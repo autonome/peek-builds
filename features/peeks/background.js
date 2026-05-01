@@ -81,6 +81,9 @@ const executeItem = (item) => {
     modal: true,
     type: 'panel',
 
+    // placement: peeks center on the cursor display regardless of size
+    center: true,
+
     // peek
     keepLive: item.keepLive || false,
     persistState: item.persistState || false,

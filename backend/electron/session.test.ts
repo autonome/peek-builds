@@ -150,6 +150,51 @@ function sanitizeParams(params: Record<string, unknown>): Record<string, unknown
   return safe;
 }
 
+/**
+ * Mirror placement intent into legacy flat flags.
+ * Identical to session.ts mirrorPlacementIntent.
+ */
+function mirrorPlacementIntent(
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  const placement = params.placement as
+    | { mode?: string; edge?: string }
+    | undefined;
+  const out: Record<string, unknown> = { ...params };
+  if (placement?.mode === 'centered' || placement?.mode === 'parent-centered') {
+    out.center = true;
+  } else if (placement?.mode === 'edge' && typeof placement.edge === 'string') {
+    out.screenEdge = placement.edge;
+  }
+  return out;
+}
+
+/**
+ * Build restore boundsOptions from a descriptor.
+ * Identical to session.ts buildRestoreBoundsOptions.
+ */
+function buildRestoreBoundsOptions(
+  descriptor: { bounds: { x: number; y: number; width: number; height: number }; params: Record<string, unknown> },
+  isPointOnScreen: (x: number, y: number) => boolean,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    width: descriptor.bounds.width,
+    height: descriptor.bounds.height,
+  };
+  const hasCenterIntent = descriptor.params.center === true;
+  const hasEdgeIntent = typeof descriptor.params.screenEdge === 'string';
+  const hasNonManualIntent = hasCenterIntent || hasEdgeIntent;
+  if (hasNonManualIntent) return out;
+
+  const centerX = descriptor.bounds.x + Math.round(descriptor.bounds.width / 2);
+  const centerY = descriptor.bounds.y + Math.round(descriptor.bounds.height / 2);
+  if (isPointOnScreen(centerX, centerY)) {
+    out.x = descriptor.bounds.x;
+    out.y = descriptor.bounds.y;
+  }
+  return out;
+}
+
 // ============================================================================
 // Database helper functions (replicate the SQL from session.ts exactly)
 // ============================================================================
@@ -497,6 +542,168 @@ describe('Session Integration Tests', () => {
       const params = { items: [{ id: 1 }, { id: 2 }] };
       const result = sanitizeParams(params);
       assert.strictEqual(result.items, undefined);
+    });
+  });
+
+  // ========================================================================
+  // mirrorPlacementIntent tests
+  //
+  // The Placement object is dropped by sanitizeParams because it's not a
+  // primitive. Without mirroring its mode into the legacy flat flags, every
+  // restored window came back with `manual` placement (saved x/y pinned),
+  // and `centered` / `edge` windows drifted across display switches. These
+  // tests lock in the round-trip behavior the user expects: persist the
+  // intent, not the pixels.
+  // ========================================================================
+
+  describe('mirrorPlacementIntent', () => {
+    it('mirrors centered mode to center: true', () => {
+      const out = mirrorPlacementIntent({ placement: { mode: 'centered' } });
+      assert.strictEqual(out.center, true);
+    });
+
+    it('mirrors parent-centered mode to center: true (nearest equivalent on restore)', () => {
+      const out = mirrorPlacementIntent({
+        placement: { mode: 'parent-centered', parentId: 99 },
+      });
+      assert.strictEqual(out.center, true);
+    });
+
+    it('mirrors edge mode to screenEdge', () => {
+      const out = mirrorPlacementIntent({
+        placement: { mode: 'edge', edge: 'right' },
+      });
+      assert.strictEqual(out.screenEdge, 'right');
+    });
+
+    it('does not set flags for manual mode', () => {
+      const out = mirrorPlacementIntent({ placement: { mode: 'manual' } });
+      assert.strictEqual(out.center, undefined);
+      assert.strictEqual(out.screenEdge, undefined);
+    });
+
+    it('does not set flags for cursor-display-fallback mode', () => {
+      const out = mirrorPlacementIntent({
+        placement: { mode: 'cursor-display-fallback' },
+      });
+      assert.strictEqual(out.center, undefined);
+      assert.strictEqual(out.screenEdge, undefined);
+    });
+
+    it('does not set flags when placement is missing', () => {
+      const out = mirrorPlacementIntent({ width: 800 });
+      assert.strictEqual(out.center, undefined);
+      assert.strictEqual(out.screenEdge, undefined);
+    });
+
+    it('preserves other params untouched', () => {
+      const out = mirrorPlacementIntent({
+        placement: { mode: 'centered' },
+        title: 'foo',
+        keepLive: true,
+      });
+      assert.strictEqual(out.title, 'foo');
+      assert.strictEqual(out.keepLive, true);
+    });
+
+    it('downstream sanitizeParams keeps the mirrored flag and drops the object', () => {
+      const out = sanitizeParams(
+        mirrorPlacementIntent({ placement: { mode: 'centered' } }),
+      );
+      assert.strictEqual(out.center, true);
+      assert.strictEqual(out.placement, undefined);
+    });
+  });
+
+  // ========================================================================
+  // buildRestoreBoundsOptions tests
+  //
+  // Verifies the restore-side branch: when descriptor.params declares a
+  // non-manual placement intent, we must NOT pass saved x/y so window-open
+  // re-derives placement on the current display.
+  // ========================================================================
+
+  describe('buildRestoreBoundsOptions', () => {
+    const allOnScreen = (_x: number, _y: number) => true;
+    const allOffScreen = (_x: number, _y: number) => false;
+    const baseBounds = { x: 100, y: 200, width: 800, height: 600 };
+
+    it('keeps width/height always', () => {
+      const out = buildRestoreBoundsOptions(
+        { bounds: baseBounds, params: {} },
+        allOnScreen,
+      );
+      assert.strictEqual(out.width, 800);
+      assert.strictEqual(out.height, 600);
+    });
+
+    it('manual + on-screen: passes saved x/y', () => {
+      const out = buildRestoreBoundsOptions(
+        { bounds: baseBounds, params: {} },
+        allOnScreen,
+      );
+      assert.strictEqual(out.x, 100);
+      assert.strictEqual(out.y, 200);
+    });
+
+    it('manual + off-screen: drops x/y (legacy off-screen safety net)', () => {
+      const out = buildRestoreBoundsOptions(
+        { bounds: baseBounds, params: {} },
+        allOffScreen,
+      );
+      assert.strictEqual(out.x, undefined);
+      assert.strictEqual(out.y, undefined);
+    });
+
+    it('center: true intent always drops x/y, even when saved center is on-screen', () => {
+      const out = buildRestoreBoundsOptions(
+        { bounds: baseBounds, params: { center: true } },
+        allOnScreen,
+      );
+      assert.strictEqual(out.x, undefined);
+      assert.strictEqual(out.y, undefined);
+    });
+
+    it('screenEdge intent always drops x/y, even when saved center is on-screen', () => {
+      const out = buildRestoreBoundsOptions(
+        { bounds: baseBounds, params: { screenEdge: 'right' } },
+        allOnScreen,
+      );
+      assert.strictEqual(out.x, undefined);
+      assert.strictEqual(out.y, undefined);
+    });
+
+    it('center: false (truthy-typed but not the strict literal) is treated as no intent', () => {
+      const out = buildRestoreBoundsOptions(
+        { bounds: baseBounds, params: { center: false } },
+        allOnScreen,
+      );
+      assert.strictEqual(out.x, 100);
+      assert.strictEqual(out.y, 200);
+    });
+
+    it('screenEdge with non-string value is ignored', () => {
+      const out = buildRestoreBoundsOptions(
+        { bounds: baseBounds, params: { screenEdge: 1 } },
+        allOnScreen,
+      );
+      assert.strictEqual(out.x, 100);
+      assert.strictEqual(out.y, 200);
+    });
+
+    it('isPointOnScreen receives the saved center, not the origin', () => {
+      let observedX: number | null = null;
+      let observedY: number | null = null;
+      buildRestoreBoundsOptions(
+        { bounds: { x: 100, y: 200, width: 800, height: 600 }, params: {} },
+        (x, y) => {
+          observedX = x;
+          observedY = y;
+          return true;
+        },
+      );
+      assert.strictEqual(observedX, 500); // 100 + round(800/2)
+      assert.strictEqual(observedY, 500); // 200 + round(600/2)
     });
   });
 

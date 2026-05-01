@@ -100,6 +100,65 @@ function extractCanvasBounds(url: string): Electron.Rectangle | null {
 }
 
 /**
+ * Mirror a Placement intent into the legacy flat flags (`center` / `screenEdge`)
+ * that survive `sanitizeParams` and the IPC boundary. The window-open handler
+ * re-derives `Placement` from these flags on restore, so 'centered' / 'edge'
+ * windows re-position on the current display layout instead of being pinned
+ * to stale absolute coordinates.
+ *
+ * 'manual' and 'cursor-display-fallback' modes intentionally produce no flag —
+ * the saved x/y (or its absence) drives the restore behavior.
+ */
+export function mirrorPlacementIntent(
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  const placement = params.placement as
+    | { mode?: string; edge?: string }
+    | undefined;
+  const out: Record<string, unknown> = { ...params };
+  if (placement?.mode === 'centered' || placement?.mode === 'parent-centered') {
+    out.center = true;
+  } else if (placement?.mode === 'edge' && typeof placement.edge === 'string') {
+    out.screenEdge = placement.edge;
+  }
+  return out;
+}
+
+/**
+ * Build the x/y/w/h options the restore path passes to window-open.
+ *
+ * If the descriptor declares a non-manual placement intent (`center: true`
+ * or `screenEdge` set), drop x/y so window-open re-derives placement on the
+ * current display layout. Otherwise behave as before: pass saved x/y when
+ * the saved center point lands on an active display, drop them when it
+ * doesn't (off-screen safety net for old snapshots).
+ *
+ * Pure: callers inject `isPointOnScreen` so this can be unit-tested without
+ * Electron's `screen` module.
+ */
+export function buildRestoreBoundsOptions(
+  descriptor: { bounds: { x: number; y: number; width: number; height: number }; params: Record<string, unknown> },
+  isPointOnScreen: (x: number, y: number) => boolean,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    width: descriptor.bounds.width,
+    height: descriptor.bounds.height,
+  };
+  const hasCenterIntent = descriptor.params.center === true;
+  const hasEdgeIntent = typeof descriptor.params.screenEdge === 'string';
+  const hasNonManualIntent = hasCenterIntent || hasEdgeIntent;
+  if (hasNonManualIntent) return out;
+
+  const centerX = descriptor.bounds.x + Math.round(descriptor.bounds.width / 2);
+  const centerY = descriptor.bounds.y + Math.round(descriptor.bounds.height / 2);
+  if (isPointOnScreen(centerX, centerY)) {
+    out.x = descriptor.bounds.x;
+    out.y = descriptor.bounds.y;
+  }
+  return out;
+}
+
+/**
  * Sanitize params to only include serializable values.
  * Mirrors the logic in ipc.ts window-list handler.
  */
@@ -231,7 +290,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       // Context not available, skip
     }
 
-    const sanitized = sanitizeParams(winData.params);
+    const sanitized = sanitizeParams(mirrorPlacementIntent(winData.params));
     if (canvasMaximized) {
       sanitized.maximized = true;
     }
@@ -652,22 +711,9 @@ export async function restoreSessionSnapshot(
 
   for (const descriptor of sortedWindows) {
     try {
-      // Validate bounds: check if saved center point falls within any active display
+      const boundsOptions = buildRestoreBoundsOptions(descriptor, isPointOnScreen);
       const centerX = descriptor.bounds.x + Math.round(descriptor.bounds.width / 2);
       const centerY = descriptor.bounds.y + Math.round(descriptor.bounds.height / 2);
-
-      const boundsOptions: Record<string, unknown> = {
-        width: descriptor.bounds.width,
-        height: descriptor.bounds.height,
-      };
-
-      if (isPointOnScreen(centerX, centerY)) {
-        // Center point is on a valid display, use saved position
-        boundsOptions.x = descriptor.bounds.x;
-        boundsOptions.y = descriptor.bounds.y;
-      }
-      // If not on screen, omit x/y and let window-open center it
-
 
       console.log(`[session:restore] Window "${descriptor.url.substring(0, 80)}" saved bounds: (${descriptor.bounds.x},${descriptor.bounds.y}) ${descriptor.bounds.width}x${descriptor.bounds.height}, center=(${centerX},${centerY}), onScreen=${isPointOnScreen(centerX, centerY)}, boundsOptions: x=${boundsOptions.x} y=${boundsOptions.y}`);
 
