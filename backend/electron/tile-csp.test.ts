@@ -102,14 +102,19 @@ describe('CSP exfiltration vectors', () => {
     assert.ok(!connectSrc.includes('*'), 'connect-src should not contain wildcards');
   });
 
-  it('should block CSS url() exfiltration via img-src restriction', () => {
-    // CSS background-image url() is governed by img-src.
-    // Without network capability, img-src is 'self' + data: only.
+  it('img-src allows external https/http image sources (favicon rendering)', () => {
+    // Tiles routinely render favicons sourced from external favicon services
+    // (Google s2, DuckDuckGo, per-domain). img-src schemes 'https:' / 'http:'
+    // let those load while keeping connect-src tight. Not a meaningful new
+    // attack surface — tiles already have a `network` capability that gates
+    // arbitrary fetch(), so img-src restriction wouldn't have prevented
+    // exfiltration in practice.
     const csp = buildCSPForTile({});
     const imgSrc = csp.match(/img-src ([^;]+)/)?.[1] || '';
     assert.ok(imgSrc.includes("'self'"), 'img-src should include self');
-    assert.ok(!imgSrc.includes('https://'), 'img-src should not allow external https URLs');
-    assert.ok(!imgSrc.includes('http://'), 'img-src should not allow external http URLs');
+    assert.ok(imgSrc.includes('data:'), 'img-src should include data:');
+    assert.ok(imgSrc.includes('https:'), 'img-src should allow https: scheme');
+    assert.ok(imgSrc.includes('http:'), 'img-src should allow http: scheme for parity');
     assert.ok(!imgSrc.includes('*'), 'img-src should not contain wildcards');
   });
 

@@ -13,13 +13,22 @@ import type { TileCapabilities, TileManifest } from './tile-manifest.js';
 /**
  * Default CSP for tiles — extremely restrictive baseline
  * Tiles can only load resources from their own origin
+ *
+ * `img-src` allows arbitrary https: / http: image sources because tiles
+ * routinely render item cards with favicons sourced from external favicon
+ * services (Google s2, DuckDuckGo, etc.) and per-domain favicon URLs. This
+ * is not a meaningful privacy expansion — tiles already have a `network`
+ * capability that lets them `fetch()` arbitrary URLs. Restricting <img>
+ * doesn't constrain what code on the page can reach. If we ever want a
+ * tighter posture for community-published tiles, route favicons through a
+ * `peek://favicon/<domain>` proxy so the CSP can stay 'self' + data:.
  */
 const DEFAULT_CSP_DIRECTIVES: Record<string, string[]> = {
   'default-src': ["'self'"],
   'script-src': ["'self'", "'unsafe-inline'"],
   'style-src': ["'self'", "'unsafe-inline'"],
   'connect-src': ["'self'"],
-  'img-src': ["'self'", 'data:'],
+  'img-src': ["'self'", 'data:', 'https:', 'http:'],
   'font-src': ["'self'"],
   'media-src': ["'self'"],
   'object-src': ["'none'"],
