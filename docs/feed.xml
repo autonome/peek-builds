@@ -4,9 +4,44 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Thu, 30 Apr 2026 21:32:25 GMT</lastBuildDate>
+    <lastBuildDate>Fri, 01 May 2026 07:59:42 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>cards: show item age in card footer</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:5d8f46cc2859</guid>
+      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
+      <description>cards: show item age in card footer</description>
+    </item>
+    <item>
+      <title>tags: show usage count on tag chips in cards</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:e72834f5c696</guid>
+      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
+      <description>tags: show usage count on tag chips in cards</description>
+    </item>
+    <item>
+      <title>todo: cmd-panel todo and done commands</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:03c413c7d0ed</guid>
+      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
+      <description>todo: cmd-panel todo and done commands</description>
+    </item>
+    <item>
+      <title>page: page-host tag widget accepts comma-separated tags</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:bcda8c320a83</guid>
+      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
+      <description>page: page-host tag widget accepts comma-separated tags</description>
+    </item>
+    <item>
+      <title>shortcuts: surface globalShortcut.register failures (linux/wayland)</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-04-30:7f547d1e36a9</guid>
+      <pubDate>Thu, 30 Apr 2026 12:00:00 GMT</pubDate>
+      <description>shortcuts: surface globalShortcut.register failures (linux/wayland)</description>
+    </item>
     <item>
       <title>chrome-ext: keep popup-side fixes, drop runtime-bridge ext patches</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>

@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: c9f255dee06d -->
+<!-- last-bumped: 890947664997 -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -19,7 +19,16 @@ See TODO.md for pending items, WIP.md for in-progress items.
 
 ## Week of 2026-04-27 (W18)
 
+### 2026-05-01
+
+- cards: show item age in card footer
+- tags: show usage count on tag chips in cards
+- todo: cmd-panel `todo` and `done` commands
+- page: page-host tag widget accepts comma-separated tags
+
 ### 2026-04-30
+
+- shortcuts: surface globalShortcut.register failures (linux/wayland)
 
 - chrome-ext: keep popup-side fixes, drop runtime-bridge ext patches
 - chrome-ext: native chrome.runtime.sendMessage cross-origin polyfill
