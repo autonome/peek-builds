@@ -184,8 +184,13 @@ function trackContentWindowFocus(win: BrowserWindow): void {
  *
  * IMPORTANT: Modal windows should NOT call this function, otherwise
  * opening the cmd palette would override the target window.
+ *
+ * `knownRole` is an optional override for the role check, supplied by
+ * callers that have the role in hand without going through the registry
+ * (e.g. tile-launcher, which creates BrowserWindows that aren't yet in
+ * `windowRegistry`).
  */
-function trackVisibleWindowFocus(win: BrowserWindow): void {
+export function trackVisibleWindowFocus(win: BrowserWindow, knownRole?: string): void {
   const url = win.webContents.getURL();
   // Exclude internal background windows
   if (url === 'peek://app/background.html') {
@@ -198,12 +203,23 @@ function trackVisibleWindowFocus(win: BrowserWindow): void {
   // Exclude overlay windows (e.g., windows switcher) — they should not
   // be tracked as the last focused visible window
   const winInfo = getWindowInfo(win.id);
-  if (winInfo?.params?.role === 'overlay') {
+  const role = knownRole ?? (winInfo?.params?.role as string | undefined);
+  if (role === 'overlay') {
     return;
   }
   // Track extension windows (peek://{id}/...) and web pages
   lastFocusedVisibleWindowId = win.id;
-  DEBUG && console.log('Updated lastFocusedVisibleWindowId:', lastFocusedVisibleWindowId, url);
+  // Unconditional — wrong-window targeting bugs (e.g. maximize hitting
+  // the window behind a focused tile) are reported by symptom; seeing
+  // the tracker transitions in stderr makes them diagnosable without
+  // re-instrumenting the user.
+  console.log(`[focus-tracker] updated lastFocusedVisibleWindowId=${lastFocusedVisibleWindowId} url=${url.slice(0, 80)}`);
+}
+
+/** Exported wrapper for tile-launcher: also runs content-window tracking. */
+export function trackOnWindowFocus(win: BrowserWindow, knownRole: string | undefined): void {
+  trackContentWindowFocus(win);
+  trackVisibleWindowFocus(win, knownRole);
 }
 
 /**

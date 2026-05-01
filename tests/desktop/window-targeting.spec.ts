@@ -168,6 +168,60 @@ test.describe('Window Targeting @desktop', () => {
     }, { backId: result.backId as number, searchId: result.searchId as number });
   });
 
+  test('focusing a tile window updates the tracker (regression: maximize-on-wrong-window)', async () => {
+    // Bug: with a tile (e.g. tags, search) focused in front of a content
+    // window, the maximize cmd hit the content window behind. Root cause:
+    // tile-launcher.createTileBrowserWindow created BrowserWindows
+    // without attaching the focus listener that updates
+    // lastFocusedVisibleWindowId — so focusing a tile-launched window
+    // never updated the tracker, leaving stale state from whatever
+    // window-open path window was focused last.
+    //
+    // Production wires the listener via configureTileLauncher's
+    // onWindowFocus hook. This test focuses a real tile window and
+    // asserts the tracker reflects it.
+    const result = await bgWindow.evaluate(async () => {
+      const api = (window as any).app;
+
+      // Open a content window first, focus it, so the tracker has a
+      // non-tile baseline.
+      const back = await api.window.open('about:blank', {
+        role: 'workspace',
+        width: 600,
+        height: 400,
+        key: 'targeting-tile-back',
+      });
+      if (!back.success) return { stage: 'open back', error: back.error };
+      await api.window.focus(back.id);
+      await new Promise(r => setTimeout(r, 200));
+
+      // Open a tile (tags-home is a workspace tile that goes through
+      // the tile-launcher createTileBrowserWindow path).
+      const tile = await api.window.open('peek://tags/home.html', {
+        role: 'workspace',
+        width: 800,
+        height: 600,
+        key: 'tags-home',
+      });
+      if (!tile.success) return { stage: 'open tile', error: tile.error };
+      await api.window.focus(tile.id);
+      await new Promise(r => setTimeout(r, 250));
+
+      const tracked = await api.window.getFocusedVisibleWindowId();
+      return { backId: back.id, tileId: tile.id, tracked };
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.tracked).toBe(result.tileId);
+    expect(result.tracked).not.toBe(result.backId);
+
+    await bgWindow.evaluate(async (ids: { backId: number; tileId: number }) => {
+      const api = (window as any).app;
+      await api.window.close(ids.backId);
+      await api.window.close(ids.tileId);
+    }, { backId: result.backId as number, tileId: result.tileId as number });
+  });
+
   test('setWindowColorScheme returns success with windowId', async () => {
     // Test that setWindowColorScheme works and returns expected data
     const result = await bgWindow.evaluate(async () => {

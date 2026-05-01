@@ -2999,6 +2999,15 @@ export function registerTileIpcHandlers(): void {
       if (!win || win.isDestroyed()) {
         return { success: false, error: 'Window not found' };
       }
+      // Logged unconditionally — wrong-window targeting bugs are reported
+      // by symptom ("the window behind got maximized"), and seeing the
+      // resolved id + url in production stderr makes it diagnosable
+      // without re-instrumenting the user.
+      try {
+        console.log(
+          `[tile:window:maximize] id=${args.id ?? 'sender-fallback'} resolved=${win.id} url=${win.webContents.getURL().slice(0, 80)}`
+        );
+      } catch { /* logging must never throw */ }
       if (win.isMaximized()) {
         win.unmaximize();
       } else {

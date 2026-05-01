@@ -2324,14 +2324,13 @@ api.commands.register({
   execute: () => webview.reload()
 });
 
-api.commands.register({
-  name: 'Maximize',
-  description: 'Toggle maximize for the current page',
-  scope: 'window',
-  execute: () => toggleMaximize()
-});
+// Note: there is intentionally no local `Maximize` command. Maximize is owned
+// by the windows feature (`maximize window`), which targets the focus tracker
+// and crosses the IPC boundary. A local renderer-side toggle here would
+// match cmd-palette input regardless of which window the user was looking
+// at, and toggle whichever page-host registered the handler.
 
-// Subscribe to page:maximize pubsub
+// Subscribe to page:maximize pubsub for explicit per-window publishes.
 api.subscribe('page:maximize', (msg) => {
   if (msg.windowId != null && msg.windowId !== myWindowId) return;
   toggleMaximize();

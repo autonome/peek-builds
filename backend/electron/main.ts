@@ -31,7 +31,7 @@ import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHe
 import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import { clearLastFocusedVisibleWindowId } from './ipc.js';
+import { clearLastFocusedVisibleWindowId, trackOnWindowFocus } from './ipc.js';
 import type { Placement } from './window-placement.js';
 
 // Configuration
@@ -206,6 +206,7 @@ export async function initialize(): Promise<void> {
   configureTileLauncher({
     getProfileSession,
     getSystemThemeBackgroundColor,
+    onWindowFocus: trackOnWindowFocus,
   });
 
   // Install the load-on-dispatch pre-publish hook. Every subsequent

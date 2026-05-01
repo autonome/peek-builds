@@ -80,6 +80,7 @@ import * as tileLifecycle from './tile-lifecycle.js';
 // null and the baseline helpers fall back cleanly.
 let _getProfileSession: (() => Electron.Session) | null = null;
 let _getSystemThemeBackgroundColor: (() => string) | null = null;
+let _onWindowFocus: ((win: BrowserWindow, role: string | undefined) => void) | null = null;
 
 /**
  * Wire tile-launcher up to its electron-side dependencies. Called once
@@ -90,9 +91,19 @@ let _getSystemThemeBackgroundColor: (() => string) | null = null;
 export function configureTileLauncher(hooks: {
   getProfileSession?: () => Electron.Session;
   getSystemThemeBackgroundColor?: () => string;
+  /**
+   * Called on every tile window's `focus` event. Production wiring
+   * forwards this into `trackVisibleWindowFocus` (and friends) in ipc.ts
+   * so the per-window-targeting tracker (`getFocusedVisibleWindowId`)
+   * sees tile-launched windows. Without it, focusing a tile (tags,
+   * search, etc.) leaves the tracker stale — commands like `maximize`
+   * then resolve to whatever non-tile window was focused last.
+   */
+  onWindowFocus?: (win: BrowserWindow, role: string | undefined) => void;
 }): void {
   if (hooks.getProfileSession) _getProfileSession = hooks.getProfileSession;
   if (hooks.getSystemThemeBackgroundColor) _getSystemThemeBackgroundColor = hooks.getSystemThemeBackgroundColor;
+  if (hooks.onWindowFocus) _onWindowFocus = hooks.onWindowFocus;
 }
 
 // Short grace period given to tiles to run their `api.onShutdown()` callbacks
@@ -307,6 +318,19 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
   const key = `${tileId}:${entryId}`;
   tileWindows.set(key, win);
   if (manifest) loadedManifests.set(tileId, manifest);
+
+  // Forward focus events so the per-window-targeting tracker
+  // (`lastFocusedVisibleWindowId` in ipc.ts) sees tile windows. Without
+  // this, focusing the tags or search tile leaves the tracker pointing
+  // at whatever non-tile window was focused last (e.g. a content
+  // page-host), and commands like `maximize` end up on the wrong window.
+  if (_onWindowFocus) {
+    const role = entry?.role;
+    win.on('focus', () => {
+      if (win.isDestroyed()) return;
+      _onWindowFocus!(win, role);
+    });
+  }
 
   // Forward console messages from the tile's webContents to main-process
   // stdout. Errors/warnings always forwarded; info/debug only under DEBUG.
