@@ -277,8 +277,7 @@ function handleAuthExpired() {
   if (authExpiredUiShown) return;
   authExpiredUiShown = true;
 
-  console.warn('[lex] Auth session expired — stopping sync poll, prompting re-authentication');
-  stopSyncPoll();
+  console.warn('[lex] Auth session expired — prompting re-authentication');
   renderAuthExpiredUi();
 }
 
@@ -382,8 +381,9 @@ async function triggerReauthenticate() {
     clearAuthExpired();
     removeAuthExpiredUi();
 
-    // Resume polling and refresh the active panel's data.
-    startSyncPoll();
+    // Trigger one sync now that auth is restored. Future syncs are
+    // visibility-driven (no periodic loop).
+    void syncPoll();
     console.log('[lex] Re-authenticated as', currentSession.handle);
   } catch (err) {
     console.error('[lex] Re-authentication failed:', err);
@@ -526,9 +526,11 @@ async function fetchLexiconDirectory() {
 
 const CACHE_PREFIX = 'lex:records:';
 const REPO_REV_KEY = 'lex:repoRev';
-const SYNC_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
-let syncIntervalId = null;
+// Minimum gap between automatic syncs triggered by visibility / focus.
+// User-initiated actions (panel switches, refresh button) are unaffected.
+const SYNC_DEBOUNCE_MS = 60 * 1000; // 1 minute
+
 let lastSyncTime = 0;
 
 /**
@@ -647,7 +649,10 @@ async function syncCollection(session, collection) {
 
 /**
  * Check repo rev and re-sync stale collections.
- * Called on the periodic poll interval.
+ *
+ * Called on user-visible triggers only: tile init while authenticated,
+ * window becoming visible/focused, re-authentication. There is no periodic
+ * background timer — see the architecture note above SYNC_DEBOUNCE_MS.
  */
 async function syncPoll() {
   if (!currentSession) return;
@@ -676,22 +681,24 @@ async function syncPoll() {
 }
 
 /**
- * Start the periodic sync poll.
+ * Run a sync now if it's been at least SYNC_DEBOUNCE_MS since the last one.
+ * Used for visibility / focus triggers; user-driven refresh paths bypass
+ * this and call `syncPoll` directly.
  */
-function startSyncPoll() {
-  if (syncIntervalId) return;
-  syncIntervalId = setInterval(syncPoll, SYNC_POLL_INTERVAL_MS);
-  console.log('[lex] Started sync poll (every 5 min)');
+function maybeSyncOnVisibility() {
+  if (!currentSession) return;
+  if (Date.now() - lastSyncTime < SYNC_DEBOUNCE_MS) return;
+  void syncPoll();
 }
 
-/**
- * Stop the periodic sync poll.
- */
-function stopSyncPoll() {
-  if (syncIntervalId) {
-    clearInterval(syncIntervalId);
-    syncIntervalId = null;
-  }
+let visibilityListenersBound = false;
+function ensureVisibilityListeners() {
+  if (visibilityListenersBound) return;
+  visibilityListenersBound = true;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') maybeSyncOnVisibility();
+  });
+  window.addEventListener('focus', maybeSyncOnVisibility);
 }
 
 /**
@@ -955,13 +962,12 @@ async function init() {
     api.escape.onEscape(handleEscape);
   }
 
-  // Start sync poll if authenticated
+  // Sync once on init if authenticated. Subsequent syncs are driven by
+  // visibility / focus events — no periodic loop.
+  ensureVisibilityListeners();
   if (currentSession) {
-    startSyncPoll();
+    void syncPoll();
   }
-
-  // Update "last synced" text every 30s
-  setInterval(updateSyncIndicator, 30000);
 }
 
 // ============================================================================
@@ -1079,7 +1085,6 @@ function setupEventListeners() {
   // Logout button — call clearSession directly
   logoutBtn.addEventListener('click', async () => {
     await clearSession();
-    stopSyncPoll();
     state.authenticated = false;
     state.handle = null;
     state.did = null;
@@ -1285,9 +1290,6 @@ function showAccountView() {
 
   // Fetch collections directly
   fetchCollections();
-
-  // Start periodic sync
-  startSyncPoll();
 }
 
 async function fetchCollections() {
