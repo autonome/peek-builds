@@ -1,0 +1,56 @@
+{
+  "manifestVersion": 3,
+  "id": "todo",
+  "shortname": "todo",
+  "name": "Todo Commands",
+  "description": "Quick `todo` and `done` cmd-panel commands",
+  "version": "1.0.0",
+  "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "url": "background.html",
+      "lazy": true
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "todo:*",
+        "cmd:execute:todo",
+        "cmd:execute:done",
+        "cmd:register",
+        "cmd:unregister",
+        "ext:ready",
+        "app:shutdown",
+        "ext:todo:shutdown",
+        "tag:item-added",
+        "tag:item-removed",
+        "item:created"
+      ]
+    },
+    "datastore": {
+      "tables": ["items", "tags", "item_tags"]
+    },
+    "commands": true
+  },
+  "commands": [
+    {
+      "name": "todo",
+      "description": "Create a todo item (auto-tagged #todo). Inline #tags add extra tags.",
+      "action": { "type": "execute" },
+      "params": [
+        { "name": "text", "type": "string", "required": true, "description": "What needs doing. Trailing #-prefixed words become extra tags." }
+      ]
+    },
+    {
+      "name": "done",
+      "description": "Mark a todo done. Matches the first #todo item whose title or content contains the search text.",
+      "action": { "type": "execute" },
+      "params": [
+        { "name": "match", "type": "string", "required": true, "description": "Substring of the todo's title or content (case-insensitive)." }
+      ]
+    }
+  ]
+}
