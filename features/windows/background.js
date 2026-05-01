@@ -118,6 +118,15 @@ const commandDefinitions = [
     }
   },
   {
+    name: 'unmaximize window',
+    description: 'Restore the active window from maximize',
+    execute: async (ctx) => {
+      const windowId = await api.window.getFocusedVisibleWindowId();
+      if (!windowId) return { success: false, error: 'No active window' };
+      return api.window.unmaximize(windowId);
+    }
+  },
+  {
     name: 'fullscreen',
     description: 'Toggle fullscreen for the active window',
     execute: async (ctx) => {

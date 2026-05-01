@@ -222,6 +222,133 @@ test.describe('Window Targeting @desktop', () => {
     }, { backId: result.backId as number, tileId: result.tileId as number });
   });
 
+  test('maximize is non-toggling — calling twice keeps window maximized', async () => {
+    // Regression: maximize used to toggle (maximize ↔ unmaximize), so a
+    // double-fire (or running the cmd twice with no intervening user
+    // action) would surprise the user. The contract is now: maximize
+    // always maximizes; unmaximize always restores.
+    const winId = await bgWindow.evaluate(async () => {
+      const api = (window as any).app;
+      const r = await api.window.open('about:blank', {
+        role: 'workspace',
+        width: 600,
+        height: 400,
+        key: 'maximize-non-toggle',
+      });
+      if (!r.success) throw new Error('open failed: ' + r.error);
+      await new Promise(res => setTimeout(res, 200));
+      await api.window.maximize(r.id);
+      await new Promise(res => setTimeout(res, 150));
+      await api.window.maximize(r.id);
+      await new Promise(res => setTimeout(res, 150));
+      return r.id as number;
+    });
+
+    const isMaxedAfterTwice = await app.evaluateMain!<boolean, number>(
+      ({ BrowserWindow }, id) => {
+        const w = BrowserWindow.fromId(id);
+        return w ? w.isMaximized() : false;
+      },
+      winId,
+    );
+    expect(isMaxedAfterTwice).toBe(true);
+
+    // unmaximize → restored
+    await bgWindow.evaluate(async (id) => {
+      const api = (window as any).app;
+      await api.window.unmaximize(id);
+      await new Promise(res => setTimeout(res, 150));
+    }, winId);
+
+    const isMaxedAfterUnmax = await app.evaluateMain!<boolean, number>(
+      ({ BrowserWindow }, id) => {
+        const w = BrowserWindow.fromId(id);
+        return w ? w.isMaximized() : false;
+      },
+      winId,
+    );
+    expect(isMaxedAfterUnmax).toBe(false);
+
+    // unmaximize again → still not maximized (no-op)
+    await bgWindow.evaluate(async (id) => {
+      const api = (window as any).app;
+      await api.window.unmaximize(id);
+      await new Promise(res => setTimeout(res, 150));
+    }, winId);
+
+    const isMaxedAfterUnmaxTwice = await app.evaluateMain!<boolean, number>(
+      ({ BrowserWindow }, id) => {
+        const w = BrowserWindow.fromId(id);
+        return w ? w.isMaximized() : false;
+      },
+      winId,
+    );
+    expect(isMaxedAfterUnmaxTwice).toBe(false);
+
+    await bgWindow.evaluate(async (id) => {
+      const api = (window as any).app;
+      await api.window.close(id);
+    }, winId);
+  });
+
+  test('unmaximize restores pre-maximize bounds', async () => {
+    // Frameless / panel-style windows don't always flip Electron's
+    // BrowserWindow.isMaximized() flag, so unmaximize() alone is a no-op
+    // on them. The IPC stashes pre-maximize bounds in the window's
+    // registry entry and restores via setBounds. This test pins that
+    // behavior — open a window at a known size, maximize, unmaximize,
+    // assert size matches the original.
+    const winId = await bgWindow.evaluate(async () => {
+      const api = (window as any).app;
+      const r = await api.window.open('about:blank', {
+        role: 'workspace',
+        width: 642,
+        height: 437,
+        key: 'unmaximize-restores-bounds',
+      });
+      if (!r.success) throw new Error('open failed: ' + r.error);
+      await new Promise(res => setTimeout(res, 250));
+      return r.id as number;
+    });
+
+    const readBounds = async (id: number) =>
+      app.evaluateMain!<{ x: number; y: number; width: number; height: number } | null, number>(
+        ({ BrowserWindow }, wid) => {
+          const w = BrowserWindow.fromId(wid);
+          return w ? w.getBounds() : null;
+        },
+        id,
+      );
+
+    const before = await readBounds(winId);
+    await bgWindow.evaluate(async (id) => {
+      await (window as any).app.window.maximize(id);
+      await new Promise(res => setTimeout(res, 200));
+    }, winId);
+    const maxed = await readBounds(winId);
+    await bgWindow.evaluate(async (id) => {
+      await (window as any).app.window.unmaximize(id);
+      await new Promise(res => setTimeout(res, 200));
+    }, winId);
+    const after = await readBounds(winId);
+
+    await bgWindow.evaluate(async (id) => {
+      await (window as any).app.window.close(id);
+    }, winId);
+
+    expect(before).not.toBeNull();
+    expect(maxed).not.toBeNull();
+    expect(after).not.toBeNull();
+    // Maximized bounds should be larger than the original.
+    expect(maxed!.width).toBeGreaterThan(before!.width);
+    expect(maxed!.height).toBeGreaterThan(before!.height);
+    // Post-unmaximize, bounds should match the pre-maximize snapshot.
+    expect(after!.width).toBe(before!.width);
+    expect(after!.height).toBe(before!.height);
+    expect(after!.x).toBe(before!.x);
+    expect(after!.y).toBe(before!.y);
+  });
+
   test('setWindowColorScheme returns success with windowId', async () => {
     // Test that setWindowColorScheme works and returns expected data
     const result = await bgWindow.evaluate(async () => {

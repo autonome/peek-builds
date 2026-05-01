@@ -63,6 +63,11 @@
       "action": { "type": "execute" }
     },
     {
+      "name": "unmaximize window",
+      "description": "Restore the active window from maximize",
+      "action": { "type": "execute" }
+    },
+    {
       "name": "fullscreen",
       "description": "Toggle fullscreen for the active window",
       "action": { "type": "execute" }

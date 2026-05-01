@@ -681,7 +681,8 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
-     * Toggle maximize on a window. Requires `window.manage` (or
+     * Maximize a window (non-toggling — no-op if already maximized).
+     * Pair with `unmaximize` to restore. Requires `window.manage` (or
      * trustedBuiltin).
      */
     maximize: (id?: number) => {
@@ -689,6 +690,44 @@ function buildAPI(): Record<string, unknown> {
         token: tileToken,
         id,
       });
+    },
+
+    /**
+     * Restore a maximized window to its pre-maximize bounds. No-op if
+     * the window is not maximized. Requires `window.manage` (or
+     * trustedBuiltin).
+     */
+    unmaximize: (id?: number) => {
+      return ipcRenderer.invoke('tile:window:unmaximize', {
+        token: tileToken,
+        id,
+      });
+    },
+
+    /**
+     * Subscribe to maximize requests targeted at this window. The
+     * `tile:window:maximize` IPC fires this on the target window's
+     * webContents after the OS-side bounds change. Renderers that
+     * manage their own internal layout (e.g. the page-host) hook in
+     * here to keep their state in sync. Returns an unsubscribe fn.
+     *
+     * Targeted send (no broadcast) — only the resolved window receives
+     * the event.
+     */
+    onMaximizeRequest: (cb: () => void) => {
+      const handler = () => { try { cb(); } catch (err) { console.error('[onMaximizeRequest]', err); } };
+      ipcRenderer.on('tile:window:maximize-request', handler);
+      return () => ipcRenderer.off('tile:window:maximize-request', handler);
+    },
+
+    /**
+     * Subscribe to unmaximize requests targeted at this window. See
+     * `onMaximizeRequest` for the firing contract.
+     */
+    onUnmaximizeRequest: (cb: () => void) => {
+      const handler = () => { try { cb(); } catch (err) { console.error('[onUnmaximizeRequest]', err); } };
+      ipcRenderer.on('tile:window:unmaximize-request', handler);
+      return () => ipcRenderer.off('tile:window:unmaximize-request', handler);
     },
 
     /**

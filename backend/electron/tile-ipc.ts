@@ -2973,7 +2973,15 @@ export function registerTileIpcHandlers(): void {
 
   // ── tile:window:maximize ──────────────────────────────────────────
   //
-  // Toggle maximize on a window. Gated by `window.manage`.
+  // Maximize a window. Non-toggling: no-op if already maximized. Pair
+  // with `tile:window:unmaximize` to restore. Gated by `window.manage`.
+  //
+  // We don't rely solely on BrowserWindow.maximize() because frameless /
+  // panel-style windows on macOS don't always flip Electron's internal
+  // isMaximized flag — meaning a subsequent unmaximize() is a no-op. So
+  // we also stash pre-maximize bounds in the window's registry entry and
+  // resize via setBounds(workArea), mirroring the open-time
+  // `maximize: true` path in ipc.ts.
   registerTileIpc('tile:window:maximize', { mode: 'handle' }, async (event, args: {
     token: string;
     id?: number;
@@ -3003,16 +3011,100 @@ export function registerTileIpcHandlers(): void {
       // by symptom ("the window behind got maximized"), and seeing the
       // resolved id + url in production stderr makes it diagnosable
       // without re-instrumenting the user.
+      const info = getWindowInfo(win.id);
       try {
         console.log(
           `[tile:window:maximize] id=${args.id ?? 'sender-fallback'} resolved=${win.id} url=${win.webContents.getURL().slice(0, 80)}`
         );
       } catch { /* logging must never throw */ }
-      if (win.isMaximized()) {
-        win.unmaximize();
-      } else {
-        win.maximize();
+
+      const currentBounds = win.getBounds();
+      const display = screen.getDisplayMatching(currentBounds);
+      const workArea = display.workArea;
+      const atWorkArea =
+        currentBounds.x === workArea.x &&
+        currentBounds.y === workArea.y &&
+        currentBounds.width === workArea.width &&
+        currentBounds.height === workArea.height;
+
+      // Only snapshot if the window isn't already filling the work area.
+      // This lets the user resize a maximized window smaller, hit
+      // `maximize` again, and have the new smaller size become the new
+      // pre-maximize snapshot — instead of being stuck with the original
+      // snapshot from the first maximize.
+      if (!atWorkArea && info) {
+        info.params.preMaximizeBounds = {
+          x: currentBounds.x,
+          y: currentBounds.y,
+          width: currentBounds.width,
+          height: currentBounds.height,
+        };
       }
+
+      win.setBounds(workArea);
+      // Targeted notification to the window's renderer — page-host (and
+      // any other renderer that owns internal layout state) subscribes
+      // via api.window.onMaximizeRequest to keep its FSM/bounds in sync
+      // without going through pubsub broadcast.
+      try { win.webContents.send('tile:window:maximize-request'); } catch { /* renderer may be gone */ }
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:unmaximize ────────────────────────────────────────
+  //
+  // Restore a maximized window to its pre-maximize bounds. Reads the
+  // bounds we stashed in the window's registry entry; falls back to
+  // BrowserWindow.unmaximize() if the registry has nothing (window was
+  // maximized via dbl-click on the OS frame, etc.). Gated by
+  // `window.manage`.
+  registerTileIpc('tile:window:unmaximize', { mode: 'handle' }, async (event, args: {
+    token: string;
+    id?: number;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkWindowAllowed(grant, 'maximize');
+    if (!check.ok) {
+      handleViolation(grant, 'window', 'window:unmaximize', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      if (args.id !== undefined && typeof args.id !== 'number') {
+        return { success: false, error: `Invalid window id: ${typeof args.id}` };
+      }
+      const win = typeof args.id === 'number'
+        ? BrowserWindow.fromId(args.id)
+        : BrowserWindow.fromWebContents(event.sender);
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Window not found' };
+      }
+      const info = getWindowInfo(win.id);
+      try {
+        console.log(
+          `[tile:window:unmaximize] id=${args.id ?? 'sender-fallback'} resolved=${win.id} hasPreBounds=${info?.params?.preMaximizeBounds != null} isMaximized=${win.isMaximized()} url=${win.webContents.getURL().slice(0, 80)}`
+        );
+      } catch { /* logging must never throw */ }
+
+      const stashed = info?.params?.preMaximizeBounds as
+        | { x: number; y: number; width: number; height: number }
+        | undefined;
+
+      if (stashed) {
+        // Clear electron's own maximize flag too, in case it's set.
+        if (win.isMaximized()) {
+          win.unmaximize();
+        }
+        win.setBounds(stashed);
+        delete info!.params.preMaximizeBounds;
+      } else if (win.isMaximized()) {
+        win.unmaximize();
+      }
+      // Targeted notification — see comment in tile:window:maximize.
+      try { win.webContents.send('tile:window:unmaximize-request'); } catch { /* renderer may be gone */ }
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

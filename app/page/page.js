@@ -594,77 +594,47 @@ function positionPanelsMaximized(winW, winH, navVisible) {
   }
 }
 
-// --- Toggle maximize ---
+// --- Maximize / unmaximize ---
+//
+// Three entry points:
+// - `doMaximize()` — non-toggling, no-op if already maximized.
+// - `doUnmaximize()` — non-toggling, no-op if not maximized.
+// - `toggleMaximize()` — flips, used by navbar dbl-click + cmd-palette
+//   pubsub paths that explicitly want toggle semantics.
 
-async function toggleMaximize() {
+function cancelInFlightInteractions() {
+  if (inDragging()) {
+    dragOverlay.classList.remove('active');
+    document.body.style.cursor = '';
+    navbar.style.cursor = 'grab';
+    dispatchFsm({ type: FSM_EVENTS.DRAG_END });
+  }
+  cancelHoldDrag();
+  cancelWebviewHold();
+  if (pendingBoundsUpdate) {
+    cancelAnimationFrame(pendingBoundsUpdate);
+    pendingBoundsUpdate = null;
+  }
+}
+
+async function doMaximize() {
   try {
-    // Cancel any active drag — drag handlers running during the await would
-    // overwrite screenBounds and call setBounds with stale values.
-    if (inDragging()) {
-      dragOverlay.classList.remove('active');
-      document.body.style.cursor = '';
-      navbar.style.cursor = 'grab';
-      dispatchFsm({ type: FSM_EVENTS.DRAG_END });
-    }
-    cancelHoldDrag();
-    cancelWebviewHold();
-    // Cancel any pending throttled bounds update from drag/resize
-    if (pendingBoundsUpdate) {
-      cancelAnimationFrame(pendingBoundsUpdate);
-      pendingBoundsUpdate = null;
-    }
+    cancelInFlightInteractions();
+    if (inMaximized()) return;
 
-    if (inMaximized()) {
-      // Restore from maximize. Use the saved WINDOW bounds directly — they
-      // were captured from the live window before maximize, so restoring with
-      // them guarantees byte-for-byte bounds equivalence regardless of any
-      // canvas margin adjustments (which may or may not be applied in
-      // headless/test environments).
-      const restoreWindowBounds = preMaximizeWindowBounds;
-      if (preMaximizeBounds) {
-        screenBounds.x = preMaximizeBounds.x;
-        screenBounds.y = preMaximizeBounds.y;
-        screenBounds.width = preMaximizeBounds.width;
-        screenBounds.height = preMaximizeBounds.height;
-        preMaximizeBounds = null;
-      }
-      preMaximizeWindowBounds = null;
-
-      // Dispatch flips fsmState MAXIMIZED→NORMAL and fires effects:
-      //   SET_BODY_MAXIMIZED(false), SET_HANDLES_VISIBLE(true) (→updatePositions),
-      //   SET_URL_MAXIMIZED(false) (→updateUrlParams). updatePositions and
-      //   updateUrlParams now see the restored screenBounds + NORMAL state.
-      dispatchFsm({ type: FSM_EVENTS.TOGGLE_MAXIMIZE });
-
-      centerColumn.style.opacity = '0';
-      if (restoreWindowBounds) {
-        await api.window.setBounds(restoreWindowBounds);
-      } else {
-        await api.window.setBounds(computeWindowBounds(screenBounds));
-      }
-      centerColumn.style.opacity = '1';
-      return;
-    }
-
-    // Maximize: fill screen work area
     const displayResult = await api.window.getDisplayInfo();
     if (!displayResult || !displayResult.success || !displayResult.data) {
       console.warn('[page] Failed to get display info for maximize');
       return;
     }
-
     const workArea = displayResult.data.workArea;
 
-    // Save current bounds for restore
     preMaximizeBounds = {
       x: screenBounds.x,
       y: screenBounds.y,
       width: screenBounds.width,
       height: screenBounds.height,
     };
-    // Also capture the live WINDOW bounds — restoring via these bypasses
-    // any computeWindowBounds margin math so the restored window matches
-    // exactly what the user had before maximizing.
     try {
       const windowBoundsResult = await api.window.getBounds();
       if (windowBoundsResult && windowBoundsResult.success !== false) {
@@ -679,23 +649,59 @@ async function toggleMaximize() {
       preMaximizeWindowBounds = null;
     }
 
-    // screenBounds now represents the full work area (window = work area in maximized mode)
     screenBounds.x = workArea.x;
     screenBounds.y = workArea.y;
     screenBounds.width = workArea.width;
     screenBounds.height = workArea.height;
 
-    // Dispatch flips fsmState NORMAL→MAXIMIZED and fires effects:
-    //   SET_BODY_MAXIMIZED(true), SET_HANDLES_VISIBLE(false) (→updatePositions
-    //   uses maximized layout), SET_URL_MAXIMIZED(true) (→updateUrlParams).
     dispatchFsm({ type: FSM_EVENTS.TOGGLE_MAXIMIZE });
 
     centerColumn.style.opacity = '0';
     await api.window.setBounds(computeWindowBounds(screenBounds));
     centerColumn.style.opacity = '1';
   } catch (err) {
-    console.error('[page] toggleMaximize failed:', err);
+    console.error('[page] doMaximize failed:', err);
   }
+}
+
+async function doUnmaximize() {
+  try {
+    cancelInFlightInteractions();
+    if (!inMaximized()) return;
+
+    // Restore from maximize. Use the saved WINDOW bounds directly when
+    // available — they were captured live before maximize, so restoring
+    // with them guarantees byte-for-byte equivalence regardless of any
+    // canvas margin math.
+    const restoreWindowBounds = preMaximizeWindowBounds;
+    if (preMaximizeBounds) {
+      screenBounds.x = preMaximizeBounds.x;
+      screenBounds.y = preMaximizeBounds.y;
+      screenBounds.width = preMaximizeBounds.width;
+      screenBounds.height = preMaximizeBounds.height;
+      preMaximizeBounds = null;
+    }
+    preMaximizeWindowBounds = null;
+
+    dispatchFsm({ type: FSM_EVENTS.TOGGLE_MAXIMIZE });
+
+    centerColumn.style.opacity = '0';
+    if (restoreWindowBounds) {
+      await api.window.setBounds(restoreWindowBounds);
+    } else {
+      await api.window.setBounds(computeWindowBounds(screenBounds));
+    }
+    centerColumn.style.opacity = '1';
+  } catch (err) {
+    console.error('[page] doUnmaximize failed:', err);
+  }
+}
+
+async function toggleMaximize() {
+  if (inMaximized()) {
+    return doUnmaximize();
+  }
+  return doMaximize();
 }
 
 // --- Set window bounds via IPC ---
@@ -2330,11 +2336,13 @@ api.commands.register({
 // match cmd-palette input regardless of which window the user was looking
 // at, and toggle whichever page-host registered the handler.
 
-// Subscribe to page:maximize pubsub for explicit per-window publishes.
-api.subscribe('page:maximize', (msg) => {
-  if (msg.windowId != null && msg.windowId !== myWindowId) return;
-  toggleMaximize();
-});
+// Targeted main→renderer notifications from the maximize/unmaximize
+// IPC handlers. Page-host owns its internal layout (FSM, screenBounds,
+// centerColumn), so the IPC tells *this* window's renderer to run its
+// own non-toggling helpers. No pubsub broadcast — the IPC already
+// resolved the target window, so it sends to that webContents only.
+api.window.onMaximizeRequest(() => doMaximize());
+api.window.onUnmaximizeRequest(() => doUnmaximize());
 
 // --- Web permission prompt ---
 // Backend's permission-handler.ts publishes `page:permission-request` when a

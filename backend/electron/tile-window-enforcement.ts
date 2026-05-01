@@ -36,7 +36,7 @@ import type { CapabilityGrant, WindowCapability } from './tile-manifest.js';
  * - `set-ignore-mouse` — toggle click-through on a window; gated by `manage`.
  * - `center` — center a window on its display; gated by `manage`.
  * - `center-all` — center every visible window; gated by `manage`.
- * - `maximize` — toggle maximize on a window; gated by `manage`.
+ * - `maximize` — maximize or unmaximize a window; gated by `manage`.
  * - `fullscreen` — toggle fullscreen on a window; gated by `manage`.
  * - `get-focused-visible-id` — read lastFocusedVisibleWindowId; gated by `query`.
  * - `set-overlay-focus-target` — set overlay restore target; gated by `manage`.
