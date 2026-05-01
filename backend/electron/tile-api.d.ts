@@ -178,10 +178,12 @@ interface TileWindow {
   setVisibleOnAllWorkspaces(id: number | undefined, visible: boolean, opts?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean }): Promise<{ success: boolean; error?: string }>;
 
   /**
-   * Get the id of the last-focused visible window.
-   * Requires `window.query` capability.
+   * Get the id of the last-focused visible window, or null if none is
+   * tracked. The preload wrapper unwraps the underlying IPC envelope, so
+   * callers receive the bare id (or null) — not a `{success, windowId}`
+   * object. Requires `window.query` capability.
    */
-  getFocusedVisibleWindowId(): Promise<{ success: boolean; windowId?: number; error?: string }>;
+  getFocusedVisibleWindowId(): Promise<number | null>;
 
   /**
    * Set the overlay focus target for the calling tile's window.

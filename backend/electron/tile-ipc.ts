@@ -2886,6 +2886,9 @@ export function registerTileIpcHandlers(): void {
     }
 
     try {
+      if (args.id !== undefined && typeof args.id !== 'number') {
+        return { success: false, error: `Invalid window id: ${typeof args.id}` };
+      }
       const win = typeof args.id === 'number'
         ? BrowserWindow.fromId(args.id)
         : BrowserWindow.fromWebContents(event.sender);
@@ -2983,6 +2986,13 @@ export function registerTileIpcHandlers(): void {
     }
 
     try {
+      // Reject non-number ids loudly. The convention is "omit id for the
+      // calling window", not "pass an object and silently fall back" —
+      // a malformed caller (e.g. forgetting to unwrap a `{success, data}`
+      // envelope) would otherwise silently maximize the wrong window.
+      if (args.id !== undefined && typeof args.id !== 'number') {
+        return { success: false, error: `Invalid window id: ${typeof args.id}` };
+      }
       const win = typeof args.id === 'number'
         ? BrowserWindow.fromId(args.id)
         : BrowserWindow.fromWebContents(event.sender);
@@ -3016,6 +3026,9 @@ export function registerTileIpcHandlers(): void {
     }
 
     try {
+      if (args.id !== undefined && typeof args.id !== 'number') {
+        return { success: false, error: `Invalid window id: ${typeof args.id}` };
+      }
       const win = typeof args.id === 'number'
         ? BrowserWindow.fromId(args.id)
         : BrowserWindow.fromWebContents(event.sender);
