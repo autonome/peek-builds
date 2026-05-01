@@ -26,7 +26,7 @@ import {
   resolveSettingDefault,
   loadSchemaDefaults,
 } from './tile-settings-defaults.js';
-import type { TileManifestV2 } from './tile-manifest.js';
+import type { TileManifest } from './tile-manifest.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -34,7 +34,7 @@ function makeManifest(
   id: string,
   defaults?: Record<string, unknown>,
   settingsSchema?: string
-): TileManifestV2 {
+): TileManifest {
   return {
     manifestVersion: 3,
     id,

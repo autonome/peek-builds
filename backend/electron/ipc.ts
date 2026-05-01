@@ -527,7 +527,7 @@ function applyPlacementOnReuse(
   }
 }
 
-// Exported reference to the window-open handler so other IPC surfaces (like v2 tile
+// Exported reference to the window-open handler so other IPC surfaces (like tile
 // IPC) can delegate to it without duplicating ~1300 lines of window creation logic.
 // Populated by registerWindowHandlers() at startup.
 // Use `any` for parameters to match the original implicit-any ergonomics of the
@@ -607,7 +607,7 @@ export function registerWindowHandlers(): void {
           // blur → hide(), and the NSPanel's floating-level order race
           // leaves the panel rendered even though Electron reports
           // isVisible=false. See commit 1b568d40 for original fix; this
-          // was lost in the tiles v2 refactor.
+          // was lost in the tile system refactor.
           (existingWindow.window as { __lastShowTime?: number }).__lastShowTime = Date.now();
           existingWindow.window.show();
           existingWindow.window.focus();
@@ -712,7 +712,7 @@ export function registerWindowHandlers(): void {
 
     // Pseudo-tile lookup: settings / diagnostic / hud-overlay / cmd panel /
     // chain editor / about:blank — URLs that need tile-preload but don't
-    // ship a v2 manifest. Registry is in pseudo-tiles.ts; see comments
+    // ship a tile manifest. Registry is in pseudo-tiles.ts; see comments
     // there for extension. Match handles hash/query fragments so URLs
     // restored from session snapshots still resolve.
     if (!tileWebPrefs) {
@@ -950,7 +950,7 @@ export function registerWindowHandlers(): void {
 
     // Create new window.
     //
-    // For real v2 feature tile URLs (tileWebPrefs resolved from the
+    // For real feature tile URLs (tileWebPrefs resolved from the
     // manifest, NOT a special-case trustedBuiltin synthesis and NOT a
     // canvas page host), route through `createTileBrowserWindow` — the
     // same helper `launchTile` uses. This is Phase D of the tile-
@@ -963,15 +963,15 @@ export function registerWindowHandlers(): void {
     // Canvas page hosts, trustedBuiltin special cases (settings,
     // diagnostic, hud-overlay, cmd-ui, about:blank, datastore-viewer),
     // and plain web pages still go through the direct `new
-    // BrowserWindow(winOptions)` path — they're not v2 feature tiles
+    // BrowserWindow(winOptions)` path — they're not feature tiles
     // and unifying them is a separate cleanup.
-    const isRealV2TileLaunch =
+    const isRealTileLaunch =
       tileWebPrefs !== null &&
       !specialCaseToken &&
       !useCanvas &&
       tileWebPrefs.token !== undefined;
     let win: BrowserWindow;
-    if (isRealV2TileLaunch && tileWebPrefs) {
+    if (isRealTileLaunch && tileWebPrefs) {
       // Pull webPreferences overrides out so the helper's baseline tile
       // webPreferences (preload, additionalArguments, session, sandbox)
       // remain in control. Anything else the caller asked for (webviewTag,
@@ -1023,7 +1023,7 @@ export function registerWindowHandlers(): void {
     if (specialCaseToken && tileWebPrefs?.tileId && tileWebPrefs?.entryId) {
       registerTrustedBuiltinWindow(tileWebPrefs.tileId, tileWebPrefs.entryId, win, specialCaseToken);
       DEBUG && console.log(`[window-open] registered ${tileWebPrefs.tileId}:${tileWebPrefs.entryId} with tile broadcaster`);
-    } else if (!isRealV2TileLaunch && tileWebPrefs?.tileId && tileWebPrefs?.entryId && tileWebPrefs?.token) {
+    } else if (!isRealTileLaunch && tileWebPrefs?.tileId && tileWebPrefs?.entryId && tileWebPrefs?.token) {
       // Feature tile window-entry opened via api.window.open(): register the
       // BrowserWindow with the tile broadcaster so GLOBAL-scope pubsub messages
       // reach it. Without this, the window gets tile-preload + a valid token
@@ -1034,12 +1034,12 @@ export function registerWindowHandlers(): void {
       // the subscribe-side handler never fires. See pubsub-repro.spec.ts for
       // a minimal repro.
       //
-      // Gate on !isRealV2TileLaunch — when the helper above created the
+      // Gate on !isRealTileLaunch — when the helper above created the
       // window it already called tileWindows.set + wired the close
       // handler, so this branch would double-register. Only reached now
       // for legacy/edge paths that still go through `new BrowserWindow`.
       registerTrustedBuiltinWindow(tileWebPrefs.tileId, tileWebPrefs.entryId, win, tileWebPrefs.token);
-      DEBUG && console.log(`[window-open] registered v2 tile window ${tileWebPrefs.tileId}:${tileWebPrefs.entryId} with tile broadcaster`);
+      DEBUG && console.log(`[window-open] registered tile window ${tileWebPrefs.tileId}:${tileWebPrefs.entryId} with tile broadcaster`);
     }
 
     // Track window position for display-watcher home display restoration

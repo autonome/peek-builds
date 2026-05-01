@@ -22,7 +22,7 @@ import {
 } from './atproto-source.js';
 import { FeatureRegistry } from './feature-registry.js';
 import { installFromBundle, type TileBundle } from './feature-installer.js';
-import type { TileManifestV2 } from './tile-manifest.js';
+import type { TileManifest } from './tile-manifest.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -34,7 +34,7 @@ function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'atproto-hardening-test-'));
 }
 
-function makeManifest(id: string, overrides: Record<string, unknown> = {}): TileManifestV2 {
+function makeManifest(id: string, overrides: Record<string, unknown> = {}): TileManifest {
   return {
     manifestVersion: 3,
     id,
@@ -51,7 +51,7 @@ function makeManifest(id: string, overrides: Record<string, unknown> = {}): Tile
       { name: `${id} cmd`, action: { type: 'execute' } },
     ],
     ...overrides,
-  } as unknown as TileManifestV2;
+  } as unknown as TileManifest;
 }
 
 // ─── Global fetch stub ──────────────────────────────────────────────
@@ -115,7 +115,7 @@ interface BundleFixture {
   handle: string;
   pdsUrl: string;
   rkey: string;
-  manifest: TileManifestV2;
+  manifest: TileManifest;
   files: BundleFixtureFile[];
   minPeekVersion?: string;
 }

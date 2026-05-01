@@ -37,10 +37,10 @@ page canvas), and the test fixture — runs through the same machinery:
 - Holds a per-window **capability token** that the main process mints at
   load time and revokes at unload
 
-The v1 era — `preload.js`, an `extensionHostWindow` that loaded multiple
+The legacy era — `preload.js`, an `extensionHostWindow` that loaded multiple
 features as iframes, and a parallel set of legacy IPC channels — was removed
 in April 2026 ([docs/v1-removal-plan.md](./v1-removal-plan.md), Status:
-DONE). There is no longer a v1↔v2 seam.
+DONE). The tile path is the only path.
 
 ### Manifest schema (v3)
 
@@ -250,7 +250,7 @@ window. Intent is recorded once at window-open time on
 `windowRegistry.params.placement` and never re-derived from flag soup
 (`center: true`, explicit `x/y`, `useCanvas`, etc.). All consumers — the
 URL-reuse and keepLive-reuse paths in `ipc.ts`, the fresh-open fallback,
-the display-watcher second pass, and the v2-tile open path in
+the display-watcher second pass, and the tile open path in
 `tile-ipc.ts` — call the same `computePlacement(input)` and apply its
 `reposition` / `no-change` result. Stranded-rescue (<50% area on any
 display) is built in for every mode. Unit-tested with synthetic display

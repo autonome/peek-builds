@@ -135,7 +135,7 @@ function deliver(source: string, topic: string, msg: unknown): void {
   }
 
   // Route to renderer windows. In Phase 5 this was gated on GLOBAL scope;
-  // with scope gone, every publish routes to the broadcaster so v2 tile
+  // with scope gone, every publish routes to the broadcaster so tile
   // windows and bgWindow subscribers see the event.
   if (pubsubBroadcaster) {
     pubsubBroadcaster(topic, msg, source);

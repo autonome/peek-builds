@@ -475,7 +475,7 @@ Test boundaries:
    `extensionBroadcaster` → `pubsubBroadcaster` (the "extension" label
    is a stale v1 term — Peek now reserves "extension" for bundled
    Chromium extensions; features/tiles are the current vocabulary).
-   This alone unblocks the "only hello-world visible" and "v2 result
+   This alone unblocks the "only hello-world visible" and "tile result
    doesn't reach subscribers" bugs. No semantic changes.
    **Test**: tag/untag/widget-update smoke tests go green.
 2. **Phase 2 — Sender-frame cross-check (security hardening).**

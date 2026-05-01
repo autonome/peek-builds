@@ -101,7 +101,7 @@ The Peek tile's role: provides UI for configuring the MCP server, shows connecti
 ```
 features/mcp-server/
   PLAN.md              — this file
-  manifest.json        — v2 tile manifest (background only, no UI needed initially)
+  manifest.json        — tile manifest (background only, no UI needed initially)
   background.html/js   — tile that manages MCP server config and status
   server.js            — the actual MCP server (standalone Node.js, spawned by Claude Code)
   db.js                — SQLite read/write helpers (shared by server.js)
@@ -189,7 +189,7 @@ Once configured, the workflow:
 7. MCP resources: `peek://tasks`, `peek://tasks/{tag}`
 
 ### Phase 3 — Peek Tile Integration
-8. `manifest.json` — v2 tile manifest (background tile)
+8. `manifest.json` — tile manifest (background tile)
 9. `background.js` — shows MCP server status, provides setup button
 10. Optional: manage UI page showing connected clients, recent tool calls
 

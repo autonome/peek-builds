@@ -29,7 +29,7 @@
 
 import { getDb } from './datastore.js';
 import { parseManifestFile, resolveCapabilities } from './tile-manifest.js';
-import type { TileManifestV2, CapabilityGrant } from './tile-manifest.js';
+import type { TileManifest, CapabilityGrant } from './tile-manifest.js';
 
 // ---------------------------------------------------------------------------
 // Row shape
@@ -38,7 +38,7 @@ import type { TileManifestV2, CapabilityGrant } from './tile-manifest.js';
 export interface ManifestCacheRow {
   featureId: string;
   version: string;
-  manifest: TileManifestV2;
+  manifest: TileManifest;
   commands: ManifestCommandDecl[];
   nouns: ManifestNounDecl[];
   shortcuts: ManifestShortcutDecl[];
@@ -97,10 +97,10 @@ export function upsertFromManifest(featureId: string, manifestPath: string): Man
   if (!parseResult) {
     throw new Error(`[manifest-cache] ${featureId}: manifest missing or invalid at ${manifestPath}`);
   }
-  if (parseResult.version !== 'v2' || !parseResult.v2) {
-    throw new Error(`[manifest-cache] ${featureId}: v1 manifests not cached`);
+  if (parseResult.version !== 'tile' || !parseResult.manifest) {
+    throw new Error(`[manifest-cache] ${featureId}: legacy manifests not cached`);
   }
-  const manifest = parseResult.v2;
+  const manifest = parseResult.manifest;
   if (manifest.id !== featureId) {
     throw new Error(`[manifest-cache] manifest id mismatch: file=${featureId} manifest=${manifest.id}`);
   }
@@ -296,7 +296,7 @@ function parseRow(raw: RawRow): ManifestCacheRow {
   return {
     featureId: raw.featureId,
     version: raw.version,
-    manifest: safeJson<TileManifestV2>(raw.manifest, null as unknown as TileManifestV2),
+    manifest: safeJson<TileManifest>(raw.manifest, null as unknown as TileManifest),
     commands: safeJson<ManifestCommandDecl[]>(raw.commands ?? '[]', []),
     nouns: safeJson<ManifestNounDecl[]>(raw.nouns ?? '[]', []),
     shortcuts: safeJson<ManifestShortcutDecl[]>(raw.shortcuts ?? '[]', []),
@@ -315,7 +315,7 @@ function safeJson<T>(str: string, fallback: T): T {
   }
 }
 
-function extractCommands(manifest: TileManifestV2): ManifestCommandDecl[] {
+function extractCommands(manifest: TileManifest): ManifestCommandDecl[] {
   if (!Array.isArray(manifest.commands)) return [];
   return manifest.commands.map(cmd => ({
     name: cmd.name,
@@ -329,7 +329,7 @@ function extractCommands(manifest: TileManifestV2): ManifestCommandDecl[] {
   }));
 }
 
-function extractNouns(manifest: TileManifestV2): ManifestNounDecl[] {
+function extractNouns(manifest: TileManifest): ManifestNounDecl[] {
   // Manifests don't yet declare nouns statically — nouns come from
   // runtime `registerNoun()` calls. Phase C will extend the manifest
   // schema to allow static noun declarations so browse/list commands
@@ -339,7 +339,7 @@ function extractNouns(manifest: TileManifestV2): ManifestNounDecl[] {
   return Array.isArray(nouns) ? nouns : [];
 }
 
-function extractShortcuts(manifest: TileManifestV2): ManifestShortcutDecl[] {
+function extractShortcuts(manifest: TileManifest): ManifestShortcutDecl[] {
   if (!Array.isArray(manifest.shortcuts)) return [];
   return manifest.shortcuts.map(sc => ({
     keys: sc.keys,
@@ -348,7 +348,7 @@ function extractShortcuts(manifest: TileManifestV2): ManifestShortcutDecl[] {
   }));
 }
 
-function extractLazyEvents(manifest: TileManifestV2): Array<{ topic: string; command: string }> {
+function extractLazyEvents(manifest: TileManifest): Array<{ topic: string; command: string }> {
   const out: Array<{ topic: string; command: string }> = [];
   if (!Array.isArray(manifest.tiles)) return out;
   for (const tile of manifest.tiles) {

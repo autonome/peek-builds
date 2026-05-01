@@ -46,7 +46,7 @@ function getBrowserWindowCtor(): typeof import('electron').BrowserWindow {
 }
 
 import {
-  type TileManifestV2,
+  type TileManifest,
   type TileEntry,
   type TileCapabilities,
   type CapabilityGrant,
@@ -107,7 +107,7 @@ export { generateToken, validateToken, revokeToken, getGrantForToken } from './t
 const tileWindows = new Map<string, BrowserWindow>();
 
 /** Loaded manifests: tileId -> manifest */
-const loadedManifests = new Map<string, TileManifestV2>();
+const loadedManifests = new Map<string, TileManifest>();
 
 /** Tiles that have signaled ready */
 const readyTiles = new Set<string>();
@@ -126,8 +126,8 @@ const TILE_READY_TIMEOUT_MS = 10000;
 export interface TileLaunchOptions {
   /** Path to the tile's directory on disk */
   tilePath: string;
-  /** The parsed v2 manifest */
-  manifest: TileManifestV2;
+  /** The parsed manifest */
+  manifest: TileManifest;
   /** Path to the tile preload script */
   preloadPath: string;
   /** Which tile entry to launch (defaults to first) */
@@ -173,7 +173,7 @@ export interface CreateTileBrowserWindowSpec {
    * manifest; callers that have no manifest (e.g. trustedBuiltin callers
    * doing post-hoc registration) can omit this.
    */
-  manifest?: TileManifestV2;
+  manifest?: TileManifest;
   entry?: TileEntry;
   /**
    * Extra BrowserWindow options applied after manifest hints. Used by the
@@ -223,7 +223,7 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
   // trustedBuiltin callers that never ran through the feature
   // registry (hud-glue, cmd-glue, etc.) the entry starts in
   // UNREGISTERED and this call is rejected. That's fine; the FSM is
-  // only authoritative for v2 feature tiles today, and a silent
+  // only authoritative for feature tiles today, and a silent
   // rejection on trustedBuiltin entries doesn't harm drift detection.
   tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.LOAD,
     { source: 'createTileBrowserWindow' });
@@ -554,7 +554,7 @@ export function isTileReady(tileId: string, entryId: string): boolean {
 /**
  * Get the manifest for a loaded tile
  */
-export function getTileManifest(tileId: string): TileManifestV2 | null {
+export function getTileManifest(tileId: string): TileManifest | null {
   return loadedManifests.get(tileId) || null;
 }
 
@@ -567,7 +567,7 @@ export function getLoadedTileIds(): string[] {
 
 /**
  * Get all BrowserWindow instances for loaded tiles.
- * Used by the pubsub broadcaster to forward messages to v2 tile windows.
+ * Used by the pubsub broadcaster to forward messages to tile windows.
  */
 export function getAllTileWindows(): BrowserWindow[] {
   return Array.from(tileWindows.values()).filter(win => !win.isDestroyed());
@@ -639,7 +639,7 @@ export function registerTrustedBuiltinWindow(
 export function getTileWebPreferencesForUrl(
   url: string,
   tilePreloadPath: string,
-  lookupLazyManifest: (tileId: string) => TileManifestV2 | null,
+  lookupLazyManifest: (tileId: string) => TileManifest | null,
 ): { preload: string; additionalArguments: string[]; tileId: string; entryId: string; token?: string } | null {
   let host: string;
   let pathPart: string;
@@ -689,7 +689,7 @@ export function getTileWebPreferencesForUrl(
 }
 
 /**
- * Resolve a peek:// URL to v2 tile web preferences for a `<webview>` child.
+ * Resolve a peek:// URL to tile web preferences for a `<webview>` child.
  *
  * Like `getTileWebPreferencesForUrl`, but treats child URLs that don't
  * correspond to a declared tile entry as belonging to the parent tile's
@@ -702,7 +702,7 @@ export function getTileWebPreferencesForUrl(
  * Resolution rules:
  *  - URL must be peek://
  *  - Tile-id (URL host, or first path segment under `peek://ext/` for legacy compat) must
- *    match a registered v2 manifest
+ *    match a registered tile manifest
  *  - If a tile entry's `url` matches the path, mint a token for that
  *    specific entry (same as `getTileWebPreferencesForUrl`)
  *  - Otherwise, fall back to the manifest's first tile entry — webview
@@ -714,7 +714,7 @@ export function getTileWebPreferencesForUrl(
 export function getTileWebPreferencesForWebviewUrl(
   url: string,
   tilePreloadPath: string,
-  lookupLazyManifest: (tileId: string) => TileManifestV2 | null,
+  lookupLazyManifest: (tileId: string) => TileManifest | null,
 ): { preload: string; additionalArguments: string[]; tileId: string; entryId: string } | null {
   let host: string;
   let pathPart: string;
@@ -852,14 +852,14 @@ export async function relaunchTile(tileId: string): Promise<TileLaunchResult | n
   // Re-read manifest from disk so any changes (e.g. during dev reload) are picked up.
   const manifestPath = path.join(tilePath, 'manifest.json');
   const parsed = parseManifestFile(manifestPath);
-  if (!parsed || parsed.version !== 'v2' || !parsed.v2) {
-    console.error(`[tile-launcher] relaunchTile: cannot re-read v2 manifest for ${tileId} at ${manifestPath}`);
+  if (!parsed || parsed.version !== 'tile' || !parsed.manifest) {
+    console.error(`[tile-launcher] relaunchTile: cannot re-read tile manifest for ${tileId} at ${manifestPath}`);
     return null;
   }
-  const manifest = parsed.v2;
+  const manifest = parsed.manifest;
 
   // Determine which entry to (re)launch — use the first entry, matching the
-  // pattern used in loadV2Tile / tile-compat.
+  // pattern used in loadTile / tile-compat.
   const entry = manifest.tiles[0];
   if (!entry) {
     console.error(`[tile-launcher] relaunchTile: manifest for ${tileId} has no tile entries`);

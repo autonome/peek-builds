@@ -45,7 +45,7 @@ const net: typeof import('electron').net = new Proxy(
   { get: (_t, prop) => (getElectron().net as any)[prop] }
 );
 
-// Tile path cache: tileId -> filesystem path. Populated when a v2 tile
+// Tile path cache: tileId -> filesystem path. Populated when a tile
 // is registered (tile-compat) or when a dev tile is loaded via
 // --load-extension. Used by the per-tile origin resolver below
 // (`peek://{tileId}/...`) and by anyone needing a tile's on-disk path.
@@ -615,7 +615,7 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       const tilePathSuffix = pathname || 'background.html';
       const absolutePath = path.resolve(tileBasePath, tilePathSuffix);
 
-      // A v2 tile origin is identified by having either a loaded manifest
+      // A tile origin is identified by having either a loaded manifest
       // (eager tiles) or a registered lazy manifest (not yet instantiated).
       const tileManifest = getTileManifest(host);
       const isTileOrigin = tileManifest !== null || isLazyTileRegistered(host);
@@ -632,7 +632,7 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
         response = await fetchFile(absolutePath, req.url);
       }
 
-      // CSP injection for v2 tile origins.
+      // CSP injection for tile origins.
       // Apply to EVERY response regardless of status or Content-Type so
       // error responses (404/500), redirects (3xx), and sub-resources
       // (JS/CSS/fonts) cannot be used to escape the tile's declared

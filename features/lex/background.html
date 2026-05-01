@@ -14,8 +14,8 @@
 
   console.log(`[ext:${extId}] background.html loaded`);
 
-  // ── V2 Tile Runtime (strict) ──
-  console.log(`[ext:${extId}] initializing v2 tile`);
+  // ── Tile Runtime (strict) ──
+  console.log(`[ext:${extId}] initializing tile`);
   await api.initialize();
 
   if (extension.init) {

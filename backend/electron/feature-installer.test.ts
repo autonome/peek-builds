@@ -36,7 +36,7 @@ function writeManifest(dir: string, manifest: Record<string, unknown>): void {
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest), 'utf-8');
 }
 
-function makeV2Manifest(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function makeTileManifest(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     manifestVersion: 3,
     id,
@@ -104,9 +104,9 @@ describe('computeManifestHash', () => {
 // ─── Builtin Source ─────────────────────────────────────────────────
 
 describe('scanBuiltinFeatures', () => {
-  it('should register v2 features from features dir', () => {
-    writeManifest(path.join(featuresDir, 'alpha'), makeV2Manifest('alpha'));
-    writeManifest(path.join(featuresDir, 'beta'), makeV2Manifest('beta'));
+  it('should register tile features from features dir', () => {
+    writeManifest(path.join(featuresDir, 'alpha'), makeTileManifest('alpha'));
+    writeManifest(path.join(featuresDir, 'beta'), makeTileManifest('beta'));
 
     const registry = new FeatureRegistry(registryDir);
     registry.loadRegistry();
@@ -124,7 +124,7 @@ describe('scanBuiltinFeatures', () => {
 
   it('should skip v1 manifests', () => {
     writeManifest(path.join(featuresDir, 'legacy'), makeV1Manifest('legacy'));
-    writeManifest(path.join(featuresDir, 'modern'), makeV2Manifest('modern'));
+    writeManifest(path.join(featuresDir, 'modern'), makeTileManifest('modern'));
 
     const registry = new FeatureRegistry(registryDir);
     registry.loadRegistry();
@@ -165,7 +165,7 @@ describe('scanBuiltinFeatures', () => {
   });
 
   it('should resolve capabilities as builtin (all granted)', () => {
-    writeManifest(path.join(featuresDir, 'priv'), makeV2Manifest('priv', {
+    writeManifest(path.join(featuresDir, 'priv'), makeTileManifest('priv', {
       capabilities: {
         pubsub: { scopes: ['self', 'global', 'system'] },
         sync: true,
@@ -192,7 +192,7 @@ describe('scanBuiltinFeatures', () => {
 describe('installFromLocalDirectory', () => {
   it('should install a valid feature from directory', () => {
     const sourceDir = path.join(tmpDir, 'source-feature');
-    writeManifest(sourceDir, makeV2Manifest('local-feat'));
+    writeManifest(sourceDir, makeTileManifest('local-feat'));
     fs.writeFileSync(path.join(sourceDir, 'background.html'), '<html></html>', 'utf-8');
 
     const registry = new FeatureRegistry(registryDir);
@@ -234,7 +234,7 @@ describe('installFromLocalDirectory', () => {
 
     const result = installFromLocalDirectory(sourceDir, registry);
     assert.strictEqual(result.success, false);
-    assert.ok(result.error?.includes('v2'));
+    assert.ok(result.error?.includes('tile manifests'));
   });
 
   it('should reject invalid manifests', () => {
@@ -251,7 +251,7 @@ describe('installFromLocalDirectory', () => {
 
   it('should reject duplicate id without force', () => {
     const sourceDir = path.join(tmpDir, 'dup-source');
-    writeManifest(sourceDir, makeV2Manifest('dup-id'));
+    writeManifest(sourceDir, makeTileManifest('dup-id'));
 
     const registry = new FeatureRegistry(registryDir);
     registry.loadRegistry();
@@ -268,7 +268,7 @@ describe('installFromLocalDirectory', () => {
 
   it('should allow duplicate id with force', () => {
     const sourceDir = path.join(tmpDir, 'force-source');
-    writeManifest(sourceDir, makeV2Manifest('force-id'));
+    writeManifest(sourceDir, makeTileManifest('force-id'));
 
     const registry = new FeatureRegistry(registryDir);
     registry.loadRegistry();
@@ -280,7 +280,7 @@ describe('installFromLocalDirectory', () => {
 
   it('should report denied capabilities for non-builtin', () => {
     const sourceDir = path.join(tmpDir, 'priv-source');
-    writeManifest(sourceDir, makeV2Manifest('priv-local', {
+    writeManifest(sourceDir, makeTileManifest('priv-local', {
       capabilities: {
         filesystem: { read: ['/tmp/*'] },
         sync: true,
@@ -299,7 +299,7 @@ describe('installFromLocalDirectory', () => {
 
   it('should copy nested directories', () => {
     const sourceDir = path.join(tmpDir, 'nested-source');
-    writeManifest(sourceDir, makeV2Manifest('nested'));
+    writeManifest(sourceDir, makeTileManifest('nested'));
     const subDir = path.join(sourceDir, 'assets', 'icons');
     fs.mkdirSync(subDir, { recursive: true });
     fs.writeFileSync(path.join(subDir, 'icon.png'), 'fake-png', 'utf-8');
@@ -319,8 +319,8 @@ describe('installFromLocalDirectory', () => {
 
 describe('syncBuiltinFeatures', () => {
   it('should add new builtins to empty registry', () => {
-    writeManifest(path.join(featuresDir, 'sync'), makeV2Manifest('sync'));
-    writeManifest(path.join(featuresDir, 'tags'), makeV2Manifest('tags'));
+    writeManifest(path.join(featuresDir, 'sync'), makeTileManifest('sync'));
+    writeManifest(path.join(featuresDir, 'tags'), makeTileManifest('tags'));
 
     const registry = new FeatureRegistry(registryDir);
     registry.loadRegistry();
@@ -338,7 +338,7 @@ describe('syncBuiltinFeatures', () => {
   });
 
   it('should remove builtins no longer on disk', () => {
-    writeManifest(path.join(featuresDir, 'stays'), makeV2Manifest('stays'));
+    writeManifest(path.join(featuresDir, 'stays'), makeTileManifest('stays'));
 
     const registry = new FeatureRegistry(registryDir);
     registry.loadRegistry();
@@ -362,7 +362,7 @@ describe('syncBuiltinFeatures', () => {
   });
 
   it('should update path for moved builtins', () => {
-    writeManifest(path.join(featuresDir, 'moved'), makeV2Manifest('moved'));
+    writeManifest(path.join(featuresDir, 'moved'), makeTileManifest('moved'));
 
     const registry = new FeatureRegistry(registryDir);
     registry.loadRegistry();
@@ -387,7 +387,7 @@ describe('syncBuiltinFeatures', () => {
   });
 
   it('should not touch non-builtin entries with same id', () => {
-    writeManifest(path.join(featuresDir, 'conflict'), makeV2Manifest('conflict'));
+    writeManifest(path.join(featuresDir, 'conflict'), makeTileManifest('conflict'));
 
     const registry = new FeatureRegistry(registryDir);
     registry.loadRegistry();

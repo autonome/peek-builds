@@ -831,7 +831,7 @@ export const init = async () => {
   features().forEach(initFeature);
 
   // Features (tiles) are loaded by the main process feature pipeline.
-  // The main-process startup (entry.ts -> loadFeatures()) runs the v2
+  // The main-process startup (entry.ts -> loadFeatures()) runs the
   // tile pipeline (tile-compat / tile-loader); core background just
   // initializes in-process features and waits for `feature:all-loaded`.
   log('core', 'Core features initialized. Tiles loaded by main process.');
@@ -840,7 +840,7 @@ export const init = async () => {
 
 
 // Note: init() is now called explicitly by app/background.html AFTER
-// `await api.initialize()` resolves, so the v2 tile-preload capability
+// `await api.initialize()` resolves, so the tile-preload capability
 // token is validated before any subscribers / datastore / window calls
 // fire. Previously this ran on `window.load`, which raced the async
 // `tile:validate-token` IPC round-trip under tile-preload.cjs.

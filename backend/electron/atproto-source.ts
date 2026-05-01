@@ -11,7 +11,7 @@
 import crypto from 'node:crypto';
 
 import type {
-  TileManifestV2,
+  TileManifest,
 } from './tile-manifest.js';
 import {
   validateTileManifest,
@@ -69,7 +69,7 @@ interface ResolvedFeature {
   handle: string;
   pdsUrl: string;
   record: FeatureReleaseRecord;
-  manifest: TileManifestV2;
+  manifest: TileManifest;
   atUri: string;
 }
 
@@ -379,7 +379,7 @@ export class AtprotoSource implements TileSource {
       }
     }
 
-    // 6. Download manifest blob and parse as TileManifestV2.
+    // 6. Download manifest blob and parse as TileManifest.
     //    Verify CID matches the record's manifest ref.
     const manifestBuffer = await getBlob(pdsUrl, did, record.manifest.ref.$link);
     verifyBlobCid('manifest.json', manifestBuffer, record.manifest.ref.$link);
@@ -399,7 +399,7 @@ export class AtprotoSource implements TileSource {
       throw new Error(`Invalid manifest: ${msgs}`);
     }
 
-    const manifest = manifestRaw as unknown as TileManifestV2;
+    const manifest = manifestRaw as unknown as TileManifest;
 
     // 8. Cross-validate: record featureId should match manifest id
     if (manifest.id !== record.featureId) {

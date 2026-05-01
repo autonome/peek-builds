@@ -1069,7 +1069,7 @@ async function initUi() {
   console.log('[ext:entities] home.js loaded');
 
   // Initialize tile — validates capability token with main process
-  console.log('[ext:entities] initializing v2 tile');
+  console.log('[ext:entities] initializing tile');
   await api.initialize();
 
   // Initialize background logic (extraction, commands, pubsub handlers)

@@ -1,10 +1,10 @@
 /**
- * Tile Manifest v2 Schema and Parser
+ * Tile Manifest Schema and Parser
  *
  * Handles:
- * - TypeScript types for the v2 tile manifest format
- * - Detection of v1 vs v2 manifests
- * - Parsing and validation of v2 manifests
+ * - TypeScript types for the tile manifest format
+ * - Detection of legacy vs current manifests
+ * - Parsing and validation of manifests
  * - Capability grant resolution (manifest declares needs, runtime validates)
  */
 
@@ -400,7 +400,7 @@ export interface TileEntry {
 }
 
 /**
- * Command definition in v2 manifest (same structure as v1 for compat)
+ * Command definition in tile manifest
  */
 export interface TileCommand {
   name: string;
@@ -426,7 +426,7 @@ export interface TileCommand {
 }
 
 /**
- * Shortcut definition in v2 manifest
+ * Shortcut definition in tile manifest
  */
 export interface TileShortcut {
   keys: string;
@@ -441,7 +441,7 @@ export interface TileShortcut {
  * Tile Manifest format. Current schema version is 3; legacy `type` and
  * `windowHints` compat fields are no longer accepted by the validator.
  */
-export interface TileManifestV2 {
+export interface TileManifest {
   /** Manifest version — must be 3 for tile manifests */
   manifestVersion: 3;
   /** Unique tile ID */
@@ -485,17 +485,17 @@ export interface TileManifestV2 {
 /**
  * Result of manifest detection
  */
-export type ManifestVersion = 'v1' | 'v2';
+export type ManifestVersion = 'legacy' | 'tile';
 
 /**
- * Parsed manifest result — either v1 or v2
+ * Parsed manifest result — either legacy or current tile manifest
  */
 export interface ParsedManifest {
   version: ManifestVersion;
   /** Original raw JSON */
   raw: Record<string, unknown>;
-  /** Only set if version is 'v2' */
-  v2?: TileManifestV2;
+  /** Only set if version is 'tile' */
+  manifest?: TileManifest;
 }
 
 // ─── Capability Grant ────────────────────────────────────────────────
@@ -553,9 +553,9 @@ const BUILTIN_ONLY_CAPABILITIES = new Set<string>([
 // ─── Detection ───────────────────────────────────────────────────────
 
 /**
- * Detect whether a manifest JSON is v1 (legacy extension) or v2 (tile).
+ * Detect whether a manifest JSON is legacy or a current tile manifest.
  *
- * The v2 architecture's schema is currently version 3. v2 manifests are
+ * The current tile manifest schema is version 3. Tile manifests are
  * identified by having:
  * - `manifestVersion: 3`, OR
  * - Both `tiles` array AND `capabilities` object present
@@ -565,12 +565,12 @@ const BUILTIN_ONLY_CAPABILITIES = new Set<string>([
  * treat them as legacy and force authors to migrate (lockstep cutover).
  */
 export function detectManifestVersion(json: Record<string, unknown>): ManifestVersion {
-  if (json.manifestVersion === 3) return 'v2';
-  if (json.manifestVersion === 2) return 'v1';
+  if (json.manifestVersion === 3) return 'tile';
+  if (json.manifestVersion === 2) return 'legacy';
   if (Array.isArray(json.tiles) && typeof json.capabilities === 'object' && json.capabilities !== null) {
-    return 'v2';
+    return 'tile';
   }
-  return 'v1';
+  return 'legacy';
 }
 
 // ─── Validation ──────────────────────────────────────────────────────
@@ -584,7 +584,7 @@ export interface ValidationError {
 }
 
 /**
- * Validate a v2 tile manifest
+ * Validate a tile manifest
  * Returns array of errors (empty = valid)
  */
 export function validateTileManifest(json: Record<string, unknown>): ValidationError[] {
@@ -940,11 +940,11 @@ export function parseManifestFile(manifestPath: string): ParsedManifest | null {
     const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
     const version = detectManifestVersion(raw);
 
-    if (version === 'v1') {
-      return { version: 'v1', raw };
+    if (version === 'legacy') {
+      return { version: 'legacy', raw };
     }
 
-    // Validate v2
+    // Validate tile manifest
     const errors = validateTileManifest(raw);
     if (errors.length > 0) {
       console.error(`[tile-manifest] Validation errors in ${manifestPath}:`);
@@ -954,8 +954,8 @@ export function parseManifestFile(manifestPath: string): ParsedManifest | null {
       return null;
     }
 
-    const v2 = raw as unknown as TileManifestV2;
-    return { version: 'v2', raw, v2 };
+    const manifest = raw as unknown as TileManifest;
+    return { version: 'tile', raw, manifest };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[tile-manifest] Failed to parse ${manifestPath}:`, message);
@@ -969,8 +969,8 @@ export function parseManifestFile(manifestPath: string): ParsedManifest | null {
 export function parseManifestJSON(json: Record<string, unknown>): ParsedManifest | null {
   const version = detectManifestVersion(json);
 
-  if (version === 'v1') {
-    return { version: 'v1', raw: json };
+  if (version === 'legacy') {
+    return { version: 'legacy', raw: json };
   }
 
   const errors = validateTileManifest(json);
@@ -978,8 +978,8 @@ export function parseManifestJSON(json: Record<string, unknown>): ParsedManifest
     return null;
   }
 
-  const v2 = json as unknown as TileManifestV2;
-  return { version: 'v2', raw: json, v2 };
+  const manifest = json as unknown as TileManifest;
+  return { version: 'tile', raw: json, manifest };
 }
 
 // ─── Capability Resolution ───────────────────────────────────────────

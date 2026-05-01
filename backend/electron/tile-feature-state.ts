@@ -2,10 +2,10 @@
  * Tile feature state — discovery and enabled-state helpers
  *
  * Thin filesystem + datastore queries that the rest of the backend uses
- * to enumerate features (each feature is a tile in v2) and check whether
+ * to enumerate features and check whether
  * a builtin is enabled. The actual tile launch / lifecycle lives in
  * `tile-launcher.ts` / `tile-lifecycle.ts`; manifest parsing lives in
- * `tile-manifest.ts` (returns the strict v3 `TileManifestV2` shape).
+ * `tile-manifest.ts` (returns the strict v3 `TileManifest` shape).
  *
  * Returned manifest objects here are deliberately untyped (`unknown`) —
  * callers that need typed access go through `tile-manifest.ts`. This

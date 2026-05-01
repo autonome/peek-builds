@@ -78,7 +78,7 @@ features/features-manager/
 
 ## Manifest
 
-v2 tile manifest. Feature id: `features-manager`. Builtin, lazy background. 4 tiles:
+Tile manifest. Feature id: `features-manager`. Builtin, lazy background. 4 tiles:
 - `background` (background, lazy)
 - `browse` (window, 960x720)
 - `manage` (window, 900x650)
@@ -166,7 +166,7 @@ A new source type alongside `builtin`, `local`, `atproto`, `url`. Dev features:
 4. Scaffold is written to the chosen directory:
    ```
    my-feature/
-     manifest.json      # v2 manifest with id, name, one background tile, minimal capabilities
+     manifest.json      # manifest with id, name, one background tile, minimal capabilities
      background.html    # minimal with api.initialize() call
      background.js      # empty init function, ready to add logic
      home.html          # optional UI page template
@@ -247,7 +247,7 @@ The manifest.json scaffold:
 
 ### Manifest Versioning
 
-The v2 tile manifest already has a `version` field (semver string). This is the version used for update comparisons. When a publisher creates a new `space.peek.feature.release` record with the same `featureId` but a higher `version`, that constitutes an available update.
+The tile manifest already has a `version` field (semver string). This is the version used for update comparisons. When a publisher creates a new `space.peek.feature.release` record with the same `featureId` but a higher `version`, that constitutes an available update.
 
 The registry entry stores the installed version. Comparing against the latest release record on the publisher's PDS determines if an update is available.
 

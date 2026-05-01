@@ -75,6 +75,6 @@
   ],
   "settingsSchema": "./settings-schema.json",
   "_notes": {
-    "lazyEventInterceptors": "The background tile declares `lazyEvents: ['editor:open', 'editor:add']` so tile-lazy.ts registers pubsub stubs that load the tile on first event publish. This replaces the v1 main.ts registerLazyEventInterceptors() path for editor — v2 features declare their lazy-triggering events directly in their manifest and the runtime wires the interceptor stubs via tile-lazy.ts."
+    "lazyEventInterceptors": "The background tile declares `lazyEvents: ['editor:open', 'editor:add']` so tile-lazy.ts registers pubsub stubs that load the tile on first event publish. Features declare their lazy-triggering events directly in their manifest and the runtime wires the interceptor stubs via tile-lazy.ts."
   }
 }

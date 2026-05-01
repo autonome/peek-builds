@@ -2,7 +2,7 @@
 
 ## Context
 
-During the tiles v2 migration, we identified that cmd, page, and hud aren't features — they're platform infrastructure. Features are things users can install, enable, disable, remove, publish, and distribute. cmd/page/hud are prerequisites for Peek existing.
+During the tiles migration, we identified that cmd, page, and hud aren't features — they're platform infrastructure. Features are things users can install, enable, disable, remove, publish, and distribute. cmd/page/hud are prerequisites for Peek existing.
 
 This document plans moving them out of `features/` and into `./app/` (cross-platform frontend code), with thin backend-specific glue where needed.
 

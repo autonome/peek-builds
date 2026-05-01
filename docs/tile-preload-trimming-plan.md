@@ -2,7 +2,7 @@
 
 ## 0. Context and Scope
 
-The overnight audit added v1-compat shims to `backend/electron/tile-preload.ts` so that 26+ v2 tiles (migrated features) keep working. The shims are a **superset** of the strict capability-gated surface and bypass enforcement: they delegate directly to the legacy `datastore-*`, `registershortcut`, `file-save-dialog`, `context-get`, and `modes:*` handlers in `backend/electron/ipc.ts`, which do not check `CapabilityGrant`.
+The overnight audit added v1-compat shims to `backend/electron/tile-preload.ts` so that 26+ migrated features keep working. The shims are a **superset** of the strict capability-gated surface and bypass enforcement: they delegate directly to the legacy `datastore-*`, `registershortcut`, `file-save-dialog`, `context-get`, and `modes:*` handlers in `backend/electron/ipc.ts`, which do not check `CapabilityGrant`.
 
 Strict handlers in `backend/electron/tile-ipc.ts` (`tile:datastore:*`, `tile:settings:*`, `tile:theme:*`, `tile:filesystem:*`, `tile:network:fetch`, `tile:window:*`) already call `getGrantForToken(args.token)` and check `hasCapability`, `hasDatastoreTable`, `isNetworkDomainAllowed`, etc. The shims bypass all of that.
 

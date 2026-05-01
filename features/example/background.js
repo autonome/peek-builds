@@ -8,7 +8,7 @@
  * - Displaying stored images
  *
  * This is the reference template for new Peek extensions. It uses the
- * strict (v2 tile) API shape directly:
+ * strict tile API shape directly:
  *   - api.pubsub.publish / api.pubsub.subscribe (no flat api.publish/subscribe)
  *   - api.datastore.* with tables declared in the manifest
  *   - api.window.open guarded by the window capability

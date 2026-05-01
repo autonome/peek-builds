@@ -74,7 +74,7 @@ const _sessionRestoreDonePromise = new Promise<void>(resolve => { _sessionRestor
 let _sessionRestoreDone = false;
 
 // Tiles that must load eagerly (not lazy) — needed at startup.
-// Passed to the v2 tile-compat path via `eagerIds`; tile-compat checks
+// Passed to the tile-compat path via `eagerIds`; tile-compat checks
 // this set in addition to the manifest `resident: true` flag.
 const EAGER_TILE_IDS = new Set(['entities']);
 
@@ -171,7 +171,7 @@ export async function initialize(): Promise<void> {
   // Without this, core renderers (cmd, hud, page) launching with
   // tile-preload would silently drop their `tile:validate-token` and
   // `tile:pubsub:*` IPC sends — handlers were historically registered
-  // lazily from `loadV2Tile()` which runs after core glue.
+  // lazily from `loadTile()` which runs after core glue.
   ensureTileIpcHandlers();
 
   // Phase 8 — install dev-mode bypass detectors. These monkey-patch
@@ -229,7 +229,7 @@ export async function initialize(): Promise<void> {
     // bgWindow hosts app/index.js which runs cmd/page/hud registries and is a
     // first-class pubsub subscriber. Every publish must reach it — historical
     // omissions from this loop were directly responsible for "hello-world-only
-    // commands visible in cmd panel" and "v2 tile cmd:execute:*:result never
+    // commands visible in cmd panel" and "tile cmd:execute:*:result never
     // reaches core subscribers" bug classes. bgWindow is NOT a tile; it is
     // broadcast to explicitly rather than via getAllTileWindows().
     const bgWindow = getCoreBackgroundWindow();
@@ -244,8 +244,8 @@ export async function initialize(): Promise<void> {
       }
     }
 
-    // Broadcast to v2 tile BrowserWindows (launched by tile-launcher).
-    // Without this, v2 tiles that subscribe to global pubsub events (editor:open,
+    // Broadcast to tile BrowserWindows (launched by tile-launcher).
+    // Without this, tiles that subscribe to global pubsub events (editor:open,
     // item:created, etc.) never receive them.
     //
     // Skip bgWindow if it appears in the tile registry — it is registered there
@@ -646,7 +646,7 @@ export async function initialize(): Promise<void> {
 }
 
 /**
- * Discover and register built-in features (each feature is a tile in v2).
+ * Discover and register built-in features (each feature is a tile).
  */
 export function discoverBuiltinFeatures(featuresDir: string): void {
   const discovered = discoverFeatures(featuresDir);
@@ -768,9 +768,9 @@ export function discoverBuiltinThemes(extensionsDir: string, legacyThemesDir?: s
 
 
 /**
- * Load all enabled features. Each feature is a tile in v2.
+ * Load all enabled features. Each feature is a tile.
  * - Builtin features (cmd/hud/page core renderers) launch via core-glue.
- * - Feature tiles in `features/` launch via the v2 tile launcher (eager
+ * - Feature tiles in `features/` launch via the tile launcher (eager
  *   if `resident: true` or in `EAGER_TILE_IDS`, otherwise lazy stubs).
  */
 export async function loadFeatures(): Promise<number> {
@@ -803,7 +803,7 @@ export async function loadFeatures(): Promise<number> {
   }
 
   // ── Feature Startup ──
-  // Run the feature-startup pipeline: discover, sync registry, and load v2 tile manifests.
+  // Run the feature-startup pipeline: discover, sync registry, and load tile manifests.
   // This runs AFTER initCmd so tile-lazy's cmd:register-batch publishes reach cmd.
   try {
     const featureResult: FeatureStartupResult = initializeFeatures({
@@ -846,7 +846,7 @@ export async function loadFeatures(): Promise<number> {
 }
 
 // Core renderers that are always considered "running" once the app has started.
-// These are not v2 feature tiles (no tile manifest in features/) but the
+// These are not feature tiles (no tile manifest in features/) but the
 // Features pane should always show them as running.
 const CORE_RENDERER_IDS = ['cmd', 'hud', 'page'];
 
@@ -869,7 +869,7 @@ export function getRunningTiles(): Array<{ id: string; manifest: unknown; status
     });
   }
 
-  // Add v2 tiles launched by the tile-launcher as separate BrowserWindows.
+  // Add tiles launched by the tile-launcher as separate BrowserWindows.
   for (const tileId of getLoadedTileIds()) {
     if (running.some(r => r.id === tileId)) continue;
     if (!isBuiltinFeatureEnabled(tileId)) continue;
@@ -893,7 +893,7 @@ export function getAllRegisteredTiles(): Array<{ id: string; manifest: unknown; 
   const result: Array<{ id: string; manifest: unknown; status: string }> = [];
 
   // Build a set of running tile IDs for status info.
-  // Sources: core renderers (always up) and loaded v2 tiles.
+  // Sources: core renderers (always up) and loaded tiles.
   const runningSet = new Set<string>(CORE_RENDERER_IDS);
   for (const tileId of getLoadedTileIds()) {
     runningSet.add(tileId);
@@ -941,7 +941,7 @@ export async function loadDevTile(tileId: string): Promise<object | null> {
     return null;
   }
 
-  // Relaunch as v2 tile: re-read manifest, revoke old token, close old window, launch fresh.
+  // Relaunch tile: re-read manifest, revoke old token, close old window, launch fresh.
   const result = await relaunchTile(tileId);
   if (!result) {
     return null;
@@ -1003,7 +1003,7 @@ export async function reloadTile(tileId: string): Promise<object | null> {
     return loadDevTile(tileId);
   }
 
-  // Relaunch as v2 tile: re-read manifest, revoke old token, close old window, launch fresh.
+  // Relaunch tile: re-read manifest, revoke old token, close old window, launch fresh.
   return relaunchTile(tileId);
 }
 
@@ -1193,7 +1193,7 @@ export function loadClosedWindowStack(): void {
  * Shutdown the application
  *
  * Fires the `app:shutdown` pubsub event, then broadcasts `tile:lifecycle:shutdown`
- * to every live v2 tile and waits one grace period so tile `api.onShutdown()`
+ * to every live tile and waits one grace period so tile `api.onShutdown()`
  * callbacks can run before the BrowserWindows are closed. Finally closes the
  * database.
  *
@@ -1227,7 +1227,7 @@ export async function shutdown(): Promise<void> {
 let backgroundWindow: BrowserWindow | null = null;
 
 /**
- * Launch the core background renderer via v2 tile mechanics.
+ * Launch the core background renderer via tile mechanics.
  *
  * Post-Phase-2.5-#1, the core background window uses `tile-preload.cjs`
  * with a `createTrustedBuiltinGrant('core')` token — same shape as cmd,
@@ -1277,7 +1277,7 @@ export async function createBackgroundWindow(): Promise<BrowserWindow> {
   // Devtools for the background window (dev-profile only, not tests /
   // headless). The core renderer was traditionally helpful to inspect
   // for command registration + pubsub traffic while debugging; keeping
-  // the same affordance post-v2.
+  // the same affordance.
   if (config.isDev && !isTestProfile() && !isHeadless()) {
     win.webContents.openDevTools({ mode: 'detach', activate: false });
   }
@@ -1286,7 +1286,7 @@ export async function createBackgroundWindow(): Promise<BrowserWindow> {
 }
 
 // Legacy `setWindowOpenHandler` child-window path removed in Phase 2.5
-// #1. Under v2, `api.window.open(...)` routes through `tile:window:open`
+// #1. `api.window.open(...)` routes through `tile:window:open`
 // (handled in tile-ipc.ts) and delegates to the centralised window-open
 // IPC handler. Native `window.open()` calls from the core background
 // HTML never happen — the renderer has no `<a target="_blank">` or

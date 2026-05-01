@@ -16,7 +16,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 import {
-  type TileManifestV2,
+  type TileManifest,
   type TileCapabilities,
   validateTileManifest,
   detectManifestVersion,
@@ -34,7 +34,7 @@ import {
  * A bundle of files that make up a feature
  */
 export interface TileBundle {
-  manifest: TileManifestV2;
+  manifest: TileManifest;
   files: Map<string, Buffer>;  // relative path -> file contents
 }
 
@@ -43,7 +43,7 @@ export interface TileBundle {
  */
 export interface FeatureSourceMetadata {
   source: FeatureSource;
-  manifest: TileManifestV2;
+  manifest: TileManifest;
 }
 
 /**
@@ -81,7 +81,7 @@ export function computeManifestHash(manifestJson: string): string {
 /**
  * Scan a features directory for builtin features and register them.
  *
- * For each subdirectory with a valid v2 manifest.json:
+ * For each subdirectory with a valid tile manifest.json:
  * - Registers in the registry with source type 'builtin'
  * - Path points directly at the repo directory (no copy)
  * - manifestCid is null (dev mode)
@@ -113,9 +113,9 @@ export function scanBuiltinFeatures(
       const manifestJson = fs.readFileSync(manifestPath, 'utf-8');
       const raw = JSON.parse(manifestJson) as Record<string, unknown>;
 
-      // Only process v2 manifests
+      // Only process tile manifests
       const version = detectManifestVersion(raw);
-      if (version !== 'v2') continue;
+      if (version !== 'tile') continue;
 
       // Validate
       const errors = validateTileManifest(raw);
@@ -127,7 +127,7 @@ export function scanBuiltinFeatures(
         continue;
       }
 
-      const manifest = raw as unknown as TileManifestV2;
+      const manifest = raw as unknown as TileManifest;
       const id = manifest.id;
 
       // Resolve capabilities (builtin = true, all granted)
@@ -190,10 +190,10 @@ export function installFromLocalDirectory(
     return { success: false, error: `Failed to read manifest: ${message}` };
   }
 
-  // Must be v2
+  // Must be a valid tile manifest
   const version = detectManifestVersion(raw);
-  if (version !== 'v2') {
-    return { success: false, error: 'Only v2 manifests are supported for local installation' };
+  if (version !== 'tile') {
+    return { success: false, error: 'Only tile manifests (manifestVersion: 3) are supported for local installation' };
   }
 
   // Validate
@@ -203,7 +203,7 @@ export function installFromLocalDirectory(
     return { success: false, error: `Invalid manifest: ${msgs}` };
   }
 
-  const manifest = raw as unknown as TileManifestV2;
+  const manifest = raw as unknown as TileManifest;
   const id = manifest.id;
 
   // Check for conflicts
@@ -360,7 +360,7 @@ export function installFromBundle(
 /**
  * Synchronize builtin features with the registry at app startup.
  *
- * 1. Scan features/ directory for v2 manifests
+ * 1. Scan features/ directory for tile manifests
  * 2. Register new builtins, update paths for existing ones
  * 3. Remove registry entries for builtins no longer on disk
  * 4. Save registry
@@ -382,11 +382,11 @@ export function syncBuiltinFeatures(
 
       try {
         const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
-        if (detectManifestVersion(raw) !== 'v2') continue;
+        if (detectManifestVersion(raw) !== 'tile') continue;
         const errors = validateTileManifest(raw);
         if (errors.length > 0) continue;
 
-        const manifest = raw as unknown as TileManifestV2;
+        const manifest = raw as unknown as TileManifest;
         onDiskIds.add(manifest.id);
 
         const existing = registry.getFeature(manifest.id);

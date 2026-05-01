@@ -1,5 +1,5 @@
 /**
- * Unit tests for v2 tile command registration plumbing.
+ * Unit tests for tile command registration plumbing.
  *
  * Phase E rewrote the dispatch machinery — per-command stubs are gone,
  * replaced by a single dispatch hook. These tests cover what survives:
@@ -26,7 +26,7 @@ import {
   __setTileLazyLauncherForTest,
   __resetTileLazyStateForTest,
 } from './tile-lazy.js';
-import type { TileManifestV2, TileCommand } from './tile-manifest.js';
+import type { TileManifest, TileCommand } from './tile-manifest.js';
 import type { TileLaunchOptions, TileLaunchResult } from './tile-launcher.js';
 
 // ─── Test Launcher ────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ function flushMicrotasks(): Promise<void> {
   return new Promise(resolve => setImmediate(resolve));
 }
 
-function makeManifestWithCommands(id: string, commands: TileCommand[]): TileManifestV2 {
+function makeManifestWithCommands(id: string, commands: TileCommand[]): TileManifest {
   return {
     manifestVersion: 3,
     id,

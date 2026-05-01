@@ -11,7 +11,7 @@
  *   1. `loadSchemaDefaults(tilePath, settingsSchemaRelPath)` — reads the
  *      schema file from disk and returns its `defaults` object (or null).
  *      Called once at tile-load time; the resulting object is cached on
- *      the in-memory manifest via `TileManifestV2.defaults`.
+ *      the in-memory manifest via `TileManifest.defaults`.
  *   2. `resolveSettingDefault(manifest, key)` — pure lookup against
  *      `manifest.defaults`. Returns the default value or `undefined`
  *      when none is declared. Supports both flat keys
@@ -24,7 +24,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { TileManifestV2 } from './tile-manifest.js';
+import type { TileManifest } from './tile-manifest.js';
 
 // ─── Schema Loading ──────────────────────────────────────────────────
 
@@ -87,7 +87,7 @@ export function loadSchemaDefaults(
  * "no default declared" from "the declared default is `null`".
  */
 export function resolveSettingDefault(
-  manifest: TileManifestV2 | null | undefined,
+  manifest: TileManifest | null | undefined,
   key: string
 ): unknown | undefined {
   if (!manifest || !manifest.defaults) return undefined;

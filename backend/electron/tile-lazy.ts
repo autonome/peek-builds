@@ -1,7 +1,7 @@
 /**
  * Lazy Loading for Tiles — load-on-dispatch
  *
- * A lazy v2 tile is registered at boot with its manifest + launch
+ * A lazy tile is registered at boot with its manifest + launch
  * config, but no BrowserWindow is created. The tile's declared
  * commands are announced to the cmd panel via `cmd:register-batch` so
  * it can list them; its background process boots the first time it
@@ -40,7 +40,7 @@ import {
   type TileLaunchOptions,
   type TileLaunchResult,
 } from './tile-launcher.js';
-import { type TileManifestV2, type TileCommand } from './tile-manifest.js';
+import { type TileManifest, type TileCommand } from './tile-manifest.js';
 import { DEBUG, isDevProfile } from './config.js';
 import * as tileLifecycle from './tile-lifecycle.js';
 
@@ -91,7 +91,7 @@ export function __resetTileLazyStateForTest(): void {
 
 /** Tiles registered for lazy loading: tileId -> launch options (without window) */
 const lazyTileRegistry = new Map<string, {
-  manifest: TileManifestV2;
+  manifest: TileManifest;
   tilePath: string;
   preloadPath: string;
 }>();
@@ -218,7 +218,7 @@ function reportDispatchFailure(
  * intercept point for load-on-dispatch.
  */
 export function registerLazyTile(
-  manifest: TileManifestV2,
+  manifest: TileManifest,
   tilePath: string,
   preloadPath: string,
 ): void {
@@ -258,7 +258,7 @@ export function registerLazyTile(
   );
 }
 
-function collectLazyEventTopics(manifest: TileManifestV2): string[] {
+function collectLazyEventTopics(manifest: TileManifest): string[] {
   const topics = new Set<string>();
   if (!Array.isArray(manifest.tiles)) return [];
   for (const tile of manifest.tiles) {
@@ -591,10 +591,10 @@ export function isLazyTileRegistered(tileId: string): boolean {
 
 /**
  * Get the manifest for a lazy-registered tile (without forcing load).
- * Used by the window-open IPC handler to recognise v2 tile URLs
+ * Used by the window-open IPC handler to recognise tile URLs
  * before the tile has actually booted.
  */
-export function getLazyTileManifest(tileId: string): TileManifestV2 | null {
+export function getLazyTileManifest(tileId: string): TileManifest | null {
   return lazyTileRegistry.get(tileId)?.manifest || null;
 }
 

@@ -3,10 +3,10 @@
  *
  * Generates CSP headers based on tile manifest capabilities.
  * The protocol handler calls buildCSPForTile() when serving HTML
- * files for v2 tile manifests.
+ * files for tile manifests.
  */
 
-import type { TileCapabilities, TileManifestV2 } from './tile-manifest.js';
+import type { TileCapabilities, TileManifest } from './tile-manifest.js';
 
 // ─── CSP Directive Builders ──────────────────────────────────────────
 

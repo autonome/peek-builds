@@ -160,7 +160,7 @@ session-restore.
 **Files touched:**
 - `backend/electron/main.ts` (registry shape)
 - `backend/electron/ipc.ts` (window-open handler — assign placement)
-- `backend/electron/tile-ipc.ts` (v2 tile open path — assign placement)
+- `backend/electron/tile-ipc.ts` (tile open path — assign placement)
 - `features/slides/background.js` (pass `screenEdge` in options)
 
 **Exit criteria:**
@@ -251,8 +251,8 @@ followup if found).
 - Replace the position-computation calls in `tile-ipc.ts` (audit identified
   lines ~2884–2891, ~2919–2926, ~3344) with `computePlacement`.
 - `createTileBrowserWindow` and friends should populate `placement` on the
-  registered tile params so reuse + display-watcher see consistent data for
-  v2 tiles.
+  registered tile params so reuse + display-watcher see consistent data
+  across tiles.
 
 **Files touched:**
 - `backend/electron/tile-ipc.ts`
@@ -262,7 +262,7 @@ followup if found).
 - Unit tests pass.
 - No remaining direct `screen.*` position calls in `tile-ipc.ts`.
 
-**Out of scope:** anything that's not v2 tile positioning.
+**Out of scope:** anything that's not tile positioning.
 
 ---
 

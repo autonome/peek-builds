@@ -3,7 +3,7 @@
  *
  * Covers the pure-helper `checkWindowAllowed` used by the
  * `tile:window:open` / `close` / `list` / `info` IPC handlers in
- * `tile-ipc.ts`. Prior to this, v2 tiles could open arbitrary windows
+ * `tile-ipc.ts`. Prior to this, tiles could open arbitrary windows
  * via the un-gated `window-open` channel without declaring the
  * `window` capability.
  *

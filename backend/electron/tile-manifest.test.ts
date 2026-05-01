@@ -1,5 +1,5 @@
 /**
- * Unit tests for Tile Manifest v2 — parsing, validation, capability resolution
+ * Unit tests for Tile Manifest — parsing, validation, capability resolution
  */
 
 import { describe, it } from 'node:test';
@@ -15,7 +15,7 @@ import {
 
 // ─── Fixtures ────────────────────────────────────────────────────────
 
-const VALID_V2_MANIFEST = {
+const VALID_TILE_MANIFEST = {
   manifestVersion: 3,
   id: 'test-tile',
   name: 'Test Tile',
@@ -59,73 +59,73 @@ const VALID_V1_MANIFEST = {
 // ─── Version Detection ───────────────────────────────────────────────
 
 describe('detectManifestVersion', () => {
-  it('should detect v2 by manifestVersion field (current schema = 3)', () => {
-    assert.strictEqual(detectManifestVersion({ manifestVersion: 3 }), 'v2');
+  it('should detect tile by manifestVersion field (current schema = 3)', () => {
+    assert.strictEqual(detectManifestVersion({ manifestVersion: 3 }), 'tile');
   });
 
-  it('should detect v2 by tiles + capabilities', () => {
+  it('should detect tile by tiles + capabilities', () => {
     assert.strictEqual(
       detectManifestVersion({ tiles: [], capabilities: {} }),
-      'v2'
+      'tile'
     );
   });
 
-  it('should detect v1 for legacy manifest', () => {
+  it('should detect legacy for legacy manifest', () => {
     assert.strictEqual(
       detectManifestVersion(VALID_V1_MANIFEST as Record<string, unknown>),
-      'v1'
+      'legacy'
     );
   });
 
-  it('should detect v1 when only tiles present (no capabilities)', () => {
+  it('should detect legacy when only tiles present (no capabilities)', () => {
     assert.strictEqual(
       detectManifestVersion({ tiles: [] }),
-      'v1'
+      'legacy'
     );
   });
 
-  it('should detect v1 when only capabilities present (no tiles)', () => {
+  it('should detect legacy when only capabilities present (no tiles)', () => {
     assert.strictEqual(
       detectManifestVersion({ capabilities: {} }),
-      'v1'
+      'legacy'
     );
   });
 
-  it('should detect v1 for empty object', () => {
-    assert.strictEqual(detectManifestVersion({}), 'v1');
+  it('should detect legacy for empty object', () => {
+    assert.strictEqual(detectManifestVersion({}), 'legacy');
   });
 
-  it('should detect v1 for manifestVersion 1', () => {
-    assert.strictEqual(detectManifestVersion({ manifestVersion: 1 }), 'v1');
+  it('should detect legacy for manifestVersion 1', () => {
+    assert.strictEqual(detectManifestVersion({ manifestVersion: 1 }), 'legacy');
   });
 
-  it('should detect v1 for legacy manifestVersion 2 (pre-v3 compat fields)', () => {
-    assert.strictEqual(detectManifestVersion({ manifestVersion: 2 }), 'v1');
+  it('should detect legacy for legacy manifestVersion 2 (pre-v3 compat fields)', () => {
+    assert.strictEqual(detectManifestVersion({ manifestVersion: 2 }), 'legacy');
   });
 });
 
 // ─── Validation ──────────────────────────────────────────────────────
 
 describe('validateTileManifest', () => {
-  it('should pass for valid v2 manifest', () => {
-    const errors = validateTileManifest(VALID_V2_MANIFEST as Record<string, unknown>);
+  it('should pass for valid tile manifest', () => {
+    const errors = validateTileManifest(VALID_TILE_MANIFEST as Record<string, unknown>);
     assert.strictEqual(errors.length, 0);
   });
 
   it('should reject missing id', () => {
-    const manifest = { ...VALID_V2_MANIFEST, id: undefined };
+    const manifest = { ...VALID_TILE_MANIFEST, id: undefined };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
     assert.ok(errors.some(e => e.path === 'id'));
   });
 
   it('should reject missing name', () => {
-    const manifest = { ...VALID_V2_MANIFEST, name: undefined };
+    const manifest = { ...VALID_TILE_MANIFEST, name: undefined };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
     assert.ok(errors.some(e => e.path === 'name'));
   });
 
   it('should reject missing tiles array', () => {
-    const manifest = { ...VALID_V2_MANIFEST, tiles: 'not-array' };
+    const manifest = { ...VALID_TILE_MANIFEST, tiles: 'not-array' };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
     assert.ok(errors.some(e => e.path === 'tiles'));
   });
@@ -134,7 +134,7 @@ describe('validateTileManifest', () => {
     const tiles = Array.from({ length: 11 }, (_, i) => ({
       id: `tile-${i}`, url: 'index.html',
     }));
-    const manifest = { ...VALID_V2_MANIFEST, tiles };
+    const manifest = { ...VALID_TILE_MANIFEST, tiles };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
     assert.ok(errors.some(e => e.path === 'tiles' && e.message.includes('maximum')));
   });
@@ -144,41 +144,41 @@ describe('validateTileManifest', () => {
       { id: 'dup', url: 'a.html' },
       { id: 'dup', url: 'b.html', resident: true },
     ];
-    const manifest = { ...VALID_V2_MANIFEST, tiles };
+    const manifest = { ...VALID_TILE_MANIFEST, tiles };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
     assert.ok(errors.some(e => e.message.includes('duplicate')));
   });
 
   it('should reject removed tile.type field (compat dropped in manifestVersion 3)', () => {
     const tiles = [{ id: 'bad', type: 'background', url: 'index.html' }];
-    const manifest = { ...VALID_V2_MANIFEST, tiles };
+    const manifest = { ...VALID_TILE_MANIFEST, tiles };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
     assert.ok(errors.some(e => e.path.endsWith('.type')));
   });
 
   it('should reject removed tile.windowHints field (compat dropped in manifestVersion 3)', () => {
     const tiles = [{ id: 'bad', url: 'index.html', windowHints: { width: 100 } }];
-    const manifest = { ...VALID_V2_MANIFEST, tiles };
+    const manifest = { ...VALID_TILE_MANIFEST, tiles };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
     assert.ok(errors.some(e => e.path.endsWith('.windowHints')));
   });
 
   it('should reject tile without url', () => {
     const tiles = [{ id: 'no-url' }];
-    const manifest = { ...VALID_V2_MANIFEST, tiles };
+    const manifest = { ...VALID_TILE_MANIFEST, tiles };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
     assert.ok(errors.some(e => e.message.includes('url')));
   });
 
   it('should reject missing capabilities object', () => {
-    const manifest = { ...VALID_V2_MANIFEST, capabilities: null };
+    const manifest = { ...VALID_TILE_MANIFEST, capabilities: null };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
     assert.ok(errors.some(e => e.path === 'capabilities'));
   });
 
   it('should reject invalid pubsub scope', () => {
     const manifest = {
-      ...VALID_V2_MANIFEST,
+      ...VALID_TILE_MANIFEST,
       capabilities: { pubsub: { scopes: ['invalid'] } },
     };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
@@ -188,7 +188,7 @@ describe('validateTileManifest', () => {
   it('should reject too many network domains', () => {
     const domains = Array.from({ length: 51 }, (_, i) => `domain${i}.com`);
     const manifest = {
-      ...VALID_V2_MANIFEST,
+      ...VALID_TILE_MANIFEST,
       capabilities: { network: { domains } },
     };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
@@ -197,7 +197,7 @@ describe('validateTileManifest', () => {
 
   it('should reject commands without name', () => {
     const manifest = {
-      ...VALID_V2_MANIFEST,
+      ...VALID_TILE_MANIFEST,
       commands: [{ action: { type: 'execute' } }],
     };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
@@ -206,7 +206,7 @@ describe('validateTileManifest', () => {
 
   it('should reject commands without action', () => {
     const manifest = {
-      ...VALID_V2_MANIFEST,
+      ...VALID_TILE_MANIFEST,
       commands: [{ name: 'test' }],
     };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
@@ -214,13 +214,13 @@ describe('validateTileManifest', () => {
   });
 
   it('should accept empty tiles array', () => {
-    const manifest = { ...VALID_V2_MANIFEST, tiles: [] };
+    const manifest = { ...VALID_TILE_MANIFEST, tiles: [] };
     const errors = validateTileManifest(manifest as Record<string, unknown>);
     assert.strictEqual(errors.length, 0);
   });
 
   it('should accept manifest with no commands', () => {
-    const { commands, ...manifest } = VALID_V2_MANIFEST;
+    const { commands, ...manifest } = VALID_TILE_MANIFEST;
     const errors = validateTileManifest(manifest as Record<string, unknown>);
     assert.strictEqual(errors.length, 0);
   });
@@ -229,22 +229,22 @@ describe('validateTileManifest', () => {
 // ─── Parsing ─────────────────────────────────────────────────────────
 
 describe('parseManifestJSON', () => {
-  it('should parse valid v2 manifest', () => {
-    const result = parseManifestJSON(VALID_V2_MANIFEST as Record<string, unknown>);
+  it('should parse valid tile manifest', () => {
+    const result = parseManifestJSON(VALID_TILE_MANIFEST as Record<string, unknown>);
     assert.ok(result);
-    assert.strictEqual(result.version, 'v2');
-    assert.ok(result.v2);
-    assert.strictEqual(result.v2.id, 'test-tile');
+    assert.strictEqual(result.version, 'tile');
+    assert.ok(result.manifest);
+    assert.strictEqual(result.manifest.id, 'test-tile');
   });
 
-  it('should parse v1 manifest', () => {
+  it('should parse legacy manifest', () => {
     const result = parseManifestJSON(VALID_V1_MANIFEST as Record<string, unknown>);
     assert.ok(result);
-    assert.strictEqual(result.version, 'v1');
-    assert.strictEqual(result.v2, undefined);
+    assert.strictEqual(result.version, 'legacy');
+    assert.strictEqual(result.manifest, undefined);
   });
 
-  it('should return null for invalid v2 manifest', () => {
+  it('should return null for invalid tile manifest', () => {
     const result = parseManifestJSON({
       manifestVersion: 3,
       // missing required fields

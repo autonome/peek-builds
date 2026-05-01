@@ -22,7 +22,7 @@ import {
   __setTileLazyLauncherForTest,
   __resetTileLazyStateForTest,
 } from './tile-lazy.js';
-import type { TileManifestV2 } from './tile-manifest.js';
+import type { TileManifest } from './tile-manifest.js';
 import type { TileLaunchOptions, TileLaunchResult } from './tile-launcher.js';
 
 // ─── Test Launcher ────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ function signalReady(state: FakeLauncherState, tileId: string, entryId: string):
 
 // ─── Manifest Fixtures ────────────────────────────────────────────────
 
-function makeManifest(id: string, lazyEvents: string[]): TileManifestV2 {
+function makeManifest(id: string, lazyEvents: string[]): TileManifest {
   return {
     manifestVersion: 3,
     id,

@@ -28,7 +28,7 @@ import {
   __setTileLazyLauncherForTest,
   __resetTileLazyStateForTest,
 } from './tile-lazy.js';
-import type { TileManifestV2 } from './tile-manifest.js';
+import type { TileManifest } from './tile-manifest.js';
 import type { TileLaunchOptions, TileLaunchResult } from './tile-launcher.js';
 
 // ─── Fake launcher that never reaches ready ──────────────────────────
@@ -68,7 +68,7 @@ function makeFakeLauncher(state: FakeLauncherState) {
 
 // ─── Manifest fixture ─────────────────────────────────────────────────
 
-function makeCommandManifest(id: string, cmdName: string): TileManifestV2 {
+function makeCommandManifest(id: string, cmdName: string): TileManifest {
   return {
     manifestVersion: 3,
     id,

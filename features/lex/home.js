@@ -2012,8 +2012,8 @@ function wireTemplateEvents() {
 (async () => {
   console.log('[ext:lex] home.js loaded');
 
-  // Initialize v2 tile — validates capability token with main process
-  console.log('[ext:lex] initializing v2 tile');
+  // Initialize tile — validates capability token with main process
+  console.log('[ext:lex] initializing tile');
   await api.initialize();
 
   // Register noun (formerly background.js responsibility)

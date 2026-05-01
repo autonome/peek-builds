@@ -28,7 +28,7 @@ const tileEntry = getArg('--tile-entry=');
 const tileToken = getArg('--tile-token=');
 
 if (!tileId || !tileEntry || !tileToken) {
-  console.error('[tile-preload] Missing tile arguments. This preload is only for v2 tiles.');
+  console.error('[tile-preload] Missing tile arguments. This preload is only for tiles.');
   // Expose minimal error API
   contextBridge.exposeInMainWorld('app', {
     error: 'Tile preload misconfigured: missing tile-id, tile-entry, or tile-token',
@@ -197,8 +197,8 @@ function buildAPI(): Record<string, unknown> {
   // ── PubSub (if granted) ──
   //
   // Publish supports two call shapes:
-  //   api.publish(topic, data)        // v1-style
-  //   api.pubsub.publish(topic, data) // v2-style (kept for clarity)
+  //   api.publish(topic, data)        // flat
+  //   api.pubsub.publish(topic, data) // namespaced (kept for clarity)
   //
   // The legacy SYSTEM / SELF / GLOBAL scope param is gone (see
   // docs/pubsub-state-machine.md). Privilege is enforced by the
@@ -518,10 +518,10 @@ function buildAPI(): Record<string, unknown> {
     /**
      * Flush any pending command registrations immediately.
      *
-     * In the v2 tile path, commands are published synchronously via
-     * ipcRenderer.send() in register() — there is no batch queue.
-     * This method exists for API compatibility with v1 callers that
-     * called flush() after a burst of register() calls; it is a no-op.
+     * Commands are published synchronously via ipcRenderer.send() in
+     * register() — there is no batch queue. This method exists for API
+     * compatibility with legacy callers that called flush() after a burst
+     * of register() calls; it is a no-op.
      */
     flush: (): Promise<{ success: true }> => {
       // No-op: register() already sends each cmd:register publish

@@ -18,10 +18,10 @@ import path from 'node:path';
 import { FeatureRegistry, type FeatureRegistryEntry } from './feature-registry.js';
 import {
   parseManifestFile,
-  type TileManifestV2,
+  type TileManifest,
   type ParsedManifest,
 } from './tile-manifest.js';
-import { type AnnotatedTile, loadV2Tile, type TileCompatConfig } from './tile-compat.js';
+import { type AnnotatedTile, loadTile, type TileCompatConfig } from './tile-compat.js';
 import * as manifestCache from './manifest-cache.js';
 import { DEBUG } from './config.js';
 
@@ -53,9 +53,9 @@ export interface TileLoaderConfig {
  *
  * For each registered feature:
  * - Reads manifest from entry.path/manifest.json
- * - Detects v1 vs v2
- * - V2: passes to tile launcher with granted capabilities
- * - V1: calls onV1Feature callback for legacy handling
+ * - Detects legacy vs current tile manifest
+ * - Current: passes to tile launcher with granted capabilities
+ * - Legacy: surfaces a clear error (reinstall or update manifest)
  *
  * Returns results for each feature attempted.
  */
@@ -90,12 +90,12 @@ function loadParsedManifest(
   try {
     const cached = manifestCache.get(entry.id);
     if (cached && cached.manifest) {
-      // The cache stores the full parsed v2 manifest JSON; it IS both
-      // the validated `v2` view and the `raw` view as far as downstream
-      // consumers care (they only touch v2 fields when version is 'v2').
+      // The cache stores the full parsed tile manifest JSON; it IS both
+      // the validated `manifest` view and the `raw` view as far as downstream
+      // consumers care (they only touch manifest fields when version is 'tile').
       return {
-        version: 'v2',
-        v2: cached.manifest,
+        version: 'tile',
+        manifest: cached.manifest,
         raw: cached.manifest as unknown as Record<string, unknown>,
       };
     }
@@ -138,8 +138,8 @@ function loadSingleFeature(
     };
   }
 
-  if (parsed.version === 'v2' && parsed.v2) {
-    return loadV2Feature(entry, parsed.v2, config);
+  if (parsed.version === 'tile' && parsed.manifest) {
+    return loadTileFromEntry(entry, parsed.manifest, config);
   }
 
   // Legacy (pre-v3 manifestVersion) — rejected by parseManifestFile in
@@ -152,11 +152,11 @@ function loadSingleFeature(
 }
 
 /**
- * Load a v2 feature via the tile compat layer
+ * Load a tile feature via the tile compat layer
  */
-function loadV2Feature(
+function loadTileFromEntry(
   entry: FeatureRegistryEntry,
-  manifest: TileManifestV2,
+  manifest: TileManifest,
   config: TileLoaderConfig
 ): FeatureLoadResult {
   // Skip features that haven't been user-approved (non-builtin)
@@ -172,7 +172,7 @@ function loadV2Feature(
   const annotated: AnnotatedTile = {
     id: entry.id,
     path: entry.path,
-    v2Manifest: manifest,
+    manifest,
   };
 
   const compatConfig: TileCompatConfig = {
@@ -181,7 +181,7 @@ function loadV2Feature(
   };
 
   try {
-    loadV2Tile(annotated, compatConfig);
+    loadTile(annotated, compatConfig);
     return { id: entry.id, loaded: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

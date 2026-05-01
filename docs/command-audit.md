@@ -1,11 +1,11 @@
-# Command Audit — v2 Tile Migration
+# Command Audit — Tile Migration
 
 Snapshot generated from `/Users/dietrich/misc/mpeek/features/*/manifest.json` on
 the overnight audit pass.
 
 ## Summary
 
-- 72 commands across 29 v2 manifests
+- 72 commands across 29 manifests
 - 1 critical runtime bug (FIXED)
 - 5 preload API mismatches between v1 `preload.js` and `tile-preload.ts` (FIXED
   with v1-compat shims)
@@ -18,7 +18,7 @@ the overnight audit pass.
 ### 1. `tile:window:open` was a stub
 
 `backend/electron/tile-ipc.ts` used to return `{success: true, url}` without
-actually opening anything. Every `window`-type command from a v2 tile
+actually opening anything. Every `window`-type command from a tile
 (20+ commands) silently failed.
 
 Fix: exposed `invokeWindowOpen` from `ipc.ts` and have the tile handler call
@@ -152,7 +152,7 @@ only.
 
 ## Remaining Known Gaps
 
-These are not command-level bugs but v2 API coverage issues that will surface
+These are not command-level bugs but tile API coverage issues that will surface
 once specific features are exercised. All are marked as explicit
 "not implemented" rather than silently returning success, so failures are
 loud.
@@ -161,7 +161,7 @@ loud.
   `api.datastore.*` v1-compat shims give features the same access they had
   under v1.
 - `api.web.*` — if any feature uses `window.app.web.*` it will error; currently
-  unused by v2 features audited.
+  unused by features audited.
 - `api.network.fetch` — the capability-gated fetch is wired, but features
   typically use standard `fetch()` directly. No regressions observed.
 

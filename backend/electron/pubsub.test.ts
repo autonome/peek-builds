@@ -131,8 +131,8 @@ describe('PubSub Module Tests', () => {
       pubsub.setPubsubBroadcaster(() => {});
     });
 
-    it('broadcaster receives a v2-tile publish of cmd:execute:*:result so bgWindow-subscriber dispatchers can resolve', () => {
-      // This is the Phase-1 regression guard. A v2 tile publishes a command
+    it('broadcaster receives a tile publish of cmd:execute:*:result so bgWindow-subscriber dispatchers can resolve', () => {
+      // This is the Phase-1 regression guard. A tile publishes a command
       // result topic. The main.ts broadcaster callback is responsible for
       // forwarding this to bgWindow (core), which is where the dispatcher
       // that set `resultTopic` lives. If the broadcaster is not invoked

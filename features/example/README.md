@@ -1,7 +1,7 @@
 # Example Extension - Image Gallery
 
 This example extension is the **reference template for new Peek extensions**.
-It demonstrates the strict (v2 tile) API shape, which is the supported form
+It demonstrates the strict tile API shape, which is the supported form
 for all newly written features.
 
 ## Features
@@ -31,7 +31,7 @@ if (hasPeekAPI) {
 
 ## Tile Initialization
 
-Every v2 tile must call `api.initialize()` before using any capability-gated
+Every tile must call `api.initialize()` before using any capability-gated
 APIs — this validates the capability token with the main process.
 `background.html` does this before calling `extension.init()`; any other
 window tile (like `gallery.html`) does the same at the top of its script.

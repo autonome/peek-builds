@@ -12,9 +12,9 @@
   const api = window.app;
   const extId = extension.id;
 
-  // ── V2 Tile Runtime ──
+  // ── Tile Runtime ──
   // Initialize tile — validates capability token with main process
-  console.log(`[ext:${extId}] initializing v2 tile`);
+  console.log(`[ext:${extId}] initializing tile`);
   await api.initialize();
 
   // Initialize extension BEFORE signaling ready

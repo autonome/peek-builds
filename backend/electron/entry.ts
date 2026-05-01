@@ -304,7 +304,7 @@ app.on('web-contents-created', (_event, contents) => {
       if (!tilePreloadPath) return;
 
       // Special-case: HUD widget webviews (peek://hud/widgets/*.html).
-      // HUD has no v2 manifest; mint a trustedBuiltin token for all widgets
+      // HUD has no tile manifest; mint a trustedBuiltin token for all widgets
       // under a unified hud-widget tile id so they can use api.window.*,
       // api.context.*, api.izui.*, api.pubsub.*, etc.
       if (params.src.startsWith('peek://hud/widgets/')) {
@@ -331,7 +331,7 @@ app.on('web-contents-created', (_event, contents) => {
         (webPreferences as { additionalArguments?: string[] }).additionalArguments =
           tileWebPrefs.additionalArguments;
         DEBUG && console.log(
-          `[webview] Injecting v2 tile-preload for ${params.src} (tile=${tileWebPrefs.tileId}, entry=${tileWebPrefs.entryId})`
+          `[webview] Injecting tile-preload for ${params.src} (tile=${tileWebPrefs.tileId}, entry=${tileWebPrefs.entryId})`
         );
       } else {
         // Any peek:// URL that reaches here is either a developer-extension
@@ -1024,7 +1024,7 @@ const onReady = async () => {
     }
   });
 
-  // Create the core background window (v2 tile mechanics — see
+  // Create the core background window (tile mechanics — see
   // backend/electron/core-glue.ts::initCore). Awaited so startup code
   // downstream sees a fully-initialised renderer with all subscribers
   // registered before e.g. CLI URLs get replayed.

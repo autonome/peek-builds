@@ -2,7 +2,7 @@
  * Pseudo-tile registry — central table of URL → trustedBuiltin tile binding.
  *
  * Pseudo-tiles are URLs that need tile-preload + a trustedBuiltin grant but
- * don't ship a v2 manifest.json (settings, cmd panel, HUD overlay, etc.).
+ * don't ship a manifest.json (settings, cmd panel, HUD overlay, etc.).
  * Historically each entry was a copy-pasted `if (url === '…') { … }` block
  * in `ipc.ts` — this module replaces that ladder with a single lookup.
  *
@@ -10,7 +10,7 @@
  * dedicated tileId + entryId so capability grants and IPC sender-frame
  * bindings stay distinct.
  *
- * Long-term: fold these into the v2 manifest registry (one manifest.json
+ * Long-term: fold these into the manifest registry (one manifest.json
  * per pseudo-tile under `app/`) so discovery is fully uniform. This table
  * is the intermediate step from "hardcoded if ladder" to that.
  */

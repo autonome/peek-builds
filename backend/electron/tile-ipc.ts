@@ -86,7 +86,7 @@ import { tagItemAndPublish as dsTagItemAndPublish } from './tag-events.js';
 import type { TableName } from '../types/index.js';
 import { installFromBundle } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
-import type { CapabilityGrant, TileCapabilities } from './tile-manifest.js';
+import type { CapabilityGrant, TileCapabilities, TileManifest } from './tile-manifest.js';
 import { invokeWindowOpen, popupToOpener, reopenLastClosedWindow, getLastFocusedVisibleWindowId, getLastContentWindowId, clearLastContentWindowId, getDarkModeSetting, setDarkModeSetting, applyDarkModeSetting, persistAdBlockerPref } from './ipc.js';
 import {
   getWindowInfo,
@@ -1225,12 +1225,12 @@ export function registerTileIpcHandlers(): void {
         try {
           const manifestPath = path.join(entry.path, 'manifest.json');
           const parsed = parseManifestFile(manifestPath);
-          if (parsed?.version === 'v2' && parsed.v2) {
-            const residentTile = parsed.v2.tiles.find(t => t.resident === true);
+          if (parsed?.version === 'tile' && parsed.manifest) {
+            const residentTile = parsed.manifest.tiles.find(t => t.resident === true);
             if (residentTile && !isTileLoaded(args.id, residentTile.id)) {
               launchTile({
                 tilePath: entry.path,
-                manifest: parsed.v2,
+                manifest: parsed.manifest,
                 preloadPath: args.tilePreloadPath,
                 entryId: residentTile.id,
               });
@@ -1864,7 +1864,7 @@ export function registerTileIpcHandlers(): void {
       }
 
       const version = detectManifestVersion(raw);
-      if (version !== 'v2') errors.push(`Manifest is ${version}, expected v2`);
+      if (version !== 'tile') errors.push(`Manifest is not a valid tile manifest (got: ${version})`);
 
       const validationErrors = validateTileManifest(raw);
       for (const ve of validationErrors) errors.push(`${ve.path}: ${ve.message}`);
@@ -2300,9 +2300,9 @@ export function registerTileIpcHandlers(): void {
 
     try {
       const manifest = entry.path ? parseManifestFile(path.join(entry.path, 'manifest.json')) : null;
-      // settingsSchema lives under v2 for tile manifests; fall back to raw for v1 extensions.
+      // settingsSchema lives on the parsed manifest; fall back to raw for legacy extensions.
       const settingsSchema: string | undefined =
-        manifest?.v2?.settingsSchema ?? (manifest?.raw?.settingsSchema as string | undefined);
+        manifest?.manifest?.settingsSchema ?? (manifest?.raw?.settingsSchema as string | undefined);
       if (!settingsSchema) return { success: true, data: null };
 
       const schemaPath = path.join(entry.path, settingsSchema);

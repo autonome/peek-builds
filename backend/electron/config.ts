@@ -41,14 +41,14 @@ export function setProfile(profile: string): void {
 }
 
 /**
- * Set the v2 tile preload script path (called during app initialization)
+ * Set the tile preload script path (called during app initialization)
  */
 export function setTilePreloadPath(tilePreloadPath: string): void {
   _tilePreloadPath = tilePreloadPath;
 }
 
 /**
- * Get the v2 tile preload script path
+ * Get the tile preload script path
  */
 export function getTilePreloadPath(): string {
   return _tilePreloadPath;

@@ -1,8 +1,8 @@
 # Tile API Reference (Phase 4 — strict surface only)
 
-This document lists the API surfaces available to v2 tiles after Phase 4 shim removal.
+This document lists the API surfaces available to tiles after Phase 4 shim removal.
 All surfaces are injected via `contextBridge.exposeInMainWorld('app', api)` from
-`backend/electron/tile-preload.ts`. Deprecated v1-compat shims are gone; calling any
+`backend/electron/tile-preload.ts`. Deprecated compat shims are gone; calling any
 removed name throws `Error('[tile-preload] ... removed in Phase 4; use ...')`.
 
 ---

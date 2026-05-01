@@ -1106,7 +1106,7 @@ const initUi = () => {
   console.log(`[ext:${extId}] home.js loaded`);
 
   // Initialize tile — validates capability token with main process
-  console.log(`[ext:${extId}] initializing v2 tile`);
+  console.log(`[ext:${extId}] initializing tile`);
   await api.initialize();
 
   // Load settings and engines
