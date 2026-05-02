@@ -28,7 +28,7 @@
   },
   "commands": [
     {
-      "name": "hello",
+      "name": "hello world",
       "description": "Open Hello World tile (tutorial + debug)",
       "action": { "type": "execute" }
     }

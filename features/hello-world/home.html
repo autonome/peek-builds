@@ -89,8 +89,8 @@ api.commands.<span class="fn">register</span>({
         <pre>yarn test:electron:bg   <span class="cmt"># background, logs to /tmp/test-electron.log</span>
 yarn test:electron      <span class="cmt"># foreground headless</span></pre>
         <p><strong>Minimal Playwright test for a tile command:</strong></p>
-        <pre>test(<span class="str">'hello command shows window'</span>, <span class="kw">async</span> ({ page }) =&gt; {
-  <span class="kw">await</span> <span class="fn">runCommand</span>(page, <span class="str">'hello'</span>);
+        <pre>test(<span class="str">'hello world command shows window'</span>, <span class="kw">async</span> ({ page }) =&gt; {
+  <span class="kw">await</span> <span class="fn">runCommand</span>(page, <span class="str">'hello world'</span>);
   <span class="kw">const</span> win = <span class="kw">await</span> app.<span class="fn">waitForWindow</span>(<span class="str">'Hello World'</span>);
   <span class="kw">await</span> expect(win).<span class="fn">toBeDefined</span>();
 });</pre>
@@ -173,14 +173,14 @@ yarn test:electron      <span class="cmt"># foreground headless</span></pre>
     // ── Register command ──
     if (api.commands?.register) {
       api.commands.register({
-        name: 'hello',
+        name: 'hello world',
         description: 'Open Hello World tile',
         execute: async () => {
           await api.window.showSelf();
           return { output: 'Hello World shown', mimeType: 'text/plain' };
         }
       });
-      log('registered `hello` command (showSelf)', 'ok');
+      log('registered `hello world` command (showSelf)', 'ok');
     }
 
     // ── Phase 3: datastore query ──

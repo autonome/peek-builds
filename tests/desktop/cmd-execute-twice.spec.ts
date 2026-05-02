@@ -4,9 +4,9 @@
  * stalls — the result never comes back. This test pins that behavior
  * down so the fix is verifiable.
  *
- * Uses the hello-world tile because its `hello` command is the
+ * Uses the hello-world tile because its `hello world` command is the
  * simplest programmatic command in the codebase: a single tile entry
- * (resident `home`) that registers `hello` via
+ * (resident `home`) that registers `hello world` via
  * `api.commands.register(...)` with an async execute that returns a
  * plain object.
  */
@@ -26,8 +26,8 @@ test.beforeAll(async () => {
   // Wait for hello-world's command registration to actually reach the
   // main-process pubsub bus. `waitForExtensionsReady` gates on feature
   // *load* but not on the `cmd:register`/`cmd:register-batch` round-
-  // trip that announces `hello` to the cmd panel. Firing before that
-  // round-trip means zero subscribers exist for `cmd:execute:hello`.
+  // trip that announces `hello world` to the cmd panel. Firing before that
+  // round-trip means zero subscribers exist for `cmd:execute:hello world`.
   //
   // Approach: poll `api.features.list('builtin')` for hello-world
   // presence, THEN do a single pubsub query-round-trip to confirm the
@@ -51,7 +51,7 @@ test.beforeAll(async () => {
       const unsubscribe = api.subscribe('cmd:query-commands-response', (msg: unknown) => {
         unsubscribe?.();
         const cmds = (msg as { commands?: Array<{ name: string }> })?.commands || [];
-        resolve(cmds.some(c => c.name === 'hello'));
+        resolve(cmds.some(c => c.name === 'hello world'));
       });
       api.publish('cmd:query-commands', {});
       setTimeout(() => { unsubscribe?.(); resolve(false); }, 200);
@@ -91,16 +91,16 @@ async function invoke(bg: Page, name: string, timeoutMs = 5000): Promise<unknown
   }, { cmdName: name, timeout: timeoutMs });
 }
 
-test('cmd:execute:hello returns a result on repeat invocations', async () => {
+test('cmd:execute:hello world returns a result on repeat invocations', async () => {
   // First invocation — expected to succeed per manual repro.
-  const first = await invoke(sharedBg, 'hello', 10000);
+  const first = await invoke(sharedBg, 'hello world', 10000);
   expect(first, 'first invocation result').toBeDefined();
 
   // Second invocation — user-reported stall happens here.
-  const second = await invoke(sharedBg, 'hello', 10000);
+  const second = await invoke(sharedBg, 'hello world', 10000);
   expect(second, 'second invocation result (user-reported stall)').toBeDefined();
 
   // Third invocation — sanity check that it's not just a "works once" fluke.
-  const third = await invoke(sharedBg, 'hello', 10000);
+  const third = await invoke(sharedBg, 'hello world', 10000);
   expect(third, 'third invocation result').toBeDefined();
 });
