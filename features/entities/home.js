@@ -90,8 +90,13 @@ async function enrichUrlItem(url, pageMetadata) {
     const item = items.data.find(i => urlVariants.has(i.content));
     if (!item) return;
 
-    if (pageMetadata.title && (!item.title || item.title === 'Loading...')) {
-      await api.datastore.updateItemTitle(url, pageMetadata.title);
+    // Fall back to hostname when extraction yields no title — see
+    // matching comment in features/entities/background.js.
+    const fallbackTitle = pageMetadata.title || (() => {
+      try { return new URL(url).hostname; } catch { return ''; }
+    })();
+    if (fallbackTitle && (!item.title || item.title === 'Loading...')) {
+      await api.datastore.updateItemTitle(url, fallbackTitle);
     }
 
     if (pageMetadata.favicon) {

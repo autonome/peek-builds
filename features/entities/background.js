@@ -107,9 +107,15 @@ async function enrichUrlItem(url, pageMetadata) {
     const item = items.data.find(i => urlVariants.has(i.content));
     if (!item) return;
 
-    // Update title if empty or "Loading..."
-    if (pageMetadata.title && (!item.title || item.title === 'Loading...')) {
-      await api.datastore.updateItemTitle(url, pageMetadata.title);
+    // Update title if empty or "Loading...". Fall back to hostname so URL
+    // items don't stay title-less when fetch fails / the page omits a
+    // <title> / extraction returns nothing — those items would otherwise
+    // render as bare URLs or empty cards in every consumer view.
+    const fallbackTitle = pageMetadata.title || (() => {
+      try { return new URL(url).hostname; } catch { return ''; }
+    })();
+    if (fallbackTitle && (!item.title || item.title === 'Loading...')) {
+      await api.datastore.updateItemTitle(url, fallbackTitle);
     }
 
     // Persist favicon if available
