@@ -65,13 +65,13 @@ async function openCmdPanel(): Promise<{ cmdWindow: Page; windowId: number }> {
   const cmdWindow = await sharedApp.getWindow('cmd/panel.html', 5000);
   await cmdWindow.waitForSelector('input', { timeout: 5000 });
 
-  // Wait for the panel to have the `hello` command registered specifically.
-  // `waitForPanelCommandsLoaded` returns as soon as ANY command is in the
-  // registry (often the 13 built-ins) — extension commands like `hello`
-  // arrive over the cmd:register-batch / cmd:register pubsub topics and
-  // can lag the initial query response.
+  // Wait for the panel to have the `hello world` command registered
+  // specifically. `waitForPanelCommandsLoaded` returns as soon as ANY
+  // command is in the registry (often the 13 built-ins) — extension
+  // commands like `hello world` arrive over the cmd:register-batch /
+  // cmd:register pubsub topics and can lag the initial query response.
   await cmdWindow.waitForFunction(
-    () => !!(window as any)._cmdState?.commands?.hello,
+    () => !!(window as any)._cmdState?.commands?.['hello world'],
     undefined,
     { timeout: 10000 }
   );
@@ -93,7 +93,7 @@ test('cmd panel handles 20 sequential open → type → Enter cycles without sta
   for (let i = 1; i <= 20; i++) {
     const { cmdWindow } = await openCmdPanel();
 
-    await cmdWindow.fill('input', 'hello');
+    await cmdWindow.fill('input', 'hello world');
     await cmdWindow.keyboard.press('ArrowDown');
     await cmdWindow.keyboard.press('Enter');
 
