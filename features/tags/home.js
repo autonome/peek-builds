@@ -186,11 +186,17 @@ const loadData = async () => {
     }
   }
 
-  // Load all tags by frecency
+  // Load all tags by frecency, then drop tags with no current items.
+  // Hidden when no live (non-deleted) item references the tag — keeps the
+  // sidebar reflecting present usage instead of historical tag rows.
   const tagsResult = await api.datastore.getTagsByFrecency();
   if (tagsResult.success) {
-    state.tags = tagsResult.data;
-    debug && console.log('[tags] Loaded tags:', state.tags.length);
+    const inUse = new Set();
+    for (const tagList of state.itemTags.values()) {
+      for (const t of tagList) inUse.add(t.id);
+    }
+    state.tags = tagsResult.data.filter(t => inUse.has(t.id));
+    debug && console.log('[tags] Loaded tags (in-use only):', state.tags.length);
   } else {
     console.error('[tags] Failed to load tags:', tagsResult.error);
     state.tags = [];
@@ -209,8 +215,12 @@ const loadData = async () => {
 const loadTags = async () => {
   const tagsResult = await api.datastore.getTagsByFrecency();
   if (tagsResult.success) {
-    state.tags = tagsResult.data;
-    debug && console.log('[tags] Reloaded tags:', state.tags.length);
+    const inUse = new Set();
+    for (const tagList of state.itemTags.values()) {
+      for (const t of tagList) inUse.add(t.id);
+    }
+    state.tags = tagsResult.data.filter(t => inUse.has(t.id));
+    debug && console.log('[tags] Reloaded tags (in-use only):', state.tags.length);
   } else {
     console.error('[tags] Failed to reload tags:', tagsResult.error);
   }
