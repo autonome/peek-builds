@@ -4,9 +4,37 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Sun, 03 May 2026 17:18:06 GMT</lastBuildDate>
+    <lastBuildDate>Sun, 03 May 2026 20:48:56 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>items: add event item type (foundations)</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:151a634a007b</guid>
+      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
+      <description>items: add event item type (foundations)</description>
+    </item>
+    <item>
+      <title>download: sanitize filenames + surface failures via notification</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:0e9d2d9c45f2</guid>
+      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
+      <description>download: sanitize filenames + surface failures via notification</description>
+    </item>
+    <item>
+      <title>datastore: backfill stuck &quot;Loading...&quot; titles to hostname on boot</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:95388a520515</guid>
+      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
+      <description>datastore: backfill stuck &quot;Loading...&quot; titles to hostname on boot</description>
+    </item>
+    <item>
+      <title>tags: seed itemTags Map entry on load failure too</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:76cc65b37260</guid>
+      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
+      <description>tags: seed itemTags Map entry on load failure too</description>
+    </item>
     <item>
       <title>tags: tags card detail view &apos;add tag&apos; becomes search/add — input filters Available Tags inline, Enter creates if no match</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>

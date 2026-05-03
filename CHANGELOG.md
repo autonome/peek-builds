@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: d2a5a27ad96f -->
+<!-- last-bumped: be4002a4dd7a -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -20,6 +20,11 @@ See TODO.md for pending items, WIP.md for in-progress items.
 ## Week of 2026-04-27 (W18)
 
 ### 2026-05-03
+
+- items: add event item type (foundations)
+- download: sanitize filenames + surface failures via notification
+- datastore: backfill stuck "Loading..." titles to hostname on boot
+- tags: seed itemTags Map entry on load failure too
 
 - tags: tags card detail view 'add tag' becomes search/add — input filters Available Tags inline, Enter creates if no match
 - sync: surface sync errors in settings status with red indicator
