@@ -111,3 +111,60 @@ describe('resolveUniqueDownloadPath', () => {
     assert.strictEqual(result, path.join(tmpDir, 'archive.tar-1.gz'));
   });
 });
+
+// ─── sanitizeDownloadFilename (mirrored from session-partition.ts) ──
+// Must stay in sync with the implementation in session-partition.ts.
+
+function sanitizeDownloadFilename(raw: string): string {
+  // eslint-disable-next-line no-control-regex
+  let cleaned = (raw || '').replace(/[\x00-\x1f/\\:*?"<>|]/g, '_').trim();
+  if (cleaned === '' || cleaned === '.' || cleaned === '..') {
+    cleaned = `download-${Date.now()}`;
+  }
+  if (cleaned.length > 200) {
+    const ext = path.extname(cleaned);
+    cleaned = cleaned.slice(0, 200 - ext.length) + ext;
+  }
+  return cleaned;
+}
+
+describe('sanitizeDownloadFilename', () => {
+  it('preserves a normal filename', () => {
+    assert.strictEqual(sanitizeDownloadFilename('photo.jpg'), 'photo.jpg');
+  });
+
+  it('preserves multi-dot extensions', () => {
+    assert.strictEqual(sanitizeDownloadFilename('archive.tar.gz'), 'archive.tar.gz');
+  });
+
+  it('replaces filesystem-hostile chars with underscore', () => {
+    assert.strictEqual(
+      sanitizeDownloadFilename('a/b\\c:d*e?f"g<h>i|j.txt'),
+      'a_b_c_d_e_f_g_h_i_j.txt',
+    );
+  });
+
+  it('replaces control characters with underscore', () => {
+    assert.strictEqual(sanitizeDownloadFilename('hello\x00world\x1f.bin'), 'hello_world_.bin');
+  });
+
+  it('replaces empty input with timestamped fallback', () => {
+    assert.match(sanitizeDownloadFilename(''), /^download-\d+$/);
+  });
+
+  it('replaces "." and ".." with timestamped fallback', () => {
+    assert.match(sanitizeDownloadFilename('.'), /^download-\d+$/);
+    assert.match(sanitizeDownloadFilename('..'), /^download-\d+$/);
+  });
+
+  it('truncates absurdly long names while preserving the extension', () => {
+    const long = 'a'.repeat(500) + '.zip';
+    const out = sanitizeDownloadFilename(long);
+    assert.ok(out.length <= 200, `expected <=200 got ${out.length}`);
+    assert.ok(out.endsWith('.zip'), `expected .zip extension got ${out}`);
+  });
+
+  it('trims surrounding whitespace', () => {
+    assert.strictEqual(sanitizeDownloadFilename('  hello.txt  '), 'hello.txt');
+  });
+});

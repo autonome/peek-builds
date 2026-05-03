@@ -280,9 +280,30 @@ export function registerDownloadHandler(ses: Session): void {
   _registerDownloadHandlerImpl(ses);
 }
 
+/**
+ * Strip path separators and other filesystem-hostile characters from a
+ * download filename. Chromium already drops `/` and `\` from suggested
+ * names, but we belt-and-suspender against null bytes, control chars,
+ * and absurdly long names that would error on `setSavePath`.
+ */
+export function sanitizeDownloadFilename(raw: string): string {
+  // eslint-disable-next-line no-control-regex
+  let cleaned = (raw || '').replace(/[\x00-\x1f/\\:*?"<>|]/g, '_').trim();
+  if (cleaned === '' || cleaned === '.' || cleaned === '..') {
+    cleaned = `download-${Date.now()}`;
+  }
+  // 200 chars leaves headroom for collision suffixes + path components.
+  if (cleaned.length > 200) {
+    const ext = path.extname(cleaned);
+    cleaned = cleaned.slice(0, 200 - ext.length) + ext;
+  }
+  return cleaned;
+}
+
 function _registerDownloadHandlerImpl(ses: Session): void {
   ses.on('will-download', (_event, item, webContents) => {
-    const filename = item.getFilename();
+    const rawFilename = item.getFilename();
+    const filename = sanitizeDownloadFilename(rawFilename);
     const desiredPath = path.join(app.getPath('downloads'), filename);
     const savePath = resolveUniqueDownloadPath(desiredPath);
     item.setSavePath(savePath);
@@ -367,7 +388,19 @@ function _registerDownloadHandlerImpl(ses: Session): void {
         });
         notification.show();
       } else {
+        // Surface failure so the user knows the download didn't silently
+        // succeed. State is 'cancelled' or 'interrupted' here.
         console.log('[download] Failed/cancelled:', filename, state);
+        try {
+          const reason = state === 'cancelled' ? 'cancelled' : 'interrupted';
+          new Notification({
+            title: 'Download Failed',
+            body: `${filename} (${reason})`,
+            silent: false,
+          }).show();
+        } catch (err) {
+          console.error('[download] Failed to surface failure notification:', err);
+        }
       }
     });
   });
