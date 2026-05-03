@@ -178,12 +178,12 @@ const loadData = async () => {
     state.items = [];
   }
 
-  // Load tags for each item
+  // Load tags for each item; always set the Map entry — even on failure
+  // — so downstream code can rely on `state.itemTags.has(id)` and avoid
+  // surprises when an item's row is silently absent.
   for (const item of state.items) {
     const tagsResult = await api.datastore.getItemTags(item.id);
-    if (tagsResult.success) {
-      state.itemTags.set(item.id, tagsResult.data);
-    }
+    state.itemTags.set(item.id, tagsResult.success ? (tagsResult.data || []) : []);
   }
 
   // Load all tags by frecency, then drop tags with no current items.
