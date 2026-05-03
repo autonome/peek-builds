@@ -383,6 +383,7 @@ export function initDatabase(dbPath: string): Database.Database {
   migrateContextHistory();
   migrateEntityType();
   migrateEventType();
+  migrateLoadingTitles();
   migrateStandalonePriceEntities();
   migrateStandaloneDateEntities();
   migrateNoisyDateEntities();
@@ -1653,6 +1654,49 @@ function migrateEventType(): void {
   } finally {
     db.pragma('foreign_keys = ON');
   }
+}
+
+/**
+ * One-time backfill: replace stuck "Loading..." titles on URL items with
+ * the URL hostname. Captures items whose page never reported a real title
+ * (fetch failed, page omitted <title>, etc.); the entities flow now does
+ * this on the fly for new items, but already-stored rows would otherwise
+ * stay title-less indefinitely.
+ */
+function migrateLoadingTitles(): void {
+  if (!db) return;
+
+  const MIGRATION_ID = 'backfill_loading_titles_v1';
+
+  const migrationRecord = db.prepare('SELECT * FROM migrations WHERE id = ?').get(MIGRATION_ID) as { status: string } | undefined;
+  if (migrationRecord && migrationRecord.status === 'complete') return;
+
+  try {
+    const stuck = db.prepare(
+      `SELECT id, content, domain FROM items
+       WHERE type = 'url' AND deletedAt = 0 AND (title = 'Loading...' OR title IS NULL OR title = '')`
+    ).all() as { id: string; content: string | null; domain: string | null }[];
+
+    let backfilled = 0;
+    const update = db.prepare('UPDATE items SET title = ?, updatedAt = ? WHERE id = ?');
+    const updatedAt = Date.now();
+    for (const row of stuck) {
+      let hostname = row.domain || '';
+      if (!hostname && row.content) {
+        try { hostname = new URL(row.content).hostname; } catch { /* skip */ }
+      }
+      if (hostname) {
+        update.run(hostname, updatedAt, row.id);
+        backfilled++;
+      }
+    }
+
+    DEBUG && console.log('main', `Loading-title backfill: scanned ${stuck.length}, backfilled ${backfilled}`);
+  } catch (error) {
+    DEBUG && console.log('main', `Loading-title backfill error:`, (error as Error).message);
+  }
+
+  db.prepare('INSERT OR REPLACE INTO migrations (id, status, completedAt) VALUES (?, ?, ?)').run(MIGRATION_ID, 'complete', Date.now());
 }
 
 /**
