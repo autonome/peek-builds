@@ -706,6 +706,14 @@ function saveSyncServerConfig(serverUrl: string): void {
 
 // ==================== Full Bidirectional Sync ====================
 
+// Module-level error state — surfaced in getSyncStatus so the settings
+// UI (and any other consumer) can show a red indicator on failure
+// without each caller having to wrap syncAll in try/catch + post the
+// error to a separate channel. Set on the throw path in syncAll, cleared
+// on the next successful run.
+let lastSyncError: string | null = null;
+let lastSyncErrorAt = 0;
+
 /**
  * Perform a full bidirectional sync
  *
@@ -753,6 +761,10 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
 
     DEBUG && console.log(`[sync] Sync complete: ${pulled} pulled, ${pushed} pushed, ${conflicts} conflicts`);
 
+    // Clear any stale error from a previous failed run.
+    lastSyncError = null;
+    lastSyncErrorAt = 0;
+
     return {
       pulled,
       pushed,
@@ -761,6 +773,8 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
     };
   } catch (error) {
     DEBUG && console.error('[sync] Sync failed:', error);
+    lastSyncError = error instanceof Error ? error.message : String(error);
+    lastSyncErrorAt = Date.now();
     throw error;
   }
 }
@@ -774,6 +788,8 @@ export function getSyncStatus(): {
   configured: boolean;
   lastSyncTime: number;
   pendingCount: number;
+  lastError: string | null;
+  lastErrorAt: number;
 } {
   const config = getSyncConfig();
   const db = getDb();
@@ -791,5 +807,7 @@ export function getSyncStatus(): {
     configured: !!(config.serverUrl && config.apiKey),
     lastSyncTime: config.lastSyncTime,
     pendingCount,
+    lastError: lastSyncError,
+    lastErrorAt: lastSyncErrorAt,
   };
 }

@@ -1576,6 +1576,14 @@ const renderSyncSettings = async () => {
   pendingLine.className = 'help-text';
   statusContainer.appendChild(pendingLine);
 
+  // Error line — only shown when the most recent syncAll threw. The
+  // background color of the whole status block also goes red so the
+  // failure is hard to miss without having to scan text.
+  const errorLine = document.createElement('div');
+  errorLine.className = 'help-text';
+  errorLine.style.cssText = 'margin-top: 6px; color: var(--base08, #cc241d); display: none;';
+  statusContainer.appendChild(errorLine);
+
   statusSection.appendChild(statusContainer);
 
   // Function to update status display
@@ -1601,6 +1609,23 @@ const renderSyncSettings = async () => {
     }
 
     pendingLine.textContent = `Pending items: ${status.pendingCount || 0}`;
+
+    // Surface sync errors prominently — the block goes red and an error
+    // line appears below pending. Cleared on the next successful sync.
+    if (status.lastError) {
+      const at = status.lastErrorAt ? new Date(status.lastErrorAt).toLocaleString() : '';
+      errorLine.textContent = at
+        ? `Last error (${at}): ${status.lastError}`
+        : `Last error: ${status.lastError}`;
+      errorLine.style.display = '';
+      statusContainer.style.background = 'var(--base08-bg, rgba(204, 36, 29, 0.12))';
+      statusContainer.style.borderLeft = '3px solid var(--base08, #cc241d)';
+    } else {
+      errorLine.style.display = 'none';
+      errorLine.textContent = '';
+      statusContainer.style.background = 'var(--bg-tertiary)';
+      statusContainer.style.borderLeft = '';
+    }
   };
 
   // Initial status update
