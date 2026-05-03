@@ -4,9 +4,51 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Sun, 03 May 2026 17:17:16 GMT</lastBuildDate>
+    <lastBuildDate>Sun, 03 May 2026 17:18:06 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>tags: tags card detail view &apos;add tag&apos; becomes search/add — input filters Available Tags inline, Enter creates if no match</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:6114f61e6dbf</guid>
+      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
+      <description>tags: tags card detail view &apos;add tag&apos; becomes search/add — input filters Available Tags inline, Enter creates if no match</description>
+    </item>
+    <item>
+      <title>sync: surface sync errors in settings status with red indicator</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:a171db066842</guid>
+      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
+      <description>sync: surface sync errors in settings status with red indicator</description>
+    </item>
+    <item>
+      <title>tags: Tags sidebar hides zero-usage tags</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:ffdaeef5dc35</guid>
+      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
+      <description>tags: Tags sidebar hides zero-usage tags</description>
+    </item>
+    <item>
+      <title>windows: surface pin-hidden windows in the Windows switcher</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:6dfda64250c4</guid>
+      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
+      <description>windows: surface pin-hidden windows in the Windows switcher</description>
+    </item>
+    <item>
+      <title>page: preserve pre-maximize bounds across renderer maximize trip</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:4fbfebf3b9bc</guid>
+      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
+      <description>page: preserve pre-maximize bounds across renderer maximize trip</description>
+    </item>
+    <item>
+      <title>ios: screenshots from manual iOS run</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:c8227bb8e9d5</guid>
+      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
+      <description>ios: screenshots from manual iOS run</description>
+    </item>
     <item>
       <title>window-targeting: track tile-launched window focus + drop page-host&apos;s local Maximize cmd</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-02</link>

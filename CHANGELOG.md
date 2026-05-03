@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: 812d250c3571 -->
+<!-- last-bumped: d2a5a27ad96f -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -18,6 +18,15 @@ Completed work. Two formats coexist on purpose:
 See TODO.md for pending items, WIP.md for in-progress items.
 
 ## Week of 2026-04-27 (W18)
+
+### 2026-05-03
+
+- tags: tags card detail view 'add tag' becomes search/add — input filters Available Tags inline, Enter creates if no match
+- sync: surface sync errors in settings status with red indicator
+- tags: Tags sidebar hides zero-usage tags
+- windows: surface pin-hidden windows in the Windows switcher
+- page: preserve pre-maximize bounds across renderer maximize trip
+- ios: screenshots from manual iOS run
 
 ### 2026-05-02
 
