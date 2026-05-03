@@ -447,10 +447,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
     // Publish maximize command
     await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:maximize',
-        { windowId: wid }
-      );
+      await (window as any).app.window.maximize(wid);
     }, windowId);
 
     // Window bounds should match the display work area
@@ -482,10 +479,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
     // Maximize
     await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:maximize',
-        { windowId: wid }
-      );
+      await (window as any).app.window.maximize(wid);
     }, windowId);
 
     // Wait for maximize state
@@ -495,12 +489,9 @@ test.describe('Page Layout Maximize @desktop', () => {
       { timeout: 5000 }
     );
 
-    // Toggle back (restore)
+    // Restore from maximize
     await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:maximize',
-        { windowId: wid }
-      );
+      await (window as any).app.window.unmaximize(wid);
     }, windowId);
 
     // Wait for maximized class to be removed
@@ -529,10 +520,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
     // Maximize
     await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:maximize',
-        { windowId: wid }
-      );
+      await (window as any).app.window.maximize(wid);
     }, windowId);
 
     await pageWindow.waitForFunction(
@@ -560,10 +548,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
     // Maximize
     await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:maximize',
-        { windowId: wid }
-      );
+      await (window as any).app.window.maximize(wid);
     }, windowId);
 
     await pageWindow.waitForFunction(
@@ -615,10 +600,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
     // Maximize
     await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:maximize',
-        { windowId: wid }
-      );
+      await (window as any).app.window.maximize(wid);
     }, windowId);
 
     await pageWindow.waitForFunction(
@@ -667,10 +649,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
     // Maximize
     await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:maximize',
-        { windowId: wid }
-      );
+      await (window as any).app.window.maximize(wid);
     }, windowId);
 
     await pageWindow.waitForFunction(
@@ -706,10 +685,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
     // Maximize
     await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:maximize',
-        { windowId: wid }
-      );
+      await (window as any).app.window.maximize(wid);
     }, windowId);
 
     await pageWindow.waitForFunction(
@@ -785,10 +761,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
     // Maximize
     await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:maximize',
-        { windowId: wid }
-      );
+      await (window as any).app.window.maximize(wid);
     }, windowId);
 
     await pageWindow.waitForFunction(

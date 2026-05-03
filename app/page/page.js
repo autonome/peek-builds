@@ -617,7 +617,7 @@ function cancelInFlightInteractions() {
   }
 }
 
-async function doMaximize() {
+async function doMaximize(injectedWindowBounds) {
   try {
     cancelInFlightInteractions();
     if (inMaximized()) return;
@@ -635,18 +635,29 @@ async function doMaximize() {
       width: screenBounds.width,
       height: screenBounds.height,
     };
-    try {
-      const windowBoundsResult = await api.window.getBounds();
-      if (windowBoundsResult && windowBoundsResult.success !== false) {
-        preMaximizeWindowBounds = {
-          x: windowBoundsResult.x,
-          y: windowBoundsResult.y,
-          width: windowBoundsResult.width,
-          height: windowBoundsResult.height,
-        };
+    if (injectedWindowBounds) {
+      // IPC-initiated path: main captured bounds before resizing the window,
+      // so we use those instead of querying after the fact.
+      preMaximizeWindowBounds = {
+        x: injectedWindowBounds.x,
+        y: injectedWindowBounds.y,
+        width: injectedWindowBounds.width,
+        height: injectedWindowBounds.height,
+      };
+    } else {
+      try {
+        const windowBoundsResult = await api.window.getBounds();
+        if (windowBoundsResult && windowBoundsResult.success !== false) {
+          preMaximizeWindowBounds = {
+            x: windowBoundsResult.x,
+            y: windowBoundsResult.y,
+            width: windowBoundsResult.width,
+            height: windowBoundsResult.height,
+          };
+        }
+      } catch {
+        preMaximizeWindowBounds = null;
       }
-    } catch {
-      preMaximizeWindowBounds = null;
     }
 
     screenBounds.x = workArea.x;
@@ -2341,7 +2352,7 @@ api.commands.register({
 // centerColumn), so the IPC tells *this* window's renderer to run its
 // own non-toggling helpers. No pubsub broadcast — the IPC already
 // resolved the target window, so it sends to that webContents only.
-api.window.onMaximizeRequest(() => doMaximize());
+api.window.onMaximizeRequest((payload) => doMaximize(payload && payload.prevWindowBounds));
 api.window.onUnmaximizeRequest(() => doUnmaximize());
 
 // --- Web permission prompt ---

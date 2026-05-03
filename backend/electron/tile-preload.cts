@@ -714,8 +714,10 @@ function buildAPI(): Record<string, unknown> {
      * Targeted send (no broadcast) — only the resolved window receives
      * the event.
      */
-    onMaximizeRequest: (cb: () => void) => {
-      const handler = () => { try { cb(); } catch (err) { console.error('[onMaximizeRequest]', err); } };
+    onMaximizeRequest: (cb: (payload?: { prevWindowBounds?: { x: number; y: number; width: number; height: number } | null }) => void) => {
+      const handler = (_event: unknown, payload?: { prevWindowBounds?: { x: number; y: number; width: number; height: number } | null }) => {
+        try { cb(payload); } catch (err) { console.error('[onMaximizeRequest]', err); }
+      };
       ipcRenderer.on('tile:window:maximize-request', handler);
       return () => ipcRenderer.off('tile:window:maximize-request', handler);
     },

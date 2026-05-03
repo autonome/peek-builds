@@ -3045,8 +3045,20 @@ export function registerTileIpcHandlers(): void {
       // Targeted notification to the window's renderer — page-host (and
       // any other renderer that owns internal layout state) subscribes
       // via api.window.onMaximizeRequest to keep its FSM/bounds in sync
-      // without going through pubsub broadcast.
-      try { win.webContents.send('tile:window:maximize-request'); } catch { /* renderer may be gone */ }
+      // without going through pubsub broadcast. Pass prevWindowBounds so
+      // the renderer captures the pre-maximize size *before* main resized
+      // — querying getBounds() from the renderer after we've already
+      // changed them would record the work-area as the "previous" size.
+      try {
+        win.webContents.send('tile:window:maximize-request', {
+          prevWindowBounds: atWorkArea ? null : {
+            x: currentBounds.x,
+            y: currentBounds.y,
+            width: currentBounds.width,
+            height: currentBounds.height,
+          },
+        });
+      } catch { /* renderer may be gone */ }
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
