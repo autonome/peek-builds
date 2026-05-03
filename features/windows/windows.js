@@ -256,6 +256,9 @@ const createWindowCard = (win) => {
   card.interactive = true;
   card.elevated = true;
   card.dataset.windowId = win.id;
+  if (win.visible === false) {
+    card.dataset.hidden = 'true';
+  }
 
   // Header with optional favicon and title
   const header = document.createElement('div');
@@ -284,6 +287,13 @@ const createWindowCard = (win) => {
   title.textContent = win.title || 'Untitled';
   header.appendChild(title);
 
+  if (win.visible === false) {
+    const badge = document.createElement('span');
+    badge.className = 'card-hidden-badge';
+    badge.textContent = 'Hidden';
+    header.appendChild(badge);
+  }
+
   card.appendChild(header);
 
   // URL in body
@@ -292,9 +302,12 @@ const createWindowCard = (win) => {
   url.textContent = win.url || '';
   card.appendChild(url);
 
-  // Click to focus window and close windows view
+  // Click to focus window and close windows view; un-hide first if hidden
   card.addEventListener('card-click', async () => {
-    debug && console.log('[windows] Clicking window:', win.id, win.title);
+    debug && console.log('[windows] Clicking window:', win.id, win.title, 'visible:', win.visible);
+    if (win.visible === false && api?.window?.show) {
+      await api.window.show(win.id);
+    }
     await api.window.setOverlayFocusTarget(win.id);
     closeWindowsView();
   });

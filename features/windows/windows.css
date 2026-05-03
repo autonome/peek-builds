@@ -103,6 +103,31 @@ peek-card[selected]:hover {
   text-overflow: ellipsis;
 }
 
+/* Hidden (pin-hidden) windows: dim the card and tag it. */
+peek-card[data-hidden="true"] {
+  --peek-card-bg: var(--base01);
+  opacity: 0.65;
+}
+
+peek-card[data-hidden="true"] .card-title {
+  font-style: italic;
+  color: var(--base04);
+}
+
+.card-hidden-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--base05);
+  background: var(--base02);
+  border: 1px solid var(--base03);
+  border-radius: 3px;
+  padding: 1px 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
 /* List view mode - remove max-width constraint */
 peek-grid.cards[view-mode="list"] peek-card {
   max-width: none;
