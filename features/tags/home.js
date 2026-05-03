@@ -581,7 +581,9 @@ const setupEventListeners = () => {
     });
   });
 
-  // New tag input in detail view
+  // Search/add tag input in detail view. Typing filters the
+  // Available Tags list inline; Enter adds the typed tag (creating it
+  // if no exact match exists).
   const newTagInput = document.querySelector('.new-tag-input');
   const addTagBtn = document.querySelector('.add-tag-btn');
 
@@ -590,6 +592,12 @@ const setupEventListeners = () => {
     if (e.key === 'Enter') {
       addNewTag(newTagInput.value);
     }
+  });
+  newTagInput.addEventListener('input', () => {
+    const currentTags = state.editingItem
+      ? state.itemTags.get(state.editingItem.id) || []
+      : [];
+    renderAvailableTags(currentTags, newTagInput.value);
   });
 
   // Add item button
@@ -1546,15 +1554,23 @@ const renderCurrentTags = (tags) => {
 };
 
 /**
- * Render available tags in detail view
+ * Render available tags in detail view, optionally filtered by `query`
+ * (substring, case-insensitive). Used by the search/add input above
+ * the list — typing live-filters the available tags so the user can
+ * pick an existing one without scrolling, or hit Enter to create.
  */
-const renderAvailableTags = (currentTags) => {
+const renderAvailableTags = (currentTags, query = '') => {
   const container = document.querySelector('.available-tags');
   const currentTagIds = new Set(currentTags.map(t => t.id));
+  const q = query.trim().toLowerCase();
 
   container.innerHTML = '';
 
-  state.tags.forEach(tag => {
+  const matches = q
+    ? state.tags.filter(tag => tag.name.toLowerCase().includes(q))
+    : state.tags;
+
+  matches.forEach(tag => {
     const tagEl = document.createElement('span');
     tagEl.className = 'available-tag';
     if (currentTagIds.has(tag.id)) {
@@ -1571,6 +1587,11 @@ const renderAvailableTags = (currentTags) => {
 
   if (state.tags.length === 0) {
     container.innerHTML = '<span class="no-tags">No tags available</span>';
+  } else if (matches.length === 0) {
+    const hint = document.createElement('span');
+    hint.className = 'no-tags';
+    hint.textContent = q ? `Press Enter to create "${q}"` : 'No tags match';
+    container.appendChild(hint);
   }
 };
 
@@ -1588,6 +1609,12 @@ const addTag = async (tag) => {
       tags.push(tag);
       state.itemTags.set(state.editingItem.id, tags);
     }
+
+    // Clear the search/add input so the available-tags list re-renders
+    // unfiltered after a successful add — picking a tag is the user's
+    // commit, the query is no longer relevant.
+    const newTagInput = document.querySelector('.new-tag-input');
+    if (newTagInput) newTagInput.value = '';
 
     // Re-render detail view tags
     renderCurrentTags(tags);
@@ -1645,7 +1672,8 @@ const addNewTag = async (tagName) => {
   // Add tag to item
   await addTag(tag);
 
-  // Clear input
+  // Clear input — addTag's renderAvailableTags re-runs without a query
+  // because we wipe the input value here before the input event fires.
   document.querySelector('.new-tag-input').value = '';
 
   // Re-render sidebar to show new tag
