@@ -4,9 +4,86 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Fri, 01 May 2026 07:59:42 GMT</lastBuildDate>
+    <lastBuildDate>Sun, 03 May 2026 17:17:16 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>window-targeting: track tile-launched window focus + drop page-host&apos;s local Maximize cmd</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-02</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-02:d9704639ddb0</guid>
+      <pubDate>Sat, 02 May 2026 12:00:00 GMT</pubDate>
+      <description>window-targeting: track tile-launched window focus + drop page-host&apos;s local Maximize cmd</description>
+    </item>
+    <item>
+      <title>windows: split maximize toggle into maximize + unmaximize cmds</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-02</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-02:d1158744ad72</guid>
+      <pubDate>Sat, 02 May 2026 12:00:00 GMT</pubDate>
+      <description>windows: split maximize toggle into maximize + unmaximize cmds</description>
+    </item>
+    <item>
+      <title>hello-world: hello → hello world to match feature name</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-02</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-02:1ff70826149a</guid>
+      <pubDate>Sat, 02 May 2026 12:00:00 GMT</pubDate>
+      <description>hello-world: hello → hello world to match feature name</description>
+    </item>
+    <item>
+      <title>entities: fall back to URL hostname when pageMetadata.title is empty so URL items don&apos;t stay title-less</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-02</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-02:d7409952778c</guid>
+      <pubDate>Sat, 02 May 2026 12:00:00 GMT</pubDate>
+      <description>entities: fall back to URL hostname when pageMetadata.title is empty so URL items don&apos;t stay title-less</description>
+    </item>
+    <item>
+      <title>window-placement: persist placement intent across session restore; center peeks</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:691d6aad287f</guid>
+      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
+      <description>window-placement: persist placement intent across session restore; center peeks</description>
+    </item>
+    <item>
+      <title>lex: drop periodic sync poll, drive sync from visibility events</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:4eda101cb54c</guid>
+      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
+      <description>lex: drop periodic sync poll, drive sync from visibility events</description>
+    </item>
+    <item>
+      <title>tile-csp: allow https/http image sources so tiles can render favicons</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:c15a914d51d5</guid>
+      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
+      <description>tile-csp: allow https/http image sources so tiles can render favicons</description>
+    </item>
+    <item>
+      <title>display-watcher: use shared 50% stranded threshold instead of local 30%</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:836ff4a1a1b7</guid>
+      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
+      <description>display-watcher: use shared 50% stranded threshold instead of local 30%</description>
+    </item>
+    <item>
+      <title>page: clamp side panels to window and reflow on OS resize</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:202f2da1c7a8</guid>
+      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
+      <description>page: clamp side panels to window and reflow on OS resize</description>
+    </item>
+    <item>
+      <title>click-through: findings and step-by-step plan for OS click-through</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:9610263cb744</guid>
+      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
+      <description>click-through: findings and step-by-step plan for OS click-through</description>
+    </item>
+    <item>
+      <title>window-targeting: harden tile:window:{maximize,fullscreen,center} against bad ids; correct .d.ts; add regression tests</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:de911b88fdb1</guid>
+      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
+      <description>window-targeting: harden tile:window:{maximize,fullscreen,center} against bad ids; correct .d.ts; add regression tests</description>
+    </item>
     <item>
       <title>cards: show item age in card footer</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>

@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: 890947664997 -->
+<!-- last-bumped: 812d250c3571 -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -19,7 +19,22 @@ See TODO.md for pending items, WIP.md for in-progress items.
 
 ## Week of 2026-04-27 (W18)
 
+### 2026-05-02
+
+- window-targeting: track tile-launched window focus + drop page-host's local Maximize cmd
+- windows: split maximize toggle into maximize + unmaximize cmds
+- hello-world: hello → hello world to match feature name
+- entities: fall back to URL hostname when pageMetadata.title is empty so URL items don't stay title-less
+
 ### 2026-05-01
+
+- window-placement: persist placement intent across session restore; center peeks
+- lex: drop periodic sync poll, drive sync from visibility events
+- tile-csp: allow https/http image sources so tiles can render favicons
+- display-watcher: use shared 50% stranded threshold instead of local 30%
+- page: clamp side panels to window and reflow on OS resize
+- click-through: findings and step-by-step plan for OS click-through
+- window-targeting: harden tile:window:{maximize,fullscreen,center} against bad ids; correct .d.ts; add regression tests
 
 - cards: show item age in card footer
 - tags: show usage count on tag chips in cards
