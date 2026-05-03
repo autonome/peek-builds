@@ -382,6 +382,7 @@ export function initDatabase(dbPath: string): Database.Database {
   migrateTagsLastUsedColumn();
   migrateContextHistory();
   migrateEntityType();
+  migrateEventType();
   migrateStandalonePriceEntities();
   migrateStandaloneDateEntities();
   migrateNoisyDateEntities();
@@ -1571,6 +1572,86 @@ function migrateEntityType(): void {
       WHERE content LIKE 'http%'`);
   } catch (error) {
     DEBUG && console.log('main', `Entity indexes:`, (error as Error).message);
+  }
+}
+
+/**
+ * Add 'event' to items type CHECK constraint for existing databases.
+ * Mirrors migrateEntityType — SQLite can't ALTER a CHECK, so we recreate.
+ */
+function migrateEventType(): void {
+  if (!db) return;
+
+  const tableExists = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='items'`
+  ).get();
+  if (!tableExists) return;
+
+  const tableSchema = db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type='table' AND name='items'`
+  ).get() as { sql: string } | undefined;
+  if (!tableSchema) return;
+
+  if (tableSchema.sql.includes("'event'")) return;
+
+  DEBUG && console.log('main', "Adding 'event' to items CHECK constraint");
+
+  const columns = db.prepare(`PRAGMA table_info(items)`).all() as { name: string }[];
+  const columnNames = columns.map(c => c.name);
+
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.exec(`DROP TABLE IF EXISTS items_event_mig`);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS items_event_mig (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity', 'event')),
+        content TEXT,
+        mimeType TEXT DEFAULT '',
+        metadata TEXT DEFAULT '{}',
+        syncId TEXT DEFAULT '',
+        syncedAt INTEGER DEFAULT 0,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL,
+        deletedAt INTEGER DEFAULT 0,
+        starred INTEGER DEFAULT 0,
+        archived INTEGER DEFAULT 0,
+        visitCount INTEGER DEFAULT 0,
+        lastVisitAt INTEGER DEFAULT 0,
+        frecencyScore INTEGER DEFAULT 0,
+        title TEXT DEFAULT '',
+        domain TEXT DEFAULT '',
+        favicon TEXT DEFAULT '',
+        thumbnail TEXT DEFAULT ''
+      )
+    `);
+
+    const migColumns = ['id', 'type', 'content', 'mimeType', 'metadata', 'syncId', 'syncedAt',
+      'createdAt', 'updatedAt', 'deletedAt', 'starred', 'archived', 'visitCount', 'lastVisitAt',
+      'frecencyScore', 'title', 'domain', 'favicon', 'thumbnail'];
+    const existingCols = migColumns.filter(c => columnNames.includes(c));
+    const colList = existingCols.join(', ');
+
+    db.exec(`INSERT INTO items_event_mig (${colList}) SELECT ${colList} FROM items`);
+    db.exec(`DROP TABLE items`);
+    db.exec(`ALTER TABLE items_event_mig RENAME TO items`);
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
+      CREATE INDEX IF NOT EXISTS idx_items_syncId ON items(syncId);
+      CREATE INDEX IF NOT EXISTS idx_items_deletedAt ON items(deletedAt);
+      CREATE INDEX IF NOT EXISTS idx_items_createdAt ON items(createdAt DESC);
+      CREATE INDEX IF NOT EXISTS idx_items_starred ON items(starred);
+      CREATE INDEX IF NOT EXISTS idx_items_lastVisitAt ON items(lastVisitAt);
+      CREATE INDEX IF NOT EXISTS idx_items_visitCount ON items(visitCount);
+      CREATE INDEX IF NOT EXISTS idx_items_frecencyScore ON items(frecencyScore DESC);
+      CREATE INDEX IF NOT EXISTS idx_items_domain ON items(domain);
+    `);
+
+    DEBUG && console.log('main', 'Event type migration complete');
+  } finally {
+    db.pragma('foreign_keys = ON');
   }
 }
 

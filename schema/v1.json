@@ -16,9 +16,9 @@
         "type": {
           "type": "text",
           "not_null": true,
-          "check": "type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')",
+          "check": "type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity', 'event')",
           "sync": true,
-          "description": "Content type: url, text, tagset, image, series, feed, or entity"
+          "description": "Content type: url, text, tagset, image, series, feed, entity, or event"
         },
         "content": {
           "type": "text",

@@ -8,7 +8,7 @@
 export interface SchemaItems {
   /** Unique identifier (UUID or generated ID) */
   id: string;
-  /** Content type: url, text, tagset, image, series, feed, or entity */
+  /** Content type: url, text, tagset, image, series, feed, entity, or event */
   type: string;
   /** URL for type=url, text content for type=text, null for tagset/image */
   content: string | null;

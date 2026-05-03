@@ -49,7 +49,8 @@ export interface Tag {
 // - series: Time-series data (numeric or text values over time)
 // - feed: External feeds (RSS, ATProto, APIs, logs)
 // - entity: Extracted entities (people, places, orgs, events, etc.)
-export type ItemType = 'url' | 'text' | 'tagset' | 'image' | 'series' | 'feed' | 'entity';
+// - event: Calendar events (with start/end time, generates ICS)
+export type ItemType = 'url' | 'text' | 'tagset' | 'image' | 'series' | 'feed' | 'entity' | 'event';
 
 export interface Item {
   id: string;

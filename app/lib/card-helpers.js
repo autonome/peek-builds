@@ -20,6 +20,7 @@ const TYPE_ICONS = {
   entity:  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F48E}</text></svg>',
   feed:    'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F4E1}</text></svg>',
   series:  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F4DA}</text></svg>',
+  event:   'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F4C5}</text></svg>',
   unknown: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">?</text></svg>'
 };
 
@@ -265,6 +266,14 @@ export const getItemDisplayInfo = (item, opts = {}) => {
       title = item.title || item.content || 'Series';
       subtitle = 'Series';
       faviconUrl = TYPE_ICONS.series;
+    } else if (itemType === 'event') {
+      title = item.title || item.content || 'Event';
+      let eventMeta = {};
+      try { eventMeta = JSON.parse(item.metadata || '{}'); } catch {}
+      subtitle = eventMeta.startsAt
+        ? new Date(eventMeta.startsAt).toLocaleString()
+        : 'Event';
+      faviconUrl = TYPE_ICONS.event;
     }
   }
 
