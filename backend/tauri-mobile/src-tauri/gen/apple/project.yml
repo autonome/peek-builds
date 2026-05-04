@@ -34,6 +34,7 @@ targets:
       - path: Externals
         excludes:
           - "*/Release/*"
+          - "**/*.a"
       - path: peek-save_iOS
       - path: assets
         buildPhase: resources
