@@ -138,6 +138,7 @@
     "test:packaged": "yarn kill:packaged; HEADLESS=1 PACKAGED=1 npx playwright test tests/desktop/",
     "test:packaged:debug": "yarn kill:packaged; HEADLESS=1 PACKAGED=1 DEBUG=1 npx playwright test tests/desktop/",
     "//-- Testing --//": "",
+    "desktop": "./scripts/timed.sh sh -c 'yarn check:native && yarn build && (NODE_ENV=test ELECTRON_RUN_AS_NODE=1 npx electron --test dist/backend/electron/*.test.js; NODE_ENV=test node --test tests/unit/*.test.js; HEADLESS=1 BACKEND=electron npx playwright test --project=desktop; HEADLESS=1 BACKEND=electron npx playwright test --project=desktop-serial --workers=1; HEADLESS=1 BACKEND=electron npx playwright test --project=components; HEADLESS=1 BACKEND=electron npx playwright test --project=editor)'",
     "test:unit": "./scripts/timed.sh sh -c 'yarn build && NODE_ENV=test ELECTRON_RUN_AS_NODE=1 npx electron --test dist/backend/electron/*.test.js && NODE_ENV=test node --test tests/unit/*.test.js'",
     "test:unit:modes": "./scripts/timed.sh sh -c 'yarn build && ELECTRON_RUN_AS_NODE=1 npx electron --test dist/backend/electron/modes.test.js'",
     "test:unit:shortcuts": "./scripts/timed.sh sh -c 'yarn build && ELECTRON_RUN_AS_NODE=1 npx electron --test dist/backend/electron/shortcuts.test.js'",
