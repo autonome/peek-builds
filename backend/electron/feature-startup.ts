@@ -29,8 +29,6 @@ export interface FeatureStartupConfig {
   builtinFeaturesDir: string;
   /** Path to the tile preload script */
   tilePreloadPath: string;
-  /** Feature IDs that should load eagerly */
-  eagerIds?: Set<string>;
   /** Current Peek app version (for minPeekVersion checks on installs) */
   peekVersion?: string;
 }
@@ -210,7 +208,6 @@ export function initializeFeatures(config: FeatureStartupConfig): FeatureStartup
   // 3. Load features
   const loaderConfig: TileLoaderConfig = {
     tilePreloadPath: config.tilePreloadPath,
-    eagerIds: config.eagerIds,
   };
 
   const loadResults = loadFeaturesFromRegistry(registry, loaderConfig);

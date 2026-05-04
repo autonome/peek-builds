@@ -51,8 +51,6 @@ export function ensureTileIpcHandlers(): void {
 export interface TileCompatConfig {
   /** Path to the tile preload script */
   tilePreloadPath: string;
-  /** Set of tile IDs that should load eagerly (not lazy) */
-  eagerIds?: Set<string>;
 }
 
 /**
@@ -75,13 +73,12 @@ export function loadTile(
   registerTilePath(tile.id, tile.path);
 
   const manifest = tile.manifest;
-  const isEager = config.eagerIds?.has(tile.id) ?? false;
 
   // A tile is resident if any entry declares `resident: true`.
   const residentEntry = manifest.tiles.find(t => t.resident === true);
   const hasLazyEvents = manifest.tiles.some(t => Array.isArray(t.lazyEvents) && t.lazyEvents.length > 0);
-  // Non-eager tiles with no resident entry are lazy-loaded on first use.
-  const shouldLazyLoad = !isEager && !residentEntry;
+  // Tiles with no resident entry are lazy-loaded on first use.
+  const shouldLazyLoad = !residentEntry;
   const hasCommands = !!(manifest.commands && manifest.commands.length > 0);
 
   if (shouldLazyLoad && (hasCommands || hasLazyEvents)) {

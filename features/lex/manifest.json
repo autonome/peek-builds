@@ -14,8 +14,7 @@
       "height": 620,
       "title": "Lexicon Studio",
       "role": "workspace",
-      "key": "lex-home",
-      "resident": true
+      "key": "lex-home"
     },
     {
       "id": "chain-form",

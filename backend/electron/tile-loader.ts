@@ -42,8 +42,6 @@ export interface FeatureLoadResult {
 export interface TileLoaderConfig {
   /** Path to the tile preload script */
   tilePreloadPath: string;
-  /** Set of feature IDs that should load eagerly */
-  eagerIds?: Set<string>;
 }
 
 // ─── Loader ─────────────────────────────────────────────────────────
@@ -177,7 +175,6 @@ function loadTileFromEntry(
 
   const compatConfig: TileCompatConfig = {
     tilePreloadPath: config.tilePreloadPath,
-    eagerIds: config.eagerIds,
   };
 
   try {

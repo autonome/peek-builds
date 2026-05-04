@@ -12,8 +12,7 @@
       "url": "home.html",
       "width": 700,
       "height": 900,
-      "title": "Hello World",
-      "resident": true
+      "title": "Hello World"
     }
   ],
   "capabilities": {

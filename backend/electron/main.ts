@@ -74,11 +74,6 @@ let _sessionRestoreDoneResolve: (() => void) | null = null;
 const _sessionRestoreDonePromise = new Promise<void>(resolve => { _sessionRestoreDoneResolve = resolve; });
 let _sessionRestoreDone = false;
 
-// Tiles that must load eagerly (not lazy) — needed at startup.
-// Passed to the tile-compat path via `eagerIds`; tile-compat checks
-// this set in addition to the manifest `resident: true` flag.
-const EAGER_TILE_IDS = new Set(['entities']);
-
 // Dev tiles loaded via --load-extension CLI flag
 // These are transient (not persisted) and always have devtools open
 const devTiles = new Map<string, { path: string }>();
@@ -761,7 +756,7 @@ export function discoverBuiltinThemes(extensionsDir: string, legacyThemesDir?: s
  * Load all enabled features. Each feature is a tile.
  * - Builtin features (cmd/hud/page core renderers) launch via core-glue.
  * - Feature tiles in `features/` launch via the tile launcher (eager
- *   if any tile entry has `resident: true` or in `EAGER_TILE_IDS`, otherwise lazy stubs).
+ *   if any tile entry has `resident: true`, otherwise lazy stubs).
  */
 export async function loadFeatures(): Promise<number> {
   const featStart = Date.now();
@@ -800,7 +795,6 @@ export async function loadFeatures(): Promise<number> {
       appDataDir: config.userDataPath,
       builtinFeaturesDir: featuresDir,
       tilePreloadPath,
-      eagerIds: EAGER_TILE_IDS,
     });
     for (const r of featureResult.loadResults) {
       if (r.loaded) loadedTileIds.add(r.id);

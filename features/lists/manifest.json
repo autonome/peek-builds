@@ -15,7 +15,6 @@
       "width": 700,
       "height": 768,
       "title": "Lists",
-      "resident": true,
       "keepLive": true
     }
   ],

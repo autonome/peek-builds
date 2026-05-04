@@ -11,8 +11,7 @@
       "id": "sheet",
       "url": "sheet.html",
       "key": "peek://widget-demo/sheet.html",
-      "title": "Widget Demo",
-      "resident": true
+      "title": "Widget Demo"
     }
   ],
   "capabilities": {
