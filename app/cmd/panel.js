@@ -1515,12 +1515,16 @@ function updateCommandUI_UrlMode(trimmedText) {
   const commandText = document.getElementById('command-text');
   commandText.innerHTML = '';
 
-  if (!trimmedText) return;
+  if (!trimmedText) {
+    syncCommandTextScroll();
+    return;
+  }
 
   const typedSpan = document.createElement('span');
   typedSpan.className = 'typed';
   typedSpan.textContent = trimmedText;
   commandText.appendChild(typedSpan);
+  syncCommandTextScroll();
 }
 
 function hasModifier(e) {
@@ -1528,6 +1532,29 @@ function hasModifier(e) {
 }
 
 // ===== UI Update Functions =====
+
+/**
+ * Mirror the (invisible) command-input's horizontal scroll position onto
+ * the (visible) command-text overlay so the caret/typed-end stays inside
+ * the visible region when content exceeds the input width.
+ *
+ * The real <input> has `caret-color: transparent` and `color: transparent`
+ * — what the user sees is `#command-text` rendered absolutely over it.
+ * The native input scrolls itself to keep the caret visible on every
+ * keystroke and arrow-key move; we just reflect that scrollLeft onto
+ * the display layer so the same visible region appears.
+ *
+ * `#command-text` has `overflow: hidden` (no scrollbar) but
+ * `scrollLeft` is still settable programmatically — content scrolls
+ * underneath the clipping window.
+ */
+function syncCommandTextScroll() {
+  const commandInput = document.getElementById('command-input');
+  const commandText = document.getElementById('command-text');
+  if (commandInput && commandText) {
+    commandText.scrollLeft = commandInput.scrollLeft;
+  }
+}
 
 function updateCommandUI() {
   const commandText = document.getElementById('command-text');
@@ -1647,6 +1674,8 @@ function updateCommandUI() {
       }
     }
   }
+
+  syncCommandTextScroll();
 }
 
 function updateResultsUI() {
@@ -2474,6 +2503,13 @@ async function render() {
 
   commandInput.value = '';
   commandInput.focus();
+
+  // Mirror the input's horizontal scroll onto #command-text so the typed
+  // end / caret stays visible when content exceeds the input width.
+  // Native <input> fires scroll events on caret-driven scroll (typing,
+  // arrow keys, click) — listening once here covers all cases regardless
+  // of whether the keystroke also triggered an FSM-driven re-render.
+  commandInput.addEventListener('scroll', syncCommandTextScroll);
 
   // Input event -> dispatch to state machine (or filter URL mode)
   commandInput.addEventListener('input', () => {
