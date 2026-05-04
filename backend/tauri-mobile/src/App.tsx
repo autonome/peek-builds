@@ -857,6 +857,25 @@ const useKeyboardHeight = () => {
   return keyboardHeight;
 };
 
+const QUICK_ADD_DRAFT_KEY = 'peek:mobile:quickAddDraft';
+
+function loadInitialQuickAddDraft(): { text: string; tags: string[]; newTag: string } | null {
+  try {
+    const raw = localStorage.getItem(QUICK_ADD_DRAFT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    const hasContent = d.text || (Array.isArray(d.tags) && d.tags.length > 0) || d.newTag;
+    if (!hasContent) return null;
+    return {
+      text: typeof d.text === 'string' ? d.text : '',
+      tags: Array.isArray(d.tags) ? d.tags : [],
+      newTag: typeof d.newTag === 'string' ? d.newTag : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 function App() {
   // DEV: random background tint on each load so we can tell if assets are fresh
   useEffect(() => {
@@ -904,11 +923,19 @@ function App() {
   const [editingImageTagInput, setEditingImageTagInput] = useState("");
   const [fullscreenImageData, setFullscreenImageData] = useState<string | null>(null);
 
-  // Unified add input state
-  const [addInputText, setAddInputText] = useState("");
-  const [addInputTags, setAddInputTags] = useState<Set<string>>(new Set());
+  // Unified add input state — hydrated from localStorage at mount
+  const initialDraftRef = useRef<ReturnType<typeof loadInitialQuickAddDraft> | undefined>(undefined);
+  if (initialDraftRef.current === undefined) {
+    initialDraftRef.current = loadInitialQuickAddDraft();
+  }
+  const initialDraft = initialDraftRef.current;
+
+  const [addInputText, setAddInputText] = useState<string>(initialDraft?.text ?? "");
+  const [addInputTags, setAddInputTags] = useState<Set<string>>(
+    () => new Set(initialDraft?.tags ?? [])
+  );
   const [addInputExpanded, setAddInputExpanded] = useState(false);
-  const [addInputNewTag, setAddInputNewTag] = useState("");
+  const [addInputNewTag, setAddInputNewTag] = useState<string>(initialDraft?.newTag ?? "");
 
   // Webview animation duration (ms) — must match --webview-anim in CSS
   const WEBVIEW_ANIM_MS = 200;
@@ -1126,6 +1153,21 @@ function App() {
     localStorage.setItem('sortOrder', sortOrder);
   }, [sortOrder]);
 
+  // Persist quick-add draft to localStorage whenever the panel is open and state changes.
+  useEffect(() => {
+    if (!addInputExpanded) return;
+    const hasContent = addInputText || addInputTags.size > 0 || addInputNewTag;
+    if (hasContent) {
+      localStorage.setItem(QUICK_ADD_DRAFT_KEY, JSON.stringify({
+        text: addInputText,
+        tags: Array.from(addInputTags),
+        newTag: addInputNewTag,
+      }));
+    } else {
+      localStorage.removeItem(QUICK_ADD_DRAFT_KEY);
+    }
+  }, [addInputExpanded, addInputText, addInputTags, addInputNewTag]);
+
   // DEV: random background tint on every load to verify page refreshed
   useEffect(() => {
     if (import.meta.env.DEV) {
@@ -1251,7 +1293,7 @@ function App() {
     };
   }, []);
 
-  // Reset empty expanded input when app returns to foreground
+  // Reset empty expanded input when app returns to foreground; flush draft on hide
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
@@ -1259,13 +1301,21 @@ function App() {
         if (addInputExpanded && !addInputText.trim() && addInputTags.size === 0) {
           setAddInputExpanded(false);
         }
+      } else {
+        // Belt-and-suspenders: flush draft to localStorage when backgrounded
+        if (addInputExpanded) {
+          const hasContent = addInputText || addInputTags.size > 0 || addInputNewTag;
+          if (hasContent) {
+            localStorage.setItem(QUICK_ADD_DRAFT_KEY, JSON.stringify({ text: addInputText, tags: Array.from(addInputTags), newTag: addInputNewTag }));
+          }
+        }
       }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [addInputExpanded, addInputText, addInputTags]);
+  }, [addInputExpanded, addInputText, addInputTags, addInputNewTag]);
 
   const loadWebhookUrl = async () => {
     try {
@@ -1774,6 +1824,7 @@ function App() {
     setAddInputTags(new Set());
     setAddInputExpanded(false);
     setAddInputNewTag("");
+    localStorage.removeItem(QUICK_ADD_DRAFT_KEY);
   };
 
   const addInputAddNewTag = () => {
