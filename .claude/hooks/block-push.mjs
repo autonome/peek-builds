@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// PreToolUse:Bash hook — blocks pushing/main-moving from agent sessions.
-// User-typed `!` commands run client-side and bypass PreToolUse hooks.
+// PreToolUse:Bash hook — surfaces push/main-move commands to the user
+// for explicit approval instead of letting agents run them silently.
+// Emits the documented `permissionDecision: "ask"` shape so Claude Code
+// shows the standard tool-permission prompt; the user approves or denies.
 
 import { readFileSync } from "node:fs";
 
@@ -22,13 +24,17 @@ if (typeof command !== "string") process.exit(0);
 
 for (const { re, why } of PATTERNS) {
   if (re.test(command)) {
-    const head = command.split("\n")[0].slice(0, 100);
-    process.stderr.write(
-      `BLOCKED: \`${head}\` ${why}.\n` +
-        `mpeek policy: jj bookmark set main / jj git push / git push are user-only.\n` +
-        `If the user wants this, they run it themselves via the \`!\` prefix.\n`,
+    process.stdout.write(
+      JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "ask",
+          permissionDecisionReason:
+            `mpeek policy: this command ${why}. Please confirm before allowing.`,
+        },
+      }),
     );
-    process.exit(2);
+    process.exit(0);
   }
 }
 
