@@ -168,6 +168,21 @@ export function transition(state, event) {
           ],
         };
       }
+      if (event.type === EVENTS.RESIZE_START) {
+        // Resize-from-maximized: keep the current (workArea) bounds as
+        // the resize starting size — user drags inward to shrink. No
+        // RESTORE_PRE_MAXIMIZE: snapping to the (smaller) pre-maximize
+        // size before the user has moved would teleport the corner out
+        // from under their cursor.
+        return {
+          state: STATES.RESIZING,
+          effects: [
+            e(EFFECTS.SET_BODY_MAXIMIZED, { value: false }),
+            e(EFFECTS.SET_HANDLES_VISIBLE, { value: true }),
+            e(EFFECTS.SET_URL_MAXIMIZED, { value: false }),
+          ],
+        };
+      }
       if (event.type === EVENTS.INIT_COMPLETE) {
         return { state, effects: [], warning: 'Duplicate INIT_COMPLETE in MAXIMIZED' };
       }

@@ -241,6 +241,22 @@ describe('page-fsm: drag/resize illegal transitions', () => {
     assert.equal(warning, undefined);
   });
 
+  it('resize.start in MAXIMIZED exits maximize and enters RESIZING (single-gesture corner-resize)', () => {
+    const { state, effects, warning } = transition(STATES.MAXIMIZED, { type: EVENTS.RESIZE_START });
+    assert.equal(state, STATES.RESIZING);
+    assert.equal(warning, undefined);
+    const types = effects.map((e) => e.type);
+    assert.ok(types.includes(EFFECTS.SET_BODY_MAXIMIZED), 'should clear maximized body class');
+    assert.ok(types.includes(EFFECTS.SET_URL_MAXIMIZED), 'should clear maximized URL flag');
+    const setBody = effects.find((e) => e.type === EFFECTS.SET_BODY_MAXIMIZED);
+    assert.equal(setBody.value, false);
+    // No RESTORE_PRE_MAXIMIZE — keep current (workArea) screenBounds so the
+    // user's drag delta shrinks from where the cursor is, not from a smaller
+    // pre-max size that would teleport the corner.
+    assert.ok(!types.includes(EFFECTS.RESTORE_PRE_MAXIMIZE),
+      'must NOT restore pre-max bounds (cursor would lose the corner)');
+  });
+
   it('toggle_maximize in DRAGGING is rejected (must end drag first)', () => {
     const { state, warning } = transition(STATES.DRAGGING, { type: EVENTS.TOGGLE_MAXIMIZE });
     assert.equal(state, STATES.DRAGGING);

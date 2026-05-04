@@ -267,9 +267,15 @@ const resizeHandles = {
   sw: document.getElementById('resize-sw'),
   ne: document.getElementById('resize-ne'),
   nw: document.getElementById('resize-nw'),
+  n: document.getElementById('resize-n'),
+  s: document.getElementById('resize-s'),
+  e: document.getElementById('resize-e'),
+  w: document.getElementById('resize-w'),
   navNe: document.getElementById('resize-nav-ne'),
   navNw: document.getElementById('resize-nav-nw'),
 };
+// Width of an edge resize hit-zone (the thin strip alongside a window edge).
+const EDGE_HIT = 6;
 const widgetContainer = document.getElementById('widget-container');
 const centerColumn = document.getElementById('center-column');
 const pageInfoPanel = document.getElementById('page-info-panel');
@@ -458,11 +464,15 @@ function updatePositions() {
   triggerZone.style.width = `${webviewWidth}px`;
   triggerZone.style.height = navVisible ? `${TRIGGER_ZONE_HEIGHT}px` : `${navOffset + TRIGGER_ZONE_HEIGHT}px`;
 
-  // Resize handles — all four corners of the webview (24x24)
+  // Resize handles — corners (24x24) + edges (thin strips between corners).
   resizeHandles.se.style.display = '';
   resizeHandles.sw.style.display = '';
   resizeHandles.ne.style.display = '';
   resizeHandles.nw.style.display = '';
+  resizeHandles.n.style.display = '';
+  resizeHandles.s.style.display = '';
+  resizeHandles.e.style.display = '';
+  resizeHandles.w.style.display = '';
 
   resizeHandles.se.style.left = `${webviewLeft + webviewWidth - 24}px`;
   resizeHandles.se.style.top = `${webviewTop + webviewHeight - 24}px`;
@@ -475,6 +485,28 @@ function updatePositions() {
 
   resizeHandles.nw.style.left = `${webviewLeft}px`;
   resizeHandles.nw.style.top = `${webviewTop}px`;
+
+  // Edge handles — thin strips along webview sides, NOT overlapping
+  // the corner 24x24 hit-zones (so corner cursor wins at the corners).
+  resizeHandles.n.style.left = `${webviewLeft + 24}px`;
+  resizeHandles.n.style.top = `${webviewTop}px`;
+  resizeHandles.n.style.width = `${Math.max(0, webviewWidth - 48)}px`;
+  resizeHandles.n.style.height = `${EDGE_HIT}px`;
+
+  resizeHandles.s.style.left = `${webviewLeft + 24}px`;
+  resizeHandles.s.style.top = `${webviewTop + webviewHeight - EDGE_HIT}px`;
+  resizeHandles.s.style.width = `${Math.max(0, webviewWidth - 48)}px`;
+  resizeHandles.s.style.height = `${EDGE_HIT}px`;
+
+  resizeHandles.e.style.left = `${webviewLeft + webviewWidth - EDGE_HIT}px`;
+  resizeHandles.e.style.top = `${webviewTop + 24}px`;
+  resizeHandles.e.style.width = `${EDGE_HIT}px`;
+  resizeHandles.e.style.height = `${Math.max(0, webviewHeight - 48)}px`;
+
+  resizeHandles.w.style.left = `${webviewLeft}px`;
+  resizeHandles.w.style.top = `${webviewTop + 24}px`;
+  resizeHandles.w.style.width = `${EDGE_HIT}px`;
+  resizeHandles.w.style.height = `${Math.max(0, webviewHeight - 48)}px`;
 
   // Navbar corner resize handles — only visible when navbar is shown
   resizeHandles.navNe.style.display = navVisible ? '' : 'none';
@@ -605,11 +637,48 @@ function updatePositionsMaximized() {
   triggerZone.style.width = `${winW}px`;
   triggerZone.style.height = navVisible ? `${NAVBAR_HEIGHT + MARGIN + TRIGGER_ZONE_HEIGHT}px` : `${TRIGGER_ZONE_HEIGHT + MARGIN}px`;
 
-  // Resize handles hidden when maximized
-  resizeHandles.se.style.display = 'none';
-  resizeHandles.sw.style.display = 'none';
-  resizeHandles.ne.style.display = 'none';
-  resizeHandles.nw.style.display = 'none';
+  // Resize handles in maximized: positioned at the OS window's edges so
+  // the user can grab a corner or edge directly. Mousedown drops the
+  // page-host out of MAXIMIZED into RESIZING (handled by the FSM
+  // transition added for this state) — single gesture, no exit-then-grab.
+  resizeHandles.se.style.display = '';
+  resizeHandles.sw.style.display = '';
+  resizeHandles.ne.style.display = '';
+  resizeHandles.nw.style.display = '';
+  resizeHandles.n.style.display = '';
+  resizeHandles.s.style.display = '';
+  resizeHandles.e.style.display = '';
+  resizeHandles.w.style.display = '';
+
+  resizeHandles.se.style.left = `${winW - 24}px`;
+  resizeHandles.se.style.top = `${winH - 24}px`;
+  resizeHandles.sw.style.left = `0px`;
+  resizeHandles.sw.style.top = `${winH - 24}px`;
+  resizeHandles.ne.style.left = `${winW - 24}px`;
+  resizeHandles.ne.style.top = `0px`;
+  resizeHandles.nw.style.left = `0px`;
+  resizeHandles.nw.style.top = `0px`;
+
+  resizeHandles.n.style.left = `24px`;
+  resizeHandles.n.style.top = `0px`;
+  resizeHandles.n.style.width = `${Math.max(0, winW - 48)}px`;
+  resizeHandles.n.style.height = `${EDGE_HIT}px`;
+  resizeHandles.s.style.left = `24px`;
+  resizeHandles.s.style.top = `${winH - EDGE_HIT}px`;
+  resizeHandles.s.style.width = `${Math.max(0, winW - 48)}px`;
+  resizeHandles.s.style.height = `${EDGE_HIT}px`;
+  resizeHandles.e.style.left = `${winW - EDGE_HIT}px`;
+  resizeHandles.e.style.top = `24px`;
+  resizeHandles.e.style.width = `${EDGE_HIT}px`;
+  resizeHandles.e.style.height = `${Math.max(0, winH - 48)}px`;
+  resizeHandles.w.style.left = `0px`;
+  resizeHandles.w.style.top = `24px`;
+  resizeHandles.w.style.width = `${EDGE_HIT}px`;
+  resizeHandles.w.style.height = `${Math.max(0, winH - 48)}px`;
+
+  // Navbar corners — keep hidden in maximized; the navbar itself is the
+  // drag-out target, so its corners would compete with the navbar's own
+  // dblclick + drag handlers for the same hit-zone.
   resizeHandles.navNe.style.display = 'none';
   resizeHandles.navNw.style.display = 'none';
 
@@ -1522,6 +1591,18 @@ function initResizeHandle(handle) {
       const newWidth = Math.max(MIN_WIDTH, resizeStartWidth - dx);
       screenBounds.x = resizeStartBoundsX + (resizeStartWidth - newWidth);
       screenBounds.width = newWidth;
+      const newHeight = Math.max(MIN_HEIGHT, resizeStartHeight - dy);
+      screenBounds.y = resizeStartBoundsY + (resizeStartHeight - newHeight);
+      screenBounds.height = newHeight;
+    } else if (resizeDir === 'e') {
+      screenBounds.width = Math.max(MIN_WIDTH, resizeStartWidth + dx);
+    } else if (resizeDir === 'w') {
+      const newWidth = Math.max(MIN_WIDTH, resizeStartWidth - dx);
+      screenBounds.x = resizeStartBoundsX + (resizeStartWidth - newWidth);
+      screenBounds.width = newWidth;
+    } else if (resizeDir === 's') {
+      screenBounds.height = Math.max(MIN_HEIGHT, resizeStartHeight + dy);
+    } else if (resizeDir === 'n') {
       const newHeight = Math.max(MIN_HEIGHT, resizeStartHeight - dy);
       screenBounds.y = resizeStartBoundsY + (resizeStartHeight - newHeight);
       screenBounds.height = newHeight;
