@@ -268,18 +268,15 @@ const createWindowCard = (win) => {
   header.style.gap = '8px';
   header.style.minWidth = '0';
 
-  // Try to get favicon from URL (only for external URLs)
-  if (win.url && !win.url.startsWith('peek://')) {
-    try {
-      const url = new URL(win.url);
-      const favicon = document.createElement('img');
-      favicon.className = 'card-favicon';
-      favicon.src = `${url.origin}/favicon.ico`;
-      favicon.onerror = () => favicon.remove();
-      header.appendChild(favicon);
-    } catch (e) {
-      // No favicon
-    }
+  // Favicon comes from the window presentation (api.window.list resolves
+  // the right source — stored value, then Google s2). Renderer just drops
+  // the URL into <img src>; no fallback chain here.
+  if (win.favicon) {
+    const favicon = document.createElement('img');
+    favicon.className = 'card-favicon';
+    favicon.src = win.favicon;
+    favicon.onerror = () => favicon.remove();
+    header.appendChild(favicon);
   }
 
   const title = document.createElement('span');
@@ -295,6 +292,17 @@ const createWindowCard = (win) => {
   }
 
   card.appendChild(header);
+
+  // Page-screenshot thumbnail when stored. peek://thumbnail/<hash>.jpg is
+  // served by the protocol handler from userData/thumbnails/.
+  if (win.thumbnail) {
+    const thumb = document.createElement('img');
+    thumb.className = 'card-thumbnail';
+    thumb.src = `peek://thumbnail/${win.thumbnail}.jpg`;
+    thumb.onerror = () => thumb.remove();
+    thumb.alt = '';
+    card.appendChild(thumb);
+  }
 
   // URL in body
   const url = document.createElement('div');

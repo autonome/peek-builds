@@ -451,6 +451,17 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
   // Restore maximize state so the page-host FSM boots into MAXIMIZED.
   if (entry.maximized) options.maximized = true;
 
+  // Pre-maximize bounds: thread through so the reopened page-host can
+  // populate its renderer-side preMaximizeBounds at INIT — letting the
+  // user unmaximize back to the size they had before the original
+  // maximize, even after a close+reopen cycle.
+  if (entry.preMaximizeBounds) {
+    options.preMaxX = entry.preMaximizeBounds.x;
+    options.preMaxY = entry.preMaximizeBounds.y;
+    options.preMaxWidth = entry.preMaximizeBounds.width;
+    options.preMaxHeight = entry.preMaximizeBounds.height;
+  }
+
   // Publish event for the background window to pick up and open
   publish(getSystemAddress(), 'window:reopen-request', {
     url: entry.url,
@@ -915,7 +926,7 @@ export function registerWindowHandlers(): void {
     // the webview coordinates then jumps to the correct position.
     // Save the original webview screen coordinates for URL params.
     let canvasWebviewBounds: { x: number; y: number; width: number; height: number } | null = null;
-    if (useCanvas && !isHeadless()) {
+    if (useCanvas) {
       const CANVAS_MARGIN = 8;
       const CANVAS_TRIGGER_ZONE = 8;
       const CANVAS_NAVBAR_HEIGHT = 36; // Always reserve space for navbar (avoids resize jumps)
@@ -936,10 +947,12 @@ export function registerWindowHandlers(): void {
         const display = screen.getDisplayNearestPoint({ x: winOptions.x as number, y: winOptions.y as number });
         const wa = display.workArea;
         canvasWebviewBounds = { x: wa.x, y: wa.y, width: wa.width, height: wa.height };
-        winOptions.x = wa.x;
-        winOptions.y = wa.y;
-        winOptions.width = wa.width;
-        winOptions.height = wa.height;
+        if (!isHeadless()) {
+          winOptions.x = wa.x;
+          winOptions.y = wa.y;
+          winOptions.width = wa.width;
+          winOptions.height = wa.height;
+        }
       } else {
         // winOptions.x/y/width/height are currently the webview screen coordinates
         canvasWebviewBounds = {
@@ -948,10 +961,12 @@ export function registerWindowHandlers(): void {
           width: winOptions.width as number,
           height: winOptions.height as number,
         };
-        winOptions.x = canvasWebviewBounds.x - CANVAS_MARGIN;
-        winOptions.y = canvasWebviewBounds.y - CANVAS_TRIGGER_ZONE - CANVAS_NAVBAR_HEIGHT;
-        winOptions.width = canvasWebviewBounds.width + CANVAS_MARGIN * 2;
-        winOptions.height = canvasWebviewBounds.height + CANVAS_TRIGGER_ZONE + CANVAS_MARGIN + CANVAS_NAVBAR_HEIGHT;
+        if (!isHeadless()) {
+          winOptions.x = canvasWebviewBounds.x - CANVAS_MARGIN;
+          winOptions.y = canvasWebviewBounds.y - CANVAS_TRIGGER_ZONE - CANVAS_NAVBAR_HEIGHT;
+          winOptions.width = canvasWebviewBounds.width + CANVAS_MARGIN * 2;
+          winOptions.height = canvasWebviewBounds.height + CANVAS_TRIGGER_ZONE + CANVAS_MARGIN + CANVAS_NAVBAR_HEIGHT;
+        }
       }
     }
 
@@ -1116,6 +1131,22 @@ export function registerWindowHandlers(): void {
         // would lose the body class / handles / URL param sync.
         // See docs/page-host-state-machine.md.
         if (options.maximized === true) pageParams.set('maximized', '1');
+        // Pre-maximize bounds: thread through so the page-host can populate
+        // its renderer-side preMaximizeBounds at INIT, allowing unmaximize
+        // (any time after restore) to restore to the size before the
+        // original maximize. Without this, doMaximize never ran and the
+        // renderer has no bounds to unmaximize to.
+        if (options.maximized === true) {
+          const px = options.preMaxX, py = options.preMaxY,
+                pw = options.preMaxWidth, ph = options.preMaxHeight;
+          if (typeof px === 'number' && typeof py === 'number'
+            && typeof pw === 'number' && typeof ph === 'number') {
+            pageParams.set('preX', String(px));
+            pageParams.set('preY', String(py));
+            pageParams.set('preWidth', String(pw));
+            pageParams.set('preHeight', String(ph));
+          }
+        }
         loadUrl = `peek://app/page/index.html?${pageParams.toString()}`;
         DEBUG && console.log('Routing web page through peek://app/page:', url, '->', loadUrl);
 
@@ -1166,7 +1197,7 @@ export function registerWindowHandlers(): void {
       // `placement` was derived earlier (in Group B fresh-open
       // positioning) and the same value is recorded on the registry
       // here so reuse paths + display-watcher can consume it.
-      const windowParams = {
+      const windowParams: Record<string, unknown> = {
         ...options,
         address: url,
         transient: isTransient,
@@ -1174,6 +1205,21 @@ export function registerWindowHandlers(): void {
         role,
         placement,
       };
+      // Seed canvas state (x/y/width/height + maximized) on the registry
+      // entry from the resolved canvas webview bounds. This is the source
+      // of truth for session save and the close-undo handler — the page-host
+      // renderer keeps it current via tile:window:update-canvas-state IPC.
+      // Seeding here ensures the values are correct from the moment the
+      // window registers, even before the renderer fires its first state
+      // update (which only happens on a transition: resize end, drag end,
+      // maximize, unmaximize).
+      if (useCanvas && canvasWebviewBounds) {
+        windowParams.x = canvasWebviewBounds.x;
+        windowParams.y = canvasWebviewBounds.y;
+        windowParams.width = canvasWebviewBounds.width;
+        windowParams.height = canvasWebviewBounds.height;
+        windowParams.maximized = options.maximized === true;
+      }
       console.log('Adding window to manager:', win.id, 'escapeMode:', windowParams.escapeMode, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'transient:', isTransient, 'placement:', placement);
       registerWindow(win.id, msg.source, windowParams);
       const coordinator = getIzuiCoordinator();

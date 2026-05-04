@@ -33,6 +33,7 @@ import { getProfileSession, getPartitionString, getCurrentProfileId } from './se
 import { getIzuiCoordinator } from './izui-state.js';
 import { clearLastFocusedVisibleWindowId, trackOnWindowFocus } from './ipc.js';
 import type { Placement } from './window-placement.js';
+import { getWindowPresentation } from './window-presenter.js';
 
 // Configuration
 export interface AppConfig {
@@ -101,6 +102,11 @@ export interface ClosedWindowEntry {
   scrollX?: number;      // Scroll position at time of close
   scrollY?: number;
   maximized?: boolean;   // Page-host was maximized at close — restore directly into MAXIMIZED on reopen
+  // Pre-maximize bounds: stored alongside `maximized` so reopen-after-close
+  // can hand them to the page-host, letting unmaximize after reopen restore
+  // to the size before the original maximize. Read from the page-host URL
+  // params (preX/preY/preWidth/preHeight) at close time.
+  preMaximizeBounds?: { x: number; y: number; width: number; height: number };
   timestamp: number;
 }
 
@@ -385,18 +391,19 @@ export async function initialize(): Promise<void> {
   app.on('browser-window-created', (_, window) => {
     const windowId = window.id;
 
-    // Capture window bounds + page-host URL before the window is destroyed
-    // (for reopen-last-closed). The page-host keeps URL params in sync with
-    // its true webview screenBounds (see app/page/page.js updateUrlParams) —
-    // those are the authoritative size for the next open, since window
-    // bounds also include side-panel extraWidth (entities/notes/etc).
+    // Capture the window's canonical presentation before destruction so the
+    // 'closed' handler can persist correct bounds, address, and maximize
+    // state for reopen-last-closed. The presenter encapsulates the canvas /
+    // generic split — main.ts no longer parses the page-host shell URL.
     let lastBounds: { x: number; y: number; width: number; height: number } | null = null;
     let lastHostUrl: string | null = null;
+    let lastPresentation: import('./window-presenter.js').WindowPresentation | null = null;
     window.on('close', () => {
       try {
         if (!window.isDestroyed()) {
           lastBounds = window.getBounds();
           lastHostUrl = window.webContents.getURL();
+          lastPresentation = getWindowPresentation(windowId);
         }
       } catch {
         // Ignore errors during shutdown
@@ -532,42 +539,23 @@ export async function initialize(): Promise<void> {
                 // Context may be cleaned up already during shutdown
               }
 
-              // For canvas pages, the page-host URL params are the authoritative
-              // webview screen bounds — they exclude side-panel extraWidth (which
-              // varies with whether entities/notes/etc are open). Falling back to
-              // window-bounds-minus-fixed-margins inflated saveBounds whenever a
-              // panel was open, so reopen produced a wider window each cycle.
-              //
-              // Exception: when the page-host is in maximized mode, screenBounds
-              // equals the display work area (window == webview, no canvas chrome
-              // applied) — using URL params here would cause reopen's canvas
-              // margin add to overshoot the display. Fall back to fixed-margin
-              // subtraction in that case so the round-trip is exact.
-              let saveBounds = lastBounds;
-              let saveMaximized = false;
-              if (isWebUrl && lastHostUrl && lastHostUrl.startsWith('peek://app/page/')) {
-                try {
-                  const parsed = new URL(lastHostUrl);
-                  saveMaximized = parsed.searchParams.get('maximized') === '1';
-                  if (!saveMaximized) {
-                    const px = parseInt(parsed.searchParams.get('x') || '');
-                    const py = parseInt(parsed.searchParams.get('y') || '');
-                    const pw = parseInt(parsed.searchParams.get('width') || '');
-                    const ph = parseInt(parsed.searchParams.get('height') || '');
-                    if (Number.isFinite(px) && Number.isFinite(py) && Number.isFinite(pw) && Number.isFinite(ph)) {
-                      saveBounds = { x: px, y: py, width: pw, height: ph };
-                    }
-                  }
-                } catch {
-                  // URL parse failed — fall through to bounds fallback below
-                }
-              }
-              // Fallback when no URL params (non-canvas, or page-host hadn't
-              // updated params yet, or the window was maximized): subtract the
-              // fixed canvas chrome from window bounds. Note: still over-counts
-              // when panels were open in non-maximized mode, but only reached
-              // when URL params are unavailable or unreliable.
-              if (saveBounds === lastBounds && lastBounds && isWebUrl) {
+              // Pull bounds + maximize state from the presentation captured
+              // pre-destruction. The presenter already returns canvas-aware
+              // bounds for page-hosts (info.params x/y/width/height) and
+              // BrowserWindow bounds for everything else.
+              let saveBounds = lastPresentation?.bounds ?? lastBounds;
+              const saveMaximized = lastPresentation?.maximized ?? false;
+              const savePreMaxBounds: ClosedWindowEntry['preMaximizeBounds'] =
+                lastPresentation?.preMaxBounds ?? undefined;
+
+              // Fallback for canvas pages whose presentation didn't capture
+              // (presenter returned null because the window was already
+              // destroyed before our close listener fired): subtract the
+              // fixed canvas chrome from window bounds. Slightly inflated
+              // when panels were open in non-maximized mode, but only
+              // reached on the unhappy path.
+              if (saveBounds === lastBounds && lastBounds && isWebUrl
+                && lastHostUrl && lastHostUrl.startsWith('peek://app/page/')) {
                 const CANVAS_MARGIN = 8;
                 const CANVAS_TRIGGER_ZONE = 8;
                 const CANVAS_NAVBAR_HEIGHT = 36;
@@ -594,6 +582,7 @@ export async function initialize(): Promise<void> {
                 scrollX: scrollX || undefined,
                 scrollY: scrollY || undefined,
                 maximized: saveMaximized || undefined,
+                preMaximizeBounds: savePreMaxBounds,
                 timestamp: Date.now(),
               });
             }
@@ -772,7 +761,7 @@ export function discoverBuiltinThemes(extensionsDir: string, legacyThemesDir?: s
  * Load all enabled features. Each feature is a tile.
  * - Builtin features (cmd/hud/page core renderers) launch via core-glue.
  * - Feature tiles in `features/` launch via the tile launcher (eager
- *   if `resident: true` or in `EAGER_TILE_IDS`, otherwise lazy stubs).
+ *   if any tile entry has `resident: true` or in `EAGER_TILE_IDS`, otherwise lazy stubs).
  */
 export async function loadFeatures(): Promise<number> {
   const featStart = Date.now();

@@ -257,4 +257,195 @@ test.describe('Session Restore Page Host @desktop', () => {
     expect(afterState.seHandleHidden,
       `restored page host shows resize handles even though body class says maximized — state drift`).toBe(true);
   });
+
+  test('maximize → unmaximize → resize smaller → restart: bounds restore at resized size, not maximized', async () => {
+    const url = `http://127.0.0.1:${serverPort}/unmax-resize-roundtrip`;
+    const { pageWindow, windowId } = await openPageHost(url);
+
+    await pageWindow.waitForFunction(() => {
+      const p = new URL(window.location.href).searchParams;
+      return p.get('width') && p.get('height');
+    });
+
+    // Capture pre-maximize URL bounds for comparison.
+    const preMaximizeUrl = await getHostState(pageWindow);
+    const preMaximizeWidth = parseInt(preMaximizeUrl.urlParams.width as string, 10);
+    const preMaximizeHeight = parseInt(preMaximizeUrl.urlParams.height as string, 10);
+
+    // Maximize.
+    await maximizePageHost(pageWindow);
+    await waitForBodyMaximized(pageWindow, true);
+
+    // Unmaximize via the same navbar dblclick path.
+    await maximizePageHost(pageWindow);
+    await waitForBodyMaximized(pageWindow, false);
+
+    // Resize smaller through the SE corner handle — pointer events drive
+    // the same FSM path the user does. Drag the SE handle 200px up-left
+    // to shrink the window.
+    await pageWindow.evaluate(() => {
+      const handle = document.getElementById('resize-se')!;
+      handle.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, button: 0, pointerId: 1, screenX: 600, screenY: 500,
+      }));
+      handle.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true, button: 0, buttons: 1, pointerId: 1, screenX: 400, screenY: 300,
+      }));
+      handle.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true, button: 0, pointerId: 1,
+      }));
+    });
+
+    // Wait for the resize to settle in URL params.
+    await pageWindow.waitForFunction(({ w, h }) => {
+      const p = new URL(window.location.href).searchParams;
+      const cw = parseInt(p.get('width') || '0', 10);
+      const ch = parseInt(p.get('height') || '0', 10);
+      return cw < w && ch < h && !p.has('maximized');
+    }, { w: preMaximizeWidth, h: preMaximizeHeight });
+
+    const beforeState = await getHostState(pageWindow);
+    expect(beforeState.bodyMaximized,
+      `pre-save: body.maximized must be false after unmaximize+resize`).toBe(false);
+    expect(beforeState.urlParams.maximized,
+      `pre-save: URL must NOT carry maximized=1 after unmaximize+resize`).toBeUndefined();
+    const resizedWidth = parseInt(beforeState.urlParams.width as string, 10);
+    const resizedHeight = parseInt(beforeState.urlParams.height as string, 10);
+
+    // Save.
+    await app.evaluateMain!((() => {
+      return (globalThis as any).__peek_test.forceSaveSession();
+    }) as any);
+
+    // Close.
+    await bgWindow.evaluate((id: number) => {
+      (window as any).__unmaxRemoved = new Promise<void>((resolve) => {
+        const handler = (msg: { id?: number }) => {
+          if (msg?.id === id) {
+            try { (window as any).app.pubsub.unsubscribe('window:removed', handler); } catch {}
+            resolve();
+          }
+        };
+        (window as any).app.pubsub.subscribe('window:removed', handler);
+      });
+      (window as any).app.window.close(id);
+    }, windowId);
+    await bgWindow.evaluate(() => (window as any).__unmaxRemoved);
+
+    // Restore.
+    const restoreResult = await app.evaluateMain!((() => {
+      return (globalThis as any).__peek_test.forceRestoreSession();
+    }) as any) as { restored: number; failed: number; total: number };
+    expect(restoreResult.restored).toBeGreaterThan(0);
+
+    const restoredPageWindow = await app.getWindow('unmax-resize-roundtrip', 15000);
+    await restoredPageWindow.waitForFunction(() => {
+      const p = new URL(window.location.href).searchParams;
+      return p.get('width') && p.get('height');
+    });
+
+    const afterState = await getHostState(restoredPageWindow);
+
+    expect(afterState.bodyMaximized,
+      `restored page host should NOT be maximized — user unmaximized + resized before restart`).toBe(false);
+    expect(afterState.urlParams.maximized,
+      `restored URL should NOT carry maximized=1`).toBeUndefined();
+    expect(parseInt(afterState.urlParams.width as string, 10),
+      `restored width should match resized width`).toBe(resizedWidth);
+    expect(parseInt(afterState.urlParams.height as string, 10),
+      `restored height should match resized height`).toBe(resizedHeight);
+  });
+
+  test('maximize → save+restore → unmaximize: restores to pre-maximize bounds (not workArea minus chrome)', async () => {
+    const url = `http://127.0.0.1:${serverPort}/premax-roundtrip`;
+    const { pageWindow, windowId } = await openPageHost(url);
+
+    await pageWindow.waitForFunction(() => {
+      const p = new URL(window.location.href).searchParams;
+      return p.get('width') && p.get('height');
+    });
+
+    // Capture pre-maximize bounds — the size the window has BEFORE we
+    // maximize. After the save/restore cycle and a subsequent unmaximize,
+    // the window must come back to this size.
+    const preState = await getHostState(pageWindow);
+    const preMaxWidth = parseInt(preState.urlParams.width as string, 10);
+    const preMaxHeight = parseInt(preState.urlParams.height as string, 10);
+    expect(preState.bodyMaximized).toBe(false);
+
+    // Maximize via dblclick — captures preMaximizeBounds in renderer state
+    // and writes preX/preY/preWidth/preHeight to the URL.
+    await maximizePageHost(pageWindow);
+    await waitForBodyMaximized(pageWindow, true);
+
+    // Verify the URL carries the pre-maximize bounds.
+    const maxState = await getHostState(pageWindow);
+    expect(maxState.urlParams.maximized).toBe('1');
+    expect(parseInt(maxState.urlParams.preWidth as string, 10),
+      `URL should carry preWidth so save+restore can preserve pre-maximize size`)
+      .toBe(preMaxWidth);
+    expect(parseInt(maxState.urlParams.preHeight as string, 10)).toBe(preMaxHeight);
+
+    // Save.
+    await app.evaluateMain!((() => {
+      return (globalThis as any).__peek_test.forceSaveSession();
+    }) as any);
+
+    // Close.
+    await bgWindow.evaluate((id: number) => {
+      (window as any).__premaxRemoved = new Promise<void>((resolve) => {
+        const handler = (msg: { id?: number }) => {
+          if (msg?.id === id) {
+            try { (window as any).app.pubsub.unsubscribe('window:removed', handler); } catch {}
+            resolve();
+          }
+        };
+        (window as any).app.pubsub.subscribe('window:removed', handler);
+      });
+      (window as any).app.window.close(id);
+    }, windowId);
+    await bgWindow.evaluate(() => (window as any).__premaxRemoved);
+
+    // Restore.
+    const restoreResult = await app.evaluateMain!((() => {
+      return (globalThis as any).__peek_test.forceRestoreSession();
+    }) as any) as { restored: number; failed: number; total: number };
+    expect(restoreResult.restored).toBeGreaterThan(0);
+
+    const restoredPageWindow = await app.getWindow('premax-roundtrip', 15000);
+    await restoredPageWindow.waitForFunction(() => {
+      const p = new URL(window.location.href).searchParams;
+      return p.get('maximized') === '1';
+    });
+
+    const restoredMaxState = await getHostState(restoredPageWindow);
+    expect(restoredMaxState.bodyMaximized,
+      `after restore: body should be maximized`).toBe(true);
+    expect(restoredMaxState.urlParams.preWidth,
+      `after restore: URL should still carry preWidth so unmaximize knows where to go`)
+      .toBe(String(preMaxWidth));
+    expect(restoredMaxState.urlParams.preHeight)
+      .toBe(String(preMaxHeight));
+
+    // Now unmaximize on the restored window — must land at the original
+    // pre-maximize size, not at workArea-minus-chrome.
+    await maximizePageHost(restoredPageWindow);
+    await waitForBodyMaximized(restoredPageWindow, false);
+
+    // Wait for URL to reflect the unmaximize bounds.
+    await restoredPageWindow.waitForFunction(({ w, h }) => {
+      const p = new URL(window.location.href).searchParams;
+      return parseInt(p.get('width') || '0', 10) === w
+        && parseInt(p.get('height') || '0', 10) === h
+        && !p.has('maximized');
+    }, { w: preMaxWidth, h: preMaxHeight });
+
+    const finalState = await getHostState(restoredPageWindow);
+    expect(parseInt(finalState.urlParams.width as string, 10),
+      `unmaximize after save+restore should restore to original pre-maximize width, not workArea`)
+      .toBe(preMaxWidth);
+    expect(parseInt(finalState.urlParams.height as string, 10),
+      `unmaximize after save+restore should restore to original pre-maximize height, not workArea`)
+      .toBe(preMaxHeight);
+  });
 });

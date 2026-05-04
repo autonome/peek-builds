@@ -14,6 +14,7 @@ import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
 import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
+import { getWindowPresentation } from './window-presenter.js';
 
 import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile } from './config.js';
@@ -50,53 +51,6 @@ export interface SessionSnapshot {
   createdAt: number;
   reason: 'before-quit' | 'autosave' | 'manual';
   windows: WindowDescriptor[];
-}
-
-/**
- * Extract the real URL from a page container URL.
- * Page containers use peek://app/page/index.html?url=<actual-url>
- * Returns the actual URL, or the original URL if not a container.
- */
-function extractRealUrl(url: string): string {
-  if (url.startsWith('peek://app/page')) {
-    try {
-      const parsed = new URL(url);
-      const actualUrl = parsed.searchParams.get('url');
-      if (actualUrl) {
-        return actualUrl;
-      }
-    } catch {
-      // If URL parsing fails, keep the original
-    }
-  }
-  return url;
-}
-
-/**
- * Extract webview bounds from a canvas page container URL.
- * Canvas pages encode the visible webview position/size in URL params.
- * Returns null if the URL is not a canvas page or params are missing.
- */
-function extractCanvasBounds(url: string): Electron.Rectangle | null {
-  if (!url.startsWith('peek://app/page')) return null;
-  try {
-    const parsed = new URL(url);
-    const x = parsed.searchParams.get('x');
-    const y = parsed.searchParams.get('y');
-    const width = parsed.searchParams.get('width');
-    const height = parsed.searchParams.get('height');
-    if (x && y && width && height) {
-      return {
-        x: parseInt(x, 10),
-        y: parseInt(y, 10),
-        width: parseInt(width, 10),
-        height: parseInt(height, 10),
-      };
-    }
-  } catch {
-    // If URL parsing fails, skip
-  }
-  return null;
 }
 
 /**
@@ -210,6 +164,24 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     zOrderMap.set(win.id, index);
   });
 
+  // Collect all "hidden by overlay" window IDs across the registry. When
+  // an overlay (Windows switcher, etc.) is open at quit time, the IZUI
+  // coordinator has hidden every other window via win.hide() — so they
+  // report !isVisible() in the loop below. Without this carve-out the
+  // !isVisible() skip drops them from the snapshot, and quitting with
+  // an overlay open silently loses every other window. The overlay
+  // tracks the IDs in info.params.overlayHiddenWindows; gather them all
+  // here so the loop's visibility check can let them through.
+  const overlayHiddenIds = new Set<number>();
+  for (const [, winData] of registeredWindows) {
+    const ids = winData.params.overlayHiddenWindows;
+    if (Array.isArray(ids)) {
+      for (const hid of ids) {
+        if (typeof hid === 'number') overlayHiddenIds.add(hid);
+      }
+    }
+  }
+
   for (const [id, winData] of registeredWindows) {
     const win = BrowserWindow.fromId(id);
 
@@ -218,10 +190,11 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       continue;
     }
 
-    // Skip invisible windows (test override skips this check so headless
-    // page-hosts — which Electron reports as not visible — can still be
-    // saved + restored by the session-restore Playwright spec).
-    if (!win.isVisible() && !opts?._forceForTest) {
+    // Skip invisible windows. Carve-out: windows hidden by an active
+    // overlay (tracked above in overlayHiddenIds) should still be saved
+    // so the user gets them back on next launch — they're real content
+    // that just happens to be temporarily covered by a transient picker.
+    if (!win.isVisible() && !opts?._forceForTest && !overlayHiddenIds.has(id)) {
       continue;
     }
 
@@ -244,8 +217,28 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       continue;
     }
 
-    // Extract real URL from page containers
-    const realUrl = extractRealUrl(url);
+    // Skip overlay-role / overlay-flagged windows. Overlays (Windows
+    // switcher, find-bar, peek-card, etc.) are transient UI surfaces
+    // that should not auto-restore on launch. Restoring an overlay
+    // also activates the IZUI coordinator's hide-others behavior, so
+    // users see startup with everything marked hidden and the overlay
+    // sitting on top — never the intent.
+    if (winData.params.role === 'overlay' || winData.params.overlay === true) {
+      DEBUG && console.log(`[session:save] Skipping overlay window ${id}`);
+      continue;
+    }
+
+    // Use the window presenter for the canonical user-facing snapshot.
+    // It encapsulates page-host's two-layer URL shape, canvas bounds, and
+    // maximize state — session.ts no longer special-cases any window type.
+    const presentation = getWindowPresentation(id);
+    if (!presentation) {
+      DEBUG && console.log(`[session:save] No presentation for window ${id}, skipping`);
+      continue;
+    }
+    const realUrl = presentation.address;
+    const windowBounds = presentation.bounds;
+    const canvasMaximized = presentation.maximized;
 
     // Skip windows for unknown tiles (stale from renames/removals)
     const extMatch = realUrl.match(/^peek:\/\/ext\/([^/]+)/);
@@ -258,23 +251,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       }
     }
 
-    // For canvas pages (web URLs in peek://app/page container), use the webview
-    // bounds from URL params, not the fullscreen transparent BrowserWindow bounds.
-    const canvasBounds = extractCanvasBounds(url);
-    const windowBounds = canvasBounds || win.getBounds();
-
-    // Detect the page-host's maximized state from its URL param so restore
-    // can re-enter MAXIMIZED on the page-host FSM rather than booting NORMAL
-    // and leaving body class / handle visibility / URL param out of sync
-    // (see docs/page-host-state-machine.md).
-    let canvasMaximized = false;
-    if (url.startsWith('peek://app/page')) {
-      try {
-        canvasMaximized = new URL(url).searchParams.get('maximized') === '1';
-      } catch { /* unparseable; treat as not maximized */ }
-    }
-
-    console.log(`[session:save] Window ${id} "${win.getTitle()}" bounds: (${windowBounds.x},${windowBounds.y}) ${windowBounds.width}x${windowBounds.height}${canvasBounds ? " [canvas]" : ""}${canvasMaximized ? " [maximized]" : ""} url=${realUrl.substring(0, 80)}`);
+    console.log(`[session:save] Window ${id} "${presentation.title}" bounds: (${windowBounds.x},${windowBounds.y}) ${windowBounds.width}x${windowBounds.height}${canvasMaximized ? " [maximized]" : ""} url=${realUrl.substring(0, 80)}`);
 
     // Capture context state for this window
     let windowContext: WindowContext | undefined;
@@ -298,12 +275,12 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     windowDescriptors.push({
       url: realUrl,
       key: (winData.params.key as string) || undefined,
-      title: win.getTitle(),
+      title: presentation.title,
       bounds: windowBounds,
       source: winData.source,
       params: sanitized,
       zOrder: zOrderMap.get(id) ?? 0,
-      focused: win.isFocused(),
+      focused: presentation.focused,
       context: windowContext,
     });
   }
@@ -681,6 +658,16 @@ export async function restoreSessionSnapshot(
       DEBUG && console.log(`[session] Skipping invalid/stale window: ${descriptor.url || '(empty)'}`);
       return false;
     }
+    // Defense in depth: drop any overlay-role descriptors that snuck into
+    // older snapshots before the save-side filter was added. Restoring an
+    // overlay activates the IZUI hide-others behavior and produces a
+    // startup with everything hidden behind a transient picker.
+    const role = descriptor.params?.role;
+    const overlayFlag = (descriptor.params as Record<string, unknown> | undefined)?.overlay;
+    if (role === 'overlay' || overlayFlag === true) {
+      DEBUG && console.log(`[session] Skipping stale overlay window in snapshot: ${descriptor.url || '(empty)'}`);
+      return false;
+    }
     return true;
   });
 
@@ -959,18 +946,17 @@ export function saveSpaceWorkspaces(): void {
     const spaceName = metadata?.spaceName as string | undefined;
     if (!spaceId) continue;
 
-    const realUrl = extractRealUrl(rawUrl);
-    const canvasBounds = extractCanvasBounds(rawUrl);
-    const bounds = canvasBounds || win.getBounds();
+    const presentation = getWindowPresentation(id);
+    if (!presentation) continue;
 
     if (!spaceWindows.has(spaceId)) {
       spaceWindows.set(spaceId, { spaceName: spaceName || '', windows: [] });
     }
     spaceWindows.get(spaceId)!.windows.push({
-      url: realUrl,
-      bounds,
+      url: presentation.address,
+      bounds: presentation.bounds,
       zOrder: zOrderMap.get(id) ?? 0,
-      focused: win.isFocused(),
+      focused: presentation.focused,
     });
   }
 

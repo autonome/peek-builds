@@ -77,17 +77,31 @@ peek-card[selected]:hover {
 
 /* Window card slotted content */
 .card-favicon {
-  width: 12px;
-  height: 12px;
-  border-radius: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
   flex-shrink: 0;
   background: var(--base02);
   object-fit: contain;
-  margin-top: 4px;
+}
+
+.card-thumbnail {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  object-position: top center;
+  background: var(--base02);
+  border-radius: 4px;
+  border: 1px solid var(--base02);
+}
+
+peek-card[data-hidden="true"] .card-thumbnail {
+  filter: grayscale(0.4);
 }
 
 .card-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--base05);
   white-space: nowrap;
@@ -96,7 +110,7 @@ peek-card[selected]:hover {
 }
 
 .card-url {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--base04);
   white-space: nowrap;
   overflow: hidden;

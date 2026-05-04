@@ -129,6 +129,20 @@ const restoreScrollY = parseInt(params.get('scrollY')) || 0;
 // the maximized layout — so the page-host FSM boots straight into
 // MAXIMIZED via INIT_COMPLETE without needing to call setBounds.
 const initialMaximized = params.get('maximized') === '1';
+// Pre-maximize bounds, threaded across save/restore so unmaximize can
+// restore to the size the window had before being maximized — even when
+// the page-host boots into MAXIMIZED via session restore (in which case
+// doMaximize never ran, so renderer module state never captured them).
+// Encoded as 4 primitive URL params (preX/preY/preWidth/preHeight) so
+// they survive sanitizeParams in session.ts; written by doMaximize and
+// cleared by doUnmaximize.
+const initialPreMaxX = parseInt(params.get('preX'));
+const initialPreMaxY = parseInt(params.get('preY'));
+const initialPreMaxW = parseInt(params.get('preWidth'));
+const initialPreMaxH = parseInt(params.get('preHeight'));
+const hasInitialPreMaxBounds =
+  Number.isFinite(initialPreMaxX) && Number.isFinite(initialPreMaxY)
+  && Number.isFinite(initialPreMaxW) && Number.isFinite(initialPreMaxH);
 
 if (!targetUrl) {
   console.error('[page] No URL provided');
@@ -158,6 +172,24 @@ let preMaximizeBounds = null; // { x, y, width, height } screen bounds before ma
 // how the window was originally sized — e.g., in headless test mode where the
 // canvas margin adjustment in ipc.ts window-open is skipped).
 let preMaximizeWindowBounds = null;
+
+// Restore pre-maximize bounds from URL when the page-host boots directly
+// into MAXIMIZED via session restore / undo-close. Without this, doMaximize
+// never runs, so module-state preMaximizeBounds stays null and unmaximize
+// has nothing to restore to — falls through to computeWindowBounds(workArea)
+// and produces the "slightly smaller than maximized" effect.
+if (initialMaximized && hasInitialPreMaxBounds) {
+  preMaximizeBounds = {
+    x: initialPreMaxX,
+    y: initialPreMaxY,
+    width: initialPreMaxW,
+    height: initialPreMaxH,
+  };
+  // No raw window bounds available — doUnmaximize will fall through to
+  // computeWindowBounds(preMaximizeBounds) which adds canvas margins; that's
+  // the correct round-trip for screen-coordinate (canvas) bounds.
+  preMaximizeWindowBounds = null;
+}
 
 // Apply FSM effects to the DOM. fsmState is already the source of truth by
 // the time effects run (dispatchFsm assigns next.state before iterating);
@@ -328,26 +360,56 @@ function computeWindowBounds(sb) {
 // --- Position all elements relative to the window ---
 
 function updateUrlParams() {
-  // Keep the URL search params in sync with current screen bounds so that
-  // session save (extractCanvasBounds) reads the latest position/size.
+  // Two writes:
+  //   1. IPC to main → updates info.params (registry). This is the
+  //      authoritative source for session save and close-undo at quit
+  //      time. info.params holds primitives so it survives sanitizeParams.
+  //   2. URL search params (history.replaceState). Renderer-side mirror
+  //      for observability — visible in dev tools, in window.location,
+  //      and to tests that watch URL state. NOT read by main at save
+  //      time (that path now reads from info.params), so URL drift
+  //      doesn't produce persistence bugs.
+  const maxed = inMaximized();
+  const x = Math.round(screenBounds.x);
+  const y = Math.round(screenBounds.y);
+  const w = Math.round(screenBounds.width);
+  const h = Math.round(screenBounds.height);
+  const payload = { x, y, width: w, height: h, maximized: maxed };
+  if (maxed && preMaximizeBounds) {
+    payload.preMaxX = Math.round(preMaximizeBounds.x);
+    payload.preMaxY = Math.round(preMaximizeBounds.y);
+    payload.preMaxWidth = Math.round(preMaximizeBounds.width);
+    payload.preMaxHeight = Math.round(preMaximizeBounds.height);
+  }
+  try {
+    api.window.updateCanvasState(payload).catch((err) => {
+      DEBUG && console.log('[page] updateCanvasState failed:', err);
+    });
+  } catch (e) {
+    DEBUG && console.log('[page] updateCanvasState threw:', e);
+  }
   try {
     const url = new URL(window.location.href);
-    url.searchParams.set('x', String(Math.round(screenBounds.x)));
-    url.searchParams.set('y', String(Math.round(screenBounds.y)));
-    url.searchParams.set('width', String(Math.round(screenBounds.width)));
-    url.searchParams.set('height', String(Math.round(screenBounds.height)));
-    // Carry the maximized flag so undo-close (main.ts) can fall back to the
-    // raw OS window bounds — when maximized, screenBounds equals the work
-    // area (window == webview) and re-adding canvas margins on reopen would
-    // overshoot the display.
-    if (inMaximized()) {
-      url.searchParams.set('maximized', '1');
+    url.searchParams.set('x', String(x));
+    url.searchParams.set('y', String(y));
+    url.searchParams.set('width', String(w));
+    url.searchParams.set('height', String(h));
+    if (maxed) url.searchParams.set('maximized', '1');
+    else url.searchParams.delete('maximized');
+    if (maxed && preMaximizeBounds) {
+      url.searchParams.set('preX', String(payload.preMaxX));
+      url.searchParams.set('preY', String(payload.preMaxY));
+      url.searchParams.set('preWidth', String(payload.preMaxWidth));
+      url.searchParams.set('preHeight', String(payload.preMaxHeight));
     } else {
-      url.searchParams.delete('maximized');
+      url.searchParams.delete('preX');
+      url.searchParams.delete('preY');
+      url.searchParams.delete('preWidth');
+      url.searchParams.delete('preHeight');
     }
     history.replaceState(null, '', url.toString());
   } catch (e) {
-    DEBUG && console.log('[page] Failed to update URL params:', e);
+    DEBUG && console.log('[page] URL mirror update failed:', e);
   }
 }
 

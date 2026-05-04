@@ -1628,13 +1628,17 @@ describe('Session Integration Tests', () => {
       url: string,
       params: Record<string, unknown>,
       isVisible: boolean,
-      isDestroyed: boolean
+      isDestroyed: boolean,
+      hiddenByActiveOverlay: boolean = false
     ): boolean {
       if (isDestroyed) return true;
-      if (!isVisible) return true;
+      // Carve-out: a window hidden because an overlay is currently
+      // covering it is still real content — save it.
+      if (!isVisible && !hiddenByActiveOverlay) return true;
       if (url.includes('peek://app/background.html')) return true;
       if (params.modal) return true;
       if (params.role === 'utility' && params.focusable === false) return true;
+      if (params.role === 'overlay' || params.overlay === true) return true;
       return false;
     }
 
@@ -1666,6 +1670,60 @@ describe('Session Integration Tests', () => {
         false
       );
       assert.strictEqual(skip, false, 'Focusable utility windows should be saved');
+    });
+
+    it('SAVES windows hidden by an active overlay (regression: quitting with overlay open lost every other window)', () => {
+      // The IZUI coordinator hides other windows when an overlay opens.
+      // Those windows are real content the user wants restored — the
+      // !isVisible() skip must be carved out for them.
+      const skip = shouldSkipWindow(
+        'https://example.com/',
+        { role: 'content' },
+        false, // !isVisible — the overlay hid it
+        false,
+        true,  // hiddenByActiveOverlay — coordinator says "this is overlay-hidden, not user-closed"
+      );
+      assert.strictEqual(skip, false, 'Overlay-hidden content windows should still be saved');
+    });
+
+    it('still skips genuinely-invisible windows when no overlay is hiding them', () => {
+      // Defensive: ensure the carve-out is gated. A window that's just
+      // !isVisible() with no overlay claiming it should still be skipped.
+      const skip = shouldSkipWindow(
+        'https://example.com/',
+        { role: 'content' },
+        false,
+        false,
+        false, // no overlay hiding it
+      );
+      assert.strictEqual(skip, true, 'Genuinely-invisible windows still skipped');
+    });
+
+    it('skips overlay-role windows like the Windows switcher', () => {
+      // Regression: an overlay was being persisted to the snapshot, so on
+      // launch the switcher would auto-open and the IZUI coordinator would
+      // hide everything else. Overlays are transient UI surfaces and
+      // should never auto-restore.
+      const skip = shouldSkipWindow(
+        'peek://windows/windows.html',
+        { role: 'overlay', overlay: true, alwaysOnTop: true },
+        true,
+        false
+      );
+      assert.strictEqual(skip, true, 'Overlay-role windows should be skipped during save');
+    });
+
+    it('skips windows flagged with overlay=true even without role=overlay', () => {
+      // The window-open option `overlay: true` is the authoritative signal
+      // that the IZUI coordinator should treat this as a hide-others surface.
+      // Skip on either signal so transient pickers don't survive restart.
+      const skip = shouldSkipWindow(
+        'peek://something/picker.html',
+        { overlay: true },
+        true,
+        false
+      );
+      assert.strictEqual(skip, true, 'Windows flagged with overlay=true should be skipped during save');
     });
 
     it('skips modal windows', () => {

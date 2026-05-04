@@ -93,6 +93,7 @@ import {
   getWindowInfo,
   validateThemeCSS,
 } from './main.js';
+import { getWindowPresentation } from './window-presenter.js';
 import {
   registerGlobalShortcut,
   unregisterGlobalShortcut,
@@ -2620,12 +2621,20 @@ export function registerTileIpcHandlers(): void {
     }
 
     try {
+      // Use the window presenter so the response carries user-facing facts
+      // (resolved address for page-hosts, canvas-aware bounds, favicon, etc.)
+      // — consumers don't have to know about page-host shell URLs.
       const windows: Array<{
         id: number;
         url: string;
         title: string;
         focused: boolean;
         visible: boolean;
+        favicon: string;
+        thumbnail: string;
+        bounds: Electron.Rectangle;
+        maximized: boolean;
+        preMaxBounds: Electron.Rectangle | null;
         params: Record<string, unknown>;
       }> = [];
       for (const win of BrowserWindow.getAllWindows()) {
@@ -2634,12 +2643,21 @@ export function registerTileIpcHandlers(): void {
         // When includeInternal is false/absent, skip windows without registry
         // entries (e.g. purely internal Electron windows). When true, include all.
         if (!args.includeInternal && !info) continue;
+        const presentation = getWindowPresentation(win.id);
+        if (!presentation) continue;
         windows.push({
-          id: win.id,
-          url: win.webContents.getURL(),
-          title: win.getTitle(),
-          focused: win.isFocused(),
-          visible: win.isVisible(),
+          id: presentation.id,
+          // Field is named `url` for backward compat; value is the resolved
+          // user-facing address (inner URL for page-hosts).
+          url: presentation.address,
+          title: presentation.title,
+          focused: presentation.focused,
+          visible: presentation.visible,
+          favicon: presentation.favicon,
+          thumbnail: presentation.thumbnail,
+          bounds: presentation.bounds,
+          maximized: presentation.maximized,
+          preMaxBounds: presentation.preMaxBounds,
           params: info ? info.params : {},
         });
       }
@@ -3033,13 +3051,19 @@ export function registerTileIpcHandlers(): void {
       // `maximize` again, and have the new smaller size become the new
       // pre-maximize snapshot — instead of being stuck with the original
       // snapshot from the first maximize.
+      // Stored as flat primitives so they survive sanitizeParams in
+      // session save (object values are stripped).
       if (!atWorkArea && info) {
-        info.params.preMaximizeBounds = {
-          x: currentBounds.x,
-          y: currentBounds.y,
-          width: currentBounds.width,
-          height: currentBounds.height,
-        };
+        info.params.preMaxX = currentBounds.x;
+        info.params.preMaxY = currentBounds.y;
+        info.params.preMaxWidth = currentBounds.width;
+        info.params.preMaxHeight = currentBounds.height;
+      }
+      // info.params.maximized is the source of truth for session save —
+      // keep it in sync here for the cmd-driven path. The renderer-driven
+      // path (dblclick) updates it via tile:window:update-canvas-state.
+      if (info) {
+        info.params.maximized = true;
       }
 
       win.setBounds(workArea);
@@ -3096,15 +3120,17 @@ export function registerTileIpcHandlers(): void {
         return { success: false, error: 'Window not found' };
       }
       const info = getWindowInfo(win.id);
+      const px = info?.params?.preMaxX, py = info?.params?.preMaxY;
+      const pw = info?.params?.preMaxWidth, ph = info?.params?.preMaxHeight;
+      const stashed = (typeof px === 'number' && typeof py === 'number'
+        && typeof pw === 'number' && typeof ph === 'number')
+        ? { x: px, y: py, width: pw, height: ph }
+        : undefined;
       try {
         console.log(
-          `[tile:window:unmaximize] id=${args.id ?? 'sender-fallback'} resolved=${win.id} hasPreBounds=${info?.params?.preMaximizeBounds != null} isMaximized=${win.isMaximized()} url=${win.webContents.getURL().slice(0, 80)}`
+          `[tile:window:unmaximize] id=${args.id ?? 'sender-fallback'} resolved=${win.id} hasPreBounds=${stashed != null} isMaximized=${win.isMaximized()} url=${win.webContents.getURL().slice(0, 80)}`
         );
       } catch { /* logging must never throw */ }
-
-      const stashed = info?.params?.preMaximizeBounds as
-        | { x: number; y: number; width: number; height: number }
-        | undefined;
 
       if (stashed) {
         // Clear electron's own maximize flag too, in case it's set.
@@ -3112,12 +3138,88 @@ export function registerTileIpcHandlers(): void {
           win.unmaximize();
         }
         win.setBounds(stashed);
-        delete info!.params.preMaximizeBounds;
       } else if (win.isMaximized()) {
         win.unmaximize();
       }
+      // Clear cmd-driven path's pre-max snapshot + maximize flag in
+      // info.params; the renderer-driven path (dblclick) clears them via
+      // tile:window:update-canvas-state.
+      if (info) {
+        delete info.params.preMaxX;
+        delete info.params.preMaxY;
+        delete info.params.preMaxWidth;
+        delete info.params.preMaxHeight;
+        info.params.maximized = false;
+      }
       // Targeted notification — see comment in tile:window:maximize.
       try { win.webContents.send('tile:window:unmaximize-request'); } catch { /* renderer may be gone */ }
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: message };
+    }
+  });
+
+  // ── tile:window:update-canvas-state ─────────────────────────────────
+  //
+  // Renderer-driven canvas page-host state sync. The page-host owns the
+  // visible webview bounds and the maximize transitions inside the
+  // fullscreen transparent window; whenever they change (resize END,
+  // drag END, doMaximize, doUnmaximize, drag-out-of-maximize), the
+  // renderer pushes the new state into `info.params` via this IPC.
+  // Session save and the close handler read from `info.params` (rather
+  // than parsing URL search params), so this is the single source of
+  // truth for canvas state at quit time.
+  //
+  // Gated by the same `window.manage` capability as maximize/unmaximize
+  // — only the window's own renderer (or trusted callers with manage
+  // grant) can update the registry entry.
+  registerTileIpc('tile:window:update-canvas-state', { mode: 'handle' }, async (event, args: {
+    token: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    maximized: boolean;
+    preMaxX?: number;
+    preMaxY?: number;
+    preMaxWidth?: number;
+    preMaxHeight?: number;
+  }, _grant) => {
+    const grant = _grant;
+    const check = checkWindowAllowed(grant, 'maximize');
+    if (!check.ok) {
+      handleViolation(grant, 'window', 'window:update-canvas-state', check.error, args.token);
+      return { success: false, error: check.error };
+    }
+
+    try {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win || win.isDestroyed()) {
+        return { success: false, error: 'Window not found' };
+      }
+      const info = getWindowInfo(win.id);
+      if (!info) {
+        // No registry entry — nothing to update. Treat as success so the
+        // renderer doesn't retry.
+        return { success: true };
+      }
+      if (typeof args.x === 'number') info.params.x = args.x;
+      if (typeof args.y === 'number') info.params.y = args.y;
+      if (typeof args.width === 'number') info.params.width = args.width;
+      if (typeof args.height === 'number') info.params.height = args.height;
+      info.params.maximized = !!args.maximized;
+      if (args.maximized) {
+        if (typeof args.preMaxX === 'number') info.params.preMaxX = args.preMaxX;
+        if (typeof args.preMaxY === 'number') info.params.preMaxY = args.preMaxY;
+        if (typeof args.preMaxWidth === 'number') info.params.preMaxWidth = args.preMaxWidth;
+        if (typeof args.preMaxHeight === 'number') info.params.preMaxHeight = args.preMaxHeight;
+      } else {
+        delete info.params.preMaxX;
+        delete info.params.preMaxY;
+        delete info.params.preMaxWidth;
+        delete info.params.preMaxHeight;
+      }
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
