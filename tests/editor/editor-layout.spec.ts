@@ -223,8 +223,8 @@ test.describe('Editor Layout @editor', () => {
       await page.evaluate(() => window.togglePreview());
       const hasActive = await page.evaluate(() => {
         const btns = document.querySelectorAll('.toolbar-btn');
-        // Preview button is the second toolbar-btn
-        return btns[1]?.classList.contains('active');
+        // Toolbar order: [Outline, Editor, Preview, Notes, Order, Focus] — Preview at index 2.
+        return btns[2]?.classList.contains('active');
       });
       expect(hasActive).toBe(true);
 
@@ -247,13 +247,14 @@ test.describe('Editor Layout @editor', () => {
     test('clicking preview toolbar button toggles preview', async () => {
       const wasCollapsed = await page.evaluate(() => window.getPreviewState().collapsed);
 
-      await page.click('.toolbar-btn:nth-child(2)');
+      // Toolbar order: [Outline, Editor, Preview, Notes, Order, Focus] — Preview is the 3rd child.
+      await page.click('.toolbar-btn:nth-child(3)');
 
       const nowCollapsed = await page.evaluate(() => window.getPreviewState().collapsed);
       expect(nowCollapsed).toBe(!wasCollapsed);
 
       // Restore state
-      await page.click('.toolbar-btn:nth-child(2)');
+      await page.click('.toolbar-btn:nth-child(3)');
     });
 
     test('collapsed sidebar has narrow width (32px)', async () => {
@@ -263,6 +264,14 @@ test.describe('Editor Layout @editor', () => {
         await page.evaluate(() => window.toggleOutline());
       }
 
+      // The sidebar uses a 150ms CSS width transition; wait for the
+      // post-collapse offsetWidth to settle to the inline 32px value
+      // before asserting (otherwise we read mid-animation, e.g. ~80px).
+      await page.waitForFunction(
+        () => document.querySelector('.outline-sidebar')?.offsetWidth === 32,
+        undefined,
+        { timeout: 2000 }
+      );
       const width = await page.evaluate(() => {
         return document.querySelector('.outline-sidebar')?.offsetWidth;
       });
@@ -631,8 +640,8 @@ Conclusion.
 
       const hasActive = await page.evaluate(() => {
         const btns = document.querySelectorAll('.toolbar-btn');
-        // Focus button is the third toolbar-btn
-        return btns[2]?.classList.contains('active');
+        // Toolbar order: [Outline, Editor, Preview, Notes, Order, Focus] — Focus at index 5.
+        return btns[5]?.classList.contains('active');
       });
       expect(hasActive).toBe(true);
 
@@ -656,12 +665,17 @@ Conclusion.
   // ==========================================================================
 
   test.describe('Resizers', () => {
+    // Resizers are named after the adjacent panes: `.resizer-outline-editor`
+    // sits between Outline and Editor (the "left" resizer in the default
+    // pane order); `.resizer-editor-preview` between Editor and Preview
+    // (the "right" resizer); `.resizer-annotations` outside the main
+    // pane container.
     test('left and right resizers exist in DOM', async () => {
       const leftResizer = await page.evaluate(() =>
-        !!document.querySelector('.resizer-left')
+        !!document.querySelector('.resizer-outline-editor')
       );
       const rightResizer = await page.evaluate(() =>
-        !!document.querySelector('.resizer-right')
+        !!document.querySelector('.resizer-editor-preview')
       );
       expect(leftResizer).toBe(true);
       expect(rightResizer).toBe(true);
@@ -669,7 +683,7 @@ Conclusion.
 
     test('resizers have cursor: col-resize', async () => {
       const cursor = await page.evaluate(() => {
-        const resizer = document.querySelector('.resizer-left');
+        const resizer = document.querySelector('.resizer-outline-editor');
         return resizer ? getComputedStyle(resizer).cursor : null;
       });
       expect(cursor).toBe('col-resize');
@@ -682,11 +696,11 @@ Conclusion.
         await page.evaluate(() => window.toggleOutline());
       }
 
-      const resizer = page.locator('.resizer-left');
+      const resizer = page.locator('.resizer-outline-editor');
       await resizer.hover();
 
       const indicatorVisible = await page.evaluate(() => {
-        const indicator = document.querySelector('.resizer-left .resizer-indicator');
+        const indicator = document.querySelector('.resizer-outline-editor .resizer-indicator');
         return indicator?.classList.contains('visible');
       });
       expect(indicatorVisible).toBe(true);
@@ -710,7 +724,7 @@ Conclusion.
       );
 
       // Get resizer position
-      const resizerBox = await page.locator('.resizer-left').boundingBox();
+      const resizerBox = await page.locator('.resizer-outline-editor').boundingBox();
       if (resizerBox) {
         const startX = resizerBox.x + resizerBox.width / 2;
         const startY = resizerBox.y + resizerBox.height / 2;
@@ -1075,7 +1089,7 @@ Conclusion.
       });
     });
 
-    test('Cmd+Shift+L with selection creates highlight with empty text', async () => {
+    test('Cmd+Shift+L with selection captures the selected text', async () => {
       // Set known content and select some text
       await page.evaluate(() => {
         window.setEditorContent('Hello World\nSecond line\nThird line');
@@ -1097,7 +1111,7 @@ Conclusion.
       expect(highlights.length).toBeGreaterThanOrEqual(1);
 
       const hl = highlights[highlights.length - 1];
-      expect(hl.text).toBe('');
+      expect(hl.text).toBe('World');
       expect(hl.from).toBe(6);
       expect(hl.to).toBe(11);
 
@@ -1167,8 +1181,8 @@ Conclusion text.
 
       const highlights = await page.evaluate(() => window.getEditorHighlights());
       const hl = highlights[highlights.length - 1];
-      expect(hl.text).toBe('');
-      // Should cover the full "Second line" -- from=11, to=22
+      // Should cover the full "Second line" -- from=11, to=22, text=line content
+      expect(hl.text).toBe('Second line');
       expect(hl.from).toBe(11);
       expect(hl.to).toBe(22);
 
@@ -1220,7 +1234,7 @@ Conclusion text.
       });
     });
 
-    test('notes pane shows "Line N -- highlight" for empty notes', async () => {
+    test('notes pane shows "Line N — <excerpt>" for highlights with no note', async () => {
       // Set known content
       await page.evaluate(() => {
         window.setEditorContent('Alpha\nBravo\nCharlie');
@@ -1239,9 +1253,9 @@ Conclusion text.
 
       const items = await page.evaluate(() => window.getAnnotationItems());
       const lastItem = items[items.length - 1];
-      // Should show "Line 2 -- highlight" (Bravo is on line 2)
+      // Header is "Line N — <text-excerpt>" — Bravo is on line 2.
       expect(lastItem.text).toContain('Line 2');
-      expect(lastItem.text).toContain('highlight');
+      expect(lastItem.text).toContain('Bravo');
 
       // Restore content and close pane
       await page.evaluate(() => {
@@ -1322,9 +1336,11 @@ Conclusion text.
       const items = await page.evaluate(() => window.getAnnotationItems());
       const annotatedItem = items.find(i => i.note === 'My note text');
       expect(annotatedItem).toBeTruthy();
-      // Should show "Line 1" (not "Line 1 -- highlight")
-      expect(annotatedItem!.text).toBe('Line 1');
-      expect(annotatedItem!.text).not.toContain('highlight');
+      // Header shows "Line N — <excerpt>" regardless of whether a note exists;
+      // the note is rendered separately in `.annotation-note`. For "Alpha"
+      // selected on line 1 the header is "Line 1 — Alpha".
+      expect(annotatedItem!.text).toBe('Line 1 — Alpha');
+      expect(annotatedItem!.note).toBe('My note text');
 
       // Restore content and close pane
       await page.evaluate(() => {
@@ -1374,7 +1390,7 @@ Conclusion text.
       });
     });
 
-    test('notes pane has Edit button on each item', async () => {
+    test('notes pane has a delete button on each item', async () => {
       // Set known content and create a highlight
       await page.evaluate(() => {
         window.setEditorContent('Test content line');
@@ -1388,11 +1404,14 @@ Conclusion text.
         return document.querySelectorAll('.annotation-item').length > 0;
       });
 
-      const editBtnText = await page.evaluate(() => {
-        const btn = document.querySelector('.annotation-item .annotation-btn');
-        return btn?.textContent;
+      // Each item exposes a single inline action button: delete (×).
+      // Editing happens by clicking the header row (no separate Edit button).
+      const deleteBtn = await page.evaluate(() => {
+        const btn = document.querySelector('.annotation-item .annotation-btn-delete');
+        return { text: btn?.textContent, hasDeleteClass: !!btn };
       });
-      expect(editBtnText).toBe('Edit');
+      expect(deleteBtn.hasDeleteClass).toBe(true);
+      expect(deleteBtn.text).toBe('×');
 
       // Restore content and close pane
       await page.evaluate(() => {

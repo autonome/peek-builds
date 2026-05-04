@@ -231,7 +231,7 @@
   <div id="editor-root"></div>
 
   <script type="module">
-    import { EditorLayout } from '/extensions/editor/editor-layout.js';
+    import { EditorLayout } from '/features/editor/editor-layout.js';
 
     const TEST_CONTENT = `# Introduction
 
@@ -337,9 +337,15 @@ Conclusion text.
     // Helper: save status visibility
     window.setSaveStatusVisible = (v) => layout.setSaveStatusVisible(v);
 
-    // Helper: get annotations pane state
+    // Helper: get annotations pane state.
+    // "visible" means "open AND expanded" — the user-perceived toggle
+    // state. Internally the pane has two flags: paneVisible (whether
+    // it's shown at all) and paneCollapsed (whether it's a 32px strip).
+    // togglePane cycles expanded <-> collapsed-strip without ever
+    // setting paneVisible back to false, so the toggle test must
+    // check "expanded", not raw visibility.
     window.getAnnotationsState = () => ({
-      visible: layout.paneVisibility.annotations,
+      visible: layout.paneVisible.annotations && !layout.paneCollapsed.annotations,
       highlightCount: layout.annotationsPane.highlights.length,
       element: layout.annotationsPane.getElement(),
     });
@@ -382,8 +388,19 @@ Conclusion text.
       }));
     };
 
-    // Helper: update highlight note
-    window.updateHighlightNote = (id, note) => layout._updateHighlightNote(id, note);
+    // Helper: update highlight note.
+    // Cmd+Shift+L auto-opens the inline textarea editor on a new highlight,
+    // so the static `.annotation-note` div isn't rendered until the user
+    // blurs out of it. Programmatic note updates from tests should mimic
+    // that final state — clear the editing id so the static note renders.
+    window.updateHighlightNote = (id, note) => {
+      layout._updateHighlightNote(id, note);
+      if (layout.annotationsPane) {
+        layout.annotationsPane._editingId = null;
+        layout.annotationsPane._pendingEditId = null;
+        layout.annotationsPane.render();
+      }
+    };
 
     // Signal ready
     document.body.dataset.ready = 'true';
