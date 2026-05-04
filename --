@@ -1,38 +1,12 @@
-fix(chrome-ext): unbreak Proton Pass chrome.permissions / browser.permissions in popup
+fix(tags): canonical URL lookup so page-widget tags attach to existing items
 
-The popup showed "Permission denied for site access" even after the user
-clicked grant. Two compounding causes:
+Manually adding a tag via the page-host widget could silently fail when the
+URL had not been canonicalized identically to the stored item — query-param
+order, default ports, trailing slashes — leaving currentItemId null and
+returning early.
 
-1. The renderer-side permissions polyfill ran on `dom-ready`, after Proton's
-   bundled webextension-polyfill had already replaced `globalThis.chrome` with
-   a Proxy whose `get` trap filters out 'permissions'. Defining
-   `chrome.permissions` on that Proxy's target made the property visible to
-   `getOwnPropertyDescriptor` but not to plain reads — and worse, with
-   `configurable:false` on a property the trap couldn't return triggered the
-   "non-configurable data property must return target's value" Proxy invariant
-   error during popup load.
-
-2. The verification log line dereferenced `chrome.permissions.request` after
-   the install, which threw inside the IIFE and skipped the `browser.permissions`
-   install entirely.
-
-Fix:
-
-- Switch the preload install to `configurable:true, writable:true` so
-  downstream Proxy wraps don't violate the get-trap invariant. Wrap the
-  verification log so a Proxy hiding `permissions` doesn't abort the IIFE.
-- Add an early-install path via `scripts/patch-chrome-extensions.js`: write a
-  `peek-permissions.js` file into the extension dir and inject a
-  `<script src=...>` tag at the top of each HTML entry (popup, settings,
-  onboarding, internal, notification, dropdown). MV3 CSP blocks inline
-  scripts, but `script-src 'self'` allows the external file. The shim
-  patches `chrome.permissions` and then locks `globalThis.chrome` with
-  `writable:false, configurable:false` so webextension-polyfill can't
-  swap the binding for a Proxy that hides our shim.
-- Drop the now-dead inline polyfills.js shim (chrome was undefined at that
-  script's first byte, so the prepend never reached its install code).
-
-Adds `tests/desktop/proton-pass-permissions.spec.ts` asserting that after
-popup load, `chrome.permissions` and `browser.permissions` both === the shim,
-no page errors fire, and `request`/`contains` resolve to `true` for proton.me
-origins.
+Introduce findUrlItem(url) in the datastore which normalizes via the same
+canonical form used by addItem('url', ...), expose it through the tile IPC
+surface (tile:datastore:find-url-item), and route the tags background helper
+through it. addTagToPage now resolves an existing item or creates one on
+demand instead of bailing on null id.

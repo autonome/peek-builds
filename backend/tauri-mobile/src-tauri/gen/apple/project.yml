@@ -43,6 +43,7 @@ targets:
     info:
       path: peek-save_iOS/Info.plist
       properties:
+        ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
@@ -100,6 +101,7 @@ targets:
     info:
       path: Peek/Info.plist
       properties:
+        ITSAppUsesNonExemptEncryption: false
         CFBundleDisplayName: Peek
         CFBundleName: Peek
         CFBundleIdentifier: com.dietrich.peek-mobile.share
