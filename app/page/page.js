@@ -493,6 +493,21 @@ function updatePositions() {
     entitiesPanel.style.top = `${rightStackTop}px`;
     entitiesPanel.style.width = `${PANEL_WIDTH}px`;
   }
+
+  // Stamp the inputs we just used so tests can deterministically tell when
+  // the DOM panel positions are coherent with the current window size.
+  // Atomic with the position writes above (same synchronous tick), so a
+  // single page.evaluate() reading both is guaranteed coherent.
+  window.__pageLayoutInputs = {
+    innerWidth: window.innerWidth,
+    centerColumnWidth,
+    gutterEach,
+    minPanelLeft,
+    maxPanelLeft,
+    webviewLeft,
+    webviewWidth,
+    rightLeft,
+  };
 }
 
 // --- Maximized layout helpers ---

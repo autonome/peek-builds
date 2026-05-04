@@ -264,20 +264,28 @@ test.describe('Page Layout Regression @desktop', () => {
       );
     }, windowId);
 
+    // Wait until two things are simultaneously true:
+    //   1. navbar is visible (the publish actually took effect), and
+    //   2. the most-recent updatePositions() ran against the CURRENT
+    //      window.innerWidth — i.e. any setWindowPadding-triggered resize
+    //      has been observed and the rAF-deferred reflow has fired.
+    // Without (2), innerWidth can be NEW (post-resize) while panel `left`
+    // values still reflect OLD layout, diverging by ~PANEL_OVERHANG (210px).
     await pageWindow.waitForFunction(
       () => {
         const navbar = document.getElementById('navbar');
-        return navbar && navbar.classList.contains('visible');
+        if (!navbar?.classList.contains('visible')) return false;
+        const inputs = (window as any).__pageLayoutInputs;
+        return inputs && inputs.innerWidth === window.innerWidth;
       },
       undefined,
       { timeout: 5000 }
     );
 
-    // Read all the layout inputs and panel positions in one shot so the
-    // clamp math runs against the SAME renderer state that produced the
-    // panel positions. Otherwise innerWidth (which depends on
-    // setWindowPadding) can drift between reads and the expected/actual
-    // diverge by 200+px.
+    // Read panel positions and the layout inputs the renderer actually
+    // used in one evaluate. Because updatePositions() stamps __pageLayoutInputs
+    // in the same synchronous tick as the panel `style.left` writes, the
+    // two are guaranteed coherent.
     const snap = await pageWindow.evaluate(() => {
       const PANEL_WIDTH = 280;
       const PANEL_OVERLAP = 70;
@@ -285,37 +293,38 @@ test.describe('Page Layout Regression @desktop', () => {
       const $ = (id: string) => document.getElementById(id);
       const rect = (el: HTMLElement | null) => el ? { left: parseFloat(el.style.left || '0'), width: el.offsetWidth } : null;
 
-      const centerColumn = document.querySelector('.center-column') as HTMLElement | null;
-      const centerWidth = centerColumn ? centerColumn.offsetWidth : 0;
-      const innerWidth = window.innerWidth;
-      const gutterEach = Math.max(0, (innerWidth - centerWidth) / 2);
-      const minLeft = -gutterEach;
-      const maxLeft = centerWidth + gutterEach - PANEL_WIDTH;
+      const inputs = (window as any).__pageLayoutInputs as {
+        innerWidth: number;
+        centerColumnWidth: number;
+        gutterEach: number;
+        minPanelLeft: number;
+        maxPanelLeft: number;
+        webviewLeft: number;
+        webviewWidth: number;
+        rightLeft: number;
+      };
 
       return {
-        innerWidth,
-        centerWidth,
-        gutterEach,
-        minLeft,
-        maxLeft,
+        inputs,
         webview: rect($('content')),
         pageInfo: rect($('page-info-panel')),
         tags: rect($('tags-panel')),
         entities: rect($('entities-panel')),
-        // Mirror the renderer math:
-        rawLeftPanelLeft: MARGIN - PANEL_WIDTH + PANEL_OVERLAP,
-        rawRightPanelLeft: MARGIN + ($('content')?.offsetWidth ?? 0) - PANEL_OVERLAP,
+        rawRightPanelLeft: MARGIN + inputs.webviewWidth - PANEL_OVERLAP,
       };
     });
 
     // Left panel: must lie within the clamp range.
     expect(snap.pageInfo).not.toBeNull();
-    expect(snap.pageInfo!.left).toBeGreaterThanOrEqual(snap.minLeft);
-    expect(snap.pageInfo!.left).toBeLessThanOrEqual(snap.maxLeft);
+    expect(snap.pageInfo!.left).toBeGreaterThanOrEqual(snap.inputs.minPanelLeft);
+    expect(snap.pageInfo!.left).toBeLessThanOrEqual(snap.inputs.maxPanelLeft);
 
     // Right panels: must equal the clamped raw value, identically for
     // tags + entities (they share the right-stack anchor).
-    const expectedRightPanelLeft = Math.max(snap.minLeft, Math.min(snap.maxLeft, snap.rawRightPanelLeft));
+    const expectedRightPanelLeft = Math.max(
+      snap.inputs.minPanelLeft,
+      Math.min(snap.inputs.maxPanelLeft, snap.rawRightPanelLeft)
+    );
     expect(snap.tags!.left).toBe(expectedRightPanelLeft);
     expect(snap.entities!.left).toBe(expectedRightPanelLeft);
 
