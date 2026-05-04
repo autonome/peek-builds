@@ -189,7 +189,7 @@ const createTableStatements = `
 
   CREATE TABLE IF NOT EXISTS items (
     id TEXT PRIMARY KEY,
-    type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')),
+    type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity', 'event')),
     content TEXT,
     mimeType TEXT DEFAULT '',
     metadata TEXT DEFAULT '{}',
