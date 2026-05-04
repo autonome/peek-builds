@@ -234,6 +234,8 @@ interface TileDatastore {
   // Item operations (require 'items' table grant)
   addItem(type: string, options?: Record<string, unknown>): Promise<TileDatastoreResult>;
   getItem(id: string): Promise<TileDatastoreResult>;
+  /** Find a URL item by canonical (normalized) URL match. Returns null when no item exists. */
+  findUrlItem(url: string): Promise<TileDatastoreResult>;
   updateItem(id: string, options: Record<string, unknown>): Promise<TileDatastoreResult>;
   deleteItem(id: string): Promise<TileDatastoreResult>;
   queryItems(filter?: Record<string, unknown>): Promise<TileDatastoreResult<unknown[]>>;

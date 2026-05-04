@@ -89,10 +89,17 @@ const getActiveWindow = async () => {
  * Find item record by URL content
  */
 const findItemByUrl = async (url) => {
-  const result = await api.datastore.queryItems({ type: 'url', search: url, limit: 5 });
+  // Use the canonical findUrlItem — normalizes the URL server-side and
+  // matches against item.content (also stored normalized). Previously
+  // this did a fuzzy queryItems search + strict `=== url` filter, which
+  // returned null whenever the active window's URL differed from the
+  // stored normalized form (trailing slash, default port, query order).
+  // That caused the tag command to create a duplicate item, which the
+  // page-host's tag-event subscriber then adopted as currentItemId —
+  // making it look like existing tags had been replaced.
+  const result = await api.datastore.findUrlItem(url);
   if (!result.success) return null;
-
-  return result.data.find(item => item.content === url) || null;
+  return result.data || null;
 };
 
 /**

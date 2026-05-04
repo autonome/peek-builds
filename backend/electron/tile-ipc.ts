@@ -44,6 +44,7 @@ import {
   getRow as dsGetRow,
   addItem as dsAddItem,
   getItem as dsGetItem,
+  findUrlItem as dsFindUrlItem,
   updateItem as dsUpdateItem,
   deleteItem as dsDeleteItem,
   queryItems as dsQueryItems,
@@ -5230,6 +5231,19 @@ export function registerTileIpcHandlers(): void {
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-item', check.error); return { error: check.error }; }
     try {
       const data = dsGetItem(args.id);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:datastore:find-url-item', { mode: 'handle' }, async (event, args: {
+    token: string;
+    url: string;
+  }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:find-url-item', check.error); return { error: check.error }; }
+    try {
+      const data = dsFindUrlItem(args.url);
       return { success: true, data };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };

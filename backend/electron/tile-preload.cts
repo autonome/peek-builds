@@ -1044,6 +1044,8 @@ function buildAPI(): Record<string, unknown> {
       ipcRenderer.invoke('tile:datastore:add-item', { token: tileToken, type, options }),
     getItem: (id: string) =>
       ipcRenderer.invoke('tile:datastore:get-item', { token: tileToken, id }),
+    findUrlItem: (url: string) =>
+      ipcRenderer.invoke('tile:datastore:find-url-item', { token: tileToken, url }),
     updateItem: (id: string, options: unknown) =>
       ipcRenderer.invoke('tile:datastore:update-item', { token: tileToken, id, options }),
     deleteItem: (id: string) =>

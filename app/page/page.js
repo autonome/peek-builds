@@ -3486,9 +3486,38 @@ function renderTags() {
 }
 
 async function addTagToPage(tagName) {
-  if (!currentItemId || !tagName) return;
+  if (!tagName) return;
   tagName = tagName.trim().toLowerCase();
   if (!tagName) return;
+
+  // If we don't have an item id yet (page load race, or no item for this
+  // URL ever existed), resolve or create one on demand. Previously this
+  // function silently returned on null currentItemId, so the user got no
+  // feedback when they typed a tag before the page metadata had settled.
+  if (!currentItemId) {
+    let url = '';
+    try { url = webview.getURL() || ''; } catch { /* ignore */ }
+    if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+      console.warn('[page] addTagToPage: no current item and no http(s) URL to anchor a new one — tag dropped:', tagName);
+      return;
+    }
+    try {
+      const found = await api.datastore.findUrlItem(url);
+      if (found?.success && found.data) {
+        currentItemId = found.data.id;
+      } else {
+        const created = await api.datastore.addItem('url', { content: url });
+        if (!created?.success || !created.data?.id) {
+          console.warn('[page] addTagToPage: failed to create item for URL:', url, created?.error);
+          return;
+        }
+        currentItemId = created.data.id;
+      }
+    } catch (err) {
+      console.error('[page] addTagToPage: error resolving item id:', err);
+      return;
+    }
+  }
 
   // Check if already tagged
   if (currentPageTags.some(t => t.name.toLowerCase() === tagName)) {

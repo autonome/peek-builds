@@ -240,6 +240,50 @@ describe('Desktop Datastore Tests', () => {
     });
   });
 
+  describe('findUrlItem (canonical URL lookup)', () => {
+    it('returns null for null/empty/non-http inputs', () => {
+      assert.strictEqual(datastore.findUrlItem(''), null);
+      assert.strictEqual(datastore.findUrlItem(null as unknown as string), null);
+      // Items table only stores url-typed rows for http(s) URLs in practice;
+      // a non-URL input still returns null because no row will match.
+      assert.strictEqual(datastore.findUrlItem('not a url'), null);
+    });
+
+    it('matches stored item via normalized URL — trailing slash', () => {
+      const { id } = datastore.addItem('url', { content: 'https://example.com/page' });
+      // Active window URL has a trailing slash; stored content does not.
+      const found = datastore.findUrlItem('https://example.com/page/');
+      assert.ok(found, 'should find item despite trailing-slash difference');
+      assert.strictEqual(found!.id, id);
+    });
+
+    it('matches stored item via normalized URL — query param order', () => {
+      const { id } = datastore.addItem('url', { content: 'https://example.com/q?a=1&b=2' });
+      const found = datastore.findUrlItem('https://example.com/q?b=2&a=1');
+      assert.ok(found, 'should find item despite param-order difference');
+      assert.strictEqual(found!.id, id);
+    });
+
+    it('matches stored item via normalized URL — default port stripped', () => {
+      const { id } = datastore.addItem('url', { content: 'https://example.com/x' });
+      const found = datastore.findUrlItem('https://example.com:443/x');
+      assert.ok(found, 'should find item despite default-port presence');
+      assert.strictEqual(found!.id, id);
+    });
+
+    it('returns null when no item exists for the URL', () => {
+      const found = datastore.findUrlItem('https://does-not-exist.example/');
+      assert.strictEqual(found, null);
+    });
+
+    it('does not return soft-deleted items', () => {
+      const { id } = datastore.addItem('url', { content: 'https://soft-deleted.example/page' });
+      datastore.deleteItem(id);
+      const found = datastore.findUrlItem('https://soft-deleted.example/page');
+      assert.strictEqual(found, null);
+    });
+  });
+
   describe('Item deletion', () => {
     it('should soft delete an item', () => {
       const { id } = datastore.addItem('url', { content: 'https://delete-me.com' });

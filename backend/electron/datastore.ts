@@ -3150,6 +3150,27 @@ export function getItem(itemId: string): Item | null {
 }
 
 /**
+ * Find a URL item by normalizing the input URL and matching item.content
+ * exactly. Items are stored with `content` already normalized (via
+ * `normalizeUrl`) so the lookup is a single equality check after we
+ * normalize the input. Returns null when no item matches — callers that
+ * want create-if-missing semantics should layer that on top.
+ *
+ * Single canonical entry point for "the item for this URL" — fixes the
+ * recurring class of bug where one caller does fuzzy/exact matching on
+ * the raw URL while another caller stored the normalized form, producing
+ * duplicate items for the same logical URL.
+ */
+export function findUrlItem(url: string): Item | null {
+  if (!url) return null;
+  const normalized = normalizeUrl(url);
+  const result = getDb()
+    .prepare('SELECT * FROM items WHERE type = ? AND content = ? AND deletedAt = 0')
+    .get('url', normalized);
+  return (result as Item) || null;
+}
+
+/**
  * Extract inline hashtags from text content and add them as tags on the item.
  * Only adds — never removes (can't distinguish manual tags from hashtag-derived).
  */
