@@ -24,6 +24,7 @@ const PREFS_STORAGE_KEY = 'prefs';
 
 // Autosave state
 let currentItemId = null;
+let currentItemTitle = null; // Tracks the loaded item's title (datastore-item path)
 let currentFilePath = null; // Tracks the open file on disk
 let saveStatus = 'saved'; // 'saved' | 'saving' | 'unsaved'
 let saveTimer = null;
@@ -213,6 +214,7 @@ const init = async () => {
       if (result.success && result.data) {
         initialContent = result.data.content || '';
         currentItemId = itemIdParam;
+        currentItemTitle = result.data.title || null;
         hasExplicitSource = true;
         debug && console.log('[editor] Loaded item from datastore:', itemIdParam);
 
@@ -252,6 +254,8 @@ const init = async () => {
     updateWindowTitle();
     // Set base path for resolving relative image paths in preview
     editorLayout.setBasePath(extractDirname(currentFilePath));
+  } else if (currentItemId) {
+    updateWindowTitle();
   }
 
   // Set up Cmd+O (open file) and Cmd+S (save file) keyboard shortcuts
@@ -495,11 +499,16 @@ const extractDirname = (filePath) => {
 };
 
 /**
- * Update the window title and filename display to show the current filename.
+ * Update the window title and filename display.
+ *
+ * Title resolution: filename (file path) → item title (datastore item) →
+ * fallback "Editor". The window-presenter pulls win.getTitle() into its
+ * canonical WindowPresentation, so consumers (Windows switcher, session
+ * save) inherit whatever we set here without any per-feature awareness.
  */
 const updateWindowTitle = () => {
   const filename = currentFilePath ? extractFilename(currentFilePath) : null;
-  const title = filename || 'Editor';
+  const title = filename || currentItemTitle || 'Editor';
   document.title = title;
   if (api?.window?.setTitle) {
     api.window.setTitle(title);
@@ -639,6 +648,11 @@ const performAutosave = async (content) => {
       saveStatus = 'saved';
       debug && console.log('[editor] Autosaved item:', currentItemId, 'title:', title);
 
+      if (title !== currentItemTitle) {
+        currentItemTitle = title;
+        updateWindowTitle();
+      }
+
       // Publish change event
       if (api?.pubsub?.publish) {
         api.pubsub.publish('editor:changed', { action: 'update', itemId: currentItemId });
@@ -669,6 +683,8 @@ const createDeferredNoteItem = async (content) => {
     const result = await api.datastore.addItem('text', { content, title });
     if (result.success && result.data) {
       currentItemId = result.data.id;
+      currentItemTitle = title || null;
+      updateWindowTitle();
       debug && console.log('[editor] Created new note item on first content:', currentItemId);
 
       // Tag with 'note' and 'from:cmd'
