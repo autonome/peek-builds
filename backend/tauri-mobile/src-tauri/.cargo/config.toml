@@ -1,3 +1,13 @@
 # Android 16KB page alignment is handled in build.rs and peek-core/build.rs
 # via cargo:rustc-link-arg. This file is intentionally minimal because
 # the Tauri CLI sets CARGO_ENCODED_RUSTFLAGS which overrides rustflags here.
+
+# Pin the iOS deployment target for cc-compiled object files (e.g. sqlite3.o
+# from rusqlite) so they match the Xcode project iOS 16.0 target. Without
+# this, cc defaults to the current SDK (e.g. 26.x) and Xcode emits
+# "Object file was built for newer iOS version than being linked" warnings.
+# [env] is the most reliable place for this — it covers both our shell
+# scripts and "tauri ios build" invoked by build-archive.sh, and is not
+# affected by CARGO_ENCODED_RUSTFLAGS.
+[env]
+IPHONEOS_DEPLOYMENT_TARGET = "16.0"

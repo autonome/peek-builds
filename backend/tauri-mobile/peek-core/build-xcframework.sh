@@ -22,6 +22,12 @@ XCFRAMEWORK_DIR="${SCRIPT_DIR}/PeekCore.xcframework"
 SIM_TARGET="aarch64-apple-ios-sim"
 DEVICE_TARGET="aarch64-apple-ios"
 
+# Match the Xcode project iOS deployment target (see src-tauri/gen/apple/project.yml
+# deploymentTarget.iOS = 16.0) so cc-compiled objects inside the static lib
+# (e.g. sqlite3.o from rusqlite) do not emit "built for newer iOS version" linker
+# warnings when Xcode links them into the app target.
+export IPHONEOS_DEPLOYMENT_TARGET=16.0
+
 SIM_ONLY=false
 if [[ "${1:-}" == "--sim" ]]; then
     SIM_ONLY=true

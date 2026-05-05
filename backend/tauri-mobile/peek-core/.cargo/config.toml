@@ -1,0 +1,12 @@
+# Pin the iOS deployment target for cc-compiled object files (e.g. sqlite3.o
+# from rusqlite) so they match the Xcode project iOS 16.0 target
+# (see src-tauri/gen/apple/project.yml deploymentTarget.iOS = 16.0).
+#
+# Without this, cc defaults to the current SDK (e.g. 26.x) and Xcode emits
+# "Object file was built for newer iOS version than being linked" warnings
+# when the resulting libpeek_core.a is linked into the app target.
+#
+# Mirrored in build-xcframework.sh as belt-and-suspenders. [env] covers
+# any direct cargo invocation in this crate too.
+[env]
+IPHONEOS_DEPLOYMENT_TARGET = "16.0"
