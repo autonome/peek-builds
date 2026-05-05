@@ -1,20 +1,30 @@
 /**
- * Entities Extension - Entity Recognition
+ * Entities — background script handler.
  *
- * Automatically extracts and indexes entities (people, places, organizations,
- * events, emails, phones, dates) from visited pages using regex, microformat,
- * and JSON-LD extractors.
+ * Stage 4a of peek MCP plan 3d7d9239: extraction work moves out of
+ * the resident home tile. This bg tile is `lazy: true` with
+ * `lazyEvents` covering every topic that drives it:
  *
- * Phase 1: Structured data extraction (regex + microformats + JSON-LD)
+ *   scripts:execute:entities-extract  ← rule engine, fired by manifest
+ *                                       rules on page:content-ready /
+ *                                       item:created (URL items only)
+ *   entities:extract                  ← imperative request from page
+ *                                       widget / "extract entities" cmd
+ *   entities:search                   ← query API
+ *   entities:get-for-url              ← lookup API
+ *
+ * The pipeline itself is unchanged from the previous resident
+ * implementation — we just wired its ignition mechanism through the
+ * rule engine (for reactive triggers) and lazyEvents (for direct
+ * imperative requests).
  */
 
 import { extractRegexEntities } from './extractors/regex.js';
 import { extractMicroformatEntities } from './extractors/microformats.js';
 import { extractStructuredDataEntities, extractPageMetadata } from './extractors/structured-data.js';
 import { processEntities } from './entity-matcher.js';
-import { getEntities, getObservations, setEntityFeedback } from './entity-store.js';
+import { getEntities } from './entity-store.js';
 import { ensureNameDatabase } from './name-validator.js';
-import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
 
@@ -25,92 +35,55 @@ const CONFIDENCE_THRESHOLD = 0.7;
 
 // In-memory cache of recently extracted URLs
 const extractionCache = new Map();
-
-// Pending extraction timers
+// Pending extraction timers (deduped per URL)
 const pendingExtractions = new Map();
 
 // ==================== Content Extraction ====================
 
-/**
- * Extract page metadata by requesting content from the main process.
- * Uses the page's HTML content (meta tags, JSON-LD, microformats).
- * @param {string} url - URL to extract from
- * @returns {Promise<{html: string, text: string, title: string} | null>}
- */
 async function getPageContent(url) {
-  // Request page content extraction via IPC
-  // The main process has access to webContents and can run executeJavaScript
   try {
     const result = await api.datastore.extractPageContent(url);
     if (result && result.success) {
-      console.log(`[entities] getPageContent via IPC for ${url}: html=${result.data.html?.length || 0} chars, text=${result.data.text?.length || 0} chars`);
       return result.data;
     }
-    console.log(`[entities] IPC extractPageContent failed for ${url}: ${result?.error || 'no result'}, falling back to fetch`);
-  } catch (err) {
-    console.log(`[entities] IPC extractPageContent error for ${url}: ${err.message}, falling back to fetch`);
+  } catch {
+    // fall through to fetch
   }
-
-  // Fallback: fetch the URL directly for metadata extraction
   try {
     const response = await fetch(url);
-    if (!response.ok) {
-      console.log(`[entities] fetch fallback failed for ${url}: HTTP ${response.status}`);
-      return null;
-    }
+    if (!response.ok) return null;
     const html = await response.text();
-    console.log(`[entities] getPageContent via fetch for ${url}: html=${html.length} chars, hasJsonLd=${html.includes('application/ld+json')}`);
-    // Extract basic text (strip tags)
     const textContent = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    return {
-      html,
-      text: textContent.slice(0, 50000), // Limit text extraction
-      title: ''
-    };
-  } catch (err) {
-    console.log(`[entities] fetch fallback error for ${url}: ${err.message}`);
+    return { html, text: textContent.slice(0, 50000), title: '' };
+  } catch {
     return null;
   }
 }
 
 // ==================== URL Item Enrichment ====================
 
-/**
- * Enrich a URL item with page metadata (OG tags, title, etc.)
- * @param {string} url - Page URL
- * @param {Object} pageMetadata - Extracted metadata from extractPageMetadata()
- */
 async function enrichUrlItem(url, pageMetadata) {
   try {
     const items = await api.datastore.queryItems({ type: 'url', search: url, limit: 5 });
     if (!items.success || !items.data) return;
 
-    // Match by exact URL or by normalized form (content is stored normalized)
-    // Also try stripping/adding trailing slash for root paths
     const urlVariants = new Set([url]);
     try {
       const parsed = new URL(url);
-      urlVariants.add(parsed.toString()); // canonical form
+      urlVariants.add(parsed.toString());
       if (parsed.pathname === '/') {
-        // Try with and without trailing slash
-        const withSlash = parsed.origin + '/' + parsed.search + parsed.hash;
-        const withoutSlash = parsed.origin + parsed.search + parsed.hash;
-        urlVariants.add(withSlash);
-        urlVariants.add(withoutSlash);
+        urlVariants.add(parsed.origin + '/' + parsed.search + parsed.hash);
+        urlVariants.add(parsed.origin + parsed.search + parsed.hash);
       }
     } catch { /* invalid URL */ }
 
     const item = items.data.find(i => urlVariants.has(i.content));
     if (!item) return;
 
-    // Update title if empty or "Loading...". Fall back to hostname so URL
-    // items don't stay title-less when fetch fails / the page omits a
-    // <title> / extraction returns nothing — those items would otherwise
-    // render as bare URLs or empty cards in every consumer view.
     const fallbackTitle = pageMetadata.title || (() => {
       try { return new URL(url).hostname; } catch { return ''; }
     })();
@@ -118,12 +91,10 @@ async function enrichUrlItem(url, pageMetadata) {
       await api.datastore.updateItemTitle(url, fallbackTitle);
     }
 
-    // Persist favicon if available
     if (pageMetadata.favicon) {
       await api.datastore.updateItemFavicon(url, pageMetadata.favicon);
     }
 
-    // Update metadata with _og data (skip if already enriched)
     const existingMeta = item.metadata ? JSON.parse(item.metadata) : {};
     if (existingMeta._og) return;
 
@@ -138,7 +109,6 @@ async function enrichUrlItem(url, pageMetadata) {
         extractedAt: Date.now()
       }
     };
-
     await api.datastore.updateItem(item.id, { metadata: JSON.stringify(enrichedMeta) });
   } catch (err) {
     console.warn('[entities] Failed to enrich URL item:', err.message);
@@ -147,12 +117,6 @@ async function enrichUrlItem(url, pageMetadata) {
 
 // ==================== Extraction Pipeline ====================
 
-/**
- * Run the full extraction pipeline on a URL
- * @param {string} url - Page URL
- * @param {string} [title] - Page title
- * @returns {Promise<Array<Object>>} Processed entities
- */
 async function extractEntities(url, title = '') {
   const content = await getPageContent(url);
   if (!content) return [];
@@ -161,18 +125,13 @@ async function extractEntities(url, title = '') {
   const text = content.text || '';
   const pageTitle = title || content.title || '';
 
-  // Enrich the URL item with page metadata (OG tags, etc.)
   try {
     const pageMetadata = extractPageMetadata(html, url);
-    if (pageMetadata) {
-      await enrichUrlItem(url, pageMetadata);
-    }
+    if (pageMetadata) await enrichUrlItem(url, pageMetadata);
   } catch (err) {
     console.warn('[entities] Page metadata enrichment failed:', err.message);
   }
 
-  // Run all extractors in parallel, isolating failures so one broken extractor
-  // doesn't prevent the others from contributing entities
   const safeExtract = (fn, name) => {
     try {
       const result = fn();
@@ -189,60 +148,36 @@ async function extractEntities(url, title = '') {
     Promise.resolve(safeExtract(() => extractStructuredDataEntities(html, url), 'structured-data')),
   ]);
 
-  console.log(`[entities] Extraction results for ${url}: structured-data=${structuredDataEntities.length}, microformats=${microformatEntities.length}, regex=${regexEntities.length}, html.length=${html.length}, hasJsonLd=${html.includes('application/ld+json')}`);
-
-  const allRaw = [
-    ...structuredDataEntities,  // Highest confidence first
-    ...microformatEntities,
-    ...regexEntities,
-  ];
-
+  const allRaw = [...structuredDataEntities, ...microformatEntities, ...regexEntities];
   if (allRaw.length === 0) return [];
 
-  // Process through matcher (dedup + store)
-  const processed = await processEntities(allRaw, {
-    url,
-    title: pageTitle
-  }, CONFIDENCE_THRESHOLD);
-
-  return processed;
+  return await processEntities(allRaw, { url, title: pageTitle }, CONFIDENCE_THRESHOLD);
 }
 
+// ==================== Trigger Plumbing ====================
+
 /**
- * Handle a page load event - schedule extraction
- * @param {Object} msg - Event message
- * @param {string} msg.url - Page URL
- * @param {string} [msg.title] - Page title
+ * Schedule extraction for a URL (debounced + cooldowned). Used by
+ * both the rule-engine entry point and the imperative entities:extract
+ * topic.
  */
-function handlePageLoad(msg) {
+function schedulePageExtraction(msg) {
   const url = msg.content || msg.url;
   if (!url || typeof url !== 'string') return;
-
-  // Skip internal URLs
   if (url.startsWith('peek://') || url.startsWith('about:') || url.startsWith('chrome://')) return;
   if (!url.startsWith('http://') && !url.startsWith('https://')) return;
 
-  // Check cooldown
   const lastExtracted = extractionCache.get(url);
-  if (lastExtracted && Date.now() - lastExtracted < REEXTRACT_COOLDOWN_MS) {
-    return;
-  }
+  if (lastExtracted && Date.now() - lastExtracted < REEXTRACT_COOLDOWN_MS) return;
 
-  // Cancel any pending extraction for this URL
-  if (pendingExtractions.has(url)) {
-    clearTimeout(pendingExtractions.get(url));
-  }
+  if (pendingExtractions.has(url)) clearTimeout(pendingExtractions.get(url));
 
-  // Schedule extraction with delay (let page finish rendering)
   const timer = setTimeout(async () => {
     pendingExtractions.delete(url);
-
     try {
       const entities = await extractEntities(url, msg.title || '');
       extractionCache.set(url, Date.now());
-
       if (entities.length > 0) {
-        // Publish extraction results
         api.pubsub.publish('entities:extracted', {
           url,
           entities: entities.map(e => ({
@@ -253,19 +188,13 @@ function handlePageLoad(msg) {
             isNew: e.isNew
           }))
         });
-
-        // Update context with the latest extracted entities for this window.
-        // The `context` capability is declared in the manifest with
-        // read/write allowlisted to the `entities` key.
         try {
           await api.context.set('entities', entities.map(e => ({
             id: e.id,
             name: e.name,
             type: e.entityType,
             confidence: e.confidence
-          })), {
-            metadata: { url, extractedAt: Date.now() }
-          });
+          })), { metadata: { url, extractedAt: Date.now() } });
         } catch (err) {
           console.warn('[entities] Context update failed:', err.message);
         }
@@ -278,230 +207,76 @@ function handlePageLoad(msg) {
   pendingExtractions.set(url, timer);
 }
 
-/**
- * Manual extraction from current page
- */
-async function extractCurrentPage() {
-  // Get the focused window
-  const windowList = await api.window.list({ includeInternal: false });
-  if (!windowList.success || !windowList.windows.length) return;
+// ==================== Lifecycle ====================
 
-  // Use the last focused visible window (not just first in list)
-  let activeWindow = windowList.windows[0];
-  const focusedId = await api.window.getFocusedVisibleWindowId();
-  if (focusedId) {
-    const focused = windowList.windows.find(w => w.id === focusedId);
-    if (focused) activeWindow = focused;
-  }
-  const url = activeWindow.url;
+const init = async () => {
+  ensureNameDatabase();
 
-  if (!url || !url.startsWith('http')) return;
-
-  // Clear cooldown for manual extraction
-  extractionCache.delete(url);
-
-  const entities = await extractEntities(url, activeWindow.title || '');
-
-  // Always publish results so page entities panel updates
-  // (even if empty, so the panel can exit "Rescanning..." state)
-  api.pubsub.publish('entities:extracted', {
-    url,
-    entities: (entities || []).map(e => ({
-      id: e.id,
-      name: e.name,
-      type: e.entityType,
-      confidence: e.confidence,
-      isNew: e.isNew
-    }))
+  // Rule-driven: the engine fires this on page:content-ready and
+  // item:created (URL only) per the manifest's rules block.
+  api.pubsub.subscribe('scripts:execute:entities-extract', (msg) => {
+    const event = (msg && msg.context && msg.context.event) || {};
+    schedulePageExtraction({
+      url: event.url || event.content,
+      content: event.content,
+      title: event.title,
+    });
   });
 
-  return entities;
-}
-
-// ==================== UI ====================
-
-function openEntityBrowser() {
-  api.window.open('peek://entities/home.html', {
-    role: 'workspace',
-    key: 'entities-browser',
-    width: 900,
-    height: 700,
-    title: 'Entities'
-  });
-}
-
-// ==================== Extension Lifecycle ====================
-
-const extension = {
-  id: 'entities',
-  labels: {
-    name: 'Entity Recognition'
-  },
-
-  registerCommands() {
-    // Register noun for auto-generated browse/list commands
-    registerNoun({
-      name: 'entities',
-      singular: 'entity',
-      description: 'Extracted people, places, organizations, and more',
-      skipBare: true, // "entities" bare command should browse, but we want the noun to generate "open entities" and "list entities"
-
-      query: async ({ search }) => {
-        const entities = await getEntities({
-          search: search || undefined,
-          limit: 50
-        });
-        if (entities.length === 0) {
-          return { output: 'No entities found.', mimeType: 'text/plain' };
-        }
-        return {
-          success: true,
-          output: {
-            data: entities.map(e => {
-              let meta = {};
-              try { meta = JSON.parse(e.metadata || '{}'); } catch {}
-              return {
-                id: e.id,
-                name: e.content,
-                type: meta.entityType,
-                confidence: meta.confidence
-              };
-            }),
-            mimeType: 'application/json',
-            title: `Entities (${entities.length})`
-          }
-        };
-      },
-
-      browse: async () => { openEntityBrowser(); },
-      produces: 'application/json'
-    });
-
-    // Extract is a specialized verb action — keep as regular command
-    api.commands.register({
-      name: 'extract entities',
-      description: 'Extract entities from current page',
-      execute: async () => {
-        await extractCurrentPage();
-      }
-    });
-
-  },
-
-  init() {
-    // Eagerly load the name database so regex NER can use it from the first extraction
-    ensureNameDatabase();
-
-    // Register commands (cmd loads first with its subscribers ready via 100ms head start)
-    this.registerCommands();
-
-    // Listen for page loads (item:created events for URL items)
-    api.pubsub.subscribe('item:created', (msg) => {
-      if (msg.itemType === 'url') {
-        handlePageLoad(msg);
-      }
-    });
-
-    // Listen for page content ready events from the main process.
-    // Fires when page-title-updated occurs, meaning the page has loaded
-    // enough for content extraction. This catches pages that already exist
-    // in history (no item:created) and provides a reliable extraction signal.
-    api.pubsub.subscribe('page:content-ready', (msg) => {
-      if (msg.url && msg.url.startsWith('http')) {
-        handlePageLoad({ content: msg.url, title: msg.title || '' });
-      }
-    });
-
-    // Listen for manual extraction requests via pubsub
-    api.pubsub.subscribe('entities:extract', async (msg) => {
-      if (msg.url) {
-        let entities = [];
-        try {
-          extractionCache.delete(msg.url);
-          entities = await extractEntities(msg.url, msg.title || '') || [];
-        } catch (err) {
-          console.error('[entities] entities:extract handler failed:', err);
-        }
-
-        // Always publish extraction results so page entities panel updates
-        // (even if empty, so the panel can exit "Rescanning..." state)
-        api.pubsub.publish('entities:extracted', {
-          url: msg.url,
-          entities: entities.map(e => ({
-            id: e.id,
-            name: e.name,
-            type: e.entityType,
-            confidence: e.confidence,
-            isNew: e.isNew
-          }))
-        });
-
-        api.pubsub.publish('entities:extract:response', {
-          url: msg.url,
-          entities
-        });
-      }
-    });
-
-    // Listen for entity queries
-    api.pubsub.subscribe('entities:search', async (msg) => {
-      const entities = await getEntities({
-        entityType: msg.type,
-        search: msg.query,
-        limit: msg.limit || 50
-      });
-      api.pubsub.publish('entities:search:response', {
-        query: msg.query,
-        entities
-      });
-    });
-
-    // Listen for get-for-url requests
-    api.pubsub.subscribe('entities:get-for-url', async (msg) => {
-      if (!msg.url) return;
-      // Query item_events where content = url to find entity observations
-      const events = await api.datastore.queryItemEvents({
-        limit: 100,
-        order: 'desc'
-      });
-      if (events.success) {
-        const entityIds = new Set();
-        for (const evt of events.data) {
-          if (evt.content === msg.url) {
-            entityIds.add(evt.itemId);
-          }
-        }
-        const entities = [];
-        for (const id of entityIds) {
-          const item = await api.datastore.getItem(id);
-          if (item.success && item.data && item.data.type === 'entity') {
-            entities.push(item.data);
-          }
-        }
-        api.pubsub.publish('entities:get-for-url:response', {
-          url: msg.url,
-          entities
-        });
-      }
-    });
-
-  },
-
-  uninit() {
-
-    // Clear pending extraction timers
-    for (const timer of pendingExtractions.values()) {
-      clearTimeout(timer);
+  // Imperative request — bypasses the cooldown so a user-initiated
+  // "extract this page" always re-runs.
+  api.pubsub.subscribe('entities:extract', async (msg) => {
+    if (!msg || !msg.url) return;
+    let entities = [];
+    try {
+      extractionCache.delete(msg.url);
+      entities = await extractEntities(msg.url, msg.title || '') || [];
+    } catch (err) {
+      console.error('[entities] entities:extract handler failed:', err);
     }
-    pendingExtractions.clear();
+    api.pubsub.publish('entities:extracted', {
+      url: msg.url,
+      entities: entities.map(e => ({
+        id: e.id, name: e.name, type: e.entityType, confidence: e.confidence, isNew: e.isNew
+      }))
+    });
+    api.pubsub.publish('entities:extract:response', { url: msg.url, entities });
+  });
 
-    // Unregister commands
-    unregisterNoun('entities');
-    api.commands.unregister('extract entities');
-  }
+  api.pubsub.subscribe('entities:search', async (msg) => {
+    const entities = await getEntities({
+      entityType: msg.type, search: msg.query, limit: msg.limit || 50
+    });
+    api.pubsub.publish('entities:search:response', { query: msg.query, entities });
+  });
+
+  api.pubsub.subscribe('entities:get-for-url', async (msg) => {
+    if (!msg.url) return;
+    const events = await api.datastore.queryItemEvents({ limit: 100, order: 'desc' });
+    if (!events.success) return;
+    const entityIds = new Set();
+    for (const evt of events.data) {
+      if (evt.content === msg.url) entityIds.add(evt.itemId);
+    }
+    const entities = [];
+    for (const id of entityIds) {
+      const item = await api.datastore.getItem(id);
+      if (item.success && item.data && item.data.type === 'entity') {
+        entities.push(item.data);
+      }
+    }
+    api.pubsub.publish('entities:get-for-url:response', { url: msg.url, entities });
+  });
 };
 
-export default extension;
+const uninit = () => {
+  for (const timer of pendingExtractions.values()) clearTimeout(timer);
+  pendingExtractions.clear();
+};
 
-// Export for UI
-export { getEntities, getObservations, extractCurrentPage, setEntityFeedback };
+export default {
+  id: 'entities',
+  labels: { name: 'Entity Recognition' },
+  init,
+  uninit,
+};

@@ -4,9 +4,20 @@
   "shortname": "entities",
   "name": "Entity Recognition",
   "description": "Automatically extracts and indexes entities (people, places, orgs, events) from visited pages",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "builtin": true,
   "tiles": [
+    {
+      "id": "background",
+      "url": "background.html",
+      "lazy": true,
+      "lazyEvents": [
+        "scripts:execute:entities-extract",
+        "entities:extract",
+        "entities:search",
+        "entities:get-for-url"
+      ]
+    },
     {
       "id": "home",
       "url": "home.html",
@@ -15,7 +26,7 @@
       "title": "Entities",
       "role": "workspace",
       "key": "entities-browser",
-      "resident": true
+      "lazy": true
     }
   ],
   "capabilities": {
@@ -30,6 +41,7 @@
         "page:content-ready",
         "editor:changed",
         "sync:pull-completed",
+        "scripts:execute:entities-extract",
         "entities:extract",
         "entities:extract:response",
         "entities:extracted",
@@ -53,13 +65,26 @@
       "read": ["entities"],
       "write": ["entities"]
     },
-    "commands": true
+    "commands": true,
+    "rules": true
   },
   "commands": [
     {
       "name": "extract entities",
       "description": "Extract entities from current page",
       "action": { "type": "execute" }
+    }
+  ],
+  "rules": [
+    {
+      "topic": "page:content-ready",
+      "scriptId": "entities-extract",
+      "match": { "url": { "$startsWith": "http" } }
+    },
+    {
+      "topic": "item:created",
+      "scriptId": "entities-extract",
+      "match": { "itemType": "url" }
     }
   ]
 }

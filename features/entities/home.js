@@ -1,267 +1,22 @@
 /**
- * Entities Tile
+ * Entities Tile — UI only.
  *
- * Single-tile (resident: true) combining entity extraction/state and UI:
- * - Automatically extracts entities from visited pages
- * - Handles external pubsub requests (entities:extract, entities:search, entities:get-for-url)
- * - Card grid showing all extracted entities with type filtering and search
- * - Includes detail pane showing full entity metadata and all source pages
+ * Stage 4a of peek MCP plan 3d7d9239: extraction work moved out of
+ * this tile into the lazy `background` tile. This file is now the
+ * entity-browser UI: card grid, type filters, search, detail pane.
+ * The "entities" noun and "extract entities" command live here too —
+ * the latter publishes `entities:extract` and lets the bg tile handle
+ * the work.
  */
 
-import { extractRegexEntities } from './extractors/regex.js';
-import { extractMicroformatEntities } from './extractors/microformats.js';
-import { extractStructuredDataEntities, extractPageMetadata } from './extractors/structured-data.js';
-import { processEntities } from './entity-matcher.js';
 import { getEntities, getObservations, setEntityFeedback } from './entity-store.js';
-import { ensureNameDatabase } from './name-validator.js';
 import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
 
-// ==================== Background State (inlined from background.js) ====================
-
-// Configuration
-const REEXTRACT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
-const EXTRACTION_DELAY_MS = 2000; // Wait for page to finish rendering
-const CONFIDENCE_THRESHOLD = 0.7;
-
-// In-memory cache of recently extracted URLs
-const extractionCache = new Map();
-
-// Pending extraction timers
-const pendingExtractions = new Map();
-
-/**
- * Extract page metadata by requesting content from the main process.
- */
-async function getPageContent(url) {
-  try {
-    const result = await api.datastore.extractPageContent(url);
-    if (result && result.success) {
-      console.log(`[entities] getPageContent via IPC for ${url}: html=${result.data.html?.length || 0} chars, text=${result.data.text?.length || 0} chars`);
-      return result.data;
-    }
-    console.log(`[entities] IPC extractPageContent failed for ${url}: ${result?.error || 'no result'}, falling back to fetch`);
-  } catch (err) {
-    console.log(`[entities] IPC extractPageContent error for ${url}: ${err.message}, falling back to fetch`);
-  }
-
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      console.log(`[entities] fetch fallback failed for ${url}: HTTP ${response.status}`);
-      return null;
-    }
-    const html = await response.text();
-    console.log(`[entities] getPageContent via fetch for ${url}: html=${html.length} chars, hasJsonLd=${html.includes('application/ld+json')}`);
-    const textContent = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    return {
-      html,
-      text: textContent.slice(0, 50000),
-      title: ''
-    };
-  } catch (err) {
-    console.log(`[entities] fetch fallback error for ${url}: ${err.message}`);
-    return null;
-  }
-}
-
-async function enrichUrlItem(url, pageMetadata) {
-  try {
-    const items = await api.datastore.queryItems({ type: 'url', search: url, limit: 5 });
-    if (!items.success || !items.data) return;
-
-    const urlVariants = new Set([url]);
-    try {
-      const parsed = new URL(url);
-      urlVariants.add(parsed.toString());
-      if (parsed.pathname === '/') {
-        const withSlash = parsed.origin + '/' + parsed.search + parsed.hash;
-        const withoutSlash = parsed.origin + parsed.search + parsed.hash;
-        urlVariants.add(withSlash);
-        urlVariants.add(withoutSlash);
-      }
-    } catch { /* invalid URL */ }
-
-    const item = items.data.find(i => urlVariants.has(i.content));
-    if (!item) return;
-
-    // Fall back to hostname when extraction yields no title — see
-    // matching comment in features/entities/background.js.
-    const fallbackTitle = pageMetadata.title || (() => {
-      try { return new URL(url).hostname; } catch { return ''; }
-    })();
-    if (fallbackTitle && (!item.title || item.title === 'Loading...')) {
-      await api.datastore.updateItemTitle(url, fallbackTitle);
-    }
-
-    if (pageMetadata.favicon) {
-      await api.datastore.updateItemFavicon(url, pageMetadata.favicon);
-    }
-
-    const existingMeta = item.metadata ? JSON.parse(item.metadata) : {};
-    if (existingMeta._og) return;
-
-    const enrichedMeta = {
-      ...existingMeta,
-      _og: {
-        title: pageMetadata.title || '',
-        description: pageMetadata.description || '',
-        image: pageMetadata.ogImage || '',
-        siteName: pageMetadata.siteName || '',
-        type: pageMetadata.ogType || '',
-        extractedAt: Date.now()
-      }
-    };
-
-    await api.datastore.updateItem(item.id, { metadata: JSON.stringify(enrichedMeta) });
-  } catch (err) {
-    console.warn('[entities] Failed to enrich URL item:', err.message);
-  }
-}
-
-async function extractEntities(url, title = '') {
-  const content = await getPageContent(url);
-  if (!content) return [];
-
-  const html = content.html || '';
-  const text = content.text || '';
-  const pageTitle = title || content.title || '';
-
-  try {
-    const pageMetadata = extractPageMetadata(html, url);
-    if (pageMetadata) {
-      await enrichUrlItem(url, pageMetadata);
-    }
-  } catch (err) {
-    console.warn('[entities] Page metadata enrichment failed:', err.message);
-  }
-
-  const safeExtract = (fn, name) => {
-    try {
-      const result = fn();
-      return Array.isArray(result) ? result : [];
-    } catch (err) {
-      console.warn(`[entities] ${name} extractor threw:`, err.message);
-      return [];
-    }
-  };
-
-  const [regexEntities, microformatEntities, structuredDataEntities] = await Promise.all([
-    Promise.resolve(safeExtract(() => extractRegexEntities(text, url), 'regex')),
-    Promise.resolve(safeExtract(() => extractMicroformatEntities(html, url), 'microformats')),
-    Promise.resolve(safeExtract(() => extractStructuredDataEntities(html, url), 'structured-data')),
-  ]);
-
-  console.log(`[entities] Extraction results for ${url}: structured-data=${structuredDataEntities.length}, microformats=${microformatEntities.length}, regex=${regexEntities.length}, html.length=${html.length}, hasJsonLd=${html.includes('application/ld+json')}`);
-
-  const allRaw = [
-    ...structuredDataEntities,
-    ...microformatEntities,
-    ...regexEntities,
-  ];
-
-  if (allRaw.length === 0) return [];
-
-  const processed = await processEntities(allRaw, {
-    url,
-    title: pageTitle
-  }, CONFIDENCE_THRESHOLD);
-
-  return processed;
-}
-
-function handlePageLoad(msg) {
-  const url = msg.content || msg.url;
-  if (!url || typeof url !== 'string') return;
-
-  if (url.startsWith('peek://') || url.startsWith('about:') || url.startsWith('chrome://')) return;
-  if (!url.startsWith('http://') && !url.startsWith('https://')) return;
-
-  const lastExtracted = extractionCache.get(url);
-  if (lastExtracted && Date.now() - lastExtracted < REEXTRACT_COOLDOWN_MS) {
-    return;
-  }
-
-  if (pendingExtractions.has(url)) {
-    clearTimeout(pendingExtractions.get(url));
-  }
-
-  const timer = setTimeout(async () => {
-    pendingExtractions.delete(url);
-
-    try {
-      const entities = await extractEntities(url, msg.title || '');
-      extractionCache.set(url, Date.now());
-
-      if (entities.length > 0) {
-        api.pubsub.publish('entities:extracted', {
-          url,
-          entities: entities.map(e => ({
-            id: e.id,
-            name: e.name,
-            type: e.entityType,
-            confidence: e.confidence,
-            isNew: e.isNew
-          }))
-        });
-
-        try {
-          await api.context.set('entities', entities.map(e => ({
-            id: e.id,
-            name: e.name,
-            type: e.entityType,
-            confidence: e.confidence
-          })), {
-            metadata: { url, extractedAt: Date.now() }
-          });
-        } catch (err) {
-          console.warn('[entities] Context update failed:', err.message);
-        }
-      }
-    } catch (err) {
-      console.error('[entities] Extraction failed for:', url, err);
-    }
-  }, EXTRACTION_DELAY_MS);
-
-  pendingExtractions.set(url, timer);
-}
-
-async function extractCurrentPage() {
-  const windowList = await api.window.list({ includeInternal: false });
-  if (!windowList.success || !windowList.windows.length) return;
-
-  let activeWindow = windowList.windows[0];
-  const focusedId = await api.window.getFocusedVisibleWindowId();
-  if (focusedId) {
-    const focused = windowList.windows.find(w => w.id === focusedId);
-    if (focused) activeWindow = focused;
-  }
-  const url = activeWindow.url;
-
-  if (!url || !url.startsWith('http')) return;
-
-  extractionCache.delete(url);
-
-  const entities = await extractEntities(url, activeWindow.title || '');
-
-  api.pubsub.publish('entities:extracted', {
-    url,
-    entities: (entities || []).map(e => ({
-      id: e.id,
-      name: e.name,
-      type: e.entityType,
-      confidence: e.confidence,
-      isNew: e.isNew
-    }))
-  });
-
-  return entities;
-}
+// ==================== UI Commands ====================
+// Background extraction is owned by features/entities/background.js
+// (lazy bg tile, driven by manifest rules + entities:* request topics).
 
 function openEntityBrowser() {
   api.window.showSelf();
@@ -309,7 +64,20 @@ function registerCommands() {
     name: 'extract entities',
     description: 'Extract entities from current page',
     execute: async () => {
-      await extractCurrentPage();
+      // Resolve the active window and ask the bg tile to do the work.
+      // The bg tile is `lazy: true, lazyEvents: ["entities:extract"]`,
+      // so the publish wakes it on demand.
+      const windowList = await api.window.list({ includeInternal: false });
+      if (!windowList.success || !windowList.windows.length) return;
+      let activeWindow = windowList.windows[0];
+      const focusedId = await api.window.getFocusedVisibleWindowId();
+      if (focusedId) {
+        const focused = windowList.windows.find(w => w.id === focusedId);
+        if (focused) activeWindow = focused;
+      }
+      const url = activeWindow.url;
+      if (!url || !url.startsWith('http')) return;
+      api.pubsub.publish('entities:extract', { url, title: activeWindow.title || '' });
     }
   });
 }
@@ -317,102 +85,6 @@ function registerCommands() {
 function unregisterCommands() {
   unregisterNoun('entities');
   api.commands.unregister('extract entities');
-}
-
-function initBackground() {
-  ensureNameDatabase();
-
-  registerCommands();
-
-  api.pubsub.subscribe('item:created', (msg) => {
-    if (msg.itemType === 'url') {
-      handlePageLoad(msg);
-    }
-  });
-
-  api.pubsub.subscribe('page:content-ready', (msg) => {
-    if (msg.url && msg.url.startsWith('http')) {
-      handlePageLoad({ content: msg.url, title: msg.title || '' });
-    }
-  });
-
-  // External API: manual extraction request (used by page widget in app/page/page.js)
-  api.pubsub.subscribe('entities:extract', async (msg) => {
-    if (msg.url) {
-      let entities = [];
-      try {
-        extractionCache.delete(msg.url);
-        entities = await extractEntities(msg.url, msg.title || '') || [];
-      } catch (err) {
-        console.error('[entities] entities:extract handler failed:', err);
-      }
-
-      api.pubsub.publish('entities:extracted', {
-        url: msg.url,
-        entities: entities.map(e => ({
-          id: e.id,
-          name: e.name,
-          type: e.entityType,
-          confidence: e.confidence,
-          isNew: e.isNew
-        }))
-      });
-
-      api.pubsub.publish('entities:extract:response', {
-        url: msg.url,
-        entities
-      });
-    }
-  });
-
-  // External API: entity search (used by external consumers)
-  api.pubsub.subscribe('entities:search', async (msg) => {
-    const entities = await getEntities({
-      entityType: msg.type,
-      search: msg.query,
-      limit: msg.limit || 50
-    });
-    api.pubsub.publish('entities:search:response', {
-      query: msg.query,
-      entities
-    });
-  });
-
-  // External API: get entities for URL (used by page widget in app/page/page.js)
-  api.pubsub.subscribe('entities:get-for-url', async (msg) => {
-    if (!msg.url) return;
-    const events = await api.datastore.queryItemEvents({
-      limit: 100,
-      order: 'desc'
-    });
-    if (events.success) {
-      const entityIds = new Set();
-      for (const evt of events.data) {
-        if (evt.content === msg.url) {
-          entityIds.add(evt.itemId);
-        }
-      }
-      const entities = [];
-      for (const id of entityIds) {
-        const item = await api.datastore.getItem(id);
-        if (item.success && item.data && item.data.type === 'entity') {
-          entities.push(item.data);
-        }
-      }
-      api.pubsub.publish('entities:get-for-url:response', {
-        url: msg.url,
-        entities
-      });
-    }
-  });
-}
-
-function uninitBackground() {
-  for (const timer of pendingExtractions.values()) {
-    clearTimeout(timer);
-  }
-  pendingExtractions.clear();
-  unregisterCommands();
 }
 
 // ==================== View State ====================
@@ -970,18 +642,30 @@ searchInput.addEventListener('input', (e) => {
   }, 300);
 });
 
-// Extract button
+// Extract button — publishes entities:extract; the lazy bg tile
+// handles the work and broadcasts entities:extracted, which the
+// listener below picks up to re-render.
 document.getElementById('extractBtn').addEventListener('click', async () => {
   const btn = document.getElementById('extractBtn');
   btn.disabled = true;
   btn.textContent = 'Extracting...';
 
   try {
-    await extractCurrentPage();
-    // Re-render after extraction
-    await renderEntities();
+    const windowList = await api.window.list({ includeInternal: false });
+    if (windowList.success && windowList.windows.length) {
+      let activeWindow = windowList.windows[0];
+      const focusedId = await api.window.getFocusedVisibleWindowId();
+      if (focusedId) {
+        const focused = windowList.windows.find(w => w.id === focusedId);
+        if (focused) activeWindow = focused;
+      }
+      const url = activeWindow.url;
+      if (url && url.startsWith('http')) {
+        api.pubsub.publish('entities:extract', { url, title: activeWindow.title || '' });
+      }
+    }
   } catch (err) {
-    console.error('[entities:ui] Extraction failed:', err);
+    console.error('[entities:ui] Extraction publish failed:', err);
   }
 
   btn.disabled = false;
@@ -1077,13 +761,13 @@ async function initUi() {
   console.log('[ext:entities] initializing tile');
   await api.initialize();
 
-  // Initialize background logic (extraction, commands, pubsub handlers)
-  initBackground();
+  // Register noun + "extract entities" command. Extraction itself
+  // runs in the lazy bg tile (features/entities/background.js).
+  registerCommands();
 
-  // Register shutdown handler
   api.onShutdown(() => {
     console.log('[ext:entities] received shutdown');
-    uninitBackground();
+    unregisterCommands();
   });
 
   // Initialize UI once DOM is ready
