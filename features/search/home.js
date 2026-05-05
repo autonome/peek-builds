@@ -402,6 +402,16 @@ const init = async () => {
   // Initialize tag action rules cache for card affordances
   actionRulesCache = createActionRulesCache(api);
 
+  // Re-render when tag-action rules arrive. The rules cache populates
+  // asynchronously via the tag-actions:get-all pubsub roundtrip;
+  // without this re-render hook the first render() runs with rules=[]
+  // and no checkbox / affordance ever appears on result rows. Subscribe
+  // AFTER createActionRulesCache so the cache's internal listener fires
+  // first and getRules() returns the up-to-date set when render reads it.
+  api.pubsub.subscribe('tag-actions:get-all:response', () => {
+    if (state.results.length > 0) render();
+  });
+
   // Parse query from URL
   const params = new URLSearchParams(window.location.search);
   state.query = params.get('q') || '';
