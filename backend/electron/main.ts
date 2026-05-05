@@ -25,7 +25,9 @@ import { signalTileReady, getLoadedTileIds, getTileManifest, getAllTileWindows, 
 import { installLoadOnDispatchHook } from './tile-lazy.js';
 import { initTray } from './tray.js';
 import { registerLocalShortcut, unregisterLocalShortcut, handleLocalShortcut, registerGlobalShortcut, unregisterGlobalShortcut, unregisterShortcutsForAddress } from './shortcuts.js';
-import { publish, subscribe, setPubsubBroadcaster, getSystemAddress } from './pubsub.js';
+import { publish, subscribe, unsubscribe, setPubsubBroadcaster, getSystemAddress } from './pubsub.js';
+import { createRuleEngine, type RuleEngine } from './rule-engine.js';
+import { listRules as rulesList, type RulesDb } from './rules.js';
 import { installDirectSendGuard, installOffPathWindowGuard, unguardedWebContentsSend } from './tile-ipc-gate.js';
 import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHeadless, getProfile, setTilePreloadPath, getTilePreloadPath, DEBUG } from './config.js';
 import { getSystemThemeBackgroundColor } from './windows.js';
@@ -155,6 +157,11 @@ export function configure(cfg: AppConfig): void {
   // Register custom protocol scheme (must be before app.ready)
   registerScheme();
 }
+
+// Rule engine singleton — created during initialize() after the
+// datastore + features are up. Held at module scope so it stays alive
+// for the process lifetime.
+let ruleEngine: RuleEngine | null = null;
 
 /**
  * Initialize the application
@@ -802,6 +809,24 @@ export async function loadFeatures(): Promise<number> {
     DEBUG && console.log(`[feature] Feature startup: ${loadedTileIds.size} tiles loaded`);
   } catch (err) {
     console.error('[feature] Feature startup failed:', err);
+  }
+
+  // ── Rule Engine ──
+  // Stage 2 of peek MCP plan 3d7d9239. The engine subscribes to every
+  // concrete topic referenced by an enabled rule and dispatches
+  // matching events to scripts:execute. Created after feature-startup
+  // so manifest-declared rules are already reconciled into the table.
+  try {
+    ruleEngine = createRuleEngine({
+      pubsub: {
+        publish: (source, topic, msg) => publish(source, topic, msg),
+        subscribe: (source, topic, cb) => subscribe(source, topic, cb),
+        unsubscribe: (source, topic) => unsubscribe(source, topic),
+      },
+      listEnabledRules: () => rulesList(getDb() as unknown as RulesDb, { enabled: true }),
+    });
+  } catch (err) {
+    console.error('[rule-engine] init failed:', err);
   }
 
   // Phase 1: Early

@@ -252,6 +252,92 @@
       ]
     },
 
+    "rules": {
+      "description": "Event-dispatch rules — declarative subscribers that tie an event topic + match predicate to a script. Drives the rule engine that lets features participate in event pipelines without being permanently resident. See peek MCP plan 3d7d9239.",
+      "columns": {
+        "id": {
+          "type": "text",
+          "primary_key": true,
+          "not_null": true,
+          "sync": false,
+          "description": "Stable rule id. SHA-256 content-hash for source='manifest' rows (so identical reboots don't churn the table); UUID for source='user' / 'runtime'."
+        },
+        "featureId": {
+          "type": "text",
+          "not_null": true,
+          "sync": false,
+          "description": "Owning feature id (or 'user' for user-created rules). Used to scope cleanup on feature uninstall."
+        },
+        "topic": {
+          "type": "text",
+          "not_null": true,
+          "sync": false,
+          "description": "Event topic the rule listens for. Trailing wildcard supported (e.g. 'page:*')."
+        },
+        "match": {
+          "type": "text",
+          "default": "'{}'",
+          "sync": false,
+          "description": "JSON predicate evaluated against the event payload by the dispatcher. See plan 3d7d9239 Stage 2 for the language."
+        },
+        "scriptId": {
+          "type": "text",
+          "not_null": true,
+          "sync": false,
+          "description": "Script to execute when the predicate matches. References an entry in the scripts feature."
+        },
+        "config": {
+          "type": "text",
+          "default": "'{}'",
+          "sync": false,
+          "description": "JSON config passed to the script alongside the event (e.g. { activeTag, completedTag } for tag-swap)."
+        },
+        "display": {
+          "type": "text",
+          "default": "''",
+          "sync": false,
+          "description": "JSON UI affordance hints ({ icon, checkedIcon, color, checkedColor, label }). Empty = compute-only rule, no UI affordance."
+        },
+        "enabled": {
+          "type": "integer",
+          "default": "1",
+          "sync": false,
+          "description": "0/1. Lets users disable a rule without deleting it."
+        },
+        "source": {
+          "type": "text",
+          "not_null": true,
+          "check": "source IN ('manifest', 'user', 'runtime')",
+          "sync": false,
+          "description": "Where the rule came from: 'manifest' (declared by a feature manifest), 'user' (rule-editor UI), 'runtime' (live api.rules.register)."
+        },
+        "ordering": {
+          "type": "integer",
+          "default": "0",
+          "sync": false,
+          "description": "Tiebreaker when multiple rules match the same event."
+        },
+        "createdAt": {
+          "type": "integer",
+          "not_null": true,
+          "sync": false,
+          "description": "Creation timestamp (Unix ms)."
+        },
+        "updatedAt": {
+          "type": "integer",
+          "not_null": true,
+          "sync": false,
+          "description": "Last update timestamp (Unix ms)."
+        }
+      },
+      "indexes": [
+        { "name": "idx_rules_topic", "columns": ["topic"], "sync": false },
+        { "name": "idx_rules_featureId", "columns": ["featureId"], "sync": false },
+        { "name": "idx_rules_source", "columns": ["source"], "sync": false },
+        { "name": "idx_rules_enabled", "columns": ["enabled"], "sync": false }
+      ]
+    },
+
     "item_events": {
       "description": "Events/entries for series and feeds - append-only time-series data",
       "columns": {
@@ -314,7 +400,8 @@
       "items": ["id", "type", "content", "syncId", "syncedAt", "createdAt", "updatedAt", "deletedAt"],
       "tags": ["id", "name", "frequency", "lastUsed", "frecencyScore", "createdAt", "updatedAt"],
       "item_tags": ["itemId", "tagId", "createdAt"],
-      "item_events": ["id", "itemId", "content", "value", "occurredAt", "metadata", "createdAt"]
+      "item_events": ["id", "itemId", "content", "value", "occurredAt", "metadata", "createdAt"],
+      "rules": []
     }
   }
 }

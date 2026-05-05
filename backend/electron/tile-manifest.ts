@@ -342,6 +342,8 @@ export interface TileCapabilities {
   session?: boolean;
   /** Can query IZUI coordinator state / ask own window to close */
   izui?: IzuiCapability;
+  /** Can register / unregister event-dispatch rules at runtime */
+  rules?: boolean;
 }
 
 // ─── Tile Definition Types ───────────────────────────────────────────
@@ -435,6 +437,31 @@ export interface TileShortcut {
   mode?: string;
 }
 
+/**
+ * Manifest-declared rule. Persisted into the `rules` table by
+ * feature-startup with `source: 'manifest'` and an id derived by
+ * content-hashing this object — see rules.ts:computeManifestRuleId.
+ *
+ * Stage 1 (peek MCP plan 3d7d9239) defines the storage shape; Stage 2
+ * adds the dispatcher and the predicate language for `match`.
+ */
+export interface TileRule {
+  /** Event topic this rule listens for. Trailing wildcard supported. */
+  topic: string;
+  /** Script to execute when the predicate matches. */
+  scriptId: string;
+  /** JSON predicate evaluated against the event payload. Stage 2 spec. */
+  match?: Record<string, unknown>;
+  /** Config object passed to the script alongside the event. */
+  config?: Record<string, unknown>;
+  /** UI affordance hints. Empty / null = compute-only rule. */
+  display?: { icon?: string; checkedIcon?: string; color?: string; checkedColor?: string; label?: string } | null;
+  /** Defaults to true. Lets users disable a rule without deleting it. */
+  enabled?: boolean;
+  /** Tiebreaker when multiple rules match the same event. */
+  ordering?: number;
+}
+
 // ─── Manifest Types ──────────────────────────────────────────────────
 
 /**
@@ -466,6 +493,8 @@ export interface TileManifest {
   commands?: TileCommand[];
   /** Keyboard shortcuts */
   shortcuts?: TileShortcut[];
+  /** Event-dispatch rules contributed by this feature. */
+  rules?: TileRule[];
   /** Settings schema file path */
   settingsSchema?: string;
   /**
@@ -811,6 +840,11 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
       }
     }
 
+    // Validate rules capability shape — boolean only.
+    if (caps.rules !== undefined && typeof caps.rules !== 'boolean') {
+      errors.push({ path: 'capabilities.rules', message: 'rules must be a boolean' });
+    }
+
 
     // Validate settings capability shape — must be boolean or { readForeign?: string[] }
     if (caps.settings !== undefined) {
@@ -903,6 +937,43 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
         }
       } else {
         errors.push({ path: 'capabilities.dialogs', message: 'dialogs must be boolean or { types: string[] }' });
+      }
+    }
+  }
+
+  // Rules validation — top-level array of TileRule.
+  if (json.rules !== undefined) {
+    if (!Array.isArray(json.rules)) {
+      errors.push({ path: 'rules', message: 'rules must be an array' });
+    } else {
+      for (let i = 0; i < json.rules.length; i++) {
+        const r = json.rules[i] as Record<string, unknown>;
+        const prefix = `rules[${i}]`;
+        if (!r || typeof r !== 'object') {
+          errors.push({ path: prefix, message: 'rule must be an object' });
+          continue;
+        }
+        if (!r.topic || typeof r.topic !== 'string') {
+          errors.push({ path: `${prefix}.topic`, message: 'rule topic is required and must be a string' });
+        }
+        if (!r.scriptId || typeof r.scriptId !== 'string') {
+          errors.push({ path: `${prefix}.scriptId`, message: 'rule scriptId is required and must be a string' });
+        }
+        if (r.match !== undefined && (typeof r.match !== 'object' || r.match === null || Array.isArray(r.match))) {
+          errors.push({ path: `${prefix}.match`, message: 'match must be an object' });
+        }
+        if (r.config !== undefined && (typeof r.config !== 'object' || r.config === null || Array.isArray(r.config))) {
+          errors.push({ path: `${prefix}.config`, message: 'config must be an object' });
+        }
+        if (r.display !== undefined && r.display !== null && (typeof r.display !== 'object' || Array.isArray(r.display))) {
+          errors.push({ path: `${prefix}.display`, message: 'display must be an object or null' });
+        }
+        if (r.enabled !== undefined && typeof r.enabled !== 'boolean') {
+          errors.push({ path: `${prefix}.enabled`, message: 'enabled must be a boolean' });
+        }
+        if (r.ordering !== undefined && typeof r.ordering !== 'number') {
+          errors.push({ path: `${prefix}.ordering`, message: 'ordering must be a number' });
+        }
       }
     }
   }
@@ -1150,6 +1221,12 @@ export function resolveCapabilities(
     granted.izui = true;
   }
 
+  // Rules: boolean grant. Lets a tile call api.rules.* (Stage 1 of
+  // the rule engine — peek MCP plan 3d7d9239).
+  if (requested.rules) {
+    granted.rules = true;
+  }
+
   return { tileId, capabilities: granted, denied };
 }
 
@@ -1223,6 +1300,7 @@ export function createTrustedBuiltinGrant(rendererId: string): CapabilityGrant {
     },
     session: true,
     izui: true,
+    rules: true,
   };
 
   return {

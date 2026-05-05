@@ -1459,6 +1459,59 @@ function buildAPI(): Record<string, unknown> {
     },
   };
 
+  // ── Rules (event-dispatch registry, Stage 1) ──────────────────────
+  //
+  // Stage 1 of the rule engine (peek MCP plan 3d7d9239). Tiles call
+  // these to register/unregister runtime rules — rows persisted to
+  // the local `rules` table with source='runtime'. Manifest-declared
+  // rules are reconciled at install time and not touched here.
+  //
+  // Capability check is per-call to match how shortcuts/commands are
+  // wired (grantedCapabilities is populated asynchronously).
+  function hasRulesCapability(): boolean {
+    return grantedCapabilities?.rules === true;
+  }
+
+  api.rules = {
+    list: (options?: { topic?: string; enabled?: boolean }) => {
+      if (!hasRulesCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.rules.list requires rules capability in manifest'));
+      }
+      return ipcRenderer.invoke('tile:rules:list', {
+        token: tileToken,
+        topic: options?.topic,
+        enabled: options?.enabled,
+      });
+    },
+    listAffordances: () => {
+      if (!hasRulesCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.rules.listAffordances requires rules capability in manifest'));
+      }
+      return ipcRenderer.invoke('tile:rules:list-affordances', { token: tileToken });
+    },
+    register: (rule: {
+      id?: string;
+      topic: string;
+      scriptId: string;
+      match?: Record<string, unknown>;
+      config?: Record<string, unknown>;
+      display?: Record<string, unknown> | null;
+      enabled?: boolean;
+      ordering?: number;
+    }) => {
+      if (!hasRulesCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.rules.register requires rules capability in manifest'));
+      }
+      return ipcRenderer.invoke('tile:rules:register', { token: tileToken, ...rule });
+    },
+    unregister: (id: string) => {
+      if (!hasRulesCapability()) {
+        return Promise.reject(new Error('[tile-preload] api.rules.unregister requires rules capability in manifest'));
+      }
+      return ipcRenderer.invoke('tile:rules:unregister', { token: tileToken, id });
+    },
+  };
+
   // ── Files (removed v1-compat) ────────────────────────────────────
   // Use api.dialogs.save / api.dialogs.open for file dialogs,
   // and api.filesystem.read / api.filesystem.write for path operations.

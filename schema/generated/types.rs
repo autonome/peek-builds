@@ -104,6 +104,39 @@ pub struct SchemaItemTags {
     pub created_at: i64,
 }
 
+/// Event-dispatch rules — declarative subscribers that tie an event topic + match predicate to a script. Drives the rule engine that lets features participate in event pipelines without being permanently resident. See peek MCP plan 3d7d9239.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaRules {
+    /// Stable rule id. SHA-256 content-hash for source='manifest' rows (so identical reboots don't churn the table); UUID for source='user' / 'runtime'.
+    pub id: String,
+    #[serde(rename = "featureId")]
+    /// Owning feature id (or 'user' for user-created rules). Used to scope cleanup on feature uninstall.
+    pub feature_id: String,
+    /// Event topic the rule listens for. Trailing wildcard supported (e.g. 'page:*').
+    pub topic: String,
+    /// JSON predicate evaluated against the event payload by the dispatcher. See plan 3d7d9239 Stage 2 for the language.
+    pub match: String,
+    #[serde(rename = "scriptId")]
+    /// Script to execute when the predicate matches. References an entry in the scripts feature.
+    pub script_id: String,
+    /// JSON config passed to the script alongside the event (e.g. { activeTag, completedTag } for tag-swap).
+    pub config: String,
+    /// JSON UI affordance hints ({ icon, checkedIcon, color, checkedColor, label }). Empty = compute-only rule, no UI affordance.
+    pub display: String,
+    /// 0/1. Lets users disable a rule without deleting it.
+    pub enabled: i64,
+    /// Where the rule came from: 'manifest' (declared by a feature manifest), 'user' (rule-editor UI), 'runtime' (live api.rules.register).
+    pub source: String,
+    /// Tiebreaker when multiple rules match the same event.
+    pub ordering: i64,
+    #[serde(rename = "createdAt")]
+    /// Creation timestamp (Unix ms).
+    pub created_at: i64,
+    #[serde(rename = "updatedAt")]
+    /// Last update timestamp (Unix ms).
+    pub updated_at: i64,
+}
+
 /// Events/entries for series and feeds - append-only time-series data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaItemEvents {

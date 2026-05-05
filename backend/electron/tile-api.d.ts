@@ -330,6 +330,68 @@ interface TileShortcuts {
   unregister(shortcut: string, options?: TileShortcutOptions): void;
 }
 
+// ─── Rules (event-dispatch registry, Stage 1) ────────────────────────
+
+interface TileRule {
+  id: string;
+  featureId: string;
+  topic: string;
+  match: Record<string, unknown>;
+  scriptId: string;
+  config: Record<string, unknown>;
+  display: Record<string, unknown> | null;
+  enabled: boolean;
+  source: 'manifest' | 'user' | 'runtime';
+  ordering: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface TileRulesRegisterArgs {
+  /** Optional caller-supplied id suffix. The persisted id is prefixed
+   *  with `rule_<featureId>_` so two features can share the same suffix
+   *  without colliding. If absent, a random suffix is generated. */
+  id?: string;
+  topic: string;
+  scriptId: string;
+  match?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+  display?: Record<string, unknown> | null;
+  enabled?: boolean;
+  ordering?: number;
+}
+
+interface TileRules {
+  /**
+   * List rules owned by the calling feature.
+   * Requires `rules` capability.
+   */
+  list(options?: { topic?: string; enabled?: boolean }): Promise<{ rules: TileRule[]; error?: string }>;
+
+  /**
+   * List every enabled rule with a non-empty `display` block, across
+   * all features. Used by shared card UIs to render affordances
+   * declared by any feature. Requires `rules` capability.
+   */
+  listAffordances(): Promise<{ rules: TileRule[]; error?: string }>;
+
+  /**
+   * Register a runtime rule for the calling feature. Idempotent when
+   * the same `id` suffix is supplied — a re-register replaces the
+   * previous row in place. Returns the persisted rule.
+   * Requires `rules` capability.
+   */
+  register(rule: TileRulesRegisterArgs): Promise<{ rule?: TileRule; error?: string }>;
+
+  /**
+   * Unregister a runtime rule by id. Only own-feature, source='runtime'
+   * rows are deletable — manifest-declared rules are managed by the
+   * install pipeline.
+   * Requires `rules` capability.
+   */
+  unregister(id: string): Promise<{ ok: boolean; error?: string }>;
+}
+
 // ─── Context ─────────────────────────────────────────────────────────
 
 interface TileContextEntry {
@@ -706,6 +768,7 @@ interface TileAPI {
   datastore: TileDatastore;
   settings: TileSettings;
   shortcuts: TileShortcuts;
+  rules: TileRules;
   context: TileContext;
   filesystem: TileFilesystem;
   dialogs: TileDialogs;

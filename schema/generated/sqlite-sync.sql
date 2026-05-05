@@ -49,6 +49,12 @@ CREATE INDEX IF NOT EXISTS idx_item_tags_itemId ON item_tags(itemId);
 CREATE INDEX IF NOT EXISTS idx_item_tags_tagId ON item_tags(tagId);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_item_tags_unique ON item_tags(itemId, tagId);
 
+-- Event-dispatch rules — declarative subscribers that tie an event topic + match predicate to a script. Drives the rule engine that lets features participate in event pipelines without being permanently resident. See peek MCP plan 3d7d9239.
+CREATE TABLE IF NOT EXISTS rules (
+
+);
+
+
 -- Events/entries for series and feeds - append-only time-series data
 CREATE TABLE IF NOT EXISTS item_events (
   id TEXT PRIMARY KEY NOT NULL,

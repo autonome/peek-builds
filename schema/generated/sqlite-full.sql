@@ -67,6 +67,27 @@ CREATE INDEX IF NOT EXISTS idx_item_tags_itemId ON item_tags(itemId);
 CREATE INDEX IF NOT EXISTS idx_item_tags_tagId ON item_tags(tagId);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_item_tags_unique ON item_tags(itemId, tagId);
 
+-- Event-dispatch rules — declarative subscribers that tie an event topic + match predicate to a script. Drives the rule engine that lets features participate in event pipelines without being permanently resident. See peek MCP plan 3d7d9239.
+CREATE TABLE IF NOT EXISTS rules (
+  id TEXT PRIMARY KEY NOT NULL,
+  featureId TEXT NOT NULL,
+  topic TEXT NOT NULL,
+  match TEXT DEFAULT '{}',
+  scriptId TEXT NOT NULL,
+  config TEXT DEFAULT '{}',
+  display TEXT DEFAULT '',
+  enabled INTEGER DEFAULT 1,
+  source TEXT NOT NULL CHECK(source IN ('manifest', 'user', 'runtime')),
+  ordering INTEGER DEFAULT 0,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_rules_topic ON rules(topic);
+CREATE INDEX IF NOT EXISTS idx_rules_featureId ON rules(featureId);
+CREATE INDEX IF NOT EXISTS idx_rules_source ON rules(source);
+CREATE INDEX IF NOT EXISTS idx_rules_enabled ON rules(enabled);
+
 -- Events/entries for series and feeds - append-only time-series data
 CREATE TABLE IF NOT EXISTS item_events (
   id TEXT PRIMARY KEY NOT NULL,

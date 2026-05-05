@@ -38,11 +38,8 @@
         "tag:item-added",
         "tag:item-removed",
         "sync:pull-completed",
-        "tag-actions:get-all",
-        "tag-actions:get-all:response",
-        "tag-actions:create:response",
-        "tag-actions:update:response",
-        "tag-actions:delete:response"
+        "affordance:click",
+        "rules:changed"
       ]
     },
     "datastore": {
@@ -55,7 +52,8 @@
     },
     "commands": true,
     "shortcuts": true,
-    "settings": true
+    "settings": true,
+    "rules": true
   },
   "commands": [
     {

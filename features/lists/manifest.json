@@ -32,7 +32,9 @@
         "item:deleted",
         "tag:item-added",
         "tag:item-removed",
-        "editor:open"
+        "editor:open",
+        "affordance:click",
+        "rules:changed"
       ]
     },
     "datastore": {
@@ -43,7 +45,8 @@
     },
     "commands": true,
     "shortcuts": true,
-    "settings": true
+    "settings": true,
+    "rules": true
   },
   "commands": [
     {

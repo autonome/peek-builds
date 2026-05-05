@@ -19,6 +19,9 @@ import { AtprotoSource } from './atproto-source.js';
 import * as manifestCache from './manifest-cache.js';
 import * as tileLifecycle from './tile-lifecycle.js';
 import { isEphemeralProfile } from './config.js';
+import { getDb } from './datastore.js';
+import { syncManifestRules, deleteRulesByFeature, type RulesDb, type ManifestRule } from './rules.js';
+import type { TileRule } from './tile-manifest.js';
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -87,6 +90,47 @@ function upsertManifestCacheForEntry(entry: FeatureRegistryEntry): void {
   }
 }
 
+// ─── rules bridge ───────────────────────────────────────────────────
+
+/**
+ * Reconcile the `rules` table with the feature's manifest.rules
+ * declaration. Called from the registry listener so that an install /
+ * update / re-register all converge to the same desired state without
+ * each caller having to know about the rules table.
+ *
+ * Errors are swallowed with a warning — a feature whose rules fail to
+ * sync should not block its tile lifecycle, and the next reconcile
+ * (next boot or next install) will heal any drift.
+ */
+function reconcileRulesForEntry(entry: FeatureRegistryEntry): void {
+  try {
+    const row = manifestCache.get(entry.id);
+    const declared = (row?.manifest?.rules as TileRule[] | undefined) ?? [];
+    const manifestRules: ManifestRule[] = declared.map(r => ({
+      topic: r.topic,
+      scriptId: r.scriptId,
+      match: r.match,
+      config: r.config,
+      display: r.display ?? null,
+      enabled: r.enabled,
+      ordering: r.ordering,
+    }));
+    const db = getDb() as unknown as RulesDb;
+    syncManifestRules(db, entry.id, manifestRules, Date.now());
+  } catch (err) {
+    console.warn(`[feature-startup] rules reconcile failed for ${entry.id}:`, err);
+  }
+}
+
+function dropManifestRulesForFeature(id: string): void {
+  try {
+    const db = getDb() as unknown as RulesDb;
+    deleteRulesByFeature(db, id);
+  } catch (err) {
+    console.warn(`[feature-startup] rules cleanup failed for ${id}:`, err);
+  }
+}
+
 // ─── tile-lifecycle bridge ──────────────────────────────────────────
 
 /**
@@ -142,6 +186,7 @@ export function initializeFeatures(config: FeatureStartupConfig): FeatureStartup
       // manifest to enumerate tile entries.
       upsertManifestCacheForEntry(entry);
       fireFsmTriggerForFeature(entry, tileLifecycle.TRIGGERS.INSTALL);
+      reconcileRulesForEntry(entry);
     },
     onUnregister: (id) => {
       // Transition first while the cache row still exists (the FSM
@@ -159,6 +204,7 @@ export function initializeFeatures(config: FeatureStartupConfig): FeatureStartup
       }
       try { manifestCache.remove(id); }
       catch (err) { console.warn(`[feature-startup] manifest-cache remove failed for ${id}:`, err); }
+      dropManifestRulesForFeature(id);
     },
     onDisableChange: (id, disabled) => {
       try { manifestCache.setDisabled(id, disabled); }
@@ -195,6 +241,7 @@ export function initializeFeatures(config: FeatureStartupConfig): FeatureStartup
       }
     }
     fireFsmTriggerForFeature(entry, tileLifecycle.TRIGGERS.INSTALL);
+    reconcileRulesForEntry(entry);
   }
 
   // 2. Sync builtins

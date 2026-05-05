@@ -319,6 +319,32 @@ const createTableStatements = `
     disabledAt INTEGER              -- null = enabled
   );
   CREATE INDEX IF NOT EXISTS idx_manifest_cache_disabled ON manifest_cache(disabledAt);
+
+  -- rules: declarative event-dispatch subscribers. Each row binds an
+  -- event topic + match predicate to a script (executed lazily on match).
+  -- Drives the rule engine that lets features participate in event
+  -- pipelines without staying resident. See peek MCP plan 3d7d9239.
+  -- Mirrors schema/v1.json — keep the two definitions in sync (this
+  -- file is hand-maintained, not generated; the generated SQL lives at
+  -- schema/generated/sqlite-full.sql for documentation only).
+  CREATE TABLE IF NOT EXISTS rules (
+    id TEXT PRIMARY KEY NOT NULL,
+    featureId TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    match TEXT DEFAULT '{}',
+    scriptId TEXT NOT NULL,
+    config TEXT DEFAULT '{}',
+    display TEXT DEFAULT '',
+    enabled INTEGER DEFAULT 1,
+    source TEXT NOT NULL CHECK(source IN ('manifest', 'user', 'runtime')),
+    ordering INTEGER DEFAULT 0,
+    createdAt INTEGER NOT NULL,
+    updatedAt INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_rules_topic ON rules(topic);
+  CREATE INDEX IF NOT EXISTS idx_rules_featureId ON rules(featureId);
+  CREATE INDEX IF NOT EXISTS idx_rules_source ON rules(source);
+  CREATE INDEX IF NOT EXISTS idx_rules_enabled ON rules(enabled);
 `;
 
 // Module state

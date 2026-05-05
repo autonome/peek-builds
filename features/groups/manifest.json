@@ -31,11 +31,8 @@
         "ext:ready",
         "ext:groups:shutdown",
         "app:shutdown",
-        "tag-actions:get-all",
-        "tag-actions:get-all:response",
-        "tag-actions:create:response",
-        "tag-actions:update:response",
-        "tag-actions:delete:response"
+        "affordance:click",
+        "rules:changed"
       ]
     },
     "datastore": {
@@ -54,7 +51,8 @@
     },
     "commands": true,
     "shortcuts": true,
-    "settings": { "readForeign": ["spaces"] }
+    "settings": { "readForeign": ["spaces"] },
+    "rules": true
   },
   "commands": [
     {

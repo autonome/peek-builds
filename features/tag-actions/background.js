@@ -1,266 +1,79 @@
 /**
- * Tag Actions Extension - Background Script
+ * Tag Actions — background script handler.
  *
- * Stores a simplified "tag pairs" config and converts it to action rules
- * for the affordances renderer. Each pair defines two tags that toggle
- * on item cards with a chosen icon style.
+ * Owns the `tag-swap` script. The rule engine publishes
+ * `scripts:execute:tag-swap` when an `affordance:click` event matches
+ * a tag-swap rule; this tile wakes via `lazyEvents` (manifest), runs
+ * the swap against the datastore, and goes back to sleep.
  *
- * Data model (stored in settings):
- *   pairs: [
- *     { activeTag: "todo", completedTag: "done", iconPair: "checkbox" },
- *     { activeTag: "readme", completedTag: "read", iconPair: "eye" }
- *   ]
- *
- * Internally converts pairs to action rules so resolveAffordances() works unchanged.
+ * The pair-management UI lives in home.js / home.html and writes
+ * rules via api.rules. There's no derived state here — rules ARE the
+ * pair definitions.
  */
-
-import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
 const debug = api.debug;
 
-// ==================== State ====================
-
-let currentPairs = [];
-let currentActions = []; // derived from pairs
-
-// ==================== Settings ====================
-
-const loadSettings = async () => {
-  const result = await api.settings.get('data');
-  if (result.success && result.data) {
-    // Support new pairs format
-    if (Array.isArray(result.data.pairs)) {
-      currentPairs = result.data.pairs;
-    }
-    // Migration: convert old actions format to pairs
-    else if (Array.isArray(result.data.actions) && result.data.actions.length > 0) {
-      currentPairs = migrateActionsToToPairs(result.data.actions);
-    } else {
-      currentPairs = [];
-    }
-  } else {
-    currentPairs = [];
+/**
+ * Execute the tag swap.
+ *
+ * Inputs (via the rule engine's `scripts:execute:<id>` payload):
+ *   - context.event.itemId   — the item the affordance was clicked on
+ *   - context.event.checked  — the affordance's NEW state (post-click)
+ *   - context.config.activeTag    — tag name to use when unchecked
+ *   - context.config.completedTag — tag name to use when checked
+ *
+ * Going from unchecked → checked: remove activeTag, add completedTag.
+ * Going from checked → unchecked: remove completedTag, add activeTag.
+ */
+const runTagSwap = async (context) => {
+  const { event, config } = context || {};
+  if (!event || !config) {
+    debug && console.warn('[tag-actions] tag-swap: missing event or config', context);
+    return;
+  }
+  const { itemId, checked } = event;
+  const { activeTag, completedTag } = config;
+  if (!itemId || !activeTag || !completedTag) {
+    debug && console.warn('[tag-actions] tag-swap: missing itemId/activeTag/completedTag', { itemId, activeTag, completedTag });
+    return;
   }
 
-  // Derive action rules from pairs
-  currentActions = pairsToActionRules(currentPairs);
-  debug && console.log('[tag-actions] Loaded', currentPairs.length, 'pairs ->', currentActions.length, 'action rules');
-};
+  const removeName = checked ? activeTag : completedTag;
+  const addName = checked ? completedTag : activeTag;
 
-const saveSettings = async () => {
-  const result = await api.settings.set('data', { pairs: currentPairs });
-  if (!result.success) {
-    console.error('[tag-actions] Failed to save settings:', result.error);
-  }
-  // Regenerate action rules
-  currentActions = pairsToActionRules(currentPairs);
-  return result;
-};
-
-// ==================== Migration ====================
-
-/**
- * Convert old-format actions array to new pairs format.
- * Only migrates toggle-type actions (the visual affordance type).
- */
-const migrateActionsToToPairs = (actions) => {
-  const pairs = [];
-  for (const action of actions) {
-    if (action.actionType === 'toggle' && action.actionConfig) {
-      const config = action.actionConfig;
-      // Map old icon names to new iconPair names
-      let iconPair = 'checkbox';
-      if (config.icon === 'eye' || config.checkedIcon === 'eye') iconPair = 'eye';
-      else if (config.icon === 'star' || config.checkedIcon === 'star') iconPair = 'star';
-      else if (config.icon === 'heart' || config.checkedIcon === 'heart') iconPair = 'heart';
-      else if (config.icon === 'flag' || config.checkedIcon === 'flag') iconPair = 'flag';
-      else if (config.icon === 'bookmark' || config.checkedIcon === 'bookmark') iconPair = 'bookmark';
-
-      pairs.push({
-        activeTag: config.activeTag || action.triggerTag || '',
-        completedTag: config.completedTag || '',
-        iconPair
-      });
+  try {
+    const addTagRes = await api.datastore.getOrCreateTag(addName);
+    if (!addTagRes.success) {
+      console.error('[tag-actions] failed to get/create tag', addName, addTagRes.error);
+      return;
     }
+    const removeTagRes = await api.datastore.getOrCreateTag(removeName);
+    if (!removeTagRes.success) {
+      console.error('[tag-actions] failed to get tag for removal', removeName, removeTagRes.error);
+      return;
+    }
+    await api.datastore.untagItem(itemId, removeTagRes.data.tag.id);
+    await api.datastore.tagItem(itemId, addTagRes.data.tag.id);
+    debug && console.log('[tag-actions] tag-swap done', { itemId, removed: removeName, added: addName });
+  } catch (err) {
+    console.error('[tag-actions] tag-swap threw:', err);
   }
-  return pairs;
 };
-
-// ==================== Pairs to Action Rules ====================
-
-/**
- * Icon pair name to the icon/checkedIcon names used by tag-action-affordances.js
- */
-const ICON_PAIR_MAP = {
-  checkbox: { icon: 'unchecked', checkedIcon: 'checked' },
-  eye:      { icon: 'eye-open', checkedIcon: 'eye-closed' },
-  star:     { icon: 'star-empty', checkedIcon: 'star-filled' },
-  heart:    { icon: 'heart-empty', checkedIcon: 'heart-filled' },
-  flag:     { icon: 'flag-empty', checkedIcon: 'flag-filled' },
-  bookmark: { icon: 'bookmark-empty', checkedIcon: 'bookmark-filled' }
-};
-
-/**
- * Convert simplified pairs to action rule objects compatible with resolveAffordances().
- */
-const pairsToActionRules = (pairs) => {
-  return pairs
-    .filter(p => p.activeTag && p.completedTag)
-    .map((pair, i) => {
-      const icons = ICON_PAIR_MAP[pair.iconPair] || ICON_PAIR_MAP.checkbox;
-      return {
-        id: `pair_${i}`,
-        name: `${pair.activeTag}/${pair.completedTag}`,
-        enabled: true,
-        triggerTag: pair.activeTag,
-        triggerOn: 'add',
-        actionType: 'toggle',
-        actionConfig: {
-          activeTag: pair.activeTag,
-          completedTag: pair.completedTag,
-          icon: icons.icon,
-          checkedIcon: icons.checkedIcon,
-          color: '#007aff',
-          checkedColor: '#34c759'
-        },
-        itemTypes: null
-      };
-    });
-};
-
-const generateId = () => {
-  return `ta_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-};
-
-// ==================== Event Handling ====================
-
-// Toggle actions are purely UI affordances rendered by card UIs.
-// No auto-execution needed for tag events -- the user clicks the toggle.
-
-// ==================== Commands ====================
-
-const openTagActions = () => {
-  api.window.open('peek://tag-actions/home.html', {
-    role: 'workspace',
-    key: 'tag-actions-home',
-    width: 560,
-    height: 400,
-    title: 'Tag Pairs'
-  });
-};
-
-const registerCommands = () => {
-  registerNoun({
-    name: 'tag actions',
-    singular: 'tag action',
-    description: 'Tag pair toggles on item cards',
-
-    query: async ({ search }) => {
-      let filtered = currentPairs;
-      if (search) {
-        const s = search.toLowerCase();
-        filtered = filtered.filter(p =>
-          p.activeTag.toLowerCase().includes(s) ||
-          p.completedTag.toLowerCase().includes(s)
-        );
-      }
-      if (filtered.length === 0) {
-        return { output: 'No tag pairs found.', mimeType: 'text/plain' };
-      }
-      return {
-        success: true,
-        output: {
-          data: filtered,
-          mimeType: 'application/json',
-          title: `Tag Pairs (${filtered.length})`
-        }
-      };
-    },
-
-    browse: async () => { openTagActions(); },
-
-    create: async ({ search }) => {
-      currentPairs.push({ activeTag: search || '', completedTag: '', iconPair: 'checkbox' });
-      await saveSettings();
-      openTagActions();
-      return { success: true };
-    },
-
-    produces: 'application/json'
-  });
-};
-
-// ==================== Extension Lifecycle ====================
 
 const init = async () => {
-  debug && console.log('[tag-actions] init');
+  debug && console.log('[tag-actions] background init (tag-swap handler)');
 
-  await loadSettings();
-  registerCommands();
-
-  // Respond to pairs CRUD from the home UI
-  api.pubsub.subscribe('tag-actions:get-pairs', () => {
-    api.pubsub.publish('tag-actions:get-pairs:response', {
-      success: true,
-      data: currentPairs
-    });
+  api.pubsub.subscribe('scripts:execute:tag-swap', async (msg) => {
+    await runTagSwap(msg && msg.context);
   });
-
-  api.pubsub.subscribe('tag-actions:set-pairs', async (msg) => {
-    if (Array.isArray(msg.pairs)) {
-      currentPairs = msg.pairs;
-      await saveSettings();
-    }
-    api.pubsub.publish('tag-actions:set-pairs:response', {
-      success: true,
-      data: currentPairs
-    });
-  });
-
-  // Backward-compatible: respond to get-all with derived action rules
-  // so tag-action-affordances.js cache still works
-  api.pubsub.subscribe('tag-actions:get-all', () => {
-    api.pubsub.publish('tag-actions:get-all:response', {
-      success: true,
-      data: currentActions
-    });
-  });
-
-  // Legacy CRUD endpoints -- respond gracefully but pairs is the source of truth now
-  api.pubsub.subscribe('tag-actions:create', async (msg) => {
-    // If it looks like a toggle action, convert to pair
-    if (msg.actionType === 'toggle' && msg.actionConfig) {
-      currentPairs.push({
-        activeTag: msg.actionConfig.activeTag || msg.triggerTag || '',
-        completedTag: msg.actionConfig.completedTag || '',
-        iconPair: 'checkbox'
-      });
-      await saveSettings();
-    }
-    api.pubsub.publish('tag-actions:create:response', { success: true });
-  });
-
-  api.pubsub.subscribe('tag-actions:update', async (msg) => {
-    api.pubsub.publish('tag-actions:update:response', { success: true });
-  });
-
-  api.pubsub.subscribe('tag-actions:delete', async (msg) => {
-    api.pubsub.publish('tag-actions:delete:response', { success: true });
-  });
-
-  debug && console.log('[tag-actions] initialized with', currentPairs.length, 'pairs');
 };
 
-const uninit = () => {
-  unregisterNoun('tag actions');
-};
+const uninit = () => {};
 
 export default {
   id: 'tag-actions',
-  labels: {
-    name: 'Tag Actions'
-  },
+  labels: { name: 'Tag Actions' },
   init,
-  uninit
+  uninit,
 };

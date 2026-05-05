@@ -84,6 +84,13 @@ import {
   normalizeUrl,
 } from './datastore.js';
 import { tagItemAndPublish as dsTagItemAndPublish } from './tag-events.js';
+import {
+  listRules as rulesList,
+  upsertRule as rulesUpsert,
+  deleteRule as rulesDelete,
+  type Rule,
+  type RulesDb,
+} from './rules.js';
 import type { TableName } from '../types/index.js';
 import { installFromBundle } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
@@ -604,6 +611,115 @@ export function registerTileIpcHandlers(): void {
         }],
       }
     );
+  });
+
+  // ── Rules (event-dispatch registry) ───────────────────────────────
+  //
+  // Stage 1 of the rule engine (peek MCP plan 3d7d9239). The storage
+  // layer lives in rules.ts; these handlers expose runtime CRUD over
+  // the per-feature slice of the `rules` table. Manifest-declared
+  // rules are reconciled at feature install/load time elsewhere
+  // (feature-startup.ts) — the runtime handlers here only ever read
+  // their own feature's rows and only ever write source='runtime'
+  // rows. Keeping the source split prevents a runtime call from
+  // racing with a manifest reconcile.
+  //
+  // featureId is bound to grant.tileId so a tile can never list /
+  // register / unregister rules for another feature.
+
+  registerTileIpc('tile:rules:list', {
+    mode: 'handle',
+    requiredCapabilities: ['rules'],
+  }, (event, args: { token: string; topic?: string; enabled?: boolean }, grant) => {
+    void event;
+    const filter: { featureId: string; topic?: string; enabled?: boolean } = { featureId: grant.tileId };
+    if (typeof args.topic === 'string') filter.topic = args.topic;
+    if (typeof args.enabled === 'boolean') filter.enabled = args.enabled;
+    const db = getDb() as unknown as RulesDb;
+    return { rules: rulesList(db, filter) };
+  });
+
+  registerTileIpc('tile:rules:register', {
+    mode: 'handle',
+    requiredCapabilities: ['rules'],
+  }, (event, args: {
+    token: string;
+    id?: string;
+    topic: string;
+    scriptId: string;
+    match?: Record<string, unknown>;
+    config?: Record<string, unknown>;
+    display?: Record<string, unknown> | null;
+    enabled?: boolean;
+    ordering?: number;
+  }, grant) => {
+    void event;
+    if (!args.topic || typeof args.topic !== 'string') return { error: 'topic-required' };
+    if (!args.scriptId || typeof args.scriptId !== 'string') return { error: 'scriptId-required' };
+
+    const db = getDb() as unknown as RulesDb;
+    const id = args.id && typeof args.id === 'string'
+      ? `rule_${grant.tileId}_${args.id}`
+      : `rule_${grant.tileId}_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    const nowMs = Date.now();
+    const rule: Rule = {
+      id,
+      featureId: grant.tileId,
+      topic: args.topic,
+      match: args.match ?? {},
+      scriptId: args.scriptId,
+      config: args.config ?? {},
+      display: args.display ?? null,
+      enabled: args.enabled !== false,
+      source: 'runtime',
+      ordering: typeof args.ordering === 'number' ? args.ordering : 0,
+      createdAt: nowMs,
+      updatedAt: nowMs,
+    };
+    const persisted = rulesUpsert(db, rule);
+    publish(`peek://${grant.tileId}/background`, 'rules:changed', {
+      featureId: grant.tileId,
+      action: 'register',
+      ruleId: persisted.id,
+    });
+    return { rule: persisted };
+  });
+
+  registerTileIpc('tile:rules:list-affordances', {
+    mode: 'handle',
+    requiredCapabilities: ['rules'],
+  }, (event, _args: { token: string }, _grant) => {
+    void event; void _args; void _grant;
+    // Cross-feature read: every enabled rule with a non-empty `display`
+    // block. Affordances are visual surfaces that any consumer (card UI,
+    // page widget, …) may render — feature scoping wouldn't make sense.
+    const db = getDb() as unknown as RulesDb;
+    const all = rulesList(db, { enabled: true });
+    return {
+      rules: all.filter(r => r.display && Object.keys(r.display).length > 0),
+    };
+  });
+
+  registerTileIpc('tile:rules:unregister', {
+    mode: 'handle',
+    requiredCapabilities: ['rules'],
+  }, (event, args: { token: string; id: string }, grant) => {
+    void event;
+    if (!args.id || typeof args.id !== 'string') return { error: 'id-required' };
+    const db = getDb() as unknown as RulesDb;
+    // Only own-feature, runtime-source rules are deletable via this
+    // handler. Manifest rows are owned by the install pipeline.
+    const rows = rulesList(db, { featureId: grant.tileId, source: 'runtime' });
+    if (!rows.some(r => r.id === args.id)) return { ok: false };
+    const ok = rulesDelete(db, args.id);
+    if (ok) {
+      publish(`peek://${grant.tileId}/background`, 'rules:changed', {
+        featureId: grant.tileId,
+        action: 'unregister',
+        ruleId: args.id,
+      });
+    }
+    return { ok };
   });
 
   // ── Shortcuts (strict) ────────────────────────────────────────────

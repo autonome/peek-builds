@@ -84,6 +84,34 @@ export interface SchemaItemTags {
   createdAt: number;
 }
 
+/** Event-dispatch rules — declarative subscribers that tie an event topic + match predicate to a script. Drives the rule engine that lets features participate in event pipelines without being permanently resident. See peek MCP plan 3d7d9239. */
+export interface SchemaRules {
+  /** Stable rule id. SHA-256 content-hash for source='manifest' rows (so identical reboots don't churn the table); UUID for source='user' / 'runtime'. */
+  id: string;
+  /** Owning feature id (or 'user' for user-created rules). Used to scope cleanup on feature uninstall. */
+  featureId: string;
+  /** Event topic the rule listens for. Trailing wildcard supported (e.g. 'page:*'). */
+  topic: string;
+  /** JSON predicate evaluated against the event payload by the dispatcher. See plan 3d7d9239 Stage 2 for the language. */
+  match: string;
+  /** Script to execute when the predicate matches. References an entry in the scripts feature. */
+  scriptId: string;
+  /** JSON config passed to the script alongside the event (e.g. { activeTag, completedTag } for tag-swap). */
+  config: string;
+  /** JSON UI affordance hints ({ icon, checkedIcon, color, checkedColor, label }). Empty = compute-only rule, no UI affordance. */
+  display: string;
+  /** 0/1. Lets users disable a rule without deleting it. */
+  enabled: number;
+  /** Where the rule came from: 'manifest' (declared by a feature manifest), 'user' (rule-editor UI), 'runtime' (live api.rules.register). */
+  source: string;
+  /** Tiebreaker when multiple rules match the same event. */
+  ordering: number;
+  /** Creation timestamp (Unix ms). */
+  createdAt: number;
+  /** Last update timestamp (Unix ms). */
+  updatedAt: number;
+}
+
 /** Events/entries for series and feeds - append-only time-series data */
 export interface SchemaItemEvents {
   /** Unique identifier (UUID) */
@@ -103,7 +131,7 @@ export interface SchemaItemEvents {
 }
 
 /** Valid sync table names */
-export type SchemaSyncTableName = 'items' | 'tags' | 'item_tags' | 'item_events';
+export type SchemaSyncTableName = 'items' | 'tags' | 'item_tags' | 'rules' | 'item_events';
 
 /** Required sync columns by table */
 export const REQUIRED_SYNC_COLUMNS: Record<SchemaSyncTableName, string[]> = {
@@ -111,4 +139,5 @@ export const REQUIRED_SYNC_COLUMNS: Record<SchemaSyncTableName, string[]> = {
   tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt"],
   item_tags: ["itemId","tagId","createdAt"],
   item_events: ["id","itemId","content","value","occurredAt","metadata","createdAt"],
+  rules: [],
 };

@@ -36,11 +36,8 @@
         "tag:item-added",
         "tag:item-removed",
         "editor:open",
-        "tag-actions:get-all",
-        "tag-actions:get-all:response",
-        "tag-actions:create:response",
-        "tag-actions:update:response",
-        "tag-actions:delete:response"
+        "affordance:click",
+        "rules:changed"
       ]
     },
     "datastore": {
@@ -49,7 +46,8 @@
     "window": {
       "create": true
     },
-    "commands": true
+    "commands": true,
+    "rules": true
   },
   "commands": [
     {

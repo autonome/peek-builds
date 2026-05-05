@@ -1,20 +1,22 @@
 /**
- * Tag Actions - Single Resident Tile
+ * Tag Actions — pair management UI.
  *
- * Combines background state management and UI in one tile (resident: true).
- * State (pairs, action rules), settings I/O, command registration, and
- * external pubsub handlers (tag-actions:get-all, :create, :update, :delete)
- * all live here. Internal get-pairs/set-pairs request-response replaced with
- * direct function calls.
+ * Stage 3 of peek MCP plan 3d7d9239: pairs are NOT stored in settings
+ * any more. Each pair is one row in the `rules` table:
+ *   topic   : 'affordance:click'
+ *   scriptId: 'tag-swap'
+ *   match   : { activeTag, completedTag }       — fires this rule only
+ *   config  : { activeTag, completedTag }       — passed to tag-swap
+ *   display : { icon, checkedIcon, color, ..., iconPair }
  *
- * Shows a flat list of tag pairs. Each pair has:
- * - Active tag (e.g. "todo")
- * - Completed tag (e.g. "done")
- * - Icon style (checkbox, eye, star, etc.)
+ * The card UI (app/lib/tag-action-affordances.js) reads these via
+ * api.rules.listAffordances() and publishes affordance:click on user
+ * interaction; the rule engine (backend) routes that to
+ * scripts:execute:tag-swap, which the background tile handles.
  *
- * External consumers (tag-action-affordances.js) still use:
- *   tag-actions:get-all / tag-actions:get-all:response
- *   tag-actions:create:response, :update:response, :delete:response
+ * One-shot migration runs on first load: any pairs found in the
+ * legacy settings keys ('data' or 'pairs') are converted to rules and
+ * the legacy keys are cleared.
  */
 
 import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
@@ -51,97 +53,6 @@ const ICON_STYLES = {
   }
 };
 
-// ==================== Default Pairs ====================
-
-const DEFAULT_PAIRS = [
-  { activeTag: 'todo', completedTag: 'done', iconPair: 'checkbox' },
-  { activeTag: 'readme', completedTag: 'read', iconPair: 'eye' }
-];
-
-// ==================== State ====================
-
-let currentPairs = [];
-let currentActions = []; // derived from pairs
-
-// ==================== Settings ====================
-
-const loadSettings = async () => {
-  // Canonical storage is the schema-declared 'pairs' key (array of pair objects).
-  // Prior versions wrote a combined object under 'data' ({ pairs: [...] }
-  // or legacy { actions: [...] }). When both rows exist, 'data' is the
-  // authoritative source — it's where the buggy code persisted the user's
-  // most recent state — so migrate from 'data' first if present, then
-  // re-save under 'pairs'. The stale 'data' row is left in place
-  // (harmless; no foreign reads).
-  const legacy = await api.settings.get('data');
-  if (legacy.success && legacy.data) {
-    if (Array.isArray(legacy.data.pairs)) {
-      currentPairs = legacy.data.pairs;
-    } else if (Array.isArray(legacy.data.actions) && legacy.data.actions.length > 0) {
-      currentPairs = migrateActionsToToPairs(legacy.data.actions);
-    } else {
-      currentPairs = [];
-    }
-    // Persist under the canonical key so subsequent loads skip the legacy branch.
-    await api.settings.set('pairs', currentPairs);
-    // Mark the legacy row as migrated so we never read it again.
-    await api.settings.set('data', null);
-  } else {
-    const pairsResult = await api.settings.get('pairs');
-    currentPairs = (pairsResult.success && Array.isArray(pairsResult.data))
-      ? pairsResult.data
-      : [];
-  }
-
-  // Derive action rules from pairs
-  currentActions = pairsToActionRules(currentPairs);
-  debug && console.log('[tag-actions] Loaded', currentPairs.length, 'pairs ->', currentActions.length, 'action rules');
-};
-
-const saveSettings = async () => {
-  const result = await api.settings.set('pairs', currentPairs);
-  if (!result.success) {
-    console.error('[tag-actions] Failed to save settings:', result.error);
-  }
-  // Regenerate action rules
-  currentActions = pairsToActionRules(currentPairs);
-  return result;
-};
-
-// ==================== Migration ====================
-
-/**
- * Convert old-format actions array to new pairs format.
- * Only migrates toggle-type actions (the visual affordance type).
- */
-const migrateActionsToToPairs = (actions) => {
-  const pairs = [];
-  for (const action of actions) {
-    if (action.actionType === 'toggle' && action.actionConfig) {
-      const config = action.actionConfig;
-      // Map old icon names to new iconPair names
-      let iconPair = 'checkbox';
-      if (config.icon === 'eye' || config.checkedIcon === 'eye') iconPair = 'eye';
-      else if (config.icon === 'star' || config.checkedIcon === 'star') iconPair = 'star';
-      else if (config.icon === 'heart' || config.checkedIcon === 'heart') iconPair = 'heart';
-      else if (config.icon === 'flag' || config.checkedIcon === 'flag') iconPair = 'flag';
-      else if (config.icon === 'bookmark' || config.checkedIcon === 'bookmark') iconPair = 'bookmark';
-
-      pairs.push({
-        activeTag: config.activeTag || action.triggerTag || '',
-        completedTag: config.completedTag || '',
-        iconPair
-      });
-    }
-  }
-  return pairs;
-};
-
-// ==================== Pairs to Action Rules ====================
-
-/**
- * Icon pair name to the icon/checkedIcon names used by tag-action-affordances.js
- */
 const ICON_PAIR_MAP = {
   checkbox: { icon: 'unchecked', checkedIcon: 'checked' },
   eye:      { icon: 'eye-open', checkedIcon: 'eye-closed' },
@@ -151,32 +62,119 @@ const ICON_PAIR_MAP = {
   bookmark: { icon: 'bookmark-empty', checkedIcon: 'bookmark-filled' }
 };
 
-/**
- * Convert simplified pairs to action rule objects compatible with resolveAffordances().
- */
-const pairsToActionRules = (pairs) => {
-  return pairs
-    .filter(p => p.activeTag && p.completedTag)
-    .map((pair, i) => {
-      const icons = ICON_PAIR_MAP[pair.iconPair] || ICON_PAIR_MAP.checkbox;
-      return {
-        id: `pair_${i}`,
-        name: `${pair.activeTag}/${pair.completedTag}`,
-        enabled: true,
-        triggerTag: pair.activeTag,
-        triggerOn: 'add',
-        actionType: 'toggle',
-        actionConfig: {
-          activeTag: pair.activeTag,
-          completedTag: pair.completedTag,
-          icon: icons.icon,
-          checkedIcon: icons.checkedIcon,
-          color: '#007aff',
-          checkedColor: '#34c759'
-        },
-        itemTypes: null
-      };
-    });
+const DEFAULT_PAIRS = [
+  { activeTag: 'todo', completedTag: 'done', iconPair: 'checkbox' },
+  { activeTag: 'readme', completedTag: 'read', iconPair: 'eye' }
+];
+
+// ==================== State ====================
+
+// In-memory mirror of the rules table for this feature. Each entry:
+//   { id, suffix, activeTag, completedTag, iconPair }
+// where suffix is the per-row stable id passed to api.rules.register.
+let pairs = [];
+
+const buildDisplay = (iconPair) => {
+  const icons = ICON_PAIR_MAP[iconPair] || ICON_PAIR_MAP.checkbox;
+  return {
+    icon: icons.icon,
+    checkedIcon: icons.checkedIcon,
+    color: '#007aff',
+    checkedColor: '#34c759',
+    iconPair, // home UI reads this to populate the icon-style dropdown
+  };
+};
+
+const ruleToPair = (rule) => ({
+  id: rule.id,
+  suffix: rule.id.startsWith('rule_tag-actions_')
+    ? rule.id.slice('rule_tag-actions_'.length)
+    : rule.id,
+  activeTag: (rule.config && rule.config.activeTag) || '',
+  completedTag: (rule.config && rule.config.completedTag) || '',
+  iconPair: (rule.display && rule.display.iconPair) || 'checkbox',
+});
+
+const generateSuffix = () => `p_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+// ==================== Rules I/O ====================
+
+const loadPairsFromRules = async () => {
+  const res = await api.rules.list({ topic: 'affordance:click' });
+  if (!res || !Array.isArray(res.rules)) {
+    pairs = [];
+    return;
+  }
+  pairs = res.rules
+    .filter(r => r.scriptId === 'tag-swap')
+    .map(ruleToPair);
+};
+
+const upsertPair = async (pair) => {
+  if (!pair.suffix) pair.suffix = generateSuffix();
+  const args = {
+    id: pair.suffix,
+    topic: 'affordance:click',
+    scriptId: 'tag-swap',
+    match: { activeTag: pair.activeTag, completedTag: pair.completedTag },
+    config: { activeTag: pair.activeTag, completedTag: pair.completedTag },
+    display: buildDisplay(pair.iconPair),
+    enabled: true,
+  };
+  const res = await api.rules.register(args);
+  if (res && res.rule) pair.id = res.rule.id;
+  else if (res && res.error) console.error('[tag-actions] register failed:', res.error);
+};
+
+const deletePair = async (pair) => {
+  if (!pair.id) return;
+  const res = await api.rules.unregister(pair.id);
+  if (res && res.error) console.error('[tag-actions] unregister failed:', res.error);
+};
+
+// ==================== One-shot migration ====================
+
+const migrateLegacySettings = async () => {
+  // Old shapes: { actions: [...] } (very old) or { pairs: [...] } (recent)
+  // under either 'data' or 'pairs' settings keys. We only honour pair-shaped
+  // rows here — legacy 'actions' was already simplified to pairs in v2.
+  const candidatePairs = [];
+  const seen = (p) => candidatePairs.some(c => c.activeTag === p.activeTag && c.completedTag === p.completedTag);
+
+  const dataRes = await api.settings.get('data');
+  if (dataRes.success && dataRes.data) {
+    if (Array.isArray(dataRes.data.pairs)) {
+      for (const p of dataRes.data.pairs) {
+        if (p && p.activeTag && p.completedTag && !seen(p)) candidatePairs.push(p);
+      }
+    }
+  }
+
+  const pairsRes = await api.settings.get('pairs');
+  if (pairsRes.success && Array.isArray(pairsRes.data)) {
+    for (const p of pairsRes.data) {
+      if (p && p.activeTag && p.completedTag && !seen(p)) candidatePairs.push(p);
+    }
+  }
+
+  if (candidatePairs.length === 0) return 0;
+
+  let migrated = 0;
+  for (const p of candidatePairs) {
+    const np = {
+      suffix: generateSuffix(),
+      activeTag: p.activeTag,
+      completedTag: p.completedTag,
+      iconPair: p.iconPair || 'checkbox',
+    };
+    await upsertPair(np);
+    migrated++;
+  }
+  // Clear the legacy keys so we never migrate twice.
+  await api.settings.set('data', null);
+  await api.settings.set('pairs', null);
+  debug && console.log('[tag-actions] migrated', migrated, 'legacy pair(s) to rules');
+  return migrated;
 };
 
 // ==================== Commands ====================
@@ -198,7 +196,7 @@ const registerCommands = () => {
     description: 'Tag pair toggles on item cards',
 
     query: async ({ search }) => {
-      let filtered = currentPairs;
+      let filtered = pairs;
       if (search) {
         const s = search.toLowerCase();
         filtered = filtered.filter(p =>
@@ -212,7 +210,7 @@ const registerCommands = () => {
       return {
         success: true,
         output: {
-          data: filtered,
+          data: filtered.map(p => ({ activeTag: p.activeTag, completedTag: p.completedTag, iconPair: p.iconPair })),
           mimeType: 'application/json',
           title: `Tag Pairs (${filtered.length})`
         }
@@ -222,8 +220,14 @@ const registerCommands = () => {
     browse: async () => { openTagActions(); },
 
     create: async ({ search }) => {
-      currentPairs.push({ activeTag: search || '', completedTag: '', iconPair: 'checkbox' });
-      await saveSettings();
+      const np = {
+        suffix: generateSuffix(),
+        activeTag: search || '',
+        completedTag: '',
+        iconPair: 'checkbox',
+      };
+      pairs.push(np);
+      await upsertPair(np);
       openTagActions();
       return { success: true };
     },
@@ -232,47 +236,9 @@ const registerCommands = () => {
   });
 };
 
-// ==================== External Pubsub Handlers ====================
-// These topics are consumed by tag-action-affordances.js (external shared lib)
-// and must remain as pubsub even in the single-tile model.
-
-const registerExternalHandlers = () => {
-  // tag-action-affordances.js queries for action rules
-  api.pubsub.subscribe('tag-actions:get-all', () => {
-    api.pubsub.publish('tag-actions:get-all:response', {
-      success: true,
-      data: currentActions
-    });
-  });
-
-  // Legacy CRUD endpoints -- respond gracefully; pairs is the source of truth
-  api.pubsub.subscribe('tag-actions:create', async (msg) => {
-    // If it looks like a toggle action, convert to pair
-    if (msg.actionType === 'toggle' && msg.actionConfig) {
-      currentPairs.push({
-        activeTag: msg.actionConfig.activeTag || msg.triggerTag || '',
-        completedTag: msg.actionConfig.completedTag || '',
-        iconPair: 'checkbox'
-      });
-      await saveSettings();
-    }
-    api.pubsub.publish('tag-actions:create:response', { success: true });
-  });
-
-  api.pubsub.subscribe('tag-actions:update', async (_msg) => {
-    api.pubsub.publish('tag-actions:update:response', { success: true });
-  });
-
-  api.pubsub.subscribe('tag-actions:delete', async (_msg) => {
-    api.pubsub.publish('tag-actions:delete:response', { success: true });
-  });
-};
-
 // ==================== Escape Handler ====================
 
-const handleEscape = () => {
-  return { handled: false };
-};
+const handleEscape = () => ({ handled: false });
 
 // ==================== Rendering ====================
 
@@ -280,12 +246,12 @@ const render = () => {
   const container = document.querySelector('.pairs-list');
   container.innerHTML = '';
 
-  if (currentPairs.length === 0) {
+  if (pairs.length === 0) {
     container.innerHTML = '<div class="empty-state">No tag pairs yet. Click + to create one.</div>';
     return;
   }
 
-  currentPairs.forEach((pair, index) => {
+  pairs.forEach((pair, index) => {
     container.appendChild(createPairRow(pair, index));
   });
 };
@@ -294,48 +260,42 @@ const createPairRow = (pair, index) => {
   const row = document.createElement('div');
   row.className = 'pair-row';
 
-  // Icon preview
   const iconPreview = document.createElement('div');
   iconPreview.className = 'pair-icon-preview';
   const style = ICON_STYLES[pair.iconPair] || ICON_STYLES.checkbox;
   iconPreview.innerHTML = style.svg;
   row.appendChild(iconPreview);
 
-  // Tags area
   const tagsArea = document.createElement('div');
   tagsArea.className = 'pair-tags';
 
-  // Active tag input
   const activeInput = document.createElement('peek-input');
   activeInput.className = 'pair-tag-input';
   activeInput.value = pair.activeTag || '';
   activeInput.placeholder = 'active tag';
-  activeInput.addEventListener('change', (e) => {
+  activeInput.addEventListener('change', async (e) => {
     pair.activeTag = e.target.value.trim();
-    saveSettings();
+    await upsertPair(pair);
   });
   tagsArea.appendChild(activeInput);
 
-  // Arrow
   const arrow = document.createElement('span');
   arrow.className = 'pair-arrow';
   arrow.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>';
   tagsArea.appendChild(arrow);
 
-  // Completed tag input
   const completedInput = document.createElement('peek-input');
   completedInput.className = 'pair-tag-input';
   completedInput.value = pair.completedTag || '';
   completedInput.placeholder = 'completed tag';
-  completedInput.addEventListener('change', (e) => {
+  completedInput.addEventListener('change', async (e) => {
     pair.completedTag = e.target.value.trim();
-    saveSettings();
+    await upsertPair(pair);
   });
   tagsArea.appendChild(completedInput);
 
   row.appendChild(tagsArea);
 
-  // Icon style selector
   const iconSelect = document.createElement('select');
   iconSelect.className = 'pair-icon-select';
   for (const [key, def] of Object.entries(ICON_STYLES)) {
@@ -345,23 +305,21 @@ const createPairRow = (pair, index) => {
     opt.selected = pair.iconPair === key;
     iconSelect.appendChild(opt);
   }
-  iconSelect.addEventListener('change', () => {
+  iconSelect.addEventListener('change', async () => {
     pair.iconPair = iconSelect.value;
-    // Update icon preview
     const newStyle = ICON_STYLES[pair.iconPair] || ICON_STYLES.checkbox;
     iconPreview.innerHTML = newStyle.svg;
-    saveSettings();
+    await upsertPair(pair);
   });
   row.appendChild(iconSelect);
 
-  // Delete button
   const deleteBtn = document.createElement('button');
   deleteBtn.className = 'pair-delete-btn';
   deleteBtn.title = 'Remove pair';
   deleteBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
   deleteBtn.addEventListener('click', async () => {
-    currentPairs.splice(index, 1);
-    await saveSettings();
+    const removed = pairs.splice(index, 1)[0];
+    if (removed) await deletePair(removed);
     render();
   });
   row.appendChild(deleteBtn);
@@ -374,24 +332,36 @@ const createPairRow = (pair, index) => {
 const init = async () => {
   debug && console.log('[tag-actions] init');
 
-  await loadSettings();
+  await migrateLegacySettings();
+  await loadPairsFromRules();
   registerCommands();
-  registerExternalHandlers();
 
   api.escape.onEscape(handleEscape);
 
-  // If no pairs exist, populate defaults
-  if (currentPairs.length === 0) {
-    currentPairs = DEFAULT_PAIRS.map(p => ({ ...p }));
-    await saveSettings();
+  // First-run defaults: only when nothing exists in rules either.
+  if (pairs.length === 0) {
+    for (const p of DEFAULT_PAIRS) {
+      const np = {
+        suffix: generateSuffix(),
+        activeTag: p.activeTag,
+        completedTag: p.completedTag,
+        iconPair: p.iconPair,
+      };
+      pairs.push(np);
+      await upsertPair(np);
+    }
   }
 
-  // Add pair button
   document.querySelector('.add-pair-btn').addEventListener('click', async () => {
-    currentPairs.push({ activeTag: '', completedTag: '', iconPair: 'checkbox' });
-    await saveSettings();
+    const np = {
+      suffix: generateSuffix(),
+      activeTag: '',
+      completedTag: '',
+      iconPair: 'checkbox',
+    };
+    pairs.push(np);
+    await upsertPair(np);
     render();
-    // Focus the first empty input in the new row
     requestAnimationFrame(() => {
       const rows = document.querySelectorAll('.pair-row');
       const lastRow = rows[rows.length - 1];
@@ -402,16 +372,16 @@ const init = async () => {
     });
   });
 
-  render();
-
-  // Proactive broadcast: consumers' first :get-all request may arrive before our
-  // subscribe; pubsub doesn't buffer, so the cache would stay empty forever.
-  api.pubsub.publish('tag-actions:get-all:response', {
-    success: true,
-    data: currentActions
+  // Keep the UI in sync with external rule changes (other windows, future
+  // user-facing rule editor). Rebuild from the table when something flips.
+  api.pubsub.subscribe('rules:changed', async () => {
+    await loadPairsFromRules();
+    render();
   });
 
-  debug && console.log('[tag-actions] initialized with', currentPairs.length, 'pairs');
+  render();
+
+  debug && console.log('[tag-actions] initialized with', pairs.length, 'pair(s)');
 };
 
 const uninit = () => {
