@@ -13,10 +13,6 @@
  * api.rules.listAffordances() and publishes affordance:click on user
  * interaction; the rule engine (backend) routes that to
  * scripts:execute:tag-swap, which the background tile handles.
- *
- * One-shot migration runs on first load: any pairs found in the
- * legacy settings keys ('data' or 'pairs') are converted to rules and
- * the legacy keys are cleared.
  */
 
 import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
@@ -130,51 +126,6 @@ const deletePair = async (pair) => {
   if (!pair.id) return;
   const res = await api.rules.unregister(pair.id);
   if (res && res.error) console.error('[tag-actions] unregister failed:', res.error);
-};
-
-// ==================== One-shot migration ====================
-
-const migrateLegacySettings = async () => {
-  // Old shapes: { actions: [...] } (very old) or { pairs: [...] } (recent)
-  // under either 'data' or 'pairs' settings keys. We only honour pair-shaped
-  // rows here — legacy 'actions' was already simplified to pairs in v2.
-  const candidatePairs = [];
-  const seen = (p) => candidatePairs.some(c => c.activeTag === p.activeTag && c.completedTag === p.completedTag);
-
-  const dataRes = await api.settings.get('data');
-  if (dataRes.success && dataRes.data) {
-    if (Array.isArray(dataRes.data.pairs)) {
-      for (const p of dataRes.data.pairs) {
-        if (p && p.activeTag && p.completedTag && !seen(p)) candidatePairs.push(p);
-      }
-    }
-  }
-
-  const pairsRes = await api.settings.get('pairs');
-  if (pairsRes.success && Array.isArray(pairsRes.data)) {
-    for (const p of pairsRes.data) {
-      if (p && p.activeTag && p.completedTag && !seen(p)) candidatePairs.push(p);
-    }
-  }
-
-  if (candidatePairs.length === 0) return 0;
-
-  let migrated = 0;
-  for (const p of candidatePairs) {
-    const np = {
-      suffix: generateSuffix(),
-      activeTag: p.activeTag,
-      completedTag: p.completedTag,
-      iconPair: p.iconPair || 'checkbox',
-    };
-    await upsertPair(np);
-    migrated++;
-  }
-  // Clear the legacy keys so we never migrate twice.
-  await api.settings.set('data', null);
-  await api.settings.set('pairs', null);
-  debug && console.log('[tag-actions] migrated', migrated, 'legacy pair(s) to rules');
-  return migrated;
 };
 
 // ==================== Commands ====================
@@ -332,7 +283,6 @@ const createPairRow = (pair, index) => {
 const init = async () => {
   debug && console.log('[tag-actions] init');
 
-  await migrateLegacySettings();
   await loadPairsFromRules();
   registerCommands();
 
