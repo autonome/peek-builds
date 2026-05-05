@@ -79,6 +79,52 @@ export function mirrorPlacementIntent(
 }
 
 /**
+ * Single-display restore policy: rewrite bounds + drop placement intent for
+ * any saved window whose center isn't on the current primary display.
+ *
+ * Why: we don't (yet) try to remember multi-display layouts. After a topology
+ * change between save and restore — display added, removed, or just re-ordered
+ * — windows whose saved coords land on a non-primary display would otherwise
+ * stay on that display, splitting the user's session across screens. This
+ * function collapses everything onto primary at restore time, preserving
+ * window size (clamped to fit) and centering inside primary's workArea.
+ *
+ * Returns a new descriptor when rewriting; returns the input untouched when
+ * the saved center is already on primary. Placement intent (`center: true`,
+ * `screenEdge`) is cleared on rewrite so the explicit bounds reach
+ * `buildRestoreBoundsOptions` and aren't re-derived against the cursor display.
+ *
+ * Pure: takes the primary workArea as a parameter so it's unit-testable
+ * without Electron's `screen` module.
+ */
+export function collapseToPrimaryDisplay(
+  descriptor: { bounds: Electron.Rectangle; params: Record<string, unknown> },
+  primaryWorkArea: Electron.Rectangle,
+): { bounds: Electron.Rectangle; params: Record<string, unknown> } {
+  const cx = descriptor.bounds.x + Math.round(descriptor.bounds.width / 2);
+  const cy = descriptor.bounds.y + Math.round(descriptor.bounds.height / 2);
+  const onPrimary =
+    cx >= primaryWorkArea.x && cx < primaryWorkArea.x + primaryWorkArea.width &&
+    cy >= primaryWorkArea.y && cy < primaryWorkArea.y + primaryWorkArea.height;
+  if (onPrimary) return descriptor;
+
+  const w = Math.min(descriptor.bounds.width, primaryWorkArea.width);
+  const h = Math.min(descriptor.bounds.height, primaryWorkArea.height);
+  const newBounds: Electron.Rectangle = {
+    x: primaryWorkArea.x + Math.round((primaryWorkArea.width - w) / 2),
+    y: primaryWorkArea.y + Math.round((primaryWorkArea.height - h) / 2),
+    width: w,
+    height: h,
+  };
+  const newParams = { ...descriptor.params };
+  // Clear placement intent so the rewritten x/y is what window-open uses,
+  // rather than computePlacement re-deriving against the cursor display.
+  delete newParams.center;
+  delete newParams.screenEdge;
+  return { bounds: newBounds, params: newParams };
+}
+
+/**
  * Build the x/y/w/h options the restore path passes to window-open.
  *
  * If the descriptor declares a non-manual placement intent (`center: true`
@@ -696,8 +742,18 @@ export async function restoreSessionSnapshot(
   // Track which window was focused for later focus restoration
   let focusedWindowId: number | null = null;
 
-  for (const descriptor of sortedWindows) {
+  // Single-display restore policy: every window goes to the current primary
+  // display. Avoids the case where reconnecting/swapping displays between
+  // save and restore leaves windows stranded on a now-secondary screen.
+  const primaryWorkArea = screen.getPrimaryDisplay().workArea;
+
+  for (const original of sortedWindows) {
     try {
+      const descriptor = (() => {
+        const collapsed = collapseToPrimaryDisplay(original, primaryWorkArea);
+        if (collapsed === original) return original;
+        return { ...original, bounds: collapsed.bounds, params: collapsed.params };
+      })();
       const boundsOptions = buildRestoreBoundsOptions(descriptor, isPointOnScreen);
       const centerX = descriptor.bounds.x + Math.round(descriptor.bounds.width / 2);
       const centerY = descriptor.bounds.y + Math.round(descriptor.bounds.height / 2);
@@ -771,7 +827,7 @@ export async function restoreSessionSnapshot(
       }
     } catch (error) {
       result.failed++;
-      console.error(`[session] Error restoring window ${descriptor.url}:`, error);
+      console.error(`[session] Error restoring window ${original.url}:`, error);
     }
   }
 

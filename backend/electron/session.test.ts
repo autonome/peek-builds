@@ -195,6 +195,35 @@ function buildRestoreBoundsOptions(
   return out;
 }
 
+/**
+ * Collapse a window descriptor onto the primary display when its saved
+ * center isn't already there. Mirrors session.ts collapseToPrimaryDisplay.
+ */
+function collapseToPrimaryDisplay(
+  descriptor: { bounds: { x: number; y: number; width: number; height: number }; params: Record<string, unknown> },
+  primaryWorkArea: { x: number; y: number; width: number; height: number },
+): { bounds: { x: number; y: number; width: number; height: number }; params: Record<string, unknown> } {
+  const cx = descriptor.bounds.x + Math.round(descriptor.bounds.width / 2);
+  const cy = descriptor.bounds.y + Math.round(descriptor.bounds.height / 2);
+  const onPrimary =
+    cx >= primaryWorkArea.x && cx < primaryWorkArea.x + primaryWorkArea.width &&
+    cy >= primaryWorkArea.y && cy < primaryWorkArea.y + primaryWorkArea.height;
+  if (onPrimary) return descriptor;
+
+  const w = Math.min(descriptor.bounds.width, primaryWorkArea.width);
+  const h = Math.min(descriptor.bounds.height, primaryWorkArea.height);
+  const newBounds = {
+    x: primaryWorkArea.x + Math.round((primaryWorkArea.width - w) / 2),
+    y: primaryWorkArea.y + Math.round((primaryWorkArea.height - h) / 2),
+    width: w,
+    height: h,
+  };
+  const newParams = { ...descriptor.params };
+  delete newParams.center;
+  delete newParams.screenEdge;
+  return { bounds: newBounds, params: newParams };
+}
+
 // ============================================================================
 // Database helper functions (replicate the SQL from session.ts exactly)
 // ============================================================================
@@ -704,6 +733,123 @@ describe('Session Integration Tests', () => {
       );
       assert.strictEqual(observedX, 500); // 100 + round(800/2)
       assert.strictEqual(observedY, 500); // 200 + round(600/2)
+    });
+  });
+
+  // ========================================================================
+  // collapseToPrimaryDisplay tests
+  //
+  // Single-display restore policy: a window whose saved center isn't on the
+  // current primary display gets re-centered there, with placement intent
+  // cleared so the rewritten coords are what window-open uses.
+  //
+  // Catches the regression where reconnecting an external display between
+  // save and restore left ~half the windows on the laptop screen.
+  // ========================================================================
+
+  describe('collapseToPrimaryDisplay', () => {
+    // Simulated topology: external is primary at origin, laptop is at -1440,0
+    // (typical macOS arrangement when external is set as the main display).
+    const externalPrimaryWA = { x: 0, y: 0, width: 2560, height: 1440 };
+    const laptopBounds = { x: -1440, y: 0, width: 1440, height: 900 };
+
+    it('returns the descriptor unchanged when saved center is on primary', () => {
+      const desc = {
+        bounds: { x: 100, y: 100, width: 800, height: 600 },
+        params: { center: true, role: 'workspace' },
+      };
+      const out = collapseToPrimaryDisplay(desc, externalPrimaryWA);
+      assert.strictEqual(out, desc);
+    });
+
+    it('re-centers a window whose saved center lands on a non-primary display', () => {
+      const desc = {
+        bounds: {
+          x: laptopBounds.x + 200,
+          y: laptopBounds.y + 200,
+          width: 800,
+          height: 600,
+        },
+        params: {} as Record<string, unknown>,
+      };
+      const out = collapseToPrimaryDisplay(desc, externalPrimaryWA);
+      assert.notStrictEqual(out, desc);
+      assert.strictEqual(out.bounds.width, 800);
+      assert.strictEqual(out.bounds.height, 600);
+      // Centered horizontally + vertically on the primary workArea
+      assert.strictEqual(out.bounds.x, Math.round((2560 - 800) / 2));
+      assert.strictEqual(out.bounds.y, Math.round((1440 - 600) / 2));
+      // Center of new bounds lies inside primary workArea
+      const cx = out.bounds.x + out.bounds.width / 2;
+      const cy = out.bounds.y + out.bounds.height / 2;
+      assert.ok(cx >= 0 && cx < 2560);
+      assert.ok(cy >= 0 && cy < 1440);
+    });
+
+    it('clears placement intent (center + screenEdge) on rewrite', () => {
+      const desc = {
+        bounds: {
+          x: laptopBounds.x + 200,
+          y: laptopBounds.y + 200,
+          width: 800,
+          height: 600,
+        },
+        params: { center: true, screenEdge: 'right', role: 'workspace' },
+      };
+      const out = collapseToPrimaryDisplay(desc, externalPrimaryWA);
+      assert.strictEqual(out.params.center, undefined);
+      assert.strictEqual(out.params.screenEdge, undefined);
+      // Non-placement params survive
+      assert.strictEqual(out.params.role, 'workspace');
+    });
+
+    it('clamps width/height when saved size exceeds primary workArea', () => {
+      const desc = {
+        bounds: {
+          x: laptopBounds.x,
+          y: laptopBounds.y,
+          width: 5000,
+          height: 3000,
+        },
+        params: {} as Record<string, unknown>,
+      };
+      const out = collapseToPrimaryDisplay(desc, externalPrimaryWA);
+      assert.strictEqual(out.bounds.width, 2560);
+      assert.strictEqual(out.bounds.height, 1440);
+      assert.strictEqual(out.bounds.x, 0);
+      assert.strictEqual(out.bounds.y, 0);
+    });
+
+    it('downstream buildRestoreBoundsOptions on a collapsed descriptor returns explicit x/y on primary', () => {
+      const desc = {
+        bounds: {
+          x: laptopBounds.x + 200,
+          y: laptopBounds.y + 200,
+          width: 800,
+          height: 600,
+        },
+        params: { center: true } as Record<string, unknown>,
+      };
+      const collapsed = collapseToPrimaryDisplay(desc, externalPrimaryWA);
+      const isPointOnScreen = (x: number, y: number) =>
+        x >= 0 && x < 2560 && y >= 0 && y < 1440;
+      const opts = buildRestoreBoundsOptions(collapsed, isPointOnScreen);
+      // After collapse, center: true is gone, so manual-bounds path runs and
+      // window-open gets explicit primary-centered coords.
+      assert.strictEqual(opts.x, Math.round((2560 - 800) / 2));
+      assert.strictEqual(opts.y, Math.round((1440 - 600) / 2));
+      assert.strictEqual(opts.width, 800);
+      assert.strictEqual(opts.height, 600);
+    });
+
+    it('center exactly at the rightmost workArea edge is treated as off-primary (half-open interval)', () => {
+      // Center at x=2560 (workArea.x + workArea.width) should NOT count as on primary.
+      const desc = {
+        bounds: { x: 2160, y: 600, width: 800, height: 600 },
+        params: {} as Record<string, unknown>,
+      };
+      const out = collapseToPrimaryDisplay(desc, externalPrimaryWA);
+      assert.notStrictEqual(out, desc);
     });
   });
 
