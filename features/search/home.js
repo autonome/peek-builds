@@ -313,11 +313,13 @@ const createResultCard = (item) => {
       rules,
       api,
       onToggle: async () => {
-        // Refresh tags for the toggled item so re-render shows the new state
-        const tagsResult = await api.datastore.getItemTags(item.id);
-        if (tagsResult.success) {
-          state.itemTags.set(item.id, tagsResult.data);
-        }
+        // Re-run the full search so an item that no longer matches the
+        // query (e.g. user flipped #todo to #done while searching #todo)
+        // disappears immediately. We don't rely on the tag:item-added /
+        // tag:item-removed pubsub bounce because (a) it's debounced 150ms
+        // and (b) we don't want a stale row sitting in results between
+        // the click and the pubsub round-trip.
+        await runSearch();
         render();
       }
     } : null,
