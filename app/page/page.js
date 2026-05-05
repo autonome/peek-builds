@@ -2142,11 +2142,12 @@ api.escape.onEscape(() => {
     DEBUG && console.log('[page] ESC: pagestream browsing, closing window');
     return { handled: false }; // let backend close
   }
-  if (webview.canGoBack()) {
-    DEBUG && console.log('[page] ESC: webview going back');
-    webview.goBack();
-    return { handled: true };
-  }
+  // ESC must NOT navigate back. Browser convention is that ESC dismisses
+  // inputs / stops loading; "back" is cmd+[ or the navbar back button.
+  // Silently rewriting history on ESC is a data-loss vector (e.g. user
+  // typing into a form, hits ESC, loses the page). For internal page-host
+  // history (typed an address, navigated, hit ESC), prefer dropping the
+  // typed-address entry from history rather than triggering navigation.
   // In space mode, ESC at root should close this page and return to the group view.
   // The backend escPolicy returns 'nothing' for content windows in active sessions,
   // so we must close the window directly from the renderer.
