@@ -647,8 +647,8 @@ test.describe('Page Layout Maximize @desktop', () => {
     await closeWindow(sharedBgWindow, windowId);
   });
 
-  // Test 11: Resize handles hidden when maximized
-  test('resize handles hidden when maximized', async () => {
+  // Test 11: Resize handles stay reachable when maximized
+  test('resize handles stay reachable when maximized so a corner-grab can exit-and-resize', async () => {
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -667,15 +667,20 @@ test.describe('Page Layout Maximize @desktop', () => {
       { timeout: 5000 }
     );
 
-    // All resize handles should be hidden
-    const handlesHidden = await pageWindow.evaluate(() => {
-      const handles = document.querySelectorAll('.resize-handle');
-      return Array.from(handles).every((h) => {
-        const style = window.getComputedStyle(h);
-        return style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none';
-      });
+    // After the page-host edge-resize work, corner handles must remain
+    // visible and pointer-event-receptive in maximized so the user can
+    // drag a corner inward to exit-and-resize in a single gesture
+    // (page-fsm RESIZE_START transition from MAXIMIZED).
+    const seReachable = await pageWindow.evaluate(() => {
+      const el = document.getElementById('resize-se');
+      if (!el) return false;
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none') return false;
+      if (style.visibility === 'hidden') return false;
+      if (style.pointerEvents === 'none') return false;
+      return true;
     });
-    expect(handlesHidden).toBe(true);
+    expect(seReachable, 'SE corner handle must stay reachable in maximized').toBe(true);
 
     await closeWindow(sharedBgWindow, windowId);
   });

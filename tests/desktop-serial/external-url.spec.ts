@@ -102,8 +102,16 @@ test.describe('External URL Opening @desktop', () => {
     });
 
     expect(windowList.success).toBe(true);
+    // Accept both the typed http:// form and the post-redirect https://
+    // form. example.com auto-redirects to HTTPS, and tile:window:list now
+    // returns the user-facing address (info.params.currentUrl after
+    // navigation lands) rather than the shell-URL with %-encoded ?url=.
     const httpWindow = windowList.windows?.find((w: any) =>
-      w.url && (w.url.includes('http://example.com') || w.url.includes('http%3A%2F%2Fexample.com'))
+      w.url && (
+        w.url.includes('http://example.com') ||
+        w.url.includes('http%3A%2F%2Fexample.com') ||
+        w.url.includes('https://example.com')
+      )
     );
     expect(httpWindow).toBeTruthy();
 

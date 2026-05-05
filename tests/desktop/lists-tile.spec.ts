@@ -28,18 +28,20 @@ test.beforeAll(async () => {
 });
 
 test.describe('Lists Tile @desktop', () => {
-  test('manifest declares a single resident, keepLive home tile', async () => {
+  test('manifest declares a single keepLive home tile', async () => {
     // Static check via the manifest file shipped with the build. The
     // bg-tile collapse should make the lists feature ship one tile, and
     // it must declare keepLive so cmd+W hides instead of destroying.
+    // No longer resident — the lists home tile is lazy-loaded on first
+    // command invocation; keepLive preserves it once spawned.
     const fs = await import('node:fs');
     const path = await import('node:path');
     const manifestPath = path.resolve(process.cwd(), 'features/lists/manifest.json');
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     expect(manifest.tiles).toHaveLength(1);
     expect(manifest.tiles[0].id).toBe('home');
-    expect(manifest.tiles[0].resident).toBe(true);
     expect(manifest.tiles[0].keepLive).toBe(true);
+    expect(manifest.tiles[0].resident).not.toBe(true);
   });
 
   test('lists command is registered after init', async () => {
