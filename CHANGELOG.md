@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: be4002a4dd7a -->
+<!-- last-bumped: 2f6648e8680b -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -17,9 +17,37 @@ Completed work. Two formats coexist on purpose:
 
 See TODO.md for pending items, WIP.md for in-progress items.
 
+## Week of 2026-05-04 (W19)
+
+### 2026-05-05
+
+- window-presenter: single source of truth for user-facing window state
+- features: drop unnecessary resident tiles; manifest is the only truth
+- page-host: edge resize handles + reachable corners when maximized
+- search: re-run query on inline tag toggle so flipped items leave results
+- editor: set window title from item title for datastore-item editors
+- windows: dismiss the overlay when any new window opens
+- page-host: ESC must not navigate back
+- search: re-render result rows when tag-action rules arrive
+- session: collapse restored windows to primary display when topology changed
+
+### 2026-05-04
+
+- items: add 'event' to inline items CHECK constraint to skip first-boot recreation
+- datastore: make Loading-title backfill local-only, run every boot
+- page-layout: eliminate panel-position race after setWindowPadding
+- editor-tests: revive Playwright editor suite after V1→features rename
+- build: add yarn desktop aggregate test script
+- fix: ios xcodegen — exclude .a from Externals scan to stop libapp.a being bundled as a Resource
+- tags: canonical URL lookup so page-widget tags attach to existing items
+- cmd: keep cursor in view when typing past visible width
+- ios: declare ITSAppUsesNonExemptEncryption=false for both targets
+
 ## Week of 2026-04-27 (W18)
 
 ### 2026-05-03
+
+- hooks: block agent push and main-move via PreToolUse:Bash hook
 
 - items: add event item type (foundations)
 - download: sanitize filenames + surface failures via notification
