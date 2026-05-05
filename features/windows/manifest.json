@@ -28,7 +28,8 @@
         "ext:ready",
         "ext:windows:shutdown",
         "app:shutdown",
-        "window:closed"
+        "window:closed",
+        "window:opened"
       ]
     },
     "window": {

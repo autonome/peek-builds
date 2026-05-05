@@ -437,6 +437,25 @@ const init = async () => {
 
   // Render windows
   renderWindows();
+
+  // Dismiss the overlay if any new window opens (cmd+n, cmd palette,
+  // a tile-spawned window, etc.). Without this, the new window appears
+  // *behind* the overlay because we're alwaysOnTop. Filter out our own
+  // creation event so we don't immediately self-close on launch.
+  let ownWindowId = null;
+  try {
+    const info = await api.window.getInfo();
+    ownWindowId = info?.id ?? null;
+  } catch {
+    // No window.getInfo grant — best-effort; an extra "self" close is
+    // recoverable by re-invoking the windows command.
+  }
+  api.pubsub.subscribe('window:opened', (msg) => {
+    if (!msg || typeof msg.id !== 'number') return;
+    if (msg.id === ownWindowId) return;
+    debug && console.log('[windows] dismissing — new window opened:', msg.id);
+    closeWindowsView();
+  });
 };
 
 // Initialize when DOM is ready
