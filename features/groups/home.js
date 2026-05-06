@@ -1062,9 +1062,19 @@ const init = async () => {
     debouncedRefresh();
   });
 
+  api.pubsub.subscribe('tag:deleted', (msg) => {
+    debug && console.log('[groups] tag:deleted event received:', msg);
+    debouncedRefresh();
+  });
+
   // Subscribe to item events for reactive updates
   api.pubsub.subscribe('item:created', (msg) => {
     debug && console.log('[groups] item:created event received:', msg);
+    debouncedRefresh();
+  });
+
+  api.pubsub.subscribe('item:updated', (msg) => {
+    debug && console.log('[groups] item:updated event received:', msg);
     debouncedRefresh();
   });
 

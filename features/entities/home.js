@@ -706,6 +706,10 @@ if (api) {
     debouncedRefresh();
   });
 
+  api.pubsub.subscribe('item:updated', () => {
+    debouncedRefresh();
+  });
+
   // Register escape handler for back-navigation from detail view
   if (api.escape) {
     api.escape.onEscape(() => {

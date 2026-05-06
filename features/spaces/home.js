@@ -883,8 +883,10 @@ const init = async () => {
   api.pubsub.subscribe('tag:item-added', () => debouncedRefresh());
   api.pubsub.subscribe('tag:item-removed', () => debouncedRefresh());
   api.pubsub.subscribe('tag:created', () => debouncedRefresh());
+  api.pubsub.subscribe('tag:deleted', () => debouncedRefresh());
   api.pubsub.subscribe('item:created', () => debouncedRefresh());
   api.pubsub.subscribe('item:deleted', () => debouncedRefresh());
+  api.pubsub.subscribe('item:updated', () => debouncedRefresh());
   api.pubsub.subscribe('sync:pull-completed', () => debouncedRefresh());
   api.pubsub.subscribe('tag:renamed', () => debouncedRefresh());
   api.pubsub.subscribe('tag:color-changed', () => debouncedRefresh());

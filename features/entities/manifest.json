@@ -38,6 +38,7 @@
         "app:shutdown",
         "item:created",
         "item:deleted",
+        "item:updated",
         "page:content-ready",
         "editor:changed",
         "sync:pull-completed",
