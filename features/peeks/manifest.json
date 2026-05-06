@@ -21,7 +21,8 @@
         "peeks:*",
         "ext:ready",
         "app:shutdown",
-        "ext:peeks:shutdown"
+        "ext:peeks:shutdown",
+        "cli:peek-open"
       ]
     },
     "window": {

@@ -20,7 +20,8 @@
       "topics": [
         "slides:settings-changed",
         "slides:settings-update",
-        "window:closed"
+        "window:closed",
+        "cli:slide-open"
       ]
     },
     "window": {
