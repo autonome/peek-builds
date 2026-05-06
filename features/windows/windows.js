@@ -249,6 +249,58 @@ const renderWindows = () => {
 };
 
 /**
+ * Hostname for a URL string — `null` when the input isn't parseable
+ * (peek://, chrome://, file://) or empty.
+ */
+const hostnameOf = (urlStr) => {
+  if (!urlStr) return null;
+  try { return new URL(urlStr).hostname || null; } catch { return null; }
+};
+
+/**
+ * Stable hue (0..360) derived from a string. Used to colour the
+ * thumbnail placeholder so each domain reads as a different swatch
+ * across runs without persisting any state.
+ */
+const hueFor = (s) => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return Math.abs(h) % 360;
+};
+
+/**
+ * Render the card's main visual block. With a stored screenshot we
+ * load it; on failure (file gone, race) we fall back to the same
+ * placeholder we'd use without one — so every card slot is the same
+ * shape regardless of capture state.
+ */
+const createThumbnail = (win) => {
+  const placeholder = () => {
+    const div = document.createElement('div');
+    div.className = 'card-thumbnail card-thumbnail-placeholder';
+    const host = hostnameOf(win.url);
+    const hue = host ? hueFor(host) : 0;
+    div.style.background = host
+      ? `linear-gradient(135deg, hsl(${hue}, 30%, 22%), hsl(${(hue + 40) % 360}, 35%, 14%))`
+      : 'var(--base02)';
+    const letter = document.createElement('span');
+    letter.className = 'card-thumbnail-letter';
+    letter.textContent = host ? host.replace(/^www\./, '')[0].toUpperCase() : '·';
+    div.appendChild(letter);
+    return div;
+  };
+
+  if (!win.thumbnail) return placeholder();
+
+  const img = document.createElement('img');
+  img.className = 'card-thumbnail';
+  img.src = `peek://thumbnail/${win.thumbnail}.jpg`;
+  img.alt = '';
+  img.onerror = () => img.replaceWith(placeholder());
+  return img;
+};
+
+/**
  * Create a card element for a window
  */
 const createWindowCard = (win) => {
@@ -293,16 +345,14 @@ const createWindowCard = (win) => {
 
   card.appendChild(header);
 
-  // Page-screenshot thumbnail when stored. peek://thumbnail/<hash>.jpg is
-  // served by the protocol handler from userData/thumbnails/.
-  if (win.thumbnail) {
-    const thumb = document.createElement('img');
-    thumb.className = 'card-thumbnail';
-    thumb.src = `peek://thumbnail/${win.thumbnail}.jpg`;
-    thumb.onerror = () => thumb.remove();
-    thumb.alt = '';
-    card.appendChild(thumb);
-  }
+  // Always render a thumbnail-sized region so every card has the same
+  // overall height in `columns` view (otherwise cards without a stored
+  // screenshot are tiny and the row's intrinsic height jumps to match
+  // whichever neighbour does have one — uneven rhythm). When a real
+  // screenshot exists we render it; otherwise a placeholder block keyed
+  // off the URL's hostname provides visual identity.
+  const thumb = createThumbnail(win);
+  card.appendChild(thumb);
 
   // URL in body
   const url = document.createElement('div');
