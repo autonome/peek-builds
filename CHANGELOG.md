@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: 2f6648e8680b -->
+<!-- last-bumped: d37b01034964 -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -19,7 +19,22 @@ See TODO.md for pending items, WIP.md for in-progress items.
 
 ## Week of 2026-05-04 (W19)
 
+### 2026-05-06
+
+- shortcuts: restore cmd customization + degrade gracefully on Wayland
+- ios: pin IPHONEOS_DEPLOYMENT_TARGET=16.0 for cargo iOS builds
+- rules: event-dispatch rule engine + tag-actions migration
+- tag-actions: drop one-shot legacy-settings migration
+- entities: migrate to rule engine + lazy bg tile
+- tag-actions: ship default tag-swap pairs as manifest rules
+- tile-launcher: pubsub broadcast must reach every live tile window
+- core: default dragHoldDelay 0.5s -> 0.3s
+- tests: point E2E downloads at tmp + delete on done; refresh v2 pubsub repro candidates
+- settings: number-input clear falls back to schema default
+
 ### 2026-05-05
+
+- session: collapse restored windows to primary display when topology changed
 
 - window-presenter: single source of truth for user-facing window state
 - features: drop unnecessary resident tiles; manifest is the only truth
