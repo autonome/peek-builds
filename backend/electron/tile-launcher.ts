@@ -114,8 +114,27 @@ export const TILE_SHUTDOWN_GRACE_MS = 500;
 // Re-export token functions for consumers
 export { generateToken, validateToken, revokeToken, getGrantForToken } from './tile-tokens.js';
 
-/** Tile window registry: tileId:entryId -> BrowserWindow */
+/** Tile window registry: tileId:entryId -> BrowserWindow.
+ *
+ *  This is a **singleton** map — used by callers like getTileWindow()
+ *  that assume one live window per (tile, entry). Opening a second
+ *  window for the same entry (e.g. multiple search/home queries open
+ *  side-by-side) silently overwrites the first entry here, which is
+ *  fine for those keyed lookups (they happen to want the most recent
+ *  one).
+ *
+ *  For the pubsub broadcaster, however, the Map's "last write wins"
+ *  shape was a real bug: every prior window stopped receiving pubsub
+ *  events because they were no longer reachable via this Map. Use
+ *  `tileWindowsAll` below instead — it preserves every live window.
+ */
 const tileWindows = new Map<string, BrowserWindow>();
+
+/** Every live tile BrowserWindow, regardless of (tileId, entryId)
+ *  duplicates. Exists so the pubsub broadcaster can fan out to all
+ *  open instances of a tile entry — e.g. two `peek://search/home.html`
+ *  windows opened with different `?q=...` queries. */
+const tileWindowsAll = new Set<BrowserWindow>();
 
 /** Loaded manifests: tileId -> manifest */
 const loadedManifests = new Map<string, TileManifest>();
@@ -317,6 +336,7 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
 
   const key = `${tileId}:${entryId}`;
   tileWindows.set(key, win);
+  tileWindowsAll.add(win);
   if (manifest) loadedManifests.set(tileId, manifest);
 
   // Forward focus events so the per-window-targeting tracker
@@ -363,6 +383,7 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
     tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.RENDER_GONE,
       { reason: details.reason, exitCode: details.exitCode });
     tileWindows.delete(key);
+    tileWindowsAll.delete(win);
     readyTiles.delete(key);
     revokeToken(token);
     try {
@@ -413,6 +434,7 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
       tileLifecycle.transition(tileId, entryId, tileLifecycle.TRIGGERS.CLEANUP_KEEP, { source: 'window-closed' });
     }
     tileWindows.delete(key);
+    tileWindowsAll.delete(win);
     readyTiles.delete(key);
     revokeToken(token);
     try {
@@ -594,7 +616,13 @@ export function getLoadedTileIds(): string[] {
  * Used by the pubsub broadcaster to forward messages to tile windows.
  */
 export function getAllTileWindows(): BrowserWindow[] {
-  return Array.from(tileWindows.values()).filter(win => !win.isDestroyed());
+  // Iterate `tileWindowsAll`, NOT `tileWindows` — the latter is a
+  // singleton Map keyed by tileId:entryId, which silently drops
+  // earlier instances when a second window opens for the same entry.
+  // Using it here meant pubsub events stopped reaching the first
+  // open window the moment a second matching window appeared (e.g.
+  // two `peek://search/home.html?q=...` queries side by side).
+  return Array.from(tileWindowsAll).filter(win => !win.isDestroyed());
 }
 
 /**
@@ -619,6 +647,7 @@ export function registerTrustedBuiltinWindow(
 ): void {
   const key = `${tileId}:${entryId}`;
   tileWindows.set(key, win);
+  tileWindowsAll.add(win);
 
   // Phase 2 pubsub hardening: bind the trustedBuiltin token to its
   // owning WebContents so the IPC gate's sender-frame cross-check
@@ -628,6 +657,7 @@ export function registerTrustedBuiltinWindow(
 
   win.on('closed', () => {
     tileWindows.delete(key);
+    tileWindowsAll.delete(win);
     readyTiles.delete(key);
     revokeToken(token);
     try {
@@ -838,7 +868,9 @@ export async function unloadTile(tileId: string, entryId: string): Promise<void>
 
   await shutdownTile(tileId, entryId);
 
+  const win = tileWindows.get(key);
   tileWindows.delete(key);
+  if (win) tileWindowsAll.delete(win);
   readyTiles.delete(key);
   loadedManifests.delete(tileId);
 
@@ -926,11 +958,13 @@ export function __setTileWindowForTest(
 ): void {
   const key = `${tileId}:${entryId}`;
   tileWindows.set(key, win as BrowserWindow);
+  tileWindowsAll.add(win as BrowserWindow);
 }
 
 /** @internal */
 export function __clearTileStateForTest(): void {
   tileWindows.clear();
+  tileWindowsAll.clear();
   readyTiles.clear();
   readyCallbacks.clear();
   loadedManifests.clear();
@@ -945,7 +979,10 @@ export function __clearTileStateForTest(): void {
  */
 export async function unloadAllTiles(): Promise<void> {
   // Phase 1: fan out shutdown signal to every tile.
-  for (const [, win] of tileWindows) {
+  // Iterate `tileWindowsAll` so duplicate-keyed windows (e.g. two
+  // open `peek://search/home.html?q=...` queries) all receive the
+  // shutdown signal, not just the most-recently-registered one.
+  for (const win of tileWindowsAll) {
     if (win.isDestroyed()) continue;
     try {
       if (!win.webContents.isDestroyed()) {
@@ -960,12 +997,13 @@ export async function unloadAllTiles(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, TILE_SHUTDOWN_GRACE_MS));
 
   // Phase 3: close every window.
-  for (const [, win] of tileWindows) {
+  for (const win of tileWindowsAll) {
     if (!win.isDestroyed()) {
       win.close();
     }
   }
   tileWindows.clear();
+  tileWindowsAll.clear();
   readyTiles.clear();
   readyCallbacks.clear();
   loadedManifests.clear();
