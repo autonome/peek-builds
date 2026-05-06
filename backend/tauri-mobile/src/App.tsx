@@ -352,7 +352,7 @@ const TagsSection: React.FC<TagsSectionProps> = ({
               value={tagInput}
               onChange={(e) => onTagInputChange(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") {
+                if (e.key === "Enter" || e.key === ",") {
                   e.preventDefault();
                   onAddTag();
                   refocusInput();
@@ -2028,12 +2028,21 @@ function App() {
       newTags.add(tagName);
     }
     setEditingTextTags(newTags);
+    scheduleTagAutoSave(newTags);
   };
 
   const addEditingTextTag = () => {
-    const trimmed = editingTextTagInput.trim().toLowerCase();
-    if (trimmed) {
-      setEditingTextTags(new Set(editingTextTags).add(trimmed));
+    const newTags = new Set(editingTextTags);
+    const initialSize = newTags.size;
+    for (const part of editingTextTagInput.split(",")) {
+      const trimmed = part.trim().toLowerCase();
+      if (trimmed) newTags.add(trimmed);
+    }
+    if (newTags.size > initialSize) {
+      setEditingTextTags(newTags);
+      setEditingTextTagInput("");
+      scheduleTagAutoSave(newTags);
+    } else if (editingTextTagInput) {
       setEditingTextTagInput("");
     }
   };
@@ -2060,9 +2069,10 @@ function App() {
 
     autoSaveTimerRef.current = setTimeout(async () => {
       try {
-        await invoke("update_text", { id: editingTextId, content: content.trim(), tags: Array.from(editingTextTagsRef.current) });
+        const currentTags = Array.from(editingTextTagsRef.current);
+        await invoke("update_text", { id: editingTextId, content: content.trim(), tags: currentTags });
         // Update original values so we know what's saved
-        setOriginalEditValues(prev => prev ? { ...prev, content: content.trim() } : null);
+        setOriginalEditValues(prev => prev ? { ...prev, content: content.trim(), tags: [...currentTags].sort() } : null);
         await loadSavedTexts();
       } catch (error) {
         console.error("Auto-save failed:", error);
@@ -2070,11 +2080,37 @@ function App() {
     }, 500);
   }, [editingTextId, originalEditValues]);
 
-  // Clear auto-save timer on unmount or when editing ends
+  // Auto-save ref for tag-only saves (needs stable identity across renders)
+  const tagAutoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Debounced auto-save triggered by tag changes (fires even when content is unchanged)
+  const scheduleTagAutoSave = useCallback((newTags: Set<string>) => {
+    if (!editingTextId || !originalEditValues) return;
+
+    if (tagAutoSaveTimerRef.current) {
+      clearTimeout(tagAutoSaveTimerRef.current);
+    }
+
+    tagAutoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        const tagsArray = Array.from(newTags);
+        await invoke("update_text", { id: editingTextId, content: editingTextContent.trim(), tags: tagsArray });
+        setOriginalEditValues(prev => prev ? { ...prev, tags: [...tagsArray].sort() } : null);
+        await loadSavedTexts();
+      } catch (error) {
+        console.error("Tag auto-save failed:", error);
+      }
+    }, 500);
+  }, [editingTextId, originalEditValues, editingTextContent]);
+
+  // Clear auto-save timers on unmount or when editing ends
   useEffect(() => {
     return () => {
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current);
+      }
+      if (tagAutoSaveTimerRef.current) {
+        clearTimeout(tagAutoSaveTimerRef.current);
       }
     };
   }, [editingTextId]);
@@ -2082,9 +2118,12 @@ function App() {
   const saveTextChanges = async () => {
     if (!editingTextId) return;
 
-    // Clear any pending auto-save
+    // Clear any pending auto-save timers
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
+    }
+    if (tagAutoSaveTimerRef.current) {
+      clearTimeout(tagAutoSaveTimerRef.current);
     }
 
     const finalTags = new Set(editingTextTags);
