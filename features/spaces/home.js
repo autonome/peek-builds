@@ -16,23 +16,13 @@ import {
   createViewPrefs
 } from 'peek://app/lib/grid-nav.js';
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
+import { liveQuery } from 'peek://app/lib/live-query.js';
 import { resolveVividColor } from './config.js';
 
 const api = window.app;
 const debug = api.debug;
 
 const SPACE_PREFIX = 'space:';
-
-/**
- * Simple debounce helper
- */
-const debounce = (fn, ms) => {
-  let timer;
-  return (...args) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), ms);
-  };
-};
 
 /**
  * Check if a URL is a navigable web URL (http/https only)
@@ -869,27 +859,32 @@ const init = async () => {
 
   document.addEventListener('keydown', handleKeydown);
 
-  const debouncedRefresh = debounce(async () => {
-    debug && console.log('[spaces] debounced refresh triggered');
-    await loadSpaces();
-    if (state.view === VIEW_SPACES) {
-      renderSpaces();
-    } else if (state.view === VIEW_ITEMS && state.currentSpace) {
-      await loadItemsForSpace(state.currentSpace.id);
-      renderItems();
-    }
-  }, 150);
-
-  api.pubsub.subscribe('tag:item-added', () => debouncedRefresh());
-  api.pubsub.subscribe('tag:item-removed', () => debouncedRefresh());
-  api.pubsub.subscribe('tag:created', () => debouncedRefresh());
-  api.pubsub.subscribe('tag:deleted', () => debouncedRefresh());
-  api.pubsub.subscribe('item:created', () => debouncedRefresh());
-  api.pubsub.subscribe('item:deleted', () => debouncedRefresh());
-  api.pubsub.subscribe('item:updated', () => debouncedRefresh());
-  api.pubsub.subscribe('sync:pull-completed', () => debouncedRefresh());
-  api.pubsub.subscribe('tag:renamed', () => debouncedRefresh());
-  api.pubsub.subscribe('tag:color-changed', () => debouncedRefresh());
+  liveQuery({
+    api,
+    topics: [
+      'tag:item-added',
+      'tag:item-removed',
+      'tag:created',
+      'tag:deleted',
+      'tag:renamed',
+      'tag:color-changed',
+      'item:created',
+      'item:deleted',
+      'item:updated',
+      'sync:pull-completed',
+    ],
+    runImmediately: false,
+    onUpdate: async () => {
+      debug && console.log('[spaces] live-query refresh');
+      await loadSpaces();
+      if (state.view === VIEW_SPACES) {
+        renderSpaces();
+      } else if (state.view === VIEW_ITEMS && state.currentSpace) {
+        await loadItemsForSpace(state.currentSpace.id);
+        renderItems();
+      }
+    },
+  });
 
   setupCreateSpace();
 

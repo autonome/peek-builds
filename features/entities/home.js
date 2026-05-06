@@ -11,6 +11,7 @@
 
 import { getEntities, getObservations, setEntityFeedback } from './entity-store.js';
 import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
+import { liveQuery } from 'peek://app/lib/live-query.js';
 
 const api = window.app;
 
@@ -672,42 +673,21 @@ document.getElementById('extractBtn').addEventListener('click', async () => {
   btn.textContent = 'Extract Current Page';
 });
 
-// Listen for new entity extractions
 if (api) {
-  api.pubsub.subscribe('entities:extracted', () => {
-    if (currentView === VIEW_LIST) renderEntities();
-  });
-
-  // Also listen for editor changes that might affect entities
-  api.pubsub.subscribe('editor:changed', () => {
-    if (currentView === VIEW_LIST) renderEntities();
-  });
-
-  // Subscribe to sync and item events for reactive updates
-  const debouncedRefresh = (() => {
-    let timer;
-    return () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        if (currentView === VIEW_LIST) renderEntities();
-      }, 150);
-    };
-  })();
-
-  api.pubsub.subscribe('sync:pull-completed', () => {
-    debouncedRefresh();
-  });
-
-  api.pubsub.subscribe('item:created', () => {
-    debouncedRefresh();
-  });
-
-  api.pubsub.subscribe('item:deleted', () => {
-    debouncedRefresh();
-  });
-
-  api.pubsub.subscribe('item:updated', () => {
-    debouncedRefresh();
+  liveQuery({
+    api,
+    topics: [
+      'entities:extracted',
+      'editor:changed',
+      'sync:pull-completed',
+      'item:created',
+      'item:deleted',
+      'item:updated',
+    ],
+    runImmediately: false,
+    onUpdate: () => {
+      if (currentView === VIEW_LIST) renderEntities();
+    },
   });
 
   // Register escape handler for back-navigation from detail view

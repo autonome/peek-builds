@@ -18,6 +18,7 @@ import {
   createAffordanceElements, createActionRulesCache
 } from 'peek://app/lib/tag-action-affordances.js';
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
+import { liveQuery } from 'peek://app/lib/live-query.js';
 import { labels, defaults } from './config.js';
 import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
@@ -26,17 +27,6 @@ const debug = api.debug;
 
 // Tag action rules cache for rendering affordances on address cards
 let actionRulesCache = null;
-
-/**
- * Simple debounce helper - collapses rapid calls into one
- */
-const debounce = (fn, ms) => {
-  let timer;
-  return (...args) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), ms);
-  };
-};
 
 /**
  * Check if a URL is a navigable web URL (http/https only)
@@ -1032,80 +1022,34 @@ const init = async () => {
 
   // NOTE: groups should NOT set mode context (spaces migration).
 
-  // Debounced refresh for reactive updates (collapses rapid events like batch imports)
-  const debouncedRefresh = debounce(async () => {
-    debug && console.log('[groups] debounced refresh triggered');
-    await loadTags();
-    if (state.view === VIEW_GROUPS) {
-      renderGroups();
-    } else if (state.view === VIEW_ADDRESSES && state.currentTag) {
-      // Reload addresses for the current tag — loadTags only refreshes tag metadata,
-      // not the items list shown in the addresses view
-      await loadAddressesForTag(state.currentTag.id);
-      renderAddresses();
-    }
-  }, 150);
-
-  // Subscribe to tag events for reactive updates
-  api.pubsub.subscribe('tag:item-added', (msg) => {
-    debug && console.log('[groups] tag:item-added event received:', msg);
-    debouncedRefresh();
-  });
-
-  api.pubsub.subscribe('tag:item-removed', (msg) => {
-    debug && console.log('[groups] tag:item-removed event received:', msg);
-    debouncedRefresh();
-  });
-
-  api.pubsub.subscribe('tag:created', (msg) => {
-    debug && console.log('[groups] tag:created event received:', msg);
-    debouncedRefresh();
-  });
-
-  api.pubsub.subscribe('tag:deleted', (msg) => {
-    debug && console.log('[groups] tag:deleted event received:', msg);
-    debouncedRefresh();
-  });
-
-  // Subscribe to item events for reactive updates
-  api.pubsub.subscribe('item:created', (msg) => {
-    debug && console.log('[groups] item:created event received:', msg);
-    debouncedRefresh();
-  });
-
-  api.pubsub.subscribe('item:updated', (msg) => {
-    debug && console.log('[groups] item:updated event received:', msg);
-    debouncedRefresh();
-  });
-
-  api.pubsub.subscribe('item:deleted', (msg) => {
-    debug && console.log('[groups] item:deleted event received:', msg);
-    debouncedRefresh();
-  });
-
-  // Subscribe to sync events — sync operations bypass per-item events,
-  // so we need this to refresh when new data arrives via sync
-  api.pubsub.subscribe('sync:pull-completed', (msg) => {
-    debug && console.log('[groups] sync:pull-completed event received:', msg);
-    debouncedRefresh();
-  });
-
-  // Subscribe to tag rename events for reactive updates
-  api.pubsub.subscribe('tag:renamed', (msg) => {
-    debug && console.log('[groups] tag:renamed event received:', msg);
-    debouncedRefresh();
-  });
-
-  // Subscribe to pin change events for reactive updates
-  api.pubsub.subscribe('group:pin-changed', (msg) => {
-    debug && console.log('[groups] group:pin-changed event received:', msg);
-    debouncedRefresh();
-  });
-
-  // Subscribe to color changes (e.g. border color resolution persisted back)
-  api.pubsub.subscribe('tag:color-changed', (msg) => {
-    debug && console.log('[groups] tag:color-changed event received:', msg);
-    debouncedRefresh();
+  liveQuery({
+    api,
+    topics: [
+      'tag:item-added',
+      'tag:item-removed',
+      'tag:created',
+      'tag:deleted',
+      'tag:renamed',
+      'tag:color-changed',
+      'item:created',
+      'item:updated',
+      'item:deleted',
+      'sync:pull-completed',
+      'group:pin-changed',
+    ],
+    runImmediately: false,
+    onUpdate: async () => {
+      debug && console.log('[groups] live-query refresh');
+      await loadTags();
+      if (state.view === VIEW_GROUPS) {
+        renderGroups();
+      } else if (state.view === VIEW_ADDRESSES && state.currentTag) {
+        // loadTags only refreshes tag metadata, not the items list shown
+        // in the addresses view — reload addresses for the current tag.
+        await loadAddressesForTag(state.currentTag.id);
+        renderAddresses();
+      }
+    },
   });
 
   // Set up create group UI

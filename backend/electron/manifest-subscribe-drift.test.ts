@@ -80,20 +80,40 @@ function jsFilesUnder(dir: string): string[] {
 }
 
 /**
- * Extract topic names from `pubsub.subscribe('topic', ...)` and
- * `api.subscribe('topic', ...)` and `subscribeImpl('topic', ...)`
- * call sites. Quoted-literal first argument only — dynamic topics
- * can't be statically validated and are intentionally skipped (a
- * separate runtime gate handles them).
+ * Extract topic names that the source effectively subscribes to:
+ *
+ *  - direct `pubsub.subscribe('topic', ...)` / `api.subscribe('topic', ...)`
+ *  - indirect `liveQuery({ topics: ['a', 'b'], ... })` (the helper subscribes
+ *    via `api.pubsub.subscribe(topic, ...)` with a variable, so the direct
+ *    regex misses these — we have to crack the array open ourselves).
+ *
+ * Quoted-literal only — dynamic topics can't be statically validated and
+ * are skipped (the runtime gate handles those).
  */
 function extractSubscribedTopics(source: string): string[] {
   const out: string[] = [];
-  // `.subscribe('topic'`  or  `api.subscribe('topic'`  or  `(.|\s)subscribe('topic'`
-  const re = /\bsubscribe\s*\(\s*(['"`])([^'"`\n]+?)\1/g;
+
+  // 1. direct subscribe('topic', ...) — covers api.pubsub.subscribe,
+  //    api.subscribe, and subscribeImpl call sites.
+  const direct = /\bsubscribe\s*\(\s*(['"`])([^'"`\n]+?)\1/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(source)) !== null) {
+  while ((m = direct.exec(source)) !== null) {
     out.push(m[2]);
   }
+
+  // 2. liveQuery({ topics: [...] }) — capture the array body, then pull
+  //    every quoted literal out of it. Lazy `[\s\S]*?` keeps the match
+  //    tight to the first closing bracket.
+  const liveQueryRe = /\bliveQuery\s*\(\s*\{[\s\S]*?topics\s*:\s*\[([\s\S]*?)\]/g;
+  while ((m = liveQueryRe.exec(source)) !== null) {
+    const body = m[1];
+    const stringRe = /(['"`])([^'"`\n]+?)\1/g;
+    let s: RegExpExecArray | null;
+    while ((s = stringRe.exec(body)) !== null) {
+      out.push(s[2]);
+    }
+  }
+
   return out;
 }
 
