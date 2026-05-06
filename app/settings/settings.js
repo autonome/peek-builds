@@ -6,6 +6,13 @@ const DEBUG = api.debug;
 const clear = false;
 
 // Helper: Create text/number input
+//
+// `options.default` (any type, optional) is used both at render time
+// (when the supplied `value` is null/undefined/NaN) and on change (if
+// the user clears a number input — `parseFloat('')` is NaN — the
+// field snaps back to default rather than persisting NaN to settings).
+// Without this, clearing a number field used to silently save NaN,
+// which then displayed as a blank input on next load.
 const createInput = (label, value, onChange, options = {}) => {
   const group = document.createElement('div');
   group.className = 'form-group';
@@ -15,7 +22,9 @@ const createInput = (label, value, onChange, options = {}) => {
 
   const input = document.createElement('input');
   input.type = options.type || 'text';
-  input.value = value || '';
+  const isMissing = (v) => v === null || v === undefined || (typeof v === 'number' && Number.isNaN(v));
+  const renderValue = isMissing(value) && options.default !== undefined ? options.default : value;
+  input.value = (renderValue === null || renderValue === undefined) ? '' : renderValue;
   input.disabled = options.disabled || false;
   if (options.placeholder) input.placeholder = options.placeholder;
 
@@ -26,7 +35,11 @@ const createInput = (label, value, onChange, options = {}) => {
   }
 
   input.addEventListener('change', (e) => {
-    const val = options.type === 'number' ? parseFloat(e.target.value) : e.target.value;
+    let val = options.type === 'number' ? parseFloat(e.target.value) : e.target.value;
+    if (options.type === 'number' && Number.isNaN(val) && options.default !== undefined) {
+      val = options.default;
+      input.value = val;
+    }
     onChange(val);
   });
 
@@ -227,7 +240,17 @@ const renderCoreSettings = async () => {
   };
 
   const pProps = schemas.prefs.properties;
-  const getVal = (k) => (prefs && prefs.hasOwnProperty(k)) ? prefs[k] : pProps[k]?.default;
+  const getVal = (k) => {
+    if (prefs && prefs.hasOwnProperty(k)) {
+      const v = prefs[k];
+      // Stored null/undefined/NaN means "no real preference set" —
+      // fall through to the schema default. Without this, a corrupt
+      // / cleared / never-validated stored value displays as empty
+      // forever.
+      if (v !== null && v !== undefined && !(typeof v === 'number' && Number.isNaN(v))) return v;
+    }
+    return pProps[k]?.default;
+  };
   const getLabel = (k) => (labels.prefs && labels.prefs[k]) || k;
 
 
@@ -350,6 +373,7 @@ const renderCoreSettings = async () => {
     type: 'number',
     step: 1,
     min: 0,
+    default: pProps.sessionAutosaveInterval.default,
     helpText: pProps.sessionAutosaveInterval.description
   }));
 
@@ -372,6 +396,7 @@ const renderCoreSettings = async () => {
     type: 'number',
     step: 1,
     min: 200,
+    default: pProps.defaultWindowWidth.default,
     helpText: pProps.defaultWindowWidth.description
   }));
 
@@ -382,6 +407,7 @@ const renderCoreSettings = async () => {
     type: 'number',
     step: 1,
     min: 200,
+    default: pProps.defaultWindowHeight.default,
     helpText: pProps.defaultWindowHeight.description
   }));
 
@@ -399,6 +425,7 @@ const renderCoreSettings = async () => {
     type: 'number',
     step: 0.1,
     min: 0,
+    default: pProps.dragHoldDelay.default,
     helpText: pProps.dragHoldDelay.description
   }));
 
