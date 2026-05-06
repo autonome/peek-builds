@@ -58,11 +58,6 @@ const ICON_PAIR_MAP = {
   bookmark: { icon: 'bookmark-empty', checkedIcon: 'bookmark-filled' }
 };
 
-const DEFAULT_PAIRS = [
-  { activeTag: 'todo', completedTag: 'done', iconPair: 'checkbox' },
-  { activeTag: 'readme', completedTag: 'read', iconPair: 'eye' }
-];
-
 // ==================== State ====================
 
 // In-memory mirror of the rules table for this feature. Each entry:
@@ -288,19 +283,9 @@ const init = async () => {
 
   api.escape.onEscape(handleEscape);
 
-  // First-run defaults: only when nothing exists in rules either.
-  if (pairs.length === 0) {
-    for (const p of DEFAULT_PAIRS) {
-      const np = {
-        suffix: generateSuffix(),
-        activeTag: p.activeTag,
-        completedTag: p.completedTag,
-        iconPair: p.iconPair,
-      };
-      pairs.push(np);
-      await upsertPair(np);
-    }
-  }
+  // First-run defaults are shipped via tag-actions/manifest.json's
+  // top-level `rules: [...]` block (source='manifest', reconciled at
+  // boot) — no UI-driven seed needed.
 
   document.querySelector('.add-pair-btn').addEventListener('click', async () => {
     const np = {

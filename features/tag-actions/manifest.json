@@ -52,5 +52,33 @@
       "description": "Open the tag actions manager",
       "action": { "type": "execute" }
     }
+  ],
+  "rules": [
+    {
+      "topic": "affordance:click",
+      "scriptId": "tag-swap",
+      "match": { "activeTag": "todo", "completedTag": "done" },
+      "config": { "activeTag": "todo", "completedTag": "done" },
+      "display": {
+        "icon": "unchecked",
+        "checkedIcon": "checked",
+        "color": "#007aff",
+        "checkedColor": "#34c759",
+        "iconPair": "checkbox"
+      }
+    },
+    {
+      "topic": "affordance:click",
+      "scriptId": "tag-swap",
+      "match": { "activeTag": "readme", "completedTag": "read" },
+      "config": { "activeTag": "readme", "completedTag": "read" },
+      "display": {
+        "icon": "eye-open",
+        "checkedIcon": "eye-closed",
+        "color": "#007aff",
+        "checkedColor": "#34c759",
+        "iconPair": "eye"
+      }
+    }
   ]
 }
