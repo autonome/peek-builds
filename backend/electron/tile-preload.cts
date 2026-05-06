@@ -2324,8 +2324,9 @@ contextBridge.exposeInMainWorld('app', api);
 // ─── Click-and-Hold Window Drag (unified, application-wide) ─────────
 //
 // Provides drag-to-move for all frameless windows. Hold the mouse button
-// down for `dragHoldDelay` seconds (default 1s; configurable via the
-// `dragHoldDelay` pref in app/config.js), then drag to move the window.
+// down for `dragHoldDelay` seconds (configurable via the `dragHoldDelay`
+// pref in app/config.js — see Settings > Core), then drag to move the
+// window.
 // Works in every tile window that doesn't opt out via `data-no-drag` on
 // <body> (e.g. peek://app/page/index.html — canvas pages have their own
 // hold-drag system that pipes through the webview console-message
