@@ -19,8 +19,10 @@
 import { app, session, Session, BrowserWindow, Notification, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { registerProtocolOnSession } from './protocol.js';
 import { installPermissionHandler } from './permission-handler.js';
+import { isTestProfile } from './config.js';
 
 const DEBUG = !!process.env.DEBUG;
 
@@ -300,11 +302,31 @@ export function sanitizeDownloadFilename(raw: string): string {
   return cleaned;
 }
 
+/**
+ * Pick the directory downloads should land in. In production this is
+ * the OS Downloads folder. Under E2E (`isTestProfile()`), redirect to
+ * a per-process subdirectory of os.tmpdir() so playwright runs never
+ * leave files in the developer's ~/Downloads. The test directory is
+ * created lazily and reused across downloads in the same process.
+ */
+let _testDownloadsDir: string | null = null;
+function getDownloadsDir(): string {
+  if (isTestProfile()) {
+    if (!_testDownloadsDir) {
+      _testDownloadsDir = path.join(os.tmpdir(), `peek-e2e-downloads-${process.pid}`);
+      try { fs.mkdirSync(_testDownloadsDir, { recursive: true }); }
+      catch { /* best-effort; setSavePath will surface a real error */ }
+    }
+    return _testDownloadsDir;
+  }
+  return app.getPath('downloads');
+}
+
 function _registerDownloadHandlerImpl(ses: Session): void {
   ses.on('will-download', (_event, item, webContents) => {
     const rawFilename = item.getFilename();
     const filename = sanitizeDownloadFilename(rawFilename);
-    const desiredPath = path.join(app.getPath('downloads'), filename);
+    const desiredPath = path.join(getDownloadsDir(), filename);
     const savePath = resolveUniqueDownloadPath(desiredPath);
     item.setSavePath(savePath);
     console.log('[download] Saving:', filename, '→', savePath);
@@ -378,6 +400,13 @@ function _registerDownloadHandlerImpl(ses: Session): void {
     item.on('done', (_e, state) => {
       if (state === 'completed') {
         console.log('[download] Completed:', filename);
+        // Under E2E, delete the file immediately — tests only care
+        // that the download happened, not that the bytes persist.
+        if (isTestProfile()) {
+          try { fs.unlinkSync(savePath); }
+          catch { /* best-effort cleanup */ }
+          return;
+        }
         const notification = new Notification({
           title: 'Download Complete',
           body: filename,

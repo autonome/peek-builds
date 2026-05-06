@@ -46,12 +46,16 @@ test('v2 trustedBuiltin tile → v2 trustedBuiltin tile pubsub round-trip', asyn
     throw new Error(`core window not found. URLs: ${JSON.stringify(urls)}`);
   }
 
-  // Subscriber: any eager feature tile.
+  // Subscriber: any eager feature tile. The candidate list reflects
+  // which builtin features still load a tile at startup — earlier
+  // entries (entities, page, me, atproto) used to be eager; entities
+  // went lazy in plan 3d7d9239 stage 4a. Update if the eager set
+  // shrinks further.
   const subWin =
-    findTileWindow(sharedApp, 'peek://entities/') ||
-    findTileWindow(sharedApp, 'peek://page/') ||
-    findTileWindow(sharedApp, 'peek://me/') ||
-    findTileWindow(sharedApp, 'peek://atproto/');
+    findTileWindow(sharedApp, 'peek://websearch/') ||
+    findTileWindow(sharedApp, 'peek://mcp-server/') ||
+    findTileWindow(sharedApp, 'peek://peeks/') ||
+    findTileWindow(sharedApp, 'peek://slides/');
 
   if (!subWin) {
     throw new Error(
