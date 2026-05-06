@@ -7,7 +7,7 @@
     "type": "object",
     "properties": {
       "shortcutKey": {
-        "description": "Global OS hotkey to open command panel",
+        "description": "Global OS hotkey to open command panel (default Option+Space on macOS/Windows, CommandOrControl+Space on Linux — Alt+Space is reserved by GNOME's window options menu)",
         "type": "string",
         "default": "Option+Space"
       },

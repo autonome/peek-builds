@@ -99,6 +99,7 @@ import {
   unregisterGlobalShortcut,
   registerLocalShortcut,
   unregisterLocalShortcut,
+  isWaylandSession,
 } from './shortcuts.js';
 import { checkShortcutAllowed } from './tile-shortcuts-enforcement.js';
 import { checkContextAllowed } from './tile-context-enforcement.js';
@@ -685,9 +686,14 @@ export function registerTileIpcHandlers(): void {
       // from success to the renderer.
       const err = registerGlobalShortcut(args.shortcut, source, callback);
       if (err) {
-        console.error(
-          `[tile-ipc] tile:shortcuts:register global failed for tile=${activeGrant.tileId} shortcut="${args.shortcut}": ${err.message}`
-        );
+        // On Wayland, registerGlobalShortcut already logged the one-time
+        // session hint — don't repeat the per-tile error noise. Still
+        // reply with the error so the renderer can fall back if it wants.
+        if (!isWaylandSession()) {
+          console.error(
+            `[tile-ipc] tile:shortcuts:register global failed for tile=${activeGrant.tileId} shortcut="${args.shortcut}": ${err.message}`
+          );
+        }
         replyError(err.message);
         return;
       }

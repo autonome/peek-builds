@@ -1,5 +1,13 @@
 const id = 'cmd';
 
+// Default global hotkey is Option+Space everywhere except Linux. On GNOME
+// (and several other Linux WMs), Alt+Space is reserved for the window
+// options menu — the local-fallback registration would conflict and the
+// global registration is rejected by the compositor anyway. Use
+// CommandOrControl+Space on Linux so the local fallback works cleanly.
+const isLinux = typeof window !== 'undefined' && window.app?.platform?.os === 'linux';
+const defaultShortcutKey = isLinux ? 'CommandOrControl+Space' : 'Option+Space';
+
 const labels = {
   name: 'Cmd',
   prefs: {
@@ -19,7 +27,7 @@ const schemas = {
       "shortcutKey": {
         "description": "Global OS hotkey to open command panel",
         "type": "string",
-        "default": "Option+Space"
+        "default": defaultShortcutKey
       },
       "showUrlsInResults": {
         "description": "Show visited URLs inline in command results",
@@ -37,7 +45,7 @@ const storageKeys = {
 
 const defaults = {
   prefs: {
-    shortcutKey: 'Option+Space',
+    shortcutKey: defaultShortcutKey,
     showUrlsInResults: false
   },
 };

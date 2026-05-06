@@ -1,4 +1,5 @@
 import appConfig from '../config.js';
+import { defaults as cmdConfigDefaults } from '../cmd/config.js';
 import { createDatastoreStore } from '../utils.js';
 import api from '../api.js';
 const DEBUG = api.debug;
@@ -421,6 +422,45 @@ const renderCoreSettings = async () => {
     helpText: pProps.quitShortcut.description,
     placeholder: 'e.g. CommandOrControl+Q'
   }));
+
+  // Cmd panel shortcut. Cmd was consolidated into the core background
+  // renderer but its prefs still persist to feature_settings row 'cmd_prefs'
+  // (see app/cmd/background.js CMD_PREFS_ROW_ID). Read/write that row
+  // directly and publish cmd:settings-changed so the cmd module reinits.
+  const CMD_PREFS_ROW_ID = 'cmd_prefs';
+  // Default is platform-aware (CommandOrControl+Space on Linux, Option+Space
+  // elsewhere) — see app/cmd/config.js for the rationale.
+  let cmdPrefs = { ...cmdConfigDefaults.prefs };
+  try {
+    const r = await api.datastore.getRow('feature_settings', CMD_PREFS_ROW_ID);
+    if (r?.success && r.data?.value) {
+      cmdPrefs = { ...cmdConfigDefaults.prefs, ...JSON.parse(r.data.value) };
+    }
+  } catch { /* fall back to defaults */ }
+
+  shortcutsGroup.appendChild(createInput('Cmd shortcut', cmdPrefs.shortcutKey, async (newVal) => {
+    cmdPrefs.shortcutKey = newVal;
+    await api.datastore.setRow('feature_settings', CMD_PREFS_ROW_ID, {
+      featureId: 'cmd',
+      key: 'prefs',
+      value: JSON.stringify(cmdPrefs),
+      updatedAt: Date.now(),
+    });
+    api.publish('cmd:settings-changed', {});
+  }, {
+    helpText: 'Global OS hotkey to open the command panel',
+    placeholder: cmdConfigDefaults.prefs.shortcutKey
+  }));
+
+  // Wayland sessions can't grant global key grabs to apps. Surface this
+  // so users don't think their shortcuts are misconfigured.
+  if (api.platform?.isWayland) {
+    const note = document.createElement('div');
+    note.className = 'help-text';
+    note.style.cssText = 'margin-top: 8px; padding: 8px 12px; border-left: 3px solid var(--accent, #888); background: var(--bg-tertiary, rgba(255,255,255,0.04));';
+    note.textContent = 'Note: this is a Wayland session. The OS does not allow apps to grab global hotkeys, so these shortcuts will only fire when a Peek window is focused.';
+    shortcutsGroup.appendChild(note);
+  }
 
   container.appendChild(shortcutsGroup);
 

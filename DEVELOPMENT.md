@@ -574,6 +574,14 @@ yarn test:electron              # Run automated tests
 - Different security model than traditional browsers
 - Be cautious with cross-origin access and custom APIs
 
+## Linux / Wayland
+
+Global hotkeys (cmd's `Option+Space`, peeks' `Option+0..9`, slides' `Option+arrows`) **don't fire when Peek is in the background on Wayland sessions**. The Wayland security model forbids apps from grabbing keys directly, so Electron's `globalShortcut.register()` returns false silently. Every feature that registers a global shortcut also registers it as a *local* shortcut, so the same accelerators work whenever a Peek window is focused.
+
+The Settings UI surfaces this in the Keyboard Shortcuts group when running on Wayland.
+
+For the full history (XWayland attempt, XDG GlobalShortcuts portal research and abandon reasoning, eventual-revisit conditions, and the implementation plan kept on file for that revisit), see [`docs/global-hotkeys-on-wayland.md`](docs/global-hotkeys-on-wayland.md).
+
 ## Claude Code Permissions
 
 All package.json scripts are pre-approved via wildcard permissions in `.claude/settings.local.json`:

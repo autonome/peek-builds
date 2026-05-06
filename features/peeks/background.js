@@ -120,6 +120,14 @@ const initItems = (prefs, items) => {
         executeItem(item);
       }, { global: true });
 
+      // Local fallback so the shortcut still fires when a Peek window is
+      // focused on platforms (Linux/Wayland) where global registration
+      // silently fails — the global call returns false but a local handler
+      // is always available.
+      api.shortcuts.register(shortcut, () => {
+        executeItem(item);
+      });
+
       registeredShortcuts.push(shortcut);
     }
   });
@@ -133,6 +141,7 @@ const uninit = () => {
 
   registeredShortcuts.forEach(shortcut => {
     api.shortcuts.unregister(shortcut, { global: true });
+    api.shortcuts.unregister(shortcut);
   });
 
   registeredShortcuts = [];

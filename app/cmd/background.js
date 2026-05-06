@@ -425,7 +425,9 @@ const openPanelWindow = (prefs) => {
 };
 
 /**
- * Register shortcuts: global (Option+Space) and local (Cmd+K)
+ * Register shortcuts: configurable global hotkey (default Option+Space on
+ * macOS/Windows, CommandOrControl+Space on Linux — see app/cmd/config.js)
+ * plus the always-on local shortcuts Cmd+K and Cmd+L.
  */
 const LOCAL_SHORTCUT = 'CommandOrControl+K';
 const URL_MODE_SHORTCUT = 'CommandOrControl+L';
@@ -559,6 +561,18 @@ const init = async () => {
 
   // 2. Load settings from datastore
   currentSettings = await loadSettings();
+
+  // 2b. One-shot migration: pre-default-change Linux users have
+  // 'Option+Space' persisted, but Alt+Space is reserved by GNOME's
+  // window-options menu so the local fallback never fires. Promote to
+  // the new platform default so it actually works. Idempotent (only
+  // matches the exact pre-migration value). Remove after a few releases
+  // once existing installs have rolled forward.
+  if (api.platform?.os === 'linux' && currentSettings.prefs.shortcutKey === 'Option+Space') {
+    log('ext:cmd', 'migrating Linux shortcut: Option+Space → CommandOrControl+Space');
+    currentSettings.prefs.shortcutKey = 'CommandOrControl+Space';
+    await saveSettings(currentSettings);
+  }
 
   // 3. Register the global shortcut
   initShortcut(currentSettings.prefs);

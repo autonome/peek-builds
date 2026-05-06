@@ -93,6 +93,15 @@ function buildAPI(): Record<string, unknown> {
 
   api.getTileEntry = () => tileEntry;
 
+  // Static platform info for renderer-side feature gating. `process.env`
+  // is available in the (non-sandboxed) preload context — exposed once at
+  // build time so settings UIs can detect Wayland (where global hotkeys
+  // are unavailable) without an IPC round-trip.
+  api.platform = {
+    os: process.platform,
+    isWayland: process.platform === 'linux' && process.env.XDG_SESSION_TYPE === 'wayland',
+  };
+
   /**
    * Initialize the tile — must be called before using any capability APIs.
    * Validates the capability token with the main process.

@@ -26,6 +26,24 @@ try {
   DEBUG && console.log('[shortcuts] Running without Electron (test mode)');
 }
 
+// On Linux/Wayland, Electron's globalShortcut.register cannot grab keys —
+// the compositor refuses, and `register` returns false silently. The per-call
+// error log noise is misleading because it isn't a bug we can fix in this
+// process. Detect once and route those failures through a single startup
+// hint instead of per-shortcut errors.
+export const isWaylandSession = (): boolean =>
+  process.platform === 'linux' && process.env.XDG_SESSION_TYPE === 'wayland';
+
+let waylandHintLogged = false;
+const logWaylandHintOnce = () => {
+  if (waylandHintLogged) return;
+  waylandHintLogged = true;
+  console.warn(
+    '[shortcuts] Wayland session detected — global hotkeys are unavailable. ' +
+    'Shortcuts will only fire when a Peek window is focused (local fallback).'
+  );
+};
+
 // Maps for tracking shortcuts
 // Global shortcuts: shortcut string -> source address
 const globalShortcuts = new Map<string, string>();
@@ -191,13 +209,17 @@ export function registerGlobalShortcut(
   });
 
   if (ret !== true) {
-    // Common on Linux Wayland: globalShortcut.register returns false silently
-    // when the compositor refuses to grab the key. Logging the platform-
-    // translated accelerator (e.g. "Alt+Space" on Linux for "Option+Space")
-    // makes it easier to correlate with WM-reserved bindings.
-    console.error(
-      `[shortcuts] globalShortcut.register FAILED: requested="${shortcut}" accelerator="${accelerator}" platform=${process.platform}`
-    );
+    // Wayland refuses every grab — log a single startup hint instead of one
+    // error per shortcut. On other platforms this is a real failure; the
+    // platform-translated accelerator (e.g. "Alt+Space" for "Option+Space")
+    // helps correlate with WM-reserved bindings.
+    if (isWaylandSession()) {
+      logWaylandHintOnce();
+    } else {
+      console.error(
+        `[shortcuts] globalShortcut.register FAILED: requested="${shortcut}" accelerator="${accelerator}" platform=${process.platform}`
+      );
+    }
     return new Error(`Failed to register shortcut: ${shortcut} (accelerator: ${accelerator})`);
   }
 
