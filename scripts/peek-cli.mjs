@@ -89,6 +89,17 @@ Verbs:
   peek-open <n>       Open peek N (0..9)
   slide-open <edge>   Open slide on edge (Up|Down|Left|Right; case-insensitive)
 
+Invocation:
+  This is a plain Node script — but Peek users typically don't have
+  Node installed, so the bundled invocation uses the Electron binary
+  in Node mode:
+
+    ELECTRON_RUN_AS_NODE=1 <electron-binary> <peek-cli.mjs> <verb> [args...]
+
+  Peek's Settings → Keyboard Shortcuts panel renders the full
+  sh -c wrapped command per packaging — copy that into your DE's
+  custom-shortcut UI and you're done.
+
 Behaviour:
   - Auto-discovers the live socket under \${XDG_RUNTIME_DIR or ~/.cache}/peek/*/ipc.sock.
   - Set \$PEEK_PROFILE to pick a specific profile when multiple Peek instances are running.

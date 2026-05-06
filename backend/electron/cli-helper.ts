@@ -44,6 +44,56 @@ export function resolveCliHelperPath(): string {
 }
 
 /**
+ * Resolve the executor (the binary that runs the helper script) and the
+ * helper script path together. The executor is the Electron binary,
+ * invoked in Node mode via ELECTRON_RUN_AS_NODE=1 — we don't assume the
+ * user has system Node installed (a non-dev wouldn't), but we always
+ * have Electron because Peek is an Electron app.
+ *
+ * AppImage: executor is the AppImage itself (stable user-visible path).
+ * The AppImage runtime mounts and execs the inner peek binary, which
+ * respects ELECTRON_RUN_AS_NODE.
+ *
+ * Packaged (deb/rpm): executor is the renamed Electron binary at
+ * ${appBundle}/peek (process.execPath in packaged Electron).
+ *
+ * Source build: executor is node_modules/electron/dist/electron, again
+ * what process.execPath points at.
+ */
+export function resolveCliExecutor(): { electron: string; helper: string } {
+  if (isAppImage()) {
+    return {
+      electron: process.env.APPIMAGE!,
+      helper: APPIMAGE_SHADOW_PATH,
+    };
+  }
+  return {
+    electron: process.execPath,
+    helper: app.isPackaged ? packagedHelperPath() : sourceHelperPath(),
+  };
+}
+
+/**
+ * Build the full shell-ready command string that users paste into
+ * GNOME (or KDE / Hyprland) keyboard shortcut settings.
+ *
+ * Wraps the env-var prefix + executor + helper + verb in `sh -c '…'`
+ * because GNOME's custom-shortcut runner doesn't expand env-var
+ * prefixes natively. Inner paths get double-quoted so paths with spaces
+ * survive sh tokenisation.
+ */
+export function formatCliCommand(verb: string, args: string[] = []): string {
+  const { electron, helper } = resolveCliExecutor();
+  // Inner: ELECTRON_RUN_AS_NODE=1 "<electron>" "<helper>" verb arg arg…
+  // Double-quote paths so embedded spaces work; escape $ ` " \ inside.
+  const dq = (s: string) => `"${s.replace(/[$`"\\]/g, '\\$&')}"`;
+  const tail = args.length ? ' ' + args.join(' ') : '';
+  const inner = `ELECTRON_RUN_AS_NODE=1 ${dq(electron)} ${dq(helper)} ${verb}${tail}`;
+  // Wrap with sh -c '…' for GNOME. Single-quote escape any ' in inner.
+  return `sh -c '${inner.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
  * On AppImage, copy the helper from the (ephemeral) mount path to the
  * stable shadow path under `~/.local/share/peek/`. Idempotent — runs
  * every daemon startup so version upgrades replace the shadow with the

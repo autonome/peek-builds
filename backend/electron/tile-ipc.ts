@@ -108,7 +108,7 @@ import {
   unregisterLocalShortcut,
   isWaylandSession,
 } from './shortcuts.js';
-import { resolveCliHelperPath } from './cli-helper.js';
+import { resolveCliHelperPath, formatCliCommand } from './cli-helper.js';
 import { checkShortcutAllowed } from './tile-shortcuts-enforcement.js';
 import { checkContextAllowed } from './tile-context-enforcement.js';
 import { checkDialogAllowed } from './tile-dialogs-enforcement.js';
@@ -6516,8 +6516,10 @@ export function registerTileIpcHandlers(): void {
 
   // tile:app:cli-helper-path — absolute path to scripts/peek-cli.mjs,
   // resolved correctly for the current packaging (source / asar-unpack
-  // / AppImage shadow). Settings UI uses this so users on Wayland can
-  // copy a complete command into their DE's keyboard shortcuts UI. See
+  // / AppImage shadow). Useful for diagnostic display and for callers
+  // that want to roll their own invocation; for the actual GNOME-bind
+  // command, prefer tile:app:cli-command which formats the full
+  // ELECTRON_RUN_AS_NODE invocation. See
   // backend/electron/cli-helper.ts and docs/global-hotkeys-on-wayland.md.
   registerTileIpc('tile:app:cli-helper-path', { mode: 'handle' }, (event, args: {
     token: string;
@@ -6529,6 +6531,28 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'trustedBuiltin required for tile:app:cli-helper-path' };
     }
     return { success: true, data: { path: resolveCliHelperPath() } };
+  });
+
+  // tile:app:cli-command — full shell-ready command users paste into
+  // GNOME / KDE / Hyprland custom-shortcut UIs to bind a verb. Wraps
+  // ELECTRON_RUN_AS_NODE=1 + bundled Electron + helper script + verb in
+  // `sh -c '…'`. See cli-helper.ts::formatCliCommand.
+  registerTileIpc('tile:app:cli-command', { mode: 'handle' }, (event, args: {
+    token: string;
+    verb: string;
+    args?: string[];
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'app', 'tile:app:cli-command', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:app:cli-command' };
+    }
+    if (typeof args.verb !== 'string' || !args.verb) {
+      return { success: false, error: 'verb is required' };
+    }
+    const verbArgs = Array.isArray(args.args) ? args.args.map(String) : [];
+    return { success: true, data: { command: formatCliCommand(args.verb, verbArgs) } };
   });
 
   // ── tile:darkMode:* ──────────────────────────────────────────────

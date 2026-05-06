@@ -2260,6 +2260,17 @@ function buildAPI(): Record<string, unknown> {
       }
       return ipcRenderer.invoke('tile:app:cli-helper-path', { token: tileToken });
     },
+    /**
+     * Build the full shell command users paste into GNOME / KDE custom
+     * keyboard shortcuts to fire a verb. Wraps ELECTRON_RUN_AS_NODE=1 +
+     * bundled Electron binary + peek-cli helper + verb in `sh -c '…'`.
+     */
+    getCliCommand: (verb: string, args?: string[]) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.app requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:app:cli-command', { token: tileToken, verb, args });
+    },
   };
 
   // ── Nav (trustedBuiltin only) ─────────────────────────────────────────

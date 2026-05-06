@@ -516,22 +516,27 @@ const renderCoreSettings = async () => {
     intro.textContent = 'Wayland blocks apps from grabbing global hotkeys directly. Bind these commands in GNOME Settings → Keyboard → Custom Shortcuts (or your desktop’s equivalent):';
     block.appendChild(intro);
 
+    // Each entry's `args` is the verb-arg list as it appears in the
+    // command (placeholder strings users replace by hand for the
+    // bind, e.g. <n> → 0).
     const verbs = [
-      { verb: 'cmd-open',   args: '',          label: 'Open command panel' },
-      { verb: 'peek-open',  args: ' <n>',      label: 'Open peek N (0–9)' },
-      { verb: 'slide-open', args: ' <edge>',   label: 'Open slide on edge (Up|Down|Left|Right)' },
+      { verb: 'cmd-open',   args: [],         label: 'Open command panel' },
+      { verb: 'peek-open',  args: ['<n>'],    label: 'Open peek N (0–9)' },
+      { verb: 'slide-open', args: ['<edge>'], label: 'Open slide on edge (Up|Down|Left|Right)' },
     ];
 
-    api.app.getCliHelperPath().then(result => {
-      const helperPath = result?.success && result.data?.path
-        ? result.data.path
-        : '<peek-cli path>';
+    // Resolve each command via the daemon so the executor + helper
+    // paths are correct for the current packaging (source / asar /
+    // AppImage shadow). Returned commands are sh -c '…' wrapped and
+    // include ELECTRON_RUN_AS_NODE=1 so users don't need a system Node.
+    Promise.all(
+      verbs.map(({ verb, args }) => api.app.getCliCommand(verb, args).then(r => r?.data?.command))
+    ).then(commands => {
+      verbs.forEach(({ verb, label }, i) => {
+        const cmdText = commands[i] || `<could not resolve ${verb} command>`;
 
-      verbs.forEach(({ verb, args, label }) => {
         const row = document.createElement('div');
         row.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 4px 0; font-family: monospace;';
-
-        const cmdText = `node ${helperPath} ${verb}${args}`;
 
         const code = document.createElement('span');
         code.textContent = cmdText;

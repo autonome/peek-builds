@@ -32,23 +32,31 @@ Invocation shape:
 node /path/to/peek-cli.mjs <verb> [args...]
 ```
 
-Where `/path/to/peek-cli.mjs` is the absolute path the Settings UI shows you. It varies by packaging:
+### What goes in the "Command" field
 
-| Packaging  | Helper path                                                       |
-|------------|-------------------------------------------------------------------|
-| Source build (`yarn start`)         | `<repo>/scripts/peek-cli.mjs`                                |
-| `.deb` / `.rpm` install             | `${process.resourcesPath}/app.asar.unpacked/scripts/peek-cli.mjs` (typically `/opt/Peek/resources/app.asar.unpacked/scripts/peek-cli.mjs`) |
-| AppImage                            | `~/.local/share/peek/peek-cli.mjs` (the daemon shadow-copies the helper here at startup since the AppImage mount path is ephemeral) |
-
-The Settings UI does this resolution for you — open Settings → Keyboard Shortcuts and copy the displayed command directly.
-
-Per-shortcut examples (source build):
+We don't assume users have a system `node` installed (Peek's audience isn't all developers), so the helper is invoked via the bundled Electron binary in Node mode:
 
 ```
-node /home/me/peek/scripts/peek-cli.mjs cmd-open
-node /home/me/peek/scripts/peek-cli.mjs peek-open 3
-node /home/me/peek/scripts/peek-cli.mjs slide-open up
+ELECTRON_RUN_AS_NODE=1 <electron-binary> <peek-cli.mjs> <verb> [args...]
 ```
+
+GNOME's custom-shortcut runner doesn't expand env-var prefixes, so the actual bind is wrapped in `sh -c '…'`. **The Settings UI renders the full ready-to-paste string per verb with a copy button — use that.**
+
+If you want to construct it by hand, the executor + helper paths vary by packaging:
+
+| Packaging  | Electron binary                                                 | Helper path                                                              |
+|------------|-----------------------------------------------------------------|--------------------------------------------------------------------------|
+| Source build (`yarn start`) | `<repo>/node_modules/electron/dist/electron`     | `<repo>/scripts/peek-cli.mjs`                                            |
+| `.deb` / `.rpm` install     | `/opt/Peek/peek` (i.e. `process.execPath`)        | `/opt/Peek/resources/app.asar.unpacked/scripts/peek-cli.mjs`             |
+| AppImage                    | the AppImage path itself (e.g. `~/Applications/Peek.AppImage`) | `~/.local/share/peek/peek-cli.mjs` (shadow refreshed at daemon start)    |
+
+Hand-built example (AppImage):
+
+```
+sh -c 'ELECTRON_RUN_AS_NODE=1 "/home/me/Applications/Peek.AppImage" "/home/me/.local/share/peek/peek-cli.mjs" cmd-open'
+```
+
+**Latency:** invoking Electron-as-Node is slower than vanilla Node — typically ~200–500ms per invocation, with another ~100–300ms on top for AppImage's FUSE-mount overhead. Still under the "feels bad" threshold for a key press, but if it ever does, the upgrade path is a tiny precompiled CLI binary (~150 lines of Rust).
 
 ### Disabling the socket
 
