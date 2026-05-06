@@ -18,7 +18,9 @@
     "pubsub": {
       "scopes": ["global"],
       "topics": [
-        "slides:settings-changed"
+        "slides:settings-changed",
+        "slides:settings-update",
+        "window:closed"
       ]
     },
     "window": {

@@ -33,6 +33,7 @@
         "ext:lex:shutdown",
         "app:shutdown",
         "lex:recent-lexicons-changed",
+        "lex:session-changed",
         "lex:open-create",
         "chain-popup:content",
         "chain-popup:result"
