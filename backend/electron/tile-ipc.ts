@@ -108,6 +108,7 @@ import {
   unregisterLocalShortcut,
   isWaylandSession,
 } from './shortcuts.js';
+import { resolveCliHelperPath } from './cli-helper.js';
 import { checkShortcutAllowed } from './tile-shortcuts-enforcement.js';
 import { checkContextAllowed } from './tile-context-enforcement.js';
 import { checkDialogAllowed } from './tile-dialogs-enforcement.js';
@@ -6511,6 +6512,23 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'trustedBuiltin required for tile:app:get-prefs' };
     }
     return getPrefs();
+  });
+
+  // tile:app:cli-helper-path — absolute path to scripts/peek-cli.mjs,
+  // resolved correctly for the current packaging (source / asar-unpack
+  // / AppImage shadow). Settings UI uses this so users on Wayland can
+  // copy a complete command into their DE's keyboard shortcuts UI. See
+  // backend/electron/cli-helper.ts and docs/global-hotkeys-on-wayland.md.
+  registerTileIpc('tile:app:cli-helper-path', { mode: 'handle' }, (event, args: {
+    token: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'app', 'tile:app:cli-helper-path', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:app:cli-helper-path' };
+    }
+    return { success: true, data: { path: resolveCliHelperPath() } };
   });
 
   // ── tile:darkMode:* ──────────────────────────────────────────────

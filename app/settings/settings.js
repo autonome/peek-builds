@@ -479,14 +479,84 @@ const renderCoreSettings = async () => {
     placeholder: cmdConfigDefaults.prefs.shortcutKey
   }));
 
-  // Wayland sessions can't grant global key grabs to apps. Surface this
-  // so users don't think their shortcuts are misconfigured.
+  // CLI dispatch socket toggle (all platforms — the socket is useful
+  // for scripting/automation everywhere, not just Wayland). Backed by
+  // core prefs.cliSocketEnabled. When disabled, the daemon closes the
+  // socket and peek-cli verbs stop working. See cli-socket.ts and
+  // docs/global-hotkeys-on-wayland.md.
+  let cliVerbBlock = null;
+  const updateVerbBlockEnabled = (enabled) => {
+    if (!cliVerbBlock) return;
+    cliVerbBlock.style.opacity = enabled ? '1' : '0.5';
+    cliVerbBlock.style.pointerEvents = enabled ? 'auto' : 'none';
+  };
+
+  shortcutsGroup.appendChild(createCheckbox(
+    getLabel('cliSocketEnabled'),
+    getVal('cliSocketEnabled'),
+    (newVal) => {
+      prefs.cliSocketEnabled = newVal;
+      updateVerbBlockEnabled(newVal);
+      save();
+    },
+    { helpText: pProps.cliSocketEnabled.description }
+  ));
+
+  // On Wayland, list the verbs prominently as the user-facing answer
+  // for global hotkeys. On other platforms the socket is mostly for
+  // scripting and we don't surface it here.
   if (api.platform?.isWayland) {
-    const note = document.createElement('div');
-    note.className = 'help-text';
-    note.style.cssText = 'margin-top: 8px; padding: 8px 12px; border-left: 3px solid var(--accent, #888); background: var(--bg-tertiary, rgba(255,255,255,0.04));';
-    note.textContent = 'Note: this is a Wayland session. The OS does not allow apps to grab global hotkeys, so these shortcuts will only fire when a Peek window is focused.';
-    shortcutsGroup.appendChild(note);
+    const block = document.createElement('div');
+    block.style.cssText = 'margin-top: 12px; padding: 10px 12px; border-left: 3px solid var(--accent, #888); background: var(--bg-tertiary, rgba(255,255,255,0.04)); font-size: 13px; transition: opacity 0.15s ease;';
+    cliVerbBlock = block;
+    updateVerbBlockEnabled(getVal('cliSocketEnabled'));
+
+    const intro = document.createElement('div');
+    intro.style.cssText = 'margin-bottom: 8px; color: var(--text-secondary, #999);';
+    intro.textContent = 'Wayland blocks apps from grabbing global hotkeys directly. Bind these commands in GNOME Settings → Keyboard → Custom Shortcuts (or your desktop’s equivalent):';
+    block.appendChild(intro);
+
+    const verbs = [
+      { verb: 'cmd-open',   args: '',          label: 'Open command panel' },
+      { verb: 'peek-open',  args: ' <n>',      label: 'Open peek N (0–9)' },
+      { verb: 'slide-open', args: ' <edge>',   label: 'Open slide on edge (Up|Down|Left|Right)' },
+    ];
+
+    api.app.getCliHelperPath().then(result => {
+      const helperPath = result?.success && result.data?.path
+        ? result.data.path
+        : '<peek-cli path>';
+
+      verbs.forEach(({ verb, args, label }) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 4px 0; font-family: monospace;';
+
+        const cmdText = `node ${helperPath} ${verb}${args}`;
+
+        const code = document.createElement('span');
+        code.textContent = cmdText;
+        code.style.cssText = 'flex: 1; user-select: all; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+        code.title = label;
+
+        const copy = document.createElement('button');
+        copy.textContent = 'copy';
+        copy.style.cssText = 'padding: 2px 8px; font-size: 11px; cursor: pointer; background: var(--bg-tertiary); border: 1px solid var(--border-primary); border-radius: 4px; color: var(--text-primary);';
+        copy.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(cmdText);
+            const orig = copy.textContent;
+            copy.textContent = 'copied';
+            setTimeout(() => { copy.textContent = orig; }, 1200);
+          } catch { /* clipboard denied or unavailable */ }
+        });
+
+        row.appendChild(code);
+        row.appendChild(copy);
+        block.appendChild(row);
+      });
+    });
+
+    shortcutsGroup.appendChild(block);
   }
 
   container.appendChild(shortcutsGroup);

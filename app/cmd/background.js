@@ -597,6 +597,15 @@ const init = async () => {
     reinit();
   });
 
+  // 4a. CLI verb: open the panel. Lets users on Wayland (and anywhere
+  // else) bind a system shortcut to `peek-cli cmd-open` instead of
+  // relying on Electron's globalShortcut. See cli-router.ts and
+  // docs/global-hotkeys-on-wayland.md.
+  api.pubsub.subscribe('cli:cmd-open', () => {
+    log('ext:cmd', 'cli:cmd-open');
+    openPanelWindow(currentSettings.prefs);
+  });
+
   // 4b. Save command cache after all extensions have loaded
   api.pubsub.subscribe('feature:all-loaded', async () => {
     log('ext:cmd', 'feature:all-loaded - saving command cache');

@@ -2254,6 +2254,12 @@ function buildAPI(): Record<string, unknown> {
       }
       return ipcRenderer.invoke('tile:app:get-prefs', { token: tileToken });
     },
+    getCliHelperPath: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.app requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:app:cli-helper-path', { token: tileToken });
+    },
   };
 
   // ── Nav (trustedBuiltin only) ─────────────────────────────────────────

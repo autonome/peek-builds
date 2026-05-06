@@ -181,6 +181,20 @@ const init = async () => {
     reinit();
   });
 
+  // CLI verb: open peek N. Args: [keyNum]. Lets users bind a system
+  // shortcut (peek-cli peek-open 3) instead of relying on Electron's
+  // globalShortcut, which doesn't grab on Wayland. See cli-router.ts.
+  api.pubsub.subscribe('cli:peek-open', (msg) => {
+    const keyNum = String(msg?.args?.[0] ?? '');
+    const item = (currentSettings.items || []).find(i => String(i.keyNum) === keyNum && i.enabled);
+    if (!item) {
+      console.warn('[ext:peeks] cli:peek-open — no enabled item with keyNum=' + keyNum);
+      return;
+    }
+    console.log('[ext:peeks] cli:peek-open keyNum=' + keyNum);
+    executeItem(item);
+  });
+
   // Listen for settings updates from Settings UI
   // Settings UI sends proposed changes, we validate and save
   api.pubsub.subscribe('peeks:settings-update', async (msg) => {

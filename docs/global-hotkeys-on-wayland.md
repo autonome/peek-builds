@@ -6,21 +6,154 @@ On Linux/Wayland, Electron's `globalShortcut.register()` returns `false` silentl
 
 This doc records what we tried, what we shipped, and what would have to be true for us to revisit a "real fix."
 
+## Quick start: bind a global hotkey on Wayland
+
+1. Make sure Peek is running (the daemon must be up — the helper doesn't cold-start it).
+2. Open your DE's keyboard-shortcut UI:
+   - **GNOME**: Settings → Keyboard → View and Customize Shortcuts → Custom Shortcuts → Add (or `gnome-control-center keyboard`)
+   - **KDE**: System Settings → Shortcuts → Custom Shortcuts → Edit → New → Global Shortcut → Command/URL
+   - **Hyprland**: `bind = SUPER, SPACE, exec, node /path/to/peek-cli.mjs cmd-open` in `hyprland.conf`
+3. Set the **Command** to the verb invocation. Peek's Settings → Keyboard Shortcuts panel has copy buttons for the exact strings, or pick one from the table below.
+4. Set the **Shortcut** to whatever key you want — `Super+Space` is a good default since GNOME doesn't reserve it.
+
+### Supported verbs
+
+Canonical list lives in [`backend/electron/cli-router.ts`](../backend/electron/cli-router.ts) (`KNOWN_VERBS`). Keep this table in sync.
+
+| Verb           | Args                       | Effect                                       |
+|----------------|----------------------------|----------------------------------------------|
+| `cmd-open`     | —                          | Open the command panel                        |
+| `peek-open`    | `<n>` — keyNum (0–9)       | Open the peek bound to that keyNum           |
+| `slide-open`   | `<edge>` — Up/Down/Left/Right (case-insensitive) | Open the slide bound to that edge |
+
+Invocation shape:
+
+```
+node /path/to/peek-cli.mjs <verb> [args...]
+```
+
+Where `/path/to/peek-cli.mjs` is the absolute path the Settings UI shows you. It varies by packaging:
+
+| Packaging  | Helper path                                                       |
+|------------|-------------------------------------------------------------------|
+| Source build (`yarn start`)         | `<repo>/scripts/peek-cli.mjs`                                |
+| `.deb` / `.rpm` install             | `${process.resourcesPath}/app.asar.unpacked/scripts/peek-cli.mjs` (typically `/opt/Peek/resources/app.asar.unpacked/scripts/peek-cli.mjs`) |
+| AppImage                            | `~/.local/share/peek/peek-cli.mjs` (the daemon shadow-copies the helper here at startup since the AppImage mount path is ephemeral) |
+
+The Settings UI does this resolution for you — open Settings → Keyboard Shortcuts and copy the displayed command directly.
+
+Per-shortcut examples (source build):
+
+```
+node /home/me/peek/scripts/peek-cli.mjs cmd-open
+node /home/me/peek/scripts/peek-cli.mjs peek-open 3
+node /home/me/peek/scripts/peek-cli.mjs slide-open up
+```
+
+### Disabling the socket
+
+The socket is on by default. Toggle it off in Settings → Keyboard Shortcuts → "Enable CLI dispatch socket" — the daemon closes the socket immediately and `peek-cli` invocations start failing with exit 2. Toggle back on, the socket re-opens, no restart needed. The pref is `cliSocketEnabled` in core prefs.
+
+### Behaviour notes
+
+- **Profile auto-discovery**: the helper scans `${XDG_RUNTIME_DIR or ~/.cache}/peek/*/ipc.sock` and uses the first live one. Set `$PEEK_PROFILE` to pick a specific profile when multiple Peek instances run side by side.
+- **Item not found**: `peek-open 7` when no peek is bound to keyNum 7 logs a warning in the daemon and silently does nothing on the user side. Same for `slide-open <edge>` when no slide is on that edge.
+- **Daemon not running**: helper exits 2 with `peek-cli: no running Peek daemon found ...`. Start Peek the normal way and try again.
+- **Bad verb**: helper exits 3 with `peek-cli: daemon rejected verb: invalid verb: ...`. Verbs must match `[a-z][a-z0-9-]*`.
+- **Latency**: ~5–20ms total per invocation when the daemon is up. The helper is plain Node + `node:net`, no Electron startup.
+
 ## What we ship today
 
-Two layers in `backend/electron/shortcuts.ts`:
+Three layers, all live:
 
 1. **Global path** — call Electron's `globalShortcut.register()` anyway. On macOS / Windows / X11-session Linux it works. On Wayland it returns `false`; we surface a single startup hint on the first Wayland failure (not one error per shortcut) and move on.
-2. **Local fallback** — every feature that registers a global shortcut also registers the same accelerator as a *local* shortcut (`api.shortcuts.register(key, cb)` with no `{global:true}`). When a Peek window is focused, the shortcut fires regardless of platform.
+2. **Local fallback** — every feature that registers a global shortcut also registers the same accelerator as a *local* shortcut. When a Peek window is focused, it fires regardless of platform.
+3. **CLI verb dispatch** — the daemon listens on a Unix socket; a bundled `peek-cli` helper writes `{verb, args}` lines into it. Users on Wayland (or anyone) bind `node /path/to/peek-cli.mjs cmd-open` to a system-level keyboard shortcut in their DE settings. The OS owns the keygrab, sidestepping every Wayland restriction.
 
-So on Wayland: shortcuts work when any Peek window is focused, and don't fire when Peek is in the background. The Settings UI surfaces this in the Keyboard Shortcuts group when `api.platform.isWayland` is true.
+The Settings UI on Wayland surfaces the `peek-cli` invocations with copy-to-clipboard.
 
 Implementation files:
-- `backend/electron/shortcuts.ts` — `isWaylandSession()`, one-time `logWaylandHintOnce()`, `registerGlobalShortcut()` dispatcher
-- `backend/electron/tile-ipc.ts` — IPC entry point; suppresses per-tile error logging on Wayland
-- `backend/electron/tile-preload.cts` — `api.platform = { os, isWayland }` exposed to renderers
-- `app/cmd/background.js`, `features/peeks/background.js`, `features/slides/background.js` — double-register pattern (global + local fallback)
-- `app/settings/settings.js` — Wayland note in core-settings Keyboard Shortcuts group
+- `backend/electron/shortcuts.ts` — `isWaylandSession()`, one-time `logWaylandHintOnce()`, `registerGlobalShortcut()` dispatcher (layer 1+2)
+- `backend/electron/cli-socket.ts` — Unix socket server at `${XDG_RUNTIME_DIR or ~/.cache}/peek/<profile>/ipc.sock`, line-delimited JSON, stale-socket cleanup, atexit unlink, 0600 perms. `start/stop/isRunning` exposed for the runtime toggle.
+- `backend/electron/cli-router.ts` — verb sanitisation + publish on `cli:<verb>` topic
+- `backend/electron/cli-helper.ts` — resolves the helper's absolute path per packaging (source / asar-unpacked / AppImage shadow) and refreshes the AppImage shadow at daemon startup
+- `backend/electron/tile-ipc.ts` — IPC entry point; suppresses per-tile error logging on Wayland; `tile:app:cli-helper-path` returns the resolved helper path for the settings UI
+- `backend/electron/tile-preload.cts` — `api.platform = { os, isWayland }` and `api.app.getCliHelperPath()` exposed to renderers
+- `backend/electron/entry.ts` — calls `ensureCliHelperShadow()` at startup; reconciles socket against `cliSocketEnabled` pref on every prefs publish
+- `scripts/peek-cli.mjs` — non-Electron Node CLI helper. Auto-discovers the live socket, sends one verb, exits in milliseconds. Honours `$PEEK_PROFILE` for explicit selection.
+- `app/cmd/background.js` — subscribes to `cli:cmd-open`
+- `features/peeks/background.js` — subscribes to `cli:peek-open`, takes `keyNum` arg
+- `features/slides/background.js` — subscribes to `cli:slide-open`, takes edge arg
+- `app/config.js` — `cliSocketEnabled` core pref (default true)
+- `app/settings/settings.js` — `cliSocketEnabled` checkbox + verb list with copy-to-clipboard in Keyboard Shortcuts group (verb list Wayland-only; checkbox everywhere)
+- `electron-builder.yml` — `scripts/peek-cli.mjs` whitelisted back into the bundle and added to `asarUnpack`; Linux targets include `AppImage` and `deb`
+
+### Ship gaps
+
+- **Not on `$PATH`.** Users bind to the absolute path the Settings UI shows. PATH-onto-`peek-cli` would need a `/usr/bin/peek-cli` wrapper from the deb postinst (and Snap/Flatpak equivalents); not done yet.
+- **No cold-start path.** `peek-cli` exits non-zero if no daemon is listening — the user has to start Peek the normal way before binding the shortcut. Auto-launching on first verb is doable later.
+- **No `peek-cli --list`** that asks the daemon for the live verb registry (the canonical list lives in `cli-router.ts:KNOWN_VERBS`; `peek-cli --help` mirrors it manually).
+- **Linux + macOS only** (Unix sockets). Windows isn't broken — `globalShortcut.register` works there natively — so no urgency for named-pipe support.
+
+## The real answer (shipped 2026-05-06): CLI verbs + DE keyboard settings
+
+Side-steps every blocker the portal route has. Now live; see "What we ship today" above for the file map. The sections below are the original design notes, kept so the rationale for each piece survives.
+
+The trick: don't try to grab keys at all. Expose CLI verbs that wake the running Peek and tell it what to do; let users bind those verbs to keys in their desktop environment's keyboard-shortcuts UI. The OS owns the key grab, so all the Wayland security model questions go away.
+
+```
+$ peek cmd-open
+$ peek peek-open 0
+$ peek slide-open up
+```
+
+User opens GNOME Settings → Keyboard → Custom Shortcuts (or KDE equivalent, or `hyprctl bind`), points the shortcut at `peek cmd-open`, and `Super+Space` (or whatever) opens the cmd panel. The shortcut binding is a system setting, not an app setting — it survives reinstalls, works across compositors, and doesn't need a portal.
+
+### Why this dodges everything
+
+- No `org.freedesktop.portal.GlobalShortcuts` dependency → works on Ubuntu LTS, Debian stable, sway, every distro.
+- No app_id stability problem → there's no portal session to key on.
+- No first-launch consent prompt → the user explicitly bound the shortcut themselves.
+- No portal version skew across compositors → every DE has a custom-shortcut UI.
+- Bonus: the same CLI surface is useful for scripting, voice assistants, and automation on macOS/Windows too.
+
+### Architecture sketch
+
+The whole point is "Peek is already running — wake it up cheaply." So skip Electron's `requestSingleInstanceLock` (which spawns a whole second Electron process just to forward argv — 300–800ms on Linux, completely defeats the point). Use a Unix socket instead: the daemon listens, a tiny CLI helper writes a verb and exits.
+
+1. **Daemon side** (in `backend/electron/`) — on app start, listen on `${XDG_RUNTIME_DIR:-$HOME/.cache/peek}/ipc.sock`. On exit, clean up. Inbound message shape: `{ "verb": "cmd-open", "args": [...] }`. New module `backend/electron/cli-router.ts` maps verbs to existing dispatch paths (cmd panel open, peek/slide execute via pubsub).
+2. **CLI side** — a tiny non-Electron helper bundled with the app (~100 lines of plain Node, or a small Rust binary if we want to be picky about ms). Behavior:
+   - Connect to the socket. If it works: write the verb, exit. ~5–20ms total.
+   - If connection fails (Peek isn't running): exec the full Peek binary in daemon mode. The daemon starts up, creates the socket, and processes the original verb. Slow path, but only once per session.
+3. **Argv shape** — `peek-cli cmd-open`, `peek-cli peek-open 0`, `peek-cli slide-open up`. The CLI helper ships inside the app bundle at a stable absolute path (e.g. `/opt/peek/peek-cli` for deb, `<AppDir>/usr/bin/peek-cli` for AppImage); users bind GNOME/KDE shortcuts to that absolute path. **First ship deliberately skips packaging the CLI helper onto PATH** — saves 1–2 days of per-format packaging fiddling at the cost of "type `peek-cli` in a terminal" discoverability. Promote to PATH later if it turns out to matter.
+4. **Settings UI on Wayland** — replace the current "global hotkeys unavailable" note with the verb list **and the absolute path to the bundled CLI helper** (settings UI knows it because the helper sits next to the daemon binary). Include a one-line "bind these in GNOME Settings → Keyboard → Custom Shortcuts" hint and a copy-to-clipboard affordance per verb so users don't have to retype `/opt/peek/peek-cli cmd-open`.
+5. **Promote this section** in this doc from "likely real answer" to "the answer on Wayland."
+
+### Effort estimate (escape-hatch scope)
+
+Roughly **2 days** for the absolute-path-only version (plus an additional 1–2 days later if/when we want `peek-cli` on PATH).
+
+- Quick (1–2 hours each): socket server + cleanup, `cli-router.ts`, settings UI update, doc update.
+- Medium (half-day each): wiring verbs to existing dispatch paths through pubsub topics that cmd/peeks/slides already subscribe to (avoids main-process reaching into renderers); CLI helper itself (~100 lines Node, or ~150 Rust if we care about Node's ~50ms startup); edge cases (stale-socket cleanup, cold-start race when user spams the shortcut while daemon is starting).
+- Skipped for the escape-hatch ship: AppImage / Snap / deb wrapper scripts to put `peek-cli` on PATH.
+
+### What about Electron's `requestSingleInstanceLock`?
+
+We don't use it for hotkey dispatch. We *might* still want it (or socket presence) as the "is another Peek already running?" check — but cheap-and-correct ways to do that exist on the socket path too (try to connect; if it succeeds, exit silently or message the running instance).
+
+### Trade-offs vs. the local-fallback we ship today
+
+- **Pro:** works when Peek is in the background. Local fallback only fires when a Peek window is focused.
+- **Pro:** survives across all compositors and Linux distros without per-platform code.
+- **Con:** user has to bind each shortcut once in their DE's settings UI. Discoverability problem — they have to read docs or hit the settings note to know.
+- **Con:** N peeks × M slides × cmd = ~10+ shortcuts to bind by hand.
+- **Resolution:** ship both layers. The local fallback stays as the zero-config baseline; the CLI verbs are the upgrade path for users who want true global hotkeys on Wayland today.
+
+### Risks
+
+- **Process spawn cost** could be worse than estimated on slow systems. Mitigation: socket-helper escape hatch above.
+- **AppImage / Snap / Flatpak packaging** might not put `peek` on PATH cleanly. Need to check each format and document the absolute path users should bind to.
+- **Verb stability** — once people bind shortcuts to `peek cmd-open`, we can't rename it casually. Pick names carefully on first commit.
 
 ## Things we tried that don't work
 

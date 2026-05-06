@@ -47,9 +47,12 @@ files:
   - "!docs/**"
   - "!old-extension"
   - "!old-extension/**"
-  # Exclude dev scripts and config
+  # Exclude dev scripts and config — but whitelist peek-cli.mjs back in
+  # so it ships for users binding it to system keyboard shortcuts.
+  # See backend/electron/cli-helper.ts and docs/global-hotkeys-on-wayland.md.
   - "!scripts"
   - "!scripts/**"
+  - "scripts/peek-cli.mjs"
   - "!playwright.config.ts"
   # Exclude dev artifacts and docs
   - "!settings-screenshot.png"
@@ -76,6 +79,9 @@ asarUnpack:
   # Chrome extensions must live on a real filesystem — Electron's
   # session.loadExtension() can't read from inside app.asar.
   - "chrome-extensions/**/*"
+  # peek-cli is invoked by an external `node` process via DE keyboard
+  # shortcuts; node can't read from inside app.asar, so unpack it.
+  - "scripts/peek-cli.mjs"
 
 # macOS specific
 mac:
@@ -112,4 +118,14 @@ linux:
   icon: assets/appicon.png
   category: Network
   target:
+    # `dir` stays for fast iteration / smoke tests.
     - target: dir
+    # AppImage works on arm64 (Asahi) and x86 alike. The mount path is
+    # ephemeral, so the daemon shadow-copies peek-cli.mjs to
+    # ~/.local/share/peek/peek-cli.mjs at startup (see cli-helper.ts).
+    - target: AppImage
+    # NOTE: `.deb` and `.rpm` are intentionally not listed here.
+    # electron-builder bundles an x86-only fpm binary and there's no
+    # arm64 build in electron-builder-binaries, so packaging fails on
+    # Asahi without FEX. Add `- target: deb` / `- target: rpm` back
+    # when building on an x86 host (or after installing FEX locally).

@@ -112,6 +112,8 @@ import { getLazyTileManifest } from './tile-lazy.js';
 import { getTilePreloadPath } from './config.js';
 import { createTrustedBuiltinGrant } from './tile-manifest.js';
 import { generateToken } from './tile-tokens.js';
+import { startCliSocketServer, stopCliSocketServer, isCliSocketRunning } from './cli-socket.js';
+import { ensureCliHelperShadow } from './cli-helper.js';
 
 // Early diagnostic logging for URL handling (writes to /tmp/ to avoid userData path issues)
 try {
@@ -946,6 +948,21 @@ const onReady = async () => {
       _quitShortcut = newQuitShortcut;
     }
 
+    // Reconcile CLI dispatch socket against the user pref. Default true
+    // (only an explicit `false` disables it). Single source of truth for
+    // both first-launch start and live toggle from Settings UI.
+    const cliSocketEnabled = prefsMsg.prefs.cliSocketEnabled !== false;
+    const socketRunning = isCliSocketRunning();
+    if (cliSocketEnabled && !socketRunning) {
+      try {
+        await startCliSocketServer(PROFILE);
+      } catch (err) {
+        console.error('[entry] cli-socket startup failed:', err);
+      }
+    } else if (!cliSocketEnabled && socketRunning) {
+      await stopCliSocketServer();
+    }
+
     // Load features after core app is ready (only once)
     if (!featuresLoaded) {
       featuresLoaded = true;
@@ -1029,6 +1046,15 @@ const onReady = async () => {
   // downstream sees a fully-initialised renderer with all subscribers
   // registered before e.g. CLI URLs get replayed.
   await createBackgroundWindow();
+
+  // On AppImage, refresh the peek-cli shadow at ~/.local/share/peek/
+  // so binding to that absolute path keeps working across launches
+  // (the AppImage mount path is ephemeral). No-op everywhere else.
+  await ensureCliHelperShadow();
+
+  // Note: cli-socket startup happens in the prefs subscriber (below)
+  // so the cliSocketEnabled toggle is honoured from the first publish.
+  // See docs/global-hotkeys-on-wayland.md for the dispatch architecture.
 
   // Start hot reload in dev mode
   if (DEBUG) {

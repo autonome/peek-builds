@@ -236,6 +236,21 @@ const init = async () => {
     reinit();
   });
 
+  // CLI verb: open slide on edge. Args: [edge in {Up,Down,Left,Right}].
+  // Case-insensitive on input. See cli-router.ts and
+  // docs/global-hotkeys-on-wayland.md.
+  api.pubsub.subscribe('cli:slide-open', (msg) => {
+    const raw = String(msg?.args?.[0] ?? '');
+    const edge = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+    const item = (currentSettings.items || []).find(i => i.screenEdge === edge && i.enabled);
+    if (!item) {
+      console.warn('[ext:slides] cli:slide-open — no enabled item with screenEdge=' + edge);
+      return;
+    }
+    console.log('[ext:slides] cli:slide-open edge=' + edge);
+    executeItem(item);
+  });
+
   // Listen for settings updates from Settings UI
   // Settings UI sends proposed changes, we validate and save
   api.pubsub.subscribe('slides:settings-update', async (msg) => {

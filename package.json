@@ -3,7 +3,10 @@
   "version": "0.0.1",
   "description": "Peek is a web user agent for working with the web in a more agent-ish fashion than a browser.",
   "main": "dist/backend/electron/entry.js",
-  "author": "dietrich ayala",
+  "author": {
+    "name": "dietrich ayala",
+    "email": "me@burrito.space"
+  },
   "license": "MIT",
   "engines": {
     "node": "24.11.1"

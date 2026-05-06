@@ -16,6 +16,7 @@ const labels = {
     defaultWindowWidth: 'Default window width',
     defaultWindowHeight: 'Default window height',
     persistWindowBounds: 'Remember window size and position',
+    cliSocketEnabled: 'Enable CLI dispatch socket',
   }
 };
 
@@ -101,6 +102,11 @@ const prefsSchema = {
       "type": "boolean",
       "default": false
     },
+    "cliSocketEnabled": {
+      "description": "Run a Unix socket so peek-cli can wake the daemon for hotkey dispatch (mainly useful on Wayland; the OS owns the keygrab and forwards via the helper). Disable to close the socket.",
+      "type": "boolean",
+      "default": true
+    },
   },
   "required": [ "shortcutKey", "startupFeature", "enableTrayIcon", "showInDockAndSwitcher", "quitShortcut" ]
 };
@@ -177,7 +183,8 @@ const defaults = {
     dragHoldDelay: 0.3,
     defaultWindowWidth: 1024,
     defaultWindowHeight: 768,
-    persistWindowBounds: false
+    persistWindowBounds: false,
+    cliSocketEnabled: true,
   },
   items: [
     { id: '82de735f-a4b7-4fe6-a458-ec29939ae00d',
