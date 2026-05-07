@@ -82,6 +82,7 @@ export {
 // Components - Basic
 export { PeekButton } from './peek-button.js';
 export { PeekCard } from './peek-card.js';
+export { PeekItemActions } from './peek-item-actions.js';
 export { PeekList, PeekListItem } from './peek-list.js';
 
 // Components - Complex
@@ -107,6 +108,7 @@ export { PeekGridToolbar } from './peek-grid-toolbar.js';
 // Side-effect imports to register all components
 import './peek-button.js';
 import './peek-card.js';
+import './peek-item-actions.js';
 import './peek-list.js';
 import './peek-carousel.js';
 import './peek-input.js';

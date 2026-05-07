@@ -1760,6 +1760,10 @@ const createGroupCard = (tag, options = {}) => {
 /**
  * Create a card element for an address using the shared search-result-card builder.
  * Handles both Address (uri) and Item (content) objects.
+ *
+ * Action buttons (open-inline, delete) are rendered via <peek-item-actions>
+ * rather than the imperative onOpen/onDelete callbacks so the same component
+ * can be reused across all feature browsers.
  */
 const createAddressCard = (address) => {
   const addressUrl = address.uri || address.content;
@@ -1768,25 +1772,8 @@ const createAddressCard = (address) => {
   const card = createSearchResultCard(address, {
     className: 'address-card',
     visitCount: address.visitCount,
-    showOpenButton: isWebUrl(addressUrl),
-    onOpen: (url) => {
-      api.window.open(url, {
-        role: 'content',
-        key: url,
-        width: 1024,
-        height: 768
-      });
-    },
-    onDelete: async (item) => {
-      if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
-      try {
-        await api.datastore.deleteItem(item.id);
-        api.pubsub.publish('item:deleted', { id: item.id });
-        if (state.currentTag) { await loadAddressesForTag(state.currentTag.id); renderAddresses(); }
-      } catch (err) {
-        console.error('[groups] Failed to delete item:', err);
-      }
-    },
+    // showOpenButton / onOpen / onDelete intentionally omitted here —
+    // action buttons are provided by <peek-item-actions> below.
     onTagRemove: async (item, tag) => {
       try {
         await api.datastore.untagItem(item.id, tag.id);
@@ -1825,17 +1812,60 @@ const createAddressCard = (address) => {
 
   card.dataset.addressId = address.id;
 
-  // Add "remove from group" button when viewing a real tag group (not untagged)
-  if (state.currentTag && !state.currentTag.isSpecial) {
-    const header = card.querySelector('[slot="header"]');
-    if (header) {
-      // Find or create the button group container
-      let btnGroup = header.querySelector('.card-btn-group');
-      if (!btnGroup) {
-        btnGroup = document.createElement('span');
-        btnGroup.className = 'card-btn-group';
-        header.appendChild(btnGroup);
+  // ── peek-item-actions: open-inline + delete ────────────────────────
+  // Inject <peek-item-actions> into the card header. The component
+  // emits composed events; we handle them here with the full api context.
+  const header = card.querySelector('[slot="header"]');
+  if (header) {
+    // Shared container for all header-right buttons (actions + remove-from-group)
+    const btnGroup = document.createElement('span');
+    btnGroup.className = 'card-btn-group';
+
+    const actions = document.createElement('peek-item-actions');
+    actions.item = address;
+    if (isWebUrl(addressUrl)) {
+      actions.setAttribute('show-open-inline', '');
+    }
+    actions.setAttribute('show-delete', '');
+
+    actions.addEventListener('action-open-inline', (e) => {
+      e.stopPropagation();
+      const url = e.detail.url;
+      const openOptions = {
+        role: 'content',
+        key: url,
+        width: 1024,
+        height: 768
+      };
+      if (state.currentTag && state.currentTag.id !== '__untagged__') {
+        openOptions.groupMode = {
+          groupId: state.currentTag.id,
+          groupName: state.currentTag.name,
+          color: state.currentTag.color
+        };
       }
+      api.window.open(url, openOptions).then(result => {
+        debug && console.log('[groups] Window opened via action-open-inline:', result);
+      });
+    });
+
+    actions.addEventListener('action-delete', async (e) => {
+      e.stopPropagation();
+      const item = e.detail.item;
+      if (!confirm(`Delete "${item.title || item.content || 'this item'}"?`)) return;
+      try {
+        await api.datastore.deleteItem(item.id);
+        api.pubsub.publish('item:deleted', { id: item.id });
+        if (state.currentTag) { await loadAddressesForTag(state.currentTag.id); renderAddresses(); }
+      } catch (err) {
+        console.error('[groups] Failed to delete item:', err);
+      }
+    });
+
+    btnGroup.appendChild(actions);
+
+    // "Remove from group" button — only when viewing a real tag group
+    if (state.currentTag && !state.currentTag.isSpecial) {
       const removeBtn = document.createElement('button');
       removeBtn.className = 'card-remove-group-btn';
       removeBtn.title = `Remove from ${state.currentTag.name}`;
@@ -1854,14 +1884,10 @@ const createAddressCard = (address) => {
           console.error('[groups] Failed to remove item from group:', err);
         }
       });
-      // Insert before the delete button so remove-from-group is to the LEFT of delete
-      const deleteBtn = btnGroup.querySelector('.card-delete-btn');
-      if (deleteBtn) {
-        btnGroup.insertBefore(removeBtn, deleteBtn);
-      } else {
-        btnGroup.appendChild(removeBtn);
-      }
+      btnGroup.appendChild(removeBtn);
     }
+
+    header.appendChild(btnGroup);
   }
 
   // Show pin indicator if item is pinned in this group
