@@ -877,12 +877,6 @@ function loadInitialQuickAddDraft(): { text: string; tags: string[]; newTag: str
 }
 
 function App() {
-  // DEV: random background tint on each load so we can tell if assets are fresh
-  useEffect(() => {
-    const hue = Math.floor(Math.random() * 360);
-    document.documentElement.style.setProperty('--dev-bg-light', `hsl(${hue}, 80%, 85%)`);
-    document.documentElement.style.setProperty('--dev-bg-dark', `hsl(${hue}, 15%, 12%)`);
-  }, []);
 
   // Filter state: "all" shows everything, or a single type
   const [activeFilter, setActiveFilter] = useState<ItemType | "all">("all");
@@ -1168,15 +1162,21 @@ function App() {
     }
   }, [addInputExpanded, addInputText, addInputTags, addInputNewTag]);
 
-  // DEV: random background tint on every load to verify page refreshed
+  // Development profile: vivid pastel bg in BOTH color schemes (the system
+  // dark-mode tint is too subtle to serve as a "page refreshed" indicator).
   useEffect(() => {
-    if (import.meta.env.DEV) {
+    const currentProfile = profileInfo?.profiles.find(p => p.id === profileInfo.currentProfileId);
+    if (currentProfile?.name === 'Development') {
       const hue = Math.floor(Math.random() * 360);
-      document.documentElement.style.setProperty('--dev-bg-light', `hsl(${hue}, 15%, 96%)`);
-      document.documentElement.style.setProperty('--dev-bg-dark', `hsl(${hue}, 10%, 12%)`);
+      const pastel = `hsl(${hue}, 80%, 85%)`;
+      document.documentElement.style.setProperty('--dev-bg-light', pastel);
+      document.documentElement.style.setProperty('--dev-bg-dark', pastel);
       console.log(`[DEV] Page loaded — bg hue: ${hue}`);
+    } else {
+      document.documentElement.style.removeProperty('--dev-bg-light');
+      document.documentElement.style.removeProperty('--dev-bg-dark');
     }
-  }, []);
+  }, [profileInfo]);
 
   // Detect system dark mode via native API (iOS) or Android bridge
   useEffect(() => {
@@ -4171,6 +4171,9 @@ ${content.html}
   const unifiedItems = getUnifiedItems();
   const totalCount = savedUrls.length + savedTexts.length + savedTagsets.length + savedImages.length;
 
+  const currentProfile = profileInfo?.profiles.find(p => p.id === profileInfo.currentProfileId);
+  const isDevProfile = currentProfile?.name === 'Development';
+
   // Hidden camera input
   const cameraInput = (
     <input
@@ -4300,7 +4303,7 @@ ${content.html}
           }}
           style={{ cursor: "pointer" }}
         >
-          Peek <span style={{ fontSize: '0.5em', opacity: 0.5 }}>{__BUILD_NUMBER__}</span>
+          Peek {isDevProfile && <span style={{ fontSize: '0.5em', opacity: 0.5 }}>{__BUILD_NUMBER__}</span>}
         </h1>
         <div style={{ flex: 1 }} />
         <div className="filter-icons">
