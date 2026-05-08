@@ -39,6 +39,49 @@ if (!tileId || !tileEntry || !tileToken) {
 
 const sourceAddress = `peek://${tileId}/${tileEntry}`;
 
+// ─── Always-on Console Wrapper ───────────────────────────────────────
+//
+// Monkey-patches console.{log,info,warn,error,debug} so every call is
+// ALSO forwarded to the main process via ipcRenderer.send (fire-and-
+// forget). The main process writes these to
+//   <userData>/logs/renderer.log
+// via renderer-log.ts. This path is independent of DevTools — when
+// DevTools is attached, the normal `webContents.on('console-message')`
+// event is suppressed by Chromium, but ipcRenderer.send still works.
+//
+// Source label: `tileId:tileEntry` so logs are identifiable per-window.
+// For page-host windows this produces e.g. `page-host:canvas-...`.
+//
+// Args are serialised in the main process (renderer-log.ts) to keep the
+// preload path minimal — we just pass the raw args array.
+{
+  const _sourceLabel = `${tileId}:${tileEntry}`;
+  const _origConsole = {
+    log:   console.log.bind(console),
+    info:  console.info.bind(console),
+    warn:  console.warn.bind(console),
+    error: console.error.bind(console),
+    debug: console.debug.bind(console),
+  };
+
+  function _wrapConsole(level: string, orig: (...a: unknown[]) => void): (...a: unknown[]) => void {
+    return (...args: unknown[]) => {
+      orig(...args);
+      try {
+        ipcRenderer.send('peek:renderer-log', { level, args, source: _sourceLabel });
+      } catch {
+        // Never let logging interfere with the app.
+      }
+    };
+  }
+
+  console.log   = _wrapConsole('log',   _origConsole.log);
+  console.info  = _wrapConsole('info',  _origConsole.info);
+  console.warn  = _wrapConsole('warn',  _origConsole.warn);
+  console.error = _wrapConsole('error', _origConsole.error);
+  console.debug = _wrapConsole('debug', _origConsole.debug);
+}
+
 // ─── Token Validation (Synchronous bootstrap) ────────────────────────
 
 // We validate the token asynchronously but build the API synchronously

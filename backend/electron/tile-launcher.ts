@@ -353,25 +353,26 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
   }
 
   // Forward console messages from the tile's webContents to main-process
-  // stdout. Errors/warnings always forwarded; info/debug only under DEBUG.
-  win.webContents.on('console-message', (event) => {
-    try {
-      // Electron 40: `level` is a string literal ('info'|'warning'|'error'|
-      // 'verbose'), not an integer. The old `parseInt(level) >= 2` numeric
-      // filter returned NaN and silently dropped ALL tile renderer output
-      // (same bug fixed for core-glue.ts in 2026-04-21 and ipc.ts here).
-      const asAny = event as unknown as { level?: unknown; message?: unknown };
-      const level = String(asAny.level ?? '');
-      const message = String(asAny.message ?? '');
-      if (level === 'warning' || level === 'error') {
-        console.error(`[tile:${tileId}:${entryId}] [${level}] ${message}`);
-      } else if (DEBUG) {
+  // stderr — but only when DEBUG is set. In normal runs the preload-level
+  // console wrapper (tile-preload.cts) sends all output to
+  // peek:renderer-log → <userData>/logs/renderer.log regardless of
+  // DevTools state, so we don't need to duplicate to stderr in production.
+  // console-message does NOT fire when DevTools is attached; the IPC path
+  // is unaffected.
+  if (DEBUG) {
+    win.webContents.on('console-message', (event) => {
+      try {
+        // Electron 40: `level` is a string literal ('info'|'warning'|'error'|
+        // 'verbose'), not an integer.
+        const asAny = event as unknown as { level?: unknown; message?: unknown };
+        const level = String(asAny.level ?? '');
+        const message = String(asAny.message ?? '');
         console.log(`[tile:${tileId}:${entryId}] [${level}] ${message}`);
+      } catch {
+        // Logging must never throw.
       }
-    } catch {
-      // Logging must never throw.
-    }
-  });
+    });
+  }
 
   // Render-process crashes: revoke token, drop tracked state, unsubscribe
   // this entry's subs only (sibling entries stay subscribed), and

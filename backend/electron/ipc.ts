@@ -1076,31 +1076,26 @@ export function registerWindowHandlers(): void {
     // Track window position for display-watcher home display restoration
     trackWindow(win);
 
-    // Forward console logs from window to main process stdout (for debugging).
-    // Errors/warnings always forwarded; info/debug only when DEBUG is on.
-    // For canvas pages, the loadUrl is peek://app/page/index.html so this
-    // catches page host errors. The label uses the original url for clarity.
-    const consoleLabel = useCanvas ? `page-host:${url.substring(0, 60)}` : url.replace('peek://', '');
-    win.webContents.on('console-message', (event) => {
-      // Electron 40 changed console-message event shape: `level` is a string
-      // literal ('info'|'warning'|'error'|...), not an integer. The old
-      // `parseInt(level) >= 2` numeric filter silently dropped ALL renderer
-      // output here (same bug fixed for core-glue.ts in 2026-04-21). Forward
-      // warnings and errors via console.error; debug-level via console.log
-      // under DEBUG.
-      try {
-        const asAny = event as unknown as { level?: unknown; message?: unknown };
-        const level = String(asAny.level ?? '');
-        const message = String(asAny.message ?? '');
-        if (level === 'warning' || level === 'error') {
-          console.error(`[${consoleLabel}] ${level}: ${message}`);
-        } else if (DEBUG && url.startsWith('peek://')) {
+    // Forward console logs from window to main process stderr only when
+    // DEBUG is set. In normal runs the preload-level console wrapper
+    // (tile-preload.cts) sends all output to peek:renderer-log →
+    // <userData>/logs/renderer.log via renderer-log.ts, independent of
+    // DevTools attach state. console-message does NOT fire when DevTools
+    // is attached, so the IPC path is the source of truth.
+    if (DEBUG) {
+      const consoleLabel = useCanvas ? `page-host:${url.substring(0, 60)}` : url.replace('peek://', '');
+      win.webContents.on('console-message', (event) => {
+        // Electron 40: `level` is a string literal, not an integer.
+        try {
+          const asAny = event as unknown as { level?: unknown; message?: unknown };
+          const level = String(asAny.level ?? '');
+          const message = String(asAny.message ?? '');
           console.log(`[${consoleLabel}] ${level}: ${message}`);
+        } catch {
+          /* logging must never throw */
         }
-      } catch {
-        /* logging must never throw */
-      }
-    });
+      });
+    }
 
     try {
       // Route canvas web pages through peek://page container.

@@ -114,6 +114,7 @@ import { createTrustedBuiltinGrant } from './tile-manifest.js';
 import { generateToken } from './tile-tokens.js';
 import { startCliSocketServer, stopCliSocketServer, isCliSocketRunning } from './cli-socket.js';
 import { ensureCliHelperShadow } from './cli-helper.js';
+import { initRendererLog } from './renderer-log.js';
 
 // Early diagnostic logging for URL handling (writes to /tmp/ to avoid userData path issues)
 try {
@@ -812,6 +813,11 @@ const onReady = async () => {
 
   // Register all IPC handlers from backend
   registerAllHandlers(onQuit);
+
+  // Always-on renderer log: writes every console.{log,info,warn,error,debug}
+  // from any preload-managed renderer to <userData>/logs/renderer.log.
+  // Must be called after app is ready (app.getPath('userData') requires it).
+  initRendererLog();
 
   // Run daily backup check (non-blocking)
   checkAndRunDailyBackup().catch(err => {

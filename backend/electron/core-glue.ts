@@ -136,19 +136,22 @@ export async function initCore(opts: InitCoreOptions): Promise<BrowserWindow> {
   // `app/index.js` would never fire.
   registerTrustedBuiltinWindow(CORE_ID, CORE_ENTRY_ID, win, token);
 
-  win.webContents.on('console-message', (event) => {
-    try {
-      // Electron 40 changed console-message event shape: `level` is a string
-      // literal ('info'|'warning'|'error'|...), not an integer. Forward
-      // everything via console.error for visibility; renderers gate their
-      // own verbosity.
-      const asAny = event as unknown as { level?: unknown; message?: unknown };
-      const message = String(asAny.message ?? '');
-      console.error(`[core:background] level=${String(asAny.level)} ${message}`);
-    } catch {
-      /* logging must never throw */
-    }
-  });
+  // Forward core bg renderer console to stderr only when DEBUG is set.
+  // In normal runs the preload-level wrapper sends all output to the log
+  // file via peek:renderer-log; console-message does not fire when DevTools
+  // is attached (which is the main motivation for the IPC path).
+  if (DEBUG) {
+    win.webContents.on('console-message', (event) => {
+      try {
+        // Electron 40: `level` is a string literal, not an integer.
+        const asAny = event as unknown as { level?: unknown; message?: unknown };
+        const message = String(asAny.message ?? '');
+        console.log(`[core:background] level=${String(asAny.level)} ${message}`);
+      } catch {
+        /* logging must never throw */
+      }
+    });
+  }
 
   win.on('closed', () => {
     coreBackgroundWindow = null;

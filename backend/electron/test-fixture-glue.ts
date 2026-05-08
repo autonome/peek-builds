@@ -103,22 +103,22 @@ export async function initTestFixture(opts: InitTestFixtureOptions): Promise<voi
   // registration, the broadcaster would skip the fixture and tests hang.
   registerTrustedBuiltinWindow(TEST_FIXTURE_ID, TEST_FIXTURE_ENTRY_ID, win, token);
 
-  win.webContents.on('console-message', (event) => {
-    try {
-      // Electron 40: `level` is a string literal, not an integer.
-      // See core-glue.ts / ipc.ts / tile-launcher.ts for the same fix.
-      const asAny = event as unknown as { level?: unknown; message?: unknown };
-      const level = String(asAny.level ?? '');
-      const message = String(asAny.message ?? '');
-      if (level === 'warning' || level === 'error') {
-        console.error(`[test-fixture:resident] [${level}] ${message}`);
-      } else if (DEBUG) {
+  // Forward test-fixture renderer console to stderr only when DEBUG is set.
+  // The preload-level wrapper (tile-preload.cts) covers the IPC path;
+  // console-message does not fire when DevTools is attached.
+  if (DEBUG) {
+    win.webContents.on('console-message', (event) => {
+      try {
+        // Electron 40: `level` is a string literal, not an integer.
+        const asAny = event as unknown as { level?: unknown; message?: unknown };
+        const level = String(asAny.level ?? '');
+        const message = String(asAny.message ?? '');
         console.log(`[test-fixture:resident] [${level}] ${message}`);
+      } catch {
+        /* logging must never throw */
       }
-    } catch {
-      /* logging must never throw */
-    }
-  });
+    });
+  }
 
   win.on('closed', () => {
     testFixtureWindow = null;
