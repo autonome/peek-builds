@@ -729,22 +729,27 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(escPolicy('active', 'workspace'), 'nothing');
     });
 
-    // REGRESSION TEST: child-content must NOT close in active sessions
-    // This was a bug where child-content always returned 'close' regardless
-    // of session state, causing root-level content windows to close on ESC
-    // when the user was actively working in the app.
+    // child-content always closes on ESC, regardless of session state.
+    // It was opened from a real parent (groups → page, search → page) and
+    // ESC means "go back to where I came from". Electron naturally focuses
+    // the parent when the child closes. Holding the page open behind the
+    // parent felt buggy to users (lost focus but stayed visible).
+    //
+    // Earlier policy returned 'nothing' in active/idle to preserve the page;
+    // that was reverted 2026-05-08 in favour of the close-on-ESC contract.
+    // Root-level 'content' (no parent) keeps the old behaviour — see below.
     it('should close child-content in transient session', () => {
       assert.strictEqual(escPolicy('transient', 'child-content'), 'close');
     });
 
-    it('should NOT close child-content in active session (regression test)', () => {
-      assert.strictEqual(escPolicy('active', 'child-content'), 'nothing',
-        'child-content windows must not close on ESC in active sessions — ' +
-        'they are user-opened content, not transient UI');
+    it('should close child-content in active session', () => {
+      assert.strictEqual(escPolicy('active', 'child-content'), 'close',
+        'child-content windows close on ESC in active sessions — ' +
+        'they were opened from a real parent and ESC means "go back"');
     });
 
-    it('should NOT close child-content in idle session', () => {
-      assert.strictEqual(escPolicy('idle', 'child-content'), 'nothing');
+    it('should close child-content in idle session', () => {
+      assert.strictEqual(escPolicy('idle', 'child-content'), 'close');
     });
 
     // Idle state: content roles should not close
@@ -770,12 +775,14 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(coordinator.getState(), 'active');
       assert.strictEqual(coordinator.isTransient(), false);
 
-      // escPolicy for child-content in active session should be 'nothing'
+      // escPolicy for child-content in active session should be 'close'
+      // (child-content has a real parent — ESC means "go back").
       const action = escPolicy(coordinator.getState(), 'child-content');
-      assert.strictEqual(action, 'nothing',
-        'ESC on child-content in active session must return nothing (not close)');
+      assert.strictEqual(action, 'close',
+        'ESC on child-content in active session closes the child; parent gets focus naturally');
 
-      // Same for plain content role
+      // Plain content role (no parent) is still 'nothing' in active session —
+      // there's no obvious return target, the renderer handles internal nav.
       const contentAction = escPolicy(coordinator.getState(), 'content');
       assert.strictEqual(contentAction, 'nothing');
     });
