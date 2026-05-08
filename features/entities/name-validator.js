@@ -20,8 +20,12 @@ async function loadNameDatabase() {
   if (_firstNames !== null) return;
 
   try {
-    // Dynamic import works in both ESM contexts
-    const data = await import('./data/names.json', { assert: { type: 'json' } }).then(m => m.default);
+    // Chrome 123+ removed the deprecated `assert` syntax in favour of
+    // `with`. Electron 40 ships with Chrome ~131, so `assert: {...}` is
+    // silently dropped — the import then fails strict MIME checking
+    // because the response is `application/json`. Use `with` for the
+    // current spec; the catch falls back to fetch for older runtimes.
+    const data = await import('./data/names.json', { with: { type: 'json' } }).then(m => m.default);
     _firstNames = new Set(data.firstNames.map(n => n.toLowerCase()));
     _surnames = new Set(data.surnames.map(n => n.toLowerCase()));
   } catch {
