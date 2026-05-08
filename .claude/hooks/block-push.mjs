@@ -6,8 +6,18 @@
 
 import { readFileSync } from "node:fs";
 
+// `main` matched as a whole bookmark token (not e.g. `main-feature`):
+// `(?:\s+\S+)*\s+main(?:\s|$)` — any number of preceding args, then `main`
+// at a whitespace boundary.
 const PATTERNS = [
-  { re: /^\s*jj\s+bookmark\s+set\s+main\b/, why: "moves the main bookmark" },
+  {
+    re: /^\s*jj\s+bookmark\s+(?:set|move|create|delete|forget|rename|track|untrack)\b(?:\s+\S+)*\s+main(?:\s|$)/,
+    why: "modifies the main bookmark",
+  },
+  {
+    re: /^\s*jj\s+op\s+(?:restore|undo|abandon)\b/,
+    why: "rewinds jj operation history (can move main as a side effect)",
+  },
   { re: /^\s*jj\s+git\s+push\b/, why: "pushes via jj" },
   { re: /^\s*git\s+push\b/, why: "bare git push" },
 ];
