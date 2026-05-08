@@ -9,6 +9,7 @@
     "dev:ios:sim": "./dev-ios-sim.sh",
     "build:ios:sim": "./build-ios.sh",
     "build:ios:sim:force": "./build-ios.sh --force",
+    "build:ios:sim:standalone": "./build-ios.sh --force",
     "build:ios:device": "./build-release.sh",
     "preview": "vite preview",
     "tauri": "tauri",

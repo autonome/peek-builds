@@ -33,21 +33,37 @@ cleanup() {
   fi
   echo "[dev] Restoring tauri.conf.json..."
   mv "$CONF.bak" "$CONF"
+  # dev-shim/index.html is kept for post-session inspectability; it's gitignored
   echo "[dev] Done."
 }
 trap cleanup EXIT
 
-# Patch tauri.conf.json with devUrl
+# Generate dev-shim/index.html from template with the actual port substituted.
+# build-ios.sh will embed this (via frontendDist: ../dev-shim) instead of dist/.
+mkdir -p "$SCRIPT_DIR/dev-shim"
+python3 -c "
+import re
+with open('$SCRIPT_DIR/dev-bootstrap.html') as f:
+    html = f.read()
+html = html.replace('__DEV_PORT__', '$PORT')
+with open('$SCRIPT_DIR/dev-shim/index.html', 'w') as f:
+    f.write(html)
+"
+echo "[dev] Generated dev-shim/index.html (port $PORT)"
+
+# Patch tauri.conf.json: set frontendDist to dev-shim so cargo embeds the
+# bootstrap redirect; also set devUrl for any Tauri runtime that consumes it.
 python3 -c "
 import json
 with open('$CONF') as f:
     c = json.load(f)
+c['build']['frontendDist'] = '../dev-shim'
 c['build']['devUrl'] = 'http://$HOST_IP:$PORT'
 with open('$CONF', 'w') as f:
     json.dump(c, f, indent=2)
     f.write('\n')
 "
-echo "[dev] Patched tauri.conf.json with devUrl=http://$HOST_IP:$PORT"
+echo "[dev] Patched tauri.conf.json: frontendDist=../dev-shim, devUrl=http://$HOST_IP:$PORT"
 
 # Bump build number
 BUILD_FILE="$SCRIPT_DIR/BUILD_NUMBER"
@@ -55,11 +71,10 @@ BUILD_NUM=$(($(cat "$BUILD_FILE") + 1))
 echo "$BUILD_NUM" > "$BUILD_FILE"
 echo "[dev] Build number: v$BUILD_NUM"
 
-# Rebuild Rust library (picks up devUrl from tauri.conf.json)
+# Rebuild Rust library (picks up patched frontendDist from tauri.conf.json)
 # Uses --force to ensure config change is picked up
-# DEV_PORT tells build-ios.sh to patch the bootstrap HTML with the actual port
-echo "[dev] Building Rust library with devUrl..."
-cd "$SCRIPT_DIR" && DEV_PORT=$PORT ./build-ios.sh --force
+echo "[dev] Building Rust library (embedding dev-shim)..."
+cd "$SCRIPT_DIR" && ./build-ios.sh --force
 
 # Build with xcodebuild
 echo "[dev] Running xcodebuild..."

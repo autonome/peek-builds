@@ -34,9 +34,12 @@ while [ $# -gt 0 ]; do
 done
 
 echo "Building frontend..."
+cd "$SCRIPT_DIR"
 npm run build
 
-# Always copy frontend assets to Xcode location (even on Rust cache hit)
+# Always copy frontend assets to Xcode location (even on Rust cache hit).
+# Runtime serves from the binary-embedded bundle via custom-protocol; this
+# copy is for Xcode project parity and any disk-resolved fallback paths.
 echo "Copying frontend assets..."
 rm -rf "$TAURI_DIR/gen/apple/assets"
 cp -R "$SCRIPT_DIR/dist" "$TAURI_DIR/gen/apple/assets"
@@ -50,7 +53,8 @@ if [ "$FORCE_REBUILD" = false ] && [ "$NO_CACHE" = false ]; then
         # Remove any existing symlink (macOS case-insensitive: release vs Release conflict)
         rm -f "$DEST_PATH"
         use_cache "release" "$DEST_PATH"
-        echo "Done! Now rebuild in Xcode with Release scheme on your device."
+        FRONTEND_DIST=$(python3 -c "import json; c=open('tauri.conf.json').read(); print(json.loads(c)['build']['frontendDist'])")
+        echo "Done! iOS release library ready (frontendDist: $FRONTEND_DIST). Now rebuild in Xcode with Release scheme on your device."
         exit 0
     fi
 fi
@@ -81,14 +85,10 @@ mkdir -p "$DEST_DIR"
 rm -f "$DEST_PATH"
 cp target/aarch64-apple-ios/release/libpeek_save_lib.a "$DEST_PATH"
 
-# Copy frontend assets to Xcode location (normally done by cargo tauri build)
-echo "Copying frontend assets..."
-rm -rf "$TAURI_DIR/gen/apple/assets"
-cp -R "$SCRIPT_DIR/dist" "$TAURI_DIR/gen/apple/assets"
-
 # Update cache
 if [ "$NO_CACHE" = false ]; then
     update_cache "release" "$TAURI_DIR" "$DEST_PATH"
 fi
 
-echo "Done! Now rebuild in Xcode with Release scheme on your device."
+FRONTEND_DIST=$(python3 -c "import json; c=open('tauri.conf.json').read(); print(json.loads(c)['build']['frontendDist'])")
+echo "Done! iOS release library built (frontendDist: $FRONTEND_DIST). Now rebuild in Xcode with Release scheme on your device."
