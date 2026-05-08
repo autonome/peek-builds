@@ -97,23 +97,20 @@ peek-card[selected]:hover {
 }
 
 /* Placeholder shown when a window has no stored screenshot — keeps
- * every card the same height in column view and gives URL-less /
- * fresh windows a distinct visual block instead of a flat empty card. */
+ * every card the same height in column view. Flat theme-coloured
+ * block with a single hostname-initial letter centred. */
 .card-thumbnail-placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--base05);
-  /* `background` is set inline per-domain (HSL gradient) so we don't
-   * need a per-domain class; this rule provides the layout only. */
+  background: var(--base02);
+  color: var(--base04);
 }
 
 .card-thumbnail-letter {
-  font-size: 36px;
-  font-weight: 600;
+  font-size: 32px;
+  font-weight: 500;
   letter-spacing: 0.02em;
-  opacity: 0.85;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   user-select: none;
 }
 

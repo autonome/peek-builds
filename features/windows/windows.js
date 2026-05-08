@@ -258,31 +258,18 @@ const hostnameOf = (urlStr) => {
 };
 
 /**
- * Stable hue (0..360) derived from a string. Used to colour the
- * thumbnail placeholder so each domain reads as a different swatch
- * across runs without persisting any state.
- */
-const hueFor = (s) => {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-  return Math.abs(h) % 360;
-};
-
-/**
  * Render the card's main visual block. With a stored screenshot we
  * load it; on failure (file gone, race) we fall back to the same
  * placeholder we'd use without one — so every card slot is the same
- * shape regardless of capture state.
+ * shape regardless of capture state. The placeholder is a flat
+ * theme-coloured block with a single hostname-initial letter — no
+ * per-domain colouring (felt too noisy in practice).
  */
 const createThumbnail = (win) => {
   const placeholder = () => {
     const div = document.createElement('div');
     div.className = 'card-thumbnail card-thumbnail-placeholder';
     const host = hostnameOf(win.url);
-    const hue = host ? hueFor(host) : 0;
-    div.style.background = host
-      ? `linear-gradient(135deg, hsl(${hue}, 30%, 22%), hsl(${(hue + 40) % 360}, 35%, 14%))`
-      : 'var(--base02)';
     const letter = document.createElement('span');
     letter.className = 'card-thumbnail-letter';
     letter.textContent = host ? host.replace(/^www\./, '')[0].toUpperCase() : '·';
