@@ -4,9 +4,135 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Wed, 06 May 2026 10:49:04 GMT</lastBuildDate>
+    <lastBuildDate>Fri, 08 May 2026 14:50:04 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>entities: JSON import uses with not deprecated assert</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:9750a143f860</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>entities: JSON import uses with not deprecated assert</description>
+    </item>
+    <item>
+      <title>log: always-on renderer log via preload + per-profile file writer</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:70001263305a</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>log: always-on renderer log via preload + per-profile file writer</description>
+    </item>
+    <item>
+      <title>mobile: tag input comma-split + debounced tag-only autosave</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:589555dc0f07</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>mobile: tag input comma-split + debounced tag-only autosave</description>
+    </item>
+    <item>
+      <title>reactivity: subscribe browsers to tag:deleted + item:updated</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:0f30d08262a1</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>reactivity: subscribe browsers to tag:deleted + item:updated</description>
+    </item>
+    <item>
+      <title>reactivity: liveQuery helper + migrate spaces/groups/entities</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:0b9614fe5e13</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>reactivity: liveQuery helper + migrate spaces/groups/entities</description>
+    </item>
+    <item>
+      <title>cli: allowlist cli:peek-open + cli:slide-open in feature manifests</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:2d512a930fd6</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>cli: allowlist cli:peek-open + cli:slide-open in feature manifests</description>
+    </item>
+    <item>
+      <title>windows: always render thumbnail block; HSL placeholder for screenshotless cards</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:2a09ae6ff302</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>windows: always render thumbnail block; HSL placeholder for screenshotless cards</description>
+    </item>
+    <item>
+      <title>card-actions: peek-item-actions component + groups integration</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:f7753366e11a</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>card-actions: peek-item-actions component + groups integration</description>
+    </item>
+    <item>
+      <title>cmd: behavior spec + gap analysis (phase 1)</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:2fb6ff7e99cd</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>cmd: behavior spec + gap analysis (phase 1)</description>
+    </item>
+    <item>
+      <title>windows: drop per-domain gradient on placeholder cards</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:b4965bf33a42</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>windows: drop per-domain gradient on placeholder cards</description>
+    </item>
+    <item>
+      <title>izui: ESC closes child-content windows in active sessions</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:499bf94a345e</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>izui: ESC closes child-content windows in active sessions</description>
+    </item>
+    <item>
+      <title>cli: invoke peek-cli via bundled Electron, not system node</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:ed6c519d969e</guid>
+      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
+      <description>cli: invoke peek-cli via bundled Electron, not system node</description>
+    </item>
+    <item>
+      <title>feat: back button in editor header, conditional markdown preview icon</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:a55ee1f6da94</guid>
+      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
+      <description>feat: back button in editor header, conditional markdown preview icon</description>
+    </item>
+    <item>
+      <title>refactor: Quick Add view uses EditorLayout instead of EditorOverlay directly</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:d14eea702be1</guid>
+      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
+      <description>refactor: Quick Add view uses EditorLayout instead of EditorOverlay directly</description>
+    </item>
+    <item>
+      <title>feat: configurable sync interval with 30min default for mobile app</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:502ea2d3df55</guid>
+      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
+      <description>feat: configurable sync interval with 30min default for mobile app</description>
+    </item>
+    <item>
+      <title>fix: add missing sync_interval_minutes field to SyncSettings constructors in mobile lib.rs</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:1c292a56c0d6</guid>
+      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
+      <description>fix: add missing sync_interval_minutes field to SyncSettings constructors in mobile lib.rs</description>
+    </item>
+    <item>
+      <title>feat: two-state offline content icon — solid when downloaded, hollow when pending</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:afad3bfea91d</guid>
+      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
+      <description>feat: two-state offline content icon — solid when downloaded, hollow when pending</description>
+    </item>
+    <item>
+      <title>fix: persist mobile quick-add draft to localStorage so it survives dismiss/relaunch</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:3265e8df93ab</guid>
+      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
+      <description>fix: persist mobile quick-add draft to localStorage so it survives dismiss/relaunch</description>
+    </item>
     <item>
       <title>shortcuts: restore cmd customization + degrade gracefully on Wayland</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
@@ -314,132 +440,6 @@
       <guid isPermaLink="false">urn:peek:changelog:2026-05-02:d7409952778c</guid>
       <pubDate>Sat, 02 May 2026 12:00:00 GMT</pubDate>
       <description>entities: fall back to URL hostname when pageMetadata.title is empty so URL items don&apos;t stay title-less</description>
-    </item>
-    <item>
-      <title>window-placement: persist placement intent across session restore; center peeks</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:691d6aad287f</guid>
-      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
-      <description>window-placement: persist placement intent across session restore; center peeks</description>
-    </item>
-    <item>
-      <title>lex: drop periodic sync poll, drive sync from visibility events</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:4eda101cb54c</guid>
-      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
-      <description>lex: drop periodic sync poll, drive sync from visibility events</description>
-    </item>
-    <item>
-      <title>tile-csp: allow https/http image sources so tiles can render favicons</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:c15a914d51d5</guid>
-      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
-      <description>tile-csp: allow https/http image sources so tiles can render favicons</description>
-    </item>
-    <item>
-      <title>display-watcher: use shared 50% stranded threshold instead of local 30%</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:836ff4a1a1b7</guid>
-      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
-      <description>display-watcher: use shared 50% stranded threshold instead of local 30%</description>
-    </item>
-    <item>
-      <title>page: clamp side panels to window and reflow on OS resize</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:202f2da1c7a8</guid>
-      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
-      <description>page: clamp side panels to window and reflow on OS resize</description>
-    </item>
-    <item>
-      <title>click-through: findings and step-by-step plan for OS click-through</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:9610263cb744</guid>
-      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
-      <description>click-through: findings and step-by-step plan for OS click-through</description>
-    </item>
-    <item>
-      <title>window-targeting: harden tile:window:{maximize,fullscreen,center} against bad ids; correct .d.ts; add regression tests</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:de911b88fdb1</guid>
-      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
-      <description>window-targeting: harden tile:window:{maximize,fullscreen,center} against bad ids; correct .d.ts; add regression tests</description>
-    </item>
-    <item>
-      <title>cards: show item age in card footer</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:5d8f46cc2859</guid>
-      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
-      <description>cards: show item age in card footer</description>
-    </item>
-    <item>
-      <title>tags: show usage count on tag chips in cards</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:e72834f5c696</guid>
-      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
-      <description>tags: show usage count on tag chips in cards</description>
-    </item>
-    <item>
-      <title>todo: cmd-panel todo and done commands</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:03c413c7d0ed</guid>
-      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
-      <description>todo: cmd-panel todo and done commands</description>
-    </item>
-    <item>
-      <title>page: page-host tag widget accepts comma-separated tags</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-01</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-01:bcda8c320a83</guid>
-      <pubDate>Fri, 01 May 2026 12:00:00 GMT</pubDate>
-      <description>page: page-host tag widget accepts comma-separated tags</description>
-    </item>
-    <item>
-      <title>shortcuts: surface globalShortcut.register failures (linux/wayland)</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-04-30:7f547d1e36a9</guid>
-      <pubDate>Thu, 30 Apr 2026 12:00:00 GMT</pubDate>
-      <description>shortcuts: surface globalShortcut.register failures (linux/wayland)</description>
-    </item>
-    <item>
-      <title>chrome-ext: keep popup-side fixes, drop runtime-bridge ext patches</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-04-30:eb8e6c443b05</guid>
-      <pubDate>Thu, 30 Apr 2026 12:00:00 GMT</pubDate>
-      <description>chrome-ext: keep popup-side fixes, drop runtime-bridge ext patches</description>
-    </item>
-    <item>
-      <title>chrome-ext: native chrome.runtime.sendMessage cross-origin polyfill</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-04-30:b9b0d8d9ea6c</guid>
-      <pubDate>Thu, 30 Apr 2026 12:00:00 GMT</pubDate>
-      <description>chrome-ext: native chrome.runtime.sendMessage cross-origin polyfill</description>
-    </item>
-    <item>
-      <title>harness: reusable Electron CDP debugging harness for chrome-extension flows</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-04-30:9491f51b5ecc</guid>
-      <pubDate>Thu, 30 Apr 2026 12:00:00 GMT</pubDate>
-      <description>harness: reusable Electron CDP debugging harness for chrome-extension flows</description>
-    </item>
-    <item>
-      <title>timers: HUD widget, custom sound URL, list view</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-04-30:10b635c78365</guid>
-      <pubDate>Thu, 30 Apr 2026 12:00:00 GMT</pubDate>
-      <description>timers: HUD widget, custom sound URL, list view</description>
-    </item>
-    <item>
-      <title>search: cmd panel opens a fresh search window per invocation</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-04-30:793da6a7867d</guid>
-      <pubDate>Thu, 30 Apr 2026 12:00:00 GMT</pubDate>
-      <description>search: cmd panel opens a fresh search window per invocation</description>
-    </item>
-    <item>
-      <title>chrome-ext: runtime-external polyfill checkpoint + harness diagnostics</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-04-30</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-04-30:a676d525cab9</guid>
-      <pubDate>Thu, 30 Apr 2026 12:00:00 GMT</pubDate>
-      <description>chrome-ext: runtime-external polyfill checkpoint + harness diagnostics</description>
     </item>
   </channel>
 </rss>

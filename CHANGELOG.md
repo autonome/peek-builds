@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: d37b01034964 -->
+<!-- last-bumped: 4272e346b04e -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -19,7 +19,30 @@ See TODO.md for pending items, WIP.md for in-progress items.
 
 ## Week of 2026-05-04 (W19)
 
+### 2026-05-08
+
+- entities: JSON import uses `with` not deprecated `assert`
+- log: always-on renderer log via preload + per-profile file writer
+
+- mobile: tag input comma-split + debounced tag-only autosave
+- reactivity: subscribe browsers to tag:deleted + item:updated
+- reactivity: liveQuery helper + migrate spaces/groups/entities
+- cli: allowlist cli:peek-open + cli:slide-open in feature manifests
+- windows: always render thumbnail block; HSL placeholder for screenshotless cards
+- card-actions: peek-item-actions component + groups integration
+- cmd: behavior spec + gap analysis (phase 1)
+- windows: drop per-domain gradient on placeholder cards
+- izui: ESC closes child-content windows in active sessions
+
 ### 2026-05-06
+
+- cli: invoke peek-cli via bundled Electron, not system node
+- feat: back button in editor header, conditional markdown preview icon
+- refactor: Quick Add view uses EditorLayout instead of EditorOverlay directly
+- feat: configurable sync interval with 30min default for mobile app
+- fix: add missing sync_interval_minutes field to SyncSettings constructors in mobile lib.rs
+- feat: two-state offline content icon — solid when downloaded, hollow when pending
+- fix: persist mobile quick-add draft to localStorage so it survives dismiss/relaunch
 
 - shortcuts: restore cmd customization + degrade gracefully on Wayland
 - ios: pin IPHONEOS_DEPLOYMENT_TARGET=16.0 for cargo iOS builds
