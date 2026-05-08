@@ -42,13 +42,20 @@ int get_system_is_dark_mode() {
     return 0;
 }
 
-// Returns 1 if this is an App Store or TestFlight build, 0 if Xcode install
-// App Store/TestFlight builds have a receipt file, Xcode installs don't
+// Returns 1 if this is an App Store or TestFlight build, 0 if Xcode install.
+// TestFlight receipt path ends in "sandboxReceipt" (may not exist on first launch);
+// App Store receipt path ends in "receipt" and the file is present.
 int is_app_store_build() {
     NSURL *receiptURL = [[NSBundle mainBundle] appStoreReceiptURL];
     if (receiptURL == nil) {
         NSLog(@"[AppGroupBridge] No receipt URL - Xcode build");
         return 0;
+    }
+
+    // TestFlight: path ends in "sandboxReceipt" — treat as production even before the file downloads.
+    if ([receiptURL.path hasSuffix:@"sandboxReceipt"]) {
+        NSLog(@"[AppGroupBridge] sandboxReceipt path - TestFlight build");
+        return 1;
     }
 
     BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:receiptURL.path];
