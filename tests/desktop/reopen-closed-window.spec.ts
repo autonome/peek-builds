@@ -62,17 +62,103 @@ test.describe('Reopen Last Closed Window @desktop', () => {
     return result.id;
   }
 
+  /**
+   * Close a window and wait for the close to settle to a terminal state.
+   *
+   * api.window.close resolves on IPC dispatch, but the actual BrowserWindow
+   * teardown (or hide, for keepLive tiles) happens a tick or two later.
+   * If the test then runs `evaluateMain` — which Playwright routes through
+   * a CDP session tracking every BrowserWindow — it can land right as a
+   * context is being torn down. Result: "execution context destroyed,
+   * most likely because of a navigation". This helper waits for one of
+   * two terminal states so the next evaluateMain call is safe:
+   *
+   *   1. Window destroyed (`BrowserWindow.fromId` returns null) — real
+   *      close, BrowserWindow is gone.
+   *   2. Window hidden (`isVisible() === false`) — keepLive hide, the
+   *      BrowserWindow is alive but evaluation against any other context
+   *      is no longer racing with its teardown.
+   *
+   * Polled via a single evaluateMain that returns a string label for the
+   * terminal state, so we don't need separate code paths for keepLive.
+   */
   async function closeWindowById(windowId: number): Promise<void> {
     await bgWindow.evaluate(async (id: number) => {
       return await (window as any).app.window.close(id);
     }, windowId);
+
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      let state: string;
+      try {
+        state = await app.evaluateMain!(({ BrowserWindow }, id: number) => {
+          const w = BrowserWindow.fromId(id);
+          if (!w || w.isDestroyed()) return 'destroyed';
+          if (!w.isVisible()) return 'hidden';
+          return 'open';
+        }, windowId) as string;
+      } catch (err) {
+        // "Execution context was destroyed, most likely because of a
+        // navigation" is THE signal we're waiting for — the BrowserWindow's
+        // CDP context is being torn down right now. Treat as in-progress
+        // and re-poll until destruction settles.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('Execution context was destroyed')) {
+          await sleep(25);
+          continue;
+        }
+        throw err;
+      }
+      if (state === 'destroyed' || state === 'hidden') return;
+      await sleep(25);
+    }
+    throw new Error(`closeWindowById timeout — window ${windowId} never settled (still open after 3s)`);
+  }
+
+  /**
+   * Tight retry-once wrapper for an evaluateMain call. Used by the
+   * stack-count helpers because Playwright's `electronApp.evaluate`
+   * occasionally throws "Execution context was destroyed, most likely
+   * because of a navigation" during a window-attach/detach transition
+   * (a new BrowserWindow's CDP session is mid-attach, or one is being
+   * torn down). The transient is bounded — by the time the retry fires
+   * a moment later the helper context is stable. NOT a generic retry:
+   * only the named error is caught; everything else propagates.
+   */
+  async function evalMainStable<T>(fn: () => T): Promise<T> {
+    if (!app.evaluateMain) throw new Error('evaluateMain not available');
+    try {
+      return (await app.evaluateMain(fn)) as T;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('Execution context was destroyed')) throw err;
+      await sleep(50);
+      return (await app.evaluateMain(fn)) as T;
+    }
   }
 
   async function getStackCount(): Promise<number> {
-    const count = await app.evaluateMain!(() => {
+    return await evalMainStable<number>(() => {
       return (globalThis as any).__peek_test.getClosedWindowCount();
     });
-    return count as number;
+  }
+
+  /**
+   * Wait for the closed-window stack to reach an expected count. Polls
+   * `getStackCount()` until the predicate matches or the timeout elapses.
+   * Used after a `window.close()` call to give the 'closed' event handler
+   * time to run and push the entry onto the stack — the close-to-push
+   * path is async, but it's bounded; this is the deterministic wait the
+   * test needs instead of a fixed sleep.
+   */
+  async function waitForStackCount(expected: number, timeoutMs = 3000): Promise<number> {
+    const deadline = Date.now() + timeoutMs;
+    let last = await getStackCount();
+    while (last !== expected && Date.now() < deadline) {
+      await sleep(50);
+      last = await getStackCount();
+    }
+    return last;
   }
 
   async function reopenViaShortcut(): Promise<{ success: boolean; url?: string; error?: string }> {
@@ -81,11 +167,25 @@ test.describe('Reopen Last Closed Window @desktop', () => {
     })) as any;
   }
 
+  /**
+   * Wait for a Page whose URL contains the given substring AND whose
+   * load has settled. Returning the Page the moment it appears in
+   * `app.windows()` is too eager — the CDP session may still be
+   * attaching, and a subsequent `evaluateMain` can race with that
+   * attach and throw "Execution context was destroyed". Waiting for
+   * `domcontentloaded` (or 'load' if the renderer is fast) gates the
+   * caller until the window's context is stable.
+   */
   async function findWindowWithUrl(urlSubstr: string, timeoutMs = 5000): Promise<Page | null> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       for (const w of app.windows()) {
-        if (w.url().includes(urlSubstr)) return w;
+        if (w.url().includes(urlSubstr)) {
+          try {
+            await w.waitForLoadState('domcontentloaded', { timeout: 1000 });
+          } catch { /* page may already be loaded — ignore */ }
+          return w;
+        }
       }
       await sleep(100);
     }
@@ -103,17 +203,12 @@ test.describe('Reopen Last Closed Window @desktop', () => {
     const stackBefore = await getStackCount();
     await closeWindowById(id);
 
-    // Wait for 'closed' event handler to push to stack
-    await bgWindow.waitForFunction(
-      async (expected: number) => {
-        // poll the count via a no-op api call to ensure we don't bypass the lifecycle
-        return true; // placeholder; real check is below via getStackCount
-      },
-      stackBefore + 1,
-      { timeout: 3000 },
-    );
-    // Real check
-    const stackAfter = await getStackCount();
+    // The 'closed' event handler runs async after window.close() resolves;
+    // it's the path that pushes the URL onto the closed-window stack.
+    // Wait deterministically for the push to land instead of the prior
+    // placeholder waitForFunction that returned `true` immediately and
+    // raced.
+    const stackAfter = await waitForStackCount(stackBefore + 1);
     expect(stackAfter).toBe(stackBefore + 1);
 
     const result = await reopenViaShortcut();
@@ -141,13 +236,14 @@ test.describe('Reopen Last Closed Window @desktop', () => {
         continue;
       }
 
+      const stackBefore = await getStackCount();
       await closeWindowById(id);
-      // Give the 'closed' handler a moment to push.
-      await sleep(150);
-
-      const stackCount = await getStackCount();
-      if (stackCount === 0) {
-        failures.push(`${tag}: closed window not on stack (count=0)`);
+      // Wait deterministically for the 'closed' handler to push instead
+      // of a fixed sleep — the rapid-loop is precisely where a 150ms
+      // assumption fails on a slow CI runner.
+      const stackCount = await waitForStackCount(stackBefore + 1);
+      if (stackCount !== stackBefore + 1) {
+        failures.push(`${tag}: closed window not on stack (count=${stackCount}, expected ${stackBefore + 1})`);
         continue;
       }
 

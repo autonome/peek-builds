@@ -90,27 +90,43 @@ test.describe('Slides @desktop', () => {
     return result.id as number;
   }
 
-  /** Read a window's current bounds via the main process. */
-  async function getBounds(windowId: number): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  /**
+   * Atomically read both the slide window's bounds AND the work area of the
+   * display it's actually on. Single main-process evaluate.
+   *
+   * Why one call: previously this was two `evaluateMain` calls (bounds, then
+   * cursor work-area). Display-metrics events firing between the two —
+   * common during macOS sleep/wake, brightness changes, multi-display
+   * setups — would reposition the window via display-watcher before the
+   * second call landed, leaving bounds and work-area off-by-one and
+   * occasionally throwing "execution context destroyed". The two-call
+   * shape made the test environment-sensitive instead of deterministic.
+   *
+   * Why display-from-bounds (not from cursor): the slide feature places
+   * the window on the cursor's display at create time — after creation,
+   * cursor moves are irrelevant; the window's display is fixed. Re-reading
+   * the cursor in a separate call could disagree with where the window
+   * actually landed (cursor moved between open and read). Using
+   * `getDisplayMatching(bounds)` derives the display from the only thing
+   * that matters for the assertion: where the window IS.
+   */
+  async function getSlideAlignment(windowId: number): Promise<{
+    bounds: { x: number; y: number; width: number; height: number };
+    work: { x: number; y: number; width: number; height: number };
+  } | null> {
     if (!app.evaluateMain) throw new Error('evaluateMain not available');
-    return await app.evaluateMain<{ x: number; y: number; width: number; height: number } | null, number>(
-      ({ BrowserWindow }, wid) => {
+    return await app.evaluateMain<{
+      bounds: { x: number; y: number; width: number; height: number };
+      work: { x: number; y: number; width: number; height: number };
+    } | null, number>(
+      ({ BrowserWindow, screen }, wid) => {
         const w = BrowserWindow.fromId(wid);
-        return w && !w.isDestroyed() ? w.getBounds() : null;
+        if (!w || w.isDestroyed()) return null;
+        const bounds = w.getBounds();
+        const display = screen.getDisplayMatching(bounds);
+        return { bounds, work: display.workArea };
       },
       windowId,
-    );
-  }
-
-  /** Read the work area of the display the cursor is on (matches main's pickCursorOrPrimaryDisplay). */
-  async function getCursorWorkArea(): Promise<{ x: number; y: number; width: number; height: number }> {
-    if (!app.evaluateMain) throw new Error('evaluateMain not available');
-    return await app.evaluateMain<{ x: number; y: number; width: number; height: number }>(
-      ({ screen }) => {
-        const cursor = screen.getCursorScreenPoint();
-        const display = screen.getDisplayNearestPoint(cursor);
-        return display.workArea;
-      },
     );
   }
 
@@ -122,43 +138,43 @@ test.describe('Slides @desktop', () => {
     } catch { /* ignore */ }
   }
 
-  test('Up screenEdge anchors to top, X-centered on cursor display', async () => {
+  test('Up screenEdge anchors to top, X-centered on its display', async () => {
     const id = await openSlide('Up', 'https://slide-up.example.com');
-    const bounds = await getBounds(id);
-    const work = await getCursorWorkArea();
-    expect(bounds).not.toBeNull();
-    expect(bounds!.y).toBe(work.y);
-    expect(bounds!.x).toBe(work.x + Math.round((work.width - bounds!.width) / 2));
+    const got = await getSlideAlignment(id);
+    expect(got).not.toBeNull();
+    const { bounds, work } = got!;
+    expect(bounds.y).toBe(work.y);
+    expect(bounds.x).toBe(work.x + Math.round((work.width - bounds.width) / 2));
     await closeWindow(id);
   });
 
-  test('Down screenEdge anchors to bottom, X-centered on cursor display', async () => {
+  test('Down screenEdge anchors to bottom, X-centered on its display', async () => {
     const id = await openSlide('Down', 'https://slide-down.example.com');
-    const bounds = await getBounds(id);
-    const work = await getCursorWorkArea();
-    expect(bounds).not.toBeNull();
-    expect(bounds!.y).toBe(work.y + work.height - bounds!.height);
-    expect(bounds!.x).toBe(work.x + Math.round((work.width - bounds!.width) / 2));
+    const got = await getSlideAlignment(id);
+    expect(got).not.toBeNull();
+    const { bounds, work } = got!;
+    expect(bounds.y).toBe(work.y + work.height - bounds.height);
+    expect(bounds.x).toBe(work.x + Math.round((work.width - bounds.width) / 2));
     await closeWindow(id);
   });
 
-  test('Left screenEdge anchors to left, Y-centered on cursor display', async () => {
+  test('Left screenEdge anchors to left, Y-centered on its display', async () => {
     const id = await openSlide('Left', 'https://slide-left.example.com');
-    const bounds = await getBounds(id);
-    const work = await getCursorWorkArea();
-    expect(bounds).not.toBeNull();
-    expect(bounds!.x).toBe(work.x);
-    expect(bounds!.y).toBe(work.y + Math.round((work.height - bounds!.height) / 2));
+    const got = await getSlideAlignment(id);
+    expect(got).not.toBeNull();
+    const { bounds, work } = got!;
+    expect(bounds.x).toBe(work.x);
+    expect(bounds.y).toBe(work.y + Math.round((work.height - bounds.height) / 2));
     await closeWindow(id);
   });
 
-  test('Right screenEdge anchors to right, Y-centered on cursor display', async () => {
+  test('Right screenEdge anchors to right, Y-centered on its display', async () => {
     const id = await openSlide('Right', 'https://slide-right.example.com');
-    const bounds = await getBounds(id);
-    const work = await getCursorWorkArea();
-    expect(bounds).not.toBeNull();
-    expect(bounds!.x).toBe(work.x + work.width - bounds!.width);
-    expect(bounds!.y).toBe(work.y + Math.round((work.height - bounds!.height) / 2));
+    const got = await getSlideAlignment(id);
+    expect(got).not.toBeNull();
+    const { bounds, work } = got!;
+    expect(bounds.x).toBe(work.x + work.width - bounds.width);
+    expect(bounds.y).toBe(work.y + Math.round((work.height - bounds.height) / 2));
     await closeWindow(id);
   });
 
