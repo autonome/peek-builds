@@ -288,7 +288,42 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
       return waitForWindowHelper(() => electronApp.windows(), 'peek://test/');
     },
 
-    evaluateMain: (fn: any, arg?: any) => electronApp.evaluate(fn as any, arg),
+    evaluateMain: async (fn: any, arg?: any) => {
+      // `electronApp.evaluate` runs the function in the Electron main
+      // process via Playwright's CDP-shaped channel. The channel is
+      // attached to a "helper" main-process context that Playwright
+      // tracks alongside every BrowserWindow. When ANY BrowserWindow is
+      // mid-attach (just created, CDP session still wiring up) or
+      // mid-detach (closing, context being torn down), the helper
+      // context can rotate underneath an in-flight evaluate, throwing
+      // "Execution context was destroyed, most likely because of a
+      // navigation". This is the dominant flake-shaped failure across
+      // the desktop suite — same fingerprint in slides, reopen-closed,
+      // page-layout, page-redirect, permission-prompt, transient-on-blur.
+      //
+      // The retry is bounded and specific: catches ONLY the named
+      // navigation transient (which is provably resolved within a
+      // tick or two when the new/closing window's CDP session settles),
+      // retries up to 3 times with a small delay, and lets every other
+      // error propagate immediately. NOT a generic "retry until passes"
+      // — the navigation IS a one-shot event with bounded duration.
+      // Any failure that survives 3 retries is a real bug, not a race.
+      const NAVIGATION_RACE = 'Execution context was destroyed';
+      const RETRIES = 3;
+      let lastErr: unknown;
+      for (let attempt = 0; attempt <= RETRIES; attempt++) {
+        try {
+          return await electronApp.evaluate(fn as any, arg);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!msg.includes(NAVIGATION_RACE) || attempt === RETRIES) throw err;
+          lastErr = err;
+          await new Promise(r => setTimeout(r, 50 * (attempt + 1)));
+        }
+      }
+      // unreachable — the loop always returns or throws
+      throw lastErr;
+    },
 
     getExtensionWindows: () => {
       return electronApp.windows().filter(w =>
