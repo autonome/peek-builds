@@ -2639,18 +2639,27 @@ function renderActivePermissionPrompt() {
   allowBtn.textContent = 'Allow';
 
   function respond(allowed) {
+    console.log('[permission-prompt] respond() called allowed=' + allowed + ' requestId=' + req.requestId + ' resolved=' + (activePermissionPrompt?.resolved ?? 'null'));
     if (!activePermissionPrompt || activePermissionPrompt.resolved) return;
     activePermissionPrompt.resolved = true;
+    console.log('[permission-prompt] publishing page:permission-response');
     api.publish('page:permission-response', {
       requestId: req.requestId,
       allowed,
       remember: rememberCheckbox.checked,
     });
+    console.log('[permission-prompt] publish returned, removing prompt');
     permissionQueue.shift();
     renderActivePermissionPrompt();
   }
-  denyBtn.addEventListener('click', () => respond(false));
-  allowBtn.addEventListener('click', () => respond(true));
+  denyBtn.addEventListener('click', (ev) => {
+    console.log('[permission-prompt] DENY click event fired target=' + (ev.target?.className ?? 'null'));
+    respond(false);
+  });
+  allowBtn.addEventListener('click', (ev) => {
+    console.log('[permission-prompt] ALLOW click event fired target=' + (ev.target?.className ?? 'null'));
+    respond(true);
+  });
 
   actions.appendChild(denyBtn);
   actions.appendChild(allowBtn);

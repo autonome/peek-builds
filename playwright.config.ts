@@ -86,10 +86,15 @@ export default defineConfig({
   // --user-data-dir (see tests/fixtures/desktop-app.ts). The single-instance
   // lock is bypassed when the profile starts with "test" (see
   // `isTestProfile()` in backend/electron/config.ts), so parallel workers
-  // don't collide on the lock. Default is 4 since smoke.spec.ts was split
-  // into one-describe-per-file (~44 files total), giving real parallelism
-  // across spec files. Override with `PEEK_TEST_WORKERS=1` to debug or
-  // on machines where 4 concurrent Electrons is too much.
+  // don't collide on the lock.
+  //
+  // Default is 4 on macOS/Windows (real parallelism across ~44 spec files),
+  // 1 on Linux. Asahi/Fedora/Wayland chokes on 4 simultaneous Electron
+  // instances even with PEEK_HEADLESS=1: tests cluster-fail across page-host
+  // / permission-prompt / page-load / page-navbar specs and the OS marks
+  // some Electron processes hung (see 2026-05-08 incident — required force-
+  // close). Untested whether other Linux desktops (X11, KDE) hit the same;
+  // gate broadly until we have data. Override with `PEEK_TEST_WORKERS=N`.
   //
   // fullyParallel: false — tests within a file run serially in one worker,
   // different files distribute across workers. fullyParallel: true exposed
@@ -103,7 +108,9 @@ export default defineConfig({
   // the desktop project at PEEK_TEST_WORKERS, then runs desktop-serial
   // afterward at --workers=1.
   fullyParallel: false,
-  workers: parseInt(process.env.PEEK_TEST_WORKERS || '4'),
+  workers: parseInt(
+    process.env.PEEK_TEST_WORKERS || (process.platform === 'linux' ? '1' : '4')
+  ),
 
   // CI settings
   forbidOnly: !!process.env.CI,

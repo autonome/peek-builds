@@ -852,8 +852,17 @@ const onReady = async () => {
   // Discover and register built-in themes from features/ (type: "theme") with legacy themes/ fallback
   discoverBuiltinThemes(path.join(ROOT_DIR, 'features'), path.join(ROOT_DIR, 'themes'));
 
-  // Initialize bundled web extensions infrastructure
-  const chromeExtensionsDir = path.join(ROOT_DIR, 'chrome-extensions');
+  // Initialize bundled web extensions infrastructure.
+  // electron-builder.yml lists chrome-extensions/** in asarUnpack so the
+  // files land on a real filesystem (Chromium's session.loadExtension
+  // doesn't go through Electron's transparent asar fs patching — it
+  // needs a literal disk path). In packaged builds the unpacked tree
+  // lives at ${resourcesPath}/app.asar.unpacked/. ROOT_DIR
+  // (= app.getAppPath()) points inside app.asar itself, so we'd need
+  // to swap it out otherwise.
+  const chromeExtensionsDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'chrome-extensions')
+    : path.join(ROOT_DIR, 'chrome-extensions');
   initChromeExtensionManager(chromeExtensionsDir);
 
   // Restore saved theme preference (must be after themes are discovered)
@@ -1082,6 +1091,18 @@ const onReady = async () => {
   registerLocalShortcut('CommandOrControl+N', 'system', () => {
     openNewPageWindow();
   });
+
+  // Close-window shortcut. The macOS application menu (set above) already
+  // wires Cmd+W via an `accelerator` entry; on non-darwin we set the menu
+  // to null to avoid stealing accelerators, which leaves Cmd+W unbound.
+  // Register it as a system local shortcut so Linux/Windows users get
+  // OS-standard "close current window" behaviour.
+  if (process.platform !== 'darwin') {
+    registerLocalShortcut('CommandOrControl+W', 'system', () => {
+      const win = BrowserWindow.getFocusedWindow();
+      if (win) closeOrHideWindow(win.id);
+    });
+  }
 
   // Mark app as ready and process any URLs that arrived during startup
   setAppReady();

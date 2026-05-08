@@ -176,6 +176,16 @@ const init = async () => {
   // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   initCommands();
 
+  // Subscribe to cmd:execute:windows so non-cmd-panel callers (notably the
+  // ESC handler in backend/electron/windows.ts → escUnhandledPolicy →
+  // open-switcher path) can open the switcher by publishing the topic.
+  // Without this, only cmd-panel selections and the manifest shortcut work;
+  // the ESC fallback silently no-ops once this lazy tile is loaded.
+  api.pubsub.subscribe('cmd:execute:windows', () => {
+    console.log('[ext:windows] cmd:execute:windows fired');
+    openWindowsView();
+  });
+
   // Track when the windows view is closed so we know to recreate it
   api.pubsub.subscribe('window:closed', async (msg) => {
     if (msg?.id === windowsViewId) {

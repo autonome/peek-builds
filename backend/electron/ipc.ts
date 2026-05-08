@@ -1189,7 +1189,19 @@ export function registerWindowHandlers(): void {
         } else if (isWebPage) {
           role = 'content';
         } else {
-          role = 'utility';
+          // Default for non-modal, non-overlay, non-webpage windows opened via
+          // api.window.open without an explicit role. These are tile-launched
+          // feature workspaces (hello-world, search, groups, etc.) — long-lived
+          // primary surfaces, NOT transient utility sidekicks. Genuine utility
+          // surfaces (datastore viewer, diagnostic tool, HUD chips, the cmd
+          // panel itself) all set role:'utility' explicitly.
+          //
+          // ESC behaviour: workspace doesn't close on ESC in active sessions
+          // and falls through to escUnhandledPolicy → open the windows
+          // switcher (the user-facing "what windows do I have open" surface).
+          // utility, by contrast, always closes on ESC — wrong for a primary
+          // feature window the user explicitly opened.
+          role = 'workspace';
         }
       }
 
@@ -2210,6 +2222,20 @@ export function registerWindowHandlers(): void {
                 if (focusedInfo?.params?.role === 'utility') {
                   DEBUG && console.log('window-open: blur for modal window suppressed — focus went to utility child', url);
                   return;
+                }
+                // Warn when focus jumped to a workspace child. Before the
+                // ipc.ts:1182 default flipped from 'utility' to 'workspace',
+                // an unmarked child window was implicitly utility and would
+                // have hit the suppression above. If a feature spawned a
+                // small "child utility" popup without declaring its role,
+                // the modal will now close on blur instead of staying open.
+                // Fix: that child needs `role: 'utility'` explicit.
+                if (focusedInfo?.params?.role === 'workspace') {
+                  console.warn(
+                    `[window-open] modal "${url}" closing on blur — focus went to workspace child "${focusedInfo?.params?.address}". ` +
+                    `If this is unexpected, the child window should declare role:'utility' explicitly ` +
+                    `(was implicitly utility before the workspace-default change).`
+                  );
                 }
               }
               // Suppress spurious blurs that fire shortly after show. When a

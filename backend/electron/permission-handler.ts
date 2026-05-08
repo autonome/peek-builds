@@ -152,6 +152,7 @@ export function installPermissionHandler(ses: Session): void {
   // Subscribe to renderer responses. The page-host renderer publishes this
   // topic when the user clicks Allow / Deny in the prompt overlay.
   subscribe('permission-handler', 'page:permission-response', (msg) => {
+    console.log('[permission] received page:permission-response msg=' + JSON.stringify(msg));
     const m = msg as { requestId?: unknown; allowed?: unknown; remember?: unknown };
     const requestId = typeof m?.requestId === 'string' ? m.requestId : null;
     const allowed = m?.allowed === true;
@@ -163,7 +164,7 @@ export function installPermissionHandler(ses: Session): void {
     const pending = pendingRequests.get(requestId);
     if (!pending) {
       // Late response after window close cleanup, or duplicate — safe to ignore.
-      DEBUG && console.log(`[permission] no pending request for ${requestId} (already resolved?)`);
+      console.log(`[permission] no pending request for ${requestId} (already resolved?)`);
       return;
     }
     pendingRequests.delete(requestId);

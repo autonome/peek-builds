@@ -48,4 +48,5 @@ export const KNOWN_VERBS: ReadonlyArray<{ verb: string; argHint?: string; descri
   { verb: 'cmd-open',   description: 'Open the command panel' },
   { verb: 'peek-open',  argHint: '<n>',    description: 'Open peek N (0–9)' },
   { verb: 'slide-open', argHint: '<edge>', description: 'Open slide on edge (Up|Down|Left|Right)' },
+  { verb: 'open-url',   argHint: '<url>',  description: 'Open a URL in a Peek page-host window' },
 ];

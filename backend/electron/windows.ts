@@ -165,7 +165,11 @@ async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webvie
   if (!entry || bw.isDestroyed()) return;
 
   const params = entry.params;
-  const role = (params.role as string) || 'utility';
+  // Should always be set by ipc.ts window-open inference (line ~1167); fallback
+  // mirrors that inference's default-default — workspace, not utility — so the
+  // ESC behaviour never silently regresses to "always close" if a window
+  // somehow lands here without role on its registry params.
+  const role = (params.role as string) || 'workspace';
   DEBUG && console.log(`[esc] ESC keyDown - window ${bw.id}, source: ${source}, role: ${role}, url: ${params.address}`);
 
   // escapeMode: 'ignore' is a hard override — let ESC pass through entirely

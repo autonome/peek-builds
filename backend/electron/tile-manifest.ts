@@ -1005,10 +1005,27 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
  * Returns null if file doesn't exist or is invalid JSON
  */
 export function parseManifestFile(manifestPath: string): ParsedManifest | null {
+  // Note: do NOT guard with `fs.existsSync` here. In packaged Electron builds
+  // (asar archive), `existsSync` returns false for paths inside `app.asar` /
+  // `app.asar.unpacked` even when the file is readable — see the manifest-cache
+  // upsert flood reported on the AppImage build. Rely on `readFileSync`'s
+  // ENOENT throw instead and treat that as "missing" silently.
+  let raw: Record<string, unknown>;
   try {
-    if (!fs.existsSync(manifestPath)) return null;
+    raw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
+  } catch (err) {
+    // ENOENT is "file legitimately doesn't exist" — silent return matches the
+    // old existsSync()→null behaviour. Anything else (parse error, perms,
+    // etc.) is real and worth logging.
+    if (err && typeof err === 'object' && (err as { code?: string }).code === 'ENOENT') {
+      return null;
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[tile-manifest] Failed to parse ${manifestPath}:`, message);
+    return null;
+  }
 
-    const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
+  try {
     const version = detectManifestVersion(raw);
 
     if (version === 'legacy') {
@@ -1029,7 +1046,7 @@ export function parseManifestFile(manifestPath: string): ParsedManifest | null {
     return { version: 'tile', raw, manifest };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[tile-manifest] Failed to parse ${manifestPath}:`, message);
+    console.error(`[tile-manifest] Validation crashed for ${manifestPath}:`, message);
     return null;
   }
 }
