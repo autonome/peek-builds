@@ -40,6 +40,19 @@ test.describe('Transient on blur auto-hide @desktop', () => {
         width: 800,
         height: 600,
         key: 'transient-on-blur-anchor',
+        // `show: false` + `focusable: false` keep the test isolated from
+        // window-manager focus events. The original macOS HEADLESS path
+        // never received natural focus events because show:false NSPanels
+        // don't get them; under Linux/Xvfb a visible focusable window WILL
+        // get them, and natural focus → win.on('focus') handler →
+        // closeOrHideWindow cascades wreck the synthetic-focus assertions
+        // (and even cancel in-flight loadURL with ERR_FAILED). The tests
+        // drive focus through __peek_test.fireWindowFocus (which calls
+        // `win.emit('focus')` directly — works regardless of focusable),
+        // and __peek_test.showWindow uses showInactive, so the only
+        // signals the production code sees are the ones the test fired.
+        show: false,
+        focusable: false,
       });
     });
     if (!anchorResult.success) {
@@ -64,6 +77,29 @@ test.describe('Transient on blur auto-hide @desktop', () => {
     if (app) await app.close();
   });
 
+  // Tests in this file open palette/quick-view/overlay windows pointed at
+  // about:blank. When a test fails mid-flight (Linux WM-driven focus races
+  // have made this a real possibility — see 2026-05-08 fix run) those
+  // windows leak into the next test, where the focus handler iterates them
+  // as transient siblings and produces cascading misbehavior in unrelated
+  // assertions. Sweep specifically about:blank test windows (excluding the
+  // anchor) after each test. Whitelist by address — anything else (the bg
+  // window, system tiles, peek:// hosts) is left alone.
+  test.afterEach(async () => {
+    if (!bgWindow) return;
+    try {
+      await bgWindow.evaluate(async (keepId: number) => {
+        const r = await (window as any).app.window.list({ includeInternal: true });
+        if (!r?.success) return;
+        for (const w of r.windows) {
+          if (w.id === keepId) continue;
+          if (w.address !== 'about:blank') continue;
+          try { await (window as any).app.window.close(w.id); } catch { /* may already be closed */ }
+        }
+      }, anchorId ?? -1);
+    } catch { /* test may have already torn things down */ }
+  });
+
   /**
    * Open a panel-style window with the given role and force it visible
    * (HEADLESS Electron skips show()). Returns the window id.
@@ -83,6 +119,14 @@ test.describe('Transient on blur auto-hide @desktop', () => {
         // Distinct key per call so the open path doesn't dedupe against
         // an existing about:blank window.
         key: `transient-on-blur-${key}`,
+        // `show: false` defers visibility to __peek_test.showWindow
+        // (which uses showInactive — see entry.ts) so opening the window
+        // doesn't fire a native WM focus event that would race with the
+        // synthetic fireWindowFocus path the test uses to drive
+        // assertions. (We don't add `focusable: false` here because modal
+        // panels need to remain focusable for the production focus
+        // handler to behave realistically when fireWindowFocus emits.)
+        show: false,
       });
     }, { role, key });
     if (!result.success) {

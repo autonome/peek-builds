@@ -82,6 +82,15 @@ test.describe('Slides @desktop', () => {
         height: 400,
         key: `${args.addr}:${args.edge}`,
         screenEdge: args.edge,
+        // `show: false` keeps natural WM focus events from firing during
+        // open. On Linux/Xvfb a visible new modal panel triggers
+        // win.on('focus') which closeOrHideWindow's any other transient
+        // sibling, including in-flight loads — about:blank loadURL then
+        // rejects with ERR_FAILED. macOS NSPanels never fired natural
+        // focus events for show:false windows so this never surfaced
+        // there. Tests that need the windows visibly tracked drive that
+        // through __peek_test.showWindow.
+        show: false,
       });
     }, { edge: screenEdge, addr: address });
     if (!result.success) {

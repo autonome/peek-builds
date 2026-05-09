@@ -71,6 +71,15 @@ test.describe('cmd hashtag → search @desktop', () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
         modal: true, width: 600, height: 400, frame: false,
         transparent: true, alwaysOnTop: true, center: true,
+        // Match production cmd-panel open params (see app/cmd/background.js):
+        // without these the panel gets default role 'quick-view' (modal-only
+        // path) and the focus handler in ipc.ts auto-closes it as a transient
+        // sibling when the search workspace below gets natural WM focus on
+        // Linux. With keepLive+role:'palette', closeOrHideWindow takes the
+        // hide branch, the cmd panel page survives, and the second evaluate
+        // here can still drive it.
+        keepLive: true,
+        role: 'palette',
       });
     });
     expect(cmdOpen.success).toBe(true);

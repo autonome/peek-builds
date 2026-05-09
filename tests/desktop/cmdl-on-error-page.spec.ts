@@ -86,8 +86,14 @@ test.describe('Cmd+L on error page @desktop', () => {
       // page.js subscriber → show()), and the main.ts before-input-event
       // fallback. Playwright's keyboard.press dispatches DOM events which
       // do NOT trigger Electron's input pipeline.
-      const sendResult = await sharedApp.evaluateMain!((electron: any) => {
-        const { BrowserWindow, webContents } = electron;
+      // The before-input-event handler watches input.meta on darwin but
+      // input.control on every other platform (see ipc.ts where the modifier
+      // is selected per-platform). Sending 'meta' on Linux maps to Super/
+      // Windows key, which is NOT what the handler is listening for, so the
+      // page:show-navbar publish never fires and the assertions below all
+      // fail. Match the modifier to what the production code expects.
+      const modKey = process.platform === 'darwin' ? 'meta' : 'control';
+      const sendResult = await sharedApp.evaluateMain!(({ BrowserWindow, webContents }, mod: string) => {
         const wins = BrowserWindow.getAllWindows();
         const host = wins.find((w: Electron.BrowserWindow) =>
           w.webContents.getURL().includes('app/page/index.html'),
@@ -101,12 +107,12 @@ test.describe('Cmd+L on error page @desktop', () => {
           }
         }
         for (const wc of targets) {
-          wc.sendInputEvent({ type: 'keyDown', keyCode: 'l', modifiers: ['meta'] } as any);
-          wc.sendInputEvent({ type: 'char', keyCode: 'l', modifiers: ['meta'] } as any);
-          wc.sendInputEvent({ type: 'keyUp', keyCode: 'l', modifiers: ['meta'] } as any);
+          wc.sendInputEvent({ type: 'keyDown', keyCode: 'l', modifiers: [mod] } as any);
+          wc.sendInputEvent({ type: 'char', keyCode: 'l', modifiers: [mod] } as any);
+          wc.sendInputEvent({ type: 'keyUp', keyCode: 'l', modifiers: [mod] } as any);
         }
         return { ok: true, targetCount: targets.length, hostId: host.id };
-      }) as any;
+      }, modKey) as any;
       expect(sendResult.error, JSON.stringify(sendResult)).toBeUndefined();
 
       // Give the renderer time to react. We wait for *either* navbar visible

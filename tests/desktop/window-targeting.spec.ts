@@ -244,13 +244,26 @@ test.describe('Window Targeting @desktop', () => {
       return r.id as number;
     });
 
-    const isMaxedAfterTwice = await app.evaluateMain!<boolean, number>(
-      ({ BrowserWindow }, id) => {
-        const w = BrowserWindow.fromId(id);
-        return w ? w.isMaximized() : false;
+    // "Maximized" here means the window fills the display work area —
+    // production maximize uses `win.setBounds(workArea)` rather than
+    // `win.maximize()`, so the WM never gets told the window is in its
+    // maximized state. On macOS BrowserWindow.isMaximized() happens to
+    // return true after setBounds-fills-workArea anyway, but on Linux
+    // (X11/Wayland) isMaximized() reflects the real WM state and stays
+    // false. Compare bounds against the work area directly so the
+    // assertion has the same meaning across platforms.
+    const isFillingWorkArea = (id: number) => app.evaluateMain!<boolean, number>(
+      ({ BrowserWindow, screen }, wid) => {
+        const w = BrowserWindow.fromId(wid);
+        if (!w) return false;
+        const b = w.getBounds();
+        const wa = screen.getDisplayMatching(b).workArea;
+        return b.x === wa.x && b.y === wa.y && b.width === wa.width && b.height === wa.height;
       },
-      winId,
+      id,
     );
+
+    const isMaxedAfterTwice = await isFillingWorkArea(winId);
     expect(isMaxedAfterTwice).toBe(true);
 
     // unmaximize → restored
@@ -260,13 +273,7 @@ test.describe('Window Targeting @desktop', () => {
       await new Promise(res => setTimeout(res, 150));
     }, winId);
 
-    const isMaxedAfterUnmax = await app.evaluateMain!<boolean, number>(
-      ({ BrowserWindow }, id) => {
-        const w = BrowserWindow.fromId(id);
-        return w ? w.isMaximized() : false;
-      },
-      winId,
-    );
+    const isMaxedAfterUnmax = await isFillingWorkArea(winId);
     expect(isMaxedAfterUnmax).toBe(false);
 
     // unmaximize again → still not maximized (no-op)
@@ -276,13 +283,7 @@ test.describe('Window Targeting @desktop', () => {
       await new Promise(res => setTimeout(res, 150));
     }, winId);
 
-    const isMaxedAfterUnmaxTwice = await app.evaluateMain!<boolean, number>(
-      ({ BrowserWindow }, id) => {
-        const w = BrowserWindow.fromId(id);
-        return w ? w.isMaximized() : false;
-      },
-      winId,
-    );
+    const isMaxedAfterUnmaxTwice = await isFillingWorkArea(winId);
     expect(isMaxedAfterUnmaxTwice).toBe(false);
 
     await bgWindow.evaluate(async (id) => {

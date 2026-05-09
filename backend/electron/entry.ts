@@ -149,15 +149,22 @@ const DEBUG = !!process.env.DEBUG;
   /** Force-restore session snapshot (bypasses test-profile guard). */
   forceRestoreSession: () => restoreSessionSnapshot({ restoreSession: true }, undefined, true),
   /**
-   * Force a BrowserWindow to be visible. In headless mode, the window-open
-   * path passes `show: false` (because there is no display); this helper
-   * lets tests exercise visibility-dependent code paths (e.g. the
-   * focus-driven transient autoclose, which gates on `other.isVisible()`).
+   * Force a BrowserWindow to be visible *without focusing it*. Tests that
+   * drive focus synthetically through `fireWindowFocus` need the window
+   * `isVisible()` (so the focus-driven transient autoclose has something to
+   * iterate) but must NOT fire a native focus event during the show — under
+   * Linux/Xvfb a real `win.show()` activates the window, the natural focus
+   * handler runs immediately, and any in-flight transient gets auto-closed
+   * before the test can run its assertions. Use `showInactive()` so the
+   * window becomes visible but the test remains the sole focus driver. (In
+   * the original macOS HEADLESS path show()/showInactive() both no-op'd at
+   * the WM level, so neither variant fired focus there — this distinction
+   * only matters under a real display.)
    */
   showWindow: (id: number): boolean => {
     const win = BrowserWindow.fromId(id);
     if (!win || win.isDestroyed()) return false;
-    win.show();
+    win.showInactive();
     return true;
   },
   /**
