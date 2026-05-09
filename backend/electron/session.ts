@@ -90,9 +90,11 @@ export function mirrorPlacementIntent(
  * window size (clamped to fit) and centering inside primary's workArea.
  *
  * Returns a new descriptor when rewriting; returns the input untouched when
- * the saved center is already on primary. Placement intent (`center: true`,
- * `screenEdge`) is cleared on rewrite so the explicit bounds reach
- * `buildRestoreBoundsOptions` and aren't re-derived against the cursor display.
+ * the saved center is already on primary. `center: true` intent is cleared on
+ * rewrite so the explicit bounds reach `buildRestoreBoundsOptions` (and the
+ * window lands at our re-centered coords on primary). `screenEdge` intent is
+ * preserved — an edge-anchored slide should re-anchor to that edge of the new
+ * primary, not float at the rewritten coords.
  *
  * Pure: takes the primary workArea as a parameter so it's unit-testable
  * without Electron's `screen` module.
@@ -117,10 +119,11 @@ export function collapseToPrimaryDisplay(
     height: h,
   };
   const newParams = { ...descriptor.params };
-  // Clear placement intent so the rewritten x/y is what window-open uses,
+  // Clear `center` intent so the rewritten x/y is what window-open uses
   // rather than computePlacement re-deriving against the cursor display.
+  // Preserve `screenEdge` — edge-anchored slides should re-anchor to that
+  // edge of the (new) primary display via the window-open re-derivation.
   delete newParams.center;
-  delete newParams.screenEdge;
   return { bounds: newBounds, params: newParams };
 }
 

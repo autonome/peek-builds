@@ -220,7 +220,6 @@ function collapseToPrimaryDisplay(
   };
   const newParams = { ...descriptor.params };
   delete newParams.center;
-  delete newParams.screenEdge;
   return { bounds: newBounds, params: newParams };
 }
 
@@ -786,7 +785,7 @@ describe('Session Integration Tests', () => {
       assert.ok(cy >= 0 && cy < 1440);
     });
 
-    it('clears placement intent (center + screenEdge) on rewrite', () => {
+    it('clears center intent but preserves screenEdge on rewrite', () => {
       const desc = {
         bounds: {
           x: laptopBounds.x + 200,
@@ -797,10 +796,41 @@ describe('Session Integration Tests', () => {
         params: { center: true, screenEdge: 'right', role: 'workspace' },
       };
       const out = collapseToPrimaryDisplay(desc, externalPrimaryWA);
+      // `center` is cleared so the rewritten x/y reach window-open as explicit
+      // primary-centered coords (otherwise window-open re-centers on cursor
+      // display, which may not be primary).
       assert.strictEqual(out.params.center, undefined);
-      assert.strictEqual(out.params.screenEdge, undefined);
+      // `screenEdge` is preserved — slides must re-anchor to the new primary's
+      // edge, not float at the rewritten center coords.
+      assert.strictEqual(out.params.screenEdge, 'right');
       // Non-placement params survive
       assert.strictEqual(out.params.role, 'workspace');
+    });
+
+    it('round-trip: edge-anchored slide on removed display reaches window-open with edge intent intact', () => {
+      // Regression: collapseToPrimaryDisplay used to delete screenEdge, so an
+      // edge-anchored slide saved while on a now-removed external display came
+      // back as a manual-bounds float on primary instead of re-anchoring.
+      const desc = {
+        bounds: {
+          x: laptopBounds.x + 200,
+          y: laptopBounds.y + 100,
+          width: 600,
+          height: 200,
+        },
+        params: { screenEdge: 'top', role: 'slide' } as Record<string, unknown>,
+      };
+      const collapsed = collapseToPrimaryDisplay(desc, externalPrimaryWA);
+      assert.strictEqual(collapsed.params.screenEdge, 'top');
+      const isPointOnScreen = (x: number, y: number) =>
+        x >= 0 && x < 2560 && y >= 0 && y < 1440;
+      const opts = buildRestoreBoundsOptions(collapsed, isPointOnScreen);
+      // screenEdge intent forces buildRestoreBoundsOptions to drop x/y so
+      // window-open re-derives Placement (edge: top) on the current display.
+      assert.strictEqual(opts.x, undefined);
+      assert.strictEqual(opts.y, undefined);
+      assert.strictEqual(opts.width, 600);
+      assert.strictEqual(opts.height, 200);
     });
 
     it('clamps width/height when saved size exceeds primary workArea', () => {
