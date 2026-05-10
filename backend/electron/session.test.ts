@@ -865,6 +865,80 @@ describe('Session Integration Tests', () => {
       assert.strictEqual(opts.height, 200);
     });
 
+    it('full save → topology change → restore: typed placementMode + legacy primitives both survive', () => {
+      // Spec scenario #3: edge slide saved while on the external; external is
+      // removed; restore lands the slide back at its edge on the new primary.
+      // mirrorPlacementIntent is the producer; collapseToPrimaryDisplay is the
+      // single-display restore policy; buildRestoreBoundsOptions is the final
+      // gate before window-open. All three together must preserve the edge
+      // intent end-to-end.
+      const saved = {
+        bounds: {
+          x: laptopBounds.x + 100,
+          y: laptopBounds.y + 50,
+          width: 600,
+          height: 200,
+        },
+        params: mirrorPlacementIntent({
+          placement: { mode: 'edge', edge: 'top' },
+          role: 'slide',
+        }),
+      };
+      // Mirror writes both the typed primitive and the legacy flag.
+      assert.strictEqual(saved.params.placementMode, 'edge');
+      assert.strictEqual(saved.params.placementEdge, 'top');
+      assert.strictEqual(saved.params.screenEdge, 'top');
+
+      const collapsed = collapseToPrimaryDisplay(saved, externalPrimaryWA);
+      // Collapse preserves all of them — typed primitives ride through the
+      // spread, screenEdge is explicitly preserved by the bug-fix in qsqz.
+      assert.strictEqual(collapsed.params.placementMode, 'edge');
+      assert.strictEqual(collapsed.params.placementEdge, 'top');
+      assert.strictEqual(collapsed.params.screenEdge, 'top');
+
+      const isPointOnScreen = (x: number, y: number) =>
+        x >= 0 && x < 2560 && y >= 0 && y < 1440;
+      const opts = buildRestoreBoundsOptions(collapsed, isPointOnScreen);
+      // screenEdge present → buildRestoreBoundsOptions drops x/y so
+      // window-open's Placement derivation re-anchors to the edge of the
+      // current primary instead of pinning to stale coords.
+      assert.strictEqual(opts.x, undefined);
+      assert.strictEqual(opts.y, undefined);
+      assert.strictEqual(opts.width, 600);
+      assert.strictEqual(opts.height, 200);
+    });
+
+    it('full save → topology change → restore: proportional window keeps relX/relY across the round-trip', () => {
+      // Spec: a proportional window saved on an external whose center lands
+      // off-primary should, after collapse, still carry placementMode +
+      // placementRelX/Y so a future reader can prefer typed primitives over
+      // the legacy x/y inference.
+      const saved = {
+        bounds: {
+          x: laptopBounds.x + 200,
+          y: laptopBounds.y + 200,
+          width: 800,
+          height: 600,
+        },
+        params: mirrorPlacementIntent({
+          placement: { mode: 'proportional', relX: 0.95, relY: 0.05 },
+        }),
+      };
+      assert.strictEqual(saved.params.placementMode, 'proportional');
+      assert.strictEqual(saved.params.placementRelX, 0.95);
+      assert.strictEqual(saved.params.placementRelY, 0.05);
+      // Proportional has no legacy mirror; window-open re-derives proportional
+      // from the saved x/y when no center/screenEdge flag is present.
+      assert.strictEqual(saved.params.center, undefined);
+      assert.strictEqual(saved.params.screenEdge, undefined);
+
+      const collapsed = collapseToPrimaryDisplay(saved, externalPrimaryWA);
+      // Typed primitives survive collapse.
+      assert.strictEqual(collapsed.params.placementMode, 'proportional');
+      assert.strictEqual(collapsed.params.placementRelX, 0.95);
+      assert.strictEqual(collapsed.params.placementRelY, 0.05);
+    });
+
     it('clamps width/height when saved size exceeds primary workArea', () => {
       const desc = {
         bounds: {

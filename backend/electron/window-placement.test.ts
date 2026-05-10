@@ -755,6 +755,99 @@ describe('spec regression: peek stays centered across live display change', () =
   });
 });
 
+describe('spec regression: resize then display-swap preserves visual position', () => {
+  it('2. window resized on A, then swapped to laptopOnly — relative position preserved', () => {
+    // Window starts at top-right of A (1920x1080) at 800x600 → x=1120, y=0.
+    const a = fakeDisplays([displayA])[0];
+    const original = rect(1120, 0, 800, 600);
+    const before = toProportional(original, a);
+    assert.strictEqual(before.relX, 1);
+    assert.strictEqual(before.relY, 0);
+
+    // User resizes wider to 1000x600 on A. Per spec, the set-bounds tick
+    // recomputes (relX, relY) against the new size: freeX=920, the user
+    // dragged the right edge so the window is still flush-right at x=920.
+    const resized = rect(920, 0, 1000, 600);
+    const after = toProportional(resized, a);
+    assert.strictEqual(after.relX, 1);
+    assert.strictEqual(after.relY, 0);
+
+    // Now disconnect external — swap to laptopOnly (1440x900). Project
+    // (relX=1, relY=0) at the new size (1000x600).
+    const swap = computePlacement(input({
+      placement: { mode: 'proportional', relX: 1, relY: 0 },
+      currentBounds: resized,
+      windowSize: { width: 1000, height: 600 },
+      displays: fakeDisplays([laptopOnly]),
+      primaryDisplayId: 1,
+    }));
+    const projected = expectReposition(swap);
+    // freeX on laptop = 1440-1000 = 440 → x=440 (flush-right).
+    assert.strictEqual(projected.x, 440);
+    assert.strictEqual(projected.y, 0);
+    assert.strictEqual(projected.width, 1000);
+    assert.strictEqual(projected.height, 600);
+  });
+});
+
+describe('spec regression: primary display reassigned while window open', () => {
+  it('6. centered window off-display, primary reassigned A→B → re-centers on new primary', () => {
+    // Window center is on no display (e.g. just disconnected the display
+    // it was on). With primary=A, centered falls back to A. With primary=B,
+    // centered falls back to B. The placement engine re-projects against
+    // whichever primary the OS reports per call — no stored display id.
+    const displays = fakeDisplays([displayA, displayB]);
+    const offBoth = rect(99000, 99000, 800, 600);
+
+    const onA = computePlacement(input({
+      placement: { mode: 'centered' },
+      currentBounds: offBoth,
+      displays,
+      primaryDisplayId: 1,
+    }));
+    const a = expectReposition(onA);
+    assert.strictEqual(a.x, 560);
+    assert.strictEqual(a.y, 240);
+
+    const onB = computePlacement(input({
+      placement: { mode: 'centered' },
+      currentBounds: offBoth,
+      displays,
+      primaryDisplayId: 2,
+    }));
+    const b = expectReposition(onB);
+    assert.strictEqual(b.x, 1920 + 560);
+    assert.strictEqual(b.y, 240);
+  });
+
+  it('6b. proportional window off-display, primary reassigned → re-projects relative to new primary', () => {
+    const displays = fakeDisplays([displayA, displayB]);
+    const offBoth = rect(99000, 99000, 800, 600);
+
+    // Primary=A: top-right (relX=1) projects to A's top-right.
+    const onA = computePlacement(input({
+      placement: { mode: 'proportional', relX: 1, relY: 0 },
+      currentBounds: offBoth,
+      displays,
+      primaryDisplayId: 1,
+    }));
+    const a = expectReposition(onA);
+    assert.strictEqual(a.x, 1120); // freeX on A (1920-800)
+    assert.strictEqual(a.y, 0);
+
+    // Primary=B: top-right projects to B's top-right.
+    const onB = computePlacement(input({
+      placement: { mode: 'proportional', relX: 1, relY: 0 },
+      currentBounds: offBoth,
+      displays,
+      primaryDisplayId: 2,
+    }));
+    const b = expectReposition(onB);
+    assert.strictEqual(b.x, 1920 + 1120);
+    assert.strictEqual(b.y, 0);
+  });
+});
+
 describe('spec regression: stranded-by-construction', () => {
   it('8. no mode produces bounds outside any display, even with oversize windowSize', () => {
     const displays = fakeDisplays([laptopOnly]);
