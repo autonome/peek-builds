@@ -1,7 +1,11 @@
 /**
  * Unit tests for backend/electron/window-placement.ts — the pure
- * `computePlacement` function. All display data is fabricated via the
+ * placement engine. All display data is fabricated via the
  * `fakeDisplays(...)` helper; no real Electron `screen` API is touched.
+ *
+ * Spec: docs/window-placement.md (canonical). The "Test scenarios"
+ * section there enumerates the regression coverage this file must
+ * provide; each test name calls out which scenario it covers.
  *
  * Runs under ELECTRON_RUN_AS_NODE=1 via `yarn test:unit`.
  */
@@ -12,13 +16,15 @@ import * as assert from 'node:assert';
 import {
   computePlacement,
   computeInitialBounds,
+  toProportional,
+  ownDisplay,
   type Placement,
   type PlacementInput,
   type PlacementResult,
 } from './window-placement.js';
 
 // ---------------------------------------------------------------------------
-// fakeDisplays — the lever the whole sprint depends on
+// fakeDisplays — synthetic display layouts for unit testing
 // ---------------------------------------------------------------------------
 
 interface DisplaySpec {
@@ -29,19 +35,11 @@ interface DisplaySpec {
   height: number;
   /** Optional: smaller workArea (excluding menu bar / dock). Defaults to bounds. */
   workArea?: { x: number; y: number; width: number; height: number };
-  /** Optional: marks this as "primary" — for our purposes, primary just means
-   *  the display whose top-left is at (0, 0). The helper enforces that for
-   *  the spec marked `primary: true` (handy ergonomics, no semantic effect
-   *  beyond bounds.x/y values). */
+  /** Optional: marks this as primary. Used only as documentation in tests —
+   *  callers pass the id explicitly via `primaryDisplayId` in the input. */
   primary?: boolean;
 }
 
-/**
- * Build an array shaped like `Electron.Display[]` from compact specs.
- * Only fields used by `window-placement.ts` are populated; the rest are
- * filled with sensible defaults so TypeScript stops complaining when we
- * cast to `Electron.Display`.
- */
 function fakeDisplays(specs: DisplaySpec[]): Electron.Display[] {
   return specs.map(s => {
     if (s.primary && (s.x !== 0 || s.y !== 0)) {
@@ -49,14 +47,10 @@ function fakeDisplays(specs: DisplaySpec[]): Electron.Display[] {
     }
     const bounds = { x: s.x, y: s.y, width: s.width, height: s.height };
     const workArea = s.workArea ?? { ...bounds };
-    // Fields below aren't referenced by computePlacement, but Electron.Display
-    // is a structural type — we cast `as unknown as Electron.Display` to skip
-    // the noise.
     return {
       id: s.id,
       bounds,
       workArea,
-      // Filler fields for type compatibility — never read.
       workAreaSize: { width: workArea.width, height: workArea.height },
       size: { width: bounds.width, height: bounds.height },
       scaleFactor: 1,
@@ -74,39 +68,22 @@ function fakeDisplays(specs: DisplaySpec[]): Electron.Display[] {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Convenience builders
-// ---------------------------------------------------------------------------
-
-function pt(x: number, y: number): Electron.Point {
-  return { x, y };
-}
-
 function rect(x: number, y: number, width: number, height: number): Electron.Rectangle {
   return { x, y, width, height };
 }
 
-/** Compute a display's workArea center. */
-function centerOf(d: Electron.Display): Electron.Point {
-  const wa = d.workArea;
-  return { x: wa.x + Math.floor(wa.width / 2), y: wa.y + Math.floor(wa.height / 2) };
-}
-
-/**
- * Construct a `PlacementInput` with sensible defaults you can override.
- * Keeps test code readable.
- */
-function input(partial: Partial<PlacementInput> & Pick<PlacementInput, 'placement'>): PlacementInput {
+function input(
+  partial: Partial<PlacementInput> & Pick<PlacementInput, 'placement'>,
+): PlacementInput {
   return {
     currentBounds: rect(0, 0, 800, 600),
     windowSize: { width: 800, height: 600 },
     displays: fakeDisplays([{ id: 1, x: 0, y: 0, width: 1920, height: 1080, primary: true }]),
-    cursorPoint: pt(960, 540),
+    primaryDisplayId: 1,
     ...partial,
   };
 }
 
-/** Pull bounds out of a result, asserting kind === reposition. */
 function expectReposition(result: PlacementResult): Electron.Rectangle {
   assert.strictEqual(result.kind, 'reposition', `expected reposition, got ${result.kind}`);
   return (result as Extract<PlacementResult, { kind: 'reposition' }>).bounds;
@@ -116,142 +93,130 @@ function expectNoChange(result: PlacementResult): void {
   assert.strictEqual(result.kind, 'no-change', `expected no-change, got ${result.kind}`);
 }
 
-// ---------------------------------------------------------------------------
-// Common display fixtures
-// ---------------------------------------------------------------------------
-
+// Common fixtures
 const displayA = { id: 1, x: 0, y: 0, width: 1920, height: 1080, primary: true } as DisplaySpec;
 const displayB = { id: 2, x: 1920, y: 0, width: 1920, height: 1080 } as DisplaySpec;
 const laptopOnly = { id: 1, x: 0, y: 0, width: 1440, height: 900, primary: true } as DisplaySpec;
-const externalUnplugged = { id: 99, x: 1920, y: 0, width: 1920, height: 1080 } as DisplaySpec;
 
 // ---------------------------------------------------------------------------
-// Tests
+// centered mode
 // ---------------------------------------------------------------------------
 
 describe('computePlacement: centered mode', () => {
-  it('1. centered on cursor display A, displays unchanged, cursor on A → no-change', () => {
+  it('window already centered on its own display → no-change', () => {
     const displays = fakeDisplays([displayA, displayB]);
-    // Window already centered on A: A.workArea is 0,0 1920x1080, window 800x600
-    // centered → x=560, y=240
     const result = computePlacement(input({
       placement: { mode: 'centered' },
-      currentBounds: rect(560, 240, 800, 600),
+      currentBounds: rect(560, 240, 800, 600), // centered on A
       displays,
-      cursorPoint: pt(960, 540), // on A
     }));
     expectNoChange(result);
   });
 
-  it('2. centered on A, cursor moves to B → reposition to B center', () => {
+  it('window centered on A, primary stays A → no-change (cursor irrelevant)', () => {
+    // The previous design re-centered on the cursor display every consume.
+    // The new spec uses "own current display" — cursor never consulted —
+    // so a window already correctly centered on its own display stays put,
+    // regardless of where any cursor would be.
     const displays = fakeDisplays([displayA, displayB]);
     const result = computePlacement(input({
       placement: { mode: 'centered' },
-      currentBounds: rect(560, 240, 800, 600), // currently centered on A
+      currentBounds: rect(560, 240, 800, 600), // centered on A
       displays,
-      cursorPoint: pt(2880, 540), // on B
+      primaryDisplayId: 1, // A is primary
     }));
-    const bounds = expectReposition(result);
-    // B.workArea is 1920,0 1920x1080; centered window: x=1920+560=2480, y=240
-    assert.strictEqual(bounds.x, 2480);
-    assert.strictEqual(bounds.y, 240);
-    assert.strictEqual(bounds.width, 800);
-    assert.strictEqual(bounds.height, 600);
+    expectNoChange(result);
   });
 
-  it('3. centered, A removed entirely → reposition to (now-only) display', () => {
-    // Window was on A at (560, 240), but A is gone — only laptop display remains.
-    // The window's old bounds at x=560 ARE inside the laptop display (0..1440),
-    // so it's NOT stranded. But because mode is `centered`, we must always
-    // re-center on cursor display every call.
-    const displays = fakeDisplays([laptopOnly]);
-    const result = computePlacement(input({
-      placement: { mode: 'centered' },
-      currentBounds: rect(560, 240, 800, 600),
-      displays,
-      cursorPoint: pt(720, 450),
-      windowSize: { width: 800, height: 600 },
-    }));
-    const bounds = expectReposition(result);
-    // laptopOnly: 1440x900 → centered 800x600: x=320, y=150
-    assert.strictEqual(bounds.x, 320);
-    assert.strictEqual(bounds.y, 150);
-  });
-
-  it('centered: cursor off all displays → falls back to primary (origin display)', () => {
+  it('centered window stays on its own display (B), even though primary is A', () => {
     const displays = fakeDisplays([displayA, displayB]);
     const result = computePlacement(input({
       placement: { mode: 'centered' },
-      currentBounds: rect(0, 0, 800, 600),
+      currentBounds: rect(2480, 240, 800, 600), // centered on B
       displays,
-      cursorPoint: pt(-9999, -9999), // nowhere
+      primaryDisplayId: 1, // primary is A; window is on B
+    }));
+    expectNoChange(result);
+  });
+
+  it("window's display removed → reposition centered on primary", () => {
+    // Window was centered on the external (B); B is unplugged.
+    // Center of currentBounds is on no display → fall back to primary (A).
+    const displays = fakeDisplays([displayA]);
+    const result = computePlacement(input({
+      placement: { mode: 'centered' },
+      currentBounds: rect(2480, 240, 800, 600), // off A
+      displays,
+      primaryDisplayId: 1,
     }));
     const bounds = expectReposition(result);
-    // Falls back to A (primary at 0,0): centered → x=560, y=240
+    assert.strictEqual(bounds.x, Math.round((1920 - 800) / 2));
+    assert.strictEqual(bounds.y, Math.round((1080 - 600) / 2));
+  });
+
+  it('centered, window-off-by-1 → reposition to exact center', () => {
+    const displays = fakeDisplays([displayA]);
+    const result = computePlacement(input({
+      placement: { mode: 'centered' },
+      currentBounds: rect(559, 240, 800, 600),
+      displays,
+    }));
+    const bounds = expectReposition(result);
     assert.strictEqual(bounds.x, 560);
-    assert.strictEqual(bounds.y, 240);
+  });
+
+  it('cursor-display-fallback is rejected by the type system but tolerable at runtime', () => {
+    // The mode no longer exists in the union. A test that *passed* a
+    // string-literal "cursor-display-fallback" would fail to typecheck —
+    // intentional. This test exists only as a doc-comment for future
+    // readers spelunking through grep history.
   });
 });
 
-describe('computePlacement: cursor-display-fallback mode', () => {
-  it('4. window currently fits, cursor moves to other display → no-change', () => {
-    const displays = fakeDisplays([displayA, displayB]);
-    const result = computePlacement(input({
-      placement: { mode: 'cursor-display-fallback' },
-      currentBounds: rect(100, 100, 800, 600), // on A, fits
-      displays,
-      cursorPoint: pt(2880, 540), // moved to B
-    }));
-    expectNoChange(result);
-  });
-
-  it('5. window stranded (display unplugged) → reposition to cursor display center', () => {
-    // Window was on the external monitor, which is now gone.
-    const displays = fakeDisplays([laptopOnly]);
-    const result = computePlacement(input({
-      placement: { mode: 'cursor-display-fallback' },
-      currentBounds: rect(2400, 200, 800, 600), // off-screen for laptop
-      displays,
-      cursorPoint: pt(720, 450), // on laptop
-    }));
-    const bounds = expectReposition(result);
-    assert.strictEqual(bounds.x, 320);
-    assert.strictEqual(bounds.y, 150);
-  });
-});
+// ---------------------------------------------------------------------------
+// edge mode
+// ---------------------------------------------------------------------------
 
 describe('computePlacement: edge mode', () => {
-  it('6. edge: top, cursor on A → bounds anchored to A top edge, X-centered', () => {
-    const displays = fakeDisplays([displayA, displayB]);
+  it('edge: top → bounds anchored to top of own display, X-centered', () => {
+    const displays = fakeDisplays([displayA]);
     const result = computePlacement(input({
       placement: { mode: 'edge', edge: 'top' },
-      currentBounds: rect(0, 500, 600, 200),
+      currentBounds: rect(0, 500, 600, 200), // somewhere on A but not at top
       windowSize: { width: 600, height: 200 },
       displays,
-      cursorPoint: pt(960, 540), // on A
     }));
     const bounds = expectReposition(result);
-    // A.workArea 0,0 1920x1080; window 600x200 anchored top, X-centered:
-    // x = (1920 - 600) / 2 = 660, y = 0
     assert.strictEqual(bounds.x, 660);
     assert.strictEqual(bounds.y, 0);
     assert.strictEqual(bounds.width, 600);
     assert.strictEqual(bounds.height, 200);
   });
 
-  it('7. edge: top, cursor moves to B → re-anchor to B top edge', () => {
+  it('edge: top, slide on B → re-anchor to B top edge (own display)', () => {
     const displays = fakeDisplays([displayA, displayB]);
     const result = computePlacement(input({
       placement: { mode: 'edge', edge: 'top' },
-      currentBounds: rect(660, 0, 600, 200), // top of A
+      currentBounds: rect(2580, 0, 600, 200), // top of B already
       windowSize: { width: 600, height: 200 },
       displays,
-      cursorPoint: pt(2880, 540), // on B
+      primaryDisplayId: 1,
+    }));
+    expectNoChange(result);
+  });
+
+  it('edge: top, slide center off all displays → re-anchor on primary', () => {
+    const displays = fakeDisplays([displayA]); // B unplugged
+    const result = computePlacement(input({
+      placement: { mode: 'edge', edge: 'top' },
+      currentBounds: rect(2580, 0, 600, 200), // was on B, now no-display
+      windowSize: { width: 600, height: 200 },
+      displays,
+      primaryDisplayId: 1,
     }));
     const bounds = expectReposition(result);
-    // B.workArea 1920,0 1920x1080; window 600x200 top, X-centered:
-    // x = 1920 + (1920-600)/2 = 2580, y = 0
-    assert.strictEqual(bounds.x, 2580);
+    // anchor to top of A (primary), X-centered: x = (1920 - 600)/2 = 660
+    assert.strictEqual(bounds.x, 660);
     assert.strictEqual(bounds.y, 0);
   });
 
@@ -262,10 +227,8 @@ describe('computePlacement: edge mode', () => {
       currentBounds: rect(0, 0, 600, 200),
       windowSize: { width: 600, height: 200 },
       displays,
-      cursorPoint: pt(960, 540),
     }));
     const bounds = expectReposition(result);
-    // y = 0 + 1080 - 200 = 880, X-centered → x = 660
     assert.strictEqual(bounds.x, 660);
     assert.strictEqual(bounds.y, 880);
   });
@@ -277,200 +240,251 @@ describe('computePlacement: edge mode', () => {
       currentBounds: rect(500, 0, 300, 600),
       windowSize: { width: 300, height: 600 },
       displays,
-      cursorPoint: pt(960, 540),
     }));
     const bounds = expectReposition(result);
-    // x = 0, y = (1080-600)/2 = 240
     assert.strictEqual(bounds.x, 0);
     assert.strictEqual(bounds.y, 240);
   });
 
-  it('edge: right anchors to right edge, Y-centered', () => {
+  it('edge: right anchors to right edge', () => {
     const displays = fakeDisplays([displayA]);
     const result = computePlacement(input({
       placement: { mode: 'edge', edge: 'right' },
       currentBounds: rect(0, 0, 300, 600),
       windowSize: { width: 300, height: 600 },
       displays,
-      cursorPoint: pt(960, 540),
     }));
     const bounds = expectReposition(result);
-    // x = 1920 - 300 = 1620, y = 240
     assert.strictEqual(bounds.x, 1620);
     assert.strictEqual(bounds.y, 240);
   });
+});
 
-  it('edge: top, currently already at correct edge position → no-change', () => {
+// ---------------------------------------------------------------------------
+// proportional mode
+// ---------------------------------------------------------------------------
+
+describe('computePlacement: proportional mode', () => {
+  it('center: relX=0.5, relY=0.5 → centered on display', () => {
     const displays = fakeDisplays([displayA]);
     const result = computePlacement(input({
-      placement: { mode: 'edge', edge: 'top' },
-      currentBounds: rect(660, 0, 600, 200),
-      windowSize: { width: 600, height: 200 },
+      placement: { mode: 'proportional', relX: 0.5, relY: 0.5 },
+      currentBounds: rect(0, 0, 800, 600), // not at the projection
+      windowSize: { width: 800, height: 600 },
       displays,
-      cursorPoint: pt(960, 540),
+    }));
+    const bounds = expectReposition(result);
+    // freeX = 1920 - 800 = 1120; relX*freeX = 560. freeY = 1080 - 600 = 480; relY*freeY = 240
+    assert.strictEqual(bounds.x, 560);
+    assert.strictEqual(bounds.y, 240);
+  });
+
+  it('top-left corner: relX=0, relY=0 → flush at workArea origin', () => {
+    const displays = fakeDisplays([displayA]);
+    const result = computePlacement(input({
+      placement: { mode: 'proportional', relX: 0, relY: 0 },
+      currentBounds: rect(100, 100, 800, 600),
+      windowSize: { width: 800, height: 600 },
+      displays,
+    }));
+    const bounds = expectReposition(result);
+    assert.strictEqual(bounds.x, 0);
+    assert.strictEqual(bounds.y, 0);
+  });
+
+  it('top-right corner: relX=1, relY=0 → flush right, flush top', () => {
+    const displays = fakeDisplays([displayA]);
+    const result = computePlacement(input({
+      placement: { mode: 'proportional', relX: 1, relY: 0 },
+      currentBounds: rect(100, 100, 800, 600),
+      windowSize: { width: 800, height: 600 },
+      displays,
+    }));
+    const bounds = expectReposition(result);
+    // freeX = 1920 - 800 = 1120 → x = 1120
+    assert.strictEqual(bounds.x, 1120);
+    assert.strictEqual(bounds.y, 0);
+  });
+
+  it('bottom-right corner: relX=1, relY=1 → flush bottom-right', () => {
+    const displays = fakeDisplays([displayA]);
+    const result = computePlacement(input({
+      placement: { mode: 'proportional', relX: 1, relY: 1 },
+      currentBounds: rect(0, 0, 800, 600),
+      windowSize: { width: 800, height: 600 },
+      displays,
+    }));
+    const bounds = expectReposition(result);
+    assert.strictEqual(bounds.x, 1120);
+    assert.strictEqual(bounds.y, 480);
+  });
+
+  it('proportional projection scales across displays — top-right stays top-right', () => {
+    // Window is at top-right of A (relX=1, relY=0). Switch to laptopOnly.
+    // Should land at top-right of laptopOnly.
+    const result = computePlacement(input({
+      placement: { mode: 'proportional', relX: 1, relY: 0 },
+      currentBounds: rect(2680, 0, 800, 600), // off any present display
+      windowSize: { width: 800, height: 600 },
+      displays: fakeDisplays([laptopOnly]),
+      primaryDisplayId: 1,
+    }));
+    const bounds = expectReposition(result);
+    // laptopOnly: 1440x900; freeX = 640, freeY = 300
+    assert.strictEqual(bounds.x, 640);
+    assert.strictEqual(bounds.y, 0);
+    assert.strictEqual(bounds.width, 800);
+    assert.strictEqual(bounds.height, 600);
+  });
+
+  it('window the same size as display → freeSpace=0, lands at origin', () => {
+    const displays = fakeDisplays([displayA]);
+    const result = computePlacement(input({
+      placement: { mode: 'proportional', relX: 0.7, relY: 0.3 },
+      currentBounds: rect(0, 0, 1920, 1080), // full-display already
+      windowSize: { width: 1920, height: 1080 },
+      displays,
     }));
     expectNoChange(result);
   });
+
+  it('window larger than display → clamps size, lands at origin', () => {
+    const displays = fakeDisplays([laptopOnly]);
+    const result = computePlacement(input({
+      placement: { mode: 'proportional', relX: 0.95, relY: 0.05 },
+      currentBounds: rect(100, 100, 800, 600),
+      windowSize: { width: 4000, height: 3000 },
+      displays,
+    }));
+    const bounds = expectReposition(result);
+    assert.strictEqual(bounds.width, 1440);
+    assert.strictEqual(bounds.height, 900);
+    // freeX = 0 → x = 0
+    assert.strictEqual(bounds.x, 0);
+    assert.strictEqual(bounds.y, 0);
+  });
+
+  it('out-of-range relX/relY are clamped to [0,1]', () => {
+    const displays = fakeDisplays([displayA]);
+    const result = computePlacement(input({
+      placement: { mode: 'proportional', relX: 2, relY: -0.5 },
+      currentBounds: rect(0, 0, 800, 600),
+      windowSize: { width: 800, height: 600 },
+      displays,
+    }));
+    const bounds = expectReposition(result);
+    // relX=2 clamps to 1 → x = freeX = 1120; relY=-0.5 clamps to 0 → y = 0
+    assert.strictEqual(bounds.x, 1120);
+    assert.strictEqual(bounds.y, 0);
+  });
+
+  it("window's display removed → reposition on primary at same relative position", () => {
+    // Window at top-right of B; B is gone, primary is A. Lands at top-right of A.
+    const displays = fakeDisplays([displayA]);
+    const result = computePlacement(input({
+      placement: { mode: 'proportional', relX: 1, relY: 0 },
+      currentBounds: rect(2680, 0, 800, 600), // was top-right of B
+      windowSize: { width: 800, height: 600 },
+      displays,
+      primaryDisplayId: 1,
+    }));
+    const bounds = expectReposition(result);
+    assert.strictEqual(bounds.x, 1120);
+    assert.strictEqual(bounds.y, 0);
+  });
 });
 
+// ---------------------------------------------------------------------------
+// parent-centered mode
+// ---------------------------------------------------------------------------
+
 describe('computePlacement: parent-centered mode', () => {
-  it('8. parent on A → centered on parent bounds', () => {
+  it('parent on A → centered on parent bounds', () => {
     const displays = fakeDisplays([displayA, displayB]);
-    const parentBounds = rect(200, 200, 1000, 700); // on A
+    const parentBounds = rect(200, 200, 1000, 700);
     const result = computePlacement(input({
       placement: { mode: 'parent-centered', parentId: 42 },
       currentBounds: rect(0, 0, 400, 300),
       windowSize: { width: 400, height: 300 },
       displays,
-      cursorPoint: pt(960, 540),
+      primaryDisplayId: 1,
       parentBounds,
     }));
     const bounds = expectReposition(result);
-    // Parent center: 700, 550. Child 400x300 centered on parent rect:
-    // x = 200 + (1000-400)/2 = 500, y = 200 + (700-300)/2 = 400
     assert.strictEqual(bounds.x, 500);
     assert.strictEqual(bounds.y, 400);
   });
 
-  it('9. parent destroyed (parentBounds undefined) → no-change (cursor-display-fallback semantics)', () => {
+  it('parent destroyed → fall back to centering on primary', () => {
     const displays = fakeDisplays([displayA]);
     const result = computePlacement(input({
       placement: { mode: 'parent-centered', parentId: 42 },
-      currentBounds: rect(100, 100, 400, 300), // not stranded
+      currentBounds: rect(0, 0, 400, 300),
       windowSize: { width: 400, height: 300 },
       displays,
-      cursorPoint: pt(960, 540),
-      parentBounds: undefined,
-    }));
-    expectNoChange(result);
-  });
-
-  it('parent destroyed AND stranded → rescue (stranded path takes priority)', () => {
-    const displays = fakeDisplays([laptopOnly]);
-    const result = computePlacement(input({
-      placement: { mode: 'parent-centered', parentId: 42 },
-      currentBounds: rect(2400, 200, 400, 300), // stranded
-      windowSize: { width: 400, height: 300 },
-      displays,
-      cursorPoint: pt(720, 450),
+      primaryDisplayId: 1,
       parentBounds: undefined,
     }));
     const bounds = expectReposition(result);
-    // Centered on laptopOnly: x=520, y=300
-    assert.strictEqual(bounds.x, 520);
-    assert.strictEqual(bounds.y, 300);
+    // Centered on A: x = (1920-400)/2 = 760, y = (1080-300)/2 = 390
+    assert.strictEqual(bounds.x, 760);
+    assert.strictEqual(bounds.y, 390);
   });
 
-  it('parent on B, child currently on A → reposition to parent center on B', () => {
+  it('parent on B → centered on parent (uses parent display for size clamp)', () => {
     const displays = fakeDisplays([displayA, displayB]);
-    const parentBounds = rect(2200, 100, 800, 600); // on B
+    const parentBounds = rect(2200, 100, 800, 600);
     const result = computePlacement(input({
       placement: { mode: 'parent-centered', parentId: 42 },
-      currentBounds: rect(100, 100, 400, 300), // on A
+      currentBounds: rect(100, 100, 400, 300),
       windowSize: { width: 400, height: 300 },
       displays,
-      cursorPoint: pt(960, 540),
+      primaryDisplayId: 1,
       parentBounds,
     }));
     const bounds = expectReposition(result);
-    // Parent center: 2600, 400. Child centered: x=2400, y=250
     assert.strictEqual(bounds.x, 2400);
     assert.strictEqual(bounds.y, 250);
   });
 });
 
-describe('computePlacement: manual mode', () => {
-  it('10. manual, window fits on some display → no-change', () => {
-    const displays = fakeDisplays([displayA, displayB]);
-    const result = computePlacement(input({
-      placement: { mode: 'manual' },
-      currentBounds: rect(700, 300, 600, 400), // on A, comfortable
-      displays,
-      cursorPoint: pt(2880, 540), // cursor on B; manual ignores
-    }));
-    expectNoChange(result);
-  });
+// ---------------------------------------------------------------------------
+// edge cases
+// ---------------------------------------------------------------------------
 
-  it('11. manual, window stranded → rescue to cursor display center', () => {
-    // Stranded rescue applies to ALL modes including manual.
-    const displays = fakeDisplays([laptopOnly]);
-    const result = computePlacement(input({
-      placement: { mode: 'manual' },
-      currentBounds: rect(externalUnplugged.x + 100, 100, 800, 600), // off-screen
-      windowSize: { width: 800, height: 600 },
-      displays,
-      cursorPoint: pt(720, 450),
-    }));
-    const bounds = expectReposition(result);
-    assert.strictEqual(bounds.x, 320);
-    assert.strictEqual(bounds.y, 150);
-  });
-});
-
-describe('computePlacement: clamping & edge cases', () => {
-  it('12. window size larger than target display → output clamped to workArea', () => {
-    const displays = fakeDisplays([laptopOnly]); // 1440x900
-    const result = computePlacement(input({
-      placement: { mode: 'centered' },
-      currentBounds: rect(0, 0, 1, 1),
-      windowSize: { width: 4000, height: 3000 }, // huge
-      displays,
-      cursorPoint: pt(720, 450),
-    }));
-    const bounds = expectReposition(result);
-    // Clamped to workArea (1440x900), then centered: x=0, y=0
-    assert.strictEqual(bounds.width, 1440);
-    assert.strictEqual(bounds.height, 900);
-    assert.strictEqual(bounds.x, 0);
-    assert.strictEqual(bounds.y, 0);
-  });
-
-  it('zero-size window is never stranded (treated as hidden/minimized)', () => {
-    const displays = fakeDisplays([laptopOnly]);
-    const result = computePlacement(input({
-      placement: { mode: 'manual' },
-      currentBounds: rect(99999, 99999, 0, 0), // way off, but zero size
-      displays,
-      cursorPoint: pt(720, 450),
-    }));
-    // Manual + not stranded (zero area is treated as "always accessible") → no-change
-    expectNoChange(result);
-  });
-
-  it('empty displays array → no-change for every mode', () => {
+describe('computePlacement: edge cases', () => {
+  it('empty displays → no-change for every mode', () => {
     const modes: Placement[] = [
       { mode: 'centered' },
-      { mode: 'cursor-display-fallback' },
       { mode: 'edge', edge: 'top' },
+      { mode: 'proportional', relX: 0.5, relY: 0.5 },
       { mode: 'parent-centered', parentId: 1 },
-      { mode: 'manual' },
     ];
     for (const placement of modes) {
       const result = computePlacement(input({
         placement,
         displays: [],
-        cursorPoint: pt(0, 0),
+        primaryDisplayId: 0,
       }));
       expectNoChange(result);
     }
   });
 
-  it('point not on any display: cursor falls back to primary (origin display)', () => {
-    const displays = fakeDisplays([displayA, displayB]);
+  it('primaryDisplayId not in displays → falls back to displays[0]', () => {
+    const displays = fakeDisplays([displayA]);
     const result = computePlacement(input({
       placement: { mode: 'centered' },
-      currentBounds: rect(0, 0, 800, 600),
+      currentBounds: rect(99000, 99000, 800, 600), // off all displays
       displays,
-      cursorPoint: pt(99999, 99999), // far away
+      primaryDisplayId: 9999, // not in the list
     }));
-    // Should still produce a valid centering on A (primary).
     const bounds = expectReposition(result);
-    assert.ok(bounds.x >= 0 && bounds.x < 1920);
-    assert.ok(bounds.y >= 0 && bounds.y < 1080);
+    // Falls back to displays[0] = A
+    assert.strictEqual(bounds.x, 560);
+    assert.strictEqual(bounds.y, 240);
   });
 
-  it('workArea smaller than bounds (menu bar / dock zones excluded)', () => {
-    // Display at (0,0) 1920x1080 with a 25px menu bar at top.
+  it('workArea smaller than bounds (menu bar excluded)', () => {
     const displays = fakeDisplays([
       {
         id: 1, x: 0, y: 0, width: 1920, height: 1080, primary: true,
@@ -481,175 +495,103 @@ describe('computePlacement: clamping & edge cases', () => {
       placement: { mode: 'centered' },
       currentBounds: rect(0, 0, 800, 600),
       displays,
-      cursorPoint: pt(960, 540),
     }));
     const bounds = expectReposition(result);
-    // workArea 0,25 1920x1055; centered 800x600:
-    // x = 560, y = 25 + (1055-600)/2 = 25 + 227 = 252 (rounded from 227.5)
     assert.strictEqual(bounds.x, 560);
-    assert.strictEqual(bounds.y, 253);
-  });
-
-  it('stranded window with negative coordinates → rescue', () => {
-    const displays = fakeDisplays([laptopOnly]);
-    const result = computePlacement(input({
-      placement: { mode: 'cursor-display-fallback' },
-      currentBounds: rect(-5000, -5000, 800, 600),
-      displays,
-      cursorPoint: pt(720, 450),
-    }));
-    const bounds = expectReposition(result);
-    assert.strictEqual(bounds.x, 320);
-    assert.strictEqual(bounds.y, 150);
-  });
-
-  it('stranded threshold: 49% overlap → rescue', () => {
-    // Display 1000x1000, window 1000x1000 with center at (500, 500)+offset.
-    // Place window so 49% of its area is on the display.
-    // Window 100x100, on display only at right strip 49 wide:
-    // Window at x=951, y=0, width=100, height=100: overlap is 49x100 = 4900, area 10000 → 49%.
-    const displays = fakeDisplays([
-      { id: 1, x: 0, y: 0, width: 1000, height: 1000, primary: true },
-    ]);
-    const result = computePlacement(input({
-      placement: { mode: 'manual' },
-      currentBounds: rect(951, 0, 100, 100),
-      windowSize: { width: 100, height: 100 },
-      displays,
-      cursorPoint: pt(500, 500),
-    }));
-    const bounds = expectReposition(result);
-    // Centered: x=450, y=450
-    assert.strictEqual(bounds.x, 450);
-    assert.strictEqual(bounds.y, 450);
-  });
-
-  it('stranded threshold: 51% overlap → no rescue (manual stays put)', () => {
-    // Window at x=949, width=100 → overlap is 51 wide on display (0..1000).
-    // 51 * 100 = 5100 / 10000 = 51% → above threshold, manual leaves alone.
-    const displays = fakeDisplays([
-      { id: 1, x: 0, y: 0, width: 1000, height: 1000, primary: true },
-    ]);
-    const result = computePlacement(input({
-      placement: { mode: 'manual' },
-      currentBounds: rect(949, 0, 100, 100),
-      windowSize: { width: 100, height: 100 },
-      displays,
-      cursorPoint: pt(500, 500),
-    }));
-    expectNoChange(result);
-  });
-
-  it('parent-centered: parent center off all displays falls back to cursor display', () => {
-    const displays = fakeDisplays([displayA]);
-    const parentBounds = rect(99000, 99000, 400, 300); // way off
-    const result = computePlacement(input({
-      placement: { mode: 'parent-centered', parentId: 42 },
-      currentBounds: rect(100, 100, 200, 150),
-      windowSize: { width: 200, height: 150 },
-      displays,
-      cursorPoint: pt(960, 540),
-      parentBounds,
-    }));
-    // Still proposes bounds: child centered on parent rect (parent rect is the
-    // recorded position even if off-screen). The point of the targetDisplay
-    // fallback is just to choose a clamping workArea — clamping uses A.
-    const bounds = expectReposition(result);
-    assert.strictEqual(bounds.width, 200);
-    assert.strictEqual(bounds.height, 150);
-  });
-
-  it('cursor-display-fallback when window already centered on cursor display → no-change', () => {
-    const displays = fakeDisplays([displayA]);
-    const result = computePlacement(input({
-      placement: { mode: 'cursor-display-fallback' },
-      currentBounds: rect(560, 240, 800, 600),
-      displays,
-      cursorPoint: pt(960, 540),
-    }));
-    expectNoChange(result);
-  });
-
-  it('centered: re-center is exact pixel match → no spurious reposition', () => {
-    const displays = fakeDisplays([displayA]);
-    // Compute what centered should yield, then feed it back.
-    const expected = rect(560, 240, 800, 600);
-    const result = computePlacement(input({
-      placement: { mode: 'centered' },
-      currentBounds: expected,
-      displays,
-      cursorPoint: pt(960, 540),
-    }));
-    expectNoChange(result);
+    assert.strictEqual(bounds.y, 253); // 25 + round(455/2)
   });
 });
 
-describe('computeInitialBounds: fresh-window helper', () => {
-  it('cursor-display-fallback centers on cursor display', () => {
-    const displays = fakeDisplays([displayA, displayB]);
-    const bounds = computeInitialBounds(
-      { mode: 'cursor-display-fallback' },
-      { width: 800, height: 600 },
-      displays,
-      pt(2880, 540), // cursor on display B
-    );
-    assert.strictEqual(bounds.x, 1920 + Math.round((1920 - 800) / 2));
-    assert.strictEqual(bounds.y, Math.round((1080 - 600) / 2));
-    assert.strictEqual(bounds.width, 800);
-    assert.strictEqual(bounds.height, 600);
-  });
+// ---------------------------------------------------------------------------
+// computeInitialBounds (fresh-window helper, no currentBounds)
+// ---------------------------------------------------------------------------
 
-  it('centered mode centers on cursor display', () => {
+describe('computeInitialBounds: fresh-window helper', () => {
+  it('centered on primary regardless of cursor (cursor not consulted)', () => {
     const displays = fakeDisplays([displayA, displayB]);
     const bounds = computeInitialBounds(
       { mode: 'centered' },
-      { width: 600, height: 400 },
+      { width: 800, height: 600 },
       displays,
-      pt(960, 540),
+      1, // primary is A
     );
-    assert.strictEqual(bounds.x, Math.round((1920 - 600) / 2));
-    assert.strictEqual(bounds.y, Math.round((1080 - 400) / 2));
+    assert.strictEqual(bounds.x, 560);
+    assert.strictEqual(bounds.y, 240);
   });
 
-  it('parent-centered centers on parentBounds', () => {
+  it('primaryDisplayId=2 → centered on B', () => {
+    const displays = fakeDisplays([displayA, displayB]);
+    const bounds = computeInitialBounds(
+      { mode: 'centered' },
+      { width: 800, height: 600 },
+      displays,
+      2,
+    );
+    assert.strictEqual(bounds.x, 1920 + 560);
+    assert.strictEqual(bounds.y, 240);
+  });
+
+  it('proportional (0.5, 0.5) on primary equivalent to centered', () => {
+    const displays = fakeDisplays([displayA]);
+    const bounds = computeInitialBounds(
+      { mode: 'proportional', relX: 0.5, relY: 0.5 },
+      { width: 800, height: 600 },
+      displays,
+      1,
+    );
+    assert.strictEqual(bounds.x, 560);
+    assert.strictEqual(bounds.y, 240);
+  });
+
+  it('proportional (1, 0) on primary → top-right', () => {
+    const displays = fakeDisplays([displayA]);
+    const bounds = computeInitialBounds(
+      { mode: 'proportional', relX: 1, relY: 0 },
+      { width: 800, height: 600 },
+      displays,
+      1,
+    );
+    assert.strictEqual(bounds.x, 1120);
+    assert.strictEqual(bounds.y, 0);
+  });
+
+  it('edge: top on primary, X-centered', () => {
+    const displays = fakeDisplays([displayA, displayB]);
+    const bounds = computeInitialBounds(
+      { mode: 'edge', edge: 'top' },
+      { width: 600, height: 200 },
+      displays,
+      2, // primary is B
+    );
+    assert.strictEqual(bounds.x, 1920 + Math.round((1920 - 600) / 2));
+    assert.strictEqual(bounds.y, 0);
+  });
+
+  it('parent-centered with parentBounds → on parent display', () => {
     const displays = fakeDisplays([displayA]);
     const parent = rect(100, 100, 1000, 800);
     const bounds = computeInitialBounds(
       { mode: 'parent-centered', parentId: 42 },
       { width: 400, height: 300 },
       displays,
-      pt(960, 540),
+      1,
       parent,
     );
     assert.strictEqual(bounds.x, 100 + Math.round((1000 - 400) / 2));
     assert.strictEqual(bounds.y, 100 + Math.round((800 - 300) / 2));
   });
 
-  it('parent-centered without parentBounds falls back to cursor center', () => {
+  it('parent-centered without parentBounds → centered on primary', () => {
     const displays = fakeDisplays([displayA]);
     const bounds = computeInitialBounds(
       { mode: 'parent-centered', parentId: 42 },
       { width: 400, height: 300 },
       displays,
-      pt(960, 540),
+      1,
       undefined,
     );
     assert.strictEqual(bounds.x, Math.round((1920 - 400) / 2));
     assert.strictEqual(bounds.y, Math.round((1080 - 300) / 2));
-  });
-
-  it('edge: top anchors to top of cursor display, X-centered', () => {
-    const displays = fakeDisplays([displayA, displayB]);
-    const bounds = computeInitialBounds(
-      { mode: 'edge', edge: 'top' },
-      { width: 600, height: 200 },
-      displays,
-      pt(2880, 540), // cursor on B
-    );
-    assert.strictEqual(bounds.x, 1920 + Math.round((1920 - 600) / 2));
-    assert.strictEqual(bounds.y, 0);
-    assert.strictEqual(bounds.width, 600);
-    assert.strictEqual(bounds.height, 200);
   });
 
   it('clamps oversize windows to workArea', () => {
@@ -658,38 +600,190 @@ describe('computeInitialBounds: fresh-window helper', () => {
       { mode: 'centered' },
       { width: 9999, height: 9999 },
       displays,
-      pt(720, 450),
+      1,
     );
     assert.strictEqual(bounds.width, 1440);
     assert.strictEqual(bounds.height, 900);
   });
+
+  it('empty displays → returns origin rect (headless safe fallback)', () => {
+    const bounds = computeInitialBounds(
+      { mode: 'centered' },
+      { width: 800, height: 600 },
+      [],
+      0,
+    );
+    assert.deepStrictEqual(bounds, { x: 0, y: 0, width: 800, height: 600 });
+  });
 });
 
-describe('computePlacement: regression coverage from plan doc', () => {
-  it('"External monitor unplugged, cmd panel still on the laptop screen but at old external coordinates"', () => {
-    const displays = fakeDisplays([laptopOnly]);
-    const result = computePlacement(input({
-      placement: { mode: 'centered' },
-      currentBounds: rect(2200, 200, 800, 600), // on the (now-missing) external
-      displays,
-      cursorPoint: centerOf(fakeDisplays([laptopOnly])[0]),
-    }));
-    const bounds = expectReposition(result);
-    assert.strictEqual(bounds.x, 320);
-    assert.strictEqual(bounds.y, 150);
+// ---------------------------------------------------------------------------
+// toProportional helper
+// ---------------------------------------------------------------------------
+
+describe('toProportional', () => {
+  const display = fakeDisplays([displayA])[0];
+
+  it('top-left of display → (0, 0)', () => {
+    const r = toProportional(rect(0, 0, 800, 600), display);
+    assert.strictEqual(r.relX, 0);
+    assert.strictEqual(r.relY, 0);
   });
 
-  it('"Slide opened, user moves to second display, slide stays on first"', () => {
+  it('top-right of display → (1, 0)', () => {
+    const r = toProportional(rect(1120, 0, 800, 600), display);
+    assert.strictEqual(r.relX, 1);
+    assert.strictEqual(r.relY, 0);
+  });
+
+  it('bottom-right of display → (1, 1)', () => {
+    const r = toProportional(rect(1120, 480, 800, 600), display);
+    assert.strictEqual(r.relX, 1);
+    assert.strictEqual(r.relY, 1);
+  });
+
+  it('center of display → (0.5, 0.5)', () => {
+    const r = toProportional(rect(560, 240, 800, 600), display);
+    assert.strictEqual(r.relX, 0.5);
+    assert.strictEqual(r.relY, 0.5);
+  });
+
+  it('window same size as display → both axes report 0', () => {
+    const r = toProportional(rect(0, 0, 1920, 1080), display);
+    assert.strictEqual(r.relX, 0);
+    assert.strictEqual(r.relY, 0);
+  });
+
+  it('out-of-bounds coordinates clamp to [0, 1]', () => {
+    const r = toProportional(rect(-500, 9999, 800, 600), display);
+    assert.strictEqual(r.relX, 0);
+    assert.strictEqual(r.relY, 1);
+  });
+
+  it('round-trip with computePlacement is idempotent at corners', () => {
+    // Take a bounds at a corner, derive proportional, project back, expect equality.
+    const original = rect(1120, 480, 800, 600); // bottom-right
+    const { relX, relY } = toProportional(original, display);
+    const result = computePlacement({
+      placement: { mode: 'proportional', relX, relY },
+      currentBounds: rect(0, 0, 800, 600), // anywhere not the original
+      windowSize: { width: 800, height: 600 },
+      displays: [display],
+      primaryDisplayId: 1,
+    });
+    const projected = expectReposition(result);
+    assert.deepStrictEqual(projected, original);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ownDisplay helper
+// ---------------------------------------------------------------------------
+
+describe('ownDisplay', () => {
+  it('returns the display containing the bounds center', () => {
     const displays = fakeDisplays([displayA, displayB]);
+    const d = ownDisplay(rect(2400, 200, 800, 600), displays, 1);
+    assert.strictEqual(d.id, 2);
+  });
+
+  it('center off all displays → returns primary', () => {
+    const displays = fakeDisplays([displayA, displayB]);
+    const d = ownDisplay(rect(99000, 99000, 800, 600), displays, 1);
+    assert.strictEqual(d.id, 1);
+  });
+
+  it('primary id missing from displays → returns first display', () => {
+    const displays = fakeDisplays([displayA]);
+    const d = ownDisplay(rect(99000, 99000, 800, 600), displays, 99);
+    assert.strictEqual(d.id, 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Spec-mandated regression scenarios (docs/window-placement.md "Test scenarios")
+// ---------------------------------------------------------------------------
+
+describe('spec regression: cross-display projection round-trip', () => {
+  it('1. proportional on A, project to B, recompute relative — same (relX, relY)', () => {
+    const displays = fakeDisplays([displayA, displayB]);
+    const placement: Placement = { mode: 'proportional', relX: 0.7, relY: 0.3 };
+    const ws = { width: 800, height: 600 };
+    // Project onto B by passing currentBounds whose center is on B
+    const onB = computePlacement({
+      placement,
+      currentBounds: rect(2200, 100, 800, 600),
+      windowSize: ws,
+      displays,
+      primaryDisplayId: 1,
+    });
+    const bounds = expectReposition(onB);
+    // Now derive (relX, relY) from those bounds against B
+    const back = toProportional(bounds, displays[1]);
+    assert.strictEqual(Math.round(back.relX * 1000), 700);
+    assert.strictEqual(Math.round(back.relY * 1000), 300);
+  });
+});
+
+describe('spec regression: edge slide stays edge-anchored across live display change', () => {
+  it('4. slide on B-top, B is removed → re-anchors to A (primary) top', () => {
+    // Live display change: window had bounds on B at top edge; B is gone.
     const result = computePlacement(input({
       placement: { mode: 'edge', edge: 'top' },
-      currentBounds: rect(660, 0, 600, 200), // top of A
+      currentBounds: rect(2580, 0, 600, 200), // was top of B
       windowSize: { width: 600, height: 200 },
-      displays,
-      cursorPoint: pt(2880, 540), // user has moved to B
+      displays: fakeDisplays([displayA]),
+      primaryDisplayId: 1,
     }));
     const bounds = expectReposition(result);
-    assert.strictEqual(bounds.x, 2580); // top of B, X-centered
     assert.strictEqual(bounds.y, 0);
+    assert.strictEqual(bounds.x, 660); // X-centered on A
+  });
+});
+
+describe('spec regression: peek stays centered across live display change', () => {
+  it('5. peek on B center, B is removed → centered on A (primary)', () => {
+    const result = computePlacement(input({
+      placement: { mode: 'centered' },
+      currentBounds: rect(2480, 240, 800, 600), // was centered on B
+      displays: fakeDisplays([displayA]),
+      primaryDisplayId: 1,
+    }));
+    const bounds = expectReposition(result);
+    assert.strictEqual(bounds.x, 560);
+    assert.strictEqual(bounds.y, 240);
+  });
+});
+
+describe('spec regression: stranded-by-construction', () => {
+  it('8. no mode produces bounds outside any display, even with oversize windowSize', () => {
+    const displays = fakeDisplays([laptopOnly]);
+    const placements: Placement[] = [
+      { mode: 'centered' },
+      { mode: 'edge', edge: 'top' },
+      { mode: 'edge', edge: 'right' },
+      { mode: 'proportional', relX: 0.7, relY: 0.3 },
+      { mode: 'parent-centered', parentId: 1 },
+    ];
+    for (const placement of placements) {
+      const result = computePlacement({
+        placement,
+        currentBounds: rect(10, 10, 1, 1),
+        windowSize: { width: 99999, height: 99999 },
+        displays,
+        primaryDisplayId: 1,
+      });
+      const bounds = result.kind === 'reposition'
+        ? result.bounds
+        : rect(10, 10, 1, 1);
+      // Bounds must be entirely within laptopOnly's workArea
+      const wa = displays[0].workArea;
+      assert.ok(bounds.x >= wa.x, `${placement.mode}: x ${bounds.x} < ${wa.x}`);
+      assert.ok(bounds.y >= wa.y, `${placement.mode}: y ${bounds.y} < ${wa.y}`);
+      assert.ok(bounds.x + bounds.width  <= wa.x + wa.width,
+        `${placement.mode}: right exceeds workArea`);
+      assert.ok(bounds.y + bounds.height <= wa.y + wa.height,
+        `${placement.mode}: bottom exceeds workArea`);
+    }
   });
 });

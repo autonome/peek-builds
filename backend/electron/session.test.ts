@@ -151,20 +151,38 @@ function sanitizeParams(params: Record<string, unknown>): Record<string, unknown
 }
 
 /**
- * Mirror placement intent into legacy flat flags.
+ * Mirror placement intent into flat primitive fields.
  * Identical to session.ts mirrorPlacementIntent.
  */
 function mirrorPlacementIntent(
   params: Record<string, unknown>,
 ): Record<string, unknown> {
   const placement = params.placement as
-    | { mode?: string; edge?: string }
+    | { mode?: string; edge?: string; relX?: number; relY?: number }
     | undefined;
   const out: Record<string, unknown> = { ...params };
-  if (placement?.mode === 'centered' || placement?.mode === 'parent-centered') {
-    out.center = true;
-  } else if (placement?.mode === 'edge' && typeof placement.edge === 'string') {
-    out.screenEdge = placement.edge;
+  if (!placement?.mode) return out;
+  switch (placement.mode) {
+    case 'centered':
+      out.placementMode = 'centered';
+      out.center = true;
+      break;
+    case 'parent-centered':
+      out.placementMode = 'centered';
+      out.center = true;
+      break;
+    case 'edge':
+      if (typeof placement.edge === 'string') {
+        out.placementMode = 'edge';
+        out.placementEdge = placement.edge;
+        out.screenEdge = placement.edge;
+      }
+      break;
+    case 'proportional':
+      out.placementMode = 'proportional';
+      if (typeof placement.relX === 'number') out.placementRelX = placement.relX;
+      if (typeof placement.relY === 'number') out.placementRelY = placement.relY;
+      break;
   }
   return out;
 }
@@ -604,18 +622,32 @@ describe('Session Integration Tests', () => {
       assert.strictEqual(out.screenEdge, 'right');
     });
 
-    it('does not set flags for manual mode', () => {
-      const out = mirrorPlacementIntent({ placement: { mode: 'manual' } });
+    it('mirrors proportional mode to placementMode + relX/relY (no legacy flag)', () => {
+      const out = mirrorPlacementIntent({
+        placement: { mode: 'proportional', relX: 0.95, relY: 0.05 },
+      });
+      assert.strictEqual(out.placementMode, 'proportional');
+      assert.strictEqual(out.placementRelX, 0.95);
+      assert.strictEqual(out.placementRelY, 0.05);
+      // Proportional has no legacy primitive equivalent; window-open
+      // re-derives proportional from saved x/y on restore.
       assert.strictEqual(out.center, undefined);
       assert.strictEqual(out.screenEdge, undefined);
     });
 
-    it('does not set flags for cursor-display-fallback mode', () => {
+    it('writes placementMode for centered (alongside legacy center flag)', () => {
+      const out = mirrorPlacementIntent({ placement: { mode: 'centered' } });
+      assert.strictEqual(out.placementMode, 'centered');
+      assert.strictEqual(out.center, true);
+    });
+
+    it('writes placementMode + placementEdge for edge (alongside legacy screenEdge)', () => {
       const out = mirrorPlacementIntent({
-        placement: { mode: 'cursor-display-fallback' },
+        placement: { mode: 'edge', edge: 'top' },
       });
-      assert.strictEqual(out.center, undefined);
-      assert.strictEqual(out.screenEdge, undefined);
+      assert.strictEqual(out.placementMode, 'edge');
+      assert.strictEqual(out.placementEdge, 'top');
+      assert.strictEqual(out.screenEdge, 'top');
     });
 
     it('does not set flags when placement is missing', () => {

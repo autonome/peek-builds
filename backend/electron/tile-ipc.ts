@@ -31,7 +31,7 @@ import {
 } from './tile-launcher.js';
 import { registerTileIpc } from './tile-ipc-gate.js';
 import { parseManifestFile } from './tile-manifest.js';
-import { computePlacement } from './window-placement.js';
+import { computePlacement, toProportional, ownDisplay } from './window-placement.js';
 import { publish, subscribe, unsubscribe, getStats as getPubSubStats } from './pubsub.js';
 import { DEBUG, TILE_STRICT, isHeadless } from './config.js';
 import { publishCapabilityViolation } from './tile-violations.js';
@@ -3039,22 +3039,15 @@ export function registerTileIpcHandlers(): void {
       }
       const bounds = win.getBounds();
       // Route through `computePlacement` so the "center this window" command
-      // shares the same code path as automatic re-centering on display change.
-      // Use a synthetic cursorPoint at the window's current center so the
-      // chosen display is the one the window is already on (preserving the
-      // original `screen.getDisplayNearestPoint(<window center>)` semantics).
-      // If the window is stranded (<50% on any display), `computePlacement`
-      // will rescue to the cursor display — a more useful outcome than
-      // centering on a display the user can't see.
+      // shares the same code path as automatic re-centering on display
+      // change. The placement engine picks "own current display" from
+      // `currentBounds` directly — no synthetic cursor needed.
       const result = computePlacement({
         placement: { mode: 'centered' },
         currentBounds: bounds,
         windowSize: { width: bounds.width, height: bounds.height },
         displays: screen.getAllDisplays(),
-        cursorPoint: {
-          x: bounds.x + Math.round(bounds.width / 2),
-          y: bounds.y + Math.round(bounds.height / 2),
-        },
+        primaryDisplayId: screen.getPrimaryDisplay().id,
       });
       if (result.kind === 'reposition') {
         win.setBounds(result.bounds);
@@ -3083,23 +3076,21 @@ export function registerTileIpcHandlers(): void {
     try {
       const windows = BrowserWindow.getAllWindows();
       let centered = 0;
-      // Snapshot displays once outside the loop — they don't change between
-      // iterations and `screen.getAllDisplays()` is not free.
+      // Snapshot displays + primary id once outside the loop — they don't
+      // change between iterations and reading them is not free.
       const displays = screen.getAllDisplays();
+      const primaryDisplayId = screen.getPrimaryDisplay().id;
       for (const win of windows) {
         if (win.isDestroyed() || !win.isVisible()) continue;
         const bounds = win.getBounds();
-        // Same synthetic-cursor trick as `tile:window:center` so each window
-        // centers on its OWN current display rather than the user's cursor.
+        // Each window centers on its OWN current display (derived from
+        // `currentBounds` by the placement engine).
         const result = computePlacement({
           placement: { mode: 'centered' },
           currentBounds: bounds,
           windowSize: { width: bounds.width, height: bounds.height },
           displays,
-          cursorPoint: {
-            x: bounds.x + Math.round(bounds.width / 2),
-            y: bounds.y + Math.round(bounds.height / 2),
-          },
+          primaryDisplayId,
         });
         if (result.kind === 'reposition') {
           win.setBounds(result.bounds);
@@ -3714,6 +3705,18 @@ export function registerTileIpcHandlers(): void {
   // Set the position and/or size of the calling window. No `window`
   // capability required — a tile can always reposition its own window.
   // (Cannot target other windows through this channel.)
+  //
+  // Per the placement spec (docs/window-placement.md), every set-bounds
+  // call updates the registry's recorded `placement`:
+  //
+  //   - `proportional` (or absent): recompute (relX, relY) against the
+  //     window's current display, write back as the new intent. One write
+  //     covers move + resize uniformly.
+  //   - `centered` / `edge` / `parent-centered`: by-design modes; intent
+  //     is left untouched. Bounds will return to the projected position
+  //     on the next consume (display change, reuse). Slides are
+  //     edge-anchored by design; a stray drag does not promote them to
+  //     proportional.
   registerTileIpc('tile:window:set-bounds', { mode: 'handle' }, (event, args: {
     token: string;
     x?: number;
@@ -3728,12 +3731,34 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'Window not found' };
     }
     const current = win.getBounds();
-    win.setBounds({
+    const next: Electron.Rectangle = {
       x: args.x ?? current.x,
       y: args.y ?? current.y,
       width: args.width ?? current.width,
       height: args.height ?? current.height,
-    });
+    };
+    win.setBounds(next);
+
+    const info = getWindowInfo(win.id);
+    if (info) {
+      const prev = info.params.placement as { mode?: string } | undefined;
+      const isByDesign =
+        prev?.mode === 'centered' ||
+        prev?.mode === 'edge' ||
+        prev?.mode === 'parent-centered';
+      if (!isByDesign) {
+        const displays = screen.getAllDisplays();
+        const primaryId = screen.getPrimaryDisplay().id;
+        const target = ownDisplay(next, displays, primaryId);
+        const { relX, relY } = toProportional(next, target);
+        info.params.placement = { mode: 'proportional', relX, relY };
+        // Drop legacy mirrored flags so a subsequent session save+restore
+        // doesn't re-derive a non-proportional Placement from stale
+        // primitives.
+        delete info.params.center;
+        delete info.params.screenEdge;
+      }
+    }
     return { success: true };
   });
 

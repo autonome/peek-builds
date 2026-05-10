@@ -84,6 +84,8 @@ import { trackWindow } from './display-watcher.js';
 import {
   computePlacement,
   computeInitialBounds,
+  toProportional,
+  ownDisplay,
   type Placement,
 } from './window-placement.js';
 
@@ -514,13 +516,11 @@ const pendingWindowKeys = new Set<string>();
 
 /**
  * Apply a stored `Placement` to a reused window. Reads the placement
- * intent from the registry, snapshots displays + cursor + (optionally)
+ * intent from the registry, snapshots displays + primary id + (optionally)
  * parent bounds, calls `computePlacement`, and applies the result.
  *
- * Replaces the inline `isWindowAccessibleNow` + `repositionOnCursorDisplay`
- * helpers and the per-mode branch logic that used to live in the reuse
- * paths. Single source of truth for "where should this reused window go?"
- * is the pure module.
+ * Single source of truth for "where should this reused window go?" is
+ * the pure module — see docs/window-placement.md.
  */
 function applyPlacementOnReuse(
   win: BrowserWindow,
@@ -541,7 +541,7 @@ function applyPlacementOnReuse(
     currentBounds,
     windowSize: { width: currentBounds.width, height: currentBounds.height },
     displays: screen.getAllDisplays(),
-    cursorPoint: screen.getCursorScreenPoint(),
+    primaryDisplayId: screen.getPrimaryDisplay().id,
     parentBounds,
   });
   if (result.kind === 'reposition') {
@@ -837,14 +837,12 @@ export function registerWindowHandlers(): void {
       !INTERNAL_URLS.some(u => openerUrl === u) &&
       !INTERNAL_URL_PREFIXES.some(p => openerUrl.startsWith(p));
 
-    // Phase 3: derive `Placement` intent and use `computeInitialBounds`
-    // to fill in x/y when not explicitly supplied. The placement derivation
+    // Derive `Placement` intent from open-time options. The derivation
     // mirrors what's recorded on the registry below — keep these two
     // call sites in sync (they consult the same option flags).
     //
-    // Order of precedence (intent wins over coords):
-    //   screenEdge > center > parent w/ no explicit position
-    //                       > explicit x/y > cursor-display-fallback
+    // Order of precedence:
+    //   screenEdge > center > parent (no explicit x/y) > explicit x/y > none
     //
     // Slides emits `screenEdge` as 'Up'|'Down'|'Left'|'Right'; map both
     // spellings to 'top'|'bottom'|'left'|'right'.
@@ -858,6 +856,12 @@ export function registerWindowHandlers(): void {
     const callerProvidedY = options.y !== undefined && !Number.isNaN(parseInt(options.y));
     const callerProvidedXY = callerProvidedX && callerProvidedY;
 
+    // Snapshot displays + primary id once for both placement derivation
+    // and `computeInitialBounds`. Reading them fresh here is cheap and
+    // matches the spec: every consumer reads live OS state.
+    const liveDisplays = screen.getAllDisplays();
+    const livePrimaryId = screen.getPrimaryDisplay().id;
+
     let placement: Placement;
     if (mappedEdge) {
       placement = { mode: 'edge', edge: mappedEdge };
@@ -866,9 +870,20 @@ export function registerWindowHandlers(): void {
     } else if (isRealParent && !callerProvidedXY && options.centerOnParent !== false) {
       placement = { mode: 'parent-centered', parentId: openerWindow!.id };
     } else if (callerProvidedXY) {
-      placement = { mode: 'manual' };
+      // Convert explicit x/y into proportional intent against the display
+      // containing the proposed bounds' center. This survives display
+      // changes — top-right of one screen stays top-right on the next.
+      const x = parseInt(options.x);
+      const y = parseInt(options.y);
+      const w = (winOptions.width as number) || APP_DEF_WIDTH;
+      const h = (winOptions.height as number) || APP_DEF_HEIGHT;
+      const target = ownDisplay({ x, y, width: w, height: h }, liveDisplays, livePrimaryId);
+      const { relX, relY } = toProportional({ x, y, width: w, height: h }, target);
+      placement = { mode: 'proportional', relX, relY };
     } else {
-      placement = { mode: 'cursor-display-fallback' };
+      // No flags, no coords: visually centered on primary by default,
+      // and since it's proportional any later drag becomes sticky.
+      placement = { mode: 'proportional', relX: 0.5, relY: 0.5 };
     }
 
     // Fill in winOptions.x/y when not already explicitly supplied.
@@ -890,8 +905,8 @@ export function registerWindowHandlers(): void {
       const initial = computeInitialBounds(
         placement,
         { width: winW, height: winH },
-        screen.getAllDisplays(),
-        screen.getCursorScreenPoint(),
+        liveDisplays,
+        livePrimaryId,
         parentBounds,
       );
       winOptions.x = initial.x;
@@ -2220,21 +2235,24 @@ export function registerWindowHandlers(): void {
         }, 100);
       }
 
-      // Maximize window if requested (fills screen without OS fullscreen)
-      // Use explicit bounds instead of win.maximize() because panel-type windows
-      // on macOS don't respond to maximize() properly. Route through
-      // `computeInitialBounds` with 'centered' + an oversize hint so the
-      // workArea-clamp produces a fill-the-screen rectangle on the cursor
-      // display — keeps every position decision in `ipc.ts` flowing
-      // through the pure module.
+      // Maximize window if requested (fills screen without OS fullscreen).
+      // Use explicit bounds instead of win.maximize() because panel-type
+      // windows on macOS don't respond to maximize() properly. Route through
+      // `computePlacement` against the window's own current display + an
+      // oversize hint so the workArea-clamp produces a fill-the-screen
+      // rectangle on whichever display the just-opened window actually sits
+      // on — keeps every position decision flowing through the pure module.
       if (options.maximize === true && !isHeadless()) {
-        const filled = computeInitialBounds(
-          { mode: 'centered' },
-          { width: Number.MAX_SAFE_INTEGER, height: Number.MAX_SAFE_INTEGER },
-          screen.getAllDisplays(),
-          screen.getCursorScreenPoint(),
-        );
-        win.setBounds(filled);
+        const result = computePlacement({
+          placement: { mode: 'centered' },
+          currentBounds: win.getBounds(),
+          windowSize: { width: Number.MAX_SAFE_INTEGER, height: Number.MAX_SAFE_INTEGER },
+          displays: screen.getAllDisplays(),
+          primaryDisplayId: screen.getPrimaryDisplay().id,
+        });
+        if (result.kind === 'reposition') {
+          win.setBounds(result.bounds);
+        }
       }
 
       // Handle overlay mode: hide other windows after this one is ready

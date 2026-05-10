@@ -54,26 +54,52 @@ export interface SessionSnapshot {
 }
 
 /**
- * Mirror a Placement intent into the legacy flat flags (`center` / `screenEdge`)
- * that survive `sanitizeParams` and the IPC boundary. The window-open handler
- * re-derives `Placement` from these flags on restore, so 'centered' / 'edge'
- * windows re-position on the current display layout instead of being pinned
- * to stale absolute coordinates.
+ * Mirror a Placement intent into flat primitive fields that survive
+ * `sanitizeParams` and the IPC boundary, so the window-open handler can
+ * re-derive `Placement` on restore against the current display layout
+ * instead of pinning to stale absolute coordinates.
  *
- * 'manual' and 'cursor-display-fallback' modes intentionally produce no flag —
- * the saved x/y (or its absence) drives the restore behavior.
+ * Persistence shape (per docs/window-placement.md §"Persistence"):
+ *   - placementMode: 'centered' | 'edge' | 'proportional' | 'parent-centered'
+ *   - placementEdge: 'top' | 'bottom' | 'left' | 'right'  (mode='edge')
+ *   - placementRelX, placementRelY: numbers in [0, 1]    (mode='proportional')
+ *
+ * Legacy `center: true` / `screenEdge` flags are also written for backward
+ * compatibility with snapshots restored by older code; new restores
+ * prefer the typed `placementMode` field. `parent-centered` is mirrored as
+ * `centered` since `parentId` doesn't survive a restart anyway.
  */
 export function mirrorPlacementIntent(
   params: Record<string, unknown>,
 ): Record<string, unknown> {
   const placement = params.placement as
-    | { mode?: string; edge?: string }
+    | { mode?: string; edge?: string; relX?: number; relY?: number }
     | undefined;
   const out: Record<string, unknown> = { ...params };
-  if (placement?.mode === 'centered' || placement?.mode === 'parent-centered') {
-    out.center = true;
-  } else if (placement?.mode === 'edge' && typeof placement.edge === 'string') {
-    out.screenEdge = placement.edge;
+  if (!placement?.mode) return out;
+
+  switch (placement.mode) {
+    case 'centered':
+      out.placementMode = 'centered';
+      out.center = true;
+      break;
+    case 'parent-centered':
+      // parentId can't survive restart; degrade to centered.
+      out.placementMode = 'centered';
+      out.center = true;
+      break;
+    case 'edge':
+      if (typeof placement.edge === 'string') {
+        out.placementMode = 'edge';
+        out.placementEdge = placement.edge;
+        out.screenEdge = placement.edge;
+      }
+      break;
+    case 'proportional':
+      out.placementMode = 'proportional';
+      if (typeof placement.relX === 'number') out.placementRelX = placement.relX;
+      if (typeof placement.relY === 'number') out.placementRelY = placement.relY;
+      break;
   }
   return out;
 }
