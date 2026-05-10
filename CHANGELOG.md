@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: 4272e346b04e -->
+<!-- last-bumped: 2458945f873a -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -19,7 +19,21 @@ See TODO.md for pending items, WIP.md for in-progress items.
 
 ## Week of 2026-05-04 (W19)
 
+### 2026-05-10
+
+- architecture: canonical window-placement spec
+- window-placement: proportional mode, primary-anchored, no cursor
+
+### 2026-05-09
+
+- session: preserve screenEdge across collapseToPrimaryDisplay
+
 ### 2026-05-08
+
+- mobile: gate dev visuals on Development profile, override system dark mode
+- hooks: widen pre-bash guard to all main bookmark mutations and op rewinds
+- mobile: stateless iOS build pipeline via frontendDist swap
+- hooks: require jj new before editing finished commits
 
 - entities: JSON import uses `with` not deprecated `assert`
 - log: always-on renderer log via preload + per-profile file writer

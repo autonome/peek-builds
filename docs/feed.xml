@@ -4,9 +4,58 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Fri, 08 May 2026 14:50:04 GMT</lastBuildDate>
+    <lastBuildDate>Sun, 10 May 2026 16:05:09 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>architecture: canonical window-placement spec</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-10</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-10:2ffabf325cd1</guid>
+      <pubDate>Sun, 10 May 2026 12:00:00 GMT</pubDate>
+      <description>architecture: canonical window-placement spec</description>
+    </item>
+    <item>
+      <title>window-placement: proportional mode, primary-anchored, no cursor</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-10</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-10:718f0db6902b</guid>
+      <pubDate>Sun, 10 May 2026 12:00:00 GMT</pubDate>
+      <description>window-placement: proportional mode, primary-anchored, no cursor</description>
+    </item>
+    <item>
+      <title>session: preserve screenEdge across collapseToPrimaryDisplay</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-09</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-09:268be7f25dcc</guid>
+      <pubDate>Sat, 09 May 2026 12:00:00 GMT</pubDate>
+      <description>session: preserve screenEdge across collapseToPrimaryDisplay</description>
+    </item>
+    <item>
+      <title>mobile: gate dev visuals on Development profile, override system dark mode</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:078b1728307c</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>mobile: gate dev visuals on Development profile, override system dark mode</description>
+    </item>
+    <item>
+      <title>hooks: widen pre-bash guard to all main bookmark mutations and op rewinds</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:fe9b32dfa122</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>hooks: widen pre-bash guard to all main bookmark mutations and op rewinds</description>
+    </item>
+    <item>
+      <title>mobile: stateless iOS build pipeline via frontendDist swap</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:9e48c7094a9b</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>mobile: stateless iOS build pipeline via frontendDist swap</description>
+    </item>
+    <item>
+      <title>hooks: require jj new before editing finished commits</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:e2e198630621</guid>
+      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
+      <description>hooks: require jj new before editing finished commits</description>
+    </item>
     <item>
       <title>entities: JSON import uses with not deprecated assert</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
@@ -335,111 +384,6 @@
       <guid isPermaLink="false">urn:peek:changelog:2026-05-04:690ba71e48c6</guid>
       <pubDate>Mon, 04 May 2026 12:00:00 GMT</pubDate>
       <description>ios: declare ITSAppUsesNonExemptEncryption=false for both targets</description>
-    </item>
-    <item>
-      <title>hooks: block agent push and main-move via PreToolUse:Bash hook</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:b40258c9a330</guid>
-      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
-      <description>hooks: block agent push and main-move via PreToolUse:Bash hook</description>
-    </item>
-    <item>
-      <title>items: add event item type (foundations)</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:151a634a007b</guid>
-      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
-      <description>items: add event item type (foundations)</description>
-    </item>
-    <item>
-      <title>download: sanitize filenames + surface failures via notification</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:0e9d2d9c45f2</guid>
-      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
-      <description>download: sanitize filenames + surface failures via notification</description>
-    </item>
-    <item>
-      <title>datastore: backfill stuck &quot;Loading...&quot; titles to hostname on boot</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:95388a520515</guid>
-      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
-      <description>datastore: backfill stuck &quot;Loading...&quot; titles to hostname on boot</description>
-    </item>
-    <item>
-      <title>tags: seed itemTags Map entry on load failure too</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:76cc65b37260</guid>
-      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
-      <description>tags: seed itemTags Map entry on load failure too</description>
-    </item>
-    <item>
-      <title>tags: tags card detail view &apos;add tag&apos; becomes search/add — input filters Available Tags inline, Enter creates if no match</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:6114f61e6dbf</guid>
-      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
-      <description>tags: tags card detail view &apos;add tag&apos; becomes search/add — input filters Available Tags inline, Enter creates if no match</description>
-    </item>
-    <item>
-      <title>sync: surface sync errors in settings status with red indicator</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:a171db066842</guid>
-      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
-      <description>sync: surface sync errors in settings status with red indicator</description>
-    </item>
-    <item>
-      <title>tags: Tags sidebar hides zero-usage tags</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:ffdaeef5dc35</guid>
-      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
-      <description>tags: Tags sidebar hides zero-usage tags</description>
-    </item>
-    <item>
-      <title>windows: surface pin-hidden windows in the Windows switcher</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:6dfda64250c4</guid>
-      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
-      <description>windows: surface pin-hidden windows in the Windows switcher</description>
-    </item>
-    <item>
-      <title>page: preserve pre-maximize bounds across renderer maximize trip</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:4fbfebf3b9bc</guid>
-      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
-      <description>page: preserve pre-maximize bounds across renderer maximize trip</description>
-    </item>
-    <item>
-      <title>ios: screenshots from manual iOS run</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-03</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-03:c8227bb8e9d5</guid>
-      <pubDate>Sun, 03 May 2026 12:00:00 GMT</pubDate>
-      <description>ios: screenshots from manual iOS run</description>
-    </item>
-    <item>
-      <title>window-targeting: track tile-launched window focus + drop page-host&apos;s local Maximize cmd</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-02</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-02:d9704639ddb0</guid>
-      <pubDate>Sat, 02 May 2026 12:00:00 GMT</pubDate>
-      <description>window-targeting: track tile-launched window focus + drop page-host&apos;s local Maximize cmd</description>
-    </item>
-    <item>
-      <title>windows: split maximize toggle into maximize + unmaximize cmds</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-02</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-02:d1158744ad72</guid>
-      <pubDate>Sat, 02 May 2026 12:00:00 GMT</pubDate>
-      <description>windows: split maximize toggle into maximize + unmaximize cmds</description>
-    </item>
-    <item>
-      <title>hello-world: hello → hello world to match feature name</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-02</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-02:1ff70826149a</guid>
-      <pubDate>Sat, 02 May 2026 12:00:00 GMT</pubDate>
-      <description>hello-world: hello → hello world to match feature name</description>
-    </item>
-    <item>
-      <title>entities: fall back to URL hostname when pageMetadata.title is empty so URL items don&apos;t stay title-less</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-02</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-02:d7409952778c</guid>
-      <pubDate>Sat, 02 May 2026 12:00:00 GMT</pubDate>
-      <description>entities: fall back to URL hostname when pageMetadata.title is empty so URL items don&apos;t stay title-less</description>
     </item>
   </channel>
 </rss>
