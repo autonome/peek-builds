@@ -1,5 +1,11 @@
 # Window Placement Refactor — Sprint Plan
 
+> **Superseded.** The canonical spec is now
+> [docs/window-placement.md](./window-placement.md). The model in this doc
+> (`manual` + `cursor-display-fallback`) has been replaced by `proportional`,
+> and cursor-display heuristics have been removed in favor of OS-primary.
+> Retained as historical sprint planning.
+
 **Goal:** Eliminate ad-hoc display/positioning logic scattered across `ipc.ts`,
 `tile-ipc.ts`, `display-watcher.ts`, and `features/slides/background.js`.
 Replace with one pure module driven by a `Placement` intent recorded on the

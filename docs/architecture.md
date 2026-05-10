@@ -239,24 +239,31 @@ single transition entry plus a test.
 
 ## Window placement
 
-**Owns:** where every BrowserWindow lands when it's opened, reused, or
-when display topology changes.
-**Lives in:** [`backend/electron/window-placement.ts`](../backend/electron/window-placement.ts) — a pure module with no `screen.*` or `BrowserWindow.*` calls inside; the caller passes display state in.
-**Doc:** [docs/window-placement-refactor.md](./window-placement-refactor.md) (sprint plan and rationale)
+**Owns:** where every window lands when it's opened, reused, or when display
+topology changes. Core window-manager functionality, platform-agnostic by
+design (Electron today, Tauri to follow against the same contract).
 
-A `Placement` discriminated union (`centered`, `cursor-display-fallback`,
-`edge`, `parent-centered`, `manual`) captures the *intent* for each
-window. Intent is recorded once at window-open time on
-`windowRegistry.params.placement` and never re-derived from flag soup
-(`center: true`, explicit `x/y`, `useCanvas`, etc.). All consumers — the
-URL-reuse and keepLive-reuse paths in `ipc.ts`, the fresh-open fallback,
-the display-watcher second pass, and the tile open path in
-`tile-ipc.ts` — call the same `computePlacement(input)` and apply its
-`reposition` / `no-change` result. Stranded-rescue (<50% area on any
-display) is built in for every mode. Unit-tested with synthetic display
-layouts via a `fakeDisplays(...)` helper so display-switch regressions
-are catchable as single failing tests, no real multi-monitor hardware
-required.
+**Spec:** [docs/window-placement.md](./window-placement.md) is canonical.
+Read that first.
+
+**Lives in:** [`backend/electron/window-placement.ts`](../backend/electron/window-placement.ts) —
+a pure module with no `screen.*` or `BrowserWindow.*` calls inside; the
+caller passes display state in.
+
+**Historical:** [docs/window-placement-refactor.md](./window-placement-refactor.md) is
+the previous sprint's plan; superseded by the spec above (model has changed:
+`manual` and `cursor-display-fallback` are gone, `proportional` replaces them).
+
+The four modes — `centered`, `edge`, `proportional`, `parent-centered` —
+capture *intent* at window-open time. Bounds are always a derived projection
+of intent against live display state, never stored as authoritative truth.
+Every consumer (open, reuse, drag, display-change, restore) calls the same
+pure `project()`. Display add/remove events project synchronously (no
+debounce) so user gestures cannot race a deferred `setBounds`. Cursor
+position is never consulted — display selection is by current display +
+primary fallback, with primary read fresh from the OS per-call. Synthetic
+display layouts in unit tests catch display-switch regressions as single
+failing assertions, no real multi-monitor hardware required.
 
 ---
 
