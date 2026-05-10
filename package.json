@@ -140,6 +140,7 @@
     "packaged:log": "tail -f /tmp/packaged-debug.log",
     "test:packaged": "yarn kill:packaged; HEADLESS=1 PACKAGED=1 ./scripts/playwright-with-display.sh test tests/desktop/",
     "test:packaged:debug": "yarn kill:packaged; HEADLESS=1 PACKAGED=1 DEBUG=1 ./scripts/playwright-with-display.sh test tests/desktop/",
+    "test:default-browser:linux": "./scripts/timed.sh sh -c 'yarn build:electron:dist && ./scripts/smoke-default-browser.sh'",
     "//-- Testing --//": "",
     "desktop": "./scripts/timed.sh sh -c 'yarn check:native && yarn build && (NODE_ENV=test ELECTRON_RUN_AS_NODE=1 npx electron --test dist/backend/electron/*.test.js; NODE_ENV=test node --test tests/unit/*.test.js; HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test --project=desktop; HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test --project=desktop-serial --workers=1; HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test --project=components; HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test --project=editor)'",
     "test:unit": "./scripts/timed.sh sh -c 'yarn build && NODE_ENV=test ELECTRON_RUN_AS_NODE=1 npx electron --test dist/backend/electron/*.test.js && NODE_ENV=test node --test tests/unit/*.test.js'",

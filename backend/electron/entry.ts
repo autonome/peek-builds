@@ -114,6 +114,7 @@ import { createTrustedBuiltinGrant } from './tile-manifest.js';
 import { generateToken } from './tile-tokens.js';
 import { startCliSocketServer, stopCliSocketServer, isCliSocketRunning } from './cli-socket.js';
 import { ensureCliHelperShadow } from './cli-helper.js';
+import { ensureLinuxDesktopInstall } from './desktop-installer.js';
 import { initRendererLog } from './renderer-log.js';
 
 // Early diagnostic logging for URL handling (writes to /tmp/ to avoid userData path issues)
@@ -1073,6 +1074,14 @@ const onReady = async () => {
   // so binding to that absolute path keeps working across launches
   // (the AppImage mount path is ephemeral). No-op everywhere else.
   await ensureCliHelperShadow();
+
+  // Linux/AppImage desktop integration: install peek.desktop +
+  // hicolor icons under ~/.local/share/ so xdg-mime, the system
+  // "Default Applications" UI, and our own settings "Set as default
+  // HTTP handler" button can find the application. Required because
+  // AppImage's mount is ephemeral and never auto-installs into the
+  // user's XDG dirs. See backend/electron/desktop-installer.ts.
+  await ensureLinuxDesktopInstall();
 
   // Note: cli-socket startup happens in the prefs subscriber (below)
   // so the cliSocketEnabled toggle is honoured from the first publish.

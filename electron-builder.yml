@@ -117,6 +117,27 @@ win:
 linux:
   icon: assets/appicon.png
   category: Network
+  # Register Peek as a candidate handler for http/https URLs and HTML
+  # documents so the system "Default Applications" UI offers Peek and
+  # `xdg-mime default peek.desktop x-scheme-handler/http` works (which
+  # is what `app.setAsDefaultProtocolClient('http')` ultimately invokes
+  # on Linux). For AppImage builds, the .desktop file inside the bundle
+  # isn't installed system-wide; backend/electron/desktop-installer.ts
+  # shadow-installs to ~/.local/share/applications/ on every launch and
+  # keeps the same MimeType list. For deb/rpm (when re-enabled), the
+  # package installs the .desktop directly to /usr/share/applications/
+  # with these mime types pre-registered.
+  mimeTypes:
+    - x-scheme-handler/http
+    - x-scheme-handler/https
+    - x-scheme-handler/about
+    - x-scheme-handler/unknown
+    - text/html
+    - application/xhtml+xml
+  desktop:
+    entry:
+      Categories: Network;WebBrowser;
+      StartupWMClass: Peek
   target:
     # `dir` stays for fast iteration / smoke tests.
     - target: dir
