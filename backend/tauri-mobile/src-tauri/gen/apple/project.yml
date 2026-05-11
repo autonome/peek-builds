@@ -31,10 +31,6 @@ targets:
     sources:
       - path: Sources
       - path: Assets.xcassets
-      - path: Externals
-        excludes:
-          - "*/Release/*"
-          - "**/*.a"
       - path: peek-save_iOS
       - path: assets
         buildPhase: resources
@@ -57,7 +53,7 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 0.1.0
-        CFBundleVersion: "0.1.0"
+        CFBundleVersion: "1147"
     entitlements:
       path: peek-save_iOS/peek-save_iOS.entitlements
       properties:
@@ -109,7 +105,7 @@ targets:
         CFBundlePackageType: XPC!
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundleShortVersionString: 0.1.0
-        CFBundleVersion: "0.1.0"
+        CFBundleVersion: "1147"
         NSExtension:
           NSExtensionAttributes:
             NSExtensionActivationRule:
