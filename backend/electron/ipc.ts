@@ -1418,7 +1418,12 @@ export function registerWindowHandlers(): void {
         const popupGrant = createTrustedBuiltinGrant(PAGE_HOST_TILE_ID);
         const popupToken = generateToken(PAGE_HOST_TILE_ID, popupEntryId, popupGrant);
 
-        // Create the new BrowserWindow (page container) with fullscreen canvas
+        // Create the new BrowserWindow (page container) with fullscreen canvas.
+        // webPreferences explicitly enforce isolation policy: sandbox + context-
+        // isolation must be set so the entry.ts SECURITY chokepoint passes and
+        // so this popup is no weaker than the canonical createTileBrowserWindow
+        // path. (Previously these were unset and inherited Electron defaults,
+        // which left the popup unsandboxed.)
         const popupWin = new BrowserWindow({
           frame: false,
           width: 1024,
@@ -1429,6 +1434,9 @@ export function registerWindowHandlers(): void {
           transparent: true,
           webPreferences: {
             preload: getTilePreloadPath(),
+            sandbox: true,
+            contextIsolation: true,
+            nodeIntegration: false,
             additionalArguments: [
               `--tile-id=${PAGE_HOST_TILE_ID}`,
               `--tile-entry=${popupEntryId}`,

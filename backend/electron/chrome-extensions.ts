@@ -633,8 +633,13 @@ export function openChromeExtensionPage(
     webPreferences: {
       session: profileSession,
       // No preload — these are chrome extension pages, they use chrome.* APIs
+      // injected by Electron's built-in extension support. sandbox is
+      // explicit-true so the entry.ts SECURITY chokepoint sees a policy-
+      // compliant window (extension pages have their own integrity model
+      // via the extension manifest + the profile-session permissions).
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
     },
   });
 
@@ -688,7 +693,15 @@ export function openChromeExtensionPage(
       }
       return { action: 'deny' };
     }
-    return { action: 'allow' };
+    // Anything that isn't http(s) — chrome-extension://, data:, blob:,
+    // javascript:, etc. — is denied. Previously this fell through to
+    // `{ action: 'allow' }`, which let extension popups spawn raw
+    // unregistered BrowserWindows that sit outside Peek's tile + preload
+    // system entirely. If a legitimate use case for non-http schemes from
+    // extension popups emerges, route it through invokeWindowOpen above
+    // with explicit scheme handling rather than re-opening this hole.
+    console.warn(`[chrome-ext] popup ${windowKey} attempted window.open('${childUrl}') with non-http scheme — denied`);
+    return { action: 'deny' };
   });
 
   win.loadURL(entry.url).catch(error => {

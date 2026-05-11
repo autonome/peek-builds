@@ -257,6 +257,68 @@ try {
 // Also inject Proton Pass webauthn.js into http/https webviews for passkey support.
 // The script overrides navigator.credentials.create/get in the main world.
 app.on('web-contents-created', (_event, contents) => {
+  // ── SECURITY chokepoint ────────────────────────────────────────────
+  // Validate every new webContents matches Peek's isolation policy.
+  // nodeIntegration MUST be false; contextIsolation MUST be true. A raw
+  // BrowserWindow constructed with permissive prefs would otherwise sit
+  // outside the tile / preload / capability system entirely and expose
+  // full Electron privileges to whatever URL it loads.
+  //
+  // Skips: extension background pages (Electron's built-in extension
+  // support owns these), offscreen pages (chrome.offscreen polyfill,
+  // sandbox: false by design and not reachable from the renderer).
+  //
+  // Behavior: log loudly always; throw in dev/test so violations cannot
+  // be missed. Production stays up — crashing real users is worse than
+  // a logged warning — but the assert path makes regressions impossible
+  // to land via PR.
+  {
+    const type = contents.getType();
+    if (type !== 'backgroundPage' && type !== 'offscreen') {
+      try {
+        // `getLastWebPreferences` exists at runtime on Electron 40
+        // (returns null for some surfaces) but is not in the public
+        // typings; cast through unknown so the type check stays clean.
+        const getter = (contents as unknown as {
+          getLastWebPreferences?: () => Electron.WebPreferences | null;
+        }).getLastWebPreferences;
+        const prefs = typeof getter === 'function' ? getter.call(contents) : null;
+        if (prefs) {
+          const violations: string[] = [];
+          if (prefs.nodeIntegration === true) violations.push('nodeIntegration=true');
+          if (prefs.contextIsolation === false) violations.push('contextIsolation=false');
+          if (violations.length > 0) {
+            const url = contents.getURL() || '<no url yet>';
+            const msg = `[SECURITY] webContents ${contents.id} (type=${type}, url=${url}) violates isolation policy: ${violations.join(', ')}`;
+            console.error(msg);
+            if (process.env.NODE_ENV !== 'production') {
+              throw new Error(msg);
+            }
+          }
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith('[SECURITY]')) throw err;
+        // Inspecting prefs may fail on some surface types; swallow
+        // non-security errors so we don't break legitimate flows.
+      }
+    }
+  }
+
+  // Default-deny window-open chokepoint. Every top-level webContents and
+  // every webview guest gets this fallback handler installed at creation
+  // time. Per-window code (ipc.ts:openPopupInPageHost wiring, chrome-
+  // extensions popup handler) calls setWindowOpenHandler AFTER this
+  // listener runs and REPLACES the default — that's the intended
+  // precedence. Anything that doesn't install its own handler fails
+  // closed: window.open() from an unhandled context is denied instead
+  // of silently spawning a raw BrowserWindow.
+  if (contents.getType() === 'window' || contents.getType() === 'webview') {
+    contents.setWindowOpenHandler(({ url }) => {
+      console.warn(`[SECURITY] Default-deny chokepoint: window.open('${url}') from webContents ${contents.id} (type=${contents.getType()}) — install an explicit setWindowOpenHandler if this should be allowed`);
+      return { action: 'deny' };
+    });
+  }
+
   // Blanket-register the will-download handler on this webContents' session.
   // `will-download` fires on the session that owns the downloading contents,
   // which may be a webview-partition session (persist:<profileId>) distinct
