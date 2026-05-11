@@ -286,6 +286,71 @@ test.describe('IZUI Escape Protocol @desktop', () => {
     }
   });
 
+  test('regression: ESC on a page opened FROM a palette-role opener does NOT close it (full backend path)', async () => {
+    // Symptom of the bug this test guards: with Peek focused, ESC closes
+    // web pages the user opened via the cmd panel. Root cause was that
+    // `isRealParent` in window-open treated any opener that wasn't bg
+    // (peek://app/background.html) as a real content parent — including
+    // the cmd palette. URLs opened from a palette were then classified
+    // as `role: 'child-content'`, and `escPolicy('active', 'child-content')`
+    // returns `'close'`. The fix excludes openers whose role is one of
+    // {palette, utility, overlay, quick-view} from the real-parent test.
+    //
+    // This test exercises the full backend ESC chain via keyboard.press —
+    // unlike the renderer-only tests above, which call app.escape.trigger
+    // and don't reach the escPolicy code path.
+
+    // Open a palette-role window via bg. This stands in for the cmd panel
+    // (app/cmd/background.js opens itself with role: 'palette').
+    const paletteResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://groups/home.html', {
+        role: 'palette',
+        width: 400,
+        height: 300,
+      });
+    });
+    expect(paletteResult.success).toBe(true);
+    const paletteWindow = await app.getWindow('groups/home.html', 5000);
+    expect(paletteWindow).toBeTruthy();
+    await paletteWindow.waitForLoadState('domcontentloaded');
+
+    // From the palette window, open a content URL. Under the bug, the
+    // opened window would be tagged child-content; under the fix, content.
+    const contentResult = await paletteWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://search/home.html', {
+        width: 400,
+        height: 300,
+      });
+    });
+    expect(contentResult.success).toBe(true);
+    const contentWindow = await app.getWindow('search/home.html', 5000);
+    expect(contentWindow).toBeTruthy();
+    await contentWindow.waitForLoadState('domcontentloaded');
+
+    // Press ESC via keyboard — exercises the before-input-event →
+    // handleEscapeForWindow → escPolicy chain that the bug lives in.
+    await contentWindow.keyboard.press('Escape');
+    await new Promise(resolve => setTimeout(resolve, 600));
+
+    // Verify the content window survived. If isRealParent treated the
+    // palette as a real parent (the bug), this evaluate would throw/false.
+    const stillAlive = await contentWindow.evaluate(() => true).catch(() => false);
+    expect(stillAlive).toBe(true);
+
+    // Clean up
+    for (const id of [contentResult.id, paletteResult.id]) {
+      if (id) {
+        try {
+          await bgWindow.evaluate(async (wid: number) => {
+            return await (window as any).app.window.close(wid);
+          }, id);
+        } catch {
+          // Window may already be closed
+        }
+      }
+    }
+  });
+
   test('navigate mode: timeout does not close window', async () => {
 
     // Open a window with navigate escape mode but NO escape handler registered

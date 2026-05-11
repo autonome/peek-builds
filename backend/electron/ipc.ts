@@ -823,19 +823,36 @@ export function registerWindowHandlers(): void {
       }
     }
 
-    // Determine opener window and whether it's a real content parent
-    // Background/infrastructure windows (background.html) are not real parents —
-    // they're just the IPC sender. Only content windows count as parents for
-    // IZUI child-window semantics (ESC closes child, focuses parent).
+    // Determine opener window and whether it's a real content parent.
+    // Background/infrastructure windows (background.html) are not real
+    // parents — they're just the IPC sender. Launcher / overlay windows
+    // (cmd palette, Windows switcher, spaces overlay) are also not real
+    // parents: a URL opened FROM the cmd panel is a top-level content
+    // window in its own right, not a "child" of the palette. If these
+    // were treated as real parents, the opened page inherits
+    // `role: 'child-content'` and `escPolicy()` would close it on ESC —
+    // exactly the regression this guard prevents.
+    //
+    // NOTE: `utility` is excluded from the non-parent set on purpose —
+    // peek:// content tiles (groups/home, search/home, etc.) currently
+    // get role 'utility' from the cascade in window-open even though
+    // they're content from the user's perspective. Treating utility as
+    // a non-parent breaks the `parentWindowId is set when opened from a
+    // content window` test in izui-behavior.spec.ts. Long-term fix is
+    // to stop overloading 'utility'; short-term, only the clearly-
+    // ephemeral roles get excluded here.
     const openerWindow = BrowserWindow.fromWebContents(ev.sender);
-    // Internal/infrastructure windows are not real parents for IZUI child-window semantics.
-    // The test-fixture window (peek://test/) is also internal — it acts as bgWindow in tests.
     const INTERNAL_URLS = ['peek://app/background.html'];
     const INTERNAL_URL_PREFIXES = ['peek://test/'];
+    // Launcher / overlay roles that should never act as a real parent.
+    const NON_PARENT_ROLES = new Set(['palette', 'overlay']);
     const openerUrl = openerWindow && !openerWindow.isDestroyed() ? openerWindow.webContents?.getURL() ?? '' : '';
+    const openerInfo = openerWindow && !openerWindow.isDestroyed() ? getWindowInfo(openerWindow.id) : null;
+    const openerRole = (openerInfo?.params?.role as string | undefined) ?? undefined;
     const isRealParent = openerWindow && !openerWindow.isDestroyed() &&
       !INTERNAL_URLS.some(u => openerUrl === u) &&
-      !INTERNAL_URL_PREFIXES.some(p => openerUrl.startsWith(p));
+      !INTERNAL_URL_PREFIXES.some(p => openerUrl.startsWith(p)) &&
+      (openerRole === undefined || !NON_PARENT_ROLES.has(openerRole));
 
     // Derive `Placement` intent from open-time options. The derivation
     // mirrors what's recorded on the registry below — keep these two
