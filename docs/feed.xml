@@ -4,7 +4,7 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Tue, 12 May 2026 10:35:46 GMT</lastBuildDate>
+    <lastBuildDate>Tue, 12 May 2026 15:20:06 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
     <item>
@@ -41,6 +41,20 @@
       <guid isPermaLink="false">urn:peek:changelog:2026-05-12:d0fb22d4f3b7</guid>
       <pubDate>Tue, 12 May 2026 12:00:00 GMT</pubDate>
       <description>electron: chokepoint guard for raw BrowserWindow + close 3 known holes</description>
+    </item>
+    <item>
+      <title>electron: keep pre-max snapshot when WM trims maximized bounds</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-12</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-12:94a2e4a8ca5b</guid>
+      <pubDate>Tue, 12 May 2026 12:00:00 GMT</pubDate>
+      <description>electron: keep pre-max snapshot when WM trims maximized bounds</description>
+    </item>
+    <item>
+      <title>test: tighten quiesce fixture defaults (~20s off full run)</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-12</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-12:96aef0ae5cc4</guid>
+      <pubDate>Tue, 12 May 2026 12:00:00 GMT</pubDate>
+      <description>test: tighten quiesce fixture defaults (~20s off full run)</description>
     </item>
     <item>
       <title>fix: morning batch — Cmd+W, ESC switcher, packaging, role default</title>

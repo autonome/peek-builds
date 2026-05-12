@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: 8b83bd252664 -->
+<!-- last-bumped: 5e13fcaa7066 -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -27,6 +27,9 @@ See TODO.md for pending items, WIP.md for in-progress items.
 - izui: ESC closes user-opened web pages when opened from cmd palette
 - collab-notes: UX v1 — desktop + mobile surfaces, journeys, contacts dependency
 - electron: chokepoint guard for raw BrowserWindow + close 3 known holes
+
+- electron: keep pre-max snapshot when WM trims maximized bounds
+- test: tighten quiesce fixture defaults (~20s off full run)
 
 ### 2026-05-11
 
