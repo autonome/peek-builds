@@ -116,6 +116,7 @@ import { startCliSocketServer, stopCliSocketServer, isCliSocketRunning } from '.
 import { ensureCliHelperShadow } from './cli-helper.js';
 import { ensureLinuxDesktopInstall } from './desktop-installer.js';
 import { initRendererLog } from './renderer-log.js';
+import { initMainLog } from './main-log.js';
 
 // Early diagnostic logging for URL handling (writes to /tmp/ to avoid userData path issues)
 try {
@@ -627,6 +628,12 @@ if (!fs.existsSync(sessionDataPath)) {
 // configure Electron with these paths
 app.setPath('userData', profileDataPath);
 app.setPath('sessionData', sessionDataPath);
+
+// Always-on main-process log: mirrors every console.{log,info,warn,error,debug}
+// from this process to <userData>/logs/main.log. Initialised here, immediately
+// after app.setPath('userData', ...) resolves the per-profile dir, so as many
+// startup log lines as possible land in the file. Failures are swallowed.
+initMainLog();
 
 // ***** Features / Strings *****
 
