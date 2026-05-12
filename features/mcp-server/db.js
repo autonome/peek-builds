@@ -53,6 +53,64 @@ export function openDb(path) {
   db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
   db.exec(`PRAGMA journal_mode = WAL`);
   db.exec(`PRAGMA foreign_keys = ON`);
+  ensureTagsUniqueIndex();
+}
+
+/**
+ * Ensure tags.name has a UNIQUE index (idx_tags_name_unique).
+ *
+ * Mirrors migrateTagsUniqueIndex() in backend/electron/datastore.ts.
+ * Running here means the MCP server self-heals even before the Electron app
+ * is rebuilt and restarted with the new DDL. Idempotent: no-op if index exists.
+ */
+function ensureTagsUniqueIndex() {
+  const existing = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_tags_name_unique'`
+  ).get();
+  if (existing) return;
+
+  // Deduplicate tags.name before creating the UNIQUE index.
+  // Canonical row = lowest id (earliest created). Duplicate item_tags refs are
+  // rewritten to the canonical row; the duplicate tag rows are then deleted.
+  const dupeGroups = db.prepare(`
+    SELECT name, MIN(id) AS canonicalId
+    FROM tags
+    GROUP BY name
+    HAVING COUNT(*) > 1
+  `).all();
+
+  if (dupeGroups.length > 0) {
+    db.exec('BEGIN');
+    try {
+      for (const { name, canonicalId } of dupeGroups) {
+        const dupeRows = db.prepare(
+          `SELECT id FROM tags WHERE name = ? AND id != ?`
+        ).all(name, canonicalId);
+
+        for (const { id: dupeId } of dupeRows) {
+          // Remove item_tags rows that would collide when we repoint
+          // (item already has both the dupe and canonical tag).
+          db.prepare(`
+            DELETE FROM item_tags
+            WHERE tagId = ?
+            AND itemId IN (SELECT itemId FROM item_tags WHERE tagId = ?)
+          `).run(dupeId, canonicalId);
+
+          // Repoint remaining refs to the canonical row.
+          db.prepare(`UPDATE item_tags SET tagId = ? WHERE tagId = ?`).run(canonicalId, dupeId);
+
+          // Delete the duplicate tag row.
+          db.prepare(`DELETE FROM tags WHERE id = ?`).run(dupeId);
+        }
+      }
+      db.exec('COMMIT');
+    } catch (err) {
+      try { db.exec('ROLLBACK'); } catch { /* ignore */ }
+      throw err;
+    }
+  }
+
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_name_unique ON tags(name)`);
 }
 
 export function closeDb() {
