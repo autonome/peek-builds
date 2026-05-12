@@ -24,6 +24,7 @@ When the user invokes /test:
 - Always use `yarn test:electron:bg` for Playwright tests (logs to `/tmp/test-electron.log`)
 - For electron test results, read `/tmp/test-electron.log` with the Read tool
 - Use `yarn test:electron:x` if user wants stop-on-first-failure mode
+- `yarn test:electron` and `test:electron:bg` run the **packaged** build (after `electron-builder --dir`, which adds ~20s). The packaging step catches asar/path/inclusion bugs that source-only runs miss. Source-only escape hatch: `yarn test:electron:source`. Single-test fast iteration: `yarn test:grep "<pattern>"` (source).
 
 ## Usage
 
