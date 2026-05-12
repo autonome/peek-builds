@@ -17,6 +17,32 @@ let db = null;
 
 const BUSY_TIMEOUT_MS = 5000;
 
+// --- Policy helpers ---
+// These mirror behavior in backend/electron/datastore.ts. Duplicating them
+// here is a known drift hazard (see Peek task 14efdd97). Column-set parity
+// with schema/v1.json is asserted by features/mcp-server/schema-drift.test.js;
+// formula parity by the policy tests in server.test.js.
+
+// Tag frecency: matches datastore.ts `calculateFrecency` (line 510).
+function calculateTagFrecency(frequency, lastUsed) {
+  const daysSinceUse = (Date.now() - lastUsed) / (1000 * 60 * 60 * 24);
+  const decayFactor = 1 / (1 + daysSinceUse / 7);
+  return Math.round(frequency * 10 * decayFactor);
+}
+
+// Tag slug: matches datastore.ts `getOrCreateTag` / `renameTag` (lines 2908, 2942).
+function slugifyTagName(name) {
+  return name.toLowerCase().trim().replace(/\s+/g, '-');
+}
+
+// Hashtag extraction: matches datastore.ts `syncContentHashtags` (line 3206).
+function extractHashtags(content) {
+  if (!content) return [];
+  const matches = content.match(/(?:^|\s)#([^\s#]+)/g);
+  if (!matches) return [];
+  return [...new Set(matches.map(m => m.trim().slice(1)))];
+}
+
 export function openDb(path) {
   if (!existsSync(path)) {
     throw new Error(`Database not found: ${path}`);
@@ -163,7 +189,13 @@ export function createItem({ type, url, title = '', content = '', metadata = {},
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
     `).run(id, type, itemContent, title, domain, metaStr, now, now);
 
-    for (const tagName of tags) {
+    // Mirror datastore.ts `syncContentHashtags`: for text items, treat
+    // inline #hashtags as tags so the item is discoverable the same way
+    // it would be if the user had created it through the app.
+    const autoTags = type === 'text' ? extractHashtags(itemContent) : [];
+    const allTags = [...new Set([...tags, ...autoTags])];
+
+    for (const tagName of allTags) {
       tagItemInTx(id, tagName, now);
     }
   });
@@ -218,16 +250,27 @@ function tagItemInTx(itemId, tagName, now) {
   const d = requireDb();
   // ON CONFLICT closes the read-then-insert race two agents otherwise hit
   // when both create the same new tag at the same instant.
+  // slug + frecencyScore match datastore.ts policy so MCP-created tags
+  // behave identically in the app's frecency-ordered surfaces.
+  const slug = slugifyTagName(tagName);
+  const initialFrecency = calculateTagFrecency(1, now);
   d.prepare(`
-    INSERT INTO tags (id, name, frequency, lastUsed, createdAt, updatedAt)
-    VALUES (?, ?, 1, ?, ?, ?)
+    INSERT INTO tags (id, name, slug, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
+    VALUES (?, ?, ?, 1, ?, ?, ?, ?)
     ON CONFLICT(name) DO UPDATE SET
       frequency = frequency + 1,
       lastUsed = excluded.lastUsed,
+      frecencyScore = ?,
       updatedAt = excluded.updatedAt
-  `).run(randomUUID(), tagName, now, now, now);
+  `).run(randomUUID(), tagName, slug, now, initialFrecency, now, now, initialFrecency);
 
-  const tag = d.prepare(`SELECT id FROM tags WHERE name = ?`).get(tagName);
+  // The frecencyScore in the ON CONFLICT branch above was computed assuming
+  // frequency=1; for the increment path we need to recompute from the new
+  // (post-increment) frequency. One extra round-trip, but parity matters.
+  const tag = d.prepare(`SELECT id, frequency FROM tags WHERE name = ?`).get(tagName);
+  d.prepare(`UPDATE tags SET frecencyScore = ? WHERE id = ?`)
+    .run(calculateTagFrecency(tag.frequency, now), tag.id);
+
   d.prepare(`
     INSERT OR IGNORE INTO item_tags (id, itemId, tagId, createdAt)
     VALUES (?, ?, ?, ?)

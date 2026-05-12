@@ -487,4 +487,69 @@ describe('MCP Server', () => {
       assert.equal(resp.error.code, -32601);
     });
   });
+
+  // Parity tests: lock in MCP-side behavior that matches policy in
+  // backend/electron/datastore.ts. If datastore.ts changes the formulas
+  // or rules, these tests will keep passing while the app diverges —
+  // they're a lower bar than true integration. The schema-drift test
+  // (schema-drift.test.js) covers the structural side.
+  describe('policy parity with datastore.ts', () => {
+    it('sets slug on new tags (lowercase, hyphens for whitespace)', async () => {
+      await client.callTool('tag_item', { itemId: 'item-1', tagName: 'Big Project' });
+      // Inspect the raw row — list_tags doesn't expose slug.
+      const dbInspect = execSync(`sqlite3 -json "${client.dbPath}"`, {
+        input: `SELECT name, slug FROM tags WHERE name = 'Big Project';`,
+        encoding: 'utf-8',
+      });
+      const rows = JSON.parse(dbInspect.trim());
+      assert.equal(rows[0].slug, 'big-project');
+    });
+
+    it('writes non-zero frecencyScore when tagging', async () => {
+      await client.callTool('tag_item', { itemId: 'item-1', tagName: 'fresh-tag' });
+      const dbInspect = execSync(`sqlite3 -json "${client.dbPath}"`, {
+        input: `SELECT frequency, frecencyScore FROM tags WHERE name = 'fresh-tag';`,
+        encoding: 'utf-8',
+      });
+      const rows = JSON.parse(dbInspect.trim());
+      // calculateTagFrecency(1, now) with daysSinceUse≈0 ≈ 10 * 1 = 10
+      assert.equal(rows[0].frequency, 1);
+      assert.equal(rows[0].frecencyScore, 10);
+    });
+
+    it('bumps frecencyScore on subsequent tag uses', async () => {
+      await client.callTool('tag_item', { itemId: 'item-1', tagName: 'reuse-tag' });
+      await client.callTool('tag_item', { itemId: 'item-3', tagName: 'reuse-tag' });
+      const dbInspect = execSync(`sqlite3 -json "${client.dbPath}"`, {
+        input: `SELECT frequency, frecencyScore FROM tags WHERE name = 'reuse-tag';`,
+        encoding: 'utf-8',
+      });
+      const rows = JSON.parse(dbInspect.trim());
+      assert.equal(rows[0].frequency, 2);
+      assert.equal(rows[0].frecencyScore, 20);
+    });
+
+    it('auto-extracts #hashtags from text item content', async () => {
+      const item = await client.callTool('create_item', {
+        type: 'text',
+        title: 'Note',
+        content: 'meeting with #alice about the #project',
+      });
+      assert.ok(item.tags.includes('alice'));
+      assert.ok(item.tags.includes('project'));
+    });
+
+    it('does not extract hashtags from url-type items', async () => {
+      const item = await client.callTool('create_item', {
+        type: 'url',
+        url: 'https://example.com/#fragment',
+        title: 'Page',
+      });
+      // The URL fragment is `fragment` — would be picked up by the
+      // hashtag regex on text. For url-type, content is the URL and
+      // we deliberately skip extraction (matches datastore.ts which
+      // only calls syncContentHashtags on text items).
+      assert.ok(!item.tags.includes('fragment'));
+    });
+  });
 });
