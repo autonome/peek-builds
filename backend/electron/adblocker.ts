@@ -16,8 +16,7 @@ import { ElectronBlocker, Request } from '@ghostery/adblocker-electron';
 import fetch from 'cross-fetch';
 
 import { getProfileSession } from './session-partition.js';
-
-const DEBUG = !!process.env.DEBUG;
+import { DEBUG } from './config.js';
 
 // Module state
 let blocker: ElectronBlocker | null = null;

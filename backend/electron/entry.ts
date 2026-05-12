@@ -117,6 +117,7 @@ import { ensureCliHelperShadow } from './cli-helper.js';
 import { ensureLinuxDesktopInstall } from './desktop-installer.js';
 import { initRendererLog } from './renderer-log.js';
 import { initMainLog } from './main-log.js';
+import { DEBUG } from './config.js';
 
 // Early diagnostic logging for URL handling (writes to /tmp/ to avoid userData path issues)
 try {
@@ -136,8 +137,6 @@ unhandled({
 
 // Get the root directory - app.getAppPath() works in both dev and packaged modes
 const ROOT_DIR = app.getAppPath();
-
-const DEBUG = !!process.env.DEBUG;
 
 // Expose test utilities on global for Playwright evaluateMain access
 (globalThis as any).__peek_test = {

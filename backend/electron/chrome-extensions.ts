@@ -20,8 +20,7 @@ import { getProfileSession } from './session-partition.js';
 import { registerAll } from './chrome-api-polyfills/index.js';
 import { buildOptionsCommandName, computeUiEntries } from './chrome-extensions-helpers.js';
 import { invokeWindowOpen } from './ipc.js';
-
-const DEBUG = !!process.env.DEBUG;
+import { DEBUG } from './config.js';
 
 /**
  * Chrome extension manifest.json structure (MV3)

@@ -24,10 +24,8 @@
 
 import { BrowserWindow, screen } from 'electron';
 import { getWindowInfo } from './main.js';
-import { WEB_CORE_ADDRESS } from './config.js';
+import { DEBUG, WEB_CORE_ADDRESS } from './config.js';
 import { computePlacement, type Placement } from './window-placement.js';
-
-const DEBUG = !!process.env.DEBUG;
 
 /** Coalesce metrics-changed events. Add/remove are synchronous. */
 let _metricsDebounceTimer: ReturnType<typeof setTimeout> | null = null;

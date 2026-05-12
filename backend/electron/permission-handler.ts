@@ -39,8 +39,7 @@ import {
 } from './permission-policy.js';
 import { getDb } from './datastore.js';
 import { getDecision, setDecision } from './permission-store.js';
-
-const DEBUG = !!process.env.DEBUG;
+import { DEBUG } from './config.js';
 
 interface PendingRequest {
   callback: (granted: boolean) => void;

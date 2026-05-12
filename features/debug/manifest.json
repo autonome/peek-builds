@@ -1,0 +1,65 @@
+{
+  "manifestVersion": 3,
+  "id": "debug",
+  "shortname": "debug",
+  "name": "Debug",
+  "description": "Runtime toggles for verbose logging and DevTools on new windows",
+  "version": "1.0.0",
+  "builtin": true,
+  "tiles": [
+    {
+      "id": "background",
+      "url": "background.html",
+      "lazy": true,
+      "lazyEvents": [
+        "cmd:execute:peek debug",
+        "cmd:execute:peek devtools"
+      ]
+    }
+  ],
+  "capabilities": {
+    "pubsub": {
+      "scopes": ["global", "system"],
+      "topics": [
+        "cmd:register",
+        "cmd:execute:peek debug",
+        "cmd:execute:peek devtools",
+        "peek:debug:changed",
+        "debug:settings-changed",
+        "ext:ready",
+        "app:shutdown"
+      ]
+    },
+    "commands": true,
+    "settings": true
+  },
+  "commands": [
+    {
+      "name": "peek debug",
+      "description": "Toggle verbose logging (writes to <userData>/logs/main.log + renderer.log). With no argument, prints current state.",
+      "action": { "type": "execute" },
+      "params": [
+        {
+          "name": "state",
+          "type": "string",
+          "required": false,
+          "description": "on | off (omit to show current state)"
+        }
+      ]
+    },
+    {
+      "name": "peek devtools",
+      "description": "Toggle DevTools availability on newly-opened windows. Existing windows are unaffected. With no argument, prints current state.",
+      "action": { "type": "execute" },
+      "params": [
+        {
+          "name": "state",
+          "type": "string",
+          "required": false,
+          "description": "on | off (omit to show current state)"
+        }
+      ]
+    }
+  ],
+  "settingsSchema": "./settings-schema.json"
+}

@@ -2373,6 +2373,39 @@ function buildAPI(): Record<string, unknown> {
     },
   };
 
+  // ── Debug flags (trustedBuiltin only) ─────────────────────────────────
+  //
+  // Read or flip the runtime debug flags (verbose logging + devtools for
+  // new windows). Used by the features/debug cmd-palette tile and the
+  // Settings UI "Debug" section. Changes are broadcast to all subscribers
+  // via the `peek:debug:changed` pubsub topic.
+  //
+  // Named `debugFlags` rather than `debug` because 33+ feature files use
+  // `const debug = api.debug;` as a no-op (`api.debug` has never been
+  // wired — they silently resolve to undefined). Naming this surface
+  // `debugFlags` keeps those sites inert; the namespace is reserved for
+  // a future cleanup that wires a renderer-side verbose flag.
+  api.debugFlags = {
+    /** Read both flags. Returns { success: true, state: { verbose, devtools } }. */
+    get: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.debugFlags requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:debug:get', { token: tileToken });
+    },
+    /**
+     * Flip one or both flags. Pass only the keys you want to change;
+     * omitted keys are unchanged. Idempotent on the main side: setting a
+     * flag to its current value is a no-op and skips the broadcast.
+     */
+    set: (state: { verbose?: boolean; devtools?: boolean }) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.debugFlags requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:debug:set', { token: tileToken, ...state });
+    },
+  };
+
   return api;
 }
 

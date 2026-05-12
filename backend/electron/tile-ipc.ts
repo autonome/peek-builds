@@ -34,6 +34,12 @@ import { parseManifestFile } from './tile-manifest.js';
 import { computePlacement, toProportional, ownDisplay } from './window-placement.js';
 import { publish, subscribe, unsubscribe, getStats as getPubSubStats } from './pubsub.js';
 import { DEBUG, TILE_STRICT, isHeadless } from './config.js';
+import {
+  setDebug,
+  setDevTools,
+  getDebugFlags,
+  onDebugFlagsChange,
+} from './debug-flag.js';
 import { publishCapabilityViolation } from './tile-violations.js';
 import { getFeatureRegistry } from './feature-startup.js';
 import { getAtprotoSource } from './feature-startup.js';
@@ -6788,6 +6794,52 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'trustedBuiltin required for tile:session:reopen-last-closed' };
     }
     return reopenLastClosedWindow();
+  });
+
+  // ── tile:debug:get / tile:debug:set ─────────────────────────────────
+  //
+  // Read and mutate the runtime debug flags (verbose logging + devtools
+  // for new windows). Persistence is wired in main.ts via
+  // installDebugFlagsPersistence; this handler only updates in-process
+  // state. The change listener registered below broadcasts the new state
+  // to all subscribers as `peek:debug:changed`.
+  //
+  // trustedBuiltin only — the toggles are developer tools, not user-
+  // exposed surface. The Settings UI and the features/debug cmd-palette
+  // tile both run with trustedBuiltin grants.
+
+  registerTileIpc('tile:debug:get', { mode: 'handle' }, (event, args: { token: string }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'debug', 'tile:debug:get', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:debug:get' };
+    }
+    return { success: true, state: getDebugFlags() };
+  });
+
+  registerTileIpc('tile:debug:set', { mode: 'handle' }, (event, args: {
+    token: string;
+    verbose?: boolean;
+    devtools?: boolean;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'debug', 'tile:debug:set', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:debug:set' };
+    }
+    if (typeof args.verbose === 'boolean') setDebug(args.verbose);
+    if (typeof args.devtools === 'boolean') setDevTools(args.devtools);
+    return { success: true, state: getDebugFlags() };
+  });
+
+  // Broadcast debug-flag changes so subscribers (Settings UI, the debug
+  // cmd-palette tile, anything else interested) re-render without polling.
+  // Listener is idempotent at the debug-flag layer — only real flips fire
+  // it — so this isn't a write-amp risk.
+  onDebugFlagsChange((state) => {
+    publish('system', 'peek:debug:changed', state);
   });
 
   DEBUG && console.log('[tile-ipc] All tile IPC handlers registered');

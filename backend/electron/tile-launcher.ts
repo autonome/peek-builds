@@ -64,6 +64,7 @@ import {
 } from './tile-tokens.js';
 import { publish, getSystemAddress, unsubscribeAll } from './pubsub.js';
 import { DEBUG, getTilePreloadPath } from './config.js';
+import { isDevToolsEnabled } from './debug-flag.js';
 import { loadSchemaDefaults } from './tile-settings-defaults.js';
 import { getTilePath } from './protocol.js';
 import * as tileLifecycle from './tile-lifecycle.js';
@@ -313,6 +314,11 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
       nodeIntegration: false,
       session: _getProfileSession?.(),
       preload: preloadPath,
+      // Read at window-creation time — Electron does not allow flipping
+      // devTools on an existing window, so the flag captures whatever the
+      // user's "Debug → devtools" toggle is set to right now. Off by
+      // default; flipping the toggle affects subsequent window opens.
+      devTools: isDevToolsEnabled(),
       additionalArguments: [
         `--tile-id=${tileId}`,
         `--tile-entry=${entryId}`,

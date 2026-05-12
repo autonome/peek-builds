@@ -22,9 +22,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { registerProtocolOnSession } from './protocol.js';
 import { installPermissionHandler } from './permission-handler.js';
-import { isTestProfile } from './config.js';
-
-const DEBUG = !!process.env.DEBUG;
+import { DEBUG, isTestProfile } from './config.js';
 
 // Module state
 let currentProfileId: string | null = null;

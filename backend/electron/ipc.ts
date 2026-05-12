@@ -61,6 +61,7 @@ import {
 } from './config.js';
 
 import { getTileWebPreferencesForUrl, registerTrustedBuiltinWindow, createTileBrowserWindow } from './tile-launcher.js';
+import { isDevToolsEnabled } from './debug-flag.js';
 import { lookupPseudoTile } from './pseudo-tiles.js';
 import { getLazyTileManifest } from './tile-lazy.js';
 import { createTrustedBuiltinGrant } from './tile-manifest.js';
@@ -794,6 +795,11 @@ export function registerWindowHandlers(): void {
           : tileWebPrefs ? tileWebPrefs.additionalArguments : options.webPreferences?.additionalArguments,
         session: profileSession,
         webviewTag: useCanvas ? true : (options.webPreferences?.webviewTag || false),
+        // Read at window-creation time. Electron does not allow flipping
+        // devTools on an existing window, so this captures the current
+        // toggle state. Default is off; flipping the toggle takes effect
+        // on subsequent windows.
+        devTools: isDevToolsEnabled(),
       }
     };
 
@@ -1444,6 +1450,7 @@ export function registerWindowHandlers(): void {
             ],
             session: profileSession,
             webviewTag: true,
+            devTools: isDevToolsEnabled(),
           },
         });
 

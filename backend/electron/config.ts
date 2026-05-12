@@ -14,8 +14,11 @@ export {
   TOPICS,
 } from '../config.js';
 
-// Debug mode - set DEBUG=1 to enable logging
-export const DEBUG = !!process.env.DEBUG;
+// Debug mode — set DEBUG=1 to enable verbose logging at boot, or toggle
+// at runtime via the `peek debug` cmd-palette command / Settings UI.
+// Re-exported from debug-flag.ts so all `DEBUG && console.log(...)` sites
+// pick up runtime flips through ESM live-binding semantics.
+export { DEBUG } from './debug-flag.js';
 
 // Strict mode — set TILE_STRICT=true to throw instead of warn on capability violations.
 // Enable in CI and strict-mode development to catch regressions as hard failures.

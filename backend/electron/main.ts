@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 import { initDatabase, closeDatabase, getDb, getContextEntry } from './datastore.js';
+import { installDebugFlagsPersistence } from './debug-flag-store.js';
 import { registerScheme, initProtocol, registerTilePath, getTilePath, getRegisteredTileIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
 import { initCore, getCoreBackgroundWindow } from './core-glue.js';
 import { initTestFixture } from './test-fixture-glue.js';
@@ -227,6 +228,11 @@ export async function initialize(): Promise<void> {
   // Initialize database
   const dbPath = path.join(config.userDataPath, config.profile, 'datastore.sqlite');
   initDatabase(dbPath);
+
+  // Hydrate runtime debug flags from persisted state. Must run after
+  // initDatabase so feature_settings is readable; before any feature loads
+  // so the flags are correct from the first DEBUG && console.log call.
+  installDebugFlagsPersistence();
 
   // Set up pubsub broadcaster.
   // Forwards GLOBAL publishes to every renderer that needs to see them:
