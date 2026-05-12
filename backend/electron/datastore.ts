@@ -90,6 +90,7 @@ const createTableStatements = `
     frecencyScore INTEGER DEFAULT 0
   );
   CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_name_unique ON tags(name);
   CREATE INDEX IF NOT EXISTS idx_tags_slug ON tags(slug);
   CREATE INDEX IF NOT EXISTS idx_tags_parentId ON tags(parentId);
   CREATE INDEX IF NOT EXISTS idx_tags_frecencyScore ON tags(frecencyScore);

@@ -381,6 +381,23 @@ describe('MCP Server', () => {
       item = await client.callTool('get_item', { id: 'item-1' });
       assert.ok(!item.tags.includes('important'));
     });
+
+    it('should apply an existing tag to a second item without ON CONFLICT error', async () => {
+      // 'todo' already exists in the tags table (seeded). Applying it to item-3
+      // exercises the ON CONFLICT(name) DO UPDATE path in tagItemInTx.
+      // Regression guard for: "ON CONFLICT clause does not match any PRIMARY KEY
+      // or UNIQUE constraint" (requires CREATE UNIQUE INDEX on tags.name).
+      const result = await client.callTool('tag_item', { itemId: 'item-3', tagName: 'todo' });
+      assert.equal(result.success, true);
+      const item = await client.callTool('get_item', { id: 'item-3' });
+      assert.ok(item.tags.includes('todo'));
+    });
+
+    it('should be idempotent when tagging an item that already has the tag', async () => {
+      // item-2 already has 'todo'. Re-tagging must not throw.
+      const result = await client.callTool('tag_item', { itemId: 'item-2', tagName: 'todo' });
+      assert.equal(result.success, true);
+    });
   });
 
   describe('record_event', () => {

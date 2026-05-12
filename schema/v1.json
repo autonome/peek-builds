@@ -210,6 +210,7 @@
       },
       "indexes": [
         { "name": "idx_tags_name", "columns": ["name"], "sync": true },
+        { "name": "idx_tags_name_unique", "columns": ["name"], "unique": true, "sync": true },
         { "name": "idx_tags_frecency", "columns": ["frecencyScore"], "order": "DESC", "sync": true },
         { "name": "idx_tags_slug", "columns": ["slug"], "sync": false },
         { "name": "idx_tags_parentId", "columns": ["parentId"], "sync": false }
