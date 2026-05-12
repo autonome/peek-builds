@@ -4,9 +4,51 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Sun, 10 May 2026 16:05:09 GMT</lastBuildDate>
+    <lastBuildDate>Tue, 12 May 2026 10:17:42 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>izui: ESC closes user-opened web pages when opened from cmd palette</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-12</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-12:ca58933a0fcb</guid>
+      <pubDate>Tue, 12 May 2026 12:00:00 GMT</pubDate>
+      <description>izui: ESC closes user-opened web pages when opened from cmd palette</description>
+    </item>
+    <item>
+      <title>collab-notes: UX v1 — desktop + mobile surfaces, journeys, contacts dependency</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-12</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-12:c6f785df0753</guid>
+      <pubDate>Tue, 12 May 2026 12:00:00 GMT</pubDate>
+      <description>collab-notes: UX v1 — desktop + mobile surfaces, journeys, contacts dependency</description>
+    </item>
+    <item>
+      <title>electron: chokepoint guard for raw BrowserWindow + close 3 known holes</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-12</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-12:d0fb22d4f3b7</guid>
+      <pubDate>Tue, 12 May 2026 12:00:00 GMT</pubDate>
+      <description>electron: chokepoint guard for raw BrowserWindow + close 3 known holes</description>
+    </item>
+    <item>
+      <title>fix: morning batch — Cmd+W, ESC switcher, packaging, role default</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-11</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-11:1d3e0d8ecf3d</guid>
+      <pubDate>Mon, 11 May 2026 12:00:00 GMT</pubDate>
+      <description>fix: morning batch — Cmd+W, ESC switcher, packaging, role default</description>
+    </item>
+    <item>
+      <title>linux: default-browser registration for AppImage</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-11</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-11:d4a18ca44aa6</guid>
+      <pubDate>Mon, 11 May 2026 12:00:00 GMT</pubDate>
+      <description>linux: default-browser registration for AppImage</description>
+    </item>
+    <item>
+      <title>notes: catalog Xvfb desktop-test flakes + failed fix attempts</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-11</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-11:73f406b3680c</guid>
+      <pubDate>Mon, 11 May 2026 12:00:00 GMT</pubDate>
+      <description>notes: catalog Xvfb desktop-test flakes + failed fix attempts</description>
+    </item>
     <item>
       <title>architecture: canonical window-placement spec</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-10</link>
@@ -251,139 +293,6 @@
       <guid isPermaLink="false">urn:peek:changelog:2026-05-06:649438f128d7</guid>
       <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
       <description>settings: number-input clear falls back to schema default</description>
-    </item>
-    <item>
-      <title>session: collapse restored windows to primary display when topology changed</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-05</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-05:adbfe02aa7d5</guid>
-      <pubDate>Tue, 05 May 2026 12:00:00 GMT</pubDate>
-      <description>session: collapse restored windows to primary display when topology changed</description>
-    </item>
-    <item>
-      <title>window-presenter: single source of truth for user-facing window state</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-05</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-05:3b8591636e43</guid>
-      <pubDate>Tue, 05 May 2026 12:00:00 GMT</pubDate>
-      <description>window-presenter: single source of truth for user-facing window state</description>
-    </item>
-    <item>
-      <title>features: drop unnecessary resident tiles; manifest is the only truth</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-05</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-05:0b48d1aa985a</guid>
-      <pubDate>Tue, 05 May 2026 12:00:00 GMT</pubDate>
-      <description>features: drop unnecessary resident tiles; manifest is the only truth</description>
-    </item>
-    <item>
-      <title>page-host: edge resize handles + reachable corners when maximized</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-05</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-05:69458ade15c6</guid>
-      <pubDate>Tue, 05 May 2026 12:00:00 GMT</pubDate>
-      <description>page-host: edge resize handles + reachable corners when maximized</description>
-    </item>
-    <item>
-      <title>search: re-run query on inline tag toggle so flipped items leave results</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-05</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-05:3dad970395b1</guid>
-      <pubDate>Tue, 05 May 2026 12:00:00 GMT</pubDate>
-      <description>search: re-run query on inline tag toggle so flipped items leave results</description>
-    </item>
-    <item>
-      <title>editor: set window title from item title for datastore-item editors</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-05</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-05:3644e4ed43ab</guid>
-      <pubDate>Tue, 05 May 2026 12:00:00 GMT</pubDate>
-      <description>editor: set window title from item title for datastore-item editors</description>
-    </item>
-    <item>
-      <title>windows: dismiss the overlay when any new window opens</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-05</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-05:bfbb8318a8b8</guid>
-      <pubDate>Tue, 05 May 2026 12:00:00 GMT</pubDate>
-      <description>windows: dismiss the overlay when any new window opens</description>
-    </item>
-    <item>
-      <title>page-host: ESC must not navigate back</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-05</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-05:88dff4099f19</guid>
-      <pubDate>Tue, 05 May 2026 12:00:00 GMT</pubDate>
-      <description>page-host: ESC must not navigate back</description>
-    </item>
-    <item>
-      <title>search: re-render result rows when tag-action rules arrive</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-05</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-05:5a46e5fec777</guid>
-      <pubDate>Tue, 05 May 2026 12:00:00 GMT</pubDate>
-      <description>search: re-render result rows when tag-action rules arrive</description>
-    </item>
-    <item>
-      <title>session: collapse restored windows to primary display when topology changed</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-05</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-05:adbfe02aa7d5</guid>
-      <pubDate>Tue, 05 May 2026 12:00:00 GMT</pubDate>
-      <description>session: collapse restored windows to primary display when topology changed</description>
-    </item>
-    <item>
-      <title>items: add &apos;event&apos; to inline items CHECK constraint to skip first-boot recreation</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-04</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-04:f4a2b9b2202f</guid>
-      <pubDate>Mon, 04 May 2026 12:00:00 GMT</pubDate>
-      <description>items: add &apos;event&apos; to inline items CHECK constraint to skip first-boot recreation</description>
-    </item>
-    <item>
-      <title>datastore: make Loading-title backfill local-only, run every boot</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-04</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-04:8111e428c1c6</guid>
-      <pubDate>Mon, 04 May 2026 12:00:00 GMT</pubDate>
-      <description>datastore: make Loading-title backfill local-only, run every boot</description>
-    </item>
-    <item>
-      <title>page-layout: eliminate panel-position race after setWindowPadding</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-04</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-04:47eaa66bc38a</guid>
-      <pubDate>Mon, 04 May 2026 12:00:00 GMT</pubDate>
-      <description>page-layout: eliminate panel-position race after setWindowPadding</description>
-    </item>
-    <item>
-      <title>editor-tests: revive Playwright editor suite after V1→features rename</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-04</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-04:8d3de46b6c39</guid>
-      <pubDate>Mon, 04 May 2026 12:00:00 GMT</pubDate>
-      <description>editor-tests: revive Playwright editor suite after V1→features rename</description>
-    </item>
-    <item>
-      <title>build: add yarn desktop aggregate test script</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-04</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-04:09a46afa1cb4</guid>
-      <pubDate>Mon, 04 May 2026 12:00:00 GMT</pubDate>
-      <description>build: add yarn desktop aggregate test script</description>
-    </item>
-    <item>
-      <title>fix: ios xcodegen — exclude .a from Externals scan to stop libapp.a being bundled as a Resource</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-04</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-04:675d423d071c</guid>
-      <pubDate>Mon, 04 May 2026 12:00:00 GMT</pubDate>
-      <description>fix: ios xcodegen — exclude .a from Externals scan to stop libapp.a being bundled as a Resource</description>
-    </item>
-    <item>
-      <title>tags: canonical URL lookup so page-widget tags attach to existing items</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-04</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-04:8983253d6a0a</guid>
-      <pubDate>Mon, 04 May 2026 12:00:00 GMT</pubDate>
-      <description>tags: canonical URL lookup so page-widget tags attach to existing items</description>
-    </item>
-    <item>
-      <title>cmd: keep cursor in view when typing past visible width</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-04</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-04:7bf7b7cd6987</guid>
-      <pubDate>Mon, 04 May 2026 12:00:00 GMT</pubDate>
-      <description>cmd: keep cursor in view when typing past visible width</description>
-    </item>
-    <item>
-      <title>ios: declare ITSAppUsesNonExemptEncryption=false for both targets</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-04</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-04:690ba71e48c6</guid>
-      <pubDate>Mon, 04 May 2026 12:00:00 GMT</pubDate>
-      <description>ios: declare ITSAppUsesNonExemptEncryption=false for both targets</description>
     </item>
   </channel>
 </rss>

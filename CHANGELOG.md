@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: 2458945f873a -->
+<!-- last-bumped: 8c80ab446e2b -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -16,6 +16,20 @@ Completed work. Two formats coexist on purpose:
 - **Pre-2026-04-29** — archival per-day `## YYYY-MM-DD` sections with rich `Desktop - {area}` clusters and detailed checkbox bullets. Preserved as-is; deliberately invisible to the RSS generator.
 
 See TODO.md for pending items, WIP.md for in-progress items.
+
+## Week of 2026-05-11 (W20)
+
+### 2026-05-12
+
+- izui: ESC closes user-opened web pages when opened from cmd palette
+- collab-notes: UX v1 — desktop + mobile surfaces, journeys, contacts dependency
+- electron: chokepoint guard for raw BrowserWindow + close 3 known holes
+
+### 2026-05-11
+
+- fix: morning batch — Cmd+W, ESC switcher, packaging, role default
+- linux: default-browser registration for AppImage
+- notes: catalog Xvfb desktop-test flakes + failed fix attempts
 
 ## Week of 2026-05-04 (W19)
 
