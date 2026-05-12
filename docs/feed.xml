@@ -4,9 +4,23 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Tue, 12 May 2026 10:17:42 GMT</lastBuildDate>
+    <lastBuildDate>Tue, 12 May 2026 10:35:46 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>mcp: rewrite db.js with node:sqlite, fix N+1 and concurrent-write contention</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-12</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-12:752d155f77e2</guid>
+      <pubDate>Tue, 12 May 2026 12:00:00 GMT</pubDate>
+      <description>mcp: rewrite db.js with node:sqlite, fix N+1 and concurrent-write contention</description>
+    </item>
+    <item>
+      <title>mcp: close policy drift with datastore.ts; add schema-drift test</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-12</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-12:b7f3ddded362</guid>
+      <pubDate>Tue, 12 May 2026 12:00:00 GMT</pubDate>
+      <description>mcp: close policy drift with datastore.ts; add schema-drift test</description>
+    </item>
     <item>
       <title>izui: ESC closes user-opened web pages when opened from cmd palette</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-12</link>
