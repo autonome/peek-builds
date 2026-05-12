@@ -44,7 +44,7 @@
     "build:android:aab": "./build-android-release.sh --aab",
     "dev:android": "./dev-android.sh",
     "dev:both": "./dev-both.sh",
-    "clean:android": "cd src-tauri && rm -rf target/aarch64-linux-android target/x86_64-linux-android target/i686-linux-android target/armv7-linux-androideabi 2>/dev/null; echo 'Android build cache cleaned'"
+    "clean:android": "cd src-tauri && rm -rf target/aarch64-linux-android target/x86_64-linux-android target/i686-linux-android target/armv7-linux-androideabi gen/android/app/build 2>/dev/null; echo 'Android build cache cleaned'"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",

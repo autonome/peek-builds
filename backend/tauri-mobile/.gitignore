@@ -30,6 +30,9 @@ peek-core/target/
 # Xcode build output
 src-tauri/gen/apple/build/
 
+# Android Gradle build output
+src-tauri/gen/android/app/build/
+
 # Claude Code local settings
 .claude/
 
