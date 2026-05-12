@@ -89,7 +89,6 @@ const createTableStatements = `
     lastUsed INTEGER DEFAULT 0,
     frecencyScore INTEGER DEFAULT 0
   );
-  CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_name_unique ON tags(name);
   CREATE INDEX IF NOT EXISTS idx_tags_slug ON tags(slug);
   CREATE INDEX IF NOT EXISTS idx_tags_parentId ON tags(parentId);
@@ -2389,86 +2388,96 @@ function migrateItemThumbnailColumn(): void {
 }
 
 /**
- * Ensure tags.name has a UNIQUE index (idx_tags_name_unique).
+ * Ensure tags.name has a UNIQUE index (idx_tags_name_unique) and drop the
+ * superseded plain idx_tags_name.
  *
- * Background: the index was added to the CREATE TABLE DDL in commit 01392807,
- * but existing databases created before that commit will not have it because
- * CREATE INDEX IF NOT EXISTS only runs when the table is first created. This
- * migration backfills the index for those databases.
+ * Background: idx_tags_name_unique was added to the CREATE TABLE DDL in
+ * commit 01392807. Existing databases created before that won't have it
+ * (CREATE INDEX IF NOT EXISTS only runs when the table is first created).
+ * The unique index covers every query the plain idx_tags_name served, so the
+ * plain index is now redundant — this migration also drops it.
  *
- * Before creating the index we deduplicate tags.name — if duplicate rows exist
- * (e.g. from a bug in an older code path), SQLite would reject the CREATE
- * UNIQUE INDEX. The canonical row is the one with the lowest id (earliest
- * creation). item_tags references pointing at duplicate rows are rewritten to
- * the canonical row's id, then the duplicate tag rows are deleted.
+ * Before creating the unique index we deduplicate tags.name. If duplicate
+ * rows exist (e.g. from a bug in an older code path), SQLite would reject
+ * the CREATE UNIQUE INDEX. The canonical row is the one with the lowest id
+ * (earliest creation). item_tags references pointing at duplicate rows are
+ * rewritten to the canonical row's id, then the duplicate tag rows are
+ * deleted.
+ *
+ * Throws on failure. A schema without idx_tags_name_unique breaks every
+ * ON CONFLICT(name) upsert in the tag code path, so silently continuing
+ * would just defer the crash to user-visible tagging operations.
  */
 function migrateTagsUniqueIndex(): void {
   if (!db) return;
 
-  // Fast-path: index already exists (new DB or already migrated).
+  // Fast-path: unique index already exists. Still attempt the plain-index
+  // drop in case a previous run created the unique index but the DDL still
+  // had the plain index at the time.
   const existing = db.prepare(
     `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_tags_name_unique'`
   ).get();
-  if (existing) return;
+  if (existing) {
+    db.exec(`DROP INDEX IF EXISTS idx_tags_name`);
+    return;
+  }
 
   DEBUG && console.log('main', 'migrateTagsUniqueIndex: index missing, deduplicating tags.name');
 
   // Capture db as a non-null local for use inside transaction closures.
   const d = db;
 
-  try {
-    // Find all name groups that have more than one row.
-    const dupeGroups = d.prepare(`
-      SELECT name, MIN(id) AS canonicalId
-      FROM tags
-      GROUP BY name
-      HAVING COUNT(*) > 1
-    `).all() as { name: string; canonicalId: string }[];
+  // Find all name groups that have more than one row.
+  const dupeGroups = d.prepare(`
+    SELECT name, MIN(id) AS canonicalId
+    FROM tags
+    GROUP BY name
+    HAVING COUNT(*) > 1
+  `).all() as { name: string; canonicalId: string }[];
 
-    if (dupeGroups.length > 0) {
-      DEBUG && console.log('main', `migrateTagsUniqueIndex: ${dupeGroups.length} duplicate tag name(s) found, deduplicating`);
+  if (dupeGroups.length > 0) {
+    DEBUG && console.log('main', `migrateTagsUniqueIndex: ${dupeGroups.length} duplicate tag name(s) found, deduplicating`);
 
-      const dedupeTransaction = d.transaction(() => {
-        for (const { name, canonicalId } of dupeGroups) {
-          // Get all duplicate ids (everything except the canonical row).
-          const dupeRows = d.prepare(
-            `SELECT id FROM tags WHERE name = ? AND id != ?`
-          ).all(name, canonicalId) as { id: string }[];
+    const dedupeTransaction = d.transaction(() => {
+      for (const { name, canonicalId } of dupeGroups) {
+        // Get all duplicate ids (everything except the canonical row).
+        const dupeRows = d.prepare(
+          `SELECT id FROM tags WHERE name = ? AND id != ?`
+        ).all(name, canonicalId) as { id: string }[];
 
-          for (const { id: dupeId } of dupeRows) {
-            // Rewrite item_tags refs from dupeId -> canonicalId.
-            // item_tags has UNIQUE(itemId, tagId) so an UPDATE could collide
-            // when an item already has both the dupe and canonical tag.
-            // Strategy: delete the row that would collide, then update the rest.
-            d.prepare(`
-              DELETE FROM item_tags
-              WHERE tagId = ?
-              AND itemId IN (
-                SELECT itemId FROM item_tags WHERE tagId = ?
-              )
-            `).run(dupeId, canonicalId);
+        for (const { id: dupeId } of dupeRows) {
+          // Rewrite item_tags refs from dupeId -> canonicalId.
+          // item_tags has UNIQUE(itemId, tagId) so an UPDATE could collide
+          // when an item already has both the dupe and canonical tag.
+          // Strategy: delete the row that would collide, then update the rest.
+          d.prepare(`
+            DELETE FROM item_tags
+            WHERE tagId = ?
+            AND itemId IN (
+              SELECT itemId FROM item_tags WHERE tagId = ?
+            )
+          `).run(dupeId, canonicalId);
 
-            // Now update the remaining refs safely.
-            d.prepare(
-              `UPDATE item_tags SET tagId = ? WHERE tagId = ?`
-            ).run(canonicalId, dupeId);
+          // Now update the remaining refs safely.
+          d.prepare(
+            `UPDATE item_tags SET tagId = ? WHERE tagId = ?`
+          ).run(canonicalId, dupeId);
 
-            // Delete the duplicate tag row.
-            d.prepare(`DELETE FROM tags WHERE id = ?`).run(dupeId);
-          }
+          // Delete the duplicate tag row.
+          d.prepare(`DELETE FROM tags WHERE id = ?`).run(dupeId);
         }
-      });
+      }
+    });
 
-      dedupeTransaction();
-      DEBUG && console.log('main', 'migrateTagsUniqueIndex: deduplication complete');
-    }
-
-    // Now create the UNIQUE index — safe because there are no duplicate names.
-    d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_name_unique ON tags(name)`);
-    DEBUG && console.log('main', 'migrateTagsUniqueIndex: idx_tags_name_unique created');
-  } catch (error) {
-    console.error('main', 'migrateTagsUniqueIndex failed:', (error as Error).message);
+    dedupeTransaction();
+    DEBUG && console.log('main', 'migrateTagsUniqueIndex: deduplication complete');
   }
+
+  // Create the UNIQUE index — safe because there are no duplicate names —
+  // and drop the now-redundant plain idx_tags_name.
+  d.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_name_unique ON tags(name)`);
+  d.exec(`DROP INDEX IF EXISTS idx_tags_name`);
+  DEBUG && console.log('main', 'migrateTagsUniqueIndex: idx_tags_name_unique created, idx_tags_name dropped');
 }
 
 /**

@@ -137,14 +137,17 @@ describe('mcp db.js: ensureTagsUniqueIndex', () => {
              ('tag-2', 'peek', 1, ${now}, 0, ${now}, ${now});
     `);
 
-    // Index must not exist before open.
-    assert.ok(!getIndexes(dbPath).includes('idx_tags_name_unique'), 'should not exist before');
+    // Index must not exist before open; plain idx_tags_name (legacy DDL) should exist.
+    const before = getIndexes(dbPath);
+    assert.ok(!before.includes('idx_tags_name_unique'), 'unique index should not exist before');
+    assert.ok(before.includes('idx_tags_name'), 'legacy plain index should exist before');
 
     dbModule.openDb(dbPath);
     dbModule.closeDb();
 
     const indexes = getIndexes(dbPath);
     assert.ok(indexes.includes('idx_tags_name_unique'), 'idx_tags_name_unique should exist after openDb');
+    assert.ok(!indexes.includes('idx_tags_name'), 'legacy plain idx_tags_name should be dropped after openDb');
   });
 
   it('creates idx_tags_name_unique on a legacy DB with duplicate tag names', async () => {
@@ -206,6 +209,7 @@ describe('mcp db.js: ensureTagsUniqueIndex', () => {
 
     const indexes = getIndexes(dbPath);
     assert.ok(indexes.includes('idx_tags_name_unique'), 'index should still exist after second open');
+    assert.ok(!indexes.includes('idx_tags_name'), 'plain idx_tags_name should still be absent after second open');
   });
 
   it('tag_item succeeds after index is created (ON CONFLICT upsert works)', async () => {

@@ -35,7 +35,6 @@ CREATE TABLE IF NOT EXISTS tags (
   updatedAt INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_name_unique ON tags(name);
 CREATE INDEX IF NOT EXISTS idx_tags_frecency ON tags(frecencyScore DESC);
 

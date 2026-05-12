@@ -57,17 +57,24 @@ export function openDb(path) {
 }
 
 /**
- * Ensure tags.name has a UNIQUE index (idx_tags_name_unique).
+ * Ensure tags.name has a UNIQUE index (idx_tags_name_unique) and drop the
+ * superseded plain idx_tags_name.
  *
  * Mirrors migrateTagsUniqueIndex() in backend/electron/datastore.ts.
  * Running here means the MCP server self-heals even before the Electron app
- * is rebuilt and restarted with the new DDL. Idempotent: no-op if index exists.
+ * is rebuilt and restarted with the new DDL. Idempotent: no-op if both
+ * conditions hold (unique index present, plain index absent).
  */
 function ensureTagsUniqueIndex() {
   const existing = db.prepare(
     `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_tags_name_unique'`
   ).get();
-  if (existing) return;
+  if (existing) {
+    // Still drop the plain index in case a previous run created the unique
+    // index but didn't drop the plain one (older code path).
+    db.exec(`DROP INDEX IF EXISTS idx_tags_name`);
+    return;
+  }
 
   // Deduplicate tags.name before creating the UNIQUE index.
   // Canonical row = lowest id (earliest created). Duplicate item_tags refs are
@@ -111,6 +118,8 @@ function ensureTagsUniqueIndex() {
   }
 
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_name_unique ON tags(name)`);
+  // Now redundant — the unique index covers every query the plain one did.
+  db.exec(`DROP INDEX IF EXISTS idx_tags_name`);
 }
 
 export function closeDb() {

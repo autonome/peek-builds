@@ -53,6 +53,18 @@ const MCP_TOUCHED_COLUMNS = {
   item_events: ['id', 'itemId', 'content', 'value', 'occurredAt', 'metadata', 'createdAt'],
 };
 
+// Indexes the MCP's db.js relies on. If schema/v1.json drops one of these (or
+// changes its uniqueness), the MCP's SQL stops behaving correctly — e.g.
+// without idx_tags_name_unique the ON CONFLICT(name) upsert in tagItemInTx
+// raises "ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE
+// constraint" at runtime, silently breaking every tag operation.
+const MCP_REQUIRED_INDEXES = {
+  tags: [
+    // Each entry: [name, { unique?: true, columns: [...] }]
+    ['idx_tags_name_unique', { unique: true, columns: ['name'] }],
+  ],
+};
+
 describe('schema drift between MCP and schema/v1.json', () => {
   for (const [table, columns] of Object.entries(MCP_TOUCHED_COLUMNS)) {
     describe(`table: ${table}`, () => {
@@ -90,5 +102,35 @@ describe('schema drift between MCP and schema/v1.json', () => {
       `v1.json requires items columns that MCP createItem doesn't write: ${missing.join(', ')}. ` +
       `Update createItem in db.js to populate them.`
     );
+  });
+
+  describe('required indexes', () => {
+    for (const [table, indexes] of Object.entries(MCP_REQUIRED_INDEXES)) {
+      for (const [indexName, expected] of indexes) {
+        it(`${table}.${indexName} is defined in v1.json with expected shape`, () => {
+          const tableDef = schema.tables[table];
+          assert.ok(tableDef, `schema/v1.json missing table "${table}"`);
+          const defs = tableDef.indexes || [];
+          const def = defs.find(d => d.name === indexName);
+          assert.ok(
+            def,
+            `MCP relies on index ${table}.${indexName} but schema/v1.json has no such index. ` +
+            `Removing it breaks SQL paths in features/mcp-server/db.js.`
+          );
+          if (expected.unique) {
+            assert.equal(
+              def.unique, true,
+              `${table}.${indexName} must be unique in schema/v1.json — MCP uses ON CONFLICT against it.`
+            );
+          }
+          if (expected.columns) {
+            assert.deepEqual(
+              def.columns, expected.columns,
+              `${table}.${indexName} columns must be ${JSON.stringify(expected.columns)} in schema/v1.json.`
+            );
+          }
+        });
+      }
+    }
   });
 });

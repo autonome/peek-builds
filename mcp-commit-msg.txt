@@ -1,0 +1,22 @@
+refactor(mcp): drop redundant idx_tags_name + harden migration
+
+The plain idx_tags_name on tags(name) is fully superseded by
+idx_tags_name_unique (added in 01392807) — every lookup the plain index
+served is now answered by the unique one. Dropping it removes storage +
+write-amp overhead.
+
+- Removed from the DDL in datastore.ts and from the canonical schema in
+  schema/v1.json; regenerated sqlite-full.sql / sqlite-sync.sql.
+- Both migrations (Electron datastore.ts and MCP db.js) now DROP INDEX
+  IF EXISTS idx_tags_name after creating the unique index. They also
+  run the drop on the fast-path return, so already-migrated DBs still
+  get the cleanup on next open.
+- migrateTagsUniqueIndex in datastore.ts now throws on failure instead
+  of swallowing and logging. A schema without idx_tags_name_unique
+  breaks every ON CONFLICT(name) upsert in the tag code path; silently
+  continuing would just defer the crash to first user-visible tag op.
+- Drift coverage added to schema-drift.test.js: MCP_REQUIRED_INDEXES
+  pins idx_tags_name_unique's shape (unique, columns: name) so a future
+  edit to v1.json that drops or rewrites it is caught before shipping.
+- mcp-db-tags-unique-index.test.js updated to assert the plain index is
+  absent after openDb.
