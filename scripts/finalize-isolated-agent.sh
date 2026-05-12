@@ -54,13 +54,29 @@ if [ -z "$NEW_COMMITS" ]; then
 fi
 
 echo "Rebasing commits from ${AGENT_PARENT} onto default workspace @" >&2
+DEFAULT_HEAD=$(jj log -r @ --no-graph -T 'commit_id' | head -1)
 jj rebase -s "roots((::${AGENT_PARENT}) ~ (::@))" -d @ >&2
 
 # After rebase the agent's commits are children of default @ but default @
-# itself hasn't moved. Advance default @ onto the rebased head so the next
-# commit made in the default workspace includes the agent's work.
+# itself hasn't moved. Capture the rebased tip before any cleanup.
 NEW_HEAD=$(jj log -r "${AGENT_PARENT}" --no-graph -T 'commit_id' 2>/dev/null | head -1)
-DEFAULT_HEAD=$(jj log -r @ --no-graph -T 'commit_id' | head -1)
+
+# Sweep empty + no-description commits in the rebased range.
+# Agents accumulate these from `jj new` between work units (each fresh
+# working copy is an empty placeholder until the next commit). Once
+# the work is rebased here they're pure noise. Filter is conservative:
+# BOTH empty AND no-description must hold — a description-less but
+# content-bearing commit is preserved (might be WIP that got mislabeled).
+SWEEP_RANGE="(${DEFAULT_HEAD}::${NEW_HEAD}) ~ ${DEFAULT_HEAD} ~ ${NEW_HEAD} & empty() & description(exact:\"\")"
+EMPTY_NODESC=$(jj log -r "$SWEEP_RANGE" --no-graph -T 'commit_id.short() ++ " "' 2>/dev/null || true)
+if [ -n "$EMPTY_NODESC" ]; then
+  echo "Abandoning empty + no-description commits: ${EMPTY_NODESC}" >&2
+  # shellcheck disable=SC2086
+  jj abandon $EMPTY_NODESC >&2 || true
+fi
+
+# Advance default @ onto the rebased head so the next commit made in the
+# default workspace includes the agent's work.
 if [ -n "$NEW_HEAD" ] && [ "$NEW_HEAD" != "$DEFAULT_HEAD" ]; then
   echo "Advancing default workspace @ onto ${NEW_HEAD:0:12}" >&2
   jj new "$NEW_HEAD" >&2
