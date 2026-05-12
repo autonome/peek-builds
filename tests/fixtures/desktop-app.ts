@@ -788,7 +788,7 @@ export const test = base.extend<{ desktopApp: DesktopApp; sharedAppQuiesce: void
  */
 async function waitForSharedAppWindowsStable(
   app: DesktopApp,
-  { maxWaitMs = 3000, stableForMs = 120, pollMs = 30 }: {
+  { maxWaitMs = 1500, stableForMs = 50, pollMs = 20 }: {
     maxWaitMs?: number; stableForMs?: number; pollMs?: number;
   } = {},
 ): Promise<void> {
