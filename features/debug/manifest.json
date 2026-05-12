@@ -25,13 +25,11 @@
         "cmd:execute:peek debug",
         "cmd:execute:peek devtools",
         "peek:debug:changed",
-        "debug:settings-changed",
         "ext:ready",
         "app:shutdown"
       ]
     },
-    "commands": true,
-    "settings": true
+    "commands": true
   },
   "commands": [
     {
@@ -60,6 +58,5 @@
         }
       ]
     }
-  ],
-  "settingsSchema": "./settings-schema.json"
+  ]
 }

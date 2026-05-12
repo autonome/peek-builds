@@ -100,33 +100,6 @@ async function handleFlagCommand(flag, arg) {
 
 // ── Init ────────────────────────────────────────────────────────────────────
 
-/**
- * Settings UI bridge. When the user changes the toggles in the Debug
- * settings panel, app/settings/settings.js writes to feature_settings
- * (featureId='debug', key='prefs') and publishes `debug:settings-changed`.
- * We read the new prefs and push them through the main-process IPC
- * handler so the live flags + persistence stay coherent.
- *
- * Without this bridge, the Settings UI change would land in the
- * `feature_settings` row but the in-process `DEBUG` binding would not
- * update until the next launch — defeating the "live toggle" point.
- */
-async function syncFromSettingsUI() {
-  try {
-    const res = await api.settings.get('prefs');
-    const prefs = res?.value;
-    if (!prefs || typeof prefs !== 'object') return;
-    const next = {};
-    if (typeof prefs.verbose === 'boolean') next.verbose = prefs.verbose;
-    if (typeof prefs.devtools === 'boolean') next.devtools = prefs.devtools;
-    if (Object.keys(next).length > 0) {
-      await api.debugFlags.set(next);
-    }
-  } catch (err) {
-    console.error('[ext:debug] syncFromSettingsUI failed:', err);
-  }
-}
-
 const extension = {
   id,
   init: async () => {
@@ -177,8 +150,6 @@ const extension = {
         },
       ],
     });
-
-    api.pubsub.subscribe('debug:settings-changed', syncFromSettingsUI);
   },
   uninit: () => {
     // pubsub subscriptions are torn down automatically on tile shutdown

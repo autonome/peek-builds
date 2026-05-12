@@ -479,11 +479,14 @@ const renderCoreSettings = async () => {
     placeholder: cmdConfigDefaults.prefs.shortcutKey
   }));
 
-  // CLI dispatch socket toggle (all platforms — the socket is useful
-  // for scripting/automation everywhere, not just Wayland). Backed by
-  // core prefs.cliSocketEnabled. When disabled, the daemon closes the
-  // socket and peek-cli verbs stop working. See cli-socket.ts and
-  // docs/global-hotkeys-on-wayland.md.
+  // CLI dispatch socket toggle (Linux only). The pref itself is platform-
+  // agnostic — backed by core prefs.cliSocketEnabled — but the UI control
+  // is only shown on Linux, where the socket is the answer for Wayland's
+  // lack of global hotkeys. macOS / Windows have working OS-level global
+  // hotkey APIs so we hide the toggle to keep the prefs surface minimal.
+  // The daemon still honors whatever value is persisted; non-Linux users
+  // who need the socket can flip it via direct datastore edit. See
+  // cli-socket.ts and docs/global-hotkeys-on-wayland.md.
   let cliVerbBlock = null;
   const updateVerbBlockEnabled = (enabled) => {
     if (!cliVerbBlock) return;
@@ -491,16 +494,18 @@ const renderCoreSettings = async () => {
     cliVerbBlock.style.pointerEvents = enabled ? 'auto' : 'none';
   };
 
-  shortcutsGroup.appendChild(createCheckbox(
-    getLabel('cliSocketEnabled'),
-    getVal('cliSocketEnabled'),
-    (newVal) => {
-      prefs.cliSocketEnabled = newVal;
-      updateVerbBlockEnabled(newVal);
-      save();
-    },
-    { helpText: pProps.cliSocketEnabled.description }
-  ));
+  if (api.platform?.os === 'linux') {
+    shortcutsGroup.appendChild(createCheckbox(
+      getLabel('cliSocketEnabled'),
+      getVal('cliSocketEnabled'),
+      (newVal) => {
+        prefs.cliSocketEnabled = newVal;
+        updateVerbBlockEnabled(newVal);
+        save();
+      },
+      { helpText: pProps.cliSocketEnabled.description }
+    ));
+  }
 
   // On Wayland, list the verbs prominently as the user-facing answer
   // for global hotkeys. On other platforms the socket is mostly for
@@ -3329,6 +3334,81 @@ const renderDatastoreSettings = async () => {
 // Render diagnostics settings (inline pane instead of separate window)
 const renderDiagnosticsSettings = async () => {
   const container = document.createElement('div');
+
+  // ── Runtime debug toggles (top of pane) ──────────────────────────────
+  //
+  // Two flags toggleable without a restart:
+  //   - verbose: enables the codebase's `DEBUG && console.log(...)` lines
+  //     in the main process. Output goes to <userData>/logs/main.log and
+  //     renderer.log.
+  //   - devtools: NEW BrowserWindows are created with devTools enabled.
+  //     Existing windows are unaffected (Electron does not allow flipping
+  //     devTools post-creation — close and reopen to inspect).
+  //
+  // Backed by the same `peek debug` / `peek devtools` cmd-palette commands.
+  // The change listener subscribes to `peek:debug:changed` so toggles
+  // stay in sync if the flag was flipped from elsewhere.
+  const debugSection = document.createElement('div');
+  debugSection.className = 'form-section';
+  debugSection.style.marginBottom = '24px';
+
+  const debugTitle = document.createElement('h3');
+  debugTitle.className = 'form-section-title';
+  debugTitle.textContent = 'Debug toggles';
+  debugSection.appendChild(debugTitle);
+
+  let debugState = { verbose: false, devtools: false };
+  try {
+    const res = await api.debugFlags?.get?.();
+    if (res?.success) debugState = res.state;
+  } catch { /* fall back to defaults */ }
+
+  let verboseInput = null;
+  let devtoolsInput = null;
+
+  const verboseGroup = createCheckbox(
+    'Verbose logging',
+    debugState.verbose,
+    async (newVal) => {
+      try {
+        const res = await api.debugFlags?.set?.({ verbose: newVal });
+        if (res?.success) debugState = res.state;
+      } catch { /* ignore */ }
+    },
+    { helpText: 'Enables DEBUG-gated logging across the main process. Output lands in <userData>/logs/main.log and renderer.log.' }
+  );
+  // Track the checkbox input so the pubsub listener can re-sync it
+  // without re-rendering the whole pane.
+  verboseInput = verboseGroup.querySelector('input[type="checkbox"]');
+  debugSection.appendChild(verboseGroup);
+
+  const devtoolsGroup = createCheckbox(
+    'DevTools on new windows',
+    debugState.devtools,
+    async (newVal) => {
+      try {
+        const res = await api.debugFlags?.set?.({ devtools: newVal });
+        if (res?.success) debugState = res.state;
+      } catch { /* ignore */ }
+    },
+    { helpText: 'New windows are created with DevTools enabled (Cmd+Opt+I). Existing windows are unaffected — close and reopen to inspect.' }
+  );
+  devtoolsInput = devtoolsGroup.querySelector('input[type="checkbox"]');
+  debugSection.appendChild(devtoolsGroup);
+
+  // Keep checkboxes in sync if the flag is flipped from somewhere else
+  // (cmd palette, another window). Subscription auto-tears-down when
+  // the settings tile shuts down.
+  if (api.pubsub?.subscribe) {
+    api.pubsub.subscribe('peek:debug:changed', (state) => {
+      if (!state || typeof state !== 'object') return;
+      debugState = { verbose: !!state.verbose, devtools: !!state.devtools };
+      if (verboseInput) verboseInput.checked = debugState.verbose;
+      if (devtoolsInput) devtoolsInput.checked = debugState.devtools;
+    });
+  }
+
+  container.appendChild(debugSection);
 
   const desc = document.createElement('p');
   desc.className = 'help-text';
