@@ -3154,11 +3154,20 @@ export function registerTileIpcHandlers(): void {
       const currentBounds = win.getBounds();
       const display = screen.getDisplayMatching(currentBounds);
       const workArea = display.workArea;
+      // X11 WMs (openbox, mutter, kwin) commonly trim a maximized window
+      // to workArea minus a few pixels for resize-affordance borders, so
+      // a window that's effectively maximized may report e.g. 1919x1079
+      // against a 1920x1080 workArea. Strict equality here would treat
+      // the second maximize() call as "from a non-maximized state" and
+      // overwrite the pre-max snapshot with the (already-maximized)
+      // current bounds — turning the next unmaximize into a no-op and
+      // stranding the window at workArea size.
+      const WM_SLACK = 4;
       const atWorkArea =
-        currentBounds.x === workArea.x &&
-        currentBounds.y === workArea.y &&
-        currentBounds.width === workArea.width &&
-        currentBounds.height === workArea.height;
+        Math.abs(currentBounds.x - workArea.x) <= WM_SLACK &&
+        Math.abs(currentBounds.y - workArea.y) <= WM_SLACK &&
+        Math.abs(currentBounds.width - workArea.width) <= WM_SLACK &&
+        Math.abs(currentBounds.height - workArea.height) <= WM_SLACK;
 
       // Only snapshot if the window isn't already filling the work area.
       // This lets the user resize a maximized window smaller, hit
