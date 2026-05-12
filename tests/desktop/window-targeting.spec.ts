@@ -252,13 +252,23 @@ test.describe('Window Targeting @desktop', () => {
     // (X11/Wayland) isMaximized() reflects the real WM state and stays
     // false. Compare bounds against the work area directly so the
     // assertion has the same meaning across platforms.
+    // Tolerance: real X11 WMs (e.g. openbox) often constrain a maximized
+    // window's bounds to workArea minus 1px borders for resize affordance.
+    // The test's intent is "second maximize didn't UN-maximize" — being
+    // within a handful of pixels of the work area still satisfies that.
+    // macOS/Wayland-native give exact workArea, but the test must pass
+    // across all WMs.
     const isFillingWorkArea = (id: number) => app.evaluateMain!<boolean, number>(
       ({ BrowserWindow, screen }, wid) => {
         const w = BrowserWindow.fromId(wid);
         if (!w) return false;
         const b = w.getBounds();
         const wa = screen.getDisplayMatching(b).workArea;
-        return b.x === wa.x && b.y === wa.y && b.width === wa.width && b.height === wa.height;
+        const slack = 4;
+        return Math.abs(b.x - wa.x) <= slack
+            && Math.abs(b.y - wa.y) <= slack
+            && Math.abs(b.width - wa.width) <= slack
+            && Math.abs(b.height - wa.height) <= slack;
       },
       id,
     );

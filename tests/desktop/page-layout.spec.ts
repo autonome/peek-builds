@@ -618,6 +618,19 @@ test.describe('Page Layout Maximize @desktop', () => {
       { timeout: 5000 }
     );
 
+    // The body.maximized class flips via the FSM as soon as the IPC
+    // returns, but setBounds(workArea) is an async X11 configure-request
+    // — actual window.innerWidth doesn't reflect the new size until the
+    // server processes it. Without this wait, panel positions get laid
+    // out against the now-wide window while we then sample
+    // window.innerWidth against the not-yet-wide window, and the
+    // clamp assertion sees a 1632px panel.left against an 816px window.
+    await pageWindow.waitForFunction(
+      () => window.innerWidth > 1000,
+      undefined,
+      { timeout: 5000 }
+    );
+
     // Show navbar to reveal panels
     await sharedBgWindow.evaluate(async (wid: number) => {
       (window as any).app.publish(

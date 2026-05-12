@@ -171,6 +171,20 @@ function isPackaged(): boolean {
   return val === '1' || val === 'true';
 }
 
+function packagedExecutableRelPath(): string {
+  const arch = process.arch;
+  switch (process.platform) {
+    case 'darwin':
+      return `out/mac-${arch}/Peek.app/Contents/MacOS/Peek`;
+    case 'linux':
+      return `out/linux-${arch}-unpacked/peek`;
+    case 'win32':
+      return `out/win-${arch}-unpacked/Peek.exe`;
+    default:
+      throw new Error(`Unsupported platform for packaged Electron: ${process.platform}`);
+  }
+}
+
 /**
  * Launch Electron backend
  *
@@ -198,13 +212,18 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
     ? []
     : [ROOT];
 
+  // Force XWayland on Linux. Electron 38+ picks Wayland whenever
+  // WAYLAND_DISPLAY is set (Ozone auto-detect) and the window escapes
+  // xvfb-run's DISPLAY redirect onto the real compositor.
+  const linuxOzoneArgs = process.platform === 'linux' ? ['--ozone-platform=x11'] : [];
+
   const launchConfig = packaged
     ? {
-        executablePath: path.join(ROOT, 'out/mac-arm64/Peek.app/Contents/MacOS/Peek'),
-        args: [`--user-data-dir=${tempDir}`]
+        executablePath: path.join(ROOT, packagedExecutableRelPath()),
+        args: [...linuxOzoneArgs, `--user-data-dir=${tempDir}`]
       }
     : {
-        args: [...baseArgs, `--user-data-dir=${tempDir}`]
+        args: [...baseArgs, ...linuxOzoneArgs, `--user-data-dir=${tempDir}`]
       };
 
   const electronApp = await electron.launch({
@@ -729,7 +748,7 @@ export async function closeSharedApp(): Promise<void> {
  *
  * The app is launched before each test and closed after.
  */
-export const test = base.extend<{ desktopApp: DesktopApp }>({
+export const test = base.extend<{ desktopApp: DesktopApp; sharedAppQuiesce: void }>({
   desktopApp: async ({}, use, testInfo) => {
     // Manual harness specs (project=manual, e.g. tests/manual/*.harness.ts)
     // use a stable `test-harness-<spec>` profile so cookies, localStorage,
@@ -744,6 +763,61 @@ export const test = base.extend<{ desktopApp: DesktopApp }>({
     await use(app);
     await app.close();
   },
+
+  // Auto-fixture: between every test, wait for the shared app's window set
+  // to stop changing. Per-spec closeWindow() helpers return as soon as the
+  // close IPC is acked, but BrowserWindow destruction (and the playwright
+  // CDP helper context that piggybacks on it) takes longer to settle. If
+  // the next test starts mid-teardown, its first evaluateMain call hits
+  // "Execution context was destroyed" and the existing bounded retry
+  // (500ms) sometimes isn't enough. Quiescing here removes the race at
+  // its source instead of bandaging the symptom with bigger retry budgets.
+  sharedAppQuiesce: [async ({}, use) => {
+    await use();
+    if (sharedApp) {
+      await waitForSharedAppWindowsStable(sharedApp);
+    }
+  }, { auto: true }],
 });
+
+/**
+ * Poll the shared Electron app's BrowserWindow count until it has been
+ * stable (unchanged) for `stableForMs`, or `maxWaitMs` elapses. Tolerates
+ * the navigation race that can occur mid-poll — if the helper context dies
+ * during evaluate, treat that as a non-stable sample and keep polling.
+ */
+async function waitForSharedAppWindowsStable(
+  app: DesktopApp,
+  { maxWaitMs = 3000, stableForMs = 120, pollMs = 30 }: {
+    maxWaitMs?: number; stableForMs?: number; pollMs?: number;
+  } = {},
+): Promise<void> {
+  if (!app.evaluateMain) return;
+  const deadline = Date.now() + maxWaitMs;
+  let lastCount = -1;
+  let stableSince = -1;
+  while (Date.now() < deadline) {
+    let count: number;
+    try {
+      count = await app.evaluateMain<number>(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+    } catch {
+      // navigation race during poll itself — reset stability tracking
+      lastCount = -1;
+      stableSince = -1;
+      await new Promise(r => setTimeout(r, pollMs));
+      continue;
+    }
+    if (count === lastCount) {
+      if (stableSince < 0) stableSince = Date.now();
+      if (Date.now() - stableSince >= stableForMs) return;
+    } else {
+      lastCount = count;
+      stableSince = -1;
+    }
+    await new Promise(r => setTimeout(r, pollMs));
+  }
+  // Timed out waiting for quiescence — downstream evaluateMain retries
+  // still backstop the case where the app genuinely won't settle.
+}
 
 export { expect } from '@playwright/test';
