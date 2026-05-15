@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: 5e13fcaa7066 -->
+<!-- last-bumped: 6b3651b96034 -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -18,6 +18,15 @@ Completed work. Two formats coexist on purpose:
 See TODO.md for pending items, WIP.md for in-progress items.
 
 ## Week of 2026-05-11 (W20)
+
+### 2026-05-15
+
+- mcp: backfill idx_tags_name_unique for existing databases
+- log: always-on main-process log to <userData>/logs/main.log
+- mcp: drop redundant idx_tags_name + harden migration
+- debug: runtime toggles for verbose logging + new-window DevTools
+- settings: debug toggles → Diagnostics pane; CLI socket → Linux only
+- window-open: land windows on the user's active macOS Space
 
 ### 2026-05-12
 

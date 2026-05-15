@@ -4,9 +4,51 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Tue, 12 May 2026 15:20:06 GMT</lastBuildDate>
+    <lastBuildDate>Fri, 15 May 2026 13:54:18 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>mcp: backfill idx_tags_name_unique for existing databases</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:69d322ec0033</guid>
+      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
+      <description>mcp: backfill idx_tags_name_unique for existing databases</description>
+    </item>
+    <item>
+      <title>log: always-on main-process log to &lt;userData&gt;/logs/main.log</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:470390521184</guid>
+      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
+      <description>log: always-on main-process log to &lt;userData&gt;/logs/main.log</description>
+    </item>
+    <item>
+      <title>mcp: drop redundant idx_tags_name + harden migration</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:ffddad1c51be</guid>
+      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
+      <description>mcp: drop redundant idx_tags_name + harden migration</description>
+    </item>
+    <item>
+      <title>debug: runtime toggles for verbose logging + new-window DevTools</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:9dd8e14559d4</guid>
+      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
+      <description>debug: runtime toggles for verbose logging + new-window DevTools</description>
+    </item>
+    <item>
+      <title>settings: debug toggles → Diagnostics pane; CLI socket → Linux only</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:00fa813bca8d</guid>
+      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
+      <description>settings: debug toggles → Diagnostics pane; CLI socket → Linux only</description>
+    </item>
+    <item>
+      <title>window-open: land windows on the user&apos;s active macOS Space</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:508479118b3c</guid>
+      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
+      <description>window-open: land windows on the user&apos;s active macOS Space</description>
+    </item>
     <item>
       <title>mcp: rewrite db.js with node:sqlite, fix N+1 and concurrent-write contention</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-12</link>
@@ -97,230 +139,6 @@
       <guid isPermaLink="false">urn:peek:changelog:2026-05-09:268be7f25dcc</guid>
       <pubDate>Sat, 09 May 2026 12:00:00 GMT</pubDate>
       <description>session: preserve screenEdge across collapseToPrimaryDisplay</description>
-    </item>
-    <item>
-      <title>mobile: gate dev visuals on Development profile, override system dark mode</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:078b1728307c</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>mobile: gate dev visuals on Development profile, override system dark mode</description>
-    </item>
-    <item>
-      <title>hooks: widen pre-bash guard to all main bookmark mutations and op rewinds</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:fe9b32dfa122</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>hooks: widen pre-bash guard to all main bookmark mutations and op rewinds</description>
-    </item>
-    <item>
-      <title>mobile: stateless iOS build pipeline via frontendDist swap</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:9e48c7094a9b</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>mobile: stateless iOS build pipeline via frontendDist swap</description>
-    </item>
-    <item>
-      <title>hooks: require jj new before editing finished commits</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:e2e198630621</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>hooks: require jj new before editing finished commits</description>
-    </item>
-    <item>
-      <title>entities: JSON import uses with not deprecated assert</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:9750a143f860</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>entities: JSON import uses with not deprecated assert</description>
-    </item>
-    <item>
-      <title>log: always-on renderer log via preload + per-profile file writer</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:70001263305a</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>log: always-on renderer log via preload + per-profile file writer</description>
-    </item>
-    <item>
-      <title>mobile: tag input comma-split + debounced tag-only autosave</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:589555dc0f07</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>mobile: tag input comma-split + debounced tag-only autosave</description>
-    </item>
-    <item>
-      <title>reactivity: subscribe browsers to tag:deleted + item:updated</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:0f30d08262a1</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>reactivity: subscribe browsers to tag:deleted + item:updated</description>
-    </item>
-    <item>
-      <title>reactivity: liveQuery helper + migrate spaces/groups/entities</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:0b9614fe5e13</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>reactivity: liveQuery helper + migrate spaces/groups/entities</description>
-    </item>
-    <item>
-      <title>cli: allowlist cli:peek-open + cli:slide-open in feature manifests</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:2d512a930fd6</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>cli: allowlist cli:peek-open + cli:slide-open in feature manifests</description>
-    </item>
-    <item>
-      <title>windows: always render thumbnail block; HSL placeholder for screenshotless cards</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:2a09ae6ff302</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>windows: always render thumbnail block; HSL placeholder for screenshotless cards</description>
-    </item>
-    <item>
-      <title>card-actions: peek-item-actions component + groups integration</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:f7753366e11a</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>card-actions: peek-item-actions component + groups integration</description>
-    </item>
-    <item>
-      <title>cmd: behavior spec + gap analysis (phase 1)</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:2fb6ff7e99cd</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>cmd: behavior spec + gap analysis (phase 1)</description>
-    </item>
-    <item>
-      <title>windows: drop per-domain gradient on placeholder cards</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:b4965bf33a42</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>windows: drop per-domain gradient on placeholder cards</description>
-    </item>
-    <item>
-      <title>izui: ESC closes child-content windows in active sessions</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-08</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-08:499bf94a345e</guid>
-      <pubDate>Fri, 08 May 2026 12:00:00 GMT</pubDate>
-      <description>izui: ESC closes child-content windows in active sessions</description>
-    </item>
-    <item>
-      <title>cli: invoke peek-cli via bundled Electron, not system node</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:ed6c519d969e</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>cli: invoke peek-cli via bundled Electron, not system node</description>
-    </item>
-    <item>
-      <title>feat: back button in editor header, conditional markdown preview icon</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:a55ee1f6da94</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>feat: back button in editor header, conditional markdown preview icon</description>
-    </item>
-    <item>
-      <title>refactor: Quick Add view uses EditorLayout instead of EditorOverlay directly</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:d14eea702be1</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>refactor: Quick Add view uses EditorLayout instead of EditorOverlay directly</description>
-    </item>
-    <item>
-      <title>feat: configurable sync interval with 30min default for mobile app</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:502ea2d3df55</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>feat: configurable sync interval with 30min default for mobile app</description>
-    </item>
-    <item>
-      <title>fix: add missing sync_interval_minutes field to SyncSettings constructors in mobile lib.rs</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:1c292a56c0d6</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>fix: add missing sync_interval_minutes field to SyncSettings constructors in mobile lib.rs</description>
-    </item>
-    <item>
-      <title>feat: two-state offline content icon — solid when downloaded, hollow when pending</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:afad3bfea91d</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>feat: two-state offline content icon — solid when downloaded, hollow when pending</description>
-    </item>
-    <item>
-      <title>fix: persist mobile quick-add draft to localStorage so it survives dismiss/relaunch</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:3265e8df93ab</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>fix: persist mobile quick-add draft to localStorage so it survives dismiss/relaunch</description>
-    </item>
-    <item>
-      <title>shortcuts: restore cmd customization + degrade gracefully on Wayland</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:a9adfbe659a4</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>shortcuts: restore cmd customization + degrade gracefully on Wayland</description>
-    </item>
-    <item>
-      <title>ios: pin IPHONEOS_DEPLOYMENT_TARGET=16.0 for cargo iOS builds</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:f2678e1a56b1</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>ios: pin IPHONEOS_DEPLOYMENT_TARGET=16.0 for cargo iOS builds</description>
-    </item>
-    <item>
-      <title>rules: event-dispatch rule engine + tag-actions migration</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:fa1e490d430f</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>rules: event-dispatch rule engine + tag-actions migration</description>
-    </item>
-    <item>
-      <title>tag-actions: drop one-shot legacy-settings migration</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:9ba355a3e260</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>tag-actions: drop one-shot legacy-settings migration</description>
-    </item>
-    <item>
-      <title>entities: migrate to rule engine + lazy bg tile</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:5978098223da</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>entities: migrate to rule engine + lazy bg tile</description>
-    </item>
-    <item>
-      <title>tag-actions: ship default tag-swap pairs as manifest rules</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:84599ddca93c</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>tag-actions: ship default tag-swap pairs as manifest rules</description>
-    </item>
-    <item>
-      <title>tile-launcher: pubsub broadcast must reach every live tile window</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:55927940f3b0</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>tile-launcher: pubsub broadcast must reach every live tile window</description>
-    </item>
-    <item>
-      <title>core: default dragHoldDelay 0.5s -&gt; 0.3s</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:fb34fcef48c0</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>core: default dragHoldDelay 0.5s -&gt; 0.3s</description>
-    </item>
-    <item>
-      <title>tests: point E2E downloads at tmp + delete on done; refresh v2 pubsub repro candidates</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:1cf42c546da1</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>tests: point E2E downloads at tmp + delete on done; refresh v2 pubsub repro candidates</description>
-    </item>
-    <item>
-      <title>settings: number-input clear falls back to schema default</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-06</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-06:649438f128d7</guid>
-      <pubDate>Wed, 06 May 2026 12:00:00 GMT</pubDate>
-      <description>settings: number-input clear falls back to schema default</description>
     </item>
   </channel>
 </rss>
