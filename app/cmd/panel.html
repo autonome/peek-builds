@@ -456,9 +456,13 @@
         border-radius: 3px;
       }
 
-      /* Mode indicator - tag button style */
+      /* Mode indicator - tag button style.
+         Hidden globally: the chip is currently disabled in the UI. JS
+         continues to update its data-mode attribute (panel.js
+         updateModeIndicator) so re-enabling later is just flipping
+         display back to flex. */
       .mode-indicator {
-        display: flex;
+        display: none;
         align-items: center;
         padding: 4px 10px;
         background: var(--cmd-badge-bg);
@@ -508,10 +512,6 @@
       .mode-indicator[data-mode="url"] {
         background: rgba(52, 199, 89, 0.4);
         border-color: rgba(52, 199, 89, 0.6);
-      }
-
-      .mode-indicator[data-mode="default"] {
-        display: none;
       }
 
       /* Chain steps - shows the pipe history */
