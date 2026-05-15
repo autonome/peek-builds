@@ -5949,6 +5949,19 @@ export function registerTileIpcHandlers(): void {
   }, _grant) => {    const check = validateTileDatastoreRequest(args?.token, ['items']);
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:track-navigation', check.error); return { error: check.error }; }
     try {
+      // Session-restored windows carry params.skipTracking=true. The first
+      // navigation after restore (the saved URL re-loading) is not a real
+      // user navigation and shouldn't pollute history/frecency. Consume the
+      // flag on first call so subsequent user-initiated navigations from
+      // the same window are tracked normally.
+      const callerWin = BrowserWindow.fromWebContents(event.sender);
+      if (callerWin && !callerWin.isDestroyed()) {
+        const info = getWindowInfo(callerWin.id);
+        if (info?.params?.skipTracking) {
+          info.params.skipTracking = false;
+          return { success: true, data: { skipped: true } };
+        }
+      }
       const data = dsTrackNavigation(args.uri, args.options as Parameters<typeof dsTrackNavigation>[1]);
       return { success: true, data };
     } catch (error) {

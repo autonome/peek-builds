@@ -2141,6 +2141,16 @@ export function registerWindowHandlers(): void {
           }
         } catch {}
 
+        // Session-restored windows carry options.skipTracking=true. We
+        // skipped the initial load above; also skip the FIRST redirect-
+        // driven did-navigate that fires before the user has interacted.
+        // Clear the flag after consuming so subsequent user-initiated
+        // navigations from the same window are tracked normally.
+        if (options.skipTracking) {
+          options.skipTracking = false;
+          return;
+        }
+
         try {
           const navTrack = trackWindowLoad(navUrl, {
             source: 'navigation',
