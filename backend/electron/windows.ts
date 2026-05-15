@@ -343,20 +343,16 @@ export function closeWindow(params: { id?: number }, callback?: (success: boolea
   }
 }
 
-/**
- * Transient window roles that should NOT affect dock visibility.
- * These are modal/overlay windows (cmd palette, quick-view, windows switcher)
- * that open and close frequently. Counting them causes dock show/hide cycling
- * which triggers activation policy changes and spurious blur events.
- *
- * Also used by the focus-driven auto-hide path: when a non-transient,
- * non-utility window gains focus, any other window with one of these roles
- * is dismissed via closeOrHideWindow. Restores the "open another window
- * → previous transient closes" behavior that panel-type windows lose
- * because macOS NSPanels don't fire reliable per-window blur events when
- * focus shifts within the app.
- */
-export const TRANSIENT_ROLES = new Set(['palette', 'quick-view', 'overlay']);
+// TRANSIENT_ROLES is defined in ./izui-roles.ts (pure module, Electron-free).
+// Re-exported here so existing imports `from './windows.js'` keep working.
+// The set covers palette/quick-view/overlay — windows that ride above the
+// workspace, must not affect dock visibility, and on macOS follow the user
+// across Spaces. Used both for dock-count exclusion below and for the
+// focus-driven auto-hide path (a non-transient window gaining focus
+// dismisses any transient sibling via closeOrHideWindow, restoring the
+// blur-on-focus-change behavior that NSPanels swallow).
+export { TRANSIENT_ROLES } from './izui-roles.js';
+import { TRANSIENT_ROLES } from './izui-roles.js';
 
 /**
  * Get count of visible persistent windows (excluding background, modals, overlays, HUD).

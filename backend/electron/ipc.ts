@@ -77,8 +77,12 @@ import {
   closeOrHideWindow,
   getSystemThemeBackgroundColor,
   getPrefs,
-  TRANSIENT_ROLES,
 } from './windows.js';
+import {
+  TRANSIENT_ROLES,
+  inferIzuiRole,
+  spacesPolicyForRole,
+} from './izui-roles.js';
 
 
 import { trackWindow } from './display-watcher.js';
@@ -637,6 +641,20 @@ export function registerWindowHandlers(): void {
           // isVisible=false. See commit 1b568d40 for original fix; this
           // was lost in the tile system refactor.
           (existingWindow.window as { __lastShowTime?: number }).__lastShowTime = Date.now();
+          // Re-apply Spaces visibility for transient roles so the hidden
+          // window follows the user to the active Space rather than dragging
+          // them back to its home Space. Non-transient (anchored) windows
+          // intentionally stay where they were opened — macOS pulls the user
+          // to them on show(), which is the desired behavior.
+          // skipTransformProcessType:true prevents the activation-policy
+          // toggle that hides every other Peek window during the call.
+          const reuseRole = existingData.params.role as string | undefined;
+          if (reuseRole && spacesPolicyForRole(reuseRole, process.platform) === 'follow') {
+            existingWindow.window.setVisibleOnAllWorkspaces(true, {
+              visibleOnFullScreen: true,
+              skipTransformProcessType: true,
+            });
+          }
           existingWindow.window.show();
           existingWindow.window.focus();
         }
@@ -1070,8 +1088,41 @@ export function registerWindowHandlers(): void {
       DEBUG && console.log('[window-open] Set alwaysOnTop floating for window', win.id);
     }
 
-    if (options.visibleOnAllWorkspaces) {
-      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    // Derive IZUI role now (before the Spaces dispatch below) using the same
+    // rules the registration block applies later. Hoisted out of the original
+    // inline cascade so the role-derived Spaces policy can run at creation
+    // time. See backend/electron/izui-roles.ts for the cascade.
+    const parentWindowIdForRole = isRealParent ? openerWindow!.id : null;
+    const role = inferIzuiRole(options as Parameters<typeof inferIzuiRole>[0], {
+      isWebPage,
+      parentWindowId: parentWindowIdForRole,
+    });
+
+    // macOS Spaces dispatch by role:
+    //   'follow' — palette/quick-view/overlay (cmd, slides, peeks). Window
+    //     appears on every Space, riding along with the user.
+    //   'anchor' — everything else on darwin. Flip true → false so macOS
+    //     lands the window on the user's active Space and pins it there.
+    //   'none' — non-darwin platforms; macOS Spaces don't exist.
+    // skipTransformProcessType:true is required on both calls — without it,
+    // macOS toggles the app's activation policy (Accessory ↔ Foreground)
+    // and every other Peek window flashes out for a frame.
+    if (!isHeadless()) {
+      const spacesPolicy = spacesPolicyForRole(role, process.platform);
+      if (spacesPolicy === 'follow') {
+        win.setVisibleOnAllWorkspaces(true, {
+          visibleOnFullScreen: true,
+          skipTransformProcessType: true,
+        });
+      } else if (spacesPolicy === 'anchor') {
+        win.setVisibleOnAllWorkspaces(true, {
+          visibleOnFullScreen: true,
+          skipTransformProcessType: true,
+        });
+        win.setVisibleOnAllWorkspaces(false, {
+          skipTransformProcessType: true,
+        });
+      }
     }
 
     // Register canvas page host windows with the tile broadcaster so pubsub
@@ -1194,48 +1245,10 @@ export function registerWindowHandlers(): void {
       // Add to window manager with modal parameter
       // Note: isTransient was determined BEFORE window creation (at top of handler)
       // to avoid the race condition where the new window becomes focused before we check
-      const parentWindowId = isRealParent ? openerWindow!.id : null;
-
-      // Phase 1: Compute IZUI role from existing params if not explicitly provided
-      let role = options.role as string | undefined;
-      if (!role) {
-        if (options.overlay === true) {
-          role = 'overlay';
-        } else if (options.modal === true && options.keepLive === true) {
-          role = 'palette';
-        } else if (options.modal === true) {
-          role = 'quick-view';
-        } else if (options.escapeMode === 'navigate') {
-          role = 'workspace';
-        } else if (parentWindowId != null && isWebPage) {
-          role = 'child-content';
-        } else if (isWebPage) {
-          role = 'content';
-        } else {
-          // Default for non-modal, non-overlay, non-webpage windows opened via
-          // api.window.open without an explicit role. These are tile-launched
-          // feature workspaces (hello-world, search, groups, etc.) — long-lived
-          // primary surfaces, NOT transient utility sidekicks. Genuine utility
-          // surfaces (datastore viewer, diagnostic tool, HUD chips, the cmd
-          // panel itself) all set role:'utility' explicitly.
-          //
-          // ESC behaviour: workspace doesn't close on ESC in active sessions
-          // and falls through to escUnhandledPolicy → open the windows
-          // switcher (the user-facing "what windows do I have open" surface).
-          // utility, by contrast, always closes on ESC — wrong for a primary
-          // feature window the user explicitly opened.
-          role = 'workspace';
-        }
-      }
-
-      // Phase 2: Promote 'content' to 'child-content' when opened from a real parent.
-      // Extensions may explicitly pass role:'content' for web pages, but if the IPC
-      // sender is a visible window (not the background renderer), the opened page
-      // is semantically a child — ESC should close it and return to the parent.
-      if (role === 'content' && parentWindowId != null) {
-        console.log(`[izui] Promoting content -> child-content (parent: ${parentWindowId})`);
-        role = 'child-content';
-      }
+      // Role + parentWindowId were derived earlier (just before the Spaces
+      // dispatch) using ./izui-roles.ts. Re-bound here for the registration
+      // payload below.
+      const parentWindowId = parentWindowIdForRole;
 
       console.log('[izui] Window role:', role, 'for:', url);
 
