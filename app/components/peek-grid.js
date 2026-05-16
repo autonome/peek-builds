@@ -486,6 +486,7 @@ export class PeekGrid extends PeekElement {
     if (N === 0) {
       grid.style.gridTemplateColumns = '';
       grid.style.gridTemplateRows = '';
+      grid.style.gap = '';
       return;
     }
 
@@ -496,34 +497,85 @@ export class PeekGrid extends PeekElement {
     // overflow the visible viewport.
     const cw = grid.clientWidth;
     const ch = grid.clientHeight;
-    const gap = this.gap;
     if (cw <= 0 || ch <= 0) return;
 
+    // The `gap` attribute acts as the MAXIMUM gutter; the effective gap
+    // scales with cell width so 30+ small cards don't drown in 72px
+    // gutters while 2 huge cards still get a generous frame.
+    // 5% / 4px floor: tuned so small cards get tight gutters (better
+    // space utilisation) without losing the framed look on big cards.
+    const MAX_GAP = this.gap;
+    const MIN_GAP = 4;
+    const GAP_RATIO = 0.05; // gap ≈ 5% of cell width
     const TARGET_ASPECT = 3 / 2; // w / h
-    let bestCols = 1;
-    let bestScore = -1;
+    // Hard aspect bounds — layouts outside this range are skipped, so
+    // cards never become extremely wide-and-short or tall-and-narrow.
+    // If no candidate fits (degenerate counts on extreme viewports),
+    // we fall back to a soft-penalty pass below.
+    const MIN_ASPECT = 0.7;
+    const MAX_ASPECT = 1.9;
 
-    for (let cols = 1; cols <= N; cols++) {
-      const rows = Math.ceil(N / cols);
-      const cellW = (cw - (cols - 1) * gap) / cols;
-      const cellH = (ch - (rows - 1) * gap) / rows;
-      if (cellW <= 0 || cellH <= 0) continue;
+    // Closed-form ideal cell width when gap = GAP_RATIO * cellW:
+    //   cellW * cols + (cols - 1) * GAP_RATIO * cellW = cw
+    //   cellW = cw / (cols + (cols - 1) * GAP_RATIO)
+    // Then clamp the resulting ideal gap into [MIN_GAP, MAX_GAP] and
+    // re-derive cellW from the clamped value so columns sum to cw.
+    const computeGap = (cols) => {
+      const idealCellW = cw / (cols + (cols - 1) * GAP_RATIO);
+      const idealGap = idealCellW * GAP_RATIO;
+      if (idealGap > MAX_GAP) return MAX_GAP;
+      if (idealGap < MIN_GAP) return MIN_GAP;
+      return idealGap;
+    };
 
+    // Score a single (cols, effGap, cellW, cellH) candidate. Returns
+    // the score; caller decides whether to honor the in-range filter.
+    const scoreCandidate = (cellW, cellH) => {
       const cardAspect = cellW / cellH;
       const aspectScore = cardAspect > TARGET_ASPECT
         ? TARGET_ASPECT / cardAspect
         : cardAspect / TARGET_ASPECT;
-      const area = cellW * cellH;
-      const score = aspectScore * area;
-      if (score > bestScore) {
-        bestScore = score;
-        bestCols = cols;
+      // Quadratic aspect penalty — wide-short and tall-narrow layouts
+      // lose against closer-to-target ones even at equal area.
+      return aspectScore * aspectScore * cellW * cellH;
+    };
+
+    // Two-pass search: first try only layouts whose cell aspect is in
+    // [MIN_ASPECT, MAX_ASPECT]; if none qualify (degenerate count on an
+    // extreme viewport), fall back to scoring every layout.
+    let bestCols = 1;
+    let bestGap = MAX_GAP;
+    let bestScore = -1;
+    let foundInRange = false;
+
+    for (let pass = 0; pass < 2; pass++) {
+      for (let cols = 1; cols <= N; cols++) {
+        const rows = Math.ceil(N / cols);
+        const effGap = computeGap(cols);
+        const cellW = (cw - (cols - 1) * effGap) / cols;
+        const cellH = (ch - (rows - 1) * effGap) / rows;
+        if (cellW <= 0 || cellH <= 0) continue;
+
+        if (pass === 0) {
+          const cardAspect = cellW / cellH;
+          if (cardAspect < MIN_ASPECT || cardAspect > MAX_ASPECT) continue;
+        }
+
+        const score = scoreCandidate(cellW, cellH);
+        if (score > bestScore) {
+          bestScore = score;
+          bestCols = cols;
+          bestGap = effGap;
+          if (pass === 0) foundInRange = true;
+        }
       }
+      if (foundInRange) break;
     }
 
     const rows = Math.ceil(N / bestCols);
     grid.style.gridTemplateColumns = `repeat(${bestCols}, 1fr)`;
     grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+    grid.style.gap = `${bestGap}px`;
   }
 
   _clearFitStyles() {
@@ -531,6 +583,7 @@ export class PeekGrid extends PeekElement {
     if (!grid) return;
     grid.style.gridTemplateColumns = '';
     grid.style.gridTemplateRows = '';
+    grid.style.gap = '';
   }
 
   _getMasonryColumns() {
