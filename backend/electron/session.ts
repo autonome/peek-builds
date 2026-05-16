@@ -11,6 +11,7 @@
 
 import { BrowserWindow, dialog, screen } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
+import type { WindowContext, WindowDescriptor } from './window-registry.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
 import type { ClosedWindowEntry } from './main.js';
@@ -22,22 +23,7 @@ import { WEB_CORE_ADDRESS } from './config.js';
 import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile } from './config.js';
 
-export interface WindowContext {
-  mode: string | null;
-  modeMetadata: Record<string, unknown> | null;
-}
-
-export interface WindowDescriptor {
-  url: string;
-  key: string | undefined;
-  title: string;
-  bounds: Electron.Rectangle;
-  source: string;
-  params: Record<string, unknown>;
-  zOrder: number;
-  focused: boolean;
-  context?: WindowContext;
-}
+export type { WindowContext, WindowDescriptor };
 
 export interface SessionMetadata {
   lastSaveReason: string;

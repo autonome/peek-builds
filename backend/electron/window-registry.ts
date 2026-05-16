@@ -21,6 +21,38 @@ import { BrowserWindow } from 'electron';
 import type { WebContents } from 'electron';
 
 /**
+ * Side-channel session state that needs to survive a window's lifecycle.
+ * Today only used by session restore (to bring back the active mode +
+ * its metadata). Held alongside the window's descriptor so a Pending
+ * (not-yet-realized) window can carry it forward too.
+ */
+export interface WindowContext {
+  mode: string | null;
+  modeMetadata: Record<string, unknown> | null;
+}
+
+/**
+ * Everything needed to recreate a window. A WindowDescriptor is what
+ * `saveSessionSnapshot` persists for each open window and what
+ * `restoreSessionSnapshot` reads back to call the window-open handler.
+ *
+ * In phase 2+ this will also be the payload carried by a Pending
+ * WindowRef so the registry can serve "fake" windows from descriptors
+ * until they're realized on demand.
+ */
+export interface WindowDescriptor {
+  url: string;
+  key: string | undefined;
+  title: string;
+  bounds: Electron.Rectangle;
+  source: string;
+  params: Record<string, unknown>;
+  zOrder: number;
+  focused: boolean;
+  context?: WindowContext;
+}
+
+/**
  * Returns the live BrowserWindow for `id`, or null if there is no such
  * window or it has been destroyed.
  *
