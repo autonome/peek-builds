@@ -16,6 +16,7 @@
 
 import fs from 'node:fs';
 import { BrowserWindow } from 'electron';
+import { getLiveWindow } from './window-registry.js';
 import { getWindowInfo } from './main.js';
 import { findUrlItem } from './datastore.js';
 import { resolveWindowAddress } from './window-address.js';
@@ -56,8 +57,8 @@ export interface WindowPresentation {
  * doesn't exist or has been destroyed.
  */
 export function getWindowPresentation(windowId: number): WindowPresentation | null {
-  const win = BrowserWindow.fromId(windowId);
-  if (!win || win.isDestroyed()) return null;
+  const win = getLiveWindow(windowId);
+  if (!win) return null;
 
   const info = getWindowInfo(windowId);
   const hostUrl = win.webContents.getURL();

@@ -25,8 +25,8 @@
  * See docs/tasks.md "Web permission requests" for the full plan.
  */
 
-import { BrowserWindow } from 'electron';
 import type { Session } from 'electron';
+import { getLiveWindow } from './window-registry.js';
 
 import { publish, subscribe } from './pubsub.js';
 import { findHostWindowId } from './webview-guest-registry.js';
@@ -126,7 +126,7 @@ export function installPermissionHandler(ses: Session): void {
     });
 
     // Clean up if the host window closes before the user responds.
-    const bw = BrowserWindow.fromId(windowId);
+    const bw = getLiveWindow(windowId);
     if (bw) {
       const onClosed = () => {
         const pending = pendingRequests.get(requestId);

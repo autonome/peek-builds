@@ -6,6 +6,7 @@
  */
 
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme, webContents } from 'electron';
+import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -323,8 +324,8 @@ export async function initialize(): Promise<void> {
       // Show any alwaysOnTop overlay windows (e.g. HUD) that were hidden
       // by the did-resign-active handler below. This hide/show pair
       // avoids a pubsub round-trip through a renderer.
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed() && win.isAlwaysOnTop() && (win as any).__hudHidden) {
+      for (const win of getAllLiveWindows()) {
+        if (win.isAlwaysOnTop() && (win as any).__hudHidden) {
           win.showInactive();
           (win as any).__hudHidden = false;
         }
@@ -351,8 +352,8 @@ export async function initialize(): Promise<void> {
       if (!coordinator.isWithinOverlayExitCooldown() && !coordinator.isWithinOverlayEntryCooldown()) {
         for (const [id, data] of windowRegistry) {
           if (data.params.role === 'overlay') {
-            const overlayWin = BrowserWindow.fromId(id);
-            if (overlayWin && !overlayWin.isDestroyed()) {
+            const overlayWin = getLiveWindow(id);
+            if (overlayWin) {
               DEBUG && console.log('[izui] App lost focus while overlay open, closing overlay window:', id);
               // Use app-blur exit path: restores hidden windows but does NOT focus any,
               // so we don't steal focus from the app the user is switching to.
@@ -372,8 +373,8 @@ export async function initialize(): Promise<void> {
       // the app loses focus. Skip focusable alwaysOnTop windows (e.g.
       // the cmd panel) — they have their own blur handler and would
       // blink if hidden here.
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (!win.isDestroyed() && win.isAlwaysOnTop() && win.isVisible() && !win.isFocusable()) {
+      for (const win of getAllLiveWindows()) {
+        if (win.isAlwaysOnTop() && win.isVisible() && !win.isFocusable()) {
           win.hide();
           (win as any).__hudHidden = true;
         }
@@ -436,8 +437,8 @@ export async function initialize(): Promise<void> {
         // Focus parent window if this was a child
         if (windowData && windowData.params.parentWindowId) {
           const parentId = windowData.params.parentWindowId as number;
-          const parentWin = BrowserWindow.fromId(parentId);
-          if (parentWin && !parentWin.isDestroyed()) {
+          const parentWin = getLiveWindow(parentId);
+          if (parentWin) {
             DEBUG && console.log('[izui] Child window closed, focusing parent:', parentId);
             parentWin.focus();
           }
@@ -465,8 +466,8 @@ export async function initialize(): Promise<void> {
 
               // Focus the target window after restoration
               if (focusTargetId) {
-                const targetWin = BrowserWindow.fromId(focusTargetId);
-                if (targetWin && !targetWin.isDestroyed()) {
+                const targetWin = getLiveWindow(focusTargetId);
+                if (targetWin) {
                   DEBUG && console.log('[izui] Overlay focus target:', focusTargetId, session.overlayFocusTarget ? '(explicit selection)' : '(pre-overlay fallback)');
                   targetWin.focus();
                 }
@@ -489,8 +490,8 @@ export async function initialize(): Promise<void> {
             if (hiddenWindowIds && hiddenWindowIds.length > 0 && !isTransient) {
               DEBUG && console.log('[izui] Overlay closed (fallback path), restoring', hiddenWindowIds.length, 'windows');
               for (const hiddenId of hiddenWindowIds) {
-                const hiddenWin = BrowserWindow.fromId(hiddenId);
-                if (hiddenWin && !hiddenWin.isDestroyed()) {
+                const hiddenWin = getLiveWindow(hiddenId);
+                if (hiddenWin) {
                   hiddenWin.show();
                 }
               }
@@ -498,8 +499,8 @@ export async function initialize(): Promise<void> {
               const preOverlayTarget = coordinator.getPreOverlayFocusTarget();
               const restoreFocusId = focusTargetId || preOverlayTarget;
               if (restoreFocusId) {
-                const targetWin = BrowserWindow.fromId(restoreFocusId);
-                if (targetWin && !targetWin.isDestroyed()) {
+                const targetWin = getLiveWindow(restoreFocusId);
+                if (targetWin) {
                   targetWin.focus();
                 }
               }
@@ -1044,8 +1045,8 @@ export function findWindowByKey(source: string, key: string): { id: number; wind
 
   for (const [id, win] of windowRegistry) {
     if (win.source === source && win.params && win.params.key === key) {
-      const browserWindow = BrowserWindow.fromId(id);
-      if (browserWindow && !browserWindow.isDestroyed()) {
+      const browserWindow = getLiveWindow(id);
+      if (browserWindow) {
         return { id, window: browserWindow, data: win };
       }
       // Clean up stale registry entry for destroyed/missing window.
@@ -1073,8 +1074,8 @@ export function findWindowByUrl(url: string): { id: number; window: BrowserWindo
       const role = win.params.role;
       if (role !== 'content' && role !== 'child-content') continue;
 
-      const browserWindow = BrowserWindow.fromId(id);
-      if (browserWindow && !browserWindow.isDestroyed()) {
+      const browserWindow = getLiveWindow(id);
+      if (browserWindow) {
         return { id, window: browserWindow, data: win };
       }
     }
@@ -1592,7 +1593,7 @@ export function registerActivateHandler(): void {
   app.on('activate', () => {
     // On macOS it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.
-    if (BrowserWindow.getAllWindows().length === 0) {
+    if (getAllLiveWindows().length === 0) {
       // Could recreate window here if needed
     }
   });

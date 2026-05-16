@@ -17,6 +17,7 @@
  */
 
 import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme, screen, app, shell } from 'electron';
+import { getAllLiveWindows, getLiveWindow, windowFromWebContents } from './window-registry.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -888,7 +889,7 @@ export function registerTileIpcHandlers(): void {
     try {
       let windowId = args.windowId;
       if (windowId == null) {
-        const callingWin = BrowserWindow.fromWebContents(ev.sender);
+        const callingWin = windowFromWebContents(ev.sender);
         windowId = callingWin?.id ?? null;
       }
       const entry = getContextEntry(args.key, windowId);
@@ -917,7 +918,7 @@ export function registerTileIpcHandlers(): void {
     try {
       let windowId = args.windowId;
       if (windowId == null) {
-        const callingWin = BrowserWindow.fromWebContents(ev.sender);
+        const callingWin = windowFromWebContents(ev.sender);
         windowId = callingWin?.id ?? null;
       }
       const source = `peek://${activeGrant.tileId}/background`;
@@ -1086,11 +1087,11 @@ export function registerTileIpcHandlers(): void {
       }
       filters.push({ name: 'All Files', extensions: ['*'] });
 
-      const senderWindow = BrowserWindow.fromWebContents(ev.sender);
+      const senderWindow = windowFromWebContents(ev.sender);
       const focusedWindow = BrowserWindow.getFocusedWindow();
       const parentWindow = focusedWindow && !focusedWindow.isDestroyed()
         ? focusedWindow
-        : (senderWindow && !senderWindow.isDestroyed() && senderWindow.isVisible() ? senderWindow : null);
+        : (senderWindow && senderWindow.isVisible() ? senderWindow : null);
 
       const dialogOpts: Electron.SaveDialogOptions = {
         defaultPath: args.filename,
@@ -1122,11 +1123,11 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: check.error };
     }
     try {
-      const senderWindow = BrowserWindow.fromWebContents(ev.sender);
+      const senderWindow = windowFromWebContents(ev.sender);
       const focusedWindow = BrowserWindow.getFocusedWindow();
       const parentWindow = focusedWindow && !focusedWindow.isDestroyed()
         ? focusedWindow
-        : (senderWindow && !senderWindow.isDestroyed() && senderWindow.isVisible() ? senderWindow : null);
+        : (senderWindow && senderWindow.isVisible() ? senderWindow : null);
 
       const openDialogOpts: Electron.OpenDialogOptions = {
         properties: ['openFile'],
@@ -2468,7 +2469,7 @@ export function registerTileIpcHandlers(): void {
     try {
       const { getIzuiCoordinator } = await import('./izui-state.js');
       const coordinator = getIzuiCoordinator();
-      const requestingWindow = BrowserWindow.fromWebContents(ev.sender);
+      const requestingWindow = windowFromWebContents(ev.sender);
       const session = coordinator.getSession();
       if (session) {
         return { transient: coordinator.isTransient() };
@@ -2520,8 +2521,8 @@ export function registerTileIpcHandlers(): void {
   registerTileIpc('tile:izui:close-self', { mode: 'handle' }, async (ev, args: { token: string }, _grant) => {    const grant = getGrantForToken(args?.token);
     const check = checkIzuiAllowed(grant);
     if (!check.ok) { handleViolation(grant, 'izui', 'izui:close-self', check.error, args?.token); return { error: check.error }; }
-    const win = BrowserWindow.fromWebContents(ev.sender);
-    if (!win || win.isDestroyed()) {
+    const win = windowFromWebContents(ev.sender);
+    if (!win) {
       return { success: false, error: 'Window not found' };
     }
     try {
@@ -2686,7 +2687,7 @@ export function registerTileIpcHandlers(): void {
     id?: number;
   }, _grant) => {
     const grant = _grant;
-    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    const senderWin = windowFromWebContents(event.sender);
     // ownWindow: closing with no id OR id matching the sender's window
     // is treated as the tile closing its own context.
     const ownWindow = args.id == null || (senderWin != null && args.id === senderWin.id);
@@ -2698,11 +2699,11 @@ export function registerTileIpcHandlers(): void {
 
     let target: BrowserWindow | null = null;
     if (args.id != null) {
-      target = BrowserWindow.fromId(args.id);
-    } else if (senderWin && !senderWin.isDestroyed()) {
+      target = getLiveWindow(args.id);
+    } else if (senderWin) {
       target = senderWin;
     }
-    if (target && !target.isDestroyed()) {
+    if (target) {
       // Route through closeOrHideWindow so windows with keepLive:true are
       // HIDDEN rather than destroyed — the api.window.open key-reuse path
       // in ipc.ts then finds the window in findWindowByKey and calls
@@ -2724,8 +2725,8 @@ export function registerTileIpcHandlers(): void {
       return { error: check.error };
     }
 
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || win.isDestroyed()) {
+    const win = windowFromWebContents(event.sender);
+    if (!win) {
       return { error: 'Window not found' };
     }
 
@@ -2766,8 +2767,7 @@ export function registerTileIpcHandlers(): void {
         preMaxBounds: Electron.Rectangle | null;
         params: Record<string, unknown>;
       }> = [];
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (win.isDestroyed()) continue;
+      for (const win of getAllLiveWindows()) {
         const info = getWindowInfo(win.id);
         // When includeInternal is false/absent, skip windows without registry
         // entries (e.g. purely internal Electron windows). When true, include all.
@@ -2823,8 +2823,8 @@ export function registerTileIpcHandlers(): void {
       if (typeof args.id !== 'number') {
         return { exists: false, success: false, data: false, error: 'Window ID is required' };
       }
-      const win = BrowserWindow.fromId(args.id);
-      if (!win || win.isDestroyed()) {
+      const win = getLiveWindow(args.id);
+      if (!win) {
         return { exists: false, success: true, data: false };
       }
       return { exists: true, success: true, data: true };
@@ -2852,8 +2852,8 @@ export function registerTileIpcHandlers(): void {
       if (typeof args.id !== 'number') {
         return { success: false, error: 'Window ID is required' };
       }
-      const win = BrowserWindow.fromId(args.id);
-      if (!win || win.isDestroyed()) {
+      const win = getLiveWindow(args.id);
+      if (!win) {
         return { success: false, error: 'Window not found' };
       }
       win.show();
@@ -2882,8 +2882,8 @@ export function registerTileIpcHandlers(): void {
       if (typeof args.id !== 'number') {
         return { success: false, error: 'Window ID is required' };
       }
-      const win = BrowserWindow.fromId(args.id);
-      if (!win || win.isDestroyed()) {
+      const win = getLiveWindow(args.id);
+      if (!win) {
         return { success: false, error: 'Window not found' };
       }
       win.hide();
@@ -2914,8 +2914,8 @@ export function registerTileIpcHandlers(): void {
       if (typeof args.id !== 'number') {
         return { success: false, error: 'Window ID is required' };
       }
-      const win = BrowserWindow.fromId(args.id);
-      if (!win || win.isDestroyed()) {
+      const win = getLiveWindow(args.id);
+      if (!win) {
         return { success: false, error: 'Window not found' };
       }
       if (!isHeadless()) {
@@ -3005,9 +3005,9 @@ export function registerTileIpcHandlers(): void {
 
     try {
       const win = typeof args.id === 'number'
-        ? BrowserWindow.fromId(args.id)
-        : BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) {
+        ? getLiveWindow(args.id)
+        : windowFromWebContents(event.sender);
+      if (!win) {
         return { success: false, error: 'Window not found' };
       }
       const forward = args.options?.forward === true;
@@ -3038,9 +3038,9 @@ export function registerTileIpcHandlers(): void {
         return { success: false, error: `Invalid window id: ${typeof args.id}` };
       }
       const win = typeof args.id === 'number'
-        ? BrowserWindow.fromId(args.id)
-        : BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) {
+        ? getLiveWindow(args.id)
+        : windowFromWebContents(event.sender);
+      if (!win) {
         return { success: false, error: 'Window not found' };
       }
       const bounds = win.getBounds();
@@ -3080,14 +3080,14 @@ export function registerTileIpcHandlers(): void {
     }
 
     try {
-      const windows = BrowserWindow.getAllWindows();
+      const windows = getAllLiveWindows();
       let centered = 0;
       // Snapshot displays + primary id once outside the loop — they don't
       // change between iterations and reading them is not free.
       const displays = screen.getAllDisplays();
       const primaryDisplayId = screen.getPrimaryDisplay().id;
       for (const win of windows) {
-        if (win.isDestroyed() || !win.isVisible()) continue;
+        if (!win.isVisible()) continue;
         const bounds = win.getBounds();
         // Each window centers on its OWN current display (derived from
         // `currentBounds` by the placement engine).
@@ -3141,9 +3141,9 @@ export function registerTileIpcHandlers(): void {
         return { success: false, error: `Invalid window id: ${typeof args.id}` };
       }
       const win = typeof args.id === 'number'
-        ? BrowserWindow.fromId(args.id)
-        : BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) {
+        ? getLiveWindow(args.id)
+        : windowFromWebContents(event.sender);
+      if (!win) {
         return { success: false, error: 'Window not found' };
       }
       // Logged unconditionally — wrong-window targeting bugs are reported
@@ -3243,9 +3243,9 @@ export function registerTileIpcHandlers(): void {
         return { success: false, error: `Invalid window id: ${typeof args.id}` };
       }
       const win = typeof args.id === 'number'
-        ? BrowserWindow.fromId(args.id)
-        : BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) {
+        ? getLiveWindow(args.id)
+        : windowFromWebContents(event.sender);
+      if (!win) {
         return { success: false, error: 'Window not found' };
       }
       const info = getWindowInfo(win.id);
@@ -3323,8 +3323,8 @@ export function registerTileIpcHandlers(): void {
     }
 
     try {
-      const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) {
+      const win = windowFromWebContents(event.sender);
+      if (!win) {
         return { success: false, error: 'Window not found' };
       }
       const info = getWindowInfo(win.id);
@@ -3375,9 +3375,9 @@ export function registerTileIpcHandlers(): void {
         return { success: false, error: `Invalid window id: ${typeof args.id}` };
       }
       const win = typeof args.id === 'number'
-        ? BrowserWindow.fromId(args.id)
-        : BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) {
+        ? getLiveWindow(args.id)
+        : windowFromWebContents(event.sender);
+      if (!win) {
         return { success: false, error: 'Window not found' };
       }
       win.setFullScreen(!win.isFullScreen());
@@ -3411,15 +3411,14 @@ export function registerTileIpcHandlers(): void {
     try {
       const tracked = getLastFocusedVisibleWindowId();
       if (typeof tracked === 'number' && tracked > 0) {
-        const win = BrowserWindow.fromId(tracked);
-        if (win && !win.isDestroyed()) return { success: true, data: tracked };
+        const win = getLiveWindow(tracked);
+        if (win) return { success: true, data: tracked };
       }
       const focused = BrowserWindow.getFocusedWindow();
       if (focused && !focused.isDestroyed()) {
         return { success: true, data: focused.id };
       }
-      for (const w of BrowserWindow.getAllWindows()) {
-        if (w.isDestroyed()) continue;
+      for (const w of getAllLiveWindows()) {
         if (!w.isVisible()) continue;
         if (!w.isFocusable()) continue;
         return { success: true, data: w.id };
@@ -3453,8 +3452,8 @@ export function registerTileIpcHandlers(): void {
       if (!targetId) {
         return { success: false, error: 'No content window available' };
       }
-      const win = BrowserWindow.fromId(targetId);
-      if (!win || win.isDestroyed()) {
+      const win = getLiveWindow(targetId);
+      if (!win) {
         if (targetId === getLastContentWindowId()) clearLastContentWindowId();
         return { success: false, error: 'Window not found or destroyed' };
       }
@@ -3482,8 +3481,8 @@ export function registerTileIpcHandlers(): void {
     }
 
     try {
-      const callerWin = BrowserWindow.fromWebContents(event.sender);
-      if (!callerWin || callerWin.isDestroyed()) {
+      const callerWin = windowFromWebContents(event.sender);
+      if (!callerWin) {
         return { success: false, error: 'Caller window not found' };
       }
       // Replicate the work the legacy `window-set-overlay-focus-target`
@@ -3529,9 +3528,9 @@ export function registerTileIpcHandlers(): void {
 
     try {
       const win = typeof args.id === 'number'
-        ? BrowserWindow.fromId(args.id)
-        : BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) {
+        ? getLiveWindow(args.id)
+        : windowFromWebContents(event.sender);
+      if (!win) {
         return { success: false, error: 'Window not found' };
       }
       win.setVisibleOnAllWorkspaces(args.visible === true, args.options || {});
@@ -3559,7 +3558,7 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: check.error };
     }
 
-    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    const senderWin = windowFromWebContents(event.sender);
     if (!senderWin) return { success: false, error: 'No sender window' };
 
     const openerWindowId = popupToOpener.get(senderWin.id);
@@ -3568,8 +3567,8 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'No opener window mapped' };
     }
 
-    const openerWin = BrowserWindow.fromId(openerWindowId);
-    if (!openerWin || openerWin.isDestroyed()) {
+    const openerWin = getLiveWindow(openerWindowId);
+    if (!openerWin) {
       DEBUG && console.log('[tile:window:opener-postmessage] Opener window', openerWindowId, 'not found or destroyed');
       popupToOpener.delete(senderWin.id);
       return { success: false, error: 'Opener window not found' };
@@ -3600,14 +3599,14 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: check.error };
     }
 
-    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    const senderWin = windowFromWebContents(event.sender);
     if (!senderWin) return { success: false, error: 'No sender window' };
 
     const openerWindowId = popupToOpener.get(senderWin.id);
     if (!openerWindowId) return { success: false, error: 'No opener mapped' };
 
-    const openerWin = BrowserWindow.fromId(openerWindowId);
-    if (!openerWin || openerWin.isDestroyed()) {
+    const openerWin = getLiveWindow(openerWindowId);
+    if (!openerWin) {
       popupToOpener.delete(senderWin.id);
       return { success: false, error: 'Opener window not found' };
     }
@@ -3638,14 +3637,14 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: check.error };
     }
 
-    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    const senderWin = windowFromWebContents(event.sender);
     if (!senderWin) return { success: false, error: 'No sender window' };
 
     const openerWindowId = popupToOpener.get(senderWin.id);
     if (!openerWindowId) return { success: false, error: 'No opener mapped' };
 
-    const openerWin = BrowserWindow.fromId(openerWindowId);
-    if (!openerWin || openerWin.isDestroyed()) {
+    const openerWin = getLiveWindow(openerWindowId);
+    if (!openerWin) {
       popupToOpener.delete(senderWin.id);
       return { success: false, error: 'Opener window not found' };
     }
@@ -3668,7 +3667,7 @@ export function registerTileIpcHandlers(): void {
   }, _grant) => {
     const grant = _grant;
 
-    const win = BrowserWindow.fromWebContents(event.sender);
+    const win = windowFromWebContents(event.sender);
     return win ? { success: true, id: win.id } : { success: false, error: 'Window not found' };
   });
 
@@ -3683,8 +3682,8 @@ export function registerTileIpcHandlers(): void {
   }, _grant) => {
     const grant = _grant;
 
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || win.isDestroyed()) {
+    const win = windowFromWebContents(event.sender);
+    if (!win) {
       return { success: false, error: 'Window not found' };
     }
     const bounds = win.getBounds();
@@ -3701,8 +3700,8 @@ export function registerTileIpcHandlers(): void {
   }, _grant) => {
     const grant = _grant;
 
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || win.isDestroyed()) {
+    const win = windowFromWebContents(event.sender);
+    if (!win) {
       return { success: false, error: 'Window not found' };
     }
     const display = screen.getDisplayMatching(win.getBounds());
@@ -3741,8 +3740,8 @@ export function registerTileIpcHandlers(): void {
   }, _grant) => {
     const grant = _grant;
 
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || win.isDestroyed()) {
+    const win = windowFromWebContents(event.sender);
+    if (!win) {
       return { success: false, error: 'Window not found' };
     }
     const current = win.getBounds();
@@ -3790,8 +3789,8 @@ export function registerTileIpcHandlers(): void {
   }, _grant) => {
     const grant = _grant;
 
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || win.isDestroyed()) {
+    const win = windowFromWebContents(event.sender);
+    if (!win) {
       return { success: false, error: 'Window not found' };
     }
     const width = Math.max(1, Math.floor(Number(args.width)));

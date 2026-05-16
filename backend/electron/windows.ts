@@ -5,6 +5,7 @@
  */
 
 import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
+import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import {
   WEB_CORE_ADDRESS,
   SETTINGS_ADDRESS,
@@ -330,7 +331,7 @@ export function closeWindow(params: { id?: number }, callback?: (success: boolea
 
     closeChildWindows(entry.params.address as string);
 
-    const win = BrowserWindow.fromId(params.id);
+    const win = getLiveWindow(params.id);
     if (win) {
       win.close();
     }
@@ -359,9 +360,8 @@ import { TRANSIENT_ROLES } from './izui-roles.js';
  * Used by maybeHideApp to decide whether to hide the app when a window closes.
  */
 export function getVisibleWindowCount(excludeId: number | null = null): number {
-  return BrowserWindow.getAllWindows().filter(win => {
+  return getAllLiveWindows().filter(win => {
     if (excludeId && win.id === excludeId) return false;
-    if (win.isDestroyed()) return false;
     if (!win.isVisible()) return false;
 
     const entry = getWindowInfo(win.id);
@@ -430,8 +430,8 @@ export function closeOrHideWindow(id: number): void {
   DEBUG && console.log('closeOrHideWindow called for ID:', id);
 
   try {
-    const win = BrowserWindow.fromId(id);
-    if (!win || win.isDestroyed()) {
+    const win = getLiveWindow(id);
+    if (!win) {
       DEBUG && console.log('Window already destroyed or invalid');
       return;
     }
@@ -508,7 +508,7 @@ export function closeChildWindows(aAddress: string): void {
     closeChildWindows(address);
 
     // close window
-    const win = BrowserWindow.fromId(child.id);
+    const win = getLiveWindow(child.id);
     if (win) {
       win.close();
     }

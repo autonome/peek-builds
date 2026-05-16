@@ -23,6 +23,7 @@
  */
 
 import { BrowserWindow, screen } from 'electron';
+import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import { getWindowInfo } from './main.js';
 import { DEBUG, WEB_CORE_ADDRESS } from './config.js';
 import { computePlacement, type Placement } from './window-placement.js';
@@ -46,11 +47,10 @@ function projectAllWindows(reason: string): void {
     `primary=${primaryDisplayId}`
   );
 
-  const allWindows = BrowserWindow.getAllWindows();
+  const allWindows = getAllLiveWindows();
   let placedCount = 0;
 
   for (const win of allWindows) {
-    if (win.isDestroyed()) continue;
     if (!win.isVisible()) continue;
 
     const entry = getWindowInfo(win.id);
@@ -62,8 +62,8 @@ function projectAllWindows(reason: string): void {
     const bounds = win.getBounds();
     let parentBounds: Electron.Rectangle | undefined;
     if (placement.mode === 'parent-centered') {
-      const parent = BrowserWindow.fromId(placement.parentId);
-      if (parent && !parent.isDestroyed()) {
+      const parent = getLiveWindow(placement.parentId);
+      if (parent) {
         parentBounds = parent.getBounds();
       }
     }

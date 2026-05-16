@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { BrowserWindow } from 'electron';
+import { getAllLiveWindows } from './window-registry.js';
 import { DEBUG } from './config.js';
 
 let watchers: fs.FSWatcher[] = [];
@@ -99,12 +99,10 @@ function scheduleReload(changedFile: string): void {
 function reloadWindows(changedFile: string): void {
   DEBUG && console.log(`[hotreload] File changed: ${changedFile}`);
 
-  const windows = BrowserWindow.getAllWindows();
+  const windows = getAllLiveWindows();
   let reloadedCount = 0;
 
   for (const win of windows) {
-    if (win.isDestroyed()) continue;
-
     const url = win.webContents.getURL();
 
     // Only reload peek:// windows (our app windows)

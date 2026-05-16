@@ -13,7 +13,8 @@
  * fragile. This registry makes the lookup O(1) and reliable.
  */
 
-import { BrowserWindow, type WebContents } from 'electron';
+import { type WebContents } from 'electron';
+import { getLiveWindow, windowFromWebContents } from './window-registry.js';
 
 const guestToHost = new Map<number, number>();
 
@@ -46,15 +47,15 @@ export function registerGuest(guest: WebContents, hostWindowId: number): void {
 export function findHostWindowId(wc: WebContents): number | null {
   const hostId = guestToHost.get(wc.id);
   if (hostId != null) {
-    const bw = BrowserWindow.fromId(hostId);
-    if (bw && !bw.isDestroyed()) return hostId;
+    const bw = getLiveWindow(hostId);
+    if (bw) return hostId;
     // Stale entry — fall through to live scan
     guestToHost.delete(wc.id);
   }
 
   // Top-level case: the WebContents IS a BrowserWindow's own contents
-  const direct = BrowserWindow.fromWebContents(wc);
-  if (direct && !direct.isDestroyed()) return direct.id;
+  const direct = windowFromWebContents(wc);
+  if (direct) return direct.id;
 
   return null;
 }

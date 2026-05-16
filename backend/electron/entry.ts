@@ -6,6 +6,7 @@
  */
 
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu } from 'electron';
+import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
@@ -163,8 +164,8 @@ const ROOT_DIR = app.getAppPath();
    * only matters under a real display.)
    */
   showWindow: (id: number): boolean => {
-    const win = BrowserWindow.fromId(id);
-    if (!win || win.isDestroyed()) return false;
+    const win = getLiveWindow(id);
+    if (!win) return false;
     win.showInactive();
     return true;
   },
@@ -177,16 +178,15 @@ const ROOT_DIR = app.getAppPath();
    * written to work around).
    */
   fireWindowFocus: (id: number): boolean => {
-    const win = BrowserWindow.fromId(id);
-    if (!win || win.isDestroyed()) return false;
+    const win = getLiveWindow(id);
+    if (!win) return false;
     win.emit('focus');
     return true;
   },
   /** Returns the page-host URL-param bounds (the canonical webview screenBounds). */
   getHostUrlParamsByUrl: (urlSubstr: string) => {
     let last: { x: number; y: number; width: number; height: number } | null = null;
-    for (const w of BrowserWindow.getAllWindows()) {
-      if (w.isDestroyed()) continue;
+    for (const w of getAllLiveWindows()) {
       try {
         const u = w.webContents.getURL();
         if (!u.includes(urlSubstr)) continue;

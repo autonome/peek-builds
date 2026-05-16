@@ -6,6 +6,7 @@
  */
 
 import { ipcMain, nativeTheme, dialog, BrowserWindow, app, screen, webContents, net, Menu, clipboard } from 'electron';
+import { getAllLiveWindows, getLiveWindow, windowFromWebContents } from './window-registry.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -334,7 +335,7 @@ function setThemeSetting(key: string, value: string): void {
  * Broadcast theme change to all windows
  */
 function broadcastThemeChange(colorScheme: string): void {
-  const windows = BrowserWindow.getAllWindows();
+  const windows = getAllLiveWindows();
   for (const win of windows) {
     // Channel is `tile:theme:changed` so tile-preload's live-reload
     // listener (and api.theme.onChange consumers) fire. The old
@@ -536,8 +537,8 @@ function applyPlacementOnReuse(
   const currentBounds = win.getBounds();
   let parentBounds: Electron.Rectangle | undefined;
   if (placement.mode === 'parent-centered') {
-    const parent = BrowserWindow.fromId(placement.parentId);
-    if (parent && !parent.isDestroyed()) {
+    const parent = getLiveWindow(placement.parentId);
+    if (parent) {
       parentBounds = parent.getBounds();
     }
   }
@@ -876,15 +877,15 @@ export function registerWindowHandlers(): void {
     // content window` test in izui-behavior.spec.ts. Long-term fix is
     // to stop overloading 'utility'; short-term, only the clearly-
     // ephemeral roles get excluded here.
-    const openerWindow = BrowserWindow.fromWebContents(ev.sender);
+    const openerWindow = windowFromWebContents(ev.sender);
     const INTERNAL_URLS = ['peek://app/background.html'];
     const INTERNAL_URL_PREFIXES = ['peek://test/'];
     // Launcher / overlay roles that should never act as a real parent.
     const NON_PARENT_ROLES = new Set(['palette', 'overlay']);
-    const openerUrl = openerWindow && !openerWindow.isDestroyed() ? openerWindow.webContents?.getURL() ?? '' : '';
-    const openerInfo = openerWindow && !openerWindow.isDestroyed() ? getWindowInfo(openerWindow.id) : null;
+    const openerUrl = openerWindow ? openerWindow.webContents?.getURL() ?? '' : '';
+    const openerInfo = openerWindow ? getWindowInfo(openerWindow.id) : null;
     const openerRole = (openerInfo?.params?.role as string | undefined) ?? undefined;
-    const isRealParent = openerWindow && !openerWindow.isDestroyed() &&
+    const isRealParent = openerWindow &&
       !INTERNAL_URLS.some(u => openerUrl === u) &&
       !INTERNAL_URL_PREFIXES.some(p => openerUrl.startsWith(p)) &&
       (openerRole === undefined || !NON_PARENT_ROLES.has(openerRole));
@@ -982,8 +983,8 @@ export function registerWindowHandlers(): void {
 
     // Set parent window if parentId is provided
     if (options.parentId) {
-      const parentWin = BrowserWindow.fromId(options.parentId);
-      if (parentWin && !parentWin.isDestroyed()) {
+      const parentWin = getLiveWindow(options.parentId);
+      if (parentWin) {
         winOptions.parent = parentWin;
       }
     }
@@ -1334,8 +1335,8 @@ export function registerWindowHandlers(): void {
         let openerModeValue: string | null = null;
         let openerMetadata: Record<string, unknown> | null = null;
         let openerWindowId: number | null = null;
-        const callingWin = BrowserWindow.fromWebContents(ev.sender);
-        if (callingWin && !callingWin.isDestroyed()) {
+        const callingWin = windowFromWebContents(ev.sender);
+        if (callingWin) {
           const openerContext = getContextEntry('mode', callingWin.id);
           if (
             openerContext &&
@@ -1425,7 +1426,7 @@ export function registerWindowHandlers(): void {
         }
 
         // Build page container URL (includes openerUrl for the bridge shim)
-        const openerWin = BrowserWindow.fromId(openerWinId);
+        const openerWin = getLiveWindow(openerWinId);
         const parentBounds = openerWin ? openerWin.getBounds() : { x: 100, y: 100, width: 1024, height: 768 };
         const pageParams = new URLSearchParams({
           url: popupUrl,
@@ -2277,9 +2278,8 @@ export function registerWindowHandlers(): void {
         //     the previous one(s).
         const focusedRole = winInfo?.params?.role as string | undefined;
         if (focusedRole !== 'utility') {
-          for (const other of BrowserWindow.getAllWindows()) {
+          for (const other of getAllLiveWindows()) {
             if (other.id === win.id) continue;
-            if (other.isDestroyed()) continue;
             if (!other.isVisible()) continue;
             const otherInfo = getWindowInfo(other.id);
             const otherRole = otherInfo?.params?.role as string | undefined;
@@ -2398,10 +2398,9 @@ export function registerWindowHandlers(): void {
       // When overlay window closes, the hidden windows will be restored (see main.ts)
       if (options.overlay === true) {
         const hiddenWindowIds: number[] = [];
-        const allWindows = BrowserWindow.getAllWindows();
+        const allWindows = getAllLiveWindows();
         for (const otherWin of allWindows) {
           if (otherWin.id === win.id) continue;
-          if (otherWin.isDestroyed()) continue;
           if (!otherWin.isVisible()) continue;
           // Don't hide background windows (check by URL or params)
           const otherInfo = getWindowInfo(otherWin.id);

@@ -10,6 +10,7 @@
  */
 
 import { BrowserWindow, dialog, screen } from 'electron';
+import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
 import type { ClosedWindowEntry } from './main.js';
@@ -234,8 +235,8 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   const registeredWindows = getAllWindows();
   const windowDescriptors: WindowDescriptor[] = [];
 
-  // Use BrowserWindow.getAllWindows() order for z-order approximation
-  const allBrowserWindows = BrowserWindow.getAllWindows();
+  // Use getAllLiveWindows() order for z-order approximation
+  const allBrowserWindows = getAllLiveWindows();
   const zOrderMap = new Map<number, number>();
   allBrowserWindows.forEach((win, index) => {
     zOrderMap.set(win.id, index);
@@ -260,10 +261,10 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   }
 
   for (const [id, winData] of registeredWindows) {
-    const win = BrowserWindow.fromId(id);
+    const win = getLiveWindow(id);
 
     // Skip destroyed windows
-    if (!win || win.isDestroyed()) {
+    if (!win) {
       continue;
     }
 
@@ -901,8 +902,8 @@ export async function restoreSessionSnapshot(
   // Focus the window that was focused at save time
   if (focusedWindowId) {
     try {
-      const focusWin = BrowserWindow.fromId(focusedWindowId);
-      if (focusWin && !focusWin.isDestroyed()) {
+      const focusWin = getLiveWindow(focusedWindowId);
+      if (focusWin) {
         focusWin.focus();
         DEBUG && console.log(`[session] Focused restored window: ${focusedWindowId}`);
       }
@@ -1038,8 +1039,8 @@ export function saveSpaceWorkspaces(): void {
 
   const registeredWindows = getAllWindows();
 
-  // Use BrowserWindow.getAllWindows() order for z-order approximation
-  const allBrowserWindows = BrowserWindow.getAllWindows();
+  // Use getAllLiveWindows() order for z-order approximation
+  const allBrowserWindows = getAllLiveWindows();
   const zOrderMap = new Map<number, number>();
   allBrowserWindows.forEach((win, index) => {
     zOrderMap.set(win.id, index);
@@ -1049,8 +1050,8 @@ export function saveSpaceWorkspaces(): void {
   const spaceWindows = new Map<string, { spaceName: string; windows: Array<{ url: string; bounds: Electron.Rectangle; zOrder: number; focused: boolean }> }>();
 
   for (const [id] of registeredWindows) {
-    const win = BrowserWindow.fromId(id);
-    if (!win || win.isDestroyed() || !win.isVisible()) continue;
+    const win = getLiveWindow(id);
+    if (!win || !win.isVisible()) continue;
 
     const rawUrl = win.webContents.getURL();
     if (rawUrl.includes('peek://app/background.html')) continue;

@@ -17,6 +17,7 @@
  */
 
 import { app, session, Session, BrowserWindow, Notification, shell } from 'electron';
+import { getAllLiveWindows, windowFromWebContents } from './window-registry.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -336,8 +337,8 @@ function _registerDownloadHandlerImpl(ses: Session): void {
 
     if (!isWebviewGuest) {
       // Top-level window opened just for this download — close it.
-      const win = BrowserWindow.fromWebContents(webContents);
-      if (win && !win.isDestroyed()) {
+      const win = windowFromWebContents(webContents);
+      if (win) {
         DEBUG && console.log('[download] Closing download-trigger window:', win.id);
         win.close();
       }
@@ -370,12 +371,11 @@ function _registerDownloadHandlerImpl(ses: Session): void {
           let hostWin: BrowserWindow | null = null;
           const hostWC = (webContents as any).hostWebContents;
           if (hostWC) {
-            hostWin = BrowserWindow.fromWebContents(hostWC);
+            hostWin = windowFromWebContents(hostWC);
           }
           if (!hostWin) {
             // Fallback: find which BrowserWindow owns this guest webContents
-            for (const bw of BrowserWindow.getAllWindows()) {
-              if (bw.isDestroyed()) continue;
+            for (const bw of getAllLiveWindows()) {
               // Check if this window's webContents has the guest attached
               // by looking at the page URL pattern (peek://app/page/index.html?url=...)
               const bwUrl = bw.webContents.getURL();
@@ -385,7 +385,7 @@ function _registerDownloadHandlerImpl(ses: Session): void {
               }
             }
           }
-          if (hostWin && !hostWin.isDestroyed()) {
+          if (hostWin) {
             console.log('[download] Closing popup window opened for download:', hostWin.id);
             hostWin.close();
           } else {
