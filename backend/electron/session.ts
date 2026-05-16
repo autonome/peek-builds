@@ -15,6 +15,8 @@ import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWin
 import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
+import { invokeWindowOpen } from './ipc.js';
+import { WEB_CORE_ADDRESS } from './config.js';
 
 import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile } from './config.js';
@@ -826,16 +828,25 @@ export async function restoreSessionSnapshot(
         options.key = descriptor.key;
       }
 
-      // Open window via IPC through the background window's preload API.
-      // The preload exposes window.app.window.open() which calls
-      // ipcRenderer.invoke('window-open', ...) under the hood.
-      // Note: source will be the background window's address, which is fine
-      // for newly restored windows on startup.
+      // Open window via the in-process window-open handler. The handler
+      // is the single source of truth for window creation regardless of
+      // caller; calling it directly bypasses the two IPC round-trips
+      // (main → bgWin → main) that the executeJavaScript path required.
+      // The handler reads `ev.sender` to identify the opener — pass the
+      // bgWin's webContents so opener resolution still yields the
+      // background window (which is the correct semantic opener for
+      // session-restored windows on startup).
       DEBUG && console.log(`[session] Opening restored window: ${descriptor.url}`);
       const windowStartedAt = Date.now();
-      const openResult = await bgWin.webContents.executeJavaScript(
-        `window.app.window.open(${JSON.stringify(descriptor.url)}, ${JSON.stringify(options)})`
-      );
+      if (!invokeWindowOpen) {
+        console.error('[session] invokeWindowOpen not initialized — registerWindowHandlers() must run before restoreSessionSnapshot');
+        result.failed++;
+        continue;
+      }
+      const openResult = await invokeWindowOpen(
+        { sender: bgWin.webContents },
+        { source: WEB_CORE_ADDRESS, url: descriptor.url, options },
+      ) as { success: boolean; id?: number; error?: string };
       const windowMs = Date.now() - windowStartedAt;
       DEBUG && console.log(`[session] Window open result:`, JSON.stringify(openResult));
 
@@ -861,7 +872,7 @@ export async function restoreSessionSnapshot(
         }
 
         // Track focused window
-        if (descriptor.focused) {
+        if (descriptor.focused && openResult.id != null) {
           focusedWindowId = openResult.id;
         }
       } else {
