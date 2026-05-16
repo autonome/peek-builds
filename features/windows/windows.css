@@ -204,22 +204,27 @@ peek-grid.cards[view-mode="fit"] peek-card {
   --peek-card-gap: 6px;
 }
 
-/* peek-card's internal .card div is a flex column but doesn't claim
-   the host's height by default. Force it to fill the cell, then make
-   the body part flex-column so the thumbnail can claim remaining
-   height after header + url. */
+/* Fit-mode card layout: thumbnail fills the card edge-to-edge, header
+   overlays at the top with a contrast gradient. The card becomes a
+   positioned container so header / body can stack absolutely. */
 peek-grid.cards[view-mode="fit"] peek-card::part(card) {
   height: 100%;
-}
-
-peek-grid.cards[view-mode="fit"] peek-card::part(body) {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1 1 0;
+  position: relative;
   overflow: hidden;
 }
 
+peek-grid.cards[view-mode="fit"] peek-card::part(body) {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Thumbnail fills the card edge-to-edge. object-fit:cover crops to fit
+   so no letterboxing, regardless of cell aspect. */
 peek-grid.cards[view-mode="fit"] .card-thumbnail,
 peek-grid.cards[view-mode="fit"] .card-thumbnail-placeholder {
   flex: 1 1 0;
@@ -229,11 +234,52 @@ peek-grid.cards[view-mode="fit"] .card-thumbnail-placeholder {
   height: 100%;
   width: 100%;
   object-fit: cover;
-  /* Visually shrink the screenshot to 80% of the card cell without
-     changing the cell size — image is centred within its flex box,
-     leaving an even gap of empty card around it. */
-  transform: scale(0.8);
-  transform-origin: center;
+  border-radius: 0;
+  border: none;
+}
+
+/* URL line is hidden in fit mode — the title bar carries identity. */
+peek-grid.cards[view-mode="fit"] .card-url {
+  display: none;
+}
+
+/* Header overlay: positions content over the top of the card without
+   painting any background itself. The slot wrapper carries the chip so
+   the favicon + title sit together on one content-sized contrast
+   surface, not a full-width band. */
+peek-grid.cards[view-mode="fit"] peek-card::part(header) {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  padding: 8px 10px;
+  pointer-events: none;
+}
+
+/* Header content chip — wraps favicon + title (+ optional Hidden badge)
+   in one mostly-opaque dark surface, sized to its contents rather than
+   the card width. Uses !important to override the inline display:flex
+   that windows.js sets so flex columns mode keeps that layout. */
+peek-grid.cards[view-mode="fit"] peek-card > [slot="header"] {
+  display: inline-flex !important;
+  background: rgba(0, 0, 0, 0.85);
+  padding: 4px 8px;
+  border-radius: 4px;
+  max-width: 100%;
+}
+
+/* Title — chip is on the wrapper now; title is plain white text. */
+peek-grid.cards[view-mode="fit"] .card-title {
+  color: #fff;
+}
+
+/* Hidden badge — flipped colours so it reads against the dark wrapper
+   chip without competing with its own background fill. */
+peek-grid.cards[view-mode="fit"] .card-hidden-badge {
+  background: rgba(255, 255, 255, 0.9);
+  color: #000;
+  border-color: rgba(255, 255, 255, 0.6);
 }
 
 /* Empty state */
