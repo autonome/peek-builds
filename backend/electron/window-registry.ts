@@ -1,20 +1,23 @@
 /**
  * Central indirection layer for window lookups.
  *
- * Today every backend file reaches for Electron's `BrowserWindow.fromId` /
- * `BrowserWindow.getAllWindows` / `BrowserWindow.fromWebContents` directly,
- * and almost every site immediately follows with a `!win.isDestroyed()`
- * check. This module collapses both responsibilities into one place so
- * future changes to "what counts as a window" only have to edit one file.
+ * Backend code looks up windows through this module instead of reaching
+ * for `BrowserWindow.fromId` / `BrowserWindow.getAllWindows` directly.
+ * That gives us one place to teach the codebase about windows that
+ * aren't live BrowserWindow instances yet — "pending" windows that hold
+ * a descriptor but haven't been constructed.
  *
- * Phase 1 (this file): pure no-op wrappers. The destroyed-window filter
- * runs here instead of at every call site, but the observable behavior
- * is identical.
+ * As of this phase, pending windows are a defined concept (see WindowRef
+ * below) but nothing produces one in production yet. The legacy
+ * `getLiveWindow` / `getAllLiveWindows` helpers continue to return only
+ * Live windows; new `getWindowRef` / `getAllWindowRefs` callers can opt
+ * into the union when they want to act on both.
  *
- * Phase 2 will extend `getLiveWindow` to return null for pending
- * (not-yet-realized) windows and add a sibling API that returns refs to
- * both pending and live windows for callers that want to act on all of
- * them (e.g. `tile:window:list`).
+ * Future phases will: (a) wire `realize()` to construct the BrowserWindow
+ * for a Pending ref on demand, (b) have session restore register Pending
+ * refs instead of constructing eagerly, and (c) audit each
+ * `getAllLiveWindows()` call site to decide whether it should iterate
+ * Live-only or All.
  */
 
 import { BrowserWindow } from 'electron';
@@ -95,4 +98,119 @@ export function broadcast(channel: string, ...args: unknown[]): void {
   for (const win of getAllLiveWindows()) {
     win.webContents.send(channel, ...args);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// WindowRef abstraction
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * A reference to a window, in one of two states:
+ *
+ *   - `live`: backed by an actual Electron `BrowserWindow`. `id` is the
+ *     `BrowserWindow.id` value Electron auto-allocated.
+ *   - `pending`: backed only by a `WindowDescriptor` — no `BrowserWindow`
+ *     has been constructed yet. `id` is a synthetic value from the top
+ *     of the safe-integer range (see `allocateSyntheticId`). Calling
+ *     `realize(ref)` will construct the BrowserWindow on demand.
+ *
+ * Synthetic and Electron IDs occupy disjoint ranges so they never
+ * collide. The mapping between a Pending ref's synthetic ID and the
+ * Electron ID assigned at realization time is a phase-5 concern — at
+ * that point we'll either translate at lookup time or migrate callers
+ * to treat the synthetic ID as canonical for the window's lifetime.
+ */
+export type WindowRef =
+  | { kind: 'live'; id: number; window: BrowserWindow }
+  | { kind: 'pending'; id: number; descriptor: WindowDescriptor };
+
+// Pending refs live in this module. Live refs are projected on demand
+// from Electron's BrowserWindow registry.
+const pendingWindows = new Map<number, WindowRef & { kind: 'pending' }>();
+
+// Synthetic IDs count down from MAX_SAFE_INTEGER so they sort above
+// any Electron-allocated ID (which start at 1 and grow). ~9 quadrillion
+// IDs before we'd loop — far beyond any realistic process lifetime.
+let nextSyntheticId = Number.MAX_SAFE_INTEGER;
+
+function allocateSyntheticId(): number {
+  return nextSyntheticId--;
+}
+
+/**
+ * Register a not-yet-realized window from a descriptor. Returns a
+ * Pending WindowRef whose `id` can be used in any registry lookup. The
+ * descriptor is held by reference — mutating it after registration
+ * affects subsequent reads.
+ *
+ * No production code calls this yet; the function exists so phase 4
+ * (session restore via Pending refs) can light it up with no further
+ * registry changes.
+ */
+export function registerPendingWindow(descriptor: WindowDescriptor): WindowRef {
+  const id = allocateSyntheticId();
+  const ref: WindowRef & { kind: 'pending' } = { kind: 'pending', id, descriptor };
+  pendingWindows.set(id, ref);
+  return ref;
+}
+
+/**
+ * Look up a window by id. Pending IDs (synthetic, high range) resolve
+ * to a Pending ref; Electron IDs resolve to a Live ref backed by the
+ * BrowserWindow; unknown or destroyed IDs return null.
+ */
+export function getWindowRef(id: number): WindowRef | null {
+  const pending = pendingWindows.get(id);
+  if (pending) return pending;
+
+  const win = BrowserWindow.fromId(id);
+  if (win && !win.isDestroyed()) {
+    return { kind: 'live', id: win.id, window: win };
+  }
+  return null;
+}
+
+/**
+ * Every known window — live (Electron's) first in `getAllWindows()`
+ * order, then pending (ours) in registration order.
+ */
+export function getAllWindowRefs(): WindowRef[] {
+  const refs: WindowRef[] = [];
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      refs.push({ kind: 'live', id: win.id, window: win });
+    }
+  }
+  for (const ref of pendingWindows.values()) {
+    refs.push(ref);
+  }
+  return refs;
+}
+
+/**
+ * Resolve a WindowRef to a live BrowserWindow. For a Live ref this is
+ * a synchronous no-op wrapped in a Promise. For a Pending ref this
+ * would construct the BrowserWindow from its descriptor via the
+ * window-open handler — but that wiring is phase 5. Today, calling
+ * `realize()` on a Pending ref throws.
+ */
+export async function realize(ref: WindowRef): Promise<BrowserWindow> {
+  if (ref.kind === 'live') return ref.window;
+
+  throw new Error(
+    'window-registry: realize() for pending windows is not implemented yet. ' +
+      'Phase 2 ships only the signature; phase 5 will wire it to invokeWindowOpen.'
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Test hooks
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Reset internal state. Tests only — do not call from production code.
+ */
+export function _resetForTests(): void {
+  nextSyntheticId = Number.MAX_SAFE_INTEGER;
+  pendingWindows.clear();
 }
