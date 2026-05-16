@@ -15,8 +15,8 @@
  */
 
 import fs from 'node:fs';
-import { BrowserWindow } from 'electron';
-import { getLiveWindow } from './window-registry.js';
+import { getWindowRef } from './window-registry.js';
+import type { WindowRef } from './window-registry.js';
 import { getWindowInfo } from './main.js';
 import { findUrlItem } from './datastore.js';
 import { resolveWindowAddress } from './window-address.js';
@@ -54,13 +54,23 @@ export interface WindowPresentation {
 
 /**
  * Return the canonical presentation for a window, or null if the window
- * doesn't exist or has been destroyed.
+ * doesn't exist or has been destroyed. Handles both Live windows
+ * (state read from the BrowserWindow + windowRegistry) and Pending
+ * windows (state read from their descriptor + thumbnail cache).
  */
 export function getWindowPresentation(windowId: number): WindowPresentation | null {
-  const win = getLiveWindow(windowId);
-  if (!win) return null;
+  const ref = getWindowRef(windowId);
+  if (!ref) return null;
+  if (ref.kind === 'pending') return getPendingPresentation(ref);
+  return getLivePresentation(ref);
+}
 
-  const info = getWindowInfo(windowId);
+function getLivePresentation(ref: WindowRef & { kind: 'live' }): WindowPresentation | null {
+  const win = ref.window;
+  // ref.id is the canonical (possibly synthetic) id; win.id is Electron's
+  // own. windowRegistry is keyed by Electron's id, so use win.id for the
+  // info lookup but expose ref.id in the response.
+  const info = getWindowInfo(win.id);
   const hostUrl = win.webContents.getURL();
   const isCanvasPage = hostUrl.startsWith('peek://app/page');
 
@@ -140,7 +150,7 @@ export function getWindowPresentation(windowId: number): WindowPresentation | nu
   }
 
   return {
-    id: windowId,
+    id: ref.id,
     address,
     title: win.getTitle(),
     favicon,
@@ -150,5 +160,74 @@ export function getWindowPresentation(windowId: number): WindowPresentation | nu
     preMaxBounds,
     visible: win.isVisible(),
     focused: win.isFocused(),
+  };
+}
+
+/**
+ * Build a presentation for a Pending window from its descriptor. The
+ * favicon/thumbnail resolution mirrors the Live path so the user-facing
+ * result is indistinguishable from a live window — same icons, same
+ * cached screenshots. `visible` is true (pending = "ready to show") and
+ * `focused` is false (only Live windows can hold OS focus).
+ */
+function getPendingPresentation(ref: WindowRef & { kind: 'pending' }): WindowPresentation {
+  const d = ref.descriptor;
+  const address = d.url;
+  const maximized = d.params.maximized === true;
+
+  let preMaxBounds: Electron.Rectangle | null = null;
+  if (maximized) {
+    const ppx = d.params.preMaxX;
+    const ppy = d.params.preMaxY;
+    const ppw = d.params.preMaxWidth;
+    const pph = d.params.preMaxHeight;
+    if (typeof ppx === 'number' && typeof ppy === 'number'
+      && typeof ppw === 'number' && typeof pph === 'number') {
+      preMaxBounds = { x: ppx, y: ppy, width: ppw, height: pph };
+    }
+  }
+
+  let favicon = '';
+  let thumbnail = '';
+  if (address.startsWith('http://') || address.startsWith('https://')) {
+    try {
+      const item = findUrlItem(address) as { favicon?: string; thumbnail?: string } | null;
+      if (item) {
+        favicon = item.favicon || '';
+        thumbnail = item.thumbnail || '';
+      }
+    } catch {
+      // best-effort
+    }
+    if (!favicon) {
+      try {
+        const host = new URL(address).hostname;
+        if (host) favicon = `https://www.google.com/s2/favicons?domain=${host}&sz=32`;
+      } catch {
+        // unparseable address — leave favicon empty
+      }
+    }
+  } else if (address.startsWith('peek://')) {
+    try {
+      const hash = urlToHash(address);
+      if (fs.existsSync(getThumbnailPath(hash))) {
+        thumbnail = hash;
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
+  return {
+    id: ref.id,
+    address,
+    title: d.title,
+    favicon,
+    thumbnail,
+    bounds: d.bounds,
+    maximized,
+    preMaxBounds,
+    visible: true,
+    focused: false,
   };
 }

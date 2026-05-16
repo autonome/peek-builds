@@ -17,7 +17,7 @@
  */
 
 import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme, screen, app, shell } from 'electron';
-import { broadcast, getAllLiveWindows, getLiveWindow, windowFromWebContents } from './window-registry.js';
+import { broadcast, getAllLiveWindows, getAllWindowRefs, getLiveWindow, getWindowRef, realize, windowFromWebContents } from './window-registry.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -2767,12 +2767,21 @@ export function registerTileIpcHandlers(): void {
         preMaxBounds: Electron.Rectangle | null;
         params: Record<string, unknown>;
       }> = [];
-      for (const win of getAllLiveWindows()) {
-        const info = getWindowInfo(win.id);
-        // When includeInternal is false/absent, skip windows without registry
-        // entries (e.g. purely internal Electron windows). When true, include all.
-        if (!args.includeInternal && !info) continue;
-        const presentation = getWindowPresentation(win.id);
+      for (const ref of getAllWindowRefs()) {
+        // For Live refs, params come from windowRegistry (keyed by
+        // Electron's id, exposed via ref.window.id). For Pending refs,
+        // params come from the descriptor. The includeInternal filter
+        // skips windows without a registry presence — pending refs
+        // always have a descriptor.source so they're never internal.
+        let params: Record<string, unknown>;
+        if (ref.kind === 'live') {
+          const info = getWindowInfo(ref.window.id);
+          if (!args.includeInternal && !info) continue;
+          params = info ? info.params : {};
+        } else {
+          params = ref.descriptor.params;
+        }
+        const presentation = getWindowPresentation(ref.id);
         if (!presentation) continue;
         windows.push({
           id: presentation.id,
@@ -2787,7 +2796,7 @@ export function registerTileIpcHandlers(): void {
           bounds: presentation.bounds,
           maximized: presentation.maximized,
           preMaxBounds: presentation.preMaxBounds,
-          params: info ? info.params : {},
+          params,
         });
       }
       return { success: true, windows };
@@ -2914,10 +2923,14 @@ export function registerTileIpcHandlers(): void {
       if (typeof args.id !== 'number') {
         return { success: false, error: 'Window ID is required' };
       }
-      const win = getLiveWindow(args.id);
-      if (!win) {
+      const ref = getWindowRef(args.id);
+      if (!ref) {
         return { success: false, error: 'Window not found' };
       }
+      // Pending refs realize on focus — this is the primary user-driven
+      // trigger that turns a "card in the windows feature" into an
+      // actual BrowserWindow.
+      const win = await realize(ref);
       if (!isHeadless()) {
         win.focus();
       }
