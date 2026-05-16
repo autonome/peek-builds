@@ -2102,6 +2102,35 @@ export function registerWindowHandlers(): void {
         });
       }
 
+      // Capture thumbnail for peek:// windows (settings, features manager,
+      // lists, etc.) so they appear with real screenshots in the Windows
+      // feature card grid instead of plain placeholder squares. The
+      // thumbnail file is stored under userData/thumbnails/<urlHash>.jpg;
+      // the window-presenter computes the same hash on read and surfaces
+      // it via `peek://thumbnail/<hash>.jpg`. There's no item record to
+      // update — for peek:// URLs the hash is derived deterministically
+      // from the URL itself.
+      //
+      // Transient roles (palette, quick-view, overlay) are skipped:
+      //   - cmd panel UI changes every keystroke, so any captured frame
+      //     is stale by the time it's seen
+      //   - quick-view / overlay windows close before the user could
+      //     navigate to them in the Windows feature anyway
+      //   - it also avoids running webContents.capturePage on the cmd
+      //     panel mid-test, which has historically been a flaky surface
+      if (url.startsWith('peek://') && !TRANSIENT_ROLES.has(role)) {
+        win.webContents.on('did-stop-loading', () => {
+          const pageUrl = win.webContents.getURL() || url;
+          if (!pageUrl.startsWith('peek://')) return;
+          setTimeout(() => {
+            if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+            captureThumbnail(win.webContents, pageUrl).catch((e) => {
+              DEBUG && console.log('Failed to capture thumbnail for peek:// window:', e);
+            });
+          }, 1500);
+        });
+      }
+
       // Track this load in history (skip internal peek:// URLs and session restores)
       if (!url.startsWith('peek://') && !options.skipTracking) {
         try {

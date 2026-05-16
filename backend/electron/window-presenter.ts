@@ -14,10 +14,12 @@
  * bugs that motivated this consolidation.
  */
 
+import fs from 'node:fs';
 import { BrowserWindow } from 'electron';
 import { getWindowInfo } from './main.js';
 import { findUrlItem } from './datastore.js';
 import { resolveWindowAddress } from './window-address.js';
+import { urlToHash, getThumbnailPath } from './thumbnails.js';
 
 export { resolveWindowAddress };
 
@@ -100,7 +102,11 @@ export function getWindowPresentation(windowId: number): WindowPresentation | nu
   // (When peek://favicon/<hash> local-cache lands per task 7927ab71, it
   // becomes a third layer here without touching any consumer.)
   //
-  // Thumbnail: stored hash only — no third-party screenshot service.
+  // Thumbnail priority:
+  //   http(s): stored item.thumbnail (no third-party screenshot service).
+  //   peek://: computed hash, if the captured JPEG exists on disk. The
+  //            capture is wired in ipc.ts on did-stop-loading; the file
+  //            name is deterministic so we don't need an item record.
   let favicon = '';
   let thumbnail = '';
   if (address.startsWith('http://') || address.startsWith('https://')) {
@@ -120,6 +126,15 @@ export function getWindowPresentation(windowId: number): WindowPresentation | nu
       } catch {
         // unparseable address — leave favicon empty
       }
+    }
+  } else if (address.startsWith('peek://')) {
+    try {
+      const hash = urlToHash(address);
+      if (fs.existsSync(getThumbnailPath(hash))) {
+        thumbnail = hash;
+      }
+    } catch {
+      // best-effort — thumbnail lookup failures shouldn't break listings
     }
   }
 
