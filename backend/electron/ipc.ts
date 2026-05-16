@@ -577,6 +577,17 @@ export function registerWindowHandlers(): void {
     // Always log escapeMode for debugging window lifecycle
     console.log(`[window-open] url: ${url}, source: ${msg.source}, escapeMode: ${options?.escapeMode}, key: ${options?.key}, options keys: ${options ? Object.keys(options).join(',') : 'none'}`);
 
+    // Phase timing — only emit when this open is part of a session
+    // restore (skipTracking is set by session.ts:restoreSessionSnapshot).
+    // See peek task 1d1331e0.
+    const perfT0 = Date.now();
+    const perfTrace = options?.skipTracking === true;
+    const perfMark = (phase: string) => {
+      if (!perfTrace) return;
+      console.log(`[window-open:perf] phase=${phase} ms=${Date.now() - perfT0} url=${(url || '').substring(0, 80)}`);
+    };
+    perfMark('entry');
+
     // IMPORTANT: Determine transient state BEFORE creating the window
     // A window is transient if:
     // 1. The current IZUI session is transient (user invoked from background), OR
@@ -1057,6 +1068,7 @@ export function registerWindowHandlers(): void {
       !specialCaseToken &&
       !useCanvas &&
       tileWebPrefs.token !== undefined;
+    perfMark('before-create');
     let win: BrowserWindow;
     if (isRealTileLaunch && tileWebPrefs) {
       // Pull webPreferences overrides out so the helper's baseline tile
@@ -1079,6 +1091,7 @@ export function registerWindowHandlers(): void {
       win = new BrowserWindow(winOptions);
     }
     { const actualBounds = win.getBounds(); console.log(`[window-open:actual] Window ${win.id} actual bounds after creation: (${actualBounds.x},${actualBounds.y}) ${actualBounds.width}x${actualBounds.height}`); }
+    perfMark('after-create');
 
     // Reinforce alwaysOnTop after creation — on macOS the constructor flag alone
     // is unreliable; calling setAlwaysOnTop with 'floating' level ensures it stays
@@ -1970,8 +1983,24 @@ export function registerWindowHandlers(): void {
 
       // Load the URL AFTER mode/context is set, so page.js can read inherited mode
       console.log(`[page-host:${win.id}] Loading: ${loadUrl.substring(0, 120)}`);
-      await win.loadURL(loadUrl);
-      console.log(`[page-host:${win.id}] loadURL resolved`);
+      perfMark('before-loadURL');
+      // Session-restore opens (skipTracking=true) don't await the load —
+      // they fire-and-forget so the restore loop can move on to the next
+      // window immediately. Pages load in parallel in the background; the
+      // restore wall-clock drops from N × per-window-load-time to N × the
+      // ~15-25ms BrowserWindow construction overhead. Errors are logged
+      // but not propagated since there's no consumer to report to. Other
+      // callers (cmd panel opens, popups, slides) keep the await so they
+      // get error-propagation and "ready" semantics they may depend on.
+      if (options.skipTracking) {
+        win.loadURL(loadUrl).catch((err) => {
+          DEBUG && console.log(`[page-host:${win.id}] background loadURL failed:`, err);
+        });
+      } else {
+        await win.loadURL(loadUrl);
+      }
+      perfMark('after-loadURL');
+      console.log(`[page-host:${win.id}] loadURL ${options.skipTracking ? 'dispatched' : 'resolved'}`);
 
       // Background detection for non-canvas web pages (slides, modals, quick-views).
       // Canvas pages get this via the webview dom-ready handler in page.js.
@@ -2405,6 +2434,7 @@ export function registerWindowHandlers(): void {
         pendingWindowKeys.delete(`${msg.source}:${options.key}`);
       }
 
+      perfMark('return');
       return { success: true, id: win.id };
     } catch (error) {
       // Clear pending key on failure too

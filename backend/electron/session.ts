@@ -776,6 +776,14 @@ export async function restoreSessionSnapshot(
   // save and restore leaves windows stranded on a now-secondary screen.
   const primaryWorkArea = screen.getPrimaryDisplay().workArea;
 
+  // Always-on timing instrumentation — lands in <userData>/logs/main.log
+  // so a real large-session profile can be captured and inspected without
+  // a debug build. Format chosen for grep: `[session:perf]` prefix +
+  // structured fields. See peek task 1d1331e0.
+  const restoreStartedAt = Date.now();
+  console.log(`[session:perf] restore-begin n=${sortedWindows.length}`);
+  const perWindowTimings: Array<{ url: string; ms: number; ok: boolean }> = [];
+
   for (const original of sortedWindows) {
     try {
       const descriptor = (() => {
@@ -824,12 +832,18 @@ export async function restoreSessionSnapshot(
       // Note: source will be the background window's address, which is fine
       // for newly restored windows on startup.
       DEBUG && console.log(`[session] Opening restored window: ${descriptor.url}`);
+      const windowStartedAt = Date.now();
       const openResult = await bgWin.webContents.executeJavaScript(
         `window.app.window.open(${JSON.stringify(descriptor.url)}, ${JSON.stringify(options)})`
       );
+      const windowMs = Date.now() - windowStartedAt;
       DEBUG && console.log(`[session] Window open result:`, JSON.stringify(openResult));
 
-      if (openResult && openResult.success && openResult.id) {
+      const ok = !!(openResult && openResult.success && openResult.id);
+      perWindowTimings.push({ url: descriptor.url, ms: windowMs, ok });
+      console.log(`[session:perf] window-open ms=${windowMs} ok=${ok} url=${descriptor.url.substring(0, 100)}`);
+
+      if (ok) {
         result.restored++;
 
         // Restore context (mode, spaceId, spaceName) after window creation
@@ -858,6 +872,19 @@ export async function restoreSessionSnapshot(
       result.failed++;
       console.error(`[session] Error restoring window ${original.url}:`, error);
     }
+  }
+
+  // Summary line — total wall clock, success/fail counts, and the
+  // top-5 slowest windows so the bottleneck pattern is visible at a
+  // glance in main.log.
+  const restoreTotalMs = Date.now() - restoreStartedAt;
+  const sumMs = perWindowTimings.reduce((s, t) => s + t.ms, 0);
+  const avgMs = perWindowTimings.length > 0 ? Math.round(sumMs / perWindowTimings.length) : 0;
+  const maxMs = perWindowTimings.reduce((m, t) => Math.max(m, t.ms), 0);
+  const slowest = [...perWindowTimings].sort((a, b) => b.ms - a.ms).slice(0, 5);
+  console.log(`[session:perf] restore-end total_ms=${restoreTotalMs} n=${perWindowTimings.length} restored=${result.restored} failed=${result.failed} avg_ms=${avgMs} max_ms=${maxMs}`);
+  for (const s of slowest) {
+    console.log(`[session:perf] slow-window ms=${s.ms} ok=${s.ok} url=${s.url.substring(0, 100)}`);
   }
 
   // Focus the window that was focused at save time
