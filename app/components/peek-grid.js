@@ -12,7 +12,7 @@
  * @prop {string} align - Item alignment: 'start' | 'center' | 'end' | 'stretch'
  * @prop {boolean} dense - Enable dense packing algorithm
  * @prop {boolean} overlay - Optimize spacing for overlay contexts
- * @prop {string} viewMode - Layout mode: 'columns' | 'list' | 'masonry' | 'freeform'
+ * @prop {string} viewMode - Layout mode: 'columns' | 'list' | 'masonry' | 'freeform' | 'fit'
  * @prop {Object} freeformLayout - Map of item id → {x, y, w, h} bounds
  * @prop {boolean} freeformEditing - Toggle edit mode for freeform layout
  * @prop {number} freeformSnap - Snap grid in px (default 20, 0 = off)
@@ -100,6 +100,25 @@ export class PeekGrid extends PeekElement {
         margin-bottom: var(--_grid-gap);
       }
 
+      /* Fit mode — all items visible in the container without scroll.
+         Cols and rows computed in JS based on item count + container
+         aspect; cells are equal-sized so there's a consistent gap and
+         no overlap regardless of count. Container needs an explicit
+         height for this to fill the viewport. */
+      :host([view-mode="fit"]) {
+        display: block;
+        height: 100%;
+      }
+
+      :host([view-mode="fit"]) .grid {
+        height: 100%;
+      }
+
+      :host([view-mode="fit"]) ::slotted(*) {
+        min-width: 0;
+        min-height: 0;
+      }
+
       /* Freeform mode — container relative, items absolute */
       :host([view-mode="freeform"]) .grid {
         display: block;
@@ -149,6 +168,8 @@ export class PeekGrid extends PeekElement {
     this._resizeObserver = new ResizeObserver(() => {
       if (this.viewMode === 'masonry' || this.viewMode === 'freeform') {
         this.requestUpdate();
+      } else if (this.viewMode === 'fit') {
+        this._applyFitLayout();
       }
     });
     this._resizeObserver.observe(this);
@@ -168,6 +189,8 @@ export class PeekGrid extends PeekElement {
 
     const wasFreeform = changedProps.has('viewMode') && changedProps.get('viewMode') === 'freeform';
     const isFreeform = this.viewMode === 'freeform';
+    const wasFit = changedProps.has('viewMode') && changedProps.get('viewMode') === 'fit';
+    const isFit = this.viewMode === 'fit';
 
     // Clean up when leaving freeform
     if (wasFreeform && !isFreeform) {
@@ -183,6 +206,14 @@ export class PeekGrid extends PeekElement {
       } else {
         this._cleanupFreeformListeners();
       }
+    }
+
+    // Clean up when leaving fit
+    if (wasFit && !isFit) {
+      this._clearFitStyles();
+    }
+    if (isFit) {
+      this._applyFitLayout();
     }
   }
 
@@ -437,7 +468,64 @@ export class PeekGrid extends PeekElement {
     if (this.viewMode === 'freeform') {
       this._applyFreeformPositions();
       if (this.freeformEditing) this._attachEditListeners();
+    } else if (this.viewMode === 'fit') {
+      this._applyFitLayout();
     }
+  }
+
+  // --- Fit: pick the cols×rows arrangement that maximises per-card area
+  // while staying close to a target card aspect ratio (3:2). Iterates from
+  // 1..N because N is small (window count). Empty container or zero items
+  // is a no-op; the host's :host([view-mode="fit"]) display:none-free
+  // styling handles the layout when the layout runs.
+  _applyFitLayout() {
+    const grid = this.shadowRoot?.querySelector('.grid');
+    if (!grid) return;
+    const children = this._getSlottedChildren();
+    const N = children.length;
+    if (N === 0) {
+      grid.style.gridTemplateColumns = '';
+      grid.style.gridTemplateRows = '';
+      return;
+    }
+
+    const cw = this.clientWidth;
+    const ch = this.clientHeight;
+    const gap = this.gap;
+    if (cw <= 0 || ch <= 0) return;
+
+    const TARGET_ASPECT = 3 / 2; // w / h
+    let bestCols = 1;
+    let bestScore = -1;
+
+    for (let cols = 1; cols <= N; cols++) {
+      const rows = Math.ceil(N / cols);
+      const cellW = (cw - (cols - 1) * gap) / cols;
+      const cellH = (ch - (rows - 1) * gap) / rows;
+      if (cellW <= 0 || cellH <= 0) continue;
+
+      const cardAspect = cellW / cellH;
+      const aspectScore = cardAspect > TARGET_ASPECT
+        ? TARGET_ASPECT / cardAspect
+        : cardAspect / TARGET_ASPECT;
+      const area = cellW * cellH;
+      const score = aspectScore * area;
+      if (score > bestScore) {
+        bestScore = score;
+        bestCols = cols;
+      }
+    }
+
+    const rows = Math.ceil(N / bestCols);
+    grid.style.gridTemplateColumns = `repeat(${bestCols}, 1fr)`;
+    grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+  }
+
+  _clearFitStyles() {
+    const grid = this.shadowRoot?.querySelector('.grid');
+    if (!grid) return;
+    grid.style.gridTemplateColumns = '';
+    grid.style.gridTemplateRows = '';
   }
 
   _getMasonryColumns() {

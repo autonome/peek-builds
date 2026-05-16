@@ -21,6 +21,21 @@ body {
   min-height: 100vh;
 }
 
+/* Fit mode needs a fixed viewport box so the grid has a real height to
+   compute cells into. Scoped via :has() so columns / list / masonry
+   keep their default scrolling behaviour. */
+html:has(peek-grid.cards[view-mode="fit"]),
+body:has(peek-grid.cards[view-mode="fit"]) {
+  height: 100vh;
+  min-height: 0;
+}
+
+body:has(peek-grid.cards[view-mode="fit"]) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 /* Search */
 .search-container {
   padding: 24px 24px 0 24px;
@@ -51,9 +66,16 @@ peek-grid-toolbar.grid-toolbar {
   --theme-accent: var(--base0D);
 }
 
-/* Cards container - peek-grid handles layout */
+/* Cards container — peek-grid handles layout. */
 .cards {
   padding: 24px;
+}
+
+/* Fit-mode only: the container claims remaining viewport height below
+   the search bar + toolbar so fit's cells have a real box. */
+peek-grid.cards[view-mode="fit"] {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* Component customization for peek-card */
@@ -168,6 +190,50 @@ peek-grid.cards[view-mode="list"] peek-card {
 /* Masonry view - remove max-width constraint */
 peek-grid.cards[view-mode="masonry"] peek-card {
   max-width: none;
+}
+
+/* Fit view mode — cells are computed in JS; remove width cap so cards
+   fill their assigned cell, and let the thumbnail stretch to consume
+   the cell's remaining height rather than enforcing a fixed 3:2 aspect
+   (which would either leave dead space below or overflow when cells
+   are very wide or very narrow). */
+peek-grid.cards[view-mode="fit"] peek-card {
+  max-width: none;
+  height: 100%;
+  --peek-card-padding: 8px;
+  --peek-card-gap: 6px;
+}
+
+/* peek-card's internal .card div is a flex column but doesn't claim
+   the host's height by default. Force it to fill the cell, then make
+   the body part flex-column so the thumbnail can claim remaining
+   height after header + url. */
+peek-grid.cards[view-mode="fit"] peek-card::part(card) {
+  height: 100%;
+}
+
+peek-grid.cards[view-mode="fit"] peek-card::part(body) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 0;
+  overflow: hidden;
+}
+
+peek-grid.cards[view-mode="fit"] .card-thumbnail,
+peek-grid.cards[view-mode="fit"] .card-thumbnail-placeholder {
+  flex: 1 1 0;
+  aspect-ratio: auto;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+  /* Visually shrink the screenshot to 80% of the card cell without
+     changing the cell size — image is centred within its flex box,
+     leaving an even gap of empty card around it. */
+  transform: scale(0.8);
+  transform-origin: center;
 }
 
 /* Empty state */

@@ -8,9 +8,11 @@
 const api = window.app;
 const debug = api.debug;
 
-// View preferences (persisted)
+// View preferences (persisted). 'fit' is the new default — Exposé-style
+// no-overlap layout that resizes cards to fit the visible viewport
+// regardless of count.
 let viewPrefs = {
-  viewMode: 'columns',
+  viewMode: 'fit',
   sortBy: 'title',
   sortDirection: 'asc'
 };

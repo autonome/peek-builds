@@ -6,7 +6,7 @@
  *
  * @element peek-grid-toolbar
  *
- * @prop {string} viewMode - 'columns' | 'list' | 'masonry' | 'freeform', default 'columns'
+ * @prop {string} viewMode - 'fit' | 'columns' | 'list' | 'masonry' | 'freeform', default 'columns'
  * @prop {boolean} freeformEditing - Whether freeform edit mode is active
  * @prop {string} sortBy - Current sort key
  * @prop {string} sortDirection - 'asc' | 'desc'
@@ -235,6 +235,20 @@ export class PeekGridToolbar extends PeekElement {
           </button>
         </div>
         <div class="toolbar-right">
+          <button
+            class="view-btn ${this.viewMode === 'fit' ? 'active' : ''}"
+            title="Fit view (no scroll, all cards visible)"
+            @click=${() => this._handleViewMode('fit')}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <rect x="1" y="1" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="8" y="1" width="5" height="3" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="8" y="5" width="5" height="3" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="1" y="8" width="3" height="5" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="5" y="9" width="3" height="4" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              <rect x="9" y="9" width="4" height="4" rx="1" stroke="currentColor" stroke-width="1.5"/>
+            </svg>
+          </button>
           <button
             class="view-btn ${this.viewMode === 'columns' ? 'active' : ''}"
             title="Grid view"
