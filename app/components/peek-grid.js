@@ -505,8 +505,8 @@ export class PeekGrid extends PeekElement {
     // 5% / 4px floor: tuned so small cards get tight gutters (better
     // space utilisation) without losing the framed look on big cards.
     const MAX_GAP = this.gap;
-    const MIN_GAP = 4;
-    const GAP_RATIO = 0.05; // gap ≈ 5% of cell width
+    const MIN_GAP = 8;
+    const GAP_RATIO = 0.06; // gap ≈ 6% of cell width
     const TARGET_ASPECT = 3 / 2; // w / h
     // Hard aspect bounds — layouts outside this range are skipped, so
     // cards never become extremely wide-and-short or tall-and-narrow.
