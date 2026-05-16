@@ -108,29 +108,43 @@ export function broadcast(channel: string, ...args: unknown[]): void {
  * A reference to a window, in one of two states:
  *
  *   - `live`: backed by an actual Electron `BrowserWindow`. `id` is the
- *     `BrowserWindow.id` value Electron auto-allocated.
+ *     canonical window id (synthetic if this ref started as Pending and
+ *     was realized; Electron's auto-allocated id otherwise).
  *   - `pending`: backed only by a `WindowDescriptor` — no `BrowserWindow`
  *     has been constructed yet. `id` is a synthetic value from the top
- *     of the safe-integer range (see `allocateSyntheticId`). Calling
- *     `realize(ref)` will construct the BrowserWindow on demand.
+ *     of the safe-integer range. Calling `realize(ref)` will construct
+ *     the BrowserWindow on demand.
  *
- * Synthetic and Electron IDs occupy disjoint ranges so they never
- * collide. The mapping between a Pending ref's synthetic ID and the
- * Electron ID assigned at realization time is a phase-5 concern — at
- * that point we'll either translate at lookup time or migrate callers
- * to treat the synthetic ID as canonical for the window's lifetime.
+ * **Canonical ID stability:** once a Pending ref is realized, its
+ * synthetic `id` continues to be the canonical id for the lifetime of
+ * the window — callers holding it can keep using it through
+ * `getWindowRef(syntheticId)` and the lookup will return the now-Live
+ * ref. The Electron BrowserWindow's own auto-allocated id is exposed
+ * via `ref.window.id` but should be considered internal; render-facing
+ * IPC payloads should carry `ref.id`. (Phase 5 will audit IPC payload
+ * shapes to enforce this.)
+ *
+ * Synthetic and Electron IDs occupy disjoint ranges (synthetic counts
+ * down from MAX_SAFE_INTEGER, Electron auto-allocates from 1 up) so
+ * they never collide.
  */
 export type WindowRef =
   | { kind: 'live'; id: number; window: BrowserWindow }
   | { kind: 'pending'; id: number; descriptor: WindowDescriptor };
 
-// Pending refs live in this module. Live refs are projected on demand
-// from Electron's BrowserWindow registry.
-const pendingWindows = new Map<number, WindowRef & { kind: 'pending' }>();
+// Unified registry of windows whose canonical id is synthetic — covers
+// both pending refs (never realized) and realized-from-pending refs.
+// Windows opened natively (e.g. cmd-N) are NOT in this map; they're
+// looked up directly via BrowserWindow.fromId in getWindowRef.
+const refs = new Map<number, WindowRef>();
 
-// Synthetic IDs count down from MAX_SAFE_INTEGER so they sort above
-// any Electron-allocated ID (which start at 1 and grow). ~9 quadrillion
-// IDs before we'd loop — far beyond any realistic process lifetime.
+// Electron BrowserWindow.id values that have a synthetic alias in
+// `refs`. Used by getAllWindowRefs to avoid double-counting realized
+// windows when it enumerates Electron's native registry.
+const aliasedElectronIds = new Set<number>();
+
+// Synthetic IDs count down from MAX_SAFE_INTEGER. ~9 quadrillion IDs
+// before wraparound — well beyond any realistic process lifetime.
 let nextSyntheticId = Number.MAX_SAFE_INTEGER;
 
 function allocateSyntheticId(): number {
@@ -139,68 +153,139 @@ function allocateSyntheticId(): number {
 
 /**
  * Register a not-yet-realized window from a descriptor. Returns a
- * Pending WindowRef whose `id` can be used in any registry lookup. The
- * descriptor is held by reference — mutating it after registration
- * affects subsequent reads.
+ * Pending WindowRef whose synthetic `id` can be used in any registry
+ * lookup for the lifetime of the window — including after realization.
  *
- * No production code calls this yet; the function exists so phase 4
- * (session restore via Pending refs) can light it up with no further
- * registry changes.
+ * The descriptor is held by reference; mutating it after registration
+ * affects subsequent reads.
  */
 export function registerPendingWindow(descriptor: WindowDescriptor): WindowRef {
   const id = allocateSyntheticId();
-  const ref: WindowRef & { kind: 'pending' } = { kind: 'pending', id, descriptor };
-  pendingWindows.set(id, ref);
+  const ref: WindowRef = { kind: 'pending', id, descriptor };
+  refs.set(id, ref);
   return ref;
 }
 
 /**
- * Look up a window by id. Pending IDs (synthetic, high range) resolve
- * to a Pending ref; Electron IDs resolve to a Live ref backed by the
- * BrowserWindow; unknown or destroyed IDs return null.
+ * Look up a window by id. Synthetic IDs resolve via the unified
+ * registry (pending or realized). Electron-native IDs (windows opened
+ * outside the pending-realize path) resolve via `BrowserWindow.fromId`.
+ * Unknown or destroyed IDs return null.
+ *
+ * Stale Live refs (BrowserWindow destroyed but registry not yet
+ * cleaned) are reaped on demand here.
  */
 export function getWindowRef(id: number): WindowRef | null {
-  const pending = pendingWindows.get(id);
-  if (pending) return pending;
+  const ref = refs.get(id);
+  if (ref) {
+    if (ref.kind === 'live' && ref.window.isDestroyed()) {
+      refs.delete(id);
+      aliasedElectronIds.delete(ref.window.id);
+      return null;
+    }
+    return ref;
+  }
 
   const win = BrowserWindow.fromId(id);
-  if (win && !win.isDestroyed()) {
+  if (win && !win.isDestroyed() && !aliasedElectronIds.has(win.id)) {
     return { kind: 'live', id: win.id, window: win };
   }
   return null;
 }
 
 /**
- * Every known window — live (Electron's) first in `getAllWindows()`
- * order, then pending (ours) in registration order.
+ * Every known window. Realized-from-pending and pending refs come from
+ * our registry; Electron-native windows are projected from
+ * `BrowserWindow.getAllWindows()`, minus those aliased by a synthetic.
  */
 export function getAllWindowRefs(): WindowRef[] {
-  const refs: WindowRef[] = [];
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
-      refs.push({ kind: 'live', id: win.id, window: win });
+  const result: WindowRef[] = [];
+  for (const ref of refs.values()) {
+    if (ref.kind === 'live' && ref.window.isDestroyed()) {
+      refs.delete(ref.id);
+      aliasedElectronIds.delete(ref.window.id);
+      continue;
     }
+    result.push(ref);
   }
-  for (const ref of pendingWindows.values()) {
-    refs.push(ref);
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    if (aliasedElectronIds.has(win.id)) continue;
+    result.push({ kind: 'live', id: win.id, window: win });
   }
-  return refs;
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Realization
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * The function that turns a descriptor into a live BrowserWindow.
+ *
+ * window-registry can't import the window-open handler directly (the
+ * handler lives in `ipc.ts`, which imports through `main.ts` which
+ * imports from here — cycle). Instead, the session/IPC layer registers
+ * a realizer at startup and `realize()` delegates to it. This also
+ * means tests can swap in a stub.
+ */
+export type WindowRealizer = (descriptor: WindowDescriptor) => Promise<BrowserWindow>;
+
+let registeredRealizer: WindowRealizer | null = null;
+
+/**
+ * Register the function that constructs a BrowserWindow from a
+ * descriptor. Must be called once during app startup, after the
+ * window-open handler is in place. Calling twice throws.
+ */
+export function registerRealizer(fn: WindowRealizer): void {
+  if (registeredRealizer) {
+    throw new Error('window-registry: realizer already registered');
+  }
+  registeredRealizer = fn;
 }
 
 /**
- * Resolve a WindowRef to a live BrowserWindow. For a Live ref this is
- * a synchronous no-op wrapped in a Promise. For a Pending ref this
- * would construct the BrowserWindow from its descriptor via the
- * window-open handler — but that wiring is phase 5. Today, calling
- * `realize()` on a Pending ref throws.
+ * Resolve a `WindowRef` to a live BrowserWindow. For a Live ref this
+ * is an immediate no-op. For a Pending ref this constructs the
+ * BrowserWindow via the registered realizer, updates the registry so
+ * subsequent lookups by the synthetic id return the Live ref, and
+ * arms a `closed` listener so the entry is reaped when the window
+ * goes away.
+ *
+ * Idempotent: realizing an already-Live ref (or a synthetic id whose
+ * pending entry was already realized by someone else) returns the
+ * existing BrowserWindow.
  */
 export async function realize(ref: WindowRef): Promise<BrowserWindow> {
   if (ref.kind === 'live') return ref.window;
 
-  throw new Error(
-    'window-registry: realize() for pending windows is not implemented yet. ' +
-      'Phase 2 ships only the signature; phase 5 will wire it to invokeWindowOpen.'
-  );
+  // Re-read in case caller has a stale ref (race between two realize
+  // calls on the same synthetic id).
+  const current = refs.get(ref.id);
+  if (!current) {
+    throw new Error(`window-registry: realize() called for unknown synthetic id ${ref.id}`);
+  }
+  if (current.kind === 'live') {
+    return current.window;
+  }
+
+  if (!registeredRealizer) {
+    throw new Error('window-registry: realize() called but no realizer registered');
+  }
+
+  const win = await registeredRealizer(current.descriptor);
+
+  const liveRef: WindowRef = { kind: 'live', id: ref.id, window: win };
+  refs.set(ref.id, liveRef);
+  aliasedElectronIds.add(win.id);
+
+  win.once('closed', () => {
+    refs.delete(ref.id);
+    aliasedElectronIds.delete(win.id);
+  });
+
+  return win;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -212,5 +297,7 @@ export async function realize(ref: WindowRef): Promise<BrowserWindow> {
  */
 export function _resetForTests(): void {
   nextSyntheticId = Number.MAX_SAFE_INTEGER;
-  pendingWindows.clear();
+  refs.clear();
+  aliasedElectronIds.clear();
+  registeredRealizer = null;
 }
