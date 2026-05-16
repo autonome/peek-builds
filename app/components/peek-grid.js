@@ -489,8 +489,13 @@ export class PeekGrid extends PeekElement {
       return;
     }
 
-    const cw = this.clientWidth;
-    const ch = this.clientHeight;
+    // Measure the grid box, not the host — the host may have padding
+    // (e.g. .cards { padding: 24px } in the windows feature) that
+    // reduces the area the grid actually lays out in. Using
+    // this.clientWidth/Height here would over-size cells and let them
+    // overflow the visible viewport.
+    const cw = grid.clientWidth;
+    const ch = grid.clientHeight;
     const gap = this.gap;
     if (cw <= 0 || ch <= 0) return;
 
