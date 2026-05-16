@@ -52,3 +52,15 @@ export function windowFromWebContents(wc: WebContents): BrowserWindow | null {
   const win = BrowserWindow.fromWebContents(wc);
   return win && !win.isDestroyed() ? win : null;
 }
+
+/**
+ * Send `channel` (with optional args) to every live window. Equivalent
+ * to iterating `getAllLiveWindows()` and calling `webContents.send` on
+ * each — use this when the message is meant for all renderers
+ * regardless of role (theme changes, dark-mode toggles, etc.).
+ */
+export function broadcast(channel: string, ...args: unknown[]): void {
+  for (const win of getAllLiveWindows()) {
+    win.webContents.send(channel, ...args);
+  }
+}

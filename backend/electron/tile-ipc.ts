@@ -17,7 +17,7 @@
  */
 
 import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme, screen, app, shell } from 'electron';
-import { getAllLiveWindows, getLiveWindow, windowFromWebContents } from './window-registry.js';
+import { broadcast, getAllLiveWindows, getLiveWindow, windowFromWebContents } from './window-registry.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -4130,8 +4130,8 @@ export function registerTileIpcHandlers(): void {
       ? args.windowId
       : null;
     if (explicitId !== null) {
-      const explicitWin = BrowserWindow.fromId(explicitId);
-      if (explicitWin && !explicitWin.isDestroyed()) {
+      const explicitWin = getLiveWindow(explicitId);
+      if (explicitWin) {
         resolvedId = explicitId;
       }
     }
@@ -4139,8 +4139,8 @@ export function registerTileIpcHandlers(): void {
     if (resolvedId === null) {
       const tracked = getLastFocusedVisibleWindowId();
       if (tracked != null) {
-        const trackedWin = BrowserWindow.fromId(tracked);
-        if (trackedWin && !trackedWin.isDestroyed()) {
+        const trackedWin = getLiveWindow(tracked);
+        if (trackedWin) {
           resolvedId = tracked;
         }
       }
@@ -4158,8 +4158,7 @@ export function registerTileIpcHandlers(): void {
       // test fixture (focusable:false) and the core background renderer
       // (url === peek://app/background.html). Take the highest-numbered
       // matching window as a proxy for "most recently created".
-      const candidates = BrowserWindow.getAllWindows().filter((w) => {
-        if (w.isDestroyed()) return false;
+      const candidates = getAllLiveWindows().filter((w) => {
         if (!w.isFocusable()) return false;
         try {
           const wurl = w.webContents.getURL();
@@ -4178,8 +4177,8 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'No visible window to target' };
     }
 
-    const win = BrowserWindow.fromId(resolvedId);
-    if (!win || win.isDestroyed()) {
+    const win = getLiveWindow(resolvedId);
+    if (!win) {
       return { success: false, error: 'Window not found' };
     }
 
@@ -4209,10 +4208,7 @@ export function registerTileIpcHandlers(): void {
     }
     tileSetThemeSetting(TILE_THEME_ID_KEY, themeId);
 
-    const windows = BrowserWindow.getAllWindows();
-    for (const win of windows) {
-      win.webContents.send('tile:theme:changed', { kind: 'theme', themeId });
-    }
+    broadcast('tile:theme:changed', { kind: 'theme', themeId });
     return { success: true, themeId };
   });
 
@@ -4555,9 +4551,7 @@ export function registerTileIpcHandlers(): void {
         return { success: false, error: 'Theme not found' };
       }
 
-      for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send('theme:reload', { themeId });
-      }
+      broadcast('theme:reload', { themeId });
 
       return { success: true, data: { id: themeId } };
     } catch (error) {
@@ -5953,8 +5947,8 @@ export function registerTileIpcHandlers(): void {
       // user navigation and shouldn't pollute history/frecency. Consume the
       // flag on first call so subsequent user-initiated navigations from
       // the same window are tracked normally.
-      const callerWin = BrowserWindow.fromWebContents(event.sender);
-      if (callerWin && !callerWin.isDestroyed()) {
+      const callerWin = windowFromWebContents(event.sender);
+      if (callerWin) {
         const info = getWindowInfo(callerWin.id);
         if (info?.params?.skipTracking) {
           info.params.skipTracking = false;
@@ -6654,10 +6648,7 @@ export function registerTileIpcHandlers(): void {
 
     const tier2Changed = (previousMode === 'force') !== (mode === 'force');
 
-    // Broadcast change to all windows.
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send('darkMode:changed', { mode });
-    }
+    broadcast('darkMode:changed', { mode });
 
     return { success: true, data: { mode, restartRequired: tier2Changed } };
   });
@@ -6670,8 +6661,8 @@ export function registerTileIpcHandlers(): void {
   const tileResolveWebWindow = (windowId?: number): BrowserWindow | null => {
     const id = windowId ?? getLastFocusedVisibleWindowId();
     if (!id) return null;
-    const win = BrowserWindow.fromId(id);
-    if (!win || win.isDestroyed()) return null;
+    const win = getLiveWindow(id);
+    if (!win) return null;
     const winUrl = win.webContents.getURL();
     if (!winUrl.startsWith('http://') && !winUrl.startsWith('https://')) return null;
     return win;
@@ -6894,10 +6885,7 @@ function tileSetThemeSetting(key: string, value: string): void {
 }
 
 function tileBroadcastThemeChange(colorScheme: string): void {
-  const windows = BrowserWindow.getAllWindows();
-  for (const win of windows) {
-    win.webContents.send('tile:theme:changed', { kind: 'colorScheme', colorScheme });
-  }
+  broadcast('tile:theme:changed', { kind: 'colorScheme', colorScheme });
 }
 
 // ─── MIME type helper ─────────────────────────────────────────────
