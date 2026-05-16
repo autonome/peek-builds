@@ -1,0 +1,54 @@
+/**
+ * Central indirection layer for window lookups.
+ *
+ * Today every backend file reaches for Electron's `BrowserWindow.fromId` /
+ * `BrowserWindow.getAllWindows` / `BrowserWindow.fromWebContents` directly,
+ * and almost every site immediately follows with a `!win.isDestroyed()`
+ * check. This module collapses both responsibilities into one place so
+ * future changes to "what counts as a window" only have to edit one file.
+ *
+ * Phase 1 (this file): pure no-op wrappers. The destroyed-window filter
+ * runs here instead of at every call site, but the observable behavior
+ * is identical.
+ *
+ * Phase 2 will extend `getLiveWindow` to return null for pending
+ * (not-yet-realized) windows and add a sibling API that returns refs to
+ * both pending and live windows for callers that want to act on all of
+ * them (e.g. `tile:window:list`).
+ */
+
+import { BrowserWindow } from 'electron';
+import type { WebContents } from 'electron';
+
+/**
+ * Returns the live BrowserWindow for `id`, or null if there is no such
+ * window or it has been destroyed.
+ *
+ * Use this in place of `BrowserWindow.fromId(id)`; callers no longer
+ * need to gate on `isDestroyed()`.
+ */
+export function getLiveWindow(id: number): BrowserWindow | null {
+  const win = BrowserWindow.fromId(id);
+  return win && !win.isDestroyed() ? win : null;
+}
+
+/**
+ * Returns every non-destroyed BrowserWindow.
+ *
+ * Use this in place of `BrowserWindow.getAllWindows()` when you intend
+ * to operate on live windows. Callers no longer need to filter out
+ * destroyed entries.
+ */
+export function getAllLiveWindows(): BrowserWindow[] {
+  return BrowserWindow.getAllWindows().filter(w => !w.isDestroyed());
+}
+
+/**
+ * Returns the live BrowserWindow that owns `wc`, or null. Use this in
+ * place of `BrowserWindow.fromWebContents(wc)` for callers that need
+ * the destroyed-window filter.
+ */
+export function windowFromWebContents(wc: WebContents): BrowserWindow | null {
+  const win = BrowserWindow.fromWebContents(wc);
+  return win && !win.isDestroyed() ? win : null;
+}
