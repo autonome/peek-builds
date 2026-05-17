@@ -1245,6 +1245,12 @@ export function registerWindowHandlers(): void {
             pageParams.set('preHeight', String(ph));
           }
         }
+        // Chrome gate: callers that want to skip page-host chrome init at boot
+        // (page-widget host, notes/tags/entities subscriptions, per-navigation
+        // chrome work) pass `chrome: false`. The page-host renderer reads
+        // `chrome=0` and queues chrome work until first focus. Default is
+        // chrome on, so direct opens (cmd panel, popups) are unaffected.
+        if (options.chrome === false) pageParams.set('chrome', '0');
         loadUrl = `peek://app/page/index.html?${pageParams.toString()}`;
         DEBUG && console.log('Routing web page through peek://app/page:', url, '->', loadUrl);
 

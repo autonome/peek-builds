@@ -808,6 +808,13 @@ export async function restoreSessionSnapshot(
         ...boundsOptions,
         // Skip visit tracking — restoring a session is not a new navigation
         skipTracking: true,
+        // Restored page-host windows boot without chrome. The page-host
+        // renderer queues chrome init (widget host, notes/tags/entities
+        // subscriptions, per-navigation chrome work) until the window first
+        // gets focus. Saves per-window renderer-boot work across the whole
+        // restore set; the focused window inits chrome synchronously on its
+        // focus event so it's indistinguishable from a fresh open.
+        chrome: false,
       };
 
       // Ensure the window key is set for deduplication

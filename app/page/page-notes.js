@@ -68,7 +68,18 @@ export class PageNotesPane {
       toggle.title = collapsed ? 'Expand' : 'Collapse';
     });
 
-    // Subscribe to relevant events
+    this._subsAttached = false;
+  }
+
+  /**
+   * Attach pubsub subscriptions. Split from the constructor so the renderer
+   * can build the DOM (cheap) at module load and defer the subscriptions
+   * (which keep the pane reactive to background datastore changes) until
+   * the window's chrome is actually needed. Idempotent.
+   */
+  init() {
+    if (this._subsAttached) return;
+    this._subsAttached = true;
     api.subscribe('item:created', () => this._reload());
     api.subscribe('item:deleted', () => this._reload());
     api.subscribe('tag:item-added', () => this._reload());

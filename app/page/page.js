@@ -144,6 +144,56 @@ const hasInitialPreMaxBounds =
   Number.isFinite(initialPreMaxX) && Number.isFinite(initialPreMaxY)
   && Number.isFinite(initialPreMaxW) && Number.isFinite(initialPreMaxH);
 
+// `chrome` query param controls whether window chrome (page widgets, notes,
+// tags/entities panels, extension widget host, etc.) initializes at boot. When
+// `chrome=0`, only the webview content + lightweight command listeners are
+// wired up; chrome subscriptions and per-navigation chrome work are queued via
+// onChrome() and fire on the first window focus event. The webview, navbar
+// keyboard hooks, drag/resize handles, and command-channel pubsub remain
+// always-on so the window is immediately usable on focus.
+const chromeEnabled = params.get('chrome') !== '0';
+let chromeInited = false;
+const chromeInitHooks = [];
+const pageBootStartedAt = Date.now();
+// Renderer-side perf marker. Uses console.error so it surfaces in main.log
+// (renderer console.log is not forwarded). Pair with [session:perf] window-open
+// to attribute per-window boot cost; pair with [page:perf] init-chrome to see
+// which renderers actually paid for chrome init vs sat deferred.
+console.error(`[page:perf] boot chrome=${chromeEnabled ? 1 : 0} url=${(targetUrl || '').substring(0, 80)}`);
+function onChrome(fn) {
+  if (chromeInited) {
+    try { fn(); } catch (e) { console.error('[page] onChrome immediate error:', e); }
+    return;
+  }
+  chromeInitHooks.push(fn);
+}
+function initChrome() {
+  if (chromeInited) return;
+  chromeInited = true;
+  const hooks = chromeInitHooks.splice(0);
+  const deferredMs = Date.now() - pageBootStartedAt;
+  console.error(`[page:perf] init-chrome deferred_ms=${deferredMs} hooks=${hooks.length} url=${(targetUrl || '').substring(0, 80)}`);
+  for (const fn of hooks) {
+    try { fn(); } catch (e) { console.error('[page] chrome init hook error:', e); }
+  }
+}
+
+// Chrome-init decision runs HERE, before the rest of the module touches the
+// loading lifecycle. For chrome=true (default direct opens), initChrome runs
+// synchronously so subsequent onChrome(...) calls fire immediately; the
+// loadingLifecycle.startLoading() call below then sees chromeInited=true and
+// show() proceeds normally to flash the loading-navbar.
+// For chrome=false (session restore), we attach engagement listeners now and
+// queue onChrome hooks until the user clicks or types into the window. Focus
+// alone never trips the gate.
+if (chromeEnabled) {
+  initChrome();
+} else {
+  const triggerInit = () => initChrome();
+  window.addEventListener('pointerdown', triggerInit, { once: true, capture: true });
+  window.addEventListener('keydown', triggerInit, { once: true, capture: true });
+}
+
 if (!targetUrl) {
   console.error('[page] No URL provided');
   document.body.innerHTML = '<h1>Error: No URL provided</h1>';
@@ -1712,6 +1762,18 @@ function updateState() {
 
 async function show(opts) {
   console.log('[page] show() called, source:', opts?.source);
+  // Chrome-deferred behavior:
+  //  - source 'loading' fires automatically at module-eval time (via
+  //    loadingLifecycle.startLoading) and would otherwise flash the navbar
+  //    visible during initial page load on a restored window the user hasn't
+  //    engaged with. Suppress entirely until chrome inits.
+  //  - other sources ('hover' from trigger zone, 'shortcut' from Cmd+L)
+  //    represent user intent to use chrome. Initialize chrome first, then
+  //    fall through to show normally.
+  if (!chromeInited) {
+    if (opts?.source === 'loading') return;
+    initChrome();
+  }
   // Don't activate navbar/panels when the window doesn't have OS focus.
   // Mouse hover and background page loads can fire even when unfocused.
   // Keyboard shortcuts (Cmd+L) already require focus to fire, so skip the guard.
@@ -1765,6 +1827,8 @@ async function show(opts) {
 }
 
 async function hide() {
+  // No chrome to hide if it was never shown.
+  if (!chromeInited) return;
   if (inDragging() || holdDragPending) return;
   // Don't hide while page is loading — navbar stays visible with spinner
   if (loadingLifecycle.state === 'loading') return;
@@ -2971,7 +3035,7 @@ const pageWidgetHost = createPageWidgetHost({
   updateWidget,
   removeWidget,
 });
-pageWidgetHost.init();
+onChrome(() => pageWidgetHost.init());
 
 // Publish page:navigated on in-page navigation
 webview.addEventListener('did-navigate', (e) => {
@@ -2993,40 +3057,42 @@ if (typeof window !== 'undefined') {
 
 // --- OpenSearch discovery widget ---
 
-api.subscribe('websearch:engine-discovered', (msg) => {
-  if (!msg || !msg.engine) return;
+onChrome(() => {
+  api.subscribe('websearch:engine-discovered', (msg) => {
+    if (!msg || !msg.engine) return;
 
-  const { engine } = msg;
-  const widgetId = `opensearch-${engine.id}`;
+    const { engine } = msg;
+    const widgetId = `opensearch-${engine.id}`;
 
-  DEBUG && console.log('[page] OpenSearch engine discovered:', engine.name);
+    DEBUG && console.log('[page] OpenSearch engine discovered:', engine.name);
 
-  const contentEl = document.createElement('div');
+    const contentEl = document.createElement('div');
 
-  const infoRow = document.createElement('div');
-  infoRow.className = 'widget-engine-found';
+    const infoRow = document.createElement('div');
+    infoRow.className = 'widget-engine-found';
 
-  const iconSpan = document.createElement('span');
-  iconSpan.className = 'widget-engine-icon';
-  iconSpan.textContent = '\uD83D\uDD0D';
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'widget-engine-icon';
+    iconSpan.textContent = '\uD83D\uDD0D';
 
-  const nameSpan = document.createElement('span');
-  nameSpan.className = 'widget-engine-name';
-  nameSpan.textContent = engine.name;
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'widget-engine-name';
+    nameSpan.textContent = engine.name;
 
-  infoRow.appendChild(iconSpan);
-  infoRow.appendChild(nameSpan);
-  contentEl.appendChild(infoRow);
+    infoRow.appendChild(iconSpan);
+    infoRow.appendChild(nameSpan);
+    contentEl.appendChild(infoRow);
 
-  const actionBtn = document.createElement('button');
-  actionBtn.className = 'widget-action-btn confirmed';
-  actionBtn.textContent = '\u2713 Added to search engines';
-  contentEl.appendChild(actionBtn);
+    const actionBtn = document.createElement('button');
+    actionBtn.className = 'widget-action-btn confirmed';
+    actionBtn.textContent = '\u2713 Added to search engines';
+    contentEl.appendChild(actionBtn);
 
-  addWidget(widgetId, {
-    title: 'Search engine found',
-    content: contentEl,
-    autoDismiss: 8000,
+    addWidget(widgetId, {
+      title: 'Search engine found',
+      content: contentEl,
+      autoDismiss: 8000,
+    });
   });
 });
 
@@ -3340,6 +3406,7 @@ function renderEntities(entities) {
 }
 
 // Listen for entity extraction results (from entities extension)
+onChrome(() => {
 api.subscribe('entities:extracted', (msg) => {
   if (!msg || !msg.url || !msg.entities) return;
   // Check if this is for the current page
@@ -3378,6 +3445,7 @@ api.subscribe('entities:get-for-url:response', (msg) => {
     // webview not ready
   }
 });
+});
 
 // Rescan button — triggers re-extraction of entities for current page
 if (entitiesRescanBtn) {
@@ -3402,6 +3470,7 @@ if (entitiesRescanBtn) {
 }
 
 // On navigation, clear entities and request for current URL
+onChrome(() => {
 webview.addEventListener('did-navigate', (e) => {
   try {
     currentPageEntities = [];
@@ -3419,6 +3488,7 @@ webview.addEventListener('did-navigate', (e) => {
       pageNotesPane.loadForUrl(e.url);
     }
   } catch (err) { console.error('[page] did-navigate entities/notes error:', err); }
+});
 });
 
 // Also do a simple in-page entity extraction as a fallback
@@ -3526,8 +3596,10 @@ async function extractSimpleEntities() {
 }
 
 // Run simple extraction after page loads (as fallback)
+onChrome(() => {
 webview.addEventListener('did-finish-load', () => {
   setTimeout(extractSimpleEntities, 2000);
+});
 });
 
 // --- Tags Panel: show/manage tags for current page ---
@@ -3800,6 +3872,7 @@ function itemUrlMatchesPage(itemUrl) {
   return false;
 }
 
+onChrome(() => {
 api.subscribe('tag:item-added', async (msg) => {
   if (msg && msg.itemId === currentItemId) {
     loadTagsForCurrentPage();
@@ -3841,10 +3914,12 @@ api.subscribe('tag:item-removed', async (msg) => {
 api.subscribe('tag:created', () => {
   loadAllTags();
 });
+});
 
 // --- Load tags on navigation ---
 
 // Capture itemId from trackNavigation on did-navigate
+onChrome(() => {
 webview.addEventListener('did-navigate', async (e) => {
   try {
     currentItemId = null;
@@ -3886,6 +3961,7 @@ webview.addEventListener('did-finish-load', async () => {
   // Load all tags for autocomplete
   loadAllTags();
   updatePositions();
+});
 });
 
 // --- Page Command Handlers (pubsub) ---
@@ -4473,6 +4549,7 @@ function renderAdblockerEntry() {
 }
 
 // Load extensions panel on initial page load
+onChrome(() => {
 webview.addEventListener('did-finish-load', () => {
   setTimeout(loadExtensionsPanel, 700);
 });
@@ -4495,6 +4572,7 @@ webview.addEventListener('did-finish-load', () => {
     // webview not ready
   }
 });
+});
 
 // --- Link hover status bar ---
 // Show the URL of the link the user is hovering over, like a browser status bar.
@@ -4509,6 +4587,30 @@ webview.addEventListener('update-target-url', (e) => {
 });
 
 DEBUG && console.log('[page] Minimal page host initialized for:', targetUrl);
+
+// --- Chrome init: attach deferred-init handlers + first-focus tear-off ---
+// Wake the notes pane subscriptions and run a one-shot "catch-up" pass for the
+// current URL, so a window restored without chrome doesn't miss the initial
+// load events fired while it was unfocused.
+onChrome(() => {
+  pageNotesPane.init();
+  let catchUpUrl;
+  try { catchUpUrl = webview.getURL(); } catch { catchUpUrl = null; }
+  if (catchUpUrl && (catchUpUrl.startsWith('http://') || catchUpUrl.startsWith('https://'))) {
+    pageNotesPane.loadForUrl(catchUpUrl);
+    api.publish('entities:get-for-url', { url: catchUpUrl });
+    setTimeout(() => { extractSimpleEntities().catch(() => {}); }, 0);
+    (async () => {
+      try {
+        currentItemId = await resolveItemId(catchUpUrl);
+        if (currentItemId) await loadTagsForCurrentPage();
+        await loadAllTags();
+        updatePositions();
+      } catch (err) { console.error('[page] chrome catch-up tag load error:', err); }
+    })();
+  }
+  setTimeout(loadExtensionsPanel, 0);
+});
 
 // Module-end sentinel. If any top-level statement above throws (e.g. an api.*
 // surface was renamed or removed), module evaluation halts and this flag is
