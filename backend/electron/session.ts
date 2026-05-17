@@ -773,6 +773,26 @@ export async function restoreSessionSnapshot(
   console.log(`[session:perf] restore-begin n=${sortedWindows.length}`);
   const perWindowTimings: Array<{ url: string; ms: number; ok: boolean }> = [];
 
+  // Renderer-boot tail tracking. `restore-end` only measures the main-process
+  // restore loop (BrowserWindow ctor + fire-and-forget loadURL). The actual
+  // user-visible "windows ready" moment is when each restored window's
+  // `did-finish-load` (or `did-fail-load`) lands. Always-on so a real-world
+  // tail regression is visible in main.log without rebuilding.
+  let pendingLoads = 0;
+  let finishedLoads = 0;
+  let failedLoads = 0;
+  let timedOutLoads = 0;
+  let loopDone = false;
+  let allLoadedEmitted = false;
+  const LOAD_TIMEOUT_MS = 30000;
+  const checkAllLoaded = () => {
+    if (allLoadedEmitted || !loopDone) return;
+    if (finishedLoads + failedLoads + timedOutLoads < pendingLoads) return;
+    allLoadedEmitted = true;
+    const allLoadedMs = Date.now() - restoreStartedAt;
+    console.log(`[session:perf] all-loaded ms=${allLoadedMs} n=${pendingLoads} finished=${finishedLoads} failed=${failedLoads} timed_out=${timedOutLoads}`);
+  };
+
   for (const original of sortedWindows) {
     try {
       const descriptor = (() => {
@@ -851,6 +871,30 @@ export async function restoreSessionSnapshot(
       if (ok) {
         result.restored++;
 
+        // Attach did-finish-load / did-fail-load listeners to measure the
+        // renderer-boot tail. Listener is attached after invokeWindowOpen
+        // returns; loadURL fires async so the events still land here.
+        if (openResult.id != null) {
+          const restoredId = openResult.id;
+          const restoredUrl = descriptor.url;
+          const win = getLiveWindow(restoredId);
+          if (win && !win.isDestroyed()) {
+            pendingLoads++;
+            let settled = false;
+            const handle = (kind: string, incCounter: () => void, extra: string = '') => {
+              if (settled) return;
+              settled = true;
+              incCounter();
+              const elapsed = Date.now() - restoreStartedAt;
+              console.log(`[session:perf] ${kind} ms=${elapsed} id=${restoredId} url=${restoredUrl.substring(0, 100)}${extra}`);
+              checkAllLoaded();
+            };
+            win.webContents.once('did-finish-load', () => handle('window-loaded', () => { finishedLoads++; }));
+            win.webContents.once('did-fail-load', (_e, code, desc) => handle('window-load-failed', () => { failedLoads++; }, ` code=${code} desc=${String(desc).substring(0, 80)}`));
+            setTimeout(() => handle('window-load-timeout', () => { timedOutLoads++; }), LOAD_TIMEOUT_MS);
+          }
+        }
+
         // Restore context (mode, spaceId, spaceName) after window creation
         if (descriptor.context?.mode) {
           try {
@@ -878,6 +922,11 @@ export async function restoreSessionSnapshot(
       console.error(`[session] Error restoring window ${original.url}:`, error);
     }
   }
+
+  // Allow the renderer-boot tail tracker to fire `all-loaded` once all
+  // pending did-finish-load events have landed (or timed out).
+  loopDone = true;
+  checkAllLoaded();
 
   // Summary line — total wall clock, success/fail counts, and the
   // top-5 slowest windows so the bottleneck pattern is visible at a
