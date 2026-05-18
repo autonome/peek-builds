@@ -17,7 +17,7 @@ import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWin
 import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
-import { invokeWindowOpen } from './ipc.js';
+import { invokeWindowOpen, getLastFocusedVisibleWindowId } from './ipc.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { WEB_CORE_ADDRESS } from './config.js';
 
@@ -247,6 +247,18 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     }
   }
 
+  // The "focused" descriptor drives restore's head-start: that window
+  // dispatches first and the rest pause briefly while it reaches dom-ready.
+  // Use the persistent focus tracker (last visible content window the user
+  // actually focused) rather than `win.isFocused()` at this instant. Save
+  // can fire mid-shutdown, with a transient overlay focused, or after the
+  // user has switched away — all of which leave `win.isFocused()` pointing
+  // at the wrong window (or nothing), and the head-start ends up firing on
+  // some unrelated window that just happens to be first in iteration
+  // order. `lastFocusedVisibleWindowId` excludes modals/overlays/bg and
+  // survives focus shifts to other apps, so it captures user intent.
+  const lastFocusedId = getLastFocusedVisibleWindowId();
+
   for (const [id, winData] of registeredWindows) {
     const win = getLiveWindow(id);
 
@@ -345,7 +357,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       source: winData.source,
       params: sanitized,
       zOrder: zOrderMap.get(id) ?? 0,
-      focused: presentation.focused,
+      focused: lastFocusedId != null && id === lastFocusedId,
       context: windowContext,
     });
   }
