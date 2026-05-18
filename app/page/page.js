@@ -1044,6 +1044,15 @@ const loadingLifecycle = {
     const timeoutMs = getLoadingTimeoutMs();
     this._timeoutId = setTimeout(() => {
       if (this._state === 'loading') {
+        // If dom-ready already fired, the page is rendered and the user is
+        // looking at content — typically a long-tail subresource is the
+        // thing that didn't finish in 30s, not the page itself. Stop the
+        // spinner but DO NOT replace the rendered page with the overlay.
+        if (domReadyFiredForCurrentNav) {
+          console.warn('[page] Loading timeout after', timeoutMs, 'ms — page already dom-ready, suppressing overlay');
+          this.stopLoading();
+          return;
+        }
         console.warn('[page] Loading timeout after', timeoutMs, 'ms — surfacing error overlay');
         this.stopLoading();
         // Render the same overlay shown for did-fail-load. Prefer the
@@ -1147,6 +1156,17 @@ let latestNavigationUrl = null;
 // rapidly, causing show()/hide() async races and resetting the 30s safety timeout.
 let lastFailedNavUrl = null;
 
+// Track whether dom-ready has fired for the *current* main-frame navigation.
+// dom-ready means the HTML has parsed and the page is interactive — the user
+// can see content. If we get a did-fail-load or hit the 30s loading-timeout
+// AFTER this point, the page is already rendered; replacing it with the
+// "didn’t load" overlay is strictly worse than doing nothing (the user has
+// just watched content disappear). Common triggers for the wrong-time overlay:
+//   - long-tail third-party subresources hanging past 30s
+//   - main-frame did-fail-load fired late for an aborted late stream
+// did-start-navigation resets the flag on each new navigation.
+let domReadyFiredForCurrentNav = false;
+
 initWebview();
 loadingLifecycle.startLoading();
 
@@ -1203,6 +1223,10 @@ webview.addEventListener('did-start-navigation', (e) => {
   }
   // Clear the failed URL tracker on any new (different) navigation
   lastFailedNavUrl = null;
+  // New navigation → page is not (yet) rendered. Re-arms the suppression
+  // logic in the loading-timeout and did-fail-load handlers so they can
+  // surface the error overlay if THIS navigation fails before dom-ready.
+  domReadyFiredForCurrentNav = false;
   DEBUG && console.log('[page] Navigation started (in-webview):', e.url);
   latestNavigationUrl = e.url;
   loadingLifecycle.startLoading();
@@ -2387,6 +2411,19 @@ webview.addEventListener('did-fail-load', (e) => {
   // Webview did-fail-load uses `validatedURL` (per Electron docs); `e.url` is
   // undefined on the DOM event. Fall back through both for safety.
   const failedUrl = e.validatedURL || e.url || '';
+  // If dom-ready already fired for this navigation, the page is rendered —
+  // a late main-frame did-fail-load here is almost always an aborted tail
+  // stream after the user has interactive content. Suppress the overlay
+  // (which would replace the visible page with a generic error) and just
+  // clear the loading state. We also DON'T set lastFailedNavUrl: that
+  // tracker exists to break meta-refresh loops on the failed URL, but a
+  // rendered page is by definition not stuck in such a loop, and marking
+  // the URL failed would wrongly suppress legitimate re-navigation to it.
+  if (domReadyFiredForCurrentNav) {
+    console.warn('[page] did-fail-load after dom-ready — page rendered, suppressing overlay. code=', e.errorCode, 'desc=', e.errorDescription, 'url=', failedUrl);
+    loadingLifecycle.stopLoading();
+    return;
+  }
   console.error('[page] Load failed:', e.errorCode, e.errorDescription, failedUrl);
   // Track this URL as failed to prevent meta-refresh loops.
   // If the previous page had <meta http-equiv="refresh"> pointing to this URL,
@@ -2403,6 +2440,11 @@ webview.addEventListener('did-fail-load', (e) => {
 // On dom-ready: detect page background color.
 // Background detection prevents the white flash when loading pages in dark mode.
 webview.addEventListener('dom-ready', async () => {
+  // Mark page as rendered for the current navigation. Suppresses spurious
+  // "didn’t load" overlays from late timeouts / did-fail-load on the main
+  // frame when the user can already see content. See the
+  // domReadyFiredForCurrentNav declaration for the full reasoning.
+  domReadyFiredForCurrentNav = true;
   // Detect background color (cosmetic)
   try {
     const bgResult = await webview.executeJavaScript(`
