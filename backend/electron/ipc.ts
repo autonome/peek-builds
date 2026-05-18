@@ -49,6 +49,7 @@ import {
   validateThemeCSS,
   popClosedWindow,
   getClosedWindowCount,
+  getBackgroundWindow,
 } from './main.js';
 
 import {
@@ -417,8 +418,17 @@ export function applyDarkModeSetting(mode: string): void {
 /**
  * Reopen the most recently closed window.
  * Called from both the IPC handler and the keyboard shortcut.
- * Uses pubsub to request the background window open the URL
- * (so we get full window-open logic including canvas, mode detection, etc.)
+ *
+ * Drives the window-open handler directly (rather than round-tripping
+ * through bgWindow via pubsub) so `registerWindow()` lands in the
+ * registry on the same tick as the user's keypress. The pubsub path
+ * was async: a fast Cmd+Q after Cmd+Shift+T would fire `before-quit`
+ * (and its synchronous `saveSessionSnapshot`) while the reopen was
+ * still in flight, dropping the reopened window from the snapshot —
+ * the very window the user last had in front. `invokeWindowOpen` is
+ * `async`, but the body runs synchronously up to its first await, and
+ * `registerWindow` is well before that — so calling it without await
+ * is enough to seed the registry before this function returns.
  */
 export function reopenLastClosedWindow(): { success: boolean; url?: string; error?: string } {
   const entry = popClosedWindow();
@@ -470,10 +480,23 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
     options.preMaxHeight = entry.preMaximizeBounds.height;
   }
 
-  // Publish event for the background window to pick up and open
-  publish(getSystemAddress(), 'window:reopen-request', {
-    url: entry.url,
-    options,
+  const bgWin = getBackgroundWindow();
+  if (!invokeWindowOpen || !bgWin) {
+    console.error('[reopen] invokeWindowOpen or bgWindow not ready');
+    return { success: false, error: 'window-open subsystem not ready' };
+  }
+
+  // Fire-and-forget: the synchronous portion of windowOpenHandler runs
+  // immediately on call (BrowserWindow ctor + registerWindow), so the
+  // registry contains the new window before the next await. The async
+  // tail (loadURL + post-load work) continues in the background and
+  // does not need to be awaited by callers — saves can run in between
+  // and will see the registered window.
+  void invokeWindowOpen(
+    { sender: bgWin.webContents },
+    { source: WEB_CORE_ADDRESS, url: entry.url, options },
+  ).catch((err) => {
+    console.error('[reopen] invokeWindowOpen failed:', err);
   });
 
   return { success: true, url: entry.url };
