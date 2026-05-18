@@ -892,6 +892,23 @@ export async function restoreSessionSnapshot(
             win.webContents.once('did-finish-load', () => handle('window-loaded', () => { finishedLoads++; }));
             win.webContents.once('did-fail-load', (_e, code, desc) => handle('window-load-failed', () => { failedLoads++; }, ` code=${code} desc=${String(desc).substring(0, 80)}`));
             setTimeout(() => handle('window-load-timeout', () => { timedOutLoads++; }), LOAD_TIMEOUT_MS);
+
+            // Earlier-phase markers in main's own timeline. These don't gate
+            // all-loaded — they're diagnostic to decompose what's happening
+            // between fire-and-forget loadURL and window-loaded:
+            //   did-start-loading: navigation actually started in renderer
+            //   dom-ready: HTML parsed + preload + page.js synchronous
+            //     module evaluation complete; document is interactive
+            // Pair with renderer-side [preload:perf] and [page-boot:perf]
+            // markers to locate the per-renderer cost.
+            win.webContents.once('did-start-loading', () => {
+              const elapsed = Date.now() - restoreStartedAt;
+              console.log(`[session:perf] window-start-loading ms=${elapsed} id=${restoredId} url=${restoredUrl.substring(0, 100)}`);
+            });
+            win.webContents.once('dom-ready', () => {
+              const elapsed = Date.now() - restoreStartedAt;
+              console.log(`[session:perf] window-dom-ready ms=${elapsed} id=${restoredId} url=${restoredUrl.substring(0, 100)}`);
+            });
           }
         }
 
