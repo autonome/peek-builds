@@ -1041,10 +1041,23 @@ export async function restoreSessionSnapshot(
   // Focus the window that was focused at save time — but only if Peek is
   // still the OS-frontmost app. If the user switched away mid-restore,
   // calling .focus() would yank them back. Best-effort either way.
+  //
+  // Also seed izui.session.focusedWindowId directly here. The win.on('focus')
+  // handler that normally updates it can race with .show()/.focus() during
+  // restore — leaving the session with focusedWindowId=null even though
+  // the window is visually focused. Two-phase ESC then fails on first
+  // visit because enterOverlay reads focusedWindowId to seed
+  // preOverlayFocusTarget, and a null pointer leaves exitOverlay with
+  // nothing to restore to (symptom: ESC ESC drops to workspace root).
+  // Seeding here is deterministic; the focus event remains the source of
+  // truth for subsequent user-driven focus changes.
   if (focusedWindowId) {
     try {
+      const coordinator = getIzuiCoordinator();
+      coordinator.setFocusedWindow(focusedWindowId);
+      DEBUG && console.log(`[session] Seeded izui focusedWindowId=${focusedWindowId}`);
       const focusWin = getLiveWindow(focusedWindowId);
-      if (focusWin && getIzuiCoordinator().isAppFocused()) {
+      if (focusWin && coordinator.isAppFocused()) {
         focusWin.focus();
         DEBUG && console.log(`[session] Focused restored window: ${focusedWindowId}`);
       } else if (focusWin) {
