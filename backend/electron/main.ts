@@ -1639,9 +1639,15 @@ export function registerActivateHandler(): void {
 
 /**
  * Request single instance lock
- * Returns true if lock acquired, false if another instance is running
+ * Returns true if lock acquired, false if another instance is running.
  *
- * Skipped when:
+ * The lock is per-profile: Electron's SingletonLock lives inside
+ * userData, and entry.ts calls `app.setPath('userData', <profileDir>)`
+ * before this function runs. Two packaged Peeks under different
+ * PROFILE= values therefore coexist; two under the same PROFILE=
+ * still block.
+ *
+ * Skipped entirely when:
  * - Source build (!app.isPackaged): every `yarn start` invocation can
  *   coexist with a packaged Peek and with other source instances. The
  *   packaged build is the only "owner" of the lock — that's what
@@ -1649,7 +1655,8 @@ export function registerActivateHandler(): void {
  *   tooling and shouldn't block on the prod lock or each other.
  * - Ephemeral profile (dev / test-* / tmp-*): packaged builds running
  *   under one of these profile prefixes are explicitly secondary
- *   (used by `run:packaged` and parallel Playwright workers).
+ *   (used by `run:packaged` and parallel Playwright workers that share
+ *   the same profile name across workers).
  *
  * The `agent-*` family used by `scripts/spawn-isolated-agent.sh`
  * always runs from source, so it's covered by the !app.isPackaged

@@ -588,28 +588,6 @@ DEBUG && console.log('PROFILE', PROFILE, app.isPackaged ? (isDevPackagedBuild() 
 // Set profile in backend config
 setProfile(PROFILE);
 
-// Acquire single instance lock EARLY (before app.whenReady).
-// This is critical on macOS: when a second instance is launched via
-// `open -a Peek URL`, Electron needs the lock to be held BEFORE the
-// second instance reaches app.whenReady. Otherwise, the second instance
-// processes the Apple Event (open-url) locally and then quits, losing
-// the URL. With early lock acquisition, Electron forwards the open-url
-// event to the first (primary) instance.
-if (!requestSingleInstance()) {
-  // Another instance is already running. On macOS, Electron forwards
-  // the Apple Event to the primary instance. On Windows/Linux, the
-  // second-instance event fires with argv. Either way, quit this instance.
-  // Note: app.quit() was already called inside requestSingleInstance().
-  // app.exit() terminates immediately (sync), preventing further init.
-  app.exit(0);
-  // TypeScript doesn't know app.exit() is noreturn, but it is.
-}
-
-// Windows/Linux: handle URLs when another instance tries to open.
-// Must be registered early (before app.whenReady) so the handler is
-// ready when the second-instance event fires.
-registerSecondInstanceHandler();
-
 // Profile dirs are subdir of userData dir
 // {home} / {appData} / {userData} / {profileDir}
 // Chromium's data in a subfolder of profile folder
@@ -624,15 +602,45 @@ if (!fs.existsSync(sessionDataPath)) {
   fs.mkdirSync(sessionDataPath, { recursive: true });
 }
 
-// configure Electron with these paths
+// Configure userData per-profile BEFORE requesting the single-instance
+// lock. Electron stores its SingletonLock inside userData, so a
+// per-profile userData yields a per-profile lock: two packaged Peeks
+// running under different PROFILE= values can coexist, while two under
+// the same PROFILE= still block. If setPath ran after the lock check,
+// the lock would resolve against the default userData dir and become
+// app-global, blocking all parallel-profile workflows.
 app.setPath('userData', profileDataPath);
 app.setPath('sessionData', sessionDataPath);
 
 // Always-on main-process log: mirrors every console.{log,info,warn,error,debug}
 // from this process to <userData>/logs/main.log. Initialised here, immediately
 // after app.setPath('userData', ...) resolves the per-profile dir, so as many
-// startup log lines as possible land in the file. Failures are swallowed.
+// startup log lines as possible land in the file (including a lock-failure
+// bailout below). Failures are swallowed.
 initMainLog();
+
+// Acquire single instance lock EARLY (before app.whenReady).
+// This is critical on macOS: when a second instance is launched via
+// `open -a Peek URL`, Electron needs the lock to be held BEFORE the
+// second instance reaches app.whenReady. Otherwise, the second instance
+// processes the Apple Event (open-url) locally and then quits, losing
+// the URL. With early lock acquisition, Electron forwards the open-url
+// event to the first (primary) instance.
+if (!requestSingleInstance()) {
+  // Another instance is already running for this profile. On macOS,
+  // Electron forwards the Apple Event to the primary instance. On
+  // Windows/Linux, the second-instance event fires with argv. Either
+  // way, quit this instance.
+  // Note: app.quit() was already called inside requestSingleInstance().
+  // app.exit() terminates immediately (sync), preventing further init.
+  app.exit(0);
+  // TypeScript doesn't know app.exit() is noreturn, but it is.
+}
+
+// Windows/Linux: handle URLs when another instance tries to open.
+// Must be registered early (before app.whenReady) so the handler is
+// ready when the second-instance event fires.
+registerSecondInstanceHandler();
 
 // ***** Features / Strings *****
 
