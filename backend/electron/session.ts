@@ -523,6 +523,28 @@ function isValidDescriptor(descriptor: WindowDescriptor): boolean {
     // URL parsing failed, continue with other checks
   }
 
+  // Orphan filter: legitimate Peek-saved descriptors only carry peek://,
+  // http://, or https:// URLs. Anything else — file://, data:, about:,
+  // chrome://, chrome-extension://, javascript:, etc. — indicates a raw
+  // BrowserWindow opened before the web-contents-created chokepoint
+  // (commit 47ab371d) landed. Those orphans have no UI affordance to close,
+  // come back on every restore, and shouldn't have been persistable.
+  // Filter them out so one more relaunch clears them permanently. Log with
+  // the descriptor shape so users hitting unknown-orphan patterns surface
+  // to main.log without re-instrumenting.
+  try {
+    const parsed = new URL(descriptor.url);
+    const allowed = parsed.protocol === 'peek:' || parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    if (!allowed) {
+      console.log(`[session:orphan] Filtering pre-chokepoint window scheme=${parsed.protocol} url=${descriptor.url.substring(0, 120)} source=${descriptor.source || '(empty)'}`);
+      return false;
+    }
+  } catch {
+    // Unparseable URL — also orphan-shaped. Real windows have valid URLs.
+    console.log(`[session:orphan] Filtering unparseable URL: ${descriptor.url.substring(0, 120)}`);
+    return false;
+  }
+
   // Validate extension URLs reference a known extension
   // (e.g. peek://me:core/... from a renamed extension would be stale)
   let extIdFromUrl: string | null = null;
