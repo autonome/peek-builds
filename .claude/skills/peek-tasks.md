@@ -77,6 +77,10 @@ mcp__peek__create_item({
 - Quality marker: if you can write a clear "done looks like..." in the content, tag `peek:ready`. If the content is "explore X" or "build Y as example" or a one-phrase musing, tag `peek:triage`.
 - Don't write to `docs/tasks.md`. Don't echo the new task back unless asked.
 
+### When the user fires task adds mid-session
+
+If the user says "add task: ..." or rapid-fires several adds while you're in the middle of other work: capture them verbatim and **keep working on the current task**. Don't pivot, don't editorialize, don't triage right then. The add is intake, not a redirect. Only pivot if the user explicitly tells you to switch.
+
 ## List tasks
 
 ```js
