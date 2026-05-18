@@ -18,6 +18,7 @@ import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { invokeWindowOpen } from './ipc.js';
+import { getIzuiCoordinator } from './izui-state.js';
 import { WEB_CORE_ADDRESS } from './config.js';
 
 import { publish, getSystemAddress } from './pubsub.js';
@@ -856,6 +857,12 @@ export async function restoreSessionSnapshot(
         // restore set; the focused window inits chrome synchronously on its
         // focus event so it's indistinguishable from a fresh open.
         chrome: false,
+        // Don't auto-show in the BrowserWindow ctor — we show it ourselves
+        // below with .show() or .showInactive() depending on whether the
+        // user is still focused on Peek. On macOS, the ctor's show:true
+        // path activates the app, which steals focus from whatever app the
+        // user switched to mid-restore.
+        show: false,
       };
 
       // Ensure the window key is set for deduplication
@@ -900,6 +907,16 @@ export async function restoreSessionSnapshot(
           const restoredUrl = descriptor.url;
           const win = getLiveWindow(restoredId);
           if (win && !win.isDestroyed()) {
+            // Show now that the window exists. If Peek still has OS-level
+            // focus, .show() activates normally; if the user has switched
+            // away mid-restore, .showInactive() makes the window visible
+            // without yanking the user back to Peek.
+            if (getIzuiCoordinator().isAppFocused()) {
+              win.show();
+            } else {
+              win.showInactive();
+            }
+
             pendingLoads++;
             let settled = false;
             const handle = (kind: string, incCounter: () => void, extra: string = '') => {
@@ -999,13 +1016,17 @@ export async function restoreSessionSnapshot(
     console.log(`[session:perf] slow-window ms=${s.ms} ok=${s.ok} url=${s.url.substring(0, 100)}`);
   }
 
-  // Focus the window that was focused at save time
+  // Focus the window that was focused at save time — but only if Peek is
+  // still the OS-frontmost app. If the user switched away mid-restore,
+  // calling .focus() would yank them back. Best-effort either way.
   if (focusedWindowId) {
     try {
       const focusWin = getLiveWindow(focusedWindowId);
-      if (focusWin) {
+      if (focusWin && getIzuiCoordinator().isAppFocused()) {
         focusWin.focus();
         DEBUG && console.log(`[session] Focused restored window: ${focusedWindowId}`);
+      } else if (focusWin) {
+        DEBUG && console.log(`[session] Skipped focus on ${focusedWindowId} — user switched away`);
       }
     } catch {
       // Best-effort focus
