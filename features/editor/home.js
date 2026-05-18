@@ -16,6 +16,20 @@ import { getCM, Vim, onVimSetOption } from './codemirror.js';
 const api = window.app;
 const debug = api?.debug;
 
+// Per-phase boot timing. Mirrors app/page/page.js __bootMark — routes
+// through api.perfLog (peek:perf-log IPC) so markers land in main.log
+// synchronously. Times are ms relative to module-script-start.
+const __bootT0 = performance.now();
+function __bootMark(phase) {
+  try {
+    const t = Math.round(performance.now() - __bootT0);
+    if (api && typeof api.perfLog === 'function') {
+      api.perfLog(`[editor-boot:perf] phase=${phase} t=${t}`);
+    }
+  } catch { /* never crash on instrumentation */ }
+}
+__bootMark('script-start');
+
 // Editor layout instance
 let editorLayout = null;
 
@@ -142,6 +156,7 @@ End of test document.
  * Initialize the editor
  */
 const init = async () => {
+  __bootMark('init-start');
   debug && console.log('[editor] Home init');
 
   const rootEl = document.getElementById('editor-root');
@@ -207,10 +222,13 @@ const init = async () => {
     }
   }
 
+  __bootMark('settings-loaded');
+
   // If itemId provided, load from datastore
   if (itemIdParam && api?.datastore?.getItem) {
     try {
       const result = await api.datastore.getItem(itemIdParam);
+      __bootMark(`item-loaded len=${(result?.data?.content || '').length}`);
       if (result.success && result.data) {
         initialContent = result.data.content || '';
         currentItemId = itemIdParam;
@@ -237,6 +255,7 @@ const init = async () => {
     debug && console.log('[editor] New blank note — item creation deferred until content is typed');
   }
 
+  __bootMark('layout-create-start');
   // Create editor layout
   editorLayout = new EditorLayout({
     container: rootEl,
@@ -245,6 +264,7 @@ const init = async () => {
     vimSettings,
     onContentChange: handleContentChange,
   });
+  __bootMark('layout-create-done');
 
   // Show save status indicator and filename if editing a datastore item or file
   if (currentItemId || currentFilePath) {
@@ -446,6 +466,7 @@ const init = async () => {
   }
 
   debug && console.log('[editor] Editor initialized');
+  __bootMark('init-done');
 };
 
 /**

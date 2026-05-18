@@ -33,6 +33,19 @@ import {
 
 const LAYOUT_PREFS_KEY = 'editor:layout-prefs';
 
+// Boot timing markers for renderer-tail perf work. Each call forwards to
+// main.log via api.perfLog. t is wall-clock relative to this module's init
+// in this renderer; cross-correlate with [editor-boot:perf] in home.js.
+function __layoutMark(phase, t0) {
+  try {
+    const t = Math.round(performance.now() - t0);
+    const api = (typeof window !== 'undefined') ? window.app : null;
+    if (api && typeof api.perfLog === 'function') {
+      api.perfLog(`[editor-layout:perf] phase=${phase} t=${t}`);
+    }
+  } catch { /* never crash on instrumentation */ }
+}
+
 /** Default widths for each pane when expanded (CSS values). */
 const DEFAULT_WIDTHS = {
   outline: '220px',
@@ -125,6 +138,8 @@ export class EditorLayout {
   }
 
   init() {
+    const __t0 = performance.now();
+    __layoutMark('init-start', __t0);
     // Create main wrapper
     this.wrapper = document.createElement('div');
     this.wrapper.className = 'editor-layout';
@@ -273,6 +288,8 @@ export class EditorLayout {
       this.statusLine.hide();
     }
 
+    __layoutMark('dom-built', __t0);
+
     // Initialize CodeMirror
     this.cmEditor = CodeMirror.createEditor({
       parent: this.cmContainer,
@@ -285,6 +302,7 @@ export class EditorLayout {
       onFoldChange: () => this.syncOutlineFromFolds(),
       onScroll: (view) => this._handleEditorScroll(view),
     });
+    __layoutMark('cm-created', __t0);
 
     // Apply persisted vim settings
     if (this.initialVimSettings && this.cmEditor) {
@@ -302,9 +320,11 @@ export class EditorLayout {
     // Initial update
     this.lastContent = this.initialContent;
     this.updateSidebars();
+    __layoutMark(`sidebars-updated len=${(this.initialContent || '').length}`, __t0);
 
     // Start watching for changes
     this.startWatching();
+    __layoutMark('init-done', __t0);
 
     // Set up keyboard shortcuts
     this.setupKeyboardShortcuts();
