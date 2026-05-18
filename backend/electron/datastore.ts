@@ -3741,6 +3741,24 @@ export function getItemTags(itemId: string): Tag[] {
 }
 
 /**
+ * Bulk: get tags for every item in one query. Returns a map keyed by itemId.
+ * Items with no tags are absent from the map.
+ */
+export function getAllItemTags(): Record<string, Tag[]> {
+  const rows = getDb().prepare(`
+    SELECT it.itemId AS _itemId, t.* FROM tags t
+    JOIN item_tags it ON t.id = it.tagId
+  `).all() as Array<Tag & { _itemId: string }>;
+  const result: Record<string, Tag[]> = {};
+  for (const row of rows) {
+    const { _itemId, ...tag } = row;
+    if (!result[_itemId]) result[_itemId] = [];
+    result[_itemId].push(tag as Tag);
+  }
+  return result;
+}
+
+/**
  * Get all items with a specific tag
  */
 export function getItemsByTag(tagId: string): Item[] {

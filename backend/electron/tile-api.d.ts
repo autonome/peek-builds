@@ -261,6 +261,7 @@ interface TileDatastore {
   tagItem(itemId: string, tagId: string): Promise<TileDatastoreResult>;
   untagItem(itemId: string, tagId: string): Promise<TileDatastoreResult>;
   getItemTags(itemId: string): Promise<TileDatastoreResult<unknown[]>>;
+  getAllItemTags(): Promise<TileDatastoreResult<unknown>>;
 
   // Requires 'items' + 'item_tags' grant
   getItemsByTag(tagId: string): Promise<TileDatastoreResult<unknown[]>>;

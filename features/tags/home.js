@@ -28,6 +28,20 @@ const { getCM, Vim } = CodeMirror;
 const api = window.app;
 const debug = api?.debug;
 
+// Per-phase boot timing. Mirrors app/page/page.js __bootMark — routes
+// through api.perfLog (peek:perf-log IPC) so markers land in main.log
+// synchronously. Times are ms relative to module-script-start.
+const __bootT0 = performance.now();
+function __bootMark(phase) {
+  try {
+    const t = Math.round(performance.now() - __bootT0);
+    if (api && typeof api.perfLog === 'function') {
+      api.perfLog(`[tags-boot:perf] phase=${phase} t=${t}`);
+    }
+  } catch { /* never crash on instrumentation */ }
+}
+__bootMark('script-start');
+
 // Tag action rules cache for rendering affordances on cards
 let actionRulesCache = null;
 
@@ -137,6 +151,7 @@ let gridToolbar;
  * Initialize the UI
  */
 const init = async () => {
+  __bootMark('init-start');
   debug && console.log('[tags] Home init');
 
   // Initialize tag action rules cache for card affordances
@@ -151,24 +166,29 @@ const init = async () => {
 
   // Load view preferences
   await loadViewPrefs();
+  __bootMark('prefs-loaded');
 
   // Set up toolbar
   setupToolbar();
 
   // Load data
   await loadData();
+  __bootMark('data-loaded');
 
   // Set up event listeners
   setupEventListeners();
+  __bootMark('listeners-set');
 
   // Initial render
   render();
+  __bootMark('render-done');
 };
 
 /**
  * Load all data from datastore
  */
 const loadData = async () => {
+  __bootMark('queryItems-start');
   // Load all items (unified: addresses, texts, tagsets, images)
   const itemsResult = await api.datastore.queryItems({});
   if (itemsResult.success) {
@@ -177,14 +197,16 @@ const loadData = async () => {
     console.error('[tags] Failed to load items:', itemsResult.error);
     state.items = [];
   }
+  __bootMark(`queryItems-done n=${state.items.length}`);
 
-  // Load tags for each item; always set the Map entry — even on failure
-  // — so downstream code can rely on `state.itemTags.has(id)` and avoid
-  // surprises when an item's row is silently absent.
+  // Bulk-load tags for all items in one IPC round-trip. Replaces the N+1
+  // per-item loop that ran ~4.4s for 7.5k items during session restore.
+  const allTagsResult = await api.datastore.getAllItemTags();
+  const allTagsMap = (allTagsResult && allTagsResult.success) ? (allTagsResult.data || {}) : {};
   for (const item of state.items) {
-    const tagsResult = await api.datastore.getItemTags(item.id);
-    state.itemTags.set(item.id, tagsResult.success ? (tagsResult.data || []) : []);
+    state.itemTags.set(item.id, allTagsMap[item.id] || []);
   }
+  __bootMark(`item-tags-loop-done n=${state.items.length}`);
 
   // Load all tags by frecency, then drop tags with no current items.
   // Hidden when no live (non-deleted) item references the tag — keeps the
@@ -202,8 +224,11 @@ const loadData = async () => {
     state.tags = [];
   }
 
+  __bootMark(`tags-frecency-done n=${state.tags.length}`);
+
   // Load entity data for URL items
   await loadEntityData();
+  __bootMark('entity-data-done');
 
   // Update filter counts
   updateFilterCounts();
@@ -851,12 +876,21 @@ const getFilteredTags = () => filterTags({
  * Main render function
  */
 const render = () => {
+  const __renderT0 = performance.now();
   renderFilterButtons();
   renderTagSidebar();
+  const tTagSidebar = Math.round(performance.now() - __renderT0);
   renderSelectedTagsBar();
+  const tBeforeCards = Math.round(performance.now() - __renderT0);
   renderCards();
+  const tCards = Math.round(performance.now() - __renderT0);
   renderActiveTagIndicator();
   updateSearchPlaceholder();
+  try {
+    if (api && typeof api.perfLog === 'function') {
+      api.perfLog(`[tags-boot:perf] phase=render-breakdown sidebar=${tTagSidebar} cards=${tCards - tBeforeCards} total=${Math.round(performance.now() - __renderT0)}`);
+    }
+  } catch {}
 };
 
 /**

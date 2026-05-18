@@ -1155,6 +1155,8 @@ function buildAPI(): Record<string, unknown> {
       ipcRenderer.invoke('tile:datastore:untag-item', { token: tileToken, itemId, tagId }),
     getItemTags: (itemId: string) =>
       ipcRenderer.invoke('tile:datastore:get-item-tags', { token: tileToken, itemId }),
+    getAllItemTags: () =>
+      ipcRenderer.invoke('tile:datastore:get-all-item-tags', { token: tileToken }),
     getItemsByTag: (tagId: string) =>
       ipcRenderer.invoke('tile:datastore:get-items-by-tag', { token: tileToken, tagId }),
     getHistory: (filter: unknown = {}) =>

@@ -58,6 +58,7 @@ import {
   tagItem as dsTagItem,
   untagItem as dsUntagItem,
   getItemTags as dsGetItemTags,
+  getAllItemTags as dsGetAllItemTags,
   getItemsByTag as dsGetItemsByTag,
   getOrCreateTag as dsGetOrCreateTag,
   getTagsByFrecency as dsGetTagsByFrecency,
@@ -5664,6 +5665,19 @@ export function registerTileIpcHandlers(): void {
     if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-item-tags', check.error); return { error: check.error }; }
     try {
       const data = dsGetItemTags(args.itemId);
+      return { success: true, data };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  registerTileIpc('tile:datastore:get-all-item-tags', { mode: 'handle' }, async (_event, args: {
+    token: string;
+  }, _grant) => {
+    const check = validateTileDatastoreRequest(args?.token, ['tags', 'item_tags']);
+    if ('error' in check) { handleDatastoreViolation(args?.token, 'datastore:get-all-item-tags', check.error); return { error: check.error }; }
+    try {
+      const data = dsGetAllItemTags();
       return { success: true, data };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
