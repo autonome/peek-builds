@@ -38,6 +38,40 @@ import { getIzuiCoordinator } from './izui-state.js';
 import { clearLastFocusedVisibleWindowId, trackOnWindowFocus } from './ipc.js';
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation } from './window-presenter.js';
+import { saveSessionSnapshot } from './session.js';
+
+// Track app-quit state so the close-debounced save doesn't double-fire
+// alongside the before-quit save. before-quit handler in entry.ts sets
+// _appIsQuitting=true via the listener below; the debounced timer body
+// checks it and bails so we don't write a half-quit snapshot.
+let _appIsQuitting = false;
+try {
+  app.on('before-quit', () => { _appIsQuitting = true; });
+} catch {
+  // Running under ELECTRON_RUN_AS_NODE=1 — `app.on` may be unavailable.
+}
+
+// Debounced session-save on window close. Force-kill / crash / power
+// loss between an explicit window close and the next autosave tick (or
+// quit) would otherwise leave the closed window in the snapshot. With
+// this trailing-edge debounce, the on-disk snapshot is at most ~500ms
+// stale from the user's last close-intent. Coalesces bulk closes so
+// we don't N-write when ten windows close in rapid succession.
+let _closeSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const CLOSE_SAVE_DEBOUNCE_MS = 500;
+function scheduleSnapshotOnClose(): void {
+  if (_appIsQuitting) return;
+  if (_closeSaveDebounceTimer) clearTimeout(_closeSaveDebounceTimer);
+  _closeSaveDebounceTimer = setTimeout(() => {
+    _closeSaveDebounceTimer = null;
+    if (_appIsQuitting) return;
+    try {
+      saveSessionSnapshot('window-close');
+    } catch (err) {
+      DEBUG && console.error('[session] Debounced close-save failed:', err);
+    }
+  }, CLOSE_SAVE_DEBOUNCE_MS);
+}
 
 // Configuration
 export interface AppConfig {
@@ -609,6 +643,9 @@ export async function initialize(): Promise<void> {
         } catch (publishErr) {
           DEBUG && console.error('[lifecycle] window:removed publish failed:', publishErr);
         }
+        // Persist the now-shorter window list so a force-kill before the
+        // next autosave tick doesn't bring the closed window back.
+        scheduleSnapshotOnClose();
       } catch (err) {
         // During shutdown, errors here must not prevent the quit sequence
         DEBUG && console.error('[lifecycle] Error in window closed handler:', err);
@@ -618,6 +655,7 @@ export async function initialize(): Promise<void> {
         } catch {
           // already in error path; suppress
         }
+        scheduleSnapshotOnClose();
       }
     });
 

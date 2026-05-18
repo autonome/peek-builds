@@ -39,7 +39,7 @@ export interface SessionMetadata {
 export interface SessionSnapshot {
   version: 1;
   createdAt: number;
-  reason: 'before-quit' | 'autosave' | 'manual';
+  reason: 'before-quit' | 'autosave' | 'manual' | 'window-close';
   windows: WindowDescriptor[];
 }
 
