@@ -754,8 +754,17 @@ export async function restoreSessionSnapshot(
     return result;
   }
 
-  // Sort windows by zOrder (higher zOrder = later in stack = opened later)
-  const sortedWindows = [...validWindows].sort((a, b) => b.zOrder - a.zOrder);
+  // Sort windows by zOrder (higher zOrder = later in stack = opened later).
+  // Then hoist the focused window (if any) to position 0 so it dispatches
+  // first and gets to spawn in low contention — the rest follow after a
+  // short head-start window so the user-visible focused window reaches
+  // interactive significantly faster than the rest. See
+  // FOCUSED_HEAD_START_MS handling further down.
+  const zOrderSorted = [...validWindows].sort((a, b) => b.zOrder - a.zOrder);
+  const focusedDescriptor = zOrderSorted.find((w) => w.focused) ?? null;
+  const orderedWindows = focusedDescriptor
+    ? [focusedDescriptor, ...zOrderSorted.filter((w) => w !== focusedDescriptor)]
+    : zOrderSorted;
 
   // Track which window was focused for later focus restoration
   let focusedWindowId: number | null = null;
@@ -770,8 +779,19 @@ export async function restoreSessionSnapshot(
   // a debug build. Format chosen for grep: `[session:perf]` prefix +
   // structured fields. See peek task 1d1331e0.
   const restoreStartedAt = Date.now();
-  console.log(`[session:perf] restore-begin n=${sortedWindows.length}`);
+  console.log(`[session:perf] restore-begin n=${orderedWindows.length}`);
   const perWindowTimings: Array<{ url: string; ms: number; ok: boolean }> = [];
+
+  // Focused-window head start. After dispatching the focused window, pause
+  // the loop until either (a) its dom-ready fires (renderer is interactive)
+  // or (b) FOCUSED_HEAD_START_MS elapses. This lets the user-visible window
+  // come up in low contention; the other 30+ windows then race normally.
+  // No-op if there is no focused descriptor.
+  const FOCUSED_HEAD_START_MS = 400;
+  let resolveFocusedDomReady: (() => void) | null = null;
+  const focusedDomReadyPromise: Promise<void> = new Promise((resolve) => {
+    resolveFocusedDomReady = resolve;
+  });
 
   // Renderer-boot tail tracking. `restore-end` only measures the main-process
   // restore loop (BrowserWindow ctor + fire-and-forget loadURL). The actual
@@ -793,7 +813,8 @@ export async function restoreSessionSnapshot(
     console.log(`[session:perf] all-loaded ms=${allLoadedMs} n=${pendingLoads} finished=${finishedLoads} failed=${failedLoads} timed_out=${timedOutLoads}`);
   };
 
-  for (const original of sortedWindows) {
+  for (let i = 0; i < orderedWindows.length; i++) {
+    const original = orderedWindows[i];
     try {
       const descriptor = (() => {
         const collapsed = collapseToPrimaryDisplay(original, primaryWorkArea);
@@ -905,9 +926,14 @@ export async function restoreSessionSnapshot(
               const elapsed = Date.now() - restoreStartedAt;
               console.log(`[session:perf] window-start-loading ms=${elapsed} id=${restoredId} url=${restoredUrl.substring(0, 100)}`);
             });
+            const wasFocused = descriptor.focused === true;
             win.webContents.once('dom-ready', () => {
               const elapsed = Date.now() - restoreStartedAt;
               console.log(`[session:perf] window-dom-ready ms=${elapsed} id=${restoredId} url=${restoredUrl.substring(0, 100)}`);
+              if (wasFocused && resolveFocusedDomReady) {
+                resolveFocusedDomReady();
+                resolveFocusedDomReady = null;
+              }
             });
           }
         }
@@ -937,6 +963,21 @@ export async function restoreSessionSnapshot(
     } catch (error) {
       result.failed++;
       console.error(`[session] Error restoring window ${original.url}:`, error);
+    }
+
+    // After dispatching the focused window (position 0 when one exists),
+    // pause until its dom-ready arrives or FOCUSED_HEAD_START_MS elapses
+    // — whichever comes first. Lets it spawn in low contention before the
+    // rest of the restore set piles in.
+    if (i === 0 && focusedDescriptor && orderedWindows.length > 1) {
+      const headStartBeganAt = Date.now();
+      await Promise.race([
+        focusedDomReadyPromise,
+        new Promise<void>((resolve) => setTimeout(resolve, FOCUSED_HEAD_START_MS)),
+      ]);
+      const headStartMs = Date.now() - headStartBeganAt;
+      const reason = resolveFocusedDomReady === null ? 'dom-ready' : 'cap';
+      console.log(`[session:perf] focused-head-start ms=${headStartMs} reason=${reason} cap_ms=${FOCUSED_HEAD_START_MS}`);
     }
   }
 
