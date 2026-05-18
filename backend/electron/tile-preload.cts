@@ -39,6 +39,26 @@ if (!tileId || !tileEntry || !tileToken) {
 
 const sourceAddress = `peek://${tileId}/${tileEntry}`;
 
+// ─── Preload boot timing ─────────────────────────────────────────────
+//
+// Times preload execution itself (renderer V8 has already started by the
+// time the first line of this file runs, so t=0 here is "first preload
+// statement"; the wall-clock gap from main-process loadURL to t=0 is the
+// OS-process spawn + Electron renderer framework init + V8 bootstrap).
+// Pair with [page-boot:perf] in page.js for the full chain. Emitted via
+// peek:perf-log so they land in main.log synchronously (survives rapid
+// quit, unlike renderer.log's async queue).
+const __preloadT0 = performance.now();
+function __preloadMark(phase: string): void {
+  try {
+    const t = Math.round(performance.now() - __preloadT0);
+    ipcRenderer.send('peek:perf-log', `[preload:perf] phase=${phase} t=${t} source=${sourceAddress}`);
+  } catch {
+    // Never let logging break the preload.
+  }
+}
+__preloadMark('preload-start');
+
 // ─── Always-on Console Wrapper ───────────────────────────────────────
 //
 // Monkey-patches console.{log,info,warn,error,debug} so every call is
@@ -2412,7 +2432,22 @@ function buildAPI(): Record<string, unknown> {
 // ─── Expose API ──────────────────────────────────────────────────────
 
 const api = buildAPI();
+
+// Diagnostic perf-log channel. Always available (no token/cap gate); sends
+// a pre-formatted string to main via ipcRenderer.send so that main can
+// console.log it into main.log synchronously. Used by page.js for
+// [page-boot:perf] markers that need to survive a rapid quit (the
+// renderer.log async queue can drop events on shutdown). Fire-and-forget.
+(api as Record<string, unknown>).perfLog = (message: string): void => {
+  try {
+    ipcRenderer.send('peek:perf-log', message);
+  } catch {
+    // Never let logging break the app.
+  }
+};
+
 contextBridge.exposeInMainWorld('app', api);
+__preloadMark('preload-done');
 
 // ─── Click-and-Hold Window Drag (unified, application-wide) ─────────
 //

@@ -25,6 +25,21 @@ import {
   INITIAL_STATE as FSM_INITIAL_STATE, transition as fsmTransition,
 } from './page-fsm.js';
 
+// Per-phase boot timing. Routes through api.perfLog (peek:perf-log IPC) so
+// markers land in main.log synchronously, surviving rapid quit. Times are
+// in ms relative to module-script-start. Strip the URL to keep lines tight.
+const __bootT0 = performance.now();
+const __bootUrl = (new URL(location.href).searchParams.get('url') || location.href).substring(0, 80);
+function __bootMark(phase) {
+  try {
+    const t = Math.round(performance.now() - __bootT0);
+    if (api && typeof api.perfLog === 'function') {
+      api.perfLog(`[page-boot:perf] phase=${phase} t=${t} url=${__bootUrl}`);
+    }
+  } catch { /* never crash on instrumentation */ }
+}
+__bootMark('script-start');
+
 console.log('[page] Script loaded');
 
 // Initialize the tile-preload surface before any api.* call. Without this,
@@ -34,6 +49,7 @@ console.log('[page] Script loaded');
 if (api.initialize) {
   await api.initialize();
 }
+__bootMark('init-done');
 
 window.addEventListener('unhandledrejection', (e) => {
   console.error('[page] Unhandled promise rejection:', e.reason);
@@ -4617,3 +4633,13 @@ onChrome(() => {
 // never set. A regression test asserts this flips within a short timeout.
 // See tests/desktop/module-health.spec.ts + feedback_top_level_await_silent_halt.md.
 window.__pageModuleReady = true;
+__bootMark('module-done');
+
+// Document load event — fires after HTML parse + initial subresources +
+// synchronous module evaluation. This is what main-process did-finish-load
+// keys off of for [session:perf] window-loaded.
+if (document.readyState === 'complete') {
+  __bootMark('document-load');
+} else {
+  window.addEventListener('load', () => __bootMark('document-load'), { once: true });
+}

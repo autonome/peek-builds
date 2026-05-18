@@ -196,6 +196,26 @@ export function initRendererLog(overrideLogDir?: string): void {
   } catch {
     // Swallow — if ipcMain isn't available (unit test context), skip.
   }
+
+  // Separate diagnostic channel: peek:perf-log. The renderer sends a single
+  // message string (already formatted); main process writes it via
+  // console.log so it lands in main.log synchronously — the renderer.log
+  // async queue can drop events on rapid quit, which is bad for perf
+  // markers we'd then never see. Used by page.js to emit
+  // [page-boot:perf] phase markers correlated with [session:perf].
+  try {
+    getIpcMain().on('peek:perf-log', (_event, message: unknown) => {
+      try {
+        if (typeof message === 'string' && message.length > 0) {
+          console.log(message);
+        }
+      } catch {
+        // Swallow.
+      }
+    });
+  } catch {
+    // Swallow.
+  }
 }
 
 // ── Exports for unit tests ────────────────────────────────────────────────────
