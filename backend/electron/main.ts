@@ -549,22 +549,54 @@ export async function initialize(): Promise<void> {
           const coordinator = getIzuiCoordinator();
           const isOverlayWindow = coordinator.isOverlay() &&
             coordinator.getSession()?.overlayWindowId === windowId;
+          console.log('[overlay:pre-close] windowId=' + windowId
+            + ' isOverlay=' + coordinator.isOverlay()
+            + ' overlayWindowId=' + (coordinator.getSession()?.overlayWindowId ?? 'null')
+            + ' isTransient=' + coordinator.isTransient());
           if (isOverlayWindow && !coordinator.isTransient()) {
             const session = coordinator.getSession()!;
             const focusTargetId = session.overlayFocusTarget ?? session.preOverlayFocusTarget;
+            console.log('[overlay:pre-close] focusTargetId=' + (focusTargetId ?? 'null')
+              + ' (overlayFocusTarget=' + (session.overlayFocusTarget ?? 'null')
+              + ', preOverlayFocusTarget=' + (session.preOverlayFocusTarget ?? 'null') + ')'
+              + ' hidden=[' + session.hiddenWindowIds.join(',') + ']');
+            // Restore non-target hidden windows without activating (preserves their
+            // Space; .show() would yank the user to whichever one ran last).
             for (const hiddenId of session.hiddenWindowIds) {
               if (hiddenId === focusTargetId) continue;
               const hiddenWin = getLiveWindow(hiddenId);
               if (hiddenWin) hiddenWin.showInactive();
             }
+            // Pull the focus target onto the CURRENT Space before activating it.
+            // The target may be anchored to a different Space than where the
+            // overlay was opened (e.g. the user moved to Space B and the
+            // last-focused Peek window from before is still anchored to A).
+            // Toggle setVisibleOnAllWorkspaces(true) → show → (false) so the
+            // window re-anchors to the user's active Space, then becomes the
+            // most-recently-shown visible window → macOS auto-picks it as the
+            // new key window post-destruction. User stays put.
             if (focusTargetId != null) {
               const target = getLiveWindow(focusTargetId);
-              if (target) target.show(); // activate → key-window candidate for macOS auto-pick
+              console.log('[overlay:pre-close] target=' + (target ? ('found id=' + target.id) : 'null'));
+              if (target) {
+                if (process.platform === 'darwin') {
+                  target.setVisibleOnAllWorkspaces(true, {
+                    visibleOnFullScreen: true,
+                    skipTransformProcessType: true,
+                  });
+                }
+                target.show();
+                if (process.platform === 'darwin') {
+                  target.setVisibleOnAllWorkspaces(false, {
+                    skipTransformProcessType: true,
+                  });
+                }
+              }
             }
           }
         }
       } catch (err) {
-        DEBUG && console.error('[overlay] pre-close restoration failed:', err);
+        console.error('[overlay:pre-close] restoration failed:', err);
       }
     });
 

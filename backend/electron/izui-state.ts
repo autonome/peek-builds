@@ -243,7 +243,9 @@ class IzuiStateCoordinator {
     this.session.hiddenWindowIds = hiddenIds;
     this.session.preOverlayFocusTarget = this.session.focusedWindowId;
     this.lastOverlayEntryTime = Date.now();
-    DEBUG && console.log('[izui] Entered overlay mode, windowId:', windowId, 'hidden:', hiddenIds.length, 'preOverlayFocus:', this.session.preOverlayFocusTarget);
+    console.log('[overlay:enter] overlayId=' + windowId
+      + ' preOverlayFocusTarget=' + (this.session.preOverlayFocusTarget ?? 'null')
+      + ' hidden=[' + hiddenIds.join(',') + ']');
   }
 
   /**
