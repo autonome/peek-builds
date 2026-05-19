@@ -29,7 +29,8 @@
         "ext:windows:shutdown",
         "app:shutdown",
         "window:closed",
-        "window:opened"
+        "window:opened",
+        "cmd:execute:windows"
       ]
     },
     "window": {
