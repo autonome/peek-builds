@@ -5,7 +5,7 @@
  * a unified API for managing the Electron application.
  */
 
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme, webContents } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, webContents } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -345,6 +345,68 @@ export async function initialize(): Promise<void> {
     }
   });
 
+  // ESC fallback when Peek is active but has no focused window on the
+  // user's current macOS Space. Without this, pressing ESC in this case
+  // does nothing because the per-window `before-input-event` handler
+  // (`windows.ts:addEscHandler`) requires a focused webContents that's
+  // visible on the current Space — and macOS only delivers keystrokes
+  // to the key window. When the user Cmd+Tabs to Peek on a Space that
+  // has none of Peek's windows, there is no reachable key window for
+  // the keystroke to land on.
+  //
+  // Workaround: register a focus-gated `globalShortcut` for Escape that
+  // publishes `cmd:execute:windows` (same fallback the per-window ESC
+  // handler uses via escUnhandledPolicy → open-switcher). Registration
+  // is gated to avoid swallowing ESC from other apps or stealing ESC
+  // from per-window handlers when a Peek window IS focused:
+  //   - Register: Peek is the active app AND no Peek window is focused.
+  //   - Unregister: Peek loses focus OR a Peek window gains focus.
+  // While Peek is active with a focused window, normal per-window ESC
+  // routing is preserved; the global hotkey only steps in when there's
+  // genuinely no per-window handler to receive the keystroke.
+  //
+  // Same pattern Spotlight / Alfred / Raycast use for their hotkeys.
+  let _escGlobalRegistered = false;
+  const escGlobalHandler = (): void => {
+    DEBUG && console.log('[esc-fallback] global ESC fired — publishing cmd:execute:windows');
+    publish(getSystemAddress(), 'cmd:execute:windows', {});
+  };
+  const updateEscGlobalRegistration = (): void => {
+    const appActive = getIzuiCoordinator().isAppFocused();
+    const focusedWin = BrowserWindow.getFocusedWindow();
+    const shouldRegister = appActive && focusedWin === null;
+    if (shouldRegister && !_escGlobalRegistered) {
+      try {
+        const ok = globalShortcut.register('Escape', escGlobalHandler);
+        if (ok) {
+          _escGlobalRegistered = true;
+          DEBUG && console.log('[esc-fallback] global ESC registered (no focused window while Peek active)');
+        } else {
+          DEBUG && console.log('[esc-fallback] global ESC registration declined (already grabbed elsewhere)');
+        }
+      } catch (err) {
+        console.error('[esc-fallback] global ESC register failed:', err);
+      }
+    } else if (!shouldRegister && _escGlobalRegistered) {
+      try {
+        globalShortcut.unregister('Escape');
+      } catch (err) {
+        // Ignore: unregistering a hotkey that isn't held is a no-op on some platforms.
+      }
+      _escGlobalRegistered = false;
+      DEBUG && console.log('[esc-fallback] global ESC unregistered');
+    }
+  };
+  app.on('browser-window-focus', () => {
+    updateEscGlobalRegistration();
+  });
+  app.on('browser-window-blur', () => {
+    // Defer one tick so the next focused window's browser-window-focus
+    // (which usually fires immediately after a blur during in-app
+    // window switching) can settle before we re-check getFocusedWindow.
+    setImmediate(() => updateEscGlobalRegistration());
+  });
+
   // Track OS-level app focus for IZUI transient detection.
   // When Peek is the active app, windows opened are "active."
   // When Peek is in the background, windows opened are "transient."
@@ -364,6 +426,10 @@ export async function initialize(): Promise<void> {
           (win as any).__hudHidden = false;
         }
       }
+      // Defer one tick so any browser-window-focus that macOS fires
+      // alongside this activation has a chance to settle first; the
+      // check below reads getFocusedWindow().
+      setImmediate(() => updateEscGlobalRegistration());
     });
     (app as any).on('did-resign-active', () => {
       const coordBefore = getIzuiCoordinator();
@@ -413,6 +479,10 @@ export async function initialize(): Promise<void> {
           (win as any).__hudHidden = true;
         }
       }
+      // Peek is no longer the active app — drop the ESC fallback so we
+      // don't swallow ESC keystrokes from whatever app the user just
+      // switched to.
+      updateEscGlobalRegistration();
     });
   } else {
     // Non-macOS fallback: use browser-window-focus/blur with focused-window check
