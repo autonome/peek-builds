@@ -21,9 +21,6 @@ let currentSettings = {
   prefs: defaults.prefs
 };
 
-// Track the windows overlay window ID for show/hide reuse
-let windowsViewId = null;
-
 /**
  * Load settings from datastore
  */
@@ -36,22 +33,29 @@ const loadSettings = async () => {
 };
 
 /**
- * Open or show the Windows view (maximized, transparent overlay).
- * On first call, creates the window. On subsequent calls, shows it
- * if it still exists (faster perceived perf — no cold-start).
+ * Open the Windows view (maximized, transparent overlay).
+ *
+ * Every invocation routes through `api.window.open`, mirroring cmd /
+ * slides / peeks. The dismiss path destroys the window (window.close()
+ * inside the overlay renderer), and overlay-mode hide-others restoration
+ * runs on the BrowserWindow's `closed` event in main.ts. Next
+ * invocation creates a fresh BrowserWindow via window-open.
+ *
+ * Window-open's fresh-create path (`backend/electron/ipc.ts`, search:
+ * `spacesPolicy = spacesPolicyForRole(role, ...)`) calls
+ * `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })`
+ * synchronously for transient roles like `overlay`, so the new window
+ * lands on the user's active macOS Space — even if the user switched
+ * Spaces since the last invocation. This is the same code path cmd /
+ * slides / peeks rely on.
+ *
+ * Previously this function short-circuited via a cached `windowsViewId`
+ * + `api.window.show(...)`, which bypassed window-open entirely and
+ * therefore bypassed the Spaces handling — the overlay would re-show
+ * on its original Space and the user (now on a different Space) would
+ * see nothing.
  */
 const openWindowsView = async () => {
-  // Try to show existing window first
-  if (windowsViewId) {
-    const exists = await api.window.exists(windowsViewId);
-    if (exists.success && exists.data) {
-      await api.window.show(windowsViewId);
-      debug && console.log('[ext:windows] Windows view shown (reused):', windowsViewId);
-      return;
-    }
-    windowsViewId = null;
-  }
-
   const params = {
     // IZUI role
     role: 'overlay',
@@ -72,10 +76,7 @@ const openWindowsView = async () => {
 
   try {
     const result = await api.window.open(address, params);
-    if (result.success) {
-      windowsViewId = result.id;
-      debug && console.log('[ext:windows] Windows view created:', windowsViewId);
-    }
+    debug && console.log('[ext:windows] Windows view opened:', result);
   } catch (error) {
     console.error('[ext:windows] Failed to open windows view:', error);
   }
@@ -184,14 +185,6 @@ const init = async () => {
   api.pubsub.subscribe('cmd:execute:windows', () => {
     console.log('[ext:windows] cmd:execute:windows fired');
     openWindowsView();
-  });
-
-  // Track when the windows view is closed so we know to recreate it
-  api.pubsub.subscribe('window:closed', async (msg) => {
-    if (msg?.id === windowsViewId) {
-      debug && console.log('[ext:windows] Windows view closed');
-      windowsViewId = null;
-    }
   });
 };
 
