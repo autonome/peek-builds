@@ -560,39 +560,32 @@ export async function initialize(): Promise<void> {
               + ' (overlayFocusTarget=' + (session.overlayFocusTarget ?? 'null')
               + ', preOverlayFocusTarget=' + (session.preOverlayFocusTarget ?? 'null') + ')'
               + ' hidden=[' + session.hiddenWindowIds.join(',') + ']');
-            // Restore non-target hidden windows without activating (preserves their
-            // Space; .show() would yank the user to whichever one ran last).
+            // Restore ALL hidden windows including the focus target with
+            // showInactive(). Activating (show/focus) a window anchored to
+            // a different Space than the user's current one yanks them to
+            // that Space — even on a window that was hidden right before.
+            // The SVOAW(true)→show→SVOAW(false) anchor flip from the
+            // window-open path doesn't help here because macOS only honors
+            // SVOAW for the next *show*, and reverting immediately re-anchors
+            // back to the window's original Space (verified empirically by
+            // 770abf71 — focusTargetId=7 was anchored to A, toggle ran, user
+            // still teleported).
+            //
+            // showInactive() preserves each window's anchored Space without
+            // pulling the user. macOS auto-picks a new key window when the
+            // overlay destroys — best-case it picks one on the user's
+            // current Space; worst-case the user lands without a Peek
+            // window focused on this Space, which is still preferable to a
+            // teleport. The `.focus()` call in the existing 'closed' handler
+            // is suppressed via the __overlayRestoredPreClose flag below so
+            // we don't undo this with a late focus().
             for (const hiddenId of session.hiddenWindowIds) {
-              if (hiddenId === focusTargetId) continue;
               const hiddenWin = getLiveWindow(hiddenId);
               if (hiddenWin) hiddenWin.showInactive();
             }
-            // Pull the focus target onto the CURRENT Space before activating it.
-            // The target may be anchored to a different Space than where the
-            // overlay was opened (e.g. the user moved to Space B and the
-            // last-focused Peek window from before is still anchored to A).
-            // Toggle setVisibleOnAllWorkspaces(true) → show → (false) so the
-            // window re-anchors to the user's active Space, then becomes the
-            // most-recently-shown visible window → macOS auto-picks it as the
-            // new key window post-destruction. User stays put.
-            if (focusTargetId != null) {
-              const target = getLiveWindow(focusTargetId);
-              console.log('[overlay:pre-close] target=' + (target ? ('found id=' + target.id) : 'null'));
-              if (target) {
-                if (process.platform === 'darwin') {
-                  target.setVisibleOnAllWorkspaces(true, {
-                    visibleOnFullScreen: true,
-                    skipTransformProcessType: true,
-                  });
-                }
-                target.show();
-                if (process.platform === 'darwin') {
-                  target.setVisibleOnAllWorkspaces(false, {
-                    skipTransformProcessType: true,
-                  });
-                }
-              }
-            }
+            (window as { __overlayRestoredPreClose?: boolean }).__overlayRestoredPreClose = true;
+            console.log('[overlay:pre-close] restored ' + session.hiddenWindowIds.length
+              + ' windows via showInactive (target=' + (focusTargetId ?? 'null') + ' not activated)');
           }
         }
       } catch (err) {
@@ -645,8 +638,13 @@ export async function initialize(): Promise<void> {
               // exitOverlay restores hidden windows and resets overlay state
               coordinator.exitOverlay();
 
-              // Focus the target window after restoration
-              if (focusTargetId) {
+              // Focus the target window after restoration — UNLESS the
+              // pre-close handler already restored everything via
+              // showInactive. In that path we intentionally don't activate
+              // any window (target may be anchored to a different Space
+              // than the user is on; .focus() would teleport).
+              const preCloseRestored = (window as { __overlayRestoredPreClose?: boolean }).__overlayRestoredPreClose === true;
+              if (focusTargetId && !preCloseRestored) {
                 const targetWin = getLiveWindow(focusTargetId);
                 if (targetWin) {
                   DEBUG && console.log('[izui] Overlay focus target:', focusTargetId, session.overlayFocusTarget ? '(explicit selection)' : '(pre-overlay fallback)');
