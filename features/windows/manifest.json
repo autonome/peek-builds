@@ -10,7 +10,7 @@
     {
       "id": "background",
       "url": "background.html",
-      "lazy": true
+      "resident": true
     },
     {
       "id": "windows-overlay",
