@@ -526,7 +526,9 @@ export async function initialize(): Promise<void> {
               for (const hiddenId of hiddenWindowIds) {
                 const hiddenWin = getLiveWindow(hiddenId);
                 if (hiddenWin) {
-                  hiddenWin.show();
+                  // showInactive: activating each one would pull the user to its
+                  // Space; the explicit .focus() below selects the right target.
+                  hiddenWin.showInactive();
                 }
               }
               const focusTargetId = windowData.params.overlayFocusTarget as number | undefined;

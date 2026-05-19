@@ -25,6 +25,11 @@ interface MockWindow {
   isFocused: () => boolean;
   isVisible: () => boolean;
   show: () => void;
+  showInactive: () => void;
+  /** Records whether the window was last surfaced via show() (activates) or
+   *  showInactive() (doesn't pull user across Spaces). Tests for the
+   *  active-Space-preservation path assert this. */
+  _lastShowMode: 'show' | 'showInactive' | null;
   webContents: { getURL: () => string };
 }
 
@@ -35,10 +40,12 @@ function createMockWindow(id: number, options: { focused?: boolean; destroyed?: 
     _focused: options.focused ?? false,
     _visible: options.visible ?? true,
     _url: options.url ?? `peek://test/window-${id}.html`,
+    _lastShowMode: null,
     isDestroyed: function() { return this._destroyed; },
     isFocused: function() { return this._focused; },
     isVisible: function() { return this._visible; },
-    show: function() { this._visible = true; },
+    show: function() { this._visible = true; this._lastShowMode = 'show'; },
+    showInactive: function() { this._visible = true; this._lastShowMode = 'showInactive'; },
     webContents: { getURL: function() { return win._url; } },
   };
   return win;
@@ -364,6 +371,49 @@ describe('IZUI State Coordinator Tests', () => {
       const session = coordinator.getSession()!;
       assert.strictEqual(session.overlayWindowId, null);
       assert.deepStrictEqual(session.hiddenWindowIds, []);
+    });
+
+    it('restores hidden windows via showInactive() to preserve the user\'s active macOS Space', () => {
+      // Regression: previously this used .show(), which activates the
+      // window and pulls macOS to its Space. With hidden windows living
+      // across multiple Spaces, restoration was yanking the user to
+      // whichever Space the last-iterated window happens to belong to.
+      // The caller (main.ts overlay-closed handler) issues an explicit
+      // .focus() on the chosen target afterward — that's the right
+      // place to deterministically pick the Space to land on.
+      const hiddenWindow1 = createMockWindow(1);
+      const hiddenWindow2 = createMockWindow(2);
+      hiddenWindow1._visible = false;
+      hiddenWindow2._visible = false;
+      mockWindows.push(hiddenWindow1, hiddenWindow2);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.enterOverlay(100, [1, 2]);
+
+      coordinator.exitOverlay();
+
+      assert.strictEqual(hiddenWindow1._lastShowMode, 'showInactive',
+        'Window 1 must be restored via showInactive(), not show()');
+      assert.strictEqual(hiddenWindow2._lastShowMode, 'showInactive',
+        'Window 2 must be restored via showInactive(), not show()');
+    });
+
+    it('exitOverlayForAppBlur also restores via showInactive()', () => {
+      // Same reasoning as the regular exit path — when the user has
+      // Cmd+Tab'd to another app, we must not yank focus back via .show().
+      const hiddenWindow = createMockWindow(1);
+      hiddenWindow._visible = false;
+      mockWindows.push(hiddenWindow);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.enterOverlay(100, [1]);
+
+      coordinator.exitOverlayForAppBlur();
+
+      assert.strictEqual(hiddenWindow._lastShowMode, 'showInactive',
+        'app-blur path must use showInactive() (matches docstring)');
     });
 
     it('should return to transient state after overlay if session was transient', () => {

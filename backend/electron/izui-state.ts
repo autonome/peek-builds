@@ -43,7 +43,7 @@ export type IzuiState = 'idle' | 'transient' | 'active' | 'overlay';
  */
 export interface WindowProvider {
   getAllWindows(): Array<{ id: number; isDestroyed(): boolean; isFocused(): boolean; isVisible(): boolean; webContents?: { getURL(): string } }>;
-  fromId(id: number): { show(): void; isDestroyed(): boolean } | null;
+  fromId(id: number): { show(): void; showInactive(): void; isDestroyed(): boolean } | null;
 }
 
 /**
@@ -259,11 +259,18 @@ class IzuiStateCoordinator {
     const hiddenIds = this.session.hiddenWindowIds;
     DEBUG && console.log('[izui] Exiting overlay, restoring', hiddenIds.length, 'windows');
 
-    // Restore hidden windows
+    // Restore hidden windows with showInactive(). Plain show() activates
+    // the window, and on macOS each activation pulls the user to the
+    // window's Space — restoring a batch of windows that live on
+    // different Spaces would yank the user to whichever one happens to
+    // come last in iteration order. The caller (main.ts overlay close
+    // handler) issues an explicit `.focus()` on the chosen target
+    // afterward, which is the correct path to activate one window's
+    // Space deterministically.
     for (const id of hiddenIds) {
       const win = this.windowProvider.fromId(id);
       if (win && !win.isDestroyed()) {
-        win.show();
+        win.showInactive();
       }
     }
 
@@ -290,11 +297,12 @@ class IzuiStateCoordinator {
     const hiddenIds = this.session.hiddenWindowIds;
     DEBUG && console.log('[izui] Exiting overlay (app blur), restoring', hiddenIds.length, 'windows without focus');
 
-    // Restore hidden windows WITHOUT focusing — use showInactive() to avoid stealing focus
+    // Restore hidden windows WITHOUT focusing — use showInactive() to avoid stealing focus.
+    // (Previously called show() despite the docstring saying showInactive — fixed.)
     for (const id of hiddenIds) {
       const win = this.windowProvider.fromId(id);
       if (win && !win.isDestroyed()) {
-        win.show();
+        win.showInactive();
       }
     }
 
