@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: 334e4b871d58 -->
+<!-- last-bumped: ad9a56a4e4eb -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -23,6 +23,7 @@ See TODO.md for pending items, WIP.md for in-progress items.
 
 - page-host: suppress "didn't load" overlay when page already rendered
 - linux: install `peek` CLI alias in PATH for AppImage builds
+- linux: add install + install-test yarn scripts for AppImage
 
 ### 2026-05-18
 

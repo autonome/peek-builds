@@ -4,7 +4,7 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Tue, 19 May 2026 13:28:45 GMT</lastBuildDate>
+    <lastBuildDate>Tue, 19 May 2026 13:54:40 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
     <item>
@@ -20,6 +20,13 @@
       <guid isPermaLink="false">urn:peek:changelog:2026-05-19:00b98f695662</guid>
       <pubDate>Tue, 19 May 2026 12:00:00 GMT</pubDate>
       <description>linux: install peek CLI alias in PATH for AppImage builds</description>
+    </item>
+    <item>
+      <title>linux: add install + install-test yarn scripts for AppImage</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-19</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-19:c118c7048641</guid>
+      <pubDate>Tue, 19 May 2026 12:00:00 GMT</pubDate>
+      <description>linux: add install + install-test yarn scripts for AppImage</description>
     </item>
     <item>
       <title>session-restore: focused-window head start</title>
