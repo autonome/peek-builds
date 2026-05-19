@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: 6b3651b96034 -->
+<!-- last-bumped: 46280c725f56 -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -17,9 +17,50 @@ Completed work. Two formats coexist on purpose:
 
 See TODO.md for pending items, WIP.md for in-progress items.
 
+## Week of 2026-05-18 (W21)
+
+### 2026-05-19
+
+- page-host: suppress "didn't load" overlay when page already rendered
+
+### 2026-05-18
+
+- session-restore: focused-window head start
+- tags: bulk getAllItemTags — N+1 loop 4.5s → 0.5s
+- editor: boot-phase markers — confirms editor at renderer floor
+- session-restore: seed izui focusedWindowId for two-phase ESC
+- profiles: make single-instance lock per-profile, not app-global
+- session-restore: record persistent user-focus in snapshot, not isFocused()
+- undo-close: drive reopen synchronously so before-quit save sees it
+
 ## Week of 2026-05-11 (W20)
 
+### 2026-05-17
+
+- session-restore: defer page-host chrome init via chrome=0
+
+### 2026-05-16
+
+- windows: Exposé-style fit view mode
+- peek-grid: measure shadow .grid box, not host, for fit cells
+- peek-grid: tune fit-mode scoring — gap scales, aspect bounded
+- peek-grid: nudge fit-mode gaps up at the many-cards end
+- windows: immersive card layout in fit mode
+- thumbnails: capture screenshots for peek:// windows
+- session-restore: fire-and-forget loadURL — 20s → 2s
+- session-restore: call invokeWindowOpen directly instead of executeJavaScript
+- window-registry: introduce indirection layer for window lookups
+- backend: route window lookups through window-registry
+- window-registry: add broadcast helper
+- window-registry: move WindowDescriptor + WindowContext into the registry module
+- window-registry: realize() body + stable-synthetic-id refactor
+- windows: presenter + list + focus handle pending WindowRefs
+
 ### 2026-05-15
+
+- log: add missing main-log.ts implementation
+- cmd-panel: hide mode chip globally
+- session-restore: don't record restored URLs as history visits
 
 - mcp: backfill idx_tags_name_unique for existing databases
 - log: always-on main-process log to <userData>/logs/main.log
