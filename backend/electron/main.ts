@@ -73,6 +73,26 @@ function scheduleSnapshotOnClose(): void {
   }, CLOSE_SAVE_DEBOUNCE_MS);
 }
 
+// Test-only: synchronously flush a pending debounced close-save. Drift-
+// detection test for the close-survives-kill regression (see
+// tests/desktop/session-restore-close-survives-kill.spec.ts) needs to
+// observe the post-close snapshot deterministically without sleeping for
+// 500ms. Cancels the in-flight timer and runs the save body directly.
+// No-op if no timer is pending. The _appIsQuitting guard is intentionally
+// dropped here — tests force a save regardless of quit state, and the
+// test profile isn't a real quit anyway.
+export function flushPendingCloseSave(): void {
+  if (_closeSaveDebounceTimer) {
+    clearTimeout(_closeSaveDebounceTimer);
+    _closeSaveDebounceTimer = null;
+  }
+  try {
+    saveSessionSnapshot('window-close');
+  } catch (err) {
+    DEBUG && console.error('[session] Manual close-save flush failed:', err);
+  }
+}
+
 // Configuration
 export interface AppConfig {
   rootDir: string;

@@ -26,6 +26,34 @@ import { DEBUG, isTestProfile } from './config.js';
 
 export type { WindowContext, WindowDescriptor };
 
+// Drift-detection counters for restoreSessionSnapshot. The fix in 853cc48f
+// gates .show()/.focus() on isAppFocused() at restore time so a user who
+// switched away mid-restore isn't yanked back. The bug class — focus
+// stealing from an unconditional .show()/.focus() in the restore loop —
+// silently regresses if someone re-introduces those calls without the
+// guard. Tests in tests/desktop/session-restore-focus.spec.ts read these
+// counters via __peek_test.getRestoreFocusCounters() to assert the gate
+// holds. Counters are reset at the top of restoreSessionSnapshot.
+let _restoreShowCount = 0;
+let _restoreShowInactiveCount = 0;
+let _restoreFocusCount = 0;
+export function getRestoreFocusCounters(): {
+  shows: number;
+  showInactives: number;
+  focuses: number;
+} {
+  return {
+    shows: _restoreShowCount,
+    showInactives: _restoreShowInactiveCount,
+    focuses: _restoreFocusCount,
+  };
+}
+export function resetRestoreFocusCounters(): void {
+  _restoreShowCount = 0;
+  _restoreShowInactiveCount = 0;
+  _restoreFocusCount = 0;
+}
+
 export interface SessionMetadata {
   lastSaveReason: string;
   lastSaveAt: number;
@@ -662,6 +690,11 @@ export async function restoreSessionSnapshot(
 ): Promise<{ restored: number; failed: number; total: number }> {
   const result = { restored: 0, failed: 0, total: 0 };
 
+  // Reset drift-detection counters for this restore pass. Tests read them
+  // afterward to verify the isAppFocused() gate held — see counter
+  // declaration above.
+  resetRestoreFocusCounters();
+
   // Skip restore in test environments unless _forceForTest is set (used by
   // session-restore Playwright specs that drive save+restore directly).
   if (isTestProfile() && !_forceForTest) {
@@ -947,8 +980,10 @@ export async function restoreSessionSnapshot(
             // without yanking the user back to Peek.
             if (getIzuiCoordinator().isAppFocused()) {
               win.show();
+              _restoreShowCount++;
             } else {
               win.showInactive();
+              _restoreShowInactiveCount++;
             }
 
             pendingLoads++;
@@ -1071,6 +1106,7 @@ export async function restoreSessionSnapshot(
       const focusWin = getLiveWindow(focusedWindowId);
       if (focusWin && coordinator.isAppFocused()) {
         focusWin.focus();
+        _restoreFocusCount++;
         DEBUG && console.log(`[session] Focused restored window: ${focusedWindowId}`);
       } else if (focusWin) {
         DEBUG && console.log(`[session] Skipped focus on ${focusedWindowId} — user switched away`);

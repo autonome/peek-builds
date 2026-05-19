@@ -177,6 +177,7 @@ export {
   saveClosedWindowStack,
   getClosedWindowStack,
   getClosedWindowCount,
+  flushPendingCloseSave,
 } from './main.js';
 
 export type { AppConfig } from './main.js';

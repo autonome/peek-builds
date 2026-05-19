@@ -115,8 +115,14 @@ class IzuiStateCoordinator {
   /**
    * Update OS-level app focus state.
    * Called from main.ts browser-window-focus/blur event handlers.
+   *
+   * Suppressed while a test override is in effect — see _testAppFocusOverride.
    */
   setAppFocused(focused: boolean): void {
+    if (this._testAppFocusOverride !== null) {
+      DEBUG && console.log('[izui] App focus change suppressed by test override:', focused, '(override=', this._testAppFocusOverride, ')');
+      return;
+    }
     this.appFocused = focused;
     DEBUG && console.log('[izui] App focus changed:', focused);
 
@@ -130,9 +136,27 @@ class IzuiStateCoordinator {
   }
 
   /**
+   * Test-only override for `isAppFocused()`. When non-null, this value is
+   * returned instead of the OS-event-driven `appFocused` state, and
+   * `setAppFocused()` becomes a no-op. Needed by drift-detection tests
+   * for the restore focus-gate: opening a new BrowserWindow during
+   * restore can trigger macOS to fire did-become-active mid-loop, which
+   * would otherwise overwrite the test's intent ("simulate user is away").
+   *
+   * Pass null to release the override and restore OS-driven behavior.
+   */
+  private _testAppFocusOverride: boolean | null = null;
+  _setAppFocusOverride(focused: boolean | null): void {
+    this._testAppFocusOverride = focused;
+    DEBUG && console.log('[izui] Test app-focus override:', focused);
+  }
+
+  /**
    * Check if app currently has OS-level focus.
+   * Returns the test override when set, otherwise the OS-driven state.
    */
   isAppFocused(): boolean {
+    if (this._testAppFocusOverride !== null) return this._testAppFocusOverride;
     return this.appFocused;
   }
 

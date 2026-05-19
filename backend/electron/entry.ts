@@ -73,6 +73,8 @@ import {
   loadClosedWindowStack,
   getClosedWindowStack,
   getClosedWindowCount,
+  // Test-only
+  flushPendingCloseSave,
 } from './index.js';
 
 import { startHotReload, stopHotReload } from './hotreload.js';
@@ -106,7 +108,8 @@ import {
   initSessionPartition,
   registerDownloadHandler,
 } from './session-partition.js';
-import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval } from './session.js';
+import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters } from './session.js';
+import { getIzuiCoordinator } from './izui-state.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
 import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
 import { getLazyTileManifest } from './tile-lazy.js';
@@ -150,6 +153,43 @@ const ROOT_DIR = app.getAppPath();
   forceSaveSession: () => saveSessionSnapshot('manual', { _forceForTest: true }),
   /** Force-restore session snapshot (bypasses test-profile guard). */
   forceRestoreSession: () => restoreSessionSnapshot({ restoreSession: true }, undefined, true),
+  /**
+   * Override the IZUI coordinator's OS-focus state for drift-detection
+   * tests. The restore loop's .show()/.focus() gate reads
+   * `isAppFocused()` live; flipping it via this hook lets a test simulate
+   * "user switched away mid-restore" deterministically.
+   *
+   * Sets a forced override (not just the OS-event-driven value) because
+   * opening a new BrowserWindow during restore can fire did-become-active
+   * on macOS, which would otherwise overwrite the test's intent. The
+   * override sticks until `clearAppFocusedForTest()` is called. See
+   * tests/desktop/session-restore-focus.spec.ts.
+   */
+  setAppFocusedForTest: (focused: boolean) => {
+    (getIzuiCoordinator() as unknown as { _setAppFocusOverride(v: boolean | null): void })
+      ._setAppFocusOverride(focused);
+  },
+  /** Release the test override and restore OS-driven app-focus tracking. */
+  clearAppFocusedForTest: () => {
+    (getIzuiCoordinator() as unknown as { _setAppFocusOverride(v: boolean | null): void })
+      ._setAppFocusOverride(null);
+  },
+  /**
+   * Read the restoreSessionSnapshot drift-detection counters. Reset at
+   * the top of every restoreSessionSnapshot call, incremented at each
+   * gated .show()/.showInactive()/.focus() call site. Tests assert
+   * shows=0 + focuses=0 when appFocused was false at restore time.
+   */
+  getRestoreFocusCounters: () => getRestoreFocusCounters(),
+  /**
+   * Synchronously flush a pending debounced session-save (the one that
+   * normally runs ~500ms after a window close). Lets the close-survives-
+   * kill regression test in
+   * tests/desktop/session-restore-close-survives-kill.spec.ts observe
+   * the post-close snapshot without sleeping (per
+   * feedback_no_sleep_in_tests_or_code).
+   */
+  flushPendingCloseSave: () => flushPendingCloseSave(),
   /**
    * Force a BrowserWindow to be visible *without focusing it*. Tests that
    * drive focus synthetically through `fireWindowFocus` need the window
