@@ -521,6 +521,51 @@ export async function initialize(): Promise<void> {
       } catch {
         // Ignore errors during shutdown
       }
+
+      // Pre-destruction overlay restoration. When the user dismisses the
+      // windows-switcher (or any overlay), the existing 'closed' handler
+      // can't help: by the time it runs, the BrowserWindow is gone and
+      // macOS has already auto-picked the next key window for the app
+      // — usually whichever hidden Peek window happens to live on a
+      // different Space. That pulls the user away before our focus()
+      // call in 'closed' can land.
+      //
+      // Do the work BEFORE destruction: showInactive the non-target
+      // hidden windows (visible-but-not-activated → preserves their
+      // Space without yanking the user), then .show() the focus target
+      // LAST so it's the most-recent visible window → macOS's auto-pick
+      // chooses it post-destruction → user lands on the target's Space.
+      //
+      // The 'closed' handler's `exitOverlay` will run showInactive
+      // again (idempotent on already-visible windows) and `focus()` on
+      // the same target (no-op when already key). Both leftovers
+      // harmless.
+      //
+      // Skipped when this isn't the overlay window for the active
+      // session, when the session is transient, or when the app-blur
+      // path already cleared coordinator state (`isOverlay()` false).
+      try {
+        if (!window.isDestroyed()) {
+          const coordinator = getIzuiCoordinator();
+          const isOverlayWindow = coordinator.isOverlay() &&
+            coordinator.getSession()?.overlayWindowId === windowId;
+          if (isOverlayWindow && !coordinator.isTransient()) {
+            const session = coordinator.getSession()!;
+            const focusTargetId = session.overlayFocusTarget ?? session.preOverlayFocusTarget;
+            for (const hiddenId of session.hiddenWindowIds) {
+              if (hiddenId === focusTargetId) continue;
+              const hiddenWin = getLiveWindow(hiddenId);
+              if (hiddenWin) hiddenWin.showInactive();
+            }
+            if (focusTargetId != null) {
+              const target = getLiveWindow(focusTargetId);
+              if (target) target.show(); // activate → key-window candidate for macOS auto-pick
+            }
+          }
+        }
+      } catch (err) {
+        DEBUG && console.error('[overlay] pre-close restoration failed:', err);
+      }
     });
 
     // Handle window close
