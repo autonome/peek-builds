@@ -1306,11 +1306,11 @@ function App() {
         if (isUrl) {
           await invoke("save_url", { url: trimmed, tags: [] });
           await loadSavedUrls();
-          showToast("Page saved");
+          showToast("Saved page from share");
         } else {
           await invoke("save_text", { content: trimmed, tags: [] });
           await loadSavedTexts();
-          showToast("Note saved");
+          showToast("Saved note from share");
         }
         await loadAllTags();
       } catch (error) {
@@ -1327,7 +1327,7 @@ function App() {
           tags: [],
         });
         await loadSavedImages();
-        showToast("Image saved");
+        showToast("Saved image from share");
       } catch (error) {
         console.error("Failed to save shared image:", error);
         showToast("Failed to save shared image", "error");

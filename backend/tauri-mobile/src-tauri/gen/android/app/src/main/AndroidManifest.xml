@@ -23,11 +23,12 @@
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
-            <!-- Share target: text/URLs from other apps via ACTION_SEND -->
+            <!-- Share target: text/URLs from other apps via ACTION_SEND (text/* covers
+                 plain, html, markdown; we read EXTRA_TEXT which is always plain) -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/*" />
             </intent-filter>
             <!-- Share target: images via ACTION_SEND -->
             <intent-filter>
@@ -39,7 +40,7 @@
             <intent-filter>
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/*" />
             </intent-filter>
             <!-- Share target: multiple images via ACTION_SEND_MULTIPLE -->
             <intent-filter>
