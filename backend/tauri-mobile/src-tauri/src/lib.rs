@@ -3147,6 +3147,69 @@ fn pop_pending_shares() -> Result<Vec<String>, String> {
     Ok(entries)
 }
 
+#[derive(Serialize)]
+struct PendingImageShare {
+    #[serde(rename = "imageData")]
+    image_data: String,
+    #[serde(rename = "mimeType")]
+    mime_type: String,
+}
+
+/// Drain image shares queued by Android MainActivity. Each entry is a sibling pair
+/// in <container>/pending_share_images/: <stem>.bin holds raw bytes, <stem>.mime
+/// holds the mime type. Bytes are base64-encoded for serialization through tauri.
+/// Files are deleted after collection.
+#[tauri::command]
+fn pop_pending_image_shares() -> Result<Vec<PendingImageShare>, String> {
+    let container = get_container_path().ok_or("no container path")?;
+    let dir = container.join("pending_share_images");
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    let mut entries: Vec<PendingImageShare> = vec![];
+    let mut cleanup: Vec<PathBuf> = vec![];
+    let read = std::fs::read_dir(&dir).map_err(|e| format!("read_dir failed: {}", e))?;
+    for entry in read {
+        let entry = entry.map_err(|e| format!("dir entry: {}", e))?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("bin") {
+            continue;
+        }
+        let stem = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let mime_path = dir.join(format!("{}.mime", stem));
+        let mime = std::fs::read_to_string(&mime_path)
+            .unwrap_or_else(|_| "image/jpeg".to_string())
+            .trim()
+            .to_string();
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                println!("[Rust] pop_pending_image_shares: read {} failed: {}", path.display(), e);
+                continue;
+            }
+        };
+        entries.push(PendingImageShare {
+            image_data: STANDARD.encode(&bytes),
+            mime_type: mime,
+        });
+        cleanup.push(path);
+        cleanup.push(mime_path);
+    }
+    for p in cleanup {
+        if let Err(e) = std::fs::remove_file(&p) {
+            println!("[Rust] pop_pending_image_shares: failed to delete {}: {}", p.display(), e);
+        }
+    }
+    if !entries.is_empty() {
+        println!("[Rust] pop_pending_image_shares: drained {} images", entries.len());
+    }
+    Ok(entries)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // RESTORE: Check for *.restore files in Documents and copy to App Group (iOS only)
@@ -3284,7 +3347,8 @@ pub fn run() {
             get_reader_content,
             show_inline_html,
             // Android share target
-            pop_pending_shares
+            pop_pending_shares,
+            pop_pending_image_shares
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

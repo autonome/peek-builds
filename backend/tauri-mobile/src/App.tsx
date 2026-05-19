@@ -1319,14 +1319,45 @@ function App() {
       }
     };
 
-    const drain = async () => {
+    const handleIncomingImage = async (img: { imageData: string; mimeType: string }) => {
       try {
-        const entries = await invoke<string[]>("pop_pending_shares");
-        for (const text of entries) {
+        await invoke("save_captured_image", {
+          imageData: img.imageData,
+          mimeType: img.mimeType,
+          tags: [],
+        });
+        await loadSavedImages();
+        showToast("Image saved");
+      } catch (error) {
+        console.error("Failed to save shared image:", error);
+        showToast("Failed to save shared image", "error");
+      }
+    };
+
+    const drain = async () => {
+      let drainedAny = false;
+      try {
+        const textEntries = await invoke<string[]>("pop_pending_shares");
+        for (const text of textEntries) {
           await handleIncoming(text);
+          drainedAny = true;
         }
       } catch (error) {
         console.error("pop_pending_shares failed:", error);
+      }
+      try {
+        const imageEntries = await invoke<Array<{ imageData: string; mimeType: string }>>(
+          "pop_pending_image_shares",
+        );
+        for (const img of imageEntries) {
+          await handleIncomingImage(img);
+          drainedAny = true;
+        }
+      } catch (error) {
+        console.error("pop_pending_image_shares failed:", error);
+      }
+      if (drainedAny) {
+        await loadAllTags();
       }
     };
 

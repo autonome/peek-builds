@@ -2,6 +2,7 @@ package com.dietrich.peek_mobile
 
 import android.content.Intent
 import android.content.res.Configuration
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -21,34 +22,82 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
-    appendShareIntent(intent)
+    handleShareIntent(intent)
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
-    appendShareIntent(intent)
+    handleShareIntent(intent)
   }
 
-  // Persist ACTION_SEND payload to filesDir/.peek/pending_shares.txt, one entry per line.
-  // The frontend drains this on mount and on tauri://focus via the pop_pending_shares
-  // tauri command. File-based is deterministic across cold-launch (file outlives the
-  // process) and avoids JS-injection timing races with React mount or webview load.
-  private fun appendShareIntent(intent: Intent?) {
+  // Persist incoming ACTION_SEND / ACTION_SEND_MULTIPLE payloads to disk under
+  // filesDir/.peek/. The frontend drains via pop_pending_shares (text) and
+  // pop_pending_image_shares (images) on mount + tauri://focus. File-based is
+  // deterministic across cold-launch (files outlive the process) and avoids
+  // JS-injection timing races.
+  private fun handleShareIntent(intent: Intent?) {
     if (intent == null) return
-    if (intent.action != Intent.ACTION_SEND) return
-    if (intent.type?.startsWith("text/") != true) return
-    val text = intent.getStringExtra(Intent.EXTRA_TEXT)
-    if (text.isNullOrBlank()) return
+    val mime = intent.type ?: return
+    when (intent.action) {
+      Intent.ACTION_SEND -> when {
+        mime.startsWith("text/") -> intent.getStringExtra(Intent.EXTRA_TEXT)?.let(::appendText)
+        mime.startsWith("image/") -> getParcelableStream(intent)?.let { appendImage(it, mime) }
+      }
+      Intent.ACTION_SEND_MULTIPLE -> when {
+        mime.startsWith("text/") ->
+          intent.getStringArrayListExtra(Intent.EXTRA_TEXT)?.forEach(::appendText)
+        mime.startsWith("image/") ->
+          getParcelableStreamList(intent)?.forEach { appendImage(it, mime) }
+      }
+    }
+  }
+
+  @Suppress("DEPRECATION")
+  private fun getParcelableStream(intent: Intent): Uri? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+      intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+    else
+      intent.getParcelableExtra(Intent.EXTRA_STREAM)
+
+  @Suppress("DEPRECATION")
+  private fun getParcelableStreamList(intent: Intent): List<Uri>? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+      intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+    else
+      intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
+
+  private fun appendText(text: String) {
+    if (text.isBlank()) return
     try {
       val peekDir = File(filesDir, ".peek")
-      if (!peekDir.exists()) peekDir.mkdirs()
+      peekDir.mkdirs()
       val file = File(peekDir, "pending_shares.txt")
-      // One entry per line — flatten any embedded newlines first.
       val sanitized = text.replace("\n", " ").replace("\r", "")
       file.appendText("$sanitized\n")
-      Log.i("Peek", "appendShareIntent: queued ${sanitized.take(80)}")
+      Log.i("Peek", "appendText: queued ${sanitized.take(80)}")
     } catch (e: Exception) {
-      Log.e("Peek", "appendShareIntent failed", e)
+      Log.e("Peek", "appendText failed", e)
+    }
+  }
+
+  private fun appendImage(uri: Uri, mime: String) {
+    try {
+      val imagesDir = File(filesDir, ".peek/pending_share_images")
+      imagesDir.mkdirs()
+      val stem = "${System.currentTimeMillis()}_${kotlin.math.abs(uri.hashCode())}"
+      val blob = File(imagesDir, "$stem.bin")
+      val meta = File(imagesDir, "$stem.mime")
+      contentResolver.openInputStream(uri).use { input ->
+        if (input == null) {
+          Log.e("Peek", "appendImage: could not open $uri")
+          return
+        }
+        blob.outputStream().use { output -> input.copyTo(output) }
+      }
+      meta.writeText(mime)
+      Log.i("Peek", "appendImage: queued ${blob.absolutePath} (${blob.length()} bytes, $mime)")
+    } catch (e: Exception) {
+      Log.e("Peek", "appendImage failed", e)
     }
   }
 
