@@ -33,7 +33,7 @@ const storageKeys = {
 
 const defaults = {
   prefs: {
-    shortcutKey: 'Option+w'
+    shortcutKey: 'CommandOrControl+Shift+W'
   },
 };
 
