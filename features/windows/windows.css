@@ -15,8 +15,17 @@ html {
 }
 
 body {
-  /* Fully transparent - window itself handles transparency */
-  background: transparent;
+  /* Semi-transparent + blurred backdrop. The overlay no longer hides
+     the user's other windows (that caused a Space-teleport bug on
+     dismiss — see backend/electron/ipc.ts windowOpenHandler), so we
+     need a visual separation layer between the switcher UI and the
+     windows showing through behind it. backdrop-filter:blur frosts
+     whatever's behind without obscuring it entirely; the rgba fill
+     ensures the foreground UI has enough contrast over light desktop
+     content. */
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
   color: var(--base05);
   min-height: 100vh;
 }

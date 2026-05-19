@@ -2423,31 +2423,29 @@ export function registerWindowHandlers(): void {
         }
       }
 
-      // Handle overlay mode: hide other windows after this one is ready
-      // When overlay window closes, the hidden windows will be restored (see main.ts)
+      // Overlay mode: the overlay window opens on top of existing windows
+      // without hiding them. Previously we hid every other visible window
+      // so the switcher rendered against an empty desktop, but that
+      // created a Space-teleport bug on dismiss: when the user opened the
+      // switcher on a Space with no other Peek windows present, every
+      // visible Peek window was on a different Space — and macOS's
+      // auto-key-window pick during overlay destruction would land on
+      // one of them, yanking the user across Spaces. Rendering the
+      // switcher with a semi-transparent + blurred backdrop (see
+      // features/windows/windows.css) gives the visual separation
+      // without hiding the underlying windows; on dismiss macOS auto-
+      // picks from windows actually visible on the user's current Space.
+      //
+      // We still register with the IZUI coordinator (with an empty
+      // hiddenWindowIds list) so the rest of the overlay-state plumbing
+      // (escape policy, focus tracking) continues to work.
       if (options.overlay === true) {
-        const hiddenWindowIds: number[] = [];
-        const allWindows = getAllLiveWindows();
-        for (const otherWin of allWindows) {
-          if (otherWin.id === win.id) continue;
-          if (!otherWin.isVisible()) continue;
-          // Don't hide background windows (check by URL or params)
-          const otherInfo = getWindowInfo(otherWin.id);
-          const otherAddress = otherInfo?.params?.address as string | undefined;
-          if (otherAddress?.includes('background.html')) continue;
-          // Hide and track
-          otherWin.hide();
-          hiddenWindowIds.push(otherWin.id);
-        }
-        DEBUG && console.log('Overlay mode: hidden', hiddenWindowIds.length, 'windows');
-        // Store hidden window IDs in the window's params for restore on close
         const winInfo = getWindowInfo(win.id);
         if (winInfo) {
-          winInfo.params.overlayHiddenWindows = hiddenWindowIds;
+          winInfo.params.overlayHiddenWindows = [];
         }
-        // Notify IZUI coordinator of overlay entry
         const coordinator = getIzuiCoordinator();
-        coordinator.enterOverlay(win.id, hiddenWindowIds);
+        coordinator.enterOverlay(win.id, []);
       }
 
       // Notify HUD and other listeners that a window was opened

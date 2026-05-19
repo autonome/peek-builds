@@ -522,75 +522,9 @@ export async function initialize(): Promise<void> {
         // Ignore errors during shutdown
       }
 
-      // Pre-destruction overlay restoration. When the user dismisses the
-      // windows-switcher (or any overlay), the existing 'closed' handler
-      // can't help: by the time it runs, the BrowserWindow is gone and
-      // macOS has already auto-picked the next key window for the app
-      // — usually whichever hidden Peek window happens to live on a
-      // different Space. That pulls the user away before our focus()
-      // call in 'closed' can land.
-      //
-      // Do the work BEFORE destruction: showInactive the non-target
-      // hidden windows (visible-but-not-activated → preserves their
-      // Space without yanking the user), then .show() the focus target
-      // LAST so it's the most-recent visible window → macOS's auto-pick
-      // chooses it post-destruction → user lands on the target's Space.
-      //
-      // The 'closed' handler's `exitOverlay` will run showInactive
-      // again (idempotent on already-visible windows) and `focus()` on
-      // the same target (no-op when already key). Both leftovers
-      // harmless.
-      //
-      // Skipped when this isn't the overlay window for the active
-      // session, when the session is transient, or when the app-blur
-      // path already cleared coordinator state (`isOverlay()` false).
-      try {
-        if (!window.isDestroyed()) {
-          const coordinator = getIzuiCoordinator();
-          const isOverlayWindow = coordinator.isOverlay() &&
-            coordinator.getSession()?.overlayWindowId === windowId;
-          console.log('[overlay:pre-close] windowId=' + windowId
-            + ' isOverlay=' + coordinator.isOverlay()
-            + ' overlayWindowId=' + (coordinator.getSession()?.overlayWindowId ?? 'null')
-            + ' isTransient=' + coordinator.isTransient());
-          if (isOverlayWindow && !coordinator.isTransient()) {
-            const session = coordinator.getSession()!;
-            const focusTargetId = session.overlayFocusTarget ?? session.preOverlayFocusTarget;
-            console.log('[overlay:pre-close] focusTargetId=' + (focusTargetId ?? 'null')
-              + ' (overlayFocusTarget=' + (session.overlayFocusTarget ?? 'null')
-              + ', preOverlayFocusTarget=' + (session.preOverlayFocusTarget ?? 'null') + ')'
-              + ' hidden=[' + session.hiddenWindowIds.join(',') + ']');
-            // Restore ALL hidden windows including the focus target with
-            // showInactive(). Activating (show/focus) a window anchored to
-            // a different Space than the user's current one yanks them to
-            // that Space — even on a window that was hidden right before.
-            // The SVOAW(true)→show→SVOAW(false) anchor flip from the
-            // window-open path doesn't help here because macOS only honors
-            // SVOAW for the next *show*, and reverting immediately re-anchors
-            // back to the window's original Space (verified empirically by
-            // 770abf71 — focusTargetId=7 was anchored to A, toggle ran, user
-            // still teleported).
-            //
-            // showInactive() preserves each window's anchored Space without
-            // pulling the user. macOS auto-picks a new key window when the
-            // overlay destroys — best-case it picks one on the user's
-            // current Space; worst-case the user lands without a Peek
-            // window focused on this Space, which is still preferable to a
-            // teleport. The `.focus()` call in the existing 'closed' handler
-            // is suppressed via the __overlayRestoredPreClose flag below so
-            // we don't undo this with a late focus().
-            for (const hiddenId of session.hiddenWindowIds) {
-              const hiddenWin = getLiveWindow(hiddenId);
-              if (hiddenWin) hiddenWin.showInactive();
-            }
-            (window as { __overlayRestoredPreClose?: boolean }).__overlayRestoredPreClose = true;
-            console.log('[overlay:pre-close] restored ' + session.hiddenWindowIds.length
-              + ' windows via showInactive (target=' + (focusTargetId ?? 'null') + ' not activated)');
-          }
-        }
-      } catch (err) {
-        console.error('[overlay:pre-close] restoration failed:', err);
-      }
+      // (Pre-close overlay restoration removed — the overlay no longer
+      // hides other windows, so there's nothing to restore. See
+      // backend/electron/ipc.ts windowOpenHandler for the rationale.)
     });
 
     // Handle window close
@@ -632,22 +566,24 @@ export async function initialize(): Promise<void> {
             const isTransient = coordinator.isTransient();
 
             if (!isTransient) {
-              // Get focus target BEFORE exitOverlay clears it
-              const focusTargetId = session.overlayFocusTarget || coordinator.getPreOverlayFocusTarget();
+              // Capture the explicit selection BEFORE exitOverlay clears it.
+              // Important: ONLY focus when the user explicitly chose a target
+              // via the switcher (overlayFocusTarget). On a plain ESC dismiss
+              // overlayFocusTarget is null and we fall through with no
+              // focus call — that preserves the user's current Space, which
+              // .focus() on the preOverlayFocusTarget would silently break
+              // if that window happened to be anchored to a different Space.
+              const selectedTargetId = session.overlayFocusTarget;
 
-              // exitOverlay restores hidden windows and resets overlay state
+              // exitOverlay resets overlay state (the hiddenWindowIds list
+              // is empty in the no-hide overlay model, so the showInactive
+              // loop inside is a no-op).
               coordinator.exitOverlay();
 
-              // Focus the target window after restoration — UNLESS the
-              // pre-close handler already restored everything via
-              // showInactive. In that path we intentionally don't activate
-              // any window (target may be anchored to a different Space
-              // than the user is on; .focus() would teleport).
-              const preCloseRestored = (window as { __overlayRestoredPreClose?: boolean }).__overlayRestoredPreClose === true;
-              if (focusTargetId && !preCloseRestored) {
-                const targetWin = getLiveWindow(focusTargetId);
+              if (selectedTargetId != null) {
+                const targetWin = getLiveWindow(selectedTargetId);
                 if (targetWin) {
-                  DEBUG && console.log('[izui] Overlay focus target:', focusTargetId, session.overlayFocusTarget ? '(explicit selection)' : '(pre-overlay fallback)');
+                  DEBUG && console.log('[izui] Overlay explicit selection focus:', selectedTargetId);
                   targetWin.focus();
                 }
               }
