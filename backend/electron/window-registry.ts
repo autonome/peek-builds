@@ -20,8 +20,39 @@
  * Live-only or All.
  */
 
-import { BrowserWindow } from 'electron';
-import type { WebContents } from 'electron';
+// Type-only imports from 'electron' so this module can be imported by
+// unit tests running under ELECTRON_RUN_AS_NODE=1 (where the 'electron'
+// module is a string path, not a fully-populated ESM namespace, so a
+// value-side `import { BrowserWindow } from 'electron'` throws at parse:
+// "The requested module 'electron' does not provide an export named
+// 'BrowserWindow'"). Runtime access goes through `getElectron()` via
+// createRequire, mirroring the canonical pattern in tile-ipc-gate.ts /
+// tile-launcher.ts. See `project_esm_require_gotcha.md`.
+import type { BrowserWindow as BrowserWindowType, WebContents } from 'electron';
+import { createRequire } from 'node:module';
+
+const requireElectron = createRequire(import.meta.url);
+let _electron: typeof import('electron') | null = null;
+function getElectron(): typeof import('electron') {
+  if (_electron) return _electron;
+  _electron = requireElectron('electron') as typeof import('electron');
+  return _electron;
+}
+
+/**
+ * Resolve the BrowserWindow class from the electron runtime, or null
+ * when there isn't one. Under `ELECTRON_RUN_AS_NODE=1` (unit tests),
+ * `require('electron')` returns the binary path string — no
+ * BrowserWindow — and downstream `.fromId` / `.getAllWindows` would
+ * throw `TypeError: Cannot read properties of undefined`. Live-window
+ * lookups have no work to do in that environment, so callers treat a
+ * null return as "no live windows exist."
+ */
+function getBrowserWindowClass(): typeof BrowserWindowType | null {
+  const electron = getElectron() as { BrowserWindow?: typeof BrowserWindowType } | string;
+  if (typeof electron !== 'object' || electron === null) return null;
+  return electron.BrowserWindow ?? null;
+}
 
 /**
  * Side-channel session state that needs to survive a window's lifecycle.
@@ -62,8 +93,10 @@ export interface WindowDescriptor {
  * Use this in place of `BrowserWindow.fromId(id)`; callers no longer
  * need to gate on `isDestroyed()`.
  */
-export function getLiveWindow(id: number): BrowserWindow | null {
-  const win = BrowserWindow.fromId(id);
+export function getLiveWindow(id: number): BrowserWindowType | null {
+  const BW = getBrowserWindowClass();
+  if (!BW) return null;
+  const win = BW.fromId(id);
   return win && !win.isDestroyed() ? win : null;
 }
 
@@ -74,8 +107,10 @@ export function getLiveWindow(id: number): BrowserWindow | null {
  * to operate on live windows. Callers no longer need to filter out
  * destroyed entries.
  */
-export function getAllLiveWindows(): BrowserWindow[] {
-  return BrowserWindow.getAllWindows().filter(w => !w.isDestroyed());
+export function getAllLiveWindows(): BrowserWindowType[] {
+  const BW = getBrowserWindowClass();
+  if (!BW) return [];
+  return BW.getAllWindows().filter(w => !w.isDestroyed());
 }
 
 /**
@@ -83,8 +118,10 @@ export function getAllLiveWindows(): BrowserWindow[] {
  * place of `BrowserWindow.fromWebContents(wc)` for callers that need
  * the destroyed-window filter.
  */
-export function windowFromWebContents(wc: WebContents): BrowserWindow | null {
-  const win = BrowserWindow.fromWebContents(wc);
+export function windowFromWebContents(wc: WebContents): BrowserWindowType | null {
+  const BW = getBrowserWindowClass();
+  if (!BW) return null;
+  const win = BW.fromWebContents(wc);
   return win && !win.isDestroyed() ? win : null;
 }
 
@@ -129,7 +166,7 @@ export function broadcast(channel: string, ...args: unknown[]): void {
  * they never collide.
  */
 export type WindowRef =
-  | { kind: 'live'; id: number; window: BrowserWindow }
+  | { kind: 'live'; id: number; window: BrowserWindowType }
   | { kind: 'pending'; id: number; descriptor: WindowDescriptor };
 
 // Unified registry of windows whose canonical id is synthetic — covers
@@ -186,7 +223,9 @@ export function getWindowRef(id: number): WindowRef | null {
     return ref;
   }
 
-  const win = BrowserWindow.fromId(id);
+  const BW = getBrowserWindowClass();
+  if (!BW) return null;
+  const win = BW.fromId(id);
   if (win && !win.isDestroyed() && !aliasedElectronIds.has(win.id)) {
     return { kind: 'live', id: win.id, window: win };
   }
@@ -208,10 +247,13 @@ export function getAllWindowRefs(): WindowRef[] {
     }
     result.push(ref);
   }
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (win.isDestroyed()) continue;
-    if (aliasedElectronIds.has(win.id)) continue;
-    result.push({ kind: 'live', id: win.id, window: win });
+  const BW = getBrowserWindowClass();
+  if (BW) {
+    for (const win of BW.getAllWindows()) {
+      if (win.isDestroyed()) continue;
+      if (aliasedElectronIds.has(win.id)) continue;
+      result.push({ kind: 'live', id: win.id, window: win });
+    }
   }
   return result;
 }
@@ -229,7 +271,7 @@ export function getAllWindowRefs(): WindowRef[] {
  * a realizer at startup and `realize()` delegates to it. This also
  * means tests can swap in a stub.
  */
-export type WindowRealizer = (descriptor: WindowDescriptor) => Promise<BrowserWindow>;
+export type WindowRealizer = (descriptor: WindowDescriptor) => Promise<BrowserWindowType>;
 
 let registeredRealizer: WindowRealizer | null = null;
 
@@ -257,7 +299,7 @@ export function registerRealizer(fn: WindowRealizer): void {
  * pending entry was already realized by someone else) returns the
  * existing BrowserWindow.
  */
-export async function realize(ref: WindowRef): Promise<BrowserWindow> {
+export async function realize(ref: WindowRef): Promise<BrowserWindowType> {
   if (ref.kind === 'live') return ref.window;
 
   // Re-read in case caller has a stale ref (race between two realize
