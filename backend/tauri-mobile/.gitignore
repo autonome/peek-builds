@@ -33,6 +33,14 @@ src-tauri/gen/apple/build/
 # Android Gradle build output
 src-tauri/gen/android/app/build/
 
+# Android Gradle internal cache (regenerated every build)
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/buildSrc/.gradle/
+
+# Android build-staged artifacts (regenerated every build)
+src-tauri/gen/android/app/src/main/jniLibs/
+src-tauri/gen/android/app/src/main/assets/
+
 # Claude Code local settings
 .claude/
 
