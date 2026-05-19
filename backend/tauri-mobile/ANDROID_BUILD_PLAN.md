@@ -2,6 +2,17 @@
 
 Comprehensive plan for adding Android build support to the Peek mobile app, which currently builds only for iOS via Tauri 2.x.
 
+> **Status (2026-05-19): much of this plan is implemented; sections below describe a historical starting point rather than current code.** Verified done at audit time:
+>
+> - Phase 1.1 (cfg-gate iOS FFI) — every caller of `webview_plugin_*`, `get_*_path`, `is_app_store_build` in `src-tauri/src/lib.rs` is `#[cfg(target_os = "ios")]` guarded, with `#[cfg(not(target_os = "ios"))]` fallbacks. No linker errors expected.
+> - Phase 1.2 (Android storage fallback) — `get_container_path()` in `lib.rs` has a non-iOS branch using HOME/data dir.
+> - Phase 1.3 (`build.rs` ios-only Objective-C compile) — already conditional on `target.contains("ios")`.
+> - Phase 1.4 (Cargo.toml `cdylib`) — `crate-type = ["staticlib", "cdylib", "rlib"]` already in place.
+> - Phase 1.6 / Phase 5 (build scripts) — `build-android.sh`, `dev-android.sh`, `build-android-release.sh`, `dev-both.sh` all exist, with BUILD_NUMBER flow, custom-protocol via `TAURI_ANDROID_FEATURES`, and emulator auto-boot.
+> - Modern toolchain in place: Gradle 8.14.3, AGP 8.11.0, Kotlin 1.9.25, compileSdk 36, NDK auto-discovered (currently 27.0.x).
+>
+> Open gaps (real, not stale): Phase 4 (Android share target — no `ACTION_SEND` intent filter), cross-workspace `.so` cache parallel to `scripts/ios-cache.sh`, and any drift that surfaces from the actual `npx tauri android build --debug` attempt. Treat the section bodies below as historical reference, not a current to-do list.
+
 ---
 
 ## Table of Contents
