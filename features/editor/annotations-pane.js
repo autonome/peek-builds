@@ -17,6 +17,7 @@ export class AnnotationsPane {
     this.doc = null; // CodeMirror doc for line number lookup
     this._editingId = null; // ID of highlight currently being edited
     this._pendingEditId = null; // ID of newly-added highlight to auto-open for editing
+    this._inRender = false; // True while render() is mutating the DOM — see blur handler
 
     this.element = document.createElement('div');
     this.element.className = 'annotations-pane';
@@ -107,6 +108,15 @@ export class AnnotationsPane {
   }
 
   render() {
+    this._inRender = true;
+    try {
+      this._renderImpl();
+    } finally {
+      this._inRender = false;
+    }
+  }
+
+  _renderImpl() {
     this.content.innerHTML = '';
 
     if (this.highlights.length === 0) {
@@ -194,6 +204,16 @@ export class AnnotationsPane {
 
         // Save and close on blur
         textarea.addEventListener('blur', () => {
+          // Skip save when blur was triggered by our own render() detaching
+          // this textarea (innerHTML clear → Chromium moves focus to body
+          // before the node is fully detached, firing blur while the
+          // textarea is still .isConnected). That path is internal cleanup,
+          // not user intent — saving the textarea's empty value here would
+          // clobber a note that another caller (e.g. updateHighlightNote)
+          // just dispatched. Real user blurs (click-elsewhere, Escape→blur())
+          // happen outside render(), so they still save normally.
+          if (this._inRender) return;
+
           const value = textarea.value;
           // Clear editing state BEFORE save — save triggers update() -> render()
           // chain via onAnnotationEdit callback. If _editingId is still set when
