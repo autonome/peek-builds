@@ -3118,6 +3118,35 @@ fn get_sync_status() -> Result<SyncStatus, String> {
     })
 }
 
+/// Drain any share intents queued to disk by the Android side (MainActivity writes
+/// ACTION_SEND payloads to <container>/pending_shares.txt, one per line). The file
+/// outlives the app process, so cold-launch shares are picked up here deterministically
+/// on the frontend's first call. Frontend calls this on mount and on tauri://focus.
+#[tauri::command]
+fn pop_pending_shares() -> Result<Vec<String>, String> {
+    let container = get_container_path().ok_or("no container path")?;
+    let path = container.join("pending_shares.txt");
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("read pending_shares failed: {}", e))?;
+    // Delete first so a crash mid-save doesn't replay the same items forever. The
+    // tradeoff is dropping items if save_url/save_text below fails; acceptable for v1.
+    if let Err(e) = std::fs::remove_file(&path) {
+        println!("[Rust] pop_pending_shares: failed to delete {}: {}", path.display(), e);
+    }
+    let entries: Vec<String> = content
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    if !entries.is_empty() {
+        println!("[Rust] pop_pending_shares: drained {} entries", entries.len());
+    }
+    Ok(entries)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // RESTORE: Check for *.restore files in Documents and copy to App Group (iOS only)
@@ -3253,7 +3282,9 @@ pub fn run() {
             open_inline_webview_html,
             close_inline_webview,
             get_reader_content,
-            show_inline_html
+            show_inline_html,
+            // Android share target
+            pop_pending_shares
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

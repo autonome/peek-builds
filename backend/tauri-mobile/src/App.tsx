@@ -1293,6 +1293,53 @@ function App() {
     };
   }, []);
 
+  // Bridge for native share intents (Android ACTION_SEND). MainActivity appends each
+  // ACTION_SEND payload to a file on disk; we drain it via the pop_pending_shares
+  // tauri command on mount and on tauri://focus. File-based queue survives cold-launch
+  // and avoids JS-injection / webview-load timing races.
+  useEffect(() => {
+    const handleIncoming = async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const isUrl = trimmed.startsWith("http://") || trimmed.startsWith("https://");
+      try {
+        if (isUrl) {
+          await invoke("save_url", { url: trimmed, tags: [] });
+          await loadSavedUrls();
+          showToast("Page saved");
+        } else {
+          await invoke("save_text", { content: trimmed, tags: [] });
+          await loadSavedTexts();
+          showToast("Note saved");
+        }
+        await loadAllTags();
+      } catch (error) {
+        console.error("Failed to save shared content:", error);
+        showToast("Failed to save shared content", "error");
+      }
+    };
+
+    const drain = async () => {
+      try {
+        const entries = await invoke<string[]>("pop_pending_shares");
+        for (const text of entries) {
+          await handleIncoming(text);
+        }
+      } catch (error) {
+        console.error("pop_pending_shares failed:", error);
+      }
+    };
+
+    drain();
+
+    let unlisten: (() => void) | undefined;
+    listen("tauri://focus", () => { drain(); }).then((un) => { unlisten = un; });
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   // Reset empty expanded input when app returns to foreground; flush draft on hide
   useEffect(() => {
     const handleVisibilityChange = () => {
