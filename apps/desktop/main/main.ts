@@ -259,7 +259,7 @@ export async function initialize(): Promise<void> {
   // from entry.ts before `loadFeatures` runs). Preload source is
   // `tile-preload.cts` (CommonJS) so tsc emits `tile-preload.cjs` —
   // Electron preload scripts must be CommonJS under `sandbox: true`.
-  const tilePreloadPath = path.join(config.rootDir, 'dist', 'backend', 'electron', 'tile-preload.cjs');
+  const tilePreloadPath = path.join(config.rootDir, 'dist', 'main', 'tile-preload.cjs');
   setTilePreloadPath(tilePreloadPath);
 
   // Inject tile-launcher's electron-side dependencies. These live on

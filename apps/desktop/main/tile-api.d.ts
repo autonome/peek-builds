@@ -2,18 +2,18 @@
  * Tile API Surface Typings — window.app
  *
  * Static hand-written .d.ts for the `window.app` surface injected by
- * `backend/electron/tile-preload.ts` via `contextBridge.exposeInMainWorld`.
+ * `apps/desktop/main/tile-preload.cts` via `contextBridge.exposeInMainWorld`.
  *
  * Keep this file in sync with:
- *   - backend/electron/tile-preload.ts  (implementation)
- *   - backend/electron/tile-ipc.ts      (main-process handlers)
- *   - docs/tile-api.md                  (reference documentation)
+ *   - apps/desktop/main/tile-preload.cts  (implementation)
+ *   - apps/desktop/main/tile-ipc.ts       (main-process handlers)
+ *   - docs/tile-api.md                    (reference documentation)
  *
- * This file does NOT auto-generate — update manually when tile-preload.ts or
+ * This file does NOT auto-generate — update manually when tile-preload.cts or
  * tile-ipc.ts adds/removes surfaces.
  *
  * Usage in a tile:
- *   /// <reference path="../../backend/electron/tile-api.d.ts" />
+ *   /// <reference path="../../apps/desktop/main/tile-api.d.ts" />
  *   // or place in tsconfig.json "typeRoots" / "types" array
  */
 

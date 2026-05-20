@@ -17,7 +17,7 @@
  * whose topic starts with `foo:`. Bare `*` covers everything.
  *
  * Scope: only feature renderers (`features/<id>/*.js`). The audit is
- * not applied to backend/electron/* (main process can subscribe
+ * not applied to apps/desktop/main/* (main process can subscribe
  * freely to any topic), to app/* shared libs (their subscribe calls
  * are inherited by whichever feature imports them — covered by that
  * feature's manifest), or to extensions/* (third-party).
@@ -144,7 +144,7 @@ const SUBSCRIBE_IGNORE: ReadonlySet<string> = new Set<string>();
 
 describe('manifest / pubsub-subscribe drift detection', () => {
   it('every subscribed topic appears in the feature manifest pubsub.topics allowlist', () => {
-    const featuresDir = path.join(repoRoot(), 'features');
+    const featuresDir = path.join(repoRoot(), 'apps', 'desktop', 'features');
     const dirs = listFeatureDirs(featuresDir);
     if (dirs.length === 0) {
       console.warn('[manifest-subscribe-drift] features/ not found from cwd, skipping');

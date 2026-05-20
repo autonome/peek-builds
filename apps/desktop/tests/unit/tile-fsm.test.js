@@ -18,7 +18,7 @@ import {
   acceptsDynamicRegistration,
   DISPATCHABLE_STATES,
   DYNAMIC_REGISTRATION_STATES,
-} from '../../dist/backend/electron/tile-fsm.js';
+} from '../../dist/main/tile-fsm.js';
 
 // ---------------------------------------------------------------------------
 // Allowed transitions (doc source of truth — keep in sync with FSM table)

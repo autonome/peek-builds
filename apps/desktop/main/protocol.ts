@@ -303,8 +303,8 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       // Features across the codebase import `peek://ext/cmd/nouns.js` — preserve
       // that URL contract.
       if (extId === 'cmd') {
-        const absolutePath = path.resolve(rootDir, 'app', 'cmd', extPath);
-        const cmdBase = path.resolve(rootDir, 'app', 'cmd');
+        const absolutePath = path.resolve(rootDir, 'renderer', 'cmd', extPath);
+        const cmdBase = path.resolve(rootDir, 'renderer', 'cmd');
         if (!absolutePath.startsWith(cmdBase)) {
           console.error('Path traversal attempt blocked:', absolutePath);
           return new Response('Forbidden', { status: 403 });
@@ -319,8 +319,8 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       // references widget URLs like `peek://ext/hud/widgets/mode.html`, so we
       // preserve that URL contract.
       if (extId === 'hud') {
-        const absolutePath = path.resolve(rootDir, 'app', 'hud', extPath);
-        const hudBase = path.resolve(rootDir, 'app', 'hud');
+        const absolutePath = path.resolve(rootDir, 'renderer', 'hud', extPath);
+        const hudBase = path.resolve(rootDir, 'renderer', 'hud');
         if (!absolutePath.startsWith(hudBase)) {
           console.error('Path traversal attempt blocked:', absolutePath);
           return new Response('Forbidden', { status: 403 });
@@ -334,8 +334,8 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       // The page background iframe URL was peek://ext/page/background.html; we
       // preserve that URL contract so any existing open windows don't break.
       if (extId === 'page') {
-        const absolutePath = path.resolve(rootDir, 'app', 'page', extPath);
-        const pageBase = path.resolve(rootDir, 'app', 'page');
+        const absolutePath = path.resolve(rootDir, 'renderer', 'page', extPath);
+        const pageBase = path.resolve(rootDir, 'renderer', 'page');
         if (!absolutePath.startsWith(pageBase)) {
           console.error('Path traversal attempt blocked:', absolutePath);
           return new Response('Forbidden', { status: 403 });
@@ -553,8 +553,8 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
     // now core app code in app/cmd/.
     if (host === 'cmd') {
       const cmdPath = pathname || 'background.html';
-      const absolutePath = path.resolve(rootDir, 'app', 'cmd', cmdPath);
-      const cmdBase = path.resolve(rootDir, 'app', 'cmd');
+      const absolutePath = path.resolve(rootDir, 'renderer', 'cmd', cmdPath);
+      const cmdBase = path.resolve(rootDir, 'renderer', 'cmd');
       if (!absolutePath.startsWith(cmdBase)) {
         console.error('Path traversal attempt blocked:', absolutePath);
         return new Response('Forbidden', { status: 403 });
@@ -568,8 +568,8 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
     // now core app code in app/hud/.
     if (host === 'hud') {
       const hudPath = pathname || 'background.html';
-      const absolutePath = path.resolve(rootDir, 'app', 'hud', hudPath);
-      const hudBase = path.resolve(rootDir, 'app', 'hud');
+      const absolutePath = path.resolve(rootDir, 'renderer', 'hud', hudPath);
+      const hudBase = path.resolve(rootDir, 'renderer', 'hud');
       if (!absolutePath.startsWith(hudBase)) {
         console.error('Path traversal attempt blocked:', absolutePath);
         return new Response('Forbidden', { status: 403 });
@@ -583,8 +583,8 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
     // now core app code in app/page/.
     if (host === 'page') {
       const pagePath = pathname || 'background.html';
-      const absolutePath = path.resolve(rootDir, 'app', 'page', pagePath);
-      const pageBase = path.resolve(rootDir, 'app', 'page');
+      const absolutePath = path.resolve(rootDir, 'renderer', 'page', pagePath);
+      const pageBase = path.resolve(rootDir, 'renderer', 'page');
       if (!absolutePath.startsWith(pageBase)) {
         console.error('Path traversal attempt blocked:', absolutePath);
         return new Response('Forbidden', { status: 403 });
@@ -598,13 +598,28 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
     // E2E_TEST=true, via test-fixture-glue.ts.
     if (host === 'test') {
       const testPath = pathname || 'index.html';
-      const absolutePath = path.resolve(rootDir, 'app', '_test', testPath);
-      const testBase = path.resolve(rootDir, 'app', '_test');
+      const absolutePath = path.resolve(rootDir, 'renderer', '_test', testPath);
+      const testBase = path.resolve(rootDir, 'renderer', '_test');
       if (!absolutePath.startsWith(testBase)) {
         console.error('Path traversal attempt blocked:', absolutePath);
         return new Response('Forbidden', { status: 403 });
       }
       DEBUG && console.log(`[protocol] test/${testPath} -> ${absolutePath}`);
+      return fetchFile(absolutePath, req.url);
+    }
+
+    // Backwards-compat: peek://app/{path} resolves to renderer/
+    // The `app/` directory was renamed to `renderer/` in the apps/desktop restructure.
+    // Feature renderers and other callers use `peek://app/lib/...` URLs — preserve that contract.
+    if (host === 'app') {
+      const appPath = pathname;
+      const absolutePath = path.resolve(rootDir, 'renderer', appPath);
+      const rendererBase = path.resolve(rootDir, 'renderer');
+      if (!absolutePath.startsWith(rendererBase)) {
+        console.error('Path traversal attempt blocked:', absolutePath);
+        return new Response('Forbidden', { status: 403 });
+      }
+      DEBUG && console.log(`[protocol] app/${appPath} -> ${absolutePath}`);
       return fetchFile(absolutePath, req.url);
     }
 

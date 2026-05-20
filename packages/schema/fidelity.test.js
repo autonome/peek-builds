@@ -81,7 +81,7 @@ function parseCreateTable(sql, tableName) {
  * Read schema from Electron datastore.ts
  */
 function getElectronSchema() {
-  const path = join(__dirname, '../backend/electron/datastore.ts');
+  const path = join(__dirname, '../apps/desktop/main/datastore.ts');
   return readFileSync(path, 'utf-8');
 }
 

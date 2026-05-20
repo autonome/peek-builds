@@ -20,7 +20,7 @@ import {
   resetForTests,
   STATES,
   TRIGGERS,
-} from '../../dist/backend/electron/tile-lifecycle.js';
+} from '../../dist/main/tile-lifecycle.js';
 
 /**
  * Walk the FSM from `unregistered` up to `target` via legitimate

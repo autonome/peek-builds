@@ -35,7 +35,7 @@ const PLATFORM_SOURCES = {
   'server': 'backend/server/db.js',
   'ios-mobile': 'backend/tauri-mobile/src-tauri/src/lib.rs',
   'desktop-tauri': 'backend/tauri/src-tauri/src/datastore.rs',
-  'electron': 'backend/electron/datastore.ts',
+  'electron': 'apps/desktop/main/datastore.ts',
 };
 
 /**

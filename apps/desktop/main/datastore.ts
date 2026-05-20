@@ -35,11 +35,11 @@ import { addDeviceMetadata } from './device.js';
 import { publish, getSystemAddress } from './pubsub.js';
 
 // Load canonical schema for validation
-// Path is relative to compiled JS in dist/backend/electron/
+// Path is relative to compiled JS in apps/desktop/dist/main/
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const SCHEMA = JSON.parse(
-  readFileSync(join(__dirname, '../../../packages/schema/v1.json'), 'utf-8')
+  readFileSync(join(__dirname, '../../../../packages/schema/v1.json'), 'utf-8')
 );
 const REQUIRED_SYNC_COLUMNS: Record<string, string[]> = SCHEMA.validation.required_sync_columns;
 

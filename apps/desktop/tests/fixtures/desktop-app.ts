@@ -509,7 +509,7 @@ function startHttpServer(): Promise<http.Server> {
         filePath = path.join(ROOT, 'features', url.replace('/ext/', ''));
       } else {
         // Serve from app directory
-        filePath = path.join(ROOT, 'app', url);
+        filePath = path.join(ROOT, 'renderer', url);
       }
 
       // Default to index.html for directories

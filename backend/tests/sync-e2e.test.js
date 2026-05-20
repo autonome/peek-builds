@@ -18,9 +18,9 @@ import { fileURLToPath } from 'url';
 import { createWriteStream } from 'fs';
 
 // Import compiled desktop modules (from dist/)
-import * as datastore from '../../dist/backend/electron/datastore.js';
-import * as sync from '../../dist/backend/electron/sync.js';
-import * as profiles from '../../dist/backend/electron/profiles.js';
+import * as datastore from '../../apps/desktop/dist/main/datastore.js';
+import * as sync from '../../apps/desktop/dist/main/sync.js';
+import * as profiles from '../../apps/desktop/dist/main/profiles.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER_PATH = join(__dirname, '..', 'server');

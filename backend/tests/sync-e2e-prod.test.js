@@ -19,8 +19,8 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 // Import compiled desktop modules (from dist/)
-import * as datastore from '../../dist/backend/electron/datastore.js';
-import * as sync from '../../dist/backend/electron/sync.js';
+import * as datastore from '../../apps/desktop/dist/main/datastore.js';
+import * as sync from '../../apps/desktop/dist/main/sync.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

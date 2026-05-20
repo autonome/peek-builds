@@ -21,11 +21,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getBgInjection as getRuntimeExternalBgInjection } from '../backend/electron/chrome-api-polyfills/runtime-external.js';
+import { getBgInjection as getRuntimeExternalBgInjection } from '../apps/desktop/main/chrome-api-polyfills/runtime-external.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const EXT_DIR = path.join(ROOT, 'chrome-extensions');
+const EXT_DIR = path.join(ROOT, 'apps', 'desktop', 'chrome-extensions');
 
 const SHIM_MARKER = '/* Peek: chrome.permissions';
 const HTML_SHIM_MARKER = '<!--peek:permissions-->';

@@ -5,8 +5,8 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// When compiled, __dirname is dist/backend/electron/ — go up 3 levels to project root
-const pageHtml = readFileSync(join(__dirname, '..', '..', '..', 'app', 'page', 'index.html'), 'utf-8');
+// When compiled, __dirname is apps/desktop/dist/main/ — go up 2 levels to apps/desktop/
+const pageHtml = readFileSync(join(__dirname, '..', '..', 'renderer', 'page', 'index.html'), 'utf-8');
 
 // --- Extracted decision logic from page.js did-fail-load handler ---
 

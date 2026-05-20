@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 // At runtime under ELECTRON_RUN_AS_NODE=1 this test file lives at
-// dist/backend/electron/tile-preload-no-request-registers.test.js and the
+// apps/desktop/dist/main/tile-preload-no-request-registers.test.js and the
 // compiled preload module is its sibling tile-preload.cjs (emitted from
 // tile-preload.cts).
 const hereDir = dirname(fileURLToPath(import.meta.url));

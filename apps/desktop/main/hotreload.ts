@@ -18,7 +18,7 @@ const DEBOUNCE_MS = 300;
  * Start watching directories for changes
  */
 export function startHotReload(rootDir: string): void {
-  const appDir = path.join(rootDir, 'app');
+  const appDir = path.join(rootDir, 'renderer');
   const extensionsDir = path.join(rootDir, 'features');
 
   DEBUG && console.log('[hotreload] Starting hot reload...');

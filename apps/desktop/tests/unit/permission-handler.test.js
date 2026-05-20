@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import {
   resolveDecision as resolve,
   resolveWithStored,
-} from '../../dist/backend/electron/permission-policy.js';
+} from '../../dist/main/permission-policy.js';
 
 describe('permission-handler: chrome-extension origins', () => {
   it('always allows geolocation for chrome-extension URLs', () => {

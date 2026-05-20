@@ -31,8 +31,8 @@ if (!PROFILE || !SERVER_URL || !API_KEY) {
 
 app.whenReady().then(async () => {
   // Import compiled modules (after app is ready)
-  const datastore = await import('../dist/backend/electron/datastore.js');
-  const profiles = await import('../dist/backend/electron/profiles.js');
+  const datastore = await import('../apps/desktop/dist/main/datastore.js');
+  const profiles = await import('../apps/desktop/dist/main/profiles.js');
 
   // Import sync engine
   const { createEngine, createBetterSqliteAdapter } = await import('../sync/index.js');

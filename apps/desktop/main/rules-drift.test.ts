@@ -23,11 +23,8 @@ import path from 'node:path';
 import type { TileManifest } from './tile-manifest.js';
 
 function repoRoot(): string {
-  // Test runs from the dist/ build, so we walk up to the repo root
-  // by pattern: dist/backend/electron → repo root.
-  // __dirname-style resolution would require import.meta.url plumbing;
-  // process.cwd() is the test runner invocation directory which is
-  // already the repo root for `yarn test:unit`.
+  // Test runs from the dist/ build. process.cwd() is the repo root
+  // when invoked via `yarn test:unit` from the project root.
   return process.cwd();
 }
 
@@ -50,7 +47,7 @@ function readManifest(featureDir: string): (TileManifest & { rules?: unknown[] }
 
 describe('rules: drift detection', () => {
   it('no feature declares both resident:true and a non-empty rules:[]', () => {
-    const featuresDir = path.join(repoRoot(), 'features');
+    const featuresDir = path.join(repoRoot(), 'apps', 'desktop', 'features');
     const dirs = listFeatureDirs(featuresDir);
     if (dirs.length === 0) {
       // Test runner cwd is not the repo root — skip rather than false-pass.
