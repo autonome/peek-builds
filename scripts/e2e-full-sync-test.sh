@@ -32,7 +32,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 SERVER_DIR="$PROJECT_DIR/apps/server"
-TAURI_DIR="$PROJECT_DIR/backend/tauri-mobile"
+TAURI_DIR="$PROJECT_DIR/apps/mobile"
 XCODE_PROJECT="$TAURI_DIR/src-tauri/gen/apple/peek-save.xcodeproj"
 
 # --- Parse arguments ---
@@ -546,7 +546,7 @@ if [ "$CLI_BUILD" = true ]; then
     cd "$PROJECT_DIR"
 
     # Build with xcodebuild using isolated DerivedData path
-    cd backend/tauri-mobile/src-tauri/gen/apple
+    cd apps/mobile/src-tauri/gen/apple
     xcodebuild -scheme peek-save_iOS -configuration Debug -sdk iphonesimulator \
         -derivedDataPath /tmp/peek-xcodebuild-sim \
         -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \

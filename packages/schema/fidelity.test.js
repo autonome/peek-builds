@@ -105,7 +105,7 @@ function getTauriDesktopSchema() {
  * Read schema from Tauri Mobile lib.rs
  */
 function getTauriMobileSchema() {
-  const path = join(__dirname, '../backend/tauri-mobile/src-tauri/src/lib.rs');
+  const path = join(__dirname, '../apps/mobile/src-tauri/src/lib.rs');
   return readFileSync(path, 'utf-8');
 }
 

@@ -19,7 +19,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 SERVER_DIR="$PROJECT_DIR/apps/server"
-TAURI_DIR="$PROJECT_DIR/backend/tauri-mobile"
+TAURI_DIR="$PROJECT_DIR/apps/mobile"
 XCODE_PROJECT="$TAURI_DIR/src-tauri/gen/apple/peek-save.xcodeproj"
 
 # --- Configuration ---

@@ -33,7 +33,7 @@ const CANONICAL_SCHEMA = {
 // Platform source files containing CREATE TABLE statements
 const PLATFORM_SOURCES = {
   'server': 'apps/server/db.js',
-  'ios-mobile': 'backend/tauri-mobile/src-tauri/src/lib.rs',
+  'ios-mobile': 'apps/mobile/src-tauri/src/lib.rs',
   'desktop-tauri': 'backend/tauri/src-tauri/src/datastore.rs',
   'electron': 'apps/desktop/main/datastore.ts',
 };

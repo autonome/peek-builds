@@ -2,7 +2,7 @@
 
 When the user invokes /ios-build:
 
-1. First, read `backend/tauri-mobile/package.json` to confirm available scripts.
+1. First, read `apps/mobile/package.json` to confirm available scripts.
 
 2. Determine build target from argument:
 
@@ -16,7 +16,7 @@ When the user invokes /ios-build:
 
 4. When complete, report:
    - Build success/failure
-   - Build number from `backend/tauri-mobile/BUILD_NUMBER`
+   - Build number from `apps/mobile/BUILD_NUMBER`
    - Any errors or warnings
 
 ## CRITICAL rules
