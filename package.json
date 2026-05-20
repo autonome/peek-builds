@@ -194,7 +194,7 @@
     "changelog:bump": "node scripts/changelog-bump.js"
   },
   "workspaces": [
-    "apps/desktop/main",
+    "apps/desktop",
     "packages/*"
   ],
   "dependencies": {
