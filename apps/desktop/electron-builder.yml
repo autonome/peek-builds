@@ -5,7 +5,7 @@ copyright: Copyright © 2024 Dietrich Ayala
 # Directories
 directories:
   output: out
-  buildResources: assets
+  buildResources: apps/desktop/assets
 
 # Include only production dependencies
 npmRebuild: true
@@ -14,7 +14,7 @@ nodeGypRebuild: false
 # Files to include/exclude
 files:
   - "**/*"
-  - "assets/**/*"
+  - "apps/desktop/assets/**/*"
   # Exclude build output (critical - prevents recursive bloat)
   - "!out"
   - "!out/**"
@@ -30,17 +30,20 @@ files:
   - "!tmp"
   - "!tmp/**"
   # Exclude backend directories not needed for Electron
-  - "!backend/tauri"
-  - "!backend/tauri/**"
-  - "!backend/server"
-  - "!backend/server/**"
-  - "!backend/tauri-mobile"
-  - "!backend/tauri-mobile/**"
-  - "!backend/tests"
-  - "!backend/tests/**"
+  - "!backend"
+  - "!backend/**"
+  # Exclude non-desktop app directories
+  - "!apps/mobile"
+  - "!apps/mobile/**"
+  - "!apps/server"
+  - "!apps/server/**"
+  - "!apps/extension"
+  - "!apps/extension/**"
+  - "!apps/tauri-desktop"
+  - "!apps/tauri-desktop/**"
   # Exclude development/test directories
-  - "!tests"
-  - "!tests/**"
+  - "!apps/desktop/tests"
+  - "!apps/desktop/tests/**"
   - "!notes"
   - "!notes/**"
   - "!docs"
@@ -49,11 +52,11 @@ files:
   - "!old-extension/**"
   # Exclude dev scripts and config — but whitelist peek-cli.mjs back in
   # so it ships for users binding it to system keyboard shortcuts.
-  # See backend/electron/cli-helper.ts and docs/global-hotkeys-on-wayland.md.
+  # See apps/desktop/main/cli-helper.ts and docs/global-hotkeys-on-wayland.md.
   - "!scripts"
   - "!scripts/**"
   - "scripts/peek-cli.mjs"
-  - "!playwright.config.ts"
+  - "!apps/desktop/playwright.config.ts"
   # Exclude dev artifacts and docs
   - "!settings-screenshot.png"
   - "!*.md"
@@ -75,10 +78,10 @@ files:
 # ASAR packaging
 asar: true
 asarUnpack:
-  - "assets/tray/**/*"
+  - "apps/desktop/assets/tray/**/*"
   # Chrome extensions must live on a real filesystem — Electron's
   # session.loadExtension() can't read from inside app.asar.
-  - "chrome-extensions/**/*"
+  - "apps/desktop/chrome-extensions/**/*"
   # peek-cli is invoked by an external `node` process via DE keyboard
   # shortcuts; node can't read from inside app.asar, so unpack it.
   - "scripts/peek-cli.mjs"
@@ -86,7 +89,7 @@ asarUnpack:
 # macOS specific
 mac:
   category: public.app-category.productivity
-  icon: assets/appicon.icns
+  icon: apps/desktop/assets/appicon.icns
   identity: null  # Disable code signing
   target:
     - target: dir
@@ -109,13 +112,13 @@ mac:
 
 # Windows specific
 win:
-  icon: assets/appicon.ico
+  icon: apps/desktop/assets/appicon.ico
   target:
     - target: dir
 
 # Linux specific
 linux:
-  icon: assets/appicon.png
+  icon: apps/desktop/assets/appicon.png
   category: Network
   # Register Peek as a candidate handler for http/https URLs and HTML
   # documents so the system "Default Applications" UI offers Peek and

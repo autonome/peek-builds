@@ -141,6 +141,10 @@ unhandled({
 
 // Get the root directory - app.getAppPath() works in both dev and packaged modes
 const ROOT_DIR = app.getAppPath();
+// Desktop app lives under apps/desktop/ within the monorepo root.
+// All renderer, features, assets, and chrome-extensions paths are relative to
+// DESKTOP_DIR rather than ROOT_DIR (which is the repo root).
+const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
 
 // Expose test utilities on global for Playwright evaluateMain access
 (globalThis as any).__peek_test = {
@@ -271,7 +275,7 @@ const systemAddress = getSystemAddress();
 // Electron ignores "world": "MAIN" in Chrome extension manifest content_scripts,
 // so we inject the script ourselves via executeJavaScript() which runs in the main world.
 let webauthnScript: string | null = null;
-const webauthnScriptPath = path.join(ROOT_DIR, 'chrome-extensions', 'proton-pass', 'webauthn.js');
+const webauthnScriptPath = path.join(DESKTOP_DIR, 'chrome-extensions', 'proton-pass', 'webauthn.js');
 try {
   if (fs.existsSync(webauthnScriptPath)) {
     webauthnScript = fs.readFileSync(webauthnScriptPath, 'utf-8');
@@ -956,7 +960,7 @@ const onReady = async () => {
   // See the block after setProfile(PROFILE) above.
 
   // Discover and register built-in features (tiles) from features/ folder
-  discoverBuiltinFeatures(path.join(ROOT_DIR, 'features'));
+  discoverBuiltinFeatures(path.join(DESKTOP_DIR, 'features'));
 
   // Register dev tiles from CLI arguments (--load-extension flag)
   // These are transient (not persisted) and load with devtools open
@@ -974,19 +978,19 @@ const onReady = async () => {
   }
 
   // Discover and register built-in themes from features/ (type: "theme") with legacy themes/ fallback
-  discoverBuiltinThemes(path.join(ROOT_DIR, 'features'), path.join(ROOT_DIR, 'themes'));
+  discoverBuiltinThemes(path.join(DESKTOP_DIR, 'features'), path.join(DESKTOP_DIR, 'themes'));
 
   // Initialize bundled web extensions infrastructure.
   // electron-builder.yml lists chrome-extensions/** in asarUnpack so the
   // files land on a real filesystem (Chromium's session.loadExtension
   // doesn't go through Electron's transparent asar fs patching — it
   // needs a literal disk path). In packaged builds the unpacked tree
-  // lives at ${resourcesPath}/app.asar.unpacked/. ROOT_DIR
+  // lives at ${resourcesPath}/app.asar.unpacked/. DESKTOP_DIR
   // (= app.getAppPath()) points inside app.asar itself, so we'd need
   // to swap it out otherwise.
   const chromeExtensionsDir = app.isPackaged
-    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'chrome-extensions')
-    : path.join(ROOT_DIR, 'chrome-extensions');
+    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'apps', 'desktop', 'chrome-extensions')
+    : path.join(DESKTOP_DIR, 'chrome-extensions');
   initChromeExtensionManager(chromeExtensionsDir);
 
   // Restore saved theme preference (must be after themes are discovered)
@@ -1065,7 +1069,7 @@ const onReady = async () => {
     // initialize system tray
     if (prefsMsg.prefs.showTrayIcon === true) {
       DEBUG && console.log('showing tray');
-      initTray(ROOT_DIR, {
+      initTray(DESKTOP_DIR, {
         tooltip: labels.tray.tooltip,
         onClick: () => {
           publish(WEB_CORE_ADDRESS, 'open', {
@@ -1205,7 +1209,7 @@ const onReady = async () => {
 
   // Start hot reload in dev mode
   if (DEBUG) {
-    startHotReload(ROOT_DIR);
+    startHotReload(DESKTOP_DIR);
   }
 
   // Register default quit shortcut (local - only works when app has focus)
@@ -1294,7 +1298,7 @@ app.commandLine.appendSwitch('disable-features', 'IsolateOrigins,site-per-proces
 
 // Configure app before ready (registers protocol scheme, sets theme)
 configure({
-  rootDir: ROOT_DIR,
+  rootDir: DESKTOP_DIR,
   userDataPath: defaultUserDataPath,
   profile: PROFILE,
   isDev: DEBUG,

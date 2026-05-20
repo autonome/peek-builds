@@ -30,6 +30,11 @@ import { waitForWindow as waitForWindowHelper, sleep, getTestProfile, waitForApp
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+// REPO_ROOT: 4 levels up from apps/desktop/tests/fixtures/ → monorepo root.
+// Used for baseArgs (electron source launch) and packaged executable path —
+// both are relative to the repo root, not to apps/desktop/.
+const REPO_ROOT = path.join(__dirname, '../../../..');
+// ROOT: apps/desktop/ subtree — renderer, features, and other desktop assets live here.
 const ROOT = path.join(__dirname, '../..');
 
 export type Backend = 'electron' | 'tauri';
@@ -210,7 +215,7 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
   // Also add --user-data-dir to redirect data to temp directory
   const baseArgs = packaged
     ? []
-    : [ROOT];
+    : [REPO_ROOT];
 
   // Force XWayland on Linux. Electron 38+ picks Wayland whenever
   // WAYLAND_DISPLAY is set (Ozone auto-detect) and the window escapes
@@ -219,7 +224,7 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
 
   const launchConfig = packaged
     ? {
-        executablePath: path.join(ROOT, packagedExecutableRelPath()),
+        executablePath: path.join(REPO_ROOT, packagedExecutableRelPath()),
         args: [...linuxOzoneArgs, `--user-data-dir=${tempDir}`]
       }
     : {
