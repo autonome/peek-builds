@@ -1,5 +1,5 @@
-# Dependencies
-node_modules/
+# Dependencies (no trailing slash — also match symlinks at these paths)
+node_modules
 
 # Yarn
 .yarn/install-state.gz
@@ -42,6 +42,8 @@ playwright-report/
 
 # Isolated agent workspaces (created by scripts/spawn-isolated-agent.sh)
 ../mpeek-agent-*
+# Isolated agent clones (created by scripts/spawn-isolated-clone.sh)
+../mpeek-clone-*
 
 # Backup files
 *.bak
