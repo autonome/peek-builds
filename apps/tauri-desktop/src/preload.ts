@@ -5,7 +5,7 @@
  * but using Tauri's invoke() for IPC communication.
  *
  * Usage: Include this script in your HTML before other app scripts:
- * <script type="module" src="peek://app/backend/tauri/src/preload.js"></script>
+ * <script type="module" src="peek://app/apps/tauri-desktop/src/preload.js"></script>
  */
 
 import { invoke } from '@tauri-apps/api/core';

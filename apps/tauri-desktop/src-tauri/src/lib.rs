@@ -253,7 +253,7 @@ pub fn run() {
                     let exe_str = exe_path.to_string_lossy();
                     if exe_str.contains("/target/release/") || exe_str.contains("/target/debug/") {
                         // Navigate up from target/{release,debug} to project root
-                        // Path: project/backend/tauri/src-tauri/target/{release,debug}/peek-tauri
+                        // Path: project/apps/tauri-desktop/src-tauri/target/{release,debug}/peek-tauri
                         if let Some(target_profile) = exe_path.parent() {
                             if let Some(target) = target_profile.parent() {
                                 if let Some(src_tauri) = target.parent() {

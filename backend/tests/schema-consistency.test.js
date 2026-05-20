@@ -34,7 +34,7 @@ const CANONICAL_SCHEMA = {
 const PLATFORM_SOURCES = {
   'server': 'apps/server/db.js',
   'ios-mobile': 'apps/mobile/src-tauri/src/lib.rs',
-  'desktop-tauri': 'backend/tauri/src-tauri/src/datastore.rs',
+  'desktop-tauri': 'apps/tauri-desktop/src-tauri/src/datastore.rs',
   'electron': 'apps/desktop/main/datastore.ts',
 };
 

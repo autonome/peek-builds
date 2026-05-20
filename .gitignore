@@ -11,8 +11,8 @@ app/dist/
 dist/
 
 # Tauri build output
-backend/tauri/src-tauri/target/
-backend/tauri/src-tauri/gen/
+apps/tauri-desktop/src-tauri/target/
+apps/tauri-desktop/src-tauri/gen/
 apps/mobile/src-tauri/target/
 apps/mobile/peek-core/target/
 apps/mobile/peek-core/generated/

@@ -97,7 +97,7 @@ function getServerSchema() {
  * Read schema from Tauri Desktop datastore.rs
  */
 function getTauriDesktopSchema() {
-  const path = join(__dirname, '../backend/tauri/src-tauri/src/datastore.rs');
+  const path = join(__dirname, '../apps/tauri-desktop/src-tauri/src/datastore.rs');
   return readFileSync(path, 'utf-8');
 }
 

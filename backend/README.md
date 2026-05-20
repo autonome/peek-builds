@@ -144,7 +144,7 @@ PROFILE=test yarn start # Custom profile
 
 ### Tauri
 ```bash
-cd backend/tauri/src-tauri
+cd apps/tauri-desktop/src-tauri
 cargo run                    # Normal mode
 HEADLESS=1 cargo run         # No visible windows (testing)
 PROFILE=test cargo run       # Custom profile

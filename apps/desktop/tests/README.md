@@ -17,7 +17,7 @@ tests/
 
 Backend-specific tests live in their respective directories:
 - `backend/electron/tests/` - Electron-only features
-- `backend/tauri/tests/` - Tauri-only features (includes smoke.rs Rust unit tests)
+- `apps/tauri-desktop/tests/` - Tauri-only features (includes smoke.rs Rust unit tests)
 
 ## Running Tests
 
@@ -64,7 +64,7 @@ yarn test:debug
 - Data doesn't persist across app restarts (Data Persistence tests fail)
 - 14/17 tests pass with the mock approach
 
-The Rust unit tests in `backend/tauri/src-tauri/tests/smoke.rs` cover the backend functionality that the mock doesn't test.
+The Rust unit tests in `apps/tauri-desktop/src-tauri/tests/smoke.rs` cover the backend functionality that the mock doesn't test.
 
 ### Why Can't We Test Tauri Directly on macOS?
 
@@ -129,7 +129,7 @@ Electron Tests:                    Tauri Frontend Tests:
 - ❌ Real multi-window behavior
 - ❌ Data persistence across restarts
 
-**The gap is filled by Rust unit tests** in `backend/tauri/src-tauri/tests/smoke.rs` which test real datastore operations, persistence, and backend logic.
+**The gap is filled by Rust unit tests** in `apps/tauri-desktop/src-tauri/tests/smoke.rs` which test real datastore operations, persistence, and backend logic.
 
 ## Hybrid Extension Mode Tests
 
