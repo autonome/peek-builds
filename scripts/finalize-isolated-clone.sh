@@ -76,7 +76,10 @@ fi
 # Capture main's current head, then rebase.
 MAIN_HEAD=$(jj log -r @ --no-graph -T 'commit_id' | head -1)
 echo "Rebasing agent commits onto main @ (${MAIN_HEAD:0:12})" >&2
-jj rebase -s "roots((::${REMOTE_BOOKMARK}) ~ (::@))" -d @ >&2
+# --ignore-immutable: the fetched bookmark from pool-<name> is treated as
+# remote-tracking and thus immutable by default. We're not actually rewriting
+# shared history — we're integrating a clone's local work — so override.
+jj rebase --ignore-immutable -s "roots((::${REMOTE_BOOKMARK}) ~ (::@))" -d @ >&2
 
 # After rebase, the new tip is at the bookmark's position. Pin a local bookmark
 # at that tip as the safety copy.
