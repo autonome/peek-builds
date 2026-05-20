@@ -1053,6 +1053,17 @@ const loadingLifecycle = {
           this.stopLoading();
           return;
         }
+        // Backstop for session-restored windows: chrome=0 defers the page-host
+        // renderer, so our dom-ready listener can attach AFTER the webview has
+        // already loaded — domReadyFiredForCurrentNav stays false even though
+        // the page is rendered. Ask the webview directly: if it's not loading
+        // anymore and is on a real (non-chrome-error) URL, the load completed
+        // and the overlay would replace visible content.
+        if (pageIsLikelyRendered(webview)) {
+          console.warn('[page] Loading timeout after', timeoutMs, 'ms — webview already loaded (dom-ready missed), suppressing overlay');
+          this.stopLoading();
+          return;
+        }
         console.warn('[page] Loading timeout after', timeoutMs, 'ms — surfacing error overlay');
         this.stopLoading();
         // Render the same overlay shown for did-fail-load. Prefer the
@@ -1166,6 +1177,27 @@ let lastFailedNavUrl = null;
 //   - main-frame did-fail-load fired late for an aborted late stream
 // did-start-navigation resets the flag on each new navigation.
 let domReadyFiredForCurrentNav = false;
+
+// Backstop for the case where our dom-ready listener attaches AFTER the
+// webview has already loaded — session-restored windows defer the page-host
+// renderer via chrome=0, so by the time this script runs the webview can
+// already be rendered. domReadyFiredForCurrentNav stays false forever in
+// that race. Query the webview's own state instead: if Chromium says it
+// isn't loading and the current URL is a real page (not chrome-error://,
+// not empty, not about:blank), then the page is rendered — covering it
+// with the overlay would be the bug.
+function pageIsLikelyRendered(wv) {
+  try {
+    if (wv.isLoading()) return false;
+    const url = wv.getURL() || '';
+    if (!url) return false;
+    if (url.startsWith('chrome-error://')) return false;
+    if (url === 'about:blank') return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 initWebview();
 loadingLifecycle.startLoading();
@@ -2424,6 +2456,14 @@ webview.addEventListener('did-fail-load', (e) => {
     loadingLifecycle.stopLoading();
     return;
   }
+  // Backstop for the same session-restore race as the timeout path: if the
+  // webview is already settled on a real URL, we missed dom-ready but the
+  // page is rendered. Don't replace it with the overlay.
+  if (pageIsLikelyRendered(webview)) {
+    console.warn('[page] did-fail-load but webview already loaded — suppressing overlay. code=', e.errorCode, 'desc=', e.errorDescription, 'url=', failedUrl);
+    loadingLifecycle.stopLoading();
+    return;
+  }
   console.error('[page] Load failed:', e.errorCode, e.errorDescription, failedUrl);
   // Track this URL as failed to prevent meta-refresh loops.
   // If the previous page had <meta http-equiv="refresh"> pointing to this URL,
@@ -2445,6 +2485,16 @@ webview.addEventListener('dom-ready', async () => {
   // frame when the user can already see content. See the
   // domReadyFiredForCurrentNav declaration for the full reasoning.
   domReadyFiredForCurrentNav = true;
+  // If the load-error overlay was already shown by the 30s timeout (e.g. a
+  // session-restored window's webview loaded after our listener attached),
+  // tear it down — the page has rendered and the overlay would sit on top
+  // of working content. Gate on `lastFailedNavUrl`: the did-fail-load path
+  // sets it (real DNS/connection error → overlay should stay even after
+  // Chromium navigates to its internal chrome-error page and fires
+  // dom-ready); the timeout path doesn't (this is the bug case to fix).
+  if (!lastFailedNavUrl) {
+    clearLoadErrorOverlay();
+  }
   // Detect background color (cosmetic)
   try {
     const bgResult = await webview.executeJavaScript(`
