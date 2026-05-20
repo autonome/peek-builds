@@ -89,7 +89,7 @@ function getElectronSchema() {
  * Read schema from Server db.js
  */
 function getServerSchema() {
-  const path = join(__dirname, '../backend/server/db.js');
+  const path = join(__dirname, '../../apps/server/db.js');
   return readFileSync(path, 'utf-8');
 }
 

@@ -2,7 +2,7 @@
  * Integration tests for Desktop <-> Server Sync
  *
  * This test verifies the server-side sync endpoints work correctly:
- * 1. Starts the server (backend/server/) with a temp data directory
+ * 1. Starts the server (apps/server/) with a temp data directory
  * 2. Creates test items via POST /items
  * 3. Tests GET /items/since/:timestamp for incremental sync
  * 4. Tests GET /items/:id for single item fetch

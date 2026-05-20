@@ -21,7 +21,7 @@ import { fileURLToPath } from 'url';
 // The root node_modules better-sqlite3 is compiled for Electron and won't work here
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const Database = require('../../backend/server/node_modules/better-sqlite3');
+const Database = require('../../apps/server/node_modules/better-sqlite3');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER_PATH = join(__dirname, '..', 'server');

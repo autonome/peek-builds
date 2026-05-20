@@ -25,7 +25,7 @@ case "${1:-status}" in
       sleep 1
     fi
     mkdir -p "$DATA_DIR"
-    DATA_DIR="$DATA_DIR" PORT="$PORT" node "$REPO_ROOT/backend/server/index.js" > "$LOG_FILE" 2>&1 &
+    DATA_DIR="$DATA_DIR" PORT="$PORT" node "$REPO_ROOT/apps/server/index.js" > "$LOG_FILE" 2>&1 &
     echo "$!" > "$PID_FILE"
     sleep 2
     if curl -sf "http://localhost:$PORT/" > /dev/null 2>&1; then

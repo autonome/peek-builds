@@ -2,7 +2,7 @@
  * End-to-End Integration Tests for Desktop <-> Server Sync
  *
  * This test verifies bidirectional sync between the desktop app and server:
- * 1. Starts the server (backend/server/) with a temp data directory
+ * 1. Starts the server (apps/server/) with a temp data directory
  * 2. Initializes desktop datastore with a temp database file
  * 3. Tests pull, push, bidirectional sync, and conflict scenarios
  * 4. Tests incremental sync with timestamps

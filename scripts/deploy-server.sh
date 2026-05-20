@@ -1,6 +1,6 @@
 #!/bin/bash
 # Deploy server to Railway by updating the deploy/server branch
-# with backend/server/ contents at the root.
+# with apps/server/ contents at the root.
 #
 # Railway uses npm (not yarn). The deploy branch must not contain
 # yarn.lock, otherwise Nixpacks will use yarn and fail.
@@ -42,8 +42,8 @@ jj log -r main --no-graph -T 'commit_id.short(12) ++ " " ++ description.first_li
 echo ""
 
 # Show recent commits that touched server
-echo ">>> Recent commits touching backend/server/:"
-jj log -r 'ancestors(main, 10)' --no-graph -T 'change_id.short(8) ++ " " ++ description.first_line() ++ "\n"' -- backend/server/ 2>/dev/null | head -5
+echo ">>> Recent commits touching apps/server/:"
+jj log -r 'ancestors(main, 10)' --no-graph -T 'change_id.short(8) ++ " " ++ description.first_line() ++ "\n"' -- apps/server/ 2>/dev/null | head -5
 echo ""
 
 # Ensure deploy/server branch exists
@@ -65,10 +65,10 @@ git worktree prune 2>/dev/null || true
 git worktree add "$DEPLOY_DIR" deploy/server
 
 # Use jj to get the actual files (avoids git working tree sync issues)
-echo "Syncing backend/server/ to deploy branch..."
+echo "Syncing apps/server/ to deploy branch..."
 rm -rf "$DEPLOY_DIR"/* 2>/dev/null || true
-jj file list -r main -- backend/server/ | while read f; do
-  REL="${f#backend/server/}"
+jj file list -r main -- apps/server/ | while read f; do
+  REL="${f#apps/server/}"
   [ "$REL" = "yarn.lock" ] && continue
   mkdir -p "$DEPLOY_DIR/$(dirname "$REL")"
   jj file show "$f" -r main > "$DEPLOY_DIR/$REL"

@@ -53,7 +53,7 @@ should_run() {
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-VERSION_JS="$PROJECT_ROOT/backend/server/version.js"
+VERSION_JS="$PROJECT_ROOT/apps/server/version.js"
 
 TS="$(date +%s)"
 LOG_FILE="/tmp/e2e-version-test-$(date +%Y%m%d-%H%M%S).log"
@@ -171,7 +171,7 @@ trap cleanup EXIT
 # --- Helper: start/stop server ----------------------------------------------
 
 start_server() {
-  DATA_DIR="$SERVER_TEMP_DIR" PORT="$PORT" node "$PROJECT_ROOT/backend/server/index.js" > "$SERVER_LOG" 2>&1 &
+  DATA_DIR="$SERVER_TEMP_DIR" PORT="$PORT" node "$PROJECT_ROOT/apps/server/index.js" > "$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
   log "$PHASE" "Starting server on port $PORT (PID: $SERVER_PID)"
 

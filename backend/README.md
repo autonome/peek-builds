@@ -170,14 +170,14 @@ yarn server:dev         # Run with hot reload
 yarn server:test        # Run tests
 yarn server:healthcheck # Verify server starts
 
-# From backend/server/
+# From apps/server/
 npm install
 npm start
 npm run dev
 npm test
 ```
 
-See `backend/server/README.md` for full API documentation.
+See `apps/server/README.md` for full API documentation.
 
 ## Adding a New Backend
 

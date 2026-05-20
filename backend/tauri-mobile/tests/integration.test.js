@@ -2,7 +2,7 @@
  * Integration test for Peek Mobile <-> backend/server webhook sync
  *
  * This test:
- * 1. Starts the server (backend/server/) with a temp data directory
+ * 1. Starts the server (apps/server/) with a temp data directory
  * 2. Creates a test user and API key
  * 3. Submits test data (pages, texts, tagsets) via the webhook API
  * 4. Fetches data back and verifies it matches what was submitted

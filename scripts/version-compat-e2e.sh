@@ -16,7 +16,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-SERVER_DIR="$PROJECT_DIR/backend/server"
+SERVER_DIR="$PROJECT_DIR/apps/server"
 
 # Use random high port to avoid conflicts
 PORT=$((3470 + RANDOM % 100))

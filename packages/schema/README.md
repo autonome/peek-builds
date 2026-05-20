@@ -48,7 +48,7 @@ Schema codegen runs automatically as part of `yarn build`:
 
 Both Server and Electron backends validate their schemas on startup:
 
-- **Server** (`backend/server/db.js`): Imports `REQUIRED_SYNC_COLUMNS` from schema/v1.json and validates after migrations
+- **Server** (`apps/server/db.js`): Imports `REQUIRED_SYNC_COLUMNS` from schema/v1.json and validates after migrations
 - **Electron** (`backend/electron/datastore.ts`): Calls `validateSyncSchema()` after migrations, throws if columns missing
 
 This catches schema drift early - if a migration is missing or broken, the app fails fast with a clear error.

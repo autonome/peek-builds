@@ -19,7 +19,7 @@ backend/tauri-mobile/peek-core/generated/
 backend/tauri-mobile/peek-core/PeekCore.xcframework/
 
 # Server data (local testing)
-backend/server/data/
+apps/server/data/
 
 # Environment files (contain secrets)
 .env

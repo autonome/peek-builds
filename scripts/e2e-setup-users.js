@@ -36,7 +36,7 @@ if (!USER_A_KEY || !USER_B_KEY) {
 // Set DATA_DIR before importing users.js (it reads process.env.DATA_DIR at module level)
 process.env.DATA_DIR = resolve(DATA_DIR);
 
-const users = require('../backend/server/users.js');
+const users = require('../apps/server/users.js');
 
 try {
   users.createUserWithKey('account-a', USER_A_KEY);

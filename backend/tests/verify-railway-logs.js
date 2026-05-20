@@ -17,7 +17,7 @@
  *   node backend/tests/verify-railway-logs.js
  *
  * Note: Requires Railway CLI to be installed and linked to the project.
- *   cd backend/server && railway link -p amusing-courtesy
+ *   cd apps/server && railway link -p amusing-courtesy
  */
 
 import { spawn } from 'child_process';
@@ -96,7 +96,7 @@ async function fetchRailwayLogs() {
     console.error('Make sure you have Railway CLI installed and linked:');
     console.error('  1. Install: npm install -g @railway/cli');
     console.error('  2. Login: railway login');
-    console.error('  3. Link: cd backend/server && railway link -p amusing-courtesy');
+    console.error('  3. Link: cd apps/server && railway link -p amusing-courtesy');
     console.error('');
     process.exit(1);
   }

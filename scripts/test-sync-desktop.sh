@@ -8,7 +8,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-SERVER_DIR="$ROOT_DIR/backend/server"
+SERVER_DIR="$ROOT_DIR/apps/server"
 
 # Generate unique identifiers
 TIMESTAMP=$(date +%s)
