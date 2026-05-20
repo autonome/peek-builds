@@ -11,12 +11,14 @@
 
 set -euo pipefail
 
-NAME="${1:-${AGENT_NAME:-}}"
-if [ -z "$NAME" ] && [ -r /tmp/mpeek-agent-name ]; then
-  NAME=$(cat /tmp/mpeek-agent-name)
+# Name read from /tmp/mpeek-agent-name only (see spawn-isolated-clone.sh for rationale).
+if [ ! -r /tmp/mpeek-agent-name ]; then
+  echo "error: write the clone name to /tmp/mpeek-agent-name first" >&2
+  exit 2
 fi
+NAME=$(cat /tmp/mpeek-agent-name)
 if [ -z "$NAME" ]; then
-  echo "usage: $0 <name>   OR write name to /tmp/mpeek-agent-name" >&2
+  echo "error: /tmp/mpeek-agent-name is empty" >&2
   exit 2
 fi
 

@@ -28,26 +28,31 @@
 
 set -euo pipefail
 
-# Name source (priority order):
-#   1. $1 positional arg
-#   2. $AGENT_NAME env var
-#   3. /tmp/mpeek-agent-name file contents
-NAME="${1:-${AGENT_NAME:-}}"
-if [ -z "$NAME" ] && [ -r /tmp/mpeek-agent-name ]; then
-  NAME=$(cat /tmp/mpeek-agent-name)
+# Name is read from /tmp/mpeek-agent-name only — no positional args, no env var.
+# This keeps the command text invariant across invocations so the chook hook
+# and Claude Code allowlist need only one approval. Write the name first:
+#   echo phase3 > /tmp/mpeek-agent-name
+#   scripts/spawn-isolated-clone.sh
+if [ ! -r /tmp/mpeek-agent-name ]; then
+  echo "error: write the clone name to /tmp/mpeek-agent-name first, e.g.:" >&2
+  echo "       echo myclone > /tmp/mpeek-agent-name" >&2
+  exit 2
 fi
+NAME=$(cat /tmp/mpeek-agent-name)
 if [ -z "$NAME" ]; then
-  echo "usage: $0 <name> [--base=<branch>]   OR write name to /tmp/mpeek-agent-name" >&2
+  echo "error: /tmp/mpeek-agent-name is empty" >&2
   exit 2
 fi
 
-# --base=<branch> override
+# Base branch is read from /tmp/mpeek-clone-base, defaulting to "main".
+# Same invariant-text rationale as the name file.
 BASE="main"
-for arg in "$@"; do
-  case "$arg" in
-    --base=*) BASE="${arg#--base=}" ;;
-  esac
-done
+if [ -r /tmp/mpeek-clone-base ]; then
+  candidate=$(cat /tmp/mpeek-clone-base)
+  if [ -n "$candidate" ]; then
+    BASE="$candidate"
+  fi
+fi
 
 MAIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CLONE_DIR="${MAIN_DIR}/../mpeek-clone-${NAME}"
