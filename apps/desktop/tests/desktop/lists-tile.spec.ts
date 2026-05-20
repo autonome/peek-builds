@@ -36,7 +36,7 @@ test.describe('Lists Tile @desktop', () => {
     // command invocation; keepLive preserves it once spawned.
     const fs = await import('node:fs');
     const path = await import('node:path');
-    const manifestPath = path.resolve(process.cwd(), 'features/lists/manifest.json');
+    const manifestPath = path.resolve(process.cwd(), 'apps/desktop/features/lists/manifest.json');
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     expect(manifest.tiles).toHaveLength(1);
     expect(manifest.tiles[0].id).toBe('home');

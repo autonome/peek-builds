@@ -17,7 +17,7 @@ import { readFileSync, existsSync } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const ROOT = path.join(__dirname, '../..');
+const ROOT = path.join(__dirname, '../../../..');
 
 // Simple static file server
 let server: ReturnType<typeof createServer>;

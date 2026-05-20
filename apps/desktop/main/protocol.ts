@@ -59,6 +59,8 @@ let activeThemeId = 'peek';
 
 // Root directory (set during init)
 let rootDir: string;
+// node_modules lives at the repo root (two levels above apps/desktop)
+let nodeModulesDir: string;
 
 // Bare import map for resolving npm package imports
 // Maps bare specifiers (e.g., 'lit') to node_modules paths
@@ -287,7 +289,7 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
 
     if (resolvedPath) {
       DEBUG && console.log(`[protocol] Resolved bare import: ${bareSpecifier} -> ${resolvedPath}`);
-      const absolutePath = path.resolve(rootDir, resolvedPath);
+      const absolutePath = path.resolve(nodeModulesDir, resolvedPath);
       return fetchFile(absolutePath, req.url);
     }
 
@@ -675,7 +677,9 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       relativePath = path.join(host, pathname);
     }
 
-    const absolutePath = path.resolve(rootDir, relativePath);
+    // node_modules are at the repo root, not under apps/desktop
+    const resolveBase = (host === 'node_modules') ? nodeModulesDir : rootDir;
+    const absolutePath = path.resolve(resolveBase, relativePath);
 
     return fetchFile(absolutePath, req.url);
   } catch (err) {
@@ -701,6 +705,8 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
  */
 export function initProtocol(appRootDir: string): void {
   rootDir = appRootDir;
+  // node_modules is at the repo root (../../ from apps/desktop)
+  nodeModulesDir = path.join(rootDir, '../..');
   protocol.handle(APP_SCHEME, handleProtocolRequest);
 }
 
