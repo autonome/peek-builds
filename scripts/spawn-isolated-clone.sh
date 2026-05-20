@@ -1,10 +1,10 @@
 #!/bin/bash
 # Claim an isolated CLONE for a background agent.
 #
-# Differs from spawn-isolated-agent.sh: that script creates a jj WORKSPACE
-# sharing .jj/ with the main checkout. THIS script creates a TRUE INDEPENDENT
+# This is the canonical agent isolation tool. It creates a TRUE INDEPENDENT
 # CLONE with its own .jj/ and .git/, eliminating both concurrent-edit hazards
 # between agents and the orphan-commit hazard of git worktrees.
+# (The old spawn-isolated-agent.sh jj-workspace pool has been retired.)
 #
 # Integration back into the main checkout happens via a registered git
 # remote (pool-<name>) — finalize fetches the agent's bookmark and rebases
@@ -15,6 +15,12 @@
 #
 # --base defaults to "main". Pass --base=apps-migration (or any other
 # bookmark name) to base the clone's working copy on a different branch.
+#
+# --scope=apps/desktop limits node_modules symlinking to that one app +
+# root + packages/*. Speeds up spawning for agents that only touch one app.
+# Read from /tmp/mpeek-clone-scope (write before calling — same invariant
+# text convention as /tmp/mpeek-clone-base and /tmp/mpeek-agent-name).
+# Unset = symlink all packages (current default behavior).
 #
 # Pool cap: 5. Policy, not enforced. Check `ls ../mpeek-clone-*` before
 # adding a new slot.
@@ -54,6 +60,18 @@ if [ -r /tmp/mpeek-clone-base ]; then
   fi
 fi
 
+# Scope is read from /tmp/mpeek-clone-scope, defaulting to empty (= all apps).
+# When set to e.g. "apps/desktop", only root, packages/*, and that one app
+# get their node_modules symlinked. Saves spawn time for single-app agents.
+SCOPE=""
+if [ -r /tmp/mpeek-clone-scope ]; then
+  candidate=$(cat /tmp/mpeek-clone-scope)
+  if [ -n "$candidate" ]; then
+    # Normalize: strip leading ./ if present
+    SCOPE="${candidate#./}"
+  fi
+fi
+
 MAIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CLONE_DIR="${MAIN_DIR}/../mpeek-clone-${NAME}"
 PROFILE="clone-${NAME}"
@@ -88,6 +106,18 @@ echo "Working copy set to ${BASE}; bookmark ${AGENT_BOOKMARK} created at @" >&2
 # We do NOT symlink .yarn/releases — the clone gets the yarn binary from the
 # git checkout. The trailing-slash-free `node_modules` gitignore pattern
 # (in main's .gitignore) covers symlinks at those paths.
+#
+# Scope filtering (when SCOPE is set):
+#   - Always symlink root (rel_dir == ".")
+#   - Always symlink packages/* (rel_dir starts with "packages/")
+#   - Symlink the scoped app dir (rel_dir == SCOPE)
+#   - Skip all other apps/
+if [ -n "$SCOPE" ]; then
+  echo "Scope: symlink node_modules only for root, packages/*, and ${SCOPE}" >&2
+else
+  echo "Scope: symlink node_modules for all packages" >&2
+fi
+
 cd "$MAIN_DIR"
 while IFS= read -r pkg; do
   pkg_dir=$(dirname "$pkg")
@@ -98,6 +128,19 @@ while IFS= read -r pkg; do
   dst_lock="${CLONE_DIR}/${rel_dir}/yarn.lock"
   if [ ! -d "$src_modules" ]; then
     continue
+  fi
+  # Scope filtering: skip out-of-scope apps/ when scope is set
+  if [ -n "$SCOPE" ]; then
+    case "$rel_dir" in
+      .|packages/*|"$SCOPE")
+        # root, shared packages, or the explicitly scoped app — keep
+        ;;
+      apps/*)
+        # a different app — skip
+        echo "Scope: skipping ${rel_dir}/node_modules" >&2
+        continue
+        ;;
+    esac
   fi
   if [ -L "$dst_modules" ] || [ -d "$dst_modules" ]; then
     continue
@@ -133,4 +176,7 @@ echo "$CLONE_DIR"
 echo "PROFILE=${PROFILE}"
 echo "" >&2
 echo "Next: cd ${CLONE_DIR} && PROFILE=${PROFILE} yarn <script>" >&2
+if [ -n "$SCOPE" ]; then
+  echo "Scope: ${SCOPE} — for cross-app work, re-run without /tmp/mpeek-clone-scope" >&2
+fi
 echo "Finalize with: scripts/finalize-isolated-clone.sh ${NAME}" >&2

@@ -60,6 +60,25 @@ The bare `#peek` tag is the legacy project membership marker — leave
 it alone on existing items, but **don't add `#peek` to new items**.
 The `peek:*` namespace is implicit project membership.
 
+## Scope tags (which app does the task belong to?)
+
+Tasks scoped to a single app carry a `peek:scope:*` tag. This makes
+triage queries easy — e.g. find all desktop-only bugs:
+`list_items({ tags: ['peek:todo', 'peek:scope:desktop'] })`.
+
+| Tag | When to use |
+|-----|-------------|
+| `peek:scope:desktop` | Only affects `apps/desktop` (Electron main process, renderer, features) |
+| `peek:scope:mobile` | Only affects `apps/mobile` (Tauri mobile / iOS / Android) |
+| `peek:scope:server` | Only affects `apps/server` (webhook API backend) |
+| `peek:scope:extension` | Only affects `apps/extension` (browser extension) |
+| `peek:scope:cross` | Explicitly cross-cutting (touches multiple apps or `packages/`) |
+
+Omit the scope tag if the task is inherently cross-cutting and you
+don't want to pick one (equivalent to `peek:scope:cross`). Do **not**
+add `peek:scope:*` when you don't know — leave it unscoped, then the
+triage pass can assign it.
+
 ## Add a task
 
 ```js

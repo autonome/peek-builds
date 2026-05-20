@@ -1761,7 +1761,7 @@ export function registerActivateHandler(): void {
  *   (used by `run:packaged` and parallel Playwright workers that share
  *   the same profile name across workers).
  *
- * The `agent-*` family used by `scripts/spawn-isolated-agent.sh`
+ * The `agent-*` family used by `scripts/spawn-isolated-clone.sh`
  * always runs from source, so it's covered by the !app.isPackaged
  * branch — no special-case needed.
  */
