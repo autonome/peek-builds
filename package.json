@@ -193,6 +193,9 @@
     "rss": "node scripts/changelog-to-rss.js",
     "changelog:bump": "node scripts/changelog-bump.js"
   },
+  "workspaces": [
+    "backend/electron"
+  ],
   "dependencies": {
     "@codemirror/commands": "^6.10.1",
     "@codemirror/lang-markdown": "^6.5.0",

@@ -829,6 +829,12 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@peek/desktop@workspace:backend/electron":
+  version: 0.0.0-use.local
+  resolution: "@peek/desktop@workspace:backend/electron"
+  languageName: unknown
+  linkType: soft
+
 "@pinojs/redact@npm:^0.4.0":
   version: 0.4.0
   resolution: "@pinojs/redact@npm:0.4.0"

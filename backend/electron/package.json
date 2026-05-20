@@ -1,0 +1,7 @@
+{
+  "name": "@peek/desktop",
+  "version": "0.0.1",
+  "description": "Peek desktop — Electron main process, renderer integration, and packaging. Stub workspace; deps + scripts move here in the apps/desktop restructure (Phase 3).",
+  "private": true,
+  "type": "module"
+}
