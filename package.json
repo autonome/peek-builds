@@ -17,7 +17,7 @@
     "url": "https://github.com/autonome/peek"
   },
   "build": {
-    "extends": "electron-builder.yml"
+    "extends": "apps/desktop/electron-builder.yml"
   },
   "scripts": {
     "postinstall": "electron-rebuild -f -w better-sqlite3",

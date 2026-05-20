@@ -829,9 +829,38 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@peek/desktop@workspace:backend/electron":
+"@peek/desktop@workspace:apps/desktop":
   version: 0.0.0-use.local
-  resolution: "@peek/desktop@workspace:backend/electron"
+  resolution: "@peek/desktop@workspace:apps/desktop"
+  dependencies:
+    "@codemirror/commands": "npm:^6.10.1"
+    "@codemirror/lang-markdown": "npm:^6.5.0"
+    "@codemirror/language": "npm:^6.12.1"
+    "@codemirror/search": "npm:^6.6.0"
+    "@codemirror/state": "npm:^6.5.4"
+    "@codemirror/theme-one-dark": "npm:^6.1.3"
+    "@codemirror/view": "npm:^6.39.11"
+    "@electron/rebuild": "npm:^4.0.2"
+    "@ghostery/adblocker-electron": "npm:^2.13.4"
+    "@playwright/test": "npm:^1.57.0"
+    "@replit/codemirror-vim": "npm:^6.3.0"
+    "@types/archiver": "npm:^6.0.0"
+    "@types/better-sqlite3": "npm:^7.6.13"
+    "@types/node": "npm:^25.0.3"
+    archiver: "npm:^7.0.0"
+    better-sqlite3: "npm:^12.5.0"
+    cross-fetch: "npm:^4.1.0"
+    electron: "npm:^40.0.0"
+    electron-builder: "npm:26.0.12"
+    electron-unhandled: "npm:^5.0.0"
+    fake-indexeddb: "npm:^6.2.5"
+    linkedom: "npm:^0.18.12"
+    lit: "npm:^3.3.2"
+    playwright: "npm:^1.57.0"
+    playwright-webextext: "npm:^0.0.4"
+    tslib: "npm:^2.8.1"
+    typescript: "npm:^5.9.3"
+    web-ext: "npm:^9.2.0"
   languageName: unknown
   linkType: soft
 
