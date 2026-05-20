@@ -72,9 +72,10 @@ else
 fi
 
 # Reset clone to current BASE and create a fresh bookmark.
+# Use BASE@origin since the clone only has remote-tracking refs, not local ones.
 cd "$CLONE_DIR"
 jj git fetch >&2
-jj new "$BASE" >&2
+jj new "${BASE}@origin" >&2
 jj bookmark create "$AGENT_BOOKMARK" -r @ >&2
 echo "Working copy set to ${BASE}; bookmark ${AGENT_BOOKMARK} created at @" >&2
 
