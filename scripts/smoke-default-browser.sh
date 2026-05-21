@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Linux smoke test for the AppImage default-browser registration flow.
+# Linux smoke test for the AppImage default-browser + CLI-alias install flow.
 #
 # Verifies end-to-end:
 #   T1: launching the AppImage installs ~/.local/share/applications/peek.desktop
@@ -8,11 +8,18 @@
 #   T3: an external xdg-open <url> reaches Peek's URL handler
 #       (verified via /tmp/peek-url-debug.log written by main.ts:urlLog)
 #   T4: a relocated AppImage corrects its own Exec= path on next launch
+#   T5: the AppImage installs a `peek` symlink in $PEEK_CLI_ALIAS_DIR
+#       pointing at the current AppImage
+#   T6: invoking the symlink with a URL (`peek https://…`) forwards the
+#       URL to the running instance (proves the alias is wired all the
+#       way through, not just present on disk)
 #
 # Isolation: $XDG_DATA_HOME is pointed at a temp dir so the test never
 # touches the real user's ~/.local/share/applications/. desktop-installer.ts
-# honors XDG_DATA_HOME for exactly this reason. The user's xdg-mime default
-# IS modified during the test (no clean way to isolate xdg's mimeapps.list
+# honors XDG_DATA_HOME for exactly this reason. $PEEK_CLI_ALIAS_DIR sends
+# the `peek` symlink to the same temp tree so we don't trample whatever the
+# user already has at ~/.local/bin/peek. The user's xdg-mime default IS
+# modified during the test (no clean way to isolate xdg's mimeapps.list
 # without a full session sandbox); we restore the previous default in the
 # trap.
 #
@@ -42,8 +49,10 @@ echo "smoke: testing $APPIMAGE"
 # ── Isolate XDG_DATA_HOME so the test doesn't touch the user's real dirs ─────
 SMOKE_TMP="$(mktemp -d -t peek-smoke-XXXXXX)"
 export XDG_DATA_HOME="$SMOKE_TMP/share"
-mkdir -p "$XDG_DATA_HOME/applications" "$XDG_DATA_HOME/icons"
+export PEEK_CLI_ALIAS_DIR="$SMOKE_TMP/bin"
+mkdir -p "$XDG_DATA_HOME/applications" "$XDG_DATA_HOME/icons" "$PEEK_CLI_ALIAS_DIR"
 DESKTOP_FILE="$XDG_DATA_HOME/applications/peek.desktop"
+CLI_ALIAS="$PEEK_CLI_ALIAS_DIR/peek"
 
 URL_LOG=/tmp/peek-url-debug.log
 MARKER_URL="https://default-browser-smoke-$$-$(date +%s).invalid/"
@@ -90,7 +99,7 @@ launch_appimage() {
   # PEEK_HEADLESS=1 keeps the BrowserWindow hidden so the test doesn't pop a
   # focus-stealing window into the user's session. The desktop-install path
   # runs unconditionally on Linux/AppImage regardless of headless.
-  PEEK_HEADLESS=1 XDG_DATA_HOME="$XDG_DATA_HOME" "$exe" >"$SMOKE_TMP/peek.log" 2>&1 &
+  PEEK_HEADLESS=1 XDG_DATA_HOME="$XDG_DATA_HOME" PEEK_CLI_ALIAS_DIR="$PEEK_CLI_ALIAS_DIR" "$exe" >"$SMOKE_TMP/peek.log" 2>&1 &
   PEEK_PID=$!
 }
 
@@ -196,6 +205,52 @@ done
 if [ "$EXEC_OK" != "1" ]; then
   echo "FAIL T4: Exec= did not update to relocated path"
   echo "--- desktop file ---"; cat "$DESKTOP_FILE"; echo "---"
+  exit 1
+fi
+echo "  pass"
+
+# ── T5: CLI alias symlink installed and pointing at current AppImage ────────
+# After T4 the relocated AppImage is the running instance, so the alias
+# should now point at $RELOCATED (T4 already self-corrected the .desktop
+# file's Exec= path — same auto-refresh logic applies to the symlink).
+echo "T5: peek symlink installed in PEEK_CLI_ALIAS_DIR"
+ALIAS_OK=0
+for _ in $(seq 1 15); do
+  if [ -L "$CLI_ALIAS" ] && [ "$(readlink "$CLI_ALIAS")" = "$RELOCATED" ]; then
+    ALIAS_OK=1
+    break
+  fi
+  sleep 1
+done
+if [ "$ALIAS_OK" != "1" ]; then
+  echo "FAIL T5: $CLI_ALIAS missing or points at the wrong target"
+  ls -la "$PEEK_CLI_ALIAS_DIR" 2>&1 || true
+  echo "expected target: $RELOCATED"
+  echo "actual readlink: $(readlink "$CLI_ALIAS" 2>/dev/null || echo '(no symlink)')"
+  exit 1
+fi
+echo "  pass"
+
+# ── T6: invoking the alias with a URL reaches Peek's URL handler ────────────
+# Distinct marker URL so we don't false-positive on T3's marker still in
+# the log. Invoking via the symlink exercises the full surface: shell →
+# symlink → AppImage runtime → second-instance forward → handleExternalUrl.
+echo "T6: \`peek <url>\` via alias forwards to running instance"
+T6_MARKER="https://cli-alias-smoke-$$-$(date +%s).invalid/"
+"$CLI_ALIAS" "$T6_MARKER" >/dev/null 2>&1 || true
+T6_FOUND=0
+for _ in $(seq 1 15); do
+  if grep -q "$T6_MARKER" "$URL_LOG" 2>/dev/null; then
+    T6_FOUND=1
+    break
+  fi
+  sleep 1
+done
+if [ "$T6_FOUND" != "1" ]; then
+  echo "FAIL T6: alias-launched URL '$T6_MARKER' never reached Peek's urlLog"
+  echo "--- /tmp/peek-url-debug.log (last 20 lines) ---"
+  tail -20 "$URL_LOG" 2>/dev/null || echo "(empty or missing)"
+  echo "---"
   exit 1
 fi
 echo "  pass"

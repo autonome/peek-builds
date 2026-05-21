@@ -118,7 +118,7 @@ import { createTrustedBuiltinGrant } from './tile-manifest.js';
 import { generateToken } from './tile-tokens.js';
 import { startCliSocketServer, stopCliSocketServer, isCliSocketRunning } from './cli-socket.js';
 import { ensureCliHelperShadow } from './cli-helper.js';
-import { ensureLinuxDesktopInstall } from './desktop-installer.js';
+import { ensureLinuxDesktopInstall, ensureLinuxCliAlias } from './desktop-installer.js';
 import { initRendererLog } from './renderer-log.js';
 import { initMainLog } from './main-log.js';
 import { DEBUG } from './config.js';
@@ -1202,6 +1202,11 @@ const onReady = async () => {
   // AppImage's mount is ephemeral and never auto-installs into the
   // user's XDG dirs. See backend/electron/desktop-installer.ts.
   await ensureLinuxDesktopInstall();
+
+  // Same gate: install a `peek` symlink in ~/.local/bin so users can
+  // run `peek https://example.com` from a shell. argv-URL handling is
+  // already wired in main.ts (handleCliUrl + second-instance handler).
+  await ensureLinuxCliAlias();
 
   // Note: cli-socket startup happens in the prefs subscriber (below)
   // so the cliSocketEnabled toggle is honoured from the first publish.
