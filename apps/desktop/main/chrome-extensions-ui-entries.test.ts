@@ -137,6 +137,65 @@ describe('computeUiEntries — MV2 extension (browser_action + options_page + ba
   });
 });
 
+// ── Regression: popup + settings buttons both rendered in Settings → Extensions ─
+//
+// This test exists because the popup branch and the options branch of
+// computeUiEntries have each been accidentally dropped in separate refactors.
+// It asserts BOTH are present for a single extension that declares them, and
+// names itself so the failure message directly identifies the missing link.
+
+describe('regression: Settings → Extensions panel link + settings link both present (fb6f27d7)', () => {
+  const EXT_ID = 'test-ext-regression';
+  const loaded = new Map([[EXT_ID, { extensionUrl: 'chrome-extension://regressionhash/' }]]);
+  const discovered = new Map([[EXT_ID, {
+    name: 'Regression Test Ext',
+    manifest: {
+      action: { default_popup: 'popup.html', default_title: 'Open' },
+      options_ui: { page: 'options.html' },
+    },
+  }]]);
+  const result = computeUiEntries(loaded, discovered);
+
+  it('popup entry (panel link) is present — if missing, the popup button in Settings → Extensions is broken', () => {
+    const popup = result.find(e => e.type === 'popup');
+    assert.ok(
+      popup,
+      'REGRESSION: popup entry missing — the "Open popup" button will not render in Settings → Extensions',
+    );
+    assert.strictEqual(popup!.extensionId, EXT_ID);
+    assert.strictEqual(popup!.openable, true);
+    assert.strictEqual(popup!.url, 'chrome-extension://regressionhash/popup.html');
+  });
+
+  it('options entry (settings link) is present — if missing, the settings button in Settings → Extensions is broken', () => {
+    const options = result.find(e => e.type === 'options');
+    assert.ok(
+      options,
+      'REGRESSION: options entry missing — the "Open settings" button will not render in Settings → Extensions',
+    );
+    assert.strictEqual(options!.extensionId, EXT_ID);
+    assert.strictEqual(options!.openable, true);
+    assert.strictEqual(options!.url, 'chrome-extension://regressionhash/options.html');
+  });
+
+  it('exactly 2 openable entries — both buttons accounted for, no extras or missing', () => {
+    const openable = result.filter(e => e.openable);
+    assert.strictEqual(
+      openable.length,
+      2,
+      'REGRESSION: expected exactly 2 openable entries (popup + options). ' +
+      'If count < 2, at least one Settings → Extensions button is missing. ' +
+      'If count > 2, an unexpected entry was added.',
+    );
+    const types = openable.map(e => e.type).sort();
+    assert.deepStrictEqual(
+      types,
+      ['options', 'popup'],
+      'REGRESSION: the two openable entries must be exactly type=popup and type=options',
+    );
+  });
+});
+
 describe('computeUiEntries — extensionId matching (Settings renderer uses ext.id === e.extensionId)', () => {
   it('extensionId in entries equals the Map key (directory name)', () => {
     const loaded = new Map([['consent-o-matic', { extensionUrl: 'chrome-extension://xhash/' }]]);
