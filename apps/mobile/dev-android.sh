@@ -66,8 +66,28 @@ echo "[dev] Build number: v$BUILD_NUM"
 # Start emulator if no devices connected
 ADB="$ANDROID_HOME/platform-tools/adb"
 if [ -x "$ADB" ]; then
-    DEVICES=$("$ADB" devices 2>/dev/null | grep -c 'device$' || true)
+    # Retry adb devices check 3x to ride out transient adb-server crashes
+    # (which happen frequently under HMR polling load). Also gate the
+    # auto-boot on `pgrep qemu-system` — if any emulator process is already
+    # running, refuse to spawn a second one (avoids the qemu-headless race
+    # observed 2026-05-21 — see task 6f5f0c6b).
+    DEVICES=0
+    for attempt in 1 2 3; do
+        DEVICES=$("$ADB" devices 2>/dev/null | grep -c 'device$' || true)
+        if [ "$DEVICES" -gt 0 ]; then break; fi
+        if [ "$attempt" -lt 3 ]; then sleep 2; fi
+    done
+
     if [ "$DEVICES" -eq 0 ]; then
+        EXISTING_EMULATORS=$(pgrep -c qemu-system 2>/dev/null || echo "0")
+        if [ "$EXISTING_EMULATORS" -gt 0 ]; then
+            echo "ERROR: adb sees no devices but qemu-system is running (PID $(pgrep qemu-system | head -1))."
+            echo "  adb may have crashed; the emulator is still alive."
+            echo "  Run 'adb kill-server' to recover, or kill the emulator with 'adb emu kill'."
+            echo "  Refusing to spawn a second emulator (would race with the existing one)."
+            exit 1
+        fi
+
         echo "[dev] No Android devices/emulators found."
         EMULATOR="$ANDROID_HOME/emulator/emulator"
         if [ -x "$EMULATOR" ]; then
