@@ -108,6 +108,23 @@ const escapeHtml = (str) => {
   return div.innerHTML;
 };
 
+/**
+ * Set the window title to reflect the current search query.
+ * Empty query → "Search"; non-empty → "Search: <query>" (truncated at 60 chars).
+ * Electron's BrowserWindow.getTitle() reads document.title, so the Windows
+ * switcher card label updates automatically.
+ */
+const setSearchTitle = (query) => {
+  const q = (query || '').trim();
+  if (!q) {
+    document.title = 'Search';
+    return;
+  }
+  const MAX = 60;
+  const truncated = q.length > MAX ? q.slice(0, MAX - 1) + '…' : q;
+  document.title = `Search: ${truncated}`;
+};
+
 // ── Data fetching ──────────────────────────────────────────────────────
 
 /**
@@ -247,6 +264,7 @@ const render = () => {
   container.innerHTML = '';
 
   renderTitle();
+  setSearchTitle(state.query);
 
   if (state.results.length === 0) {
     const message = state.query
