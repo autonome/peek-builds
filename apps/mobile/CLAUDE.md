@@ -68,6 +68,24 @@ Android build and dev scripts are in `apps/mobile/`:
 
 **adb am start with `content://media` URIs fails with SecurityException** from synthetic adb tests. Real apps work via own-FileProvider grants. Do not conclude image-share is broken based on a synthetic adb test.
 
+### tauri CLI version — use npm, not system cargo-tauri
+
+The mobile app pins `@tauri-apps/cli` at `^2.10.1` (see `devDependencies` in `package.json`). All Android scripts (`dev-android.sh`, `build-android.sh`, `build-android-release.sh`, `dev-both.sh`) resolve the tauri CLI explicitly from `node_modules/.bin/tauri` — they do NOT use `npx tauri` or any system `cargo-tauri`.
+
+Two reasons for this:
+1. **Fresh-clone reliability**: `npx` resolution fails on pool clones where per-app `npm install` state isn't guaranteed (node_modules are symlinked from main, but npm's tauri resolution requires the symlink to be present).
+2. **Version mismatch panic**: System `cargo-tauri` installed via `cargo install` (e.g. 2.9.6) panics inside `android-studio-script` against our npm CLI at 2.10.x. Minor versions are NOT compatible across the cargo/npm distributions.
+
+If you have a system `cargo-tauri` installed, it is ignored by all scripts. If you need to verify which version will be used:
+
+```bash
+apps/mobile/node_modules/.bin/tauri --version
+# or from repo root:
+node_modules/.bin/tauri --version
+```
+
+Do NOT run `cargo install tauri-cli` to "fix" Android dev issues — use the npm CLI that the scripts resolve automatically.
+
 ---
 
 ## iOS Share Extension
