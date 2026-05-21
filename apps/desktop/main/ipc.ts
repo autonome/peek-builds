@@ -769,7 +769,7 @@ export function registerWindowHandlers(): void {
     // (webview, navbar, resize handle) are positioned via JS on an invisible surface.
     // Non-canvas web pages (modals, quick-views, overlays) load their URL directly.
     const isModalOrQuickView = options.modal === true || options.overlay === true;
-    const useCanvas = isWebPage && !isModalOrQuickView;
+    const useCanvas = options.canvas === true || (isWebPage && !isModalOrQuickView);
 
     // Use profile-specific session for isolation
     const profileSession = getProfileSession();

@@ -79,6 +79,8 @@ const executeItem = (item) => {
 
     // modal behavior
     modal: true,
+    // canvas: true → page-host shell with address bar (task ff3b18ba)
+    canvas: true,
     type: 'panel',
 
     // placement: peeks center on the cursor display regardless of size
