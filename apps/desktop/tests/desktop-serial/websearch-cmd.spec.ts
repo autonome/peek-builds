@@ -79,24 +79,22 @@ async function ensureWebsearchLoaded(bgWindow: Page) {
   const loaded = await bgWindow.evaluate(async () => {
     const api = (window as any).app;
 
-    // Probe: is a websearch tile window already live?
-    const hasWebsearchWindow = async () => {
-      const result = await api.window.list({ includeInternal: true });
-      if (!result?.success || !Array.isArray(result.windows)) return false;
-      return result.windows.some(
-        (w: { url?: string }) => (w.url || '').includes('peek://websearch/'),
-      );
+    // Probe: is the kagi command already registered (i.e. tile is fully booted)?
+    const hasKagiCommand = async () => {
+      const result = await api.commands.list();
+      if (!result?.success || !Array.isArray(result.data)) return false;
+      return result.data.some((c: { name: string }) => c.name === 'kagi');
     };
 
-    if (await hasWebsearchWindow()) return true;
+    if (await hasKagiCommand()) return true;
 
     // Trigger lazy load via a non-hanging command
     api.publish('cmd:execute:open web search', {});
 
-    // Wait for a websearch tile window to appear
+    // Wait for the kagi command to be registered (tile fully booted)
     const start = Date.now();
     while (Date.now() - start < 15000) {
-      if (await hasWebsearchWindow()) return true;
+      if (await hasKagiCommand()) return true;
       await new Promise(r => setTimeout(r, 200));
     }
     return false;
@@ -128,13 +126,13 @@ test.describe('Websearch Cold-Start Lazy Loading @desktop', () => {
 
     // Verify websearch is NOT loaded yet (it's lazy, not eager).
     // In v3 there's no "running" status on the registry — registered ≠ loaded.
-    // The real signal for "loaded" is a live websearch tile window.
+    // The real signal for "loaded" is the kagi command being registered (tile
+    // fully booted), not just a window URL match which can race with command
+    // registration.
     const isLoaded = await sharedBgWindow.evaluate(async () => {
-      const result = await (window as any).app.window.list({ includeInternal: true });
-      if (!result?.success || !Array.isArray(result.windows)) return false;
-      return result.windows.some(
-        (w: { url?: string }) => (w.url || '').includes('peek://websearch/'),
-      );
+      const result = await (window as any).app.commands.list();
+      if (!result?.success || !Array.isArray(result.data)) return false;
+      return result.data.some((c: { name: string }) => c.name === 'kagi');
     });
     // If it's already loaded (e.g., test order changed), skip gracefully
     if (isLoaded) {
