@@ -1378,6 +1378,42 @@ if (isHeadless() && isTestProfile()) {
     });
   });
   console.log('[headless-guard] BrowserWindow creation guard active (visible-at-ctor throws)');
+
+  // ── show / showInactive prototype guard ────────────────────────────────
+  // Any call to win.show() or win.showInactive() that bypasses
+  // showWindowHeadlessSafe() will reach here with opacity != 0 and will
+  // therefore be visible on the real display. Intercept both methods and
+  // throw if the window's opacity wasn't zeroed first, so future
+  // accidental call sites are caught immediately rather than silently
+  // flashing windows onto the user's screen.
+  //
+  // Exempt: the opacity is checked BEFORE the original method runs.
+  // showWindowHeadlessSafe() already calls setOpacity(0) first, so
+  // compliant callers always pass the check.
+  const _origShow = BrowserWindow.prototype.show;
+  const _origShowInactive = BrowserWindow.prototype.showInactive;
+
+  function headlessShowGuard(this: BrowserWindow, methodName: 'show' | 'showInactive', origFn: () => void): void {
+    if (!this.isDestroyed() && this.getOpacity() !== 0) {
+      let url = '(no-url)';
+      try { url = this.webContents.getURL() || '(no-url)'; } catch { /* destroyed */ }
+      const msg = `[headless-violation] ${methodName}() called on id=${this.id} with opacity=${this.getOpacity()} (not 0) url=${url} — use showWindowHeadlessSafe()`;
+      console.error(msg);
+      console.error(new Error(msg).stack);
+      process.exitCode = 1;
+      throw new Error(msg);
+    }
+    origFn.call(this);
+  }
+
+  BrowserWindow.prototype.show = function(this: BrowserWindow) {
+    headlessShowGuard.call(this, 'show', _origShow);
+  };
+  BrowserWindow.prototype.showInactive = function(this: BrowserWindow) {
+    headlessShowGuard.call(this, 'showInactive', _origShowInactive);
+  };
+
+  console.log('[headless-guard] BrowserWindow show/showInactive prototype guard active (opacity must be 0)');
 }
 
 // Start the app
