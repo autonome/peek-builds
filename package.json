@@ -67,7 +67,7 @@
     "mobile:ios:sim:boot": "xcrun simctl boot 'iPhone 17 Pro' 2>/dev/null || echo 'Simulator already booted or not found'",
     "mobile:ios:sim:open": "open -a Simulator",
     "mobile:ios:sim:launch": "xcrun simctl launch booted com.dietrich.peek-mobile",
-    "mobile:ios:sim:run": "yarn mobile:ios:sim:boot && yarn mobile:ios:sim:open && yarn mobile:ios:xcodebuild:release:full && yarn mobile:ios:sim:launch",
+    "mobile:ios:sim:run": "yarn mobile:ios:sim:boot && yarn mobile:ios:sim:open && yarn mobile:ios:xcodebuild:full && yarn mobile:ios:sim:launch",
     "mobile:ios:sim:db:path": "find ~/Library/Developer/CoreSimulator/Devices -name 'com.dietrich.peek-mobile' -path '*/AppGroup/*' 2>/dev/null | head -1 | xargs dirname | xargs ls -la",
     "mobile:ios:sim:db:info": "DB=$(find ~/Library/Developer/CoreSimulator/Devices -name 'peek*.db' -path '*/AppGroup/*' 2>/dev/null | head -1) && echo \"Database: $DB\" && sqlite3 \"$DB\" 'SELECT * FROM settings; SELECT COUNT(*) as items FROM items WHERE deleted_at IS NULL; SELECT COUNT(*) as tags FROM tags; SELECT COUNT(*) as item_tags FROM item_tags;'",
     "mobile:ios:sim:db:schema": "DB=$(find ~/Library/Developer/CoreSimulator/Devices -name 'peek*.db' -path '*/AppGroup/*' 2>/dev/null | head -1) && sqlite3 \"$DB\" '.schema tags' '.schema item_tags'",
