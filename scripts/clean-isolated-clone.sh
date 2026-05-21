@@ -22,6 +22,17 @@ if [ -z "$NAME" ]; then
   exit 2
 fi
 
+# Guard the reserved "mobile" slot — clean only on explicit override.
+# This slot persists Rust target/, Xcode derived data, libapp.a, xcframework
+# outputs across sessions; tearing it down means re-paying ~2 min Rust cold
+# build + xcode time on next mobile work.
+if [ "$NAME" = "mobile" ] && [ "${MOBILE_FORCE_CLEAN:-}" != "1" ]; then
+  echo "error: refusing to clean the reserved 'mobile' workspace slot." >&2
+  echo "       this slot caches hours of Rust + Xcode build outputs." >&2
+  echo "       to clean anyway: MOBILE_FORCE_CLEAN=1 scripts/clean-isolated-clone.sh" >&2
+  exit 4
+fi
+
 MAIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CLONE_DIR="${MAIN_DIR}/../mpeek-clone-${NAME}"
 REMOTE_NAME="pool-${NAME}"
