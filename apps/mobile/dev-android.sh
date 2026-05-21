@@ -46,13 +46,60 @@ echo "ANDROID_HOME=$ANDROID_HOME"
 echo "JAVA_HOME=$JAVA_HOME"
 echo "NDK_HOME=$NDK_HOME"
 
-# Ensure local.properties exists
+# Ensure local.properties exists (written with real SDK path before shim takes over)
 TAURI_DIR="$SCRIPT_DIR/src-tauri"
 if [ ! -f "$TAURI_DIR/gen/android/local.properties" ]; then
     mkdir -p "$TAURI_DIR/gen/android"
     echo "sdk.dir=$ANDROID_HOME" > "$TAURI_DIR/gen/android/local.properties"
     echo "Created local.properties"
 fi
+
+# ── adb crash-prevention shim ──────────────────────────────────────────────
+# tauri android dev spawns many concurrent adb child processes.  In adb 37.0.0
+# a race-to-bind-port-5037 regression causes SIGABRT in adb_server_main when
+# multiple processes try to start the daemon simultaneously (30+ crashes / 3 min
+# observed 2026-05-21, task 93e18a97).
+#
+# Fix: intercept adb via a shim ANDROID_HOME whose platform-tools/adb is a
+# flock-serialised wrapper (apps/mobile/bin/adb).  The wrapper ensures only ONE
+# process at a time can be in the "start server" state; all others either see
+# the daemon is already up (fast TCP probe) or wait for the lock.
+#
+# Additionally, a background shepherd monitors the daemon and restarts it if it
+# dies, closing the window where concurrent adb clients would all race to start.
+
+# Record real SDK path before overriding ANDROID_HOME
+REAL_ANDROID_HOME="$ANDROID_HOME"
+
+# Source the shim script; exports ANDROID_HOME (shim dir) and PEEK_REAL_ADB
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/bin/setup-adb-shim.sh"
+echo "[adb-shim] ANDROID_HOME → $ANDROID_HOME (shim)"
+echo "[adb-shim] PEEK_REAL_ADB = $PEEK_REAL_ADB"
+
+# Background shepherd: keep the adb daemon alive during the tauri run.
+# Uses the REAL adb directly (not the wrapper) to avoid re-entry.
+_adb_daemon_shepherd() {
+    local _real="$1"
+    local _port="${ANDROID_ADB_SERVER_PORT:-5037}"
+    while true; do
+        if ! nc -z -w1 127.0.0.1 "$_port" 2>/dev/null; then
+            "$_real" -P "$_port" start-server >/dev/null 2>&1 || true
+        fi
+        sleep 1
+    done
+}
+_adb_daemon_shepherd "$PEEK_REAL_ADB" &
+_SHEPHERD_PID=$!
+
+# Kill shepherd when dev session ends (Ctrl-C, normal exit, or error)
+_cleanup_shepherd() {
+    kill "$_SHEPHERD_PID" 2>/dev/null || true
+}
+trap '_cleanup_shepherd' EXIT INT TERM HUP
+
+echo "[adb-shim] shepherd started (PID $_SHEPHERD_PID)"
+# ── end adb crash-prevention shim ─────────────────────────────────────────
 
 # Bump build number (auto-create if missing — fresh clones don't have this file)
 BUILD_FILE="$SCRIPT_DIR/BUILD_NUMBER"

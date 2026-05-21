@@ -1,0 +1,96 @@
+#!/bin/sh
+# adb-wrapper: serialised adb proxy that breaks the concurrent server-spawn race.
+#
+# Root cause of SIGABRT in adb_server_main (observed 30+ crashes / 3 min during
+# tauri android dev, 2026-05-21):
+#   tauri-cli polls via many concurrent adb child processes.  Each child, if it
+#   cannot connect to the daemon on first attempt, forks a server-start subprocess
+#   (adb fork-server server).  When multiple of these race to bind port 5037, the
+#   losers call LOG(FATAL) → SIGABRT.
+#
+# Fix: serialise the "server not running → start it" phase.
+#   Fast path (server up): TCP probe with nc (does NOT auto-start server).  If the
+#   daemon is reachable, skip locking and exec the real adb command directly.
+#   Slow path (server down): acquire an atomic mkdir lock, re-check inside the lock,
+#   start server under the lock if still down, release lock, wait for server to be
+#   ready, then exec real adb.
+#
+# Requirements:
+#   PEEK_REAL_ADB — absolute path to the real adb binary (set by dev-android.sh)
+# Fallback if PEEK_REAL_ADB is not set: $HOME/Library/Android/sdk/platform-tools/adb
+
+REAL_ADB="${PEEK_REAL_ADB}"
+if [ -z "$REAL_ADB" ] || [ ! -x "$REAL_ADB" ]; then
+  _fallback="$HOME/Library/Android/sdk/platform-tools/adb"
+  if [ -x "$_fallback" ]; then
+    REAL_ADB="$_fallback"
+  else
+    echo "adb-wrapper: PEEK_REAL_ADB not set and real adb not found at $_fallback" >&2
+    exit 1
+  fi
+fi
+
+ADB_PORT="${ANDROID_ADB_SERVER_PORT:-5037}"
+LOCKDIR="${TMPDIR:-/tmp}/peek-adb-server.lck"
+
+# Fast path: if the adb daemon is already reachable (raw TCP probe — does NOT
+# auto-start the server), exec the real command directly with zero overhead.
+if nc -z -w1 127.0.0.1 "$ADB_PORT" 2>/dev/null; then
+  exec "$REAL_ADB" "$@"
+fi
+
+# Slow path: daemon not reachable.
+# Use atomic mkdir as a cross-process exclusive lock.
+# Strategy:
+#   - The FIRST process to acquire the lock starts the server.
+#   - All other processes wait for the lock, then find the server already up.
+#   - After any wait (lock or timeout), re-check TCP before proceeding; if the
+#     server is now up, exec directly (avoids re-entering the start-server path).
+
+_lock_acquired=0
+_max_retries=50    # 50 * 0.1s = 5 seconds max wait
+_retries=0
+
+while [ "$_retries" -lt "$_max_retries" ]; do
+  if mkdir "$LOCKDIR" 2>/dev/null; then
+    _lock_acquired=1
+    # Write PID for stale-lock detection
+    echo $$ > "$LOCKDIR/pid" 2>/dev/null || true
+    break
+  fi
+  # Check for stale lock: lock dir exists but owner PID is gone
+  _pid_file="$LOCKDIR/pid"
+  if [ -f "$_pid_file" ]; then
+    _lock_pid="$(cat "$_pid_file" 2>/dev/null)"
+    if [ -n "$_lock_pid" ] && ! kill -0 "$_lock_pid" 2>/dev/null; then
+      # Stale lock from a dead process — remove and retry immediately
+      rm -rf "$LOCKDIR" 2>/dev/null || true
+      continue
+    fi
+  fi
+  # While waiting, the lock holder may have already started the server.
+  # Re-check TCP: if the server came up, we can skip waiting entirely.
+  if nc -z -w1 127.0.0.1 "$ADB_PORT" 2>/dev/null; then
+    exec "$REAL_ADB" "$@"
+  fi
+  sleep 0.1
+  _retries=$((_retries + 1))
+done
+
+if [ "$_lock_acquired" -eq 1 ]; then
+  # We hold the lock.  Re-check (another process may have just started the server)
+  if ! nc -z -w1 127.0.0.1 "$ADB_PORT" 2>/dev/null; then
+    # start-server waits until the daemon is fully ready before returning
+    "$REAL_ADB" -P "$ADB_PORT" start-server >/dev/null 2>&1 || true
+  fi
+  # Release the lock before exec (exec replaces this process; traps don't fire)
+  rm -rf "$LOCKDIR" 2>/dev/null || true
+else
+  # Timed out waiting for the lock.  By this point (~5 seconds) the server
+  # should be running (started by whichever process held the lock).  Proceed;
+  # the real adb will connect normally or fail gracefully.
+  true
+fi
+
+# Run the actual command.
+exec "$REAL_ADB" "$@"
