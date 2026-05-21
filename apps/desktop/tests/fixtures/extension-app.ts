@@ -15,7 +15,13 @@
  *
  * Environment:
  *   BROWSER=chrome|firefox  - Select browser (default: chrome)
- *   HEADLESS=0              - Must be 0, extensions require headed mode
+ *   HEADLESS=1              - On Linux, Xvfb provides a virtual display so
+ *                            extensions run invisibly. On macOS, Chrome
+ *                            extensions cannot load in Playwright's headless
+ *                            mode (chromium-headless-shell drops extension
+ *                            support), so extension tests MUST run headed
+ *                            on macOS. The spec files skip automatically
+ *                            when HEADLESS=1 and platform is not Linux.
  */
 
 import { chromium, firefox, BrowserContext, Page } from '@playwright/test';
@@ -23,7 +29,6 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { sleep } from '../helpers/window-utils';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -69,14 +74,22 @@ function createTempProfileDir(browser: ExtensionBrowser, profile: string): strin
 }
 
 /**
- * Launch Chrome with extension loaded
+ * Launch Chrome with extension loaded.
+ *
+ * Chrome extensions cannot load in Playwright's headless mode
+ * (chromium-headless-shell). This fixture always runs headed.
+ * On Linux, playwright-with-display.sh provides an Xvfb virtual display
+ * so the window never reaches the user's real session. On macOS, tests
+ * that call this fixture skip when HEADLESS=1 (see spec files).
  */
 async function launchChrome(profile: string): Promise<ExtensionApp> {
   const userDataDir = createTempProfileDir('chrome', profile);
 
-  // Launch Chrome with the extension loaded using persistent context
+  // Launch Chrome with the extension loaded using persistent context.
+  // headless: false is required — Playwright's headless mode uses
+  // chromium-headless-shell which does not support loading extensions.
   const context = await chromium.launchPersistentContext(userDataDir, {
-    headless: false, // Extensions require headed mode
+    headless: false,
     args: [
       `--disable-extensions-except=${EXTENSION_PATH}`,
       `--load-extension=${EXTENSION_PATH}`,
@@ -85,62 +98,33 @@ async function launchChrome(profile: string): Promise<ExtensionApp> {
     ],
   });
 
-  // Wait for the service worker to be registered
+  // Detect the extension ID from its service worker URL.
+  //
+  // The service worker may already be registered by the time we read it
+  // (fast launch) or may register shortly after (slow/cold start). Check
+  // the already-registered list first, then fall back to waiting for the
+  // next registration event — deterministic, no polling or sleep.
   let extensionId = '';
 
-  // Method 1: Wait for service worker event with timeout
-  try {
-    const workerPromise = context.waitForEvent('serviceworker', { timeout: 10000 });
-    const worker = await workerPromise;
-    const url = worker.url();
-    if (url.startsWith('chrome-extension://')) {
-      const match = url.match(/chrome-extension:\/\/([^/]+)/);
+  // Check existing service workers first (they beat us to it on fast launches)
+  for (const worker of context.serviceWorkers()) {
+    const match = worker.url().match(/chrome-extension:\/\/([^/]+)/);
+    if (match) {
+      extensionId = match[1];
+      break;
+    }
+  }
+
+  // If not already present, wait for the SW registration event
+  if (!extensionId) {
+    try {
+      const worker = await context.waitForEvent('serviceworker', { timeout: 15000 });
+      const match = worker.url().match(/chrome-extension:\/\/([^/]+)/);
       if (match) {
         extensionId = match[1];
       }
-    }
-  } catch {
-    // Timeout - try alternative methods
-  }
-
-  // Method 2: Check existing service workers
-  if (!extensionId) {
-    const workers = context.serviceWorkers();
-    for (const worker of workers) {
-      const url = worker.url();
-      if (url.startsWith('chrome-extension://')) {
-        const match = url.match(/chrome-extension:\/\/([^/]+)/);
-        if (match) {
-          extensionId = match[1];
-          break;
-        }
-      }
-    }
-  }
-
-  // Method 3: Open a blank page and use chrome.runtime to get extension ID
-  if (!extensionId) {
-    // Open default page (about:blank) and list all service workers via devtools
-    const page = context.pages()[0] || await context.newPage();
-
-    // Poll for service workers
-    const maxWait = 10000;
-    const start = Date.now();
-    while (Date.now() - start < maxWait && !extensionId) {
-      const workers = context.serviceWorkers();
-      for (const worker of workers) {
-        const url = worker.url();
-        if (url.startsWith('chrome-extension://')) {
-          const match = url.match(/chrome-extension:\/\/([^/]+)/);
-          if (match) {
-            extensionId = match[1];
-            break;
-          }
-        }
-      }
-      if (!extensionId) {
-        await sleep(200);
-      }
+    } catch {
+      // waitForEvent timed out — fall through to failure below
     }
   }
 

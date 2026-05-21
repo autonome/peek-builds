@@ -3,10 +3,21 @@
  *
  * Tests for the options/settings page (options.html/options.js).
  * Run with: BROWSER=chrome yarn test:extension:browser
+ *
+ * These tests require a headed Chrome instance to load the extension
+ * (Playwright's headless shell does not support extensions). On Linux,
+ * playwright-with-display.sh unsets HEADLESS and provides an Xvfb
+ * virtual display. On macOS with HEADLESS=1, tests are skipped.
  */
 
 import { test, expect } from '@playwright/test';
 import { getSharedExtension, ExtensionApp } from '../fixtures/extension-app';
+
+// Chrome extensions cannot run in Playwright's headless mode (chromium-headless-shell).
+// On Linux, playwright-with-display.sh runs tests under Xvfb (headless unset, virtual display).
+// On macOS, skip when HEADLESS=1 to avoid surfacing a Chrome window on the user's desktop.
+test.skip(process.env.HEADLESS === '1' && process.platform !== 'linux',
+  'Extension tests require a display. Run yarn test:extension:browser (no HEADLESS) or on Linux where Xvfb is available.');
 import {
   waitForOptionsInit,
   fillSyncConfig,
