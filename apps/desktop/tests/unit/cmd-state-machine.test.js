@@ -10,7 +10,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const modulePath = join(__dirname, '..', '..', 'app', 'cmd', 'state-machine.js');
+const modulePath = join(__dirname, '..', '..', 'renderer', 'cmd', 'state-machine.js');
 
 const { createStateMachine, States, Events } = await import(modulePath);
 

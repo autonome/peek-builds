@@ -11,7 +11,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STATES, EVENTS, EFFECTS, INITIAL_STATE, transition, run,
-} from '../../app/page/page-fsm.js';
+} from '../../renderer/page/page-fsm.js';
 
 const effectTypes = (effects) => effects.map(e => e.type);
 

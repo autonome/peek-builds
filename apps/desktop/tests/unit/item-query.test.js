@@ -12,7 +12,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const modulePath = join(__dirname, '..', '..', 'app', 'cmd', 'commands', 'extract-title.js');
+const modulePath = join(__dirname, '..', '..', 'renderer', 'cmd', 'commands', 'extract-title.js');
 
 const { extractTitle } = await import(modulePath);
 

@@ -12,7 +12,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const modulePath = join(__dirname, '..', '..', 'app', 'page', 'page-widgets.js');
+const modulePath = join(__dirname, '..', '..', 'renderer', 'page', 'page-widgets.js');
 
 const { createPageWidgetHost } = await import(modulePath);
 
