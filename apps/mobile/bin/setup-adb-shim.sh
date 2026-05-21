@@ -66,3 +66,10 @@ chmod +x "$_SHIM_DIR/platform-tools/adb"
 # Export the env vars into the calling shell
 export PEEK_REAL_ADB="$_REAL_HOME/platform-tools/adb"
 export ANDROID_HOME="$_SHIM_DIR"
+
+# Prepend the shim's platform-tools to PATH so child processes that call
+# `adb` without an explicit path (tauri-cli, Gradle tasks, etc.) resolve
+# to our serialized wrapper instead of any system adb earlier on PATH.
+# Without this, the user's PATH adb (e.g. ~/bin/platform-tools/adb) wins
+# and bypasses the wrapper entirely — the SIGABRT race returns.
+export PATH="$_SHIM_DIR/platform-tools:$PATH"

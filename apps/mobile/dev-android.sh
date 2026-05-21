@@ -78,18 +78,23 @@ echo "[adb-shim] ANDROID_HOME → $ANDROID_HOME (shim)"
 echo "[adb-shim] PEEK_REAL_ADB = $PEEK_REAL_ADB"
 
 # Background shepherd: keep the adb daemon alive during the tauri run.
-# Uses the REAL adb directly (not the wrapper) to avoid re-entry.
+# Goes through the wrapper (NOT real adb directly) so the shepherd's
+# start-server call shares the wrapper's mkdir lock with any concurrent
+# tauri-cli child invocations. Original "uses REAL adb to avoid re-entry"
+# was the bug: re-entry is fine (lock is process-level), but two
+# unsynchronized start-server calls race to bind port 5037 and one
+# SIGABRTs in adb_server_main. See task 93e18a97.
 _adb_daemon_shepherd() {
-    local _real="$1"
+    local _wrapper="$1"
     local _port="${ANDROID_ADB_SERVER_PORT:-5037}"
     while true; do
         if ! nc -z -w1 127.0.0.1 "$_port" 2>/dev/null; then
-            "$_real" -P "$_port" start-server >/dev/null 2>&1 || true
+            "$_wrapper" -P "$_port" start-server >/dev/null 2>&1 || true
         fi
         sleep 1
     done
 }
-_adb_daemon_shepherd "$PEEK_REAL_ADB" &
+_adb_daemon_shepherd "$ANDROID_HOME/platform-tools/adb" &
 _SHEPHERD_PID=$!
 
 # Kill shepherd when dev session ends (Ctrl-C, normal exit, or error)
