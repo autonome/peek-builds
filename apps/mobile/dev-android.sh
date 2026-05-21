@@ -54,8 +54,11 @@ if [ ! -f "$TAURI_DIR/gen/android/local.properties" ]; then
     echo "Created local.properties"
 fi
 
-# Bump build number
+# Bump build number (auto-create if missing — fresh clones don't have this file)
 BUILD_FILE="$SCRIPT_DIR/BUILD_NUMBER"
+if [ ! -f "$BUILD_FILE" ]; then
+  echo "0" > "$BUILD_FILE"
+fi
 BUILD_NUM=$(($(cat "$BUILD_FILE") + 1))
 echo "$BUILD_NUM" > "$BUILD_FILE"
 echo "[dev] Build number: v$BUILD_NUM"
@@ -115,6 +118,26 @@ if [ -x "$ADB" ]; then
 fi
 export TAURI_CONFIG='{"build":{"devUrl":"http://127.0.0.1:1430"}}'
 
+# Resolve tauri CLI - prefer apps/mobile/node_modules, fall back to repo root.
+# Explicit path avoids two failure modes:
+#   1. npx resolution fails on fresh pool clones (no per-app npm install state)
+#   2. System cargo-tauri (e.g. 2.9.6) panics against our npm @tauri-apps/cli 2.10.x
+# If neither path has the binary, run yarn install to bootstrap it.
+TAURI_BIN="$SCRIPT_DIR/node_modules/.bin/tauri"
+if [ ! -x "$TAURI_BIN" ]; then
+  TAURI_BIN="$SCRIPT_DIR/../../node_modules/.bin/tauri"
+fi
+if [ ! -x "$TAURI_BIN" ]; then
+  echo "[dev] tauri CLI not found — running yarn install to bootstrap node_modules..."
+  cd "$SCRIPT_DIR"
+  yarn install
+  TAURI_BIN="$SCRIPT_DIR/node_modules/.bin/tauri"
+fi
+if [ ! -x "$TAURI_BIN" ]; then
+  echo "ERROR: tauri CLI still not found after yarn install. Check package.json."
+  exit 1
+fi
+
 # Let tauri android dev handle everything:
 # - Starts Vite with TAURI_DEV_HOST set (for mobile HMR WebSocket config)
 # - Sets up adb reverse port forwarding
@@ -123,4 +146,4 @@ export TAURI_CONFIG='{"build":{"devUrl":"http://127.0.0.1:1430"}}'
 echo "[dev] Starting tauri android dev..."
 echo ""
 cd "$SCRIPT_DIR"
-npx tauri android dev
+"$TAURI_BIN" android dev

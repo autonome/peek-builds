@@ -90,7 +90,19 @@ echo "Building Android debug APK..."
 # custom-protocol is required so Tauri serves bundled assets via scheme handler
 # Tauri's android build handles cargo cross-compilation and Gradle packaging
 export TAURI_ANDROID_FEATURES="custom-protocol"
-npx tauri android build --debug
+
+# Resolve tauri CLI explicitly — avoids npx resolution failure on fresh clones
+# and system cargo-tauri version mismatch panic.
+TAURI_BIN="$SCRIPT_DIR/node_modules/.bin/tauri"
+if [ ! -x "$TAURI_BIN" ]; then
+  TAURI_BIN="$SCRIPT_DIR/../../node_modules/.bin/tauri"
+fi
+if [ ! -x "$TAURI_BIN" ]; then
+  echo "ERROR: tauri CLI not found at apps/mobile/node_modules/.bin/tauri or repo-root node_modules/.bin/tauri"
+  echo "Run 'yarn install' at the repo root first."
+  exit 1
+fi
+"$TAURI_BIN" android build --debug
 
 echo ""
 echo "Done! Debug APK built."

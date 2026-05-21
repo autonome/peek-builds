@@ -93,15 +93,27 @@ npm run build
 # custom-protocol is required so Tauri serves bundled assets
 export TAURI_ANDROID_FEATURES="custom-protocol"
 
+# Resolve tauri CLI explicitly — avoids npx resolution failure on fresh clones
+# and system cargo-tauri version mismatch panic.
+TAURI_BIN="$SCRIPT_DIR/node_modules/.bin/tauri"
+if [ ! -x "$TAURI_BIN" ]; then
+  TAURI_BIN="$SCRIPT_DIR/../../node_modules/.bin/tauri"
+fi
+if [ ! -x "$TAURI_BIN" ]; then
+  echo "ERROR: tauri CLI not found at apps/mobile/node_modules/.bin/tauri or repo-root node_modules/.bin/tauri"
+  echo "Run 'yarn install' at the repo root first."
+  exit 1
+fi
+
 if [ "$BUILD_AAB" = true ]; then
     echo "Building Android release AAB (App Bundle for Play Store)..."
-    npx tauri android build --aab
+    "$TAURI_BIN" android build --aab
     echo ""
     echo "Done! Release AAB built."
     echo "AAB location: src-tauri/gen/android/app/build/outputs/bundle/release/"
 else
     echo "Building Android release APK..."
-    npx tauri android build --apk
+    "$TAURI_BIN" android build --apk
     echo ""
     echo "Done! Release APK built."
     echo "APK location: src-tauri/gen/android/app/build/outputs/apk/release/"

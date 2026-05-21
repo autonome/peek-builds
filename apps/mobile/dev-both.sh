@@ -102,7 +102,11 @@ log "Patched tauri.conf.json: devUrl=http://$HOST_IP:$PORT, beforeBuildCommand d
 
 # ── Bump build number (once for both) ──────────────────────────────
 
+# Auto-create if missing — fresh clones don't have this file
 BUILD_FILE="$SCRIPT_DIR/BUILD_NUMBER"
+if [ ! -f "$BUILD_FILE" ]; then
+  echo "0" > "$BUILD_FILE"
+fi
 BUILD_NUM=$(($(cat "$BUILD_FILE") + 1))
 echo "$BUILD_NUM" > "$BUILD_FILE"
 log "Build number: v$BUILD_NUM"
@@ -250,6 +254,17 @@ build_android() {
     log "[android] Restoring tauri.conf.json for tauri android dev..."
     cp "$CONF.bak" "$CONF"
 
+    # Resolve tauri CLI explicitly — avoids npx resolution failure on fresh clones
+    # and system cargo-tauri version mismatch panic.
+    TAURI_BIN="$SCRIPT_DIR/node_modules/.bin/tauri"
+    if [ ! -x "$TAURI_BIN" ]; then
+        TAURI_BIN="$SCRIPT_DIR/../../node_modules/.bin/tauri"
+    fi
+    if [ ! -x "$TAURI_BIN" ]; then
+        log "[android] ERROR: tauri CLI not found. Run 'yarn install' at repo root first."
+        return 1
+    fi
+
     # Use `tauri android dev` which handles everything:
     # - Starts its own Vite server (on default port 1420)
     # - Sets up adb reverse port forwarding
@@ -258,7 +273,7 @@ build_android() {
     # Runs in background so we can also serve iOS.
     log "[android] Starting tauri android dev (runs its own vite + builds + installs)..."
     cd "$SCRIPT_DIR"
-    npx tauri android dev &
+    "$TAURI_BIN" android dev &
     TAURI_ANDROID_PID=$!
 
     ANDROID_OK=true
