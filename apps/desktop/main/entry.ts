@@ -1344,5 +1344,40 @@ if (isHeadless() && process.platform === 'darwin' && app.dock) {
   app.dock.hide();
 }
 
+// Headless strict guard: no BrowserWindow must appear visible immediately
+// after construction during headless test runs. Windows created with show:true
+// flash on the user's physical macOS desktop. Any drift from the isHeadless()
+// gate in BrowserWindow constructors is caught here and fails the process.
+//
+// Note: BrowserWindow.prototype.show() calls are NOT blocked — session restore,
+// test helpers (showWindow/fireWindowFocus), and page-host flows all legitimately
+// call .show() on already-hidden windows. Only the constructor show:true path
+// is the physical flash vector; it fires the OS compositor before JS can hide
+// the window again.
+//
+// Guard scope: PEEK_HEADLESS=1 AND test profile only.
+if (isHeadless() && isTestProfile()) {
+  app.on('browser-window-created', (_event, win) => {
+    // Check visibility in the next tick. If the window is already visible at
+    // creation time it was constructed with show:true. setImmediate defers past
+    // the internal Electron constructor synchronous show path while still
+    // running before any app JS touches the window.
+    setImmediate(() => {
+      if (win.isDestroyed()) return;
+      if (win.isVisible()) {
+        let url = '(no-url)';
+        try { url = win.webContents.getURL() || '(no-url)'; } catch { /* destroyed */ }
+        const msg = `[headless-violation] BrowserWindow id=${win.id} visible at construction time (show:true?) url=${url} — fix: gate show: on !isHeadless()`;
+        console.error(msg);
+        console.error(new Error(msg).stack);
+        // Fail hard so CI catches the regression.
+        process.exitCode = 1;
+        throw new Error(msg);
+      }
+    });
+  });
+  console.log('[headless-guard] BrowserWindow creation guard active (visible-at-ctor throws)');
+}
+
 // Start the app
 app.whenReady().then(onReady);
