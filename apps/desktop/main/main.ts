@@ -51,12 +51,14 @@ try {
   // Running under ELECTRON_RUN_AS_NODE=1 — `app.on` may be unavailable.
 }
 
-// Debounced session-save on window close. Force-kill / crash / power
-// loss between an explicit window close and the next autosave tick (or
-// quit) would otherwise leave the closed window in the snapshot. With
-// this trailing-edge debounce, the on-disk snapshot is at most ~500ms
-// stale from the user's last close-intent. Coalesces bulk closes so
-// we don't N-write when ten windows close in rapid succession.
+// Debounced session-save on window close or open. Force-kill / crash /
+// power loss between an explicit window close/open and the next autosave
+// tick (or quit) would otherwise leave the snapshot stale. With this
+// trailing-edge debounce, the on-disk snapshot is at most ~500ms stale
+// from the user's last lifecycle-intent. A single shared timer coalesces
+// mixed open+close bursts into one write 500ms after the last event.
+// The open path is gated on !skipTracking so bulk session-restore does
+// NOT trigger N extra saves (the periodic autosave covers that).
 let _closeSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const CLOSE_SAVE_DEBOUNCE_MS = 500;
 function scheduleSnapshotOnClose(): void {
@@ -66,14 +68,19 @@ function scheduleSnapshotOnClose(): void {
     _closeSaveDebounceTimer = null;
     if (_appIsQuitting) return;
     try {
-      saveSessionSnapshot('window-close');
+      saveSessionSnapshot('window-lifecycle');
     } catch (err) {
-      DEBUG && console.error('[session] Debounced close-save failed:', err);
+      DEBUG && console.error('[session] Debounced lifecycle-save failed:', err);
     }
   }, CLOSE_SAVE_DEBOUNCE_MS);
 }
 
-// Test-only: synchronously flush a pending debounced close-save. Drift-
+// Shared debounce trigger for both close and open events — same timer,
+// same 500ms trailing edge. Export so ipc.ts can call it from the
+// window-open success path without duplicating the logic.
+export { scheduleSnapshotOnClose as scheduleSnapshotOnLifecycleChange };
+
+// Test-only: synchronously flush a pending debounced lifecycle-save. Drift-
 // detection test for the close-survives-kill regression (see
 // tests/desktop/session-restore-close-survives-kill.spec.ts) needs to
 // observe the post-close snapshot deterministically without sleeping for
@@ -87,9 +94,9 @@ export function flushPendingCloseSave(): void {
     _closeSaveDebounceTimer = null;
   }
   try {
-    saveSessionSnapshot('window-close');
+    saveSessionSnapshot('window-lifecycle');
   } catch (err) {
-    DEBUG && console.error('[session] Manual close-save flush failed:', err);
+    DEBUG && console.error('[session] Manual lifecycle-save flush failed:', err);
   }
 }
 

@@ -50,6 +50,7 @@ import {
   popClosedWindow,
   getClosedWindowCount,
   getBackgroundWindow,
+  scheduleSnapshotOnLifecycleChange,
 } from './main.js';
 
 import {
@@ -2455,6 +2456,14 @@ export function registerWindowHandlers(): void {
         url,
         source: msg.source
       });
+
+      // Persist the now-larger window list so a force-kill before the
+      // next autosave tick doesn't lose the newly opened window.
+      // Gated on !skipTracking so bulk session-restore doesn't fire a
+      // save per restored window — the periodic autosave covers that.
+      if (!options.skipTracking) {
+        scheduleSnapshotOnLifecycleChange();
+      }
 
       // Clear pending key now that window is registered
       if (options.key) {

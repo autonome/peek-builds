@@ -67,7 +67,7 @@ export interface SessionMetadata {
 export interface SessionSnapshot {
   version: 1;
   createdAt: number;
-  reason: 'before-quit' | 'autosave' | 'manual' | 'window-close';
+  reason: 'before-quit' | 'autosave' | 'manual' | 'window-close' | 'window-lifecycle';
   windows: WindowDescriptor[];
 }
 
