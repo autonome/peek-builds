@@ -8,7 +8,7 @@
  * Test organization:
  *   tests/desktop/     - Cross-backend desktop tests
  *   tests/extension/   - Browser extension e2e tests (Chrome only)
- *   backend/{name}/tests/ - Backend-specific tests
+ *   apps/{name}/tests/ - Backend-specific tests
  *
  * Extension tests:
  *   yarn test:extension:browser  - Run in Chrome (automated)
