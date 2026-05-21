@@ -381,7 +381,7 @@ async function test8_bothNoHeaders() {
 //   3. If stored < code: update stored version (upgrade)
 //   4. Write current version to feature_settings
 
-const CODE_DATASTORE_VERSION = 1; // Matches backend/version.ts
+const CODE_DATASTORE_VERSION = 1; // Matches apps/desktop/version.ts
 
 function createTestDesktopDb(dbPath) {
   const db = new Database(dbPath);

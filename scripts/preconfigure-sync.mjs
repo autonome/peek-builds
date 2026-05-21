@@ -35,7 +35,7 @@ app.whenReady().then(async () => {
   const profiles = await import('../apps/desktop/dist/main/profiles.js');
 
   // Import sync engine
-  const { createEngine, createBetterSqliteAdapter } = await import('../sync/index.js');
+  const { createEngine, createBetterSqliteAdapter } = await import('../packages/sync/index.js');
 
   // Paths
   const userDataPath = join(homedir(), 'Library', 'Application Support', 'Peek');

@@ -6,15 +6,15 @@
  * Checks Railway logs for sync markers from e2e tests.
  *
  * Usage:
- *   node backend/tests/verify-railway-logs.js [marker]
+ *   node packages/integration-tests/verify-railway-logs.js [marker]
  *   yarn test:sync:verify-logs [marker]
  *
  * Examples:
  *   # Check for a specific test run
- *   node backend/tests/verify-railway-logs.js "E2E-TEST-1737481234567"
+ *   node packages/integration-tests/verify-railway-logs.js "E2E-TEST-1737481234567"
  *
  *   # Check for recent sync activity
- *   node backend/tests/verify-railway-logs.js
+ *   node packages/integration-tests/verify-railway-logs.js
  *
  * Note: Requires Railway CLI to be installed and linked to the project.
  *   cd apps/server && railway link -p amusing-courtesy

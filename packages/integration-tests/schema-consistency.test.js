@@ -4,7 +4,7 @@
  * Verifies that all platforms use the same column names in their database schemas.
  * This prevents drift like iOS using snake_case (last_used) while server uses camelCase (lastUsed).
  *
- * Run with: node backend/tests/schema-consistency.test.js
+ * Run with: node packages/integration-tests/schema-consistency.test.js
  */
 
 import fs from 'fs';

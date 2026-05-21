@@ -1,0 +1,8 @@
+{
+  "name": "@peek/sync",
+  "version": "0.0.1",
+  "description": "Shared sync engine used by apps/desktop, apps/extension, and apps/mobile.",
+  "private": true,
+  "type": "module",
+  "main": "index.js"
+}

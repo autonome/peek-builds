@@ -125,7 +125,7 @@ echo "[4/4] Running automated version compat tests..."
 echo ""
 
 cd "$PROJECT_DIR"
-if node backend/tests/sync-version-compat.test.js; then
+if node packages/integration-tests/sync-version-compat.test.js; then
   echo ""
   echo "  Automated tests: ALL PASSED"
 else

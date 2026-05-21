@@ -864,6 +864,12 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@peek/sync@workspace:packages/sync":
+  version: 0.0.0-use.local
+  resolution: "@peek/sync@workspace:packages/sync"
+  languageName: unknown
+  linkType: soft
+
 "@pinojs/redact@npm:^0.4.0":
   version: 0.4.0
   resolution: "@pinojs/redact@npm:0.4.0"

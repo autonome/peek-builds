@@ -8,7 +8,7 @@
  * This test creates in-memory databases simulating legacy states and
  * verifies the migration logic handles all cases correctly.
  *
- * Run with: ELECTRON_RUN_AS_NODE=1 npx electron --test backend/tests/migration-regression.test.js
+ * Run with: ELECTRON_RUN_AS_NODE=1 npx electron --test packages/integration-tests/migration-regression.test.js
  */
 
 import { describe, it } from 'node:test';
