@@ -20,7 +20,7 @@ import { getProfileSession } from './session-partition.js';
 import { registerAll } from './chrome-api-polyfills/index.js';
 import { buildOptionsCommandName, computeUiEntries } from './chrome-extensions-helpers.js';
 import { invokeWindowOpen } from './ipc.js';
-import { DEBUG } from './config.js';
+import { DEBUG, isHeadless } from './config.js';
 
 /**
  * Chrome extension manifest.json structure (MV3)
@@ -626,7 +626,7 @@ export function openChromeExtensionPage(
     width: entry.width,
     height: entry.height,
     title: entry.title,
-    show: true,
+    show: !isHeadless(),
     backgroundColor,
     titleBarStyle: 'hiddenInset',
     webPreferences: {
