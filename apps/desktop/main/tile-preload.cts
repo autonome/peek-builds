@@ -10,7 +10,7 @@
  * scripts must use require(), not import.
  */
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 // ─── Parse CLI Arguments ─────────────────────────────────────────────
 
@@ -61,19 +61,28 @@ __preloadMark('preload-start');
 
 // ─── Always-on Console Wrapper ───────────────────────────────────────
 //
-// Monkey-patches console.{log,info,warn,error,debug} so every call is
-// ALSO forwarded to the main process via ipcRenderer.send (fire-and-
-// forget). The main process writes these to
-//   <userData>/logs/renderer.log
-// via renderer-log.ts. This path is independent of DevTools — when
-// DevTools is attached, the normal `webContents.on('console-message')`
-// event is suppressed by Chromium, but ipcRenderer.send still works.
+// Forwards every console.{log,info,warn,error,debug} call from renderers
+// to the main process via ipcRenderer.send('peek:renderer-log'), which
+// writes to <userData>/logs/renderer.log (renderer-log.ts).
 //
-// Source label: `tileId:tileEntry` so logs are identifiable per-window.
-// For page-host windows this produces e.g. `page-host:canvas-...`.
+// Why two layers:
 //
-// Args are serialised in the main process (renderer-log.ts) to keep the
-// preload path minimal — we just pass the raw args array.
+//  1. Isolated-world patch (this block, ipcRenderer.send directly):
+//     The preload runs in Electron's isolated context. Patching console
+//     here catches output from other preload code (e.g. the API builder
+//     below, the perf markers) where we have direct access to ipcRenderer.
+//
+//  2. Main-world patch (webFrame.executeJavaScript below):
+//     With contextIsolation:true, the preload's isolated-world `console`
+//     is a DIFFERENT JavaScript object from the main-world `console` that
+//     page JS and Playwright's bgWindow.evaluate() use. Setting
+//     console.log in the isolated world does NOT affect the main world.
+//     To capture tile page output we MUST inject a patch into the main
+//     world via webFrame.executeJavaScript. The injected patch calls
+//     window.__peekLogShim__.send (exposed via contextBridge below) which
+//     calls ipcRenderer.send on behalf of the main-world script.
+//
+// Source label: `tileId:tileEntry` — e.g. `page-host:canvas-abc`.
 {
   const _sourceLabel = `${tileId}:${tileEntry}`;
   const _origConsole = {
@@ -95,11 +104,71 @@ __preloadMark('preload-start');
     };
   }
 
+  // Isolated-world patch (catches preload-level console output).
   console.log   = _wrapConsole('log',   _origConsole.log);
   console.info  = _wrapConsole('info',  _origConsole.info);
   console.warn  = _wrapConsole('warn',  _origConsole.warn);
   console.error = _wrapConsole('error', _origConsole.error);
   console.debug = _wrapConsole('debug', _origConsole.debug);
+
+  // ── Main-world IPC bridge ─────────────────────────────────────────
+  // Expose a minimal shim into the main world so the main-world console
+  // patch (injected below via webFrame.executeJavaScript) can call IPC
+  // without needing direct ipcRenderer access.
+  //
+  // Key: '__peekLogShim__' — deliberately obscure to avoid collision with
+  // tile API surface ('app'). Not advertised in any public API type.
+  try {
+    contextBridge.exposeInMainWorld('__peekLogShim__', {
+      send: (level: string, args: unknown[]) => {
+        try {
+          ipcRenderer.send('peek:renderer-log', { level, args, source: _sourceLabel });
+        } catch {
+          // Swallow.
+        }
+      },
+    });
+  } catch {
+    // exposeInMainWorld can throw if called after contextBridge is sealed
+    // (e.g. in a test environment that re-runs the preload). Swallow.
+  }
+
+  // ── Main-world console patch ──────────────────────────────────────
+  // Inject into the main world so tile page JS and any scripts running
+  // in the page's main world (including Playwright's evaluate()) are
+  // covered. The injected code is a plain IIFE string — no closure
+  // captures needed since it reads window.__peekLogShim__ at call time.
+  //
+  // We fire-and-forget the promise (no await) so the preload continues
+  // synchronously. The patch lands before the page's own scripts run
+  // because webFrame.executeJavaScript in the preload executes before
+  // DOMContentLoaded.
+  try {
+    (webFrame as { executeJavaScript: (src: string) => Promise<unknown> }).executeJavaScript(`
+      (function() {
+        try {
+          if (typeof window.__peekLogShim__ !== 'object' || !window.__peekLogShim__) return;
+          var _shim = window.__peekLogShim__;
+          var _levels = ['log', 'info', 'warn', 'error', 'debug'];
+          for (var i = 0; i < _levels.length; i++) {
+            (function(lvl) {
+              var _orig = console[lvl].bind(console);
+              console[lvl] = function() {
+                _orig.apply(console, arguments);
+                try {
+                  var args = Array.prototype.slice.call(arguments);
+                  _shim.send(lvl, args);
+                } catch(e) { /* never break the renderer */ }
+              };
+            })(_levels[i]);
+          }
+        } catch(e) { /* never break the renderer */ }
+      })();
+    `).catch(() => { /* swallow */ });
+  } catch {
+    // Swallow — webFrame.executeJavaScript may not be available in all
+    // renderer contexts (e.g. chrome extension popups, which skip this path).
+  }
 }
 
 // ─── Token Validation (Synchronous bootstrap) ────────────────────────
