@@ -90,6 +90,31 @@ if [ -x "$ADB" ]; then
     fi
 fi
 
+# Pre-set TAURI_CONFIG with the Android dev URL to eliminate the redundant
+# second Rust compile.
+#
+# Background: `tauri android dev` runs TWO cargo builds:
+#   1. Initial build (port 1420, direct Vite URL)
+#   2. android-studio-script via Gradle (port 1430, ADB-forwarded URL)
+#
+# The two builds use different TAURI_CONFIG values → tauri-build emits
+# cargo:rerun-if-env-changed=TAURI_CONFIG → build script reruns →
+# regenerates Kotlin files → cascades to 5 crates (~12s wasted).
+#
+# Fix: pre-set TAURI_CONFIG to the ADB-forwarded URL (what android-studio-script
+# uses) and pre-do the ADB reverse. If tauri-cli respects the parent env for
+# the initial cargo build, both passes use identical TAURI_CONFIG → second
+# pass is a cargo no-op. If tauri-cli overrides it anyway, this is a no-op
+# (falls back to the original 12s behaviour, no regression).
+#
+# The port 1430 is tauri-cli's standard Android dev ADB forward port.
+# Vite runs on port 1420; `adb reverse tcp:1430 tcp:1420` makes the emulator
+# reach the host Vite server at 127.0.0.1:1430.
+if [ -x "$ADB" ]; then
+    "$ADB" reverse tcp:1430 tcp:1420 2>/dev/null || true
+fi
+export TAURI_CONFIG='{"build":{"devUrl":"http://127.0.0.1:1430"}}'
+
 # Let tauri android dev handle everything:
 # - Starts Vite with TAURI_DEV_HOST set (for mobile HMR WebSocket config)
 # - Sets up adb reverse port forwarding
