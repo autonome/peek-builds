@@ -124,9 +124,11 @@ body.dark .auto-sync-indicator {
 header {
   background: #ffffff;
   padding: 0.25rem 0.75rem;
-  /* Safe area: --safe-area-top is set by JS on mount (env() for iOS, Kotlin bridge for Android).
-     Fallback 40px ensures header clears notch/status bar even before JS runs. */
-  padding-top: calc(var(--safe-area-top, 40px) + 0.4rem);
+  /* Safe area: --safe-area-top is set by JS on mount (env() probe for iOS, Kotlin bridge for
+     Android). Fallback to env(safe-area-inset-top) so iOS gets the correct notch inset even
+     before JS runs; Android WebView returns 0 for env() and the Kotlin bridge sets the real
+     value, so no hard-coded iOS offset leaks onto Android. */
+  padding-top: calc(var(--safe-area-top, env(safe-area-inset-top, 0px)) + 0.4rem);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   position: sticky;
   top: 0;
@@ -2527,7 +2529,7 @@ body.dark .captured-image-preview {
   flex-direction: column;
   align-items: center;
   padding: 0.5rem;
-  padding-top: var(--safe-area-top, 40px);
+  padding-top: var(--safe-area-top, env(safe-area-inset-top, 0px));
   /* Bottom padding handled by .editor-segment-buttons safe-area padding */
   padding-bottom: 0;
   /* Prevent iOS from scrolling the viewport when keyboard appears */

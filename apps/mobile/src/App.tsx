@@ -220,13 +220,24 @@ const EditorOverlay: React.FC<EditorOverlayProps> = ({ children, onDismiss, keyb
   }, []);
 
   // Set --safe-area-top CSS variable for status bar / notch clearance.
-  // On iOS: read from env(safe-area-inset-top) via a CSS trick.
-  // On Android: Kotlin bridge overwrites with real WindowInsets value.
-  // Default 40px ensures header clears notch even if bridge is slow.
+  // On iOS: probe env(safe-area-inset-top) via a hidden div — this is the correct
+  //   notch/dynamic-island inset; set it immediately so CSS picks it up.
+  // On Android: env(safe-area-inset-top) is not supported in WebView, so the probe
+  //   returns 0. The Kotlin bridge overwrites --safe-area-top with the real
+  //   WindowInsets value when the page loads. We must NOT default to a hard-coded
+  //   iOS-specific value (e.g. 40px) here — that leaks iOS-notch spacing onto
+  //   Android devices that have no notch.
   useEffect(() => {
     const root = document.documentElement;
     if (!root.style.getPropertyValue('--safe-area-top')) {
-      root.style.setProperty('--safe-area-top', '40px');
+      // Probe env(safe-area-inset-top): non-zero on iOS, 0 on Android WebView.
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:fixed;top:0;height:env(safe-area-inset-top,0px);visibility:hidden;pointer-events:none;';
+      document.body.appendChild(probe);
+      const insetPx = probe.offsetHeight;
+      document.body.removeChild(probe);
+      // On iOS this is the notch height; on Android it's 0 (bridge sets real value).
+      root.style.setProperty('--safe-area-top', `${insetPx}px`);
     }
   }, []);
 
