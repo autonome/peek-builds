@@ -1,9 +1,0 @@
-chore(mobile): drop android build artifacts; ignore gradle output
-
-Reclaims ~24G in this workspace by removing dormant android build outputs.
-iOS is the active mobile path; android cross-targets and gradle output
-were holding ~24G with no value.
-
-- .gitignore: add src-tauri/gen/android/app/build/ - mirrors apple/build/
-- package.json: extend clean:android to also remove the gradle output dir
-- working copy: drop snapshotted gen/android/app/build/ tree
