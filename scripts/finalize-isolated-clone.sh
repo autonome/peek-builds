@@ -48,11 +48,22 @@ fi
 echo "Found bookmark in clone: ${BOOKMARK}" >&2
 
 # Make sure clone's bookmark covers any commits the agent made after spawn.
-# Move bookmark to @- (the last real commit; @ is typically an empty placeholder).
-AT_DASH=$(jj log -r '@-' --no-graph -T 'commit_id' 2>/dev/null | head -1)
-if [ -n "$AT_DASH" ]; then
-  jj bookmark set "$BOOKMARK" -r "$AT_DASH" >&2
-  echo "Bookmark ${BOOKMARK} advanced to @- (${AT_DASH:0:12})" >&2
+# Pick @ if it has a description (agent did `jj describe` without trailing `jj new`,
+# so the work IS @); otherwise use @- (jj-canonical: agent did `jj commit` or
+# `jj describe + jj new`, work is the parent, @ is an empty placeholder).
+# --allow-backwards is needed because `jj describe` keeps the change_id but
+# changes the commit_id, which jj treats as a sideways move on the bookmark.
+AT_DESC=$(jj log -r @ --no-graph -T 'description' 2>/dev/null)
+if [ -n "$AT_DESC" ]; then
+  WORK_TIP=$(jj log -r @ --no-graph -T 'commit_id' 2>/dev/null | head -1)
+  TIP_LABEL="@"
+else
+  WORK_TIP=$(jj log -r '@-' --no-graph -T 'commit_id' 2>/dev/null | head -1)
+  TIP_LABEL="@-"
+fi
+if [ -n "$WORK_TIP" ]; then
+  jj bookmark set "$BOOKMARK" -r "$WORK_TIP" --allow-backwards >&2
+  echo "Bookmark ${BOOKMARK} advanced to ${TIP_LABEL} (${WORK_TIP:0:12})" >&2
 fi
 
 # Switch to main and fetch from the clone's remote.
@@ -87,7 +98,7 @@ jj rebase --ignore-immutable -s "roots((::${REMOTE_BOOKMARK}) ~ (::@))" -d @ >&2
 # at that tip as the safety copy.
 NEW_HEAD=$(jj log -r "$REMOTE_BOOKMARK" --no-graph -T 'commit_id' 2>/dev/null | head -1)
 if [ -n "$NEW_HEAD" ]; then
-  jj bookmark create "$BOOKMARK" -r "$NEW_HEAD" >&2 2>/dev/null || jj bookmark set "$BOOKMARK" -r "$NEW_HEAD" >&2
+  jj bookmark create "$BOOKMARK" -r "$NEW_HEAD" >&2 2>/dev/null || jj bookmark set "$BOOKMARK" -r "$NEW_HEAD" --allow-backwards >&2
   echo "Local bookmark ${BOOKMARK} pinned at ${NEW_HEAD:0:12} (safety copy)" >&2
 fi
 
