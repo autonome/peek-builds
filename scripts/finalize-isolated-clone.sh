@@ -1,20 +1,42 @@
 #!/bin/bash
-# Merge an isolated clone's commits back into the main checkout.
+# Finalize an isolated clone's commits into the main checkout's `main` bookmark.
 #
-# Usage: scripts/finalize-isolated-clone.sh <name>
+# Usage:
+#   echo <name> > /tmp/mpeek-agent-name
+#   scripts/finalize-isolated-clone.sh
 #
-# Mechanism: each spawn creates a timestamped bookmark `agent-<name>-<unix>`
-# in the clone. Finalize finds the latest such bookmark, fetches it from the
-# pool-<name> git remote into the main checkout, and rebases its commits
-# onto @ in main. The bookmark is preserved in main as a safety copy until
-# explicit clean.
+# ## Semantics: fast-forward-or-bust
+#
+# This script REFUSES to rebase. It only advances `main` if the agent's work
+# is a strict descendant of the current `main`. Otherwise it surfaces the
+# divergence and tells you to rebase IN THE CLONE.
+#
+# Why: rebasing agent commits inside the main checkout (the old behavior)
+# rewrites commit IDs while the clone's pool-* remote still tracks the
+# originals. That ALWAYS produces divergent change_ids in jj — the root
+# cause of the chaos we cleaned up on 2026-05-21. Fast-forward-only finalize
+# eliminates divergence by construction.
+#
+# Cost: if main moves while the agent is working (e.g. another agent
+# finalized first), the agent has to rebase in their own clone before
+# finalize succeeds. That's the right place for the rebase anyway — the
+# agent has the context to resolve conflicts.
+#
+# ## Mechanism
+#
+# 1. In the clone, advance the agent's bookmark to @ or @- (depending on
+#    whether the agent left work at @ or did `jj new` after).
+# 2. Fetch from the clone's pool-<name> git remote into main checkout.
+# 3. Check: is the fetched ref a strict descendant of current `main`?
+#    - YES: advance `main` bookmark to the fetched tip. Move @ on top.
+#    - NO:  refuse with explicit rebase recipe.
 #
 # Clone and registered remote are PRESERVED for reuse by the next spawn.
 # Tear down with scripts/clean-isolated-clone.sh.
 
 set -euo pipefail
 
-# Name read from /tmp/mpeek-agent-name only (see spawn-isolated-clone.sh for rationale).
+# Name read from /tmp/mpeek-agent-name only (invariant command text → one allowlist).
 if [ ! -r /tmp/mpeek-agent-name ]; then
   echo "error: write the clone name to /tmp/mpeek-agent-name first" >&2
   exit 2
@@ -34,7 +56,7 @@ if [ ! -d "$CLONE_DIR" ]; then
   exit 1
 fi
 
-# Find the most recent agent-<NAME>-* bookmark in the clone.
+# ── Step 1: in the clone, advance the agent bookmark to the work tip ──────
 cd "$CLONE_DIR"
 BOOKMARK=$(jj bookmark list -T 'name ++ "\n"' 2>/dev/null \
   | grep "^agent-${NAME}-" \
@@ -47,12 +69,10 @@ if [ -z "$BOOKMARK" ]; then
 fi
 echo "Found bookmark in clone: ${BOOKMARK}" >&2
 
-# Make sure clone's bookmark covers any commits the agent made after spawn.
-# Pick @ if it has a description (agent did `jj describe` without trailing `jj new`,
-# so the work IS @); otherwise use @- (jj-canonical: agent did `jj commit` or
-# `jj describe + jj new`, work is the parent, @ is an empty placeholder).
-# --allow-backwards is needed because `jj describe` keeps the change_id but
-# changes the commit_id, which jj treats as a sideways move on the bookmark.
+# Pick @ if it has a description (agent did `jj describe` without trailing
+# `jj new` — the work IS @); otherwise @- (jj-canonical: work is @-, @ is
+# an empty placeholder). --allow-backwards because `jj describe` keeps the
+# change_id while changing commit_id, which jj treats as a sideways move.
 AT_DESC=$(jj log -r @ --no-graph -T 'description' 2>/dev/null)
 if [ -n "$AT_DESC" ]; then
   WORK_TIP=$(jj log -r @ --no-graph -T 'commit_id' 2>/dev/null | head -1)
@@ -66,7 +86,7 @@ if [ -n "$WORK_TIP" ]; then
   echo "Bookmark ${BOOKMARK} advanced to ${TIP_LABEL} (${WORK_TIP:0:12})" >&2
 fi
 
-# Switch to main and fetch from the clone's remote.
+# ── Step 2: in main, fetch from the clone's git remote ────────────────────
 cd "$MAIN_DIR"
 if ! git remote get-url "$REMOTE_NAME" >/dev/null 2>&1; then
   echo "error: git remote ${REMOTE_NAME} not registered in main checkout." >&2
@@ -76,47 +96,62 @@ fi
 echo "Fetching from ${REMOTE_NAME}..." >&2
 jj git fetch --remote "$REMOTE_NAME" >&2
 
-# The fetched bookmark appears as ${BOOKMARK}@${REMOTE_NAME} in main.
-REMOTE_BOOKMARK="${BOOKMARK}@${REMOTE_NAME}"
+REMOTE_REF="${BOOKMARK}@${REMOTE_NAME}"
 
-# Find commits unique to the agent vs main's @.
-NEW_COMMITS=$(jj log -r "(::${REMOTE_BOOKMARK}) ~ (::@)" --no-graph -T 'commit_id ++ "\n"' 2>/dev/null || true)
-if [ -z "$NEW_COMMITS" ]; then
-  echo "no new commits from ${BOOKMARK} to rebase" >&2
+# ── Step 3: fast-forward-or-bust check ────────────────────────────────────
+REMOTE_REV=$(jj log -r "$REMOTE_REF" --no-graph -T 'commit_id' 2>/dev/null | head -1)
+MAIN_REV=$(jj log -r main --no-graph -T 'commit_id' 2>/dev/null | head -1)
+
+if [ -z "$REMOTE_REV" ]; then
+  echo "error: could not resolve ${REMOTE_REF} after fetch." >&2
+  exit 1
+fi
+if [ -z "$MAIN_REV" ]; then
+  echo "error: could not resolve local 'main' bookmark." >&2
+  exit 1
+fi
+
+# Same commit: no-op
+if [ "$REMOTE_REV" = "$MAIN_REV" ]; then
+  echo "agent ${NAME} has no new commits — main already at ${MAIN_REV:0:12}" >&2
   exit 0
 fi
 
-# Capture main's current head, then rebase.
-MAIN_HEAD=$(jj log -r @ --no-graph -T 'commit_id' | head -1)
-echo "Rebasing agent commits onto main @ (${MAIN_HEAD:0:12})" >&2
-# --ignore-immutable: the fetched bookmark from pool-<name> is treated as
-# remote-tracking and thus immutable by default. We're not actually rewriting
-# shared history — we're integrating a clone's local work — so override.
-jj rebase --ignore-immutable -s "roots((::${REMOTE_BOOKMARK}) ~ (::@))" -d @ >&2
-
-# After rebase, the new tip is at the bookmark's position. Pin a local bookmark
-# at that tip as the safety copy.
-NEW_HEAD=$(jj log -r "$REMOTE_BOOKMARK" --no-graph -T 'commit_id' 2>/dev/null | head -1)
-if [ -n "$NEW_HEAD" ]; then
-  jj bookmark create "$BOOKMARK" -r "$NEW_HEAD" >&2 2>/dev/null || jj bookmark set "$BOOKMARK" -r "$NEW_HEAD" --allow-backwards >&2
-  echo "Local bookmark ${BOOKMARK} pinned at ${NEW_HEAD:0:12} (safety copy)" >&2
+# Strict-descendant check: is MAIN_REV an ancestor of REMOTE_REV?
+# Computed as: does jj's ancestor set of REMOTE_REV contain MAIN_REV?
+# (We grep instead of using `&` in the revset because chook blocks `&` in
+# Bash tool args; this stays portable to interactive invocations too.)
+ANCESTORS_OF_REMOTE=$(jj log -r "::${REMOTE_REV}" --no-graph -T 'commit_id ++ "\n"' 2>/dev/null)
+if ! echo "$ANCESTORS_OF_REMOTE" | grep -qx "$MAIN_REV"; then
+  echo "" >&2
+  echo "ERROR: agent's work is NOT a fast-forward of main." >&2
+  echo "" >&2
+  echo "  main is at:        ${MAIN_REV:0:12}" >&2
+  echo "  agent's work tip:  ${REMOTE_REV:0:12}" >&2
+  echo "" >&2
+  echo "Main moved since the clone was spawned. The agent must rebase in" >&2
+  echo "their own clone before finalize. Recipe:" >&2
+  echo "" >&2
+  echo "  cd ${CLONE_DIR}" >&2
+  echo "  jj git fetch                                # pull latest main" >&2
+  echo "  jj rebase -s ${BOOKMARK} -d main@origin --skip-emptied" >&2
+  echo "  # resolve any conflicts: jj resolve" >&2
+  echo "  cd ${MAIN_DIR}" >&2
+  echo "  echo ${NAME} > /tmp/mpeek-agent-name" >&2
+  echo "  scripts/finalize-isolated-clone.sh" >&2
+  echo "" >&2
+  exit 5
 fi
 
-# Sweep empty + no-description commits in the rebased range.
-SWEEP_RANGE="(${MAIN_HEAD}::${NEW_HEAD}) ~ ${MAIN_HEAD} ~ ${NEW_HEAD} & empty() & description(exact:\"\")"
-EMPTY_NODESC=$(jj log -r "$SWEEP_RANGE" --no-graph -T 'commit_id.short() ++ " "' 2>/dev/null || true)
-if [ -n "$EMPTY_NODESC" ]; then
-  echo "Abandoning empty + no-description commits: ${EMPTY_NODESC}" >&2
-  # shellcheck disable=SC2086
-  jj abandon $EMPTY_NODESC >&2 || true
-fi
+# ── Step 4: fast-forward main and @ ───────────────────────────────────────
+jj bookmark set main -r "$REMOTE_REV"
+echo "Fast-forwarded main: ${MAIN_REV:0:12} → ${REMOTE_REV:0:12}" >&2
 
-# Advance main's @ onto the new head.
-if [ -n "$NEW_HEAD" ] && [ "$NEW_HEAD" != "$MAIN_HEAD" ]; then
-  echo "Advancing main @ onto ${NEW_HEAD:0:12}" >&2
-  jj new "$NEW_HEAD" >&2
-fi
+# Move @ onto the new tip (preserves the convention that @ rides above main)
+jj new "$REMOTE_REV" >&2
 
 echo "" >&2
-echo "Finalized clone ${NAME}. Bookmark ${BOOKMARK} preserved as safety copy." >&2
+echo "Finalized clone ${NAME} (fast-forward, no rebase, no divergence)." >&2
 echo "Clone preserved at ${CLONE_DIR} for reuse." >&2
+echo "" >&2
+echo "Next: push to tangled with scripts/push-main.sh (step 4 of the chaos-defense plan)." >&2
