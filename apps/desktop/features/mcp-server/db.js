@@ -18,9 +18,9 @@ let db = null;
 const BUSY_TIMEOUT_MS = 5000;
 
 // --- Policy helpers ---
-// These mirror behavior in backend/electron/datastore.ts. Duplicating them
+// These mirror behavior in apps/desktop/main/datastore.ts. Duplicating them
 // here is a known drift hazard (see Peek task 14efdd97). Column-set parity
-// with schema/v1.json is asserted by features/mcp-server/schema-drift.test.js;
+// with packages/schema/v1.json is asserted by apps/desktop/features/mcp-server/schema-drift.test.js;
 // formula parity by the policy tests in server.test.js.
 
 // Tag frecency: matches datastore.ts `calculateFrecency` (line 510).
@@ -60,7 +60,7 @@ export function openDb(path) {
  * Ensure tags.name has a UNIQUE index (idx_tags_name_unique) and drop the
  * superseded plain idx_tags_name.
  *
- * Mirrors migrateTagsUniqueIndex() in backend/electron/datastore.ts.
+ * Mirrors migrateTagsUniqueIndex() in apps/desktop/main/datastore.ts.
  * Running here means the MCP server self-heals even before the Electron app
  * is rebuilt and restarted with the new DDL. Idempotent: no-op if both
  * conditions hold (unique index present, plain index absent).

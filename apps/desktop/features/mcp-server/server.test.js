@@ -506,7 +506,7 @@ describe('MCP Server', () => {
   });
 
   // Parity tests: lock in MCP-side behavior that matches policy in
-  // backend/electron/datastore.ts. If datastore.ts changes the formulas
+  // apps/desktop/main/datastore.ts. If datastore.ts changes the formulas
   // or rules, these tests will keep passing while the app diverges —
   // they're a lower bar than true integration. The schema-drift test
   // (schema-drift.test.js) covers the structural side.
