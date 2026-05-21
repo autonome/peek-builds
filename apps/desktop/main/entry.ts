@@ -108,7 +108,7 @@ import {
   initSessionPartition,
   registerDownloadHandler,
 } from './session-partition.js';
-import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters } from './session.js';
+import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest } from './session.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
 import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
@@ -194,6 +194,31 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    * feedback_no_sleep_in_tests_or_code).
    */
   flushPendingCloseSave: () => flushPendingCloseSave(),
+  /**
+   * Override the restore-complete flag for tests that simulate mid-restore
+   * save behavior. Set to false to simulate "restore in flight"; set to true
+   * (or call forceRestoreSession) to re-enable saves.
+   *
+   * See tests/desktop/session-restore-save-during-restore.spec.ts.
+   */
+  setRestoreCompleteForTest: (value: boolean) => setRestoreCompleteForTest(value),
+  /**
+   * Read the current on-disk session snapshot directly. Returns the parsed
+   * SessionSnapshot object or null if no snapshot exists. Used by tests to
+   * assert snapshot integrity after a save attempt.
+   */
+  getLastSnapshot: () => {
+    try {
+      const db = getDb();
+      const row = db.prepare(
+        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'snapshot'`
+      ).get() as { value: string } | undefined;
+      if (!row?.value) return null;
+      return JSON.parse(row.value);
+    } catch {
+      return null;
+    }
+  },
   /**
    * Force a BrowserWindow to be visible *without focusing it*. Tests that
    * drive focus synthetically through `fireWindowFocus` need the window

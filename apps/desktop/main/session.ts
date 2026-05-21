@@ -26,6 +26,57 @@ import { DEBUG, isTestProfile } from './config.js';
 
 export type { WindowContext, WindowDescriptor };
 
+// ============================================================================
+// Restore-complete flag (mid-restore corruption guard)
+//
+// Problem: Cmd+Q (or any before-quit / autosave trigger) during the restore
+// loop can fire while restored windows still have empty URLs (webContents
+// hasn't called loadURL yet). Writing that state as the new snapshot erases
+// the user's session — all 35 windows come back with url="" on next launch.
+//
+// Solution: a module-level boolean that flips to `true` only after
+// restoreSessionSnapshot() completes. saveSessionSnapshot() is a no-op while
+// the flag is false (logs a warn so the refusal appears in main.log). Also
+// applied: empty-URL filter (belt-and-suspenders) and fewer-windows guard
+// (refuse to overwrite a larger snapshot with a smaller one).
+//
+// Shadow-snapshotting (.partial file that promotes on completion) was
+// considered and deferred — these three in-memory guards address the failure
+// mode more simply with no extra I/O surface.
+// ============================================================================
+
+/**
+ * True once restoreSessionSnapshot() has finished (success or failure).
+ * All production save calls are no-ops until this flips. Prevents a
+ * mid-restore Cmd+Q from overwriting the good snapshot with empty-URL garbage.
+ * Starts as true so saves work on fresh launch (no restore in flight).
+ */
+let _restoreComplete = true;
+
+/**
+ * Mark restore as in-flight. Called at the top of restoreSessionSnapshot so
+ * any save triggered by a Cmd+Q during the loop is rejected.
+ */
+export function markRestoreInFlight(): void {
+  _restoreComplete = false;
+}
+
+/**
+ * Mark restore as complete. Called at the bottom of restoreSessionSnapshot
+ * (regardless of success/failure) so saves can proceed normally.
+ */
+export function markRestoreComplete(): void {
+  _restoreComplete = true;
+}
+
+/**
+ * Test-only override: set the restore-complete flag to an arbitrary value
+ * so tests can simulate mid-restore or post-restore save behavior.
+ */
+export function setRestoreCompleteForTest(value: boolean): void {
+  _restoreComplete = value;
+}
+
 // Drift-detection counters for restoreSessionSnapshot. The fix in 853cc48f
 // gates .show()/.focus() on isAppFocused() at restore time so a user who
 // switched away mid-restore isn't yanked back. The bug class — focus
@@ -236,6 +287,18 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   // session-restore Playwright specs that drive save+restore directly).
   if (isTestProfile() && !opts?._forceForTest) return;
 
+  // Guard 1: Restore-complete flag.
+  // If a restore is in flight (flag=false), any save is a no-op. The snapshot
+  // written mid-restore would contain windows whose webContents.getURL() is
+  // still "" because loadURL hasn't resolved yet — effectively wiping the
+  // user's session. The flag flips true at the end of restoreSessionSnapshot()
+  // regardless of success/failure. _forceForTest bypasses this for Playwright
+  // specs that need direct save control.
+  if (!_restoreComplete && !opts?._forceForTest) {
+    console.warn(`[session] Refusing to save snapshot (reason: ${reason}): restore still in flight. Snapshot preserved.`);
+    return;
+  }
+
   DEBUG && console.log(`[session] Saving session snapshot (reason: ${reason})`);
 
   let db;
@@ -390,14 +453,64 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     });
   }
 
+  // Guard 2: Empty-URL filter (belt-and-suspenders).
+  // Even when restore is complete, a window may legitimately have an empty URL
+  // for a brief moment (e.g., created but not yet navigated). Strip those so
+  // they never reach the on-disk snapshot. Log each filtered window so the
+  // decision is visible in main.log without re-instrumenting.
+  const preFilterCount = windowDescriptors.length;
+  const filteredDescriptors = windowDescriptors.filter((d) => {
+    const url = d.url;
+    if (!url || url.trim() === '' || url === 'about:blank' || url === 'about:newtab') {
+      console.warn(`[session:guard] Filtering window with empty/blank URL from snapshot (reason: ${reason})`);
+      return false;
+    }
+    return true;
+  });
+  if (filteredDescriptors.length < preFilterCount) {
+    const dropped = preFilterCount - filteredDescriptors.length;
+    console.warn(`[session:guard] Dropped ${dropped} window(s) with empty/blank URLs from snapshot (reason: ${reason})`);
+  }
+
+  // Guard 3: Fewer-windows guard.
+  // If the new snapshot (after URL filtering) would have strictly fewer
+  // non-empty-URL windows than the currently persisted snapshot, refuse to
+  // overwrite. This catches the primary failure mode: Cmd+Q mid-restore
+  // collapses 35 real windows to 0 loaded ones. The before-quit save would
+  // normally carry cleanShutdown=true, so the user gets no crash dialog — the
+  // data loss is silent. We accept the new snapshot only when it is at least as
+  // large as the previous one (normal usage) or _forceForTest bypasses the
+  // guard (tests that deliberately reduce window count need direct control).
+  if (!opts?._forceForTest) {
+    try {
+      const existingRow = db.prepare(
+        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'snapshot'`
+      ).get() as { value: string } | undefined;
+      if (existingRow?.value) {
+        const existingSnapshot: SessionSnapshot = JSON.parse(existingRow.value);
+        const existingCount = (existingSnapshot.windows ?? []).filter(
+          (d) => d.url && d.url.trim() !== '' && d.url !== 'about:blank' && d.url !== 'about:newtab'
+        ).length;
+        if (filteredDescriptors.length < existingCount) {
+          console.warn(
+            `[session:guard] Refusing to overwrite snapshot: new count ${filteredDescriptors.length} < existing count ${existingCount} (reason: ${reason}). Snapshot preserved.`
+          );
+          return;
+        }
+      }
+    } catch {
+      // If we can't read the existing snapshot, proceed with the save.
+    }
+  }
+
   const snapshot: SessionSnapshot = {
     version: 1,
     createdAt: Date.now(),
     reason,
-    windows: windowDescriptors,
+    windows: filteredDescriptors,
   };
 
-  DEBUG && console.log(`[session] Captured ${windowDescriptors.length} window(s)`);
+  DEBUG && console.log(`[session] Captured ${filteredDescriptors.length} window(s) (${preFilterCount - filteredDescriptors.length} filtered)`);
 
   try {
     // Write snapshot to feature_settings table
@@ -707,6 +820,14 @@ export async function restoreSessionSnapshot(
     DEBUG && console.log('[session] Session restore disabled by pref');
     return result;
   }
+
+  // Mark restore as in-flight. Any saveSessionSnapshot call from this point
+  // until markRestoreComplete() (at function exit, via finally) will be rejected
+  // to prevent a mid-restore Cmd+Q from writing empty-URL windows as the session
+  // snapshot. The try/finally guarantees the flag always flips back to true.
+  markRestoreInFlight();
+
+  try {
 
   let db;
   try {
@@ -1167,6 +1288,13 @@ export async function restoreSessionSnapshot(
 
   DEBUG && console.log(`[session] Restore complete: ${result.restored}/${result.total} windows restored, ${result.failed} failed`);
   return result;
+
+  } finally {
+    // Always flip the restore-complete flag back on so subsequent saves
+    // (autosave, window-close debounce, next quit) work normally.
+    markRestoreComplete();
+    DEBUG && console.log('[session] markRestoreComplete: saves re-enabled');
+  }
 }
 
 // ============================================================================
