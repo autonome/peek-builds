@@ -199,6 +199,7 @@ export {
 export {
   setPrefsGetter,
   modWindow,
+  showWindowHeadlessSafe,
   addEscHandler,
   winDevtoolsConfig,
   closeWindow,

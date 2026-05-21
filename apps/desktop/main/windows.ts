@@ -57,6 +57,37 @@ export function getPrefs(): Record<string, unknown> {
 }
 
 /**
+ * Show a BrowserWindow in a headless-safe way.
+ *
+ * On macOS without Xvfb, both win.show() and win.showInactive() surface the
+ * window at the OS level regardless of whether the window was constructed with
+ * show:false.  Setting opacity to 0 before showing suppresses the on-screen
+ * rendering while keeping Electron's internal visibility state intact:
+ * isVisible() returns true, and focus/blur events still fire.  This is the
+ * behaviour Playwright tests rely on.
+ *
+ * Under Linux/Xvfb the opacity step is redundant but harmless.
+ * In non-headless production builds it is skipped entirely.
+ *
+ * @param win    The BrowserWindow to show.
+ * @param opts   { active: true } to call win.show() (steals focus);
+ *               default is win.showInactive() (focus-preserving).
+ */
+export function showWindowHeadlessSafe(
+  win: BrowserWindow,
+  opts?: { active?: boolean },
+): void {
+  if (isHeadless()) {
+    try { win.setOpacity(0); } catch { /* setOpacity unsupported on some platforms */ }
+  }
+  if (opts?.active) {
+    win.show();
+  } else {
+    win.showInactive();
+  }
+}
+
+/**
  * Modify window state (close, hide, show)
  */
 export function modWindow(bw: BrowserWindow, params: { action: string }): void {
@@ -67,7 +98,7 @@ export function modWindow(bw: BrowserWindow, params: { action: string }): void {
     bw.hide();
   }
   if (params.action === 'show') {
-    bw.show();
+    showWindowHeadlessSafe(bw, { active: true });
   }
 }
 
