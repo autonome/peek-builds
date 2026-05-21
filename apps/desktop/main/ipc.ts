@@ -2264,6 +2264,7 @@ export function registerWindowHandlers(): void {
 
       // Track content window focus for devtools command
       win.on('focus', () => {
+        console.log(`[focus-tracker] win.on(focus) fired id=${win.id}`);
         trackContentWindowFocus(win);
         // Only track non-modal windows for visible window targeting
         // Modal windows (like cmd palette) shouldn't override the target window
