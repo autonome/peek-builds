@@ -41,15 +41,15 @@ yarn schema:check
 ## Build Integration
 
 Schema codegen runs automatically as part of `yarn build`:
-1. `node schema/codegen.js` - Regenerate all files from v1.json
-2. `tsc -p backend/tsconfig.json` - Compile TypeScript
+1. `node packages/schema/codegen.js` - Regenerate all files from v1.json
+2. `tsc -p apps/desktop/tsconfig.json` - Compile TypeScript
 
 ## Runtime Validation
 
 Both Server and Electron backends validate their schemas on startup:
 
 - **Server** (`apps/server/db.js`): Imports `REQUIRED_SYNC_COLUMNS` from schema/v1.json and validates after migrations
-- **Electron** (`backend/electron/datastore.ts`): Calls `validateSyncSchema()` after migrations, throws if columns missing
+- **Electron** (`apps/desktop/main/datastore.ts`): Calls `validateSyncSchema()` after migrations, throws if columns missing
 
 This catches schema drift early - if a migration is missing or broken, the app fails fast with a clear error.
 
@@ -121,8 +121,8 @@ assertValidSyncSchema((table) => getColumnNames(table));
 ## Adding/Modifying Schema
 
 1. Edit `v1.json`
-2. Run `node schema/codegen.js`
-3. Run `node --test schema/fidelity.test.js` to verify backends match
+2. Run `node packages/schema/codegen.js`
+3. Run `node --test packages/schema/fidelity.test.js` to verify backends match
 4. Update backend implementations if tests fail
 5. Commit all changes together
 

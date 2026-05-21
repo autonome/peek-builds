@@ -18,7 +18,7 @@ This doc records what we tried, what we shipped, and what would have to be true 
 
 ### Supported verbs
 
-Canonical list lives in [`backend/electron/cli-router.ts`](../backend/electron/cli-router.ts) (`KNOWN_VERBS`). Keep this table in sync.
+Canonical list lives in [`apps/desktop/main/cli-router.ts`](../apps/desktop/main/cli-router.ts) (`KNOWN_VERBS`). Keep this table in sync.
 
 | Verb           | Args                       | Effect                                       |
 |----------------|----------------------------|----------------------------------------------|
@@ -81,13 +81,13 @@ Three layers, all live:
 The Settings UI on Wayland surfaces the `peek-cli` invocations with copy-to-clipboard.
 
 Implementation files:
-- `backend/electron/shortcuts.ts` — `isWaylandSession()`, one-time `logWaylandHintOnce()`, `registerGlobalShortcut()` dispatcher (layer 1+2)
-- `backend/electron/cli-socket.ts` — Unix socket server at `${XDG_RUNTIME_DIR or ~/.cache}/peek/<profile>/ipc.sock`, line-delimited JSON, stale-socket cleanup, atexit unlink, 0600 perms. `start/stop/isRunning` exposed for the runtime toggle.
-- `backend/electron/cli-router.ts` — verb sanitisation + publish on `cli:<verb>` topic
-- `backend/electron/cli-helper.ts` — resolves the helper's absolute path per packaging (source / asar-unpacked / AppImage shadow) and refreshes the AppImage shadow at daemon startup
-- `backend/electron/tile-ipc.ts` — IPC entry point; suppresses per-tile error logging on Wayland; `tile:app:cli-helper-path` returns the resolved helper path for the settings UI
-- `backend/electron/tile-preload.cts` — `api.platform = { os, isWayland }` and `api.app.getCliHelperPath()` exposed to renderers
-- `backend/electron/entry.ts` — calls `ensureCliHelperShadow()` at startup; reconciles socket against `cliSocketEnabled` pref on every prefs publish
+- `apps/desktop/main/shortcuts.ts` — `isWaylandSession()`, one-time `logWaylandHintOnce()`, `registerGlobalShortcut()` dispatcher (layer 1+2)
+- `apps/desktop/main/cli-socket.ts` — Unix socket server at `${XDG_RUNTIME_DIR or ~/.cache}/peek/<profile>/ipc.sock`, line-delimited JSON, stale-socket cleanup, atexit unlink, 0600 perms. `start/stop/isRunning` exposed for the runtime toggle.
+- `apps/desktop/main/cli-router.ts` — verb sanitisation + publish on `cli:<verb>` topic
+- `apps/desktop/main/cli-helper.ts` — resolves the helper's absolute path per packaging (source / asar-unpacked / AppImage shadow) and refreshes the AppImage shadow at daemon startup
+- `apps/desktop/main/tile-ipc.ts` — IPC entry point; suppresses per-tile error logging on Wayland; `tile:app:cli-helper-path` returns the resolved helper path for the settings UI
+- `apps/desktop/main/tile-preload.cts` — `api.platform = { os, isWayland }` and `api.app.getCliHelperPath()` exposed to renderers
+- `apps/desktop/main/entry.ts` — calls `ensureCliHelperShadow()` at startup; reconciles socket against `cliSocketEnabled` pref on every prefs publish
 - `scripts/peek-cli.mjs` — non-Electron Node CLI helper. Auto-discovers the live socket, sends one verb, exits in milliseconds. Honours `$PEEK_PROFILE` for explicit selection.
 - `app/cmd/background.js` — subscribes to `cli:cmd-open`
 - `features/peeks/background.js` — subscribes to `cli:peek-open`, takes `keyNum` arg
@@ -129,7 +129,7 @@ User opens GNOME Settings → Keyboard → Custom Shortcuts (or KDE equivalent, 
 
 The whole point is "Peek is already running — wake it up cheaply." So skip Electron's `requestSingleInstanceLock` (which spawns a whole second Electron process just to forward argv — 300–800ms on Linux, completely defeats the point). Use a Unix socket instead: the daemon listens, a tiny CLI helper writes a verb and exits.
 
-1. **Daemon side** (in `backend/electron/`) — on app start, listen on `${XDG_RUNTIME_DIR:-$HOME/.cache/peek}/ipc.sock`. On exit, clean up. Inbound message shape: `{ "verb": "cmd-open", "args": [...] }`. New module `backend/electron/cli-router.ts` maps verbs to existing dispatch paths (cmd panel open, peek/slide execute via pubsub).
+1. **Daemon side** (in `apps/desktop/main/`) — on app start, listen on `${XDG_RUNTIME_DIR:-$HOME/.cache/peek}/ipc.sock`. On exit, clean up. Inbound message shape: `{ "verb": "cmd-open", "args": [...] }`. New module `apps/desktop/main/cli-router.ts` maps verbs to existing dispatch paths (cmd panel open, peek/slide execute via pubsub).
 2. **CLI side** — a tiny non-Electron helper bundled with the app (~100 lines of plain Node, or a small Rust binary if we want to be picky about ms). Behavior:
    - Connect to the socket. If it works: write the verb, exit. ~5–20ms total.
    - If connection fails (Peek isn't running): exec the full Peek binary in daemon mode. The daemon starts up, creates the socket, and processes the original verb. Slow path, but only once per session.
@@ -190,7 +190,7 @@ Until then, the local-fallback Peek already has is a better experience than a po
 
 ## Implementation plan (for the eventual revisit)
 
-Keep this section in sync with `backend/electron/shortcuts.ts` if any of the file paths shift.
+Keep this section in sync with `apps/desktop/main/shortcuts.ts` if any of the file paths shift.
 
 ### A. Feasibility verification — what to re-check first
 
@@ -208,7 +208,7 @@ Keep this section in sync with `backend/electron/shortcuts.ts` if any of the fil
 
 #### Module layout
 
-New file `backend/electron/portal-shortcuts.ts` exporting:
+New file `apps/desktop/main/portal-shortcuts.ts` exporting:
 
 ```ts
 async function initPortalShortcuts(): Promise<PortalClient | null>
@@ -256,7 +256,7 @@ Only proceed past step 1 if risks D.1 and D.2 prove benign for the target distro
 
 1. **Probe-only spike** (no code changes to Peek). Standalone Node script using `@homebridge/dbus-native` that calls `CreateSession`, registers `Option+Space`, listens for `Activated`. Run on the then-current Fedora / Kubuntu / Ubuntu / Hyprland. Log app_id from each environment via the 5 launch methods listed in risk D.1. **This is a kill-or-proceed gate.**
 2. Add `@homebridge/dbus-native` to `dependencies` in `package.json`. Verify it survives `electron-rebuild` (it shouldn't need rebuilding — pure JS).
-3. New module `backend/electron/portal-shortcuts.ts`. Implement `PortalClient` with just CreateSession + BindShortcuts + Activated subscription. No unregister yet.
+3. New module `apps/desktop/main/portal-shortcuts.ts`. Implement `PortalClient` with just CreateSession + BindShortcuts + Activated subscription. No unregister yet.
 4. Wire into `shortcuts.ts` `registerGlobalShortcut`: when `isWaylandSession()` and `portalClient` is initialized, route to portal; on portal failure, fall through to existing path. **Vertical slice — only `Option+Space` for the cmd panel.** Ship behind an env flag (`PEEK_WAYLAND_PORTAL=1`) for opt-in dogfooding.
 5. Add Activated signal handling and the in-memory `shortcut_id → callback` map.
 6. Implement unregister via the portal's session-close semantics (the portal lacks a per-shortcut unregister; in v2 you re-call BindShortcuts with the new full set). Add a debounced "rebind" pass so churn from peeks/slides reinit doesn't spam the portal.

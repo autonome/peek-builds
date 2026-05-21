@@ -260,7 +260,7 @@ function safeOrigin(href) {
 export function getBgInjection() {
   return `
 /* Peek: chrome.runtime.onMessageExternal polyfill — capture listeners and
- * dispatch from main-process IPC. See backend/electron/chrome-api-polyfills/
+ * dispatch from main-process IPC. See apps/desktop/main/chrome-api-polyfills/
  * runtime-external.js. */
 (function(){
   if (typeof chrome === 'undefined' || !chrome.runtime) return;

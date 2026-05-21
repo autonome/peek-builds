@@ -2,9 +2,9 @@
 
 ## 0. Context and Scope
 
-The overnight audit added v1-compat shims to `backend/electron/tile-preload.ts` so that 26+ migrated features keep working. The shims are a **superset** of the strict capability-gated surface and bypass enforcement: they delegate directly to the legacy `datastore-*`, `registershortcut`, `file-save-dialog`, `context-get`, and `modes:*` handlers in `backend/electron/ipc.ts`, which do not check `CapabilityGrant`.
+The overnight audit added v1-compat shims to `apps/desktop/main/tile-preload.ts` so that 26+ migrated features keep working. The shims are a **superset** of the strict capability-gated surface and bypass enforcement: they delegate directly to the legacy `datastore-*`, `registershortcut`, `file-save-dialog`, `context-get`, and `modes:*` handlers in `apps/desktop/main/ipc.ts`, which do not check `CapabilityGrant`.
 
-Strict handlers in `backend/electron/tile-ipc.ts` (`tile:datastore:*`, `tile:settings:*`, `tile:theme:*`, `tile:filesystem:*`, `tile:network:fetch`, `tile:window:*`) already call `getGrantForToken(args.token)` and check `hasCapability`, `hasDatastoreTable`, `isNetworkDomainAllowed`, etc. The shims bypass all of that.
+Strict handlers in `apps/desktop/main/tile-ipc.ts` (`tile:datastore:*`, `tile:settings:*`, `tile:theme:*`, `tile:filesystem:*`, `tile:network:fetch`, `tile:window:*`) already call `getGrantForToken(args.token)` and check `hasCapability`, `hasDatastoreTable`, `isNetworkDomainAllowed`, etc. The shims bypass all of that.
 
 ### Scope surprise: partial-shim gaps
 
@@ -199,14 +199,14 @@ slides, tag-actions, tags, timers, websearch, widget-demo, windows, wonderwall
 
 1. ✓ `TILE_STRICT=true` env var — throws instead of warns on capability violations
 2. ✓ Capability-violation events → `tile:capability-violation` pubsub topic (GLOBAL scope, rate-limited 5s)
-3. ✓ Static `window.app` typings in `backend/electron/tile-api.d.ts`
+3. ✓ Static `window.app` typings in `apps/desktop/main/tile-api.d.ts`
 
 **Deliverables:**
-- `backend/electron/config.ts` — added `TILE_STRICT` flag
-- `backend/electron/tile-violations.ts` — `publishCapabilityViolation()` helper with rate limiting
-- `backend/electron/tile-ipc.ts` — all rejection paths wired to `handleViolation()` (throws in TILE_STRICT mode, publishes violation event always)
-- `backend/electron/tile-api.d.ts` — static typings for `window.app` surface
-- `backend/electron/tile-strict.test.ts` — tests for violation event shape, rate limiting, TILE_STRICT throw contract
+- `apps/desktop/main/config.ts` — added `TILE_STRICT` flag
+- `apps/desktop/main/tile-violations.ts` — `publishCapabilityViolation()` helper with rate limiting
+- `apps/desktop/main/tile-ipc.ts` — all rejection paths wired to `handleViolation()` (throws in TILE_STRICT mode, publishes violation event always)
+- `apps/desktop/main/tile-api.d.ts` — static typings for `window.app` surface
+- `apps/desktop/main/tile-strict.test.ts` — tests for violation event shape, rate limiting, TILE_STRICT throw contract
 - `docs/tile-api.md` — documented TILE_STRICT, violation topic, and .d.ts reference
 
 ---

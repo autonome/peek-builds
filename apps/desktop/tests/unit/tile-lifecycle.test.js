@@ -2,7 +2,7 @@
  * tile-lifecycle — state store + transition helper tests.
  *
  * Imports from the compiled dist output (the module is TypeScript,
- * compiled by `yarn build` into `dist/backend/electron/tile-lifecycle.js`).
+ * compiled by `yarn build` into `dist/main/tile-lifecycle.js`).
  * Uses Node's built-in test runner under Electron's Node context via
  * `yarn test:unit`.
  */

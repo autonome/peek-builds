@@ -183,9 +183,9 @@ a renderer ever needs policy introspection (e.g. cmd panel drift
 detection surface), we'll expose a snapshot via strict IPC rather
 than import the FSM file cross-process.
 
-- `backend/electron/tile-fsm.ts` — **pure** transition table + `validateTransition(from, trigger) → to | error`. No electron / node imports. Testable in isolation.
-- `backend/electron/tile-lifecycle.ts` — state store + enforcement engine. Wires the pure FSM to BrowserWindow events, token lifecycle, and broadcaster registration. Authoritative `tileId → state` map lives here.
-- `backend/electron/manifest-cache.ts` — SQLite writer + reader for `manifest_cache`. Only write call-sites: feature install path + boot-time manifest discovery. Read API exposed via strict tile IPC for cmd panel / features pane. Distinct from `backend/electron/feature-registry.ts`, which stores install metadata (source, publisher, capability grants, update policy) in `registry.json`.
+- `apps/desktop/main/tile-fsm.ts` — **pure** transition table + `validateTransition(from, trigger) → to | error`. No electron / node imports. Testable in isolation.
+- `apps/desktop/main/tile-lifecycle.ts` — state store + enforcement engine. Wires the pure FSM to BrowserWindow events, token lifecycle, and broadcaster registration. Authoritative `tileId → state` map lives here.
+- `apps/desktop/main/manifest-cache.ts` — SQLite writer + reader for `manifest_cache`. Only write call-sites: feature install path + boot-time manifest discovery. Read API exposed via strict tile IPC for cmd panel / features pane. Distinct from `apps/desktop/main/feature-registry.ts`, which stores install metadata (source, publisher, capability grants, update policy) in `registry.json`.
 - `app/cmd/background.js` — already in the core renderer; stops subscribing to `noun:register-batch` / `cmd:register` for *declared* commands (those come from the cache via IPC). Keeps the subscriptions for *dynamic* registrations from live tiles.
 
 ## Phased plan

@@ -79,7 +79,7 @@ The Firefox package excludes `tests/` and `scripts/` directories. Chrome packagi
 
 ## Key Pitfalls
 
-- The extension shares the `sync/` module via a symlink (`apps/extension/sync -> ../../sync`). Changes to `sync/` affect both the extension and other consumers. Run `yarn test:extension` after any sync change.
+- The extension shares the `sync/` module via a symlink (`apps/extension/sync -> ../../packages/sync`). Changes to `sync/` affect both the extension and other consumers. Run `yarn test:extension` after any sync change.
 - Extension Playwright tests are in `apps/desktop/tests/extension/`, not `apps/extension/tests/`. The two test directories serve different purposes (browser E2E vs unit).
 - `chrome.runtime.sendMessage` polyfill is committed but the Proton-auth bug fix is NOT. Check before relying on the polyfill for auth flows.
 - Do not use `npx playwright` directly — always use the yarn scripts.

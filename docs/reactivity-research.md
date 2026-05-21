@@ -19,7 +19,7 @@ Thin event layer on top of existing IPC handlers. When tag/item operations succe
 
 ### Tag Events (Phase 1 - Implemented)
 
-Emitted from `backend/electron/ipc.ts` IPC handlers:
+Emitted from `apps/desktop/main/ipc.ts` IPC handlers:
 
 ```javascript
 'tag:created'         → { tagId, tagName }
@@ -145,8 +145,8 @@ Integration tests in `tests/desktop/smoke.spec.ts`:
 
 | File | Purpose |
 |------|---------|
-| `backend/electron/ipc.ts` | Event emission (IPC handlers) |
-| `backend/electron/pubsub.ts` | PubSub engine (unchanged) |
+| `apps/desktop/main/ipc.ts` | Event emission (IPC handlers) |
+| `apps/desktop/main/pubsub.ts` | PubSub engine (unchanged) |
 | `extensions/groups/home.js` | Tag + item event subscriptions |
 | `extensions/tags/home.js` | Tag + item event subscriptions |
 | `tests/desktop/smoke.spec.ts` | Integration tests |

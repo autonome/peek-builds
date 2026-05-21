@@ -43,7 +43,7 @@ let testFixtureWindow: BrowserWindow | null = null;
  * Options for initializing the test fixture renderer.
  */
 export interface InitTestFixtureOptions {
-  /** Absolute path to `dist/backend/electron/tile-preload.cjs`. */
+  /** Absolute path to `dist/main/tile-preload.cjs`. */
   tilePreloadPath: string;
 }
 

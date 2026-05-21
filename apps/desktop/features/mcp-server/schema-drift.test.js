@@ -3,7 +3,7 @@
  *
  * The MCP server in this directory issues SQL directly against the columns
  * of items/tags/item_tags/item_events. The canonical schema for those tables
- * is owned by `schema/v1.json` (consumed by the Electron app at startup via
+ * is owned by `packages/packages/schema/v1.json` (consumed by the Electron app at startup via
  * `validateSyncSchema`). If a column the MCP writes to is removed or renamed
  * in v1.json, this test fails — before users hit a runtime "no such column"
  * error.
@@ -28,12 +28,12 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const schemaPath = join(__dirname, '..', '..', 'schema', 'v1.json');
+const schemaPath = join(__dirname, '..', '..', '..', '..', 'packages', 'schema', 'v1.json');
 const schema = JSON.parse(readFileSync(schemaPath, 'utf-8'));
 
 // Columns the MCP's db.js writes to or filters on. If you add a new column
 // write in db.js, add it here too — the test asserts the column exists in
-// schema/v1.json. Read-only columns (returned in SELECTs but never written)
+// packages/schema/v1.json. Read-only columns (returned in SELECTs but never written)
 // are not listed; their drift surfaces as JS undefined, which is benign.
 const MCP_TOUCHED_COLUMNS = {
   items: [
@@ -53,7 +53,7 @@ const MCP_TOUCHED_COLUMNS = {
   item_events: ['id', 'itemId', 'content', 'value', 'occurredAt', 'metadata', 'createdAt'],
 };
 
-// Indexes the MCP's db.js relies on. If schema/v1.json drops one of these (or
+// Indexes the MCP's db.js relies on. If packages/schema/v1.json drops one of these (or
 // changes its uniqueness), the MCP's SQL stops behaving correctly — e.g.
 // without idx_tags_name_unique the ON CONFLICT(name) upsert in tagItemInTx
 // raises "ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE
@@ -65,17 +65,17 @@ const MCP_REQUIRED_INDEXES = {
   ],
 };
 
-describe('schema drift between MCP and schema/v1.json', () => {
+describe('schema drift between MCP and packages/schema/v1.json', () => {
   for (const [table, columns] of Object.entries(MCP_TOUCHED_COLUMNS)) {
     describe(`table: ${table}`, () => {
       it(`is defined in v1.json`, () => {
-        assert.ok(schema.tables[table], `schema/v1.json missing table "${table}"`);
+        assert.ok(schema.tables[table], `packages/schema/v1.json missing table "${table}"`);
       });
 
       for (const col of columns) {
         it(`column "${col}" exists in v1.json`, () => {
           const def = schema.tables[table]?.columns?.[col];
-          assert.ok(def, `MCP writes to ${table}.${col} but schema/v1.json has no such column`);
+          assert.ok(def, `MCP writes to ${table}.${col} but packages/schema/v1.json has no such column`);
         });
       }
     });
@@ -109,24 +109,24 @@ describe('schema drift between MCP and schema/v1.json', () => {
       for (const [indexName, expected] of indexes) {
         it(`${table}.${indexName} is defined in v1.json with expected shape`, () => {
           const tableDef = schema.tables[table];
-          assert.ok(tableDef, `schema/v1.json missing table "${table}"`);
+          assert.ok(tableDef, `packages/schema/v1.json missing table "${table}"`);
           const defs = tableDef.indexes || [];
           const def = defs.find(d => d.name === indexName);
           assert.ok(
             def,
-            `MCP relies on index ${table}.${indexName} but schema/v1.json has no such index. ` +
+            `MCP relies on index ${table}.${indexName} but packages/schema/v1.json has no such index. ` +
             `Removing it breaks SQL paths in features/mcp-server/db.js.`
           );
           if (expected.unique) {
             assert.equal(
               def.unique, true,
-              `${table}.${indexName} must be unique in schema/v1.json — MCP uses ON CONFLICT against it.`
+              `${table}.${indexName} must be unique in packages/schema/v1.json — MCP uses ON CONFLICT against it.`
             );
           }
           if (expected.columns) {
             assert.deepEqual(
               def.columns, expected.columns,
-              `${table}.${indexName} columns must be ${JSON.stringify(expected.columns)} in schema/v1.json.`
+              `${table}.${indexName} columns must be ${JSON.stringify(expected.columns)} in packages/schema/v1.json.`
             );
           }
         });

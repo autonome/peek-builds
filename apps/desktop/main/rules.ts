@@ -5,7 +5,7 @@
  * (peek MCP plan 3d7d9239) lands the storage layer + CRUD + manifest
  * contribution; Stage 2 introduces the dispatcher and predicate
  * language. All Stage 1 rows are local-only (`sync: false` in
- * schema/v1.json).
+ * packages/schema/v1.json).
  *
  * Pure SQL wrapper — no Electron imports — so the module is
  * unit-testable under plain node via an in-memory better-sqlite3, the

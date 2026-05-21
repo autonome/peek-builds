@@ -6,7 +6,7 @@
 
 **Only two call sites exist in the working tree:**
 
-1. `backend/electron/tile-ipc.ts:2866` — the IPC handler for `tile:window:set-ignore-mouse`. Registered at line 2845. Gated by `window.manage` capability (enforced in `backend/electron/tile-window-enforcement.ts:164`).
+1. `apps/desktop/main/tile-ipc.ts:2866` — the IPC handler for `tile:window:set-ignore-mouse`. Registered at line 2845. Gated by `window.manage` capability (enforced in `apps/desktop/main/tile-window-enforcement.ts:164`).
 
 2. `features/spaces/background.js:76` — sole renderer-side caller. Sets the Spaces border decoration window to permanent click-through (`ignore=true`, `forward=true`). Not a canvas page host.
 
@@ -14,7 +14,7 @@
 
 ### Transparent `BrowserWindow` constructions
 
-`backend/electron/ipc.ts`:
+`apps/desktop/main/ipc.ts`:
 
 | Line | Window | `transparent` | `frame` | Click-through? |
 |------|--------|--------------|---------|----------------|
@@ -43,7 +43,7 @@ Clicks in visually-empty regions of overlay/canvas windows reach the OS app behi
 
 ### IPC channel
 
-`tile:window:set-ignore-mouse` already exists (`backend/electron/tile-ipc.ts:2845`) and supports `{ forward: true }`. `api.window.setIgnoreMouseEvents(id, ignore, { forward: true })` is already in `backend/electron/tile-api.d.ts:172`. No new IPC.
+`tile:window:set-ignore-mouse` already exists (`apps/desktop/main/tile-ipc.ts:2845`) and supports `{ forward: true }`. `api.window.setIgnoreMouseEvents(id, ignore, { forward: true })` is already in `apps/desktop/main/tile-api.d.ts:172`. No new IPC.
 
 ### Per-window hit-test loop
 
@@ -81,8 +81,8 @@ The hit-test does not have to handle visibility class details perfectly; if the 
 |------|--------|
 | `app/page/page.js` | Add `mousemove` hit-test loop after DOM ready; call `api.window.setIgnoreMouseEvents` |
 | `app/hud/hud.js` | Same pattern with `#hud-container` whitelist |
-| `backend/electron/tile-ipc.ts` | No change — handler exists |
-| `backend/electron/tile-api.d.ts` | No change — surface declared |
+| `apps/desktop/main/tile-ipc.ts` | No change — handler exists |
+| `apps/desktop/main/tile-api.d.ts` | No change — surface declared |
 
 ## Cross-platform notes
 

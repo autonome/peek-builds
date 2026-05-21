@@ -27,7 +27,7 @@ The page loading pipeline:
 
 ### 1. CRITICAL: Adblocker Blocking YouTube Resources
 
-**File**: `/Users/dietrich/misc/mpeek/backend/electron/adblocker.ts`
+**File**: `/Users/dietrich/misc/mpeek/apps/desktop/main/adblocker.ts`
 
 The app uses `@ghostery/adblocker-electron` with `ElectronBlocker.fromPrebuiltAdsAndTracking()` (line 52). This loads EasyList + EasyPrivacy filter lists, which are known to aggressively block YouTube's ad-serving infrastructure.
 
@@ -45,7 +45,7 @@ The blocker attaches to the profile session (line 105-106: `getProfileSession()`
 
 ### 2. MODERATE: WebContentsForceDark May Corrupt YouTube Rendering
 
-**File**: `/Users/dietrich/misc/mpeek/backend/electron/entry.ts` (lines 679-686)
+**File**: `/Users/dietrich/misc/mpeek/apps/desktop/main/entry.ts` (lines 679-686)
 
 If the user's dark mode setting is `"force"`, the app applies:
 ```
@@ -71,7 +71,7 @@ The `Electron/40.0.0` token is unusual but YouTube typically doesn't block based
 
 ### 4. MINOR: `allowServiceWorkers: false` on the `peek://` Scheme
 
-**File**: `/Users/dietrich/misc/mpeek/backend/electron/protocol.ts` (line 81)
+**File**: `/Users/dietrich/misc/mpeek/apps/desktop/main/protocol.ts` (line 81)
 
 The custom protocol `peek://` has `allowServiceWorkers: false`. However, this only affects pages loaded via the `peek://` scheme — the webview loads `https://youtube.com` which uses its own session and the standard HTTPS scheme. Service workers for YouTube should work normally within the webview's session.
 
@@ -200,10 +200,10 @@ To verify the adblocker theory before implementing fixes:
 |------|------|
 | `/Users/dietrich/misc/mpeek/app/page/page.js` | Webview creation, URL loading, error handling |
 | `/Users/dietrich/misc/mpeek/app/page/index.html` | Page container with `<webview>` tag |
-| `/Users/dietrich/misc/mpeek/backend/electron/ipc.ts` | Window-open handler, canvas setup, guest webContents |
-| `/Users/dietrich/misc/mpeek/backend/electron/session-partition.ts` | Session/partition setup |
-| `/Users/dietrich/misc/mpeek/backend/electron/main.ts` | App initialization, no permission handlers |
-| `/Users/dietrich/misc/mpeek/backend/electron/entry.ts` | `WebContentsForceDark` command-line switch |
-| `/Users/dietrich/misc/mpeek/backend/electron/protocol.ts` | `peek://` scheme registration (`allowServiceWorkers: false`) |
-| `/Users/dietrich/misc/mpeek/backend/electron/adblocker.ts` | Ghostery adblocker — primary suspect |
+| `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` | Window-open handler, canvas setup, guest webContents |
+| `/Users/dietrich/misc/mpeek/apps/desktop/main/session-partition.ts` | Session/partition setup |
+| `/Users/dietrich/misc/mpeek/apps/desktop/main/main.ts` | App initialization, no permission handlers |
+| `/Users/dietrich/misc/mpeek/apps/desktop/main/entry.ts` | `WebContentsForceDark` command-line switch |
+| `/Users/dietrich/misc/mpeek/apps/desktop/main/protocol.ts` | `peek://` scheme registration (`allowServiceWorkers: false`) |
+| `/Users/dietrich/misc/mpeek/apps/desktop/main/adblocker.ts` | Ghostery adblocker — primary suspect |
 | `/Users/dietrich/misc/mpeek/package.json` | Electron 40.x / Chromium 144 |

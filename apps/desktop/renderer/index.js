@@ -641,7 +641,7 @@ export const init = async () => {
   // CLI verb: open-url. Bridge from the cli-socket dispatch path to the
   // existing external:open-url handler below — same shape (a URL opens
   // in a Peek page-host window), just sourced from peek-cli rather than
-  // an OS open-url event. See backend/electron/cli-router.ts.
+  // an OS open-url event. See apps/desktop/main/cli-router.ts.
   api.subscribe('cli:open-url', (msg) => {
     const url = String(msg?.args?.[0] ?? '');
     if (!url) {

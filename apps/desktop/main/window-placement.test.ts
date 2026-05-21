@@ -1,5 +1,5 @@
 /**
- * Unit tests for backend/electron/window-placement.ts — the pure
+ * Unit tests for apps/desktop/main/window-placement.ts — the pure
  * placement engine. All display data is fabricated via the
  * `fakeDisplays(...)` helper; no real Electron `screen` API is touched.
  *

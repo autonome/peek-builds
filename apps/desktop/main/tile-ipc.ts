@@ -5277,7 +5277,7 @@ export function registerTileIpcHandlers(): void {
   // ── Web Permissions (settings UI) ──
   //
   // Read/clear stored per-origin permission decisions persisted by the web
-  // permission handler (see backend/electron/permission-handler.ts +
+  // permission handler (see apps/desktop/main/permission-handler.ts +
   // permission-store.ts). All handlers gate on `trustedBuiltin` so only
   // peek-core renderers (settings page) can list/revoke; tile renderers
   // can't snoop or tamper with another tile's stored decisions.
@@ -6593,7 +6593,7 @@ export function registerTileIpcHandlers(): void {
   // that want to roll their own invocation; for the actual GNOME-bind
   // command, prefer tile:app:cli-command which formats the full
   // ELECTRON_RUN_AS_NODE invocation. See
-  // backend/electron/cli-helper.ts and docs/global-hotkeys-on-wayland.md.
+  // apps/desktop/main/cli-helper.ts and docs/global-hotkeys-on-wayland.md.
   registerTileIpc('tile:app:cli-helper-path', { mode: 'handle' }, (event, args: {
     token: string;
   }, _grant) => {

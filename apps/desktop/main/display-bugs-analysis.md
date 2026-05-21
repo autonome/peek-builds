@@ -9,7 +9,7 @@
 
 ## Bug 1: macOS Display IDs Are NOT Stable Across Unplug/Replug Cycles
 
-**Files:** `/Users/dietrich/misc/mpeek/backend/electron/display-watcher.ts` lines 373-403
+**Files:** `/Users/dietrich/misc/mpeek/apps/desktop/main/display-watcher.ts` lines 373-403
 **Severity:** HIGH -- This is likely the primary cause of symptom #1.
 
 ### Root Cause
@@ -39,8 +39,8 @@ Native macOS apps use `NSWindow`, which has built-in screen affinity managed by 
 ## Bug 2: Popup Windows and Background-Window Children Are NOT Tracked by Display Watcher
 
 **Files:**
-- `/Users/dietrich/misc/mpeek/backend/electron/ipc.ts` lines 2604-2617 (popup window creation -- NO `trackWindow()` call)
-- `/Users/dietrich/misc/mpeek/backend/electron/main.ts` lines 985-1064 (background window child creation -- NO `trackWindow()` call)
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` lines 2604-2617 (popup window creation -- NO `trackWindow()` call)
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/main.ts` lines 985-1064 (background window child creation -- NO `trackWindow()` call)
 **Severity:** HIGH
 
 ### Root Cause
@@ -66,7 +66,7 @@ Add `trackWindow(win)` calls after window creation in both paths:
 
 ## Bug 3: Phase 1b Redistribution Fights macOS Native Window Migration
 
-**File:** `/Users/dietrich/misc/mpeek/backend/electron/display-watcher.ts` lines 574-598
+**File:** `/Users/dietrich/misc/mpeek/apps/desktop/main/display-watcher.ts` lines 574-598
 **Severity:** HIGH -- This is likely the second major contributor to symptom #1.
 
 ### Root Cause
@@ -96,8 +96,8 @@ Remove Phase 1b entirely, or make it opt-in only for cases where macOS's native 
 
 **Files:**
 - `/Users/dietrich/misc/mpeek/app/page/page.js` lines 246-252, 610-628
-- `/Users/dietrich/misc/mpeek/backend/electron/ipc.ts` lines 3194-3205
-- `/Users/dietrich/misc/mpeek/backend/electron/display-watcher.ts` lines 840-865
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` lines 3194-3205
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/display-watcher.ts` lines 840-865
 **Severity:** HIGH -- This is the primary cause of symptom #2 (drag glitchiness).
 
 ### Root Cause
@@ -122,7 +122,7 @@ Peek's page canvas uses a custom drag implementation that calls `setBounds()` vi
 
 ## Bug 5: `isWindowAccessible()` Check Is Too Lenient for Canvas Windows
 
-**File:** `/Users/dietrich/misc/mpeek/backend/electron/display-watcher.ts` lines 155-158
+**File:** `/Users/dietrich/misc/mpeek/apps/desktop/main/display-watcher.ts` lines 155-158
 **Severity:** MEDIUM
 
 ### Root Cause
@@ -139,7 +139,7 @@ For the display-change use case, `isWindowAccessible()` should also verify that 
 
 ## Bug 6: 500ms Debounce May Miss the Window for Pre-Debounce Capture
 
-**File:** `/Users/dietrich/misc/mpeek/backend/electron/display-watcher.ts` lines 776-797
+**File:** `/Users/dietrich/misc/mpeek/apps/desktop/main/display-watcher.ts` lines 776-797
 **Severity:** MEDIUM
 
 ### Root Cause
@@ -156,7 +156,7 @@ This is largely mitigated by fixing Bug 2 (ensuring all windows are tracked). Th
 
 ## Bug 7: `display-metrics-changed` Does Not Pass `isRemoval=true`
 
-**File:** `/Users/dietrich/misc/mpeek/backend/electron/display-watcher.ts` lines 823-831
+**File:** `/Users/dietrich/misc/mpeek/apps/desktop/main/display-watcher.ts` lines 823-831
 **Severity:** LOW
 
 ### Root Cause

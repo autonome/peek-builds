@@ -31,7 +31,7 @@ page canvas), and the test fixture — runs through the same machinery:
 
 - A single HTML entry point
 - Loaded into a per-window Electron `BrowserWindow` with the
-  [`backend/electron/tile-preload.cts`](../backend/electron/tile-preload.cts)
+  [`apps/desktop/main/tile-preload.cts`](../apps/desktop/main/tile-preload.cts)
   preload script (CommonJS — Electron's sandbox preload rejects ESM)
 - Talks to the main process exclusively over the strict `tile:*` IPC surface
 - Holds a per-window **capability token** that the main process mints at
@@ -46,7 +46,7 @@ DONE). The tile path is the only path.
 
 A tile is described by a `manifest.json` at `manifestVersion: 3`. The full
 TypeScript schema lives in
-[`backend/electron/tile-manifest.ts`](../backend/electron/tile-manifest.ts);
+[`apps/desktop/main/tile-manifest.ts`](../apps/desktop/main/tile-manifest.ts);
 the abbreviated shape is:
 
 ```json
@@ -115,7 +115,7 @@ ship as part of the trusted codebase.
 ### The IPC chokepoint
 
 Every `tile:*` IPC frame goes through a single main-process pipeline,
-[`backend/electron/tile-ipc-gate.ts`](../backend/electron/tile-ipc-gate.ts).
+[`apps/desktop/main/tile-ipc-gate.ts`](../apps/desktop/main/tile-ipc-gate.ts).
 Handlers cannot be registered any other way. The pipeline runs in fixed
 order; failing any step emits a `gate:rejected` telemetry event and drops
 the frame:
@@ -136,7 +136,7 @@ to back-door a tile renders a loud assertion failure rather than a silent bug.
 
 ### The preload surface
 
-[`tile-preload.cts`](../backend/electron/tile-preload.cts) exposes
+[`tile-preload.cts`](../apps/desktop/main/tile-preload.cts) exposes
 `window.app` to the renderer. This is the entire API a tile sees. The shape
 is tracked in [docs/tile-api.md](./tile-api.md); see
 [docs/tile-preload-trimming-plan.md](./tile-preload-trimming-plan.md) for
@@ -170,8 +170,8 @@ impossible.
 ### 1. Tile lifecycle FSM
 
 **Owns:** when a tile is alive.
-**Lives in:** [`backend/electron/tile-lifecycle.ts`](../backend/electron/tile-lifecycle.ts) +
-[`backend/electron/tile-fsm.ts`](../backend/electron/tile-fsm.ts) (pure transition table).
+**Lives in:** [`apps/desktop/main/tile-lifecycle.ts`](../apps/desktop/main/tile-lifecycle.ts) +
+[`apps/desktop/main/tile-fsm.ts`](../apps/desktop/main/tile-fsm.ts) (pure transition table).
 **Doc:** [docs/tile-lifecycle-fsm.md](./tile-lifecycle-fsm.md)
 
 States: `unregistered → registered → loading → ready → visible` plus
@@ -192,7 +192,7 @@ exists" bug clusters.
 ### 2. PubSub state machine
 
 **Owns:** what messages can flow between tiles in each state.
-**Lives in:** [`backend/electron/pubsub.ts`](../backend/electron/pubsub.ts) +
+**Lives in:** [`apps/desktop/main/pubsub.ts`](../apps/desktop/main/pubsub.ts) +
 the `tile-ipc-gate.ts` validation pipeline above.
 **Doc:** [docs/pubsub-state-machine.md](./pubsub-state-machine.md)
 
@@ -246,7 +246,7 @@ design (Electron today, Tauri to follow against the same contract).
 **Spec:** [docs/window-placement.md](./window-placement.md) is canonical.
 Read that first.
 
-**Lives in:** [`backend/electron/window-placement.ts`](../backend/electron/window-placement.ts) —
+**Lives in:** [`apps/desktop/main/window-placement.ts`](../apps/desktop/main/window-placement.ts) —
 a pure module with no `screen.*` or `BrowserWindow.*` calls inside; the
 caller passes display state in.
 

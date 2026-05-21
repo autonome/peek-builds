@@ -1,6 +1,6 @@
 //! Tauri command handlers
 //!
-//! These commands mirror the Electron IPC handlers in backend/electron/ipc.ts
+//! These commands mirror the Electron IPC handlers in apps/desktop/main/ipc.ts
 
 pub mod datastore;
 pub mod extensions;

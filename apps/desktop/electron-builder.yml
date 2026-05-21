@@ -125,7 +125,7 @@ linux:
   # `xdg-mime default peek.desktop x-scheme-handler/http` works (which
   # is what `app.setAsDefaultProtocolClient('http')` ultimately invokes
   # on Linux). For AppImage builds, the .desktop file inside the bundle
-  # isn't installed system-wide; backend/electron/desktop-installer.ts
+  # isn't installed system-wide; apps/desktop/main/desktop-installer.ts
   # shadow-installs to ~/.local/share/applications/ on every launch and
   # keeps the same MimeType list. For deb/rpm (when re-enabled), the
   # package installs the .desktop directly to /usr/share/applications/

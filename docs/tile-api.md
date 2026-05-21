@@ -2,7 +2,7 @@
 
 This document lists the API surfaces available to tiles after Phase 4 shim removal.
 All surfaces are injected via `contextBridge.exposeInMainWorld('app', api)` from
-`backend/electron/tile-preload.ts`. Deprecated compat shims are gone; calling any
+`apps/desktop/main/tile-preload.ts`. Deprecated compat shims are gone; calling any
 removed name throws `Error('[tile-preload] ... removed in Phase 4; use ...')`.
 
 ---
@@ -301,7 +301,7 @@ an `Error` synchronously instead of logging a warning and returning `{ error }`.
   pubsub, network) now calls `handleViolation()` which throws `new Error(msg)` when
   `TILE_STRICT === true`.
 - The violation event (`tile:capability-violation`) is still published before the throw.
-- Flag is read from `process.env.TILE_STRICT === 'true'` in `backend/electron/config.ts`.
+- Flag is read from `process.env.TILE_STRICT === 'true'` in `apps/desktop/main/config.ts`.
 
 ### `tile:capability-violation` pubsub topic
 
@@ -331,7 +331,7 @@ api.pubsub.subscribe('tile:capability-violation', (evt) => {
 event per 5 seconds. A runaway tile retrying the same operation rapidly emits only one event,
 preventing subscriber flood.
 
-### Static typings — `backend/electron/tile-api.d.ts`
+### Static typings — `apps/desktop/main/tile-api.d.ts`
 
 A hand-written `.d.ts` file provides TypeScript autocomplete for the full `window.app` surface.
 It covers all capability-gated surfaces (pubsub, commands, window, datastore, settings,
@@ -340,7 +340,7 @@ screen, escape) plus always-available base API.
 
 Reference it in your tile:
 ```ts
-/// <reference path="../../backend/electron/tile-api.d.ts" />
+/// <reference path="../../apps/desktop/main/tile-api.d.ts" />
 ```
 
 Keep it in sync with `tile-preload.ts` + `tile-ipc.ts` when adding new surfaces.

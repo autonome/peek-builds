@@ -1,6 +1,6 @@
 //! Sync module - bidirectional sync between desktop app and server
 //!
-//! Ports backend/electron/sync.ts to Rust.
+//! Ports apps/desktop/main/sync.ts to Rust.
 //! Uses the unified item types (url, text, tagset, image) across all platforms.
 //!
 //! Sync Protocol:

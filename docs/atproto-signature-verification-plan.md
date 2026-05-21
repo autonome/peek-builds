@@ -2,7 +2,7 @@
 
 ## Gap
 
-`backend/electron/atproto-source.ts:356` fetches a `space.peek.feature.release`
+`apps/desktop/main/atproto-source.ts:356` fetches a `space.peek.feature.release`
 record via `com.atproto.repo.getRecord` and accepts whatever the PDS returns.
 No signature is checked. `verifyBlobCid()` (line 502) only confirms that the
 downloaded bundle bytes hash to the CIDs **declared by that record** — if the
@@ -96,7 +96,7 @@ MST walk**, to keep the install path's dependency surface tight.
 
 ### File layout
 
-- `backend/electron/atproto-verify.ts` — new module:
+- `apps/desktop/main/atproto-verify.ts` — new module:
   - `resolveSigningKey(did): {curve, publicKey}` — DID doc fetch + key
     extraction.
   - `fetchSignedCommit(pdsUrl, did): {commit, commitCid, sig, signedBytes}`.
@@ -104,7 +104,7 @@ MST walk**, to keep the install path's dependency surface tight.
   - `verifyRecordInclusion(pdsUrl, commit, collection, rkey): recordCid`.
   - `fetchAndVerifyRecord(atUri): verifiedRecord` — the public entry point
     the installer calls instead of `getRecord`.
-- `backend/electron/atproto-source.ts` — replace the naive `getRecord` call
+- `apps/desktop/main/atproto-source.ts` — replace the naive `getRecord` call
   in `resolveInternal()` with `fetchAndVerifyRecord()`. Keep the existing
   `verifyBlobCid()` unchanged; it remains the last link in the chain.
 
@@ -165,7 +165,7 @@ fall back to unverified install under any circumstance.
 
 ## Testing
 
-- **Unit tests** (`backend/electron/atproto-verify.test.ts`):
+- **Unit tests** (`apps/desktop/main/atproto-verify.test.ts`):
   - Golden signed commit fixture → verifies cleanly.
   - Flipped bit in commit body → rejects.
   - Flipped bit in `sig` → rejects.
@@ -198,5 +198,5 @@ Total: ~3 days for a complete tamper-evident install chain.
 - atproto DID method (PLC): https://web.plc.directory/
 - `@atproto/crypto`: https://www.npmjs.com/package/@atproto/crypto
 - MST spec: https://atproto.com/specs/repository#mst
-- Existing install code: `backend/electron/atproto-source.ts`
+- Existing install code: `apps/desktop/main/atproto-source.ts`
 - Existing blob-CID check: `atproto-source.ts:502` (`verifyBlobCid`)

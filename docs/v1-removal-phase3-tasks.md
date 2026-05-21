@@ -49,8 +49,8 @@ After Phase 2.5 cleanup, these v1 surfaces are still present:
    `tile:*` handler or (if the capability gate is redundant) to delete
    entirely. ~10 sites need validation.
 7. **`IPC_CHANNELS` const** in `backend/config.ts:16-27` — imported by
-   `backend/electron/ipc.ts`, `backend/electron/index.ts`,
-   `backend/electron/config.ts`. Delete after no callers remain.
+   `apps/desktop/main/ipc.ts`, `apps/desktop/main/index.ts`,
+   `apps/desktop/main/config.ts`. Delete after no callers remain.
 8. **`getRunningExtensions()` / `getAllRegisteredExtensions()` /
    `isConsolidatedExtension()`** — still called from `ipc.ts:1300,1310,
    1323,1333`. Features pane + extension-management IPCs depend on them.
@@ -140,10 +140,10 @@ broadcaster loop iterating it. Update callers in `ipc.ts:1199, 1290,
 handlers entirely if no tile uses them.
 
 **Files:**
-- `/Users/dietrich/misc/mpeek/backend/electron/main.ts` (lines 73-77,
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/main.ts` (lines 73-77,
   247-258, 1335-1343, 1393-1397, 1418-1442, 1447-1450)
-- `/Users/dietrich/misc/mpeek/backend/electron/index.ts:149-151`
-- `/Users/dietrich/misc/mpeek/backend/electron/ipc.ts:97-98, 1199,
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/index.ts:149-151`
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts:97-98, 1199,
   1290, 1333`
 
 **Dependencies:** none (map is already orphan data)
@@ -172,9 +172,9 @@ corresponding `ipcMain.handle('izui-*')` legacy handler in `ipc.ts` if
 no other caller.
 
 **Files:**
-- `/Users/dietrich/misc/mpeek/backend/electron/tile-preload.cts` (lines
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/tile-preload.cts` (lines
   1624, 1636, 1644, 1652, 1660)
-- `/Users/dietrich/misc/mpeek/backend/electron/ipc.ts` (`izui-*` handler
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` (`izui-*` handler
   sites — grep first)
 
 **Dependencies:** none
@@ -205,9 +205,9 @@ Output as a new section in this doc.
 
 **Files to grep (callers):**
 - `/Users/dietrich/misc/mpeek/preload.js`
-- `/Users/dietrich/misc/mpeek/backend/electron/tile-preload.cts`
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/tile-preload.cts`
 - `/Users/dietrich/misc/mpeek/chrome-extensions/**` (content scripts)
-- `/Users/dietrich/misc/mpeek/backend/tauri/preload.js` (reference,
+- `/Users/dietrich/misc/mpeek/apps/tauri-desktop/preload.js` (reference,
   don't touch)
 - `/Users/dietrich/misc/mpeek/app/**` (legacy `app.*` call sites)
 
@@ -233,11 +233,11 @@ derived the same way. Delete `isConsolidatedExtension()` + the
 Features pane still displays everything correctly.
 
 **Files:**
-- `/Users/dietrich/misc/mpeek/backend/electron/main.ts` (lines 89, 97,
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/main.ts` (lines 89, 97,
   1214, 1225, 1237, 1313-1373, 1380-1413, 1462-1464)
-- `/Users/dietrich/misc/mpeek/backend/electron/ipc.ts:100, 1300, 1310,
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts:100, 1300, 1310,
   1323` (`isConsolidatedExtension` callsite + handlers)
-- `/Users/dietrich/misc/mpeek/backend/electron/index.ts` (if exported)
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/index.ts` (if exported)
 
 **Dependencies:** phase3.1 (if 3.1 recommends deleting the host window,
 the cleanup is tighter)
@@ -265,9 +265,9 @@ at `main.ts:1208`, the broadcaster loop iterating host frames
 the `app/extension-host.html` file. Update smoke tests per 3.1 outcome.
 
 **Files:**
-- `/Users/dietrich/misc/mpeek/backend/electron/main.ts` (lines 80, 226-
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/main.ts` (lines 80, 226-
   244, 767-771, 1103-1176, 1208, 1321, 1386, 1455-1457)
-- `/Users/dietrich/misc/mpeek/backend/electron/ipc.ts:2306`
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts:2306`
 - `/Users/dietrich/misc/mpeek/app/extension-host.html` — delete
 - `/Users/dietrich/misc/mpeek/tests/desktop/smoke.spec.ts` (lines per
   3.1)
@@ -297,20 +297,20 @@ callers), delete the `ipcMain.handle/on(...)` registration in `ipc.ts`.
 For bucket (b) channels, convert the `tile-preload.cts` calls to strict
 `tile:*` paths (audit which need capability gates, which are privileged).
 Delete the `IPC_CHANNELS` const from `backend/config.ts`. Update
-`backend/electron/ipc.ts:121`, `backend/electron/index.ts:13`,
-`backend/electron/config.ts:14` imports. Delete the
+`apps/desktop/main/ipc.ts:121`, `apps/desktop/main/index.ts:13`,
+`apps/desktop/main/config.ts:14` imports. Delete the
 `IPC_CHANNELS.SUBSCRIBE/PUBLISH/CLOSE_WINDOW/REGISTER_SHORTCUT/
 UNREGISTER_SHORTCUT/MODIFY_WINDOW/CONSOLE/RENDERER_LOG/APP_QUIT/
 APP_RESTART` handler blocks at `ipc.ts:4158-4476`.
 
 **Files:**
-- `/Users/dietrich/misc/mpeek/backend/electron/ipc.ts` (many lines —
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` (many lines —
   see phase3.4 output)
-- `/Users/dietrich/misc/mpeek/backend/electron/tile-preload.cts` (the
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/tile-preload.cts` (the
   ~70 `ipcRenderer.invoke('legacy-*')` sites in bucket (b))
-- `/Users/dietrich/misc/mpeek/backend/config.ts:16-27`
-- `/Users/dietrich/misc/mpeek/backend/electron/config.ts:14`
-- `/Users/dietrich/misc/mpeek/backend/electron/index.ts:13`
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/config.ts:16-27`
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/config.ts:14`
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/index.ts:13`
 
 **Dependencies:** phase3.4 (must know bucket per channel), phase3.6
 (host window gone = no frame.send path using IPC_CHANNELS names), phase
@@ -348,7 +348,7 @@ small.
 
 **Scope:** After 3.7, nothing should import or use `preload.js`. Delete
 the file. Remove `preloadPath`/`setPreloadPath`/`getPreloadPath` from
-`backend/electron/config.ts`, `entry.ts`, `index.ts`, and the window-open
+`apps/desktop/main/config.ts`, `entry.ts`, `index.ts`, and the window-open
 fallback at `ipc.ts:2268,2670`. Update `will-attach-webview` in
 `entry.ts:189-211` to drop the v1 fallback branch — all peek:// webview
 children get `tile-preload.cjs` unconditionally (or throw if not a v2
@@ -356,12 +356,12 @@ tile).
 
 **Files:**
 - `/Users/dietrich/misc/mpeek/preload.js` — delete (2693 LOC)
-- `/Users/dietrich/misc/mpeek/backend/electron/entry.ts` (lines 63, 152,
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/entry.ts` (lines 63, 152,
   157, 189-211)
-- `/Users/dietrich/misc/mpeek/backend/electron/config.ts` (preload path
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/config.ts` (preload path
   getters/setters)
-- `/Users/dietrich/misc/mpeek/backend/electron/index.ts` (exports)
-- `/Users/dietrich/misc/mpeek/backend/electron/ipc.ts` (lines 119,
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/index.ts` (exports)
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` (lines 119,
   2268, 2670)
 
 **Dependencies:** phase3.7 (all buckets) + phase3.6
@@ -384,8 +384,8 @@ first.
 
 ## Out of scope (deferred to Phase 4)
 
-- Tauri-side preload migration (`backend/tauri/preload.js`,
-  `backend/tauri-mobile/.../include_str!`). Per Phase 2.5 #5 — copy to a
+- Tauri-side preload migration (`apps/tauri-desktop/preload.js`,
+  `apps/mobile/.../include_str!`). Per Phase 2.5 #5 — copy to a
   Tauri-local path if Electron deletion would break `include_str!`.
 - Manifest v3 bump / `type?` field deletion / `windowHints` cleanup —
   Phase 4.
@@ -406,9 +406,9 @@ Prefer shipping 5 validated packages over 10 sketchy ones.
 ### phase3.4 — IPC channel audit (2026-04-18)
 
 Audited every `ipcMain.handle(...)` and `ipcMain.on(...)` registration
-in `backend/electron/ipc.ts`, then grepped every call site across
-`preload.js`, `backend/electron/tile-preload.cts`, `app/**`,
-`chrome-extensions/**`, and `backend/electron/**` (excluding test files
+in `apps/desktop/main/ipc.ts`, then grepped every call site across
+`preload.js`, `apps/desktop/main/tile-preload.cts`, `app/**`,
+`chrome-extensions/**`, and `apps/desktop/main/**` (excluding test files
 and Tauri).
 
 **Total channel count: 193** (183 `.handle` + 10 `.on`).
@@ -434,7 +434,7 @@ generate IPC code at runtime via `_ipc-bridge.js` but those target
 #### Channel table
 
 Format: `channel | bucket | callers (file:line, abbreviated)`. `pl` =
-`preload.js`, `tp` = `backend/electron/tile-preload.cts`,
+`preload.js`, `tp` = `apps/desktop/main/tile-preload.cts`,
 `pg` = `app/page/page.js`, `ctx` = `app/context/*.js`.
 
 ##### `datastore-*` (47 channels) — batch 3.7c
@@ -1001,7 +1001,7 @@ existing `opener-*` semantics from `ipc.ts`. Gate on `window.manage`
 capability (or new `opener` cap if more appropriate — pick the simpler
 one).
 
-**Files:** `backend/electron/tile-ipc.ts`, `backend/electron/tile-
+**Files:** `apps/desktop/main/tile-ipc.ts`, `apps/desktop/main/tile-
 preload.cts` (add wrapper methods only — DO NOT remove legacy invoke
 yet; that's 3.6a).
 
@@ -1025,7 +1025,7 @@ require trustedBuiltin enforcement (theme handlers should refuse
 non-trusted callers — pattern from existing `tile:datastore:*`
 trustedBuiltin sites in recent commits).
 
-**Files:** `backend/electron/tile-ipc.ts`, `backend/electron/tile-
+**Files:** `apps/desktop/main/tile-ipc.ts`, `apps/desktop/main/tile-
 preload.cts` (add wrappers, additive).
 
 **Dependencies:** none
@@ -1046,7 +1046,7 @@ preload.cts` (add wrappers, additive).
 `listAllRegistered`, `windowDevtools`, `reload` (10 total).
 TrustedBuiltin enforcement.
 
-**Files:** `backend/electron/tile-ipc.ts`, `backend/electron/tile-
+**Files:** `apps/desktop/main/tile-ipc.ts`, `apps/desktop/main/tile-
 preload.cts` (add wrappers).
 
 **Dependencies:** none
@@ -1065,7 +1065,7 @@ preload.cts` (add wrappers).
 **Scope:** Add `tile:chrome-extensions:list`, `enable`, `disable`,
 `getStatus`, `getUiEntries`, `openPage`. TrustedBuiltin enforcement.
 
-**Files:** `backend/electron/tile-ipc.ts`, `backend/electron/tile-
+**Files:** `apps/desktop/main/tile-ipc.ts`, `apps/desktop/main/tile-
 preload.cts`.
 
 **Dependencies:** none
@@ -1086,7 +1086,7 @@ for its own package. Add `tile:features:settings-schema` (mirror of
 `feature-settings-schema`) and `tile:window:get-id` (mirror of
 `get-window-id`). Both used unconditionally in tile-preload.
 
-**Files:** `backend/electron/tile-ipc.ts`, `backend/electron/tile-
+**Files:** `apps/desktop/main/tile-ipc.ts`, `apps/desktop/main/tile-
 preload.cts`.
 
 **Dependencies:** none
@@ -1108,7 +1108,7 @@ opt to keep the legacy `ipcMain.on` handlers permanently as the only
 survivors instead — decide based on capability story (per 3.7e
 recommendation in audit).
 
-**Files:** `backend/electron/tile-ipc.ts`, `backend/electron/tile-
+**Files:** `apps/desktop/main/tile-ipc.ts`, `apps/desktop/main/tile-
 preload.cts`.
 
 **Dependencies:** none
@@ -1130,7 +1130,7 @@ last 3 commits (b820dafc, 06eaacb6, 48d15aca) added many; this package
 is the "fill the gaps" pass. For each missing, add a strict shim with
 permissive datastore-capability gating (existing pattern).
 
-**Files:** `backend/electron/tile-ipc.ts`, `backend/electron/tile-
+**Files:** `apps/desktop/main/tile-ipc.ts`, `apps/desktop/main/tile-
 preload.cts`. Reference: 3.4 audit table for the 28 strict-shadow
 datastore channels.
 
@@ -1152,8 +1152,8 @@ surface.
 tile-preload with `tile:window:opener-*`. Then delete the 3
 `ipcMain.handle('opener-*')` blocks in `ipc.ts`.
 
-**Files:** `backend/electron/tile-preload.cts` (lines around 1112,
-1122, 1129 in `app/page/page.js` consumer paths), `backend/electron/
+**Files:** `apps/desktop/main/tile-preload.cts` (lines around 1112,
+1122, 1129 in `app/page/page.js` consumer paths), `apps/desktop/main/
 ipc.ts`.
 
 **Dependencies:** 3.5a
@@ -1173,8 +1173,8 @@ ipc.ts`.
 sites in tile-preload with strict equivalents. Delete the 6 legacy
 handlers.
 
-**Files:** `backend/electron/tile-preload.cts` (lines 2036–2055),
-`backend/electron/ipc.ts`.
+**Files:** `apps/desktop/main/tile-preload.cts` (lines 2036–2055),
+`apps/desktop/main/ipc.ts`.
 
 **Dependencies:** 3.5b
 
@@ -1191,7 +1191,7 @@ handlers.
 **Scope:** Replace 10 `ipcRenderer.invoke('extension-*', …)` sites
 (1933–1993). Delete legacy handlers in `ipc.ts`.
 
-**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+**Files:** `apps/desktop/main/tile-preload.cts`, `apps/desktop/main/
 ipc.ts`.
 
 **Dependencies:** 3.5c
@@ -1209,7 +1209,7 @@ ipc.ts`.
 
 **Scope:** Replace 6 sites (2071–2101). Delete legacy handlers.
 
-**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+**Files:** `apps/desktop/main/tile-preload.cts`, `apps/desktop/main/
 ipc.ts`.
 
 **Dependencies:** 3.5d
@@ -1227,7 +1227,7 @@ ipc.ts`.
 
 **Scope:** Replace tile-preload calls + delete handlers.
 
-**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+**Files:** `apps/desktop/main/tile-preload.cts`, `apps/desktop/main/
 ipc.ts`.
 
 **Dependencies:** 3.5e
@@ -1246,7 +1246,7 @@ ipc.ts`.
 `.on` handlers, OR explicitly choose to keep the 3 as legacy-permanent
 survivors. Document the decision inline in `ipc.ts`.
 
-**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+**Files:** `apps/desktop/main/tile-preload.cts`, `apps/desktop/main/
 ipc.ts`.
 
 **Dependencies:** 3.5f
@@ -1265,7 +1265,7 @@ ipc.ts`.
 …)` sites in tile-preload (lines 861–955) with `tile:datastore:*`
 equivalents. Delete the matching 28 legacy handlers in `ipc.ts`.
 
-**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+**Files:** `apps/desktop/main/tile-preload.cts`, `apps/desktop/main/
 ipc.ts`.
 
 **Dependencies:** 3.5g (shims must exist first)
@@ -1290,7 +1290,7 @@ return ipcRenderer.invoke('window-*', …)` else branches in tile-preload
 to throw + delete. Mirror the 3.3 izui pattern. Delete the legacy
 `window-*` handlers in `ipc.ts` for the 11 affected channels.
 
-**Files:** `backend/electron/tile-preload.cts` (lines 514, 541, 570,
+**Files:** `apps/desktop/main/tile-preload.cts` (lines 514, 541, 570,
 585, 600, 615, 636, 654, 668, 682, 696, 710, 726, 749), `backend/
 electron/ipc.ts`.
 
@@ -1313,7 +1313,7 @@ through all tile manifests for `window` capability.
 (lines 1448–1470) to throw + delete fallback. Delete the 10 legacy
 handlers in `ipc.ts`.
 
-**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+**Files:** `apps/desktop/main/tile-preload.cts`, `apps/desktop/main/
 ipc.ts`.
 
 **Dependencies:** 3.6e (clears related surfaces)
@@ -1333,7 +1333,7 @@ ipc.ts`.
 (lines 1287–1297) to throw + delete fallback. Delete the 6 legacy
 handlers in `ipc.ts`.
 
-**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+**Files:** `apps/desktop/main/tile-preload.cts`, `apps/desktop/main/
 ipc.ts`.
 
 **Dependencies:** 3.8b (`app/context/*.js` must already use
@@ -1358,7 +1358,7 @@ handlers. Per-channel sites:
 - `save-space-workspaces`: tp:1791
 - `window-set-visible-on-all-workspaces`: tp:749
 
-**Files:** `backend/electron/tile-preload.cts`, `backend/electron/
+**Files:** `apps/desktop/main/tile-preload.cts`, `apps/desktop/main/
 ipc.ts`.
 
 **Dependencies:** none
@@ -1425,9 +1425,9 @@ renderer ids list (cmd/hud/page). Delete `isConsolidatedExtension()`
 and the `loadedConsolidatedExtensions.add(...)` calls. Verify Features
 pane.
 
-**Files:** `backend/electron/main.ts` (lines 89, 97, 1214, 1225, 1237,
-1313–1373, 1380–1413, 1462–1464), `backend/electron/ipc.ts:100, 1300,
-1310, 1323`, `backend/electron/index.ts` (if exported).
+**Files:** `apps/desktop/main/main.ts` (lines 89, 97, 1214, 1225, 1237,
+1313–1373, 1380–1413, 1462–1464), `apps/desktop/main/ipc.ts:100, 1300,
+1310, 1323`, `apps/desktop/main/index.ts` (if exported).
 
 **Dependencies:** 3.1 (cleared — GO).
 
@@ -1450,7 +1450,7 @@ host.html` file. Update smoke tests per 3.1's per-site recommendations
 1380-1386 and 4359-4366; rewrite fixture helper at desktop-app.ts:
 222-244; trim README.md:140-141 + 148).
 
-**Files:** `backend/electron/main.ts`, `backend/electron/ipc.ts:2306`,
+**Files:** `apps/desktop/main/main.ts`, `apps/desktop/main/ipc.ts:2306`,
 `app/extension-host.html` (delete), smoke.spec.ts, fixtures, README.
 
 **Dependencies:** 3.9
@@ -1477,7 +1477,7 @@ browser-status`, `set-default-browser`, `window-reopen-last-closed`,
 frecency`, `IPC_CHANNELS.CONSOLE`. Pre-delete: re-verify via grep for
 `api.invoke('<name>')` passthrough usage.
 
-**Files:** `backend/electron/ipc.ts`, `backend/config.ts` (CONSOLE).
+**Files:** `apps/desktop/main/ipc.ts`, `backend/config.ts` (CONSOLE).
 
 **Dependencies:** none — independent low-risk package, runnable any
 time after 3.4.
@@ -1498,13 +1498,13 @@ miss.
 **Scope:** With Wave 2b + 2c + 2d complete, the remaining ~48 preload-
 only handlers in `ipc.ts` have no live consumers. Delete them all.
 Then delete `preload.js`. Remove `setPreloadPath`/`getPreloadPath`
-from `backend/electron/config.ts`, `entry.ts`, `index.ts`, and the
+from `apps/desktop/main/config.ts`, `entry.ts`, `index.ts`, and the
 window-open fallback at `ipc.ts:2268,2670`. Update `will-attach-
 webview` in `entry.ts:189-211` to drop the v1 fallback branch.
 
-**Files:** `backend/electron/ipc.ts` (~48 handler blocks), `preload.js`
-(delete 2693 LOC), `backend/electron/entry.ts` (lines 63, 152, 157,
-189–211), `backend/electron/config.ts`, `backend/electron/index.ts`.
+**Files:** `apps/desktop/main/ipc.ts` (~48 handler blocks), `preload.js`
+(delete 2693 LOC), `apps/desktop/main/entry.ts` (lines 63, 152, 157,
+189–211), `apps/desktop/main/config.ts`, `apps/desktop/main/index.ts`.
 
 **Dependencies:** Wave 2b (3.6a–g) + Wave 2c (3.7a–d) + Wave 2d
 (3.8b) + Wave 2f (3.10) all complete.
@@ -1525,14 +1525,14 @@ caught all live consumers; tsc + full electron suite is the final net.
 #### 3.11c — Delete `IPC_CHANNELS` const + remaining `.on` handlers
 
 **Scope:** Delete `IPC_CHANNELS` const from `backend/config.ts:16-27`.
-Update imports in `backend/electron/ipc.ts:121`, `backend/electron/
-index.ts:13`, `backend/electron/config.ts:14`. Delete the
+Update imports in `apps/desktop/main/ipc.ts:121`, `apps/desktop/main/
+index.ts:13`, `apps/desktop/main/config.ts:14`. Delete the
 `IPC_CHANNELS.SUBSCRIBE/PUBLISH/CLOSE_WINDOW/REGISTER_SHORTCUT/
 UNREGISTER_SHORTCUT/MODIFY_WINDOW/RENDERER_LOG/APP_QUIT/APP_RESTART/
 CONSOLE` handler blocks at `ipc.ts:4158-4476`.
 
-**Files:** `backend/config.ts`, `backend/electron/config.ts`, `backend/
-electron/index.ts`, `backend/electron/ipc.ts`.
+**Files:** `backend/config.ts`, `apps/desktop/main/config.ts`, `backend/
+electron/index.ts`, `apps/desktop/main/ipc.ts`.
 
 **Dependencies:** 3.11b. Also requires 3.6f decision (if `renderer-
 log`/`app-quit`/`app-restart` are kept as legacy survivors, they stay;

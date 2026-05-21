@@ -3,8 +3,8 @@
  *
  * Tests extracted pure functions from:
  * - features/spaces/config.js: isSpaceTag, getSpaceDisplayName, toSpaceTagName
- * - backend/electron/datastore.ts: updateModeForNavigation (space preservation)
- * - backend/electron/ipc.ts: auto-tagging decision logic
+ * - apps/desktop/main/datastore.ts: updateModeForNavigation (space preservation)
+ * - apps/desktop/main/ipc.ts: auto-tagging decision logic
  * - Screen border visibility for space mode
  *
  * These are logic-only tests — no DOM, no Electron, no IPC runtime.

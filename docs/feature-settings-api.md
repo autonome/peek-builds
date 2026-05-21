@@ -239,9 +239,9 @@ Not an IPC handler per se -- this is the notification pushed to renderers after 
 ### Phase 1: Add API (non-breaking)
 
 1. Create `app/settings-registry.js` with scope declarations and defaults.
-2. Add `global-settings-get` IPC handler to `backend/electron/ipc.ts`, reading from existing `_prefs` cache.
+2. Add `global-settings-get` IPC handler to `apps/desktop/main/ipc.ts`, reading from existing `_prefs` cache.
 3. Add `api.settings.global.get()` and `api.settings.global.subscribe()` to `preload.js`.
-4. Add stubs returning defaults to `backend/tauri/preload.js`.
+4. Add stubs returning defaults to `apps/tauri-desktop/preload.js`.
 
 No existing code changes. The old mechanisms continue to work.
 

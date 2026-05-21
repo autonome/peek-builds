@@ -294,18 +294,18 @@ Default: `profile=default` if not specified (backward compatible)
 
 **Implementation:**
 
-- `backend/electron/profiles.ts` - Profile management module
-- `backend/electron/entry.ts` - Profile initialization and selection
-- `backend/electron/ipc.ts` - IPC handlers for profiles
-- `backend/electron/sync.ts` - Per-profile sync configuration
+- `apps/desktop/main/profiles.ts` - Profile management module
+- `apps/desktop/main/entry.ts` - Profile initialization and selection
+- `apps/desktop/main/ipc.ts` - IPC handlers for profiles
+- `apps/desktop/main/sync.ts` - Per-profile sync configuration
 - `app/settings/settings.js` - Profiles UI section
 - `preload.js` - Profiles API exposure
 
 **Server:**
 
-- `backend/server/users.js` - Profile CRUD functions
-- `backend/server/db.js` - Profile-aware connection pooling
-- `backend/server/index.js` - Profile API endpoints
+- `apps/server/users.js` - Profile CRUD functions
+- `apps/server/db.js` - Profile-aware connection pooling
+- `apps/server/index.js` - Profile API endpoints
 
 **Documentation:**
 
@@ -335,15 +335,15 @@ yarn start                    # Should use dev profile
 ### Files Modified/Created
 
 **Server:**
-- `backend/server/users.js` - Added profiles table and CRUD functions
-- `backend/server/db.js` - Profile-aware connection pooling (userId:profileSlug)
-- `backend/server/index.js` - Profile API endpoints + data migration
+- `apps/server/users.js` - Added profiles table and CRUD functions
+- `apps/server/db.js` - Profile-aware connection pooling (userId:profileSlug)
+- `apps/server/index.js` - Profile API endpoints + data migration
 
 **Desktop:**
-- `backend/electron/profiles.ts` - Profile management module (NEW)
-- `backend/electron/entry.ts` - Profile initialization and selection
-- `backend/electron/ipc.ts` - Profile IPC handlers
-- `backend/electron/sync.ts` - Per-profile sync configuration
+- `apps/desktop/main/profiles.ts` - Profile management module (NEW)
+- `apps/desktop/main/entry.ts` - Profile initialization and selection
+- `apps/desktop/main/ipc.ts` - Profile IPC handlers
+- `apps/desktop/main/sync.ts` - Per-profile sync configuration
 - `app/settings/settings.js` - Profiles UI section
 - `preload.js` - Profiles API exposure
 

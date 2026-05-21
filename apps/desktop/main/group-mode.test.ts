@@ -1,7 +1,7 @@
 /**
  * Unit tests for group mode scoping and visual indicator
  *
- * Tests extracted pure functions from backend/electron/ipc.ts:
+ * Tests extracted pure functions from apps/desktop/main/ipc.ts:
  * - resolveGroupBorderColor: vivid color selection for screen border
  * - shouldAutoTagForGroup: group mode detection (no lastFocusedVisible fallback)
  * - shouldInheritGroupMode: window lineage-based group mode inheritance
@@ -13,7 +13,7 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
 
 // ============================================================================
-// resolveGroupBorderColor (from backend/electron/ipc.ts)
+// resolveGroupBorderColor (from apps/desktop/main/ipc.ts)
 // ============================================================================
 
 const VIVID_GROUP_COLORS = [

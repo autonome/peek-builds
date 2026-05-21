@@ -238,7 +238,7 @@ CREATE TABLE settings (
 - `src/App.css` - Mobile-optimized styling with dark mode
 
 ### Tests
-- `tests/integration.test.js` - Integration tests against backend/server
+- `tests/integration.test.js` - Integration tests against apps/server
 
 ### Configuration
 - `src-tauri/tauri.conf.json` - Bundle ID: `com.dietrich.peek-mobile`
@@ -365,7 +365,7 @@ The app uses `Peek.icon` bundle (Xcode 15+ unified icon format):
 
 The URL cards have action buttons (Safari, WKWebView, copy, edit, delete) that use inline SVG icons.
 
-**Location:** `backend/tauri-mobile/src/App.tsx` - search for `SvgIcon` components
+**Location:** `apps/mobile/src/App.tsx` - search for `SvgIcon` components
 
 **Styling:** The `.card-action-btn` class in `App.css` controls button appearance:
 ```css
@@ -417,7 +417,7 @@ The `build-ios.sh` script:
 
 ### Testing
 
-Integration tests verify the webhook sync with the backend server (`backend/server/`):
+Integration tests verify the webhook sync with the backend server (`apps/server/`):
 
 ```bash
 # Run tests (starts server with temp data, runs tests, cleans up)
@@ -475,7 +475,7 @@ Without this feature, the app tries to connect to `localhost:1420` instead of us
 - Blank white screen
 
 ```toml
-# backend/tauri-mobile/src-tauri/Cargo.toml
+# apps/mobile/src-tauri/Cargo.toml
 [dependencies]
 tauri = { version = "2", features = ["custom-protocol"] }
 
@@ -531,7 +531,7 @@ This is why the build scripts use `cargo build --lib` and why the `custom-protoc
 | `yarn mobile:ios:xcodebuild:device:full` | Full pipeline: cargo + xcodebuild + install (device) |
 | `yarn mobile:ios:assets` | Rebuild frontend assets only |
 
-**From backend/tauri-mobile (package.json):**
+**From apps/mobile (package.json):**
 
 | Script | Description |
 |--------|-------------|
@@ -660,11 +660,11 @@ yarn mobile:device:backup
 **Fix:**
 ```bash
 # 1. Verify feature is in Cargo.toml
-grep -A5 "\[features\]" backend/tauri-mobile/src-tauri/Cargo.toml
+grep -A5 "\[features\]" apps/mobile/src-tauri/Cargo.toml
 # Should show: custom-protocol = ["tauri/custom-protocol"]
 
 # 2. Clean and rebuild with feature
-rm -rf backend/tauri-mobile/src-tauri/target/aarch64-apple-ios*/release
+rm -rf apps/mobile/src-tauri/target/aarch64-apple-ios*/release
 yarn mobile:ios:cargo:release  # For device
 # or
 yarn mobile:ios:cargo:debug    # For simulator (if you want bundled assets)
@@ -758,7 +758,7 @@ Verify:
 **Fix:**
 1. Quit Xcode completely
 2. Delete stale DerivedData: `rm -rf ~/Library/Developer/Xcode/DerivedData/peek-save-*`
-3. Reopen from the correct workspace: `open backend/tauri-mobile/src-tauri/gen/apple/peek-save.xcodeproj`
+3. Reopen from the correct workspace: `open apps/mobile/src-tauri/gen/apple/peek-save.xcodeproj`
 
 ### Xcode "Update to Recommended Settings"
 

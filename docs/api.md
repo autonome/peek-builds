@@ -634,6 +634,6 @@ if (result.success) {
 
 The Peek API is implemented in:
 - **Electron**: `preload.js` using Electron's `contextBridge`
-- **Tauri**: `backend/tauri/preload.js` injected via `initialization_script`
+- **Tauri**: `apps/tauri-desktop/preload.js` injected via `initialization_script`
 
 Both implementations provide identical API surfaces, allowing frontend code to work unchanged across backends.

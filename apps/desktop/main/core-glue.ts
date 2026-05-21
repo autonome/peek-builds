@@ -66,7 +66,7 @@ let coreBackgroundWindow: BrowserWindow | null = null;
  * Options for initializing the core background renderer.
  */
 export interface InitCoreOptions {
-  /** Absolute path to `dist/backend/electron/tile-preload.cjs`. */
+  /** Absolute path to `dist/main/tile-preload.cjs`. */
   tilePreloadPath: string;
 }
 

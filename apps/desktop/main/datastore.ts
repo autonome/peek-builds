@@ -304,7 +304,7 @@ const createTableStatements = `
   -- registry / lazyEvents interceptor read at boot. Writes happen only
   -- at install/update time + boot-time manifest discovery. Distinct
   -- from registry.json (install metadata) — see
-  -- backend/electron/feature-registry.ts for that.
+  -- apps/desktop/main/feature-registry.ts for that.
   -- See docs/tile-lifecycle-fsm.md.
   CREATE TABLE IF NOT EXISTS manifest_cache (
     featureId TEXT PRIMARY KEY,
@@ -324,9 +324,9 @@ const createTableStatements = `
   -- event topic + match predicate to a script (executed lazily on match).
   -- Drives the rule engine that lets features participate in event
   -- pipelines without staying resident. See peek MCP plan 3d7d9239.
-  -- Mirrors schema/v1.json — keep the two definitions in sync (this
+  -- Mirrors packages/schema/v1.json — keep the two definitions in sync (this
   -- file is hand-maintained, not generated; the generated SQL lives at
-  -- schema/generated/sqlite-full.sql for documentation only).
+  -- packages/schema/generated/sqlite-full.sql for documentation only).
   CREATE TABLE IF NOT EXISTS rules (
     id TEXT PRIMARY KEY NOT NULL,
     featureId TEXT NOT NULL,
@@ -379,7 +379,7 @@ function validateSyncSchema(): void {
     }
     throw new Error(
       `[schema] Required sync columns missing: ${missing.join(', ')}. ` +
-      `Database may need migration. See schema/v1.json for canonical schema.`
+      `Database may need migration. See packages/schema/v1.json for canonical schema.`
     );
   }
 

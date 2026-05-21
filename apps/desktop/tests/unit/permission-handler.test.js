@@ -1,5 +1,5 @@
 /**
- * Unit tests for backend/electron/permission-handler.ts — the policy resolver
+ * Unit tests for apps/desktop/main/permission-handler.ts — the policy resolver
  * that decides allow / deny / prompt for each permission request.
  *
  * No Electron Session needed: we exercise the pure resolver via the test-only

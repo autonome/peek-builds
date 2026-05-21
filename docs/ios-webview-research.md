@@ -8,7 +8,7 @@ Currently iOS Peek opens pages in a fullscreen modal webview. This research expl
 
 ## Current Implementation
 
-**File:** `backend/tauri-mobile/src-tauri/gen/apple/Sources/peek-save/WebviewPlugin.swift`
+**File:** `apps/mobile/src-tauri/gen/apple/Sources/peek-save/WebviewPlugin.swift`
 
 - Presentation: `modalPresentationStyle = .fullScreen`
 - Navigation: `UINavigationController` wrapping `EmbeddedWebViewController`
@@ -137,9 +137,9 @@ webView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
 
 | File | Purpose |
 |------|---------|
-| `backend/tauri-mobile/src-tauri/gen/apple/Sources/peek-save/WebviewPlugin.swift` | Swift webview presentation |
-| `backend/tauri-mobile/src/App.tsx` | React integration (lines 2435-2449) |
-| `backend/tauri-mobile/src-tauri/src/lib.rs` | Rust FFI bridge (lines 2539-2575) |
+| `apps/mobile/src-tauri/gen/apple/Sources/peek-save/WebviewPlugin.swift` | Swift webview presentation |
+| `apps/mobile/src/App.tsx` | React integration (lines 2435-2449) |
+| `apps/mobile/src-tauri/src/lib.rs` | Rust FFI bridge (lines 2539-2575) |
 
 ---
 

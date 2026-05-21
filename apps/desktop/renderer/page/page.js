@@ -2695,7 +2695,7 @@ api.window.onUnmaximizeRequest(() => doUnmaximize());
 // knows more requests are waiting (rather than silently stacking off-screen).
 // On click the user's decision is published back as `page:permission-response`
 // and the backend resolves the deferred Chromium callback. See
-// backend/electron/permission-handler.ts for the wire protocol.
+// apps/desktop/main/permission-handler.ts for the wire protocol.
 
 const permissionQueue = [];
 let activePermissionPrompt = null; // { req, wrap, badgeEl, resolved }

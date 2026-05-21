@@ -238,7 +238,7 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
       PROFILE: profile,
       DEBUG: process.env.DEBUG || '1',
       // E2E_TEST triggers the privileged test-fixture renderer in
-      // `backend/electron/test-fixture-glue.ts`. Always set it for
+      // `apps/desktop/main/test-fixture-glue.ts`. Always set it for
       // Playwright-driven Electron launches — the fixture is cheap when
       // unused and required for the v2 bgWindow path.
       E2E_TEST: 'true',

@@ -2,7 +2,7 @@
  * Browser Extension Environment Module
  *
  * Detects browser environment and generates persistent device IDs.
- * Mirrors backend/electron/device.ts for the extension backend.
+ * Mirrors apps/desktop/main/device.ts for the extension backend.
  */
 
 import { data } from './engine.js';

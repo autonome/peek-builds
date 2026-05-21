@@ -8,7 +8,7 @@ Status: **Research** | Feb 2026
 
 Peek already has a mature theme system with two layers:
 
-**1. Backend Theme Infrastructure** (`backend/electron/`)
+**1. Backend Theme Infrastructure** (`apps/desktop/main/`)
 - **Discovery**: `main.ts:discoverBuiltinThemes()` scans `themes/` directory for subdirectories with `manifest.json`
 - **Protocol**: `peek://theme/variables.css` serves the active theme's CSS; `peek://theme/{id}/...` serves specific themes
 - **IPC handlers** in `ipc.ts`: `theme:get`, `theme:setTheme`, `theme:setColorScheme`, `theme:list`, `theme:getAll`, `theme:add`, `theme:remove`, `theme:reload`, `theme:pickFolder`, `theme:validateFolder`

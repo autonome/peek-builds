@@ -1,7 +1,7 @@
 //! Theme management for Tauri backend
 //!
 //! Handles theme discovery, registration, and settings persistence.
-//! Mirrors the Electron implementation in backend/electron/protocol.ts and ipc.ts
+//! Mirrors the Electron implementation in apps/desktop/main/protocol.ts and ipc.ts
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};

@@ -35,40 +35,40 @@ The fix: **everything syncs**, using the deterministic timestamp-based algorithm
 ### Where syncSource is read/written
 
 **Sync algorithm (push filtering):**
-- `backend/electron/sync.ts:515-525` — WHERE clause filters by `syncSource = ''`
+- `apps/desktop/main/sync.ts:515-525` — WHERE clause filters by `syncSource = ''`
 - `sync/sync.js:102-107` — Same filter in unified sync engine
-- `backend/tauri/src-tauri/src/sync.rs:634-665` — Same filter in Tauri desktop
+- `apps/tauri-desktop/src-tauri/src/sync.rs:634-665` — Same filter in Tauri desktop
 
 **Set on push (marks as synced):**
-- `backend/electron/sync.ts:619-620` — `syncSource = 'server'` after push
+- `apps/desktop/main/sync.ts:619-620` — `syncSource = 'server'` after push
 - `sync/sync.js:162-166` — Same
-- `backend/tauri/src-tauri/src/sync.rs:799-800` — Same
+- `apps/tauri-desktop/src-tauri/src/sync.rs:799-800` — Same
 
 **Set on pull (marks origin as server):**
-- `backend/electron/sync.ts:393-394` — `syncSource = 'server'` on new items from server
+- `apps/desktop/main/sync.ts:393-394` — `syncSource = 'server'` on new items from server
 - `sync/sync.js:399-400` — Same
-- `backend/tauri/src-tauri/src/sync.rs:521-522` — Same
+- `apps/tauri-desktop/src-tauri/src/sync.rs:521-522` — Same
 
 **Reset on server change:**
-- `backend/electron/sync.ts:667-668` — Resets all to `syncSource = ''`
+- `apps/desktop/main/sync.ts:667-668` — Resets all to `syncSource = ''`
 - `sync/sync.js:277-282` — Same
 
 **Browser extension (sets import source):**
-- `backend/extension/history.js:119` — `syncSource = 'history'`
-- `backend/extension/tabs.js:138` — `syncSource = 'tab'`
-- `backend/extension/bookmarks.js:84` — `syncSource = 'bookmark'`
+- `apps/extension/history.js:119` — `syncSource = 'history'`
+- `apps/extension/tabs.js:138` — `syncSource = 'tab'`
+- `apps/extension/bookmarks.js:84` — `syncSource = 'bookmark'`
 
 **Datastore (gates device metadata):**
-- `backend/electron/datastore.ts:2322-2324` — Skips `addDeviceMetadata()` if `syncSource` is present
-- `backend/electron/datastore.ts:2404-2406` — Same for updates
+- `apps/desktop/main/datastore.ts:2322-2324` — Skips `addDeviceMetadata()` if `syncSource` is present
+- `apps/desktop/main/datastore.ts:2404-2406` — Same for updates
 
 **Sync status UI:**
-- `backend/electron/sync.ts:773-775` — Counts pending items using syncSource filter
+- `apps/desktop/main/sync.ts:773-775` — Counts pending items using syncSource filter
 - Extension stats pages count items by syncSource value
 
 ### Device ID (already partially implemented)
 
-`backend/electron/device.ts` generates device IDs and adds them to item metadata:
+`apps/desktop/main/device.ts` generates device IDs and adds them to item metadata:
 
 ```
 metadata._sync = {
@@ -123,25 +123,25 @@ UPDATE items SET syncId = ?, syncedAt = ? WHERE id = ?
 **On server change** — reset `syncedAt = 0` to force full re-sync. No need to touch syncSource.
 
 **Files updated:**
-- ✅ `backend/electron/sync.ts` — syncSource removed from push filter, post-push update, server-change reset
+- ✅ `apps/desktop/main/sync.ts` — syncSource removed from push filter, post-push update, server-change reset
 - ✅ `sync/sync.js` — syncSource replaced with syncedAt-based filtering, fromISOString() added for server timestamp conversion
 - ✅ `sync/adapters/better-sqlite3.js` — syncSource removed from schema, migration, INSERT
 - ✅ `sync/data.js` — syncSource removed from addItem and saveItem
-- ⬜ `backend/tauri/src-tauri/src/sync.rs` — still has sync_source (Tauri desktop)
-- ⬜ `backend/tauri-mobile/src-tauri/src/lib.rs` — still has sync_source (iOS mobile)
+- ⬜ `apps/tauri-desktop/src-tauri/src/sync.rs` — still has sync_source (Tauri desktop)
+- ⬜ `apps/mobile/src-tauri/src/lib.rs` — still has sync_source (iOS mobile)
 
 ### 2. Stop setting syncSource on item creation
 
 **Browser extension** — remove `syncSource` param from `addItem()` calls:
-- `backend/extension/history.js:119` — remove `syncSource: 'history'`
-- `backend/extension/tabs.js:138` — remove `syncSource: 'tab'`
-- `backend/extension/bookmarks.js:84` — remove `syncSource: 'bookmark'`
+- `apps/extension/history.js:119` — remove `syncSource: 'history'`
+- `apps/extension/tabs.js:138` — remove `syncSource: 'tab'`
+- `apps/extension/bookmarks.js:84` — remove `syncSource: 'bookmark'`
 
 Classifications are already preserved in tags (`from:*`) and metadata JSON.
 
 **Datastore** — replace syncSource gating on device metadata with architectural separation (match mobile pattern):
-- `backend/electron/datastore.ts:2322-2324` — currently uses `if (!options.syncSource)` to gate `addDeviceMetadata()`. This guard goes away with syncSource.
-- `backend/electron/datastore.ts:2404-2406` — same for updates
+- `apps/desktop/main/datastore.ts:2322-2324` — currently uses `if (!options.syncSource)` to gate `addDeviceMetadata()`. This guard goes away with syncSource.
+- `apps/desktop/main/datastore.ts:2404-2406` — same for updates
 - **Fix:** Sync pull in `sync.ts` should write server metadata directly to DB (separate codepath) instead of routing through the shared `addItem()`/`updateItem()`. This matches how mobile works — `merge_server_item()` is architecturally separate from user-facing `save_*`/`update_*` commands, so server `_sync` metadata is preserved naturally without any guard.
 
 ### 3. Device ID prefix removal
@@ -151,10 +151,10 @@ Device IDs currently use platform prefixes: `"desktop-{uuid}"` (Electron), `"ext
 **Change:** Generate plain UUIDs going forward. Platform/type info belongs in the devices table.
 
 **Already done (mobile device ID PR):**
-- `backend/electron/device.ts:46` — now generates `crypto.randomUUID()` (no `desktop-` prefix)
-- `backend/tauri-mobile/src-tauri/src/lib.rs` — mobile generates raw UUID, stores in `settings` table, injects `_sync` metadata on all save/update commands
+- `apps/desktop/main/device.ts:46` — now generates `crypto.randomUUID()` (no `desktop-` prefix)
+- `apps/mobile/src-tauri/src/lib.rs` — mobile generates raw UUID, stores in `settings` table, injects `_sync` metadata on all save/update commands
 - `backend/types/index.ts` — shared `SyncMetadata` interface added
-- `backend/tauri-mobile/src/App.tsx` — `SyncMetadata` interface and `_sync` field on `ItemMetadata`
+- `apps/mobile/src/App.tsx` — `SyncMetadata` interface and `_sync` field on `ItemMetadata`
 
 **Still needed:**
 
@@ -170,12 +170,12 @@ This requires updating:
 
 **Detection logic:** Check if device ID matches `/{prefix}-[0-9a-f]{8}-/` pattern. Known prefixes: `desktop-`, `extension-`. Strip prefix, keep UUID.
 
-**One exception:** `backend/extension/environment.js:29` checks `parsed.startsWith('extension-')` for the extension device ID. This needs updating to handle both old prefixed and new plain UUID formats during the transition period.
+**One exception:** `apps/extension/environment.js:29` checks `parsed.startsWith('extension-')` for the extension device ID. This needs updating to handle both old prefixed and new plain UUID formats during the transition period.
 
 **Files to update:**
-- `backend/extension/environment.js` — update `startsWith('extension-')` check, generate raw UUID
-- Add migration in `backend/electron/datastore.ts` (startup) — strip prefix from stored device ID + update existing item metadata
-- Add migration in `backend/extension/` (startup)
+- `apps/extension/environment.js` — update `startsWith('extension-')` check, generate raw UUID
+- Add migration in `apps/desktop/main/datastore.ts` (startup) — strip prefix from stored device ID + update existing item metadata
+- Add migration in `apps/extension/` (startup)
 
 ### 4. New `devices` table
 
@@ -252,7 +252,7 @@ If needed, the old sync algorithm still works — it just won't push browser imp
 yarn test:sync:e2e
 
 # RIGHT — uses Electron's bundled Node
-ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron backend/tests/sync-e2e.test.js
+ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron packages/integration-tests/sync-e2e.test.js
 ```
 
 **Current test status (as of mobile device ID PR):**
@@ -260,11 +260,11 @@ ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron backend/tests/sync-e2e.test.
 | Test | Command | Status | Notes |
 |------|---------|--------|-------|
 | Sync integration | `yarn test:sync` | Passes (9/9) | Server-only, no better-sqlite3 dependency |
-| Sync e2e | `ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron backend/tests/sync-e2e.test.js` | Fails (pre-existing) | `item_events` table missing from test DB — schema validation rejects fresh DB without migration |
+| Sync e2e | `ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron packages/integration-tests/sync-e2e.test.js` | Fails (pre-existing) | `item_events` table missing from test DB — schema validation rejects fresh DB without migration |
 | Sync three-way | `yarn test:sync:three-way` | Not tested | Likely same `item_events` issue |
 
 **Pre-existing issues to fix before these tests can validate the refactor:**
 
 1. **`item_events` table migration** — `sync-e2e.test.js` creates a fresh DB but the desktop datastore's `validateSyncSchema()` requires all tables from `schema/v1.json` including `item_events`. Either the test setup needs to run migrations, or `initDatabase()` needs to create missing tables.
 2. **`test:sync:e2e` package.json script** — should use `ELECTRON_RUN_AS_NODE=1` instead of bare `node`. All sync test scripts that touch the desktop datastore need this.
-3. **Server deps** — `backend/server/node_modules` may not be installed in jj workspaces. Run `cd backend/server && npm install` if tests fail with `Cannot find module 'hono'`.
+3. **Server deps** — `apps/server/node_modules` may not be installed in jj workspaces. Run `cd apps/server && npm install` if tests fail with `Cannot find module 'hono'`.

@@ -118,7 +118,7 @@ const executeItem = (item) => {
       // and computes bounds via `computeInitialBounds` against the cursor's
       // display every time the slide opens (and re-anchors via
       // `computePlacement` on reuse + display-change). The renderer no
-      // longer computes x/y — main owns placement. See backend/electron/
+      // longer computes x/y — main owns placement. See apps/desktop/main/
       // window-placement.ts and ipc.ts edgeMap.
       screenEdge: item.screenEdge,
 

@@ -135,11 +135,11 @@ Deletions propagate across platforms via **tombstones** (soft-deletes with a `de
 
 | Platform | Push tombstones | Pull tombstones | Query param |
 |----------|----------------|-----------------|-------------|
-| JS engine (`sync/sync.js`) | `getItemsForPush()` includes deleted | `applyPulledItems()` checks `deleted_at` | `includeDeleted=true` |
-| Electron (`backend/electron/sync.ts`) | Push query includes `deleted_at IS NOT NULL` | Pull applies `deleted_at` to local items | `&includeDeleted=true` |
-| Tauri desktop (`backend/tauri/src-tauri/src/sync.rs`) | Push includes soft-deleted items | Pull handles `deleted_at` field | `&includeDeleted=true` |
-| Tauri mobile (`backend/tauri-mobile/src-tauri/src/lib.rs`) | Push includes soft-deleted items | Pull handles `deleted_at` field | `&includeDeleted=true` |
-| Server (`backend/server/db.js`) | N/A | `getItems()` respects `includeDeleted` param; `getItemsSince()` always includes tombstones | N/A |
+| JS engine (`packages/sync/sync.js`) | `getItemsForPush()` includes deleted | `applyPulledItems()` checks `deleted_at` | `includeDeleted=true` |
+| Electron (`apps/desktop/main/sync.ts`) | Push query includes `deleted_at IS NOT NULL` | Pull applies `deleted_at` to local items | `&includeDeleted=true` |
+| Tauri desktop (`apps/tauri-desktop/src-tauri/src/sync.rs`) | Push includes soft-deleted items | Pull handles `deleted_at` field | `&includeDeleted=true` |
+| Tauri mobile (`apps/mobile/src-tauri/src/lib.rs`) | Push includes soft-deleted items | Pull handles `deleted_at` field | `&includeDeleted=true` |
+| Server (`apps/server/db.js`) | N/A | `getItems()` respects `includeDeleted` param; `getItemsSince()` always includes tombstones | N/A |
 
 ### Tombstone lifecycle
 
@@ -159,9 +159,9 @@ When a user changes sync servers (or configures sync for the first time after ha
 This ensures no data loss when switching servers and no duplicates on first sync.
 
 **Files:**
-- `sync/sync.js`: `resetSyncStateIfServerChanged()`, `saveSyncServerConfig()` (unified engine)
-- `backend/electron/sync.ts`: `resetSyncStateIfServerChanged()`, `saveSyncServerConfig()` (desktop)
-- `backend/tauri-mobile/src-tauri/src/lib.rs`: `reset_sync_state_if_server_changed()`, `save_sync_server_config()` (mobile)
+- `packages/sync/sync.js`: `resetSyncStateIfServerChanged()`, `saveSyncServerConfig()` (unified engine)
+- `apps/desktop/main/sync.ts`: `resetSyncStateIfServerChanged()`, `saveSyncServerConfig()` (desktop)
+- `apps/mobile/src-tauri/src/lib.rs`: `reset_sync_state_if_server_changed()`, `save_sync_server_config()` (mobile)
 
 ## Deduplication
 
@@ -182,7 +182,7 @@ When items arrive without a `sync_id` (e.g., browser extension, API calls):
 
 ### fromISOString
 
-The server returns integer timestamps (Unix ms). The `fromISOString()` helper in both `sync/sync.js` and `backend/electron/sync.ts` handles both integer and ISO string inputs.
+The server returns integer timestamps (Unix ms). The `fromISOString()` helper in both `packages/sync/sync.js` and `apps/desktop/main/sync.ts` handles both integer and ISO string inputs.
 
 ## E2E Full Sync Test
 
@@ -237,10 +237,10 @@ Failed push operations are logged but not retried. After sync, `lastSyncTime` ad
 
 ## Files
 
-- `sync/sync.js` - Unified cross-platform sync engine (JS, used by mobile/web)
-- `backend/electron/sync.ts` - Desktop sync implementation (Electron-specific)
-- `backend/server/db.js` - Server database with sync support
-- `backend/tests/sync-e2e.test.js` - Server + desktop headless e2e sync tests
-- `backend/tauri-mobile/src-tauri/src/lib.rs` - Mobile sync (pull/push/sync_all)
+- `packages/sync/sync.js` - Unified cross-platform sync engine (JS, used by mobile/web)
+- `apps/desktop/main/sync.ts` - Desktop sync implementation (Electron-specific)
+- `apps/server/db.js` - Server database with sync support
+- `packages/integration-tests/sync-e2e.test.js` - Server + desktop headless e2e sync tests
+- `apps/mobile/src-tauri/src/lib.rs` - Mobile sync (pull/push/sync_all)
 - `scripts/e2e-full-sync-test.sh` - Full three-way e2e test (server + desktop + iOS simulator)
 - `notes/sync-edge-cases.md` - Detailed edge case documentation

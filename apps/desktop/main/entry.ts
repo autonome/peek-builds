@@ -1185,7 +1185,7 @@ const onReady = async () => {
   });
 
   // Create the core background window (tile mechanics — see
-  // backend/electron/core-glue.ts::initCore). Awaited so startup code
+  // apps/desktop/main/core-glue.ts::initCore). Awaited so startup code
   // downstream sees a fully-initialised renderer with all subscribers
   // registered before e.g. CLI URLs get replayed.
   await createBackgroundWindow();
@@ -1200,7 +1200,7 @@ const onReady = async () => {
   // "Default Applications" UI, and our own settings "Set as default
   // HTTP handler" button can find the application. Required because
   // AppImage's mount is ephemeral and never auto-installs into the
-  // user's XDG dirs. See backend/electron/desktop-installer.ts.
+  // user's XDG dirs. See apps/desktop/main/desktop-installer.ts.
   await ensureLinuxDesktopInstall();
 
   // Same gate: install a `peek` symlink in ~/.local/bin so users can

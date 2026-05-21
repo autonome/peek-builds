@@ -9,7 +9,7 @@
  * — unconditional .show()/.focus() in the restore loop — silently
  * regresses if someone re-introduces those calls without the guard.
  *
- * The drift-detection counters in backend/electron/session.ts increment
+ * The drift-detection counters in apps/desktop/main/session.ts increment
  * at each gated call site. These tests assert the counters reflect the
  * gate's behavior: shows=0 + focuses=0 when appFocused is false at
  * restore time; shows>0 + focuses=1 in the happy-path positive case.

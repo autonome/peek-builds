@@ -39,7 +39,7 @@ The border is visible **if and only if** the currently focused visible window ha
 ## Implementation
 
 ### Decision function
-`updateGroupScreenBorder()` in `backend/electron/ipc.ts` checks `lastFocusedVisibleWindowId`:
+`updateGroupScreenBorder()` in `apps/desktop/main/ipc.ts` checks `lastFocusedVisibleWindowId`:
 1. If no focused visible window exists, schedule hide
 2. If focused window is destroyed, schedule hide
 3. If focused window's `context.mode === 'group'` with a valid `groupId`, show border with group's color and name

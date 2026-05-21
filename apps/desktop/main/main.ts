@@ -544,7 +544,7 @@ export async function initialize(): Promise<void> {
 
       // (Pre-close overlay restoration removed — the overlay no longer
       // hides other windows, so there's nothing to restore. See
-      // backend/electron/ipc.ts windowOpenHandler for the rationale.)
+      // apps/desktop/main/ipc.ts windowOpenHandler for the rationale.)
     });
 
     // Handle window close

@@ -41,7 +41,7 @@ const loadSettings = async () => {
  * runs on the BrowserWindow's `closed` event in main.ts. Next
  * invocation creates a fresh BrowserWindow via window-open.
  *
- * Window-open's fresh-create path (`backend/electron/ipc.ts`, search:
+ * Window-open's fresh-create path (`apps/desktop/main/ipc.ts`, search:
  * `spacesPolicy = spacesPolicyForRole(role, ...)`) calls
  * `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })`
  * synchronously for transient roles like `overlay`, so the new window
@@ -178,7 +178,7 @@ const init = async () => {
   initCommands();
 
   // Subscribe to cmd:execute:windows so non-cmd-panel callers (notably the
-  // ESC handler in backend/electron/windows.ts → escUnhandledPolicy →
+  // ESC handler in apps/desktop/main/windows.ts → escUnhandledPolicy →
   // open-switcher path) can open the switcher by publishing the topic.
   // Without this, only cmd-panel selections and the manifest shortcut work;
   // the ESC fallback silently no-ops once this lazy tile is loaded.

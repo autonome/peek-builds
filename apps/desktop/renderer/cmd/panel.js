@@ -133,7 +133,7 @@ api.subscribe('cmd:url-mode', () => {
 // alwaysOnTop windows (like this cmd panel) are skipped, so the panel
 // never fires `blur` in that flow and the modal blur handler can't
 // clean up. Subscribe to the global `window:focused` pubsub (published
-// by backend/electron/ipc.ts for every focus event) and hide the
+// by apps/desktop/main/ipc.ts for every focus event) and hide the
 // panel when another non-utility window gains focus. Utility children
 // (chain popup, etc.) are excluded so opening one doesn't dismiss the
 // panel it spawned.

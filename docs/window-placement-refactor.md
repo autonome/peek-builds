@@ -28,7 +28,7 @@ unit tests pass** — that's it.
 ### `Placement` discriminated union
 
 ```ts
-// backend/electron/window-placement.ts
+// apps/desktop/main/window-placement.ts
 
 export type Placement =
   | { mode: 'centered' }
@@ -109,9 +109,9 @@ Each phase has: scope, files, exit criteria, what's explicitly **out**.
 ### Phase 1 — Pure module + unit tests + fake-displays helper
 
 **Scope:**
-- New file `backend/electron/window-placement.ts` exporting `Placement`,
+- New file `apps/desktop/main/window-placement.ts` exporting `Placement`,
   `PlacementInput`, `PlacementResult`, and `computePlacement`.
-- New file `backend/electron/window-placement.test.ts` (or
+- New file `apps/desktop/main/window-placement.test.ts` (or
   `tests/unit/window-placement.test.js`, matching project unit-test
   conventions — agent decides based on existing layout) with a
   `fakeDisplays(...)` helper and exhaustive coverage of every `Placement`
@@ -119,7 +119,7 @@ Each phase has: scope, files, exit criteria, what's explicitly **out**.
 - No production code touched. No imports added to `ipc.ts` etc.
 
 **Files touched:**
-- `backend/electron/window-placement.ts` (new)
+- `apps/desktop/main/window-placement.ts` (new)
 - Test file (new)
 
 **Test cases (minimum):**
@@ -154,7 +154,7 @@ session-restore.
 
 **Scope:**
 - Add `placement: Placement` field to `windowRegistry.params` shape
-  (`backend/electron/main.ts`).
+  (`apps/desktop/main/main.ts`).
 - At every `registerWindow()` call site, derive and pass `placement` per the
   mapping table above.
 - Slides feature: pass `screenEdge` through the open options object so the
@@ -164,9 +164,9 @@ session-restore.
   current `isWindowAccessibleNow` + `center: true` branch logic.
 
 **Files touched:**
-- `backend/electron/main.ts` (registry shape)
-- `backend/electron/ipc.ts` (window-open handler — assign placement)
-- `backend/electron/tile-ipc.ts` (tile open path — assign placement)
+- `apps/desktop/main/main.ts` (registry shape)
+- `apps/desktop/main/ipc.ts` (window-open handler — assign placement)
+- `apps/desktop/main/tile-ipc.ts` (tile open path — assign placement)
 - `features/slides/background.js` (pass `screenEdge` in options)
 
 **Exit criteria:**
@@ -207,8 +207,8 @@ still use today's logic. Slides renderer keeps doing its `window.screen` math.
   depth) and for windows registered before placement was added.
 
 **Files touched:**
-- `backend/electron/ipc.ts`
-- `backend/electron/display-watcher.ts`
+- `apps/desktop/main/ipc.ts`
+- `apps/desktop/main/display-watcher.ts`
 
 **Exit criteria:**
 - `yarn build` clean.
@@ -261,7 +261,7 @@ followup if found).
   across tiles.
 
 **Files touched:**
-- `backend/electron/tile-ipc.ts`
+- `apps/desktop/main/tile-ipc.ts`
 
 **Exit criteria:**
 - `yarn build` clean.

@@ -15,7 +15,7 @@ macOS treats BrowserWindow display Spaces based on the `visibleOnAllWorkspaces` 
 ### Cmd Panel Window Lifecycle
 
 1. **First open**: `openPanelWindow()` in `extensions/cmd/background.js` calls `api.window.open()` with `keepLive: true`, `modal: true`, `type: 'panel'`, `alwaysOnTop: true`.
-2. **IPC handler**: `window-open` in `backend/electron/ipc.ts` creates a BrowserWindow with `type: 'panel'` (macOS) and `alwaysOnTop` set.
+2. **IPC handler**: `window-open` in `apps/desktop/main/ipc.ts` creates a BrowserWindow with `type: 'panel'` (macOS) and `alwaysOnTop` set.
 3. **Subsequent opens**: When the global shortcut is triggered again, the keepLive window is found by key and reused via `existingWindow.window.show()` + `.focus()` (ipc.ts lines ~2187-2195).
 4. **Dismiss**: ESC or blur hides the window via `closeOrHideWindow()` which calls `win.hide()` for keepLive windows.
 
@@ -23,9 +23,9 @@ macOS treats BrowserWindow display Spaces based on the `visibleOnAllWorkspaces` 
 
 - `/Users/dietrich/misc/mpeek/extensions/cmd/background.js` - `openPanelWindow()` defines the window params
 - `/Users/dietrich/misc/mpeek/extensions/cmd/config.js` - Global shortcut default (Option+Space)
-- `/Users/dietrich/misc/mpeek/backend/electron/ipc.ts` - `window-open` IPC handler creates/reuses windows
-- `/Users/dietrich/misc/mpeek/backend/electron/shortcuts.ts` - Global shortcut registration (no app.focus())
-- `/Users/dietrich/misc/mpeek/backend/electron/windows.ts` - `closeOrHideWindow()` handles keepLive hide
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` - `window-open` IPC handler creates/reuses windows
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/shortcuts.ts` - Global shortcut registration (no app.focus())
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/windows.ts` - `closeOrHideWindow()` handles keepLive hide
 
 ### What Was NOT the Cause
 
@@ -35,7 +35,7 @@ macOS treats BrowserWindow display Spaces based on the `visibleOnAllWorkspaces` 
 
 ## Fix Applied
 
-Two changes in `/Users/dietrich/misc/mpeek/backend/electron/ipc.ts`:
+Two changes in `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts`:
 
 ### 1. New modal window creation
 

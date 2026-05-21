@@ -19,7 +19,7 @@
  * lives here; renderer-side consumers get snapshots via strict
  * `tile:features:*` IPC.
  *
- * Distinct from `backend/electron/feature-registry.ts`, which stores
+ * Distinct from `apps/desktop/main/feature-registry.ts`, which stores
  * install metadata (source, publisher, capability grants, update
  * policy) in `registry.json`. This file is the **manifest declaration
  * cache** — what commands/nouns/shortcuts each feature declares.

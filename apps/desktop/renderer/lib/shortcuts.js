@@ -4,7 +4,7 @@
  * Platform-agnostic shortcut parsing, matching, and registry management.
  * Works in any web context (Electron renderer, Tauri webview, plain browser).
  *
- * NOTE: The Electron backend (backend/electron/shortcuts.ts) maintains its own
+ * NOTE: The Electron backend (apps/desktop/main/shortcuts.ts) maintains its own
  * copy of this logic due to TS rootDir boundaries. Keep them in sync.
  *
  * @example

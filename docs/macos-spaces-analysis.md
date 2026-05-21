@@ -26,7 +26,7 @@ api.shortcuts.register(prefs.shortcutKey, () => {
 
 The default shortcut key is `Option+Space` (from `config.js` line 32).
 
-This calls through to `/Users/dietrich/misc/mpeek/backend/electron/shortcuts.ts` line 174:
+This calls through to `/Users/dietrich/misc/mpeek/apps/desktop/main/shortcuts.ts` line 174:
 
 ```ts
 const ret = globalShortcut.register(shortcut, () => {
@@ -58,7 +58,7 @@ With these params:
 
 ### Step 3: IPC handler 'window-open' in main process
 
-In `/Users/dietrich/misc/mpeek/backend/electron/ipc.ts` line 2139, the `window-open` IPC
+In `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` line 2139, the `window-open` IPC
 handler fires.
 
 **FIRST INVOCATION (cold start -- window doesn't exist yet):**

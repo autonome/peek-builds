@@ -296,7 +296,7 @@ test.describe('External URL Opening @desktop', () => {
 
     // Subscribe to the window:opened event BEFORE publishing the
     // trigger so there's no race — main publishes this as soon as the
-    // new window is registered (see backend/electron/ipc.ts
+    // new window is registered (see apps/desktop/main/ipc.ts
     // window-create handler).
     await bgWindow.evaluate((url: string) => {
       const api = (window as any).app;

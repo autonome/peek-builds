@@ -200,7 +200,7 @@ const stats = await api.datastore.getStats();
 
 The datastore syncs between backends via the server API:
 
-1. **Desktop ↔ Server**: Bidirectional sync in `backend/electron/sync.ts`
+1. **Desktop ↔ Server**: Bidirectional sync in `apps/desktop/main/sync.ts`
 2. **Mobile → Server**: Push sync from mobile app
 3. **Conflict Resolution**: Last-write-wins based on `updatedAt`
 
@@ -208,7 +208,7 @@ See `docs/sync.md` for sync architecture details.
 
 ## Files
 
-- `backend/electron/datastore.ts` - Electron SQLite implementation
-- `backend/tauri/src-tauri/src/datastore.rs` - Tauri SQLite implementation
-- `backend/server/db.js` - Server SQLite implementation
+- `apps/desktop/main/datastore.ts` - Electron SQLite implementation
+- `apps/tauri-desktop/src-tauri/src/datastore.rs` - Tauri SQLite implementation
+- `apps/server/db.js` - Server SQLite implementation
 - `app/datastore/` - Shared schema and helpers

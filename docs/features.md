@@ -289,7 +289,7 @@ This is enforced in `isBuiltinExtensionEnabled()` which always returns `true` fo
 
 ### Hybrid Loading Process
 
-Extensions are loaded in hybrid mode by `loadExtensions()` in `backend/electron/main.ts`:
+Extensions are loaded in hybrid mode by `loadExtensions()` in `apps/desktop/main/main.ts`:
 
 1. **Create extension host window** - Single BrowserWindow at `peek://app/extension-host.html`
 2. **Load built-in extensions as iframes** - `cmd`, `groups`, `peeks`, `slides` loaded via IPC into the host

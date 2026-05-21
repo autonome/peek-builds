@@ -68,8 +68,8 @@ Frontend changes (portable):
 All three frontend renderers use `tile-preload.cts` and the standard `api.*` surface — identical to feature tiles.
 
 Backend glue changes (Electron-specific, kept thin):
-- `backend/electron/cmd-glue.ts` / `hud-glue.ts` / `page-glue.ts`: drop `loadExtInHost(...)` call. Replace with a `launchTile()`-style call that creates the BrowserWindow with `tile-preload.cts` and a **privileged token grant** (no capability enforcement).
-- New: a privileged-grant helper, e.g. `createCoreGrant(id: string): CapabilityGrant` that returns a grant which short-circuits all capability checks. Lives in `backend/electron/tile-manifest.ts` next to `resolveCapabilities`.
+- `apps/desktop/main/cmd-glue.ts` / `hud-glue.ts` / `page-glue.ts`: drop `loadExtInHost(...)` call. Replace with a `launchTile()`-style call that creates the BrowserWindow with `tile-preload.cts` and a **privileged token grant** (no capability enforcement).
+- New: a privileged-grant helper, e.g. `createCoreGrant(id: string): CapabilityGrant` that returns a grant which short-circuits all capability checks. Lives in `apps/desktop/main/tile-manifest.ts` next to `resolveCapabilities`.
 - Tile-ipc enforcement updates: at each `checkXxxAllowed` site, an early-return for grants flagged `core: true`. Audit each enforcement point to make this explicit (avoid silent bypasses).
 
 Acceptance: cmd panel, hud, page-host commands all work. No `loadExtInHost` calls remain for these three. Frontend logic moved into `app/` files; backend glue files shrink.
@@ -120,7 +120,7 @@ Phase 3 attempt revealed the original plan didn't enumerate a second always-on v
 2. **Webview preload injection in `entry.ts:179`** — every `peek://` webview (widget panes, HUD children, page canvas children) gets the v1 `preload.js` injected via `will-attach-webview`. Switch to `tile-preload.cjs` (or remove if widgets don't need the API).
 3. **`createExtensionWindow()`** — Phase 2.5 #3 audit found 8 callers: 4 dead (deleted in `25c154ea`, -110 LOC); 0 v2-migratable builtins (`example` is already on `loadV2Tile`); 0 chrome extensions (those use `session.loadExtension()`, separate path). 2 live callers remain: `reloadExtension()` (features-manager UI reload button) and `loadDevExtension()` (`--load-extension` CLI flag). They need a `relaunchTile(tileId)` helper in `tile-launcher.ts` (re-read manifest, revoke old token via `revokeTokensForTile`, close old window, call `launchTile`). Once that helper exists, both callers migrate and `createExtensionWindow` can be deleted entirely. Phase 2.5 #3b.
 4. **Dead-code cleanup that's safe today:** `CONSOLIDATED_EXTENSION_IDS` list (always empty after v2 migration), the `if (consolidatedIds.length > 0)` block in `loadExtensions()`, the `loadExtInHost` helper. Safe to delete now since no v2 feature uses them — preserved only because their removal interacts with smoke tests asserting on `peek://app/extension-host.html` existence.
-5. ~~Tauri mobile uses `preload.js` via `include_str!`~~ **Out of scope.** No Tauri/mobile work in this v1-removal pass. If deleting `preload.js` from Electron's path would break Tauri's `include_str!`, copy the file into a Tauri-local path first (e.g. `backend/tauri/src-tauri/src/preload.js`) and update the include — Tauri keeps its v1 surface untouched. The Electron-side cleanup proceeds regardless.
+5. ~~Tauri mobile uses `preload.js` via `include_str!`~~ **Out of scope.** No Tauri/mobile work in this v1-removal pass. If deleting `preload.js` from Electron's path would break Tauri's `include_str!`, copy the file into a Tauri-local path first (e.g. `apps/tauri-desktop/src-tauri/src/preload.js`) and update the include — Tauri keeps its v1 surface untouched. The Electron-side cleanup proceeds regardless.
 
 After Phase 2.5: Phase 3 (destructive cleanup) can proceed cleanly. Phase 4 (manifest cleanup) follows.
 

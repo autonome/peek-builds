@@ -4,7 +4,7 @@ import { createPerDescribeApp } from '../helpers/test-app';
 
 // IZUI policy: a window with role in TRANSIENT_ROLES (palette, quick-view,
 // overlay) must auto-hide when another non-utility window gains focus.
-// Driven from main-process `win.on('focus')` in backend/electron/ipc.ts —
+// Driven from main-process `win.on('focus')` in apps/desktop/main/ipc.ts —
 // macOS NSPanels don't fire reliable per-window blur on intra-app focus
 // shifts, so the focuser closes its transient siblings explicitly.
 //

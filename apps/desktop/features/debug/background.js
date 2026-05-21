@@ -5,7 +5,7 @@
  *
  *   - `peek debug [on|off]`  — flips the verbose-logging flag. `DEBUG &&
  *     console.log(...)` lines across the main process (~hundreds of call
- *     sites that import DEBUG from backend/electron/config.ts) start
+ *     sites that import DEBUG from apps/desktop/main/config.ts) start
  *     firing as soon as this is on. Output lands in:
  *       <userData>/logs/main.log
  *       <userData>/logs/renderer.log

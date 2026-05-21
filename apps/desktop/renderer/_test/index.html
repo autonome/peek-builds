@@ -10,7 +10,7 @@
   Privileged test renderer.
 
   This is a hidden resident BrowserWindow launched by
-  `backend/electron/test-fixture-glue.ts` only when `E2E_TEST=true`. It
+  `apps/desktop/main/test-fixture-glue.ts` only when `E2E_TEST=true`. It
   is the test fixture that Playwright tests use as `bgWindow` for
   pub/sub + datastore calls.
 
@@ -40,7 +40,7 @@
   the renderer side, so this module cannot add aliases to `window.app`
   directly — every method the tests need must live on the preload's
   `api` object. If a test needs a method that isn't there yet, extend
-  `backend/electron/tile-preload.cts` (trustedBuiltin-gated as needed).
+  `apps/desktop/main/tile-preload.cts` (trustedBuiltin-gated as needed).
 
   After `api.initialize()` resolves, the renderer sets `window.__testReady`
   so the launch-time wait in `test-fixture-glue.ts` can block

@@ -44,7 +44,7 @@ Key behaviors:
 
 ### State Coordinator
 
-The `IzuiStateCoordinator` class (`backend/electron/izui-state.ts`) is the central manager:
+The `IzuiStateCoordinator` class (`apps/desktop/main/izui-state.ts`) is the central manager:
 
 ```typescript
 class IzuiStateCoordinator {
@@ -166,15 +166,15 @@ ESC behavior is determined by `escapeMode` parameter and transient state:
 | `navigate` | Any | Ask renderer first, close if not handled |
 | `ignore` | Any | Do nothing |
 
-See `backend/electron/windows.ts` `addEscHandler()` for implementation.
+See `apps/desktop/main/windows.ts` `addEscHandler()` for implementation.
 
 ## Testing
 
-The IZUI state coordinator has comprehensive unit tests in `backend/electron/izui-state.test.ts`:
+The IZUI state coordinator has comprehensive unit tests in `apps/desktop/main/izui-state.test.ts`:
 
 ```bash
 # Run IZUI tests
-yarn build && node --test dist/backend/electron/izui-state.test.js
+yarn build && node --test dist/apps/desktop/main/izui-state.test.js
 ```
 
 Tests cover:
@@ -190,11 +190,11 @@ Tests cover:
 
 | File | Purpose |
 |------|---------|
-| `backend/electron/izui-state.ts` | State coordinator singleton |
-| `backend/electron/izui-state.test.ts` | Unit tests (54 test cases) |
-| `backend/electron/ipc.ts` | IZUI IPC handlers, transient propagation |
-| `backend/electron/main.ts` | Window lifecycle hooks, overlay close |
-| `backend/electron/windows.ts` | ESC handler with IZUI integration |
+| `apps/desktop/main/izui-state.ts` | State coordinator singleton |
+| `apps/desktop/main/izui-state.test.ts` | Unit tests (54 test cases) |
+| `apps/desktop/main/ipc.ts` | IZUI IPC handlers, transient propagation |
+| `apps/desktop/main/main.ts` | Window lifecycle hooks, overlay close |
+| `apps/desktop/main/windows.ts` | ESC handler with IZUI integration |
 | `preload.js` | `api.izui.*` namespace for renderers |
 | `extensions/cmd/panel.js` | Mode display based on transient state |
 

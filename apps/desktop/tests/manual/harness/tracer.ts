@@ -94,7 +94,7 @@ export async function startTracer(opts: TracerOpts): Promise<Tracer> {
     const pushAndStream = (obj: any) => buf.push(obj);
 
     // Tap main-process stdout/stderr — captures console.log/error from
-    // backend/electron/* including our [peek:runtime-external:main] logs,
+    // apps/desktop/main/* including our [peek:runtime-external:main] logs,
     // which tell us which BG-dispatch error path is being hit.
     const _origStdoutWrite = process.stdout.write.bind(process.stdout);
     const _origStderrWrite = process.stderr.write.bind(process.stderr);

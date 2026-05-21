@@ -6,7 +6,7 @@
 //! - Separate Chromium session data (on desktop)
 //!
 //! Profile metadata is stored in profiles.db in the userData directory.
-//! Ports backend/electron/profiles.ts to Rust.
+//! Ports apps/desktop/main/profiles.ts to Rust.
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};

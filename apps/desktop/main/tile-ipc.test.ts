@@ -149,7 +149,7 @@ describe('verifyTokenSender (back-compat shim over tile-ipc-gate — Phase 8)', 
 
 describe('Phase 3: tile:command:result is gone', () => {
   // At runtime under ELECTRON_RUN_AS_NODE=1 the test file lives at
-  // dist/backend/electron/tile-ipc.test.js and the compiled handler
+  // dist/main/tile-ipc.test.js and the compiled handler
   // module is its sibling tile-ipc.js. We assert the compiled output
   // contains no reference to the legacy side-channel — neither the
   // preload send site nor the main-process handler registration can

@@ -80,7 +80,7 @@ const send = (socketPath, msg) => new Promise((resolve, reject) => {
   setTimeout(() => { conn.destroy(); reject(new Error('timeout waiting for reply')); }, 2000).unref();
 });
 
-// Keep in sync with KNOWN_VERBS in backend/electron/cli-router.ts.
+// Keep in sync with KNOWN_VERBS in apps/desktop/main/cli-router.ts.
 // (No --list flag yet that asks the daemon for the live registry.)
 const HELP_TEXT = `usage: peek-cli <verb> [args...]
 

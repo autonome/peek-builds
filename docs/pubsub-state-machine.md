@@ -421,16 +421,16 @@ imports from `tile-lifecycle`. This is what makes the pubsub FSM
 testable in isolation and eliminates the race between state lookup and
 state transition.
 
-- **`backend/electron/pubsub-fsm.ts`** (pure, new) — the authorization
+- **`apps/desktop/main/pubsub-fsm.ts`** (pure, new) — the authorization
   matrix as a pure function: `allow({role, grant, topic, op}) →
   'allow' | {violation: reason}`. No Electron / Node imports. Topic
   classification lives here. Testable without spinning up main.
-- **`backend/electron/tile-fsm.ts`** (pure, exists) — lifecycle
+- **`apps/desktop/main/tile-fsm.ts`** (pure, exists) — lifecycle
   transition table. Unchanged.
-- **`backend/electron/pubsub.ts`** — the hub: delivery, broadcaster
+- **`apps/desktop/main/pubsub.ts`** — the hub: delivery, broadcaster
   wiring, pre-publish hooks. Imports `pubsub-fsm.ts` only. Exposes
   `unsubscribeAllByPrefix(tileId)` for lifecycle cleanup.
-- **`backend/electron/tile-ipc-gate.ts`** (new) — the single IPC
+- **`apps/desktop/main/tile-ipc-gate.ts`** (new) — the single IPC
   chokepoint AND the rejection-telemetry surface AND the bypass
   detectors. One module owns the whole gate boundary:
   - `registerTileIpc(channel, handler, descriptor)` — the only way to
@@ -445,18 +445,18 @@ state transition.
   - Subsumes what Phase 2 scaffolded as `tile-ipc-sender-check.ts` —
     the sender-frame check becomes step 2 of the pipeline, not a
     separate helper module.
-- **`backend/electron/tile-ipc.ts`** — individual channel handlers,
+- **`apps/desktop/main/tile-ipc.ts`** — individual channel handlers,
   registered via `registerTileIpc`. On `tile:pubsub:publish` /
   `tile:pubsub:subscribe`: the gate has already validated the frame, so
   the handler just calls `pubsubFsm.allow(...)` for per-topic
   authorization → publish or reject. This is where the lifecycle↔pubsub
   boundary sits.
-- **`backend/electron/tile-lifecycle.ts`** — state store + token
+- **`apps/desktop/main/tile-lifecycle.ts`** — state store + token
   lifecycle. On `loading → ready`: mint token. On `→ unloading` /
   `→ crashed`: revoke token, call `pubsub.unsubscribeAllByPrefix()`.
   Publishes `tile:state-changed` for observers. Imports from
   `pubsub.ts` (one-way); never imported by it.
-- **`backend/electron/tile-lazy.ts`** — load-on-dispatch pre-publish
+- **`apps/desktop/main/tile-lazy.ts`** — load-on-dispatch pre-publish
   hook. Already lives on the lifecycle side (it triggers
   `registered → loading`). Continues to register as a pre-publish hook
   on `pubsub.ts`; the hook body calls into lifecycle.
@@ -554,19 +554,19 @@ Each phase is independently shippable and each has a narrow failure mode.
 
 - [tile-lifecycle-fsm.md](tile-lifecycle-fsm.md) — tile state machine;
   this doc layers on top.
-- `backend/electron/pubsub.ts` — the hub.
-- `backend/electron/pubsub-fsm.ts` (new, Phase 8) — pure authorization
+- `apps/desktop/main/pubsub.ts` — the hub.
+- `apps/desktop/main/pubsub-fsm.ts` (new, Phase 8) — pure authorization
   matrix.
-- `backend/electron/tile-ipc.ts` — individual `tile:*` channel handlers.
-- `backend/electron/tile-ipc-gate.ts` (new, Phase 8) — single IPC
+- `apps/desktop/main/tile-ipc.ts` — individual `tile:*` channel handlers.
+- `apps/desktop/main/tile-ipc-gate.ts` (new, Phase 8) — single IPC
   chokepoint + rejection telemetry + bypass detectors. Owns the
   `gate:rejected` topic.
-- `backend/electron/tile-preload.cts` — renderer-side publish/subscribe
+- `apps/desktop/main/tile-preload.cts` — renderer-side publish/subscribe
   API + command registration.
-- `backend/electron/main.ts:216` — broadcaster registration site
+- `apps/desktop/main/main.ts:216` — broadcaster registration site
   (`setExtensionBroadcaster` → renamed to `setPubsubBroadcaster` in
   Phase 1; this is the bug site for bgWindow exclusion).
-- `backend/electron/tile-lazy.ts` — pre-publish hook for
+- `apps/desktop/main/tile-lazy.ts` — pre-publish hook for
   load-on-dispatch.
 - `app/background.html`, `app/index.js`, `app/cmd/background.js` — core
   renderer entry points + subscribers.

@@ -289,7 +289,7 @@ New features inherit the `defaultUpdatePolicy` from the features-manager setting
 
 ---
 
-## AtprotoSource (`backend/electron/atproto-source.ts`)
+## AtprotoSource (`apps/desktop/main/atproto-source.ts`)
 
 Implements `TileSource` interface:
 
@@ -363,7 +363,7 @@ Datastore table `features_history`:
 6. Add `features_history` table + history tracking
 
 ### Phase 2 — AtprotoSource + Install
-7. Implement AtprotoSource in `backend/electron/atproto-source.ts`
+7. Implement AtprotoSource in `apps/desktop/main/atproto-source.ts`
 8. Factor out `installFromBundle()` in feature-installer.ts
 9. Add IPC handlers for install-from-atproto flow
 10. Build capability approval prompt UI

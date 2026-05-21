@@ -25,7 +25,7 @@ Status: **Architecture Decided** | Feb 2026
 | Windows extension | `extensions/windows/` | Full reference implementation: search + toolbar + grid of cards |
 | HUD extension | `extensions/hud/` | Always-on-top overlay (first customer for widget migration) |
 | `DataBoundElement` | `app/components/data-binding.js` | Reactive data binding base class |
-| `item_events` table | `backend/electron/datastore.ts` | Time-series data (feeds, series) — widget data source |
+| `item_events` table | `apps/desktop/main/datastore.ts` | Time-series data (feeds, series) — widget data source |
 | Extension page model | `peek://ext/{id}/page.html` | Extensions serve visible pages via URL |
 
 ### What Needs to Be Built

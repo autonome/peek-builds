@@ -3,7 +3,7 @@
  *
  * Tests extracted pure functions from:
  * - app/page/page.js: isOAuthUrl (OAuth URL detection)
- * - backend/electron/ipc.ts: popup-to-opener bridge logic (popupToOpener Map,
+ * - apps/desktop/main/ipc.ts: popup-to-opener bridge logic (popupToOpener Map,
  *   opener-postmessage, opener-close, opener-focus handler logic)
  *
  * These are logic-only tests -- no DOM, no Electron, no IPC runtime.
@@ -57,7 +57,7 @@ function isOAuthUrl(url: string | null | undefined): boolean {
 }
 
 // ============================================================================
-// Popup-to-Opener bridge logic (from backend/electron/ipc.ts)
+// Popup-to-Opener bridge logic (from apps/desktop/main/ipc.ts)
 // ============================================================================
 // The IPC handlers in ipc.ts use a popupToOpener Map<number, number> and
 // BrowserWindow lookups. Here we extract the pure mapping/lookup logic into

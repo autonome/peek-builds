@@ -3,7 +3,7 @@
  *
  * Each describe block calls createPerDescribeApp(label) in its beforeAll to
  * launch a fresh Electron instance with an isolated profile. The profile name
- * MUST start with "test" so that isTestProfile() in backend/electron/config.ts
+ * MUST start with "test" so that isTestProfile() in apps/desktop/main/config.ts
  * skips the single-instance lock — without that prefix, parallel Playwright
  * workers would all contend for the same machine-wide lock and only one
  * Electron launch would succeed.
@@ -14,7 +14,7 @@ import { Page } from '@playwright/test';
 import { waitForExtensionsReady } from './window-utils';
 
 export async function createPerDescribeApp(label: string): Promise<{ app: DesktopApp; bgWindow: Page }> {
-  // Profile MUST start with "test" — `isTestProfile()` in backend/electron/config.ts
+  // Profile MUST start with "test" — `isTestProfile()` in apps/desktop/main/config.ts
   // keys on that prefix to skip the single-instance lock. Without it, parallel
   // Playwright workers would all contend for the same machine-wide lock and
   // only one Electron launch would succeed.

@@ -1239,7 +1239,7 @@ const renderPermissionsSettings = async () => {
   emptyMsg.style.display = 'none';
   container.appendChild(emptyMsg);
 
-  // Friendly labels — keep in sync with backend/electron/permission-policy.ts
+  // Friendly labels — keep in sync with apps/desktop/main/permission-policy.ts
   // PERMISSION_LABELS. Falls back to the raw permission name if missing.
   const PERMISSION_LABELS = {
     geolocation: 'Location',
@@ -3706,7 +3706,7 @@ const init = async () => {
   // Add Permissions section (between Extensions and Dark Mode).
   // Lists per-origin web permission decisions persisted by the page-host
   // permission handler (geolocation, camera/mic, etc.) and lets the user
-  // revoke them. See backend/electron/permission-handler.ts +
+  // revoke them. See apps/desktop/main/permission-handler.ts +
   // permission-store.ts.
   const permissionsNav = document.createElement('a');
   permissionsNav.className = 'nav-item';

@@ -660,7 +660,7 @@ export function registerWindowHandlers(): void {
           // already encodes both semantics:
           //   - `centered` mode → always re-center on cursor display
           //   - other modes → only reposition if stranded
-          // See backend/electron/window-placement.ts.
+          // See apps/desktop/main/window-placement.ts.
           applyPlacementOnReuse(
             existingWindow.window,
             existingData.params.placement as Placement | undefined,
@@ -1128,7 +1128,7 @@ export function registerWindowHandlers(): void {
     // Derive IZUI role now (before the Spaces dispatch below) using the same
     // rules the registration block applies later. Hoisted out of the original
     // inline cascade so the role-derived Spaces policy can run at creation
-    // time. See backend/electron/izui-roles.ts for the cascade.
+    // time. See apps/desktop/main/izui-roles.ts for the cascade.
     const parentWindowIdForRole = isRealParent ? openerWindow!.id : null;
     const role = inferIzuiRole(options as Parameters<typeof inferIzuiRole>[0], {
       isWebPage,

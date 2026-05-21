@@ -14,7 +14,7 @@ Playwright suite (235 tests, 2 skipped) passed in 85 seconds.
 ### Critical (silent-failure) bugs
 
 1. **`tile:window:open` was a stub**
-   `backend/electron/tile-ipc.ts:397` returned `{success: true, url}` without
+   `apps/desktop/main/tile-ipc.ts:397` returned `{success: true, url}` without
    actually opening anything. Every v2 tile command with
    `action: { type: 'window' }` (20+ commands across groups, tags,
    features-manager, feeds, scripts, wonderwall, etc.) and every tile calling
@@ -79,30 +79,30 @@ c503ccdd (pre-existing) fix(tile): broadcast pubsub messages to v2 tile BrowserW
 
 ### Specific fixes
 
-- **`backend/electron/ipc.ts`**: Extracted the window-open handler body into
+- **`apps/desktop/main/ipc.ts`**: Extracted the window-open handler body into
   a named function and exported `invokeWindowOpen` so `tile-ipc.ts` can
   delegate directly — without duplicating ~1300 lines of window-creation
   logic.
 
-- **`backend/electron/tile-ipc.ts:tile:window:open`**: Now calls
+- **`apps/desktop/main/tile-ipc.ts:tile:window:open`**: Now calls
   `invokeWindowOpen(event, {source, url, options})`. Preserves all
   window-open behaviour: canvas rendering, mode inheritance, keep-live key
   reuse, IZUI registration.
 
-- **`backend/electron/tile-ipc.ts:tile:settings:*`**: Wired to
+- **`apps/desktop/main/tile-ipc.ts:tile:settings:*`**: Wired to
   `feature_settings` table scoped by `grant.tileId` (same schema as the
   v1 `feature-settings-get-key` IPC).
 
-- **`backend/electron/tile-ipc.ts:tile:theme:info`**: Returns real
+- **`apps/desktop/main/tile-ipc.ts:tile:theme:info`**: Returns real
   `{ themeId, activeTheme, isDark, effectiveScheme }` from `nativeTheme`
   and `getActiveThemeId()`.
 
-- **`backend/electron/tile-ipc.ts:tile:datastore:*`**: Return explicit
+- **`apps/desktop/main/tile-ipc.ts:tile:datastore:*`**: Return explicit
   not-yet-implemented errors rather than pretending success. No feature
   currently uses them; when one does, wire to `getDb()` with per-tile row
   filtering.
 
-- **`backend/electron/tile-preload.ts`**: Rebuilt the renderer API surface
+- **`apps/desktop/main/tile-preload.ts`**: Rebuilt the renderer API surface
   to match what features actually call. Now exposes:
   - `api.commands.register(string|object, handler?)` accepting both the v2
     two-arg form and the v1 object form
@@ -126,7 +126,7 @@ c503ccdd (pre-existing) fix(tile): broadcast pubsub messages to v2 tile BrowserW
 
 ## Tests Added
 
-- **`backend/electron/tile-command-registration.test.ts`** — 5 tests
+- **`apps/desktop/main/tile-command-registration.test.ts`** — 5 tests
   covering the lazy-tile command registration path:
   - cmd:register-batch published per manifest command
   - `cmd:execute:{name}` subscriber registered by lazy-stub
@@ -134,7 +134,7 @@ c503ccdd (pre-existing) fix(tile): broadcast pubsub messages to v2 tile BrowserW
   - tile launch + message replay on first invocation
   - window-action commands retain `action.type === 'window'` in the batch
 
-- **`backend/electron/tile-window-open.test.ts`** — placeholder documenting
+- **`apps/desktop/main/tile-window-open.test.ts`** — placeholder documenting
   that the delegation path is tested via Playwright smoke, because
   importing `ipc.ts` under `ELECTRON_RUN_AS_NODE=1` pulls in Electron
   runtime-only APIs.
@@ -152,17 +152,17 @@ c503ccdd (pre-existing) fix(tile): broadcast pubsub messages to v2 tile BrowserW
 
 ## Files Changed (Absolute Paths)
 
-- `/Users/dietrich/misc/mpeek/backend/electron/ipc.ts` — exports
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/ipc.ts` — exports
   `invokeWindowOpen`; handler body refactored to a named function.
-- `/Users/dietrich/misc/mpeek/backend/electron/tile-ipc.ts` — 4 handlers
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/tile-ipc.ts` — 4 handlers
   overhauled (tile:window:open, tile:settings:get/set, tile:theme:info,
   tile:datastore:get/set/query).
-- `/Users/dietrich/misc/mpeek/backend/electron/tile-preload.ts` — expanded
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/tile-preload.ts` — expanded
   API surface (+150 lines); added commands shim that accepts both call
   shapes.
-- `/Users/dietrich/misc/mpeek/backend/electron/tile-command-registration.test.ts`
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/tile-command-registration.test.ts`
   (new) — 5 unit tests.
-- `/Users/dietrich/misc/mpeek/backend/electron/tile-window-open.test.ts`
+- `/Users/dietrich/misc/mpeek/apps/desktop/main/tile-window-open.test.ts`
   (new) — placeholder.
 - `/Users/dietrich/misc/mpeek/tests/desktop/tile-v2-commands.spec.ts`
   (new) — pointer doc.

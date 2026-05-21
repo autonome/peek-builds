@@ -2,7 +2,7 @@
  * Browser Extension Profiles Module
  *
  * Manages user profiles using chrome.storage.local.
- * Mirrors backend/electron/profiles.ts data model.
+ * Mirrors apps/desktop/main/profiles.ts data model.
  */
 
 const PROFILES_KEY = 'peek_profiles';

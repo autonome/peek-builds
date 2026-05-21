@@ -5,7 +5,7 @@
 retained as historical sprint planning.
 
 **Scope:** core window-manager behavior. Platform-agnostic spec; current
-implementation is Electron (`backend/electron/window-placement.ts`), with a
+implementation is Electron (`apps/desktop/main/window-placement.ts`), with a
 Tauri port to follow against the same contract.
 
 ---

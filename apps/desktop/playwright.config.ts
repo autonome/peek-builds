@@ -85,7 +85,7 @@ export default defineConfig({
   // Playwright workers — each runs in its own Electron with its own
   // --user-data-dir (see tests/fixtures/desktop-app.ts). The single-instance
   // lock is bypassed when the profile starts with "test" (see
-  // `isTestProfile()` in backend/electron/config.ts), so parallel workers
+  // `isTestProfile()` in apps/desktop/main/config.ts), so parallel workers
   // don't collide on the lock.
   //
   // Default is 4 on macOS/Windows (real parallelism across ~44 spec files),

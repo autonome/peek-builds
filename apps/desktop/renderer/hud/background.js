@@ -15,7 +15,7 @@
  * `peek://hud/hud.html`, opened on-demand via api.window.open(...).
  *
  * macOS app-focus hide/show of the alwaysOnTop HUD window is handled
- * directly in the main process (see backend/electron/main.ts) —
+ * directly in the main process (see apps/desktop/main/main.ts) —
  * registering that handler does not require a renderer.
  */
 
@@ -179,7 +179,7 @@ const init = async () => {
     toggleHud();
   });
 
-  // App focus hide/show is handled in backend/electron/hud-glue.ts
+  // App focus hide/show is handled in apps/desktop/main/hud-glue.ts
   // (did-resign-active / did-become-active) for reliability — alwaysOnTop
   // windows are hidden/shown directly without pubsub round-trip.
   api.pubsub.subscribe('app:focus-changed', (msg) => {

@@ -5,7 +5,7 @@
  * plain node without going through Electron-as-node. The orchestration
  * (deferred callbacks, IPC, BrowserWindow lookup) lives in permission-handler.ts.
  *
- * See backend/electron/permission-handler.ts for the full Phase 2 plan.
+ * See apps/desktop/main/permission-handler.ts for the full Phase 2 plan.
  */
 
 /** Permissions that Electron may request via setPermissionRequestHandler. */

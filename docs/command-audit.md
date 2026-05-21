@@ -17,7 +17,7 @@ the overnight audit pass.
 
 ### 1. `tile:window:open` was a stub
 
-`backend/electron/tile-ipc.ts` used to return `{success: true, url}` without
+`apps/desktop/main/tile-ipc.ts` used to return `{success: true, url}` without
 actually opening anything. Every `window`-type command from a tile
 (20+ commands) silently failed.
 

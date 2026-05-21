@@ -426,7 +426,7 @@ Then compute all pairwise co-occurrences and NPMI scores. For N entities, the wo
 
 ### Where This Code Lives
 
-The correlation engine should be a **backend module** (`backend/electron/entity-correlations.ts`), not an extension. Reasons:
+The correlation engine should be a **backend module** (`apps/desktop/main/entity-correlations.ts`), not an extension. Reasons:
 
 - It needs direct SQLite access for efficient batch queries
 - It runs on the main process, not in extension renderer

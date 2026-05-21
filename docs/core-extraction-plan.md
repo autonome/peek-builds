@@ -19,11 +19,11 @@ This document plans moving them out of `features/` and into `./app/` (cross-plat
 Peek runs on Electron AND Tauri (and mobile via Tauri). Core UI components must remain platform-agnostic:
 
 - `./app/` — cross-platform frontend (webview code, identical on Electron or Tauri)
-- `./backend/electron/` — Electron-specific main process, IPC, protocol handlers
-- `./backend/tauri/` — Tauri-specific (Rust)
-- `./backend/tauri-mobile/` — mobile Tauri
+- `./apps/desktop/main/` — Electron-specific main process, IPC, protocol handlers
+- `./apps/tauri-desktop/` — Tauri-specific (Rust)
+- `./apps/mobile/` — mobile Tauri
 
-**cmd/page/hud UI code goes in `./app/`, not `./backend/electron/`.**
+**cmd/page/hud UI code goes in `./app/`, not `./apps/desktop/main/`.**
 
 The cross-platform `api.*` surface (`api.pubsub`, `api.shortcuts`, `api.window`) hides backend differences. Each backend implements this contract.
 
@@ -42,12 +42,12 @@ app/
     hud.html, hud.js, hud.css             — always-on overlay UI
     widgets/...                           — HUD widgets
 
-backend/electron/
+apps/desktop/main/
   cmd-glue.ts                             — registers global Cmd+K shortcut, creates cmd window
   page-glue.ts                            — URL rewriting, webview protocol setup
   hud-glue.ts                             — creates HUD window with alwaysOnTop/focusable:false/transparent, handles did-resign-active hide/show
 
-backend/tauri/src-tauri/src/
+apps/tauri-desktop/src-tauri/src/
   cmd_glue.rs                             — equivalent for Tauri
   page_glue.rs                            — equivalent for Tauri
   hud_glue.rs                             — equivalent for Tauri
@@ -63,7 +63,7 @@ backend/tauri/src-tauri/src/
 - Not subject to tile sandboxing, CSP injection, capability tokens
 
 ### Backend-specific hooks move to glue files
-Currently in `backend/electron/main.ts`:
+Currently in `apps/desktop/main/main.ts`:
 - Global shortcut registration for Cmd+K → `cmd-glue.ts`
 - HUD window creation (alwaysOnTop, focusable: false, transparent) → `hud-glue.ts`
 - HUD focus handling (`did-resign-active`/`did-become-active` hide/show) → `hud-glue.ts`
@@ -86,7 +86,7 @@ Tiles don't know or care that cmd/page/hud moved. They just use the `api`.
 ### Phase 1: cmd
 Highest impact. Current cmd is in `features/cmd/` as a consolidated extension. Move:
 1. `features/cmd/panel.html`, `panel.js`, `state-machine.js`, `nouns.js`, `noun-registry.js`, etc. → `app/cmd/`
-2. Backend glue (global shortcut registration, window creation) → `backend/electron/cmd-glue.ts`
+2. Backend glue (global shortcut registration, window creation) → `apps/desktop/main/cmd-glue.ts`
 3. Remove `features/cmd/manifest.json`
 4. Drop `cmd` from `CONSOLIDATED_EXTENSION_IDS` and `EAGER_EXTENSION_IDS`
 5. Update startup: `loadCmdPanel()` in main.ts calls into `cmd-glue.ts` to create the panel window
@@ -94,7 +94,7 @@ Highest impact. Current cmd is in `features/cmd/` as a consolidated extension. M
 
 ### Phase 2: hud
 1. `features/hud/` → `app/hud/`
-2. Backend glue (window creation with special properties, focus handling) → `backend/electron/hud-glue.ts`
+2. Backend glue (window creation with special properties, focus handling) → `apps/desktop/main/hud-glue.ts`
 3. Remove manifest, drop from CONSOLIDATED/EAGER lists
 4. Startup calls `initHud()` from hud-glue
 
@@ -106,7 +106,7 @@ Trickiest because of frozen canvas architecture (see CLAUDE.md). Move UI to `./a
 Also flagged for future work, not part of this extraction:
 
 - The tiles runtime (tile-launcher, tile-preload, tile-csp, tile-ipc, tile-tokens) is currently Electron-specific
-- To run tile-based features on Tauri: build equivalent modules under `backend/tauri/`
+- To run tile-based features on Tauri: build equivalent modules under `apps/tauri-desktop/`
 - Document the tile runtime as a cross-backend contract — what any backend MUST provide
 - Treat Electron impl as one of N backends
 

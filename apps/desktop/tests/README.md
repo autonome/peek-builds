@@ -16,7 +16,7 @@ tests/
 ```
 
 Backend-specific tests live in their respective directories:
-- `backend/electron/tests/` - Electron-only features
+- `apps/desktop/tests/` - Electron-only features
 - `apps/tauri-desktop/tests/` - Tauri-only features (includes smoke.rs Rust unit tests)
 
 ## Running Tests
@@ -219,10 +219,10 @@ test.describe('My Feature @desktop', () => {
 
 ### Backend-Specific Tests
 
-Place in `backend/{name}/tests/` and use backend-specific APIs:
+Place in `apps/{name}/tests/` and use backend-specific APIs:
 
 ```typescript
-// backend/electron/tests/tray.spec.ts
+// apps/desktop/tests/tray.spec.ts
 import { test, _electron as electron } from '@playwright/test';
 
 test('tray icon works', async () => {
@@ -305,7 +305,7 @@ test.describe('Settings @desktop', () => {
 During tests (when `PROFILE` starts with `test`), the macOS dock icon is **always hidden**.
 This prevents the dock from appearing during test runs and interfering with test execution
 or causing visual distractions. The `updateDockVisibility()` function in
-`backend/electron/windows.ts` checks `isTestProfile()` and always hides the dock.
+`apps/desktop/main/windows.ts` checks `isTestProfile()` and always hides the dock.
 
 ### DevTools
 
