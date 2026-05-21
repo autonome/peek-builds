@@ -3,12 +3,12 @@
  * Schema Fidelity Tests
  *
  * Verifies that all backend schema implementations match the canonical schema.
- * Run with: node schema/fidelity.test.js
+ * Run with: node packages/schema/fidelity.test.js
  *           yarn schema:test
  *
  * These tests:
  * 1. Parse CREATE TABLE statements from each backend
- * 2. Compare against required sync columns from schema/v1.json
+ * 2. Compare against required sync columns from packages/schema/v1.json
  * 3. Verify timestamp columns use INTEGER (not TEXT)
  * 4. Verify id columns use TEXT (not INTEGER)
  */
@@ -81,7 +81,7 @@ function parseCreateTable(sql, tableName) {
  * Read schema from Electron datastore.ts
  */
 function getElectronSchema() {
-  const path = join(__dirname, '../apps/desktop/main/datastore.ts');
+  const path = join(__dirname, '../../apps/desktop/main/datastore.ts');
   return readFileSync(path, 'utf-8');
 }
 
@@ -97,7 +97,7 @@ function getServerSchema() {
  * Read schema from Tauri Desktop datastore.rs
  */
 function getTauriDesktopSchema() {
-  const path = join(__dirname, '../apps/tauri-desktop/src-tauri/src/datastore.rs');
+  const path = join(__dirname, '../../apps/tauri-desktop/src-tauri/src/datastore.rs');
   return readFileSync(path, 'utf-8');
 }
 
@@ -105,7 +105,7 @@ function getTauriDesktopSchema() {
  * Read schema from Tauri Mobile lib.rs
  */
 function getTauriMobileSchema() {
-  const path = join(__dirname, '../apps/mobile/src-tauri/src/lib.rs');
+  const path = join(__dirname, '../../apps/mobile/src-tauri/src/lib.rs');
   return readFileSync(path, 'utf-8');
 }
 
@@ -359,7 +359,7 @@ describe('Schema Fidelity Tests', () => {
       const schemaValues = parseSchemaCheckValues('items', 'type');
       assert.ok(schemaValues, 'v1.json items.type should have a CHECK constraint');
 
-      const typesTs = readFileSync(join(__dirname, '../backend/types/index.ts'), 'utf-8');
+      const typesTs = readFileSync(join(__dirname, '../../apps/desktop/types/index.ts'), 'utf-8');
       const match = typesTs.match(/export type ItemType\s*=\s*([^;]+);/);
       assert.ok(match, 'ItemType should be defined in types/index.ts');
 
@@ -374,7 +374,7 @@ describe('Schema Fidelity Tests', () => {
 
   describe('Table Completeness', () => {
     test('all tables in Electron createTableStatements are in TypeScript TableName', () => {
-      const typesTs = readFileSync(join(__dirname, '../backend/types/index.ts'), 'utf-8');
+      const typesTs = readFileSync(join(__dirname, '../../apps/desktop/types/index.ts'), 'utf-8');
 
       // Extract TableName union values
       const tableNameMatch = typesTs.match(/export type TableName\s*=([^;]+);/s);
@@ -405,7 +405,7 @@ describe('Schema Fidelity Tests', () => {
     });
 
     test('tableNames array matches TableName union', () => {
-      const typesTs = readFileSync(join(__dirname, '../backend/types/index.ts'), 'utf-8');
+      const typesTs = readFileSync(join(__dirname, '../../apps/desktop/types/index.ts'), 'utf-8');
 
       // Extract TableName union values
       const tableNameMatch = typesTs.match(/export type TableName\s*=([^;]+);/s);

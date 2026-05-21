@@ -170,7 +170,7 @@ Both test frameworks cover equivalent functionality:
 | Extension windows | `Peeks`, `Slides`, `Groups` | N/A (UI only) |
 
 **Note:** UI-specific tests (Settings, Cmd Palette, extension windows) only run via Playwright.
-Tauri Rust tests focus on backend/datastore functionality.
+Tauri Rust tests focus on apps/datastore functionality.
 
 ## Writing Tests
 
@@ -282,7 +282,7 @@ When working on tests:
 
 1. **Cross-backend tests go in `tests/desktop/`**
 2. **Use `desktopApp` fixture, never `_electron` directly** in cross-backend tests
-3. **Backend-specific tests go in `backend/{name}/tests/`**
+3. **Backend-specific tests go in `apps/{name}/tests/`**
 4. **Always use PROFILE for data isolation**
 5. **Test both backends before marking complete:** `yarn test`
 6. **Follow existing patterns** - look at smoke.spec.ts for examples

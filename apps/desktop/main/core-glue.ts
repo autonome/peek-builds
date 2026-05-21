@@ -29,7 +29,7 @@
  *
  * The URL loaded stays `peek://app/background.html` — the protocol
  * handler already resolves that to `rootDir/app/background.html`, and
- * `WEB_CORE_ADDRESS` in `backend/config.ts` is used elsewhere (e.g.
+ * `WEB_CORE_ADDRESS` in `apps/desktop/config.ts` is used elsewhere (e.g.
  * `closeOrHideWindow` refuses to close the core window by address
  * match, `countVisibleWindows` excludes it, session restore skips it).
  *

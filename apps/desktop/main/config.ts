@@ -2,7 +2,7 @@
  * Electron-Specific Runtime Configuration
  *
  * Runtime configuration and state for the Electron main process.
- * For shared constants, see backend/config.ts
+ * For shared constants, see apps/desktop/config.ts
  */
 
 // Re-export shared constants for convenience
