@@ -48,7 +48,7 @@ test.describe('Popup Command Bar', () => {
     expect(placeholder).toBe(true);
 
     const displayText = await getDisplayText(popup);
-    expect(displayText).toBe('tag, note, or search...');
+    expect(displayText).toBe('tag, note, server, key, sync...');
   });
 
   test('hides placeholder when typing', async () => {
