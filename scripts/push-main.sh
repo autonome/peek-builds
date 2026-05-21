@@ -66,8 +66,13 @@ fi
 
 # Check: is TANGLED_REV an ancestor of MAIN_REV? (i.e. main is a strict
 # descendant of main@tangled — safe fast-forward push)
-ANCESTORS_OF_MAIN=$(jj log -r "::${MAIN_REV}" --no-graph -T 'commit_id ++ "\n"' 2>/dev/null)
-if ! echo "$ANCESTORS_OF_MAIN" | grep -qx "$TANGLED_REV"; then
+# jj DAG range X::Y = descendants(X) intersected with ancestors(Y). Empty iff
+# X is NOT an ancestor of Y. The trailing `|| true` is needed because
+# `head -1` exits after the first line, closing the pipe and triggering
+# SIGPIPE on `jj log` — combined with `set -o pipefail` that would abort
+# the script. We only care about whether the range is non-empty.
+DAG_RANGE_HEAD=$(jj log -r "${TANGLED_REV}::${MAIN_REV}" --no-graph -T 'commit_id ++ "\n"' 2>/dev/null | head -1 || true)
+if [ -z "$DAG_RANGE_HEAD" ]; then
   echo "" >&2
   echo "ERROR: local 'main' is NOT a strict descendant of main@tangled." >&2
   echo "" >&2
