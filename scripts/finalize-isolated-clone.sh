@@ -121,8 +121,15 @@ fi
 # Computed as: does jj's ancestor set of REMOTE_REV contain MAIN_REV?
 # (We grep instead of using `&` in the revset because chook blocks `&` in
 # Bash tool args; this stays portable to interactive invocations too.)
+#
+# IMPORTANT: under `set -o pipefail`, `grep -q` short-circuits on first match
+# and causes the upstream `echo` to receive SIGPIPE (exit 141). pipefail then
+# makes the whole pipeline exit 141, and `if !` flips that to truthy — i.e.
+# the ERROR branch runs even when MAIN_REV IS an ancestor. Use `grep -c`
+# (counts every line, no early exit) with the count discarded; check grep's
+# exit code directly, which is 0 iff at least one match was found.
 ANCESTORS_OF_REMOTE=$(jj log -r "::${REMOTE_REV}" --no-graph -T 'commit_id ++ "\n"' 2>/dev/null)
-if ! echo "$ANCESTORS_OF_REMOTE" | grep -qx "$MAIN_REV"; then
+if ! echo "$ANCESTORS_OF_REMOTE" | grep -cFx "$MAIN_REV" >/dev/null; then
   echo "" >&2
   echo "ERROR: agent's work is NOT a fast-forward of main." >&2
   echo "" >&2
