@@ -150,7 +150,7 @@ import {
   createBackup,
   listBackups,
 } from './backup.js';
-import { getPrefs, closeOrHideWindow } from './windows.js';
+import { getPrefs, closeOrHideWindow, showWindowHeadlessSafe } from './windows.js';
 import {
   saveSessionSnapshot,
   restoreSessionSnapshot,
@@ -2866,7 +2866,7 @@ export function registerTileIpcHandlers(): void {
       if (!win) {
         return { success: false, error: 'Window not found' };
       }
-      win.show();
+      showWindowHeadlessSafe(win, { active: true });
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

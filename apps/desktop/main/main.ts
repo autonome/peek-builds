@@ -32,7 +32,7 @@ import { createRuleEngine, type RuleEngine } from './rule-engine.js';
 import { listRules as rulesList, type RulesDb } from './rules.js';
 import { installDirectSendGuard, installOffPathWindowGuard, unguardedWebContentsSend } from './tile-ipc-gate.js';
 import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHeadless, getProfile, setTilePreloadPath, getTilePreloadPath, DEBUG } from './config.js';
-import { getSystemThemeBackgroundColor } from './windows.js';
+import { getSystemThemeBackgroundColor, showWindowHeadlessSafe } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { clearLastFocusedVisibleWindowId, trackOnWindowFocus } from './ipc.js';
@@ -636,7 +636,7 @@ export async function initialize(): Promise<void> {
                 if (hiddenWin) {
                   // showInactive: activating each one would pull the user to its
                   // Space; the explicit .focus() below selects the right target.
-                  hiddenWin.showInactive();
+                  showWindowHeadlessSafe(hiddenWin);
                 }
               }
               const focusTargetId = windowData.params.overlayFocusTarget as number | undefined;

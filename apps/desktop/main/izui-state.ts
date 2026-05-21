@@ -294,6 +294,13 @@ class IzuiStateCoordinator {
     for (const id of hiddenIds) {
       const win = this.windowProvider.fromId(id);
       if (win && !win.isDestroyed()) {
+        // In headless test mode, set opacity to 0 so the restored window
+        // doesn't flash on the real display. setOpacity is a BrowserWindow
+        // method — wrapped in a duck-typed check so unit-test mock stubs
+        // (which don't implement it) are unaffected.
+        if (isHeadless() && typeof (win as any).setOpacity === 'function') {
+          try { (win as any).setOpacity(0); } catch { /* unsupported on some platforms */ }
+        }
         win.showInactive();
       }
     }
@@ -326,6 +333,10 @@ class IzuiStateCoordinator {
     for (const id of hiddenIds) {
       const win = this.windowProvider.fromId(id);
       if (win && !win.isDestroyed()) {
+        // Same headless-safe guard as exitOverlay above.
+        if (isHeadless() && typeof (win as any).setOpacity === 'function') {
+          try { (win as any).setOpacity(0); } catch { /* unsupported on some platforms */ }
+        }
         win.showInactive();
       }
     }

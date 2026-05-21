@@ -23,6 +23,7 @@ import { WEB_CORE_ADDRESS } from './config.js';
 
 import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile } from './config.js';
+import { showWindowHeadlessSafe } from './windows.js';
 
 export type { WindowContext, WindowDescriptor };
 
@@ -1098,12 +1099,14 @@ export async function restoreSessionSnapshot(
             // Show now that the window exists. If Peek still has OS-level
             // focus, .show() activates normally; if the user has switched
             // away mid-restore, .showInactive() makes the window visible
-            // without yanking the user back to Peek.
+            // without yanking the user back to Peek. Both paths use
+            // showWindowHeadlessSafe so that headless test runs don't flash
+            // windows onto the real display (setOpacity(0) + show/showInactive).
             if (getIzuiCoordinator().isAppFocused()) {
-              win.show();
+              showWindowHeadlessSafe(win, { active: true });
               _restoreShowCount++;
             } else {
-              win.showInactive();
+              showWindowHeadlessSafe(win);
               _restoreShowInactiveCount++;
             }
 

@@ -65,6 +65,7 @@ import {
   isHeadless,
   // Window helpers
   closeOrHideWindow,
+  showWindowHeadlessSafe,
   setPrefsGetter,
   applyDockPreference,
   // Tile manifest loading
@@ -235,16 +236,7 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
   showWindow: (id: number): boolean => {
     const win = getLiveWindow(id);
     if (!win) return false;
-    // In headless test mode on macOS, showInactive() actually surfaces the
-    // window because show:false suppresses the WM-level create but not the
-    // app-level show(). Set opacity to 0 before showing — the window is
-    // still "visible" in Electron's BrowserWindow.isVisible() sense and
-    // focus/blur events still fire (which is what the tests actually
-    // assert), but the user sees no flash on the real display.
-    if (isHeadless()) {
-      try { win.setOpacity(0); } catch { /* setOpacity unsupported on some platforms */ }
-    }
-    win.showInactive();
+    showWindowHeadlessSafe(win);
     return true;
   },
   /**
