@@ -3,7 +3,7 @@
  *
  * The MCP server in this directory issues SQL directly against the columns
  * of items/tags/item_tags/item_events. The canonical schema for those tables
- * is owned by `packages/packages/schema/v1.json` (consumed by the Electron app at startup via
+ * is owned by `packages/schema/v1.json` (consumed by the Electron app at startup via
  * `validateSyncSchema`). If a column the MCP writes to is removed or renamed
  * in v1.json, this test fails — before users hit a runtime "no such column"
  * error.
