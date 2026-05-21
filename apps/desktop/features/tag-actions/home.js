@@ -18,7 +18,6 @@
 import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
-const debug = api.debug;
 
 // ==================== Icon Style Definitions ====================
 
@@ -276,8 +275,6 @@ const createPairRow = (pair, index) => {
 // ==================== Init ====================
 
 const init = async () => {
-  debug && console.log('[tag-actions] init');
-
   await loadPairsFromRules();
   registerCommands();
 
@@ -315,8 +312,6 @@ const init = async () => {
   });
 
   render();
-
-  debug && console.log('[tag-actions] initialized with', pairs.length, 'pair(s)');
 };
 
 const uninit = () => {

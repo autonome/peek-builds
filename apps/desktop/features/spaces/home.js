@@ -20,7 +20,6 @@ import { liveQuery } from 'peek://app/lib/live-query.js';
 import { resolveVividColor } from './config.js';
 
 const api = window.app;
-const debug = api.debug;
 
 const SPACE_PREFIX = 'space:';
 
@@ -226,12 +225,10 @@ const loadSpaces = async () => {
       if (vivid !== tag.color) {
         tag.color = vivid;
         api.datastore.updateTagColor(tag.id, vivid);
-        debug && console.log('[spaces] Persisted vivid color for space:', tag.name, vivid);
       }
     }
 
     state.spaces = spaceTags;
-    debug && console.log('[spaces] Loaded spaces:', state.spaces.length);
   } else {
     console.error('[spaces] Failed to load spaces:', result.error);
     state.spaces = [];
@@ -277,7 +274,6 @@ const loadItemsForSpace = async (tagId) => {
       item.type === 'url' && isWebUrl(item.content)
     );
     state.items = deduplicateByUrl(urlItems);
-    debug && console.log('[spaces] Loaded items for space:', state.items.length);
   } else {
     console.error('[spaces] Failed to load items:', result.error);
     state.items = [];
@@ -395,7 +391,6 @@ const setupCreateSpace = () => {
     try {
       const result = await api.datastore.getOrCreateTag(tagName);
       if (result.success) {
-        debug && console.log('[spaces] Created new space:', tagName, result.data);
         hideForm();
         await loadSpaces();
         renderSpaces();
@@ -638,7 +633,6 @@ const startRenameSpace = (headerEl, space) => {
           space.name = newTagName;
           const searchInput = document.querySelector('peek-input.search-input');
           searchInput.placeholder = `Search in ${newDisplayName}...`;
-          debug && console.log('[spaces] Renamed space to:', newTagName);
         } else {
           console.error('[spaces] Failed to rename space:', result.error);
         }
@@ -781,7 +775,6 @@ const createItemCard = (item) => {
       }
     },
     onClick: async () => {
-      debug && console.log('[spaces] Opening item:', itemUrl);
       // Open with space mode context so the window enters space mode
       const openOptions = {
         role: 'content',
@@ -794,8 +787,7 @@ const createItemCard = (item) => {
           color: state.currentSpace.color || '#999'
         } : undefined
       };
-      const result = await api.window.open(itemUrl, openOptions);
-      debug && console.log('[spaces] Window opened:', result);
+      await api.window.open(itemUrl, openOptions);
     }
   });
 
@@ -842,7 +834,6 @@ const createItemCard = (item) => {
 };
 
 const init = async () => {
-  debug && console.log('[spaces] init');
 
   if (api.escape) api.escape.onEscape(handleEscape);
 
@@ -875,7 +866,6 @@ const init = async () => {
     ],
     runImmediately: false,
     onUpdate: async () => {
-      debug && console.log('[spaces] live-query refresh');
       await loadSpaces();
       if (state.view === VIEW_SPACES) {
         renderSpaces();

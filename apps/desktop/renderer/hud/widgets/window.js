@@ -3,7 +3,6 @@
  */
 
 const api = window.app;
-const debug = api.debug;
 
 const windowTitle = document.getElementById('window-title');
 
@@ -18,7 +17,6 @@ const updateDisplay = () => {
     windowTitle.textContent = 'No active window';
   }
 
-  debug && console.log('[hud:window] Updated:', currentWindowInfo?.title);
 };
 
 const refreshWindowInfo = async () => {

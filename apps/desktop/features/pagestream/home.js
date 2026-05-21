@@ -12,7 +12,6 @@ import {
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 
 const api = window.app;
-const debug = api.debug;
 
 // Tag action rules cache for rendering affordances on visit cards
 let actionRulesCache = null;
@@ -106,7 +105,6 @@ const loadVisits = async () => {
       .filter(Boolean)
       .reverse();
 
-    debug && console.log('[pagestream] Loaded', state.visits.length, 'visits');
   } catch (err) {
     console.error('[pagestream] Error loading visits:', err);
     state.visits = [];
@@ -684,7 +682,6 @@ const handleKeydown = (e) => {
 // ===== Initialization =====
 
 const init = async () => {
-  debug && console.log('[pagestream] init');
 
   // Initialize tag action rules cache
   actionRulesCache = createActionRulesCache(api);
@@ -697,7 +694,6 @@ const init = async () => {
   render(true);
 
   const debouncedRefresh = debounce(async () => {
-    debug && console.log('[pagestream] debounced refresh triggered');
     await loadVisits();
     render();
   }, 150);

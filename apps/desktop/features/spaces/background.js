@@ -14,7 +14,6 @@ import {
 } from './config.js';
 
 const api = window.app;
-const debug = api.debug;
 
 console.log('[ext:spaces] background loaded');
 
@@ -75,7 +74,6 @@ async function showBorder(color, name) {
       borderWindowId = result.id;
       await api.window.setIgnoreMouseEvents(borderWindowId, true, true);
       await api.window.setVisibleOnAllWorkspaces(borderWindowId, true);
-      debug && console.log('[ext:spaces] Border window created:', borderWindowId);
     }
   } catch (err) {
     console.error('[ext:spaces] Failed to create border window:', err);
@@ -133,10 +131,8 @@ async function handleItemCreated(msg) {
         itemId,
         source: 'spaces-auto-tag'
       });
-      debug && console.log('[ext:spaces] Auto-tagged item', itemId, 'with space', spaceTagId);
     }
-  } catch (err) {
-    debug && console.log('[ext:spaces] Auto-tag error:', err);
+  } catch {
   }
 }
 
@@ -164,11 +160,9 @@ async function handleTagRemoved(msg) {
       const windowUrl = modeResult.data.metadata?.url;
       if (windowUrl && normalizeUrl(windowUrl) === normalizeUrl(item.content)) {
         await api.context.setMode('page', { windowId, metadata: { url: windowUrl } });
-        debug && console.log('[ext:spaces] Reset window', windowId, 'from space to page after tag removal');
       }
     }
-  } catch (err) {
-    debug && console.log('[ext:spaces] Tag removal handler error:', err);
+  } catch {
   }
 }
 
@@ -210,8 +204,7 @@ async function updateBorderVisibility() {
     } else {
       scheduleHideBorder();
     }
-  } catch (err) {
-    debug && console.log('[ext:spaces] updateBorderVisibility error:', err);
+  } catch {
     scheduleHideBorder();
   }
 }
@@ -233,7 +226,6 @@ async function openSpace(spaceName) {
   if (vividColor !== tag.color) {
     tag.color = vividColor;
     await api.datastore.updateTagColor(tag.id, vividColor);
-    debug && console.log('[ext:spaces] Persisted vivid color for space:', vividColor);
   }
 
   activeSpaceId = tag.id;
@@ -294,8 +286,7 @@ async function closeSpace() {
     if (api.session?.saveSpaceWorkspaces) {
       await api.session.saveSpaceWorkspaces();
     }
-  } catch (err) {
-    debug && console.log('[ext:spaces] Failed to save workspace:', err);
+  } catch {
   }
 
   // Get all windows in this space and close them
@@ -304,8 +295,7 @@ async function closeSpace() {
     for (const windowId of result.data) {
       try {
         await api.window.close(windowId);
-      } catch (err) {
-        debug && console.log(`[ext:spaces] Failed to close window ${windowId}:`, err);
+      } catch {
       }
     }
   }

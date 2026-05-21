@@ -6,7 +6,6 @@
  */
 
 const api = window.app;
-const debug = api.debug;
 
 const valueEl = document.getElementById('timers-value');
 
@@ -28,7 +27,6 @@ const handleHudUpdate = (msg) => {
     return;
   }
   setActive(msg.text);
-  debug && console.log('[hud:timers] Updated:', msg.text);
 };
 
 const init = async () => {

@@ -16,7 +16,6 @@
 import { id, labels, schemas, storageKeys, defaults, builtinEngines } from './config.js';
 
 const api = window.app;
-const debug = api.debug;
 
 // ===== State =====
 
@@ -77,7 +76,6 @@ const loadEngines = async () => {
     ...customEngines
   ];
 
-  debug && console.log('[ext:websearch] Loaded engines:', engines.map(e => e.id));
 };
 
 /**
@@ -134,8 +132,6 @@ const addEngine = async (engine) => {
   // Re-register commands for the new engine
   unregisterEngineCommands();
   registerEngineCommands();
-
-  debug && console.log('[ext:websearch] Added engine:', engine.id, engine.name);
 };
 
 /**
@@ -175,7 +171,6 @@ const executeSearch = async (engine, query) => {
   if (!query || !query.trim()) return;
 
   const url = buildSearchUrl(engine.searchUrl, query.trim());
-  debug && console.log('[ext:websearch] Searching:', engine.name, query, '->', url);
 
   api.window.open(url, {
     role: 'content',
@@ -214,7 +209,6 @@ const fetchSuggestions = async (engine, query, signal) => {
     if (signal && signal.aborted) return [];
 
     if (!res.ok) {
-      debug && console.log('[ext:websearch] Suggestion fetch failed:', res.status);
       return [];
     }
 
@@ -233,7 +227,6 @@ const fetchSuggestions = async (engine, query, signal) => {
     return [];
   } catch (err) {
     if (err.name !== 'AbortError') {
-      debug && console.log('[ext:websearch] Suggestion fetch failed:', err.message);
     }
     return [];
   }
@@ -287,7 +280,6 @@ const parseOpenSearchXml = (xmlText, sourceUrl) => {
     // Check for parse errors
     const parseError = doc.querySelector('parsererror');
     if (parseError) {
-      debug && console.log('[ext:websearch] OpenSearch XML parse error');
       return null;
     }
 
@@ -316,19 +308,16 @@ const parseOpenSearchXml = (xmlText, sourceUrl) => {
     }
 
     if (!shortName || !searchUrl) {
-      debug && console.log('[ext:websearch] OpenSearch XML missing required fields (ShortName, Url)');
       return null;
     }
 
     // Validate that searchUrl contains {searchTerms}
     if (!searchUrl.includes('{searchTerms}')) {
-      debug && console.log('[ext:websearch] OpenSearch search URL missing {searchTerms} placeholder');
       return null;
     }
 
     // Reject javascript: URLs
     if (searchUrl.startsWith('javascript:') || (suggestUrl && suggestUrl.startsWith('javascript:'))) {
-      debug && console.log('[ext:websearch] Rejecting javascript: URL in OpenSearch');
       return null;
     }
 
@@ -386,7 +375,6 @@ const discoverEngine = async (opensearchUrl, pageUrl) => {
     // Check if we already have this engine
     const existing = getEngine(engine.id);
     if (existing) {
-      debug && console.log('[ext:websearch] Engine already registered:', engine.id);
       return existing;
     }
 
@@ -398,10 +386,8 @@ const discoverEngine = async (opensearchUrl, pageUrl) => {
       engine: { id: engine.id, name: engine.name, searchUrl: engine.searchUrl }
     });
 
-    debug && console.log('[ext:websearch] Discovered search engine:', engine.name, 'from', pageUrl);
     return engine;
-  } catch (err) {
-    debug && console.log('[ext:websearch] OpenSearch discovery failed:', err.message);
+  } catch {
     return null;
   }
 };
@@ -480,9 +466,6 @@ const staticCommandDefinitions = [
     description: 'Search the web with your default search engine',
     params: [{ name: 'query', type: 'string', required: false, description: 'Search query' }],
     execute: async (ctx) => {
-      debug && console.log('[ext:websearch] web search execute:',
-        'ctx keys:', ctx ? Object.keys(ctx) : 'null',
-        'search:', ctx?.search, 'params:', ctx?.params, 'typed:', ctx?.typed);
       const query = extractSearchQuery(ctx);
       if (query) {
         const engine = getDefaultEngine();
@@ -520,11 +503,7 @@ const registerEngineCommands = () => {
       description: `Search ${engine.name}`,
       params: [{ name: 'query', type: 'string', required: false, description: 'Search query' }],
       execute: async (ctx) => {
-        debug && console.log('[ext:websearch] Engine command execute:', engine.shortName,
-          'ctx keys:', ctx ? Object.keys(ctx) : 'null',
-          'search:', ctx?.search, 'params:', ctx?.params, 'typed:', ctx?.typed, 'name:', ctx?.name);
         const query = extractSearchQuery(ctx);
-        debug && console.log('[ext:websearch] Extracted query:', JSON.stringify(query), 'from ctx for', engine.shortName);
         if (query) {
           await executeSearch(engine, query);
         } else {
@@ -538,7 +517,6 @@ const registerEngineCommands = () => {
     engineCommands.push(engine.shortName);
   }
 
-  debug && console.log('[ext:websearch] Registered engine commands:', engineCommands);
 };
 
 /**
@@ -563,8 +541,6 @@ const initCommands = () => {
 
   // Register engine commands
   registerEngineCommands();
-
-  debug && console.log('[ext:websearch] Registered commands:', [...registeredCommands, ...engineCommands]);
 };
 
 /**
@@ -577,8 +553,6 @@ const uninitCommands = () => {
   registeredCommands = [];
 
   unregisterEngineCommands();
-
-  debug && console.log('[ext:websearch] Unregistered commands');
 };
 
 // ===== Event Handlers (background-mode) =====
@@ -728,7 +702,6 @@ const executeSearchFromUi = (query) => {
   if (!engine) return;
 
   const url = engine.searchUrl.replace('{searchTerms}', encodeURIComponent(query.trim()));
-  debug && console.log('[websearch:home] Searching:', engine.name, query, '->', url);
 
   api.window.open(url, {
     role: 'content',
@@ -1032,8 +1005,6 @@ const handleKeydown = (e) => {
 // ===== UI Initialization =====
 
 const initUi = () => {
-  debug && console.log('[websearch:home] initUi');
-
   // Register escape handler
   api.escape.onEscape(handleEscape);
 
@@ -1121,7 +1092,6 @@ const initUi = () => {
 
   // Listen for settings updates from Settings UI
   api.pubsub.subscribe('websearch:settings-update', async (msg) => {
-    debug && console.log('[ext:websearch] settings-update received:', msg);
 
     try {
       if (msg.data) {

@@ -15,7 +15,6 @@
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 
 const api = window.app;
-const debug = api.debug;
 
 // Extension content is served from peek://timers/
 const address = 'peek://timers/home.html';
@@ -197,14 +196,12 @@ const playNotification = (timer) => {
       const audio = new Audio(url);
       const result = audio.play();
       if (result && typeof result.catch === 'function') {
-        result.catch((err) => {
-          debug && console.log('[ext:timers] Custom sound playback failed, falling back to bell:', err);
+        result.catch(() => {
           playBell();
         });
       }
       return;
-    } catch (err) {
-      debug && console.log('[ext:timers] Custom sound construction failed, falling back to bell:', err);
+    } catch {
     }
   }
   playBell();
@@ -259,8 +256,7 @@ const playBell = () => {
     gain3.connect(ctx.destination);
     osc3.start(now);
     osc3.stop(now + duration);
-  } catch (err) {
-    debug && console.log('[ext:timers] Bell playback failed:', err);
+  } catch {
   }
 };
 
@@ -308,7 +304,6 @@ const createTimerItem = async (opts) => {
   // Track in active timers
   activeTimers.set(item.id, item);
 
-  debug && console.log('[ext:timers] Created timer:', item.id, metadata.timerType);
   return item;
 };
 
@@ -344,8 +339,7 @@ const completeTimer = async (timer) => {
     new Notification(timer.title || 'Timer Complete', {
       body: formatTimerStatus(timer.metadata)
     });
-  } catch (err) {
-    debug && console.log('[ext:timers] Notification failed:', err);
+  } catch {
   }
 
   playNotification(timer);
@@ -357,7 +351,6 @@ const completeTimer = async (timer) => {
     timerType: timer.metadata.timerType
   });
 
-  debug && console.log('[ext:timers] Timer completed:', timer.id);
 };
 
 /**
@@ -371,8 +364,7 @@ const fireIntervalNotification = (timer) => {
     new Notification(timer.title || 'Interval Timer', {
       body: `Interval #${timer.metadata.intervalCount} completed`
     });
-  } catch (err) {
-    debug && console.log('[ext:timers] Interval notification failed:', err);
+  } catch {
   }
 
   playNotification(timer);
@@ -471,7 +463,6 @@ const tick = () => {
 const startTickLoop = () => {
   if (tickInterval) return;
   tickInterval = setInterval(tick, 1000);
-  debug && console.log('[ext:timers] Tick loop started');
 };
 
 /**
@@ -481,7 +472,6 @@ const stopTickLoopIfEmpty = () => {
   if (activeTimers.size === 0 && tickInterval) {
     clearInterval(tickInterval);
     tickInterval = null;
-    debug && console.log('[ext:timers] Tick loop stopped (no active timers)');
     // Clear HUD
     updateHud([]);
   }
@@ -561,7 +551,6 @@ const restoreTimers = async () => {
 
     if (restoredCount > 0) {
       startTickLoop();
-      debug && console.log(`[ext:timers] Restored ${restoredCount} active timer(s)`);
     }
   } catch (err) {
     console.error('[ext:timers] Failed to restore timers:', err);
@@ -750,7 +739,6 @@ const setupPubsubHandlers = () => {
 
     await updateTimerMetadata(timer.id, timer.metadata);
     api.pubsub.publish('timer:state-changed', { id: timer.id, status: 'paused' });
-    debug && console.log('[ext:timers] Paused timer:', timer.id);
   });
 
   // Resume a timer
@@ -781,7 +769,6 @@ const setupPubsubHandlers = () => {
     await updateTimerMetadata(timer.id, timer.metadata);
     startTickLoop();
     api.pubsub.publish('timer:state-changed', { id: timer.id, status: 'running' });
-    debug && console.log('[ext:timers] Resumed timer:', timer.id);
   });
 
   // Stop a timer
@@ -800,7 +787,6 @@ const setupPubsubHandlers = () => {
     activeTimers.delete(timer.id);
     stopTickLoopIfEmpty();
     api.pubsub.publish('timer:state-changed', { id: timer.id, status: 'stopped' });
-    debug && console.log('[ext:timers] Stopped timer:', timer.id);
   });
 
   // Delete a timer
@@ -813,7 +799,6 @@ const setupPubsubHandlers = () => {
       console.error('[ext:timers] Failed to delete timer:', err);
     }
     api.pubsub.publish('timer:state-changed', { id: msg.id, status: 'deleted' });
-    debug && console.log('[ext:timers] Deleted timer:', msg.id);
   });
 
   // Request current timer state (UI requests on load)
@@ -846,8 +831,6 @@ const setupPubsubHandlers = () => {
 // ===== Registration =====
 
 const init = async () => {
-  debug && console.log('[ext:timers] init');
-
   // Register command handlers
   api.commands.register({
     name: 'timers',
@@ -928,7 +911,6 @@ const init = async () => {
 };
 
 const uninit = () => {
-  debug && console.log('[ext:timers] uninit');
   if (tickInterval) {
     clearInterval(tickInterval);
     tickInterval = null;

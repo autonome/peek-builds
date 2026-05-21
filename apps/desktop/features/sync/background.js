@@ -14,8 +14,6 @@ const labels = {
   description: 'Sync commands and functionality'
 };
 
-const debug = api.debug;
-
 // ===== Command definitions =====
 
 const commandDefinitions = [

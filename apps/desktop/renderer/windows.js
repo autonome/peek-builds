@@ -2,7 +2,6 @@ import { openStore } from "./utils.js";
 import api from './api.js';
 import { trackNavigation } from './datastore/history.js';
 
-const debug = api.debug;
 const clear = false;
 
 // maps app id to BrowserWindow id (background)

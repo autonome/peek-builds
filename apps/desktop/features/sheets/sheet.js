@@ -6,7 +6,6 @@
  */
 
 const api = window.app;
-const debug = api.debug;
 
 let sheetId = null;
 let sheetConfig = null;
@@ -43,7 +42,6 @@ const saveSheetConfig = async () => {
     console.error('[sheets] Failed to save config:', result.error);
     return;
   }
-  debug && console.log('[sheets] Config saved:', key);
 };
 
 /**
@@ -262,7 +260,6 @@ const setupEvents = () => {
   const grid = document.querySelector('peek-grid.cards');
   grid.addEventListener('freeform-layout-change', (e) => {
     const { layout } = e.detail;
-    debug && console.log('[sheets] Layout changed:', layout);
 
     // Update config items with new positions
     for (const item of sheetConfig.items) {
@@ -288,8 +285,6 @@ const init = async () => {
     console.error('[sheets] No sheetId in URL');
     return;
   }
-
-  debug && console.log('[sheets] Loading sheet:', sheetId);
 
   sheetConfig = await loadSheetConfig();
   if (!sheetConfig) {

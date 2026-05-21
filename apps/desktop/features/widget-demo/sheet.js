@@ -10,7 +10,6 @@
  */
 
 const api = window.app;
-const debug = api.debug;
 
 // ── Tile initialization ──
 // Must run before any user interaction. api.initialize() validates the
@@ -104,7 +103,6 @@ const loadSheetConfig = async () => {
 const saveSheetConfig = async () => {
   if (!sheetConfig) return;
   await api.settings.set(DEMO_SHEET_KEY, sheetConfig);
-  debug && console.log('[widget-demo] Config saved');
 };
 
 /**
@@ -186,7 +184,6 @@ const setupEvents = () => {
   const grid = document.querySelector('peek-grid.demo-grid');
   grid.addEventListener('freeform-layout-change', (e) => {
     const { layout } = e.detail;
-    debug && console.log('[widget-demo] Layout changed:', layout);
 
     // Update config items with new positions
     for (const item of sheetConfig.items) {

@@ -12,7 +12,6 @@
  */
 
 const api = window.app;
-const debug = api.debug;
 
 /**
  * Execute the tag swap.
@@ -29,13 +28,11 @@ const debug = api.debug;
 const runTagSwap = async (context) => {
   const { event, config } = context || {};
   if (!event || !config) {
-    debug && console.warn('[tag-actions] tag-swap: missing event or config', context);
     return;
   }
   const { itemId, checked } = event;
   const { activeTag, completedTag } = config;
   if (!itemId || !activeTag || !completedTag) {
-    debug && console.warn('[tag-actions] tag-swap: missing itemId/activeTag/completedTag', { itemId, activeTag, completedTag });
     return;
   }
 
@@ -55,15 +52,12 @@ const runTagSwap = async (context) => {
     }
     await api.datastore.untagItem(itemId, removeTagRes.data.tag.id);
     await api.datastore.tagItem(itemId, addTagRes.data.tag.id);
-    debug && console.log('[tag-actions] tag-swap done', { itemId, removed: removeName, added: addName });
   } catch (err) {
     console.error('[tag-actions] tag-swap threw:', err);
   }
 };
 
 const init = async () => {
-  debug && console.log('[tag-actions] background init (tag-swap handler)');
-
   api.pubsub.subscribe('scripts:execute:tag-swap', async (msg) => {
     await runTagSwap(msg && msg.context);
   });

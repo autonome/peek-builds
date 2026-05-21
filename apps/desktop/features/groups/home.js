@@ -23,7 +23,6 @@ import { labels, defaults } from './config.js';
 import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
-const debug = api.debug;
 
 // Tag action rules cache for rendering affordances on address cards
 let actionRulesCache = null;
@@ -130,7 +129,6 @@ const promoteTagToGroup = async (tag) => {
     };
     await api.datastore.setRow('tags', tag.id, tagRow);
     tag.metadata = metadataStr;
-    debug && console.log('[groups] Promoted tag to group:', tag.name);
     return true;
   } catch (err) {
     console.error('[groups] Failed to promote tag to group:', err);
@@ -311,7 +309,6 @@ const setupCreateGroup = () => {
     try {
       const result = await api.datastore.getOrCreateTag(name);
       if (result.success) {
-        debug && console.log('[groups] Created new group (tag):', name, result.data);
         // Mark the tag as a group
         const tag = result.data.tag;
         await promoteTagToGroup(tag);
@@ -400,7 +397,6 @@ const openGroupsWindow = async () => {
       trackingSourceId: 'groups'
     };
     const window = await api.window.open(bgAddress, params);
-    debug && console.log('[ext:groups] Groups window opened:', window);
     groupsWindowId = window?.id || null;
   } catch (error) {
     console.error('[ext:groups] Failed to open groups window:', error);
@@ -417,7 +413,6 @@ const setGroupMode = async (windowId, groupId, groupName, color = null) => {
       windowId,
       metadata: { groupId, groupName, color }
     });
-    debug && console.log(`[ext:groups] Set group mode for window ${windowId}: ${groupName}`);
   } catch (err) {
     console.error('[ext:groups] Failed to set group mode:', err);
   }
@@ -430,7 +425,6 @@ const exitGroupMode = async (groupId) => {
     const result = await api.context.getWindowsInSpace(groupId);
     if (!result.success || !result.data) return;
     const windowIds = result.data;
-    debug && console.log(`[ext:groups] Exiting group mode for ${windowIds.length} windows`);
     for (const windowId of windowIds) {
       await api.context.setMode('page', { windowId });
     }
@@ -455,8 +449,7 @@ const resolveCurrentGroup = async () => {
         };
       }
     }
-  } catch (err) {
-    debug && console.log('[ext:groups] Failed to resolve current group:', err);
+  } catch {
   }
   return null;
 };
@@ -471,8 +464,7 @@ const closeGroup = async (groupId = null, groupName = null) => {
 
   try {
     if (api.session?.saveSpaceWorkspaces) await api.session.saveSpaceWorkspaces();
-  } catch (err) {
-    debug && console.log('[ext:groups] Failed to save workspace before close:', err);
+  } catch {
   }
 
   const result = await api.context.getWindowsInSpace(groupId);
@@ -486,8 +478,7 @@ const closeGroup = async (groupId = null, groupName = null) => {
     try {
       await api.window.hide(windowId);
       hiddenIds.push(windowId);
-    } catch (err) {
-      debug && console.log(`[ext:groups] Failed to hide window ${windowId}:`, err);
+    } catch {
     }
   }
   suspendedGroups.set(groupId, hiddenIds);
@@ -520,8 +511,7 @@ const restoreGroup = async (groupId, groupName = null) => {
       } else {
         failedIds.push(windowId);
       }
-    } catch (err) {
-      debug && console.log(`[ext:groups] Failed to show window ${windowId}:`, err);
+    } catch {
       failedIds.push(windowId);
     }
   }
@@ -562,8 +552,7 @@ const getPinnedItems = async (groupId) => {
     if (!result.error && result.value) {
       return Array.isArray(result.value) ? result.value : [];
     }
-  } catch (err) {
-    debug && console.log('[ext:groups] Failed to load pins:', err);
+  } catch {
   }
   return [];
 };
@@ -664,7 +653,6 @@ const saveToGroup = async (groupName) => {
     if (!meta.isGroup) {
       meta.isGroup = true;
       await api.datastore.setRow('tags', tagId, { ...tag, metadata: JSON.stringify(meta) });
-      debug && console.log('[ext:groups] Auto-promoted tag to group:', groupName);
     }
   } catch (err) {
     console.error('[ext:groups] Failed to auto-promote tag:', err);
@@ -689,10 +677,8 @@ const saveToGroup = async (groupName) => {
   try {
     if (api.session?.saveSpaceWorkspaces) {
       await api.session.saveSpaceWorkspaces();
-      debug && console.log('[ext:groups] Group workspace layouts saved');
     }
-  } catch (err) {
-    debug && console.log('[ext:groups] Failed to save workspace layouts:', err);
+  } catch {
   }
 
   return { success: true, count: savedCount, total: listResult.windows.length };
@@ -771,11 +757,9 @@ const openGroup = async (groupName) => {
           const bZ = savedBoundsMap.get(normalizeUrlForCompare(b._openUrl))?.zOrder ?? 0;
           return bZ - aZ;
         });
-        debug && console.log(`[ext:groups] Loaded workspace snapshot with ${snapshot.windows.length} saved positions`);
       }
     }
-  } catch (err) {
-    debug && console.log('[ext:groups] No saved workspace layout, using defaults:', err);
+  } catch {
   }
 
   const openedWindows = [];
@@ -921,7 +905,6 @@ const initBackground = async () => {
   api.pubsub.subscribe('window:closed', async (msg) => {
     const closedWindowId = msg?.id;
     if (closedWindowId === groupsWindowId) {
-      debug && console.log('[ext:groups] Groups window closed, keeping group mode on member windows');
       groupsWindowId = null;
     }
   });
@@ -988,7 +971,6 @@ const uninitBackground = () => {
 })();
 
 const init = async () => {
-  debug && console.log('Groups init');
 
   // Validate capability token with main process — required before any
   // token-gated api.* call (window.open, etc.) can succeed.
@@ -1039,7 +1021,6 @@ const init = async () => {
     ],
     runImmediately: false,
     onUpdate: async () => {
-      debug && console.log('[groups] live-query refresh');
       await loadTags();
       if (state.view === VIEW_GROUPS) {
         renderGroups();
@@ -1077,7 +1058,6 @@ const loadTags = async () => {
   const result = await api.datastore.getTagsByFrecency();
   if (result.success) {
     state.tags = result.data;
-    debug && console.log('Loaded tags:', state.tags.length);
 
     // Fetch URL item count for each tag (only http/https URLs)
     for (const tag of state.tags) {
@@ -1109,7 +1089,6 @@ const loadTags = async () => {
       }
     }
     state.untaggedCount = untaggedItems.length;
-    debug && console.log('Untagged URL items:', state.untaggedCount);
   } else {
     state.untaggedCount = 0;
   }
@@ -1171,12 +1150,10 @@ const loadAddressesForTag = async (tagId) => {
         // Sort pinned items first
         addresses.sort((a, b) => (b._pinned ? 1 : 0) - (a._pinned ? 1 : 0));
       }
-    } catch (err) {
-      debug && console.log('[groups] Failed to load pins for tag:', err);
+    } catch {
     }
 
     state.addresses = addresses;
-    debug && console.log('Loaded URL items for tag:', state.addresses.length);
   } else {
     console.error('Failed to load addresses:', result.error);
     state.addresses = [];
@@ -1290,7 +1267,6 @@ const showGroups = async () => {
   if (api.context) {
     try {
       await api.context.setMode('default', {});
-      debug && console.log('[groups] Reset to default mode');
     } catch (err) {
       console.error('[groups] Failed to reset mode:', err);
     }
@@ -1414,7 +1390,6 @@ const showAddresses = async (tag) => {
           color: tag.color
         }
       });
-      debug && console.log('[groups] Set group mode for:', tag.name);
     } catch (err) {
       console.error('[groups] Failed to set group mode:', err);
     }
@@ -1616,7 +1591,6 @@ const startRenameGroup = (headerEl, tag) => {
           const searchInput = document.querySelector('peek-input.search-input');
           searchInput.placeholder = `Search in ${newName}...`;
           // NOTE: groups should NOT set mode context (spaces migration).
-          debug && console.log('[groups] Renamed group to:', newName);
         } else {
           console.error('[groups] Failed to rename group:', result.error);
         }
@@ -1791,7 +1765,6 @@ const createAddressCard = (address) => {
       }
     },
     onClick: async () => {
-      debug && console.log('Opening address:', addressUrl);
       const openOptions = {
         role: 'content',
         key: addressUrl,
@@ -1805,8 +1778,7 @@ const createAddressCard = (address) => {
           color: state.currentTag.color
         };
       }
-      const result = await api.window.open(addressUrl, openOptions);
-      debug && console.log('Window opened:', result);
+      await api.window.open(addressUrl, openOptions);
     }
   });
 
@@ -1844,9 +1816,7 @@ const createAddressCard = (address) => {
           color: state.currentTag.color
         };
       }
-      api.window.open(url, openOptions).then(result => {
-        debug && console.log('[groups] Window opened via action-open-inline:', result);
-      });
+      api.window.open(url, openOptions);
     });
 
     actions.addEventListener('action-delete', async (e) => {

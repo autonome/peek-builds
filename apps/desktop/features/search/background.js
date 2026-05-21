@@ -8,7 +8,6 @@
 
 const id = 'search';
 const api = window.app;
-const debug = api.debug;
 
 const baseAddress = 'peek://search/home.html';
 

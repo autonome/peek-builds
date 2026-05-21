@@ -3,7 +3,6 @@
  */
 
 const api = window.app;
-const debug = api.debug;
 
 const izuiValue = document.getElementById('izui-value');
 
@@ -18,7 +17,6 @@ const updateDisplay = () => {
   izuiValue.textContent = currentIzuiState;
   izuiValue.classList.add(`izui-${currentIzuiState}`);
 
-  debug && console.log('[hud:izui] Updated:', currentIzuiState);
 };
 
 const refreshIzuiState = async () => {

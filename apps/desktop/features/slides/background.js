@@ -10,7 +10,6 @@
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 
 const api = window.app;
-const debug = api.debug;
 
 console.log('[ext:slides] background', labels.name);
 

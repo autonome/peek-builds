@@ -11,7 +11,6 @@ import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
-const debug = api.debug;
 
 // Extension content is served from peek://pagestream/
 const address = 'peek://pagestream/home.html';
@@ -57,7 +56,6 @@ const openPagestreamWindow = async () => {
       const exists = await api.window.exists(pagestreamWindowId);
       if (exists.success && exists.data) {
         await api.window.show(pagestreamWindowId);
-        debug && console.log('[ext:pagestream] Pagestream window shown (reused):', pagestreamWindowId);
         return;
       }
       pagestreamWindowId = null;
@@ -84,7 +82,6 @@ const openPagestreamWindow = async () => {
     };
 
     const win = await api.window.open(address, params);
-    debug && console.log('[ext:pagestream] Pagestream window opened:', win);
     pagestreamWindowId = win?.id || null;
   } catch (error) {
     console.error('[ext:pagestream] Failed to open pagestream window:', error);
@@ -139,14 +136,12 @@ const init = async () => {
   api.pubsub.subscribe('window:closed', async (msg) => {
     const closedWindowId = msg?.id;
     if (closedWindowId === pagestreamWindowId) {
-      debug && console.log('[ext:pagestream] Pagestream window closed');
       pagestreamWindowId = null;
     }
   });
 
   // Listen for settings changes to hot-reload
   api.pubsub.subscribe('pagestream:settings-changed', async () => {
-    debug && console.log('[ext:pagestream] settings changed, reinitializing');
     uninit();
     currentSettings = await loadSettings();
     initShortcut(currentSettings.prefs.shortcutKey);
@@ -155,7 +150,6 @@ const init = async () => {
 
   // Listen for settings updates from Settings UI
   api.pubsub.subscribe('pagestream:settings-update', async (msg) => {
-    debug && console.log('[ext:pagestream] settings-update received');
 
     try {
       if (msg.data) {

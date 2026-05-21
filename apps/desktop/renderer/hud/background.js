@@ -20,7 +20,6 @@
  */
 
 const api = window.app;
-const debug = api.debug;
 
 const HUD_ADDRESS = 'peek://hud/hud.html';
 const STORAGE_KEY = 'hud_enabled';

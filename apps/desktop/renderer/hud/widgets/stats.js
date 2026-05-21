@@ -3,7 +3,6 @@
  */
 
 const api = window.app;
-const debug = api.debug;
 
 const statsContent = document.getElementById('stats-content');
 
@@ -33,7 +32,6 @@ const updateDisplay = () => {
     row('Delivered', formatNum(pubsubDelivered)),
   ].join('');
 
-  debug && console.log('[hud:stats] Updated');
 };
 
 const row = (label, value) =>

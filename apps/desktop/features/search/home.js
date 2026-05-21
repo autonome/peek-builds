@@ -20,7 +20,6 @@ import { createActionRulesCache } from 'peek://app/lib/tag-action-affordances.js
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 
 const api = window.app;
-const debug = api.debug;
 
 // Tag action rules cache for rendering affordances on result cards
 let actionRulesCache = null;
@@ -188,7 +187,6 @@ const runSearch = async () => {
 
     if (resolvedTags.length < tagNames.length) {
       // Some tags not found — show empty results
-      debug && console.log('[search] Some tags not found, showing empty results');
       state.results = [];
       return;
     }
@@ -227,7 +225,6 @@ const runSearch = async () => {
     }
   }
 
-  debug && console.log('[search] Results:', items.length);
 };
 
 // ── Sorting ────────────────────────────────────────────────────────────
@@ -415,7 +412,6 @@ const setupToolbar = () => {
 // ── Init ───────────────────────────────────────────────────────────────
 
 const init = async () => {
-  debug && console.log('[search] init');
 
   // Initialize tag action rules cache for card affordances
   actionRulesCache = createActionRulesCache(api);
@@ -469,28 +465,23 @@ const debouncedRefresh = debounce(async () => {
   render();
 }, 150);
 
-api.pubsub.subscribe('sync:pull-completed', (msg) => {
-  debug && console.log('[search] sync:pull-completed event received:', msg);
+api.pubsub.subscribe('sync:pull-completed', () => {
   debouncedRefresh();
 });
 
-api.pubsub.subscribe('item:created', (msg) => {
-  debug && console.log('[search] item:created event received:', msg);
+api.pubsub.subscribe('item:created', () => {
   debouncedRefresh();
 });
 
-api.pubsub.subscribe('item:deleted', (msg) => {
-  debug && console.log('[search] item:deleted event received:', msg);
+api.pubsub.subscribe('item:deleted', () => {
   debouncedRefresh();
 });
 
-api.pubsub.subscribe('tag:item-added', (msg) => {
-  debug && console.log('[search] tag:item-added event received:', msg);
+api.pubsub.subscribe('tag:item-added', () => {
   debouncedRefresh();
 });
 
-api.pubsub.subscribe('tag:item-removed', (msg) => {
-  debug && console.log('[search] tag:item-removed event received:', msg);
+api.pubsub.subscribe('tag:item-removed', () => {
   debouncedRefresh();
 });
 

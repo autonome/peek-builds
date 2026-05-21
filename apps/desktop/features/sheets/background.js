@@ -9,7 +9,6 @@
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 
 const api = window.app;
-const debug = api.debug;
 
 // Extension content is served from peek://sheets/ (hybrid mode)
 const sheetPageUrl = 'peek://sheets/sheet.html';
@@ -61,9 +60,6 @@ const openSheet = (sheetId, name) => {
   };
 
   api.window.open(url, params)
-    .then(win => {
-      debug && console.log('[ext:sheets] Sheet opened:', sheetId, name);
-    })
     .catch(error => {
       console.error('[ext:sheets] Failed to open sheet:', error);
     });

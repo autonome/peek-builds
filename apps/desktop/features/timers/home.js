@@ -7,7 +7,6 @@
  */
 
 const api = window.app;
-const debug = api.debug;
 
 // Timer type icons (text-based, no emoji)
 const TIMER_ICONS = {
@@ -312,7 +311,6 @@ const handleTick = (msg) => {
 // ===== Initialization =====
 
 const init = async () => {
-  debug && console.log('[timers:home] init');
 
   // Register escape handler
   api.escape.onEscape(() => {

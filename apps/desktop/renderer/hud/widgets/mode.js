@@ -3,7 +3,6 @@
  */
 
 const api = window.app;
-const debug = api.debug;
 
 const modeValue = document.getElementById('mode-value');
 const groupAccent = document.getElementById('group-accent');
@@ -54,7 +53,6 @@ const updateDisplay = () => {
     if (widget) widget.style.removeProperty('--group-color');
   }
 
-  debug && console.log('[hud:mode] Updated:', displayText);
 };
 
 const refreshMode = async () => {

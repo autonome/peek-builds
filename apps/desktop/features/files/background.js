@@ -7,7 +7,6 @@
  */
 
 const api = window.app;
-const debug = api.debug;
 
 const id = 'files';
 const labels = { name: 'Files' };

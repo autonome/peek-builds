@@ -11,7 +11,6 @@
  */
 
 const api = window.app;
-const debug = api.debug;
 
 const EXTENSION_ID = 'pagewidgets-sample';
 const WIDGET_ID = 'page-meta';
@@ -173,8 +172,6 @@ function escapeHtml(str) {
 async function onPageLoaded(msg) {
   if (!msg || !msg.url) return;
 
-  debug && console.log('[ext:pagewidgets-sample] Page loaded:', msg.url);
-
   try {
     const meta = await executeContentScript(METADATA_EXTRACTION_SCRIPT);
     const html = buildWidgetHtml(meta);
@@ -185,8 +182,6 @@ async function onPageLoaded(msg) {
       title: 'Page Summary',
       html,
     });
-
-    debug && console.log('[ext:pagewidgets-sample] Widget rendered for:', msg.url);
   } catch (err) {
     console.warn('[ext:pagewidgets-sample] Failed to extract metadata:', err.message);
 
@@ -204,7 +199,6 @@ async function onPageLoaded(msg) {
  */
 function onPageNavigated(msg) {
   if (!msg || !msg.url) return;
-  debug && console.log('[ext:pagewidgets-sample] Page navigated:', msg.url);
   // Re-extract after a brief delay for the new page to settle
   setTimeout(() => onPageLoaded(msg), 500);
 }

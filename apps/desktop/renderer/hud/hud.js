@@ -9,7 +9,6 @@
  */
 
 const api = window.app;
-const debug = api.debug;
 
 const HUD_SHEET_KEY = 'hud_sheet';
 const CURRENT_CONFIG_VERSION = 3;
@@ -152,7 +151,6 @@ const autoResizeWindow = () => {
     const height = maxBottom + 20;
 
     api.window.resize(width, height);
-    debug && console.log('[hud] Auto-resized window to:', width, height);
   }, 50);
 };
 

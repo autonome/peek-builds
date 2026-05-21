@@ -6,7 +6,6 @@
  */
 
 const api = window.app;
-const debug = api.debug;
 
 // View preferences (persisted). 'fit' is the new default — Exposé-style
 // no-overlap layout that resizes cards to fit the visible viewport
@@ -80,8 +79,6 @@ const activateSelected = async () => {
   const selectedWindow = filteredWindows[state.selectedIndex];
 
   if (selectedWindow) {
-    debug && console.log('[windows] Focusing window:', selectedWindow.id, selectedWindow.title);
-
     // Tell the overlay which window to focus after it closes and restores hidden windows
     // (calling focus() directly doesn't work because the target window is hidden by the overlay)
     await api.window.setOverlayFocusTarget(selectedWindow.id);
@@ -196,7 +193,6 @@ const loadWindows = async () => {
       // Include everything else (content windows and peek:// UI pages)
       return true;
     });
-    debug && console.log('[windows] Loaded windows:', state.windows.length);
   } else {
     console.error('[windows] Failed to load windows:', result.error);
     state.windows = [];
@@ -351,7 +347,6 @@ const createWindowCard = (win) => {
 
   // Click to focus window and close windows view; un-hide first if hidden
   card.addEventListener('card-click', async () => {
-    debug && console.log('[windows] Clicking window:', win.id, win.title, 'visible:', win.visible);
     if (win.visible === false && api?.window?.show) {
       await api.window.show(win.id);
     }
@@ -370,10 +365,8 @@ const loadViewPrefs = async () => {
     const stored = localStorage.getItem('viewPrefs');
     if (stored) {
       viewPrefs = { ...viewPrefs, ...JSON.parse(stored) };
-      debug && console.log('[windows] Loaded viewPrefs:', viewPrefs);
     }
-  } catch (err) {
-    debug && console.log('[windows] Failed to load viewPrefs:', err);
+  } catch {
   }
 };
 
@@ -383,8 +376,7 @@ const loadViewPrefs = async () => {
 const saveViewPrefs = async () => {
   try {
     localStorage.setItem('viewPrefs', JSON.stringify(viewPrefs));
-  } catch (err) {
-    debug && console.log('[windows] Failed to save viewPrefs:', err);
+  } catch {
   }
 };
 
@@ -441,7 +433,6 @@ const setupToolbar = () => {
 };
 
 const init = async () => {
-  debug && console.log('[windows] init');
 
   // Load view preferences and set up toolbar
   await loadViewPrefs();
@@ -459,7 +450,6 @@ const init = async () => {
     const targetIndex = sortedWindows.findIndex(w => w.id === preOverlayFocusTarget);
     if (targetIndex !== -1) {
       state.selectedIndex = targetIndex;
-      debug && console.log('[windows] Pre-overlay focus target:', preOverlayFocusTarget, 'index:', targetIndex);
     }
   }
 
@@ -492,7 +482,6 @@ const init = async () => {
   api.pubsub.subscribe('window:opened', (msg) => {
     if (!msg || typeof msg.id !== 'number') return;
     if (msg.id === ownWindowId) return;
-    debug && console.log('[windows] dismissing — new window opened:', msg.id);
     closeWindowsView();
   });
 };

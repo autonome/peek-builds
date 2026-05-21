@@ -14,7 +14,6 @@ import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 import { id, defaults } from './config.js';
 
 const api = window.app;
-const debug = api.debug;
 
 // ===== Feature state (engine portion — runs before DOM) =====
 
@@ -410,7 +409,6 @@ const createResultElement = (item, query, index) => {
  * Activate (open) a result
  */
 const activateResult = async (item) => {
-  debug && console.log('[lists] Activating result:', item.type, item.id);
 
   if (item.type === 'url') {
     // Open URL in content window
@@ -526,7 +524,6 @@ const handleKeydown = (e) => {
 // ===== Initialization =====
 
 const init = async () => {
-  debug && console.log('[lists] init');
 
   // Register escape handler (guarded — api.escape is v1-preload-only)
   if (api.escape) {
@@ -576,28 +573,23 @@ const debouncedRefresh = debounce(async () => {
   renderResults(results, state.query);
 }, 150);
 
-api.pubsub.subscribe('sync:pull-completed', (msg) => {
-  debug && console.log('[lists] sync:pull-completed event received:', msg);
+api.pubsub.subscribe('sync:pull-completed', () => {
   debouncedRefresh();
 });
 
-api.pubsub.subscribe('item:created', (msg) => {
-  debug && console.log('[lists] item:created event received:', msg);
+api.pubsub.subscribe('item:created', () => {
   debouncedRefresh();
 });
 
-api.pubsub.subscribe('item:deleted', (msg) => {
-  debug && console.log('[lists] item:deleted event received:', msg);
+api.pubsub.subscribe('item:deleted', () => {
   debouncedRefresh();
 });
 
-api.pubsub.subscribe('tag:item-added', (msg) => {
-  debug && console.log('[lists] tag:item-added event received:', msg);
+api.pubsub.subscribe('tag:item-added', () => {
   debouncedRefresh();
 });
 
-api.pubsub.subscribe('tag:item-removed', (msg) => {
-  debug && console.log('[lists] tag:item-removed event received:', msg);
+api.pubsub.subscribe('tag:item-removed', () => {
   debouncedRefresh();
 });
 
@@ -614,14 +606,12 @@ api.pubsub.subscribe('tag:item-removed', (msg) => {
   // Settings hot-reload (cross-process scope kept for compatibility with
   // settings UI publishing to global pubsub).
   api.pubsub.subscribe('lists:settings-changed', async () => {
-    debug && console.log('[ext:lists] settings changed, reinitializing');
     uninitShortcut();
     currentSettings = await loadSettings();
     initShortcut(currentSettings.prefs.shortcutKey);
   });
 
   api.pubsub.subscribe('lists:settings-update', async (msg) => {
-    debug && console.log('[ext:lists] settings-update received:', msg);
     try {
       if (msg.data) {
         currentSettings = { prefs: msg.data.prefs || currentSettings.prefs };

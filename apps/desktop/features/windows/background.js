@@ -9,7 +9,6 @@
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 
 const api = window.app;
-const debug = api.debug;
 
 console.log('[ext:windows] background', labels.name);
 
@@ -75,8 +74,7 @@ const openWindowsView = async () => {
   };
 
   try {
-    const result = await api.window.open(address, params);
-    debug && console.log('[ext:windows] Windows view opened:', result);
+    await api.window.open(address, params);
   } catch (error) {
     console.error('[ext:windows] Failed to open windows view:', error);
   }

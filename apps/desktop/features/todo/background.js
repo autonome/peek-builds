@@ -16,7 +16,6 @@
 import { id, labels, schemas, storageKeys, defaults } from './config.js';
 
 const api = window.app;
-const debug = api.debug;
 
 const TODO_TAG = 'todo';
 const DONE_TAG = 'done';
@@ -164,8 +163,6 @@ const handleDone = async (rawArgs) => {
 // ===== Registration =====
 
 const init = async () => {
-  debug && console.log('[ext:todo] init');
-
   api.pubsub.subscribe('cmd:execute:todo', async (msg) => {
     const result = await handleTodo(msg.search?.trim() || msg.data?.text || '');
     if (msg.expectResult && msg.resultTopic) {
@@ -181,11 +178,9 @@ const init = async () => {
   });
 
   // Manifest declares both commands; no need to publish cmd:register here.
-  debug && console.log('[ext:todo] cmd:execute handlers wired (todo, done)');
 };
 
 const uninit = () => {
-  debug && console.log('[ext:todo] uninit');
 };
 
 export default {
