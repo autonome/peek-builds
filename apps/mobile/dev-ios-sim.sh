@@ -65,8 +65,11 @@ with open('$CONF', 'w') as f:
 "
 echo "[dev] Patched tauri.conf.json: frontendDist=../dev-shim, devUrl=http://$HOST_IP:$PORT"
 
-# Bump build number
+# Bump build number (auto-create if missing — fresh clones don't have this file)
 BUILD_FILE="$SCRIPT_DIR/BUILD_NUMBER"
+if [ ! -f "$BUILD_FILE" ]; then
+  echo "0" > "$BUILD_FILE"
+fi
 BUILD_NUM=$(($(cat "$BUILD_FILE") + 1))
 echo "$BUILD_NUM" > "$BUILD_FILE"
 echo "[dev] Build number: v$BUILD_NUM"
