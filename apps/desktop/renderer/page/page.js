@@ -2839,7 +2839,20 @@ function renderActivePermissionPrompt() {
   wrap.appendChild(rememberLabel);
   wrap.appendChild(actions);
 
-  document.body.appendChild(wrap);
+  // Defer the DOM append to the next paint frame. Without this, the synchronous
+  // appendChild during the renderer's event tick can briefly leak the prompt's
+  // pixels onto the user's display via the macOS compositor — even though the
+  // BrowserWindow has opacity:0 (set at ctor in ipc.ts), the initial paint cycle
+  // of a transparent+show:false window doesn't fully respect alpha. By the next
+  // rAF tick, the window's alpha-0 state has settled in NSWindow and the
+  // appendChild's paint can no longer escape.
+  //
+  // Diagnostic origin: a 2-second setTimeout reproducibly suppressed the
+  // visible "permission prompts flashing center of screen" symptom. rAF is the
+  // same fix at minimum delay — production gets ~16ms, imperceptible.
+  requestAnimationFrame(() => {
+    document.body.appendChild(wrap);
+  });
   activePermissionPrompt = { req, wrap, badgeEl: badge, resolved: false };
 }
 
