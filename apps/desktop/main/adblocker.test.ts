@@ -23,9 +23,9 @@
  * we exercise the same guarantee through the exported pure helpers.
  */
 
-import { describe, it, before, after } from 'node:test';
+import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
-import { ElectronBlocker } from '@ghostery/adblocker-electron';
+import { ElectronBlocker, Request } from '@ghostery/adblocker-electron';
 
 // ─── Helpers re-exported for testability ─────────────────────────────────────
 // The module keeps buildFallbackEngine internal.  We re-create its logic here
@@ -56,7 +56,6 @@ describe('adblocker bundled fallback', () => {
 
     // Build a synthetic request for a well-known ad domain included in the
     // bundled list and assert that the engine matches it.
-    const { Request } = require('@ghostery/adblocker');
     const req = Request.fromRawDetails({
       url: 'https://doubleclick.net/ads/pixel.gif',
       type: 'image',
@@ -69,7 +68,6 @@ describe('adblocker bundled fallback', () => {
 
   it('fallback engine does NOT block a legitimate URL', () => {
     const engine = ElectronBlocker.parse(BUNDLED_FALLBACK_FILTERS);
-    const { Request } = require('@ghostery/adblocker');
     const req = Request.fromRawDetails({
       url: 'https://example.com/page.html',
       type: 'main_frame',
