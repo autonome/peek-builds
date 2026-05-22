@@ -1414,6 +1414,68 @@ if (isHeadless() && isTestProfile()) {
   };
 
   console.log('[headless-guard] BrowserWindow show/showInactive prototype guard active (opacity must be 0)');
+
+  // ── focus / moveTop / restore / center / setVisibleOnAllWorkspaces no-op guard ──
+  // These methods can steal OS-level focus from the user's foreground app or
+  // trigger a visible flash on macOS, but ONLY when called on a hidden window.
+  // Visible windows (cmd panel, modals being interacted with by Playwright)
+  // legitimately need real focus behavior — cmd-hashtag-search, cmdl-on-error-page,
+  // and transient-on-blur tests all depend on this.
+  //
+  // Gate: identical to the show/showInactive guard above — use opacity===0 as
+  // the "hidden" signal. showWindowHeadlessSafe sets opacity=0 first, so a
+  // window in mid-show transition is correctly considered hidden until opacity
+  // is restored to 1. Visible windows pass through to the original method.
+  //
+  // Strategy: count + warn (first 3 per method) when no-op fires, with stack,
+  // so the worst call sites can be hardened individually later.
+  const _headlessNoOpCounts = {
+    focus: 0,
+    moveTop: 0,
+    restore: 0,
+    center: 0,
+    setVisibleOnAllWorkspaces: 0,
+  };
+
+  type NoOpMethodName = keyof typeof _headlessNoOpCounts;
+
+  function makeHeadlessNoOp<K extends NoOpMethodName>(
+    name: K,
+    orig: (...args: unknown[]) => unknown,
+  ): (...args: unknown[]) => unknown {
+    return function(this: BrowserWindow, ...args: unknown[]) {
+      // Gate on opacity (same signal as the show/showInactive guard).
+      // Hidden window → no-op + warn; visible window → real behavior.
+      if (!this.isDestroyed() && this.getOpacity() === 0) {
+        _headlessNoOpCounts[name]++;
+        if (_headlessNoOpCounts[name] <= 3) {
+          let url = '(no-url)';
+          try { url = this.webContents?.getURL?.() ?? '(no-url)'; } catch { /* destroyed */ }
+          console.warn(`[headless-noop] ${name}() called on id=${this.id} url=${url} opacity=0 — no-op in headless`);
+          console.warn(new Error('[headless-noop] stack').stack);
+        }
+        return;
+      }
+      return orig.apply(this, args);
+    };
+  }
+
+  const _origFocus = BrowserWindow.prototype.focus;
+  const _origMoveTop = BrowserWindow.prototype.moveTop;
+  const _origRestore = BrowserWindow.prototype.restore;
+  const _origCenter = BrowserWindow.prototype.center;
+  const _origSetVisibleOnAllWorkspaces = BrowserWindow.prototype.setVisibleOnAllWorkspaces;
+  BrowserWindow.prototype.focus = makeHeadlessNoOp('focus', _origFocus as never) as typeof BrowserWindow.prototype.focus;
+  BrowserWindow.prototype.moveTop = makeHeadlessNoOp('moveTop', _origMoveTop as never) as typeof BrowserWindow.prototype.moveTop;
+  BrowserWindow.prototype.restore = makeHeadlessNoOp('restore', _origRestore as never) as typeof BrowserWindow.prototype.restore;
+  BrowserWindow.prototype.center = makeHeadlessNoOp('center', _origCenter as never) as typeof BrowserWindow.prototype.center;
+  BrowserWindow.prototype.setVisibleOnAllWorkspaces = makeHeadlessNoOp('setVisibleOnAllWorkspaces', _origSetVisibleOnAllWorkspaces as never) as typeof BrowserWindow.prototype.setVisibleOnAllWorkspaces;
+
+  app.on('before-quit', () => {
+    console.log('[headless-noop] final counts:', JSON.stringify(_headlessNoOpCounts));
+  });
+
+  console.log('[headless-guard] BrowserWindow focus/moveTop/restore/center/setVisibleOnAllWorkspaces no-op guard active');
 }
 
 // Start the app
