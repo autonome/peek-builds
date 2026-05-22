@@ -154,10 +154,12 @@ test.describe('slide peek addressbar @desktop', () => {
     );
     expect(isVisible).toBe(false);
 
-    // Also verify opacity: for transparent canvas windows, setOpacity(0) is
-    // called before any show() in headless. Until showWindowHeadlessSafe is
-    // explicitly called, opacity should remain at its default (1.0) because
-    // the window has never been shown.
+    // Verify opacity: canvas windows in headless are born at opacity 0
+    // via the ipc.ts ctor opacity option (closes the brief paint window
+    // between BrowserWindow construction and any explicit setOpacity call).
+    // Combined with show:false, the window is doubly hidden. If opacity
+    // were 1.0 here, the ctor opacity:0 gate has regressed and visible
+    // flashes can occur during macOS compositor events.
     const opacity = await app.evaluateMain<number, number>(
       ({ BrowserWindow }, wid) => {
         const w = BrowserWindow.fromId(wid);
@@ -166,11 +168,7 @@ test.describe('slide peek addressbar @desktop', () => {
       },
       result.id,
     );
-    // Opacity 1.0 (not shown yet) is correct: the window is hidden at ctor
-    // time (show: false). If opacity were 0 here, it would mean showWindowHeadlessSafe
-    // already fired and partially showed the window — that is NOT expected
-    // immediately after window-open.
-    expect(opacity).toBe(1.0);
+    expect(opacity).toBe(0);
 
     // Clean up
     await bgWindow.evaluate(async (id: number) => {
