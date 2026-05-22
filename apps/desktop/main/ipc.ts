@@ -829,16 +829,22 @@ export function registerWindowHandlers(): void {
       width: parseInt(options.width) || APP_DEF_WIDTH,
       height: parseInt(options.height) || APP_DEF_HEIGHT,
       show: isHeadless() ? false : options.show !== false,
-      // In headless: prevent webContents from painting until the window is
-      // actually shown. Electron's default is paintWhenInitiallyHidden: true,
-      // which means the offscreen surface renders immediately even with
-      // show: false. On macOS with transparent: true (canvas windows), that
-      // offscreen surface can briefly leak onto the user's display during
-      // compositor events. The user-visible "permission flash" symptom from
-      // the permission-prompt spec traces to this gap.
-      // Tradeoff: ready-to-show event won't fire when this is false, but
-      // headless tests don't depend on it.
-      paintWhenInitiallyHidden: !isHeadless(),
+      // In headless: create the window already at opacity 0 so its compositor
+      // surface, even if it leaks during macOS window-management or dock
+      // animation events, cannot paint anything visible to the user.
+      //
+      // We previously tried paintWhenInitiallyHidden: false here, but that
+      // also deactivates the renderer's JS event loop (per Electron docs),
+      // breaking the page-host's stored-permission-decision listener.
+      // opacity: 0 keeps the renderer fully active while making the surface
+      // visually empty regardless of compositor behavior.
+      //
+      // The existing show/showInactive guard in entry.ts blocks .show() unless
+      // opacity is already 0, so showWindowHeadlessSafe's setOpacity(0) is
+      // still the runtime path. This ctor-level opacity:0 closes the brief
+      // window between BrowserWindow construction and the first explicit
+      // setOpacity call.
+      opacity: isHeadless() ? 0 : undefined,
       // Canvas pages: transparent minimal window, no shadow, no OS resize (we handle it via setBounds)
       transparent: useCanvas ? true : (options.transparent || false),
       backgroundColor: (useCanvas || options.transparent) ? undefined : getSystemThemeBackgroundColor(),
