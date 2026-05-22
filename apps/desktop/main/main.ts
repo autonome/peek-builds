@@ -395,6 +395,10 @@ export async function initialize(): Promise<void> {
   // Same pattern Spotlight / Alfred / Raycast use for their hotkeys.
   let _escGlobalRegistered = false;
   const escGlobalHandler = (): void => {
+    if (getIzuiCoordinator().isWithinOverlayExitCooldown()) {
+      DEBUG && console.log('[esc-fallback] Skipping escGlobalHandler — within overlay exit cooldown');
+      return;
+    }
     DEBUG && console.log('[esc-fallback] global ESC fired — publishing cmd:execute:windows');
     publish(getSystemAddress(), 'cmd:execute:windows', {});
   };

@@ -1267,6 +1267,47 @@ describe('IZUI State Coordinator Tests', () => {
       assert.ok(coordinator.getSession());
       assert.deepStrictEqual(coordinator.getSession()!.windowStack, [5, 6, 100]);
     });
+
+    it('11. Overlay exit cooldown blocks immediate re-open: isWithinOverlayExitCooldown is true right after exitOverlay', () => {
+      // Regression: after dismissing the windows-switcher overlay with ESC,
+      // the ESC key lands on the workspace window. escUnhandledPolicy returns
+      // open-switcher for workspace in an active session. Without the cooldown
+      // check in handleEscapeForWindow the switcher re-opens immediately.
+      // This test verifies the coordinator signals the cooldown correctly so
+      // the caller can gate the switcher open.
+      const winA = createMockWindow(5);
+      mockWindows.push(winA);
+
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(5);
+      coordinator.pushWindow(100);
+      coordinator.setFocusedWindow(5);
+
+      // Before overlay: no cooldown
+      assert.strictEqual(coordinator.isWithinOverlayExitCooldown(), false,
+        'No cooldown before overlay opens');
+
+      coordinator.enterOverlay(100, [5]);
+
+      // Overlay open: still no exit cooldown (entry cooldown, not exit)
+      assert.strictEqual(coordinator.isWithinOverlayExitCooldown(), false,
+        'No exit cooldown while overlay is open');
+
+      // Overlay closes via ESC (exitOverlay called by closed-event handler)
+      coordinator.exitOverlay();
+
+      // Immediately after: exit cooldown active — workspace ESC must NOT open switcher
+      assert.strictEqual(coordinator.isWithinOverlayExitCooldown(), true,
+        'Exit cooldown must be active right after exitOverlay to block re-open');
+
+      // With a 0ms custom cooldown the check confirms we are past a zero-width window
+      assert.strictEqual(coordinator.isWithinOverlayExitCooldown(0), false,
+        'isWithinOverlayExitCooldown(0) false — confirms cooldown is time-based');
+
+      // State is back to active (the switcher should stay closed, not reopen)
+      assert.strictEqual(coordinator.getState(), 'active');
+    });
   });
 
   describe('exitOverlayForAppBlur', () => {

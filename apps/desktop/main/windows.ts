@@ -225,6 +225,16 @@ async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webvie
   } else {
     // escPolicy returned 'nothing' — renderer is at root and window won't close.
     // Consult second-phase policy for unhandled ESC.
+    //
+    // Guard: if an overlay just closed (within 300ms), skip the switcher open.
+    // Without this guard, the ESC that dismissed the overlay lands on the
+    // workspace window immediately after exitOverlay() runs, and
+    // escUnhandledPolicy('active', 'workspace') returns 'open-switcher',
+    // causing the switcher to re-open in a tight loop.
+    if (coordinator.isWithinOverlayExitCooldown()) {
+      DEBUG && console.log(`[esc] Skipping escUnhandledPolicy — within overlay exit cooldown`);
+      return;
+    }
     const unhandledAction = escUnhandledPolicy(sessionState, role);
     DEBUG && console.log(`[esc] escUnhandledPolicy(${sessionState}, ${role}) -> ${unhandledAction}`);
     if (unhandledAction === 'open-switcher') {
