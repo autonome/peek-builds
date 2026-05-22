@@ -829,6 +829,16 @@ export function registerWindowHandlers(): void {
       width: parseInt(options.width) || APP_DEF_WIDTH,
       height: parseInt(options.height) || APP_DEF_HEIGHT,
       show: isHeadless() ? false : options.show !== false,
+      // In headless: prevent webContents from painting until the window is
+      // actually shown. Electron's default is paintWhenInitiallyHidden: true,
+      // which means the offscreen surface renders immediately even with
+      // show: false. On macOS with transparent: true (canvas windows), that
+      // offscreen surface can briefly leak onto the user's display during
+      // compositor events. The user-visible "permission flash" symptom from
+      // the permission-prompt spec traces to this gap.
+      // Tradeoff: ready-to-show event won't fire when this is false, but
+      // headless tests don't depend on it.
+      paintWhenInitiallyHidden: !isHeadless(),
       // Canvas pages: transparent minimal window, no shadow, no OS resize (we handle it via setBounds)
       transparent: useCanvas ? true : (options.transparent || false),
       backgroundColor: (useCanvas || options.transparent) ? undefined : getSystemThemeBackgroundColor(),
