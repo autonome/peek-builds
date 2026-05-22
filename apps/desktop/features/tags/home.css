@@ -438,12 +438,13 @@ peek-grid-toolbar.grid-toolbar {
 }
 
 /* Card customization - peek-card custom properties */
+/* Tags view is a scanning surface: cards are kept small for density */
 peek-card {
   --peek-card-bg: var(--base01);
   --peek-card-border: transparent;
-  --peek-card-radius: 6px;
-  --peek-card-padding: 8px;
-  --peek-card-gap: 4px;
+  --peek-card-radius: 5px;
+  --peek-card-padding: 5px;
+  --peek-card-gap: 3px;
 }
 
 peek-card[selected] {
@@ -454,13 +455,13 @@ peek-card[selected] {
 .card-header {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: 4px;
 }
 
 .card-favicon {
-  width: 16px;
-  height: 16px;
-  border-radius: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
   flex-shrink: 0;
   background: var(--base02);
   object-fit: contain;
