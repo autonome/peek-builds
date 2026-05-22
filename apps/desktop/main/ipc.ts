@@ -80,6 +80,7 @@ import {
   closeOrHideWindow,
   getSystemThemeBackgroundColor,
   getPrefs,
+  showWindowHeadlessSafe,
 } from './windows.js';
 import {
   TRANSIENT_ROLES,
@@ -691,7 +692,7 @@ export function registerWindowHandlers(): void {
               skipTransformProcessType: true,
             });
           }
-          existingWindow.window.show();
+          showWindowHeadlessSafe(existingWindow.window, { active: true });
           existingWindow.window.focus();
         }
         // Signal keepLive-reuse to the renderer BEFORE returning so the
@@ -736,7 +737,7 @@ export function registerWindowHandlers(): void {
             existingData.params.placement,
             'url-reuse',
           );
-          existingByUrl.window.show();
+          showWindowHeadlessSafe(existingByUrl.window, { active: true });
           existingByUrl.window.focus();
         }
         // Reload the page so content is fresh (the webview may have navigated
@@ -1120,8 +1121,9 @@ export function registerWindowHandlers(): void {
 
     // Reinforce alwaysOnTop after creation — on macOS the constructor flag alone
     // is unreliable; calling setAlwaysOnTop with 'floating' level ensures it stays
-    // above regular windows.
-    if (options.alwaysOnTop) {
+    // above regular windows. Skip in headless: even at opacity=0, setAlwaysOnTop
+    // triggers a macOS compositor repaint that can flash a thin window frame.
+    if (options.alwaysOnTop && !isHeadless()) {
       win.setAlwaysOnTop(true, 'floating');
       DEBUG && console.log('[window-open] Set alwaysOnTop floating for window', win.id);
     }

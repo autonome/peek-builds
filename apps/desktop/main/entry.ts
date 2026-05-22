@@ -1476,6 +1476,30 @@ if (isHeadless() && isTestProfile()) {
   });
 
   console.log('[headless-guard] BrowserWindow focus/moveTop/restore/center/setVisibleOnAllWorkspaces no-op guard active');
+
+  // ── headless opacity-restore guard ──────────────────────────────────────
+  // Catches any code path that restores opacity from 0 to a nonzero value
+  // on a hidden window during headless test runs, which would cause a visible
+  // flash. The show/showInactive guard above already blocks shows on opacity!=0
+  // windows; this guard is the complementary protection for the restore path.
+  const _origSetOpacity = BrowserWindow.prototype.setOpacity;
+  BrowserWindow.prototype.setOpacity = function(this: BrowserWindow, opacity: number) {
+    if (!this.isDestroyed()) {
+      const prev = this.getOpacity();
+      if (prev === 0 && opacity !== 0) {
+        let url = '(no-url)';
+        try { url = this.webContents?.getURL?.() ?? '(no-url)'; } catch { /* */ }
+        const msg = `[headless-violation] setOpacity id=${this.id} from=0 to=${opacity} url=${url} — restoring opacity on hidden window causes flash`;
+        console.error(msg);
+        console.error(new Error(msg).stack);
+        process.exitCode = 1;
+        throw new Error(msg);
+      }
+    }
+    return _origSetOpacity.call(this, opacity);
+  };
+
+  console.log('[headless-guard] setOpacity 0→nonzero guard active');
 }
 
 // Start the app
