@@ -31,7 +31,7 @@ That file is a one-line pointer; do not edit it.
 Every task is a Peek item with the `peek:todo` status tag plus at
 least one domain or type tag from this controlled list:
 
-- **Status**: `peek:todo`, `peek:wip`, `peek:blocked`, `peek:done`, `peek:wontfix`
+- **Status**: `peek:todo`, `peek:wip`, `peek:needs-review`, `peek:blocked`, `peek:done`, `peek:wontfix`
 - **Quality** (additive to `peek:todo`): `peek:ready`, `peek:triage`
 - **Domain**: `peek:desktop`, `peek:mobile`, `peek:tauri`, `peek:atproto`, `peek:extensions`
 - **Type**: `peek:bug`, `peek:feature`, `peek:test-coverage`, `peek:docs`, `peek:design`, `peek:security`, `peek:tile-arch`, `peek:meta`, `peek:tooling`, `peek:daily-use`
@@ -45,6 +45,15 @@ Items in the active queue (`peek:todo`) carry one of two quality markers:
 
 Use the intersection to find actionable work:
 `list_items({ tags: ['peek:todo', 'peek:ready'] })`.
+
+### `peek:needs-review` — agent done, user approval pending
+
+Agent has shipped work (commits landed on `main` via the chokepoint scripts, full
+test suite green), but the task is NOT yet `peek:done`. The user is the final
+gate: tests + LLM review are necessary, not sufficient. Move the item to
+`peek:needs-review` and surface the diff + test result; user approval flips it
+to `peek:done`. See [[feedback_user_approves_done]] and the `/agent-review`
+skill.
 
 ### `peek:wontfix` — terminal state
 

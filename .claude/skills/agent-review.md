@@ -1,0 +1,158 @@
+# /agent-review — Pass/fail an agent-produced diff in a clone
+
+Use when a pool-clone agent has finished a task and you need to decide whether
+to finalize + land its work. Codifies the decision boundary, the reviewer-agent
+brief, the land + verify loop, and the retry-in-clone path on test failure.
+
+This is **distinct from `/review`**. `/review` reviews uncommitted local diffs.
+`/agent-review` reviews a clone agent's committed work + drives it through the
+chaos-defense chokepoints (finalize → `test:electron` → mark done).
+
+---
+
+## Decision: who reviews?
+
+| Diff size                                       | Reviewer       |
+|-------------------------------------------------|----------------|
+| < ~100 lines, single area, CSS / config         | Orchestrator   |
+| ≥ ~100 lines, new module, or cross-area         | Subagent       |
+| New main-process IPC or capability surface      | Subagent       |
+| Renames / mechanical refactors                  | Orchestrator   |
+
+A reviewer subagent is overkill for tiny diffs *and* prone to the grep-shortcut
+failure mode (see [Failure modes](#failure-modes-name-them-in-the-brief)). The
+real gate is `yarn test:electron` in the main checkout — not a second LLM read.
+
+Orchestrator review:
+1. `jj -R ../mpeek-clone-<name> diff --stat -r 'main..@'` — scope check.
+2. `jj -R ../mpeek-clone-<name> diff -r 'main..@'` or `Read` each changed file.
+3. Look for: cross-app touches, missing tests, scope creep, secrets,
+   `webSecurity:false` / `sandbox:false` regressions, lazy `require('electron')`,
+   `setTimeout` in main without `isDestroyed()` guard, top-level
+   `await api.initialize()`.
+
+---
+
+## Reviewer subagent brief template
+
+```
+You are reviewing agent-produced work in clone /Users/dietrich/misc/mpeek-clone-<name>/.
+The agent claims it implemented <task>. Verify the claim — do NOT trust it.
+
+ACCEPTANCE (all runtime, all must pass — no grep shortcuts):
+1. `jj -R ../mpeek-clone-<name> diff --stat -r 'main..@'` — list files; flag any
+   touch outside the declared scope.
+2. `yarn workspace @peek/desktop test:unit` from the clone — must pass; report
+   numeric count.
+3. <task-specific runtime check — e.g. "delete the cache file, run init in a
+   smoke script, confirm it falls back without throwing">.
+4. Read the actual implementation file end-to-end. Cite line numbers for any
+   concern.
+
+REPORT FORMAT:
+- VERDICT: PASS or FAIL (one word).
+- Diff scope: <ok | violates>.
+- Runtime checks: <each acceptance item with observed result>.
+- Concerns (with line numbers): <bullets>.
+- Recommended action: land / land with follow-up task / send back to agent.
+
+Under 300 words. Do NOT propose edits — that's the orchestrator's call.
+```
+
+### Failure modes — name them in the brief
+
+Reviewer subagents drift toward these. Naming them in the brief reduces it.
+
+- **Grep shortcut**: "I grepped for X and found it, so it's wired up." Greps
+  prove presence of a string, not runtime behaviour. Always pair with an
+  executed check.
+- **Faux runtime**: "The test exists" — but did it pass *this run*? Demand the
+  numeric pass count from a fresh run, not the agent's prior claim.
+- **"Looks fine"**: shorthand for "I didn't actually read it." Require line
+  citations for any concern AND for the overall PASS.
+- **Scope blindness**: only checking the file the task names, missing
+  cross-app collateral. The `diff --stat` against `main..@` catches this if you
+  demand it explicitly.
+
+---
+
+## Land + verify loop (orchestrator drives this)
+
+```
+1. Decide reviewer (table above).
+2. Review passes → finalize in dependency order if main has moved:
+     a. echo <name> > /tmp/mpeek-agent-name
+     b. scripts/finalize-isolated-clone.sh
+     c. If FF rejected: rebase IN THE CLONE
+          (jj -R ../mpeek-clone-<name> git fetch --remote origin
+           jj -R ../mpeek-clone-<name> rebase -s 'roots(::@ ~ ::main)' -d main)
+        Then retry finalize.
+3. After ALL targeted clones finalized:
+     yarn test:electron   # run_in_background, ~2.5 min, canonical gate
+4. test:electron green → tasks move to NEEDS-REVIEW. **Do NOT auto-mark
+   peek:done.** Surface the diff + test result to the user; only the user
+   authorises `peek:done`. See [Needs-review handoff](#needs-review-handoff).
+5. test:electron RED → see [Retry-in-clone](#retry-in-clone-on-test-failure).
+6. Clean clones (`scripts/clean-isolated-clone.sh` per slot) unless the build
+   cache is reusable for follow-up work — but only AFTER the user has approved
+   peek:done. Clean'd clones can't be re-driven without respawn.
+```
+
+**Do NOT run `scripts/push-main.sh`** unless the user explicitly asks. Authorization
+is per-request, never standing.
+
+### Needs-review handoff
+
+When tests are green but user approval is pending, the orchestrator must:
+
+1. Tag the peek task `peek:needs-review` and untag `peek:todo` /
+   `peek:wip` (see `peek-tasks.md` controlled vocab).
+2. Surface to the user, in one short message:
+   - The commit IDs landed on main
+   - The diff stat (`jj diff --stat -r 'main..@'` or per-commit)
+   - The test result (numeric pass count, runtime)
+   - "Approve to mark done, or call out anything to revisit"
+3. Wait for explicit "approve" / "ok mark done" / equivalent before
+   untagging `peek:todo` and tagging `peek:done`.
+
+This applies even when the orchestrator personally reviewed the diff and ran
+the tests. The user is the final gate. Tests + LLM review are necessary, not
+sufficient.
+
+---
+
+## Retry-in-clone on test failure
+
+When `test:electron` fails after landing:
+
+1. Identify which finalized commit caused the failure (often obvious from the
+   failing test's surface area; if not, `jj log main@tangled..main` + bisect by
+   `jj op restore`).
+2. `jj abandon <finalized-commit-id>` in main — this leaves `main` pointing one
+   commit back. The chaos-defense scripts will FF correctly on next finalize.
+3. The clone still exists (preserved by finalize). SendMessage the **original
+   agent** (not a fresh spawn) with:
+   ```
+   Your <task> landed but yarn test:electron failed: <paste failing test +
+   relevant log lines>. The commit was abandoned from main. The clone at
+   ../mpeek-clone-<name>/ still has your work. Diagnose, fix in the clone,
+   commit, and report back. Same brief as before re: do-not-finalize,
+   do-not-push.
+   ```
+4. When the agent returns, run `/agent-review` on the updated diff.
+
+Why SendMessage and not a new Agent: the original agent has full context on
+what it did and why. A fresh spawn re-reads everything. The clone still has
+its node_modules + jj state; no respawn overhead.
+
+---
+
+## Usage
+
+```
+/agent-review <clone-name>
+/agent-review tags-cards
+/agent-review adblocker-resilience
+```
+
+If no name passed, list clones in the pool (`ls -d ../mpeek-clone-*`) and ask.
