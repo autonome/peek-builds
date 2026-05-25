@@ -198,6 +198,7 @@
   },
   "workspaces": [
     "apps/desktop",
+    "apps/mobile",
     "packages/*"
   ],
   "dependencies": {
@@ -234,7 +235,10 @@
   },
   "resolutions": {
     "tmp": "^0.2.5",
-    "glob@^11.0.0": "^11.1.0"
+    "glob@^11.0.0": "^11.1.0",
+    "@tauri-apps/api": "2.10.1",
+    "@tauri-apps/plugin-opener": "2.5.3",
+    "@tauri-apps/plugin-store": "2.4.2"
   },
   "packageManager": "yarn@4.13.0"
 }
