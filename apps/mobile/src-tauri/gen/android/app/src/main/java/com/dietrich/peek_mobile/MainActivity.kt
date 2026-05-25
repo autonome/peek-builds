@@ -11,18 +11,51 @@ import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import java.io.File
 
 class MainActivity : TauriActivity() {
-  // Cached safe-area JS snippet, updated by insets listener
-  private var safeAreaJs: String? = null
+  // Cached safe-area values (dp), updated by insets listener
+  private var safeAreaTopDp: Float = 0f
+  private var safeAreaBottomDp: Float = 0f
+  private var safeAreaLeftDp: Float = 0f
+  private var safeAreaRightDp: Float = 0f
+  // Script handle for document-start injection (so we can remove+replace on rotation)
+  private var docStartScriptHandle: androidx.webkit.ScriptHandler? = null
   private var webViewRef: WebView? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    // enableEdgeToEdge() handles setDecorFitsSystemWindows internally; calling it
+    // after super.onCreate() is correct for Tauri's activity hierarchy.
     enableEdgeToEdge()
     handleShareIntent(intent)
+
+    // Install the insets listener on the window's root content view so we get
+    // reliable dispatches on every layout pass (including rotation). We post so
+    // the decor view is fully attached before we request insets.
+    window.decorView.post {
+      val rootView = window.decorView
+      ViewCompat.setOnApplyWindowInsetsListener(rootView) { _, insets ->
+        val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+        val density = resources.displayMetrics.density
+        safeAreaTopDp = systemBars.top / density
+        safeAreaBottomDp = systemBars.bottom / density
+        safeAreaLeftDp = systemBars.left / density
+        safeAreaRightDp = systemBars.right / density
+        Log.d("PeekInsets", "root insets top=${systemBars.top}px (${safeAreaTopDp}dp) webViewRef=${webViewRef != null}")
+        // If WebView is already created, re-inject into the live document AND
+        // update the document-start script so future navigations pick up new insets.
+        webViewRef?.let { wv ->
+          val js = buildSafeAreaJs(safeAreaTopDp, safeAreaBottomDp, safeAreaLeftDp, safeAreaRightDp)
+          wv.evaluateJavascript(js, null)
+          updateDocumentStartScript(wv)
+        }
+        insets
+      }
+      ViewCompat.requestApplyInsets(rootView)
+    }
   }
 
   override fun onNewIntent(intent: Intent) {
@@ -135,33 +168,52 @@ class MainActivity : TauriActivity() {
       WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, true)
     }
 
-    // Inject safe-area and dark mode via a WebChromeClient, which doesn't conflict
-    // with Tauri's RustWebViewClient (they are independent — WebViewClient vs WebChromeClient).
-    webView.webChromeClient = object : android.webkit.WebChromeClient() {
-      override fun onProgressChanged(view: WebView?, newProgress: Int) {
-        super.onProgressChanged(view, newProgress)
-        // Inject once the page is mostly loaded
-        if (newProgress >= 80 && view != null) {
-          safeAreaJs?.let { view.evaluateJavascript(it, null) }
-          injectDarkModeState(view)
-        }
+    // Read insets synchronously now — they're already available from our listener
+    // (or directly from the decorView if the listener hasn't fired yet).
+    if (safeAreaTopDp == 0f) {
+      val rootInsets = ViewCompat.getRootWindowInsets(window.decorView)
+      if (rootInsets != null) {
+        val systemBars = rootInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+        val density = webView.resources.displayMetrics.density
+        safeAreaTopDp = systemBars.top / density
+        safeAreaBottomDp = systemBars.bottom / density
+        safeAreaLeftDp = systemBars.left / density
+        safeAreaRightDp = systemBars.right / density
+        Log.d("PeekInsets", "onWebViewCreate: read insets synchronously top=${safeAreaTopDp}dp")
       }
     }
 
-    // Android WebView does not expose env(safe-area-inset-*) CSS variables,
-    // so we bridge them from the native WindowInsets API as CSS custom properties.
-    ViewCompat.setOnApplyWindowInsetsListener(webView) { view, insets ->
-      val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-      val density = view.resources.displayMetrics.density
-      val topDp = systemBars.top / density
-      val bottomDp = systemBars.bottom / density
-      val leftDp = systemBars.left / density
-      val rightDp = systemBars.right / density
-      safeAreaJs = buildSafeAreaJs(topDp, bottomDp, leftDp, rightDp)
-      webView.evaluateJavascript(safeAreaJs!!, null)
-      insets
+    // Register a document-start script so the CSS vars are set on EVERY page load,
+    // before any app JS runs. This survives chrome-client swaps because it's
+    // registered on the WebView itself via the WebViewCompat API.
+    // Note: Tauri already uses this mechanism for its own init scripts (see RustWebView).
+    updateDocumentStartScript(webView)
+
+    // Belt-and-suspenders: also inject via WebViewClient.onPageFinished so that
+    // even if DOCUMENT_START_SCRIPT is unavailable, we catch page loads.
+    // We wrap Tauri's existing WebViewClient by delegating to it rather than
+    // replacing it (Tauri's client handles asset loading; replacing it breaks the app).
+    // Since we can't wrap an existing client without reflection, we rely on
+    // the document-start script as primary and the insets listener's evaluateJavascript
+    // call (which fires on every insets change after WebView exists) as secondary.
+    // If document-start is unavailable we add a standalone client only if Tauri hasn't set one.
+    if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+      Log.d("PeekInsets", "DOCUMENT_START_SCRIPT not supported, falling back to evaluateJavascript on load")
+      // webViewClient may already be set by Tauri's native code (it registers RustWebViewClient).
+      // We must not replace it. Instead, immediately inject and rely on the insets-listener
+      // evaluateJavascript() path which fires after each insets change.
+      val js = buildSafeAreaJs(safeAreaTopDp, safeAreaBottomDp, safeAreaLeftDp, safeAreaRightDp)
+      webView.evaluateJavascript(js, null)
     }
-    ViewCompat.requestApplyInsets(webView)
+  }
+
+  private fun updateDocumentStartScript(webView: WebView) {
+    if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
+    // Remove the old script handle if we have one (rotation / inset change).
+    docStartScriptHandle?.remove()
+    val js = buildSafeAreaJs(safeAreaTopDp, safeAreaBottomDp, safeAreaLeftDp, safeAreaRightDp)
+    Log.d("PeekInsets", "registerDocumentStartScript: top=${safeAreaTopDp}dp js=$js")
+    docStartScriptHandle = WebViewCompat.addDocumentStartJavaScript(webView, js, setOf("*"))
   }
 
   override fun onConfigurationChanged(newConfig: Configuration) {
