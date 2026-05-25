@@ -148,6 +148,7 @@
     "test:unit:modes": "yarn workspace @peek/desktop run test:unit:modes",
     "test:unit:shortcuts": "yarn workspace @peek/desktop run test:unit:shortcuts",
     "test:unit:datastore": "yarn workspace @peek/desktop run test:unit:datastore",
+    "test:desktop": "./scripts/timed.sh sh -c 'yarn test:unit && yarn test:electron'",
     "test": "./scripts/timed.sh sh -c 'yarn build && yarn test:electron && yarn test:tauri'",
     "test:electron": "yarn workspace @peek/desktop run test:electron",
     "test:electron:source": "yarn workspace @peek/desktop run test:electron:source",
