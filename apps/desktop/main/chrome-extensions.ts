@@ -138,7 +138,9 @@ export interface ChromeExtensionSetting {
 }
 
 // Extensions that are disabled by default (must be explicitly enabled by user)
-const DISABLED_BY_DEFAULT = new Set<string>();
+// twp: bundled but spammy — uses chrome.tabs.detectLanguage which we don't
+//      polyfill. Re-enable manually via Settings → Extensions if needed.
+const DISABLED_BY_DEFAULT = new Set<string>(['twp']);
 
 // Module state
 let polyfillHandle: { cleanup: () => void; getPreloadScript: () => string } | null = null;
