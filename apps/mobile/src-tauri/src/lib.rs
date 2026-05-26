@@ -2075,9 +2075,21 @@ fn is_dark_mode() -> bool {
     {
         unsafe { get_system_is_dark_mode() != 0 }
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(target_os = "linux")]
     {
-        false // Default to light mode on non-iOS platforms
+        // GNOME/Phosh: org.gnome.desktop.interface color-scheme is the
+        // canonical signal. Value is 'default' | 'prefer-dark' | 'prefer-light'.
+        std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "color-scheme"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("prefer-dark"))
+            .unwrap_or(false)
+    }
+    #[cfg(not(any(target_os = "ios", target_os = "linux")))]
+    {
+        false
     }
 }
 
