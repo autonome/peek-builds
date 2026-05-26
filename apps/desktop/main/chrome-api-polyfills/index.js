@@ -41,8 +41,10 @@ import * as webNavigation from './web-navigation.js';
 import * as offscreen from './offscreen.js';
 import * as permissions from './permissions.js';
 import * as runtimeExternal from './runtime-external.js';
+import * as scripting from './scripting.js';
+import * as tabs from './tabs.js';
 
-export { alarms, storageSession, webNavigation, offscreen, permissions, runtimeExternal };
+export { alarms, storageSession, webNavigation, offscreen, permissions, runtimeExternal, scripting, tabs };
 
 /**
  * Register all Chrome API polyfills for a session.
@@ -100,6 +102,16 @@ export function registerAll(session, options = {}) {
     cleanups.push(handles.runtimeExternal.cleanup);
   }
 
+  if (shouldRegister('scripting')) {
+    handles.scripting = scripting.setupMainProcess(session, { ipcMain });
+    cleanups.push(handles.scripting.cleanup);
+  }
+
+  if (shouldRegister('tabs')) {
+    handles.tabs = tabs.setupMainProcess(session, { ipcMain });
+    cleanups.push(handles.tabs.cleanup);
+  }
+
   return {
     /**
      * Clean up all registered handlers and free resources.
@@ -138,6 +150,12 @@ export function registerAll(session, options = {}) {
       }
       if (shouldRegister('permissions')) {
         scripts.push(permissions.getPreloadScript());
+      }
+      if (shouldRegister('scripting')) {
+        scripts.push(scripting.getPreloadScript());
+      }
+      if (shouldRegister('tabs')) {
+        scripts.push(tabs.getPreloadScript());
       }
 
       return scripts.join('\n');
