@@ -136,9 +136,21 @@ const PAGE_POLYFILL_SRC = `(function(){
   }
 
   if (window.chrome.runtime) {
-    _redactSendMessage(window.chrome.runtime);
+    // Install the bridge-routed sendMessage shim (Path C). Replaces both the
+    // original Path A (synthetic chrome.runtime object) and Path B (redact +
+    // postMessage-via-orchestrator fallback). _sendMessage posts a request to
+    // the preload bridge, which invokes main-process IPC, which routes through
+    // the hidden bridge window's chrome.runtime.Port to the BG SW's
+    // onMessageExternal listeners.
+    try {
+      Object.defineProperty(window.chrome.runtime, 'sendMessage', {
+        value: _sendMessage, configurable: true, writable: true, enumerable: true,
+      });
+    } catch (e) {
+      try { window.chrome.runtime.sendMessage = _sendMessage; } catch (_) {}
+    }
     _setExtId(window.chrome.runtime);
-    console.log('[peek:runtime-external:page] forced Path B: chrome.runtime.sendMessage redacted, id set, native otherwise preserved');
+    console.log('[peek:runtime-external:page] Path C: chrome.runtime.sendMessage routed through main-process bridge, id set');
   }
   // If window.chrome.runtime isn't there yet, do nothing. Replacing it with a
   // synthetic object races Chromium's native_extension_bindings_system trying
@@ -149,9 +161,16 @@ const PAGE_POLYFILL_SRC = `(function(){
   //  the page actually qualifies.
 
   if (window.browser && window.browser.runtime) {
-    _redactSendMessage(window.browser.runtime);
+    // Same Path C treatment for the webextension-polyfill browser.runtime alias.
+    try {
+      Object.defineProperty(window.browser.runtime, 'sendMessage', {
+        value: _sendMessage, configurable: true, writable: true, enumerable: true,
+      });
+    } catch (e) {
+      try { window.browser.runtime.sendMessage = _sendMessage; } catch (_) {}
+    }
     _setExtId(window.browser.runtime);
-    console.log('[peek:runtime-external:page] browser.runtime sendMessage also redacted');
+    console.log('[peek:runtime-external:page] Path C: browser.runtime.sendMessage routed through main-process bridge');
   }
 })();`;
 
