@@ -18,6 +18,7 @@ import path from 'node:path';
 import { getDb } from './datastore.js';
 import { getProfileSession } from './session-partition.js';
 import { registerAll } from './chrome-api-polyfills/index.js';
+import { getBridgePreloadPath, setBridgeWindowsRegistry } from './chrome-api-polyfills/runtime-external.js';
 import { buildOptionsCommandName, computeUiEntries } from './chrome-extensions-helpers.js';
 import { invokeWindowOpen } from './ipc.js';
 import { DEBUG, isHeadless } from './config.js';
@@ -146,6 +147,10 @@ const discoveredExtensions: Map<string, ChromeExtensionInfo> = new Map();
 const loadedExtensions: Map<string, LoadedChromeExtension> = new Map();
 // Track open extension UI windows: key = `${extId}:${type}` -> BrowserWindow
 const extensionUiWindows: Map<string, BrowserWindow> = new Map();
+// Track hidden bridge windows: key = electronExtension.id -> BrowserWindow.
+// These provide the chrome-extension:// origin context needed for
+// same-extension chrome.runtime.connect() to the BG SW.
+const _bridgeWindows: Map<string, BrowserWindow> = new Map();
 
 /**
  * Initialize the chrome_extensions table in the database
@@ -298,11 +303,92 @@ async function loadExtension(extInfo: ChromeExtensionInfo): Promise<LoadedChrome
     loadedExtensions.set(extInfo.id, loaded);
     DEBUG && console.log(`[chrome-ext] Loaded: ${extInfo.name}`);
 
+    // Spawn the hidden bridge window for this extension if the extension has
+    // externally_connectable matches (i.e. it can receive cross-origin messages).
+    // The bridge window lives at chrome-extension://<runtimeId>/peek-bridge.html
+    // and holds a long-lived chrome.runtime.Port to the BG SW, acting as the
+    // relay for messages that cannot be delivered cross-origin from Electron 40.
+    if (Array.isArray(extInfo.manifest?.externally_connectable?.matches) &&
+        extInfo.manifest.externally_connectable.matches.length > 0) {
+      _spawnBridgeWindow(loaded);
+    }
+
     return loaded;
   } catch (error) {
     console.error(`[chrome-ext] Failed to load ${extInfo.id}:`, error);
     return null;
   }
+}
+
+/**
+ * Spawn (or reuse) the hidden bridge BrowserWindow for an extension.
+ * The bridge page (peek-bridge.html) is a chrome-extension:// page that has
+ * native same-extension chrome.runtime.connect() to the BG SW, which is used
+ * to relay messages forwarded from the main process.
+ */
+function _spawnBridgeWindow(loaded: LoadedChromeExtension): void {
+  const runtimeId = loaded.electronExtension.id;
+
+  // Don't duplicate if already alive.
+  const existing = _bridgeWindows.get(runtimeId);
+  if (existing && !existing.isDestroyed()) {
+    DEBUG && console.log(`[chrome-ext] bridge window already alive for ${runtimeId}`);
+    return;
+  }
+
+  const bridgeUrl = `chrome-extension://${runtimeId}/peek-bridge.html`;
+  const profileSession = getProfileSession();
+  const preloadPath = getBridgePreloadPath();
+
+  console.log(`[chrome-ext] spawning bridge window for ${loaded.name} (${runtimeId})`);
+
+  const win = new BrowserWindow({
+    show: false,
+    width: 1,
+    height: 1,
+    webPreferences: {
+      session: profileSession,
+      preload: preloadPath,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false, // needed so contextBridge + ipcRenderer work in the preload
+    },
+  });
+
+  _bridgeWindows.set(runtimeId, win);
+  // Keep runtime-external.js in sync so it can route via this window.
+  setBridgeWindowsRegistry(_bridgeWindows);
+
+  win.on('closed', () => {
+    _bridgeWindows.delete(runtimeId);
+    setBridgeWindowsRegistry(_bridgeWindows);
+    console.log(`[chrome-ext] bridge window closed for ${runtimeId}`);
+  });
+
+  // Forward bridge window console output to main stderr in all modes —
+  // bridge errors are critical for diagnosing auth-ext failures.
+  win.webContents.on('console-message', (event) => {
+    try {
+      const e = event as unknown as { level?: unknown; message?: unknown; lineNumber?: unknown; sourceId?: unknown };
+      const msg = String(e.message ?? '');
+      if (msg.includes('peek:bridge') || msg.includes('peek:auth-ext')) {
+        console.error(`[bridge:${runtimeId.slice(0, 8)}:${String(e.level)}] ${msg}`);
+      }
+    } catch { /* logging must never throw */ }
+  });
+
+  win.webContents.on('render-process-gone', (_e, details) => {
+    console.error(`[chrome-ext] bridge window render-process-gone for ${runtimeId}:`, details);
+    _bridgeWindows.delete(runtimeId);
+    setBridgeWindowsRegistry(_bridgeWindows);
+  });
+
+  win.loadURL(bridgeUrl).catch(err => {
+    console.error(`[chrome-ext] bridge window failed to load ${bridgeUrl}:`, err && err.message);
+    if (!win.isDestroyed()) win.destroy();
+  });
+
+  DEBUG && console.log(`[chrome-ext] bridge window spawned for ${loaded.name} at ${bridgeUrl}`);
 }
 
 /**
@@ -316,9 +402,18 @@ async function unloadExtension(extId: string): Promise<boolean> {
   }
 
   try {
+    // Close the bridge window for this extension before removing it.
+    const runtimeId = loaded.electronExtension.id;
+    const bridgeWin = _bridgeWindows.get(runtimeId);
+    if (bridgeWin && !bridgeWin.isDestroyed()) {
+      bridgeWin.destroy();
+    }
+    _bridgeWindows.delete(runtimeId);
+    setBridgeWindowsRegistry(_bridgeWindows);
+
     // Use profile-specific session for isolation
     const profileSession = getProfileSession();
-    await profileSession.removeExtension(loaded.electronExtension.id);
+    await profileSession.removeExtension(runtimeId);
     loadedExtensions.delete(extId);
     DEBUG && console.log(`[chrome-ext] Unloaded: ${loaded.name}`);
     return true;
@@ -734,6 +829,15 @@ export async function cleanupChromeExtensions(): Promise<void> {
     }
   }
   extensionUiWindows.clear();
+
+  // Close all bridge windows
+  for (const [runtimeId, win] of _bridgeWindows) {
+    if (!win.isDestroyed()) {
+      win.destroy();
+    }
+  }
+  _bridgeWindows.clear();
+  setBridgeWindowsRegistry(_bridgeWindows);
 
   for (const extId of loadedExtensions.keys()) {
     await unloadExtension(extId);

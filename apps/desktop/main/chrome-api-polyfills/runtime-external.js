@@ -63,10 +63,39 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const IPC_SEND_FROM_PAGE = 'peek:runtime-external:send';
 const SW_CHANNEL_INCOMING = 'peek:runtime-external:incoming';
 const SW_CHANNEL_RESPONSE = 'peek:runtime-external:response';
+const BRIDGE_FORWARD_CHANNEL = 'peek:auth-ext:forward';
+const BRIDGE_RESPONSE_CHANNEL = 'peek:auth-ext:response';
 
 /** Absolute path to the webview preload .cjs. Set by entry.ts via getPreloadPath(). */
 export function getPreloadPath() {
   return path.join(__dirname, 'runtime-external-preload.cjs');
+}
+
+/** Absolute path to the bridge window preload .cjs. Used by chrome-extensions.ts. */
+export function getBridgePreloadPath() {
+  return path.join(__dirname, 'peek-bridge-preload.cjs');
+}
+
+/**
+ * Bridge window registry: extRuntimeId → BrowserWindow.
+ * Kept in sync by chrome-extensions.ts via setBridgeWindowsRegistry() so
+ * setupMainProcess can route messages through the bridge window instead of
+ * trying to call session.serviceWorkers.send() directly (which doesn't work
+ * for cross-origin pages in Electron 40).
+ *
+ * @type {Map<string, import('electron').BrowserWindow>}
+ */
+let _bridgeWindowsRegistry = new Map();
+
+/**
+ * Called by chrome-extensions.ts whenever the bridge window map changes
+ * (spawn, close, cleanup). Allows setupMainProcess to route via bridge window
+ * without a circular import — chrome-extensions.ts pushes state here.
+ *
+ * @param {Map<string, import('electron').BrowserWindow>} registry
+ */
+export function setBridgeWindowsRegistry(registry) {
+  _bridgeWindowsRegistry = registry;
 }
 
 /**
@@ -102,6 +131,8 @@ function _newReqId() {
   return `peek-rt-${Date.now()}-${++_seq}`;
 }
 const _attachedSwIpc = new Set();
+// Whether we've attached the ipcMain listener for bridge responses.
+let _bridgeResponseListenerAttached = false;
 
 /**
  * Register main-process handlers for the runtime-external bridge.
@@ -118,6 +149,25 @@ export function setupMainProcess(session, options = {}) {
     throw new Error('chrome-api-polyfills/runtime-external: options.ipcMain is required');
   }
 
+  // Attach ipcMain listener for responses from the bridge window (once).
+  // The bridge page sends back via ipcRenderer.send(BRIDGE_RESPONSE_CHANNEL, ...)
+  // which arrives here as a regular ipcMain 'on' event.
+  if (!_bridgeResponseListenerAttached) {
+    _bridgeResponseListenerAttached = true;
+    ipcMain.on(BRIDGE_RESPONSE_CHANNEL, (_event, payload) => {
+      const { reqId: rid, response, error } = payload || {};
+      const pending = _pendingByReqId.get(rid);
+      if (pending) {
+        _pendingByReqId.delete(rid);
+        console.log('[peek:runtime-external:main] bridge response received reqId=', rid);
+        pending(error ? { __peekRuntimeExternalError: error } : response);
+      } else {
+        console.error('[peek:runtime-external:main] bridge response for unknown reqId=', rid);
+      }
+    });
+    console.log('[peek:runtime-external:main] bridge response listener attached');
+  }
+
   // Receive page-side request from the webview preload.
   ipcMain.handle(IPC_SEND_FROM_PAGE, async (_event, payload) => {
     const { extId: requestedExtId, message, origin } = payload || {};
@@ -126,10 +176,79 @@ export function setupMainProcess(session, options = {}) {
       return { __peekRuntimeExternalError: 'missing extId' };
     }
 
-    // Find target extension's BG SW versionId. Electron exposes
-    // `session.serviceWorkers.getAllRunning()` which returns a map keyed by
-    // versionId. Each entry's `scope` for an extension SW is
-    // `chrome-extension://<extId>/`.
+    // Resolve the target extension's runtime ID. First try to find a bridge
+    // window for the requested extId directly (fast path: page already knows
+    // the correct Electron-assigned runtime hash). If not found, fall back to
+    // origin-based resolution for pages like Proton's account bundle that
+    // fan out to multiple hardcoded Web Store IDs.
+    let extId = requestedExtId;
+
+    // Check bridge window registry first (bridge path is preferred).
+    let bridgeWin = _bridgeWindowsRegistry.get(extId);
+
+    if (!bridgeWin || bridgeWin.isDestroyed()) {
+      // Not found by direct extId — try origin-based fallback.
+      if (typeof findExtensionByOrigin === 'function' && origin) {
+        try {
+          const resolvedExtId = findExtensionByOrigin(origin);
+          if (resolvedExtId && resolvedExtId !== extId) {
+            const candidate = _bridgeWindowsRegistry.get(resolvedExtId);
+            if (candidate && !candidate.isDestroyed()) {
+              console.log('[peek:runtime-external:main] origin-fallback: extId=', requestedExtId, '→', resolvedExtId, 'via origin=', origin);
+              extId = resolvedExtId;
+              bridgeWin = candidate;
+            }
+          }
+        } catch (e) {
+          console.error('[peek:runtime-external:main] findExtensionByOrigin threw:', e?.message);
+        }
+      }
+    }
+
+    if (bridgeWin && !bridgeWin.isDestroyed()) {
+      // === Bridge window path ===
+      // Forward the message to the bridge window, which holds a live
+      // chrome.runtime.Port to the BG SW and relays it natively.
+      const reqId = _newReqId();
+      const sender = {
+        id: extId,
+        origin: origin ? safeOrigin(origin) : '',
+        url: origin ?? '',
+        tab: { id: -1 },
+      };
+      console.log('[peek:runtime-external:main] routing via bridge window reqId=', reqId, 'extId=', extId);
+
+      return await new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          if (_pendingByReqId.has(reqId)) {
+            _pendingByReqId.delete(reqId);
+            console.error('[peek:runtime-external:main] bridge timeout reqId=', reqId);
+            resolve({ __peekRuntimeExternalError: 'BG response timeout (bridge)' });
+          }
+        }, 30_000);
+
+        _pendingByReqId.set(reqId, (response) => {
+          clearTimeout(timer);
+          console.log('[peek:runtime-external:main] bridge resolved reqId=', reqId);
+          resolve(response);
+        });
+
+        try {
+          bridgeWin.webContents.send(BRIDGE_FORWARD_CHANNEL, { reqId, message, sender });
+          console.log('[peek:runtime-external:main] bridge forward sent reqId=', reqId);
+        } catch (err) {
+          _pendingByReqId.delete(reqId);
+          clearTimeout(timer);
+          console.error('[peek:runtime-external:main] bridge send THREW reqId=', reqId, 'err=', err?.message);
+          resolve({ __peekRuntimeExternalError: `bridge send failed: ${err?.message ?? String(err)}` });
+        }
+      });
+    }
+
+    // === Fallback: direct SW path (for extensions without externally_connectable) ===
+    // This path is kept as a best-effort fallback. In Electron 40 it typically
+    // fails for cross-origin pages but may work for same-extension contexts.
+    console.log('[peek:runtime-external:main] no bridge window for extId=', extId, '— trying direct SW path');
     const swInfos = (session.serviceWorkers?.getAllRunning?.() ?? {});
     const swSummary = Object.entries(swInfos).map(([v, i]) => `vid=${v} scope=${i?.scope}`).join(' ; ');
     console.log('[peek:runtime-external:main] running service workers:', swSummary || '(none)');
@@ -140,31 +259,25 @@ export function setupMainProcess(session, options = {}) {
       }
       return null;
     }
-    let targetVersionId = findVersionIdForExtId(requestedExtId);
-    let extId = requestedExtId;
+    let targetVersionId = findVersionIdForExtId(extId);
     if (targetVersionId == null && typeof findExtensionByOrigin === 'function' && origin) {
-      // The requested extId didn't match. Pages like Proton's account bundle
-      // fan out to multiple platform-specific Web Store IDs (Chrome, Edge,
-      // Firefox, Safari) — none match our Electron-assigned runtime hash.
-      // Resolve by origin instead: any extension whose
-      // externally_connectable.matches accepts this origin is a valid target.
       try {
         const resolvedExtId = findExtensionByOrigin(origin);
         if (resolvedExtId) {
           const vid = findVersionIdForExtId(resolvedExtId);
           if (vid != null) {
-            console.log('[peek:runtime-external:main] origin-fallback: requested extId=', requestedExtId, 'resolved to extId=', resolvedExtId, 'via origin=', origin);
+            console.log('[peek:runtime-external:main] SW fallback origin-resolve: extId=', resolvedExtId);
             targetVersionId = vid;
             extId = resolvedExtId;
           }
         }
       } catch (e) {
-        console.error('[peek:runtime-external:main] findExtensionByOrigin threw:', e?.message);
+        console.error('[peek:runtime-external:main] SW fallback findExtensionByOrigin threw:', e?.message);
       }
     }
     if (targetVersionId == null) {
-      console.error('[peek:runtime-external:main] no SW match for extId=', requestedExtId, '(origin fallback also failed)');
-      return { __peekRuntimeExternalError: `no running service worker for extension ${requestedExtId}` };
+      console.error('[peek:runtime-external:main] no bridge window and no SW match for extId=', requestedExtId);
+      return { __peekRuntimeExternalError: `no bridge window or running service worker for extension ${requestedExtId}` };
     }
 
     const reqId = _newReqId();
@@ -174,43 +287,39 @@ export function setupMainProcess(session, options = {}) {
       url: origin ?? '',
       tab: { id: -1 },
     };
-    console.log('[peek:runtime-external:main] dispatching reqId=', reqId, 'to versionId=', targetVersionId);
+    console.log('[peek:runtime-external:main] SW fallback dispatching reqId=', reqId, 'to versionId=', targetVersionId);
 
     return await new Promise((resolve) => {
       const timer = setTimeout(() => {
         if (_pendingByReqId.has(reqId)) {
           _pendingByReqId.delete(reqId);
-          console.error('[peek:runtime-external:main] BG response timeout reqId=', reqId);
+          console.error('[peek:runtime-external:main] SW BG response timeout reqId=', reqId);
           resolve({ __peekRuntimeExternalError: 'BG response timeout' });
         }
       }, 30_000);
 
       _pendingByReqId.set(reqId, (response) => {
         clearTimeout(timer);
-        console.log('[peek:runtime-external:main] resolved reqId=', reqId);
+        console.log('[peek:runtime-external:main] SW resolved reqId=', reqId);
         resolve(response);
       });
 
       try {
-        // Electron 40: use ServiceWorkerMain.send via getWorkerFromVersionID
-        // — there is no generic send() on the ServiceWorkers manager.
         const swMain = session.serviceWorkers.getWorkerFromVersionID?.(targetVersionId)
           ?? session.serviceWorkers.fromVersionID?.(targetVersionId);
         if (!swMain || typeof swMain.send !== 'function') {
           throw new Error('ServiceWorkerMain.send not available');
         }
-        // Lazily attach the response listener on this swMain's ipc — first
-        // dispatch to a given SW wires it up; subsequent dispatches reuse.
         if (!_attachedSwIpc.has(targetVersionId) && swMain.ipc?.on) {
           _attachedSwIpc.add(targetVersionId);
-          swMain.ipc.on(SW_CHANNEL_RESPONSE, (_e, payload) => {
-            const { reqId: rid, response, error } = payload || {};
+          swMain.ipc.on(SW_CHANNEL_RESPONSE, (_e, swPayload) => {
+            const { reqId: rid, response, error } = swPayload || {};
             const pending = _pendingByReqId.get(rid);
             if (pending) {
               _pendingByReqId.delete(rid);
               pending(error ? { __peekRuntimeExternalError: error } : response);
             } else {
-              console.error('[peek:runtime-external:main] response for unknown reqId=', rid);
+              console.error('[peek:runtime-external:main] SW response for unknown reqId=', rid);
             }
           });
           console.log('[peek:runtime-external:main] swMain.ipc listener attached for vid=', targetVersionId);
@@ -226,16 +335,14 @@ export function setupMainProcess(session, options = {}) {
     });
   });
 
-  // SW → main reply path is wired up lazily via swMain.ipc.on inside the
-  // dispatch path (see _attachedSwIpc above). Electron 40 doesn't fire a
-  // generic 'ipc-message' event on the ServiceWorkers manager — IPC is
-  // per-ServiceWorkerMain via its `ipc` IpcMainServiceWorker instance.
-
   return {
     cleanup() {
       try { ipcMain.removeHandler(IPC_SEND_FROM_PAGE); } catch { /* idempotent */ }
       _attachedSwIpc.clear();
       _pendingByReqId.clear();
+      // Note: _bridgeResponseListenerAttached stays true — ipcMain.on doesn't
+      // have removeAllListeners for a specific channel in the same way as
+      // handle; the listener will be GC'd with the module on app exit.
     },
   };
 }
@@ -394,7 +501,73 @@ export function getBgInjection() {
     }
   }
 
-  // Listen for incoming dispatches from main.
+  // === Bridge port handler ===
+  // The hidden bridge BrowserWindow connects via chrome.runtime.connect({ name: 'peek-auth-relay' }).
+  // This fires chrome.runtime.onConnect (same-extension, not onConnectExternal).
+  // Messages on the port carry { reqId, message, sender }; we fan-fire
+  // onMessageExternal listeners and reply via port.postMessage({ reqId, response }).
+  var BRIDGE_PORT_NAME = 'peek-auth-relay';
+  try {
+    if (chrome.runtime.onConnect && chrome.runtime.onConnect.addListener) {
+      chrome.runtime.onConnect.addListener(function(port) {
+        if (!port || port.name !== BRIDGE_PORT_NAME) return;
+        console.log('[peek:runtime-external:bg] bridge port connected name=', port.name);
+
+        port.onMessage.addListener(function(portMsg) {
+          var reqId = portMsg && portMsg.reqId;
+          var fwdMessage = portMsg && portMsg.message;
+          var fwdSender = (portMsg && portMsg.sender) || {};
+          fwdSender.id = chrome.runtime.id;
+          console.log('[peek:runtime-external:bg] bridge port message reqId=', reqId, 'type=', fwdMessage && fwdMessage.type, 'listeners=', _externalListeners.length);
+
+          if (_externalListeners.length === 0) {
+            try { port.postMessage({ reqId: reqId, error: 'no onMessageExternal listeners registered' }); } catch(_) {}
+            return;
+          }
+
+          var responded = false;
+          function respondViaPort(response) {
+            if (responded) return;
+            responded = true;
+            console.log('[peek:runtime-external:bg] bridge port respond reqId=', reqId);
+            try { port.postMessage({ reqId: reqId, response: response }); } catch(e) {
+              console.error('[peek:runtime-external:bg] port.postMessage respond threw:', e && e.message);
+            }
+          }
+
+          for (var i = 0; i < _externalListeners.length; i++) {
+            try {
+              var ret = _externalListeners[i](fwdMessage, fwdSender, respondViaPort);
+              if (ret && typeof ret.then === 'function') {
+                (function() {
+                  ret.then(function(r) { respondViaPort(r); }, function(e) {
+                    if (!responded) {
+                      responded = true;
+                      try { port.postMessage({ reqId: reqId, error: (e && e.message) || String(e) }); } catch(_) {}
+                    }
+                  });
+                })();
+              }
+            } catch(e) {
+              if (!responded) {
+                responded = true;
+                console.error('[peek:runtime-external:bg] bridge listener THREW reqId=', reqId, 'err=', e && e.message);
+                try { port.postMessage({ reqId: reqId, error: (e && e.message) || String(e) }); } catch(_) {}
+              }
+            }
+          }
+        });
+
+        port.onDisconnect.addListener(function() {
+          var err = chrome.runtime.lastError;
+          console.log('[peek:runtime-external:bg] bridge port disconnected:', err && err.message || '(no error)');
+        });
+      });
+      console.log('[peek:runtime-external:bg] onConnect listener installed for bridge port');
+    }
+  } catch(e) { console.error('[peek:runtime-external:bg] onConnect setup failed:', e && e.message); }
+
+  // Listen for incoming dispatches from main (legacy direct SW path — kept as fallback).
   if (_ipc) {
     _ipc.on(SW_CHANNEL_INCOMING, function(_event, payload) { _dispatch(payload); });
     console.log('[peek:runtime-external:bg] ipcRenderer.on(' + SW_CHANNEL_INCOMING + ') installed');

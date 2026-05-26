@@ -619,6 +619,22 @@ function patchProtonPass() {
   fs.writeFileSync(peekJsPath, PEEK_PERMISSIONS_JS);
   console.log('[patch] Wrote peek-permissions.js');
 
+  // --- Copy peek-bridge.html into the extension directory ---
+  // The bridge page is loaded as a hidden BrowserWindow at
+  // chrome-extension://<ext-id>/peek-bridge.html by chrome-extensions.ts.
+  // Extension pages (chrome-extension:// origin) have native same-extension
+  // chrome.runtime.connect() which reaches the BG SW — the cross-origin path
+  // that Electron 40 does NOT implement for external pages.
+  // Source lives in apps/desktop/main/chrome-api-polyfills/peek-bridge.html.
+  const bridgeSrcPath = path.join(ROOT, 'apps', 'desktop', 'main', 'chrome-api-polyfills', 'peek-bridge.html');
+  const bridgeDstPath = path.join(extPath, 'peek-bridge.html');
+  if (fs.existsSync(bridgeSrcPath)) {
+    fs.copyFileSync(bridgeSrcPath, bridgeDstPath);
+    console.log('[patch] Copied peek-bridge.html to extension directory');
+  } else {
+    console.warn('[patch] WARNING: peek-bridge.html source not found at', bridgeSrcPath);
+  }
+
   // --- Patch HTML entry points (popup.html, settings.html, etc.) ---
   // Inject <script src="peek-permissions.js"> right after <body>, BEFORE
   // polyfills.js / popup.js script tags. Our shim runs first, installs a
