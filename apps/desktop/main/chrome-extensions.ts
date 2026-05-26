@@ -745,25 +745,26 @@ export function openChromeExtensionPage(
     DEBUG && console.log(`[chrome-ext] UI window closed: ${windowKey}`);
   });
 
-  if (DEBUG) {
-    // Forward renderer console + JS errors to main stderr so popup-side
-    // failures (which would otherwise live only in the popup's DevTools)
-    // surface in the same log stream as the rest of the extension wiring.
-    // NOTE: console-message does NOT fire when DevTools is attached, so we
-    // do not auto-open DevTools here. If you need to inspect manually,
-    // right-click → Inspect inside the popup.
-    win.webContents.on('console-message', (event) => {
-      try {
-        const e = event as unknown as { level?: unknown; message?: unknown; lineNumber?: unknown; sourceId?: unknown };
-        console.log(`[ext-popup:${windowKey}:${String(e.level)}] ${String(e.message)} (${String(e.sourceId)}:${String(e.lineNumber)})`);
-      } catch {
-        /* logging must never throw */
+  // Always forward extension UI console errors/warnings + render-process
+  // crashes to main stderr — these surfaces have no other diagnostic path
+  // (Electron's native extension popup doesn't expose devtools through our
+  // Cmd+Option+I bridge), so a black popup leaves no trace otherwise.
+  // Info/log levels still gated on DEBUG to keep the stream usable.
+  win.webContents.on('console-message', (event) => {
+    try {
+      const e = event as unknown as { level?: unknown; message?: unknown; lineNumber?: unknown; sourceId?: unknown };
+      const level = String(e.level);
+      const isErrorish = level === 'error' || level === 'warning' || level === 'warn';
+      if (isErrorish || DEBUG) {
+        console.log(`[ext-popup:${windowKey}:${level}] ${String(e.message)} (${String(e.sourceId)}:${String(e.lineNumber)})`);
       }
-    });
-    win.webContents.on('render-process-gone', (_e, details) => {
-      console.error(`[ext-popup:${windowKey}] render-process-gone:`, details);
-    });
-  }
+    } catch {
+      /* logging must never throw */
+    }
+  });
+  win.webContents.on('render-process-gone', (_e, details) => {
+    console.error(`[ext-popup:${windowKey}] render-process-gone:`, details);
+  });
 
   // Route window.open(url) from the popup (and from our chrome.tabs.create
   // shim, which delegates to window.open) through Peek's normal window

@@ -208,7 +208,16 @@ const PEEK_PERMISSIONS_JS = `/* Peek: chrome.permissions early-install shim. See
     window.addEventListener('error', function(ev) {
       try {
         var stack = ev.error && ev.error.stack ? ev.error.stack : '(no stack)';
-        console.error('[peek:popup-error]', ev.message, '@', ev.filename + ':' + ev.lineno + ':' + ev.colno, '\\n', stack);
+        // For resource-load errors (img/script/link), ev.message is undefined.
+        // ev.target identifies the failed element — dump its src/href + tag.
+        var t = ev.target;
+        var resourceInfo = '';
+        if (t && t !== window && t.nodeType === 1) {
+          var src = t.src || t.href || '(no src/href)';
+          var tag = t.tagName || '(no tag)';
+          resourceInfo = ' resource=' + tag + ' src=' + src;
+        }
+        console.error('[peek:popup-error]', ev.message, '@', ev.filename + ':' + ev.lineno + ':' + ev.colno, resourceInfo, '\\n', stack);
       } catch(_) {}
     }, true);
     window.addEventListener('unhandledrejection', function(ev) {
@@ -619,20 +628,26 @@ function patchProtonPass() {
   fs.writeFileSync(peekJsPath, PEEK_PERMISSIONS_JS);
   console.log('[patch] Wrote peek-permissions.js');
 
-  // --- Copy peek-bridge.html into the extension directory ---
+  // --- Copy peek-bridge.html + peek-bridge.js into the extension directory ---
   // The bridge page is loaded as a hidden BrowserWindow at
   // chrome-extension://<ext-id>/peek-bridge.html by chrome-extensions.ts.
   // Extension pages (chrome-extension:// origin) have native same-extension
   // chrome.runtime.connect() which reaches the BG SW — the cross-origin path
   // that Electron 40 does NOT implement for external pages.
-  // Source lives in apps/desktop/main/chrome-api-polyfills/peek-bridge.html.
-  const bridgeSrcPath = path.join(ROOT, 'apps', 'desktop', 'main', 'chrome-api-polyfills', 'peek-bridge.html');
-  const bridgeDstPath = path.join(extPath, 'peek-bridge.html');
-  if (fs.existsSync(bridgeSrcPath)) {
-    fs.copyFileSync(bridgeSrcPath, bridgeDstPath);
-    console.log('[patch] Copied peek-bridge.html to extension directory');
-  } else {
-    console.warn('[patch] WARNING: peek-bridge.html source not found at', bridgeSrcPath);
+  //
+  // The script lives in a separate .js file (referenced via <script src>)
+  // because MV3 extensions ship a CSP `script-src 'self' 'wasm-unsafe-eval'`
+  // that blocks inline scripts even on extension-origin pages.
+  const polyfillsDir = path.join(ROOT, 'apps', 'desktop', 'main', 'chrome-api-polyfills');
+  for (const file of ['peek-bridge.html', 'peek-bridge.js']) {
+    const srcPath = path.join(polyfillsDir, file);
+    const dstPath = path.join(extPath, file);
+    if (fs.existsSync(srcPath)) {
+      fs.copyFileSync(srcPath, dstPath);
+      console.log(`[patch] Copied ${file} to extension directory`);
+    } else {
+      console.warn(`[patch] WARNING: ${file} source not found at`, srcPath);
+    }
   }
 
   // --- Patch HTML entry points (popup.html, settings.html, etc.) ---

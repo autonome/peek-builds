@@ -10,7 +10,16 @@
     window.addEventListener('error', function(ev) {
       try {
         var stack = ev.error && ev.error.stack ? ev.error.stack : '(no stack)';
-        console.error('[peek:popup-error]', ev.message, '@', ev.filename + ':' + ev.lineno + ':' + ev.colno, '\n', stack);
+        // For resource-load errors (img/script/link), ev.message is undefined.
+        // ev.target identifies the failed element — dump its src/href + tag.
+        var t = ev.target;
+        var resourceInfo = '';
+        if (t && t !== window && t.nodeType === 1) {
+          var src = t.src || t.href || '(no src/href)';
+          var tag = t.tagName || '(no tag)';
+          resourceInfo = ' resource=' + tag + ' src=' + src;
+        }
+        console.error('[peek:popup-error]', ev.message, '@', ev.filename + ':' + ev.lineno + ':' + ev.colno, resourceInfo, '\n', stack);
       } catch(_) {}
     }, true);
     window.addEventListener('unhandledrejection', function(ev) {

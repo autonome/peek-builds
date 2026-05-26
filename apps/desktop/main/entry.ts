@@ -375,6 +375,26 @@ app.on('web-contents-created', (_event, contents) => {
     }
   }
 
+  // Forward console errors/warnings from EVERY chrome-extension:// webContents
+  // to main stderr. Extension popups, options pages, BG SW, etc. have no
+  // user-visible diagnostic path when they fail to render (a black screen
+  // tells you nothing). Centralised here at the web-contents-created chokepoint
+  // so it covers all callsites: chrome-extensions.ts openChromeExtensionPage,
+  // api.window.open path, harness-driven opens, etc.
+  contents.on('console-message', (event) => {
+    try {
+      const url = contents.getURL();
+      if (!url.startsWith('chrome-extension://')) return;
+      const e = event as unknown as { level?: unknown; message?: unknown; lineNumber?: unknown; sourceId?: unknown };
+      const level = String(e.level);
+      const isErrorish = level === 'error' || level === 'warning' || level === 'warn';
+      if (isErrorish) {
+        const extId = url.slice('chrome-extension://'.length).split('/')[0].slice(0, 8);
+        console.log(`[ext:${extId}:${level}] ${String(e.message)} (${String(e.sourceId)}:${String(e.lineNumber)})`);
+      }
+    } catch { /* logging must never throw */ }
+  });
+
   // DevTools shortcut: Cmd+Alt+I (mac) / Ctrl+Shift+I (linux/win). Gated by
   // the runtime debug toggle (Settings → Diagnostics). Every window is
   // created with `webPreferences.devTools: true`, so this handler can open
