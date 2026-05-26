@@ -1,0 +1,48 @@
+#!/bin/sh
+# Peek MCP launcher — bundled inside Peek.app.
+#
+# Spawned by MCP clients (e.g. Claude Code) over stdio. Runs the MCP
+# server using Peek's bundled Electron binary in Node mode, so the user
+# does not need a system Node install.
+#
+# Layout after packaging:
+#   $APP_ROOT/Contents/Resources/peek-mcp                 (this script)
+#   $APP_ROOT/Contents/MacOS/Peek                          (Electron binary)
+#   $APP_ROOT/Contents/Resources/app.asar.unpacked/
+#     apps/desktop/features/mcp-server/server.js
+
+set -e
+
+RESOURCES_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_ROOT="$(cd "$RESOURCES_DIR/.." && pwd)"
+ELECTRON_BIN="$APP_ROOT/MacOS/Peek"
+SERVER_JS="$RESOURCES_DIR/app.asar.unpacked/apps/desktop/features/mcp-server/server.js"
+
+if [ ! -x "$ELECTRON_BIN" ]; then
+  echo "peek-mcp: Electron binary not found at $ELECTRON_BIN" >&2
+  exit 1
+fi
+
+if [ ! -f "$SERVER_JS" ]; then
+  echo "peek-mcp: server.js not found at $SERVER_JS" >&2
+  echo "peek-mcp: check that mcp-server is in asarUnpack" >&2
+  exit 1
+fi
+
+SETUP_JS="$RESOURCES_DIR/app.asar.unpacked/apps/desktop/features/mcp-server/setup.js"
+
+# `peek-mcp --install [args...]` runs setup.js to write the
+# Claude Code config snippet (global by default, or --project / --mcp-json).
+# Any other args (or no args) start the MCP server over stdio.
+if [ "$1" = "--install" ]; then
+  shift
+  if [ ! -f "$SETUP_JS" ]; then
+    echo "peek-mcp: setup.js not found at $SETUP_JS" >&2
+    exit 1
+  fi
+  export ELECTRON_RUN_AS_NODE=1
+  exec "$ELECTRON_BIN" "$SETUP_JS" "$@"
+fi
+
+export ELECTRON_RUN_AS_NODE=1
+exec "$ELECTRON_BIN" --experimental-sqlite "$SERVER_JS"

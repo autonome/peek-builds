@@ -19,6 +19,20 @@ const SERVER_NAME = 'peek-mcp';
 const SERVER_VERSION = '1.0.0';
 const PROTOCOL_VERSION = '2024-11-05';
 
+// Read-only mode hides the mutating tools and refuses tools/call for them.
+// Toggled via the Settings UI by writing PEEK_MCP_READONLY=1 into the
+// MCP client config's env.
+const READONLY = process.env.PEEK_MCP_READONLY === '1';
+const MUTATING_TOOLS = new Set([
+  'create_item',
+  'update_item',
+  'delete_item',
+  'tag_item',
+  'untag_item',
+  'complete_task',
+  'record_event',
+]);
+
 // --- Tool definitions ---
 
 const TOOLS = [
@@ -285,11 +299,19 @@ function handleMessage(msg) {
     case 'ping':
       return makeResponse(id, {});
 
-    case 'tools/list':
-      return makeResponse(id, { tools: TOOLS });
+    case 'tools/list': {
+      const visible = READONLY ? TOOLS.filter((t) => !MUTATING_TOOLS.has(t.name)) : TOOLS;
+      return makeResponse(id, { tools: visible });
+    }
 
     case 'tools/call': {
       const { name, arguments: args } = params;
+      if (READONLY && MUTATING_TOOLS.has(name)) {
+        return makeResponse(id, {
+          content: [{ type: 'text', text: 'Error: Peek MCP is in read-only mode; mutating tools are disabled.' }],
+          isError: true,
+        });
+      }
       try {
         const result = handleToolCall(name, args || {});
         return makeResponse(id, {

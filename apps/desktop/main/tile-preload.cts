@@ -2499,6 +2499,26 @@ function buildAPI(): Record<string, unknown> {
     },
   };
 
+  // ── api.mcp ─────────────────────────────────────────────────────────
+  //
+  // Reads/writes the `mcpServers.peek` entry in ~/.claude/settings.json.
+  // Off by default — the toggle in Settings → Diagnostics writes the
+  // entry on enable and removes it on disable.
+  api.mcp = {
+    getStatus: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.mcp requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:mcp:status', { token: tileToken });
+    },
+    setConfig: (patch: { enabled?: boolean; profile?: string; readonly?: boolean }) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.mcp requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:mcp:set-config', { token: tileToken, ...patch });
+    },
+  };
+
   return api;
 }
 

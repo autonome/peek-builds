@@ -574,6 +574,161 @@ const renderCoreSettings = async () => {
   return container;
 };
 
+// Render Integrations settings — currently houses the MCP server toggle.
+// New integrations (other agents, webhooks, etc.) land here as additional
+// groups inside this section.
+const renderIntegrationsSettings = async () => {
+  const container = document.createElement('div');
+
+  const intro = document.createElement('p');
+  intro.className = 'help-text';
+  intro.style.marginBottom = '16px';
+  intro.textContent = 'Connect Peek to external tools.';
+  container.appendChild(intro);
+
+  // --- MCP server ---
+  //
+  // Writes/removes the `mcpServers.peek` entry in ~/.claude/settings.json.
+  // Off by default — checking opts Peek into agents' MCP tool surface.
+  // Profile dropdown picks which Peek profile's datastore the snippet
+  // points at; "Allow writes" controls whether mutating tools are
+  // exposed (defaults to off).
+  const mcpGroup = createSettingsGroup('MCP server');
+
+  let mcpState = {
+    enabled: false, profile: 'default', readonly: true,
+    expectedCommand: '', configuredCommand: null,
+    settingsPath: '~/.claude/settings.json', profiles: [], configuredAt: null,
+  };
+  try {
+    const res = await api.mcp?.getStatus?.();
+    if (res?.success) mcpState = res.state;
+  } catch { /* fall back to defaults */ }
+
+  let profileSelect = null;
+  let allowWritesInput = null;
+  let statusLine = null;
+
+  const renderStatus = () => {
+    if (!statusLine) return;
+    if (!mcpState.enabled) {
+      statusLine.textContent = `Not configured. Will write to ${mcpState.settingsPath} when enabled.`;
+      return;
+    }
+    const when = mcpState.configuredAt ? new Date(mcpState.configuredAt).toLocaleString() : 'unknown';
+    statusLine.textContent = `Configured at ${mcpState.settingsPath} (last updated ${when}).`;
+  };
+
+  const syncUI = () => {
+    if (profileSelect) {
+      profileSelect.disabled = !mcpState.enabled;
+      if (profileSelect.value !== mcpState.profile) profileSelect.value = mcpState.profile;
+    }
+    if (allowWritesInput) {
+      allowWritesInput.disabled = !mcpState.enabled;
+      allowWritesInput.checked = !mcpState.readonly;
+    }
+    renderStatus();
+    renderReadonlyWarning();
+  };
+
+  mcpGroup.appendChild(createCheckbox(
+    'Expose Peek to Agents (MCP)',
+    mcpState.enabled,
+    async (newVal) => {
+      try {
+        const res = await api.mcp?.setConfig?.({ enabled: newVal });
+        if (res?.success) mcpState = res.state;
+      } catch { /* ignore */ }
+      syncUI();
+    },
+    { helpText: 'Lets agents query your Peek items and tasks via the Model Context Protocol. Off by default.' },
+  ));
+
+  // Profile dropdown
+  const profileGroup = document.createElement('div');
+  profileGroup.className = 'form-group';
+  profileGroup.style.marginLeft = '24px';
+  const profileLabel = document.createElement('label');
+  profileLabel.textContent = 'Profile to expose';
+  profileLabel.style.cssText = 'display: block; font-size: 13px; margin-bottom: 4px;';
+  profileGroup.appendChild(profileLabel);
+  profileSelect = document.createElement('select');
+  profileSelect.style.cssText = 'padding: 4px 8px; font-size: 13px;';
+  const profileOptions = mcpState.profiles.length ? mcpState.profiles : [mcpState.profile];
+  for (const p of profileOptions) {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = p;
+    if (p === mcpState.profile) opt.selected = true;
+    profileSelect.appendChild(opt);
+  }
+  profileSelect.addEventListener('change', async (e) => {
+    try {
+      const res = await api.mcp?.setConfig?.({ profile: e.target.value });
+      if (res?.success) mcpState = res.state;
+    } catch { /* ignore */ }
+    syncUI();
+  });
+  profileGroup.appendChild(profileSelect);
+  const profileHelp = document.createElement('p');
+  profileHelp.className = 'help-text';
+  profileHelp.style.cssText = 'margin-top: 4px; font-size: 12px;';
+  profileHelp.textContent = 'Which Peek profile\'s datastore the MCP server reads. Defaults to "default" (prod data).';
+  profileGroup.appendChild(profileHelp);
+  mcpGroup.appendChild(profileGroup);
+
+  // "Allow writes" checkbox — OFF by default. Checking opts in to
+  // mutating tools. Framed positively so the safe state is the
+  // unchecked one and the destructive action requires an explicit add.
+  const allowWritesGroup = createCheckbox(
+    'Allow writes',
+    !mcpState.readonly,
+    async (newVal) => {
+      try {
+        const res = await api.mcp?.setConfig?.({ readonly: !newVal });
+        if (res?.success) mcpState = res.state;
+      } catch { /* ignore */ }
+      syncUI();
+    },
+    { helpText: 'Exposes the create / update / delete / tag / complete-task / record-event tools. Off by default — querying always works.' },
+  );
+  allowWritesGroup.style.marginLeft = '24px';
+  allowWritesInput = allowWritesGroup.querySelector('input[type="checkbox"]');
+  mcpGroup.appendChild(allowWritesGroup);
+
+  // Destructive-action warning — red treatment. Shown only when writes
+  // are enabled.
+  const readonlyWarning = document.createElement('p');
+  readonlyWarning.style.cssText = 'margin: 4px 0 0 24px; padding: 8px 12px; font-size: 12px; color: #ff8080; background: rgba(220, 53, 53, 0.10); border-left: 3px solid #d44c4c; border-radius: 4px; line-height: 1.4; font-weight: 500;';
+  readonlyWarning.innerHTML = '<strong>Warning:</strong> writes are enabled. Any connected agent can create, update, tag, and <strong>permanently delete</strong> your Peek items. Only do this if you trust every agent that will connect.';
+  mcpGroup.appendChild(readonlyWarning);
+  const renderReadonlyWarning = () => {
+    readonlyWarning.style.display = (mcpState.enabled && !mcpState.readonly) ? 'block' : 'none';
+  };
+
+  // Status line + Open link
+  const statusRow = document.createElement('div');
+  statusRow.style.cssText = 'margin-left: 24px; margin-top: 8px; font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 8px;';
+  statusLine = document.createElement('span');
+  statusRow.appendChild(statusLine);
+  const openLink = document.createElement('a');
+  openLink.textContent = 'Open';
+  openLink.href = '#';
+  openLink.style.cssText = 'cursor: pointer; text-decoration: underline;';
+  openLink.addEventListener('click', async (e) => {
+    e.preventDefault();
+    try { await api.shell?.openPath?.(mcpState.settingsPath); } catch { /* ignore */ }
+  });
+  statusRow.appendChild(openLink);
+  mcpGroup.appendChild(statusRow);
+
+  syncUI();
+
+  container.appendChild(mcpGroup);
+  return container;
+};
+
 // Render themes settings
 const renderThemesSettings = async () => {
   const container = document.createElement('div');
@@ -3868,6 +4023,29 @@ const init = async () => {
   });
 
   contentArea.appendChild(datastoreSection);
+
+  // Add Integrations section (MCP server toggle + future external-tool wiring)
+  const integrationsNav = document.createElement('a');
+  integrationsNav.className = 'nav-item';
+  integrationsNav.textContent = 'Integrations';
+  integrationsNav.dataset.section = 'integrations';
+  integrationsNav.addEventListener('click', () => showSection('integrations'));
+  sidebarNav.appendChild(integrationsNav);
+
+  const integrationsSection = document.createElement('div');
+  integrationsSection.className = 'section';
+  integrationsSection.id = 'section-integrations';
+
+  const integrationsSectionTitle = document.createElement('h2');
+  integrationsSectionTitle.className = 'section-title';
+  integrationsSectionTitle.textContent = 'Integrations';
+  integrationsSection.appendChild(integrationsSectionTitle);
+
+  renderIntegrationsSettings().then(content => {
+    integrationsSection.appendChild(content);
+  });
+
+  contentArea.appendChild(integrationsSection);
 
   // Add Diagnostics section (inline pane)
   const diagnosticNav = document.createElement('a');

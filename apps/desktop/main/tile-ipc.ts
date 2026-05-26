@@ -41,6 +41,7 @@ import {
   getDebugFlags,
   onDebugFlagsChange,
 } from './debug-flag.js';
+import { getMcpStatus, setMcpConfig } from './mcp-config.js';
 import { publishCapabilityViolation } from './tile-violations.js';
 import { getFeatureRegistry } from './feature-startup.js';
 import { getAtprotoSource } from './feature-startup.js';
@@ -6877,6 +6878,49 @@ export function registerTileIpcHandlers(): void {
   // it — so this isn't a write-amp risk.
   onDebugFlagsChange((state) => {
     publish('system', 'peek:debug:changed', state);
+  });
+
+  // ── tile:mcp:status / tile:mcp:set-enabled ──────────────────────────
+  //
+  // Read/write the `mcpServers.peek` entry in ~/.claude/settings.json.
+  // Backs the Settings → Diagnostics → "MCP server" toggle. Off by
+  // default — the entry only exists after the user opts in.
+  //
+  // trustedBuiltin only: writing user config files is not a surface
+  // exposed to third-party tiles.
+
+  registerTileIpc('tile:mcp:status', { mode: 'handle' }, (event, args: { token: string }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'mcp', 'tile:mcp:status', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:mcp:status' };
+    }
+    return { success: true, state: getMcpStatus() };
+  });
+
+  registerTileIpc('tile:mcp:set-config', { mode: 'handle' }, (event, args: {
+    token: string;
+    enabled?: boolean;
+    profile?: string;
+    readonly?: boolean;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'mcp', 'tile:mcp:set-config', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:mcp:set-config' };
+    }
+    try {
+      const patch: { enabled?: boolean; profile?: string; readonly?: boolean } = {};
+      if (typeof args.enabled === 'boolean') patch.enabled = args.enabled;
+      if (typeof args.profile === 'string') patch.profile = args.profile;
+      if (typeof args.readonly === 'boolean') patch.readonly = args.readonly;
+      const state = setMcpConfig(patch);
+      return { success: true, state };
+    } catch (err) {
+      return { success: false, error: (err as Error)?.message ?? String(err) };
+    }
   });
 
   DEBUG && console.log('[tile-ipc] All tile IPC handlers registered');

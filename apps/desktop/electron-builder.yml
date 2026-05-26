@@ -44,6 +44,11 @@ files:
   # Exclude development/test directories
   - "!apps/desktop/tests"
   - "!apps/desktop/tests/**"
+  # MCP server: ship the runtime files only, not its colocated dev artifacts.
+  # (the rest of mcp-server/ goes into asar.unpacked — see asarUnpack below)
+  - "!apps/desktop/features/mcp-server/*.test.js"
+  - "!apps/desktop/features/mcp-server/PLAN.md"
+  - "!apps/desktop/features/mcp-server/run.sh"
   - "!notes"
   - "!notes/**"
   - "!docs"
@@ -85,6 +90,17 @@ asarUnpack:
   # peek-cli is invoked by an external `node` process via DE keyboard
   # shortcuts; node can't read from inside app.asar, so unpack it.
   - "scripts/peek-cli.mjs"
+  # MCP server is spawned by external MCP clients (Claude Code etc.)
+  # via Electron-as-Node; the launcher exec's it via fs path, so it
+  # can't live inside app.asar. See Contents/Resources/peek-mcp.
+  - "apps/desktop/features/mcp-server/**/*"
+
+# Files copied into Contents/Resources/ verbatim (not packed in asar).
+extraResources:
+  # Bundled MCP launcher — gives external MCP clients a stable absolute
+  # path: /Applications/Peek.app/Contents/Resources/peek-mcp
+  - from: "apps/desktop/scripts/peek-mcp"
+    to: "peek-mcp"
 
 # macOS specific
 mac:
