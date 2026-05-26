@@ -8,11 +8,12 @@
  *     through to importers without any call-site changes — every read of
  *     `DEBUG` evaluates the current value.
  *
- *   - `_devTools`: whether new BrowserWindows are created with
- *     `webPreferences.devTools: true`. Consulted by ipc.ts and the tile
- *     launcher at window-creation time. Toggling at runtime only affects
- *     windows opened AFTER the toggle — Electron does not allow flipping
- *     devTools on an existing window.
+ *   - `_devTools`: whether the Cmd+Alt+I / Ctrl+Shift+I keyboard shortcut
+ *     opens devtools on the focused window. Every window is created with
+ *     `webPreferences.devTools: true` so the capability is always present;
+ *     this flag gates the OPEN action so toggling it takes effect on any
+ *     window — including ones already open. Consulted by the
+ *     `before-input-event` handler in entry.ts.
  *
  * The module deliberately has no Electron / datastore imports. The caller
  * (boot path in entry.ts / ipc.ts) reads persisted state and calls
@@ -32,7 +33,7 @@
  */
 export let DEBUG: boolean = !!process.env.DEBUG;
 
-/** DevTools enable for NEW BrowserWindows. */
+/** Whether the devtools keyboard shortcut is armed. */
 let _devTools: boolean = false;
 
 /** Change listeners — wired by ipc.ts to broadcast + persist on flip. */
@@ -50,7 +51,7 @@ export function getDebugFlags(): DebugFlagsState {
   return { verbose: DEBUG, devtools: _devTools };
 }
 
-/** Whether new BrowserWindows should be created with devTools enabled. */
+/** Whether the devtools keyboard shortcut should open devtools when pressed. */
 export function isDevToolsEnabled(): boolean {
   return _devTools;
 }
@@ -69,9 +70,9 @@ export function setDebug(v: boolean): void {
 }
 
 /**
- * Set the devTools-for-new-windows flag. Idempotent. Existing windows are
- * not affected — Electron's `webPreferences.devTools` is fixed at window
- * creation. The toggle takes effect on the next window opened.
+ * Set the devtools-shortcut-armed flag. Idempotent. Takes effect immediately
+ * on every window — windows are always built with the devTools capability,
+ * and this flag only gates whether the keyboard shortcut opens them.
  */
 export function setDevTools(v: boolean): void {
   if (_devTools === v) return;

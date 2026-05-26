@@ -260,10 +260,16 @@ export function buildRestoreBoundsOptions(
 /**
  * Sanitize params to only include serializable values.
  * Mirrors the logic in ipc.ts window-list handler.
+ *
+ * Also strips devtools-open flags (`openDevTools`, `detachedDevTools`) so a
+ * window the user happened to have devtools open on at quit time doesn't
+ * auto-reopen devtools on restore. Devtools state is intentionally not
+ * persisted — it's a transient diagnostic surface.
  */
 function sanitizeParams(params: Record<string, unknown>): Record<string, unknown> {
   const safe: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(params)) {
+    if (key === 'openDevTools' || key === 'detachedDevTools') continue;
     const type = typeof value;
     if (type === 'string' || type === 'number' || type === 'boolean' || value === null) {
       safe[key] = value;
@@ -1026,7 +1032,12 @@ export async function restoreSessionSnapshot(
       // Note: role and escapeMode are preserved — they're semantic properties that
       // describe how the window should behave (e.g., ESC handling for extension windows).
       const cleanParams: Record<string, unknown> = {};
-      const stripKeys = new Set(['x', 'y', 'width', 'height', 'address', 'transient', 'parentWindowId', 'skipTracking']);
+      // openDevTools / detachedDevTools: a window the user happened to have
+      // devtools open on at quit time should not auto-reopen devtools on
+      // restore. Devtools is a transient diagnostic surface, not part of the
+      // window's persistent state. Also strips them from snapshots saved
+      // before this filter was added on the save side.
+      const stripKeys = new Set(['x', 'y', 'width', 'height', 'address', 'transient', 'parentWindowId', 'skipTracking', 'openDevTools', 'detachedDevTools']);
       for (const [key, value] of Object.entries(descriptor.params)) {
         if (!stripKeys.has(key)) {
           cleanParams[key] = value;

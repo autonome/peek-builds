@@ -580,7 +580,7 @@ const init = async () => {
   // 3b. Register built-in commands
   api.commands.register({
     name: 'devtools',
-    description: 'Open devtools for last active content window',
+    description: 'Open DevTools on the focused window',
     execute: async () => {
       const result = await api.window.devtools();
       if (result.success) {

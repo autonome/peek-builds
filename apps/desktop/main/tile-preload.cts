@@ -919,8 +919,10 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
-     * Open devtools (detached) on the last-focused content window
-     * (http/https). With an explicit id, opens on that window.
+     * Open devtools (detached) on a target window. Resolution order:
+     *   1. explicit id, if provided
+     *   2. last-focused content (http/https) window
+     *   3. last-focused visible window of any kind
      * Strict-only — requires trustedBuiltin (devtools is a developer
      * surface).
      */

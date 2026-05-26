@@ -3446,8 +3446,15 @@ export function registerTileIpcHandlers(): void {
 
   // ── tile:window:devtools ─────────────────────────────────────────
   //
-  // Open devtools (detached) on the last-focused content window
-  // (http/https). With an explicit id, opens devtools on that window.
+  // Open devtools (detached) on a target window. Resolution order:
+  //   1. args.id if provided
+  //   2. the last-focused content (http/https) window
+  //   3. the last-focused visible window of any kind
+  // Step 3 covers page-hosts (peek://app/page/?url=...), settings, and any
+  // other peek:// surface — without it, `view devtools` from the cmd palette
+  // would fail with "No content window available" because page-hosts are not
+  // http/https top-level URLs.
+  //
   // trustedBuiltin only — devtools is a developer surface; third-party
   // tiles must not trigger it on arbitrary windows. Replaces legacy
   // `window-devtools` ipcMain handler.
@@ -3462,9 +3469,9 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'trustedBuiltin required for tile:window:devtools' };
     }
     try {
-      const targetId = args.id ?? getLastContentWindowId();
+      const targetId = args.id ?? getLastContentWindowId() ?? getLastFocusedVisibleWindowId();
       if (!targetId) {
-        return { success: false, error: 'No content window available' };
+        return { success: false, error: 'No focused window available' };
       }
       const win = getLiveWindow(targetId);
       if (!win) {

@@ -123,6 +123,7 @@ import { ensureLinuxDesktopInstall, ensureLinuxCliAlias } from './desktop-instal
 import { initRendererLog } from './renderer-log.js';
 import { initMainLog } from './main-log.js';
 import { DEBUG } from './config.js';
+import { isDevToolsEnabled } from './debug-flag.js';
 
 // Early diagnostic logging for URL handling (writes to /tmp/ to avoid userData path issues)
 try {
@@ -373,6 +374,32 @@ app.on('web-contents-created', (_event, contents) => {
       }
     }
   }
+
+  // DevTools shortcut: Cmd+Alt+I (mac) / Ctrl+Shift+I (linux/win). Gated by
+  // the runtime debug toggle (Settings → Diagnostics). Every window is
+  // created with `webPreferences.devTools: true`, so this handler can open
+  // devtools on any focused window — including ones that existed before the
+  // user flipped the toggle, which the previous boot-time gate could not.
+  //
+  // Match on `input.code` (physical key) not `input.key` — on macOS,
+  // holding Option transforms `key` (Option+I → 'ˆ'), so matching on `key`
+  // would never fire for the mac chord.
+  contents.on('before-input-event', (_e, input) => {
+    if (input.type !== 'keyDown' || input.code !== 'KeyI') return;
+    const isMacShortcut = process.platform === 'darwin' && input.meta && input.alt && !input.control && !input.shift;
+    const isPcShortcut = process.platform !== 'darwin' && input.control && input.shift && !input.meta && !input.alt;
+    if (!isMacShortcut && !isPcShortcut) return;
+    if (!isDevToolsEnabled()) {
+      console.log(`[devtools-shortcut] ignored — toggle is off (webContents ${contents.id})`);
+      return;
+    }
+    console.log(`[devtools-shortcut] toggling devtools on webContents ${contents.id} (was open: ${contents.isDevToolsOpened()})`);
+    if (contents.isDevToolsOpened()) {
+      contents.closeDevTools();
+    } else {
+      contents.openDevTools({ mode: 'detach' });
+    }
+  });
 
   // Default-deny window-open chokepoint. Every top-level webContents and
   // every webview guest gets this fallback handler installed at creation
@@ -892,7 +919,20 @@ const onReady = async () => {
         submenu: [
           { label: 'Close Window', accelerator: 'CommandOrControl+W', click: () => {
               const win = BrowserWindow.getFocusedWindow();
-              if (win) closeOrHideWindow(win.id);
+              if (!win) return;
+              // Devtools (detached) isn't a BrowserWindow — it's a child of
+              // the parent's webContents. When the user focuses devtools and
+              // hits Cmd+W, getFocusedWindow() still returns the parent.
+              // Detect via "devtools open AND parent webContents not
+              // focused" — `isDevToolsFocused()` alone has been observed to
+              // return false in Electron 40 when devtools is the OS-focused
+              // window. Route to closeDevTools so the parent survives.
+              const wc = win.webContents;
+              if (wc.isDevToolsOpened() && (wc.isDevToolsFocused() || !wc.isFocused())) {
+                wc.closeDevTools();
+                return;
+              }
+              closeOrHideWindow(win.id);
           }},
           { role: 'minimize' },
         ]
