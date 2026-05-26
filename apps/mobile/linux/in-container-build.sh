@@ -7,7 +7,10 @@ cd /work/apps/mobile
 
 if [ ! -d node_modules ]; then
   echo "[in-container] Installing npm deps..."
-  npm install --silent
+  # --no-save / --no-package-lock: don't mutate root yarn.lock or write a
+  # package-lock.json at the workspace root (npm walks up to the workspaces
+  # parent and would otherwise rewrite the root lockfile in npm format).
+  npm install --silent --no-save --no-package-lock
 fi
 
 echo "[in-container] Building frontend (vite -> dist/)..."

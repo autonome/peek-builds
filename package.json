@@ -86,6 +86,7 @@
     "mobile:android:dev": "cd apps/mobile/src-tauri && cargo tauri android dev",
     "mobile:android:build": "cd apps/mobile/src-tauri && cargo tauri android build",
     "mobile:linux:build": "apps/mobile/build-linux.sh",
+    "mobile:linux:install": "apps/mobile/linux/install.sh",
     "//-- Server (webhook API backend in apps/server) --//": "",
     "server:start": "cd apps/server && npm start",
     "server:dev": "cd apps/server && npm run dev",
