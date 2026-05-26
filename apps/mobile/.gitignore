@@ -25,6 +25,7 @@ dist-ssr
 
 # Rust/Cargo build output
 src-tauri/target/
+src-tauri/target-linux-musl/
 peek-core/target/
 
 # Xcode build output

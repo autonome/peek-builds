@@ -1,0 +1,21 @@
+# Build environment for the Linux aarch64 (Alpine/musl) target of peek-mobile.
+# Used by apps/mobile/build-linux.sh via podman.
+#
+# Why Alpine: matches postmarketOS userland — the eventual install target.
+# Why aarch64: host (Asahi) and target (Pixel 3a / sargo) both aarch64, so no QEMU.
+
+FROM docker.io/alpine:edge
+
+RUN apk update && apk add --no-cache \
+    bash \
+    alpine-sdk \
+    rust cargo \
+    nodejs npm \
+    webkit2gtk-4.1-dev \
+    gtk+3.0-dev \
+    libsoup3-dev \
+    librsvg-dev \
+    openssl-dev \
+    pkgconf
+
+WORKDIR /work

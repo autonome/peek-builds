@@ -3261,6 +3261,21 @@ pub fn run() {
                     }
                 });
             }
+
+            // Linux/Phosh: requesting fullscreen via tauri.conf at window create
+            // time causes a left-shifted layout on Phosh (xdg_toplevel.set_fullscreen
+            // issued before the surface is configured). Delay the request until after
+            // the window is up.
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(win) = _app.get_webview_window("main") {
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        let _ = win.set_fullscreen(true);
+                    });
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

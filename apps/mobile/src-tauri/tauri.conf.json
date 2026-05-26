@@ -12,8 +12,8 @@
     "windows": [
       {
         "title": "Peek Save",
-        "width": 800,
-        "height": 600,
+        "width": 540,
+        "height": 1110,
         "disableInputAccessoryView": true,
         "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1"
       }

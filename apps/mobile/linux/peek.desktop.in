@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Peek
+Comment=Web user agent
+Exec=@PEEK_BIN@
+Terminal=false
+Categories=Network;WebBrowser;
+StartupNotify=true
+X-GNOME-Autostart-enabled=true
