@@ -7,7 +7,7 @@
   "scripts": {
     "//-- Build --//": "",
     "check:native": "node ../../scripts/check-native-modules.js",
-    "build": "../../scripts/timed.sh sh -c 'node ../../packages/schema/codegen.js && tsc -p tsconfig.json && cp -r main/chrome-api-polyfills dist/main/'",
+    "build": "../../scripts/timed.sh sh -c 'node ../../packages/schema/codegen.js && tsc -p tsconfig.json && cp -r main/chrome-api-polyfills dist/main/ && node ../../scripts/patch-chrome-extensions.js'",
     "build:watch": "tsc -p tsconfig.json --watch",
     "build:electron": "cd ../.. && ./scripts/timed.sh electron-builder --dir",
     "build:electron:install": "cd ../.. && ./scripts/timed.sh sh -c 'electron-builder --dir && rm -rf /Applications/Peek.app && cp -R out/mac-arm64/Peek.app /Applications/'",
