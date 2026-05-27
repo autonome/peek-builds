@@ -75,3 +75,6 @@ package.js
 protocol-imports.diff
 test/
 tmp/
+
+# Per-developer MCP server configs (machine-local absolute paths)
+/.mcp.json

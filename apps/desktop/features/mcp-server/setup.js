@@ -10,11 +10,18 @@
  *   - Bundled: { command: "<Peek.app>/Contents/Resources/peek-mcp" }
  *   - Dev:     { command: "node", args: ["--experimental-sqlite", "<server.js>"] }
  *
+ * Scope is mandatory — every scaffolded entry confines its session to
+ * items tagged <scope> or <scope>:*. Writes default to OFF; pass
+ * --writes to enable mutating tools.
+ *
  * Usage:
- *   node setup.js                          # global (~/.claude/settings.json)
- *   node setup.js --project                # <cwd>/.claude/settings.json
- *   node setup.js --mcp-json               # <cwd>/.mcp.json
- *   node setup.js --print                  # print snippet, don't write
+ *   node setup.js --scope <tag>                       # global (~/.claude/settings.json)
+ *   node setup.js --scope <tag> --project             # <cwd>/.claude/settings.json
+ *   node setup.js --scope <tag> --mcp-json            # <cwd>/.mcp.json
+ *   node setup.js --scope <tag> --writes              # opt into mutating tools
+ *   node setup.js --scope <tag> --profile <name>      # non-default Peek profile
+ *   node setup.js --scope <tag> --force               # overwrite differing entry
+ *   node setup.js --scope <tag> --print               # print snippet, don't write
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -49,14 +56,14 @@ function detectBundledLauncher() {
 
 // --- DB path detection ---
 
-function findDbPath() {
+function findDbPath(profile = 'default') {
   if (process.env.PEEK_DB_PATH && existsSync(process.env.PEEK_DB_PATH)) {
     return process.env.PEEK_DB_PATH;
   }
   const candidates = [
-    join(homedir(), 'Library', 'Application Support', 'Peek', 'default', 'datastore.sqlite'),
-    join(homedir(), '.config', 'Peek', 'default', 'datastore.sqlite'),
-    join(homedir(), '.local', 'share', 'Peek', 'default', 'datastore.sqlite'),
+    join(homedir(), 'Library', 'Application Support', 'Peek', profile, 'datastore.sqlite'),
+    join(homedir(), '.config', 'Peek', profile, 'datastore.sqlite'),
+    join(homedir(), '.local', 'share', 'Peek', profile, 'datastore.sqlite'),
   ];
   for (const path of candidates) {
     if (existsSync(path)) return path;
@@ -66,19 +73,38 @@ function findDbPath() {
 
 // --- Snippet builders ---
 
-function bundledSnippet(launcherPath, dbPath) {
-  return {
-    command: launcherPath,
-    env: { PEEK_DB_PATH: dbPath },
-  };
+function buildEnv(dbPath, { scope, readonly }) {
+  const env = { PEEK_DB_PATH: dbPath, PEEK_MCP_SCOPE_TAG: scope };
+  if (readonly) env.PEEK_MCP_READONLY = '1';
+  return env;
 }
 
-function devSnippet(serverPath, dbPath) {
+function bundledSnippet(launcherPath, dbPath, opts) {
+  return { command: launcherPath, env: buildEnv(dbPath, opts) };
+}
+
+function devSnippet(serverPath, dbPath, opts) {
   return {
     command: 'node',
     args: ['--experimental-sqlite', serverPath],
-    env: { PEEK_DB_PATH: dbPath },
+    env: buildEnv(dbPath, opts),
   };
+}
+
+function snippetsEqual(a, b) {
+  if (!a || !b) return false;
+  if (a.command !== b.command) return false;
+  const ag = a.args ?? [], bg = b.args ?? [];
+  if (ag.length !== bg.length) return false;
+  for (let i = 0; i < ag.length; i++) if (ag[i] !== bg[i]) return false;
+  const ae = a.env ?? {}, be = b.env ?? {};
+  const ak = Object.keys(ae).sort(), bk = Object.keys(be).sort();
+  if (ak.length !== bk.length) return false;
+  for (let i = 0; i < ak.length; i++) {
+    if (ak[i] !== bk[i]) return false;
+    if (ae[ak[i]] !== be[bk[i]]) return false;
+  }
+  return true;
 }
 
 // --- Settings file I/O ---
@@ -99,45 +125,97 @@ function writeJsonFile(path, data) {
 
 // --- Main ---
 
-function main() {
-  const argv = process.argv.slice(2);
-  const flag = (name) => argv.includes(name);
+function parseArgs(argv) {
+  const opts = { scope: '', profile: 'default', writes: false, force: false,
+                 print: false, project: false, mcpJson: false, help: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    switch (a) {
+      case '--scope':   opts.scope = argv[++i] || ''; break;
+      case '--profile': opts.profile = argv[++i] || 'default'; break;
+      case '--writes':  opts.writes = true; break;
+      case '--force':   opts.force = true; break;
+      case '--print':   opts.print = true; break;
+      case '--project': opts.project = true; break;
+      case '--mcp-json': opts.mcpJson = true; break;
+      case '--help':
+      case '-h':        opts.help = true; break;
+      default:
+        process.stderr.write(`Unknown argument: ${a}\n`);
+        process.exit(2);
+    }
+  }
+  return opts;
+}
 
-  const dbPath = findDbPath();
+const HELP = `Peek MCP setup — writes/updates the mcpServers.peek entry.
+
+Usage:
+  peek-mcp --install --scope <tag> [options]
+
+Options:
+  --scope <tag>     Confine the session to items tagged <tag> or <tag>:* (required)
+  --writes          Enable mutating tools (default: read-only)
+  --profile <name>  Peek profile to expose (default: "default")
+  --mcp-json        Write to <cwd>/.mcp.json (per-project, recommended)
+  --project         Write to <cwd>/.claude/settings.json
+  (no dest flag)    Write to ~/.claude/settings.json
+  --force           Overwrite an existing peek entry that differs
+  --print           Print the snippet to stdout, do not write
+`;
+
+function main() {
+  const opts = parseArgs(process.argv.slice(2));
+
+  if (opts.help) {
+    process.stdout.write(HELP);
+    return;
+  }
+
+  if (!opts.scope) {
+    process.stderr.write('Error: --scope <tag> is required.\n\n');
+    process.stderr.write(HELP);
+    process.exit(2);
+  }
+
+  const dbPath = findDbPath(opts.profile);
   if (!dbPath) {
-    process.stderr.write('Could not find Peek database.\n');
+    process.stderr.write(`Could not find Peek database for profile "${opts.profile}".\n`);
     process.stderr.write('Looked in:\n');
-    process.stderr.write('  ~/Library/Application Support/Peek/default/datastore.sqlite\n');
-    process.stderr.write('  ~/.config/Peek/default/datastore.sqlite\n');
-    process.stderr.write('  ~/.local/share/Peek/default/datastore.sqlite\n');
+    process.stderr.write(`  ~/Library/Application Support/Peek/${opts.profile}/datastore.sqlite\n`);
+    process.stderr.write(`  ~/.config/Peek/${opts.profile}/datastore.sqlite\n`);
+    process.stderr.write(`  ~/.local/share/Peek/${opts.profile}/datastore.sqlite\n`);
     process.stderr.write('\nSet PEEK_DB_PATH to override.\n');
     process.exit(1);
   }
 
   const launcher = detectBundledLauncher();
+  const snippetOpts = { scope: opts.scope, readonly: !opts.writes };
   const snippet = launcher
-    ? bundledSnippet(launcher, dbPath)
-    : devSnippet(resolve(__dirname, 'server.js'), dbPath);
+    ? bundledSnippet(launcher, dbPath, snippetOpts)
+    : devSnippet(resolve(__dirname, 'server.js'), dbPath, snippetOpts);
   const mode = launcher ? 'bundled' : 'dev';
 
-  if (flag('--print')) {
+  if (opts.print) {
     process.stdout.write(JSON.stringify({ mcpServers: { peek: snippet } }, null, 2) + '\n');
     return;
   }
 
-  // Pick destination.
   let settingsPath;
   let isMcpJson = false;
-  if (flag('--mcp-json')) {
+  if (opts.mcpJson) {
     settingsPath = join(process.cwd(), '.mcp.json');
     isMcpJson = true;
-  } else if (flag('--project')) {
+  } else if (opts.project) {
     settingsPath = join(process.cwd(), '.claude', 'settings.json');
   } else {
     settingsPath = join(homedir(), '.claude', 'settings.json');
   }
 
   process.stderr.write(`Peek MCP Setup (${mode})\n`);
+  process.stderr.write(`  Scope:    ${opts.scope} (and ${opts.scope}:*)\n`);
+  process.stderr.write(`  Writes:   ${opts.writes ? 'enabled' : 'OFF (read-only)'}\n`);
+  process.stderr.write(`  Profile:  ${opts.profile}\n`);
   process.stderr.write(`  Database: ${dbPath}\n`);
   if (launcher) {
     process.stderr.write(`  Launcher: ${launcher}\n`);
@@ -150,6 +228,14 @@ function main() {
   if (!settings.mcpServers) settings.mcpServers = {};
 
   const prev = settings.mcpServers.peek;
+  if (prev && !snippetsEqual(prev, snippet) && !opts.force) {
+    process.stderr.write('Refusing to overwrite existing mcpServers.peek entry.\n');
+    process.stderr.write(`Existing scope: ${prev.env?.PEEK_MCP_SCOPE_TAG || '(none)'}\n`);
+    process.stderr.write(`New scope:      ${opts.scope}\n`);
+    process.stderr.write('Pass --force to replace it.\n');
+    process.exit(1);
+  }
+
   settings.mcpServers.peek = snippet;
   writeJsonFile(settingsPath, settings);
 
@@ -160,7 +246,7 @@ function main() {
   }
   process.stderr.write(`\nRestart your MCP client (Claude Code: /mcp list) to pick up the new server.\n`);
   if (isMcpJson) {
-    process.stderr.write('Note: .mcp.json should be committed only if everyone on the project has Peek installed at the same path.\n');
+    process.stderr.write('Note: .mcp.json holds absolute machine-local paths; gitignore unless your team standardizes them.\n');
   }
 }
 

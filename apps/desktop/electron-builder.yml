@@ -101,6 +101,11 @@ extraResources:
   # path: /Applications/Peek.app/Contents/Resources/peek-mcp
   - from: "apps/desktop/scripts/peek-mcp"
     to: "peek-mcp"
+  # Convenience scaffolder. Wraps `peek-mcp --install --mcp-json --scope`
+  # so a user can drop into any project and write a scoped .mcp.json in
+  # one line: /Applications/Peek.app/Contents/Resources/peek-mcp-init <tag>
+  - from: "apps/desktop/scripts/peek-mcp-init"
+    to: "peek-mcp-init"
 
 # macOS specific
 mac:
