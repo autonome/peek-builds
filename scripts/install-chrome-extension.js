@@ -21,6 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import { extractCanonicalIdFromCrx } from './crx-canonical-id.mjs';
 
 const CRX_URL = (id) =>
   `https://clients2.google.com/service/update2/crx?response=redirect&prodversion=120.0.0&acceptformat=crx2,crx3&x=id%3D${id}%26installsource%3Dondemand%26uc`;
@@ -111,6 +112,33 @@ async function main() {
   }
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   console.log(`[install-chrome-extension] installed ${manifest.name} v${manifest.version}`);
+
+  // Derive the canonical Chrome extension ID from the CRX itself and stash
+  // it in a peek-managed sibling file (NOT inside the extension dir — keeps
+  // upstream source untouched). Compat layer reads this at extension load
+  // time to route cross-origin sendMessage fan-out requests faithfully:
+  // pages like account.proton.me hardcode 4 platform-specific extension IDs
+  // and race them; Chrome rejects all but the installed one as "no such
+  // extension". Without the canonical ID we don't know which is "ours".
+  try {
+    const canonicalId = extractCanonicalIdFromCrx(crxBuf);
+    if (canonicalId) {
+      const metaDir = path.dirname(destDir);
+      const metaPath = path.join(metaDir, '.peek-canonical-ids.json');
+      const dirName = path.basename(destDir);
+      let metaMap = {};
+      if (fs.existsSync(metaPath)) {
+        try { metaMap = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch { metaMap = {}; }
+      }
+      metaMap[dirName] = canonicalId;
+      fs.writeFileSync(metaPath, JSON.stringify(metaMap, null, 2) + '\n');
+      console.log(`[install-chrome-extension] canonical id ${canonicalId} recorded in ${path.relative(process.cwd(), metaPath)}`);
+    } else {
+      console.warn('[install-chrome-extension] could not derive canonical id from CRX (format unrecognized)');
+    }
+  } catch (err) {
+    console.warn('[install-chrome-extension] canonical id extraction failed:', err && err.message);
+  }
 }
 
 main().catch((err) => die(err.stack || err.message || String(err)));
