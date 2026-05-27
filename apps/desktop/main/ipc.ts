@@ -2352,9 +2352,14 @@ export function registerWindowHandlers(): void {
       // Set up DevTools if requested
       winDevtoolsConfig(win);
 
-      // Auto-open devtools for peek:// URLs in debug mode (not tests/headless)
-      // This helps debug extension windows
-      if (DEBUG && url.startsWith('peek://') && !isTestProfile() && !isHeadless()) {
+      // Auto-open devtools for peek:// URLs in CLI dev mode (DEBUG=1
+       // env, set by `yarn dev`). Previously keyed on the live mutable
+       // DEBUG export, which the Settings → Diagnostics → "Verbose
+       // logging" toggle could flip on — that conflated logging with
+       // auto-opening, fanning out devtools on every session-restored
+       // peek:// window. Env-only check keeps Verbose Logging purely a
+       // logging toggle.
+      if (process.env.DEBUG && url.startsWith('peek://') && !isTestProfile() && !isHeadless()) {
         win.webContents.openDevTools({ mode: 'detach', activate: false });
       }
 

@@ -618,15 +618,6 @@ app.on('web-contents-created', (_event, contents) => {
           }
         } catch { /* logging must never throw */ }
       });
-      contents.on('did-finish-load', () => {
-        const url = contents.getURL();
-        if (url.includes('proton.me') || url.includes('proton.dev')) {
-          if (!contents.isDevToolsOpened()) {
-            try { contents.openDevTools({ mode: 'detach', activate: false }); }
-            catch { /* devtools open is best-effort */ }
-          }
-        }
-      });
     }
   }
 });
