@@ -2,6 +2,38 @@
 
 A Peek feature (tile) that exposes Peek's data and capabilities via Model Context Protocol, enabling Claude Code and other MCP clients to query items, manage tasks, and interact with Peek programmatically.
 
+> ## Current state (as of 2026-05-27)
+>
+> The original plan below has shipped (Phases 1–3) and been extended. This summary captures behavior the design doc doesn't cover.
+>
+> ### Packaging + install
+> - Bundled launcher: `/Applications/Peek.app/Contents/Resources/peek-mcp` (Electron-as-Node, no system Node required). Dev mode falls through to `node --experimental-sqlite server.js`.
+> - CLI scaffolder: `peek-mcp --install [--scope <tag>] [--mcp-json] [--writes] [--profile <name>]`. Thin wrapper `peek-mcp-init <tag>` shipped at `Contents/Resources/peek-mcp-init` writes `<cwd>/.mcp.json`.
+> - In-app: Settings → Integrations → MCP server. Global toggle + scope tag + profile dropdown + Allow writes. (Per-project "Project scopes" subsection landed in `mcp-followups` bookmark; unverified — see peek item `2caccd6e`.)
+>
+> ### Scope tag (`PEEK_MCP_SCOPE_TAG`)
+> Hard-fences a session to items tagged `<scope>` or `<scope>:*`. Server-side enforcement in every tool dispatcher; bare shared tags (`todo`, `done`) are permitted, foreign namespaces (`other:*`) rejected on writes.
+>
+> ### Read-only mode (`PEEK_MCP_READONLY=1`)
+> Hides mutating tools from `tools/list` and rejects them on `tools/call`. Off by default — users must opt in via Settings → Allow writes.
+>
+> ### Dev/prod settings isolation
+> `mcp-config.ts` writes to `~/.claude/settings.json` **only** when packaged AND running the `default` profile. Dev builds and non-default profiles write to `<userData>/mcp-sandbox/claude-settings.json` instead, so a dev session can't trample the real Claude Code config. The Settings UI status line shows the active path.
+>
+> ### Drift self-exit
+> `server.js` runs `checkConfigDrift()` before each incoming JSON-RPC message. It walks `<cwd>/.mcp.json` → `<cwd>/.claude/settings.json` → `~/.claude/settings.json`, finds the first file with an `mcpServers.peek` entry, and compares its `env` to `process.env` for `PEEK_MCP_SCOPE_TAG`, `PEEK_MCP_READONLY`, `PEEK_DB_PATH`. On mismatch — or if the peek entry was removed from all known config paths — it logs to stderr and `process.exit(0)` so the client respawns with fresh env.
+>
+> Why: env is frozen at spawn. Without this check, settings changes mid-session silently went wrong. The check also masks the gap that Claude Code (the harness) doesn't restart MCP children on config-file change.
+>
+> **Tests using `McpClient` must isolate `HOME` and `cwd`** (`mkdtempSync` is the pattern in `server.test.js`) — otherwise the drift check finds the real user's `~/.claude/settings.json` and exits the process. The `McpClient` helper bakes this in.
+>
+> ### Restart-required UX
+> Two surfaces communicate that a settings change does NOT propagate to a running MCP client:
+> - **Settings UI banner.** After any save that changes the effective MCP snippet (enabled/profile/scope/readonly), a yellow info banner appears: *"Restart Claude Code to apply. The change is saved, but any MCP client already running won't pick it up until you fully quit and reopen it. Re-approving in /mcp is not enough."* Persists until dismissed; idempotent saves don't re-trigger.
+> - **`peek-mcp-init` post-write warning.** TTY bold/yellow text on stderr after the snippet is written, explicit that `/mcp` re-approval is insufficient and that the reinstall case has the same hazard (running child has the old binary).
+>
+> Original Phase-3 plan below stays for historical reference. The MCP feature is shipped — keep this doc updated as the surface evolves.
+
 ## Overview
 
 This is a background tile that starts an MCP server (stdio or HTTP/SSE transport). Claude Code connects to it as an MCP server in its config. The server exposes Peek's datastore, tags, and item operations as MCP tools and resources.
