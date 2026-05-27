@@ -125,6 +125,11 @@ const main = async () => {
   if (!result?.ok) {
     die(`daemon rejected verb: ${result?.error ?? 'unknown error'}`, 3);
   }
+  // For verbs that return data (debug-*), print it as JSON to stdout so it can
+  // be piped through jq / read by humans.
+  if (result.data !== undefined) {
+    process.stdout.write(JSON.stringify(result.data, null, 2) + '\n');
+  }
 };
 
 main().catch(err => die(err?.message ?? String(err)));

@@ -89,8 +89,17 @@ export async function startCliSocketServer(profile: string): Promise<void> {
           conn.write(JSON.stringify({ ok: false, error: 'bad json' }) + '\n');
           continue;
         }
-        const result = dispatch(msg);
-        conn.write(JSON.stringify(result) + '\n');
+        // dispatch is async (some verbs evaluate JS in a webContents).
+        // Per-line response order is preserved because the connection is a
+        // single client and we await before reading the next message... but
+        // here we read the buffer in a loop. For now, dispatches from the
+        // same connection fire in parallel — fine for `peek-cli` which
+        // sends one request per connection.
+        Promise.resolve(dispatch(msg)).then(result => {
+          conn.write(JSON.stringify(result) + '\n');
+        }).catch(err => {
+          conn.write(JSON.stringify({ ok: false, error: `dispatch threw: ${(err as Error)?.message ?? String(err)}` }) + '\n');
+        });
       }
     });
     conn.on('error', () => {

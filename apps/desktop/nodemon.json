@@ -1,0 +1,18 @@
+{
+  "comment": "Used by `yarn dev:hot` (and scripts/dev-popup.sh). Watches sources that drive the main process — restarts the electron child when any of them change. Ignores compiled outputs to avoid restart loops, since `yarn build` writes to dist/ on each cycle.",
+  "watch": [
+    "main",
+    "../../packages",
+    "../../scripts/patch-chrome-extensions.js"
+  ],
+  "ignore": [
+    "dist",
+    "node_modules",
+    "tests",
+    "**/*.test.ts",
+    "**/*.test.js",
+    "**/generated/**"
+  ],
+  "ext": "ts,cts,js,cjs,mjs,json,html",
+  "delay": 300
+}
