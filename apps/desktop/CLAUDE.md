@@ -57,6 +57,21 @@ See "Page View Canvas Architecture" in `DEVELOPMENT.md` for the canonical descri
 
 ---
 
+## Chrome extensions: compat layer only — never modify imported source
+
+Imported chrome extensions under `apps/desktop/chrome-extensions/<ext>/` are upstream CRX downloads (refreshed by `scripts/install-chrome-extension.js`). **Never** edit their source directly — any in-place change is blown away on refresh, and Proton-/extension-specific patches make the integration fragile instead of generalizing.
+
+When an extension exposes a gap (a Chrome API that Electron doesn't fully implement, an injection point that Electron doesn't auto-fire, etc.), the fix always lives in our compat layer:
+
+- `apps/desktop/main/chrome-api-polyfills/*` — preload, BG SW shims, bridge window
+- `apps/desktop/main/chrome-extensions.ts` — loader, lookups, match-pattern helpers
+- `apps/desktop/main/entry.ts` — webview lifecycle hooks (dom-ready content-script injection, CDP polyfill registration)
+- `scripts/patch-chrome-extensions.js` — build-step compat injection (bounded by `PEEK_BG_SHIMS_BEGIN/END` sentinels, idempotent — this IS the compat layer, expressed as a generated prefix on `background.js`)
+
+Test for "is this a compat-layer fix?" — would the same code help a hypothetical *different* extension with the same Chrome API gap? If yes, compat layer. If it only helps one extension and references its internals (sender labels, hardcoded version strings, payload shapes), find the underlying Chrome API gap instead.
+
+---
+
 ## asar / electron-builder Quirks
 
 Three categories of files must live in `asar.unpacked` (see `electron-builder.yml`):
