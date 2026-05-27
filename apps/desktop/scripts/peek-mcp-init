@@ -23,7 +23,9 @@ Options:
   --profile <name>  Peek profile to expose (default: "default")
   --force           Overwrite an existing peek entry that differs
 
-After running, restart Claude Code in this directory.
+After running, fully quit and reopen Claude Code in this directory.
+Re-approving the /mcp prompt is not enough — the running peek-mcp child
+must be respawned to pick up the new env.
 EOF
   exit 0
 fi

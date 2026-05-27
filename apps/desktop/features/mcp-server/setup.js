@@ -244,9 +244,17 @@ function main() {
   } else {
     process.stderr.write('Added mcpServers.peek entry.\n');
   }
-  process.stderr.write(`\nRestart your MCP client (Claude Code: /mcp list) to pick up the new server.\n`);
+  const isTty = process.stderr.isTTY;
+  const bold = isTty ? '\x1b[1m' : '';
+  const yellow = isTty ? '\x1b[33m' : '';
+  const reset = isTty ? '\x1b[0m' : '';
+  process.stderr.write(`\n${yellow}${bold}=> Fully quit and reopen Claude Code in this directory.${reset}\n`);
+  process.stderr.write(`   Re-approving the /mcp prompt does NOT respawn the peek-mcp child;\n`);
+  process.stderr.write(`   only a full client restart picks up the new env.\n`);
+  process.stderr.write(`   (Same applies if you just reinstalled Peek.app — the running child\n`);
+  process.stderr.write(`   still has the old launcher binary.)\n`);
   if (isMcpJson) {
-    process.stderr.write('Note: .mcp.json holds absolute machine-local paths; gitignore unless your team standardizes them.\n');
+    process.stderr.write('\nNote: .mcp.json holds absolute machine-local paths; gitignore unless your team standardizes them.\n');
   }
 }
 

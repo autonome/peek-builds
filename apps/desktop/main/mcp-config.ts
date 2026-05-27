@@ -13,10 +13,20 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CLAUDE_SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
 
 // Profile directory base. macOS-only for now; mirrors entry.ts profile layout.
 const PROFILES_BASE = path.join(os.homedir(), 'Library', 'Application Support', 'Peek');
+
+// Only packaged + default profile writes to the real Claude config. Dev
+// builds and non-default profiles get a sandbox path inside their own
+// userData dir so they can't trample a user's real ~/.claude/settings.json.
+function settingsPath(): string {
+  const activeProfile = path.basename(app.getPath('userData'));
+  if (app.isPackaged && activeProfile === 'default') {
+    return path.join(os.homedir(), '.claude', 'settings.json');
+  }
+  return path.join(app.getPath('userData'), 'mcp-sandbox', 'claude-settings.json');
+}
 
 interface McpSnippet {
   command: string;
@@ -117,17 +127,17 @@ function snippetsMatch(a: McpSnippet, b: McpSnippet): boolean {
 
 function readSettings(): Record<string, unknown> {
   try {
-    if (!fs.existsSync(CLAUDE_SETTINGS_PATH)) return {};
-    return JSON.parse(fs.readFileSync(CLAUDE_SETTINGS_PATH, 'utf-8'));
+    if (!fs.existsSync(settingsPath())) return {};
+    return JSON.parse(fs.readFileSync(settingsPath(), 'utf-8'));
   } catch {
     return {};
   }
 }
 
 function writeSettings(data: Record<string, unknown>): void {
-  fs.mkdirSync(path.dirname(CLAUDE_SETTINGS_PATH), { recursive: true });
+  fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
   fs.writeFileSync(
-    CLAUDE_SETTINGS_PATH,
+    settingsPath(),
     JSON.stringify(data, null, 2) + '\n',
     'utf-8',
   );
@@ -148,7 +158,7 @@ export function getMcpStatus(): McpStatus {
   const expected = buildSnippet(inferred);
   let configuredAt: number | null = null;
   if (configured) {
-    try { configuredAt = fs.statSync(CLAUDE_SETTINGS_PATH).mtimeMs; } catch {}
+    try { configuredAt = fs.statSync(settingsPath()).mtimeMs; } catch {}
   }
   return {
     enabled: !!configured && snippetsMatch(configured, expected),
@@ -157,10 +167,139 @@ export function getMcpStatus(): McpStatus {
     scopeTag: inferred.scopeTag,
     expectedCommand: expected.command,
     configuredCommand: configured?.command ?? null,
-    settingsPath: CLAUDE_SETTINGS_PATH,
+    settingsPath: settingsPath(),
     profiles: listProfiles(),
     configuredAt,
   };
+}
+
+// ── Per-project scope scaffolding ────────────────────────────────────
+//
+// Backs the Settings UI's "Project scopes" affordance. Writes
+// individual project .mcp.json files (same shape peek-mcp-init writes)
+// and keeps a registry inside the active profile's userData dir so the
+// UI can re-list, edit, and remove them later.
+
+interface ScopedProjectEntry {
+  path: string;
+  addedAt: number;
+}
+
+export interface ScopedProject {
+  path: string;
+  exists: boolean;
+  scopeTag: string;
+  profile: string;
+  readonly: boolean;
+  configuredAt: number | null;
+}
+
+function registryPath(): string {
+  return path.join(app.getPath('userData'), 'mcp-scoped-projects.json');
+}
+
+function readRegistry(): ScopedProjectEntry[] {
+  try {
+    const data = JSON.parse(fs.readFileSync(registryPath(), 'utf-8'));
+    if (!Array.isArray(data)) return [];
+    return data.filter((e) => e && typeof e.path === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function writeRegistry(entries: ScopedProjectEntry[]): void {
+  fs.mkdirSync(path.dirname(registryPath()), { recursive: true });
+  fs.writeFileSync(registryPath(), JSON.stringify(entries, null, 2) + '\n', 'utf-8');
+}
+
+export function listScopedProjects(): ScopedProject[] {
+  return readRegistry().map((entry) => {
+    const mcpJsonPath = path.join(entry.path, '.mcp.json');
+    if (!fs.existsSync(mcpJsonPath)) {
+      return { path: entry.path, exists: false, scopeTag: '', profile: '', readonly: true, configuredAt: null };
+    }
+    try {
+      const data = JSON.parse(fs.readFileSync(mcpJsonPath, 'utf-8')) as { mcpServers?: Record<string, McpSnippet> };
+      const snippet = data.mcpServers?.peek;
+      if (!snippet) {
+        return { path: entry.path, exists: false, scopeTag: '', profile: '', readonly: true, configuredAt: null };
+      }
+      const inferred = inferFromConfigured(snippet);
+      let configuredAt: number | null = null;
+      try { configuredAt = fs.statSync(mcpJsonPath).mtimeMs; } catch {}
+      return { path: entry.path, exists: true, scopeTag: inferred.scopeTag, profile: inferred.profile, readonly: inferred.readonly, configuredAt };
+    } catch {
+      return { path: entry.path, exists: false, scopeTag: '', profile: '', readonly: true, configuredAt: null };
+    }
+  });
+}
+
+export function scaffoldProject(opts: { dirPath: string; scopeTag: string; profile?: string; readonly?: boolean }): { success: boolean; error?: string; path?: string } {
+  const dirPath = opts.dirPath;
+  if (!dirPath || !path.isAbsolute(dirPath)) {
+    return { success: false, error: 'Absolute directory path required.' };
+  }
+  try {
+    if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+      return { success: false, error: 'Directory does not exist.' };
+    }
+  } catch (err) {
+    return { success: false, error: (err as Error)?.message ?? 'Cannot access directory.' };
+  }
+  const scopeTag = (opts.scopeTag || '').trim();
+  if (!scopeTag) {
+    return { success: false, error: 'Scope tag is required (no unscoped projects).' };
+  }
+  const profile = opts.profile || defaultProfile();
+  const readonly = opts.readonly ?? true;
+  const mcpJsonPath = path.join(dirPath, '.mcp.json');
+  // Preserve any non-peek mcpServers entries the user already has.
+  let existing: { mcpServers?: Record<string, McpSnippet> } = {};
+  if (fs.existsSync(mcpJsonPath)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(mcpJsonPath, 'utf-8'));
+    } catch {
+      existing = {};
+    }
+  }
+  if (!existing.mcpServers) existing.mcpServers = {};
+  existing.mcpServers.peek = buildSnippet({ profile, readonly, scopeTag });
+  fs.writeFileSync(mcpJsonPath, JSON.stringify(existing, null, 2) + '\n', 'utf-8');
+  const registry = readRegistry();
+  if (!registry.some((e) => e.path === dirPath)) {
+    registry.push({ path: dirPath, addedAt: Date.now() });
+    writeRegistry(registry);
+  }
+  return { success: true, path: mcpJsonPath };
+}
+
+export function removeScopedProject(dirPath: string): { success: boolean; error?: string } {
+  if (!dirPath || !path.isAbsolute(dirPath)) {
+    return { success: false, error: 'Absolute directory path required.' };
+  }
+  const mcpJsonPath = path.join(dirPath, '.mcp.json');
+  if (fs.existsSync(mcpJsonPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(mcpJsonPath, 'utf-8')) as { mcpServers?: Record<string, McpSnippet> };
+      if (data.mcpServers?.peek) {
+        delete data.mcpServers.peek;
+        if (Object.keys(data.mcpServers).length === 0) {
+          delete data.mcpServers;
+        }
+        if (Object.keys(data).length === 0) {
+          fs.unlinkSync(mcpJsonPath);
+        } else {
+          fs.writeFileSync(mcpJsonPath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+        }
+      }
+    } catch {
+      // Best-effort: still drop from registry below.
+    }
+  }
+  const registry = readRegistry().filter((e) => e.path !== dirPath);
+  writeRegistry(registry);
+  return { success: true };
 }
 
 export function setMcpConfig(opts: Partial<McpConfig>): McpStatus {

@@ -2517,6 +2517,30 @@ function buildAPI(): Record<string, unknown> {
       }
       return ipcRenderer.invoke('tile:mcp:set-config', { token: tileToken, ...patch });
     },
+    listScopedProjects: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.mcp requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:mcp:list-scoped-projects', { token: tileToken });
+    },
+    scaffoldProject: (opts: { dirPath: string; scopeTag: string; profile?: string; readonly?: boolean }) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.mcp requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:mcp:scaffold-project', { token: tileToken, ...opts });
+    },
+    removeScopedProject: (dirPath: string) => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.mcp requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:mcp:remove-scoped-project', { token: tileToken, dirPath });
+    },
+    pickDirectory: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.mcp requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:mcp:pick-directory', { token: tileToken });
+    },
   };
 
   return api;

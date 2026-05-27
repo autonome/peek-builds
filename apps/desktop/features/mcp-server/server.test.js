@@ -125,9 +125,13 @@ class McpClient {
 
   start() {
     return new Promise((resolve, reject) => {
+      // Isolate HOME + cwd so the server's drift check can't see the real
+      // user's .mcp.json or ~/.claude/settings.json.
+      this.tmpCwd = mkdtempSync(join(tmpdir(), 'peek-mcp-test-cwd-'));
       this.proc = spawn('node', [SERVER_PATH], {
-        env: { ...process.env, PEEK_DB_PATH: this.dbPath, ...this.extraEnv },
+        env: { ...process.env, HOME: this.tmpCwd, PEEK_DB_PATH: this.dbPath, ...this.extraEnv },
         stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: this.tmpCwd,
       });
 
       this.proc.stdout.on('data', (chunk) => {
@@ -759,5 +763,126 @@ describe('MCP Server scope enforcement (PEEK_MCP_SCOPE_TAG=peek)', () => {
       });
       assert.equal(r.isError, true);
     });
+  });
+});
+
+// --- Config drift detection ---
+
+function spawnServerWithCwd(env, cwd) {
+  // Isolate HOME to cwd so the drift check can't see the real user's
+  // ~/.claude/settings.json — keeps the test deterministic per machine.
+  const proc = spawn('node', [SERVER_PATH], {
+    env: { ...process.env, HOME: cwd, ...env },
+    stdio: ['pipe', 'pipe', 'pipe'],
+    cwd,
+  });
+  let stderr = '';
+  proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+  const started = new Promise((resolve) => {
+    const onData = (chunk) => {
+      if (chunk.toString().includes('started')) {
+        proc.stderr.off('data', onData);
+        resolve();
+      }
+    };
+    proc.stderr.on('data', onData);
+    setTimeout(resolve, 2000);
+  });
+  const exited = new Promise((resolve) => {
+    proc.on('exit', (code) => resolve(code));
+  });
+  return { proc, started, exited, getStderr: () => stderr };
+}
+
+function expectExit(exited, ms) {
+  return Promise.race([
+    exited,
+    new Promise((_, rej) => setTimeout(() => rej(new Error(`did not exit within ${ms}ms`)), ms)),
+  ]);
+}
+
+describe('MCP Server config drift detection', () => {
+  it('exits when on-disk PEEK_MCP_SCOPE_TAG diverges from spawn env', async () => {
+    const dbPath = createTestDb();
+    const tmpProject = mkdtempSync(join(tmpdir(), 'peek-mcp-drift-'));
+    const mcpJsonPath = join(tmpProject, '.mcp.json');
+    writeFileSync(mcpJsonPath, JSON.stringify({
+      mcpServers: { peek: { command: 'node', args: [SERVER_PATH],
+        env: { PEEK_DB_PATH: dbPath, PEEK_MCP_SCOPE_TAG: 'foo' } } },
+    }));
+
+    const { proc, started, exited, getStderr } = spawnServerWithCwd(
+      { PEEK_DB_PATH: dbPath, PEEK_MCP_SCOPE_TAG: 'foo' }, tmpProject,
+    );
+    await started;
+
+    // Mutate .mcp.json to a different scope tag.
+    writeFileSync(mcpJsonPath, JSON.stringify({
+      mcpServers: { peek: { command: 'node', args: [SERVER_PATH],
+        env: { PEEK_DB_PATH: dbPath, PEEK_MCP_SCOPE_TAG: 'bar' } } },
+    }));
+
+    proc.stdin.write(JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'tools/list', params: {},
+    }) + '\n');
+
+    const code = await expectExit(exited, 3000);
+    const stderr = getStderr();
+    assert.equal(code, 0);
+    assert.ok(stderr.includes('drift'), `stderr should mention drift, got: ${stderr}`);
+    assert.ok(stderr.includes('SCOPE_TAG'), `stderr should mention SCOPE_TAG, got: ${stderr}`);
+  });
+
+  it('exits when peek entry is removed from settings', async () => {
+    const dbPath = createTestDb();
+    const tmpProject = mkdtempSync(join(tmpdir(), 'peek-mcp-drift-'));
+    const mcpJsonPath = join(tmpProject, '.mcp.json');
+    writeFileSync(mcpJsonPath, JSON.stringify({
+      mcpServers: { peek: { command: 'node', args: [SERVER_PATH],
+        env: { PEEK_DB_PATH: dbPath } } },
+    }));
+
+    const { proc, started, exited, getStderr } = spawnServerWithCwd(
+      { PEEK_DB_PATH: dbPath }, tmpProject,
+    );
+    await started;
+
+    // Remove the peek entry — simulates toggling MCP off in Settings.
+    writeFileSync(mcpJsonPath, JSON.stringify({ mcpServers: {} }));
+
+    proc.stdin.write(JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'tools/list', params: {},
+    }) + '\n');
+
+    const code = await expectExit(exited, 3000);
+    const stderr = getStderr();
+    assert.equal(code, 0);
+    assert.ok(stderr.includes('removed'), `stderr should mention removed, got: ${stderr}`);
+  });
+
+  it('does not exit when on-disk env matches spawn env', async () => {
+    const dbPath = createTestDb();
+    const tmpProject = mkdtempSync(join(tmpdir(), 'peek-mcp-drift-'));
+    writeFileSync(join(tmpProject, '.mcp.json'), JSON.stringify({
+      mcpServers: { peek: { command: 'node', args: [SERVER_PATH],
+        env: { PEEK_DB_PATH: dbPath, PEEK_MCP_READONLY: '1' } } },
+    }));
+
+    const { proc, started, exited } = spawnServerWithCwd(
+      { PEEK_DB_PATH: dbPath, PEEK_MCP_READONLY: '1' }, tmpProject,
+    );
+    await started;
+
+    proc.stdin.write(JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'tools/list', params: {},
+    }) + '\n');
+
+    // Should NOT exit within 500ms. Race exit against a timeout — timeout wins.
+    const outcome = await Promise.race([
+      exited.then(() => 'exited'),
+      new Promise((resolve) => setTimeout(() => resolve('still-running'), 500)),
+    ]);
+    assert.equal(outcome, 'still-running');
+    proc.kill();
   });
 });

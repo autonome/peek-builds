@@ -17,6 +17,7 @@
  */
 
 import { createInterface } from 'node:readline';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { openDb, queryItems, getItem, createItem, updateItem, deleteItem,
@@ -457,6 +458,71 @@ function handleMessage(msg) {
   }
 }
 
+// --- Config drift detection ---
+//
+// Env (PEEK_MCP_SCOPE_TAG / PEEK_MCP_READONLY / PEEK_DB_PATH) is frozen
+// at spawn. If the user changes settings (Settings UI toggle, scope edit,
+// re-running peek-mcp-init), the on-disk config drifts from our process
+// env and behaviour silently goes wrong. Detect drift before each
+// incoming message and exit(0) so the client respawns with fresh env.
+
+function readPeekEntry(filePath) {
+  try {
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    return data?.mcpServers?.peek || null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveOnDiskPeekEntry() {
+  const candidates = [
+    path.join(process.cwd(), '.mcp.json'),
+    path.join(process.cwd(), '.claude', 'settings.json'),
+    path.join(os.homedir(), '.claude', 'settings.json'),
+  ];
+  let sawAnyFile = false;
+  for (const p of candidates) {
+    if (!fs.existsSync(p)) continue;
+    sawAnyFile = true;
+    const entry = readPeekEntry(p);
+    if (entry) return { path: p, entry, sawAnyFile };
+  }
+  return { path: null, entry: null, sawAnyFile };
+}
+
+let exiting = false;
+function checkConfigDrift() {
+  if (exiting) return;
+  const found = resolveOnDiskPeekEntry();
+  if (!found.entry) {
+    // No config files at all → can't say; tolerate (might be transient).
+    if (!found.sawAnyFile) return;
+    // Files exist but peek entry was removed — toggled off.
+    exiting = true;
+    process.stderr.write('Peek MCP entry removed from settings; exiting so client can clean up.\n');
+    process.exit(0);
+  }
+  const env = found.entry.env || {};
+  const onScope = (env.PEEK_MCP_SCOPE_TAG || '').trim();
+  const onReadonly = env.PEEK_MCP_READONLY === '1';
+  const onDb = env.PEEK_DB_PATH || '';
+  const curScope = (process.env.PEEK_MCP_SCOPE_TAG || '').trim();
+  const curReadonly = process.env.PEEK_MCP_READONLY === '1';
+  const curDb = process.env.PEEK_DB_PATH || '';
+  if (onScope !== curScope || onReadonly !== curReadonly || onDb !== curDb) {
+    exiting = true;
+    process.stderr.write(
+      `Peek MCP config drift detected at ${found.path}:\n` +
+      `  PEEK_MCP_SCOPE_TAG:  current="${curScope}" on-disk="${onScope}"\n` +
+      `  PEEK_MCP_READONLY:   current=${curReadonly ? '"1"' : '(unset)'} on-disk=${onReadonly ? '"1"' : '(unset)'}\n` +
+      `  PEEK_DB_PATH:        current="${curDb}" on-disk="${onDb}"\n` +
+      `Exiting so client respawns with fresh env.\n`,
+    );
+    process.exit(0);
+  }
+}
+
 // --- Main ---
 
 function defaultDbPath() {
@@ -490,6 +556,8 @@ function main() {
   rl.on('line', (line) => {
     const trimmed = line.trim();
     if (!trimmed) return;
+
+    checkConfigDrift();
 
     let msg;
     try {

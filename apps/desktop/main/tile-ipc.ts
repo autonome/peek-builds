@@ -41,7 +41,7 @@ import {
   getDebugFlags,
   onDebugFlagsChange,
 } from './debug-flag.js';
-import { getMcpStatus, setMcpConfig } from './mcp-config.js';
+import { getMcpStatus, setMcpConfig, listScopedProjects, scaffoldProject, removeScopedProject } from './mcp-config.js';
 import { publishCapabilityViolation } from './tile-violations.js';
 import { getFeatureRegistry } from './feature-startup.js';
 import { getAtprotoSource } from './feature-startup.js';
@@ -6920,6 +6920,85 @@ export function registerTileIpcHandlers(): void {
       if (typeof args.scopeTag === 'string') patch.scopeTag = args.scopeTag;
       const state = setMcpConfig(patch);
       return { success: true, state };
+    } catch (err) {
+      return { success: false, error: (err as Error)?.message ?? String(err) };
+    }
+  });
+
+  // ── tile:mcp:list-scoped-projects / scaffold-project / remove-scoped-project / pick-directory ──
+  //
+  // Backs the Settings → MCP "Project scopes" subsection. Each call is
+  // trustedBuiltin only — writing user files is not a third-party surface.
+
+  registerTileIpc('tile:mcp:list-scoped-projects', { mode: 'handle' }, (event, args: { token: string }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'mcp', 'tile:mcp:list-scoped-projects', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:mcp:list-scoped-projects' };
+    }
+    return { success: true, projects: listScopedProjects() };
+  });
+
+  registerTileIpc('tile:mcp:scaffold-project', { mode: 'handle' }, (event, args: {
+    token: string;
+    dirPath?: string;
+    scopeTag?: string;
+    profile?: string;
+    readonly?: boolean;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'mcp', 'tile:mcp:scaffold-project', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:mcp:scaffold-project' };
+    }
+    try {
+      const result = scaffoldProject({
+        dirPath: args.dirPath || '',
+        scopeTag: args.scopeTag || '',
+        profile: args.profile,
+        readonly: args.readonly,
+      });
+      return result;
+    } catch (err) {
+      return { success: false, error: (err as Error)?.message ?? String(err) };
+    }
+  });
+
+  registerTileIpc('tile:mcp:remove-scoped-project', { mode: 'handle' }, (event, args: {
+    token: string;
+    dirPath?: string;
+  }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'mcp', 'tile:mcp:remove-scoped-project', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:mcp:remove-scoped-project' };
+    }
+    try {
+      return removeScopedProject(args.dirPath || '');
+    } catch (err) {
+      return { success: false, error: (err as Error)?.message ?? String(err) };
+    }
+  });
+
+  registerTileIpc('tile:mcp:pick-directory', { mode: 'handle' }, async (event, args: { token: string }, _grant) => {
+    if (!args?.token) return { success: false, error: 'Invalid token' };
+    const grant = _grant;
+    if (!grant.trustedBuiltin) {
+      handleViolation(grant, 'mcp', 'tile:mcp:pick-directory', 'trustedBuiltin required', args.token);
+      return { success: false, error: 'trustedBuiltin required for tile:mcp:pick-directory' };
+    }
+    try {
+      const result = await dialog.showOpenDialog({
+        properties: ['openDirectory'],
+        title: 'Pick a project directory to scope',
+      });
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, canceled: true };
+      }
+      return { success: true, path: result.filePaths[0] };
     } catch (err) {
       return { success: false, error: (err as Error)?.message ?? String(err) };
     }
