@@ -54,6 +54,8 @@ export { alarms, storageSession, webNavigation, offscreen, permissions, runtimeE
  * @param {import('electron').IpcMain} options.ipcMain — Electron's ipcMain module
  * @param {import('electron').App} [options.app] — Electron's app module (needed for webNavigation)
  * @param {string[]} [options.apis] — Specific APIs to register (default: all)
+ * @param {(origin: string) => string | null} [options.findExtensionByOrigin] — see runtime-external.setupMainProcess.
+ * @param {(origin: string) => string | null} [options.getCanonicalChromeIdForOrigin] — see runtime-external.setupMainProcess.
  * @returns {{
  *   cleanup: () => void,
  *   getPreloadScript: () => string,
@@ -61,7 +63,7 @@ export { alarms, storageSession, webNavigation, offscreen, permissions, runtimeE
  * }}
  */
 export function registerAll(session, options = {}) {
-  const { ipcMain, app, apis, findExtensionByOrigin } = options;
+  const { ipcMain, app, apis, findExtensionByOrigin, getCanonicalChromeIdForOrigin } = options;
 
   if (!ipcMain) {
     throw new Error('chrome-api-polyfills: options.ipcMain is required');
@@ -98,7 +100,7 @@ export function registerAll(session, options = {}) {
   }
 
   if (shouldRegister('runtimeExternal')) {
-    handles.runtimeExternal = runtimeExternal.setupMainProcess(session, { ipcMain, findExtensionByOrigin });
+    handles.runtimeExternal = runtimeExternal.setupMainProcess(session, { ipcMain, findExtensionByOrigin, getCanonicalChromeIdForOrigin });
     cleanups.push(handles.runtimeExternal.cleanup);
   }
 

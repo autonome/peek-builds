@@ -24,6 +24,8 @@
 const { ipcRenderer, webFrame } = require('electron');
 
 const IPC_SEND_FROM_PAGE = 'peek:runtime-external:send';
+const IPC_CS_RELAY_FROM_PAGE = 'peek:cs-relay:from-page';
+const IPC_CS_RELAY_TO_PAGE = 'peek:cs-relay:to-page';
 
 console.log('[peek:runtime-external:preload] loaded for', location.href);
 
@@ -215,3 +217,68 @@ window.addEventListener('message', function (ev) {
       window.postMessage({ __peekRuntimeExternal: 'response', reqId, error: (err && err.message) || String(err) }, location.origin);
     });
 }, true);
+
+// === Content-script relay: page postMessage ⇄ extension bridge window ===
+//
+// Pages whose URL matches an extension's ISOLATED-world content_scripts can't
+// host those scripts directly (Electron doesn't give us isolated worlds with
+// the extension's chrome.runtime). Instead, the bridge BrowserWindow hosts
+// them as singleton listeners. The preload's job is to ferry window.postMessage
+// events across that boundary.
+//
+// Enabled via additionalArgument: --peek-cs-relay-enabled
+//
+// page postMessage → here → main (which routes to the matching bridge window) →
+//   content scripts run in bridge → they postMessage a response → bridge IPCs
+//   back → main → here → we dispatch as window.postMessage on this page.
+//
+// Loop avoidance: we hash dispatched events and skip matching incoming events
+// for a short TTL.
+const _csRelayEnabled = (process.argv || []).some(function (a) {
+  return a === '--peek-cs-relay-enabled';
+});
+if (_csRelayEnabled) {
+  console.log('[peek:cs-relay:preload] enabled for', location.href);
+
+  const _justDispatched = new Set();
+  const _LOOP_TTL_MS = 100;
+  function _hash(d) { try { return JSON.stringify(d); } catch (_) { return null; } }
+
+  // Page → main. Skip events that are clearly internal protocol surface.
+  window.addEventListener('message', function (ev) {
+    if (ev.source !== window) return;
+    const d = ev.data;
+    if (d && typeof d === 'object') {
+      // Skip our own protocol envelopes.
+      if (d.__peekRuntimeExternal) return;
+    }
+    // Skip events we just dispatched (loop avoidance).
+    const h = _hash(d);
+    if (h && _justDispatched.has(h)) { _justDispatched.delete(h); return; }
+    // Only relay object-shaped data. Skip strings/numbers/transferables —
+    // those are typically iframe protocols / analytics, not content-script
+    // message channels.
+    if (typeof d !== 'object' || d === null) return;
+    try {
+      ipcRenderer.send(IPC_CS_RELAY_FROM_PAGE, { data: d, origin: location.origin });
+    } catch (err) {
+      console.error('[peek:cs-relay:preload] forward threw:', err && err.message);
+    }
+  }, false);
+
+  // Main → page. Tag dispatched event for loop avoidance, then postMessage.
+  ipcRenderer.on(IPC_CS_RELAY_TO_PAGE, function (_event, payload) {
+    const data = payload && payload.data;
+    if (data === undefined) return;
+    const h = _hash(data);
+    if (h) {
+      _justDispatched.add(h);
+      setTimeout(function () { _justDispatched.delete(h); }, _LOOP_TTL_MS);
+    }
+    try {
+      window.postMessage(data, location.origin);
+    } catch (err) {
+      console.error('[peek:cs-relay:preload] dispatch to page threw:', err && err.message);
+    }
+  });
+}

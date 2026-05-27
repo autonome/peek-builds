@@ -308,7 +308,11 @@
     var reqId = payload && payload.reqId;
     var fwdMessage = payload && payload.message;
     var fwdSender = (payload && payload.sender) || {};
-    fwdSender.id = chrome.runtime.id;
+    // Leave fwdSender.id unset. Chrome's onMessageExternal sets sender.id only
+    // for messages from another extension; webpage senders matching
+    // externally_connectable get sender.tab/url/origin only. Overriding to
+    // chrome.runtime.id makes the BG SW treat the message as INTERNAL and
+    // apply same-extension validation (e.g. version checks).
     console.log('[peek:runtime-external:bg] dispatch reqId=', reqId, 'listeners=', _externalListeners.length, 'type=', fwdMessage && fwdMessage.type);
 
     if (_externalListeners.length === 0) {
@@ -363,7 +367,9 @@
           var reqId = portMsg && portMsg.reqId;
           var fwdMessage = portMsg && portMsg.message;
           var fwdSender = (portMsg && portMsg.sender) || {};
-          fwdSender.id = chrome.runtime.id;
+          // See note in _dispatch above: do not set fwdSender.id. Webpage
+          // senders should arrive without an id so the BG SW routes them
+          // through the EXTERNAL message path, not the INTERNAL one.
           console.log('[peek:runtime-external:bg] bridge port message reqId=', reqId, 'type=', fwdMessage && fwdMessage.type, 'listeners=', _externalListeners.length);
 
           if (_externalListeners.length === 0) {

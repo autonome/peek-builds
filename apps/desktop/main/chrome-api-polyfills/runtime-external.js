@@ -57,6 +57,15 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+// Lazy/optional Electron import so this module can be loaded by build-time
+// tools (e.g. scripts/patch-chrome-extensions.js → getBgInjection()) that run
+// in plain Node without Electron available. createRequire is synchronous and
+// can short-circuit if 'electron' isn't resolvable.
+const _require = createRequire(import.meta.url);
+let _electronWebContents = null;
+try { _electronWebContents = _require('electron')?.webContents ?? null; } catch (_) { /* not in Electron */ }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -65,6 +74,10 @@ const SW_CHANNEL_INCOMING = 'peek:runtime-external:incoming';
 const SW_CHANNEL_RESPONSE = 'peek:runtime-external:response';
 const BRIDGE_FORWARD_CHANNEL = 'peek:auth-ext:forward';
 const BRIDGE_RESPONSE_CHANNEL = 'peek:auth-ext:response';
+const CS_RELAY_FROM_PAGE = 'peek:cs-relay:from-page';
+const CS_RELAY_DISPATCH = 'peek:cs-relay:dispatch';
+const CS_RELAY_FROM_BRIDGE = 'peek:cs-relay:from-bridge';
+const CS_RELAY_TO_PAGE = 'peek:cs-relay:to-page';
 
 /** Absolute path to the webview preload .cjs. Set by entry.ts via getPreloadPath(). */
 export function getPreloadPath() {
@@ -133,6 +146,16 @@ function _newReqId() {
 const _attachedSwIpc = new Set();
 // Whether we've attached the ipcMain listener for bridge responses.
 let _bridgeResponseListenerAttached = false;
+// Same flag for the content-script relay handlers.
+let _csRelayListenersAttached = false;
+
+function _webContentsById(id) {
+  try {
+    return _electronWebContents ? (_electronWebContents.fromId(id) || null) : null;
+  } catch (_) {
+    return null;
+  }
+}
 
 /**
  * Register main-process handlers for the runtime-external bridge.
@@ -141,12 +164,63 @@ let _bridgeResponseListenerAttached = false;
  * @param {Object} options
  * @param {import('electron').IpcMain} options.ipcMain
  * @param {(url: string) => string | null} [options.findExtensionByOrigin] — fallback resolver for when the requested extId doesn't match a running SW. Receives the request origin and returns an extension ID whose `externally_connectable.matches` accepts that origin (or null). Used to bridge the gap between the hardcoded Web Store IDs in pages like Proton's account bundle (which fans out to 4 platform-specific IDs) and the Electron-assigned runtime hash of our locally-unpacked extension.
+ * @param {(origin: string) => string | null} [options.getCanonicalChromeIdForOrigin] — returns the loaded extension's canonical Chrome Web Store ID (derived from its CRX's signed_header_data) for `origin`. When provided, the IPC handler rejects requests whose requestedExtId doesn't match the canonical id — Chrome's native behavior, prevents fan-out duplicates from pages racing platform-specific extension IDs.
  * @returns {{ cleanup: () => void }}
  */
 export function setupMainProcess(session, options = {}) {
-  const { ipcMain, findExtensionByOrigin } = options;
+  const { ipcMain, findExtensionByOrigin, getCanonicalChromeIdForOrigin } = options;
   if (!ipcMain) {
     throw new Error('chrome-api-polyfills/runtime-external: options.ipcMain is required');
+  }
+
+  // === Content-script relay routing ===
+  // Page (matched URL) posts to main via CS_RELAY_FROM_PAGE; we look up the
+  // matching extension's bridge window and dispatch to it. Bridge responds via
+  // CS_RELAY_FROM_BRIDGE with a senderId; we route back to that webContents.
+  //
+  // Tracked as a module-level "attached once" pattern same as the auth-ext
+  // response listener so re-invocations of setupMainProcess (HMR) don't pile up
+  // duplicate handlers.
+  if (!_csRelayListenersAttached) {
+    _csRelayListenersAttached = true;
+    // Page → bridge.
+    ipcMain.on(CS_RELAY_FROM_PAGE, (event, payload) => {
+      const data = payload && payload.data;
+      const origin = payload && payload.origin;
+      if (!origin) return;
+      let extId = null;
+      try {
+        extId = typeof findExtensionByOrigin === 'function' ? findExtensionByOrigin(origin) : null;
+      } catch (e) {
+        console.error('[peek:cs-relay:main] findExtensionByOrigin threw:', e?.message);
+      }
+      if (!extId) return;
+      const bridgeWin = _bridgeWindowsRegistry.get(extId);
+      if (!bridgeWin || bridgeWin.isDestroyed()) return;
+      try {
+        bridgeWin.webContents.send(CS_RELAY_DISPATCH, {
+          senderId: event.sender.id,
+          data,
+          origin,
+        });
+      } catch (err) {
+        console.error('[peek:cs-relay:main] forward to bridge threw:', err?.message);
+      }
+    });
+    // Bridge → page.
+    ipcMain.on(CS_RELAY_FROM_BRIDGE, (_event, payload) => {
+      const senderId = payload && payload.senderId;
+      const data = payload && payload.data;
+      if (typeof senderId !== 'number') return;
+      const target = _webContentsById(senderId);
+      if (!target || target.isDestroyed()) return;
+      try {
+        target.send(CS_RELAY_TO_PAGE, { data });
+      } catch (err) {
+        console.error('[peek:cs-relay:main] forward to page threw:', err?.message);
+      }
+    });
+    console.log('[peek:cs-relay:main] handlers attached');
   }
 
   // Attach ipcMain listener for responses from the bridge window (once).
@@ -205,13 +279,44 @@ export function setupMainProcess(session, options = {}) {
       }
     }
 
+    // Reject requests where the page is targeting a non-canonical platform ID
+    // (the Firefox/Edge/Safari Web Store ID for a Chrome-installed extension,
+    // etc.). Chrome itself returns "no such extension" for those — without
+    // this filter, our origin-fallback routes ALL 4 of an account.proton.me-
+    // style fan-out to the same loaded extension, and the page's race picks
+    // up an error from a duplicate forward (the canonical request consumed a
+    // single-use auth selector, the others see "Invalid selector" and win
+    // the UI race). Skip when canonical id is unknown (extension dropped in
+    // manually without going through scripts/install-chrome-extension.js).
+    if (typeof getCanonicalChromeIdForOrigin === 'function' && origin) {
+      try {
+        const canonical = getCanonicalChromeIdForOrigin(origin);
+        if (canonical && requestedExtId !== canonical && extId !== requestedExtId) {
+          // requestedExtId came in via origin-fallback (didn't directly match
+          // a loaded extension) AND doesn't match the canonical id. Mimic
+          // Chrome: "no such extension."
+          console.log('[peek:runtime-external:main] canonical-id filter — rejecting non-canonical fan-out requestedExtId=', requestedExtId, 'canonical=', canonical, 'origin=', origin);
+          return { __peekRuntimeExternalError: `Could not establish connection. Receiving end does not exist.` };
+        }
+      } catch (e) {
+        console.error('[peek:runtime-external:main] canonical-id check threw:', e?.message);
+      }
+    }
+
     if (bridgeWin && !bridgeWin.isDestroyed()) {
       // === Bridge window path ===
       // Forward the message to the bridge window, which holds a live
       // chrome.runtime.Port to the BG SW and relays it natively.
       const reqId = _newReqId();
+      // sender.id is intentionally UNSET for webpage senders. Chrome's
+      // onMessageExternal sets sender.id only for messages from another
+      // extension; for webpage senders matching externally_connectable, only
+      // sender.tab/url/origin are populated. Setting sender.id = our own
+      // extension id causes the BG SW to mistake the message for an INTERNAL
+      // (same-extension) call and apply same-extension validation paths (e.g.
+      // strict version checks), which throw for any payload not crafted by
+      // the extension's own content scripts.
       const sender = {
-        id: extId,
         origin: origin ? safeOrigin(origin) : '',
         url: origin ?? '',
         tab: { id: -1 },
@@ -281,8 +386,10 @@ export function setupMainProcess(session, options = {}) {
     }
 
     const reqId = _newReqId();
+    // See note in bridge path above: sender.id intentionally unset for
+    // webpage senders so the BG SW treats this as an external (not internal)
+    // dispatch.
     const sender = {
-      id: extId,
       origin: origin ? safeOrigin(origin) : '',
       url: origin ?? '',
       tab: { id: -1 },
@@ -462,7 +569,11 @@ export function getBgInjection() {
     var reqId = payload && payload.reqId;
     var fwdMessage = payload && payload.message;
     var fwdSender = (payload && payload.sender) || {};
-    fwdSender.id = chrome.runtime.id;
+    // Leave fwdSender.id unset. Chrome's onMessageExternal sets sender.id only
+    // for messages from another extension; webpage senders matching
+    // externally_connectable get sender.tab/url/origin only. Overriding to
+    // chrome.runtime.id makes the BG SW treat the message as INTERNAL and
+    // apply same-extension validation (e.g. version checks).
     console.log('[peek:runtime-external:bg] dispatch reqId=', reqId, 'listeners=', _externalListeners.length, 'type=', fwdMessage && fwdMessage.type);
 
     if (_externalListeners.length === 0) {
@@ -517,7 +628,9 @@ export function getBgInjection() {
           var reqId = portMsg && portMsg.reqId;
           var fwdMessage = portMsg && portMsg.message;
           var fwdSender = (portMsg && portMsg.sender) || {};
-          fwdSender.id = chrome.runtime.id;
+          // See note in _dispatch above: do not set fwdSender.id. Webpage
+          // senders should arrive without an id so the BG SW routes them
+          // through the EXTERNAL message path, not the INTERNAL one.
           console.log('[peek:runtime-external:bg] bridge port message reqId=', reqId, 'type=', fwdMessage && fwdMessage.type, 'listeners=', _externalListeners.length);
 
           if (_externalListeners.length === 0) {

@@ -45,6 +45,7 @@ export interface ChromeManifest {
     js?: string[];
     css?: string[];
     run_at?: string;
+    world?: 'ISOLATED' | 'MAIN';
   }>;
   action?: {
     default_popup?: string;
@@ -110,6 +111,20 @@ export interface ChromeExtensionUiEntry {
  */
 export interface ChromeExtensionInfo {
   id: string;
+  /**
+   * Canonical Chrome extension ID derived from the CRX's signed_header_data
+   * (or its embedded public key). This is the ID that pages hardcode when
+   * targeting this extension via `chrome.runtime.sendMessage(id, msg)` from
+   * a `externally_connectable` origin. Different from Electron's
+   * path-derived runtime ID. Used by the compat layer to faithfully reject
+   * fan-out requests intended for OTHER platform-specific extension IDs
+   * (firefox/edge/safari variants etc.) — Chrome would also reject those
+   * with "no such extension." Populated by `scripts/install-chrome-extension.js`
+   * into `apps/desktop/chrome-extensions/.peek-canonical-ids.json` and
+   * loaded at init. May be null if the install script didn't write an entry
+   * (e.g., manually-dropped extensions).
+   */
+  canonicalChromeId?: string | null;
   name: string;
   version: string;
   description: string;
@@ -241,6 +256,20 @@ function discoverExtensions(): void {
     return;
   }
 
+  // Load the canonical-IDs sidecar written by scripts/install-chrome-extension.js
+  // (one JSON file at the extensions/ root, NOT inside any extension dir, so
+  // we don't touch upstream source).
+  let canonicalIds: Record<string, string> = {};
+  const canonicalIdsPath = path.join(extensionsDir, '.peek-canonical-ids.json');
+  if (fs.existsSync(canonicalIdsPath)) {
+    try {
+      canonicalIds = JSON.parse(fs.readFileSync(canonicalIdsPath, 'utf-8'));
+      DEBUG && console.log(`[chrome-ext] loaded canonical IDs for ${Object.keys(canonicalIds).length} extension(s)`);
+    } catch (err) {
+      console.warn('[chrome-ext] failed to parse .peek-canonical-ids.json:', err);
+    }
+  }
+
   const entries = fs.readdirSync(extensionsDir, { withFileTypes: true });
 
   for (const entry of entries) {
@@ -263,6 +292,7 @@ function discoverExtensions(): void {
 
       const extInfo: ChromeExtensionInfo = {
         id: extId,
+        canonicalChromeId: canonicalIds[extId] ?? null,
         name: manifest.name || extId,
         version: manifest.version || '0.0.0',
         description: manifest.description || '',
@@ -390,6 +420,29 @@ function _spawnBridgeWindow(loaded: LoadedChromeExtension): void {
     if (!win.isDestroyed()) win.destroy();
   });
 
+  // After the bridge page is ready, inject the extension's ISOLATED-world
+  // content scripts so they run as singleton listeners on behalf of any page
+  // whose URL matches their `matches` patterns. The bridge is a chrome-extension
+  // origin window, so executeJavaScript runs in a context where chrome.runtime
+  // is the extension's real runtime — same-extension messaging from these
+  // scripts works natively, no shims.
+  win.webContents.once('did-finish-load', () => {
+    const scripts = getIsolatedContentScriptsForExtension(loaded.id);
+    for (const s of scripts) {
+      let src: string;
+      try {
+        src = fs.readFileSync(s.scriptPath, 'utf-8');
+      } catch (err) {
+        console.error(`[chrome-ext] failed to read ISOLATED content script ${s.scriptPath}:`, err);
+        continue;
+      }
+      win.webContents.executeJavaScript(src).then(
+        () => DEBUG && console.log(`[chrome-ext] bridge ${runtimeId}: injected ISOLATED content script ${path.basename(s.scriptPath)}`),
+        (err) => console.error(`[chrome-ext] bridge ${runtimeId}: failed injecting ${path.basename(s.scriptPath)}:`, err && err.message),
+      );
+    }
+  });
+
   DEBUG && console.log(`[chrome-ext] bridge window spawned for ${loaded.name} at ${bridgeUrl}`);
 }
 
@@ -442,6 +495,10 @@ export async function loadEnabledChromeExtensions(): Promise<void> {
       // fans out to 4 platform IDs that never match our Electron-assigned
       // runtime hash), fall back to resolving by origin.
       findExtensionByOrigin: (origin: string) => findExtensionByExternallyConnectableUrl(origin),
+      // Lets the runtime-external IPC handler reject non-canonical platform
+      // IDs from fan-out requests — Chrome's native behavior. See
+      // getCanonicalChromeIdForOrigin doc for why this is necessary.
+      getCanonicalChromeIdForOrigin: (origin: string) => getCanonicalChromeIdForOrigin(origin),
     });
 
     // Web permission handling now lives in permission-handler.ts (installed
@@ -626,6 +683,184 @@ function matchPatternToTester(pattern: string): ((url: URL) => boolean) | null {
 function escapeRe(s: string): string { return s.replace(/[.+?^${}()|[\]\\]/g, '\\$&'); }
 
 /**
+ * Match-pattern test against the manifest "matches" grammar — returns true if
+ * any pattern in `patterns` accepts `url`. Convenience wrapper.
+ */
+function urlMatchesAny(url: URL, patterns: string[] | undefined): boolean {
+  if (!Array.isArray(patterns)) return false;
+  for (const p of patterns) {
+    const tester = matchPatternToTester(p);
+    if (tester && tester(url)) return true;
+  }
+  return false;
+}
+
+/**
+ * Result entry for {@link getMatchingMainWorldContentScripts}.
+ */
+export interface MainWorldContentScriptInjection {
+  extId: string;
+  /** Absolute path to the .js file on disk. */
+  scriptPath: string;
+  /** Source of the script (read at injection time by caller to keep this sync). */
+  runAt: 'document_start' | 'document_end' | 'document_idle';
+}
+
+/**
+ * Returns the set of content_scripts (declared `world: "MAIN"`) whose `matches`
+ * pattern accepts `url`, for all currently-loaded extensions.
+ *
+ * Electron's `session.loadExtension()` does NOT auto-inject content_scripts on
+ * web pages — that's a gap in its Chrome API implementation. This function
+ * exposes the manifest-declared scripts so the lifecycle hook in entry.ts can
+ * inject them via `webContents.executeJavaScript()` (which runs in main world).
+ *
+ * ISOLATED-world scripts (the default) are intentionally excluded: their whole
+ * point is to access the extension's own `chrome.runtime` rather than the
+ * page's chrome shim, and `executeJavaScript` cannot provide that context. They
+ * need a separate path (bridge-window relay; see runtime-external.js).
+ */
+export function getMatchingMainWorldContentScripts(url: string): MainWorldContentScriptInjection[] {
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return []; }
+
+  const out: MainWorldContentScriptInjection[] = [];
+  for (const [extId, info] of discoveredExtensions) {
+    const loaded = loadedExtensions.get(extId);
+    if (!loaded) continue;
+    const scripts = info.manifest?.content_scripts;
+    if (!Array.isArray(scripts)) continue;
+
+    for (const entry of scripts) {
+      if (entry.world !== 'MAIN') continue; // ISOLATED handled elsewhere
+      if (!urlMatchesAny(parsed, entry.matches)) continue;
+      if (urlMatchesAny(parsed, (entry as { exclude_matches?: string[] }).exclude_matches)) continue;
+      if (!Array.isArray(entry.js)) continue;
+
+      const runAtRaw = entry.run_at ?? 'document_idle';
+      const runAt: MainWorldContentScriptInjection['runAt'] =
+        runAtRaw === 'document_start' || runAtRaw === 'document_end' ? runAtRaw : 'document_idle';
+
+      for (const js of entry.js) {
+        out.push({
+          extId,
+          scriptPath: path.join(loaded.path, js),
+          runAt,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Result entry for {@link getMatchingIsolatedContentScripts}.
+ */
+export interface IsolatedContentScriptMatch {
+  /** Internal extension ID (directory name). */
+  extId: string;
+  /** Runtime extension ID (Electron-assigned, e.g. chrome.runtime.id value). */
+  runtimeExtId: string;
+}
+
+/**
+ * Returns extensions whose ISOLATED-world content_scripts accept `url`. Used by
+ * the page-side preload to decide whether window.postMessage events from this
+ * origin should be relayed to the extension's bridge window (where the
+ * ISOLATED scripts are hosted as singleton listeners with the extension's real
+ * chrome.runtime). Only returns extensions that are loaded AND have a live
+ * bridge window — caller doesn't need to recheck.
+ */
+export function getMatchingIsolatedContentScripts(url: string): IsolatedContentScriptMatch[] {
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return []; }
+
+  const out: IsolatedContentScriptMatch[] = [];
+  for (const [extId, info] of discoveredExtensions) {
+    const loaded = loadedExtensions.get(extId);
+    if (!loaded) continue;
+    const bridge = _bridgeWindows.get(loaded.electronExtension.id);
+    if (!bridge || bridge.isDestroyed()) continue;
+    const scripts = info.manifest?.content_scripts;
+    if (!Array.isArray(scripts)) continue;
+
+    for (const entry of scripts) {
+      if (entry.world === 'MAIN') continue; // MAIN handled by direct page injection
+      if (!urlMatchesAny(parsed, entry.matches)) continue;
+      if (urlMatchesAny(parsed, (entry as { exclude_matches?: string[] }).exclude_matches)) continue;
+      if (!Array.isArray(entry.js) || entry.js.length === 0) continue;
+      out.push({ extId, runtimeExtId: loaded.electronExtension.id });
+      break; // dedupe per extension; one match is enough to enable relay
+    }
+  }
+  return out;
+}
+
+/**
+ * Returns absolute paths of an extension's ISOLATED-world content_scripts —
+ * the scripts to inject into the bridge BrowserWindow at load time so they
+ * can act as singleton listeners on behalf of all pages whose URL matches
+ * their `matches` patterns. The bridge is a chrome-extension:// origin window,
+ * so injecting via executeJavaScript gives these scripts the extension's
+ * native chrome.runtime (same-extension messaging works without shims).
+ */
+export function getIsolatedContentScriptsForExtension(extId: string): { scriptPath: string }[] {
+  const loaded = loadedExtensions.get(extId);
+  if (!loaded) return [];
+  const info = discoveredExtensions.get(extId);
+  if (!info) return [];
+  const scripts = info.manifest?.content_scripts;
+  if (!Array.isArray(scripts)) return [];
+
+  const out: { scriptPath: string }[] = [];
+  const seen = new Set<string>();
+  for (const entry of scripts) {
+    if (entry.world === 'MAIN') continue;
+    if (!Array.isArray(entry.js)) continue;
+    for (const js of entry.js) {
+      const full = path.join(loaded.path, js);
+      if (seen.has(full)) continue;
+      seen.add(full);
+      out.push({ scriptPath: full });
+    }
+  }
+  return out;
+}
+
+/**
+ * Returns the CANONICAL Chrome extension ID of the extension whose
+ * externally_connectable.matches accepts `origin`, or null if none.
+ *
+ * The canonical ID is what Chrome derives from the extension's CRX
+ * signed_header_data (Web Store ID). Pages targeting an extension via
+ * `chrome.runtime.sendMessage(<id>, msg)` use this hardcoded id, so the
+ * compat layer uses it to filter fan-out requests: pages like
+ * account.proton.me try 4 platform-specific extension IDs in parallel
+ * (Chrome/Firefox/Edge/Safari) and accept the first responder. Chrome
+ * itself rejects requests to non-installed IDs as "no such extension" so
+ * only one wins. Our origin-fallback path needs the same filter — without
+ * it, all 4 requests fan out to the same loaded extension and corrupt
+ * single-use state (e.g. auth selectors).
+ *
+ * Returns null when the extension was loaded without a canonical id sidecar
+ * entry (e.g. manually-dropped extensions); callers should fall back to
+ * accepting any matching origin in that case.
+ */
+export function getCanonicalChromeIdForOrigin(origin: string): string | null {
+  let parsed: URL;
+  try { parsed = new URL(origin); } catch { return null; }
+  for (const [extId, info] of discoveredExtensions) {
+    if (!loadedExtensions.has(extId)) continue;
+    const matches = info.manifest?.externally_connectable?.matches;
+    if (!Array.isArray(matches)) continue;
+    if (urlMatchesAny(parsed, matches)) {
+      return info.canonicalChromeId ?? null;
+    }
+  }
+  return null;
+}
+
+/**
  * Returns the extension ID whose externally_connectable.matches matches `url`,
  * or null if none. Used by entry.ts will-attach-webview to decide whether to
  * inject the runtime-external preload into a webview navigating to that URL.
@@ -719,11 +954,16 @@ export function openChromeExtensionPage(
   // Use dark background when system is in dark mode for proper Peek styling
   const backgroundColor = nativeTheme.shouldUseDarkColors ? '#1a1a1a' : '#ffffff';
 
+  // PEEK_AUTOOPEN_EXT mode: open without stealing focus so the dev iteration
+  // loop can rebuild + relaunch in the background while the user keeps
+  // working in their editor / terminal. Use show:false here and call
+  // showInactive() after load (below).
+  const inDevAutoopen = !!process.env.PEEK_AUTOOPEN_EXT;
   const win = new BrowserWindow({
     width: entry.width,
     height: entry.height,
     title: entry.title,
-    show: !isHeadless(),
+    show: !isHeadless() && !inDevAutoopen,
     backgroundColor,
     titleBarStyle: 'hiddenInset',
     webPreferences: {
@@ -767,6 +1007,16 @@ export function openChromeExtensionPage(
   win.webContents.on('render-process-gone', (_e, details) => {
     console.error(`[ext-popup:${windowKey}] render-process-gone:`, details);
   });
+
+  // PEEK_AUTOOPEN_EXT mode: show inactive (no focus steal) and open detached
+  // devtools so the dev iteration loop can inspect the extension UI without
+  // pulling focus away from the terminal/editor on each nodemon restart.
+  if (inDevAutoopen && !isHeadless()) {
+    win.webContents.once('did-finish-load', () => {
+      try { win.showInactive(); } catch { /* ignore */ }
+      try { win.webContents.openDevTools({ mode: 'detach', activate: false }); } catch { /* ignore */ }
+    });
+  }
 
   // Route window.open(url) from the popup (and from our chrome.tabs.create
   // shim, which delegates to window.open) through Peek's normal window

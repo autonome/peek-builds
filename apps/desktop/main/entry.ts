@@ -91,9 +91,10 @@ import {
   loadEnabledChromeExtensions,
   openChromeExtensionPage,
   cleanupChromeExtensions,
-  isChromeExtensionLoaded,
   getChromeExtensionOptionsCommands,
   findExtensionByExternallyConnectableUrl,
+  getMatchingMainWorldContentScripts,
+  getMatchingIsolatedContentScripts,
 } from './chrome-extensions.js';
 import {
   getPreloadPath as getRuntimeExternalPreloadPath,
@@ -298,20 +299,6 @@ for (const arg of process.argv) {
 
 const systemAddress = getSystemAddress();
 
-// Read Proton Pass webauthn.js for main-world injection into web content webviews.
-// Electron ignores "world": "MAIN" in Chrome extension manifest content_scripts,
-// so we inject the script ourselves via executeJavaScript() which runs in the main world.
-let webauthnScript: string | null = null;
-const webauthnScriptPath = path.join(DESKTOP_DIR, 'chrome-extensions', 'proton-pass', 'webauthn.js');
-try {
-  if (fs.existsSync(webauthnScriptPath)) {
-    webauthnScript = fs.readFileSync(webauthnScriptPath, 'utf-8');
-    DEBUG && console.log('[webauthn] Loaded Proton Pass webauthn.js for injection');
-  }
-} catch (err) {
-  console.error('[webauthn] Failed to read webauthn.js:', err);
-}
-
 // Inject tile-preload into <webview> elements that load peek:// URLs.
 // This gives internal widget pages (e.g., HUD widgets, widget-demo cards)
 // access to window.app API while leaving external web content webviews untouched.
@@ -325,8 +312,8 @@ try {
 //      tile-preload.cjs with manifest-derived capability token.
 //   3. Unrecognised peek:// URL: log a warning and skip preload injection.
 //
-// Also inject Proton Pass webauthn.js into http/https webviews for passkey support.
-// The script overrides navigator.credentials.create/get in the main world.
+// Also auto-inject MAIN-world content_scripts (e.g. webauthn.js) from loaded
+// chrome extensions whose manifest match-patterns accept the webview URL.
 app.on('web-contents-created', (_event, contents) => {
   // ── SECURITY chokepoint ────────────────────────────────────────────
   // Validate every new webContents matches Peek's isolation policy.
@@ -462,9 +449,16 @@ app.on('web-contents-created', (_event, contents) => {
       const matchedExtId = findExtensionByExternallyConnectableUrl(params.src);
       if (matchedExtId && process.env.PEEK_DISABLE_RUNTIME_EXTERNAL_POLYFILL !== '1') {
         webPreferences.preload = getRuntimeExternalPreloadPath();
+        const extraArgs = [`--peek-runtime-external-ext-id=${matchedExtId}`];
+        // If this URL matches ISOLATED-world content_scripts of a loaded
+        // extension, flag the preload to also forward window.postMessage events
+        // to the bridge window (where the content scripts are hosted).
+        if (getMatchingIsolatedContentScripts(params.src).length > 0) {
+          extraArgs.push('--peek-cs-relay-enabled');
+        }
         webPreferences.additionalArguments = [
           ...(webPreferences.additionalArguments ?? []),
-          `--peek-runtime-external-ext-id=${matchedExtId}`,
+          ...extraArgs,
         ];
         // Disable sandbox for these webviews. Electron 40's sandbox-bundle
         // init crashes on subsequent navigations within Proton's auth flow
@@ -532,20 +526,32 @@ app.on('web-contents-created', (_event, contents) => {
     }
   });
 
-  // Inject webauthn.js into web content webviews for Proton Pass passkey support.
-  // Uses executeJavaScript() which runs in the main world, allowing the script to
-  // override navigator.credentials.create() and navigator.credentials.get().
-  // Falls back to native WebAuthn if Proton Pass orchestrator isn't connected.
+  // Auto-inject MAIN-world content_scripts from loaded chrome extensions whose
+  // manifest `matches` patterns accept the webview's URL. Electron's
+  // session.loadExtension does NOT auto-inject content_scripts (gap in its
+  // Chrome API surface), so we drive injection ourselves via executeJavaScript,
+  // which runs in main world. ISOLATED-world scripts (the default) need a real
+  // isolated context with the extension's own chrome.runtime — handled
+  // separately via the bridge-window relay in runtime-external.js. This loop
+  // only handles `world: "MAIN"` entries (e.g. Proton Pass's webauthn.js).
   if (contents.getType() === 'webview') {
     contents.on('dom-ready', () => {
-      if (!webauthnScript || !isChromeExtensionLoaded('proton-pass')) return;
-
       const url = contents.getURL();
-      if (url.startsWith('http://') || url.startsWith('https://')) {
-        contents.executeJavaScript(webauthnScript).catch(() => {
+      if (!url.startsWith('http://') && !url.startsWith('https://')) return;
+
+      const injections = getMatchingMainWorldContentScripts(url);
+      for (const inj of injections) {
+        let src: string;
+        try {
+          src = fs.readFileSync(inj.scriptPath, 'utf-8');
+        } catch (err) {
+          console.error(`[content-script-inject] Failed to read ${inj.scriptPath}:`, err);
+          continue;
+        }
+        contents.executeJavaScript(src).catch(() => {
           // Ignore injection errors (webContents may be destroyed)
         });
-        DEBUG && console.log(`[webauthn] Injected Proton Pass webauthn.js into: ${url}`);
+        DEBUG && console.log(`[content-script-inject] ${inj.extId}: injected ${path.basename(inj.scriptPath)} (run_at=${inj.runAt}, world=MAIN) into ${url}`);
       }
     });
 
@@ -1214,6 +1220,25 @@ const onReady = async () => {
       loadEnabledChromeExtensions().then(() => {
         registerChromeExtensionCommands();
         publish(systemAddress, 'chrome-extensions:loaded', {});
+
+        // PEEK_AUTOOPEN_EXT=<extId>:<pageType> auto-opens a chrome extension UI
+        // page after extensions load. Used by scripts/dev-popup.sh for fast
+        // iteration on the chrome-extension compat layer (skip the manual
+        // toolbar-click to get to the popup). Format: "proton-pass:popup".
+        const _autoOpen = process.env.PEEK_AUTOOPEN_EXT;
+        if (_autoOpen) {
+          const [extId, pageType] = _autoOpen.split(':');
+          if (extId && pageType) {
+            const win = openChromeExtensionPage(extId, pageType as 'popup' | 'options' | 'background' | 'newtab' | 'history' | 'bookmarks' | 'devtools' | 'sidepanel');
+            if (win) {
+              console.log(`[startup] PEEK_AUTOOPEN_EXT opened ${extId}:${pageType}`);
+            } else {
+              console.error(`[startup] PEEK_AUTOOPEN_EXT failed to open ${extId}:${pageType}`);
+            }
+          } else {
+            console.error(`[startup] PEEK_AUTOOPEN_EXT malformed (expected "<extId>:<pageType>"): ${_autoOpen}`);
+          }
+        }
       }).catch(err => {
         console.error('[startup] Chrome extensions init failed:', err);
       });
@@ -1221,6 +1246,15 @@ const onReady = async () => {
       const featTime = Date.now() - featStart;
       const totalTime = Date.now() - ((global as Record<string, unknown>).__startupStart as number);
       DEBUG && console.log(`[startup] main: ${featStart - ((global as Record<string, unknown>).__startupStart as number)}ms, features: ${featTime}ms, total: ${totalTime}ms`);
+
+      // PEEK_AUTOOPEN_EXT mode: skip session restore + startup feature so the
+      // dev iteration loop opens cleanly with only the auto-opened extension
+      // page. See `scripts/dev-popup.sh`.
+      if (process.env.PEEK_AUTOOPEN_EXT) {
+        _sessionRestorePending = false;
+        notifySessionRestoreDone();
+        DEBUG && console.log('[session] PEEK_AUTOOPEN_EXT set — skipping session restore + startup feature');
+      }
 
       // Restore session after features are loaded
       if (_sessionRestorePending) {

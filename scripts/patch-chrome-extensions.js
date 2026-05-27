@@ -639,7 +639,7 @@ function patchProtonPass() {
   // because MV3 extensions ship a CSP `script-src 'self' 'wasm-unsafe-eval'`
   // that blocks inline scripts even on extension-origin pages.
   const polyfillsDir = path.join(ROOT, 'apps', 'desktop', 'main', 'chrome-api-polyfills');
-  for (const file of ['peek-bridge.html', 'peek-bridge.js']) {
+  for (const file of ['peek-bridge.html', 'peek-bridge.js', 'peek-relay.js']) {
     const srcPath = path.join(polyfillsDir, file);
     const dstPath = path.join(extPath, file);
     if (fs.existsSync(srcPath)) {

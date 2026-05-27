@@ -24,6 +24,8 @@ const { ipcRenderer, contextBridge } = require('electron');
 
 const IPC_FORWARD_CHANNEL = 'peek:auth-ext:forward';
 const IPC_RESPONSE_CHANNEL = 'peek:auth-ext:response';
+const IPC_CS_RELAY_DISPATCH = 'peek:cs-relay:dispatch';
+const IPC_CS_RELAY_FROM_BRIDGE = 'peek:cs-relay:from-bridge';
 
 console.error('[peek:bridge:preload] loaded for', location.href);
 
@@ -59,6 +61,35 @@ contextBridge.exposeInMainWorld('peekBridge', {
       }
     });
     console.error('[peek:bridge:preload] onForward listener registered');
+  },
+
+  /**
+   * Register a listener for content-script relay dispatches from main —
+   * page-side window.postMessage events forwarded here so injected ISOLATED
+   * content scripts can hear them. See peek-relay.js.
+   *
+   * @param {function} listener - Called with {senderId, data, origin}
+   */
+  onRelayDispatch(listener) {
+    ipcRenderer.on(IPC_CS_RELAY_DISPATCH, (_event, payload) => {
+      try {
+        listener(payload);
+      } catch (err) {
+        console.error('[peek:bridge:preload] relay listener threw:', err && err.message);
+      }
+    });
+    console.error('[peek:bridge:preload] onRelayDispatch listener registered');
+  },
+
+  /**
+   * Send an outgoing relay message back from the bridge to a page. peek-relay.js
+   * calls this when it observes content scripts posting responses via
+   * window.postMessage. Main routes to the original sender webContents by ID.
+   *
+   * @param {{senderId: number, data: unknown, origin?: string}} payload
+   */
+  relayBack(payload) {
+    ipcRenderer.send(IPC_CS_RELAY_FROM_BRIDGE, payload);
   },
 
   /**
