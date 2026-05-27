@@ -49,6 +49,20 @@ const PAGE_POLYFILL_SRC = `(function(){
     };
   }
 
+  // Invoke a sendMessage callback with chrome.runtime.lastError scoped to just
+  // this invocation. Chrome sets lastError per-callback (only visible inside the
+  // callback synchronously) — our polyfill must match, otherwise concurrent
+  // sendMessage calls leak each other's errors. Proton fans out to 4 platform
+  // ext IDs; 3 reject ("Receiving end does not exist"), 1 succeeds — without
+  // per-callback scoping, the successful callback sees a leftover lastError and
+  // treats success as failure.
+  function _invokeCb(callback, response, errMsg) {
+    var rt = window.chrome && window.chrome.runtime;
+    if (rt) { try { rt.lastError = errMsg ? { message: errMsg } : undefined; } catch(_){} }
+    try { callback(response); } catch(_){}
+    if (rt) { try { rt.lastError = undefined; } catch(_){} }
+  }
+
   var _sendMessage = function(extIdOrMessage, messageOrCb, optsOrCb, maybeCb) {
     var extId, message, callback;
     if (typeof extIdOrMessage === 'string') {
@@ -62,7 +76,7 @@ const PAGE_POLYFILL_SRC = `(function(){
       console.log('[peek:runtime-external:page] sendMessage rejected: extId not a string (typeof=', typeof extIdOrMessage, ')');
       var p = Promise.reject(new Error('Peek runtime bridge: extensionId required for cross-origin sendMessage'));
       var cb = (typeof messageOrCb === 'function') ? messageOrCb : (typeof optsOrCb === 'function' ? optsOrCb : undefined);
-      if (cb) { p.catch(function(e){ try { window.chrome.runtime.lastError = { message: e.message }; cb(undefined); } catch(_){} }); }
+      if (cb) { p.catch(function(e){ _invokeCb(cb, undefined, e.message); }); }
       return p;
     }
 
@@ -92,8 +106,8 @@ const PAGE_POLYFILL_SRC = `(function(){
       }, location.origin);
     });
     if (callback) {
-      p.then(function(r){ try { callback(r); } catch(_){} },
-             function(e){ try { window.chrome.runtime.lastError = { message: e.message }; callback(undefined); } catch(_){} });
+      p.then(function(r){ _invokeCb(callback, r, null); },
+             function(e){ _invokeCb(callback, undefined, e.message); });
     }
     return p;
   };
