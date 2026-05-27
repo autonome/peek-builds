@@ -6904,6 +6904,7 @@ export function registerTileIpcHandlers(): void {
     enabled?: boolean;
     profile?: string;
     readonly?: boolean;
+    scopeTag?: string;
   }, _grant) => {
     if (!args?.token) return { success: false, error: 'Invalid token' };
     const grant = _grant;
@@ -6912,10 +6913,11 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'trustedBuiltin required for tile:mcp:set-config' };
     }
     try {
-      const patch: { enabled?: boolean; profile?: string; readonly?: boolean } = {};
+      const patch: { enabled?: boolean; profile?: string; readonly?: boolean; scopeTag?: string } = {};
       if (typeof args.enabled === 'boolean') patch.enabled = args.enabled;
       if (typeof args.profile === 'string') patch.profile = args.profile;
       if (typeof args.readonly === 'boolean') patch.readonly = args.readonly;
+      if (typeof args.scopeTag === 'string') patch.scopeTag = args.scopeTag;
       const state = setMcpConfig(patch);
       return { success: true, state };
     } catch (err) {

@@ -8,9 +8,17 @@
  *
  * Environment:
  *   PEEK_DB_PATH — path to Peek's datastore.sqlite
+ *     If unset, defaults to the platform default-profile location
+ *     (macOS: ~/Library/Application Support/Peek/default/datastore.sqlite).
+ *   PEEK_MCP_READONLY=1 — hides mutating tools (create/update/delete/tag/etc.)
+ *   PEEK_MCP_SCOPE_TAG — confines this session to items tagged <scope> or
+ *     matching <scope>:*. Reads filter to in-scope only; writes are force-
+ *     tagged and reject foreign namespaces. Untagged items are invisible.
  */
 
 import { createInterface } from 'node:readline';
+import os from 'node:os';
+import path from 'node:path';
 import { openDb, queryItems, getItem, createItem, updateItem, deleteItem,
          listTags, tagItem, untagItem, recordEvent, listTasks, completeTask,
          getTaskContext, getItemTags } from './db.js';
@@ -32,6 +40,56 @@ const MUTATING_TOOLS = new Set([
   'complete_task',
   'record_event',
 ]);
+
+// Scope tag — when set, every read filters to items tagged <SCOPE> or
+// <SCOPE>:*, every write force-adds <SCOPE>, and any tag of the form
+// <other>:* (where other != SCOPE) is rejected so an in-scope agent can't
+// poison items into a sibling namespace. Empty string = no scope.
+const SCOPE = (process.env.PEEK_MCP_SCOPE_TAG || '').trim();
+
+function inScope(tags) {
+  if (!SCOPE) return true;
+  if (!tags || tags.length === 0) return false;
+  const prefix = SCOPE + ':';
+  return tags.some((t) => t === SCOPE || t.startsWith(prefix));
+}
+
+function tagIsScopeOwned(tag) {
+  if (!SCOPE) return false;
+  return tag === SCOPE || tag.startsWith(SCOPE + ':');
+}
+
+function tagIsForeignNamespace(tag) {
+  if (!SCOPE) return false;
+  if (tagIsScopeOwned(tag)) return false;
+  // Foreign iff it has a colon — bare tags like "todo", "done", "note" are
+  // shared vocabulary and allowed.
+  return tag.includes(':');
+}
+
+function assertItemInScope(id) {
+  if (!SCOPE) return;
+  const tags = getItemTags(id);
+  if (!inScope(tags)) {
+    throw new Error(`Item ${id} is not in scope "${SCOPE}".`);
+  }
+}
+
+function validateWriteTags(tags) {
+  if (!SCOPE || !tags) return;
+  for (const t of tags) {
+    if (tagIsForeignNamespace(t)) {
+      throw new Error(`Tag "${t}" is outside scope "${SCOPE}".`);
+    }
+  }
+}
+
+function withScopeTag(tags) {
+  if (!SCOPE) return tags || [];
+  const list = Array.isArray(tags) ? [...tags] : [];
+  if (!list.includes(SCOPE)) list.push(SCOPE);
+  return list;
+}
 
 // --- Tool definitions ---
 
@@ -216,32 +274,58 @@ const RESOURCE_TEMPLATES = [
 
 function handleToolCall(name, args) {
   switch (name) {
-    case 'list_items':
-      return queryItems(args || {});
-    case 'get_item':
-      return getItem(args.id);
-    case 'create_item':
-      return createItem(args);
+    case 'list_items': {
+      const rows = queryItems(args || {});
+      return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
+    }
+    case 'get_item': {
+      const item = getItem(args.id);
+      if (!item) return null;
+      if (SCOPE && !inScope(item.tags)) return null;
+      return item;
+    }
+    case 'create_item': {
+      validateWriteTags(args.tags);
+      return createItem({ ...args, tags: withScopeTag(args.tags) });
+    }
     case 'update_item': {
       const { id, ...rest } = args;
+      assertItemInScope(id);
       return updateItem(id, rest);
     }
     case 'delete_item':
+      assertItemInScope(args.id);
       return deleteItem(args.id);
-    case 'list_tags':
-      return listTags(args || {});
+    case 'list_tags': {
+      const rows = listTags(args || {});
+      return SCOPE ? rows.filter((t) => tagIsScopeOwned(t.name)) : rows;
+    }
     case 'tag_item':
+      assertItemInScope(args.itemId);
+      validateWriteTags([args.tagName]);
       return tagItem(args.itemId, args.tagName);
     case 'untag_item':
+      assertItemInScope(args.itemId);
+      if (tagIsScopeOwned(args.tagName)) {
+        throw new Error(`Cannot untag "${args.tagName}" — would remove item from scope "${SCOPE}".`);
+      }
       return untagItem(args.itemId, args.tagName);
     case 'record_event':
+      assertItemInScope(args.itemId);
       return recordEvent(args.itemId, args.type, args.value);
-    case 'list_tasks':
-      return listTasks(args || {});
+    case 'list_tasks': {
+      const rows = listTasks(args || {});
+      return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
+    }
     case 'complete_task':
+      assertItemInScope(args.id);
       return completeTask(args.id, args.notes);
-    case 'get_task_context':
-      return getTaskContext(args.id);
+    case 'get_task_context': {
+      const ctx = getTaskContext(args.id);
+      if (!ctx) return null;
+      if (SCOPE && !inScope(ctx.tags)) return null;
+      return ctx;
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -250,17 +334,22 @@ function handleToolCall(name, args) {
 // --- Resource handlers ---
 
 function handleResourceRead(uri) {
+  const scopeFilter = (rows) => SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
+  const scopeTagFilter = (rows) => SCOPE ? rows.filter((t) => tagIsScopeOwned(t.name)) : rows;
   if (uri === 'peek://tasks') {
-    return JSON.stringify(listTasks(), null, 2);
+    return JSON.stringify(scopeFilter(listTasks()), null, 2);
   }
   if (uri === 'peek://tags') {
-    return JSON.stringify(listTags(), null, 2);
+    return JSON.stringify(scopeTagFilter(listTags()), null, 2);
   }
   // peek://tasks/{tag}
   const taskMatch = uri.match(/^peek:\/\/tasks\/(.+)$/);
   if (taskMatch) {
     const tag = decodeURIComponent(taskMatch[1]);
-    return JSON.stringify(listTasks({ tags: ['todo'], project: tag }), null, 2);
+    if (SCOPE && tagIsForeignNamespace(tag)) {
+      throw new Error(`Tag "${tag}" is outside scope "${SCOPE}".`);
+    }
+    return JSON.stringify(scopeFilter(listTasks({ tags: ['todo'], project: tag })), null, 2);
   }
   throw new Error(`Unknown resource: ${uri}`);
 }
@@ -370,13 +459,18 @@ function handleMessage(msg) {
 
 // --- Main ---
 
+function defaultDbPath() {
+  // macOS-only for now; mirrors PROFILES_BASE in main/mcp-config.ts.
+  return path.join(
+    os.homedir(), 'Library', 'Application Support', 'Peek',
+    'default', 'datastore.sqlite',
+  );
+}
+
 function main() {
-  // Resolve DB path
-  const dbPath = process.env.PEEK_DB_PATH;
-  if (!dbPath) {
-    process.stderr.write('Error: PEEK_DB_PATH environment variable not set\n');
-    process.exit(1);
-  }
+  // Resolve DB path — falls back to platform default-profile location so
+  // the settings.json snippet can omit env entirely for the common case.
+  const dbPath = process.env.PEEK_DB_PATH || defaultDbPath();
 
   try {
     openDb(dbPath);
@@ -387,6 +481,8 @@ function main() {
 
   process.stderr.write(`Peek MCP Server v${SERVER_VERSION} started\n`);
   process.stderr.write(`Database: ${dbPath}\n`);
+  if (SCOPE) process.stderr.write(`Scope: ${SCOPE} (and ${SCOPE}:*)\n`);
+  if (READONLY) process.stderr.write(`Read-only mode\n`);
 
   // Read JSON-RPC messages from stdin (newline-delimited)
   const rl = createInterface({ input: process.stdin });

@@ -596,7 +596,7 @@ const renderIntegrationsSettings = async () => {
   const mcpGroup = createSettingsGroup('MCP server');
 
   let mcpState = {
-    enabled: false, profile: 'default', readonly: true,
+    enabled: false, profile: 'default', readonly: true, scopeTag: '',
     expectedCommand: '', configuredCommand: null,
     settingsPath: '~/.claude/settings.json', profiles: [], configuredAt: null,
   };
@@ -606,6 +606,7 @@ const renderIntegrationsSettings = async () => {
   } catch { /* fall back to defaults */ }
 
   let profileSelect = null;
+  let scopeTagInput = null;
   let allowWritesInput = null;
   let statusLine = null;
 
@@ -624,12 +625,15 @@ const renderIntegrationsSettings = async () => {
       profileSelect.disabled = !mcpState.enabled;
       if (profileSelect.value !== mcpState.profile) profileSelect.value = mcpState.profile;
     }
+    if (scopeTagInput) {
+      scopeTagInput.disabled = !mcpState.enabled;
+      if (scopeTagInput.value !== (mcpState.scopeTag || '')) scopeTagInput.value = mcpState.scopeTag || '';
+    }
     if (allowWritesInput) {
       allowWritesInput.disabled = !mcpState.enabled;
       allowWritesInput.checked = !mcpState.readonly;
     }
     renderStatus();
-    renderReadonlyWarning();
   };
 
   mcpGroup.appendChild(createCheckbox(
@@ -678,6 +682,35 @@ const renderIntegrationsSettings = async () => {
   profileGroup.appendChild(profileHelp);
   mcpGroup.appendChild(profileGroup);
 
+  // Scope tag input — hard-fence the session to items tagged <scope> or
+  // <scope>:*. Empty = no scope (agent sees everything).
+  const scopeGroup = document.createElement('div');
+  scopeGroup.className = 'form-group';
+  scopeGroup.style.marginLeft = '24px';
+  const scopeLabel = document.createElement('label');
+  scopeLabel.textContent = 'Scope tag (optional)';
+  scopeLabel.style.cssText = 'display: block; font-size: 13px; margin-bottom: 4px;';
+  scopeGroup.appendChild(scopeLabel);
+  scopeTagInput = document.createElement('input');
+  scopeTagInput.type = 'text';
+  scopeTagInput.placeholder = 'e.g. peek';
+  scopeTagInput.value = mcpState.scopeTag || '';
+  scopeTagInput.style.cssText = 'padding: 4px 8px; font-size: 13px; min-width: 200px;';
+  scopeTagInput.addEventListener('change', async (e) => {
+    try {
+      const res = await api.mcp?.setConfig?.({ scopeTag: e.target.value.trim() });
+      if (res?.success) mcpState = res.state;
+    } catch { /* ignore */ }
+    syncUI();
+  });
+  scopeGroup.appendChild(scopeTagInput);
+  const scopeHelp = document.createElement('p');
+  scopeHelp.className = 'help-text';
+  scopeHelp.style.cssText = 'margin-top: 4px; font-size: 12px;';
+  scopeHelp.textContent = 'Confines this MCP session to items tagged <scope> or <scope>:* — reads filter, writes are auto-tagged, foreign namespaces rejected. Leave blank to expose everything.';
+  scopeGroup.appendChild(scopeHelp);
+  mcpGroup.appendChild(scopeGroup);
+
   // "Allow writes" checkbox — OFF by default. Checking opts in to
   // mutating tools. Framed positively so the safe state is the
   // unchecked one and the destructive action requires an explicit add.
@@ -697,15 +730,12 @@ const renderIntegrationsSettings = async () => {
   allowWritesInput = allowWritesGroup.querySelector('input[type="checkbox"]');
   mcpGroup.appendChild(allowWritesGroup);
 
-  // Destructive-action warning — red treatment. Shown only when writes
-  // are enabled.
+  // Destructive-action warning — red treatment. Always visible so the
+  // user reads it before opting in, not only after.
   const readonlyWarning = document.createElement('p');
   readonlyWarning.style.cssText = 'margin: 4px 0 0 24px; padding: 8px 12px; font-size: 12px; color: #ff8080; background: rgba(220, 53, 53, 0.10); border-left: 3px solid #d44c4c; border-radius: 4px; line-height: 1.4; font-weight: 500;';
-  readonlyWarning.innerHTML = '<strong>Warning:</strong> writes are enabled. Any connected agent can create, update, tag, and <strong>permanently delete</strong> your Peek items. Only do this if you trust every agent that will connect.';
+  readonlyWarning.innerHTML = '<strong>Warning:</strong> enabling writes lets any connected agent create, update, tag, and <strong>permanently delete</strong> your Peek items. Only do this if you trust every agent that will connect.';
   mcpGroup.appendChild(readonlyWarning);
-  const renderReadonlyWarning = () => {
-    readonlyWarning.style.display = (mcpState.enabled && !mcpState.readonly) ? 'block' : 'none';
-  };
 
   // Status line + Open link
   const statusRow = document.createElement('div');

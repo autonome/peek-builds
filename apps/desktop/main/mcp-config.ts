@@ -28,6 +28,7 @@ interface McpConfig {
   enabled: boolean;
   profile: string;
   readonly: boolean;
+  scopeTag: string;
 }
 
 function listProfiles(): string[] {
@@ -57,9 +58,10 @@ function defaultProfile(): string {
   return profiles[0] ?? 'default';
 }
 
-function buildSnippet(opts: { profile: string; readonly: boolean }): McpSnippet {
+function buildSnippet(opts: { profile: string; readonly: boolean; scopeTag: string }): McpSnippet {
   const env: Record<string, string> = { PEEK_DB_PATH: dbPathForProfile(opts.profile) };
   if (opts.readonly) env.PEEK_MCP_READONLY = '1';
+  if (opts.scopeTag) env.PEEK_MCP_SCOPE_TAG = opts.scopeTag;
   if (app.isPackaged) {
     // Launcher at <Peek.app>/Contents/Resources/peek-mcp. Bundles its
     // own Electron-as-Node runtime, so users need no system Node.
@@ -78,10 +80,10 @@ function buildSnippet(opts: { profile: string; readonly: boolean }): McpSnippet 
   };
 }
 
-function inferFromConfigured(configured: McpSnippet | null): { profile: string; readonly: boolean } {
+function inferFromConfigured(configured: McpSnippet | null): { profile: string; readonly: boolean; scopeTag: string } {
   // Fresh state defaults to read-only — writes are off by default so an
   // agent can never destroy items without an explicit opt-in.
-  if (!configured) return { profile: defaultProfile(), readonly: true };
+  if (!configured) return { profile: defaultProfile(), readonly: true, scopeTag: '' };
   const dbPath = configured.env?.PEEK_DB_PATH || '';
   let profile = defaultProfile();
   const prefix = PROFILES_BASE + path.sep;
@@ -89,7 +91,8 @@ function inferFromConfigured(configured: McpSnippet | null): { profile: string; 
     profile = dbPath.slice(prefix.length).split(path.sep)[0] || profile;
   }
   const readonly = configured.env?.PEEK_MCP_READONLY === '1';
-  return { profile, readonly };
+  const scopeTag = (configured.env?.PEEK_MCP_SCOPE_TAG || '').trim();
+  return { profile, readonly, scopeTag };
 }
 
 function snippetsMatch(a: McpSnippet, b: McpSnippet): boolean {
@@ -151,6 +154,7 @@ export function getMcpStatus(): McpStatus {
     enabled: !!configured && snippetsMatch(configured, expected),
     profile: inferred.profile,
     readonly: inferred.readonly,
+    scopeTag: inferred.scopeTag,
     expectedCommand: expected.command,
     configuredCommand: configured?.command ?? null,
     settingsPath: CLAUDE_SETTINGS_PATH,
@@ -164,10 +168,11 @@ export function setMcpConfig(opts: Partial<McpConfig>): McpStatus {
   const enabled = opts.enabled ?? current.enabled;
   const profile = opts.profile ?? current.profile;
   const readonly = opts.readonly ?? current.readonly;
+  const scopeTag = (opts.scopeTag ?? current.scopeTag ?? '').trim();
   const settings = readSettings() as { mcpServers?: Record<string, McpSnippet> };
   if (enabled) {
     if (!settings.mcpServers) settings.mcpServers = {};
-    (settings.mcpServers as Record<string, McpSnippet>).peek = buildSnippet({ profile, readonly });
+    (settings.mcpServers as Record<string, McpSnippet>).peek = buildSnippet({ profile, readonly, scopeTag });
   } else if (settings.mcpServers && (settings.mcpServers as Record<string, McpSnippet>).peek) {
     delete (settings.mcpServers as Record<string, McpSnippet>).peek;
     if (Object.keys(settings.mcpServers as object).length === 0) {

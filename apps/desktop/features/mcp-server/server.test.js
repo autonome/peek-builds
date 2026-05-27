@@ -114,8 +114,9 @@ function createTestDb() {
 }
 
 class McpClient {
-  constructor(dbPath) {
+  constructor(dbPath, extraEnv = {}) {
     this.dbPath = dbPath;
+    this.extraEnv = extraEnv;
     this.proc = null;
     this.buffer = '';
     this.pending = new Map();
@@ -125,7 +126,7 @@ class McpClient {
   start() {
     return new Promise((resolve, reject) => {
       this.proc = spawn('node', [SERVER_PATH], {
-        env: { ...process.env, PEEK_DB_PATH: this.dbPath },
+        env: { ...process.env, PEEK_DB_PATH: this.dbPath, ...this.extraEnv },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
@@ -183,6 +184,14 @@ class McpClient {
     if (resp.error) throw new Error(resp.error.message);
     const text = resp.result.content[0].text;
     return JSON.parse(text);
+  }
+
+  // Returns the full result envelope so callers can inspect isError + raw
+  // text (which may be a plain "Error: ..." string, not JSON).
+  async callToolRaw(name, args = {}) {
+    const resp = await this.send('tools/call', { name, arguments: args });
+    if (resp.error) throw new Error(resp.error.message);
+    return resp.result;
   }
 
   stop() {
@@ -567,6 +576,188 @@ describe('MCP Server', () => {
       // we deliberately skip extraction (matches datastore.ts which
       // only calls syncContentHashtags on text items).
       assert.ok(!item.tags.includes('fragment'));
+    });
+  });
+});
+
+// --- Scope tests ---
+//
+// Verify PEEK_MCP_SCOPE_TAG hard-fence. An agent running with scope="peek"
+// must only see/touch items tagged `peek` or `peek:*`. Untagged items and
+// foreign namespaces (`untense`, `untense:*`) are invisible and unwritable.
+
+function createScopedTestDb() {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'peek-mcp-scope-test-'));
+  const dbPath = join(tmpDir, 'test.sqlite');
+  const schema = `
+    CREATE TABLE items (id TEXT PRIMARY KEY NOT NULL, type TEXT NOT NULL,
+      content TEXT, mimeType TEXT DEFAULT '', metadata TEXT DEFAULT '{}',
+      syncId TEXT DEFAULT '', syncedAt INTEGER DEFAULT 0,
+      createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL,
+      deletedAt INTEGER DEFAULT 0, starred INTEGER DEFAULT 0,
+      archived INTEGER DEFAULT 0, visitCount INTEGER DEFAULT 0,
+      lastVisitAt INTEGER DEFAULT 0, frecencyScore INTEGER DEFAULT 0,
+      title TEXT DEFAULT '', domain TEXT DEFAULT '', favicon TEXT DEFAULT '');
+    CREATE TABLE tags (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL UNIQUE,
+      frequency INTEGER DEFAULT 1, lastUsed INTEGER NOT NULL,
+      frecencyScore REAL DEFAULT 0.0, createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL, slug TEXT, color TEXT DEFAULT '#999999',
+      parentId TEXT DEFAULT '', description TEXT DEFAULT '', metadata TEXT DEFAULT '{}');
+    CREATE TABLE item_tags (id TEXT PRIMARY KEY NOT NULL, itemId TEXT NOT NULL,
+      tagId TEXT NOT NULL, createdAt INTEGER NOT NULL);
+    CREATE UNIQUE INDEX idx_item_tags_unique ON item_tags(itemId, tagId);
+    CREATE TABLE item_events (id TEXT PRIMARY KEY NOT NULL, itemId TEXT NOT NULL,
+      content TEXT, value REAL, occurredAt INTEGER NOT NULL,
+      metadata TEXT DEFAULT '{}', createdAt INTEGER NOT NULL);
+  `;
+  execSync(`sqlite3 "${dbPath}"`, { input: schema, encoding: 'utf-8' });
+
+  const now = Date.now();
+  const seed = `
+    INSERT INTO items (id, type, content, title, createdAt, updatedAt) VALUES
+      ('p-only', 'text', 'peek thing', 'P', ${now - 6000}, ${now - 6000}),
+      ('p-sub',  'text', 'peek sub',   'PS', ${now - 5000}, ${now - 5000}),
+      ('u-only', 'text', 'untense thing', 'U', ${now - 4000}, ${now - 4000}),
+      ('u-sub',  'text', 'untense sub', 'US', ${now - 3000}, ${now - 3000}),
+      ('cross',  'text', 'both',        'C', ${now - 2000}, ${now - 2000}),
+      ('bare',   'text', 'no tags',     'B', ${now - 1000}, ${now - 1000});
+    INSERT INTO tags (id, name, lastUsed, createdAt, updatedAt) VALUES
+      ('t-p',  'peek',              ${now}, ${now}, ${now}),
+      ('t-ps', 'peek:scope:desktop',${now}, ${now}, ${now}),
+      ('t-u',  'untense',           ${now}, ${now}, ${now}),
+      ('t-us', 'untense:todo',      ${now}, ${now}, ${now});
+    INSERT INTO item_tags (id, itemId, tagId, createdAt) VALUES
+      ('it-1', 'p-only', 't-p',  ${now}),
+      ('it-2', 'p-sub',  't-ps', ${now}),
+      ('it-3', 'u-only', 't-u',  ${now}),
+      ('it-4', 'u-sub',  't-us', ${now}),
+      ('it-5', 'cross',  't-p',  ${now}),
+      ('it-6', 'cross',  't-u',  ${now});
+  `;
+  execSync(`sqlite3 "${dbPath}"`, { input: seed, encoding: 'utf-8' });
+  return dbPath;
+}
+
+describe('MCP Server scope enforcement (PEEK_MCP_SCOPE_TAG=peek)', () => {
+  let dbPath;
+  let client;
+
+  before(async () => {
+    dbPath = createScopedTestDb();
+    client = new McpClient(dbPath, { PEEK_MCP_SCOPE_TAG: 'peek' });
+    await client.start();
+  });
+
+  after(() => {
+    client.stop();
+    if (dbPath && existsSync(dbPath)) {
+      try { unlinkSync(dbPath); } catch { /* ignore */ }
+    }
+  });
+
+  describe('reads', () => {
+    it('list_items hides foreign and untagged items', async () => {
+      const items = await client.callTool('list_items', { limit: 100 });
+      const ids = items.map((i) => i.id).sort();
+      assert.deepEqual(ids, ['cross', 'p-only', 'p-sub']);
+    });
+
+    it('list_items honors client tag filters within scope', async () => {
+      const items = await client.callTool('list_items', { tags: ['peek:scope:desktop'] });
+      assert.equal(items.length, 1);
+      assert.equal(items[0].id, 'p-sub');
+    });
+
+    it('get_item returns null for out-of-scope id', async () => {
+      const r = await client.callTool('get_item', { id: 'u-only' });
+      assert.equal(r, null);
+    });
+
+    it('get_item returns null for untagged id', async () => {
+      const r = await client.callTool('get_item', { id: 'bare' });
+      assert.equal(r, null);
+    });
+
+    it('get_item returns in-scope item with all tags visible', async () => {
+      const r = await client.callTool('get_item', { id: 'cross' });
+      assert.ok(r);
+      // The cross-cut item shows ALL its tags, including untense — agents
+      // can see what a human chose to share, they just can't write it.
+      assert.ok(r.tags.includes('peek'));
+      assert.ok(r.tags.includes('untense'));
+    });
+
+    it('list_tags hides foreign namespaces', async () => {
+      const tags = await client.callTool('list_tags', {});
+      const names = tags.map((t) => t.name).sort();
+      assert.deepEqual(names, ['peek', 'peek:scope:desktop']);
+    });
+  });
+
+  describe('writes', () => {
+    it('create_item force-adds scope tag', async () => {
+      const item = await client.callTool('create_item', {
+        type: 'text', title: 'new', content: 'hi',
+      });
+      assert.ok(item.tags.includes('peek'));
+    });
+
+    it('create_item preserves bare shared tags', async () => {
+      const item = await client.callTool('create_item', {
+        type: 'text', title: 'todo', content: 'x', tags: ['todo'],
+      });
+      assert.ok(item.tags.includes('peek'));
+      assert.ok(item.tags.includes('todo'));
+    });
+
+    it('create_item rejects foreign-namespace tags', async () => {
+      const r = await client.callToolRaw('create_item', {
+        type: 'text', title: 'leak', content: 'x', tags: ['untense:foo'],
+      });
+      assert.equal(r.isError, true);
+      assert.match(r.content[0].text, /outside scope/);
+    });
+
+    it('update_item refuses out-of-scope id', async () => {
+      const r = await client.callToolRaw('update_item', {
+        id: 'u-only', title: 'hijacked',
+      });
+      assert.equal(r.isError, true);
+      assert.match(r.content[0].text, /not in scope/);
+    });
+
+    it('delete_item refuses out-of-scope id', async () => {
+      const r = await client.callToolRaw('delete_item', { id: 'u-only' });
+      assert.equal(r.isError, true);
+    });
+
+    it('untag_item refuses to remove the scope tag', async () => {
+      const r = await client.callToolRaw('untag_item', {
+        itemId: 'p-only', tagName: 'peek',
+      });
+      assert.equal(r.isError, true);
+      assert.match(r.content[0].text, /would remove item from scope/);
+    });
+
+    it('untag_item refuses on out-of-scope id', async () => {
+      const r = await client.callToolRaw('untag_item', {
+        itemId: 'u-only', tagName: 'untense',
+      });
+      assert.equal(r.isError, true);
+    });
+
+    it('tag_item rejects foreign-namespace tag', async () => {
+      const r = await client.callToolRaw('tag_item', {
+        itemId: 'p-only', tagName: 'untense:foo',
+      });
+      assert.equal(r.isError, true);
+    });
+
+    it('record_event refuses on out-of-scope id', async () => {
+      const r = await client.callToolRaw('record_event', {
+        itemId: 'u-only', type: 'note', value: 'leak',
+      });
+      assert.equal(r.isError, true);
     });
   });
 });

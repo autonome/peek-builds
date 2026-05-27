@@ -2511,7 +2511,7 @@ function buildAPI(): Record<string, unknown> {
       }
       return ipcRenderer.invoke('tile:mcp:status', { token: tileToken });
     },
-    setConfig: (patch: { enabled?: boolean; profile?: string; readonly?: boolean }) => {
+    setConfig: (patch: { enabled?: boolean; profile?: string; readonly?: boolean; scopeTag?: string }) => {
       if (!trustedBuiltin) {
         return Promise.resolve({ success: false, error: 'api.mcp requires trustedBuiltin' });
       }
