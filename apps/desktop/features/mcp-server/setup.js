@@ -28,6 +28,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { TEMPLATE_BODY, BODY_BEGIN, BODY_END } from './peek-skill-template.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -143,6 +144,48 @@ function allowSettingsPath(mainPath, isMcpJson) {
   return join(dirname(mainPath), 'settings.local.json');
 }
 
+// Render the skill body with scope substitution.
+function renderSkillBody(scope) {
+  return TEMPLATE_BODY.replace(/\{SCOPE\}/g, scope);
+}
+
+// Scaffold or refresh <cwd>/.claude/skills/peek.md. Returns { path, action }
+// where action is 'created' | 'refreshed' | 'unchanged'. The auto-managed
+// section is bracketed by BODY_BEGIN/END markers; anything after BODY_END is
+// preserved across re-runs so per-project conventions survive.
+function writeSkillFile(cwd, scope) {
+  const path = join(cwd, '.claude', 'skills', 'peek.md');
+  const rendered = renderSkillBody(scope);
+
+  if (!existsSync(path)) {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, rendered, 'utf-8');
+    return { path, action: 'created' };
+  }
+
+  const existing = readFileSync(path, 'utf-8');
+  const endIdx = existing.indexOf(BODY_END);
+  if (endIdx === -1) {
+    // No marker found — file exists but isn't from this template. Don't
+    // clobber; the user owns it.
+    return { path, action: 'unchanged' };
+  }
+
+  // Preserve everything from BODY_END's line onward in the existing file.
+  // We splice in the freshly-rendered prefix (up through BODY_END) and keep
+  // the existing tail (project-specific section).
+  const renderedEnd = rendered.indexOf(BODY_END);
+  const newPrefix = rendered.slice(0, renderedEnd + BODY_END.length);
+  const existingTail = existing.slice(endIdx + BODY_END.length);
+  const merged = newPrefix + existingTail;
+
+  if (merged === existing) {
+    return { path, action: 'unchanged' };
+  }
+  writeFileSync(path, merged, 'utf-8');
+  return { path, action: 'refreshed' };
+}
+
 // Merge entries into permissions.allow, preserving existing entries and order.
 // Returns { added: string[], skipped: boolean } — skipped=true means nothing
 // new to write so the file was left alone.
@@ -167,7 +210,8 @@ function mergeAllowEntries(path, entries) {
 
 function parseArgs(argv) {
   const opts = { scope: '', profile: 'default', writes: false, force: false,
-                 print: false, project: false, mcpJson: false, allow: true, help: false };
+                 print: false, project: false, mcpJson: false, allow: true,
+                 skill: true, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
@@ -179,6 +223,7 @@ function parseArgs(argv) {
       case '--project': opts.project = true; break;
       case '--mcp-json': opts.mcpJson = true; break;
       case '--no-allow': opts.allow = false; break;
+      case '--no-skill': opts.skill = false; break;
       case '--help':
       case '-h':        opts.help = true; break;
       default:
@@ -203,12 +248,19 @@ Options:
   (no dest flag)    Write to ~/.claude/settings.json
   --force           Overwrite an existing peek entry that differs
   --no-allow        Skip adding mcp__peek__* entries to permissions.allow
+  --no-skill        Skip scaffolding the per-project peek skill
   --print           Print the snippet to stdout, do not write
 
-By default also appends the appropriate mcp__peek__* tool names to the
-permissions.allow array in settings.local.json (sibling of the chosen
-settings file — gitignored / user-specific), so Claude Code stops
-prompting for each Peek tool. --no-allow opts out.
+By default also:
+  - appends mcp__peek__* tool names to permissions.allow in settings.local.json
+    (sibling of the chosen settings file — gitignored / user-specific), so
+    Claude Code stops prompting for each Peek tool. --no-allow opts out.
+  - scaffolds <cwd>/.claude/skills/peek.md from the bundled template with
+    {SCOPE} substituted, so Claude Code sessions in this project know the
+    Peek conventions (status vocabulary, bare-tag trap, hashtag opt-in,
+    untag orphan rule, restart UX). Re-running refreshes the auto-managed
+    section while preserving the trailing "Project-specific" section.
+    Only runs when --mcp-json or --project is set. --no-skill opts out.
 `;
 
 function main() {
@@ -299,6 +351,20 @@ function main() {
       process.stderr.write(`Allowlist entries already present in ${allowPath}.\n`);
     } else {
       process.stderr.write(`Added ${result.added.length} mcp__peek__* entries to ${allowPath}.\n`);
+    }
+  }
+
+  // Skill scaffolding only applies to per-project setups (mcp-json or project).
+  // Global mode has no project context to scaffold into.
+  const projectMode = opts.mcpJson || opts.project;
+  if (opts.skill && projectMode) {
+    const result = writeSkillFile(process.cwd(), opts.scope);
+    if (result.action === 'created') {
+      process.stderr.write(`Scaffolded skill at ${result.path}.\n`);
+    } else if (result.action === 'refreshed') {
+      process.stderr.write(`Refreshed auto-managed section of ${result.path}.\n`);
+    } else {
+      process.stderr.write(`Skill at ${result.path} left untouched (no markers / no changes).\n`);
     }
   }
   const isTty = process.stderr.isTTY;
