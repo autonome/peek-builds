@@ -3516,8 +3516,16 @@ function renderEntities(entities) {
       badge.className = `entity-badge ${type}`;
       item.appendChild(badge);
 
-      const name = document.createTextNode(entity.name || entity.content || '');
-      item.appendChild(name);
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = entity.name || entity.content || '';
+      item.appendChild(nameSpan);
+
+      if (entity.visitCount > 0) {
+        const count = document.createElement('span');
+        count.className = 'entity-count';
+        count.textContent = entity.visitCount;
+        item.appendChild(count);
+      }
 
       groupEl.appendChild(item);
     }
@@ -3556,7 +3564,8 @@ api.subscribe('entities:get-for-url:response', (msg) => {
         return {
           name: e.content || e.title,
           type: meta.entityType || 'other',
-          confidence: meta.confidence || 0
+          confidence: meta.confidence || 0,
+          visitCount: e.visitCount || 0
         };
       });
       renderEntities(currentPageEntities);
