@@ -20,7 +20,6 @@
  *   node setup.js --scope <tag> --mcp-json            # <cwd>/.mcp.json
  *   node setup.js --scope <tag> --writes              # opt into mutating tools
  *   node setup.js --scope <tag> --profile <name>      # non-default Peek profile
- *   node setup.js --scope <tag> --force               # overwrite differing entry
  *   node setup.js --scope <tag> --print               # print snippet, don't write
  */
 
@@ -102,22 +101,6 @@ function devSnippet(serverPath, dbPath, opts) {
     args: ['--experimental-sqlite', serverPath],
     env: buildEnv(dbPath, opts),
   };
-}
-
-function snippetsEqual(a, b) {
-  if (!a || !b) return false;
-  if (a.command !== b.command) return false;
-  const ag = a.args ?? [], bg = b.args ?? [];
-  if (ag.length !== bg.length) return false;
-  for (let i = 0; i < ag.length; i++) if (ag[i] !== bg[i]) return false;
-  const ae = a.env ?? {}, be = b.env ?? {};
-  const ak = Object.keys(ae).sort(), bk = Object.keys(be).sort();
-  if (ak.length !== bk.length) return false;
-  for (let i = 0; i < ak.length; i++) {
-    if (ak[i] !== bk[i]) return false;
-    if (ae[ak[i]] !== be[bk[i]]) return false;
-  }
-  return true;
 }
 
 // --- Settings file I/O ---
@@ -209,7 +192,7 @@ function mergeAllowEntries(path, entries) {
 // --- Main ---
 
 function parseArgs(argv) {
-  const opts = { scope: '', profile: 'default', writes: false, force: false,
+  const opts = { scope: '', profile: 'default', writes: false,
                  print: false, project: false, mcpJson: false, allow: true,
                  skill: true, help: false };
   for (let i = 0; i < argv.length; i++) {
@@ -218,7 +201,6 @@ function parseArgs(argv) {
       case '--scope':   opts.scope = argv[++i] || ''; break;
       case '--profile': opts.profile = argv[++i] || 'default'; break;
       case '--writes':  opts.writes = true; break;
-      case '--force':   opts.force = true; break;
       case '--print':   opts.print = true; break;
       case '--project': opts.project = true; break;
       case '--mcp-json': opts.mcpJson = true; break;
@@ -246,7 +228,6 @@ Options:
   --mcp-json        Write to <cwd>/.mcp.json (per-project, recommended)
   --project         Write to <cwd>/.claude/settings.json
   (no dest flag)    Write to ~/.claude/settings.json
-  --force           Overwrite an existing peek entry that differs
   --no-allow        Skip adding mcp__peek__* entries to permissions.allow
   --no-skill        Skip scaffolding the per-project peek skill
   --print           Print the snippet to stdout, do not write
@@ -327,14 +308,6 @@ function main() {
   if (!settings.mcpServers) settings.mcpServers = {};
 
   const prev = settings.mcpServers.peek;
-  if (prev && !snippetsEqual(prev, snippet) && !opts.force) {
-    process.stderr.write('Refusing to overwrite existing mcpServers.peek entry.\n');
-    process.stderr.write(`Existing scope: ${prev.env?.PEEK_MCP_SCOPE_TAG || '(none)'}\n`);
-    process.stderr.write(`New scope:      ${opts.scope}\n`);
-    process.stderr.write('Pass --force to replace it.\n');
-    process.exit(1);
-  }
-
   settings.mcpServers.peek = snippet;
   writeJsonFile(settingsPath, settings);
 

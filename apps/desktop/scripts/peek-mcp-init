@@ -13,7 +13,7 @@ if [ "$#" -eq 0 ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
 peek-mcp-init — scaffold a per-project .mcp.json with Peek MCP scope.
 
 Usage:
-  peek-mcp-init <tag> [--writes] [--profile <name>] [--force] [--no-allow] [--no-skill]
+  peek-mcp-init <tag> [--writes] [--profile <name>] [--no-allow] [--no-skill]
 
 Writes three files in the project root so a Claude Code session in this
 directory can read (and optionally write) only Peek items tagged <tag>
@@ -29,7 +29,6 @@ or <tag>:*, with conventions pre-loaded:
 Options:
   --writes          Enable mutating tools (default: read-only)
   --profile <name>  Peek profile to expose (default: "default")
-  --force           Overwrite an existing peek entry that differs
   --no-allow        Skip the permissions.allow write
   --no-skill        Skip the skill scaffold/refresh
 

@@ -10,17 +10,21 @@ export const BODY_END = '<!-- PEEK_SKILL_BODY_END -->';
 // Frontmatter + auto-managed body. {SCOPE} gets substituted at scaffold time.
 export const TEMPLATE_BODY = `---
 name: peek
-description: Use Peek's MCP server (mcp__peek__*) to manage tasks/items in the {SCOPE}:* namespace. Covers status vocabulary, the bare-tag default trap, hashtag opt-in, untag orphan rule, and restart-required UX.
+description: "Peek is the user's personal task/knowledge system, accessed via mcp__peek__* tools. NOT part of this project's codebase — it's an external service like a todo list or issue tracker. Use it to read/write tasks and notes in the {SCOPE}:* namespace."
 ---
 
-# Peek MCP — {SCOPE} scope
+# Peek — task & knowledge tools ({SCOPE} scope)
 
 ${BODY_BEGIN}
 
-This Claude Code session is configured to talk to Peek's MCP server,
-scoped to items tagged \`{SCOPE}\` or \`{SCOPE}:*\` (enforced server-side
-via \`PEEK_MCP_SCOPE_TAG={SCOPE}\`). Keep all work inside that namespace
-so tag conventions stay clean.
+**Peek is an external task and knowledge management system** — like a
+personal issue tracker. It is NOT part of this project's codebase. You
+interact with it through \`mcp__peek__*\` tool calls to read and manage
+the user's tasks, notes, and reference items.
+
+This session is scoped to items tagged \`{SCOPE}\` or \`{SCOPE}:*\`
+(enforced server-side via \`PEEK_MCP_SCOPE_TAG={SCOPE}\`). Keep all work
+inside that namespace so tag conventions stay clean.
 
 ## Avoid the bare-tag defaults
 
