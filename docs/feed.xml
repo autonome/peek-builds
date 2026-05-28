@@ -4,246 +4,246 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Tue, 19 May 2026 13:54:40 GMT</lastBuildDate>
+    <lastBuildDate>Thu, 28 May 2026 09:55:39 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
     <item>
-      <title>page-host: suppress &quot;didn&apos;t load&quot; overlay when page already rendered</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-19</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-19:77d220d4e45d</guid>
-      <pubDate>Tue, 19 May 2026 12:00:00 GMT</pubDate>
-      <description>page-host: suppress &quot;didn&apos;t load&quot; overlay when page already rendered</description>
+      <title>chrome-ext: scope chrome.runtime.lastError per-callback in cross-origin sendMessage polyfill</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-28</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-28:0cdb7fe7de7a</guid>
+      <pubDate>Thu, 28 May 2026 12:00:00 GMT</pubDate>
+      <description>chrome-ext: scope chrome.runtime.lastError per-callback in cross-origin sendMessage polyfill</description>
     </item>
     <item>
-      <title>linux: install peek CLI alias in PATH for AppImage builds</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-19</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-19:00b98f695662</guid>
-      <pubDate>Tue, 19 May 2026 12:00:00 GMT</pubDate>
-      <description>linux: install peek CLI alias in PATH for AppImage builds</description>
+      <title>mcp-server: make hashtag extraction opt-in via extractHashtags flag</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-28</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-28:1e1ea868e652</guid>
+      <pubDate>Thu, 28 May 2026 12:00:00 GMT</pubDate>
+      <description>mcp-server: make hashtag extraction opt-in via extractHashtags flag</description>
     </item>
     <item>
-      <title>linux: add install + install-test yarn scripts for AppImage</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-19</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-19:c118c7048641</guid>
-      <pubDate>Tue, 19 May 2026 12:00:00 GMT</pubDate>
-      <description>linux: add install + install-test yarn scripts for AppImage</description>
+      <title>mcp-server: allow untag_item when other in-scope tags remain</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-28</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-28:5b18dad4d201</guid>
+      <pubDate>Thu, 28 May 2026 12:00:00 GMT</pubDate>
+      <description>mcp-server: allow untag_item when other in-scope tags remain</description>
     </item>
     <item>
-      <title>session-restore: focused-window head start</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-18</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-18:f2abe4cdf37c</guid>
-      <pubDate>Mon, 18 May 2026 12:00:00 GMT</pubDate>
-      <description>session-restore: focused-window head start</description>
+      <title>mcp-server: peek-mcp-init scaffolds per-project Peek skill</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-28</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-28:cd1416806837</guid>
+      <pubDate>Thu, 28 May 2026 12:00:00 GMT</pubDate>
+      <description>mcp-server: peek-mcp-init scaffolds per-project Peek skill</description>
     </item>
     <item>
-      <title>tags: bulk getAllItemTags — N+1 loop 4.5s → 0.5s</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-18</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-18:624ef2f70d44</guid>
-      <pubDate>Mon, 18 May 2026 12:00:00 GMT</pubDate>
-      <description>tags: bulk getAllItemTags — N+1 loop 4.5s → 0.5s</description>
+      <title>mcp-server: add README covering install/use/conventions</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-28</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-28:e47dc37445de</guid>
+      <pubDate>Thu, 28 May 2026 12:00:00 GMT</pubDate>
+      <description>mcp-server: add README covering install/use/conventions</description>
     </item>
     <item>
-      <title>editor: boot-phase markers — confirms editor at renderer floor</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-18</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-18:435d63bc8bde</guid>
-      <pubDate>Mon, 18 May 2026 12:00:00 GMT</pubDate>
-      <description>editor: boot-phase markers — confirms editor at renderer floor</description>
+      <title>desktop: ship MCP server in app + Settings → Integrations → MCP toggle</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:d9a705303de8</guid>
+      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
+      <description>desktop: ship MCP server in app + Settings → Integrations → MCP toggle</description>
     </item>
     <item>
-      <title>session-restore: seed izui focusedWindowId for two-phase ESC</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-18</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-18:4d0a080885ee</guid>
-      <pubDate>Mon, 18 May 2026 12:00:00 GMT</pubDate>
-      <description>session-restore: seed izui focusedWindowId for two-phase ESC</description>
+      <title>desktop: decouple devtools auto-open from Settings Verbose Logging toggle</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:21fe83950553</guid>
+      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
+      <description>desktop: decouple devtools auto-open from Settings Verbose Logging toggle</description>
     </item>
     <item>
-      <title>profiles: make single-instance lock per-profile, not app-global</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-18</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-18:0781158fc2df</guid>
-      <pubDate>Mon, 18 May 2026 12:00:00 GMT</pubDate>
-      <description>profiles: make single-instance lock per-profile, not app-global</description>
+      <title>mcp-server: peek-mcp-init scaffolder for per-project scope</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:ebb3246af5a8</guid>
+      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
+      <description>mcp-server: peek-mcp-init scaffolder for per-project scope</description>
     </item>
     <item>
-      <title>session-restore: record persistent user-focus in snapshot, not isFocused()</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-18</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-18:e3175817655d</guid>
-      <pubDate>Mon, 18 May 2026 12:00:00 GMT</pubDate>
-      <description>session-restore: record persistent user-focus in snapshot, not isFocused()</description>
+      <title>wip: MCP followups — drift check, sandbox path, restart banner, project scopes UI</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:27508212c2d2</guid>
+      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
+      <description>wip: MCP followups — drift check, sandbox path, restart banner, project scopes UI</description>
     </item>
     <item>
-      <title>undo-close: drive reopen synchronously so before-quit save sees it</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-18</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-18:30ed85feb4fd</guid>
-      <pubDate>Mon, 18 May 2026 12:00:00 GMT</pubDate>
-      <description>undo-close: drive reopen synchronously so before-quit save sees it</description>
+      <title>mcp-server: capture current state in PLAN.md — scope tag, readonly mode, dev sandbox path, drift self-exit, restart-required UX</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:b0c739568aaa</guid>
+      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
+      <description>mcp-server: capture current state in PLAN.md — scope tag, readonly mode, dev sandbox path, drift self-exit, restart-required UX</description>
     </item>
     <item>
-      <title>session-restore: defer page-host chrome init via chrome=0</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-17</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-17:5aff75defd4f</guid>
-      <pubDate>Sun, 17 May 2026 12:00:00 GMT</pubDate>
-      <description>session-restore: defer page-host chrome init via chrome=0</description>
+      <title>desktop: policy — chrome ext compat layer only, never modify imported source</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:6cedba762828</guid>
+      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
+      <description>desktop: policy — chrome ext compat layer only, never modify imported source</description>
     </item>
     <item>
-      <title>windows: Exposé-style fit view mode</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-16</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-16:3ff8ac239246</guid>
-      <pubDate>Sat, 16 May 2026 12:00:00 GMT</pubDate>
-      <description>windows: Exposé-style fit view mode</description>
+      <title>chrome-ext: compat-layer fixes that land Proton Pass auth end-to-end</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:9238699ca0fe</guid>
+      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
+      <description>chrome-ext: compat-layer fixes that land Proton Pass auth end-to-end</description>
     </item>
     <item>
-      <title>peek-grid: measure shadow .grid box, not host, for fit cells</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-16</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-16:accd0cc12ea8</guid>
-      <pubDate>Sat, 16 May 2026 12:00:00 GMT</pubDate>
-      <description>peek-grid: measure shadow .grid box, not host, for fit cells</description>
+      <title>desktop: dev tooling for fast chrome-ext compat-layer iteration</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:9ae4ade6accb</guid>
+      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
+      <description>desktop: dev tooling for fast chrome-ext compat-layer iteration</description>
     </item>
     <item>
-      <title>peek-grid: tune fit-mode scoring — gap scales, aspect bounded</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-16</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-16:1875c1b68161</guid>
-      <pubDate>Sat, 16 May 2026 12:00:00 GMT</pubDate>
-      <description>peek-grid: tune fit-mode scoring — gap scales, aspect bounded</description>
+      <title>mobile/linux: one-command device install + icon mask + lockfile guard</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-26</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-26:b719ace9a349</guid>
+      <pubDate>Tue, 26 May 2026 12:00:00 GMT</pubDate>
+      <description>mobile/linux: one-command device install + icon mask + lockfile guard</description>
     </item>
     <item>
-      <title>peek-grid: nudge fit-mode gaps up at the many-cards end</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-16</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-16:c7d6b32b02f9</guid>
-      <pubDate>Sat, 16 May 2026 12:00:00 GMT</pubDate>
-      <description>peek-grid: nudge fit-mode gaps up at the many-cards end</description>
+      <title>mobile/linux: wire is_dark_mode to GNOME color-scheme</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-26</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-26:20dc53a8b959</guid>
+      <pubDate>Tue, 26 May 2026 12:00:00 GMT</pubDate>
+      <description>mobile/linux: wire is_dark_mode to GNOME color-scheme</description>
     </item>
     <item>
-      <title>windows: immersive card layout in fit mode</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-16</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-16:6a043e07a727</guid>
-      <pubDate>Sat, 16 May 2026 12:00:00 GMT</pubDate>
-      <description>windows: immersive card layout in fit mode</description>
+      <title>desktop: polyfill chrome.scripting.executeScript and chrome.tabs gaps to unblock Proton Pass autofill</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-26</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-26:8311c5f7f8ed</guid>
+      <pubDate>Tue, 26 May 2026 12:00:00 GMT</pubDate>
+      <description>desktop: polyfill chrome.scripting.executeScript and chrome.tabs gaps to unblock Proton Pass autofill</description>
     </item>
     <item>
-      <title>thumbnails: capture screenshots for peek:// windows</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-16</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-16:8ab558b10c18</guid>
-      <pubDate>Sat, 16 May 2026 12:00:00 GMT</pubDate>
-      <description>thumbnails: capture screenshots for peek:// windows</description>
+      <title>chrome-ext: bundle Proton Pass + auto-patch on build</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-26</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-26:91a14d23bcb1</guid>
+      <pubDate>Tue, 26 May 2026 12:00:00 GMT</pubDate>
+      <description>chrome-ext: bundle Proton Pass + auto-patch on build</description>
     </item>
     <item>
-      <title>session-restore: fire-and-forget loadURL — 20s → 2s</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-16</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-16:f656be26f319</guid>
-      <pubDate>Sat, 16 May 2026 12:00:00 GMT</pubDate>
-      <description>session-restore: fire-and-forget loadURL — 20s → 2s</description>
+      <title>desktop: devtools available on any focused window via cmd palette and Cmd+Option+I</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-26</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-26:6b6e63038582</guid>
+      <pubDate>Tue, 26 May 2026 12:00:00 GMT</pubDate>
+      <description>desktop: devtools available on any focused window via cmd palette and Cmd+Option+I</description>
     </item>
     <item>
-      <title>session-restore: call invokeWindowOpen directly instead of executeJavaScript</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-16</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-16:2856570f24b7</guid>
-      <pubDate>Sat, 16 May 2026 12:00:00 GMT</pubDate>
-      <description>session-restore: call invokeWindowOpen directly instead of executeJavaScript</description>
+      <title>chrome-ext: split peek-bridge inline script to satisfy MV3 CSP, broaden popup error forwarding</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-26</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-26:00067c188c0f</guid>
+      <pubDate>Tue, 26 May 2026 12:00:00 GMT</pubDate>
+      <description>chrome-ext: split peek-bridge inline script to satisfy MV3 CSP, broaden popup error forwarding</description>
     </item>
     <item>
-      <title>window-registry: introduce indirection layer for window lookups</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-16</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-16:18e9cbe8cdb3</guid>
-      <pubDate>Sat, 16 May 2026 12:00:00 GMT</pubDate>
-      <description>window-registry: introduce indirection layer for window lookups</description>
+      <title>chrome-ext: install-chrome-extension script + refresh Proton Pass to v1.37.1</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-26</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-26:728917de221d</guid>
+      <pubDate>Tue, 26 May 2026 12:00:00 GMT</pubDate>
+      <description>chrome-ext: install-chrome-extension script + refresh Proton Pass to v1.37.1</description>
     </item>
     <item>
-      <title>backend: route window lookups through window-registry</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-16</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-16:105496ffd2ce</guid>
-      <pubDate>Sat, 16 May 2026 12:00:00 GMT</pubDate>
-      <description>backend: route window lookups through window-registry</description>
+      <title>chrome-ext: Path C - route cross-origin sendMessage through main IPC bridge instead of redacting, unblocks Proton Pass login</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-26</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-26:9b2802bd0f29</guid>
+      <pubDate>Tue, 26 May 2026 12:00:00 GMT</pubDate>
+      <description>chrome-ext: Path C - route cross-origin sendMessage through main IPC bridge instead of redacting, unblocks Proton Pass login</description>
     </item>
     <item>
-      <title>window-registry: add broadcast helper</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-16</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-16:b4dc992605fe</guid>
-      <pubDate>Sat, 16 May 2026 12:00:00 GMT</pubDate>
-      <description>window-registry: add broadcast helper</description>
+      <title>skills: add /agent-review skill and peek:needs-review status</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-25</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-25:e1f90f1f3ad3</guid>
+      <pubDate>Mon, 25 May 2026 12:00:00 GMT</pubDate>
+      <description>skills: add /agent-review skill and peek:needs-review status</description>
     </item>
     <item>
-      <title>window-registry: move WindowDescriptor + WindowContext into the registry module</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-16</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-16:aa8adf3e831a</guid>
-      <pubDate>Sat, 16 May 2026 12:00:00 GMT</pubDate>
-      <description>window-registry: move WindowDescriptor + WindowContext into the registry module</description>
+      <title>mobile: consolidate apps/mobile into root yarn workspace; pin @tauri-apps 2.10.1</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-25</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-25:a9943fc17c2a</guid>
+      <pubDate>Mon, 25 May 2026 12:00:00 GMT</pubDate>
+      <description>mobile: consolidate apps/mobile into root yarn workspace; pin @tauri-apps 2.10.1</description>
     </item>
     <item>
-      <title>window-registry: realize() body + stable-synthetic-id refactor</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-16</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-16:08d3941227f0</guid>
-      <pubDate>Sat, 16 May 2026 12:00:00 GMT</pubDate>
-      <description>window-registry: realize() body + stable-synthetic-id refactor</description>
+      <title>mobile/android: use addDocumentStartJavaScript for safe-area insets</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-25</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-25:6aa95a5a4d0c</guid>
+      <pubDate>Mon, 25 May 2026 12:00:00 GMT</pubDate>
+      <description>mobile/android: use addDocumentStartJavaScript for safe-area insets</description>
     </item>
     <item>
-      <title>windows: presenter + list + focus handle pending WindowRefs</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-16</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-16:e622158f579d</guid>
-      <pubDate>Sat, 16 May 2026 12:00:00 GMT</pubDate>
-      <description>windows: presenter + list + focus handle pending WindowRefs</description>
+      <title>build: add yarn test:desktop as the canonical full-desktop gate</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-25</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-25:6e57cf6cc695</guid>
+      <pubDate>Mon, 25 May 2026 12:00:00 GMT</pubDate>
+      <description>build: add yarn test:desktop as the canonical full-desktop gate</description>
     </item>
     <item>
-      <title>log: add missing main-log.ts implementation</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:f3ffc935a809</guid>
-      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
-      <description>log: add missing main-log.ts implementation</description>
+      <title>renderer-log: add preload-level console wrapper forwarding to file</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-22</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-22:6f8f1e42efdd</guid>
+      <pubDate>Fri, 22 May 2026 12:00:00 GMT</pubDate>
+      <description>renderer-log: add preload-level console wrapper forwarding to file</description>
     </item>
     <item>
-      <title>cmd-panel: hide mode chip globally</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:7eafdc173b6c</guid>
-      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
-      <description>cmd-panel: hide mode chip globally</description>
+      <title>test: tighten ensureWebsearchLoaded predicate to wait for kagi command registration</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-22</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-22:5d7d13c1c6fd</guid>
+      <pubDate>Fri, 22 May 2026 12:00:00 GMT</pubDate>
+      <description>test: tighten ensureWebsearchLoaded predicate to wait for kagi command registration</description>
     </item>
     <item>
-      <title>session-restore: don&apos;t record restored URLs as history visits</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:e64272a1634e</guid>
-      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
-      <description>session-restore: don&apos;t record restored URLs as history visits</description>
+      <title>slides,peeks: show page-host address bar in slide and peek windows</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-22</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-22:91e0645897bf</guid>
+      <pubDate>Fri, 22 May 2026 12:00:00 GMT</pubDate>
+      <description>slides,peeks: show page-host address bar in slide and peek windows</description>
     </item>
     <item>
-      <title>mcp: backfill idx_tags_name_unique for existing databases</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:69d322ec0033</guid>
-      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
-      <description>mcp: backfill idx_tags_name_unique for existing databases</description>
+      <title>esc: guard escUnhandledPolicy and escGlobalHandler against overlay exit cooldown</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-22</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-22:70f67b06e460</guid>
+      <pubDate>Fri, 22 May 2026 12:00:00 GMT</pubDate>
+      <description>esc: guard escUnhandledPolicy and escGlobalHandler against overlay exit cooldown</description>
     </item>
     <item>
-      <title>log: always-on main-process log to &lt;userData&gt;/logs/main.log</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:470390521184</guid>
-      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
-      <description>log: always-on main-process log to &lt;userData&gt;/logs/main.log</description>
+      <title>misc: fix headless extend prototype guard to no-op focus moveTop restore center</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-22</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-22:1ee4f7cf254a</guid>
+      <pubDate>Fri, 22 May 2026 12:00:00 GMT</pubDate>
+      <description>misc: fix headless extend prototype guard to no-op focus moveTop restore center</description>
     </item>
     <item>
-      <title>mcp: drop redundant idx_tags_name + harden migration</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:ffddad1c51be</guid>
-      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
-      <description>mcp: drop redundant idx_tags_name + harden migration</description>
+      <title>headless: eliminate window-flash vectors in keepLive-reuse and alwaysOnTop paths</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-22</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-22:2b22cb61ac94</guid>
+      <pubDate>Fri, 22 May 2026 12:00:00 GMT</pubDate>
+      <description>headless: eliminate window-flash vectors in keepLive-reuse and alwaysOnTop paths</description>
     </item>
     <item>
-      <title>debug: runtime toggles for verbose logging + new-window DevTools</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:9dd8e14559d4</guid>
-      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
-      <description>debug: runtime toggles for verbose logging + new-window DevTools</description>
+      <title>misc: test update drift expectation to opacity 0 after ctor opacity gate landed</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-22</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-22:443e35c21268</guid>
+      <pubDate>Fri, 22 May 2026 12:00:00 GMT</pubDate>
+      <description>misc: test update drift expectation to opacity 0 after ctor opacity gate landed</description>
     </item>
     <item>
-      <title>settings: debug toggles → Diagnostics pane; CLI socket → Linux only</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:00fa813bca8d</guid>
-      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
-      <description>settings: debug toggles → Diagnostics pane; CLI socket → Linux only</description>
+      <title>tags: reduce card size by half for denser scanning layout</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-22</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-22:16bd658c08cf</guid>
+      <pubDate>Fri, 22 May 2026 12:00:00 GMT</pubDate>
+      <description>tags: reduce card size by half for denser scanning layout</description>
     </item>
     <item>
-      <title>window-open: land windows on the user&apos;s active macOS Space</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-15</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-15:508479118b3c</guid>
-      <pubDate>Fri, 15 May 2026 12:00:00 GMT</pubDate>
-      <description>window-open: land windows on the user&apos;s active macOS Space</description>
+      <title>misc: fix adblocker: cache to disk, graceful offline fallback, background refresh with unit tests</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-22</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-22:7180d62ca183</guid>
+      <pubDate>Fri, 22 May 2026 12:00:00 GMT</pubDate>
+      <description>misc: fix adblocker: cache to disk, graceful offline fallback, background refresh with unit tests</description>
     </item>
   </channel>
 </rss>

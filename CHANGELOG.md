@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: ad9a56a4e4eb -->
+<!-- last-bumped: 5af62bfde59e -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -17,7 +17,121 @@ Completed work. Two formats coexist on purpose:
 
 See TODO.md for pending items, WIP.md for in-progress items.
 
+## Week of 2026-05-25 (W22)
+
+### 2026-05-28
+
+- chrome-ext: scope chrome.runtime.lastError per-callback in cross-origin sendMessage polyfill
+- mcp-server: make hashtag extraction opt-in via extractHashtags flag
+- mcp-server: allow untag_item when other in-scope tags remain
+- mcp-server: peek-mcp-init scaffolds per-project Peek skill
+- mcp-server: add README covering install/use/conventions
+
+### 2026-05-27
+
+- desktop: ship MCP server in app + Settings → Integrations → MCP toggle
+- desktop: decouple devtools auto-open from Settings Verbose Logging toggle
+- mcp-server: peek-mcp-init scaffolder for per-project scope
+- wip: MCP followups — drift check, sandbox path, restart banner, project scopes UI
+- mcp-server: capture current state in PLAN.md — scope tag, readonly mode, dev sandbox path, drift self-exit, restart-required UX
+- desktop: policy — chrome ext compat layer only, never modify imported source
+- chrome-ext: compat-layer fixes that land Proton Pass auth end-to-end
+- desktop: dev tooling for fast chrome-ext compat-layer iteration
+
+### 2026-05-26
+
+- mobile/linux: one-command device install + icon mask + lockfile guard
+- mobile/linux: wire is_dark_mode to GNOME color-scheme
+- desktop: polyfill chrome.scripting.executeScript and chrome.tabs gaps to unblock Proton Pass autofill
+- chrome-ext: bundle Proton Pass + auto-patch on build
+- desktop: devtools available on any focused window via cmd palette and Cmd+Option+I
+- chrome-ext: split peek-bridge inline script to satisfy MV3 CSP, broaden popup error forwarding
+- chrome-ext: install-chrome-extension script + refresh Proton Pass to v1.37.1
+- chrome-ext: Path C - route cross-origin sendMessage through main IPC bridge instead of redacting, unblocks Proton Pass login
+
+### 2026-05-25
+
+- skills: add /agent-review skill and peek:needs-review status
+- mobile: consolidate apps/mobile into root yarn workspace; pin @tauri-apps 2.10.1
+- mobile/android: use addDocumentStartJavaScript for safe-area insets
+- build: add yarn test:desktop as the canonical full-desktop gate
+
 ## Week of 2026-05-18 (W21)
+
+### 2026-05-22
+
+- renderer-log: add preload-level console wrapper forwarding to file
+- test: tighten ensureWebsearchLoaded predicate to wait for kagi command registration
+- slides,peeks: show page-host address bar in slide and peek windows
+- esc: guard escUnhandledPolicy and escGlobalHandler against overlay exit cooldown
+- misc: fix headless extend prototype guard to no-op focus moveTop restore center
+- headless: eliminate window-flash vectors in keepLive-reuse and alwaysOnTop paths
+- misc: test update drift expectation to opacity 0 after ctor opacity gate landed
+- tags: reduce card size by half for denser scanning layout
+- misc: fix adblocker: cache to disk, graceful offline fallback, background refresh with unit tests
+
+### 2026-05-21
+
+- packages: promote sync/ and backend/tests/ to packages/, finalize backend/ removal
+- apps/desktop: port Linux AppImage CLI alias + install scripts onto new layout
+- test: update popup placeholder expectation to match production HTML
+- clone-pool: finalize handles both @-as-work and @-as-placeholder agent conventions
+- mobile-workspace: dedicated reserved slot for iOS/Android builds
+- mcp-server: update run.sh + doc comments to apps/desktop paths
+- paths: final comment cleanup in playwright.config.ts
+- izui: always-log overlay-enter, focused-window-set, and per-window focus events
+- session: debounced snapshot save on window open (was already on close)
+- clone-pool: rewrite finalize to fast-forward-or-bust, no rebase
+- claude: document fast-forward-or-bust finalize + push-main.sh chokepoint
+- push-main: tolerate SIGPIPE from head -1 in pipefail context
+- finalize-script: tolerate SIGPIPE from grep -q in fast-forward check
+- session: guard saveSessionSnapshot against mid-restore corruption
+- mobile-scripts: pair sim:run with Debug xcodebuild, not release
+- mobile: gate iOS-notch header padding to iOS only
+- tests: correct stale projectRoot path in entity unit tests
+- chrome-extensions: gate openChromeExtensionPage show on headless
+- android: pre-set TAURI_CONFIG to eliminate redundant Rust compile in dev:android
+- test-headless: setOpacity(0) before showInactive in __peek_test.showWindow
+- test-headless: extract showWindowHeadlessSafe helper in windows.ts
+- test-headless: sweep show/showInactive call sites to use helper
+- mobile: resolve tauri-cli explicitly in Android scripts, drop npx fallback
+- mobile: document cargo-tauri version expectations and script resolution
+- mobile: retry adb devices check + refuse second emulator in dev-android.sh
+- android: serialised adb wrapper + shepherd to eliminate SIGABRT crashes
+- tests: update 4 stale unit-test import paths after apps/ restructure
+- android: close 97% of adb SIGABRT race via PATH prepend + shepherd-via-wrapper
+- search: update document.title to reflect active search query
+
+### 2026-05-20
+
+- ios: bump build to 1147 + drop libapp.a from app bundle
+- mobile: mark stale phases in ANDROID_BUILD_PLAN.md
+- mobile: android share extension v3 — text/* + share-toast wording
+- editor: annotations-pane blur-on-detach no longer clobbers notes
+- page-host: clear load-error overlay when page renders after timeout
+- test-helpers: add observeUrl for one-off page-host repros
+- wip: search peek tasks for undo-close-window
+- misc: PRE-RESTRUCTURE CHECKPOINT — known-good state before apps/ migration
+- clone-pool: add scripts/{spawn,finalize,clean}-isolated-clone.sh + gitignore fix
+- clone-pool: add --ignore-immutable to finalize rebase
+- workspaces: declare backend/electron as workspace stub (deps stay at root)
+- packages: move schema/ to packages/schema/ + update runtime + script paths
+- spawn-clone: use BASE@origin since fresh clones have only remote-tracking refs
+- clone-pool: scripts read name+base from /tmp/mpeek-* files only (chook convention)
+- apps/desktop: move Electron app source into apps/desktop/
+- apps/desktop: rewrite tsconfig, electron-builder, and runtime paths for new layout
+- apps/desktop: create desktop workspace package.json with electron-specific deps
+- apps/desktop: fix node_modules protocol resolution and test ROOT paths after apps/ restructure
+- apps/server: move backend/server to apps/server
+- apps/mobile: move backend/tauri-mobile to apps/mobile
+- apps/extension: move backend/extension to apps/extension
+- apps/tauri-desktop: move backend/tauri to apps/tauri-desktop
+- apps/desktop: add CLAUDE.md
+- apps/mobile: add CLAUDE.md
+- apps/server: add CLAUDE.md
+- apps/extension: add CLAUDE.md
+- apps/tauri-desktop: add CLAUDE.md stub (off critical path)
+- phase6: electron scripts to apps/desktop, retire agent pool, scope tags, clone scope
 
 ### 2026-05-19
 
