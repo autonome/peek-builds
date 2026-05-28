@@ -74,7 +74,7 @@ function findDbPath(profile = 'default') {
 // --- Tool sets (must mirror server.js TOOLS array) ---
 
 // Read-only tools: safe to always allow.
-const READ_TOOLS = ['list_items', 'get_item', 'list_tags', 'list_tasks', 'get_task_context'];
+const READ_TOOLS = ['list_items', 'search_items', 'get_item', 'list_tags', 'list_tasks', 'get_task_context'];
 // Mutating tools: only allowed when --writes is set.
 const WRITE_TOOLS = ['create_item', 'update_item', 'delete_item', 'tag_item', 'untag_item', 'record_event', 'complete_task'];
 

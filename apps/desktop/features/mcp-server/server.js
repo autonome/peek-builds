@@ -20,7 +20,7 @@ import { createInterface } from 'node:readline';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { openDb, queryItems, getItem, createItem, updateItem, deleteItem,
+import { openDb, queryItems, searchItems, getItem, createItem, updateItem, deleteItem,
          listTags, tagItem, untagItem, recordEvent, listTasks, completeTask,
          getTaskContext, getItemTags } from './db.js';
 
@@ -107,6 +107,21 @@ const TOOLS = [
         offset: { type: 'number', description: 'Pagination offset' },
         sort: { type: 'string', enum: ['recent', 'frecency'], description: 'Sort order (default recent)' },
       },
+    },
+  },
+  {
+    name: 'search_items',
+    description: 'Full-text search across Peek items. Searches content, title, and domain fields. Optionally filter by tags and/or type.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search string (matched against content, title, and domain)' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Only return items that have ALL listed tags' },
+        type: { type: 'string', description: 'Filter by item type (url, text, tagset, image, series, feed, entity)' },
+        limit: { type: 'number', description: 'Max results (default 20)' },
+        offset: { type: 'number', description: 'Pagination offset' },
+      },
+      required: ['query'],
     },
   },
   {
@@ -278,6 +293,10 @@ function handleToolCall(name, args) {
   switch (name) {
     case 'list_items': {
       const rows = queryItems(args || {});
+      return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
+    }
+    case 'search_items': {
+      const rows = searchItems(args || {});
       return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
     }
     case 'get_item': {

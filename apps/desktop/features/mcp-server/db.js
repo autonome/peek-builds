@@ -217,6 +217,73 @@ export function queryItems({ tags, type, limit = 50, offset = 0, sort = 'recent'
   });
 }
 
+export function searchItems({ query, tags, type, limit = 20, offset = 0 } = {}) {
+  const d = requireDb();
+  const params = [];
+  const conditions = ['i.deletedAt = 0'];
+
+  const likePattern = `%${query}%`;
+  conditions.push('(i.content LIKE ? OR i.title LIKE ? OR i.domain LIKE ?)');
+  params.push(likePattern, likePattern, likePattern);
+
+  if (type) {
+    conditions.push('i.type = ?');
+    params.push(type);
+  }
+
+  let sql;
+  if (tags && tags.length > 0) {
+    const placeholders = tags.map(() => '?').join(',');
+    sql = `
+      SELECT i.id, i.type, i.content, i.title, i.domain, i.metadata,
+             i.createdAt, i.updatedAt, i.starred, i.archived, i.visitCount, i.frecencyScore
+      FROM items i
+      JOIN item_tags it ON i.id = it.itemId
+      JOIN tags t ON it.tagId = t.id
+      WHERE t.name IN (${placeholders}) AND ${conditions.join(' AND ')}
+      GROUP BY i.id
+      HAVING COUNT(DISTINCT t.id) = ?
+      ORDER BY i.updatedAt DESC
+      LIMIT ? OFFSET ?
+    `;
+    params.unshift(...tags);
+    params.push(tags.length, limit, offset);
+  } else {
+    sql = `
+      SELECT i.id, i.type, i.content, i.title, i.domain, i.metadata,
+             i.createdAt, i.updatedAt, i.starred, i.archived, i.visitCount, i.frecencyScore
+      FROM items i
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY i.updatedAt DESC
+      LIMIT ? OFFSET ?
+    `;
+    params.push(limit, offset);
+  }
+
+  const rows = d.prepare(sql).all(...params);
+  if (rows.length === 0) return [];
+
+  const ids = rows.map(r => r.id);
+  const tagPlaceholders = ids.map(() => '?').join(',');
+  const tagRows = d.prepare(`
+    SELECT it.itemId, t.name
+    FROM item_tags it
+    JOIN tags t ON t.id = it.tagId
+    WHERE it.itemId IN (${tagPlaceholders})
+  `).all(...ids);
+
+  const tagsById = new Map();
+  for (const tr of tagRows) {
+    if (!tagsById.has(tr.itemId)) tagsById.set(tr.itemId, []);
+    tagsById.get(tr.itemId).push(tr.name);
+  }
+
+  return rows.map(r => {
+    r.tags = tagsById.get(r.id) || [];
+    return parseMetadata(r);
+  });
+}
+
 export function getItem(id) {
   const d = requireDb();
   const item = d.prepare(`
