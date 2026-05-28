@@ -36,7 +36,9 @@ function slugifyTagName(name) {
 }
 
 // Hashtag extraction: matches datastore.ts `syncContentHashtags` (line 3206).
-function extractHashtags(content) {
+// Renamed to avoid colliding with the `extractHashtags` opt-in flag callers
+// can pass to createItem.
+function extractHashtagsFromContent(content) {
   if (!content) return [];
   const matches = content.match(/(?:^|\s)#([^\s#]+)/g);
   if (!matches) return [];
@@ -237,7 +239,7 @@ export function getItemTags(itemId) {
   `).all(itemId).map(r => r.name);
 }
 
-export function createItem({ type, url, title = '', content = '', metadata = {}, tags = [] }) {
+export function createItem({ type, url, title = '', content = '', metadata = {}, tags = [], extractHashtags = false }) {
   const id = randomUUID();
   const now = Date.now();
   const metaStr = typeof metadata === 'string' ? metadata : JSON.stringify(metadata);
@@ -256,10 +258,12 @@ export function createItem({ type, url, title = '', content = '', metadata = {},
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
     `).run(id, type, itemContent, title, domain, metaStr, now, now);
 
-    // Mirror datastore.ts `syncContentHashtags`: for text items, treat
-    // inline #hashtags as tags so the item is discoverable the same way
-    // it would be if the user had created it through the app.
-    const autoTags = type === 'text' ? extractHashtags(itemContent) : [];
+    // Hashtag auto-extraction is OPT-IN at the MCP layer: LLM callers
+    // routinely write "#123" issue refs or "#3)" enumeration prose, neither
+    // of which should silently become tags. When opt-in, we still only
+    // extract from text-type items (url content is the URL itself; fragments
+    // would leak in).
+    const autoTags = (extractHashtags && type === 'text') ? extractHashtagsFromContent(itemContent) : [];
     const allTags = [...new Set([...tags, ...autoTags])];
 
     for (const tagName of allTags) {

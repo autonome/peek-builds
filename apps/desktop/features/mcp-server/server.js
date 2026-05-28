@@ -122,7 +122,7 @@ const TOOLS = [
   },
   {
     name: 'create_item',
-    description: 'Create a new item in Peek. For URLs, set type="url" and provide url. For text notes, set type="text" and provide content.',
+    description: 'Create a new item in Peek. For URLs, set type="url" and provide url. For text notes, set type="text" and provide content. Hashtags inside content (e.g. "#foo") are NOT auto-extracted as tags unless extractHashtags is true — pass tags explicitly in the tags array.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -132,6 +132,7 @@ const TOOLS = [
         content: { type: 'string', description: 'Item content/body' },
         metadata: { type: 'object', description: 'Additional metadata as JSON object' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Tags to apply' },
+        extractHashtags: { type: 'boolean', description: 'When true, parse "#word" patterns out of text-item content and add them as tags. Default false — content is treated as opaque text so issue refs like "#123" or numbered lists like "#3)" do not become tags.' },
       },
       required: ['type'],
     },

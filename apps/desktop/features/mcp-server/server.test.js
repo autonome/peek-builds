@@ -559,21 +559,37 @@ describe('MCP Server', () => {
       assert.equal(rows[0].frecencyScore, 20);
     });
 
-    it('auto-extracts #hashtags from text item content', async () => {
+    it('does NOT extract #hashtags from content by default (opt-in only)', async () => {
+      // The MCP layer differs from the in-app datastore policy: LLM callers
+      // write "#123" issue refs and "#3)" enumerations in prose constantly,
+      // so default behavior is to treat content as opaque. Callers that
+      // genuinely want UI-style auto-tagging pass extractHashtags:true.
+      const item = await client.callTool('create_item', {
+        type: 'text',
+        title: 'Note',
+        content: 'fixes #123 and adds #feature',
+      });
+      assert.ok(!item.tags.includes('123'));
+      assert.ok(!item.tags.includes('feature'));
+    });
+
+    it('auto-extracts #hashtags from text item content when extractHashtags is true', async () => {
       const item = await client.callTool('create_item', {
         type: 'text',
         title: 'Note',
         content: 'meeting with #alice about the #project',
+        extractHashtags: true,
       });
       assert.ok(item.tags.includes('alice'));
       assert.ok(item.tags.includes('project'));
     });
 
-    it('does not extract hashtags from url-type items', async () => {
+    it('does not extract hashtags from url-type items even when extractHashtags is true', async () => {
       const item = await client.callTool('create_item', {
         type: 'url',
         url: 'https://example.com/#fragment',
         title: 'Page',
+        extractHashtags: true,
       });
       // The URL fragment is `fragment` — would be picked up by the
       // hashtag regex on text. For url-type, content is the URL and
