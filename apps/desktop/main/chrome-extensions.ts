@@ -309,6 +309,58 @@ function discoverExtensions(): void {
 }
 
 /**
+ * Wait for an extension's BG service worker to reach "running" status.
+ * Electron's SW startup takes ~3s after loadExtension; the bridge window's
+ * chrome.runtime.connect() fails until the SW is ready.
+ */
+async function _waitForServiceWorker(session: Electron.Session, runtimeId: string, extName: string): Promise<void> {
+  const targetScope = `chrome-extension://${runtimeId}/`;
+  const SW_TIMEOUT_MS = 10_000;
+  const sw = session.serviceWorkers;
+  if (!sw) {
+    console.warn(`[chrome-ext] session.serviceWorkers unavailable — skipping SW wait for ${extName}`);
+    return;
+  }
+
+  // Already running?
+  const running = sw.getAllRunning?.() ?? {};
+  for (const info of Object.values(running)) {
+    if ((info as { scope?: string })?.scope?.startsWith(targetScope)) {
+      console.log(`[chrome-ext] SW already running for ${extName}`);
+      return;
+    }
+  }
+
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      console.warn(`[chrome-ext] SW startup timeout (${SW_TIMEOUT_MS}ms) for ${extName} — spawning bridge anyway`);
+      resolve();
+    }, SW_TIMEOUT_MS);
+
+    const handler = (...args: unknown[]) => {
+      const details = args[0] as { versionId?: number; runningStatus?: string } | undefined;
+      if (details?.runningStatus !== 'running') return;
+      const allRunning = sw.getAllRunning?.() ?? {};
+      const vid = String(details.versionId);
+      const info = (allRunning as Record<string, { scope?: string }>)[vid];
+      if (info?.scope?.startsWith(targetScope)) {
+        cleanup();
+        console.log(`[chrome-ext] SW running for ${extName} (vid=${details.versionId})`);
+        resolve();
+      }
+    };
+
+    function cleanup() {
+      clearTimeout(timer);
+      try { (sw as unknown as { removeListener: (e: string, h: (...a: unknown[]) => void) => void }).removeListener('running-status-changed', handler); } catch { /* best effort */ }
+    }
+
+    (sw as unknown as { on: (e: string, h: (...a: unknown[]) => void) => void }).on('running-status-changed', handler);
+  });
+}
+
+/**
  * Load a chrome extension into the session
  */
 async function loadExtension(extInfo: ChromeExtensionInfo): Promise<LoadedChromeExtension | null> {
@@ -340,8 +392,14 @@ async function loadExtension(extInfo: ChromeExtensionInfo): Promise<LoadedChrome
     // The bridge window lives at chrome-extension://<runtimeId>/peek-bridge.html
     // and holds a long-lived chrome.runtime.Port to the BG SW, acting as the
     // relay for messages that cannot be delivered cross-origin from Electron 40.
+    //
+    // The bridge's chrome.runtime.connect() needs the BG SW to be running.
+    // Electron's SW startup takes ~3s after loadExtension — spawning the bridge
+    // immediately causes a reconnect loop until the SW is ready. Wait for
+    // running-status-changed → "running" before spawning.
     if (Array.isArray(extInfo.manifest?.externally_connectable?.matches) &&
         extInfo.manifest.externally_connectable.matches.length > 0) {
+      await _waitForServiceWorker(profileSession, ext.id, extInfo.name);
       _spawnBridgeWindow(loaded);
     }
 
