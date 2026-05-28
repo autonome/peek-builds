@@ -71,33 +71,52 @@
   /* Backup object — accessible from tests to verify the shim is loaded. */
   globalThis.__peekPermissions = _shimPerms;
 
-  /* Build a Proxy wrapper for chrome with {} as target. */
+  /* Build a Proxy wrapper for chrome with {} as target.
+   * _target stores overrides — downstream polyfills (chrome.scripting etc.)
+   * that fail to assign on nativeObj (read-only native props) get stored here
+   * and served by the get trap before falling through to nativeObj. */
   function wrapWithPermissionsShim(nativeObj, shimPerms) {
     if (!nativeObj || typeof nativeObj !== 'object') return nativeObj;
     return new Proxy({}, {
       get: function(_target, prop) {
         if (prop === 'permissions') return shimPerms;
+        if (Object.prototype.hasOwnProperty.call(_target, prop)) return _target[prop];
         var val = nativeObj[prop];
         if (typeof val === 'function') return val.bind(nativeObj);
         return val;
       },
       set: function(_target, prop, value) {
         if (prop === 'permissions') return true; /* swallow attempts to overwrite our shim */
-        try { nativeObj[prop] = value; } catch(e) {}
+        try {
+          nativeObj[prop] = value;
+          if (nativeObj[prop] === value) return true;
+        } catch(e) {}
+        _target[prop] = value;
         return true;
       },
+      defineProperty: function(_target, prop, desc) {
+        if (prop === 'permissions') return true;
+        try { Object.defineProperty(nativeObj, prop, desc); return true; } catch(e) {}
+        try { Object.defineProperty(_target, prop, desc); return true; } catch(e) {}
+        return false;
+      },
       has: function(_target, prop) {
-        return prop === 'permissions' || prop in nativeObj;
+        return prop === 'permissions' || prop in _target || prop in nativeObj;
       },
       ownKeys: function(_target) {
         var keys = [];
         try { keys = Reflect.ownKeys(nativeObj); } catch(e) {}
+        var tKeys = Reflect.ownKeys(_target);
+        for (var i = 0; i < tKeys.length; i++) { if (keys.indexOf(tKeys[i]) === -1) keys.push(tKeys[i]); }
         if (keys.indexOf('permissions') === -1) keys.push('permissions');
         return keys;
       },
       getOwnPropertyDescriptor: function(_target, prop) {
         if (prop === 'permissions') {
           return { value: shimPerms, writable: true, configurable: true, enumerable: true };
+        }
+        if (Object.prototype.hasOwnProperty.call(_target, prop)) {
+          return { value: _target[prop], writable: true, configurable: true, enumerable: true };
         }
         try { return Object.getOwnPropertyDescriptor(nativeObj, prop); } catch(e) { return undefined; }
       },

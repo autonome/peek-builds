@@ -70,8 +70,16 @@ function resolveTab(tabId) {
     return null;
   }
   if (!wc || wc.isDestroyed()) return null;
-  // Only allow targeting webContents in our session
-  if (_session && wc.session !== _session) return null;
+  // Allow cross-session targeting: webview guests render page content in the
+  // page's own partition, not the extension's session, so a `wc.session ===
+  // _session` check would reject the very page an extension legitimately
+  // targets. Injection is still bounded by host_permissions, validated in
+  // doExecuteScript / doInsertCSS below — for Proton that's https/http only, so
+  // peek:// and chrome-extension:// targets are already rejected there.
+  // FOLLOW-UP: add an explicit privileged-scheme guard here (reject peek:// /
+  // chrome-extension:// / devtools:// targets) to harden against a hypothetical
+  // <all_urls> extension; needs a fill-path test since the autofill chip itself
+  // never calls chrome.scripting.executeScript (verified 2026-05-28).
   return wc;
 }
 

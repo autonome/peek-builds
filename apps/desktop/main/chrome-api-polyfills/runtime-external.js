@@ -314,10 +314,13 @@ export function setupMainProcess(session, options = {}) {
       // For internal messages (content scripts calling sendMessage with own
       // extId), sender.id IS set — Chrome's onMessage always includes sender.id
       // for same-extension callers.
+      const senderTabId = _event?.sender?.id ?? -1;
+      const senderUrl = origin ?? '';
       const sender = {
         origin: origin ? safeOrigin(origin) : '',
-        url: origin ?? '',
-        tab: { id: -1 },
+        url: senderUrl,
+        tab: { id: senderTabId, url: senderUrl },
+        frameId: 0,
       };
       if (internal) {
         sender.id = extId;
@@ -390,10 +393,13 @@ export function setupMainProcess(session, options = {}) {
     // See note in bridge path above: sender.id intentionally unset for
     // webpage senders so the BG SW treats this as an external (not internal)
     // dispatch.
+    const senderTabId = _event?.sender?.id ?? -1;
+    const senderUrl = origin ?? '';
     const sender = {
       origin: origin ? safeOrigin(origin) : '',
-      url: origin ?? '',
-      tab: { id: -1 },
+      url: senderUrl,
+      tab: { id: senderTabId, url: senderUrl },
+      frameId: 0,
     };
     console.log('[peek:runtime-external:main] SW fallback dispatching reqId=', reqId, 'to versionId=', targetVersionId);
 
