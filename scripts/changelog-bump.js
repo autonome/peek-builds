@@ -2,16 +2,22 @@
 /**
  * changelog-bump.js
  *
- * Reads jj log between the last-bumped marker and main, generates terse
- * one-line bullets clustered by (type, area, day), and merges them into
- * CHANGELOG.md under `## Week of YYYY-MM-DD (Wnn)` / `### YYYY-MM-DD`.
+ * Reads jj log between the last-bumped marker and the upper-bound revset
+ * (default `main`), generates terse one-line bullets clustered by
+ * (type, area, day), and merges them into CHANGELOG.md under
+ * `## Week of YYYY-MM-DD (Wnn)` / `### YYYY-MM-DD`.
  *
  * Usage:
- *   node scripts/changelog-bump.js [--dry-run] [--since <commit>]
+ *   node scripts/changelog-bump.js [--dry-run] [--since <commit>] [--up-to <revset>]
+ *
+ *   --up-to defaults to `main`. Pass a feature bookmark (e.g. `mcp-llm-policy`)
+ *   to bump BEFORE finalizing main onto a stack — that way the bump commit
+ *   joins the feature stack and a single finalize covers everything. After
+ *   main has been advanced onto the stack, the default `main` is correct.
  *
  * Marker:
  *   `<!-- last-bumped: <commit-short-id> -->` — first match in CHANGELOG.md.
- *   On success, the marker is rewritten to the current main HEAD.
+ *   On success, the marker is rewritten to the upper-bound revset's HEAD.
  *
  * Skip rules (commit titles):
  *   - chore(*)
@@ -42,6 +48,8 @@ const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
 const sinceArgIdx = args.indexOf('--since');
 const SINCE_OVERRIDE = sinceArgIdx >= 0 ? args[sinceArgIdx + 1] : null;
+const upToArgIdx = args.indexOf('--up-to');
+const UP_TO = upToArgIdx >= 0 ? args[upToArgIdx + 1] : 'main';
 
 const SKIP_TYPES = new Set(['chore', 'test']);
 
@@ -54,17 +62,17 @@ function findMarker(content) {
   return m ? m[1] : null;
 }
 
-function getMainHead() {
-  const out = execSync(`jj log -r main -T 'commit_id.short()' --no-graph`, {
+function getRevHead(rev) {
+  const out = execSync(`jj log -r ${rev} -T 'commit_id.short()' --no-graph`, {
     encoding: 'utf-8',
   });
   return out.trim();
 }
 
-function getCommits(sinceCommit) {
+function getCommits(sinceCommit, upTo) {
   // Tab-separated: short_id \t ISO timestamp \t description first line
   const tmpl = String.raw`commit_id.short() ++ "\t" ++ committer.timestamp().format("%Y-%m-%dT%H:%M:%S%z") ++ "\t" ++ description.first_line() ++ "\n"`;
-  const range = `${sinceCommit}..main`;
+  const range = `${sinceCommit}..${upTo}`;
   const cmd = `jj log -r '${range}' --no-graph -T '${tmpl}' --reversed`;
   let out;
   try {
@@ -298,15 +306,15 @@ function main() {
     process.exit(2);
   }
 
-  const head = getMainHead();
+  const head = getRevHead(UP_TO);
   if (head === marker) {
     console.log(`No new commits since ${marker}; nothing to bump.`);
     return;
   }
 
-  const commits = getCommits(marker);
+  const commits = getCommits(marker, UP_TO);
   if (commits.length === 0) {
-    console.log(`No commits in ${marker}..main; nothing to bump.`);
+    console.log(`No commits in ${marker}..${UP_TO}; nothing to bump.`);
     return;
   }
 
