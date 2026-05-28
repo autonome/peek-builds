@@ -31,8 +31,10 @@
 #    - YES: advance `main` bookmark to the fetched tip. Move @ on top.
 #    - NO:  refuse with explicit rebase recipe.
 #
-# Clone and registered remote are PRESERVED for reuse by the next spawn.
-# Tear down with scripts/clean-isolated-clone.sh.
+# After a successful fast-forward, the clone is automatically reset to main
+# (via reset-isolated-clone.sh) so it's ready for the next task. All agent
+# bookmarks are preserved as breadcrumbs for archaeology.
+# Full teardown (reclaim slot): scripts/clean-isolated-clone.sh.
 
 set -euo pipefail
 
@@ -159,6 +161,10 @@ jj new "$REMOTE_REV" >&2
 
 echo "" >&2
 echo "Finalized clone ${NAME} (fast-forward, no rebase, no divergence)." >&2
-echo "Clone preserved at ${CLONE_DIR} for reuse." >&2
+
+# Reset the clone back to main so it's ready for the next task.
+# Bookmarks are preserved as breadcrumbs for archaeology.
+"${MAIN_DIR}/scripts/reset-isolated-clone.sh" >&2
+
 echo "" >&2
-echo "Next: push to tangled with scripts/push-main.sh (step 4 of the chaos-defense plan)." >&2
+echo "Next: push to tangled with scripts/push-main.sh" >&2
