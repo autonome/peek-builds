@@ -5,14 +5,12 @@
  * ffc4fe6f-8885-4f13-bd1f-3851a6188cdb: pressing Cmd+Q (or any before-quit /
  * autosave trigger) while a session restore is in flight can capture windows
  * whose webContents.getURL() is still "" and overwrite the good snapshot with
- * garbage. The fix applies three guards in saveSessionSnapshot():
+ * garbage. The fix applies two guards in saveSessionSnapshot():
  *
  *   1. Restore-complete flag: saves are no-ops while the flag is false (set
  *      at the top of restoreSessionSnapshot, cleared in finally).
  *   2. Empty-URL filter: windows with url="" / about:blank are stripped even
  *      when the flag is true (belt-and-suspenders).
- *   3. Fewer-windows guard: refuse to overwrite if the new filtered count is
- *      strictly less than the existing snapshot's non-empty-URL count.
  *
  * Per feedback_no_sleep_in_tests_or_code: no wall-clock waits anywhere.
  * All scenarios are deterministic via __peek_test hooks.
@@ -155,7 +153,6 @@ test.describe('Session Restore Save During Restore @desktop', () => {
     //   3. Close all windows so a save would produce an empty/fewer snapshot.
     //   4. Call forceSave again — _forceForTest=true INTENTIONALLY bypasses
     //      the restore-complete flag (test needs full save control).
-    //   5. The fewer-windows guard (guard 3) should catch this instead.
     //
     // Guard 1 is exercised by the production code path (before-quit) which does
     // NOT pass _forceForTest. We verify it via a dedicated evaluateMain call
@@ -248,10 +245,10 @@ test.describe('Session Restore Save During Restore @desktop', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Scenario 3: fewer-windows guard — save that would shrink snapshot is rejected
+  // Scenario 3: closing windows and saving correctly persists the smaller set
   // ---------------------------------------------------------------------------
 
-  test('save with filtered count less than existing snapshot count is rejected', async () => {
+  test('save after closing windows persists the reduced window set', async () => {
     const urlA = `http://127.0.0.1:${serverPort}/guard-fewer-a`;
     const urlB = `http://127.0.0.1:${serverPort}/guard-fewer-b`;
     const urlC = `http://127.0.0.1:${serverPort}/guard-fewer-c`;
@@ -267,19 +264,19 @@ test.describe('Session Restore Save During Restore @desktop', () => {
     const baselineCount = (baseline!.windows ?? []).length;
     expect(baselineCount).toBeGreaterThanOrEqual(3);
 
-    // Close 2 windows so a subsequent save would produce a smaller snapshot.
-    await bgWindow.evaluate(async (port: number) => {
+    // Close 2 windows.
+    await bgWindow.evaluate(async () => {
       const list = await (window as any).app.window.list({ includeInternal: false });
       if (!list?.success) return;
       let closed = 0;
       for (const w of list.windows || []) {
-        if (typeof w.url === 'string' && (w.url.includes(`guard-fewer-a`) || w.url.includes(`guard-fewer-b`))) {
+        if (typeof w.url === 'string' && (w.url.includes('guard-fewer-a') || w.url.includes('guard-fewer-b'))) {
           await (window as any).app.window.close(w.id);
           closed++;
           if (closed >= 2) break;
         }
       }
-    }, serverPort);
+    });
 
     // Wait for the closes to propagate.
     await bgWindow.waitForFunction(async () => {
@@ -291,51 +288,15 @@ test.describe('Session Restore Save During Restore @desktop', () => {
       return active.length === 0;
     });
 
-    // Now attempt a force-save. With only 1 window remaining (< 3 baseline),
-    // the fewer-windows guard must reject the write.
-    // NOTE: forceSave uses _forceForTest=true, which bypasses the fewer-windows
-    // guard to give tests direct control. To exercise the guard we instead
-    // read back the snapshot and verify it still holds the baseline.
-    // The fewer-windows guard is exercised in the production path (before-quit,
-    // autosave) which does not pass _forceForTest. Here we verify the guard
-    // activates by observing that after a production-path save attempt (simulated
-    // via setRestoreCompleteForTest + evaluateMain), the baseline is preserved.
-    //
-    // The guard is unit-tested directly in apps/desktop/main/session.test.ts.
-    // This integration test verifies the full save pipeline in a running Electron
-    // instance, focusing on the happy path and the _forceForTest bypass contract.
-
-    // Force-save with _forceForTest=true (bypasses guard — intentional, test control).
+    // Save after closing. The snapshot must reflect the current (smaller) state.
     await forceSave();
-    const afterForceSave = await getLastSnapshot();
-    expect(afterForceSave).not.toBeNull();
+    const afterSave = await getLastSnapshot();
+    expect(afterSave).not.toBeNull();
 
-    // Force-save correctly reflects the current state (1 window).
-    // This confirms forceSave is working and the test infrastructure is live.
-    const afterCount = (afterForceSave!.windows ?? []).length;
-    expect(afterCount).toBeGreaterThanOrEqual(1);
-
-    // Verify the fewer-windows guard activates for production-path saves by
-    // writing back the 3-window baseline and then calling a non-forced save
-    // evaluateMain that produces fewer windows. We assert the baseline survives.
-    // Re-write the baseline snapshot directly via the test hook.
-    await app.evaluateMain!(((_e: unknown, snap: any) => {
-      try {
-        // Re-write the 3-window baseline to the DB
-        const Database = require('better-sqlite3');
-        void Database; // may not be available in evaluateMain context
-        // Instead use the session hook: we call forceSaveSession to get a fresh
-        // snapshot, then manipulate it. Since we can't easily inject a specific
-        // snapshot here, we rely on the unit test coverage in session.test.ts
-        // for the exact guard boundary, and use this integration test to verify
-        // the overall pipeline correctness.
-      } catch { /* ignore — unit tests cover the guard boundary precisely */ }
-    }) as any, baseline);
-
-    // The key integration assertion: existing snapshot must be present and valid.
-    const finalSnapshot = await getLastSnapshot();
-    expect(finalSnapshot).not.toBeNull();
-    expect((finalSnapshot!.windows ?? []).length).toBeGreaterThanOrEqual(1);
+    const afterUrls = (afterSave!.windows ?? []).map((w: any) => w.url as string);
+    expect(afterUrls.some((u: string) => u.includes('guard-fewer-c'))).toBe(true);
+    expect(afterUrls.some((u: string) => u.includes('guard-fewer-a'))).toBe(false);
+    expect(afterUrls.some((u: string) => u.includes('guard-fewer-b'))).toBe(false);
   });
 
   // ---------------------------------------------------------------------------

@@ -38,12 +38,12 @@ export type { WindowContext, WindowDescriptor };
 // Solution: a module-level boolean that flips to `true` only after
 // restoreSessionSnapshot() completes. saveSessionSnapshot() is a no-op while
 // the flag is false (logs a warn so the refusal appears in main.log). Also
-// applied: empty-URL filter (belt-and-suspenders) and fewer-windows guard
-// (refuse to overwrite a larger snapshot with a smaller one).
+// applied: empty-URL filter (belt-and-suspenders) strips windows whose
+// getURL() is still "" even after restore completes.
 //
 // Shadow-snapshotting (.partial file that promotes on completion) was
-// considered and deferred — these three in-memory guards address the failure
-// mode more simply with no extra I/O surface.
+// considered and deferred — these two guards address the failure mode more
+// simply with no extra I/O surface.
 // ============================================================================
 
 /**
@@ -477,37 +477,6 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   if (filteredDescriptors.length < preFilterCount) {
     const dropped = preFilterCount - filteredDescriptors.length;
     console.warn(`[session:guard] Dropped ${dropped} window(s) with empty/blank URLs from snapshot (reason: ${reason})`);
-  }
-
-  // Guard 3: Fewer-windows guard.
-  // If the new snapshot (after URL filtering) would have strictly fewer
-  // non-empty-URL windows than the currently persisted snapshot, refuse to
-  // overwrite. This catches the primary failure mode: Cmd+Q mid-restore
-  // collapses 35 real windows to 0 loaded ones. The before-quit save would
-  // normally carry cleanShutdown=true, so the user gets no crash dialog — the
-  // data loss is silent. We accept the new snapshot only when it is at least as
-  // large as the previous one (normal usage) or _forceForTest bypasses the
-  // guard (tests that deliberately reduce window count need direct control).
-  if (!opts?._forceForTest) {
-    try {
-      const existingRow = db.prepare(
-        `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'snapshot'`
-      ).get() as { value: string } | undefined;
-      if (existingRow?.value) {
-        const existingSnapshot: SessionSnapshot = JSON.parse(existingRow.value);
-        const existingCount = (existingSnapshot.windows ?? []).filter(
-          (d) => d.url && d.url.trim() !== '' && d.url !== 'about:blank' && d.url !== 'about:newtab'
-        ).length;
-        if (filteredDescriptors.length < existingCount) {
-          console.warn(
-            `[session:guard] Refusing to overwrite snapshot: new count ${filteredDescriptors.length} < existing count ${existingCount} (reason: ${reason}). Snapshot preserved.`
-          );
-          return;
-        }
-      }
-    } catch {
-      // If we can't read the existing snapshot, proceed with the save.
-    }
   }
 
   const snapshot: SessionSnapshot = {
