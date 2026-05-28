@@ -641,7 +641,7 @@ function patchProtonPass() {
   // because MV3 extensions ship a CSP `script-src 'self' 'wasm-unsafe-eval'`
   // that blocks inline scripts even on extension-origin pages.
   const polyfillsDir = path.join(ROOT, 'apps', 'desktop', 'main', 'chrome-api-polyfills');
-  for (const file of ['peek-bridge.html', 'peek-bridge.js', 'peek-relay.js']) {
+  for (const file of ['peek-bridge.html', 'peek-bridge.js', 'peek-relay.js', 'peek-cs-compat.js']) {
     const srcPath = path.join(polyfillsDir, file);
     const dstPath = path.join(extPath, file);
     if (fs.existsSync(srcPath)) {
@@ -649,6 +649,35 @@ function patchProtonPass() {
       console.log(`[patch] Copied ${file} to extension directory`);
     } else {
       console.warn(`[patch] WARNING: ${file} source not found at`, srcPath);
+    }
+  }
+
+  // --- Add peek-cs-compat.js to manifest content_scripts ---
+  // The ISOLATED-world sendMessage shim must run before the extension's own
+  // content scripts so it wraps chrome.runtime.sendMessage before any call.
+  const manifestPath = path.join(extPath, 'manifest.json');
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      const CS_COMPAT_ENTRY_MARKER = 'peek-cs-compat.js';
+      const hasCompat = (manifest.content_scripts || []).some(
+        cs => cs.js && cs.js.includes(CS_COMPAT_ENTRY_MARKER)
+      );
+      if (!hasCompat) {
+        if (!manifest.content_scripts) manifest.content_scripts = [];
+        manifest.content_scripts.unshift({
+          matches: ['https://*/*', 'http://*/*'],
+          js: [CS_COMPAT_ENTRY_MARKER],
+          all_frames: true,
+          run_at: 'document_start',
+        });
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+        console.log('[patch] Added peek-cs-compat.js to manifest content_scripts');
+      } else {
+        console.log('[patch] peek-cs-compat.js already in manifest content_scripts');
+      }
+    } catch (e) {
+      console.error('[patch] Failed to patch manifest:', e.message);
     }
   }
 

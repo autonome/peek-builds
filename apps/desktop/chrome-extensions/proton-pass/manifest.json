@@ -1,6 +1,5 @@
 {
-"update_url": "https://clients2.google.com/service/update2/crx",
-
+  "update_url": "https://clients2.google.com/service/update2/crx",
   "name": "Proton Pass: Free Password Manager",
   "description": "Free and fully encrypted password manager to keep your logins and passwords safe.",
   "version": "1.37.1",
@@ -13,6 +12,17 @@
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
   },
   "content_scripts": [
+    {
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ],
+      "js": [
+        "peek-cs-compat.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_start"
+    },
     {
       "matches": [
         "https://*/*",

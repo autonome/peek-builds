@@ -293,6 +293,23 @@
     }
   } catch(e) { console.error('[peek:runtime-external:bg] addListener wrap failed:', e && e.message); }
 
+  // Capture chrome.runtime.onMessage listeners (internal/same-extension messages).
+  // Content scripts calling sendMessage(ownExtId, msg) or sendMessage(msg) fire
+  // onMessage, not onMessageExternal. We wrap addListener to capture the
+  // registered handlers for our bridge dispatch path.
+  var _internalListeners = [];
+  try {
+    var _om = chrome.runtime.onMessage;
+    var _origAddInternal = _om && _om.addListener && _om.addListener.bind(_om);
+    if (_origAddInternal) {
+      _om.addListener = function(fn) {
+        _internalListeners.push(fn);
+        console.log('[peek:runtime-external:bg] onMessage listener captured, total=', _internalListeners.length);
+        try { _origAddInternal(fn); } catch(_) {}
+      };
+    }
+  } catch(e) { console.error('[peek:runtime-external:bg] onMessage addListener wrap failed:', e && e.message); }
+
   function _sendBack(payload) {
     if (!_ipc) {
       console.error('[peek:runtime-external:bg] no SW→main IPC path; response dropped reqId=', payload && payload.reqId);
@@ -369,13 +386,17 @@
           var reqId = portMsg && portMsg.reqId;
           var fwdMessage = portMsg && portMsg.message;
           var fwdSender = (portMsg && portMsg.sender) || {};
-          // See note in _dispatch above: do not set fwdSender.id. Webpage
-          // senders should arrive without an id so the BG SW routes them
-          // through the EXTERNAL message path, not the INTERNAL one.
-          console.log('[peek:runtime-external:bg] bridge port message reqId=', reqId, 'type=', fwdMessage && fwdMessage.type, 'listeners=', _externalListeners.length);
+          var isInternal = !!(portMsg && portMsg.internal);
 
-          if (_externalListeners.length === 0) {
-            try { port.postMessage({ reqId: reqId, error: 'no onMessageExternal listeners registered' }); } catch(_) {}
+          // Pick the right listener set: internal messages (content script
+          // sendMessage with own extId) → onMessage listeners; external
+          // messages (web page sendMessage) → onMessageExternal listeners.
+          var listeners = isInternal ? _internalListeners : _externalListeners;
+          var listenerLabel = isInternal ? 'onMessage' : 'onMessageExternal';
+          console.log('[peek:runtime-external:bg] bridge port message reqId=', reqId, 'type=', fwdMessage && fwdMessage.type, 'internal=', isInternal, 'listeners=', listeners.length);
+
+          if (listeners.length === 0) {
+            try { port.postMessage({ reqId: reqId, error: 'no ' + listenerLabel + ' listeners registered' }); } catch(_) {}
             return;
           }
 
@@ -389,9 +410,9 @@
             }
           }
 
-          for (var i = 0; i < _externalListeners.length; i++) {
+          for (var i = 0; i < listeners.length; i++) {
             try {
-              var ret = _externalListeners[i](fwdMessage, fwdSender, respondViaPort);
+              var ret = listeners[i](fwdMessage, fwdSender, respondViaPort);
               if (ret && typeof ret.then === 'function') {
                 (function() {
                   ret.then(function(r) { respondViaPort(r); }, function(e) {

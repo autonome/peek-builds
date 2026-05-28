@@ -140,8 +140,9 @@
         reqId: reqId,
         message: payload && payload.message,
         sender: payload && payload.sender,
+        internal: !!(payload && payload.internal),
       });
-      log('port.postMessage dispatched reqId=', reqId);
+      log('port.postMessage dispatched reqId=', reqId, 'internal=', !!(payload && payload.internal));
     } catch (err) {
       delete _pendingByReqId[reqId];
       clearTimeout(timer);

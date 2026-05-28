@@ -214,9 +214,9 @@ window.addEventListener('message', function (ev) {
   if (ev.source !== window) return;
   const d = ev.data;
   if (!d || d.__peekRuntimeExternal !== 'request') return;
-  const { reqId, extId, message, origin } = d;
-  console.log('[peek:runtime-external:preload] req reqId=', reqId, 'extId=', extId, 'type=', message && message.type);
-  ipcRenderer.invoke(IPC_SEND_FROM_PAGE, { extId, message, origin })
+  const { reqId, extId, message, origin, internal } = d;
+  console.log('[peek:runtime-external:preload] req reqId=', reqId, 'extId=', extId, 'type=', message && message.type, 'internal=', !!internal);
+  ipcRenderer.invoke(IPC_SEND_FROM_PAGE, { extId, message, origin, internal: !!internal })
     .then(function (response) {
       if (response && response.__peekRuntimeExternalError) {
         console.error('[peek:runtime-external:preload] resp ERROR reqId=', reqId, 'err=', response.__peekRuntimeExternalError);
