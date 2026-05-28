@@ -30,6 +30,25 @@
       log('chrome.runtime.connect() opened port name=', PORT_NAME, 'extId=', chrome.runtime.id);
 
       _port.onMessage.addListener(function (msg) {
+        // Handle scripting relay requests from the BG SW
+        if (msg && msg.type === 'peek:scripting') {
+          log('port.onMessage: scripting relay reqId=', msg.reqId, 'channel=', msg.channel);
+          if (window.peekBridge && window.peekBridge.invokeScripting) {
+            window.peekBridge.invokeScripting(msg.channel, msg.params).then(function (result) {
+              try { _port.postMessage({ type: 'peek:scripting:response', reqId: msg.reqId, result: result }); } catch (e) {
+                log('scripting response postMessage threw:', e && e.message);
+              }
+            }).catch(function (err) {
+              try { _port.postMessage({ type: 'peek:scripting:response', reqId: msg.reqId, error: (err && err.message) || String(err) }); } catch (e) {
+                log('scripting error response postMessage threw:', e && e.message);
+              }
+            });
+          } else {
+            try { _port.postMessage({ type: 'peek:scripting:response', reqId: msg.reqId, error: 'peekBridge.invokeScripting not available' }); } catch (_) {}
+          }
+          return;
+        }
+
         log('port.onMessage reqId=', msg && msg.reqId, 'type=', msg && msg.type);
         var reqId = msg && msg.reqId;
         var pending = reqId && _pendingByReqId[reqId];

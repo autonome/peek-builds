@@ -20,10 +20,16 @@
  * @see https://developer.chrome.com/docs/extensions/reference/api/scripting
  */
 
-import { webContents as _wc } from 'electron';
+import { createRequire } from 'node:module';
 import { channel, registerHandler, removeHandler } from './_ipc-bridge.js';
 import fs from 'node:fs';
 import path from 'node:path';
+
+// Lazy/optional Electron import so this module can be loaded by build-time
+// tools (e.g. scripts/patch-chrome-extensions.js) that run in plain Node.
+const _require = createRequire(import.meta.url);
+let _wc = null;
+try { _wc = _require('electron')?.webContents ?? null; } catch (_) { /* not in Electron */ }
 
 const API = 'scripting';
 const DEBUG = !!process.env.DEBUG;
@@ -393,12 +399,88 @@ export function getPreloadScript() {
 
   return `
 (function() {
-  var _ipc = (typeof electron !== 'undefined' && electron.ipcRenderer) ? electron.ipcRenderer : null;
-  if (!_ipc) return; // Not in an Electron extension context — skip
+  var _reqId = 0;
+  var _pending = {};
+
+  var _ipc = null;
+  try {
+    if (typeof electron !== 'undefined' && electron.ipcRenderer) _ipc = electron.ipcRenderer;
+  } catch(_) {}
+  try {
+    if (!_ipc && typeof globalThis !== 'undefined' && globalThis.electron && globalThis.electron.ipcRenderer) _ipc = globalThis.electron.ipcRenderer;
+  } catch(_) {}
+  try {
+    if (!_ipc && typeof require === 'function') {
+      var _e = require('electron');
+      if (_e && _e.ipcRenderer) _ipc = _e.ipcRenderer;
+    }
+  } catch(_) {}
+
+  function _invoke(ch, params) {
+    if (_ipc) return _ipc.invoke(ch, params);
+    var port = globalThis.__peekBridgePort || null;
+    if (!port) {
+      return new Promise(function(resolve, reject) {
+        var attempts = 0;
+        var timer = setInterval(function() {
+          attempts++;
+          port = globalThis.__peekBridgePort || null;
+          if (port) {
+            clearInterval(timer);
+            _doPortInvoke(port, ch, params).then(resolve, reject);
+          } else if (attempts > 50) {
+            clearInterval(timer);
+            reject(new Error('[scripting] bridge port not available'));
+          }
+        }, 100);
+      });
+    }
+    return _doPortInvoke(port, ch, params);
+  }
+
+  function _doPortInvoke(port, ch, params) {
+    var id = 'scripting:' + (++_reqId);
+    return new Promise(function(resolve, reject) {
+      _pending[id] = { resolve: resolve, reject: reject };
+      try {
+        port.postMessage({ type: 'peek:scripting', reqId: id, channel: ch, params: params });
+      } catch(e) {
+        delete _pending[id];
+        reject(e);
+      }
+      setTimeout(function() {
+        if (_pending[id]) { delete _pending[id]; reject(new Error('[scripting] timeout')); }
+      }, 30000);
+    });
+  }
+
+  function _attachPortListener(port) {
+    port.onMessage.addListener(function(msg) {
+      if (!msg || msg.type !== 'peek:scripting:response') return;
+      var p = _pending[msg.reqId];
+      if (!p) return;
+      delete _pending[msg.reqId];
+      if (msg.error) p.reject(new Error(msg.error));
+      else p.resolve(msg.result);
+    });
+  }
+
+  if (globalThis.__peekBridgePort) {
+    _attachPortListener(globalThis.__peekBridgePort);
+  } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onConnect) {
+    try {
+      chrome.runtime.onConnect.addListener(function() {
+        if (globalThis.__peekBridgePort && !globalThis.__peekScriptingListenerAttached) {
+          globalThis.__peekScriptingListenerAttached = true;
+          _attachPortListener(globalThis.__peekBridgePort);
+        }
+      });
+    } catch(_) {}
+  }
 
   var _scripting = {
     executeScript: function(params, callback) {
-      var p = _ipc.invoke('${chExec}', params);
+      var p = _invoke('${chExec}', params);
       if (typeof callback === 'function') {
         p.then(function(r) { try { callback(r); } catch(e) {} })
          .catch(function(e) {
@@ -415,7 +497,7 @@ export function getPreloadScript() {
     },
 
     insertCSS: function(params, callback) {
-      var p = _ipc.invoke('${chCSS}', params);
+      var p = _invoke('${chCSS}', params);
       if (typeof callback === 'function') {
         p.then(function() { try { callback(); } catch(e) {} })
          .catch(function(e) {
@@ -432,21 +514,18 @@ export function getPreloadScript() {
     },
   };
 
-  // Install on chrome.scripting. Use defineProperty with configurable:true
-  // so downstream Proxy wrappers don't trigger V8 get-trap invariant violations.
   function _installScripting(root) {
     if (!root || typeof root !== 'object') return false;
+    try {
+      root.scripting = _scripting;
+      if (root.scripting === _scripting) return true;
+    } catch(_) {}
     try {
       Object.defineProperty(root, 'scripting', {
         value: _scripting, writable: true, configurable: true, enumerable: true,
       });
       return true;
-    } catch(e) {
-      try {
-        root.scripting = _scripting;
-        return true;
-      } catch(_) { return false; }
-    }
+    } catch(_) { return false; }
   }
 
   if (typeof chrome !== 'undefined' && chrome) {

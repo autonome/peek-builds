@@ -7,8 +7,8 @@
  * placing or updating extension files in resources/chrome-extensions/.
  *
  * What it does:
- * - Proton Pass: Prepends chrome.permissions, chrome.storage.session, and
- *   chrome.runtime.getBackgroundPage shims to background.js
+ * - Proton Pass: Prepends chrome.permissions, chrome.storage.session,
+ *   chrome.runtime.getBackgroundPage, and chrome.scripting shims to background.js
  * - Proton Pass: Prepends chrome.permissions shim to polyfills.js
  *   (loaded by popup.html and settings.html before their entry scripts)
  *
@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getBgInjection as getRuntimeExternalBgInjection } from '../apps/desktop/main/chrome-api-polyfills/runtime-external.js';
+import { getPreloadScript as getScriptingPreloadScript } from '../apps/desktop/main/chrome-api-polyfills/scripting.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -607,6 +608,7 @@ function patchProtonPass() {
     GET_BACKGROUND_PAGE_SHIM +
     diag +
     getRuntimeExternalBgInjection() +
+    getScriptingPreloadScript() +
     SHIM_BLOCK_END;
   if (!content.startsWith(SHIM_BLOCK_BEGIN)) {
     content = block + content;

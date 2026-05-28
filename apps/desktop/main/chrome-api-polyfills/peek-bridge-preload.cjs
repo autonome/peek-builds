@@ -93,6 +93,18 @@ contextBridge.exposeInMainWorld('peekBridge', {
   },
 
   /**
+   * Invoke a main-process IPC handler and return the result.
+   * Used by the bridge page to relay scripting requests from the BG SW.
+   *
+   * @param {string} channel — IPC channel name
+   * @param {unknown} params — parameters to pass
+   * @returns {Promise<unknown>}
+   */
+  invokeScripting(channel, params) {
+    return ipcRenderer.invoke(channel, params);
+  },
+
+  /**
    * Log from the bridge page to main stderr (console.error in renderers
    * forwards to main stderr via Electron's built-in log forwarding).
    */

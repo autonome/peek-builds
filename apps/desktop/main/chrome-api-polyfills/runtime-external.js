@@ -623,8 +623,10 @@ export function getBgInjection() {
       chrome.runtime.onConnect.addListener(function(port) {
         if (!port || port.name !== BRIDGE_PORT_NAME) return;
         console.log('[peek:runtime-external:bg] bridge port connected name=', port.name);
+        globalThis.__peekBridgePort = port;
 
         port.onMessage.addListener(function(portMsg) {
+          if (portMsg && portMsg.type && portMsg.type.indexOf('peek:scripting') === 0) return;
           var reqId = portMsg && portMsg.reqId;
           var fwdMessage = portMsg && portMsg.message;
           var fwdSender = (portMsg && portMsg.sender) || {};

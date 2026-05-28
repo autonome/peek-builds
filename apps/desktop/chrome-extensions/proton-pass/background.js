@@ -362,8 +362,10 @@
       chrome.runtime.onConnect.addListener(function(port) {
         if (!port || port.name !== BRIDGE_PORT_NAME) return;
         console.log('[peek:runtime-external:bg] bridge port connected name=', port.name);
+        globalThis.__peekBridgePort = port;
 
         port.onMessage.addListener(function(portMsg) {
+          if (portMsg && portMsg.type && portMsg.type.indexOf('peek:scripting') === 0) return;
           var reqId = portMsg && portMsg.reqId;
           var fwdMessage = portMsg && portMsg.message;
           var fwdSender = (portMsg && portMsg.sender) || {};
@@ -448,6 +450,144 @@
         });
       }
     } catch(e) {}
+  }
+})();
+
+(function() {
+  var _reqId = 0;
+  var _pending = {};
+
+  var _ipc = null;
+  try {
+    if (typeof electron !== 'undefined' && electron.ipcRenderer) _ipc = electron.ipcRenderer;
+  } catch(_) {}
+  try {
+    if (!_ipc && typeof globalThis !== 'undefined' && globalThis.electron && globalThis.electron.ipcRenderer) _ipc = globalThis.electron.ipcRenderer;
+  } catch(_) {}
+  try {
+    if (!_ipc && typeof require === 'function') {
+      var _e = require('electron');
+      if (_e && _e.ipcRenderer) _ipc = _e.ipcRenderer;
+    }
+  } catch(_) {}
+
+  function _invoke(ch, params) {
+    if (_ipc) return _ipc.invoke(ch, params);
+    var port = globalThis.__peekBridgePort || null;
+    if (!port) {
+      return new Promise(function(resolve, reject) {
+        var attempts = 0;
+        var timer = setInterval(function() {
+          attempts++;
+          port = globalThis.__peekBridgePort || null;
+          if (port) {
+            clearInterval(timer);
+            _doPortInvoke(port, ch, params).then(resolve, reject);
+          } else if (attempts > 50) {
+            clearInterval(timer);
+            reject(new Error('[scripting] bridge port not available'));
+          }
+        }, 100);
+      });
+    }
+    return _doPortInvoke(port, ch, params);
+  }
+
+  function _doPortInvoke(port, ch, params) {
+    var id = 'scripting:' + (++_reqId);
+    return new Promise(function(resolve, reject) {
+      _pending[id] = { resolve: resolve, reject: reject };
+      try {
+        port.postMessage({ type: 'peek:scripting', reqId: id, channel: ch, params: params });
+      } catch(e) {
+        delete _pending[id];
+        reject(e);
+      }
+      setTimeout(function() {
+        if (_pending[id]) { delete _pending[id]; reject(new Error('[scripting] timeout')); }
+      }, 30000);
+    });
+  }
+
+  function _attachPortListener(port) {
+    port.onMessage.addListener(function(msg) {
+      if (!msg || msg.type !== 'peek:scripting:response') return;
+      var p = _pending[msg.reqId];
+      if (!p) return;
+      delete _pending[msg.reqId];
+      if (msg.error) p.reject(new Error(msg.error));
+      else p.resolve(msg.result);
+    });
+  }
+
+  if (globalThis.__peekBridgePort) {
+    _attachPortListener(globalThis.__peekBridgePort);
+  } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onConnect) {
+    try {
+      chrome.runtime.onConnect.addListener(function() {
+        if (globalThis.__peekBridgePort && !globalThis.__peekScriptingListenerAttached) {
+          globalThis.__peekScriptingListenerAttached = true;
+          _attachPortListener(globalThis.__peekBridgePort);
+        }
+      });
+    } catch(_) {}
+  }
+
+  var _scripting = {
+    executeScript: function(params, callback) {
+      var p = _invoke('chrome-polyfill:scripting:executeScript', params);
+      if (typeof callback === 'function') {
+        p.then(function(r) { try { callback(r); } catch(e) {} })
+         .catch(function(e) {
+           try {
+             if (typeof chrome !== 'undefined' && chrome.runtime) {
+               chrome.runtime.lastError = { message: String(e && e.message || e) };
+             }
+             callback([]);
+           } catch(_) {}
+         });
+        return undefined;
+      }
+      return p;
+    },
+
+    insertCSS: function(params, callback) {
+      var p = _invoke('chrome-polyfill:scripting:insertCSS', params);
+      if (typeof callback === 'function') {
+        p.then(function() { try { callback(); } catch(e) {} })
+         .catch(function(e) {
+           try {
+             if (typeof chrome !== 'undefined' && chrome.runtime) {
+               chrome.runtime.lastError = { message: String(e && e.message || e) };
+             }
+             callback();
+           } catch(_) {}
+         });
+        return undefined;
+      }
+      return p;
+    },
+  };
+
+  function _installScripting(root) {
+    if (!root || typeof root !== 'object') return false;
+    try {
+      root.scripting = _scripting;
+      if (root.scripting === _scripting) return true;
+    } catch(_) {}
+    try {
+      Object.defineProperty(root, 'scripting', {
+        value: _scripting, writable: true, configurable: true, enumerable: true,
+      });
+      return true;
+    } catch(_) { return false; }
+  }
+
+  if (typeof chrome !== 'undefined' && chrome) {
+    _installScripting(chrome);
+  } else if (typeof globalThis !== 'undefined') {
+    globalThis.chrome = globalThis.chrome || {};
+    _installScripting(globalThis.chrome);
   }
 })();
 
