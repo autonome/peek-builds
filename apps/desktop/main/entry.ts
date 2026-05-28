@@ -481,6 +481,27 @@ app.on('web-contents-created', (_event, contents) => {
         // match-pattern conversion is wrong. Surface both possibilities.
         console.log(`[peek:runtime-external:webview] No extension matched ${params.src} — extension probably not loaded yet, or pattern mismatch`);
       }
+
+      // Fallback: URL doesn't match externally_connectable but DOES have
+      // matching ISOLATED-world content scripts. Install the preload so
+      // peek-cs-compat.js's sendMessage shim (running in the ISOLATED world)
+      // can relay via window.postMessage → preload → IPC → bridge → BG SW.
+      // Without this, the shim's postMessages have no listener.
+      if (process.env.PEEK_DISABLE_RUNTIME_EXTERNAL_POLYFILL !== '1') {
+        const csMatches = getMatchingIsolatedContentScripts(params.src);
+        if (csMatches.length > 0) {
+          const csExtId = csMatches[0].runtimeExtId;
+          webPreferences.preload = getRuntimeExternalPreloadPath();
+          webPreferences.additionalArguments = [
+            ...(webPreferences.additionalArguments ?? []),
+            `--peek-runtime-external-ext-id=${csExtId}`,
+          ];
+          webPreferences.sandbox = false;
+          webPreferences.contextIsolation = true;
+          console.log(`[peek:runtime-external:webview] Injecting runtime-external preload for content-script URL ${params.src} (ext=${csExtId})`);
+          return;
+        }
+      }
     }
 
     if (params.src && params.src.startsWith('peek://')) {
