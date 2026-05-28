@@ -71,6 +71,18 @@ function findDbPath(profile = 'default') {
   return null;
 }
 
+// --- Tool sets (must mirror server.js TOOLS array) ---
+
+// Read-only tools: safe to always allow.
+const READ_TOOLS = ['list_items', 'get_item', 'list_tags', 'list_tasks', 'get_task_context'];
+// Mutating tools: only allowed when --writes is set.
+const WRITE_TOOLS = ['create_item', 'update_item', 'delete_item', 'tag_item', 'untag_item', 'record_event', 'complete_task'];
+
+function allowList({ writes }) {
+  const tools = writes ? [...READ_TOOLS, ...WRITE_TOOLS] : READ_TOOLS;
+  return tools.map((t) => `mcp__peek__${t}`);
+}
+
 // --- Snippet builders ---
 
 function buildEnv(dbPath, { scope, readonly }) {
@@ -123,11 +135,39 @@ function writeJsonFile(path, data) {
   writeFileSync(path, JSON.stringify(data, null, 2) + '\n', 'utf-8');
 }
 
+// settings.local.json sibling of the chosen main settings file.
+function allowSettingsPath(mainPath, isMcpJson) {
+  // .mcp.json sits at <cwd>/.mcp.json — local settings goes in <cwd>/.claude/.
+  if (isMcpJson) return join(dirname(mainPath), '.claude', 'settings.local.json');
+  // <cwd>/.claude/settings.json or ~/.claude/settings.json — sibling in the same dir.
+  return join(dirname(mainPath), 'settings.local.json');
+}
+
+// Merge entries into permissions.allow, preserving existing entries and order.
+// Returns { added: string[], skipped: boolean } — skipped=true means nothing
+// new to write so the file was left alone.
+function mergeAllowEntries(path, entries) {
+  const settings = readJsonFile(path);
+  if (!settings.permissions) settings.permissions = {};
+  if (!Array.isArray(settings.permissions.allow)) settings.permissions.allow = [];
+  const existing = new Set(settings.permissions.allow);
+  const added = [];
+  for (const entry of entries) {
+    if (!existing.has(entry)) {
+      settings.permissions.allow.push(entry);
+      added.push(entry);
+    }
+  }
+  if (added.length === 0) return { added, skipped: true };
+  writeJsonFile(path, settings);
+  return { added, skipped: false };
+}
+
 // --- Main ---
 
 function parseArgs(argv) {
   const opts = { scope: '', profile: 'default', writes: false, force: false,
-                 print: false, project: false, mcpJson: false, help: false };
+                 print: false, project: false, mcpJson: false, allow: true, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
@@ -138,6 +178,7 @@ function parseArgs(argv) {
       case '--print':   opts.print = true; break;
       case '--project': opts.project = true; break;
       case '--mcp-json': opts.mcpJson = true; break;
+      case '--no-allow': opts.allow = false; break;
       case '--help':
       case '-h':        opts.help = true; break;
       default:
@@ -161,7 +202,13 @@ Options:
   --project         Write to <cwd>/.claude/settings.json
   (no dest flag)    Write to ~/.claude/settings.json
   --force           Overwrite an existing peek entry that differs
+  --no-allow        Skip adding mcp__peek__* entries to permissions.allow
   --print           Print the snippet to stdout, do not write
+
+By default also appends the appropriate mcp__peek__* tool names to the
+permissions.allow array in settings.local.json (sibling of the chosen
+settings file — gitignored / user-specific), so Claude Code stops
+prompting for each Peek tool. --no-allow opts out.
 `;
 
 function main() {
@@ -243,6 +290,16 @@ function main() {
     process.stderr.write('Updated existing mcpServers.peek entry.\n');
   } else {
     process.stderr.write('Added mcpServers.peek entry.\n');
+  }
+
+  if (opts.allow) {
+    const allowPath = allowSettingsPath(settingsPath, isMcpJson);
+    const result = mergeAllowEntries(allowPath, allowList({ writes: opts.writes }));
+    if (result.skipped) {
+      process.stderr.write(`Allowlist entries already present in ${allowPath}.\n`);
+    } else {
+      process.stderr.write(`Added ${result.added.length} mcp__peek__* entries to ${allowPath}.\n`);
+    }
   }
   const isTty = process.stderr.isTTY;
   const bold = isTty ? '\x1b[1m' : '';

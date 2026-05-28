@@ -13,15 +13,20 @@ if [ "$#" -eq 0 ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
 peek-mcp-init — scaffold a per-project .mcp.json with Peek MCP scope.
 
 Usage:
-  peek-mcp-init <tag> [--writes] [--profile <name>] [--force]
+  peek-mcp-init <tag> [--writes] [--profile <name>] [--force] [--no-allow]
 
 Writes ./.mcp.json so a Claude Code session in this directory can read
 (and optionally write) only Peek items tagged <tag> or <tag>:*.
+
+Also appends the appropriate mcp__peek__* tool names to
+./.claude/settings.local.json (permissions.allow) so Claude Code stops
+prompting for each Peek tool call. Pass --no-allow to skip.
 
 Options:
   --writes          Enable mutating tools (default: read-only)
   --profile <name>  Peek profile to expose (default: "default")
   --force           Overwrite an existing peek entry that differs
+  --no-allow        Skip the permissions.allow write
 
 After running, fully quit and reopen Claude Code in this directory.
 Re-approving the /mcp prompt is not enough — the running peek-mcp child
