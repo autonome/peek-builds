@@ -16,6 +16,9 @@
   if (!chrome.runtime.id) return;
 
   var _ownExtId = chrome.runtime.id;
+  var _originalSendMessage = typeof chrome.runtime.sendMessage === 'function'
+    ? chrome.runtime.sendMessage.bind(chrome.runtime)
+    : null;
   var _seq = 0;
 
   function _newReqId() {
@@ -68,6 +71,15 @@
         internal: internal,
       }, '*');
     });
+
+    // Fire-and-forget: call the original native sendMessage alongside the
+    // relay. The native call preserves side effects that orchestrator.js
+    // depends on (e.g. UNLOAD/LOAD_CONTENT_SCRIPT init messages trigger
+    // native content script handling even though the Promise never settles).
+    // No callback — the relay handles responses; native is side-effect-only.
+    if (_originalSendMessage) {
+      try { _originalSendMessage(extId, message); } catch (_) {}
+    }
 
     if (callback) {
       p.then(

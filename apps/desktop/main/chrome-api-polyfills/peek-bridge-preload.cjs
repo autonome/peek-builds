@@ -45,10 +45,13 @@ contextBridge.exposeInMainWorld('peekBridge', {
     ipcRenderer.on(IPC_FORWARD_CHANNEL, (_event, payload) => {
       console.error('[peek:bridge:preload] forward received reqId=', payload && payload.reqId);
       const sendResponse = (response) => {
-        ipcRenderer.send(IPC_RESPONSE_CHANNEL, {
-          reqId: payload && payload.reqId,
-          response,
-        });
+        const msg = { reqId: payload && payload.reqId };
+        if (response && response.__peekBridgeError) {
+          msg.error = response.__peekBridgeError;
+        } else {
+          msg.response = response;
+        }
+        ipcRenderer.send(IPC_RESPONSE_CHANNEL, msg);
       };
       try {
         listener(payload, sendResponse);
