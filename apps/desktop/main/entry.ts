@@ -1210,14 +1210,15 @@ const onReady = async () => {
         });
       }
 
-      // Load enabled chrome extensions, register their UI pages as commands,
-      // then broadcast chrome-extensions:loaded so the Settings → Extensions
-      // pane can re-render its per-extension buttons. The broadcast is needed
-      // because renderPrivacySettings() runs once at page-open and
-      // loadEnabledChromeExtensions() is async — without the signal, a
-      // settings window opened before loading completes shows no buttons
-      // (this was the root cause of the 2026-04-29 regression).
-      loadEnabledChromeExtensions().then(() => {
+      // Load chrome extensions BEFORE session restore. Electron's native
+      // content_scripts injection fires when a webContents on the extension's
+      // session navigates to a matching URL — but only if the extension is
+      // already loaded on the session. Awaiting here ensures extensions are
+      // registered before session restore creates and navigates webviews,
+      // eliminating the race that caused inconsistent ISOLATED-world content
+      // script injection (e.g. orchestrator.js) into webview guests.
+      try {
+        await loadEnabledChromeExtensions();
         registerChromeExtensionCommands();
         publish(systemAddress, 'chrome-extensions:loaded', {});
 
@@ -1239,9 +1240,9 @@ const onReady = async () => {
             console.error(`[startup] PEEK_AUTOOPEN_EXT malformed (expected "<extId>:<pageType>"): ${_autoOpen}`);
           }
         }
-      }).catch(err => {
+      } catch (err) {
         console.error('[startup] Chrome extensions init failed:', err);
-      });
+      }
 
       const featTime = Date.now() - featStart;
       const totalTime = Date.now() - ((global as Record<string, unknown>).__startupStart as number);

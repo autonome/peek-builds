@@ -710,15 +710,17 @@ export interface MainWorldContentScriptInjection {
  * Returns the set of content_scripts (declared `world: "MAIN"`) whose `matches`
  * pattern accepts `url`, for all currently-loaded extensions.
  *
- * Electron's `session.loadExtension()` does NOT auto-inject content_scripts on
- * web pages — that's a gap in its Chrome API implementation. This function
- * exposes the manifest-declared scripts so the lifecycle hook in entry.ts can
- * inject them via `webContents.executeJavaScript()` (which runs in main world).
+ * Electron's `session.loadExtension()` auto-injects ISOLATED-world
+ * content_scripts (the default) but does NOT auto-inject MAIN-world scripts.
+ * This function exposes the MAIN-world scripts so the lifecycle hook in
+ * entry.ts can inject them via `webContents.executeJavaScript()`.
  *
- * ISOLATED-world scripts (the default) are intentionally excluded: their whole
- * point is to access the extension's own `chrome.runtime` rather than the
- * page's chrome shim, and `executeJavaScript` cannot provide that context. They
- * need a separate path (bridge-window relay; see runtime-external.js).
+ * ISOLATED-world scripts are excluded here because Electron handles them
+ * natively — they get a proper isolated context with the extension's own
+ * `chrome.runtime`. The critical requirement is that the extension must be
+ * loaded on the session BEFORE webContents navigate to matching URLs;
+ * entry.ts awaits `loadEnabledChromeExtensions()` before session restore
+ * to ensure this ordering.
  */
 export function getMatchingMainWorldContentScripts(url: string): MainWorldContentScriptInjection[] {
   let parsed: URL;
