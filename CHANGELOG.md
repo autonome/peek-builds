@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: 5af62bfde59e -->
+<!-- last-bumped: e0a6bced3421 -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -20,6 +20,8 @@ See TODO.md for pending items, WIP.md for in-progress items.
 ## Week of 2026-05-25 (W22)
 
 ### 2026-05-28
+
+- scripts: changelog-bump.js accepts --up-to <revset> for pre-finalize bumps
 
 - chrome-ext: scope chrome.runtime.lastError per-callback in cross-origin sendMessage polyfill
 - mcp-server: make hashtag extraction opt-in via extractHashtags flag

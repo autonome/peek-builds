@@ -4,9 +4,16 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Thu, 28 May 2026 09:55:39 GMT</lastBuildDate>
+    <lastBuildDate>Thu, 28 May 2026 10:07:07 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>scripts: changelog-bump.js accepts --up-to &lt;revset&gt; for pre-finalize bumps</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-28</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-05-28:ce2e7839039a</guid>
+      <pubDate>Thu, 28 May 2026 12:00:00 GMT</pubDate>
+      <description>scripts: changelog-bump.js accepts --up-to &lt;revset&gt; for pre-finalize bumps</description>
+    </item>
     <item>
       <title>chrome-ext: scope chrome.runtime.lastError per-callback in cross-origin sendMessage polyfill</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-28</link>
