@@ -306,12 +306,22 @@ function handleToolCall(name, args) {
       assertItemInScope(args.itemId);
       validateWriteTags([args.tagName]);
       return tagItem(args.itemId, args.tagName);
-    case 'untag_item':
+    case 'untag_item': {
       assertItemInScope(args.itemId);
-      if (tagIsScopeOwned(args.tagName)) {
-        throw new Error(`Cannot untag "${args.tagName}" — would remove item from scope "${SCOPE}".`);
+      // Only refuse a scope-owned untag if it would actually orphan the item.
+      // If other in-scope tags remain (e.g. bare `peek` plus `peek:todo` →
+      // dropping `peek:todo` leaves bare `peek`), the untag is safe.
+      if (SCOPE && tagIsScopeOwned(args.tagName)) {
+        const remaining = getItemTags(args.itemId).filter((t) => t !== args.tagName);
+        if (!inScope(remaining)) {
+          throw new Error(
+            `Cannot untag "${args.tagName}" — it is the only tag keeping this item in scope "${SCOPE}". ` +
+            `Add another ${SCOPE} or ${SCOPE}:* tag first, then retry.`,
+          );
+        }
       }
       return untagItem(args.itemId, args.tagName);
+    }
     case 'record_event':
       assertItemInScope(args.itemId);
       return recordEvent(args.itemId, args.type, args.value);

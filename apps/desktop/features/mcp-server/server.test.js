@@ -751,12 +751,36 @@ describe('MCP Server scope enforcement (PEEK_MCP_SCOPE_TAG=peek)', () => {
       assert.equal(r.isError, true);
     });
 
-    it('untag_item refuses to remove the scope tag', async () => {
+    it('untag_item refuses to remove the only scope tag (would orphan item)', async () => {
+      // p-only carries just bare `peek`. Removing it would push the item
+      // out of scope entirely.
       const r = await client.callToolRaw('untag_item', {
         itemId: 'p-only', tagName: 'peek',
       });
       assert.equal(r.isError, true);
-      assert.match(r.content[0].text, /would remove item from scope/);
+      assert.match(r.content[0].text, /only tag keeping this item in scope/);
+    });
+
+    it('untag_item allows removing a scope tag when other scope tags remain', async () => {
+      // Build an item with TWO scope-owned tags (peek + peek:scope:desktop),
+      // then untag one. Should succeed — the other keeps it in scope.
+      // Regression for: parallel tag/untag swap, and bare-peek-plus-namespaced
+      // case both refused even though removal was safe.
+      const item = await client.callTool('create_item', {
+        type: 'text', title: 'multi-scope', content: 'x',
+        tags: ['peek:scope:desktop'],
+      });
+      assert.ok(item.tags.includes('peek'));
+      assert.ok(item.tags.includes('peek:scope:desktop'));
+
+      const r = await client.callToolRaw('untag_item', {
+        itemId: item.id, tagName: 'peek:scope:desktop',
+      });
+      assert.notEqual(r.isError, true);
+
+      const refetched = await client.callTool('get_item', { id: item.id });
+      assert.ok(refetched.tags.includes('peek'));
+      assert.ok(!refetched.tags.includes('peek:scope:desktop'));
     });
 
     it('untag_item refuses on out-of-scope id', async () => {
