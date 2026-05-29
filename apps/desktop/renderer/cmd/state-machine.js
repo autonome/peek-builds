@@ -145,6 +145,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       const paramDef = cmd && cmd.params && cmd.params[0];
       return paramDef && paramDef.type === 'item';
     },
+    hasUrlGhost: (payload) => payload?.hasUrlGhost === true,
     isURL: (payload) => {
       return payload?.isURL === true;
     },
@@ -305,6 +306,11 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       ],
       [Events.ENTER]: [
         {
+          guard: 'hasUrlGhost',
+          target: States.CLOSING,
+          actions: ['openUrlGhost', 'clearInput', 'shutdown'],
+        },
+        {
           guard: 'isURL',
           target: States.CLOSING,
           actions: ['openURL', 'recordFrecency', 'clearInput', 'shutdown'],
@@ -389,6 +395,11 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
         },
       ],
       [Events.ENTER]: [
+        {
+          guard: 'hasUrlGhost',
+          target: States.CLOSING,
+          actions: ['openUrlGhost', 'clearInput', 'shutdown'],
+        },
         {
           guard: 'isURL',
           target: States.CLOSING,

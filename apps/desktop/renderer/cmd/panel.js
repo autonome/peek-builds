@@ -156,11 +156,11 @@ api.subscribe('window:focused', async (msg) => {
 // Chain popup state (module-level for cleanup)
 let chainPopupWindowId = null;
 
-// URL search state — async URL results mixed into normal cmd results
-let urlSearchGeneration = 0;
-let urlSearchResults = [];  // [{title, domain, content (url), favicon, ...}]
-let urlSearchTimer = null;
-const URL_SEARCH_DEBOUNCE_MS = 150;
+// URL ghost-text state — inline ghost completion in command input
+let urlGhostGeneration = 0;
+let urlGhostSuggestion = null; // { url, matchable } | null
+let urlGhostTimer = null;
+const URL_GHOST_DEBOUNCE_MS = 150;
 
 // Current command context (mode, target window, etc.)
 let commandContext = null;
@@ -187,9 +187,11 @@ window._cmdState = new Proxy(state, {
     if (prop === 'chainMode') return machine.getState() === States.CHAIN_MODE || machine.getState() === States.CHAIN_POPUP;
     if (prop === 'executing') return machine.getState() === States.EXECUTING;
     if (prop === 'currentState') return machine.getState();
+    if (prop === 'urlGhostSuggestion') return urlGhostSuggestion;
     return target[prop];
   }
 });
+
 
 // ===== Window Sizing =====
 
@@ -1273,69 +1275,106 @@ function findMatchingUrlCommand(url) {
   return bestMatch;
 }
 
-// ===== Async URL Search for Normal Cmd Mode =====
+// ===== Inline URL Ghost-Text for Normal Cmd Mode =====
 
 /**
- * Trigger async URL search to mix visited URLs into normal cmd results.
- * Debounced to avoid DB thrashing on every keystroke.
- * Results are appended below command matches in updateResultsUI.
+ * Strip https://, http://, and leading www. so we can do prefix matching
+ * against the user's typed text (which won't include the scheme).
+ * E.g. https://www.marktplaats.nl/foo -> marktplaats.nl/foo
  */
-function triggerUrlSearch(text) {
-  if (urlSearchTimer) {
-    clearTimeout(urlSearchTimer);
-    urlSearchTimer = null;
-  }
-
-  if (!text || text.length < 2) {
-    urlSearchResults = [];
-    urlSearchGeneration++;
-    return;
-  }
-
-  const generation = ++urlSearchGeneration;
-
-  urlSearchTimer = setTimeout(async () => {
-    try {
-      const query = { type: 'url', sortBy: 'frecency', limit: 10 };
-      query.search = text;
-      const result = await api.datastore.queryItems(query);
-      if (generation !== urlSearchGeneration) return; // stale
-      // Filter out internal peek:// URLs — only show web URLs
-      const allResults = (result.success && result.data) ? result.data : [];
-      urlSearchResults = allResults.filter(item => !item.content?.startsWith('peek://')).slice(0, 5);
-      // Re-render results to include URL items
-      updateResultsUI();
-      updateWindowSize();
-    } catch (e) {
-      log.error('cmd:panel', 'URL search failed:', e);
-    }
-  }, URL_SEARCH_DEBOUNCE_MS);
+function urlMatchable(url) {
+  if (!url) return '';
+  let s = url;
+  if (s.startsWith('https://')) s = s.slice('https://'.length);
+  else if (s.startsWith('http://')) s = s.slice('http://'.length);
+  if (s.startsWith('www.')) s = s.slice('www.'.length);
+  return s;
 }
 
 /**
- * Open a URL from the inline URL search results.
+ * Clear the URL ghost suggestion and cancel any pending debounce timer.
  */
-function openUrlSearchResult(index) {
-  const item = urlSearchResults[index];
-  if (!item) return;
+function clearUrlGhost() {
+  urlGhostSuggestion = null;
+  urlGhostGeneration++;
+  if (urlGhostTimer) {
+    clearTimeout(urlGhostTimer);
+    urlGhostTimer = null;
+  }
+}
 
-  const url = item.content;
-  if (!url) return;
+/**
+ * Debounced query for the best frecency-ranked URL that starts with the
+ * typed text. On success, stores the result as urlGhostSuggestion and
+ * triggers a UI update so updateCommandUI can render the ghost remainder.
+ */
+function triggerUrlGhost(text) {
+  if (urlGhostTimer) {
+    clearTimeout(urlGhostTimer);
+    urlGhostTimer = null;
+  }
 
-  log('cmd:panel', 'Opening URL search result:', url);
+  if (!text || text.length < 2) {
+    clearUrlGhost();
+    updateCommandUI();
+    return;
+  }
 
-  api.window.open(url, {
-    role: 'content',
-    width: 1024,
-    height: 768,
-    trackingSource: 'cmd',
-    trackingSourceId: 'url-search'
-  }).catch(error => {
-    log.error('cmd:panel', 'Failed to open URL search result:', error);
-  });
+  const generation = ++urlGhostGeneration;
 
-  updateMatchCount(url);
-  setTimeout(shutdown, 100);
+  urlGhostTimer = setTimeout(async () => {
+    try {
+      const result = await api.datastore.queryItems({ type: 'url', sortBy: 'frecency', limit: 10, search: text });
+      if (generation !== urlGhostGeneration) return; // stale
+      const allResults = (result.success && result.data) ? result.data : [];
+      const trimmed = text.trim().toLowerCase();
+      const match = allResults
+        .filter(item => !item.content?.startsWith('peek://'))
+        .find(item => {
+          const m = urlMatchable(item.content).toLowerCase();
+          return m.startsWith(trimmed) && m.length > trimmed.length;
+        });
+      if (match) {
+        urlGhostSuggestion = { url: match.content, matchable: urlMatchable(match.content) };
+      } else {
+        clearUrlGhost();
+      }
+      updateCommandUI();
+      updateWindowSize();
+    } catch (e) {
+      log.error('cmd:panel', 'URL ghost query failed:', e);
+    }
+  }, URL_GHOST_DEBOUNCE_MS);
+}
+
+/**
+ * Returns true when the URL ghost can be accepted: no command matches,
+ * there is a ghost suggestion, and the ghost's matchable starts with the
+ * current input value and is strictly longer.
+ */
+function urlGhostAcceptable(value) {
+  // Ghost is acceptable when there are no real command matches (URL-named commands
+  // from the history source are excluded — they're history entries, not real commands).
+  if (hasRealCommandMatches()) return false;
+  if (!urlGhostSuggestion) return false;
+  const trimmed = (value || '').trim();
+  const m = urlGhostSuggestion.matchable.toLowerCase();
+  return m.startsWith(trimmed.toLowerCase()) && m.length > trimmed.length;
+}
+
+/**
+ * Accept the URL ghost: fill the input with the full matchable, update
+ * state.typed, and re-render the ghost (remainder now empty).
+ * Keeps urlGhostSuggestion set so a subsequent Enter opens the exact url.
+ */
+function acceptUrlGhost() {
+  if (!urlGhostSuggestion) return;
+  const commandInput = document.getElementById('command-input');
+  if (!commandInput) return;
+  commandInput.value = urlGhostSuggestion.matchable;
+  state.typed = urlGhostSuggestion.matchable;
+  updateCommandUI();
+  syncCommandTextScroll();
 }
 
 // ===== URL Mode Functions =====
@@ -1556,17 +1595,48 @@ function syncCommandTextScroll() {
   }
 }
 
+/**
+ * Returns true when the current command matches contain ONLY URL-named commands
+ * (registered by the history source with the full URL as name, e.g. https://...).
+ * These are filtered out when determining whether the ghost should show — URL-named
+ * commands co-exist with the ghost, while real command matches suppress it.
+ */
+function hasRealCommandMatches() {
+  return state.matches.some(m => !m.includes('://'));
+}
+
+/**
+ * If there is an active URL ghost suggestion whose matchable starts with
+ * the typed text and is strictly longer, append the remainder as a dimmed
+ * (no-class) span to #command-text.
+ */
+function appendUrlGhost(typed) {
+  if (!urlGhostSuggestion) return;
+  const m = urlGhostSuggestion.matchable;
+  const t = (typed || '').trim();
+  if (m.toLowerCase().startsWith(t.toLowerCase()) && m.length > t.length) {
+    const commandText = document.getElementById('command-text');
+    const ghostSpan = document.createElement('span');
+    ghostSpan.textContent = m.substring(t.length);
+    commandText.appendChild(ghostSpan);
+  }
+}
+
 function updateCommandUI() {
   const commandText = document.getElementById('command-text');
   commandText.innerHTML = '';
 
   if (!state.typed) return;
 
-  if (state.matches.length === 0) {
+  // No command matches, OR only URL-named commands (history source artifacts):
+  // show plain typed text + URL ghost completion.
+  if (state.matches.length === 0 || !hasRealCommandMatches()) {
     const typedSpan = document.createElement('span');
     typedSpan.className = 'typed';
     typedSpan.textContent = state.typed;
     commandText.appendChild(typedSpan);
+    appendUrlGhost(state.typed);
+    syncCommandTextScroll();
     return;
   }
 
@@ -1725,8 +1795,10 @@ function updateResultsUI() {
   }
 
   const isChainState = machine.getState() === States.CHAIN_MODE;
-  const hasUrlResults = urlSearchResults.length > 0 && !isChainState && !urlModeActive;
-  if ((state.matches.length === 0 && !hasUrlResults) || (!state.showResults && !isChainState && !hasUrlResults)) {
+  // Hide results if: no matches at all, results not explicitly shown,
+  // OR there are only URL-named commands (history artifacts) — those are
+  // not displayed as a dropdown; the URL ghost handles them inline.
+  if (state.matches.length === 0 || (!state.showResults && !isChainState) || !hasRealCommandMatches()) {
     resultsContainer.classList.remove('visible');
     updateWindowSize();
     return;
@@ -1792,56 +1864,6 @@ function updateResultsUI() {
     resultsContainer.appendChild(item);
   });
 
-  // Append visited URL results below command matches
-  if (hasUrlResults) {
-    // Separator label
-    const separator = document.createElement('div');
-    separator.className = 'url-results-separator';
-    separator.textContent = 'Visited Pages';
-    resultsContainer.appendChild(separator);
-
-    urlSearchResults.forEach((urlItem, urlIndex) => {
-      const el = document.createElement('div');
-      el.className = 'command-item url-result-item';
-
-      // Favicon
-      const faviconUrl = urlItem.favicon || '';
-      if (faviconUrl) {
-        const favicon = document.createElement('img');
-        favicon.className = 'url-favicon';
-        favicon.src = faviconUrl;
-        favicon.width = 16;
-        favicon.height = 16;
-        favicon.onerror = () => { favicon.style.display = 'none'; };
-        el.appendChild(favicon);
-      }
-
-      // Title
-      const titleSpan = document.createElement('span');
-      titleSpan.className = 'cmd-name url-title';
-      let title = urlItem.title || '';
-      if (!title && urlItem.metadata) {
-        try {
-          const meta = typeof urlItem.metadata === 'string' ? JSON.parse(urlItem.metadata) : urlItem.metadata;
-          title = meta.title || '';
-        } catch (e) {}
-      }
-      titleSpan.textContent = title || urlItem.content || 'Untitled';
-      el.appendChild(titleSpan);
-
-      // Domain / URL subtitle
-      const urlSpan = document.createElement('span');
-      urlSpan.className = 'cmd-desc url-subtitle';
-      urlSpan.textContent = urlItem.domain || urlItem.content || '';
-      el.appendChild(urlSpan);
-
-      el.addEventListener('click', () => {
-        openUrlSearchResult(urlIndex);
-      });
-
-      resultsContainer.appendChild(el);
-    });
-  }
 
   updateWindowSize();
 }
@@ -1884,15 +1906,13 @@ function actionHandlers() {
       state.originalTyped = '';
       state.matches = [];
       state.matchIndex = 0;
-      urlSearchResults = [];
-      urlSearchGeneration++;
+      clearUrlGhost();
     },
 
     clearMatches() {
       state.matches = [];
       state.matchIndex = 0;
-      urlSearchResults = [];
-      urlSearchGeneration++;
+      clearUrlGhost();
     },
 
     computeMatches(payload) {
@@ -1904,19 +1924,24 @@ function actionHandlers() {
           const chainingNames = new Set(chainingCommands.map(cmd => cmd.name));
           const allMatches = findMatchingCommands(typed);
           state.matches = allMatches.filter(name => chainingNames.has(name));
+          clearUrlGhost();
         } else {
           state.matches = findMatchingCommands(typed);
-          // Also search visited URLs asynchronously (results appear below commands)
-          if (showUrlsInResults) {
-            triggerUrlSearch(typed.trim());
+          // Trigger URL ghost only when there are no "real" command matches.
+          // URL-named commands (registered by the history source with '://' in name)
+          // are excluded from the real-match count — they're URL history entries, not
+          // actual user commands, so the ghost should still show alongside them.
+          if (showUrlsInResults && !hasRealCommandMatches()) {
+            triggerUrlGhost(typed.trim());
+          } else {
+            clearUrlGhost();
           }
         }
         state.matchIndex = 0;
       } else {
         state.matches = [];
         state.matchIndex = 0;
-        urlSearchResults = [];
-        urlSearchGeneration++;
+        clearUrlGhost();
       }
     },
 
@@ -2309,6 +2334,23 @@ function actionHandlers() {
       });
     },
 
+    openUrlGhost() {
+      if (!urlGhostSuggestion) return;
+      const url = urlGhostSuggestion.url;
+      log('cmd:panel', 'Opening URL ghost suggestion:', url);
+      state.lastExecuted = url;
+      updateMatchCount(url);
+      api.window.open(url, {
+        role: 'content',
+        width: 1024,
+        height: 768,
+        trackingSource: 'cmd',
+        trackingSourceId: 'url-ghost'
+      }).catch(error => {
+        log.error('cmd:panel', 'Failed to open URL ghost suggestion:', error);
+      });
+    },
+
     shutdown() {
       setTimeout(shutdown, 100);
     },
@@ -2455,13 +2497,8 @@ function actionHandlers() {
       state.chainPopupActive = false;
       state.showResults = false;
 
-      // Clear inline URL search results
-      urlSearchResults = [];
-      urlSearchGeneration++;
-      if (urlSearchTimer) {
-        clearTimeout(urlSearchTimer);
-        urlSearchTimer = null;
-      }
+      // Clear inline URL ghost suggestion
+      clearUrlGhost();
 
       // Exit URL mode if active from previous invocation
       exitUrlMode();
@@ -2662,6 +2699,13 @@ async function render() {
       const tokens = trimmedText.split(/\s+/).filter(Boolean);
       const allHashtags = tokens.length > 0 && tokens.every(t => /^#[^\s#]+$/.test(t));
 
+      // URL ghost: active when there's a ghost suggestion whose matchable starts
+      // with the current typed text AND there are no real command matches
+      // (covers both pre- and post-Tab-accept cases).
+      const hasUrlGhost = !!urlGhostSuggestion &&
+        !hasRealCommandMatches() &&
+        urlGhostSuggestion.matchable.toLowerCase().startsWith(trimmedText.toLowerCase());
+
       machine.dispatch(Events.ENTER, {
         value: commandInput.value,
         isURL: urlResult.valid,
@@ -2670,6 +2714,7 @@ async function render() {
         committed,
         commandName: name,
         typed: commandInput.value,
+        hasUrlGhost,
       });
       return;
     }
@@ -2687,6 +2732,12 @@ async function render() {
     }
 
     if (e.key === 'ArrowRight') {
+      // Accept URL ghost when caret is at end of input and ghost is present
+      if (commandInput.selectionStart === commandInput.value.length && urlGhostAcceptable(commandInput.value)) {
+        e.preventDefault();
+        acceptUrlGhost();
+        return;
+      }
       if (machine.getState() === States.OUTPUT_SELECTION) {
         e.preventDefault();
         machine.dispatch(Events.ARROW_RIGHT);
@@ -2699,6 +2750,11 @@ async function render() {
       if (e.shiftKey) {
         machine.dispatch(Events.SHIFT_TAB);
       } else {
+        // Accept URL ghost with Tab when no command matches
+        if (urlGhostAcceptable(commandInput.value)) {
+          acceptUrlGhost();
+          return;
+        }
         // For Tab, check if the selected command has params
         const name = state.matches[state.matchIndex];
         const cmd = name && state.commands[name];
