@@ -479,6 +479,22 @@ const renderCoreSettings = async () => {
     placeholder: cmdConfigDefaults.prefs.shortcutKey
   }));
 
+  shortcutsGroup.appendChild(createCheckbox(
+    'Show visited URLs in results',
+    cmdPrefs.showUrlsInResults ?? cmdConfigDefaults.prefs.showUrlsInResults,
+    async (newVal) => {
+      cmdPrefs.showUrlsInResults = newVal;
+      await api.datastore.setRow('feature_settings', CMD_PREFS_ROW_ID, {
+        featureId: 'cmd',
+        key: 'prefs',
+        value: JSON.stringify(cmdPrefs),
+        updatedAt: Date.now(),
+      });
+      api.publish('cmd:settings-changed', {});
+    },
+    { helpText: 'Suggest frequently/recently visited URLs inline as you type, ranked by frecency' }
+  ));
+
   // CLI dispatch socket toggle (Linux only). The pref itself is platform-
   // agnostic — backed by core prefs.cliSocketEnabled — but the UI control
   // is only shown on Linux, where the socket is the answer for Wayland's
