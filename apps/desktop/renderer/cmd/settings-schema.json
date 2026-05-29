@@ -14,7 +14,7 @@
       "showUrlsInResults": {
         "description": "Show visited URLs inline in command results",
         "type": "boolean",
-        "default": false
+        "default": true
       }
     },
     "required": ["shortcutKey"]
@@ -25,7 +25,7 @@
   "defaults": {
     "prefs": {
       "shortcutKey": "Option+Space",
-      "showUrlsInResults": false
+      "showUrlsInResults": true
     }
   }
 }

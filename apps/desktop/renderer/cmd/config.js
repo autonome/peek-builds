@@ -32,7 +32,7 @@ const schemas = {
       "showUrlsInResults": {
         "description": "Show visited URLs inline in command results",
         "type": "boolean",
-        "default": false
+        "default": true
       },
     },
     "required": ["shortcutKey"]
@@ -46,7 +46,7 @@ const storageKeys = {
 const defaults = {
   prefs: {
     shortcutKey: defaultShortcutKey,
-    showUrlsInResults: false
+    showUrlsInResults: true
   },
 };
 
