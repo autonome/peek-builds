@@ -1452,6 +1452,20 @@ if (isHeadless() && process.platform === 'darwin' && app.dock) {
   app.dock.hide();
 }
 
+// Headless: make the app an "accessory" so it can never become the frontmost
+// application. dock.hide() alone removes the Dock tile but leaves the app a
+// REGULAR (activatable) app — so any win.show()/win.focus() (even on an
+// opacity-0 window, since opacity hides pixels but not activation) still
+// foregrounds Peek and steals OS focus + churns the system menubar. Accessory
+// policy closes that activation gap at the OS level: window-level focus/blur
+// events still fire (cmd / transient-on-blur / izui detection keep working),
+// but the app cannot yank focus from the user's foreground app or own the
+// menubar during headless test runs. See tasks d9bb2924 (focus steal) and
+// cdf2e5f8 (menubar churn).
+if (isHeadless() && process.platform === 'darwin' && app.setActivationPolicy) {
+  app.setActivationPolicy('accessory');
+}
+
 // Headless strict guard: no BrowserWindow must appear visible immediately
 // after construction during headless test runs. Windows created with show:true
 // flash on the user's physical macOS desktop. Any drift from the isHeadless()
