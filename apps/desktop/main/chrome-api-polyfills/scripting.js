@@ -70,16 +70,23 @@ function resolveTab(tabId) {
     return null;
   }
   if (!wc || wc.isDestroyed()) return null;
-  // Allow cross-session targeting: webview guests render page content in the
-  // page's own partition, not the extension's session, so a `wc.session ===
-  // _session` check would reject the very page an extension legitimately
-  // targets. Injection is still bounded by host_permissions, validated in
-  // doExecuteScript / doInsertCSS below — for Proton that's https/http only, so
-  // peek:// and chrome-extension:// targets are already rejected there.
-  // FOLLOW-UP: add an explicit privileged-scheme guard here (reject peek:// /
-  // chrome-extension:// / devtools:// targets) to harden against a hypothetical
-  // <all_urls> extension; needs a fill-path test since the autofill chip itself
-  // never calls chrome.scripting.executeScript (verified 2026-05-28).
+  const url = wc.getURL() || '';
+  // Privileged-scheme guard: never let an extension inject into Peek's own
+  // privileged surfaces, independent of its host_permissions. Fill/exec targets
+  // are always http/https web pages; these schemes are never legitimate targets.
+  // Safe-by-construction: if the URL is empty or unparseable we reject rather
+  // than allow through.
+  const PRIVILEGED = ['peek:', 'chrome-extension:', 'devtools:', 'file:'];
+  let scheme;
+  try { scheme = new URL(url).protocol; } catch { return null; }
+  if (PRIVILEGED.includes(scheme)) return null;
+  // Cross-session targeting is intentional: webview guests render page content
+  // in the page's own partition, not the extension's session, so a
+  // `wc.session === _session` check would reject the very page an extension
+  // legitimately targets. Injection is still bounded by host_permissions,
+  // validated in doExecuteScript / doInsertCSS below. The privileged-scheme
+  // guard above handles the <all_urls> hardening case without relying on
+  // session membership or host_permissions matching.
   return wc;
 }
 
