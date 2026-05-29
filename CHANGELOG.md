@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: e0a6bced3421 -->
+<!-- last-bumped: 741e340c3bb8 -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -19,7 +19,20 @@ See TODO.md for pending items, WIP.md for in-progress items.
 
 ## Week of 2026-05-25 (W22)
 
+### 2026-05-29
+
+- fix: make app accessory under headless to cut test-run focus steal and stop menubar churn — partial, full focus fix tracked in task d9bb2924
+- feat: inline ghost-text URL completion in cmd, replacing dead Visited Pages dropdown
+
 ### 2026-05-28
+
+- mcp-server: skill template frames Peek as external tool so agents in other projects don't reject it
+- mcp-server: add search_items tool for full-text search across items
+- session: remove over-broad fewer-windows guard that blocked saving after closing windows
+- feat: inject chrome.scripting polyfill into BG service worker via bridge port
+- fix: await chrome extension loading before session restore to fix ISOLATED content script injection race
+- feat: ISOLATED-world sendMessage shim for content scripts in webview guests
+- fix: content-script sender gets a real tab.id so Proton Pass accepts REGISTER_ELEMENTS
 
 - scripts: changelog-bump.js accepts --up-to <revset> for pre-finalize bumps
 
