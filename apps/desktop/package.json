@@ -50,7 +50,7 @@
     "debug:electron:bg": "cd ../.. && yarn kill:electron && sleep 1 && yarn workspace @peek/desktop build && DEBUG=1 electron . > /tmp/electron-debug.log 2>&1 &",
     "electron:log": "tail -f /tmp/electron-debug.log",
     "//-- Packaged run --//": "",
-    "kill:electron": "pkill -f '/Users/dietrich/misc/peek/node_modules/.bin/electron' || true",
+    "kill:electron": "pkill -f '/Users/dietrich/misc/mpeek/node_modules/electron/dist/Electron.app' || true",
     "kill:packaged": "pkill -f 'out/mac-arm64/Peek.app' || true",
     "kill:prod": "pkill -f '/Applications/Peek.app' || true",
     "run:packaged": "cd ../.. && ./scripts/timed.sh sh -c 'yarn workspace @peek/desktop kill:packaged && yarn workspace @peek/desktop build && electron-builder --dir && PROFILE=tmp-$(date +%s) out/mac-arm64/Peek.app/Contents/MacOS/Peek'",
