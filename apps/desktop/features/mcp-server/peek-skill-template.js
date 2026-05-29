@@ -10,7 +10,7 @@ export const BODY_END = '<!-- PEEK_SKILL_BODY_END -->';
 // Frontmatter + auto-managed body. {SCOPE} gets substituted at scaffold time.
 export const TEMPLATE_BODY = `---
 name: peek
-description: "Peek is the user's personal task/knowledge system, accessed via mcp__peek__* tools. NOT part of this project's codebase — it's an external service like a todo list or issue tracker. Use it to read/write tasks and notes in the {SCOPE}:* namespace."
+description: "Peek is the user's personal task/knowledge system, accessed via mcp__peek__* tools — the DEFAULT place for this project's tasks, todos, and notes (an external service like an issue tracker, NOT part of the codebase). Whenever the user mentions a task, todo, backlog, says 'add task' / 'remind me' / 'track this', or asks what to work on, reach for the Peek MCP (list_items / create_item / tag_item in the {SCOPE}:* namespace) by DEFAULT — do not fall back to an ad-hoc or built-in todo list."
 ---
 
 # Peek — task & knowledge tools ({SCOPE} scope)
@@ -54,6 +54,15 @@ mcp__peek__create_item({
   tags: ['{SCOPE}:todo'],  // plus any project-specific tags from the section below
 })
 \`\`\`
+
+**\`create_item\` force-adds the bare \`{SCOPE}\` tag.** The scope guard appends bare \`{SCOPE}\` to every item you create so it can't land outside your namespace. The \`tags\` array you pass IS honored — it is not ignored or collapsed. Because you already pass a \`{SCOPE}:*\` status tag, the bare \`{SCOPE}\` is redundant and pollutes the reserved bare-tag intake; drop it with one \`untag_item\` call right after create:
+
+\`\`\`js
+const item = mcp__peek__create_item({ type: 'text', title: '…', content: '…', tags: ['{SCOPE}:todo'] })
+mcp__peek__untag_item({ itemId: item.id, tagName: '{SCOPE}' })  // remove the auto-added bare tag
+\`\`\`
+
+This is safe: the \`{SCOPE}:todo\` tag keeps the item in scope, so the orphan guard allows the untag.
 
 **Hashtags in content do NOT auto-tag by default.** \`#123\` issue refs and \`#3)\` enumerations stay as plain text. Pass \`extractHashtags: true\` only when you genuinely want \`#word\` patterns from text-type content auto-tagged.
 

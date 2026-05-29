@@ -99,6 +99,21 @@ mcp__peek__create_item({
 })
 ```
 
+**The MCP force-adds the bare `peek` tag on create.** The scope guard
+appends bare `peek` to every item `create_item` makes (so it can't escape
+the namespace). Your `tags` array IS applied on top — it is not ignored or
+collapsed. Since you always pass `peek:todo`, the bare `peek` is redundant
+and lands in the user-reserved bare-`#peek` intake; remove it right after
+create:
+
+```js
+const item = mcp__peek__create_item({ type: 'text', title: '…', content: '…', tags: ['peek:todo', 'peek:triage'] })
+mcp__peek__untag_item({ itemId: item.id, tagName: 'peek' })  // drop the auto-added bare tag
+```
+
+Safe because the `peek:todo` tag keeps the item in scope, so the orphan
+guard allows the untag.
+
 - Title is what shows in lists — keep it scannable.
 - Content is markdown; first line `# {title}` matches the title.
 - Tags: always include `peek:todo` + a quality marker (`peek:ready` or `peek:triage`) + at least one domain (`peek:desktop`/`peek:mobile`/etc.) + ideally one type (`peek:bug`/`peek:feature`/etc.).
@@ -213,8 +228,10 @@ cmd-panel handoff is the canonical flow.
 - **Don't use `list_tasks` or `complete_task`** — they're generic
   bare-tag tools that ignore the `peek:*` namespace. Use `list_items`
   + manual tag/event transitions.
-- **Don't add `#todo` or `#peek`** to new items — `peek:todo` already
-  encodes both project membership and queue status.
+- **Don't manually add `#todo` or `#peek`** to new items — `peek:todo`
+  already encodes both project membership and queue status. Note the MCP
+  server force-adds bare `peek` for you on `create_item`; untag it
+  afterward (see "Add a task") — don't leave it on the item.
 - **Don't use `peek:deferred`** — retired 2026-04-29. If you'd reach
   for it, the right move is `peek:wontfix` (close the item) or
   `peek:triage` (decision needed).

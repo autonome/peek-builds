@@ -169,6 +169,51 @@ function writeSkillFile(cwd, scope) {
   return { path, action: 'refreshed' };
 }
 
+// Managed-block sentinels for the .gitignore entries we own.
+const GITIGNORE_BEGIN = '# >>> peek-mcp-init (auto-managed) >>>';
+const GITIGNORE_END = '# <<< peek-mcp-init (auto-managed) <<<';
+
+// Write/refresh an idempotent managed block in <cwd>/.gitignore listing the
+// per-developer Peek MCP wiring files (machine/scope-specific — must not be
+// committed). Returns { path, action } with action 'created'|'updated'|'unchanged'.
+function writeGitignoreBlock(cwd) {
+  const path = join(cwd, '.gitignore');
+  const block = [
+    GITIGNORE_BEGIN,
+    '# Per-developer Peek MCP wiring — machine/scope-specific, do not commit.',
+    '.mcp.json',
+    '.claude/settings.local.json',
+    '.claude/skills/peek.md',
+    GITIGNORE_END,
+  ].join('\n');
+
+  if (!existsSync(path)) {
+    writeFileSync(path, block + '\n', 'utf-8');
+    return { path, action: 'created' };
+  }
+  const existing = readFileSync(path, 'utf-8');
+  const beginIdx = existing.indexOf(GITIGNORE_BEGIN);
+  if (beginIdx === -1) {
+    // Append our block, preserving existing content.
+    const sep = existing.endsWith('\n') ? '' : '\n';
+    const merged = existing + sep + '\n' + block + '\n';
+    writeFileSync(path, merged, 'utf-8');
+    return { path, action: 'updated' };
+  }
+  // Replace the existing managed block in place.
+  const endIdx = existing.indexOf(GITIGNORE_END, beginIdx);
+  if (endIdx === -1) {
+    // Malformed (begin without end) — leave the file alone rather than corrupt it.
+    return { path, action: 'unchanged' };
+  }
+  const before = existing.slice(0, beginIdx);
+  const after = existing.slice(endIdx + GITIGNORE_END.length);
+  const merged = before + block + after;
+  if (merged === existing) return { path, action: 'unchanged' };
+  writeFileSync(path, merged, 'utf-8');
+  return { path, action: 'updated' };
+}
+
 // Merge entries into permissions.allow, preserving existing entries and order.
 // Returns { added: string[], skipped: boolean } — skipped=true means nothing
 // new to write so the file was left alone.
@@ -194,7 +239,7 @@ function mergeAllowEntries(path, entries) {
 function parseArgs(argv) {
   const opts = { scope: '', profile: 'default', writes: false,
                  print: false, project: false, mcpJson: false, allow: true,
-                 skill: true, help: false };
+                 skill: true, gitignore: true, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
@@ -206,6 +251,7 @@ function parseArgs(argv) {
       case '--mcp-json': opts.mcpJson = true; break;
       case '--no-allow': opts.allow = false; break;
       case '--no-skill': opts.skill = false; break;
+      case '--no-gitignore': opts.gitignore = false; break;
       case '--help':
       case '-h':        opts.help = true; break;
       default:
@@ -230,6 +276,7 @@ Options:
   (no dest flag)    Write to ~/.claude/settings.json
   --no-allow        Skip adding mcp__peek__* entries to permissions.allow
   --no-skill        Skip scaffolding the per-project peek skill
+  --no-gitignore    Skip adding the scaffolded files to .gitignore
   --print           Print the snippet to stdout, do not write
 
 By default also:
@@ -242,6 +289,10 @@ By default also:
     untag orphan rule, restart UX). Re-running refreshes the auto-managed
     section while preserving the trailing "Project-specific" section.
     Only runs when --mcp-json or --project is set. --no-skill opts out.
+  - adds .mcp.json, .claude/settings.local.json, and .claude/skills/peek.md
+    to <cwd>/.gitignore in a managed block (these are per-developer wiring
+    files that are machine/scope-specific and should not be committed).
+    Only runs when --mcp-json or --project is set. --no-gitignore opts out.
 `;
 
 function main() {
@@ -338,6 +389,16 @@ function main() {
       process.stderr.write(`Refreshed auto-managed section of ${result.path}.\n`);
     } else {
       process.stderr.write(`Skill at ${result.path} left untouched (no markers / no changes).\n`);
+    }
+  }
+  if (opts.gitignore && projectMode) {
+    const result = writeGitignoreBlock(process.cwd());
+    if (result.action === 'created') {
+      process.stderr.write(`Created .gitignore with Peek MCP entries at ${result.path}.\n`);
+    } else if (result.action === 'updated') {
+      process.stderr.write(`Updated Peek MCP block in ${result.path}.\n`);
+    } else {
+      process.stderr.write(`.gitignore at ${result.path} already current.\n`);
     }
   }
   const isTty = process.stderr.isTTY;
