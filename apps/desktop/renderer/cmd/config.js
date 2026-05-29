@@ -13,6 +13,7 @@ const labels = {
   prefs: {
     shortcutKey: 'Cmd shortcut',
     showUrlsInResults: 'Show URLs in results',
+    enterRunsInlineSuggestion: 'Enter runs the inline suggestion',
   }
 };
 
@@ -34,6 +35,11 @@ const schemas = {
         "type": "boolean",
         "default": true
       },
+      "enterRunsInlineSuggestion": {
+        "description": "Pressing Enter runs the inline-suggested command even when only a prefix is typed",
+        "type": "boolean",
+        "default": true
+      },
     },
     "required": ["shortcutKey"]
   }
@@ -46,7 +52,8 @@ const storageKeys = {
 const defaults = {
   prefs: {
     shortcutKey: defaultShortcutKey,
-    showUrlsInResults: true
+    showUrlsInResults: true,
+    enterRunsInlineSuggestion: true
   },
 };
 

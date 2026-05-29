@@ -99,12 +99,14 @@ loadAdaptiveData().then(data => {
 
 // Cached prefs for URL search behavior
 let showUrlsInResults = defaults.prefs.showUrlsInResults;
+let enterRunsInlineSuggestion = defaults.prefs.enterRunsInlineSuggestion;
 
 // Load prefs on startup. api.settings.get(key) requires the per-row key;
 // the legacy no-arg whole-object form was removed.
 api.settings.get('prefs').then(result => {
   if (result.success && result.data) {
     showUrlsInResults = result.data.showUrlsInResults ?? defaults.prefs.showUrlsInResults;
+    enterRunsInlineSuggestion = result.data.enterRunsInlineSuggestion ?? defaults.prefs.enterRunsInlineSuggestion;
   }
   log('cmd:panel', 'showUrlsInResults:', showUrlsInResults);
 });
@@ -114,6 +116,10 @@ api.subscribe('settings:changed', (payload) => {
   if (payload?.prefs?.showUrlsInResults !== undefined) {
     showUrlsInResults = payload.prefs.showUrlsInResults;
     log('cmd:panel', 'showUrlsInResults updated:', showUrlsInResults);
+  }
+  if (payload?.prefs?.enterRunsInlineSuggestion !== undefined) {
+    enterRunsInlineSuggestion = payload.prefs.enterRunsInlineSuggestion;
+    log('cmd:panel', 'enterRunsInlineSuggestion updated:', enterRunsInlineSuggestion);
   }
 });
 
@@ -2687,12 +2693,29 @@ async function render() {
       const nameLower = name ? name.toLowerCase() : '';
       const typedLower = trimmedText.toLowerCase();
 
-      const committed = name && (
+      let committed = name && (
         typedLower === nameLower ||
         typedLower.startsWith(nameLower + ' ') ||
         state.showResults ||
         machine.getState() === States.CHAIN_MODE
       );
+
+      // Pref: Enter runs the inline-suggested command for a genuine PREFIX completion
+      // (the ghost-completion case). NEVER for substring/fuzzy matches —
+      // findMatchingCommands does substring matching, and auto-running a fuzzy match
+      // would execute a command the user didn't intend (why this was disabled before).
+      if (!committed && enterRunsInlineSuggestion && name && !typedLower.includes(' ')
+          && typedLower.length > 0 && nameLower.startsWith(typedLower) && nameLower !== typedLower) {
+        const suggestedCmd = state.commands[name];
+        const suggestedHasParams = suggestedCmd && suggestedCmd.params && suggestedCmd.params.length > 0;
+        if (suggestedHasParams) {
+          // Param command: complete the name + enter param mode (like Tab), don't execute with empty params.
+          e.preventDefault();
+          machine.dispatch(Events.TAB, { commandName: name, hasParams: true });
+          return;
+        }
+        committed = true; // no-param command → execute via the userCommittedToCommand guard
+      }
 
       // All tokens are `#name` (no inner whitespace, no `#`-only): treat as
       // a tag-search shortcut. Routes to the `search` view filtered by tags.
