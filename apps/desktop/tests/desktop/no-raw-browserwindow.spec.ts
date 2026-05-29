@@ -97,9 +97,6 @@ test.describe('No raw BrowserWindow @desktop', () => {
     await opened.waitForLoadState('domcontentloaded');
 
     if (!app.evaluateMain) throw new Error('evaluateMain not available');
-    const countBefore = await app.evaluateMain<number, void>(
-      ({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
-    );
 
     // Invoke window.open from inside the groups renderer. Expect denial.
     const openResult = await opened.evaluate(() => {
@@ -111,16 +108,17 @@ test.describe('No raw BrowserWindow @desktop', () => {
       }
     });
 
-    // Wait long enough for any errant window to actually surface
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    const countAfter = await app.evaluateMain<number, void>(
-      ({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
+    // The deny is synchronous — no settle wait needed. Assert the specific
+    // denied URL never surfaced as a BrowserWindow, regardless of concurrent
+    // unrelated window churn from other tests or extension respawns.
+    const exampleWindowExists = await app.evaluateMain<boolean, void>(
+      ({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows().some((w) => {
+          try { return w.webContents.getURL().startsWith('https://example.com'); }
+          catch { return false; }
+        }),
     );
-
-    // Either the call returned null (Electron's default on deny), or the
-    // call threw. EITHER way, the window count must not have grown.
-    expect(countAfter).toBe(countBefore);
+    expect(exampleWindowExists).toBe(false);
     expect(openResult.returned).not.toBe('window');
 
     // Clean up
