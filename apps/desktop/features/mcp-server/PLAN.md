@@ -77,7 +77,7 @@ The Peek tile's role: provides UI for configuring the MCP server, shows connecti
 - Returns: array of `{id, type, url, title, content, metadata, tags[], createdAt, updatedAt}`
 
 **`get_item`** — Get a single item by ID
-- Params: `id: string`
+- Params: `itemId: string`
 - Returns: full item with all metadata, tags, content, visits
 
 **`create_item`** — Create a new item
@@ -85,11 +85,11 @@ The Peek tile's role: provides UI for configuring the MCP server, shows connecti
 - Returns: created item
 
 **`update_item`** — Update item metadata/content
-- Params: `id: string, title?: string, content?: string, metadata?: object`
+- Params: `itemId: string, title?: string, content?: string, metadata?: object`
 - Returns: updated item
 
 **`delete_item`** — Soft-delete an item
-- Params: `id: string`
+- Params: `itemId: string`
 
 **`record_event`** — Add a timestamped event to an item (non-destructive)
 - Params: `itemId: string, type: string, value?: string`
@@ -114,11 +114,11 @@ The Peek tile's role: provides UI for configuring the MCP server, shows connecti
 - Returns: items sorted by creation date, with all tags included
 
 **`complete_task`** — Mark a task item as done
-- Params: `id: string, notes?: string`
+- Params: `itemId: string, notes?: string`
 - Action: adds `done` tag, removes `todo` tag, records completion event with notes
 
 **`get_task_context`** — Get a task with surrounding context
-- Params: `id: string`
+- Params: `itemId: string`
 - Returns: item + its tags + recent events + any linked/related items
 
 ## MCP Resources

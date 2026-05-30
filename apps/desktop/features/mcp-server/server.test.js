@@ -298,7 +298,7 @@ describe('MCP Server', () => {
 
   describe('get_item', () => {
     it('should return item with tags', async () => {
-      const item = await client.callTool('get_item', { id: 'item-2' });
+      const item = await client.callTool('get_item', { itemId: 'item-2' });
       assert.equal(item.id, 'item-2');
       assert.equal(item.title, 'Shopping list');
       assert.ok(Array.isArray(item.tags));
@@ -307,8 +307,21 @@ describe('MCP Server', () => {
     });
 
     it('should return null for nonexistent item', async () => {
-      const item = await client.callTool('get_item', { id: 'nonexistent' });
+      const item = await client.callTool('get_item', { itemId: 'nonexistent' });
       assert.equal(item, null);
+    });
+
+    it('round-trips an id created via create_item, via the itemId param', async () => {
+      const created = await client.callTool('create_item', { type: 'text', title: 'Roundtrip', content: 'roundtrip body' });
+      const fetched = await client.callTool('get_item', { itemId: created.id });
+      assert.equal(fetched.id, created.id);
+      assert.equal(fetched.title, 'Roundtrip');
+    });
+
+    it('returns a clean error mentioning itemId when itemId is missing', async () => {
+      const r = await client.callToolRaw('get_item', {});
+      assert.equal(r.isError, true);
+      assert.ok(r.content[0].text.includes('itemId'), `expected error to mention itemId, got: ${r.content[0].text}`);
     });
   });
 
@@ -341,7 +354,7 @@ describe('MCP Server', () => {
   describe('update_item', () => {
     it('should update item title', async () => {
       const item = await client.callTool('update_item', {
-        id: 'item-1',
+        itemId: 'item-1',
         title: 'Updated Example',
       });
       assert.equal(item.title, 'Updated Example');
@@ -355,7 +368,7 @@ describe('MCP Server', () => {
         type: 'text',
         title: 'To delete',
       });
-      const result = await client.callTool('delete_item', { id: created.id });
+      const result = await client.callTool('delete_item', { itemId: created.id });
       assert.equal(result.success, true);
 
       // Should no longer appear in list
@@ -386,12 +399,12 @@ describe('MCP Server', () => {
     it('should add and remove tags', async () => {
       // Tag item-1 with 'important'
       await client.callTool('tag_item', { itemId: 'item-1', tagName: 'important' });
-      let item = await client.callTool('get_item', { id: 'item-1' });
+      let item = await client.callTool('get_item', { itemId: 'item-1' });
       assert.ok(item.tags.includes('important'));
 
       // Untag
       await client.callTool('untag_item', { itemId: 'item-1', tagName: 'important' });
-      item = await client.callTool('get_item', { id: 'item-1' });
+      item = await client.callTool('get_item', { itemId: 'item-1' });
       assert.ok(!item.tags.includes('important'));
     });
 
@@ -402,7 +415,7 @@ describe('MCP Server', () => {
       // or UNIQUE constraint" (requires CREATE UNIQUE INDEX on tags.name).
       const result = await client.callTool('tag_item', { itemId: 'item-3', tagName: 'todo' });
       assert.equal(result.success, true);
-      const item = await client.callTool('get_item', { id: 'item-3' });
+      const item = await client.callTool('get_item', { itemId: 'item-3' });
       assert.ok(item.tags.includes('todo'));
     });
 
@@ -452,7 +465,7 @@ describe('MCP Server', () => {
       });
 
       const result = await client.callTool('complete_task', {
-        id: task.id,
+        itemId: task.id,
         notes: 'All done',
       });
 
@@ -470,7 +483,7 @@ describe('MCP Server', () => {
         value: 'Making progress',
       });
 
-      const ctx = await client.callTool('get_task_context', { id: 'item-2' });
+      const ctx = await client.callTool('get_task_context', { itemId: 'item-2' });
       assert.equal(ctx.id, 'item-2');
       assert.ok(Array.isArray(ctx.events));
       assert.ok(ctx.events.length >= 1);
@@ -689,17 +702,17 @@ describe('MCP Server scope enforcement (PEEK_MCP_SCOPE_TAG=peek)', () => {
     });
 
     it('get_item returns null for out-of-scope id', async () => {
-      const r = await client.callTool('get_item', { id: 'u-only' });
+      const r = await client.callTool('get_item', { itemId: 'u-only' });
       assert.equal(r, null);
     });
 
     it('get_item returns null for untagged id', async () => {
-      const r = await client.callTool('get_item', { id: 'bare' });
+      const r = await client.callTool('get_item', { itemId: 'bare' });
       assert.equal(r, null);
     });
 
     it('get_item returns in-scope item with all tags visible', async () => {
-      const r = await client.callTool('get_item', { id: 'cross' });
+      const r = await client.callTool('get_item', { itemId: 'cross' });
       assert.ok(r);
       // The cross-cut item shows ALL its tags, including untense — agents
       // can see what a human chose to share, they just can't write it.
@@ -740,14 +753,14 @@ describe('MCP Server scope enforcement (PEEK_MCP_SCOPE_TAG=peek)', () => {
 
     it('update_item refuses out-of-scope id', async () => {
       const r = await client.callToolRaw('update_item', {
-        id: 'u-only', title: 'hijacked',
+        itemId: 'u-only', title: 'hijacked',
       });
       assert.equal(r.isError, true);
       assert.match(r.content[0].text, /not in scope/);
     });
 
     it('delete_item refuses out-of-scope id', async () => {
-      const r = await client.callToolRaw('delete_item', { id: 'u-only' });
+      const r = await client.callToolRaw('delete_item', { itemId: 'u-only' });
       assert.equal(r.isError, true);
     });
 
@@ -778,7 +791,7 @@ describe('MCP Server scope enforcement (PEEK_MCP_SCOPE_TAG=peek)', () => {
       });
       assert.notEqual(r.isError, true);
 
-      const refetched = await client.callTool('get_item', { id: item.id });
+      const refetched = await client.callTool('get_item', { itemId: item.id });
       assert.ok(refetched.tags.includes('peek'));
       assert.ok(!refetched.tags.includes('peek:scope:desktop'));
     });

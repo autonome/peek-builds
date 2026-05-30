@@ -76,6 +76,14 @@ function assertItemInScope(id) {
   }
 }
 
+function requireItemId(args) {
+  const id = args.itemId;
+  if (typeof id !== 'string' || id === '') {
+    throw new Error('Missing required "itemId": a non-empty item id string.');
+  }
+  return id;
+}
+
 function validateWriteTags(tags) {
   if (!SCOPE || !tags) return;
   for (const t of tags) {
@@ -130,9 +138,9 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Item ID' },
+        itemId: { type: 'string', description: 'Item ID' },
       },
-      required: ['id'],
+      required: ['itemId'],
     },
   },
   {
@@ -158,12 +166,12 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Item ID' },
+        itemId: { type: 'string', description: 'Item ID' },
         title: { type: 'string', description: 'New title' },
         content: { type: 'string', description: 'New content' },
         metadata: { type: 'object', description: 'New metadata (replaces existing)' },
       },
-      required: ['id'],
+      required: ['itemId'],
     },
   },
   {
@@ -172,9 +180,9 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Item ID' },
+        itemId: { type: 'string', description: 'Item ID' },
       },
-      required: ['id'],
+      required: ['itemId'],
     },
   },
   {
@@ -242,10 +250,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Item ID' },
+        itemId: { type: 'string', description: 'Item ID' },
         notes: { type: 'string', description: 'Completion notes' },
       },
-      required: ['id'],
+      required: ['itemId'],
     },
   },
   {
@@ -254,9 +262,9 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Item ID' },
+        itemId: { type: 'string', description: 'Item ID' },
       },
-      required: ['id'],
+      required: ['itemId'],
     },
   },
 ];
@@ -300,7 +308,8 @@ function handleToolCall(name, args) {
       return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
     }
     case 'get_item': {
-      const item = getItem(args.id);
+      const itemId = requireItemId(args);
+      const item = getItem(itemId);
       if (!item) return null;
       if (SCOPE && !inScope(item.tags)) return null;
       return item;
@@ -310,13 +319,16 @@ function handleToolCall(name, args) {
       return createItem({ ...args, tags: withScopeTag(args.tags) });
     }
     case 'update_item': {
-      const { id, ...rest } = args;
-      assertItemInScope(id);
-      return updateItem(id, rest);
+      const itemId = requireItemId(args);
+      const { itemId: _omit, ...rest } = args;
+      assertItemInScope(itemId);
+      return updateItem(itemId, rest);
     }
-    case 'delete_item':
-      assertItemInScope(args.id);
-      return deleteItem(args.id);
+    case 'delete_item': {
+      const itemId = requireItemId(args);
+      assertItemInScope(itemId);
+      return deleteItem(itemId);
+    }
     case 'list_tags': {
       const rows = listTags(args || {});
       return SCOPE ? rows.filter((t) => tagIsScopeOwned(t.name)) : rows;
@@ -348,11 +360,14 @@ function handleToolCall(name, args) {
       const rows = listTasks(args || {});
       return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
     }
-    case 'complete_task':
-      assertItemInScope(args.id);
-      return completeTask(args.id, args.notes);
+    case 'complete_task': {
+      const itemId = requireItemId(args);
+      assertItemInScope(itemId);
+      return completeTask(itemId, args.notes);
+    }
     case 'get_task_context': {
-      const ctx = getTaskContext(args.id);
+      const itemId = requireItemId(args);
+      const ctx = getTaskContext(itemId);
       if (!ctx) return null;
       if (SCOPE && !inScope(ctx.tags)) return null;
       return ctx;

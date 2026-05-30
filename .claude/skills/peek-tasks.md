@@ -21,7 +21,7 @@ That file is a one-line pointer; do not edit it.
   surfaces every cross-project todo. **Do not use** in this codebase.
 - ❌ `mcp__peek__list_tasks({ project: 'peek' })` — queries bare
   `#peek` + `#todo`, also wrong namespace.
-- ❌ `mcp__peek__complete_task({ id })` — hardcoded to add bare `done`
+- ❌ `mcp__peek__complete_task({ itemId })` — hardcoded to add bare `done`
   and remove bare `todo`. Won't touch `peek:todo`. **Do not use.**
 - ✅ `mcp__peek__list_items({ tags: ['peek:todo'] })` — correct.
 - ✅ Manual untag + tag + event for status changes (see below).
@@ -182,7 +182,7 @@ also clear the `peek:ready`/`peek:triage` quality marker.
 
 ```js
 mcp__peek__update_item({
-  id: '<itemId>',
+  itemId: '<itemId>',
   title: 'New title',     // optional
   content: 'New body…',   // optional
 })

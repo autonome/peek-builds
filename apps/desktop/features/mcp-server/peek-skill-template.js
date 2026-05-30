@@ -29,7 +29,7 @@ inside that namespace so tag conventions stay clean.
 ## Avoid the bare-tag defaults
 
 - \`mcp__peek__list_tasks()\` defaults to \`tags: ['todo']\` (BARE) — surfaces every project's todos. Use \`list_items({ tags: ['{SCOPE}:todo'] })\` instead.
-- \`mcp__peek__complete_task({ id })\` adds bare \`done\`, removes bare \`todo\` — does NOT touch \`{SCOPE}:todo\` / \`{SCOPE}:done\`. Do status changes manually (below).
+- \`mcp__peek__complete_task({ itemId })\` adds bare \`done\`, removes bare \`todo\` — does NOT touch \`{SCOPE}:todo\` / \`{SCOPE}:done\`. Do status changes manually (below).
 
 ## Status vocabulary
 

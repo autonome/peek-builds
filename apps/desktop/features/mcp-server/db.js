@@ -285,6 +285,7 @@ export function searchItems({ query, tags, type, limit = 20, offset = 0 } = {}) 
 }
 
 export function getItem(id) {
+  if (typeof id !== 'string' || id === '') return null;
   const d = requireDb();
   const item = d.prepare(`
     SELECT id, type, content, title, domain, metadata, mimeType,
