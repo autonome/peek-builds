@@ -78,3 +78,10 @@ tmp/
 
 # Per-developer MCP server configs (machine-local absolute paths)
 /.mcp.json
+
+# >>> peek-mcp-init (auto-managed) >>>
+# Per-developer Peek MCP wiring — machine/scope-specific, do not commit.
+.mcp.json
+.claude/settings.local.json
+.claude/skills/peek.md
+# <<< peek-mcp-init (auto-managed) <<<

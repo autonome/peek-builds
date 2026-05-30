@@ -1,6 +1,6 @@
 ---
 name: peek
-description: "Peek is the user's personal task/knowledge system, accessed via mcp__peek__* tools. NOT part of this project's codebase — it's an external service like a todo list or issue tracker. Use it to read/write tasks and notes in the peek:* namespace."
+description: "Peek is the user's personal task/knowledge system, accessed via mcp__peek__* tools — the DEFAULT place for this project's tasks, todos, and notes (an external service like an issue tracker, NOT part of the codebase). Whenever the user mentions a task, todo, backlog, says 'add task' / 'remind me' / 'track this', or asks what to work on, reach for the Peek MCP (list_items / create_item / tag_item in the peek:* namespace) by DEFAULT — do not fall back to an ad-hoc or built-in todo list."
 ---
 
 # Peek — task & knowledge tools (peek scope)
@@ -44,6 +44,15 @@ mcp__peek__create_item({
   tags: ['peek:todo'],  // plus any project-specific tags from the section below
 })
 ```
+
+**`create_item` force-adds the bare `peek` tag.** The scope guard appends bare `peek` to every item you create so it can't land outside your namespace. The `tags` array you pass IS honored — it is not ignored or collapsed. Because you already pass a `peek:*` status tag, the bare `peek` is redundant and pollutes the reserved bare-tag intake; drop it with one `untag_item` call right after create:
+
+```js
+const item = mcp__peek__create_item({ type: 'text', title: '…', content: '…', tags: ['peek:todo'] })
+mcp__peek__untag_item({ itemId: item.id, tagName: 'peek' })  // remove the auto-added bare tag
+```
+
+This is safe: the `peek:todo` tag keeps the item in scope, so the orphan guard allows the untag.
 
 **Hashtags in content do NOT auto-tag by default.** `#123` issue refs and `#3)` enumerations stay as plain text. Pass `extractHashtags: true` only when you genuinely want `#word` patterns from text-type content auto-tagged.
 
