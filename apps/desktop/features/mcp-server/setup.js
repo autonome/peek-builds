@@ -214,6 +214,34 @@ function writeGitignoreBlock(cwd) {
   return { path, action: 'updated' };
 }
 
+// Recover scope, writes, profile, and destination from an existing Peek MCP
+// install in `cwd`, so a no-scope re-run just "refreshes" it without the
+// caller re-specifying params. Checks .mcp.json first (the recommended
+// layout), then .claude/settings.json. Returns { found, scope, writes,
+// profile, dest } where dest is 'mcp-json' | 'project'.
+function detectExistingInstall(cwd) {
+  const candidates = [
+    { path: join(cwd, '.mcp.json'), dest: 'mcp-json' },
+    { path: join(cwd, '.claude', 'settings.json'), dest: 'project' },
+  ];
+  for (const { path, dest } of candidates) {
+    if (!existsSync(path)) continue;
+    const json = readJsonFile(path);
+    const peek = json && json.mcpServers && json.mcpServers.peek;
+    if (!peek || !peek.env) continue;
+    const env = peek.env;
+    const scope = (env.PEEK_MCP_SCOPE_TAG || '').trim();
+    if (!scope) continue;
+    const writes = env.PEEK_MCP_READONLY !== '1';
+    let profile = 'default';
+    const dbPath = env.PEEK_DB_PATH || '';
+    const m = dbPath.match(/\/Peek\/([^/]+)\/datastore\.sqlite$/);
+    if (m) profile = m[1];
+    return { found: true, scope, writes, profile, dest };
+  }
+  return { found: false };
+}
+
 // Merge entries into permissions.allow, preserving existing entries and order.
 // Returns { added: string[], skipped: boolean } — skipped=true means nothing
 // new to write so the file was left alone.
@@ -265,10 +293,11 @@ function parseArgs(argv) {
 const HELP = `Peek MCP setup — writes/updates the mcpServers.peek entry.
 
 Usage:
-  peek-mcp --install --scope <tag> [options]
+  peek-mcp --install --scope <tag> [options]    # scaffold / override
+  peek-mcp --install                            # refresh existing install in cwd
 
 Options:
-  --scope <tag>     Confine the session to items tagged <tag> or <tag>:* (required)
+  --scope <tag>     Confine the session to items tagged <tag> or <tag>:* (required). Omit --scope to refresh an existing install in the current directory (recovers scope, writes, and profile from .mcp.json or .claude/settings.json).
   --writes          Enable mutating tools (default: read-only)
   --profile <name>  Peek profile to expose (default: "default")
   --mcp-json        Write to <cwd>/.mcp.json (per-project, recommended)
@@ -303,8 +332,25 @@ function main() {
     return;
   }
 
+  // No --scope: refresh an existing install in this directory, recovering its
+  // scope/writes/profile/destination so a bare `peek-mcp-init` re-run picks up
+  // template + launcher-path updates without re-specifying anything.
+  let refreshing = false;
   if (!opts.scope) {
-    process.stderr.write('Error: --scope <tag> is required.\n\n');
+    const existing = detectExistingInstall(process.cwd());
+    if (existing.found) {
+      opts.scope = existing.scope;
+      opts.writes = existing.writes;
+      opts.profile = existing.profile;
+      if (existing.dest === 'mcp-json') opts.mcpJson = true;
+      else if (existing.dest === 'project') opts.project = true;
+      refreshing = true;
+    }
+  }
+
+  if (!opts.scope) {
+    process.stderr.write('Error: no --scope given and no existing Peek MCP install found in this directory.\n');
+    process.stderr.write('Pass a <tag> to scaffold a new one, or run from a directory that already has .mcp.json or .claude/settings.json.\n\n');
     process.stderr.write(HELP);
     process.exit(2);
   }
@@ -343,6 +389,9 @@ function main() {
     settingsPath = join(homedir(), '.claude', 'settings.json');
   }
 
+  if (refreshing) {
+    process.stderr.write('Refreshing existing install — recovered scope, writes, and profile from this directory.\n');
+  }
   process.stderr.write(`Peek MCP Setup (${mode})\n`);
   process.stderr.write(`  Scope:    ${opts.scope} (and ${opts.scope}:*)\n`);
   process.stderr.write(`  Writes:   ${opts.writes ? 'enabled' : 'OFF (read-only)'}\n`);

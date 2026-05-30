@@ -1,19 +1,25 @@
 #!/bin/sh
-# peek-mcp-init — scaffold a per-project .mcp.json with Peek MCP scope.
+# peek-mcp-init — scaffold or refresh a per-project .mcp.json with Peek MCP scope.
 #
 # Convenience wrapper around `peek-mcp --install --mcp-json --scope <tag>`.
 # Run from the project root; writes ./.mcp.json so a Claude Code session
 # in this directory can read (and optionally write) only Peek items
 # tagged <tag> or <tag>:*.
+#
+# With no arguments, refreshes the existing install in the current directory
+# by recovering the scope/writes/profile from the existing .mcp.json.
 
 set -e
 
-if [ "$#" -eq 0 ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+RESOURCES_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
   cat <<'EOF'
-peek-mcp-init — scaffold a per-project .mcp.json with Peek MCP scope.
+peek-mcp-init — scaffold or refresh a per-project .mcp.json with Peek MCP scope.
 
 Usage:
   peek-mcp-init <tag> [--writes] [--profile <name>] [--no-allow] [--no-skill] [--no-gitignore]
+  peek-mcp-init                 # refresh existing install in this directory
 
 Writes three files in the project root so a Claude Code session in this
 directory can read (and optionally write) only Peek items tagged <tag>
@@ -29,6 +35,11 @@ or <tag>:*, with conventions pre-loaded:
 These three files are auto-added to ./.gitignore in a managed block
 (per-developer wiring — machine/scope-specific, not for committing).
 
+Running with no tag re-detects the scope and params from the existing
+.mcp.json (or .claude/settings.json) and refreshes the snippet, allowlist,
+skill, and .gitignore. This is handy after reinstalling Peek.app to pick
+up the new launcher path without re-specifying anything.
+
 Options:
   --writes          Enable mutating tools (default: read-only)
   --profile <name>  Peek profile to expose (default: "default")
@@ -43,8 +54,12 @@ EOF
   exit 0
 fi
 
+if [ "$#" -eq 0 ]; then
+  # No tag: refresh the existing install in this directory. setup.js detects
+  # the scope/writes/profile/destination from .mcp.json or .claude/settings.json.
+  exec "$RESOURCES_DIR/peek-mcp" --install
+fi
+
 TAG="$1"
 shift
-
-RESOURCES_DIR="$(cd "$(dirname "$0")" && pwd)"
 exec "$RESOURCES_DIR/peek-mcp" --install --mcp-json --scope "$TAG" "$@"

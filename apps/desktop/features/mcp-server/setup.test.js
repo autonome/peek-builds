@@ -42,6 +42,86 @@ function runSetup(projDir, dbPath, extraArgs) {
   }
 }
 
+// Helper: scaffold a fresh project with given extra args, returns { projDir, dbPath }
+function scaffoldProject(extraArgs) {
+  const { projDir, dbPath } = makeTmpProject();
+  const args = [SETUP_JS, '--mcp-json', ...extraArgs];
+  try {
+    execFileSync(process.execPath, args, {
+      cwd: projDir,
+      env: { ...process.env, PEEK_DB_PATH: dbPath },
+    });
+  } catch (err) {
+    const msg = err.stderr ? err.stderr.toString() : String(err);
+    throw new Error('setup.js exited non-zero during scaffold. stderr: ' + msg);
+  }
+  return { projDir, dbPath };
+}
+
+// Helper: run setup.js with no scope (refresh mode)
+function runRefresh(projDir, dbPath) {
+  execFileSync(process.execPath, [SETUP_JS], {
+    cwd: projDir,
+    env: { ...process.env, PEEK_DB_PATH: dbPath },
+  });
+}
+
+describe('setup.js refresh mode', () => {
+  let tmpDirs = [];
+
+  after(() => {
+    for (const dir of tmpDirs) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refresh: no-arg re-run recovers scope from existing .mcp.json', () => {
+    const { projDir, dbPath } = scaffoldProject(['--scope', 'refreshme', '--writes']);
+    tmpDirs.push(projDir);
+
+    runRefresh(projDir, dbPath);
+
+    const mcpJsonPath = join(projDir, '.mcp.json');
+    const parsed = JSON.parse(readFileSync(mcpJsonPath, 'utf-8'));
+    assert.strictEqual(parsed.mcpServers.peek.env.PEEK_MCP_SCOPE_TAG, 'refreshme');
+  });
+
+  it('refresh: preserves writes - read-only flag unset after writes scaffold', () => {
+    const { projDir, dbPath } = scaffoldProject(['--scope', 'writetag', '--writes']);
+    tmpDirs.push(projDir);
+
+    runRefresh(projDir, dbPath);
+
+    const mcpJsonPath = join(projDir, '.mcp.json');
+    const parsed = JSON.parse(readFileSync(mcpJsonPath, 'utf-8'));
+    assert.strictEqual(parsed.mcpServers.peek.env.PEEK_MCP_READONLY, undefined);
+  });
+
+  it('refresh: preserves read-only state', () => {
+    const { projDir, dbPath } = scaffoldProject(['--scope', 'roproj']);
+    tmpDirs.push(projDir);
+
+    runRefresh(projDir, dbPath);
+
+    const mcpJsonPath = join(projDir, '.mcp.json');
+    const parsed = JSON.parse(readFileSync(mcpJsonPath, 'utf-8'));
+    assert.strictEqual(parsed.mcpServers.peek.env.PEEK_MCP_READONLY, '1');
+  });
+
+  it('refresh: errors when no existing install', () => {
+    const { projDir, dbPath } = makeTmpProject();
+    tmpDirs.push(projDir);
+
+    let threw = false;
+    try {
+      runRefresh(projDir, dbPath);
+    } catch {
+      threw = true;
+    }
+    assert.ok(threw, 'setup.js should exit non-zero when no existing install found');
+  });
+});
+
 describe('setup.js .gitignore managed block', () => {
   let tmpDirs = [];
 
