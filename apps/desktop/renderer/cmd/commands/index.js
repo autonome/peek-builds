@@ -70,7 +70,6 @@ const commands = [...activeCommands];
 
 // Source commands - these are modules that generate multiple commands dynamically
 const sources = [
-  historyModule,
   urlsNounModule,
   notesNounModule
 ];

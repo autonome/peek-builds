@@ -1259,28 +1259,6 @@ function getValidURL(str) {
   }
 }
 
-function findMatchingUrlCommand(url) {
-  if (!url) return null;
-  const lowerUrl = url.toLowerCase();
-
-  if (state.commands[url]) return url;
-
-  let bestMatch = null;
-  let bestLength = Infinity;
-
-  for (const name of Object.keys(state.commands)) {
-    const lowerName = name.toLowerCase();
-    if (lowerName.startsWith(lowerUrl) || lowerUrl.startsWith(lowerName)) {
-      if (name.length < bestLength) {
-        bestMatch = name;
-        bestLength = name.length;
-      }
-    }
-  }
-
-  return bestMatch;
-}
-
 // ===== Inline URL Ghost-Text for Normal Cmd Mode =====
 
 /**
@@ -1340,13 +1318,10 @@ function triggerUrlGhost(text) {
           const m = urlMatchable(item.content).toLowerCase();
           return m.startsWith(trimmed) && m.length > trimmed.length;
         });
-      if (match) {
-        urlGhostSuggestion = { url: match.content, matchable: urlMatchable(match.content) };
-      } else {
-        clearUrlGhost();
-      }
-      updateCommandUI();
-      updateWindowSize();
+      const suggestion = match
+        ? { url: match.content, matchable: urlMatchable(match.content) }
+        : null;
+      machine.dispatch(Events.GHOST_RESOLVED, { suggestion });
     } catch (e) {
       log.error('cmd:panel', 'URL ghost query failed:', e);
     }
@@ -1359,9 +1334,8 @@ function triggerUrlGhost(text) {
  * current input value and is strictly longer.
  */
 function urlGhostAcceptable(value) {
-  // Ghost is acceptable when there are no real command matches (URL-named commands
-  // from the history source are excluded — they're history entries, not real commands).
-  if (hasRealCommandMatches()) return false;
+  // Ghost is acceptable only when there are no command matches.
+  if (state.matches.length > 0) return false;
   if (!urlGhostSuggestion) return false;
   const trimmed = (value || '').trim();
   const m = urlGhostSuggestion.matchable.toLowerCase();
@@ -1372,8 +1346,9 @@ function urlGhostAcceptable(value) {
  * Accept the URL ghost: fill the input with the full matchable, update
  * state.typed, and re-render the ghost (remainder now empty).
  * Keeps urlGhostSuggestion set so a subsequent Enter opens the exact url.
+ * Invoked via the FSM's `acceptUrlGhost` action (ACCEPT_GHOST event).
  */
-function acceptUrlGhost() {
+function doAcceptUrlGhost() {
   if (!urlGhostSuggestion) return;
   const commandInput = document.getElementById('command-input');
   if (!commandInput) return;
@@ -1602,16 +1577,6 @@ function syncCommandTextScroll() {
 }
 
 /**
- * Returns true when the current command matches contain ONLY URL-named commands
- * (registered by the history source with the full URL as name, e.g. https://...).
- * These are filtered out when determining whether the ghost should show — URL-named
- * commands co-exist with the ghost, while real command matches suppress it.
- */
-function hasRealCommandMatches() {
-  return state.matches.some(m => !m.includes('://'));
-}
-
-/**
  * If there is an active URL ghost suggestion whose matchable starts with
  * the typed text and is strictly longer, append the remainder as a dimmed
  * (no-class) span to #command-text.
@@ -1634,9 +1599,8 @@ function updateCommandUI() {
 
   if (!state.typed) return;
 
-  // No command matches, OR only URL-named commands (history source artifacts):
-  // show plain typed text + URL ghost completion.
-  if (state.matches.length === 0 || !hasRealCommandMatches()) {
+  // No command matches: show plain typed text + URL ghost completion.
+  if (state.matches.length === 0) {
     const typedSpan = document.createElement('span');
     typedSpan.className = 'typed';
     typedSpan.textContent = state.typed;
@@ -1801,10 +1765,8 @@ function updateResultsUI() {
   }
 
   const isChainState = machine.getState() === States.CHAIN_MODE;
-  // Hide results if: no matches at all, results not explicitly shown,
-  // OR there are only URL-named commands (history artifacts) — those are
-  // not displayed as a dropdown; the URL ghost handles them inline.
-  if (state.matches.length === 0 || (!state.showResults && !isChainState) || !hasRealCommandMatches()) {
+  // Hide results if: no matches at all, or results not explicitly shown.
+  if (state.matches.length === 0 || (!state.showResults && !isChainState)) {
     resultsContainer.classList.remove('visible');
     updateWindowSize();
     return;
@@ -1903,6 +1865,16 @@ function actionHandlers() {
       state.originalTyped = payload.value;
     },
 
+    applyGhostResolution(payload) {
+      urlGhostSuggestion = payload.suggestion || null;
+      updateCommandUI();
+      updateWindowSize();
+    },
+
+    acceptUrlGhost() {
+      doAcceptUrlGhost();
+    },
+
     clearInput() {
       const input = commandInput();
       if (input) {
@@ -1933,11 +1905,8 @@ function actionHandlers() {
           clearUrlGhost();
         } else {
           state.matches = findMatchingCommands(typed);
-          // Trigger URL ghost only when there are no "real" command matches.
-          // URL-named commands (registered by the history source with '://' in name)
-          // are excluded from the real-match count — they're URL history entries, not
-          // actual user commands, so the ghost should still show alongside them.
-          if (showUrlsInResults && !hasRealCommandMatches()) {
+          // Trigger URL ghost only when there are no command matches.
+          if (showUrlsInResults && state.matches.length === 0) {
             triggerUrlGhost(typed.trim());
           } else {
             clearUrlGhost();
@@ -2302,8 +2271,7 @@ function actionHandlers() {
 
       log('cmd:panel', 'Opening URL:', urlResult.url);
 
-      const matchingUrlCommand = findMatchingUrlCommand(urlResult.url);
-      const frecencyTarget = matchingUrlCommand || urlResult.url;
+      const frecencyTarget = urlResult.url;
       state.lastExecuted = frecencyTarget;
       updateMatchCount(frecencyTarget);
       updateAdaptiveFeedback(trimmedText, frecencyTarget);
@@ -2723,10 +2691,10 @@ async function render() {
       const allHashtags = tokens.length > 0 && tokens.every(t => /^#[^\s#]+$/.test(t));
 
       // URL ghost: active when there's a ghost suggestion whose matchable starts
-      // with the current typed text AND there are no real command matches
+      // with the current typed text AND there are no command matches
       // (covers both pre- and post-Tab-accept cases).
       const hasUrlGhost = !!urlGhostSuggestion &&
-        !hasRealCommandMatches() &&
+        state.matches.length === 0 &&
         urlGhostSuggestion.matchable.toLowerCase().startsWith(trimmedText.toLowerCase());
 
       machine.dispatch(Events.ENTER, {
@@ -2758,7 +2726,7 @@ async function render() {
       // Accept URL ghost when caret is at end of input and ghost is present
       if (commandInput.selectionStart === commandInput.value.length && urlGhostAcceptable(commandInput.value)) {
         e.preventDefault();
-        acceptUrlGhost();
+        machine.dispatch(Events.ACCEPT_GHOST, { urlGhostAcceptable: true });
         return;
       }
       if (machine.getState() === States.OUTPUT_SELECTION) {
@@ -2775,7 +2743,7 @@ async function render() {
       } else {
         // Accept URL ghost with Tab when no command matches
         if (urlGhostAcceptable(commandInput.value)) {
-          acceptUrlGhost();
+          machine.dispatch(Events.ACCEPT_GHOST, { urlGhostAcceptable: true });
           return;
         }
         // For Tab, check if the selected command has params

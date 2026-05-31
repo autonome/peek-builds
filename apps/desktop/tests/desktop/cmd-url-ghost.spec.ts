@@ -16,6 +16,24 @@ import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 import { waitForPanelCommandsLoaded } from '../helpers/window-utils';
 
+/**
+ * keepLive panel reuse: the reopen dispatches VISIBILITY_SHOWN (reset → IDLE)
+ * via the tile:lifecycle:visible IPC, which lands asynchronously. Wait for the
+ * FSM to leave any terminal/closing state before typing, so INPUT isn't
+ * absorbed. (Tests are ordered so no test reopens the panel from CLOSING —
+ * the only state that does not reliably reset on reuse-show.)
+ */
+async function waitForPanelReady(cmdWindow: Page): Promise<void> {
+  await cmdWindow.waitForFunction(
+    () => {
+      const st = (window as any)._cmdState?.currentState;
+      return !!st && st !== 'CLOSING';
+    },
+    undefined,
+    { timeout: 5000 }
+  );
+}
+
 test.describe('cmd URL ghost-text completion @desktop', () => {
   let app: DesktopApp;
   let bgWindow: Page;
@@ -27,6 +45,18 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
   const SEED_MATCHABLE = 'ziggurat-test.example.com/visited/page';
   const TYPE_PREFIX = 'zigg';
   const GHOST_REMAINDER = SEED_MATCHABLE.substring(TYPE_PREFIX.length); // urat-test.example.com/visited/page
+
+  // Titled-history regression seed: a URL WITH a title that contains the typed
+  // prefix. Distinct prefix/domain from the zigg seed above so the two don't
+  // interfere. Previously the in-memory command registry mirrored both the URL
+  // and its title as commands; the title command ("Fastlike Site") would match
+  // "fast" and suppress the ghost. After decoupling, history is no longer
+  // mirrored into the registry, so the ghost still shows.
+  const TITLED_URL = 'https://fastlike.example.com/inbox';
+  const TITLED_MATCHABLE = 'fastlike.example.com/inbox';
+  const TITLED_TITLE = 'Fastlike Site';
+  const TITLED_PREFIX = 'fast';
+  const TITLED_REMAINDER = TITLED_MATCHABLE.substring(TITLED_PREFIX.length); // like.example.com/inbox
 
   test.beforeAll(async () => {
     ({ app, bgWindow } = await createPerDescribeApp('cmd-url-ghost'));
@@ -42,6 +72,17 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
       });
     }, SEED_URL);
     expect(navResult.success).toBe(true);
+
+    // Seed a titled URL — trackNavigation forwards options.title to the backend,
+    // so the item gets a metadata.title of "Fastlike Site".
+    const titledResult = await bgWindow.evaluate(async (args: { url: string; title: string }) => {
+      return await (window as any).app.datastore.trackNavigation(args.url, {
+        source: 'window',
+        windowType: 'main',
+        title: args.title,
+      });
+    }, { url: TITLED_URL, title: TITLED_TITLE });
+    expect(titledResult.success).toBe(true);
   });
 
   test.afterAll(async () => {
@@ -129,6 +170,157 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
     }
   });
 
+  test('titled history URL still shows ghost and is not mirrored into the command registry', async () => {
+    const openResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 400,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true,
+        keepLive: true,
+        role: 'palette',
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+    await waitForPanelReady(cmdWindow);
+
+    // Type the prefix that the seeded title contains — should still trigger the ghost.
+    await cmdWindow.fill('input', TITLED_PREFIX);
+
+    // (1) urlGhostSuggestion is set with the seeded URL's matchable.
+    await cmdWindow.waitForFunction(
+      (matchable: string) => {
+        const s = (window as any)._cmdState;
+        return !!s && !!s.urlGhostSuggestion && s.urlGhostSuggestion.matchable === matchable;
+      },
+      TITLED_MATCHABLE,
+      { timeout: 8000 }
+    );
+
+    // (2) The #command-text ghost remainder renders (plain span, no class, non-empty).
+    await cmdWindow.waitForFunction(
+      (args: { prefix: string; remainder: string }) => {
+        const commandText = document.getElementById('command-text');
+        if (!commandText) return false;
+        const typedSpan = commandText.querySelector('span.typed');
+        if (!typedSpan) return false;
+        const spans = Array.from(commandText.querySelectorAll('span'));
+        const ghostSpan = spans.find(s => !s.className && s.textContent);
+        if (!ghostSpan) return false;
+        return (
+          (typedSpan.textContent || '').toLowerCase() === args.prefix.toLowerCase() &&
+          (ghostSpan.textContent || '').toLowerCase() === args.remainder.toLowerCase()
+        );
+      },
+      { prefix: TITLED_PREFIX, remainder: TITLED_REMAINDER },
+      { timeout: 5000 }
+    );
+
+    // (3) Structural guarantee: history is no longer mirrored into the in-memory
+    // command registry — no command key equals the seeded URL or its title, and
+    // no command key contains '://'.
+    const registryCheck = await cmdWindow.evaluate(
+      (args: { url: string; title: string }) => {
+        const s = (window as any)._cmdState;
+        const names = Object.keys(s.commands || {});
+        return {
+          hasUrlKey: names.includes(args.url),
+          hasTitleKey: names.includes(args.title),
+          hasProtocolKey: names.some((n) => n.includes('://')),
+        };
+      },
+      { url: TITLED_URL, title: TITLED_TITLE }
+    );
+    expect(registryCheck.hasUrlKey).toBe(false);
+    expect(registryCheck.hasTitleKey).toBe(false);
+    expect(registryCheck.hasProtocolKey).toBe(false);
+
+    if (openResult.id) {
+      try {
+        await bgWindow.evaluate(async (id: number) => {
+          return await (window as any).app.window.close(id);
+        }, openResult.id);
+      } catch { /* may already be closed */ }
+    }
+  });
+
+  test('pressing Tab accepts the ghost (ACCEPT_GHOST via the FSM)', async () => {
+    const openResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 400,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true,
+        keepLive: true,
+        role: 'palette',
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+    await waitForPanelReady(cmdWindow);
+
+    // Type prefix and wait for the ghost suggestion to populate.
+    await cmdWindow.fill('input', TYPE_PREFIX);
+    await cmdWindow.waitForFunction(
+      (matchable: string) => {
+        const s = (window as any)._cmdState;
+        return !!s && !!s.urlGhostSuggestion && s.urlGhostSuggestion.matchable === matchable;
+      },
+      SEED_MATCHABLE,
+      { timeout: 8000 }
+    );
+
+    // Press Tab — ACCEPT_GHOST should fill input + state.typed with the full matchable.
+    await cmdWindow.keyboard.press('Tab');
+
+    await cmdWindow.waitForFunction(
+      (matchable: string) => {
+        const input = document.getElementById('command-input') as HTMLInputElement | null;
+        const s = (window as any)._cmdState;
+        return !!input && input.value === matchable && !!s && s.typed === matchable;
+      },
+      SEED_MATCHABLE,
+      { timeout: 5000 }
+    );
+
+    const inputValue = await cmdWindow.evaluate(() => {
+      const input = document.getElementById('command-input') as HTMLInputElement | null;
+      return input ? input.value : null;
+    });
+    expect(inputValue).toBe(SEED_MATCHABLE);
+
+    const typedValue = await cmdWindow.evaluate(() => {
+      const s = (window as any)._cmdState;
+      return s ? s.typed : null;
+    });
+    expect(typedValue).toBe(SEED_MATCHABLE);
+
+    if (openResult.id) {
+      try {
+        await bgWindow.evaluate(async (id: number) => {
+          return await (window as any).app.window.close(id);
+        }, openResult.id);
+      } catch { /* may already be closed */ }
+    }
+  });
+
+  // Runs LAST: pressing Enter shuts the panel down into the CLOSING state, and
+  // keepLive reuse-from-CLOSING does not reliably re-dispatch VISIBILITY_SHOWN
+  // (a known keepLive-reuse race). Keeping this test last means no later test
+  // reopens the panel from CLOSING.
   test('pressing Enter on ghost suggestion opens the seeded URL', async () => {
     // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
@@ -149,12 +341,7 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
     await waitForPanelCommandsLoaded(cmdWindow);
-
-    // Get baseline window count
-    const beforeList = await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.list();
-    });
-    const beforeCount = beforeList.windows?.length ?? 0;
+    await waitForPanelReady(cmdWindow);
 
     // Type prefix and wait for ghost suggestion to be populated in state
     await cmdWindow.fill('input', TYPE_PREFIX);

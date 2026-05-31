@@ -58,6 +58,9 @@ export const Events = Object.freeze({
   ERROR_TIMEOUT: 'error_timeout',
   // Mode cycling
   CYCLE_MODE: 'cycle_mode',
+  // URL ghost (inline ghost-text completion)
+  GHOST_RESOLVED: 'ghost_resolved',   // Async ghost query resolved (suggestion or null)
+  ACCEPT_GHOST: 'accept_ghost',       // Tab / ArrowRight accepted the ghost
 });
 
 /**
@@ -146,6 +149,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       return paramDef && paramDef.type === 'item';
     },
     hasUrlGhost: (payload) => payload?.hasUrlGhost === true,
+    urlGhostAcceptable: (payload) => payload?.urlGhostAcceptable === true,
     isURL: (payload) => {
       return payload?.isURL === true;
     },
@@ -345,6 +349,12 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       [Events.CYCLE_MODE]: [
         { target: States.TYPING, actions: ['cycleMode'] },
       ],
+      [Events.GHOST_RESOLVED]: [
+        { target: null, actions: ['applyGhostResolution'] },
+      ],
+      [Events.ACCEPT_GHOST]: [
+        { guard: 'urlGhostAcceptable', target: null, actions: ['acceptUrlGhost'] },
+      ],
     },
 
     // ===== RESULTS_OPEN =====
@@ -422,6 +432,12 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       ],
       [Events.VISIBILITY_HIDDEN]: [
         { target: States.CLOSING, actions: ['shutdown'] },
+      ],
+      [Events.GHOST_RESOLVED]: [
+        { target: null, actions: ['applyGhostResolution'] },
+      ],
+      [Events.ACCEPT_GHOST]: [
+        { guard: 'urlGhostAcceptable', target: null, actions: ['acceptUrlGhost'] },
       ],
     },
 
