@@ -91,7 +91,14 @@ import {
   getWindowsWithContextValue,
   getWindowsMatchingContext,
   normalizeUrl,
+  setWakeShortcuts as dsSetWakeShortcuts,
+  type WakeShortcut,
 } from './datastore.js';
+import {
+  lazyShortcutSource,
+  registerWakeShortcutList,
+} from './feature-shortcut-registrar.js';
+import { unregisterShortcutsForAddress } from './shortcuts.js';
 import { tagItemAndPublish as dsTagItemAndPublish } from './tag-events.js';
 import {
   listRules as rulesList,
@@ -856,6 +863,63 @@ export function registerTileIpcHandlers(): void {
       const modeConditions = modeStr ? { majorMode: modeStr as import('./datastore.js').MajorModeId } : undefined;
       unregisterLocalShortcut(args.shortcut, source, modeConditions);
     }
+  });
+
+  // ── Lazy-wake shortcuts (strict) ──────────────────────────────────
+  //
+  // `tile:shortcuts:declare-wake` lets a feature persist its user-
+  // configured global wake hotkeys so the main process can replay them
+  // at boot WITHOUT the feature's renderer (see feature-shortcut-
+  // registrar.ts::registerWakeShortcuts). The renderer declares the full
+  // set each time; the handler stores a SNAPSHOT (replace-all) and live-
+  // re-registers immediately so customizations take effect this session,
+  // not just next boot.
+  //
+  // Gated on the same `shortcuts` capability as register/unregister:
+  // every declared accelerator must pass `checkShortcutAllowed` (so a
+  // `shortcuts: { keys: [...] }` allowlist is enforced; `shortcuts: true`
+  // allows any). The wakeTopic/wakeArgs are opaque feature payload — the
+  // main process never interprets them.
+  registerTileIpc('tile:shortcuts:declare-wake', { mode: 'on' }, (_ev, args: {
+    token: string;
+    shortcuts?: Array<{ accelerator: string; wakeTopic: string; wakeArgs?: unknown[] }>;
+  }, _grant) => {
+    const grant = _grant;
+    if (!grant) {
+      handleViolation(null, 'shortcuts', 'shortcuts:declare-wake', 'Invalid token', args.token);
+      return;
+    }
+    const list = Array.isArray(args.shortcuts) ? args.shortcuts : [];
+
+    // Validate every accelerator against the shortcuts capability /
+    // keys allowlist. Reject the whole declaration on the first miss —
+    // a partial persist would leave the tile in a confusing state.
+    for (const sc of list) {
+      if (!sc || typeof sc.accelerator !== 'string' || typeof sc.wakeTopic !== 'string') {
+        handleViolation(grant, 'shortcuts', 'shortcuts:declare-wake', 'malformed wake shortcut entry', args.token);
+        return;
+      }
+      const check = checkShortcutAllowed(grant, sc.accelerator);
+      if (!check.ok) {
+        handleViolation(grant, 'shortcuts', 'shortcuts:declare-wake', check.error, args.token);
+        return;
+      }
+    }
+
+    const tileId = grant.tileId;
+    const wakeList: WakeShortcut[] = list.map((sc) => ({
+      accelerator: sc.accelerator,
+      wakeTopic: sc.wakeTopic,
+      wakeArgs: Array.isArray(sc.wakeArgs) ? sc.wakeArgs : [],
+    }));
+
+    // Persist snapshot (replace-all for this tile).
+    dsSetWakeShortcuts(tileId, wakeList);
+
+    // Live re-register: drop the tile's prior wake-shortcut group, then
+    // register the new set so the customization takes effect now.
+    unregisterShortcutsForAddress(lazyShortcutSource(tileId));
+    registerWakeShortcutList(tileId, wakeList);
   });
 
   // ── Context (strict) ──────────────────────────────────────────────

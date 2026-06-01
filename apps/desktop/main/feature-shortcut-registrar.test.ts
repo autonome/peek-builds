@@ -107,7 +107,7 @@ describe('feature-shortcut-registrar', () => {
     assert.deepStrictEqual(publishCalls[0], {
       source: STUB_SYSTEM_ADDRESS,
       topic: 'cmd:execute:windows',
-      msg: {},
+      msg: { args: [] },
     });
   });
 
@@ -129,7 +129,7 @@ describe('feature-shortcut-registrar', () => {
 
     registerCalls[0].callback();
     assert.deepStrictEqual(publishCalls, [
-      { source: STUB_SYSTEM_ADDRESS, topic: 'cmd:execute:yank', msg: {} },
+      { source: STUB_SYSTEM_ADDRESS, topic: 'cmd:execute:yank', msg: { args: [] } },
     ]);
   });
 

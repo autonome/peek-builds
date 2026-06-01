@@ -1578,6 +1578,20 @@ function buildAPI(): Record<string, unknown> {
     });
   }
 
+  // Declare the tile's full set of persisted lazy-WAKE shortcuts (snapshot
+  // / replace-all). The main process stores them so it can register these
+  // user-configured global hotkeys at boot WITHOUT this renderer running,
+  // and live-re-registers them immediately. Each entry is
+  // `{ accelerator, wakeTopic, wakeArgs? }` — pressing `accelerator`
+  // publishes `wakeTopic` with `{ args: wakeArgs }` (which wakes the tile).
+  function declareWakeShortcutsStrict(list: unknown): void {
+    const shortcuts = Array.isArray(list) ? list : [];
+    ipcRenderer.send('tile:shortcuts:declare-wake', {
+      token: tileToken,
+      shortcuts,
+    });
+  }
+
   // Strict-only shortcuts surface. Tiles must declare `shortcuts` in
   // their manifest capabilities.
   api.shortcuts = {
@@ -1592,6 +1606,12 @@ function buildAPI(): Record<string, unknown> {
         throw new Error('[tile-preload] api.shortcuts.unregister requires shortcuts capability in manifest');
       }
       unregisterShortcutStrict(shortcut, options);
+    },
+    declareWakeShortcuts: (list: unknown) => {
+      if (!hasShortcutsCapability()) {
+        throw new Error('[tile-preload] api.shortcuts.declareWakeShortcuts requires shortcuts capability in manifest');
+      }
+      declareWakeShortcutsStrict(list);
     },
   };
 

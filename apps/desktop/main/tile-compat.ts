@@ -7,7 +7,7 @@
 import { type TileManifest } from './tile-manifest.js';
 import { launchTile, type TileLaunchResult } from './tile-launcher.js';
 import { registerLazyTile } from './tile-lazy.js';
-import { registerManifestShortcuts } from './feature-shortcut-registrar.js';
+import { registerWakeShortcuts } from './feature-shortcut-registrar.js';
 import { registerTileIpcHandlers } from './tile-ipc.js';
 import { registerTilePath } from './protocol.js';
 import { DEBUG } from './config.js';
@@ -87,12 +87,15 @@ export function loadTile(
     // The tile is loaded on first command invocation or first lazy event publish.
     registerLazyTile(manifest, tile.path, config.tilePreloadPath);
     // A lazy tile's renderer isn't running, so it can't register its own
-    // manifest `shortcuts[]` global hotkey. The generic main-side
-    // registrar owns it instead: each shortcut's keypress publishes
-    // `cmd:execute:<command>`, which the load-on-dispatch hook routes
-    // into waking this very tile. Feature-agnostic — serves any lazy
-    // tile declaring shortcuts[].
-    registerManifestShortcuts(manifest);
+    // global wake hotkeys. The generic main-side registrar owns them
+    // instead: each accelerator's keypress publishes its wake topic
+    // (command-style → `cmd:execute:<command>`, or a feature topic),
+    // which the load-on-dispatch hook routes into waking this very tile.
+    // `registerWakeShortcuts` prefers the tile's persisted, user-
+    // configured rows and falls back to the manifest's static defaults —
+    // so windows (manifest `{keys, command}`, no persisted rows) still
+    // registers exactly as before. Feature-agnostic.
+    registerWakeShortcuts(tile.id, manifest);
     DEBUG && console.log(`[tile-compat] Registered ${tile.id} for lazy loading`);
     return null;
   }

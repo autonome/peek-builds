@@ -345,6 +345,15 @@ const createTableStatements = `
   CREATE INDEX IF NOT EXISTS idx_rules_featureId ON rules(featureId);
   CREATE INDEX IF NOT EXISTS idx_rules_source ON rules(source);
   CREATE INDEX IF NOT EXISTS idx_rules_enabled ON rules(enabled);
+
+  CREATE TABLE IF NOT EXISTS lazy_wake_shortcuts (
+    ownerTileId TEXT NOT NULL,
+    accelerator TEXT NOT NULL,
+    wakeTopic TEXT NOT NULL,
+    wakeArgs TEXT DEFAULT '[]',
+    PRIMARY KEY (ownerTileId, accelerator)
+  );
+  CREATE INDEX IF NOT EXISTS idx_lazy_wake_shortcuts_owner ON lazy_wake_shortcuts(ownerTileId);
 `;
 
 // Module state
@@ -2901,6 +2910,104 @@ function checkAndWriteDatastoreVersion(): void {
  */
 export function isSyncDisabledDueToVersion(): boolean {
   return syncDisabledDueToVersionMismatch;
+}
+
+// ==================== Lazy-wake shortcuts ====================
+//
+// A lazy tile's renderer isn't running at boot, so it can't register
+// its user-configured global hotkeys itself. The main process replays
+// them from this table at startup (see feature-shortcut-registrar.ts).
+//
+// The stored values are OPAQUE to the datastore — `accelerator`,
+// `wakeTopic`, and `wakeArgs` are interpreted only by the registrar and
+// the feature's renderer once woken. `wakeArgs` is a JSON array string.
+//
+// Snapshot semantics: `setWakeShortcuts` REPLACES all rows for the tile
+// (delete-then-insert in one transaction), so the table always reflects
+// the tile's latest declared set with no stale rows.
+
+/** A persisted lazy-wake shortcut row (values opaque to the datastore). */
+export interface WakeShortcut {
+  /** Accelerator string (e.g. 'Alt+0', 'CommandOrControl+Shift+W'). */
+  accelerator: string;
+  /** Pubsub topic published when the accelerator fires. */
+  wakeTopic: string;
+  /** Arguments delivered with the wake publish. */
+  wakeArgs: unknown[];
+}
+
+interface WakeShortcutRow {
+  ownerTileId: string;
+  accelerator: string;
+  wakeTopic: string;
+  wakeArgs: string;
+}
+
+function parseWakeArgs(s: string): unknown[] {
+  if (!s) return [];
+  try {
+    const v = JSON.parse(s);
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Replace ALL persisted wake shortcuts for a tile with `list` (snapshot
+ * semantics): existing rows for `ownerTileId` are deleted, then the new
+ * list is inserted. An empty `list` clears the tile's rows entirely.
+ */
+export function setWakeShortcuts(ownerTileId: string, list: WakeShortcut[]): void {
+  const d = getDb();
+  const tx = d.transaction((rows: WakeShortcut[]) => {
+    d.prepare('DELETE FROM lazy_wake_shortcuts WHERE ownerTileId = ?').run(ownerTileId);
+    const insert = d.prepare(
+      'INSERT OR REPLACE INTO lazy_wake_shortcuts (ownerTileId, accelerator, wakeTopic, wakeArgs) VALUES (?, ?, ?, ?)'
+    );
+    for (const sc of rows) {
+      insert.run(
+        ownerTileId,
+        sc.accelerator,
+        sc.wakeTopic,
+        JSON.stringify(Array.isArray(sc.wakeArgs) ? sc.wakeArgs : [])
+      );
+    }
+  });
+  tx(list);
+}
+
+/** Get the persisted wake shortcuts for a single tile. */
+export function getWakeShortcuts(ownerTileId: string): WakeShortcut[] {
+  const rows = getDb()
+    .prepare('SELECT ownerTileId, accelerator, wakeTopic, wakeArgs FROM lazy_wake_shortcuts WHERE ownerTileId = ?')
+    .all(ownerTileId) as WakeShortcutRow[];
+  return rows.map((r) => ({
+    accelerator: r.accelerator,
+    wakeTopic: r.wakeTopic,
+    wakeArgs: parseWakeArgs(r.wakeArgs),
+  }));
+}
+
+/**
+ * Get every persisted wake shortcut, grouped by owner tile. Used at boot
+ * to replay all tiles' user-configured hotkeys in one pass.
+ */
+export function getAllWakeShortcuts(): Map<string, WakeShortcut[]> {
+  const rows = getDb()
+    .prepare('SELECT ownerTileId, accelerator, wakeTopic, wakeArgs FROM lazy_wake_shortcuts')
+    .all() as WakeShortcutRow[];
+  const byTile = new Map<string, WakeShortcut[]>();
+  for (const r of rows) {
+    const list = byTile.get(r.ownerTileId) ?? [];
+    list.push({
+      accelerator: r.accelerator,
+      wakeTopic: r.wakeTopic,
+      wakeArgs: parseWakeArgs(r.wakeArgs),
+    });
+    byTile.set(r.ownerTileId, list);
+  }
+  return byTile;
 }
 
 // ==================== Window Load Tracking (delegates to items system) ====================

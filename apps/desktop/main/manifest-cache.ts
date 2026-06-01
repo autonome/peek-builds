@@ -75,7 +75,12 @@ export interface ManifestNounDecl {
 
 export interface ManifestShortcutDecl {
   keys: string;
-  command: string;
+  /** Command form: publishes `cmd:execute:<command>`. */
+  command?: string;
+  /** Topic form: publishes this topic directly. */
+  wakeTopic?: string;
+  /** Arguments for the topic form. */
+  wakeArgs?: unknown[];
   global?: boolean;
 }
 
@@ -344,6 +349,8 @@ function extractShortcuts(manifest: TileManifest): ManifestShortcutDecl[] {
   return manifest.shortcuts.map(sc => ({
     keys: sc.keys,
     command: sc.command,
+    wakeTopic: (sc as { wakeTopic?: string }).wakeTopic,
+    wakeArgs: (sc as { wakeArgs?: unknown[] }).wakeArgs,
     global: (sc as { global?: boolean }).global,
   }));
 }

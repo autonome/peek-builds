@@ -428,11 +428,31 @@ export interface TileCommand {
 }
 
 /**
- * Shortcut definition in tile manifest
+ * Shortcut definition in tile manifest.
+ *
+ * A manifest shortcut binds an accelerator (`keys`) to a WAKE TARGET,
+ * declared in one of two additive forms:
+ *
+ *   - Command form (original): `{ keys, command }` — pressing the key
+ *     publishes `cmd:execute:<command>`, which the lazy-load dispatch
+ *     hook routes into waking the owning tile. Used by windows.
+ *   - Topic form: `{ keys, wakeTopic, wakeArgs? }` — pressing the key
+ *     publishes `wakeTopic` directly with `{ args: wakeArgs }`. Lets a
+ *     feature declare a static default hotkey that wakes it via its own
+ *     event topic rather than a command.
+ *
+ * Exactly one of `command` / `wakeTopic` should be present. These
+ * manifest entries are the DEFAULTS used when the tile has no persisted
+ * `lazy_wake_shortcuts` rows (see feature-shortcut-registrar.ts).
  */
 export interface TileShortcut {
   keys: string;
-  command: string;
+  /** Command form: publishes `cmd:execute:<command>`. */
+  command?: string;
+  /** Topic form: publishes this topic directly. */
+  wakeTopic?: string;
+  /** Arguments for the topic form (ignored by the command form). */
+  wakeArgs?: unknown[];
   global?: boolean;
   mode?: string;
 }
@@ -973,6 +993,48 @@ export function validateTileManifest(json: Record<string, unknown>): ValidationE
         }
         if (r.ordering !== undefined && typeof r.ordering !== 'number') {
           errors.push({ path: `${prefix}.ordering`, message: 'ordering must be a number' });
+        }
+      }
+    }
+  }
+
+  // Shortcuts validation — top-level array of TileShortcut. Each entry
+  // needs `keys` and exactly one wake target: `command` (command form)
+  // OR `wakeTopic` (topic form). Additive: pre-existing `{keys, command}`
+  // manifests stay valid.
+  if (json.shortcuts !== undefined) {
+    if (!Array.isArray(json.shortcuts)) {
+      errors.push({ path: 'shortcuts', message: 'shortcuts must be an array' });
+    } else {
+      for (let i = 0; i < json.shortcuts.length; i++) {
+        const sc = json.shortcuts[i] as Record<string, unknown>;
+        const prefix = `shortcuts[${i}]`;
+        if (!sc || typeof sc !== 'object') {
+          errors.push({ path: prefix, message: 'shortcut must be an object' });
+          continue;
+        }
+        if (!sc.keys || typeof sc.keys !== 'string') {
+          errors.push({ path: `${prefix}.keys`, message: 'shortcut keys is required and must be a string' });
+        }
+        const hasCommand = sc.command !== undefined;
+        const hasTopic = sc.wakeTopic !== undefined;
+        if (hasCommand && typeof sc.command !== 'string') {
+          errors.push({ path: `${prefix}.command`, message: 'command must be a string' });
+        }
+        if (hasTopic && typeof sc.wakeTopic !== 'string') {
+          errors.push({ path: `${prefix}.wakeTopic`, message: 'wakeTopic must be a string' });
+        }
+        if (!hasCommand && !hasTopic) {
+          errors.push({ path: prefix, message: 'shortcut must declare a command or a wakeTopic' });
+        }
+        if (hasCommand && hasTopic) {
+          errors.push({ path: prefix, message: 'shortcut must declare exactly one of command or wakeTopic' });
+        }
+        if (sc.wakeArgs !== undefined && !Array.isArray(sc.wakeArgs)) {
+          errors.push({ path: `${prefix}.wakeArgs`, message: 'wakeArgs must be an array' });
+        }
+        if (sc.global !== undefined && typeof sc.global !== 'boolean') {
+          errors.push({ path: `${prefix}.global`, message: 'global must be a boolean' });
         }
       }
     }

@@ -30,7 +30,8 @@
 
 import { registerGlobalShortcut as _registerGlobalShortcut, unregisterShortcutsForAddress as _unregisterShortcutsForAddress } from './shortcuts.js';
 import { publish as _publish, getSystemAddress as _getSystemAddress } from './pubsub.js';
-import { type TileManifest } from './tile-manifest.js';
+import { getWakeShortcuts as _getWakeShortcuts, type WakeShortcut } from './datastore.js';
+import { type TileManifest, type TileShortcut } from './tile-manifest.js';
 import { DEBUG } from './config.js';
 
 // ─── Injection seam (for testability) ──────────────────────────────────
@@ -45,36 +46,112 @@ interface RegistrarDeps {
   unregisterShortcutsForAddress: (address: string) => void;
   publish: (source: string, topic: string, msg: unknown) => void;
   getSystemAddress: () => string;
+  getWakeShortcuts: (ownerTileId: string) => WakeShortcut[];
 }
 
-let deps: RegistrarDeps = {
-  registerGlobalShortcut: _registerGlobalShortcut,
-  unregisterShortcutsForAddress: _unregisterShortcutsForAddress,
-  publish: _publish,
-  getSystemAddress: _getSystemAddress,
-};
+function defaultDeps(): RegistrarDeps {
+  return {
+    registerGlobalShortcut: _registerGlobalShortcut,
+    unregisterShortcutsForAddress: _unregisterShortcutsForAddress,
+    publish: _publish,
+    getSystemAddress: _getSystemAddress,
+    getWakeShortcuts: _getWakeShortcuts,
+  };
+}
+
+let deps: RegistrarDeps = defaultDeps();
 
 export function __setFeatureShortcutRegistrarDepsForTest(override: Partial<RegistrarDeps> | null): void {
   if (override === null) {
-    deps = {
-      registerGlobalShortcut: _registerGlobalShortcut,
-      unregisterShortcutsForAddress: _unregisterShortcutsForAddress,
-      publish: _publish,
-      getSystemAddress: _getSystemAddress,
-    };
+    deps = defaultDeps();
     return;
   }
+  const base = defaultDeps();
   deps = {
-    registerGlobalShortcut: override.registerGlobalShortcut ?? _registerGlobalShortcut,
-    unregisterShortcutsForAddress: override.unregisterShortcutsForAddress ?? _unregisterShortcutsForAddress,
-    publish: override.publish ?? _publish,
-    getSystemAddress: override.getSystemAddress ?? _getSystemAddress,
+    registerGlobalShortcut: override.registerGlobalShortcut ?? base.registerGlobalShortcut,
+    unregisterShortcutsForAddress: override.unregisterShortcutsForAddress ?? base.unregisterShortcutsForAddress,
+    publish: override.publish ?? base.publish,
+    getSystemAddress: override.getSystemAddress ?? base.getSystemAddress,
+    getWakeShortcuts: override.getWakeShortcuts ?? base.getWakeShortcuts,
   };
 }
 
 /** The source-address namespace under which this registrar tracks accelerators. */
 export function lazyShortcutSource(tileId: string): string {
   return `peek://${tileId}/lazy-shortcut`;
+}
+
+/**
+ * Map a manifest `shortcuts[]` to the generic WakeShortcut wire form,
+ * resolving each entry's wake target:
+ *   - command form `{ keys, command }` → `wakeTopic = 'cmd:execute:'+command`,
+ *     no args (keypress kicks the existing load-on-dispatch hook).
+ *   - topic form `{ keys, wakeTopic, wakeArgs? }` → that topic + args.
+ * Skips entries that opt out of global (`global: false`) or are malformed.
+ */
+export function manifestShortcutsToWake(shortcuts: TileShortcut[] | undefined): WakeShortcut[] {
+  if (!Array.isArray(shortcuts)) return [];
+  const out: WakeShortcut[] = [];
+  for (const sc of shortcuts) {
+    if (!sc || typeof sc.keys !== 'string') continue;
+    if (sc.global === false) continue; // focus-local — renderer's concern
+    if (typeof sc.command === 'string') {
+      out.push({ accelerator: sc.keys, wakeTopic: `cmd:execute:${sc.command}`, wakeArgs: [] });
+    } else if (typeof sc.wakeTopic === 'string') {
+      out.push({ accelerator: sc.keys, wakeTopic: sc.wakeTopic, wakeArgs: Array.isArray(sc.wakeArgs) ? sc.wakeArgs : [] });
+    }
+  }
+  return out;
+}
+
+/**
+ * Register a flat list of wake shortcuts for a tile. Each accelerator's
+ * keypress publishes `wakeTopic` with `{ args: wakeArgs }` on the System
+ * address — the publish flows through the load-on-dispatch hook to wake
+ * the tile. Returns nothing; per-shortcut failures are logged.
+ *
+ * Idempotent at the OS layer (registerGlobalShortcut unregisters any
+ * prior grab of the same accelerator first).
+ */
+export function registerWakeShortcutList(tileId: string, list: WakeShortcut[]): void {
+  if (!Array.isArray(list) || list.length === 0) return;
+  const source = lazyShortcutSource(tileId);
+  const systemAddress = deps.getSystemAddress();
+
+  for (const sc of list) {
+    if (!sc || typeof sc.accelerator !== 'string' || typeof sc.wakeTopic !== 'string') continue;
+    const wakeTopic = sc.wakeTopic;
+    const wakeArgs = Array.isArray(sc.wakeArgs) ? sc.wakeArgs : [];
+    const err = deps.registerGlobalShortcut(sc.accelerator, source, () => {
+      deps.publish(systemAddress, wakeTopic, { args: wakeArgs });
+    });
+    if (err) {
+      DEBUG && console.warn(`[feature-shortcut-registrar] failed to register ${sc.accelerator} for ${tileId}: ${err.message}`);
+      continue;
+    }
+    DEBUG && console.log(`[feature-shortcut-registrar] ${tileId}: ${sc.accelerator} → ${wakeTopic}`);
+  }
+}
+
+/**
+ * Boot-replay entry point. Registers a lazy tile's global wake hotkeys,
+ * picking the source with PRECEDENCE:
+ *   1. persisted `lazy_wake_shortcuts` rows (the user's configured set) —
+ *      if any exist, register those and ignore the manifest defaults.
+ *   2. otherwise the manifest's static default `shortcuts[]` entries
+ *      (command-style or wakeTopic-style) — the fresh-profile defaults.
+ *
+ * This replaces the old `registerManifestShortcuts(manifest)` call in the
+ * lazy-load branch, so windows (manifest `{keys, command}`, no persisted
+ * rows) still registers exactly as before via the manifest-defaults path.
+ */
+export function registerWakeShortcuts(tileId: string, manifest: TileManifest): void {
+  const persisted = deps.getWakeShortcuts(tileId);
+  if (Array.isArray(persisted) && persisted.length > 0) {
+    registerWakeShortcutList(tileId, persisted);
+    return;
+  }
+  registerWakeShortcutList(tileId, manifestShortcutsToWake(manifest.shortcuts));
 }
 
 /**
@@ -91,35 +168,12 @@ export function lazyShortcutSource(tileId: string): string {
  * manifest's `CommandOrControl+Shift+W → windows` is global (default).
  */
 export function registerManifestShortcuts(manifest: TileManifest): void {
-  const shortcuts = manifest.shortcuts;
-  if (!Array.isArray(shortcuts) || shortcuts.length === 0) return;
-
-  const tileId = manifest.id;
-  const source = lazyShortcutSource(tileId);
-  const systemAddress = deps.getSystemAddress();
-
-  for (const sc of shortcuts) {
-    if (!sc || typeof sc.keys !== 'string' || typeof sc.command !== 'string') continue;
-    // A manifest shortcut is global unless it explicitly opts out.
-    if (sc.global === false) continue;
-
-    const command = sc.command;
-    const err = deps.registerGlobalShortcut(sc.keys, source, () => {
-      // The keypress's sole job: kick the existing lazy-wake hook by
-      // publishing the command's execute topic. The hook boots the tile
-      // (if needed) and delivers to the woken renderer's handler.
-      deps.publish(systemAddress, `cmd:execute:${command}`, {});
-    });
-
-    if (err) {
-      // registerGlobalShortcut already logs the specific failure (or the
-      // single Wayland hint). Nothing actionable here; the tile remains
-      // reachable via the cmd palette and any renderer-local path.
-      DEBUG && console.warn(`[feature-shortcut-registrar] failed to register ${sc.keys} for ${tileId}: ${err.message}`);
-      continue;
-    }
-    DEBUG && console.log(`[feature-shortcut-registrar] ${tileId}: ${sc.keys} → cmd:execute:${command}`);
-  }
+  // Thin alias over the unified path: register the manifest's static
+  // default shortcut entries (command-style → `cmd:execute:<command>`,
+  // or wakeTopic-style → that topic). Kept for callers/tests that want
+  // the manifest-defaults path explicitly; `registerWakeShortcuts`
+  // adds the persisted-rows precedence on top.
+  registerWakeShortcutList(manifest.id, manifestShortcutsToWake(manifest.shortcuts));
 }
 
 /**
