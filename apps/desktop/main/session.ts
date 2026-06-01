@@ -22,7 +22,7 @@ import { getIzuiCoordinator } from './izui-state.js';
 import { WEB_CORE_ADDRESS } from './config.js';
 
 import { publish, getSystemAddress } from './pubsub.js';
-import { DEBUG, isTestProfile } from './config.js';
+import { DEBUG, isTestProfile, isHeadless } from './config.js';
 import { showWindowHeadlessSafe } from './windows.js';
 
 export type { WindowContext, WindowDescriptor };
@@ -705,6 +705,12 @@ function isValidDescriptor(descriptor: WindowDescriptor): boolean {
  * Returns true if restore should proceed, false to start fresh.
  */
 async function showCrashRecoveryDialog(crashCount: number): Promise<boolean> {
+  // Headless/test runs must never surface a native modal dialog (it steals OS
+  // focus on the user's real desktop). Force-restore specs reach here with a
+  // live unclean-shutdown DB; default to starting fresh rather than prompting.
+  if (isHeadless() || isTestProfile()) {
+    return false;
+  }
   // Too many crashes — skip restore automatically
   if (crashCount > 3) {
     console.warn(`[session] ${crashCount} consecutive crashes detected. Starting fresh to avoid further issues.`);

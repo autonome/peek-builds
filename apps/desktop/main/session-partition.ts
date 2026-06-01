@@ -418,15 +418,20 @@ function _registerDownloadHandlerImpl(ses: Session): void {
         // Surface failure so the user knows the download didn't silently
         // succeed. State is 'cancelled' or 'interrupted' here.
         console.log('[download] Failed/cancelled:', filename, state);
-        try {
-          const reason = state === 'cancelled' ? 'cancelled' : 'interrupted';
-          new Notification({
-            title: 'Download Failed',
-            body: `${filename} (${reason})`,
-            silent: false,
-          }).show();
-        } catch (err) {
-          console.error('[download] Failed to surface failure notification:', err);
+        // Never surface a native OS notification under test profiles — it pops
+        // (audibly, silent:false) on the user's real desktop. Mirror the
+        // success-branch isTestProfile() guard above.
+        if (!isTestProfile()) {
+          try {
+            const reason = state === 'cancelled' ? 'cancelled' : 'interrupted';
+            new Notification({
+              title: 'Download Failed',
+              body: `${filename} (${reason})`,
+              silent: false,
+            }).show();
+          } catch (err) {
+            console.error('[download] Failed to surface failure notification:', err);
+          }
         }
       }
     });

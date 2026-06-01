@@ -393,6 +393,10 @@ app.on('web-contents-created', (_event, contents) => {
   // would never fire for the mac chord.
   contents.on('before-input-event', (_e, input) => {
     if (input.type !== 'keyDown' || input.code !== 'KeyI') return;
+    // Never open devtools under headless test runs (the central web-contents
+    // neutralization also no-ops openDevTools; this keeps the known chord path
+    // from tripping that drift signal).
+    if (isHeadless()) return;
     const isMacShortcut = process.platform === 'darwin' && input.meta && input.alt && !input.control && !input.shift;
     const isPcShortcut = process.platform !== 'darwin' && input.control && input.shift && !input.meta && !input.alt;
     if (!isMacShortcut && !isPcShortcut) return;
@@ -1627,6 +1631,45 @@ if (isHeadless() && isTestProfile()) {
   };
 
   console.log('[headless-guard] setOpacity 0→nonzero guard active');
+
+  // ── globalShortcut neutralization (single chokepoint) ───────────────────
+  // globalShortcut.register grabs a SYSTEM-WIDE hotkey on the user's real
+  // machine — the packaged build has a live globalShortcut. Both the ESC
+  // fallback (main.ts updateEscGlobalRegistration) and feature hotkeys
+  // (shortcuts.ts, e.g. Option+Space) call it. No-op every registration here so
+  // NO call site can grab the user's keys during a headless run. This is the
+  // one place that needs to know about headless — call sites don't each carry
+  // an isHeadless() guard.
+  globalShortcut.register = (() => true) as typeof globalShortcut.register;
+  globalShortcut.registerAll = (() => {}) as typeof globalShortcut.registerAll;
+  console.log('[headless-guard] globalShortcut.register/registerAll neutralized');
+
+  // ── per-webContents UI-surface neutralization ───────────────────────────
+  // openDevTools and the native beforeunload "Leave site?" modal both surface
+  // OS-level UI that steals focus, and neither is a BrowserWindow method, so the
+  // prototype guards above can't see them. Neutralize them once at the
+  // web-contents-created chokepoint, which fires for EVERY webContents (windows
+  // + webview guests) regardless of which code path created it.
+  app.on('web-contents-created', (_e, contents) => {
+    // DevTools: nothing should pop a detached inspector onto the user's real
+    // desktop during a headless run. No-op + flag drift (exitCode) so a future
+    // unguarded openDevTools call site fails CI, without throwing (a throw from
+    // a patched method would break the caller).
+    contents.openDevTools = (() => {
+      console.error('[headless-violation] openDevTools() suppressed in headless', new Error().stack);
+      process.exitCode = 1;
+    }) as typeof contents.openDevTools;
+
+    // beforeunload: real external pages loaded by some specs register a
+    // beforeunload handler; when the fixture's app.quit() closes the window
+    // Electron would surface a native "Leave site?" modal — a focus-stealing
+    // blocking dialog (this is the "window.confirm"-like prompt). preventDefault
+    // auto-accepts the unload with no prompt.
+    contents.on('will-prevent-unload', (event) => {
+      event.preventDefault();
+    });
+  });
+  console.log('[headless-guard] per-webContents openDevTools + beforeunload neutralization active');
 }
 
 // Start the app

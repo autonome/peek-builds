@@ -403,14 +403,9 @@ export async function initialize(): Promise<void> {
     publish(getSystemAddress(), 'cmd:execute:windows', {});
   };
   const updateEscGlobalRegistration = (): void => {
-    // The global Escape fallback is a real-display affordance. Under headless
-    // test runs appFocused is stuck true (izui-state) and opacity-0 windows
-    // leave getFocusedWindow() null, so shouldRegister would be satisfied and we
-    // would grab a SYSTEM-WIDE Escape hotkey — re-thrashed on every
-    // browser-window-focus/blur (which fire on opacity-0 windows) across up to 4
-    // parallel test workers, freezing the user's real desktop. Never register
-    // it headless.
-    if (isHeadless()) return;
+    // Headless safety: globalShortcut.register is neutralized centrally for
+    // headless test runs (entry.ts), so this hot path can run unguarded — no
+    // OS-wide Escape grab happens regardless of how often focus/blur churn.
     const appActive = getIzuiCoordinator().isAppFocused();
     const focusedWin = BrowserWindow.getFocusedWindow();
     const shouldRegister = appActive && focusedWin === null;
@@ -460,7 +455,9 @@ export async function initialize(): Promise<void> {
       // by the did-resign-active handler below. This hide/show pair
       // avoids a pubsub round-trip through a renderer.
       for (const win of getAllLiveWindows()) {
-        if (win.isAlwaysOnTop() && (win as any).__hudHidden) {
+        // Never re-show overlay/HUD windows under headless — showInactive on an
+        // alwaysOnTop window surfaces it on the user's real desktop.
+        if (!isHeadless() && win.isAlwaysOnTop() && (win as any).__hudHidden) {
           win.showInactive();
           (win as any).__hudHidden = false;
         }
