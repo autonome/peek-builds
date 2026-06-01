@@ -402,3 +402,233 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
     }
   });
 });
+
+test.describe('cmd URL history Visited lane @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  // Two visited URLs sharing a prefix ("qux") that matches NO registered
+  // command. Typing the prefix should populate both the inline ghost AND the
+  // navigable Visited lane (>=2 rows).
+  const LANE_URL_A = 'https://quxfoo.example.com/alpha';
+  const LANE_URL_B = 'https://quxbar.example.com/beta';
+  const LANE_PREFIX = 'qux';
+
+  // A URL whose matchable starts with "data" — typing "data" matches the
+  // registered `datastore` command AND this url, exercising the combined lane.
+  const COMBINED_URL = 'https://data.example.com/dashboard';
+  const COMBINED_PREFIX = 'data';
+
+  async function openPanel(): Promise<{ cmdWindow: Page; panelId: number }> {
+    const openResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 400,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true,
+        keepLive: true,
+        role: 'palette',
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+    await waitForPanelReady(cmdWindow);
+    return { cmdWindow, panelId: openResult.id };
+  }
+
+  async function closePanel(panelId: number) {
+    if (!panelId) return;
+    try {
+      await bgWindow.evaluate(async (id: number) => {
+        await (window as any).app.window.close(id);
+      }, panelId);
+    } catch { /* may already be closed */ }
+  }
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('cmd-url-lane'));
+
+    for (const url of [LANE_URL_A, LANE_URL_B, COMBINED_URL]) {
+      const navResult = await bgWindow.evaluate(async (u: string) => {
+        return await (window as any).app.datastore.trackNavigation(u, {
+          source: 'window',
+          windowType: 'main',
+        });
+      }, url);
+      expect(navResult.success).toBe(true);
+    }
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  test('history lane appears alongside the inline ghost (no command match)', async () => {
+    const { cmdWindow, panelId } = await openPanel();
+
+    await cmdWindow.fill('input', LANE_PREFIX);
+
+    // No command matches this prefix; at least one url-history match arrives.
+    await cmdWindow.waitForFunction(
+      () => {
+        const s = (window as any)._cmdState;
+        return !!s && (s.matches?.length || 0) === 0 && (s.urlMatches?.length || 0) >= 2;
+      },
+      undefined,
+      { timeout: 8000 }
+    );
+
+    // Inline ghost is present (single best frecency completion).
+    const hasGhost = await cmdWindow.evaluate(() => {
+      const s = (window as any)._cmdState;
+      return !!s && !!s.urlGhostSuggestion;
+    });
+    expect(hasGhost).toBe(true);
+
+    // The Visited lane renders >=2 navigable rows.
+    await cmdWindow.waitForFunction(
+      () => document.querySelectorAll('.url-result-item').length >= 2,
+      undefined,
+      { timeout: 5000 }
+    );
+
+    const laneCount = await cmdWindow.evaluate(
+      () => document.querySelectorAll('.url-result-item').length
+    );
+    expect(laneCount).toBeGreaterThanOrEqual(2);
+
+    await closePanel(panelId);
+  });
+
+  test('combined command + url lanes both render and auto-open', async () => {
+    const { cmdWindow, panelId } = await openPanel();
+
+    // Ensure the datastore command is registered so the prefix matches it.
+    await cmdWindow.waitForFunction(
+      () => {
+        const s = (window as any)._cmdState;
+        return s && s.commands && s.commands['datastore'];
+      },
+      undefined,
+      { timeout: 10000 }
+    );
+
+    await cmdWindow.fill('input', COMBINED_PREFIX);
+
+    // Both lanes populate: >=1 command match AND >=1 url match.
+    await cmdWindow.waitForFunction(
+      () => {
+        const s = (window as any)._cmdState;
+        return !!s && (s.matches?.length || 0) >= 1 && (s.urlMatches?.length || 0) >= 1;
+      },
+      undefined,
+      { timeout: 8000 }
+    );
+
+    // Combined total > 1 → results container auto-opens with both row kinds.
+    await cmdWindow.waitForFunction(
+      () => {
+        const container = document.getElementById('results');
+        const cmdRows = container
+          ? container.querySelectorAll('.command-item:not(.url-result-item)').length
+          : 0;
+        const urlRows = container
+          ? container.querySelectorAll('.url-result-item').length
+          : 0;
+        return !!container && container.classList.contains('visible') && cmdRows >= 1 && urlRows >= 1;
+      },
+      undefined,
+      { timeout: 5000 }
+    );
+
+    const visible = await cmdWindow.evaluate(() => {
+      const container = document.getElementById('results');
+      return !!container && container.classList.contains('visible');
+    });
+    expect(visible).toBe(true);
+
+    await closePanel(panelId);
+  });
+
+  // Runs LAST: pressing Enter closes the panel into CLOSING (keepLive reuse race),
+  // matching the ordering discipline of the ghost describe block above.
+  test('ArrowDown to a Visited row then Enter opens that row url', async () => {
+    const { cmdWindow, panelId } = await openPanel();
+
+    await cmdWindow.fill('input', LANE_PREFIX);
+
+    // Wait for command (0) + url (>=2) lanes to settle.
+    await cmdWindow.waitForFunction(
+      () => {
+        const s = (window as any)._cmdState;
+        return !!s && (s.matches?.length || 0) === 0 && (s.urlMatches?.length || 0) >= 2;
+      },
+      undefined,
+      { timeout: 8000 }
+    );
+
+    // ArrowDown opens the dropdown and selects the first (Visited) row, since
+    // there are no command rows (matches.length === 0).
+    await cmdWindow.keyboard.press('ArrowDown');
+
+    await cmdWindow.waitForFunction(
+      () => {
+        const s = (window as any)._cmdState;
+        return !!s && s.matchIndex === 0 && (s.urlMatches?.length || 0) >= 1;
+      },
+      undefined,
+      { timeout: 5000 }
+    );
+
+    // Resolve the url of the currently-selected Visited row.
+    const expectedUrl = await cmdWindow.evaluate(() => {
+      const s = (window as any)._cmdState;
+      const i = s.matchIndex - (s.matches?.length || 0);
+      const item = s.urlMatches[i];
+      return item ? item.content : null;
+    });
+    expect(expectedUrl).toBeTruthy();
+
+    // Subscribe to window:opened for the selected url before triggering Enter.
+    await bgWindow.evaluate((url: string) => {
+      (window as any).__laneUrlWindowOpened = null;
+      (window as any).app.subscribe('window:opened', (msg: any) => {
+        if (msg?.url && (msg.url.includes(url) || msg.url.includes(encodeURIComponent(url)))) {
+          (window as any).__laneUrlWindowOpened = msg;
+        }
+      });
+    }, expectedUrl);
+
+    await cmdWindow.keyboard.press('Enter');
+
+    await bgWindow.waitForFunction(
+      () => (window as any).__laneUrlWindowOpened !== null,
+      undefined,
+      { timeout: 10000 }
+    );
+
+    const afterList = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.list();
+    });
+    const openedWindow = afterList.windows?.find((w: { url?: string }) =>
+      w.url && (w.url.includes(expectedUrl as string) || w.url.includes(encodeURIComponent(expectedUrl as string)))
+    );
+    expect(openedWindow).toBeTruthy();
+
+    if (openedWindow?.id) {
+      try {
+        await bgWindow.evaluate(async (id: number) => {
+          await (window as any).app.window.close(id);
+        }, openedWindow.id);
+      } catch { /* may already be closed */ }
+    }
+
+    await closePanel(panelId);
+  });
+});

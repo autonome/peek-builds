@@ -61,6 +61,7 @@ export const Events = Object.freeze({
   // URL ghost (inline ghost-text completion)
   GHOST_RESOLVED: 'ghost_resolved',   // Async ghost query resolved (suggestion or null)
   ACCEPT_GHOST: 'accept_ghost',       // Tab / ArrowRight accepted the ghost
+  CLICK_URL_RESULT: 'click_url_result',
 });
 
 /**
@@ -96,6 +97,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
 
     // UI flags
     showResults: false,
+    urlMatches: [],   // url-history items matching typed text (parallel lane)
 
     // Output selection
     outputItems: [],
@@ -128,6 +130,8 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
 
   const defaultGuards = {
     hasMatches: () => data.matches.length > 0,
+    hasAnyResults: () => (data.matches.length + (data.urlMatches?.length || 0)) > 0,
+    selectedIsUrlResult: () => data.matchIndex >= data.matches.length && data.matchIndex < (data.matches.length + (data.urlMatches?.length || 0)),
     hasParamSuggestions: () => data.paramSuggestions.length > 0,
     commandHasParams: (payload) => {
       const cmdName = payload?.commandName || data.matches[data.matchIndex];
@@ -184,7 +188,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
     inChainMode: () => currentState === States.CHAIN_MODE,
     inOutputSelection: () => currentState === States.OUTPUT_SELECTION,
     chainStackDeep: () => data.chainStack.length > 1,
-    canNavigateDown: () => data.matchIndex + 1 < data.matches.length,
+    canNavigateDown: () => data.matchIndex + 1 < (data.matches.length + (data.urlMatches?.length || 0)),
     canNavigateUp: () => data.matchIndex > 0,
     canNavigateParamDown: () => data.paramIndex + 1 < data.paramSuggestions.length,
     canNavigateParamUp: () => data.paramIndex > 0,
@@ -245,7 +249,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
         // Empty input stays IDLE (no-op)
       ],
       [Events.ARROW_DOWN]: [
-        { guard: 'hasMatches', target: States.RESULTS_OPEN, actions: ['showResults', 'renderResults'] },
+        { guard: 'hasAnyResults', target: States.RESULTS_OPEN, actions: ['showResults', 'renderResults'] },
       ],
       [Events.ESCAPE]: [
         { target: States.CLOSING, actions: ['shutdown'] },
@@ -285,7 +289,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
         },
       ],
       [Events.ARROW_DOWN]: [
-        { guard: 'hasMatches', target: States.RESULTS_OPEN, actions: ['showResults', 'renderResults'] },
+        { guard: 'hasAnyResults', target: States.RESULTS_OPEN, actions: ['showResults', 'renderResults'] },
       ],
       [Events.TAB]: [
         {
@@ -355,6 +359,12 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       [Events.ACCEPT_GHOST]: [
         { guard: 'urlGhostAcceptable', target: null, actions: ['acceptUrlGhost'] },
       ],
+      [Events.CLICK_RESULT]: [
+        { target: States.EXECUTING, actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'hideResults', 'updateGhostText', 'updateResults'] },
+      ],
+      [Events.CLICK_URL_RESULT]: [
+        { target: States.CLOSING, actions: ['setMatchIndexFromClick', 'openSelectedUrlResult', 'clearInput', 'shutdown'] },
+      ],
     },
 
     // ===== RESULTS_OPEN =====
@@ -405,6 +415,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
         },
       ],
       [Events.ENTER]: [
+        { guard: 'selectedIsUrlResult', target: States.CLOSING, actions: ['openSelectedUrlResult', 'clearInput', 'shutdown'] },
         {
           guard: 'hasUrlGhost',
           target: States.CLOSING,
@@ -426,6 +437,9 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
           target: States.EXECUTING,
           actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'hideResults', 'updateGhostText', 'updateResults'],
         },
+      ],
+      [Events.CLICK_URL_RESULT]: [
+        { target: States.CLOSING, actions: ['setMatchIndexFromClick', 'openSelectedUrlResult', 'clearInput', 'shutdown'] },
       ],
       [Events.ESCAPE]: [
         { target: States.TYPING, actions: ['hideResults', 'updateResults'] },
@@ -810,11 +824,12 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
   // ===== Invariant Enforcement =====
 
   function enforceInvariants() {
-    // Bound matchIndex
-    if (data.matches.length === 0) {
+    // Bound matchIndex against the COMBINED command + url-history total
+    const totalResults = data.matches.length + (data.urlMatches?.length || 0);
+    if (totalResults === 0) {
       data.matchIndex = 0;
-    } else if (data.matchIndex >= data.matches.length) {
-      data.matchIndex = data.matches.length - 1;
+    } else if (data.matchIndex >= totalResults) {
+      data.matchIndex = totalResults - 1;
     } else if (data.matchIndex < 0) {
       data.matchIndex = 0;
     }
@@ -898,6 +913,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       data.typed = '';
       data.originalTyped = '';
       data.matches = [];
+      data.urlMatches = [];
       data.matchIndex = 0;
       data.showResults = false;
       data.outputItems = [];

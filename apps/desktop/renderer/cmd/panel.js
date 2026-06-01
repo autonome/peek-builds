@@ -167,6 +167,7 @@ let urlGhostGeneration = 0;
 let urlGhostSuggestion = null; // { url, matchable } | null
 let urlGhostTimer = null;
 const URL_GHOST_DEBOUNCE_MS = 150;
+const URL_RESULT_LANE_LIMIT = 6;
 
 // Current command context (mode, target window, etc.)
 let commandContext = null;
@@ -1279,6 +1280,7 @@ function urlMatchable(url) {
  * Clear the URL ghost suggestion and cancel any pending debounce timer.
  */
 function clearUrlGhost() {
+  state.urlMatches = [];
   urlGhostSuggestion = null;
   urlGhostGeneration++;
   if (urlGhostTimer) {
@@ -1312,16 +1314,16 @@ function triggerUrlGhost(text) {
       if (generation !== urlGhostGeneration) return; // stale
       const allResults = (result.success && result.data) ? result.data : [];
       const trimmed = text.trim().toLowerCase();
-      const match = allResults
-        .filter(item => !item.content?.startsWith('peek://'))
-        .find(item => {
-          const m = urlMatchable(item.content).toLowerCase();
-          return m.startsWith(trimmed) && m.length > trimmed.length;
-        });
+      const filtered = allResults.filter(item => !item.content?.startsWith('peek://'));
+      const match = filtered.find(item => {
+        const m = urlMatchable(item.content).toLowerCase();
+        return m.startsWith(trimmed) && m.length > trimmed.length;
+      });
       const suggestion = match
         ? { url: match.content, matchable: urlMatchable(match.content) }
         : null;
-      machine.dispatch(Events.GHOST_RESOLVED, { suggestion });
+      const urlMatches = filtered.slice(0, URL_RESULT_LANE_LIMIT);
+      machine.dispatch(Events.GHOST_RESOLVED, { suggestion, urlMatches });
     } catch (e) {
       log.error('cmd:panel', 'URL ghost query failed:', e);
     }
@@ -1765,13 +1767,14 @@ function updateResultsUI() {
   }
 
   const isChainState = machine.getState() === States.CHAIN_MODE;
-  // Hide results if: no matches at all, or results not explicitly shown.
-  if (state.matches.length === 0 || (!state.showResults && !isChainState)) {
+  const urlMatches = isChainState ? [] : (state.urlMatches || []);
+  const totalResults = state.matches.length + urlMatches.length;
+  // Auto-open when >1 combined result; otherwise require explicit showResults (ArrowDown) or chain mode.
+  if (totalResults === 0 || (totalResults <= 1 && !state.showResults && !isChainState)) {
     resultsContainer.classList.remove('visible');
     updateWindowSize();
     return;
   }
-
   resultsContainer.classList.add('visible');
 
   state.matches.forEach((match, index) => {
@@ -1832,6 +1835,53 @@ function updateResultsUI() {
     resultsContainer.appendChild(item);
   });
 
+  if (!isChainState && urlMatches.length > 0) {
+    const header = document.createElement('div');
+    header.className = 'results-section-header';
+    header.textContent = 'Visited';
+    resultsContainer.appendChild(header);
+
+    urlMatches.forEach((item, i) => {
+      const globalIndex = state.matches.length + i;
+      const el = document.createElement('div');
+      el.className = 'command-item url-result-item';
+      if (globalIndex === state.matchIndex) el.classList.add('selected');
+
+      const faviconUrl = item.favicon || '';
+      if (faviconUrl) {
+        const favicon = document.createElement('img');
+        favicon.className = 'url-favicon';
+        favicon.src = faviconUrl;
+        favicon.width = 16;
+        favicon.height = 16;
+        favicon.onerror = () => { favicon.style.display = 'none'; };
+        el.appendChild(favicon);
+      }
+
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'cmd-name url-title';
+      let title = item.title || '';
+      if (!title && item.metadata) {
+        try {
+          const meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata;
+          title = meta.title || '';
+        } catch (e) {}
+      }
+      titleSpan.textContent = title || item.content || 'Untitled';
+      el.appendChild(titleSpan);
+
+      const urlSpan = document.createElement('span');
+      urlSpan.className = 'cmd-desc url-subtitle';
+      urlSpan.textContent = item.domain || item.content || '';
+      el.appendChild(urlSpan);
+
+      el.addEventListener('click', () => {
+        machine.dispatch(Events.CLICK_URL_RESULT, { index: globalIndex });
+      });
+
+      resultsContainer.appendChild(el);
+    });
+  }
 
   updateWindowSize();
 }
@@ -1867,7 +1917,9 @@ function actionHandlers() {
 
     applyGhostResolution(payload) {
       urlGhostSuggestion = payload.suggestion || null;
+      state.urlMatches = payload.urlMatches || [];
       updateCommandUI();
+      updateResultsUI();
       updateWindowSize();
     },
 
@@ -1905,8 +1957,7 @@ function actionHandlers() {
           clearUrlGhost();
         } else {
           state.matches = findMatchingCommands(typed);
-          // Trigger URL ghost only when there are no command matches.
-          if (showUrlsInResults && state.matches.length === 0) {
+          if (showUrlsInResults) {
             triggerUrlGhost(typed.trim());
           } else {
             clearUrlGhost();
@@ -2322,6 +2373,25 @@ function actionHandlers() {
         trackingSourceId: 'url-ghost'
       }).catch(error => {
         log.error('cmd:panel', 'Failed to open URL ghost suggestion:', error);
+      });
+    },
+
+    openSelectedUrlResult() {
+      const urlIndex = state.matchIndex - state.matches.length;
+      const item = state.urlMatches[urlIndex];
+      if (!item || !item.content) return;
+      const url = item.content;
+      log('cmd:panel', 'Opening URL history result:', url);
+      state.lastExecuted = url;
+      updateMatchCount(url);
+      api.window.open(url, {
+        role: 'content',
+        width: 1024,
+        height: 768,
+        trackingSource: 'cmd',
+        trackingSourceId: 'history-result'
+      }).catch(error => {
+        log.error('cmd:panel', 'Failed to open URL history result:', error);
       });
     },
 
