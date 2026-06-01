@@ -1173,8 +1173,11 @@ const onReady = async () => {
     // Apply dock preference
     applyDockPreference();
 
-    // initialize system tray
-    if (prefsMsg.prefs.showTrayIcon === true) {
+    // initialize system tray (never under headless test runs — a Tray is a
+    // visible menubar status item that setActivationPolicy/accessory mode does
+    // NOT suppress, so each headless instance would otherwise leak its own icon
+    // into the user's menubar; multi-worker runs stack several).
+    if (prefsMsg.prefs.showTrayIcon === true && !isHeadless()) {
       DEBUG && console.log('showing tray');
       initTray(DESKTOP_DIR, {
         tooltip: labels.tray.tooltip,
