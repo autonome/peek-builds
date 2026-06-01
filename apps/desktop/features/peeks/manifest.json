@@ -11,7 +11,15 @@
     {
       "id": "background",
       "url": "background.html",
-      "resident": true
+      "lazy": true,
+      "lazyEvents": ["cli:peek-open", "peeks:settings-changed"]
+    }
+  ],
+  "shortcuts": [
+    {
+      "keys": "Option+0",
+      "wakeTopic": "cli:peek-open",
+      "wakeArgs": ["0"]
     }
   ],
   "capabilities": {

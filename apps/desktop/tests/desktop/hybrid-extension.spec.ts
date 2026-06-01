@@ -1,7 +1,7 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
-import { waitForWindow, sleep } from '../helpers/window-utils';
+import { waitForWindow } from '../helpers/window-utils';
 
 test.describe('Hybrid Extension Mode @desktop', () => {
   let app: DesktopApp;
@@ -16,15 +16,10 @@ test.describe('Hybrid Extension Mode @desktop', () => {
   });
 
   test('v2 background tile windows exist as separate BrowserWindows', async () => {
-    // V2 background tiles (peeks, slides) launch as separate hidden BrowserWindows
-    // at peek://{id}/background.html — NOT as iframes in the extension host.
-    const peeksWin = await waitForWindow(
-      () => app.windows(),
-      'peek://peeks/background.html',
-      15000
-    );
-    expect(peeksWin).toBeDefined();
-
+    // A resident v2 background tile (slides) launches as a separate hidden
+    // BrowserWindow at peek://{id}/background.html — NOT as an iframe in the
+    // extension host. peeks is now LAZY (no resident entry) and is NOT in the
+    // boot set, so we only assert on slides here.
     const slidesWin = await waitForWindow(
       () => app.windows(),
       'peek://slides/background.html',
@@ -46,30 +41,34 @@ test.describe('Hybrid Extension Mode @desktop', () => {
   });
 
   test('commands work from both consolidated and external extensions', async () => {
-    // Wait a bit for extensions to initialize and register commands
-    await sleep(1000);
-
-    // Query commands - should include commands from all extensions
+    // Synchronize on command registration deterministically: re-query on each
+    // cmd:register(-batch) event and resolve the instant the response carries
+    // both example:gallery (external) and settings (consolidated). No
+    // fixed-duration sleep (per feedback_no_sleep_in_tests_or_code); a single
+    // Playwright timeout bounds the whole thing.
     const result = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
 
       return new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          resolve({ success: false, commandCount: 0 });
-        }, 10000);
-
+        let done = false;
         api.subscribe('cmd:query-commands-response', (msg: any) => {
-          clearTimeout(timeout);
-          resolve({
-            success: true,
-            commandCount: msg.commands?.length || 0,
-            // example:gallery comes from external 'example' extension
-            hasGalleryCommand: msg.commands?.some((c: any) => c.name === 'example:gallery'),
-            // settings comes from core (via consolidated cmd)
-            hasSettingsCommand: msg.commands?.some((c: any) => c.name === 'settings')
-          });
+          if (done) return;
+          const cmds = msg.commands || [];
+          const hasGallery = cmds.some((c: any) => c.name === 'example:gallery');
+          const hasSettings = cmds.some((c: any) => c.name === 'settings');
+          if (hasGallery && hasSettings) {
+            done = true;
+            resolve({
+              success: true,
+              commandCount: cmds.length,
+              hasGalleryCommand: hasGallery,
+              hasSettingsCommand: hasSettings,
+            });
+          }
         });
-
+        // Re-query when the registry grows.
+        api.subscribe('cmd:register', () => api.publish('cmd:query-commands', {}));
+        api.subscribe('cmd:register-batch', () => api.publish('cmd:query-commands', {}));
         api.publish('cmd:query-commands', {});
       });
     });

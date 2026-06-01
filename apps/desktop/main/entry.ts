@@ -49,6 +49,7 @@ import {
   registerLocalShortcut,
   unregisterLocalShortcut,
   handleLocalShortcut,
+  getGlobalShortcutSource,
   // PubSub
   publish,
   subscribe,
@@ -290,6 +291,27 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
   publishCmdExecute: (command: string): void => {
     publish(getSystemAddress(), `cmd:execute:${command}`, {});
   },
+  /**
+   * Publish an arbitrary `topic` with `msg` on the System address — the
+   * exact output of a feature-shortcut-registrar wakeTopic-style global
+   * hotkey callback (`publish(systemAddress, wakeTopic, { args })`). Used
+   * by the lazy peeks-wake spec to drive `cli:peek-open` with
+   * `{ args: ['0'] }` WITHOUT injecting OS keys (no virtual display on
+   * macOS-headless). Generic counterpart to `publishCmdExecute`.
+   */
+  publishSystemTopic: (topic: string, msg: unknown): void => {
+    publish(getSystemAddress(), topic, msg);
+  },
+  /**
+   * Return the source-address that owns a registered GLOBAL accelerator, or
+   * undefined if none. Reads the internal `globalShortcuts` map in
+   * shortcuts.ts, which is populated even under headless (where Electron's
+   * `globalShortcut.register` is neutralized). Lets the lazy peeks-wake spec
+   * assert that the manifest's static-default hotkey (`Option+0`) was
+   * registered at boot by the feature-shortcut-registrar WITHOUT the renderer.
+   */
+  getGlobalShortcutSource: (accelerator: string): string | undefined =>
+    getGlobalShortcutSource(accelerator),
   /**
    * Resolve when the given tile reaches `state` (an FSM state name such
    * as 'ready' / 'visible'). Subscribes to the System-owned, read-only

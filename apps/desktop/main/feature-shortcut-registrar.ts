@@ -30,7 +30,7 @@
 
 import { registerGlobalShortcut as _registerGlobalShortcut, unregisterShortcutsForAddress as _unregisterShortcutsForAddress } from './shortcuts.js';
 import { publish as _publish, getSystemAddress as _getSystemAddress } from './pubsub.js';
-import { getWakeShortcuts as _getWakeShortcuts, type WakeShortcut } from './datastore.js';
+import { getWakeShortcuts as _getWakeShortcuts, hasDeclaredWakeShortcuts as _hasDeclaredWakeShortcuts, type WakeShortcut } from './datastore.js';
 import { type TileManifest, type TileShortcut } from './tile-manifest.js';
 import { DEBUG } from './config.js';
 
@@ -47,6 +47,7 @@ interface RegistrarDeps {
   publish: (source: string, topic: string, msg: unknown) => void;
   getSystemAddress: () => string;
   getWakeShortcuts: (ownerTileId: string) => WakeShortcut[];
+  hasDeclaredWakeShortcuts: (ownerTileId: string) => boolean;
 }
 
 function defaultDeps(): RegistrarDeps {
@@ -56,6 +57,7 @@ function defaultDeps(): RegistrarDeps {
     publish: _publish,
     getSystemAddress: _getSystemAddress,
     getWakeShortcuts: _getWakeShortcuts,
+    hasDeclaredWakeShortcuts: _hasDeclaredWakeShortcuts,
   };
 }
 
@@ -73,6 +75,7 @@ export function __setFeatureShortcutRegistrarDepsForTest(override: Partial<Regis
     publish: override.publish ?? base.publish,
     getSystemAddress: override.getSystemAddress ?? base.getSystemAddress,
     getWakeShortcuts: override.getWakeShortcuts ?? base.getWakeShortcuts,
+    hasDeclaredWakeShortcuts: override.hasDeclaredWakeShortcuts ?? base.hasDeclaredWakeShortcuts,
   };
 }
 
@@ -136,19 +139,25 @@ export function registerWakeShortcutList(tileId: string, list: WakeShortcut[]): 
 /**
  * Boot-replay entry point. Registers a lazy tile's global wake hotkeys,
  * picking the source with PRECEDENCE:
- *   1. persisted `lazy_wake_shortcuts` rows (the user's configured set) —
- *      if any exist, register those and ignore the manifest defaults.
- *   2. otherwise the manifest's static default `shortcuts[]` entries
- *      (command-style or wakeTopic-style) — the fresh-profile defaults.
+ *   1. if the tile has EVER declared its wake set (`hasDeclaredWakeShortcuts`)
+ *      register exactly the persisted `lazy_wake_shortcuts` rows — which may
+ *      be EMPTY (the user cleared every hotkey → register NOTHING). The
+ *      declared marker is what distinguishes "declared empty" from "never
+ *      declared"; a plain empty-rows check could not.
+ *   2. otherwise (never declared, e.g. a fresh profile) the manifest's
+ *      static default `shortcuts[]` entries (command-style or wakeTopic-
+ *      style) — the fresh-profile defaults.
  *
  * This replaces the old `registerManifestShortcuts(manifest)` call in the
  * lazy-load branch, so windows (manifest `{keys, command}`, no persisted
- * rows) still registers exactly as before via the manifest-defaults path.
+ * rows, never declared) still registers exactly as before via the
+ * manifest-defaults path.
  */
 export function registerWakeShortcuts(tileId: string, manifest: TileManifest): void {
-  const persisted = deps.getWakeShortcuts(tileId);
-  if (Array.isArray(persisted) && persisted.length > 0) {
-    registerWakeShortcutList(tileId, persisted);
+  if (deps.hasDeclaredWakeShortcuts(tileId)) {
+    // Declared at least once → the persisted set is authoritative, even if
+    // empty (register nothing). Manifest defaults are NOT consulted.
+    registerWakeShortcutList(tileId, deps.getWakeShortcuts(tileId));
     return;
   }
   registerWakeShortcutList(tileId, manifestShortcutsToWake(manifest.shortcuts));

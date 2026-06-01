@@ -16,19 +16,28 @@ test.describe('Core Functionality @desktop', () => {
   });
 
   test('app launches and extensions load', async () => {
-    // After v2 tile migration:
-    // - V2 features load as separate background BrowserWindows (peek://{id}/background.html)
-    // - Eager v2 features (e.g. entities, peeks, slides) launch at startup;
-    //   lazy v2 features (e.g. example) launch on first command/event
-
-    // Check that at least one eager v2 background tile window exists.
-    // peeks and slides are eager v2 background tiles that launch at startup.
-    const v2BgWindow = await waitForWindow(
+    // App readiness, asserted WITHOUT relying on any lazy feature's
+    // background window. peeks is now lazy (no resident entry) and is NOT in
+    // the boot set, so we can't wait on peek://peeks/background.html here.
+    //
+    // Two independent readiness signals:
+    //   1. The core orchestrator window (peek://app/background.html) — always
+    //      resident — exists. This is what "app launched" means.
+    //   2. peeks is registered in the builtin feature registry. features.list
+    //      reads the registry, not the loaded-window set, so a LAZY (unloaded)
+    //      tile still surfaces here — proving extensions loaded/registered.
+    const coreWindow = await waitForWindow(
       () => app.windows(),
-      'peek://peeks/background.html',
+      'peek://app/background.html',
       15000
     );
-    expect(v2BgWindow).toBeDefined();
+    expect(coreWindow).toBeDefined();
+
+    const builtins = await bgWindow.evaluate(async () => {
+      return await (window as any).app.features.list('builtin');
+    });
+    const hasPeeks = builtins.entries?.some((ext: any) => ext.id === 'peeks');
+    expect(hasPeeks).toBe(true);
   });
 
   test('database is accessible', async () => {
@@ -40,28 +49,35 @@ test.describe('Core Functionality @desktop', () => {
   });
 
   test('commands are registered', async () => {
-    // Commands are now owned by the cmd extension via pubsub
-    // Query via cmd:query-commands topic with retry for extension loading
+    // Commands are owned by the cmd extension via pubsub. Synchronize on the
+    // cmd:query-commands-response topic itself: subscribe once, then re-emit
+    // the query whenever a response arrives that doesn't yet contain the
+    // target command, and resolve the instant it does. No fixed-duration
+    // waits — a single Playwright timeout bounds the whole thing
+    // (per feedback_no_sleep_in_tests_or_code).
     const result = await bgWindow.evaluate(async () => {
       const api = (window as any).app;
-
-      const queryCommands = () => new Promise((resolve) => {
+      return await new Promise<any[]>((resolve) => {
+        let done = false;
+        const tryResolve = (cmds: any[]) => {
+          if (done) return;
+          if (cmds.some((c: any) => c.name === 'example:gallery')) {
+            done = true;
+            resolve(cmds);
+          }
+        };
+        // Resolve as soon as a query response carries example:gallery.
         api.subscribe('cmd:query-commands-response', (msg: any) => {
-          resolve(msg.commands || []);
+          tryResolve((msg.commands || []) as any[]);
         });
+        // Re-query whenever a command (batch) registers — the deterministic
+        // signal that the registry grew. This fires the response handler
+        // above; no fixed-duration polling.
+        api.subscribe('cmd:register', () => api.publish('cmd:query-commands', {}));
+        api.subscribe('cmd:register-batch', () => api.publish('cmd:query-commands', {}));
+        // Kick the first query (commands may already be registered from cache).
         api.publish('cmd:query-commands', {});
-        setTimeout(() => resolve([]), 1000);
       });
-
-      // Retry a few times to allow extensions to finish loading
-      for (let i = 0; i < 5; i++) {
-        const cmds = await queryCommands() as any[];
-        if (cmds.some((c: any) => c.name === 'example:gallery')) {
-          return cmds;
-        }
-        await new Promise(r => setTimeout(r, 500));
-      }
-      return await queryCommands();
     });
     expect(Array.isArray(result)).toBe(true);
     expect(result.length).toBeGreaterThan(0);

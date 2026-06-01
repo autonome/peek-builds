@@ -58,12 +58,14 @@ let registerCalls: RegisterCall[];
 let publishCalls: PublishCall[];
 let unregisterCalls: string[];
 let persistedFake: Map<string, WakeShortcut[]>;
+let declaredFake: Set<string>;
 
 function installSpies(): void {
   registerCalls = [];
   publishCalls = [];
   unregisterCalls = [];
   persistedFake = new Map();
+  declaredFake = new Set();
   __setFeatureShortcutRegistrarDepsForTest({
     registerGlobalShortcut: (keys: string, source: string, callback: () => void) => {
       registerCalls.push({ keys, source, callback });
@@ -77,6 +79,7 @@ function installSpies(): void {
     },
     getSystemAddress: () => STUB_SYSTEM_ADDRESS,
     getWakeShortcuts: (ownerTileId: string) => persistedFake.get(ownerTileId) ?? [],
+    hasDeclaredWakeShortcuts: (ownerTileId: string) => declaredFake.has(ownerTileId),
   });
 }
 
@@ -155,6 +158,26 @@ describe('lazy_wake_shortcuts datastore accessors', () => {
     assert.strictEqual(datastore.getWakeShortcuts('peeks').length, 0);
   });
 
+  it('hasDeclaredWakeShortcuts distinguishes declared-empty from never-declared', () => {
+    // 'never-declared-tile' has had no setWakeShortcuts call.
+    assert.strictEqual(datastore.hasDeclaredWakeShortcuts('never-declared-tile'), false);
+
+    // beforeEach already called setWakeShortcuts('peeks', []) → declared, empty.
+    assert.strictEqual(datastore.hasDeclaredWakeShortcuts('peeks'), true);
+    assert.strictEqual(datastore.getWakeShortcuts('peeks').length, 0);
+
+    // Declaring a non-empty set keeps it declared.
+    datastore.setWakeShortcuts('peeks', [
+      { accelerator: 'Alt+0', wakeTopic: 'peeks:open', wakeArgs: [0] },
+    ]);
+    assert.strictEqual(datastore.hasDeclaredWakeShortcuts('peeks'), true);
+
+    // Re-declaring empty (user cleared all) STAYS declared — marker persists.
+    datastore.setWakeShortcuts('peeks', []);
+    assert.strictEqual(datastore.hasDeclaredWakeShortcuts('peeks'), true);
+    assert.strictEqual(datastore.getWakeShortcuts('peeks').length, 0);
+  });
+
   it('getAllWakeShortcuts groups rows by owner tile', () => {
     datastore.setWakeShortcuts('peeks', [
       { accelerator: 'Alt+0', wakeTopic: 'peeks:open', wakeArgs: [0] },
@@ -210,7 +233,8 @@ describe('feature-shortcut-registrar wake replay', () => {
   });
 
   it('boot replay: persisted rows take precedence over manifest defaults', () => {
-    // peeks has persisted user customizations that differ from the manifest.
+    // peeks has DECLARED user customizations that differ from the manifest.
+    declaredFake.add('peeks');
     persistedFake.set('peeks', [
       { accelerator: 'Alt+9', wakeTopic: 'peeks:open', wakeArgs: [9] },
     ]);
@@ -227,6 +251,31 @@ describe('feature-shortcut-registrar wake replay', () => {
     assert.deepStrictEqual(publishCalls, [
       { source: STUB_SYSTEM_ADDRESS, topic: 'peeks:open', msg: { args: [9] } },
     ]);
+  });
+
+  it('boot replay: DECLARED-EMPTY registers nothing (user cleared all hotkeys), NOT the manifest defaults', () => {
+    // The user declared their wake set but it is empty — the declared
+    // marker is set, persisted rows are empty. The manifest's Alt+0/Alt+1
+    // defaults must NOT be resurrected.
+    declaredFake.add('peeks');
+    persistedFake.set('peeks', []);
+
+    registerWakeShortcuts('peeks', makePeeksManifest());
+
+    assert.strictEqual(registerCalls.length, 0, 'declared-empty → register nothing');
+    assert.strictEqual(publishCalls.length, 0);
+  });
+
+  it('boot replay: NEVER-DECLARED falls back to manifest defaults (fresh profile)', () => {
+    // No declared marker, no persisted rows — fresh profile. The manifest's
+    // static defaults are the source.
+    assert.strictEqual(declaredFake.has('peeks'), false);
+    assert.strictEqual((persistedFake.get('peeks') ?? []).length, 0);
+
+    registerWakeShortcuts('peeks', makePeeksManifest());
+
+    assert.strictEqual(registerCalls.length, 2, 'both manifest defaults registered');
+    assert.deepStrictEqual(registerCalls.map((c) => c.keys), ['Alt+0', 'Alt+1']);
   });
 
   it('a registered wake callback publishes its topic with { args: wakeArgs } on the System address', () => {

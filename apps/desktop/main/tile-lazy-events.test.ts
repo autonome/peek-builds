@@ -304,6 +304,36 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
     unsubscribe('peek://websearch/bg', 'page:search-engine-discovered');
   });
 
+  it('wakes the peeks-style tile on cli:peek-open and delivers the {args:[keyNum]} payload', async () => {
+    // Mirrors the real peeks manifest after the lazy conversion (STEP 3b):
+    // a single hidden tile whose lazyEvent is `cli:peek-open`. The static-
+    // default global wake hotkey (Option+0) publishes `cli:peek-open` with
+    // `{ args: ['0'] }`; that must launch the tile exactly once and deliver
+    // the payload to the (post-ready) cli:peek-open handler, which opens the
+    // matching peek — no real window here, just the dispatch contract.
+    const manifest = makeManifest('peeks', ['cli:peek-open', 'peeks:settings-changed']);
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
+
+    const received: unknown[] = [];
+    launcherState.onLaunch = () => {
+      subscribe('peek://peeks/bg', 'cli:peek-open', (msg) => {
+        received.push(msg);
+      });
+      signalReady(launcherState, 'peeks', 'background');
+    };
+
+    const payload = { args: ['0'] };
+    publish('peek://test-publisher', 'cli:peek-open', payload);
+    for (let i = 0; i < 10; i++) await flushMicrotasks();
+
+    assert.strictEqual(launcherState.launchCalls.length, 1, 'peeks tile should launch exactly once');
+    assert.strictEqual(launcherState.launchCalls[0].manifest.id, 'peeks');
+    assert.strictEqual(received.length, 1, 'cli:peek-open handler should receive the deferred payload post-ready');
+    assert.deepStrictEqual(received[0], payload);
+
+    unsubscribe('peek://peeks/bg', 'cli:peek-open');
+  });
+
   it('topic not declared anywhere bypasses the hook entirely', async () => {
     // Register a tile with a specific lazyEvent topic — an unrelated
     // publish must not go through the dispatch hook (no launch, no defer).

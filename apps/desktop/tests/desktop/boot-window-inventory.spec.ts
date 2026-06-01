@@ -15,17 +15,18 @@
  *
  * A fresh instance spawns a small fixed set of hidden background windows:
  *   - core            peek://app/background.html
- *   - peeks           peek://peeks/...        (resident: true)
  *   - slides          peek://slides/...       (resident: true)
  * Each is its own BrowserWindow + renderer webContents. That is the
- * PRODUCTION fixed set (3). mcp-server, windows AND websearch are now
- * lazy (no resident entry) and are NOT in the boot set; each loads on
- * first command invocation (windows additionally wakes on its manifest
- * global hotkey via the main-side feature-shortcut-registrar; websearch
- * additionally wakes on the core `page:search-engine-discovered`
- * lazyEvent). Under E2E_TEST=true the boot inventory also carries a
- * settings host (peek://app/settings/) and the test-fixture renderer
- * (peek://test/), so the measured fixed count here is 5.
+ * PRODUCTION fixed set (2). mcp-server, windows, websearch AND peeks are
+ * now lazy (no resident entry) and are NOT in the boot set; each loads on
+ * first command invocation or lazyEvent (windows additionally wakes on its
+ * manifest global hotkey via the main-side feature-shortcut-registrar;
+ * websearch wakes on the core `page:search-engine-discovered` lazyEvent;
+ * peeks wakes on its `cli:peek-open` lazyEvent — fired by its static-default
+ * global wake hotkey registered at boot by the registrar). Under
+ * E2E_TEST=true the boot inventory also carries a settings host
+ * (peek://app/settings/) and the test-fixture renderer (peek://test/), so
+ * the measured fixed count here is 4.
  *
  * Page-host windows (peek://app/page/...) each carry TWO webContents: the
  * host window + an embedded <webview> loading real content. Restored
@@ -51,14 +52,14 @@ let server: http.Server;
 let serverPort: number;
 
 // URL substrings that MUST all be present among the boot windows before we
-// consider the fixed inventory settled. core + 2 resident builtin tiles.
-// mcp-server, windows AND websearch are now lazy (no resident entry) — none
-// appears at boot; windows wakes on its global hotkey / cmd:execute:windows,
-// and websearch wakes on the core `page:search-engine-discovered` lazyEvent
-// (or its commands).
+// consider the fixed inventory settled. core + 1 resident builtin tile.
+// mcp-server, windows, websearch AND peeks are now lazy (no resident entry)
+// — none appears at boot; windows wakes on its global hotkey /
+// cmd:execute:windows, websearch wakes on the core
+// `page:search-engine-discovered` lazyEvent, and peeks wakes on its
+// `cli:peek-open` lazyEvent (fired by its static-default global wake hotkey).
 const EXPECTED_RESIDENT_URLS = [
   'peek://app/background.html',
-  'peek://peeks/',
   'peek://slides/',
 ];
 
@@ -232,25 +233,30 @@ test.describe('Boot Window Inventory @desktop', () => {
     expect(pageHostWindows).toBe(K);
     expect(pageHostWebviews).toBe(K);
 
+    // peeks is now lazy: its background window must NOT be in the boot set.
+    const peeksAtBoot = fixed.windows.some((w) => w.url.includes('peek://peeks/'));
+    expect(peeksAtBoot).toBe(false);
+
     // ── 4. Regression assertion on the FIXED background-window count ───────
-    // Observed fixed count after mcp-server, windows AND websearch were made
-    // lazy (epic d8e7efa5): 5.
+    // Observed fixed count after mcp-server, windows, websearch AND peeks were
+    // made lazy (epic d8e7efa5): 4.
     // Breakdown:
     //   - peek://app/background.html      core orchestrator
-    //   - peek://peeks/background.html    resident tile
     //   - peek://slides/background.html   resident tile
     //   - peek://app/settings/settings.html  settings host present at boot
     //   - peek://test/index.html          E2E test-fixture renderer
     //                                     (test-only; only when E2E_TEST=true)
-    // So the PRODUCTION fixed background-window count is 3 (core + 2 resident
-    // tiles); the extra 2 here are settings + the test fixture. mcp-server,
-    // windows and websearch are now lazy (no resident entry) and are no longer
-    // in the boot set; windows wakes on its global hotkey via the main-side
-    // feature-shortcut-registrar publishing cmd:execute:windows, and websearch
-    // wakes on the core `page:search-engine-discovered` lazyEvent (or its
-    // commands).
-    // Ceiling is observed+1 (= 6) so a NEW resident tile sneaking into the
+    // So the PRODUCTION fixed background-window count is 2 (core + 1 resident
+    // tile, slides); the extra 2 here are settings + the test fixture.
+    // mcp-server, windows, websearch and peeks are now lazy (no resident
+    // entry) and are no longer in the boot set; windows wakes on its global
+    // hotkey via the main-side feature-shortcut-registrar publishing
+    // cmd:execute:windows, websearch wakes on the core
+    // `page:search-engine-discovered` lazyEvent, and peeks wakes on its
+    // `cli:peek-open` lazyEvent (fired by its static-default global wake
+    // hotkey registered at boot by the registrar).
+    // Ceiling is observed+1 (= 5) so a NEW resident tile sneaking into the
     // boot set fails the test.
-    expect(fixedWindowCount).toBeLessThanOrEqual(6);
+    expect(fixedWindowCount).toBeLessThanOrEqual(5);
   });
 });

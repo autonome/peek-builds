@@ -354,6 +354,10 @@ const createTableStatements = `
     PRIMARY KEY (ownerTileId, accelerator)
   );
   CREATE INDEX IF NOT EXISTS idx_lazy_wake_shortcuts_owner ON lazy_wake_shortcuts(ownerTileId);
+
+  CREATE TABLE IF NOT EXISTS lazy_wake_declared (
+    ownerTileId TEXT PRIMARY KEY
+  );
 `;
 
 // Module state
@@ -2973,8 +2977,26 @@ export function setWakeShortcuts(ownerTileId: string, list: WakeShortcut[]): voi
         JSON.stringify(Array.isArray(sc.wakeArgs) ? sc.wakeArgs : [])
       );
     }
+    // Mark this tile as having explicitly declared its wake set — even when
+    // `rows` is empty. Boot-replay uses this to distinguish "declared
+    // empty" (the user cleared all hotkeys → register NOTHING) from "never
+    // declared" (a fresh profile → fall back to the manifest defaults).
+    d.prepare('INSERT OR IGNORE INTO lazy_wake_declared (ownerTileId) VALUES (?)').run(ownerTileId);
   });
   tx(list);
+}
+
+/**
+ * Whether `ownerTileId` has ever explicitly declared its wake-shortcut set
+ * (i.e. `setWakeShortcuts` was called for it at least once, possibly with an
+ * empty list). Lets boot-replay tell "declared empty → register nothing"
+ * apart from "never declared → use the manifest's static defaults".
+ */
+export function hasDeclaredWakeShortcuts(ownerTileId: string): boolean {
+  const row = getDb()
+    .prepare('SELECT 1 FROM lazy_wake_declared WHERE ownerTileId = ?')
+    .get(ownerTileId);
+  return row != null;
 }
 
 /** Get the persisted wake shortcuts for a single tile. */
