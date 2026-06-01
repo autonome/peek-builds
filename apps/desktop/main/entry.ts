@@ -922,7 +922,7 @@ const onReady = async () => {
   // before before-input-event fires, preventing our local shortcut handler
   // from seeing it. We keep standard Edit accelerators (copy/paste/etc.) and
   // the app submenu (hide/quit), but omit the Preferences accelerator.
-  if (process.platform === 'darwin') {
+  if (process.platform === 'darwin' && !isHeadless()) {
     const template: Electron.MenuItemConstructorOptions[] = [
       {
         label: app.name,
@@ -978,8 +978,11 @@ const onReady = async () => {
     ];
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
   } else {
-    // On non-macOS platforms, remove the menu entirely so it doesn't
-    // consume any shortcut accelerators
+    // Non-macOS platforms, or headless test runs: remove the menu entirely so
+    // it doesn't consume shortcut accelerators or build an unused app menu.
+    // (Headless also runs as an 'accessory' app via setActivationPolicy below,
+    // so it can never own the system menubar regardless — this just avoids
+    // building the template needlessly.)
     Menu.setApplicationMenu(null);
   }
 

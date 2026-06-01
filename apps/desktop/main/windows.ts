@@ -423,14 +423,14 @@ export function getVisibleWindowCount(excludeId: number | null = null): number {
 /**
  * Apply dock visibility based on user preference.
  * Call at startup and when the showInDockAndSwitcher preference changes.
- * Test profiles always hide the dock. Manual sandboxes should use
+ * Test profiles and headless runs always hide the dock. Manual sandboxes should use
  * `PROFILE=tmp-*` (which bypasses the single-instance lock without
  * inheriting test-only behaviors — see `isEphemeralProfile`).
  */
 export function applyDockPreference(): void {
   if (process.platform !== 'darwin' || !app.dock) return;
 
-  if (isTestProfile()) {
+  if (isTestProfile() || isHeadless()) {
     app.dock.hide();
     return;
   }
