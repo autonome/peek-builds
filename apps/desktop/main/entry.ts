@@ -1668,8 +1668,23 @@ if (isHeadless() && isTestProfile()) {
     contents.on('will-prevent-unload', (event) => {
       event.preventDefault();
     });
+
+    // window.confirm/alert/prompt: Peek's OWN renderers (settings, lists,
+    // groups, tags, scripts, entities, …) call native confirm()/alert() on
+    // delete/remove/clear actions. Each one flashes a focus-stealing native
+    // modal on the user's real macOS desktop (and several blocking modals across
+    // parallel workers read as a freeze). Override them in the page's MAIN world
+    // (executeJavaScript runs there) to resolve without any native UI —
+    // confirm()→true so flows that gate on it (e.g. settings "Clear all") still
+    // proceed. Re-inject on every dom-ready so it survives navigations. This is
+    // the single chokepoint; the ~30 call sites don't each need a guard.
+    contents.on('dom-ready', () => {
+      contents.executeJavaScript(
+        'window.confirm=function(){return true};window.alert=function(){};window.prompt=function(){return null};',
+      ).catch(() => { /* devtools / restricted webContents reject eval — ignore */ });
+    });
   });
-  console.log('[headless-guard] per-webContents openDevTools + beforeunload neutralization active');
+  console.log('[headless-guard] per-webContents openDevTools + beforeunload + JS-dialog neutralization active');
 }
 
 // Start the app
