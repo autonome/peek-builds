@@ -133,6 +133,16 @@ test.describe('Permission Prompt @desktop', () => {
   });
 
   test('geolocation request renders prompt; Allow attempts the actual call', async () => {
+    // Allowing geolocation makes Chromium run the REAL navigator.geolocation
+    // lookup. On a macOS host with Location Services enabled that surfaces the
+    // native OS Location prompt — a focus-stealing, system-hanging TCC dialog on
+    // the user's physical desktop. CI (Linux/Xvfb, or macOS with Location
+    // Services off) has no such service, so the call fails gracefully. Skip the
+    // allow-path on macOS-headless; the deny/render paths still cover the UI.
+    test.skip(
+      process.env.HEADLESS === '1' && process.platform === 'darwin',
+      'Allow-path triggers a real geolocation call → macOS Location Services prompt; covered on Linux/Xvfb',
+    );
     const pageWindow = await openPageHost('perm-allow');
 
     const webview = await pageWindow.evaluateHandle(() => document.getElementById('content'));
@@ -196,6 +206,15 @@ test.describe('Permission Prompt @desktop', () => {
   });
 
   test('Remember-this-decision (allow path): clicking Allow + checkbox persists, second request auto-allows', async () => {
+    // Allow-path: clicking Allow (and the auto-allowed second request) both run
+    // the REAL navigator.geolocation lookup → macOS Location Services prompt on
+    // a host with Location Services enabled. Skip on macOS-headless; the
+    // deny-path remember test above covers the persistence logic, and this runs
+    // on Linux/Xvfb. See the allow-path test above.
+    test.skip(
+      process.env.HEADLESS === '1' && process.platform === 'darwin',
+      'Allow-path triggers a real geolocation call → macOS Location Services prompt; covered on Linux/Xvfb',
+    );
     // Symmetric to the Deny+Remember test above. (beforeEach has already
     // cleared any stored decisions.)
     const first = await openPageHost('perm-allow-remember-1');
