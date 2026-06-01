@@ -558,19 +558,34 @@ const uninitCommands = () => {
 // ===== Event Handlers (background-mode) =====
 
 /**
- * Handle page navigation events for OpenSearch discovery
+ * Resolves once settings + engines have finished loading. The discovery
+ * handler awaits this so a `page:search-engine-discovered` event that
+ * arrives during the wake window (subscription registered before
+ * loadSettings/loadEngines complete) doesn't run discoverEngine against
+ * an unpopulated `currentSettings` / engine list.
  */
-const handlePageLoaded = async (msg) => {
-  if (!currentSettings.prefs.enableAutoDiscovery) return;
-  if (!msg || !msg.url) return;
+let resolveInitReady;
+const initReady = new Promise((resolve) => { resolveInitReady = resolve; });
+
+/**
+ * Handle the core `page:search-engine-discovered` event for OpenSearch
+ * discovery. Core page handling fires this (with {pageUrl, opensearchUrl})
+ * only when a page advertises an OpenSearch descriptor — it is also the
+ * lazyEvent that wakes this tile (declared in manifest.json). The tile
+ * boots HIDDEN on this event; discovery never shows the search UI.
+ */
+const handleSearchEngineDiscovered = async (msg) => {
+  if (!msg || !msg.pageUrl || !msg.opensearchUrl) return;
 
   // Only discover from http/https pages
-  if (!msg.url.startsWith('http://') && !msg.url.startsWith('https://')) return;
+  if (!msg.pageUrl.startsWith('http://') && !msg.pageUrl.startsWith('https://')) return;
 
-  // Check if the page has an OpenSearch link
-  if (msg.opensearchUrl) {
-    await discoverEngine(msg.opensearchUrl, msg.url);
-  }
+  // The wake event may arrive before loadSettings/loadEngines finish.
+  await initReady;
+
+  if (!currentSettings.prefs.enableAutoDiscovery) return;
+
+  await discoverEngine(msg.opensearchUrl, msg.pageUrl);
 };
 
 // ===== Tile Lifecycle (engine init — runs before DOM) =====
@@ -1080,6 +1095,20 @@ const initUi = () => {
   console.log(`[ext:${extId}] initializing tile`);
   await api.initialize();
 
+  // Subscribe to the core semantic search-engine-discovery event
+  // SYNCHRONOUSLY, before the async settings/engine loads below. This is
+  // also this tile's lazyEvent (manifest.json): when a page-load event
+  // WAKES this lazy tile, the load-on-dispatch hook delivers the deferred
+  // publish as soon as the tile signals ready (which the preload defers
+  // to a setTimeout(0) macrotask). If we subscribed only after awaiting
+  // loadSettings/loadEngines, that ready macrotask could fire — and the
+  // deferred message be delivered — before the subscription existed,
+  // dropping the very event that woke us. Subscribing here, in the same
+  // synchronous turn that api.initialize() resolved on, guarantees the
+  // handler is registered before ready. The handler awaits initReady so
+  // settings/engines are loaded by the time discovery actually runs.
+  api.pubsub.subscribe('page:search-engine-discovered', handleSearchEngineDiscovered);
+
   // Load settings and engines
   currentSettings = await loadSettings();
   await loadEngines();
@@ -1087,8 +1116,9 @@ const initUi = () => {
   // Register commands
   initCommands();
 
-  // Listen for page load events for OpenSearch discovery
-  api.pubsub.subscribe('page:loaded', handlePageLoaded);
+  // Settings + engines are loaded; release any discovery events that
+  // arrived during the wake window above.
+  resolveInitReady();
 
   // Listen for settings updates from Settings UI
   api.pubsub.subscribe('websearch:settings-update', async (msg) => {

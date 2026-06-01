@@ -16,8 +16,8 @@
       "title": "Web Search",
       "role": "workspace",
       "key": "websearch-home",
-      "resident": true,
-      "keepLive": true
+      "lazy": true,
+      "lazyEvents": ["page:search-engine-discovered"]
     }
   ],
   "capabilities": {
@@ -28,6 +28,7 @@
         "ext:websearch:shutdown",
         "app:shutdown",
         "page:loaded",
+        "page:search-engine-discovered",
         "window:closed",
         "websearch:*",
         "cmd:execute:*"

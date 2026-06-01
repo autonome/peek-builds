@@ -272,6 +272,38 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
     unsubscribe('peek://test-tile-6/bg', 'test6:open');
   });
 
+  it('wakes the websearch-style tile on page:search-engine-discovered and delivers the deferred payload', async () => {
+    // Mirrors the real websearch manifest after the lazy conversion:
+    // a single hidden tile whose lazyEvent is the core semantic
+    // search-engine-discovery event. Publishing that topic must launch
+    // the tile exactly once and deliver the {pageUrl, opensearchUrl}
+    // payload to the (post-ready) discovery handler — no real fetch.
+    const manifest = makeManifest('websearch', ['page:search-engine-discovered']);
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
+
+    const received: unknown[] = [];
+    launcherState.onLaunch = () => {
+      subscribe('peek://websearch/bg', 'page:search-engine-discovered', (msg) => {
+        received.push(msg);
+      });
+      signalReady(launcherState, 'websearch', 'background');
+    };
+
+    const payload = {
+      pageUrl: 'https://example.com/',
+      opensearchUrl: 'https://example.com/osd.xml',
+    };
+    publish('peek://test-publisher', 'page:search-engine-discovered', payload);
+    for (let i = 0; i < 10; i++) await flushMicrotasks();
+
+    assert.strictEqual(launcherState.launchCalls.length, 1, 'websearch tile should launch exactly once');
+    assert.strictEqual(launcherState.launchCalls[0].manifest.id, 'websearch');
+    assert.strictEqual(received.length, 1, 'discovery handler should receive the deferred payload post-ready');
+    assert.deepStrictEqual(received[0], payload);
+
+    unsubscribe('peek://websearch/bg', 'page:search-engine-discovered');
+  });
+
   it('topic not declared anywhere bypasses the hook entirely', async () => {
     // Register a tile with a specific lazyEvent topic — an unrelated
     // publish must not go through the dispatch hook (no launch, no defer).

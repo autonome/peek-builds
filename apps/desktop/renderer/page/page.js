@@ -2583,6 +2583,22 @@ webview.addEventListener('did-finish-load', async () => {
 
   DEBUG && console.log('[page] page:loaded published:', pageUrl, opensearchUrl ? `(OpenSearch: ${opensearchUrl})` : '');
 
+  // Semantic search-engine-discovery event. Fired only when this page
+  // actually advertises an OpenSearch descriptor. This is the lazy-wake
+  // trigger for the websearch feature: the websearch tile declares
+  // `lazyEvents: ["page:search-engine-discovered"]`, so it boots (hidden)
+  // on first such event and runs its fetch/parse/record there — no
+  // resident page:loaded listener at boot. The websearch LOGIC stays in
+  // the websearch renderer; core only fires the event off the same
+  // lightweight DOM detection it already does for page:loaded.
+  if (opensearchUrl) {
+    api.publish('page:search-engine-discovered', {
+      pageUrl,
+      opensearchUrl
+    });
+    DEBUG && console.log('[page] page:search-engine-discovered published:', pageUrl, opensearchUrl);
+  }
+
   // Restore scroll position if this window was reopened via undo-close
   if (restoreScrollX || restoreScrollY) {
     try {
