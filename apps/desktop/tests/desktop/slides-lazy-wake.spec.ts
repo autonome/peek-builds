@@ -40,9 +40,12 @@ import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 import { waitForExtensionsReady } from '../helpers/window-utils';
+import http from 'http';
 
 let app: DesktopApp;
 let bgWindow: Page;
+let server: http.Server;
+let serverPort: number;
 
 /** True iff any live BrowserWindow's URL contains the given substring. */
 const windowUrlExists = (needle: string): Promise<boolean> =>
@@ -134,12 +137,29 @@ const closeWindowId = (id: number): Promise<void> =>
 test.describe('Slides Lazy Wake @desktop', () => {
   test.beforeAll(async () => {
     ({ app, bgWindow } = await createPerDescribeApp('slides-lazy-wake'));
+
+    // Stand up a trivial local http server so test (d) has a LOADABLE,
+    // distinct slide address (an unresolvable DNS host makes app.window.open
+    // return success:false). Mirrors boot-window-inventory.spec.ts.
+    await new Promise<void>((resolve) => {
+      server = http.createServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(`<!DOCTYPE html><html><head><title>${req.url}</title></head><body><h1>${req.url}</h1></body></html>`);
+      });
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address();
+        serverPort = typeof addr === 'object' && addr ? addr.port : 0;
+        resolve();
+      });
+    });
+
     // Gate on core/cmd readiness so the load-on-dispatch hook is wired
     // before we probe.
     await waitForExtensionsReady(bgWindow, 15000);
   });
 
   test.afterAll(async () => {
+    if (server) server.close();
     if (app) await app.close();
   });
 
@@ -198,7 +218,7 @@ test.describe('Slides Lazy Wake @desktop', () => {
     // slides is awake now (from the previous test). Drive the window-open
     // pipeline with the slides identity contract (key = address:edge) — same
     // params slides emit. Using a distinct address so this test owns its key.
-    const addr = 'https://slide-lazy-identity.example.com';
+    const addr = `http://127.0.0.1:${serverPort}/slide-identity`;
 
     // Open edge=Up.
     const first = await openSlideForEdge('Up', addr);
