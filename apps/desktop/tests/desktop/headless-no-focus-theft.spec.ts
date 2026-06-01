@@ -158,4 +158,48 @@ test.describe('headless no focus theft @desktop', () => {
       await (window as any).app.window.close(id);
     }, result.id);
   });
+
+  // ---------------------------------------------------------------------------
+  // Regression guard for the ~30s desktop freeze: headless must NEVER grab a
+  // system-wide Escape hotkey. On a real display the ESC fallback registers a
+  // global shortcut when Peek is active with no focused window; in headless,
+  // appFocused is stuck true and opacity-0 windows leave getFocusedWindow()
+  // null, so without the !isHeadless() guard (main.ts updateEscGlobalRegistration)
+  // every focus/blur would grab Escape OS-wide and thrash it across workers.
+  // ---------------------------------------------------------------------------
+
+  test('headless never registers the system-wide Escape global shortcut', async () => {
+    if (!app.evaluateMain) throw new Error('evaluateMain not available');
+
+    // Open then close a window to drive browser-window-focus/blur — the events
+    // that trigger updateEscGlobalRegistration on a real display.
+    const result = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('https://example.com', {
+        role: 'quick-view',
+        modal: true,
+        canvas: true,
+        type: 'panel',
+        width: 800,
+        height: 600,
+        key: 'test-esc-global-shortcut',
+        center: true,
+      });
+    });
+    expect(result.success).toBe(true);
+
+    const escRegistered = await app.evaluateMain<boolean>(({ globalShortcut }) => {
+      return globalShortcut.isRegistered('Escape');
+    });
+    expect(escRegistered).toBe(false);
+
+    await bgWindow.evaluate(async (id: number) => {
+      await (window as any).app.window.close(id);
+    }, result.id);
+
+    // After teardown churn it must still be unregistered.
+    const escRegisteredAfter = await app.evaluateMain<boolean>(({ globalShortcut }) => {
+      return globalShortcut.isRegistered('Escape');
+    });
+    expect(escRegisteredAfter).toBe(false);
+  });
 });

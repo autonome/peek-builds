@@ -1081,7 +1081,9 @@ export function registerWindowHandlers(): void {
     console.log(`[window-open:bounds] url=${url.substring(0, 80)} final position: (${winOptions.x},${winOptions.y}) ${winOptions.width}x${winOptions.height}${useCanvas ? " [canvas]" : ""}`);
 
     // Pass through optional BrowserWindow properties from caller
-    if (options.alwaysOnTop !== undefined) winOptions.alwaysOnTop = !!options.alwaysOnTop;
+    // Headless never floats a window above the user's real desktop (mirrors the
+    // gated setAlwaysOnTop reinforcement below).
+    if (options.alwaysOnTop !== undefined) winOptions.alwaysOnTop = !isHeadless() && !!options.alwaysOnTop;
     if (options.focusable !== undefined) winOptions.focusable = !!options.focusable;
     if (options.skipTaskbar !== undefined) winOptions.skipTaskbar = !!options.skipTaskbar;
     if (options.hasShadow !== undefined && !useCanvas) winOptions.hasShadow = !!options.hasShadow;

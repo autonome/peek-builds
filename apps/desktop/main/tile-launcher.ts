@@ -63,7 +63,7 @@ import {
   setTokenOwner,
 } from './tile-tokens.js';
 import { publish, getSystemAddress, unsubscribeAll } from './pubsub.js';
-import { DEBUG, getTilePreloadPath } from './config.js';
+import { DEBUG, getTilePreloadPath, isHeadless } from './config.js';
 import { loadSchemaDefaults } from './tile-settings-defaults.js';
 import { getTilePath } from './protocol.js';
 import * as tileLifecycle from './tile-lifecycle.js';
@@ -302,7 +302,7 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
     // `frame: true` in the manifest.
     frame: hints?.frame === true,
     transparent: transparentResolved,
-    alwaysOnTop: hints?.alwaysOnTop === true,
+    alwaysOnTop: !isHeadless() && hints?.alwaysOnTop === true,
     focusable: hints?.focusable !== false,
     resizable: hints?.resizable !== false,
     title: hints?.title || manifest?.name,

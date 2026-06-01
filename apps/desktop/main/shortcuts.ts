@@ -10,7 +10,7 @@
  * NOTE: Shared copy lives in app/lib/shortcuts.js for frontend/Tauri use.
  */
 
-import { DEBUG } from './config.js';
+import { DEBUG, isHeadless } from './config.js';
 import { checkModeConditions, type MajorModeId } from './datastore.js';
 
 // Lazy-load Electron modules to allow testing without Electron
@@ -190,6 +190,14 @@ export function registerGlobalShortcut(
 ): Error | undefined {
   DEBUG && console.log('registerGlobalShortcut', shortcut);
 
+  // Headless test runs must never grab OS-wide hotkeys on the user's real
+  // machine (the packaged build has a live globalShortcut). Mirror the
+  // no-globalShortcut branch: record state for queries, skip the actual grab.
+  if (isHeadless()) {
+    globalShortcuts.set(shortcut, source);
+    return undefined;
+  }
+
   const accelerator = platformShortcut(shortcut);
 
   // globalShortcut not available in test mode
@@ -232,6 +240,13 @@ export function registerGlobalShortcut(
  */
 export function unregisterGlobalShortcut(shortcut: string): Error | undefined {
   DEBUG && console.log('unregisterGlobalShortcut', shortcut);
+
+  // Headless: we never grabbed the OS hotkey (see registerGlobalShortcut), so
+  // just drop the tracked state.
+  if (isHeadless()) {
+    globalShortcuts.delete(shortcut);
+    return undefined;
+  }
 
   // globalShortcut not available in test mode
   if (!globalShortcut) {
