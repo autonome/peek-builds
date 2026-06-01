@@ -138,15 +138,17 @@ const commandDefinitions = [
 
 // ===== Registration =====
 
-let registeredShortcut = null;
 let registeredCommands = [];
 
-const initShortcut = (shortcut) => {
-  api.shortcuts.register(shortcut, () => {
-    openWindowsView();
-  }, { global: true });
-  registeredShortcut = shortcut;
-};
+// NOTE: the global shortcut (CommandOrControl+Shift+W → windows) is no
+// longer registered here. Now that this is a LAZY tile, the renderer
+// isn't running at boot, so it can't own the OS hotkey. The generic
+// main-side registrar (apps/desktop/main/feature-shortcut-registrar.ts)
+// reads the manifest `shortcuts[]` and registers the global accelerator
+// with a callback that publishes `cmd:execute:windows` — which wakes
+// THIS tile via the load-on-dispatch hook and lands on the
+// `cmd:execute:windows` subscription below. Registering it here too
+// would double-register the same accelerator.
 
 const initCommands = async () => {
   commandDefinitions.forEach(cmd => {
@@ -170,8 +172,6 @@ const init = async () => {
   // Load settings from datastore
   currentSettings = await loadSettings();
 
-  initShortcut(currentSettings.prefs.shortcutKey);
-
   // Register commands (cmd loads first with its subscribers ready via 100ms head start)
   initCommands();
 
@@ -188,10 +188,8 @@ const init = async () => {
 
 const uninit = () => {
   console.log('[ext:windows] uninit');
-  if (registeredShortcut) {
-    api.shortcuts.unregister(registeredShortcut, { global: true });
-    registeredShortcut = null;
-  }
+  // The global shortcut is owned by the main-side registrar now (see the
+  // note in the Registration section); nothing renderer-side to unregister.
   uninitCommands();
 };
 

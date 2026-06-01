@@ -18,13 +18,14 @@
  *   - peeks           peek://peeks/...        (resident: true)
  *   - slides          peek://slides/...       (resident: true)
  *   - websearch       peek://websearch/...    (resident: true, keepLive)
- *   - windows         peek://windows/...      (resident: true)
  * Each is its own BrowserWindow + renderer webContents. That is the
- * PRODUCTION fixed set (5). mcp-server is now lazy (no resident entry) and
- * is NOT in the boot set; it loads on first command invocation. Under
+ * PRODUCTION fixed set (4). mcp-server AND windows are now lazy (no
+ * resident entry) and are NOT in the boot set; each loads on first
+ * command invocation (windows additionally wakes on its manifest global
+ * hotkey via the main-side feature-shortcut-registrar). Under
  * E2E_TEST=true the boot inventory also carries a settings host
  * (peek://app/settings/) and the test-fixture renderer (peek://test/), so
- * the measured fixed count here is 7.
+ * the measured fixed count here is 6.
  *
  * Page-host windows (peek://app/page/...) each carry TWO webContents: the
  * host window + an embedded <webview> loading real content. Restored
@@ -50,14 +51,14 @@ let server: http.Server;
 let serverPort: number;
 
 // URL substrings that MUST all be present among the boot windows before we
-// consider the fixed inventory settled. core + 4 resident builtin tiles.
-// mcp-server is now lazy (no resident entry) — it no longer appears at boot.
+// consider the fixed inventory settled. core + 3 resident builtin tiles.
+// mcp-server AND windows are now lazy (no resident entry) — neither appears
+// at boot; windows wakes on its global hotkey / cmd:execute:windows.
 const EXPECTED_RESIDENT_URLS = [
   'peek://app/background.html',
   'peek://peeks/',
   'peek://slides/',
   'peek://websearch/',
-  'peek://windows/',
 ];
 
 interface WindowInfo { id: number; url: string; title: string; visible: boolean; }
@@ -231,21 +232,23 @@ test.describe('Boot Window Inventory @desktop', () => {
     expect(pageHostWebviews).toBe(K);
 
     // ── 4. Regression assertion on the FIXED background-window count ───────
-    // Observed fixed count after mcp-server was made lazy (epic d8e7efa5): 7.
+    // Observed fixed count after mcp-server AND windows were made lazy
+    // (epic d8e7efa5): 6.
     // Breakdown:
     //   - peek://app/background.html      core orchestrator
     //   - peek://peeks/background.html    resident tile
     //   - peek://slides/background.html   resident tile
     //   - peek://websearch/home.html      resident tile (keepLive)
-    //   - peek://windows/background.html  resident tile
     //   - peek://app/settings/settings.html  settings host present at boot
     //   - peek://test/index.html          E2E test-fixture renderer
     //                                     (test-only; only when E2E_TEST=true)
-    // So the PRODUCTION fixed background-window count is 5 (core + 4 resident
-    // tiles); the extra 2 here are settings + the test fixture. mcp-server is
-    // now lazy (no resident entry) and is no longer in the boot set.
-    // Ceiling is observed+1 (= 8) so a NEW resident tile sneaking into the
+    // So the PRODUCTION fixed background-window count is 4 (core + 3 resident
+    // tiles); the extra 2 here are settings + the test fixture. mcp-server and
+    // windows are now lazy (no resident entry) and are no longer in the boot
+    // set; windows wakes on its global hotkey via the main-side
+    // feature-shortcut-registrar publishing cmd:execute:windows.
+    // Ceiling is observed+1 (= 7) so a NEW resident tile sneaking into the
     // boot set fails the test.
-    expect(fixedWindowCount).toBeLessThanOrEqual(8);
+    expect(fixedWindowCount).toBeLessThanOrEqual(7);
   });
 });

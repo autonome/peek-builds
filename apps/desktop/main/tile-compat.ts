@@ -7,6 +7,7 @@
 import { type TileManifest } from './tile-manifest.js';
 import { launchTile, type TileLaunchResult } from './tile-launcher.js';
 import { registerLazyTile } from './tile-lazy.js';
+import { registerManifestShortcuts } from './feature-shortcut-registrar.js';
 import { registerTileIpcHandlers } from './tile-ipc.js';
 import { registerTilePath } from './protocol.js';
 import { DEBUG } from './config.js';
@@ -85,6 +86,13 @@ export function loadTile(
     // Lazy load: register command stubs and/or event interceptors.
     // The tile is loaded on first command invocation or first lazy event publish.
     registerLazyTile(manifest, tile.path, config.tilePreloadPath);
+    // A lazy tile's renderer isn't running, so it can't register its own
+    // manifest `shortcuts[]` global hotkey. The generic main-side
+    // registrar owns it instead: each shortcut's keypress publishes
+    // `cmd:execute:<command>`, which the load-on-dispatch hook routes
+    // into waking this very tile. Feature-agnostic — serves any lazy
+    // tile declaring shortcuts[].
+    registerManifestShortcuts(manifest);
     DEBUG && console.log(`[tile-compat] Registered ${tile.id} for lazy loading`);
     return null;
   }

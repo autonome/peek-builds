@@ -52,6 +52,7 @@ import {
   // PubSub
   publish,
   subscribe,
+  unsubscribe,
   getSystemAddress,
   // IPC
   registerAllHandlers,
@@ -277,6 +278,51 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
       } catch { /* ignore */ }
     }
     return last;
+  },
+  /**
+   * Publish `cmd:execute:<command>` on the System address — the exact
+   * output of the feature-shortcut-registrar's global-hotkey callback
+   * (apps/desktop/main/feature-shortcut-registrar.ts). Used by the lazy
+   * windows-wake spec to drive the load-on-dispatch hook WITHOUT
+   * injecting OS keys (no virtual display on macOS-headless). Mirrors
+   * `deps.publish(deps.getSystemAddress(), 'cmd:execute:' + command, {})`.
+   */
+  publishCmdExecute: (command: string): void => {
+    publish(getSystemAddress(), `cmd:execute:${command}`, {});
+  },
+  /**
+   * Resolve when the given tile reaches `state` (an FSM state name such
+   * as 'ready' / 'visible'). Subscribes to the System-owned, read-only
+   * `tile:state-changed` observer topic — the same in-process pubsub the
+   * tile-lifecycle engine publishes on every transition — so the wait is
+   * synchronized on a REAL FSM transition, never a timer.
+   *
+   * If the tile is already AT (or past) the target when called, the
+   * caller should instead synchronize on a committed signal (e.g. the
+   * window's presence): this only fires on a fresh transition INTO
+   * `state`. Resolves with the transition payload; rejects on timeout so
+   * a regression surfaces as a failure rather than a hang.
+   */
+  waitForTileState: (tileId: string, state: string, timeoutMs = 15000): Promise<unknown> => {
+    return new Promise((resolve, reject) => {
+      const observerSource = `peek://test/tile-state-observer/${tileId}/${state}/${Date.now()}`;
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        unsubscribe(observerSource, 'tile:state-changed');
+        reject(new Error(`waitForTileState timed out: ${tileId} never reached ${state}`));
+      }, timeoutMs);
+      subscribe(observerSource, 'tile:state-changed', (msg: unknown) => {
+        const m = msg as { tileId?: string; to?: string };
+        if (m?.tileId !== tileId || m?.to !== state) return;
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        unsubscribe(observerSource, 'tile:state-changed');
+        resolve(msg);
+      });
+    });
   },
 };
 (globalThis as any).__peek_electron = { globalShortcut };
