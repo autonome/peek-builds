@@ -5,6 +5,9 @@
  * All Electron-specific code lives here.
  */
 
+// MUST be first: sets the macOS headless activation policy before any other
+// (side-effectful) import runs, minimizing the launch-time focus flash.
+import './headless-policy.js';
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import fs from 'node:fs';
@@ -1473,7 +1476,11 @@ if (isHeadless() && process.platform === 'darwin' && app.dock) {
 // menubar during headless test runs. See tasks d9bb2924 (focus steal) and
 // cdf2e5f8 (menubar churn).
 if (isHeadless() && process.platform === 'darwin' && app.setActivationPolicy) {
-  app.setActivationPolicy('accessory');
+  // EXPERIMENT: 'prohibited' (vs 'accessory') — accessory still lets a freshly
+  // launched instance activate/grab focus; prohibited forbids the app from ever
+  // becoming the active application. Testing whether it kills the launch dip
+  // without breaking focus/blur-dependent tests (transient-on-blur / izui).
+  app.setActivationPolicy('prohibited');
 }
 
 // Headless strict guard: no BrowserWindow must appear visible immediately
