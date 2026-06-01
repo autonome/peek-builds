@@ -845,8 +845,13 @@ export function registerWindowHandlers(): void {
       // setOpacity call.
       opacity: isHeadless() ? 0 : undefined,
       // Canvas pages: transparent minimal window, no shadow, no OS resize (we handle it via setBounds)
-      transparent: useCanvas ? true : (options.transparent || false),
-      backgroundColor: (useCanvas || options.transparent) ? undefined : getSystemThemeBackgroundColor(),
+      // Headless test runs: canvas windows are opacity:0 (invisible) anyway, so make
+      // them OPAQUE instead of transparent. This keeps the full-screen geometry (bounds
+      // round-trip tests still pass) but eliminates the per-pixel ALPHA COMPOSITING that
+      // otherwise saturates macOS WindowServer when many full-screen page-host canvas
+      // windows exist at once (e.g. session restore across parallel test workers).
+      transparent: (useCanvas && !isHeadless()) ? true : (options.transparent || false),
+      backgroundColor: ((useCanvas && !isHeadless()) || options.transparent) ? undefined : getSystemThemeBackgroundColor(),
       ...(useCanvas ? { hasShadow: false, resizable: false } : {}),
       webPreferences: {
         ...options.webPreferences,
