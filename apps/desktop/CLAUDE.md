@@ -53,6 +53,15 @@ Content and child-content web pages use a **fullscreen transparent canvas** Brow
 3. All elements (`<webview>`, navbar, resize handle) are `position: absolute` siblings. Positions set via inline styles by `updatePositions()` based on `bounds` URL params.
 4. Drag/resize uses a custom mousedown handler — no `-webkit-app-region: drag`.
 
+**Headless perf exception (do not "fix" as a bug):** under `isHeadless()` the canvas
+window is created **opaque** (`ipc.ts` — `transparent: useCanvas && !isHeadless()`),
+not transparent. It's `opacity:0` (invisible) in tests anyway, and a full-screen
+*transparent* window forces per-pixel alpha compositing that saturates macOS
+`WindowServer` when many page-host windows exist (e.g. session restore at parallel
+workers). Opaque keeps the full-screen geometry (bounds round-trip tests pass) and
+cut measured WindowServer from 56–75% → 38–49%. Visible/prod behavior is unchanged.
+More desktop test-run perf levers: peek `d8e7efa5` / memory `project_headless_test_perf`.
+
 See "Page View Canvas Architecture" in `DEVELOPMENT.md` for the canonical description.
 
 ---
