@@ -2770,8 +2770,12 @@ async function render() {
       // prefix — the auto-open Visited dropdown surfaces alternatives so the user
       // can arrow/click to correct. (Inline append only renders for the prefix
       // case; this guard is independent of that.)
+      // A typed VALID URL (e.g. "example.com") opens via the isURL path below,
+      // not the history ghost — otherwise a substring history match would hijack
+      // a literal address the user explicitly typed.
       const hasUrlGhost = !!urlGhostSuggestion &&
-        state.matches.length === 0;
+        state.matches.length === 0 &&
+        !urlResult.valid;
 
       machine.dispatch(Events.ENTER, {
         value: commandInput.value,
