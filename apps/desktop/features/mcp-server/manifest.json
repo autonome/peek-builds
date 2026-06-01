@@ -9,8 +9,7 @@
   "tiles": [
     {
       "id": "background",
-      "url": "background.html",
-      "resident": true
+      "url": "background.html"
     }
   ],
   "capabilities": {

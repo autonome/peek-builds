@@ -18,12 +18,13 @@
  *   - peeks           peek://peeks/...        (resident: true)
  *   - slides          peek://slides/...       (resident: true)
  *   - websearch       peek://websearch/...    (resident: true, keepLive)
- *   - mcp-server      peek://mcp-server/...   (resident: true)
  *   - windows         peek://windows/...      (resident: true)
  * Each is its own BrowserWindow + renderer webContents. That is the
- * PRODUCTION fixed set (6). Under E2E_TEST=true the boot inventory also
- * carries a settings host (peek://app/settings/) and the test-fixture
- * renderer (peek://test/), so the measured fixed count here is 8.
+ * PRODUCTION fixed set (5). mcp-server is now lazy (no resident entry) and
+ * is NOT in the boot set; it loads on first command invocation. Under
+ * E2E_TEST=true the boot inventory also carries a settings host
+ * (peek://app/settings/) and the test-fixture renderer (peek://test/), so
+ * the measured fixed count here is 7.
  *
  * Page-host windows (peek://app/page/...) each carry TWO webContents: the
  * host window + an embedded <webview> loading real content. Restored
@@ -49,13 +50,13 @@ let server: http.Server;
 let serverPort: number;
 
 // URL substrings that MUST all be present among the boot windows before we
-// consider the fixed inventory settled. core + 5 resident builtin tiles.
+// consider the fixed inventory settled. core + 4 resident builtin tiles.
+// mcp-server is now lazy (no resident entry) — it no longer appears at boot.
 const EXPECTED_RESIDENT_URLS = [
   'peek://app/background.html',
   'peek://peeks/',
   'peek://slides/',
   'peek://websearch/',
-  'peek://mcp-server/',
   'peek://windows/',
 ];
 
@@ -230,23 +231,21 @@ test.describe('Boot Window Inventory @desktop', () => {
     expect(pageHostWebviews).toBe(K);
 
     // ── 4. Regression assertion on the FIXED background-window count ───────
-    // Observed fixed count at the time this baseline was written: 8.
+    // Observed fixed count after mcp-server was made lazy (epic d8e7efa5): 7.
     // Breakdown:
     //   - peek://app/background.html      core orchestrator
     //   - peek://peeks/background.html    resident tile
     //   - peek://slides/background.html   resident tile
     //   - peek://websearch/home.html      resident tile (keepLive)
-    //   - peek://mcp-server/background.html resident tile
     //   - peek://windows/background.html  resident tile
     //   - peek://app/settings/settings.html  settings host present at boot
     //   - peek://test/index.html          E2E test-fixture renderer
     //                                     (test-only; only when E2E_TEST=true)
-    // So the PRODUCTION fixed background-window count is 6 (core + 5 resident
-    // tiles); the extra 2 here are settings + the test fixture. Ceiling is
-    // observed+1 (= 9) so a NEW resident tile sneaking into the boot set fails
-    // the test. TIGHTEN this ceiling after the resident-tile consolidation
-    // lands (epic d8e7efa5) — the whole point of the consolidation is to drive
-    // this number DOWN, and the guard should track that win.
-    expect(fixedWindowCount).toBeLessThanOrEqual(9);
+    // So the PRODUCTION fixed background-window count is 5 (core + 4 resident
+    // tiles); the extra 2 here are settings + the test fixture. mcp-server is
+    // now lazy (no resident entry) and is no longer in the boot set.
+    // Ceiling is observed+1 (= 8) so a NEW resident tile sneaking into the
+    // boot set fails the test.
+    expect(fixedWindowCount).toBeLessThanOrEqual(8);
   });
 });

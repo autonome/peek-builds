@@ -49,11 +49,10 @@ test('v2 trustedBuiltin tile → v2 trustedBuiltin tile pubsub round-trip', asyn
   // Subscriber: any eager feature tile. The candidate list reflects
   // which builtin features still load a tile at startup — earlier
   // entries (entities, page, me, atproto) used to be eager; entities
-  // went lazy in plan 3d7d9239 stage 4a. Update if the eager set
-  // shrinks further.
+  // went lazy in plan 3d7d9239 stage 4a; mcp-server went lazy in
+  // epic d8e7efa5. Update if the eager set shrinks further.
   const subWin =
     findTileWindow(sharedApp, 'peek://websearch/') ||
-    findTileWindow(sharedApp, 'peek://mcp-server/') ||
     findTileWindow(sharedApp, 'peek://peeks/') ||
     findTileWindow(sharedApp, 'peek://slides/');
 
