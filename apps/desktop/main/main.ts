@@ -11,7 +11,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-import { initDatabase, closeDatabase, getDb, getContextEntry } from './datastore.js';
+import { initDatabase, closeDatabase, getDb, getContextEntry, normalizeUrl } from './datastore.js';
 import { installDebugFlagsPersistence } from './debug-flag-store.js';
 import { registerScheme, initProtocol, registerTilePath, getTilePath, getRegisteredTileIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
 import { initCore, getCoreBackgroundWindow } from './core-glue.js';
@@ -1220,8 +1220,19 @@ export function findWindowByKey(source: string, key: string): { id: number; wind
 export function findWindowByUrl(url: string): { id: number; window: BrowserWindow; data: unknown } | null {
   if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return null;
 
+  // Normalize the target once. Match registry addresses on their normalized
+  // form too, so a re-open of the SAME page that differs only in trailing
+  // slash, default port, or query-param order (e.g. `http://x/` vs `http://x`)
+  // is recognized as already-open instead of spawning a duplicate window.
+  // Reuses datastore's canonical `normalizeUrl` — the same helper `findUrlItem`
+  // uses — so window dedupe and item lookup agree on URL identity.
+  const normalizedTarget = normalizeUrl(url);
+
   for (const [id, win] of windowRegistry) {
-    if (win.params && win.params.address === url) {
+    const address = win.params && typeof win.params.address === 'string'
+      ? (win.params.address as string)
+      : null;
+    if (address && normalizeUrl(address) === normalizedTarget) {
       // Only match page-host windows (canvas pages), not peeks, slides, modals, etc.
       const role = win.params.role;
       if (role !== 'content' && role !== 'child-content') continue;

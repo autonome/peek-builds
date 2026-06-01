@@ -1,0 +1,151 @@
+import { test, expect, DesktopApp } from '../fixtures/desktop-app';
+import { Page } from '@playwright/test';
+import { createPerDescribeApp } from '../helpers/test-app';
+import { waitForExtensionsReady, waitForAppReady } from '../helpers/window-utils';
+
+/**
+ * Regression for peek task de704b10: opening (via the cmd palette) a URL that
+ * is ALREADY open in a live content window must FOCUS/RAISE that window rather
+ * than spawning a duplicate. The fix normalizes the URL (datastore.normalizeUrl)
+ * when matching the window registry, so `https://example.com` (typed) and the
+ * registry's `https://example.com/` (normalized) are recognized as the same
+ * target. This test asserts the user-observable outcome — unchanged content-
+ * window count + the existing window raised — independent of that internal.
+ */
+test.describe('Cmd URL window reuse @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('cmd-url-window-reuse'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  // Open the cmd panel, type `text`, press Enter. Synchronizes on the panel's
+  // FSM leaving TYPING (it transitions to EXECUTING/CLOSING/IDLE once the URL
+  // open IPC has been dispatched) — deterministic, no fixed sleep. Because the
+  // reuse-vs-create decision happens synchronously inside the awaited
+  // window-open IPC, the window-list state is final by the time this resolves.
+  const openViaCmd = async (text: string) => {
+    const openResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 50,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true,
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await cmdWindow.fill('input', text);
+    await cmdWindow.keyboard.press('Enter');
+    // Wait for the panel to leave TYPING — the Enter has been handled and the
+    // URL-open dispatched. Tolerate the panel already having closed (terminal).
+    try {
+      await cmdWindow.waitForFunction(
+        () => {
+          const s = (window as any)._cmdState;
+          return s && s.currentState && s.currentState !== 'TYPING';
+        },
+        undefined,
+        { timeout: 10000 }
+      );
+    } catch {
+      // Panel window torn down during the wait — that's a terminal post-execute
+      // state, which is exactly what we were waiting for.
+    }
+  };
+
+  // Snapshot of live content windows referencing example.com, fetched via the
+  // window-list IPC. Returns ids + which are focused.
+  const exampleWindows = async (): Promise<{ ids: number[]; focusedIds: number[] }> => {
+    return await bgWindow.evaluate(async () => {
+      const list = await (window as any).app.window.list();
+      const matches = (list.windows || []).filter((w: any) =>
+        w.url && (w.url.includes('example.com') || w.url.includes('example%2Ecom'))
+      );
+      return {
+        ids: matches.map((w: any) => w.id),
+        focusedIds: matches.filter((w: any) => w.focused).map((w: any) => w.id),
+      };
+    });
+  };
+
+  test('opening an already-open URL via cmd reuses the window instead of duplicating', async () => {
+    await waitForExtensionsReady(bgWindow, 15000);
+    await waitForAppReady(bgWindow);
+
+    // Subscribe to window:opened on the bg renderer and accumulate the count of
+    // FRESH example.com window creations into a renderer-side counter. The
+    // reuse path does NOT publish window:opened (it never creates a window), so
+    // this counter is the deterministic signal that distinguishes
+    // "reused existing" (counter stays 1) from "spawned duplicate" (counter 2).
+    await bgWindow.evaluate(() => {
+      const api = (window as any).app;
+      (window as any).__exampleOpenedCount = 0;
+      api.subscribe('window:opened', (msg: any) => {
+        const u = msg?.url || '';
+        if (u.includes('example.com') || u.includes(encodeURIComponent('example.com'))) {
+          (window as any).__exampleOpenedCount++;
+        }
+      });
+    });
+
+    // First open. Typing `example.com` (no trailing slash) means getValidURL
+    // yields `https://example.com`, while the registry stores the normalized
+    // `https://example.com/`. Exact-string matching used to miss this on
+    // re-open and spawn a duplicate; the normalized match must not.
+    await openViaCmd('example.com');
+
+    // Deterministic: wait for the first (and only) creation event.
+    await bgWindow.waitForFunction(
+      () => (window as any).__exampleOpenedCount === 1,
+      undefined,
+      { timeout: 10000 }
+    );
+
+    const afterFirst = await exampleWindows();
+    expect(afterFirst.ids.length).toBe(1);
+    const firstId = afterFirst.ids[0];
+    expect(firstId).toBeGreaterThan(0);
+
+    // Second open of the SAME target via the cmd path. Reuse must raise the
+    // existing window WITHOUT publishing a new window:opened event. openViaCmd
+    // resolves only after the URL-open IPC has been dispatched and resolved, so
+    // the window-list state below is final (the reuse decision is synchronous
+    // inside that IPC).
+    await openViaCmd('example.com');
+
+    // The creation counter must STILL be 1 — no duplicate window was spawned.
+    // This is the core user-observable outcome and the deterministic signal that
+    // distinguishes reuse (counter stays 1) from a duplicate (counter would be 2).
+    const openedCount = await bgWindow.evaluate(() => (window as any).__exampleOpenedCount);
+    expect(openedCount).toBe(1);
+
+    // And the live window set confirms it: exactly one example window, same id.
+    const afterSecond = await exampleWindows();
+    expect(afterSecond.ids.length).toBe(1);
+    expect(afterSecond.ids).toContain(firstId);
+
+    // Focus/raise is only observable with a real display. Under HEADLESS the
+    // reuse path skips show()/focus() (guarded by !isHeadless() in the main
+    // process), and BrowserWindow.isFocused() is unreliable, so only assert the
+    // raised window is focused when a display is attached.
+    if (!process.env.HEADLESS) {
+      expect(afterSecond.focusedIds).toContain(firstId);
+    }
+
+    // Clean up.
+    await bgWindow.evaluate(async (id: number) => {
+      await (window as any).app.window.close(id);
+    }, firstId);
+  });
+});
