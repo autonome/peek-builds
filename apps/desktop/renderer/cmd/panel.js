@@ -1313,14 +1313,18 @@ function triggerUrlGhost(text) {
       const result = await api.datastore.queryItems({ type: 'url', sortBy: 'frecency', limit: 10, search: text });
       if (generation !== urlGhostGeneration) return; // stale
       const allResults = (result.success && result.data) ? result.data : [];
-      const trimmed = text.trim().toLowerCase();
       const filtered = allResults.filter(item => !item.content?.startsWith('peek://'));
-      const match = filtered.find(item => {
-        const m = urlMatchable(item.content).toLowerCase();
-        return m.startsWith(trimmed) && m.length > trimmed.length;
-      });
-      const suggestion = match
-        ? { url: match.content, matchable: urlMatchable(match.content) }
+      // Substring-everywhere: the ghost suggestion is the frecency-best SUBSTRING
+      // match, not a prefix match. The DB query already substring-filtered
+      // (search:text) and frecency-sorted, so filtered[0] is the highest-frecency
+      // url containing the typed text — prefix or not. The bet: frecency predicts
+      // intent, and the auto-open dropdown shows alternatives for fast correction.
+      // When filtered[0] happens to be a prefix, appendUrlGhost still renders the
+      // inline remainder; otherwise the inline completion is silent and the lane
+      // carries it.
+      const best = filtered[0];
+      const suggestion = best
+        ? { url: best.content, matchable: urlMatchable(best.content) }
         : null;
       const urlMatches = filtered.slice(0, URL_RESULT_LANE_LIMIT);
       machine.dispatch(Events.GHOST_RESOLVED, { suggestion, urlMatches });
@@ -2760,12 +2764,14 @@ async function render() {
       const tokens = trimmedText.split(/\s+/).filter(Boolean);
       const allHashtags = tokens.length > 0 && tokens.every(t => /^#[^\s#]+$/.test(t));
 
-      // URL ghost: active when there's a ghost suggestion whose matchable starts
-      // with the current typed text AND there are no command matches
-      // (covers both pre- and post-Tab-accept cases).
+      // URL ghost: active when there's a ghost suggestion (the frecency-best
+      // substring match) and there are no command matches. Substring-everywhere:
+      // Enter opens that match even when the typed text is mid-string and not a
+      // prefix — the auto-open Visited dropdown surfaces alternatives so the user
+      // can arrow/click to correct. (Inline append only renders for the prefix
+      // case; this guard is independent of that.)
       const hasUrlGhost = !!urlGhostSuggestion &&
-        state.matches.length === 0 &&
-        urlGhostSuggestion.matchable.toLowerCase().startsWith(trimmedText.toLowerCase());
+        state.matches.length === 0;
 
       machine.dispatch(Events.ENTER, {
         value: commandInput.value,

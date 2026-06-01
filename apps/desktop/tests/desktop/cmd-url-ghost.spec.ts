@@ -632,3 +632,121 @@ test.describe('cmd URL history Visited lane @desktop', () => {
     await closePanel(panelId);
   });
 });
+
+// Standalone describe (its own app/panel) because this test presses Enter, which
+// drives the panel to CLOSING — keeping it out of the lane describe avoids the
+// keepLive reuse race that back-to-back Enter-closing tests trip on.
+test.describe('cmd URL history substring match @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  // Bug 879c0316: the user's real fastmail URL is a SUBDOMAINED deep link, so the
+  // typed text "fast" is a SUBSTRING of the matchable ("app.fastmail.com/...") but
+  // NOT a prefix. urlMatchable strips only https:// and www., so the old prefix-only
+  // ghost never resolved → "zero matches". Substring-everywhere must surface it and
+  // open it on Enter.
+  const SUBSTRING_URL = 'https://app.fastmail.com/mail/Inbox';
+  const SUBSTRING_QUERY = 'fast';
+
+  async function openPanel(): Promise<{ cmdWindow: Page; panelId: number }> {
+    const openResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 400,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true,
+        keepLive: true,
+        role: 'palette',
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+    await waitForPanelReady(cmdWindow);
+    return { cmdWindow, panelId: openResult.id };
+  }
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('cmd-url-substring'));
+
+    const navResult = await bgWindow.evaluate(async (u: string) => {
+      return await (window as any).app.datastore.trackNavigation(u, {
+        source: 'window',
+        windowType: 'main',
+      });
+    }, SUBSTRING_URL);
+    expect(navResult.success).toBe(true);
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  test('typing "fast" (substring, non-prefix) opens app.fastmail.com on Enter', async () => {
+    const { cmdWindow } = await openPanel();
+
+    await cmdWindow.fill('input', SUBSTRING_QUERY);
+
+    // No command matches "fast"; the subdomained fastmail url arrives as a url match.
+    await cmdWindow.waitForFunction(
+      () => {
+        const s = (window as any)._cmdState;
+        return !!s && (s.matches?.length || 0) === 0 && (s.urlMatches?.length || 0) >= 1;
+      },
+      undefined,
+      { timeout: 8000 }
+    );
+
+    // The ghost suggestion is the substring match — and it is NOT a prefix of the
+    // typed text (proving the substring path, not a prefix match).
+    const ghost = await cmdWindow.evaluate(() => {
+      const s = (window as any)._cmdState;
+      return s && s.urlGhostSuggestion
+        ? { url: s.urlGhostSuggestion.url, matchable: s.urlGhostSuggestion.matchable }
+        : null;
+    });
+    expect(ghost).toBeTruthy();
+    expect(ghost!.url).toBe(SUBSTRING_URL);
+    expect(ghost!.matchable.toLowerCase().startsWith(SUBSTRING_QUERY)).toBe(false);
+
+    // Subscribe to window:opened for the substring url before pressing Enter.
+    await bgWindow.evaluate((url: string) => {
+      (window as any).__substringUrlWindowOpened = null;
+      (window as any).app.subscribe('window:opened', (msg: any) => {
+        if (msg?.url && (msg.url.includes(url) || msg.url.includes(encodeURIComponent(url)))) {
+          (window as any).__substringUrlWindowOpened = msg;
+        }
+      });
+    }, SUBSTRING_URL);
+
+    // Enter — with no ArrowDown — opens the frecency-best substring match.
+    await cmdWindow.keyboard.press('Enter');
+
+    await bgWindow.waitForFunction(
+      () => (window as any).__substringUrlWindowOpened !== null,
+      undefined,
+      { timeout: 10000 }
+    );
+
+    const afterList = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.list();
+    });
+    const openedWindow = afterList.windows?.find((w: { url?: string }) =>
+      w.url && (w.url.includes(SUBSTRING_URL) || w.url.includes(encodeURIComponent(SUBSTRING_URL)))
+    );
+    expect(openedWindow).toBeTruthy();
+
+    if (openedWindow?.id) {
+      try {
+        await bgWindow.evaluate(async (id: number) => {
+          await (window as any).app.window.close(id);
+        }, openedWindow.id);
+      } catch { /* may already be closed */ }
+    }
+  });
+});
