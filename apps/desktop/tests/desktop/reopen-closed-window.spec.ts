@@ -434,34 +434,33 @@ test.describe('Reopen Last Closed Window @desktop', () => {
       api.publish('cmd:execute:open web search', {});
     });
 
-    // Wait for the websearch window to appear, then close it.
-    let websearchId: number | null = null;
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline) {
-      const result = await bgWindow.evaluate(async () => {
-        const r = await (window as any).app.window.list({ includeInternal: true });
-        if (!r.success) return null;
-        const win = r.windows.find((w: any) => (w.url || '').includes('peek://websearch/'));
-        return win?.id ?? null;
-      });
-      if (result != null) {
-        websearchId = result;
-        break;
-      }
-      await sleep(150);
-    }
+    // Wait for the websearch window to appear (committed presence via
+    // getWindow), then resolve its id from the committed window list.
+    const websearchWindow = await app.getWindow('websearch/', 10_000);
+    expect(websearchWindow).toBeTruthy();
+    const websearchId = await bgWindow.evaluate(async () => {
+      const r = await (window as any).app.window.list({ includeInternal: true });
+      if (!r.success) return null;
+      const win = r.windows.find((w: any) => (w.url || '').includes('peek://websearch/'));
+      return win?.id ?? null;
+    });
     expect(websearchId).not.toBeNull();
 
     const stackBeforeWebsearchClose = await getStackCount();
+    // closeWindowById resolves only once the window is destroyed/hidden — the
+    // same 'closed' handler that would push to the stack has already run by
+    // then, so reading the count afterward is deterministic (no settle-wait).
     await closeWindowById(websearchId!);
-    await sleep(300);
     const stackAfterWebsearchClose = await getStackCount();
     // keepLive tile hides — must NOT push.
     expect(stackAfterWebsearchClose).toBe(stackBeforeWebsearchClose);
 
-    // Now close the page tile.
+    // Now close the page tile and wait deterministically for the 'closed'
+    // handler to push it onto the stack (real predicate, not a fixed sleep).
+    const stackBeforePageClose = await getStackCount();
     await closeWindowById(pageId);
-    await sleep(300);
+    const stackAfterPageClose = await waitForStackCount(stackBeforePageClose + 1);
+    expect(stackAfterPageClose).toBe(stackBeforePageClose + 1);
 
     // Reopen — should bring back the page tile, not anything else.
     const result = await reopenViaShortcut();

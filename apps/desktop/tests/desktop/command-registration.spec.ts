@@ -18,52 +18,55 @@ test.describe('Command Registration Performance @desktop', () => {
   });
 
   test('cmd:register-batch is handled by cmd extension', async () => {
-    // Test that batch registration works by sending a batch and verifying commands appear
-    const result = await bgWindow.evaluate(async () => {
-      const api = (window as any).app;
-
-      // Send a batch of test commands
-      api.publish('cmd:register-batch', {
+    // Send a batch of test commands. cmd:register-batch is fire-and-forget;
+    // the registry processes it asynchronously.
+    await bgWindow.evaluate(async () => {
+      (window as any).app.publish('cmd:register-batch', {
         commands: [
           { name: 'test-batch-cmd-1', description: 'Test batch command 1', source: 'test' },
           { name: 'test-batch-cmd-2', description: 'Test batch command 2', source: 'test' },
           { name: 'test-batch-cmd-3', description: 'Test batch command 3', source: 'test' }
         ]
       });
-
-      // Poll for commands to appear (deterministic retry instead of fixed timeout)
-      const maxAttempts = 20;
-      const pollInterval = 100;
-
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        await new Promise(r => setTimeout(r, pollInterval));
-
-        const commands = await new Promise<any[]>((resolve) => {
-          const unsub = api.subscribe('cmd:query-commands-response', (msg: any) => {
-            unsub?.();
-            resolve(msg.commands || []);
-          });
-          api.publish('cmd:query-commands', {});
-          setTimeout(() => resolve([]), 500);
-        });
-
-        const batchCmds = commands.filter((c: any) => c.name.startsWith('test-batch-cmd-'));
-        if (batchCmds.length === 3) {
-          return {
-            totalCommands: commands.length,
-            batchCommandsFound: batchCmds.length,
-            batchCommandNames: batchCmds.map((c: any) => c.name)
-          };
-        }
-      }
-
-      return { totalCommands: 0, batchCommandsFound: 0, batchCommandNames: [] };
     });
 
-    expect(result.batchCommandsFound).toBe(3);
-    expect(result.batchCommandNames).toContain('test-batch-cmd-1');
-    expect(result.batchCommandNames).toContain('test-batch-cmd-2');
-    expect(result.batchCommandNames).toContain('test-batch-cmd-3');
+    // Synchronize on the registry actually carrying the 3 batch commands.
+    // Each evaluation does ONE race-free round-trip: subscribe to the
+    // response topic BEFORE publishing the query, so the producer's
+    // synchronous `cmd:query-commands-response` can't be missed. The
+    // predicate is the real populated command set (not a clock); the cmd
+    // extension's batch-processing latency is absorbed by waitForFunction
+    // re-evaluating the round-trip, and the deadline is a failure deadline.
+    await bgWindow.waitForFunction(async () => {
+      const api = (window as any).app;
+      const commands: any[] = await new Promise((resolve) => {
+        const unsub = api.subscribe('cmd:query-commands-response', (msg: any) => {
+          unsub?.();
+          resolve(msg.commands || []);
+        });
+        api.publish('cmd:query-commands', {});
+      });
+      return commands.filter((c) => c.name.startsWith('test-batch-cmd-')).length === 3;
+    }, undefined, { timeout: 5000 });
+
+    // Read the batch command names out of one more round-trip for assertion.
+    const batchCommandNames = await bgWindow.evaluate(async () => {
+      const api = (window as any).app;
+      const commands: any[] = await new Promise((resolve) => {
+        const unsub = api.subscribe('cmd:query-commands-response', (msg: any) => {
+          unsub?.();
+          resolve(msg.commands || []);
+        });
+        api.publish('cmd:query-commands', {});
+      });
+      return commands
+        .filter((c) => c.name.startsWith('test-batch-cmd-'))
+        .map((c) => c.name);
+    });
+
+    expect(batchCommandNames).toContain('test-batch-cmd-1');
+    expect(batchCommandNames).toContain('test-batch-cmd-2');
+    expect(batchCommandNames).toContain('test-batch-cmd-3');
   });
 
 });

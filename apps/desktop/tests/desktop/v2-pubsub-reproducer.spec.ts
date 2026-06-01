@@ -93,37 +93,41 @@ test('v2 trustedBuiltin tile → v2 trustedBuiltin tile pubsub round-trip', asyn
     }
   });
 
-  // Small buffer: IPC subscribe is async in main.
-  await new Promise(r => setTimeout(r, 200));
+  // 2. Publish from core and confirm receipt. The subscribe IPC commits in
+  //    main asynchronously relative to the renderer (subscribeImpl uses a
+  //    fire-and-forget `ipcRenderer.send`), and pubsub is not retained — a
+  //    publish that races ahead of the subscribe registration is dropped.
+  //    There is no committed-subscription signal to await, so instead of a
+  //    fixed settle-buffer we treat "publish, then the subscriber received"
+  //    as the retried unit, keyed on the REAL receipt predicate
+  //    (__reproReceived populated). expect.poll re-runs publish+check on a
+  //    deterministic interval until receipt — its 5s budget is a failure
+  //    deadline, not a settle-sleep; once the subscribe has committed the
+  //    very next publish lands and the poll resolves.
+  let lastPubResult: any = null;
+  await expect.poll(async () => {
+    lastPubResult = await pubWin.evaluate(() => {
+      const api = (window as any).app;
+      const diag: any = {
+        apiExists: !!api,
+        hasPublish: !!(api && api.publish),
+      };
+      if (api && api.publish) {
+        api.publish('repro:v2-v2-hello', { from: 'core', ts: Date.now() });
+        diag.published = true;
+      }
+      return diag;
+    });
+    return await subWin.evaluate(() => (window as any).__reproReceived !== null);
+  }, {
+    message: 'subscriber never received core publish — v2 pubsub routing broken',
+    timeout: 5000,
+  }).toBe(true);
 
-  // 2. Publish from core.
-  const pubResult = await pubWin.evaluate(() => {
-    const api = (window as any).app;
-    const diag: any = {
-      apiExists: !!api,
-      hasPublish: !!(api && api.publish),
-    };
-    if (api && api.publish) {
-      api.publish('repro:v2-v2-hello', { from: 'core', ts: Date.now() });
-      diag.published = true;
-    }
-    return diag;
-  });
-  console.log('[repro] publish diag:', JSON.stringify(pubResult));
-
-  // 3. Wait for subscriber to receive. 5s is generous — v1 pubsub
-  //    round-trips finish in <50ms.
-  const received = await subWin.waitForFunction(
-    () => (window as any).__reproReceived !== null,
-    undefined,
-    { timeout: 5000 }
-  ).then(h => h.jsonValue()).catch(async () => {
-    const diag = await subWin.evaluate(() => (window as any).__reproDiag);
-    console.log('[repro] sub diag at timeout:', JSON.stringify(diag));
-    return null;
-  });
+  console.log('[repro] publish diag:', JSON.stringify(lastPubResult));
+  const received = await subWin.evaluate(() => (window as any).__reproReceived);
   console.log('[repro] received:', JSON.stringify(received));
 
-  expect(pubResult.published, `core failed to publish: ${JSON.stringify(pubResult)}`).toBe(true);
+  expect(lastPubResult.published, `core failed to publish: ${JSON.stringify(lastPubResult)}`).toBe(true);
   expect(received, 'subscriber never received core publish — v2 pubsub routing broken').not.toBeNull();
 });
