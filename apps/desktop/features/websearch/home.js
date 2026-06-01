@@ -466,6 +466,10 @@ const staticCommandDefinitions = [
     description: 'Search the web with your default search engine',
     params: [{ name: 'query', type: 'string', required: false, description: 'Search query' }],
     execute: async (ctx) => {
+      // A cold cmd-execute wake may deliver this before loadSettings/
+      // loadEngines resolve. Wait so the default engine reflects the user's
+      // saved preference, not the module-load defaults.
+      await initReady;
       const query = extractSearchQuery(ctx);
       if (query) {
         const engine = getDefaultEngine();
@@ -503,6 +507,10 @@ const registerEngineCommands = () => {
       description: `Search ${engine.name}`,
       params: [{ name: 'query', type: 'string', required: false, description: 'Search query' }],
       execute: async (ctx) => {
+        // A cold cmd-execute wake may deliver this before loadSettings/
+        // loadEngines resolve. Wait so the engine list / settings are fully
+        // loaded before we build and open the search URL.
+        await initReady;
         const query = extractSearchQuery(ctx);
         if (query) {
           await executeSearch(engine, query);
@@ -1109,15 +1117,33 @@ const initUi = () => {
   // settings/engines are loaded by the time discovery actually runs.
   api.pubsub.subscribe('page:search-engine-discovered', handleSearchEngineDiscovered);
 
+  // Register command handlers SYNCHRONOUSLY too, in the same turn, BEFORE the
+  // async settings/engine loads below. Same lazy-wake hazard as the discovery
+  // subscribe: a cold `cmd:execute:<websearch-cmd>` that WAKES this tile is
+  // deferred by the load-on-dispatch hook until the tile signals ready, and
+  // ready fires on a setTimeout(0) macrotask that can run before the awaits
+  // below resolve. If command registration happened only after those awaits,
+  // the deferred command would be delivered with no handler registered and
+  // hang (first cold command dropped). Registering here guarantees the
+  // handlers exist before ready. The engine commands registered now cover the
+  // built-in engines (seeded at module load); they're refreshed once
+  // loadEngines() resolves so custom/discovered engines get their keywords.
+  // Each command handler body awaits initReady before reading
+  // settings/engines, so the first cold command still uses fully-loaded state.
+  initCommands();
+
   // Load settings and engines
   currentSettings = await loadSettings();
   await loadEngines();
 
-  // Register commands
-  initCommands();
+  // Refresh engine commands now that custom/discovered engines are loaded
+  // (the early initCommands() above only saw the built-in engines). Mirrors
+  // the same dance addEngine/removeEngine/settings-update already use.
+  unregisterEngineCommands();
+  registerEngineCommands();
 
-  // Settings + engines are loaded; release any discovery events that
-  // arrived during the wake window above.
+  // Settings + engines are loaded; release any discovery events / cold
+  // commands that arrived during the wake window above.
   resolveInitReady();
 
   // Listen for settings updates from Settings UI
