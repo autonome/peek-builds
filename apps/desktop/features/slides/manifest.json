@@ -11,7 +11,15 @@
     {
       "id": "background",
       "url": "background.html",
-      "resident": true
+      "lazy": true,
+      "lazyEvents": ["cli:slide-open", "slides:settings-changed"]
+    }
+  ],
+  "shortcuts": [
+    {
+      "keys": "Option+Up",
+      "wakeTopic": "cli:slide-open",
+      "wakeArgs": ["Up"]
     }
   ],
   "capabilities": {

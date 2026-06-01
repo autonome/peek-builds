@@ -140,59 +140,86 @@ const executeItem = (item) => {
   }
 };
 
+/**
+ * Initialize shortcuts for enabled slides.
+ *
+ * Slides is a LAZY tile: its renderer isn't running at boot, so it cannot
+ * call `api.shortcuts.register({global:true})` to own its global hotkeys
+ * (that's the chicken-and-egg the wake-shortcut registry solves). Instead
+ * we DECLARE the full enabled set to the main process via
+ * `declareWakeShortcuts` — main persists it and registers each per-edge
+ * accelerator (`<prefix><screenEdge>`, e.g. `Option+Up`) as a global wake
+ * hotkey that, when pressed, publishes `cli:slide-open` with
+ * `{args:[screenEdge]}`, waking this tile (lazyEvents) and routing to the
+ * `cli:slide-open` subscriber below, which opens the matching slide. The
+ * dynamic accelerator computation (prefix + edge) STAYS here in the
+ * renderer; main holds only feature-agnostic infra.
+ *
+ * The LOCAL (non-global) fallback registrations remain — they only matter
+ * while this tile is already awake/focused (e.g. Linux/Wayland where the
+ * global grab silently fails), so they don't need the lazy path.
+ */
 const initItems = (prefs, items) => {
   const cmdPrefix = prefs.shortcutKeyPrefix;
 
-  items.forEach(item => {
-    if (item.enabled == true && item.address && item.address.length > 0) {
-      const shortcut = `${cmdPrefix}${item.screenEdge}`;
+  const enabledItems = items.filter(
+    item => item.enabled == true && item.address && item.address.length > 0
+  );
 
-      api.shortcuts.register(shortcut, () => {
-        executeItem(item);
-      }, { global: true });
+  // Declare the full set of global wake hotkeys to main (snapshot /
+  // replace-all). One entry per enabled slide. The accelerator format and
+  // the cli:slide-open arg shape MUST match the `cli:slide-open` subscriber:
+  // it normalizes `String(msg.args[0])` (case-insensitive) and matches it
+  // against the item's `screenEdge`.
+  api.shortcuts.declareWakeShortcuts(
+    enabledItems.map(item => ({
+      accelerator: `${cmdPrefix}${item.screenEdge}`,
+      wakeTopic: 'cli:slide-open',
+      wakeArgs: [item.screenEdge],
+    }))
+  );
 
-      // Local fallback so the shortcut still fires when a Peek window is
-      // focused on platforms (Linux/Wayland) where global registration
-      // silently fails.
-      api.shortcuts.register(shortcut, () => {
-        executeItem(item);
-      });
+  enabledItems.forEach(item => {
+    const shortcut = `${cmdPrefix}${item.screenEdge}`;
 
-      registeredShortcuts.push(shortcut);
-    }
+    // Local fallback so the shortcut still fires when a Peek window is
+    // focused on platforms (Linux/Wayland) where global registration
+    // silently fails. Local-only (no {global:true}) — relevant only while
+    // this tile is already awake; the global path is owned by main's
+    // wake-shortcut registry via declareWakeShortcuts above.
+    api.shortcuts.register(shortcut, () => {
+      executeItem(item);
+    });
+
+    registeredShortcuts.push(shortcut);
   });
 };
 
 /**
- * Unregister all shortcuts and clean up windows
+ * Unregister local fallback shortcuts.
+ *
+ * Only LOCAL fallbacks are registered from this renderer now; the global
+ * wake hotkeys are owned by main's wake-shortcut registry (re-declared on
+ * the next declareWakeShortcuts in initItems), so we don't unregister them
+ * here. We also do NOT tear down open slide windows: window identity is
+ * owned by main's `(source, key)` dedup (findWindowByKey, main.ts) and the
+ * window registry survives a renderer unload. The in-renderer
+ * `slideWindows` Map is only a local cache used while this tile is awake;
+ * it is NOT load-bearing for identity across a wake/unload cycle, so
+ * dropping it here (and re-seeding it lazily on the next executeItem) is
+ * safe — main treats a reopened key as the same window if it's still live,
+ * or a fresh window if it was closed.
  */
 const uninit = () => {
-  console.log('[ext:slides] uninit - unregistering', registeredShortcuts.length, 'shortcuts');
+  console.log('[ext:slides] uninit - unregistering', registeredShortcuts.length, 'local shortcuts');
 
   registeredShortcuts.forEach(shortcut => {
-    api.shortcuts.unregister(shortcut, { global: true });
     api.shortcuts.unregister(shortcut);
   });
   registeredShortcuts = [];
 
-  // Close or hide all slide windows
-  for (const [key, windowId] of slideWindows.entries()) {
-    console.log('[ext:slides] Closing slide window:', key);
-    api.window.hide(windowId).then(result => {
-      if (!result || !result.success) {
-        console.error('[ext:slides] Failed to hide slide window:', result && result.error);
-        // Strict close is fire-and-forget (no return value)
-        try { api.window.close(windowId); } catch (err) {
-          console.error('[ext:slides] Error closing slide window:', err);
-        }
-      }
-    }).catch(err => {
-      console.error('[ext:slides] Error hiding slide window:', err);
-      try { api.window.close(windowId); } catch (closeErr) {
-        console.error('[ext:slides] Error closing slide window:', closeErr);
-      }
-    });
-  }
+  // Drop the local window cache. Open windows are left alone — main owns
+  // their lifecycle and identity; the cache is rebuilt on next executeItem.
   slideWindows.clear();
 };
 
@@ -213,23 +240,16 @@ const reinit = async () => {
 const init = async () => {
   console.log('[ext:slides] init');
 
-  // Load settings from datastore
-  currentSettings = await loadSettings();
-
-  // Add global window closed handler
-  api.pubsub.subscribe('window:closed', (data) => {
-    for (const [key, windowId] of slideWindows.entries()) {
-      if (data.id === windowId) {
-        console.log('[ext:slides] Slide window was closed externally:', key);
-        slideWindows.delete(key);
-      }
-    }
-  });
-
-  // Initialize slides
-  if (currentSettings.items && currentSettings.items.length > 0) {
-    initItems(currentSettings.prefs, currentSettings.items);
-  }
+  // Subscribe to wake topics FIRST — before the async loadSettings() await.
+  // slides is a LAZY tile woken by a `cli:slide-open` / `slides:settings-
+  // changed` lazyEvent: the load-on-dispatch hook re-delivers that publish
+  // once this tile reaches the READY FSM state, which the tile-preload
+  // signals (deferred a tick) inside api.initialize() — i.e. BEFORE this
+  // init()'s awaits resolve. If we subscribed AFTER `await loadSettings()`,
+  // the woken publish would land with no subscriber and be dropped (the
+  // cold-boot subscribe-race). The handlers read `currentSettings` lazily,
+  // so subscribing pre-load is safe; currentSettings is seeded with defaults
+  // (the 'Up' slide enabled) until the datastore read completes.
 
   // Listen for settings changes to hot-reload (GLOBAL scope for cross-process)
   api.pubsub.subscribe('slides:settings-changed', () => {
@@ -238,8 +258,9 @@ const init = async () => {
   });
 
   // CLI verb: open slide on edge. Args: [edge in {Up,Down,Left,Right}].
-  // Case-insensitive on input. See cli-router.ts and
-  // docs/global-hotkeys-on-wayland.md.
+  // Case-insensitive on input. Also the wake target for the static-default /
+  // persisted global hotkeys (see initItems + feature-shortcut-registrar.ts).
+  // See cli-router.ts and docs/global-hotkeys-on-wayland.md.
   api.pubsub.subscribe('cli:slide-open', (msg) => {
     const raw = String(msg?.args?.[0] ?? '');
     const edge = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
@@ -251,6 +272,26 @@ const init = async () => {
     console.log('[ext:slides] cli:slide-open edge=' + edge);
     executeItem(item);
   });
+
+  // Add global window closed handler — prunes the local cache when a slide
+  // window is closed externally. Subscribing pre-load is harmless (the Map
+  // is empty until executeItem populates it).
+  api.pubsub.subscribe('window:closed', (data) => {
+    for (const [key, windowId] of slideWindows.entries()) {
+      if (data.id === windowId) {
+        console.log('[ext:slides] Slide window was closed externally:', key);
+        slideWindows.delete(key);
+      }
+    }
+  });
+
+  // Load settings from datastore
+  currentSettings = await loadSettings();
+
+  // Initialize slides
+  if (currentSettings.items && currentSettings.items.length > 0) {
+    initItems(currentSettings.prefs, currentSettings.items);
+  }
 
   // Listen for settings updates from Settings UI
   // Settings UI sends proposed changes, we validate and save

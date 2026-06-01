@@ -334,6 +334,37 @@ describe('tile-lazy load-on-dispatch (lazyEvents)', () => {
     unsubscribe('peek://peeks/bg', 'cli:peek-open');
   });
 
+  it('wakes the slides-style tile on cli:slide-open and delivers the {args:[edge]} payload', async () => {
+    // Mirrors the real slides manifest after the lazy conversion (STEP 4):
+    // a single hidden tile whose lazyEvents are `cli:slide-open` and
+    // `slides:settings-changed`. The static-default global wake hotkey
+    // (Option+Up) publishes `cli:slide-open` with `{ args: ['Up'] }`; that
+    // must launch the tile exactly once and deliver the payload to the
+    // (post-ready) cli:slide-open handler, which opens the matching slide —
+    // no real window here, just the dispatch contract.
+    const manifest = makeManifest('slides', ['cli:slide-open', 'slides:settings-changed']);
+    registerLazyTile(manifest, '/fake/path', '/fake/tile-preload.cjs');
+
+    const received: unknown[] = [];
+    launcherState.onLaunch = () => {
+      subscribe('peek://slides/bg', 'cli:slide-open', (msg) => {
+        received.push(msg);
+      });
+      signalReady(launcherState, 'slides', 'background');
+    };
+
+    const payload = { args: ['Up'] };
+    publish('peek://test-publisher', 'cli:slide-open', payload);
+    for (let i = 0; i < 10; i++) await flushMicrotasks();
+
+    assert.strictEqual(launcherState.launchCalls.length, 1, 'slides tile should launch exactly once');
+    assert.strictEqual(launcherState.launchCalls[0].manifest.id, 'slides');
+    assert.strictEqual(received.length, 1, 'cli:slide-open handler should receive the deferred payload post-ready');
+    assert.deepStrictEqual(received[0], payload);
+
+    unsubscribe('peek://slides/bg', 'cli:slide-open');
+  });
+
   it('topic not declared anywhere bypasses the hook entirely', async () => {
     // Register a tile with a specific lazyEvent topic — an unrelated
     // publish must not go through the dispatch hook (no launch, no defer).

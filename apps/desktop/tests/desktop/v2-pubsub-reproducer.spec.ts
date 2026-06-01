@@ -3,13 +3,18 @@
  * v1-removal Phase 2.
  *
  * Post-consolidation (cmd + hud + page merged into the core background
- * renderer), the trustedBuiltin tile windows we can use for a pure v2
- * pubsub round-trip are:
- *   - the core background renderer (peek://app/background.html)
- *   - any eager feature tile (e.g. peek://entities/home.html)
+ * renderer), and after the lazy-feature workstream (peek epic d8e7efa5 /
+ * task 921b54b3), there are NO eager feature tiles left at boot — peeks,
+ * slides, websearch, windows and mcp-server are all lazy. So this repro can
+ * no longer just grab whatever feature tile happens to be resident; instead
+ * it DETERMINISTICALLY WAKES a lazy tile (peeks) to READY and uses that
+ * woken renderer as the subscriber:
+ *   - publisher: the core background renderer (peek://app/background.html)
+ *   - subscriber: the peeks tile, woken via its `cli:peek-open` lazyEvent
+ *     (driven through the System hook exactly as its wake hotkey would)
  *
- * core publishes; the feature tile subscribes. If the subscriber never
- * fires, the v2 pubsub routing is broken.
+ * core publishes; the woken feature tile subscribes. If the subscriber
+ * never fires, the v2 pubsub routing is broken.
  */
 
 import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
@@ -46,20 +51,28 @@ test('v2 trustedBuiltin tile → v2 trustedBuiltin tile pubsub round-trip', asyn
     throw new Error(`core window not found. URLs: ${JSON.stringify(urls)}`);
   }
 
-  // Subscriber: any eager feature tile. The candidate list reflects
-  // which builtin features still load a tile at startup — earlier
-  // entries (entities, page, me, atproto) used to be eager; entities
-  // went lazy in plan 3d7d9239 stage 4a; mcp-server went lazy in
-  // epic d8e7efa5. Update if the eager set shrinks further.
-  const subWin =
-    findTileWindow(sharedApp, 'peek://websearch/') ||
-    findTileWindow(sharedApp, 'peek://peeks/') ||
-    findTileWindow(sharedApp, 'peek://slides/');
+  // Subscriber: there are no eager feature tiles at boot anymore (all lazy).
+  // Deterministically WAKE the peeks tile to READY, then use it as the
+  // subscriber. We arm the FSM observer BEFORE firing the wake topic so the
+  // cold-boot READY transition can't race ahead, then publish the exact
+  // output of the peeks wake hotkey: cli:peek-open {args:['0']} on System.
+  const readyPromise = sharedApp.evaluateMain!(((_e: unknown) =>
+    (globalThis as any).__peek_test.waitForTileState('peeks', 'ready', 15000)) as any);
+  await sharedApp.evaluateMain!(((_e: unknown) => {
+    (globalThis as any).__peek_test.publishSystemTopic('cli:peek-open', { args: ['0'] });
+  }) as any);
+  await readyPromise;
+
+  // Now the peeks bg renderer exists. Grab it as the subscriber. getWindow's
+  // timeout is a failure-deadline (the tile is already READY), not a settle-
+  // wait — it just covers the tick between READY and Playwright enumerating
+  // the new BrowserWindow.
+  const subWin = await sharedApp.getWindow('peek://peeks/', 15000);
 
   if (!subWin) {
     throw new Error(
       `No feature tile window found for subscriber pairing. ` +
-      `Available URLs: ${JSON.stringify(urls)}`
+      `Available URLs: ${JSON.stringify(sharedApp.windows().map(w => w.url()))}`
     );
   }
   console.log('[repro] subscriber window:', subWin.url());
