@@ -150,6 +150,16 @@ test.describe('renderer log file @desktop', () => {
   });
 
   test('DevTools open — console.log still reaches renderer.log', async () => {
+    // This test opens a REAL (detached) DevTools window. macOS has no virtual
+    // display, so that window surfaces on the user's physical desktop — and the
+    // central headless neutralization in entry.ts deliberately no-ops
+    // openDevTools, which makes the isDevToolsOpened() assertion below
+    // impossible under headless. Skip on macOS-headless; Linux/Xvfb runs it
+    // against an invisible display where opening DevTools is harmless.
+    test.skip(
+      process.env.HEADLESS === '1' && process.platform === 'darwin',
+      'DevTools opens a real window that surfaces on the macOS desktop; covered on Linux/Xvfb',
+    );
     // Open DevTools on the test fixture renderer to replicate the
     // DEBUG=1 scenario where Chromium suppresses console-message events.
     // The preload wrapper routes via ipcRenderer.send which is independent
