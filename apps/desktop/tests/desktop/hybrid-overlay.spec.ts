@@ -36,15 +36,27 @@ test.describe('Hybrid Chrome Overlay (P1.4b-1) @desktop', () => {
     const boundsA = { x: 100, y: 120, width: 640, height: 480 };
     const boundsB = { x: 800, y: 200, width: 500, height: 700 };
 
-    const ids = await app.evaluateMain!((_e, arg) => {
+    const setup = await app.evaluateMain!((_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       return {
         a: b.makeFakeHybridWindow((arg as any).boundsA),
         b: b.makeFakeHybridWindow((arg as any).boundsB),
+        // Expected EXPANDED overlay frames: content rect + canvas gutters, so the
+        // chrome has gutter to render in around the content (the gutter fix).
+        frameA: b.expectedOverlayFrame((arg as any).boundsA),
+        frameB: b.expectedOverlayFrame((arg as any).boundsB),
+        gutters: b.overlayGutters(),
       };
     }, { boundsA, boundsB });
+    const ids = { a: setup.a, b: setup.b };
 
-    // Activate A → overlay exists, is shown, framed over A.
+    // There IS a gutter (overlay frame strictly larger than the content rect).
+    expect(setup.frameA.width).toBeGreaterThan(boundsA.width);
+    expect(setup.frameA.height).toBeGreaterThan(boundsA.height);
+    expect(setup.gutters.left).toBeGreaterThan(0);
+    expect(setup.gutters.top).toBeGreaterThan(0);
+
+    // Activate A → overlay exists, is shown, framed over A EXPANDED by the gutters.
     const stateA = await app.evaluateMain!((_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       b.setActive((arg as any).id);
@@ -53,9 +65,11 @@ test.describe('Hybrid Chrome Overlay (P1.4b-1) @desktop', () => {
 
     expect(stateA).not.toBeNull();
     expect(stateA.visible).toBe(true);
-    expect(stateA.bounds).toEqual(boundsA);
+    // Overlay = content rect + canvas gutters (NOT the bare content rect): the
+    // content window stays at boundsA, the overlay extends into the gutter.
+    expect(stateA.bounds).toEqual(setup.frameA);
 
-    // Activate B → overlay retargets to B's frame.
+    // Activate B → overlay retargets to B's expanded frame.
     const stateB = await app.evaluateMain!((_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       b.setActive((arg as any).id);
@@ -63,7 +77,7 @@ test.describe('Hybrid Chrome Overlay (P1.4b-1) @desktop', () => {
     }, { id: ids.b });
 
     expect(stateB).not.toBeNull();
-    expect(stateB.bounds).toEqual(boundsB);
+    expect(stateB.bounds).toEqual(setup.frameB);
     expect(stateB.visible).toBe(true);
     // Same overlay window — singleton, not a new one per page.
     expect(stateB.id).toBe(stateA.id);
@@ -85,17 +99,23 @@ test.describe('Hybrid Chrome Overlay (P1.4b-1) @desktop', () => {
     const start = { x: 50, y: 60, width: 400, height: 300 };
     const moved = { x: 333, y: 222, width: 555, height: 666 };
 
-    const state = await app.evaluateMain!((_e, arg) => {
+    const result = await app.evaluateMain!((_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       const id = b.makeFakeHybridWindow((arg as any).start);
       b.setActive(id);
       // Programmatic move+resize fires the host's 'move'/'resize' → overlay follows.
       b.setHostBounds(id, (arg as any).moved);
-      return b.overlayState();
+      return {
+        host: b.hostBounds(id),
+        overlay: b.overlayState()?.bounds ?? null,
+        frame: b.expectedOverlayFrame((arg as any).moved),
+      };
     }, { start, moved });
 
-    expect(state).not.toBeNull();
-    expect(state.bounds).toEqual(moved);
+    expect(result.overlay).not.toBeNull();
+    // Content window is at the moved rect; overlay follows it EXPANDED by gutters.
+    expect(result.host).toEqual(moved);
+    expect(result.overlay).toEqual(result.frame);
   });
 
   test('singleton: exactly one overlay window across many active-changes', async () => {
@@ -399,13 +419,14 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
         id,
         host: b.hostBounds(id),
         overlay: b.overlayState()?.bounds ?? null,
+        frame: b.expectedOverlayFrame((arg as any).resized),
       };
     }, { start, resized });
 
-    // The content BaseWindow took the requested bounds...
+    // The content BaseWindow took the requested CONTENT bounds...
     expect(result.host).toEqual(resized);
-    // ...and the overlay followed (P1.4b-1 follow on the host 'resize').
-    expect(result.overlay).toEqual(resized);
+    // ...and the overlay followed, framed at the content rect + gutters.
+    expect(result.overlay).toEqual(result.frame);
   });
 
   test('move intent moves the content window + overlay follows (P1.4b-3)', async () => {
@@ -419,11 +440,15 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
       const id = b.makeFakeHybridWindow((arg as any).start);
       b.setActive(id);
       b.publishTopic('page:set-bounds', { windowId: id, bounds: (arg as any).moved });
-      return { host: b.hostBounds(id), overlay: b.overlayState()?.bounds ?? null };
+      return {
+        host: b.hostBounds(id),
+        overlay: b.overlayState()?.bounds ?? null,
+        frame: b.expectedOverlayFrame((arg as any).moved),
+      };
     }, { start, moved });
 
     expect(result.host).toEqual(moved);
-    expect(result.overlay).toEqual(moved);
+    expect(result.overlay).toEqual(result.frame);
   });
 
   test('maximize snaps to work area; restore returns to prior bounds (P1.4b-3)', async () => {
@@ -1162,6 +1187,53 @@ test.describe('Hybrid Chrome Overlay notes + widgets (P1.4b-6) @desktop', () => 
       )
       .toEqual({ count: 0, hasData: false });
   });
+
+  test('gutter fix: widgets render in the right gutter (outside content) and STACK', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await makeActiveWithUrl('https://gutter.example.com/p');
+    await waitOverlayReady();
+
+    // Add ≥2 widgets, reveal the chrome, read their overlay-local geometry.
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      await b.addTestWidgets(3);
+    });
+
+    const layout = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      // reveal + read (rAF-coalesced relayout settles within a couple frames)
+      await b.overlayGutterLayout();
+      await new Promise((r) => setTimeout(r, 60));
+      return b.overlayGutterLayout();
+    });
+
+    expect(layout).not.toBeNull();
+    expect(layout.content).not.toBeNull();
+    expect(layout.widgets.length).toBeGreaterThanOrEqual(3);
+
+    // 1) IN THE GUTTER, not buried under content: each widget's left edge is at or
+    //    past the right-stack anchor (content.right - overlap), i.e. the bulk of
+    //    the card sits in the right gutter beyond the content's right edge — NOT
+    //    inside the content window border (the reported "widgets inside content"
+    //    bug). The right-stack anchor = content.right - PANEL_OVERLAP(70).
+    const rightAnchor = layout.content.right - 70;
+    for (const wgt of layout.widgets) {
+      expect(wgt.left).toBeGreaterThanOrEqual(rightAnchor - 1);
+      // And the card extends into the gutter past the content's right edge.
+      expect(wgt.right).toBeGreaterThan(layout.content.right);
+    }
+
+    // 2) STACKED, not piled: tops are strictly increasing (each below the prior),
+    //    and no two cards share a top — the reported "all stacked at the top,
+    //    covering each other" bug.
+    const tops = layout.widgets.map((w: any) => w.top).sort((a: number, b: number) => a - b);
+    for (let i = 1; i < tops.length; i++) {
+      expect(tops[i]).toBeGreaterThan(tops[i - 1]);
+    }
+    const uniqueTops = new Set(tops);
+    expect(uniqueTops.size).toBe(tops.length);
+  });
 });
 
 /**
@@ -1278,14 +1350,15 @@ test.describe('Hybrid Chrome Overlay focus-group @desktop', () => {
         afterFocusB,
         afterDefer,
         overlayB: b.overlayState()?.bounds ?? null,
+        frameB: b.expectedOverlayFrame({ x: 700, y: 100, width: 500, height: 400 }),
       };
     });
 
     expect(result.afterA.active).toBe(result.a);
     expect(result.afterFocusB).toBe(result.bb);
     expect(result.afterDefer).toBe(result.bb);
-    // Overlay retargeted onto B (different bounds than A).
-    expect(result.overlayB).toEqual({ x: 700, y: 100, width: 500, height: 400 });
+    // Overlay retargeted onto B (B's content rect + gutters, distinct from A).
+    expect(result.overlayB).toEqual(result.frameB);
   });
 
   test('back/forward unblocked: nav drives the active content WC held through an overlay interaction', async () => {

@@ -39,26 +39,22 @@
       pointer-events: none;
     }
 
-    /* Trigger zone — transparent strip at the top of the window. Hover reveals
-     * the navbar (matches the canvas page.js trigger-zone behavior). It must be
-     * interactive (so hover is detected) — that is handled by the click-capture
-     * IPC (see overlay.js): pointer enter over .interactive sets capture on. */
+    /* Trigger zone — transparent strip above the inset content (in the top
+     * gutter). Hover reveals the navbar (matches the canvas page.js trigger-zone
+     * behavior). It must be interactive (so hover is detected) — that is handled
+     * by the click-capture IPC (see overlay.js): pointer enter over .interactive
+     * sets capture on. Position (left/top/width/height) is set by JS
+     * (updateOverlayPositions) relative to the inner content rect. */
     .trigger-zone {
       position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 12px;
       z-index: 50;
       pointer-events: auto;
     }
 
+    /* Navbar — sits in the top gutter, spanning the inset content width. Position
+     * (left/top/width) is set by JS relative to the inner content rect. */
     peek-navbar {
       position: absolute;
-      top: 6px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: min(720px, calc(100% - 24px));
       z-index: 100;
       opacity: 0;
       pointer-events: none;
@@ -70,12 +66,13 @@
       pointer-events: auto;
     }
 
-    /* P1.4b-3: resize handles. The overlay frames the content window's FULL
-     * outer bounds, so the handles sit at the window edges/corners (the same
-     * positions page.js uses in its MAXIMIZED layout, where the window has no
-     * surrounding canvas margin — identical to the chrome-less hybrid window).
-     * They are .interactive so the click-capture IPC turns the overlay opaque to
-     * the pointer while a drag is in progress. */
+    /* P1.4b-3: resize handles. The overlay frames the content rect EXPANDED by
+     * the canvas gutters, so the handles sit at the INNER content rect's
+     * edges/corners (the same positions page.js's non-maximized
+     * `updatePositions` uses around the inset webview). Position is set by JS
+     * (updateOverlayPositions) relative to the content rect. They are
+     * .interactive so the click-capture IPC turns the overlay opaque to the
+     * pointer while a drag is in progress. EDGE_HIT=6 matches page.js. */
     .resize-handle {
       position: absolute;
       width: 24px;
@@ -84,25 +81,21 @@
       pointer-events: auto;
       touch-action: none;
     }
-    .resize-handle[data-dir="se"] { right: 0; bottom: 0; cursor: se-resize; }
-    .resize-handle[data-dir="sw"] { left: 0; bottom: 0; cursor: sw-resize; }
-    .resize-handle[data-dir="ne"] { right: 0; top: 0; cursor: ne-resize; }
-    .resize-handle[data-dir="nw"] { left: 0; top: 0; cursor: nw-resize; }
-    /* Edge handles span between the corners. EDGE_HIT=6 matches page.js. */
-    .resize-handle[data-dir="n"]  { left: 24px; right: 24px; top: 0; height: 6px; width: auto; cursor: n-resize; }
-    .resize-handle[data-dir="s"]  { left: 24px; right: 24px; bottom: 0; height: 6px; width: auto; cursor: s-resize; }
-    .resize-handle[data-dir="e"]  { right: 0; top: 24px; bottom: 24px; width: 6px; height: auto; cursor: e-resize; }
-    .resize-handle[data-dir="w"]  { left: 0; top: 24px; bottom: 24px; width: 6px; height: auto; cursor: w-resize; }
+    .resize-handle[data-dir="se"] { cursor: se-resize; }
+    .resize-handle[data-dir="sw"] { cursor: sw-resize; }
+    .resize-handle[data-dir="ne"] { cursor: ne-resize; }
+    .resize-handle[data-dir="nw"] { cursor: nw-resize; }
+    .resize-handle[data-dir="n"]  { cursor: n-resize; }
+    .resize-handle[data-dir="s"]  { cursor: s-resize; }
+    .resize-handle[data-dir="e"]  { cursor: e-resize; }
+    .resize-handle[data-dir="w"]  { cursor: w-resize; }
 
-    /* Drag-move surface: an invisible strip behind the navbar. Dragging it moves
-     * the content window (mirrors page.js navbar-background instant-drag). It is
-     * shown only while the navbar is visible. */
+    /* Drag-move surface: an invisible strip behind the navbar (in the top gutter,
+     * over the content width). Dragging it moves the content window (mirrors
+     * page.js navbar-background instant-drag). Position is set by JS relative to
+     * the content rect. Shown only while the navbar is visible. */
     .drag-zone {
       position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 44px;
       z-index: 40;
       pointer-events: none;
     }
@@ -118,8 +111,6 @@
      * by default (display:none) and shown by overlay.js on page:find. */
     .find-bar {
       position: absolute;
-      top: 6px;
-      right: 12px;
       z-index: 110;
       display: none;
       align-items: center;
@@ -205,14 +196,15 @@
       opacity: 0;
       transition: opacity 0.5s ease;
     }
-    /* Left stack pinned top-left, right stack pinned top-right. The 52px top
-     * offset clears the trigger zone + navbar region (matches page.js's
-     * panelTopOffset = webviewTop + 40 once the chrome-less window has no
-     * canvas margin). */
-    .page-info-panel { left: 12px; top: 52px; }
-    .extensions-panel { left: 12px; top: 52px; }
-    .tags-panel { right: 12px; top: 52px; }
-    .entities-panel { right: 12px; top: 52px; }
+    /* Left stack (page-info, then extensions) lives in the LEFT gutter; right
+     * stack (widgets, tags, notes, entities) in the RIGHT gutter. Each is
+     * positioned (left/top) by JS (updateOverlayPositions) relative to the inner
+     * content rect, with cumulative top offsets so panels STACK rather than pile
+     * at the same top — exactly page.js's updatePositions rightStackTop math. */
+    .page-info-panel,
+    .extensions-panel,
+    .tags-panel,
+    .entities-panel { width: 280px; }
 
     body.panels-visible .page-info-panel.has-data,
     body.panels-visible .tags-panel.has-data,
@@ -520,13 +512,11 @@
      * for the active window (.has-data) — NOT page.js's per-element `.visible`
      * toggling (the overlay is one renderer serving N windows). */
 
-    /* Notes panel (right stack, pinned top-right below entities). */
+    /* Notes panel (right gutter stack — JS positions it below the other right
+     * panels via updateOverlayPositions cumulative stacking). */
     .notes-panel {
       position: absolute;
-      right: 12px;
-      top: 52px;
-      max-width: 280px;
-      min-width: 200px;
+      width: 280px;
       z-index: 140;
       pointer-events: none;
       background: color-mix(in srgb, var(--base00) 85%, transparent);
@@ -682,8 +672,6 @@
      * pointer; individual .widget cards are interactive. */
     .widget-container {
       position: absolute;
-      right: 12px;
-      top: 52px;
       width: 280px;
       display: flex;
       flex-direction: column;

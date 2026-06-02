@@ -88,6 +88,98 @@ const OVERLAY_ENTRY_ID = 'chrome';
 /** The peek:// address that resolves to renderer/page/overlay.html. */
 const OVERLAY_URL = 'peek://app/page/overlay.html';
 
+// ── Canvas gutter geometry (the SPEC) ────────────────────────────────────────
+// The old canvas era framed ONE transparent window whose outer bounds were the
+// content rect EXPANDED by a margin: the `<webview>` was inset, and the chrome
+// (navbar at top, trigger zone, resize handles at the edges, side panels +
+// widgets in the left/right gutters) lived in that surrounding margin. See
+// `ipc.ts` (CANVAS_MARGIN / CANVAS_TRIGGER_ZONE / CANVAS_NAVBAR_HEIGHT, the
+// window-expansion the canvas branch applied) and `renderer/page/page.js`
+// (`computeWindowBounds`/`updatePositions`, where `extraWidth` widens the window
+// so the overhanging side panels have gutter space).
+//
+// The hybrid path splits that into TWO windows: an OPAQUE content `BaseWindow`
+// sized to the INNER content rect, and this transparent overlay framed over it.
+// To reproduce the canvas look the overlay must be the content rect expanded by
+// the SAME margins so the chrome renders in the gutter AROUND the content (and
+// the center stays transparent so the content window shows through).
+//
+// These mirror the canvas constants 1:1 (do NOT invent new values):
+//   MARGIN          = CANVAS_MARGIN            (8px resize-handle margin)
+//   TRIGGER_ZONE    = CANVAS_TRIGGER_ZONE      (8px hover strip above the navbar)
+//   NAVBAR_HEIGHT   = CANVAS_NAVBAR_HEIGHT     (36px reserved navbar band)
+//   PANEL_WIDTH     = page.js PANEL_WIDTH      (280px side-panel width)
+//   PANEL_OVERLAP   = page.js PANEL_OVERLAP    (70px = 25% overlaps the content)
+//   PANEL_OVERHANG  = page.js PANEL_OVERHANG   (210px extends into the gutter)
+// The left/right gutter is `MARGIN + PANEL_OVERHANG` wide — exactly the canvas's
+// `extraWidth/2 + MARGIN` per side when both side stacks are shown — so a 280px
+// panel that overlaps the content edge by 70px fits the gutter without clipping.
+const MARGIN = 8;
+const TRIGGER_ZONE = 8;
+const NAVBAR_HEIGHT = 36;
+const PANEL_WIDTH = 280;
+const PANEL_OVERLAP = PANEL_WIDTH * 0.25; // 70
+const PANEL_OVERHANG = PANEL_WIDTH - PANEL_OVERLAP; // 210
+
+/** Per-side insets from the overlay frame to the inner content rect. */
+const GUTTER_LEFT = MARGIN + PANEL_OVERHANG; // 218
+const GUTTER_RIGHT = MARGIN + PANEL_OVERHANG; // 218
+const GUTTER_TOP = TRIGGER_ZONE + NAVBAR_HEIGHT; // 44
+const GUTTER_BOTTOM = MARGIN; // 8
+
+/**
+ * Expand an inner content rect (the content `BaseWindow`'s outer bounds) into
+ * the overlay's frame: the content rect grown by the canvas gutters so the
+ * chrome has margin to render in AROUND the content. The inner content rect is
+ * recovered by the renderer (and tests) by subtracting `GUTTER_LEFT`/`GUTTER_TOP`
+ * back off — the renderer is told the gutters via the active handoff so its
+ * layout stays a pure function of the content rect.
+ */
+function expandToOverlayFrame(content: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}): { x: number; y: number; width: number; height: number } {
+  // Maximized parity (mirrors the canvas): a window snapped to its display work
+  // area gets NO gutter — the chrome renders edge-to-edge over the content, and
+  // expanding by gutters would push the overlay off-screen. Detect it by
+  // comparing the content rect to the nearest display's work area.
+  try {
+    const display = screen.getDisplayNearestPoint({
+      x: content.x + Math.floor(content.width / 2),
+      y: content.y + Math.floor(content.height / 2),
+    });
+    const wa = display.workArea;
+    if (
+      content.x === wa.x &&
+      content.y === wa.y &&
+      content.width === wa.width &&
+      content.height === wa.height
+    ) {
+      return { x: wa.x, y: wa.y, width: wa.width, height: wa.height };
+    }
+  } catch {
+    /* screen unavailable in some test envs — fall through to gutter expand */
+  }
+  return {
+    x: Math.round(content.x - GUTTER_LEFT),
+    y: Math.round(content.y - GUTTER_TOP),
+    width: Math.round(content.width + GUTTER_LEFT + GUTTER_RIGHT),
+    height: Math.round(content.height + GUTTER_TOP + GUTTER_BOTTOM),
+  };
+}
+
+/** The gutter insets — published to the overlay renderer so it can place the
+ * transparent content hole + chrome relative to the inner content rect, and read
+ * by tests to assert the expanded frame. */
+const OVERLAY_GUTTERS = {
+  left: GUTTER_LEFT,
+  right: GUTTER_RIGHT,
+  top: GUTTER_TOP,
+  bottom: GUTTER_BOTTOM,
+} as const;
+
 let overlayWin: BrowserWindow | null = null;
 let unsubscribeActive: (() => void) | null = null;
 
@@ -268,7 +360,12 @@ function sendActiveHandoff(id: number | null): void {
     canGoBack,
     canGoForward,
     loading,
+    // The INNER content rect (content BaseWindow outer bounds). The renderer
+    // places the transparent content hole + chrome relative to this, insetting
+    // it by the gutters below — so the overlay center sits exactly over the
+    // content window and the chrome lives in the surrounding margin.
     bounds,
+    gutters: OVERLAY_GUTTERS,
   });
 }
 
@@ -312,12 +409,16 @@ function unfollow(): void {
 }
 
 /**
- * Position + size the overlay to FRAME the given bounds (full-frame for now),
- * then raise it above the content window. Focus-free.
+ * Position + size the overlay to FRAME the given INNER content rect: the content
+ * `BaseWindow`'s outer bounds expanded by the canvas gutters
+ * (`expandToOverlayFrame`), so the chrome renders in the margin AROUND the
+ * content and the transparent center sits exactly over the content window. Then
+ * raise the overlay above the content window. Focus-free.
  */
-function frameBounds(bounds: { x: number; y: number; width: number; height: number }): void {
+function frameBounds(content: { x: number; y: number; width: number; height: number }): void {
   const win = ensureOverlay();
   if (win.isDestroyed()) return;
+  const bounds = expandToOverlayFrame(content);
   // setBounds in one shot avoids an intermediate paint (R2: no double-paint /
   // flicker on retarget).
   win.setBounds(bounds);
@@ -674,6 +775,20 @@ function installTestBridge(): void {
       return _getOverlayStateForTests();
     },
     /**
+     * Gutter geometry verification: the per-side insets from the overlay frame to
+     * the inner content rect, plus the expected overlay frame for a given content
+     * rect. A test asserts `overlayState().bounds` equals
+     * `expectedOverlayFrame(hostBounds(id))` (overlay = content + gutters) so
+     * there IS a gutter for the chrome — and the content BaseWindow stays at the
+     * inner rect (`hostBounds(id)` unchanged).
+     */
+    overlayGutters(): { left: number; right: number; top: number; bottom: number } {
+      return { ...OVERLAY_GUTTERS };
+    },
+    expectedOverlayFrame(content: { x: number; y: number; width: number; height: number }) {
+      return expandToOverlayFrame(content);
+    },
+    /**
      * P1.4b-3: read the overlay window's focusABLE / focusED state directly off
      * the singleton (focus-free assertion). The overlay must be focusable:true
      * (so a click into the URL field can make it key) yet never focused on
@@ -900,6 +1015,54 @@ function installTestBridge(): void {
                 count: cards.length,
                 text: cards.map((c) => c.textContent.trim()).join(' | '),
               } : null,
+            };
+          })()`,
+        )
+        .catch(() => null);
+    },
+    /**
+     * Gutter-placement verification (the gutter fix). Reveals the chrome and reads
+     * the overlay-local geometry: the inner content rect (where the content
+     * window shows through), each widget card's top/left/right, and each
+     * right-stack panel's top. A test asserts widgets render OUTSIDE the content
+     * rect (in the right gutter: card.left >= content.right - overlap, i.e. not
+     * buried under content) and STACK (distinct, increasing top offsets — not all
+     * piled at the same top). Pure executeJavaScript, no OS focus.
+     */
+    /** Test-only: add N plain widgets to the overlay's widget container (gutter
+     * placement / stacking verification). Resolves the live widget count. */
+    addTestWidgets(n: number): Promise<number> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(0);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const N = ${Math.max(0, Math.floor(n))};
+            for (let i = 0; i < N; i++) {
+              window.__overlayTestAddWidget('test-widget-' + i, 'Widget ' + i, '<div class="widget-body">Body of widget ' + i + ' with enough text to give it real height in the gutter.</div>');
+            }
+            const wc = document.getElementById('widget-container');
+            return wc ? wc.querySelectorAll('.widget').length : 0;
+          })()`,
+        )
+        .catch(() => 0);
+    },
+    overlayGutterLayout(): Promise<unknown> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(null);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const tz = document.getElementById('trigger-zone');
+            if (tz) tz.dispatchEvent(new Event('mouseenter'));
+            const wc = document.getElementById('widget-container');
+            const cards = wc ? Array.from(wc.querySelectorAll('.widget')) : [];
+            const rect = (el) => { const r = el.getBoundingClientRect(); return { left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom), height: Math.round(r.height) }; };
+            // The content rect within the overlay: gutters inset. Recover it from
+            // the window inner size minus the known gutters via the trigger zone
+            // (which spans the content width at content.left/top).
+            const tzr = tz ? tz.getBoundingClientRect() : null;
+            return {
+              content: tzr ? { left: Math.round(tzr.left), top: Math.round(tzr.bottom), right: Math.round(tzr.right) } : null,
+              widgets: cards.map((c) => ({ ...rect(c), text: c.textContent.trim() })),
             };
           })()`,
         )

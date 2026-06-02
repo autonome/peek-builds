@@ -95,6 +95,161 @@ const findCloseBtn = document.getElementById('find-close');
 const MIN_WIDTH = 200;
 const MIN_HEIGHT = 150;
 
+// ── Canvas gutter geometry (the SPEC), mirrored from page.js + hybrid-overlay.ts.
+// The overlay window is the inner content rect EXPANDED by these gutters (main
+// does the expand via expandToOverlayFrame). The renderer lays out the chrome
+// relative to the INNER content rect, which inside the overlay sits at
+// {left: gutters.left, top: gutters.top, width: content.width, height: content.height}.
+// Default gutters mirror hybrid-overlay.ts; main also sends them in the handoff
+// (msg.gutters) so the two stay in sync.
+const EDGE_HIT = 6;       // thin edge resize hit-zone (page.js EDGE_HIT)
+const PANEL_WIDTH = 280;  // page.js PANEL_WIDTH
+const PANEL_OVERLAP = PANEL_WIDTH * 0.25;          // 70
+const PANEL_OVERHANG = PANEL_WIDTH - PANEL_OVERLAP; // 210
+let gutters = { left: 8 + PANEL_OVERHANG, right: 8 + PANEL_OVERHANG, top: 8 + 36, bottom: 8 };
+
+// The inner content rect WITHIN the overlay window (overlay-local coordinates):
+// the gutters inset on each side. width/height come from activeBounds (the
+// content BaseWindow's size). Returns null when there is no active window.
+function contentRectInOverlay() {
+  if (!activeBounds) return null;
+  // Maximized parity (mirrors page.js updatePositionsMaximized + the main-side
+  // expandToOverlayFrame maximize check): the overlay window == the content rect
+  // (work area, no gutter), so the chrome rings the window edge-to-edge. The
+  // overlay's own viewport IS the work area when maximized, so size the content
+  // rect to window.inner* rather than activeBounds (which still holds the
+  // pre-maximize size — main snapped the content to the work area, but did not
+  // push that back to the renderer).
+  if (maximized) {
+    return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+  }
+  return {
+    left: gutters.left,
+    top: gutters.top,
+    width: activeBounds.width,
+    height: activeBounds.height,
+  };
+}
+
+// Position every chrome element relative to the inner content rect so the chrome
+// lives in the gutter AROUND the content and the center stays transparent (the
+// content BaseWindow shows through). Ported from page.js updatePositions():
+//   - navbar / trigger-zone / drag-zone span the content width in the top gutter
+//   - resize handles ring the content rect edges (corners 24x24, edges EDGE_HIT)
+//   - left stack (page-info, extensions) in the LEFT gutter, overlapping the
+//     content edge by PANEL_OVERLAP; right stack (widgets, tags, notes, entities)
+//     in the RIGHT gutter, each with a CUMULATIVE top offset so they STACK
+//     instead of piling at the same top (the reported bug).
+function updateOverlayPositions() {
+  const r = contentRectInOverlay();
+  if (!r) return;
+  const left = r.left;
+  const top = r.top;
+  const w = r.width;
+  const h = r.height;
+  const navOffset = gutters.top; // navbar band + trigger zone above content
+
+  // Navbar: spans the content width, pinned to the top of the window (page.js
+  // navbar.top = 0). Trigger zone: the strip between the window top and content.
+  navbar.style.left = `${left}px`;
+  navbar.style.top = `0px`;
+  navbar.style.width = `${w}px`;
+
+  triggerZone.style.left = `${left}px`;
+  triggerZone.style.top = `0px`;
+  triggerZone.style.width = `${w}px`;
+  triggerZone.style.height = `${navOffset}px`;
+
+  // Drag-zone: invisible move strip in the top gutter over the content width.
+  dragZone.style.left = `${left}px`;
+  dragZone.style.top = `0px`;
+  dragZone.style.width = `${w}px`;
+  dragZone.style.height = `${navOffset}px`;
+
+  // Find bar: top-right corner of the content rect. Pin its right edge 8px inside
+  // the content's right edge via left (overlay-local), so it stays correct in
+  // both gutter and maximized modes (right:0 would be the window/gutter edge).
+  if (findBar) {
+    findBar.style.right = '';
+    // Approx find-bar width ~320px; place its left so it hugs the content right.
+    findBar.style.left = `${left + w - 8 - findBar.offsetWidth}px`;
+    findBar.style.top = `${top + 4}px`;
+  }
+
+  // Resize handles ring the content rect (page.js updatePositions geometry).
+  const setHandle = (dir, x, y, hw, hh) => {
+    const el = document.querySelector(`.resize-handle[data-dir="${dir}"]`);
+    if (!el) return;
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    if (hw != null) el.style.width = `${hw}px`;
+    if (hh != null) el.style.height = `${hh}px`;
+  };
+  setHandle('nw', left, top, 24, 24);
+  setHandle('ne', left + w - 24, top, 24, 24);
+  setHandle('sw', left, top + h - 24, 24, 24);
+  setHandle('se', left + w - 24, top + h - 24, 24, 24);
+  setHandle('n', left + 24, top, Math.max(0, w - 48), EDGE_HIT);
+  setHandle('s', left + 24, top + h - EDGE_HIT, Math.max(0, w - 48), EDGE_HIT);
+  setHandle('e', left + w - EDGE_HIT, top + 24, EDGE_HIT, Math.max(0, h - 48));
+  setHandle('w', left, top + 24, EDGE_HIT, Math.max(0, h - 48));
+
+  // Panel top offset — clearance below the content top edge (page.js
+  // panelTopOffset = webviewTop + 40, where webviewTop === navOffset here).
+  const panelTopOffset = top + 40;
+
+  // Left gutter stack: page-info, then extensions below. left = content edge -
+  // PANEL_WIDTH + PANEL_OVERLAP (mostly in the gutter, 70px overlaps content).
+  const leftStackLeft = left - PANEL_WIDTH + PANEL_OVERLAP;
+  let leftStackTop = panelTopOffset;
+  const pageInfoEl = document.getElementById('page-info-panel');
+  const extEl = document.getElementById('extensions-panel');
+  if (pageInfoEl) {
+    pageInfoEl.style.left = `${leftStackLeft}px`;
+    pageInfoEl.style.top = `${leftStackTop}px`;
+    const visH = pageInfoEl.classList.contains('has-data') ? pageInfoEl.offsetHeight : 0;
+    if (visH > 0) leftStackTop += visH + 12;
+  }
+  if (extEl) {
+    extEl.style.left = `${leftStackLeft}px`;
+    extEl.style.top = `${leftStackTop}px`;
+  }
+
+  // Right gutter stack: widgets (top), then tags, notes, entities — each offset
+  // by the previous element's height so they STACK (page.js rightStackTop math).
+  const rightStackLeft = left + w - PANEL_OVERLAP;
+  let rightStackTop = panelTopOffset;
+  const widgetEl = document.getElementById('widget-container');
+  const tagsEl = document.getElementById('tags-panel');
+  const notesEl = document.querySelector('.notes-panel');
+  const entitiesEl = document.getElementById('entities-panel');
+  const stackRight = (el, hasDataGated) => {
+    if (!el) return;
+    el.style.left = `${rightStackLeft}px`;
+    el.style.top = `${rightStackTop}px`;
+    const shown = hasDataGated ? el.classList.contains('has-data') : true;
+    const visH = shown && el.offsetHeight > 0 ? el.offsetHeight : 0;
+    if (visH > 0) rightStackTop += visH + 12;
+  };
+  stackRight(widgetEl, true);
+  stackRight(tagsEl, true);
+  stackRight(notesEl, true);
+  stackRight(entitiesEl, true);
+}
+
+// Coalesced re-layout: a panel/widget gaining or losing `.has-data` (async, as
+// data loads) changes the cumulative stack heights, so re-run the gutter layout.
+// rAF-coalesced so a burst of data arrivals reflows once.
+let relayoutPending = false;
+function relayoutChrome() {
+  if (relayoutPending) return;
+  relayoutPending = true;
+  requestAnimationFrame(() => {
+    relayoutPending = false;
+    updateOverlayPositions();
+  });
+}
+
 // Component-level keyboard shortcuts are managed by the navbar; keep them on so
 // Cmd+L/Cmd+R/Cmd+[/Cmd+] work while the overlay is focused. (The canvas page
 // disables them and routes via pubsub instead; the overlay is the only chrome
@@ -171,11 +326,18 @@ api.subscribe('page-overlay:active', (msg) => {
   // P1.4b-5: seed the active URL for the side panels and refresh them for the
   // newly-active window (full swap — clears the prior window's panel data first).
   setActiveUrl(isHttp(msg.url) ? msg.url : null);
-  // P1.4b-3: seed the locally-tracked outer bounds for resize/move math. Reset
-  // maximize state for the newly-active window (each window owns its own).
+  // P1.4b-3: seed the locally-tracked CONTENT-RECT bounds for resize/move math
+  // (these are the content BaseWindow's outer bounds, NOT the overlay's — the
+  // overlay frame is this rect expanded by the gutters, applied by main).
+  // Reset maximize state for the newly-active window (each window owns its own).
   activeBounds = msg.bounds ? { ...msg.bounds } : null;
+  // Gutter geometry from main (defaults already set; keep them in sync if sent).
+  if (msg.gutters) gutters = { ...msg.gutters };
   maximized = false;
   preMaxBounds = null;
+  // Reposition the chrome into the gutter around the (possibly new-sized) content
+  // rect so widgets/handles/panels never land over the content.
+  updateOverlayPositions();
   // Hard reset before painting the new window so stale loading/nav state can
   // never bleed across a retarget. Also close any open find bar (find is
   // per-window; the new window starts with no active search).
@@ -261,6 +423,9 @@ function showNavbar() {
   // P1.4b-5: reveal the side panels alongside the navbar (matches page.js, where
   // show() reveals panels with the navbar). Only panels marked has-data paint.
   document.body.classList.add('panels-visible');
+  // Re-stack the gutter panels now they're visible (heights are only measurable
+  // once painted, so cumulative stacking must recompute on reveal).
+  updateOverlayPositions();
 }
 function hideNavbar() {
   navbar.classList.remove('visible');
@@ -420,6 +585,9 @@ for (const handle of document.querySelectorAll('.resize-handle')) {
       activeBounds.height = nh;
     }
     publishBounds();
+    // The content size changed → reflow the chrome around the new content rect
+    // locally (main reframes the overlay window via the content resize follow).
+    updateOverlayPositions();
   });
 
   const onEnd = (e) => endResize(handle, e);
@@ -482,6 +650,9 @@ function toggleMaximize() {
     maximized = true;
     api.publish('page:maximize', { windowId: activeWindowId });
   }
+  // Reflow the chrome for the new mode (the window resize from main also fires
+  // the window 'resize' relayout, but recompute now so there's no 1-frame gap).
+  updateOverlayPositions();
 }
 navbar.addEventListener('dblclick', (e) => {
   e.preventDefault();
@@ -512,6 +683,9 @@ function showFindBar() {
   if (activeWindowId == null) return;
   document.body.classList.add('find-visible');
   findBarVisible = true;
+  // Now it has layout (display:flex) — position it at the content's top-right
+  // (offsetWidth is only measurable once shown).
+  updateOverlayPositions();
   findInput.focus();
   findInput.select();
   // Surfacing the find bar means the overlay must be pointer-opaque so the user
@@ -1389,7 +1563,14 @@ const pageWidgetHost = createPageWidgetHost({
   removeWidget,
 });
 pageWidgetHost.init();
-if (typeof window !== 'undefined') window.__pageWidgetHost = pageWidgetHost;
+if (typeof window !== 'undefined') {
+  window.__pageWidgetHost = pageWidgetHost;
+  // Test-only: add a plain test widget so gutter-placement/stacking can be
+  // verified with ≥2 widgets without depending on the OpenSearch/space-mode
+  // feature plumbing. Mirrors a normal addWidget call (joins #widget-container).
+  window.__overlayTestAddWidget = (id, title, content) =>
+    addWidget(id, { title, content, closable: true, collapsible: true });
+}
 
 // --- OpenSearch discovery widget (gated to the ACTIVE window) ---
 // Canvas page.js renders this off the global `websearch:engine-discovered`
@@ -1525,6 +1706,30 @@ initModeContext();
 window.addEventListener('beforeunload', () => {
   try { pageWidgetHost.destroy(); } catch { /* ignore */ }
 });
+
+// Gutter re-stacking: a panel/widget gaining or losing `.has-data` (or a widget
+// being added/removed) changes the cumulative stack heights. Rather than wire a
+// relayout into every async data-load site, observe class/child mutations on the
+// gutter regions and reflow (rAF-coalesced) so panels always STACK correctly.
+const _relayoutTargets = [
+  document.getElementById('page-info-panel'),
+  document.getElementById('extensions-panel'),
+  document.getElementById('tags-panel'),
+  document.getElementById('entities-panel'),
+  document.querySelector('.notes-panel'),
+  document.getElementById('widget-container'),
+].filter(Boolean);
+// Watch ONLY `class` (the has-data/visible toggles) on the regions themselves and
+// `childList` (widgets added/removed) — NOT `style`, which updateOverlayPositions
+// writes (observing it would loop). Not subtree, to avoid reacting to inner DOM
+// churn that doesn't change the region's own stack height meaningfully.
+const _relayoutObserver = new MutationObserver(() => relayoutChrome());
+for (const t of _relayoutTargets) {
+  _relayoutObserver.observe(t, { attributes: true, attributeFilter: ['class'], childList: true });
+}
+// Reflow on window resize too (main reframes the overlay window when the content
+// window resizes; the renderer must re-place chrome around the new content rect).
+window.addEventListener('resize', () => relayoutChrome());
 
 // Signal readiness so main can verify the renderer is wired (and tests can wait).
 window.__overlayReady = true;
