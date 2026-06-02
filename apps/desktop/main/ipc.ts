@@ -125,6 +125,7 @@ import {
   registerHybridWindow,
   findHybridWindowByUrl,
   findHybridWindowByKey,
+  getHybridContentWC,
 } from './hybrid-page-host-registry.js';
 import {
   getRuntimeExternalWebPrefsForUrl,
@@ -829,6 +830,75 @@ function wireHybridContentEvents(
 
     publishNavState();
   });
+}
+
+/**
+ * P1.4b-2 — MAIN-mediated chrome→content navbar action routing for the hybrid
+ * page-host. On the canvas path, page.js (in the per-page chrome renderer)
+ * subscribes to `page:navigate` / `page:reload` / `page:go-back` /
+ * `page:go-forward` and drives its own `<webview>`. The hybrid path has no
+ * page.js: the SHARED overlay renderer (renderer/page/overlay.js) publishes the
+ * SAME topics tagged with the active hybrid `windowId`, and MAIN resolves the
+ * content webContents via `getHybridContentWC(windowId)` and drives it.
+ *
+ * Coexistence with the canvas page.js subscribers is safe: every handler — both
+ * here and in page.js — filters strictly on `windowId`, and a given window is
+ * EITHER a canvas BrowserWindow+webview (page.js subscribes for it) OR a hybrid
+ * BaseWindow (this routes for it), never both. `getHybridContentWC` returns null
+ * for any non-hybrid windowId, so this handler is a no-op for canvas windows and
+ * page.js is a no-op (windowId mismatch) for hybrid windows.
+ *
+ * Idempotent + gated: only installed once, only when `isHybridPageHost()`.
+ */
+let hybridNavbarRoutingInstalled = false;
+export function installHybridNavbarActionRouting(): void {
+  if (!isHybridPageHost()) return;
+  if (hybridNavbarRoutingInstalled) return;
+  hybridNavbarRoutingInstalled = true;
+
+  const wcFor = (raw: unknown): { wc: Electron.WebContents; windowId: number } | null => {
+    const msg = raw as { windowId?: number } | null;
+    if (!msg || typeof msg.windowId !== 'number') return null;
+    const wc = getHybridContentWC(msg.windowId);
+    if (!wc) return null;
+    return { wc, windowId: msg.windowId };
+  };
+
+  subscribe(getSystemAddress(), 'page:navigate', (raw) => {
+    const r = wcFor(raw);
+    if (!r) return;
+    const url = (raw as { url?: string }).url;
+    if (!url) return;
+    r.wc.loadURL(url).catch((err) => {
+      DEBUG && console.log(`[hybrid-page-host:${r.windowId}] navbar navigate failed:`, err);
+    });
+  });
+
+  subscribe(getSystemAddress(), 'page:reload', (raw) => {
+    const r = wcFor(raw);
+    if (!r) return;
+    try { r.wc.reload(); } catch { /* wc gone */ }
+  });
+
+  subscribe(getSystemAddress(), 'page:go-back', (raw) => {
+    const r = wcFor(raw);
+    if (!r) return;
+    try {
+      if (r.wc.navigationHistory.canGoBack()) r.wc.navigationHistory.goBack();
+    } catch { /* wc gone */ }
+  });
+
+  subscribe(getSystemAddress(), 'page:go-forward', (raw) => {
+    const r = wcFor(raw);
+    if (!r) return;
+    try {
+      if (r.wc.navigationHistory.canGoForward()) r.wc.navigationHistory.goForward();
+    } catch { /* wc gone */ }
+  });
+
+  // P1.4b-3: find-in-page (`page:find` / `page:find-next` / `page:find-prev`)
+  // → contentWC.findInPage routing is DEFERRED with the find-bar UI.
+  DEBUG && console.log('[hybrid-page-host] navbar action routing installed');
 }
 
 // Exported reference to the window-open handler so other IPC surfaces (like tile

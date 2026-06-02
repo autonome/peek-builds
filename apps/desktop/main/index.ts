@@ -193,6 +193,7 @@ export {
   reopenLastClosedWindow,
   openNewPageWindow,
   clearLastFocusedVisibleWindowId,
+  installHybridNavbarActionRouting,
 } from './ipc.js';
 
 // Window helpers

@@ -131,3 +131,261 @@ test.describe('Hybrid Chrome Overlay (P1.4b-1) @desktop', () => {
     expect(result.after - result.before).toBeLessThanOrEqual(1);
   });
 });
+
+/**
+ * P1.4b-2 — the overlay is now a WORKING shared navbar that reflects and drives
+ * the active hybrid content window. All active-window changes are still
+ * SYNTHETIC (the E2E bridge), so this suite is focus-free. Navbar/content
+ * mediation is asserted by publishing pubsub intents + reading the real content
+ * WebContents and the overlay renderer's navbar DOM (executeJavaScript).
+ */
+test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
+  let app: DesktopApp;
+
+  test.beforeAll(async () => {
+    ({ app } = await createPerDescribeApp('hybrid-overlay-navbar'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  const bridgePresent = async () =>
+    app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
+
+  // Wait until the overlay renderer has loaded + subscribed (window.__overlayReady).
+  const waitOverlayReady = async () => {
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? s.ready === true : false;
+        }),
+      )
+      .toBe(true);
+  };
+
+  test('active handoff paints navbar for A, swaps to B, clears on null', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    // Two real (headless) hybrid windows; load distinct content so url() differs.
+    const ids = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const a = b.makeFakeHybridWindow({ x: 100, y: 100, width: 600, height: 400 });
+      const bb = b.makeFakeHybridWindow({ x: 700, y: 100, width: 600, height: 400 });
+      await b.loadFakeContent(a, 'data:text/html,<title>Alpha</title>A');
+      await b.loadFakeContent(bb, 'data:text/html,<title>Beta</title>B');
+      return { a, bb };
+    });
+
+    // Activate A → renderer ready, navbar painted with A's url.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.setActive((arg as any).id);
+    }, { id: ids.a });
+    await waitOverlayReady();
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s && !s.noActive ? s.url : null;
+        }),
+      )
+      .toContain('Alpha');
+
+    // Activate B → navbar fully swaps to B's url.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.setActive((arg as any).id);
+    }, { id: ids.bb });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? s.url : null;
+        }),
+      )
+      .toContain('Beta');
+
+    // Activate null → navbar clears + body marked no-active.
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.setActive(null);
+    });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? { noActive: s.noActive, url: s.url } : null;
+        }),
+      )
+      .toEqual({ noActive: true, url: '' });
+  });
+
+  test('navbar intents drive the active content WebContents (navigate/back/reload)', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 100, y: 100, width: 600, height: 400 });
+      await b.loadFakeContent(w, 'data:text/html,<title>One</title>page-one');
+      b.setActive(w);
+      return w;
+    });
+    await waitOverlayReady();
+
+    // page:navigate → contentWC.loadURL: the content URL actually changes.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:navigate', {
+        windowId: (arg as any).id,
+        url: 'data:text/html,<title>Two</title>page-two',
+      });
+    }, { id });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async (_e, arg) => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.contentUrl((arg as any).id);
+        }, { id }),
+      )
+      .toContain('page-two');
+
+    // Drive a 3rd nav so there is history, then page:go-back returns to page-two.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:navigate', {
+        windowId: (arg as any).id,
+        url: 'data:text/html,<title>Three</title>page-three',
+      });
+    }, { id });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async (_e, arg) => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.contentUrl((arg as any).id);
+        }, { id }),
+      )
+      .toContain('page-three');
+
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:go-back', { windowId: (arg as any).id });
+    }, { id });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async (_e, arg) => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.contentUrl((arg as any).id);
+        }, { id }),
+      )
+      .toContain('page-two');
+
+    // page:reload does not throw and the URL stays page-two.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:reload', { windowId: (arg as any).id });
+    }, { id });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async (_e, arg) => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.contentUrl((arg as any).id);
+        }, { id }),
+      )
+      .toContain('page-two');
+  });
+
+  test('content events repaint the active window navbar (nav-state, title)', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 100, y: 100, width: 600, height: 400 });
+      await b.loadFakeContent(w, 'data:text/html,<title>Init</title>init');
+      b.setActive(w);
+      return w;
+    });
+    await waitOverlayReady();
+
+    // Publish page:nav-state for the active window → navbar back/forward + url.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:nav-state', {
+        windowId: (arg as any).id,
+        url: 'https://example.com/navstate',
+        canGoBack: true,
+        canGoForward: false,
+      });
+    }, { id });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? { url: s.url, canGoBack: s.canGoBack } : null;
+        }),
+      )
+      .toEqual({ url: 'https://example.com/navstate', canGoBack: true });
+
+    // A nav-state for a DIFFERENT windowId must be ignored (filtering works).
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:nav-state', {
+        windowId: (arg as any).id + 99999,
+        url: 'https://wrong.example.com/',
+        canGoBack: false,
+        canGoForward: true,
+      });
+    }, { id });
+
+    // URL still the active window's, not the foreign one.
+    const after = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayChromeState();
+      return s ? s.url : null;
+    });
+    expect(after).toBe('https://example.com/navstate');
+  });
+
+  test('click-capture toggles overlay window between capture and click-through', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    // Ensure an overlay exists.
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 100, y: 100, width: 600, height: 400 });
+      b.setActive(w);
+    });
+    await waitOverlayReady();
+
+    // Default after clear/init is click-through (false).
+    // Publish capture-on (as the renderer would on pointer-enter over navbar).
+    const capturedOn = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishCapture(true);
+      return b.captureState();
+    });
+    expect(capturedOn).toBe(true);
+
+    // Publish capture-off (pointer left chrome → content stays interactive).
+    const capturedOff = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishCapture(false);
+      return b.captureState();
+    });
+    expect(capturedOff).toBe(false);
+  });
+});

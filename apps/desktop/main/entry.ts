@@ -58,6 +58,7 @@ import {
   getSystemAddress,
   // IPC
   registerAllHandlers,
+  installHybridNavbarActionRouting,
   restoreSavedTheme,
   reopenLastClosedWindow,
   openNewPageWindow,
@@ -1040,6 +1041,12 @@ const onReady = async () => {
   // shared overlay window that retargets over the frontmost hybrid content
   // window. (The canvas path is untouched — the gate returns immediately.)
   initHybridOverlay();
+
+  // P1.4b-2 — install the chrome→content navbar action routing for hybrid
+  // windows (navigate/back/forward/reload published by the overlay renderer are
+  // resolved to the active hybrid window's content webContents here). No-op
+  // unless PEEK_PAGEHOST_HYBRID=1; idempotent.
+  installHybridNavbarActionRouting();
 
   // Always-on renderer log: writes every console.{log,info,warn,error,debug}
   // from any preload-managed renderer to <userData>/logs/renderer.log.

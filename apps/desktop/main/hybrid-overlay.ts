@@ -49,8 +49,8 @@
  */
 
 import { BrowserWindow, BaseWindow as BaseWindowCtor, WebContentsView } from 'electron';
-import type { BaseWindow } from 'electron';
-import { isHeadless } from './config.js';
+import type { BaseWindow, WebContents } from 'electron';
+import { isHeadless, getTilePreloadPath } from './config.js';
 import { isHybridPageHost, DEBUG } from './debug-flag.js';
 import {
   onActiveHybridWindowChange,
@@ -60,25 +60,30 @@ import {
   registerHybridWindow,
   _setActiveHybridWindowForTests,
 } from './hybrid-page-host-registry.js';
+import { createTrustedBuiltinGrant } from './tile-manifest.js';
+import { generateToken } from './tile-tokens.js';
+import { registerTrustedBuiltinWindow } from './tile-launcher.js';
+import { getProfileSession } from './session-partition.js';
+import { publish, subscribe, unsubscribe, getSystemAddress } from './pubsub.js';
 
-/**
- * Minimal placeholder chrome for P1.4b-1. A translucent top "navbar zone" bar
- * plus a thin border so a visible run shows the overlay framing the active
- * content window. Fully click-through (pointer-events:none belt-and-suspenders
- * on top of `setIgnoreMouseEvents`). REPLACED by page.js in P1.4b-2.
- */
-const PLACEHOLDER_CHROME = `data:text/html,${encodeURIComponent(
-  `<!doctype html><html><head><meta charset="utf-8"><style>
-    html,body{margin:0;height:100%;background:transparent;pointer-events:none;overflow:hidden}
-    .frame{position:fixed;inset:0;border:1px solid rgba(120,120,255,.45);box-sizing:border-box;border-radius:8px}
-    .bar{position:fixed;top:0;left:0;right:0;height:36px;background:rgba(40,40,60,.28);
-         border-top-left-radius:8px;border-top-right-radius:8px;
-         backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
-  </style></head><body><div class="frame"></div><div class="bar" id="navbar-zone"></div></body></html>`,
-)}`;
+/** Tile id / entry for the overlay's trustedBuiltin grant + pubsub routing. */
+const OVERLAY_TILE_ID = 'page-overlay';
+const OVERLAY_ENTRY_ID = 'chrome';
+
+/** The peek:// address that resolves to renderer/page/overlay.html. */
+const OVERLAY_URL = 'peek://app/page/overlay.html';
 
 let overlayWin: BrowserWindow | null = null;
 let unsubscribeActive: (() => void) | null = null;
+
+// True once the click-capture subscription has been installed (idempotent).
+let captureWired = false;
+
+// The last click-capture state applied to the overlay window via the
+// `page-overlay:set-capture` subscription (true = capturing pointer events,
+// false = click-through). Exposed for focus-free test verification because
+// Electron has no getter for `setIgnoreMouseEvents`.
+let lastCaptureState = false;
 
 // The hybrid host window the overlay is currently following, plus its bound
 // 'move'/'resize' listeners, so we can detach them when the active window
@@ -87,12 +92,27 @@ let followedBaseWin: BaseWindow | null = null;
 let onFollowedMove: (() => void) | null = null;
 
 /**
- * Lazily create the singleton overlay window. Transparent, frameless,
- * alwaysOnTop, focus-free, click-through. Headless → opacity 0. Idempotent:
- * returns the existing window if already created (and not destroyed).
+ * Lazily create the singleton overlay window and mount the REAL shared chrome
+ * (P1.4b-2). Transparent, frameless, alwaysOnTop, focus-free, click-through by
+ * default. Headless → opacity 0. Idempotent: returns the existing window if
+ * already created (and not destroyed).
+ *
+ * The overlay renderer (`renderer/page/overlay.html` + `overlay.js`) reuses the
+ * existing `<peek-navbar>` Lit component and needs `api.*` (pubsub
+ * publish/subscribe) to drive/reflect the active content window. So — exactly
+ * like the core background / cmd / hud renderers (see `core-glue.ts`) — it runs
+ * with `tile-preload.cjs` + a `createTrustedBuiltinGrant` token and is
+ * registered via `registerTrustedBuiltinWindow` so the main pubsub broadcaster
+ * forwards topics to it.
  */
 function ensureOverlay(): BrowserWindow {
   if (overlayWin && !overlayWin.isDestroyed()) return overlayWin;
+
+  // Mint a trustedBuiltin token so every tile:* IPC (incl. pubsub) the overlay
+  // invokes bypasses capability enforcement — it is trusted core chrome.
+  const grant = createTrustedBuiltinGrant(OVERLAY_TILE_ID);
+  const token = generateToken(OVERLAY_TILE_ID, OVERLAY_ENTRY_ID, grant);
+  const tilePreloadPath = getTilePreloadPath();
 
   const win = new BrowserWindow({
     width: 800,
@@ -108,29 +128,50 @@ function ensureOverlay(): BrowserWindow {
     alwaysOnTop: true,
     opacity: isHeadless() ? 0 : 1,
     webPreferences: {
-      // Placeholder only loads a data: URL; no preload / node here. P1.4b-2
-      // swaps in page.js's chrome renderer (with its tile-preload + grant).
+      // Same mechanics as the other core renderers: tile-preload + token in
+      // additionalArguments, profile session for storage parity.
       contextIsolation: true,
       sandbox: true,
+      preload: tilePreloadPath,
+      session: getProfileSession(),
+      additionalArguments: [
+        `--tile-id=${OVERLAY_TILE_ID}`,
+        `--tile-entry=${OVERLAY_ENTRY_ID}`,
+        `--tile-token=${token}`,
+      ],
     },
   });
 
-  // Float above normal windows. (P1.4b-2 may tune the level; 'floating' keeps
-  // it above the content BaseWindow without sitting over OS panels.)
+  // Register with the tile launcher so the pubsub broadcaster forwards messages
+  // to this window (without this, `api.subscribe` in overlay.js never fires).
+  registerTrustedBuiltinWindow(OVERLAY_TILE_ID, OVERLAY_ENTRY_ID, win, token);
+
+  // Float above normal windows. ('floating' keeps it above the content
+  // BaseWindow without sitting over OS panels.)
   try {
     win.setAlwaysOnTop(true, 'floating');
   } catch {
     /* level arg unsupported on some platforms */
   }
 
-  // Full click-through: every pointer event passes to the content window
-  // below. `forward: true` keeps move events flowing so a future chrome that
-  // re-enables capture on hot zones can still receive hover. Real navbar/handle
-  // click-capture is P1.4b-2.
+  // Default click-through: every pointer event passes to the content window
+  // below. `forward: true` keeps move events flowing so the overlay renderer's
+  // pointer enter/leave handlers fire over the (otherwise click-through) chrome
+  // layer — that's how it knows to ask main to enable capture (see
+  // `wireClickCapture`). Real navbar/handle interaction toggles this off/on.
   win.setIgnoreMouseEvents(true, { forward: true });
 
-  win.loadURL(PLACEHOLDER_CHROME).catch((err) => {
-    DEBUG && console.log('[hybrid-overlay] placeholder load failed:', err);
+  win.loadURL(OVERLAY_URL).catch((err) => {
+    DEBUG && console.log('[hybrid-overlay] overlay chrome load failed:', err);
+  });
+
+  // First-paint race: the renderer subscribes to `page-overlay:active` only
+  // after its module loads, which is AFTER the first `retarget()` may have
+  // already published the handoff. Re-send the current active state once the
+  // renderer has finished loading (and on every reload) so the navbar paints.
+  win.webContents.on('did-finish-load', () => {
+    const currentId = getActiveHybridWindowId();
+    if (currentId != null) sendActiveHandoff(currentId);
   });
 
   win.on('closed', () => {
@@ -140,6 +181,72 @@ function ensureOverlay(): BrowserWindow {
   overlayWin = win;
   DEBUG && console.log('[hybrid-overlay] created singleton overlay window', win.id);
   return win;
+}
+
+/**
+ * Push the active-window handoff to the overlay renderer: which `windowId` is
+ * now active, plus a snapshot of its current url / title / nav-state / loading
+ * so the navbar can paint instantly with no flash of the previous window's
+ * state. Passing `null` clears + hides the chrome. Published on the system
+ * address — the overlay is the only subscriber to `page-overlay:active`, so the
+ * broadcast is effectively directed.
+ */
+function sendActiveHandoff(id: number | null): void {
+  if (id == null) {
+    publish(getSystemAddress(), 'page-overlay:active', null);
+    return;
+  }
+  const entry = getHybridWindow(id);
+  if (!entry) {
+    publish(getSystemAddress(), 'page-overlay:active', null);
+    return;
+  }
+  const wc: WebContents = entry.contentWC;
+  let canGoBack = false;
+  let canGoForward = false;
+  let loading = false;
+  try {
+    if (!wc.isDestroyed()) {
+      canGoBack = wc.navigationHistory.canGoBack();
+      canGoForward = wc.navigationHistory.canGoForward();
+      loading = wc.isLoading();
+    }
+  } catch {
+    /* wc torn down between active-change and snapshot */
+  }
+  publish(getSystemAddress(), 'page-overlay:active', {
+    windowId: id,
+    url: entry.url(),
+    title: entry.title(),
+    canGoBack,
+    canGoForward,
+    loading,
+  });
+}
+
+/**
+ * Subscribe (once) to the overlay renderer's click-capture toggle. When the
+ * pointer is over an interactive chrome region (navbar / trigger zone) the
+ * renderer publishes `{capture:true}`; main flips the overlay window to CAPTURE
+ * pointer events (`setIgnoreMouseEvents(false)`). When the pointer leaves chrome
+ * it publishes `{capture:false}` and we restore click-through
+ * (`setIgnoreMouseEvents(true,{forward:true})`) so the content window below
+ * stays fully interactive everywhere the chrome isn't.
+ */
+function wireClickCapture(): void {
+  if (captureWired) return;
+  captureWired = true;
+  subscribe(getSystemAddress(), 'page-overlay:set-capture', (raw) => {
+    const msg = raw as { capture?: boolean } | null;
+    const capture = !!(msg && msg.capture);
+    lastCaptureState = capture;
+    if (!overlayWin || overlayWin.isDestroyed()) return;
+    if (capture) {
+      overlayWin.setIgnoreMouseEvents(false);
+    } else {
+      overlayWin.setIgnoreMouseEvents(true, { forward: true });
+    }
+  });
 }
 
 /** Stop following the currently-followed host window (detach move/resize). */
@@ -198,8 +305,10 @@ function retarget(id: number | null): void {
   unfollow();
 
   if (id == null) {
-    // No active hybrid window — hide the overlay (centralized show/hide, the
-    // natural fix for the old per-canvas overlay-stays-visible bug 88797f2d).
+    // No active hybrid window — clear the overlay chrome, then hide the window
+    // (centralized show/hide, the natural fix for the old per-canvas
+    // overlay-stays-visible bug 88797f2d).
+    sendActiveHandoff(null);
     if (overlayWin && !overlayWin.isDestroyed() && overlayWin.isVisible()) {
       overlayWin.hide();
     }
@@ -208,7 +317,8 @@ function retarget(id: number | null): void {
 
   const entry = getHybridWindow(id);
   if (!entry || entry.baseWin.isDestroyed()) {
-    // Active window vanished between signal and handling — hide.
+    // Active window vanished between signal and handling — clear + hide.
+    sendActiveHandoff(null);
     if (overlayWin && !overlayWin.isDestroyed() && overlayWin.isVisible()) {
       overlayWin.hide();
     }
@@ -237,6 +347,15 @@ function retarget(id: number | null): void {
   followedBaseWin = baseWin;
   onFollowedMove = follow;
 
+  // Tell the overlay renderer which window is now active + a state snapshot so
+  // it fully swaps its navbar for the new window (instant paint, no flash).
+  // The renderer may not be loaded yet on the very first retarget; in that case
+  // overlay.js seeds nothing — but it also subscribes synchronously at module
+  // load, and the broadcaster only delivers to already-subscribed windows, so a
+  // re-send after did-finish-load guarantees the first paint. We re-send below
+  // for that race.
+  sendActiveHandoff(id);
+
   DEBUG && console.log('[hybrid-overlay] retargeted onto hybrid window', id);
 }
 
@@ -253,6 +372,11 @@ function retarget(id: number | null): void {
 export function initHybridOverlay(): void {
   if (!isHybridPageHost()) return;
   if (unsubscribeActive) return; // already initialized
+
+  // Subscribe to the overlay renderer's click-capture toggle before any window
+  // exists — the subscription is on the main pubsub registry, independent of
+  // the overlay window's lifetime.
+  wireClickCapture();
 
   unsubscribeActive = onActiveHybridWindowChange((id) => {
     try {
@@ -296,6 +420,13 @@ export function teardownHybridOverlay(): void {
     overlayWin.destroy();
   }
   overlayWin = null;
+  // Drop the click-capture subscription so a later re-init re-wires cleanly.
+  try {
+    unsubscribe(getSystemAddress(), 'page-overlay:set-capture');
+  } catch {
+    /* never throw on teardown */
+  }
+  captureWired = false;
 }
 
 /**
@@ -375,6 +506,85 @@ function installTestBridge(): void {
     },
     browserWindowCount(): number {
       return BrowserWindow.getAllWindows().length;
+    },
+    /**
+     * Load a URL into a fake hybrid window's content webContents (so tests can
+     * exercise the navbar→content navigate/back/forward/reload routing against
+     * a real WebContents). Returns a promise that resolves once loaded.
+     */
+    loadFakeContent(id: number, url: string): Promise<boolean> {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.contentWC.isDestroyed()) return Promise.resolve(false);
+      return entry.contentWC
+        .loadURL(url)
+        .then(() => true)
+        .catch(() => false);
+    },
+    /** The current live URL of a fake hybrid window's content webContents. */
+    contentUrl(id: number): string {
+      const entry = getHybridWindow(id);
+      return entry ? entry.url() : '';
+    },
+    /** Whether a fake hybrid window's content can go back (post-navigation). */
+    contentCanGoBack(id: number): boolean {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.contentWC.isDestroyed()) return false;
+      try {
+        return entry.contentWC.navigationHistory.canGoBack();
+      } catch {
+        return false;
+      }
+    },
+    /**
+     * Read the overlay navbar's painted chrome state from the renderer DOM.
+     * Resolves null if no overlay window / renderer not ready. Focus-free:
+     * pure executeJavaScript, no OS focus.
+     */
+    overlayChromeState(): Promise<unknown> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(null);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const nb = document.getElementById('navbar');
+            if (!nb) return null;
+            const input = nb.shadowRoot && nb.shadowRoot.querySelector('.url-text');
+            return {
+              ready: window.__overlayReady === true,
+              noActive: document.body.classList.contains('no-active'),
+              navbarVisible: nb.classList.contains('visible'),
+              url: nb.url || '',
+              inputValue: input ? input.value : null,
+              canGoBack: !!nb.canGoBack,
+              canGoForward: !!nb.canGoForward,
+              loading: !!nb.loading,
+            };
+          })()`,
+        )
+        .catch(() => null);
+    },
+    /**
+     * Synthetically toggle click-capture by publishing the same topic the
+     * renderer would, then read back the overlay window's ignore-mouse state via
+     * the structural assertion the test makes. (We can't read ignoreMouseEvents
+     * directly off BrowserWindow in Electron, so the test asserts the publish
+     * path drives setIgnoreMouseEvents by checking it does not throw + the
+     * subscription exists; the renderer-driven path is covered separately.)
+     */
+    publishCapture(capture: boolean): void {
+      publish(getSystemAddress(), 'page-overlay:set-capture', { capture });
+    },
+    /** The last click-capture state applied to the overlay window. */
+    captureState(): boolean {
+      return lastCaptureState;
+    },
+    /**
+     * Publish an arbitrary `page:*` topic on the system address (the same path
+     * the overlay renderer / HUD use). Lets the navbar→content + content→chrome
+     * mediation be exercised from a test without resolving the pubsub module by
+     * path inside `electronApp.evaluate`.
+     */
+    publishTopic(topic: string, msg: unknown): void {
+      publish(getSystemAddress(), topic, msg);
     },
   };
 }
