@@ -32,9 +32,28 @@
  *   overlay → main (click-capture toggle):
  *     - page-overlay:set-capture {capture:boolean}
  *
- * DEFERRED to P1.4b-3 (stubbed/omitted here): widgets, side panels
- * (info/tags/entities/notes/extensions), resize-handle DRAG to resize the
- * content BaseWindow, find-in-page, window drag-to-move, maximized layout.
+ * P1.4b-5: side panels (page-info / tags / entities / extensions) are ported
+ * here from the canvas page.js. The overlay is ONE renderer serving N windows by
+ * retargeting, so every panel shows data for the CURRENT active window's URL and
+ * fully swaps on retarget (clears on active→null). Data sources (identical to
+ * page.js, keyed on the active window's URL):
+ *   - page-info  → overlay publishes `page:extract-info {windowId}`; main execs
+ *                  the meta-tag extraction in the active content WC and replies
+ *                  `page:page-info {windowId,url,info}` (ipc.ts). Active-filtered.
+ *   - tags       → `api.datastore.*` (queryItems/getItemTags/getOrCreateTag/
+ *                  tagItem/untagItem/getTagsByFrecency) on the active URL, +
+ *                  `tag:item-added` / `tag:item-removed` / `tag:created` pubsub.
+ *   - entities   → publish `entities:get-for-url {url}` → `entities:get-for-url:
+ *                  response {url,entities}`; also `entities:extracted {url,...}`.
+ *   - extensions → `api.chromeExtensions.*` + `api.adblocker.*`, keyed on the
+ *                  active URL's hostname.
+ * Panels are .interactive (covered by the existing click-capture loop) and shown
+ * with the navbar via body.panels-visible.
+ *
+ * DEFERRED to a follow-up (P1.4b-6): the NOTES panel (PageNotesPane in
+ * page-notes.js — a separate component that needs its own overlay mount) and the
+ * page WIDGETS host (page-widgets.js + opensearch + space-mode widgets). See the
+ * report for the concrete plan.
  */
 
 import api from '../api.js';
@@ -71,6 +90,12 @@ navbar.shortcuts = true;
 // hybrid window (overlay cleared + hidden by main).
 let activeWindowId = null;
 
+// P1.4b-5: the active window's current page URL (http/https). Every side panel
+// keys its data on this; it is reset on each retarget and updated as the active
+// window navigates (page:nav-state / page:navigated). null when no active window
+// or the active URL is not http(s).
+let activeUrl = null;
+
 // P1.4b-3: the active host window's current OUTER bounds, seeded from the active
 // handoff and kept in sync as the user resizes/moves through the overlay chrome.
 // The overlay frames the content window's full outer rect, so these ARE the
@@ -91,8 +116,10 @@ function clearChrome() {
   navbar.pageTitle = '';
   navbar.favicon = '';
   navbar.classList.remove('visible');
+  document.body.classList.remove('panels-visible');
   document.body.classList.add('no-active');
   hideFindBar();
+  clearPanels();
   setCapture(false);
 }
 
@@ -116,6 +143,7 @@ function paintFromSnapshot(snap) {
 api.subscribe('page-overlay:active', (msg) => {
   if (!msg || msg.windowId == null) {
     activeWindowId = null;
+    activeUrl = null;
     activeBounds = null;
     maximized = false;
     preMaxBounds = null;
@@ -124,6 +152,9 @@ api.subscribe('page-overlay:active', (msg) => {
     return;
   }
   activeWindowId = msg.windowId;
+  // P1.4b-5: seed the active URL for the side panels and refresh them for the
+  // newly-active window (full swap — clears the prior window's panel data first).
+  setActiveUrl(isHttp(msg.url) ? msg.url : null);
   // P1.4b-3: seed the locally-tracked outer bounds for resize/move math. Reset
   // maximize state for the newly-active window (each window owns its own).
   activeBounds = msg.bounds ? { ...msg.bounds } : null;
@@ -172,6 +203,8 @@ api.subscribe('page:nav-state', (msg) => {
 api.subscribe('page:navigated', (msg) => {
   if (!isActive(msg)) return;
   if (msg.url) navbar.setUrl(msg.url);
+  // P1.4b-5: a navigation changes the page identity → re-key + refresh panels.
+  if (isHttp(msg.url) && msg.url !== activeUrl) setActiveUrl(msg.url);
 });
 
 // ── chrome → content: navbar actions, tagged with the active windowId ─────────
@@ -209,10 +242,14 @@ function showNavbar() {
   navbar.classList.add('visible');
   // P1.4b-3: arm the drag-zone (window move) only while the chrome is visible.
   document.body.classList.add('chrome-visible');
+  // P1.4b-5: reveal the side panels alongside the navbar (matches page.js, where
+  // show() reveals panels with the navbar). Only panels marked has-data paint.
+  document.body.classList.add('panels-visible');
 }
 function hideNavbar() {
   navbar.classList.remove('visible');
   document.body.classList.remove('chrome-visible');
+  document.body.classList.remove('panels-visible');
 }
 function scheduleHide() {
   cancelHide();
@@ -227,6 +264,16 @@ triggerZone.addEventListener('mouseenter', showNavbar);
 triggerZone.addEventListener('mouseleave', scheduleHide);
 navbar.addEventListener('mouseenter', cancelHide);
 navbar.addEventListener('mouseleave', scheduleHide);
+
+// P1.4b-5: keep the chrome (navbar + panels) visible while the pointer is over a
+// side panel — mirrors page.js, which cancels the hide timer on panel hover so a
+// user can interact with panels without the chrome collapsing under them.
+for (const sel of ['#page-info-panel', '#tags-panel', '#entities-panel', '#extensions-panel']) {
+  const p = document.querySelector(sel);
+  if (!p) continue;
+  p.addEventListener('mouseenter', () => { showNavbar(); });
+  p.addEventListener('mouseleave', scheduleHide);
+}
 
 // ── Click-capture: overlay is window-level click-through by default. Capture
 // ONLY while the pointer is over an interactive chrome region (trigger zone or
@@ -536,9 +583,611 @@ api.subscribe('page:find-prev', (msg) => {
   showFindBar();
 });
 
-// P1.4b-5: side panels (info/tags/entities/notes/extensions) and page widgets
-// are DEFERRED. P1.5: popups. Their chrome would hang off this same overlay
-// surface + main routing.
+// ── P1.4b-5: side panels (page-info / tags / entities / extensions) ───────────
+// All four key on `activeUrl` (the active window's current page URL). They fully
+// swap on retarget and clear on active→null. The panel DOM/markup/CSS is REUSED
+// verbatim from renderer/page/index.html; the rendering logic is ported from
+// page.js (renderPageInfo/renderTags/renderEntities/loadExtensionsPanel) with the
+// only change being the data SOURCE: instead of reading a same-window <webview>,
+// the overlay reads the MAIN-owned active content WC via pubsub + api.datastore.
+
+function isHttp(u) {
+  return typeof u === 'string' && (u.startsWith('http://') || u.startsWith('https://'));
+}
+
+// Panel DOM refs (mirror page.js's element handles).
+const pageInfoPanel = document.getElementById('page-info-panel');
+const pageInfoBody = document.getElementById('page-info-body');
+const tagsPanel = document.getElementById('tags-panel');
+const tagsBody = document.getElementById('tags-body');
+const tagsList = document.getElementById('tags-list');
+const tagsInput = document.getElementById('tags-input');
+const tagsSuggestion = document.getElementById('tags-suggestion');
+const entitiesPanel = document.getElementById('entities-panel');
+const entitiesBody = document.getElementById('entities-body');
+const entitiesRescanBtn = document.getElementById('entities-rescan-btn');
+const extensionsPanel = document.getElementById('extensions-panel');
+const extensionsBody = document.getElementById('extensions-body');
+
+// Per-active-window panel state. A monotonically-increasing token gates async
+// callbacks so a slow datastore/exec reply for a NO-LONGER-active window can
+// never paint into the panels (the single overlay renderer serves N windows).
+let panelToken = 0;
+let currentItemId = null;
+let currentPageTags = [];
+let allTagsCache = [];
+let currentPageEntities = [];
+let currentSiteHostname = null;
+let currentSiteAdblockAllowed = false;
+let adblockerGlobalEnabled = false;
+
+/** Reset every panel to empty + remove its has-data flag (so it stops painting).
+ *  Called on active→null and at the start of every retarget. */
+function clearPanels() {
+  panelToken++;
+  currentItemId = null;
+  currentPageTags = [];
+  currentPageEntities = [];
+  currentSiteHostname = null;
+  currentSiteAdblockAllowed = false;
+  if (pageInfoBody) pageInfoBody.innerHTML = '<div class="info-empty">Loading page info...</div>';
+  if (tagsList) tagsList.innerHTML = '';
+  if (tagsInput) tagsInput.value = '';
+  if (tagsSuggestion) tagsSuggestion.textContent = '';
+  if (entitiesBody) entitiesBody.innerHTML = '<div class="entity-empty">No entities detected yet</div>';
+  if (extensionsBody) extensionsBody.innerHTML = '<div class="ext-loading">Loading extensions...</div>';
+  for (const p of [pageInfoPanel, tagsPanel, entitiesPanel, extensionsPanel]) {
+    if (p) p.classList.remove('has-data');
+  }
+}
+
+/** Re-key the panels onto a new active URL and kick off all four loads. Passing
+ *  null clears them (non-http active window — panels have nothing to show). */
+function setActiveUrl(url) {
+  clearPanels();
+  activeUrl = url;
+  if (!url) return;
+  const token = panelToken;
+  requestPageInfo(token);
+  requestEntities(token, url);
+  loadTagsForUrl(token, url);
+  loadExtensionsPanel(token);
+}
+
+// ── Page Info ─────────────────────────────────────────────────────────────────
+// Ask main to extract the active content WC's meta tags; the reply arrives on
+// `page:page-info` (active-filtered). Mirrors page.js renderPageInfo verbatim.
+function requestPageInfo(token) {
+  if (activeWindowId == null || token !== panelToken) return;
+  api.publish('page:extract-info', { windowId: activeWindowId });
+}
+
+api.subscribe('page:page-info', (msg) => {
+  if (!isActive(msg)) return;
+  if (!msg.info) return;
+  renderPageInfo(msg.info);
+});
+
+function renderPageInfo(info) {
+  if (!pageInfoBody) return;
+  const rows = [];
+  if (info.title) rows.push(makeInfoRow('Title', info.title));
+  if (info.hostname) rows.push(makeInfoRow('Domain', info.hostname));
+  if (info.ogSiteName && info.ogSiteName !== info.hostname) rows.push(makeInfoRow('Site', info.ogSiteName));
+  const desc = info.ogDescription || info.description;
+  if (desc) rows.push(makeInfoRow('Description', desc, true));
+  if (info.keywords) rows.push(makeInfoRow('Keywords', info.keywords, true));
+  if (info.author) rows.push(makeInfoRow('Author', info.author));
+  if (info.ogType) rows.push(makeInfoRow('Type', info.ogType));
+  if (info.ogImage) {
+    const imgRow = document.createElement('div');
+    imgRow.className = 'info-row';
+    const label = document.createElement('div');
+    label.className = 'info-label';
+    label.textContent = 'OG Image';
+    imgRow.appendChild(label);
+    const img = document.createElement('img');
+    img.className = 'og-image-preview';
+    img.src = info.ogImage;
+    img.alt = 'Open Graph image';
+    img.onerror = () => { imgRow.remove(); };
+    imgRow.appendChild(img);
+    rows.push(imgRow);
+  }
+  if (info.generator) rows.push(makeInfoRow('Generator', info.generator));
+
+  if (rows.length === 0) {
+    pageInfoBody.innerHTML = '<div class="info-empty">No metadata available</div>';
+  } else {
+    pageInfoBody.innerHTML = '';
+    for (const row of rows) pageInfoBody.appendChild(row);
+  }
+  if (pageInfoPanel) pageInfoPanel.classList.add('has-data');
+}
+
+function makeInfoRow(labelText, valueText, truncated = false) {
+  const row = document.createElement('div');
+  row.className = 'info-row';
+  const label = document.createElement('div');
+  label.className = 'info-label';
+  label.textContent = labelText;
+  row.appendChild(label);
+  const value = document.createElement('div');
+  value.className = 'info-value' + (truncated ? ' truncated' : '');
+  value.textContent = valueText;
+  row.appendChild(value);
+  return row;
+}
+
+// ── Tags ──────────────────────────────────────────────────────────────────────
+// Pure api.datastore + tag pubsub, keyed on the active URL. Ported verbatim from
+// page.js (resolveItemId/loadTagsForCurrentPage/renderTags/add/removeTagToPage).
+function normalizeUrlForCompare(u) {
+  try {
+    const parsed = new URL(u);
+    if (parsed.pathname !== '/' && parsed.pathname.endsWith('/')) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
+    }
+    if ((parsed.protocol === 'http:' && parsed.port === '80') || (parsed.protocol === 'https:' && parsed.port === '443')) {
+      parsed.port = '';
+    }
+    if (parsed.search) {
+      const params = new URLSearchParams(parsed.search);
+      const sortedParams = new URLSearchParams([...params.entries()].sort());
+      parsed.search = sortedParams.toString();
+    }
+    return parsed.toString();
+  } catch { return u; }
+}
+
+async function resolveItemId(url) {
+  if (!isHttp(url)) return null;
+  try {
+    const result = await api.datastore.queryItems({ type: 'url', search: url });
+    if (result.success && result.data && result.data.length > 0) {
+      const normalUrl = normalizeUrlForCompare(url);
+      const exact = result.data.find((item) => normalizeUrlForCompare(item.content) === normalUrl);
+      if (exact) return exact.id;
+      return result.data[0].id;
+    }
+  } catch (err) {
+    DEBUG && console.log('[overlay] resolveItemId failed:', err.message);
+  }
+  return null;
+}
+
+async function loadTagsForUrl(token, url) {
+  if (!isHttp(url)) return;
+  const itemId = await resolveItemId(url);
+  if (token !== panelToken) return; // active window changed mid-resolve
+  currentItemId = itemId;
+  if (!itemId) {
+    currentPageTags = [];
+    renderTags();
+    loadAllTags();
+    return;
+  }
+  try {
+    const result = await api.datastore.getItemTags(itemId);
+    if (token !== panelToken) return;
+    currentPageTags = (result.success && result.data) ? result.data : [];
+  } catch (err) {
+    DEBUG && console.log('[overlay] load tags failed:', err.message);
+    currentPageTags = [];
+  }
+  renderTags();
+  loadAllTags();
+}
+
+async function loadAllTags() {
+  try {
+    const result = await api.datastore.getTagsByFrecency();
+    if (result.success && result.data) allTagsCache = result.data;
+  } catch (err) {
+    DEBUG && console.log('[overlay] loadAllTags failed:', err.message);
+  }
+}
+
+function renderTags() {
+  if (!tagsList) return;
+  tagsList.innerHTML = '';
+  for (const tag of currentPageTags) {
+    const btn = document.createElement('button');
+    btn.className = 'tag-btn';
+    btn.title = `Remove tag: ${tag.name}`;
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'tag-name';
+    nameSpan.textContent = tag.name;
+    btn.appendChild(nameSpan);
+    const removeSpan = document.createElement('span');
+    removeSpan.className = 'tag-remove';
+    removeSpan.textContent = '×';
+    btn.appendChild(removeSpan);
+    btn.addEventListener('click', () => { removeTagFromPage(tag.id, tag.name); });
+    tagsList.appendChild(btn);
+  }
+  // The Tags panel always offers the add-tag input, so it always has-data once
+  // an active URL is set (matches page.js always showing it alongside chrome).
+  if (tagsPanel) tagsPanel.classList.add('has-data');
+}
+
+async function addTagToPage(tagName) {
+  if (!tagName) return;
+  tagName = tagName.trim().toLowerCase();
+  if (!tagName || !isHttp(activeUrl)) return;
+  const token = panelToken;
+  if (!currentItemId) {
+    try {
+      const found = await api.datastore.findUrlItem(activeUrl);
+      if (token !== panelToken) return;
+      if (found?.success && found.data) {
+        currentItemId = found.data.id;
+      } else {
+        const created = await api.datastore.addItem('url', { content: activeUrl });
+        if (token !== panelToken) return;
+        if (!created?.success || !created.data?.id) {
+          console.warn('[overlay] addTagToPage: failed to create item for URL:', activeUrl);
+          return;
+        }
+        currentItemId = created.data.id;
+      }
+    } catch (err) {
+      console.error('[overlay] addTagToPage: error resolving item id:', err);
+      return;
+    }
+  }
+  if (currentPageTags.some((t) => t.name.toLowerCase() === tagName)) return;
+  try {
+    const tagResult = await api.datastore.getOrCreateTag(tagName);
+    if (!tagResult.success || !tagResult.data) return;
+    const tagId = tagResult.data.tag.id;
+    const result = await api.datastore.tagItem(currentItemId, tagId);
+    if (token !== panelToken) return;
+    if (result.success) {
+      await loadTagsForUrl(token, activeUrl);
+      loadAllTags();
+    }
+  } catch (err) {
+    console.error('[overlay] addTagToPage failed:', err);
+  }
+}
+
+async function removeTagFromPage(tagId) {
+  if (!currentItemId || !tagId) return;
+  const token = panelToken;
+  try {
+    const result = await api.datastore.untagItem(currentItemId, tagId);
+    if (token !== panelToken) return;
+    if (result.success) await loadTagsForUrl(token, activeUrl);
+  } catch (err) {
+    console.error('[overlay] removeTagFromPage failed:', err);
+  }
+}
+
+if (tagsInput) {
+  tagsInput.addEventListener('input', () => {
+    const query = tagsInput.value.trim().toLowerCase();
+    if (!query) { if (tagsSuggestion) tagsSuggestion.textContent = ''; return; }
+    const appliedNames = new Set(currentPageTags.map((t) => t.name.toLowerCase()));
+    const match = allTagsCache.find((t) =>
+      t.name.toLowerCase().startsWith(query) && !appliedNames.has(t.name.toLowerCase()));
+    if (match && tagsSuggestion) {
+      tagsSuggestion.textContent = tagsInput.value + match.name.slice(query.length);
+    } else if (tagsSuggestion) {
+      tagsSuggestion.textContent = '';
+    }
+  });
+  tagsInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' && tagsSuggestion && tagsSuggestion.textContent) {
+      e.preventDefault();
+      tagsInput.value = tagsSuggestion.textContent;
+      tagsSuggestion.textContent = '';
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const value = tagsInput.value.trim();
+      if (value) {
+        const names = value.split(',').map((t) => t.trim()).filter(Boolean);
+        for (const name of names) addTagToPage(name);
+        tagsInput.value = '';
+        if (tagsSuggestion) tagsSuggestion.textContent = '';
+      }
+    } else if (e.key === 'Escape') {
+      tagsInput.value = '';
+      if (tagsSuggestion) tagsSuggestion.textContent = '';
+      tagsInput.blur();
+      e.stopPropagation();
+    }
+  });
+}
+
+// React to tag pubsub — refresh when our item's tags change. Active-URL-keyed.
+api.subscribe('tag:item-added', async (msg) => {
+  if (!msg || !msg.itemId) return;
+  if (msg.itemId === currentItemId) { loadTagsForUrl(panelToken, activeUrl); loadAllTags(); return; }
+  // Adopt a freshly-created item whose URL matches our active page.
+  try {
+    const lookup = await api.datastore.getItem(msg.itemId);
+    if (lookup?.success && lookup.data && isHttp(activeUrl)
+        && normalizeUrlForCompare(lookup.data.content) === normalizeUrlForCompare(activeUrl)) {
+      currentItemId = msg.itemId;
+      loadTagsForUrl(panelToken, activeUrl);
+    }
+  } catch { /* ignore */ }
+  loadAllTags();
+});
+api.subscribe('tag:item-removed', (msg) => {
+  if (msg && msg.itemId === currentItemId) loadTagsForUrl(panelToken, activeUrl);
+});
+api.subscribe('tag:created', () => { loadAllTags(); });
+
+// ── Entities ────────────────────────────────────────────────────────────────
+// Request entities for the active URL from the entities feature via pubsub; the
+// response (and proactive `entities:extracted`) is active-URL-keyed. Ported from
+// page.js renderEntities + the get-for-url / extracted handlers.
+function requestEntities(token, url) {
+  if (token !== panelToken || !isHttp(url)) return;
+  if (entitiesBody) entitiesBody.innerHTML = '<div class="entity-loading">Scanning for entities...</div>';
+  api.publish('entities:get-for-url', { url });
+}
+
+function entitiesUrlMatches(url) {
+  return isHttp(url) && isHttp(activeUrl) && url === activeUrl;
+}
+
+api.subscribe('entities:extracted', (msg) => {
+  if (!msg || !msg.url || !msg.entities || !entitiesUrlMatches(msg.url)) return;
+  currentPageEntities = msg.entities;
+  renderEntities(currentPageEntities);
+});
+api.subscribe('entities:get-for-url:response', (msg) => {
+  if (!msg || !msg.url || !msg.entities || !entitiesUrlMatches(msg.url)) return;
+  if (msg.entities.length === 0) { renderEntities([]); return; }
+  currentPageEntities = msg.entities.map((e) => {
+    let meta = {};
+    try { meta = JSON.parse(e.metadata || '{}'); } catch { /* not json */ }
+    return {
+      name: e.content || e.title,
+      type: meta.entityType || 'other',
+      confidence: meta.confidence || 0,
+      visitCount: e.visitCount || 0,
+    };
+  });
+  renderEntities(currentPageEntities);
+});
+
+if (entitiesRescanBtn) {
+  entitiesRescanBtn.addEventListener('click', () => {
+    if (!isHttp(activeUrl)) return;
+    currentPageEntities = [];
+    if (entitiesBody) entitiesBody.innerHTML = '<div class="entity-loading">Rescanning for entities...</div>';
+    api.publish('entities:extract', { url: activeUrl });
+  });
+}
+
+function renderEntities(entities) {
+  if (!entitiesBody) return;
+  if (entitiesPanel) entitiesPanel.classList.add('has-data');
+  if (!entities || entities.length === 0) {
+    entitiesBody.innerHTML = '<div class="entity-empty">No entities detected</div>';
+    return;
+  }
+  const groups = {};
+  for (const entity of entities) {
+    const type = entity.type || entity.entityType || 'other';
+    if (!groups[type]) groups[type] = [];
+    groups[type].push(entity);
+  }
+  const typeOrder = ['person', 'organization', 'place', 'event', 'email', 'phone', 'product', 'creative_work', 'date', 'tracking_number', 'other'];
+  const typeLabels = {
+    person: 'People', organization: 'Organizations', place: 'Places', event: 'Events',
+    email: 'Emails', phone: 'Phones', product: 'Products', creative_work: 'Works',
+    date: 'Dates', tracking_number: 'Tracking', other: 'Other',
+  };
+  const sortedTypes = Object.keys(groups).sort((a, b) => {
+    const ai = typeOrder.indexOf(a); const bi = typeOrder.indexOf(b);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+  entitiesBody.innerHTML = '';
+  for (const type of sortedTypes) {
+    const groupEl = document.createElement('div');
+    groupEl.className = 'entity-group';
+    const label = document.createElement('div');
+    label.className = 'entity-group-label';
+    label.textContent = typeLabels[type] || type;
+    groupEl.appendChild(label);
+    for (const entity of groups[type]) {
+      const item = document.createElement('div');
+      item.className = 'entity-item';
+      const badge = document.createElement('span');
+      badge.className = `entity-badge ${type}`;
+      item.appendChild(badge);
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = entity.name || entity.content || '';
+      item.appendChild(nameSpan);
+      if (entity.visitCount > 0) {
+        const count = document.createElement('span');
+        count.className = 'entity-count';
+        count.textContent = entity.visitCount;
+        item.appendChild(count);
+      }
+      groupEl.appendChild(item);
+    }
+    entitiesBody.appendChild(groupEl);
+  }
+}
+
+// ── Extensions ──────────────────────────────────────────────────────────────
+// api.chromeExtensions + api.adblocker, keyed on the active URL's hostname.
+// Ported verbatim from page.js loadExtensionsPanel + renderAdblockerEntry.
+function hostnameForActive() {
+  if (!isHttp(activeUrl)) return null;
+  try { return new URL(activeUrl).hostname; } catch { return null; }
+}
+
+async function loadExtensionsPanel(token) {
+  if (!extensionsBody || token !== panelToken) return;
+  try {
+    const [extResult, uiResult, adStatus] = await Promise.all([
+      api.chromeExtensions.list(),
+      api.chromeExtensions.getUiEntries(),
+      api.adblocker.getStatus(),
+    ]);
+    if (token !== panelToken) return;
+    const extensions = (extResult.success && extResult.data) ? extResult.data : [];
+    const uiEntries = (uiResult.success && uiResult.data) ? uiResult.data : [];
+    adblockerGlobalEnabled = adStatus.success && adStatus.data?.enabled;
+
+    const hostname = hostnameForActive();
+    currentSiteHostname = hostname;
+    if (hostname && adblockerGlobalEnabled) {
+      const siteResult = await api.adblocker.isSiteAllowed(hostname);
+      if (token !== panelToken) return;
+      currentSiteAdblockAllowed = siteResult.success && siteResult.data;
+    } else {
+      currentSiteAdblockAllowed = false;
+    }
+
+    const popupMap = new Map();
+    const optionsMap = new Map();
+    for (const entry of uiEntries) {
+      if (entry.type === 'popup') popupMap.set(entry.extensionId, entry);
+      else if (entry.type === 'options') optionsMap.set(entry.extensionId, entry);
+    }
+    const enabledExts = extensions.filter((ext) => ext.enabled);
+
+    extensionsBody.innerHTML = '';
+    renderAdblockerEntry();
+
+    if (enabledExts.length === 0) {
+      const emptyEl = document.createElement('div');
+      emptyEl.className = 'ext-empty';
+      emptyEl.textContent = 'No extensions enabled';
+      extensionsBody.appendChild(emptyEl);
+    } else {
+      for (const ext of enabledExts) {
+        const item = document.createElement('div');
+        item.className = 'ext-item';
+        const header = document.createElement('div');
+        header.className = 'ext-item-header';
+        const icon = document.createElement('span');
+        icon.className = 'ext-icon';
+        icon.textContent = '🧩';
+        header.appendChild(icon);
+        const info = document.createElement('div');
+        info.className = 'ext-info';
+        const name = document.createElement('div');
+        name.className = 'ext-name';
+        name.textContent = ext.name;
+        name.title = ext.description || ext.name;
+        info.appendChild(name);
+        header.appendChild(info);
+        item.appendChild(header);
+        const popupEntry = popupMap.get(ext.id);
+        const optionsEntry = optionsMap.get(ext.id);
+        if (popupEntry || optionsEntry) {
+          const actions = document.createElement('div');
+          actions.className = 'ext-actions';
+          if (popupEntry) {
+            const popupBtn = document.createElement('button');
+            popupBtn.className = 'ext-action-btn';
+            popupBtn.textContent = 'Open';
+            popupBtn.title = `Open ${ext.name} popup`;
+            popupBtn.addEventListener('click', () => { api.chromeExtensions.openPage(ext.id, 'popup'); });
+            actions.appendChild(popupBtn);
+          }
+          if (optionsEntry) {
+            const settingsBtn = document.createElement('button');
+            settingsBtn.className = 'ext-action-btn';
+            settingsBtn.textContent = 'Settings';
+            settingsBtn.title = `Open ${ext.name} settings`;
+            settingsBtn.addEventListener('click', () => { api.chromeExtensions.openPage(ext.id, 'options'); });
+            actions.appendChild(settingsBtn);
+          }
+          item.appendChild(actions);
+        }
+        extensionsBody.appendChild(item);
+      }
+    }
+    if (extensionsPanel) extensionsPanel.classList.add('has-data');
+  } catch (err) {
+    console.warn('[overlay] Failed to load extensions panel:', err.message);
+    if (extensionsBody) extensionsBody.innerHTML = '<div class="ext-empty">Could not load extensions</div>';
+    if (extensionsPanel) extensionsPanel.classList.add('has-data');
+  }
+}
+
+function renderAdblockerEntry() {
+  if (!extensionsBody) return;
+  const item = document.createElement('div');
+  item.className = 'ext-item';
+  item.id = 'ext-adblocker-item';
+  const icon = document.createElement('span');
+  icon.className = 'ext-icon';
+  icon.textContent = '🛡️';
+  item.appendChild(icon);
+  const info = document.createElement('div');
+  info.className = 'ext-info';
+  const name = document.createElement('div');
+  name.className = 'ext-name';
+  name.textContent = 'Ad Blocker';
+  info.appendChild(name);
+  if (currentSiteHostname) {
+    const status = document.createElement('div');
+    status.className = 'ext-adblocker-status';
+    if (!adblockerGlobalEnabled) status.textContent = 'Disabled globally';
+    else if (currentSiteAdblockAllowed) status.textContent = `Ads allowed on ${currentSiteHostname}`;
+    else status.textContent = `Blocking ads on ${currentSiteHostname}`;
+    info.appendChild(status);
+  }
+  item.appendChild(info);
+  if (adblockerGlobalEnabled && currentSiteHostname) {
+    const toggle = document.createElement('label');
+    toggle.className = 'ext-toggle';
+    toggle.title = currentSiteAdblockAllowed
+      ? `Enable ad blocking on ${currentSiteHostname}`
+      : `Disable ad blocking on ${currentSiteHostname}`;
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = !currentSiteAdblockAllowed;
+    input.addEventListener('change', async () => {
+      const shouldBlock = input.checked;
+      try {
+        if (shouldBlock) { await api.adblocker.disallowSite(currentSiteHostname); currentSiteAdblockAllowed = false; }
+        else { await api.adblocker.allowSite(currentSiteHostname); currentSiteAdblockAllowed = true; }
+        const existing = document.getElementById('ext-adblocker-item');
+        if (existing) {
+          const nextSibling = existing.nextSibling;
+          existing.remove();
+          renderAdblockerEntry();
+          const newItem = document.getElementById('ext-adblocker-item');
+          if (newItem && nextSibling) extensionsBody.insertBefore(newItem, nextSibling);
+        }
+      } catch (err) {
+        console.error('[overlay] Adblocker toggle failed:', err);
+        input.checked = !shouldBlock;
+      }
+    });
+    const track = document.createElement('span');
+    track.className = 'ext-toggle-track';
+    toggle.appendChild(input);
+    toggle.appendChild(track);
+    item.appendChild(toggle);
+  }
+  if (extensionsBody.firstChild) extensionsBody.insertBefore(item, extensionsBody.firstChild);
+  else extensionsBody.appendChild(item);
+}
+
+// ── Panel collapse toggles (REUSED from page.js: built-in panel headers) ──────
+for (const toggle of document.querySelectorAll('.panel-toggle')) {
+  const header = toggle.closest('.panel-header');
+  const panel = header?.parentElement;
+  const bodyWrap = panel?.querySelector('.panel-body-wrap');
+  if (!bodyWrap) continue;
+  toggle.addEventListener('click', () => {
+    const collapsed = bodyWrap.classList.toggle('collapsed');
+    toggle.classList.toggle('collapsed', collapsed);
+  });
+}
 
 // Signal readiness so main can verify the renderer is wired (and tests can wait).
 window.__overlayReady = true;

@@ -1130,6 +1130,62 @@ export function installHybridNavbarActionRouting(): void {
     try { r.wc.stopFindInPage('clearSelection'); } catch { /* wc gone */ }
   });
 
+  // ── P1.4b-5: page-info extraction routing (overlay panel → content WC) ──────
+  // The shared overlay's Page-Info side panel needs the active page's <meta>
+  // metadata (title/description/og:*/author/etc.). On the canvas path page.js
+  // reads it with `webview.executeJavaScript(...)` directly in-renderer. The
+  // hybrid content webContents is MAIN-owned, so the overlay publishes
+  // `page:extract-info {windowId}` and main resolves `getHybridContentWC` and
+  // runs the IDENTICAL extraction script page.js uses (renderer/page/page.js
+  // extractPageInfo), then publishes the result back as
+  // `page:page-info {windowId, url, info}`. The overlay applies it only for the
+  // active window (windowId match), exactly like every other content→chrome
+  // topic. Non-hybrid/torn-down windowIds resolve to null → no-op.
+  subscribe(getSystemAddress(), 'page:extract-info', (raw) => {
+    const r = wcFor(raw);
+    if (!r) return;
+    let url = '';
+    try { url = r.wc.getURL() || ''; } catch { /* wc gone */ }
+    if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return;
+    r.wc
+      .executeJavaScript(`
+        (function() {
+          function getMeta(name) {
+            var el = document.querySelector('meta[property="' + name + '"], meta[name="' + name + '"]');
+            return el ? (el.getAttribute('content') || '').trim() : '';
+          }
+          return {
+            title: document.title || '',
+            hostname: window.location.hostname || '',
+            url: window.location.href || '',
+            description: getMeta('description') || getMeta('og:description') || '',
+            keywords: getMeta('keywords') || '',
+            ogTitle: getMeta('og:title') || '',
+            ogDescription: getMeta('og:description') || '',
+            ogImage: getMeta('og:image') || '',
+            ogSiteName: getMeta('og:site_name') || '',
+            ogType: getMeta('og:type') || '',
+            author: getMeta('author') || '',
+            generator: getMeta('generator') || '',
+            canonical: (function() {
+              var link = document.querySelector('link[rel="canonical"]');
+              return link ? link.href : '';
+            })(),
+            favicon: (function() {
+              var link = document.querySelector('link[rel="icon"], link[rel="shortcut icon"]');
+              return link ? link.href : '';
+            })()
+          };
+        })();
+      `)
+      .then((info: unknown) => {
+        publish(getSystemAddress(), 'page:page-info', { windowId: r.windowId, url, info });
+      })
+      .catch((err: unknown) => {
+        DEBUG && console.log(`[hybrid-page-host:${r.windowId}] page-info extract failed:`, err);
+      });
+  });
+
   DEBUG && console.log('[hybrid-page-host] navbar action routing installed');
 }
 

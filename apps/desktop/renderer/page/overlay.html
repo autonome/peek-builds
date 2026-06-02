@@ -178,12 +178,345 @@
       color: var(--theme-text, #fff);
     }
 
+    /* ── P1.4b-5: side panels (page-info / tags / entities / extensions) ────────
+     * REUSED verbatim from renderer/page/index.html (the canvas page.js chrome).
+     * The overlay frames the active hybrid window's FULL outer bounds (no canvas
+     * margin), so panels are pinned to the window edges directly: left stack
+     * (page-info, then extensions below) at top-left, right stack (tags, then
+     * entities) at top-right, both offset below the navbar/trigger zone. They are
+     * .interactive so the click-capture path turns the overlay opaque to the
+     * pointer over them. Shown only while chrome is visible (body.panels-visible),
+     * hidden when there is no active window. */
+    .page-info-panel, .tags-panel, .entities-panel, .extensions-panel {
+      position: absolute;
+      z-index: 140;
+      pointer-events: none;
+      background: color-mix(in srgb, var(--base00) 85%, transparent);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: var(--theme-surface-border, 1px solid rgba(255, 255, 255, 0.08));
+      color: var(--theme-text, #e0e0e0);
+      font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
+      font-size: 12px;
+      border-radius: 10px;
+      max-width: 280px;
+      min-width: 200px;
+      overflow: hidden;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+    }
+    /* Left stack pinned top-left, right stack pinned top-right. The 52px top
+     * offset clears the trigger zone + navbar region (matches page.js's
+     * panelTopOffset = webviewTop + 40 once the chrome-less window has no
+     * canvas margin). */
+    .page-info-panel { left: 12px; top: 52px; }
+    .extensions-panel { left: 12px; top: 52px; }
+    .tags-panel { right: 12px; top: 52px; }
+    .entities-panel { right: 12px; top: 52px; }
+
+    body.panels-visible .page-info-panel.has-data,
+    body.panels-visible .tags-panel.has-data,
+    body.panels-visible .entities-panel.has-data,
+    body.panels-visible .extensions-panel.has-data {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .page-info-panel .panel-header, .tags-panel .panel-header,
+    .entities-panel .panel-header, .extensions-panel .panel-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px 4px 10px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .page-info-panel .panel-title, .tags-panel .panel-title,
+    .entities-panel .panel-title, .extensions-panel .panel-title {
+      flex: 1;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--theme-text-secondary, #aaa);
+    }
+
+    .panel-toggle {
+      background: none;
+      border: none;
+      color: var(--theme-text-muted, #666);
+      font-size: 9px;
+      width: 14px;
+      height: 14px;
+      padding: 0;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: transform 0.2s ease, color 0.15s;
+      font-family: system-ui;
+      line-height: 1;
+    }
+    .panel-toggle:hover { color: var(--theme-text-secondary, #aaa); }
+    .panel-toggle.collapsed { transform: rotate(-90deg); }
+
+    .panel-body-wrap {
+      display: grid;
+      grid-template-rows: 1fr;
+      transition: grid-template-rows 0.2s ease;
+      overflow: hidden;
+    }
+    .panel-body-wrap.collapsed { grid-template-rows: 0fr; }
+    .panel-body-wrap > * { overflow: hidden; min-height: 0; }
+
+    .panel-action-btn {
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.1));
+      border: none;
+      color: var(--theme-text-secondary, #bbb);
+      font-size: 10px;
+      font-family: inherit;
+      padding: 2px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: background 0.1s, color 0.1s;
+      white-space: nowrap;
+    }
+    .panel-action-btn:hover {
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.18));
+      color: var(--theme-text, #fff);
+    }
+    .panel-action-btn:disabled { opacity: 0.5; cursor: default; }
+
+    /* Page Info */
+    .page-info-panel .panel-body { padding: 4px 10px 10px 10px; }
+    .page-info-panel .info-row {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 4px 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--theme-border) 30%, transparent);
+    }
+    .page-info-panel .info-row:last-child { border-bottom: none; }
+    .page-info-panel .info-label {
+      font-size: 10px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--theme-text-muted, #777);
+    }
+    .page-info-panel .info-value {
+      font-size: 12px;
+      color: var(--theme-text, #e0e0e0);
+      word-break: break-word;
+      line-height: 1.4;
+    }
+    .page-info-panel .info-value.truncated {
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .page-info-panel .og-image-preview {
+      width: 100%;
+      max-height: 100px;
+      object-fit: cover;
+      border-radius: 6px;
+      margin-top: 4px;
+    }
+    .page-info-panel .info-empty {
+      color: var(--theme-text-muted, #555);
+      font-style: italic;
+      font-size: 11px;
+      padding: 8px 0;
+    }
+
+    /* Tags */
+    .tags-panel .panel-body { padding: 4px 10px 10px 10px; }
+    .tags-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      max-height: 120px;
+      overflow-y: auto;
+      margin-bottom: 6px;
+    }
+    .tags-list:empty { display: none; margin-bottom: 0; }
+    .tag-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.1));
+      border: 1px solid color-mix(in srgb, var(--theme-border) 40%, transparent);
+      color: var(--theme-text, #e0e0e0);
+      font-size: 11px;
+      font-family: inherit;
+      padding: 3px 6px;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background 0.1s, color 0.1s, border-color 0.1s;
+      max-width: 100%;
+      overflow: hidden;
+    }
+    .tag-btn:hover {
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.18));
+      border-color: color-mix(in srgb, var(--theme-border) 60%, transparent);
+    }
+    .tag-btn .tag-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tag-btn .tag-remove { font-size: 12px; line-height: 1; opacity: 0.5; transition: opacity 0.1s; flex-shrink: 0; }
+    .tag-btn:hover .tag-remove { opacity: 1; color: #f87171; }
+    .tags-input-row { position: relative; }
+    .tags-input-wrapper { position: relative; }
+    .tags-input {
+      width: 100%;
+      background: color-mix(in srgb, var(--theme-bg-tertiary) 30%, transparent);
+      border: 1px solid color-mix(in srgb, var(--theme-border) 40%, transparent);
+      border-radius: 5px;
+      color: var(--theme-text, #e0e0e0);
+      font-size: 11px;
+      font-family: inherit;
+      padding: 4px 6px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .tags-input:focus { border-color: var(--theme-accent, rgba(100, 150, 255, 0.5)); }
+    .tags-input::placeholder { color: var(--theme-text-muted, #666); }
+    .tags-suggestion {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 4px 6px;
+      font-size: 11px;
+      font-family: inherit;
+      color: var(--theme-text-muted, #555);
+      pointer-events: none;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
+    /* Entities */
+    .entities-panel .panel-body { padding: 4px 10px 10px 10px; max-height: 400px; overflow-y: auto; }
+    .entities-panel .entity-group { margin-bottom: 8px; }
+    .entities-panel .entity-group:last-child { margin-bottom: 0; }
+    .entities-panel .entity-group-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--theme-text-muted, #777);
+      margin-bottom: 4px;
+    }
+    .entities-panel .entity-item {
+      padding: 3px 0;
+      font-size: 12px;
+      color: var(--theme-text, #e0e0e0);
+      line-height: 1.3;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .entities-panel .entity-badge {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .entities-panel .entity-badge.person { background: #6dca6d; }
+    .entities-panel .entity-badge.organization { background: #5b9bd5; }
+    .entities-panel .entity-badge.place { background: #e6a23c; }
+    .entities-panel .entity-badge.email { background: #c084fc; }
+    .entities-panel .entity-badge.phone { background: #f472b6; }
+    .entities-panel .entity-badge.event { background: #fb923c; }
+    .entities-panel .entity-badge.product { background: #67e8f9; }
+    .entities-panel .entity-badge.date { background: #fbbf24; }
+    .entities-panel .entity-badge.tracking_number { background: #a78bfa; }
+    .entities-panel .entity-badge.other { background: #94a3b8; }
+    .entities-panel .entity-count { font-size: 10px; color: var(--theme-text-muted, #777); margin-left: 6px; opacity: 0.7; }
+    .entities-panel .entity-empty { color: var(--theme-text-muted, #555); font-style: italic; font-size: 11px; padding: 8px 0; }
+    .entities-panel .entity-loading { color: var(--theme-text-muted, #666); font-size: 11px; padding: 8px 0; }
+
+    /* Extensions */
+    .extensions-panel .panel-body { padding: 4px 10px 10px 10px; max-height: 400px; overflow-y: auto; }
+    .ext-loading { color: var(--theme-text-muted, #666); font-size: 11px; padding: 8px 0; }
+    .ext-empty { color: var(--theme-text-muted, #555); font-style: italic; font-size: 11px; padding: 8px 0; }
+    .ext-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 5px 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--theme-border) 30%, transparent);
+    }
+    .ext-item-header { display: flex; align-items: center; gap: 8px; }
+    .ext-item:last-child { border-bottom: none; }
+    .ext-icon {
+      flex-shrink: 0;
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      opacity: 0.8;
+    }
+    .ext-info { flex: 1; min-width: 0; }
+    .ext-name {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--theme-text, #e0e0e0);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ext-actions { display: flex; gap: 4px; }
+    .ext-action-btn {
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.1));
+      border: none;
+      color: var(--theme-text-secondary, #bbb);
+      font-size: 11px;
+      font-family: inherit;
+      padding: 3px 8px;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background 0.1s, color 0.1s;
+      white-space: nowrap;
+    }
+    .ext-action-btn:hover { background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.18)); color: var(--theme-text, #fff); }
+    .ext-toggle { position: relative; width: 32px; height: 18px; flex-shrink: 0; }
+    .ext-toggle input { opacity: 0; width: 0; height: 0; }
+    .ext-toggle-track {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: color-mix(in srgb, var(--theme-border) 60%, transparent);
+      border-radius: 9px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .ext-toggle-track::before {
+      content: '';
+      position: absolute;
+      width: 14px; height: 14px; left: 2px; top: 2px;
+      background: white;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .ext-toggle input:checked + .ext-toggle-track { background: #4ade80; }
+    .ext-toggle input:checked + .ext-toggle-track::before { transform: translateX(14px); }
+    .ext-adblocker-status { font-size: 10px; color: var(--theme-text-muted, #777); }
+
     /* When there is no active window, hide everything (belt-and-suspenders on
      * top of main-side overlayWin.hide()). */
     body.no-active .trigger-zone,
     body.no-active .resize-handle,
     body.no-active .drag-zone,
     body.no-active .find-bar,
+    body.no-active .page-info-panel,
+    body.no-active .tags-panel,
+    body.no-active .entities-panel,
+    body.no-active .extensions-panel,
     body.no-active peek-navbar {
       display: none;
     }
@@ -210,6 +543,64 @@
     <button id="find-next" title="Next (Enter)">&#8595;</button>
     <button id="find-close" title="Close (Esc)">&#215;</button>
   </div>
+  <!-- P1.4b-5: side panels (REUSED markup from renderer/page/index.html). They
+       are .interactive so the click-capture path turns the overlay opaque to the
+       pointer over them. overlay.js mounts/feeds/clears them per active window. -->
+  <div class="page-info-panel interactive" id="page-info-panel">
+    <div class="panel-header">
+      <button class="panel-toggle" title="Collapse">&#x25BC;</button>
+      <span class="panel-title">Page Info</span>
+    </div>
+    <div class="panel-body-wrap">
+      <div class="panel-body" id="page-info-body">
+        <div class="info-empty">Loading page info...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="extensions-panel interactive" id="extensions-panel">
+    <div class="panel-header">
+      <button class="panel-toggle" title="Collapse">&#x25BC;</button>
+      <span class="panel-title">Extensions</span>
+    </div>
+    <div class="panel-body-wrap">
+      <div class="panel-body" id="extensions-body">
+        <div class="ext-loading">Loading extensions...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tags-panel interactive" id="tags-panel">
+    <div class="panel-header">
+      <button class="panel-toggle" title="Collapse">&#x25BC;</button>
+      <span class="panel-title">Tags</span>
+    </div>
+    <div class="panel-body-wrap">
+      <div class="panel-body" id="tags-body">
+        <div class="tags-list" id="tags-list"></div>
+        <div class="tags-input-row">
+          <div class="tags-input-wrapper">
+            <input type="text" class="tags-input" id="tags-input" placeholder="Add tag..." autocomplete="off" spellcheck="false">
+            <span class="tags-suggestion" id="tags-suggestion"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="entities-panel interactive" id="entities-panel">
+    <div class="panel-header">
+      <button class="panel-toggle" title="Collapse">&#x25BC;</button>
+      <span class="panel-title">Entities</span>
+      <button class="panel-action-btn" id="entities-rescan-btn" title="Re-extract entities">Rescan</button>
+    </div>
+    <div class="panel-body-wrap">
+      <div class="panel-body" id="entities-body">
+        <div class="entity-empty">No entities detected yet</div>
+      </div>
+    </div>
+  </div>
+
   <script type="module">
     import 'peek://app/components/peek-navbar.js';
   </script>

@@ -724,6 +724,83 @@ function installTestBridge(): void {
         .catch(() => null);
     },
     /**
+     * P1.4b-5: read the overlay's SIDE-PANEL DOM state for focus-free panel
+     * verification. Returns per-panel { hasData, text } plus the panels-visible
+     * body flag. `hasData` mirrors the `.has-data` opacity gate (a panel only
+     * paints once it has data for the active window); `text` is the panel body's
+     * textContent so a test can assert the right URL's data is shown. Resolves
+     * null if no overlay / renderer not ready. Pure executeJavaScript, no OS focus.
+     */
+    overlayPanelState(): Promise<unknown> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(null);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const pick = (id) => {
+              const p = document.getElementById(id);
+              const body = p && p.querySelector('.panel-body');
+              return p ? { hasData: p.classList.contains('has-data'), text: body ? body.textContent.trim() : '' } : null;
+            };
+            return {
+              panelsVisible: document.body.classList.contains('panels-visible'),
+              noActive: document.body.classList.contains('no-active'),
+              pageInfo: pick('page-info-panel'),
+              tags: pick('tags-panel'),
+              entities: pick('entities-panel'),
+              extensions: pick('extensions-panel'),
+            };
+          })()`,
+        )
+        .catch(() => null);
+    },
+    /**
+     * P1.4b-5: whether every side panel carries the `.interactive` class — the
+     * exact class the overlay's click-capture loop binds pointer enter/leave on,
+     * so an `.interactive` panel is in the capture set (turns the overlay opaque
+     * to the pointer when hovered). Focus-free DOM read.
+     */
+    overlayPanelsInteractive(): Promise<boolean> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(false);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const ids = ['page-info-panel','tags-panel','entities-panel','extensions-panel'];
+            return ids.every((id) => {
+              const p = document.getElementById(id);
+              return !!p && p.classList.contains('interactive');
+            });
+          })()`,
+        )
+        .catch(() => false);
+    },
+    /**
+     * P1.4b-5: synthetically reveal the chrome (navbar + panels) without a real
+     * pointer hover — drives the same showNavbar() path the trigger-zone hover
+     * would, so a test can assert panels become visible. Focus-free.
+     */
+    revealOverlayChrome(): Promise<boolean> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(false);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const tz = document.getElementById('trigger-zone');
+            if (!tz) return false;
+            tz.dispatchEvent(new Event('mouseenter'));
+            return document.body.classList.contains('panels-visible');
+          })()`,
+        )
+        .catch(() => false);
+    },
+    /**
+     * P1.4b-5: publish an entities response on the SAME topic the entities
+     * feature would, so the overlay's Entities panel can be verified without the
+     * real entities tile present. `url` MUST equal the active window's URL for
+     * the panel to accept it (active-URL-keyed filter).
+     */
+    publishEntities(url: string, entities: unknown[]): void {
+      publish(getSystemAddress(), 'entities:get-for-url:response', { url, entities });
+    },
+    /**
      * Synthetically toggle click-capture by publishing the same topic the
      * renderer would, then read back the overlay window's ignore-mouse state via
      * the structural assertion the test makes. (We can't read ignoreMouseEvents

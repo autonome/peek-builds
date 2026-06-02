@@ -676,3 +676,274 @@ test.describe('Hybrid Chrome Overlay find + title/favicon (P1.4b-4) @desktop', (
     expect(after).toEqual({ t: 'My Page Title', f: 'https://example.com/favicon.ico' });
   });
 });
+
+/**
+ * P1.4b-5 — side panels (page-info / tags / entities / extensions) ported to the
+ * shared overlay. Focus-free: synthetic active-change + published intents +
+ * overlayPanelState() DOM reads (no real OS focus, never visible). The panels are
+ * one renderer serving N windows by retargeting, so each test asserts the panel
+ * shows the ACTIVE window's data, fully SWAPS on retarget, and CLEARS on null.
+ */
+test.describe('Hybrid Chrome Overlay side panels (P1.4b-5) @desktop', () => {
+  let app: DesktopApp;
+
+  test.beforeAll(async () => {
+    ({ app } = await createPerDescribeApp('hybrid-overlay-panels'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  const bridgePresent = async () =>
+    app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
+
+  const waitOverlayReady = async () => {
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? s.ready === true : false;
+        }),
+      )
+      .toBe(true);
+  };
+
+  // Make a hybrid window, activate it, and set its active URL via a synthetic
+  // page:navigated (the panels key on http(s) URLs, which a data: fake can't
+  // carry). Returns the window id.
+  const makeActiveWithUrl = async (url: string) =>
+    app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 100, y: 100, width: 700, height: 500 });
+      await b.loadFakeContent(w, 'data:text/html,<title>x</title>x');
+      b.setActive(w);
+      b.publishTopic('page:navigated', { windowId: w, url: (arg as any).url });
+      return w;
+    }, { url });
+
+  test('page-info renders the active window data, swaps on retarget, clears on null', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await makeActiveWithUrl('https://alpha.example.com/page');
+    await waitOverlayReady();
+
+    // Drive the page-info reply on the SAME active-filtered topic main publishes
+    // after extracting the content WC's meta tags. (The extract→exec routing is
+    // identical to the already-tested OpenSearch exec; here we verify the overlay
+    // renders + active-keys the result.)
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:page-info', {
+        windowId: (arg as any).id,
+        url: 'https://alpha.example.com/page',
+        info: { title: 'Alpha Title', hostname: 'alpha.example.com', description: 'Alpha desc' },
+      });
+    }, { id });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayPanelState();
+          return s && s.pageInfo ? { hasData: s.pageInfo.hasData, text: s.pageInfo.text } : null;
+        }),
+      )
+      .toEqual(
+        expect.objectContaining({
+          hasData: true,
+        }),
+      );
+
+    const txtA = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayPanelState();
+      return s?.pageInfo?.text ?? '';
+    });
+    expect(txtA).toContain('Alpha Title');
+    expect(txtA).toContain('alpha.example.com');
+
+    // Retarget to a SECOND window with different data → panel fully swaps and the
+    // first window's data is gone.
+    const id2 = await makeActiveWithUrl('https://beta.example.com/other');
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:page-info', {
+        windowId: (arg as any).id2,
+        url: 'https://beta.example.com/other',
+        info: { title: 'Beta Title', hostname: 'beta.example.com' },
+      });
+    }, { id2 });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayPanelState();
+          return s?.pageInfo?.text ?? '';
+        }),
+      )
+      .toContain('Beta Title');
+
+    const txtB = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayPanelState();
+      return s?.pageInfo?.text ?? '';
+    });
+    expect(txtB).not.toContain('Alpha Title');
+
+    // A page-info for a FOREIGN windowId must be ignored.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:page-info', {
+        windowId: (arg as any).id2 + 99999,
+        url: 'https://wrong.example.com/',
+        info: { title: 'WRONG TITLE', hostname: 'wrong.example.com' },
+      });
+    }, { id2 });
+    const txtAfterForeign = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayPanelState();
+      return s?.pageInfo?.text ?? '';
+    });
+    expect(txtAfterForeign).not.toContain('WRONG TITLE');
+    expect(txtAfterForeign).toContain('Beta Title');
+
+    // Active → null clears the panel (no-active, panel loses has-data).
+    await app.evaluateMain!(() => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.setActive(null);
+    });
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayPanelState();
+          return s ? { noActive: s.noActive, hasData: s.pageInfo?.hasData } : null;
+        }),
+      )
+      .toEqual({ noActive: true, hasData: false });
+  });
+
+  test('entities panel renders active-URL entities and swaps on retarget', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await makeActiveWithUrl('https://ent-a.example.com/x');
+    await waitOverlayReady();
+
+    // Publish an entities response on the SAME topic the entities feature uses,
+    // keyed on the active URL → the panel renders it.
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishEntities('https://ent-a.example.com/x', [
+        { content: 'Ada Lovelace', metadata: JSON.stringify({ entityType: 'person' }) },
+      ]);
+    });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayPanelState();
+          return s?.entities?.text ?? '';
+        }),
+      )
+      .toContain('Ada Lovelace');
+
+    // An entities response for a NON-active URL must be ignored.
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishEntities('https://some-other.example.com/y', [
+        { content: 'Wrong Person', metadata: JSON.stringify({ entityType: 'person' }) },
+      ]);
+    });
+    const afterForeign = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayPanelState();
+      return s?.entities?.text ?? '';
+    });
+    expect(afterForeign).not.toContain('Wrong Person');
+    expect(afterForeign).toContain('Ada Lovelace');
+
+    // Retarget → entities clears (new window has no entities until its own
+    // response arrives).
+    await makeActiveWithUrl('https://ent-b.example.com/z');
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayPanelState();
+          return s?.entities?.text ?? '';
+        }),
+      )
+      .not.toContain('Ada Lovelace');
+  });
+
+  test('tags + extensions panels gain has-data for an active http window, clear on null', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    await makeActiveWithUrl('https://tagsite.example.com/p');
+    await waitOverlayReady();
+
+    // Tags panel always offers its add-tag input → has-data once an active URL is
+    // set. Extensions loads via api.chromeExtensions/api.adblocker → has-data once
+    // the (possibly-empty) list resolves.
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayPanelState();
+          return s ? { tags: s.tags?.hasData, ext: s.extensions?.hasData } : null;
+        }),
+      )
+      .toEqual({ tags: true, ext: true });
+
+    // Active → null clears both.
+    await app.evaluateMain!(() => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.setActive(null);
+    });
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayPanelState();
+          return s ? { tags: s.tags?.hasData, ext: s.extensions?.hasData } : null;
+        }),
+      )
+      .toEqual({ tags: false, ext: false });
+  });
+
+  test('panels become visible with the chrome and are in the click-capture set', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await makeActiveWithUrl('https://vis.example.com/p');
+    await waitOverlayReady();
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:page-info', {
+        windowId: (arg as any).id,
+        url: 'https://vis.example.com/p',
+        info: { title: 'Vis', hostname: 'vis.example.com' },
+      });
+    }, { id });
+
+    // Reveal chrome (synthetic trigger-zone hover) → panels-visible flips on.
+    const visible = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.revealOverlayChrome();
+    });
+    expect(visible).toBe(true);
+
+    // Every panel carries the .interactive class — the exact class the overlay's
+    // click-capture loop binds pointer enter/leave on — so an open panel is in
+    // the capture set (overlay turns opaque to the pointer over it). The capture
+    // toggle itself is exercised by the dedicated click-capture test.
+    const interactive = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.overlayPanelsInteractive();
+    });
+    expect(interactive).toBe(true);
+  });
+});
