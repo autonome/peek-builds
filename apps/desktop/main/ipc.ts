@@ -122,6 +122,11 @@ import {
 import { isHybridPageHost } from './debug-flag.js';
 import { markPageHostContent, registerGuest } from './webview-guest-registry.js';
 import {
+  registerHybridWindow,
+  findHybridWindowByUrl,
+  findHybridWindowByKey,
+} from './hybrid-page-host-registry.js';
+import {
   getRuntimeExternalWebPrefsForUrl,
   installMainWorldContentScriptInjection,
   installRuntimeExternalCdpPolyfill,
@@ -880,6 +885,29 @@ export function registerWindowHandlers(): void {
         return { success: true, id: null, reused: true };
       }
 
+      // P1.4a hybrid dedup (by key): hybrid page-hosts are BaseWindows, which
+      // findWindowByKey (via getLiveWindow == BrowserWindow.fromId) cannot
+      // resolve. When the flag is on, consult the hybrid registry first so a
+      // repeat open of the same key REUSES the existing hybrid window (focus
+      // its baseWin, return its id) instead of spawning a duplicate — matching
+      // the canvas key-reuse semantics below. Gated on isHybridPageHost() so
+      // non-hybrid opens are byte-identical (registry is empty when off).
+      if (isHybridPageHost()) {
+        const existingHybrid = findHybridWindowByKey(options.key);
+        if (existingHybrid) {
+          DEBUG && console.log('[hybrid-page-host] Reusing existing hybrid window with key:', options.key);
+          if (!isHeadless()) {
+            try {
+              existingHybrid.baseWin.show();
+              existingHybrid.baseWin.focus();
+            } catch (e) {
+              DEBUG && console.log('[hybrid-page-host] focus-on-key-reuse failed:', e);
+            }
+          }
+          return { success: true, id: existingHybrid.windowId, reused: true };
+        }
+      }
+
       const existingWindow = findWindowByKey(msg.source, options.key);
       if (existingWindow) {
         DEBUG && console.log('Reusing existing window with key:', options.key);
@@ -964,6 +992,34 @@ export function registerWindowHandlers(): void {
     // whose window was just transient-closed will fall through here and get
     // attached to whatever unrelated http window happens to share its URL.
     if ((url.startsWith('http://') || url.startsWith('https://')) && options.trackingSource !== 'reopen' && !options.key) {
+      // P1.4a hybrid dedup (by url): same rationale as the key path above —
+      // BaseWindow page-hosts are invisible to findWindowByUrl. When the flag
+      // is on, reuse an existing hybrid window loading the same url (focus its
+      // baseWin, reload it fresh like the canvas path, return its id) instead
+      // of spawning a duplicate. Gated on isHybridPageHost(); registry empty
+      // when off so non-hybrid opens are byte-identical.
+      if (isHybridPageHost()) {
+        const existingHybridByUrl = findHybridWindowByUrl(url);
+        if (existingHybridByUrl) {
+          DEBUG && console.log('[hybrid-page-host] Reusing existing hybrid window with same URL:', url);
+          if (!isHeadless()) {
+            try {
+              existingHybridByUrl.baseWin.show();
+              existingHybridByUrl.baseWin.focus();
+            } catch (e) {
+              DEBUG && console.log('[hybrid-page-host] focus-on-url-reuse failed:', e);
+            }
+          }
+          // Reload so content is fresh (mirrors the canvas path's reload).
+          try {
+            existingHybridByUrl.contentWC.reload();
+          } catch (e) {
+            DEBUG && console.log('[hybrid-page-host] reload-on-url-reuse failed:', e);
+          }
+          return { success: true, id: existingHybridByUrl.windowId, reused: true };
+        }
+      }
+
       const existingByUrl = findWindowByUrl(url);
       if (existingByUrl) {
         DEBUG && console.log('Reusing existing window with same URL:', url);
@@ -1362,6 +1418,18 @@ export function registerWindowHandlers(): void {
         // (registerGuest → findHostWindowId) treats it as page-host content.
         markPageHostContent(view.webContents);
         registerGuest(view.webContents, baseWin.id);
+
+        // P1.4a — register this hybrid window so it is enumerable, dedup-able
+        // by url/key, focus-trackable, and targetable. A BaseWindow is not a
+        // BrowserWindow, so window-registry's BrowserWindow-backed lookups
+        // cannot hold it; this separate registry is the indirection layer.
+        // Self-cleans on baseWin 'closed' / content wc 'destroyed' and
+        // maintains getActiveHybridWindowId() off baseWin focus/blur.
+        registerHybridWindow(baseWin.id, {
+          baseWin,
+          contentWC: view.webContents,
+          key: options.key,
+        });
 
         // P1.2 — re-attach the chrome-ext compat hooks to THIS content
         // webContents EXPLICITLY. We cannot rely on entry.ts's

@@ -13,6 +13,7 @@
 
 import { publish } from './pubsub.js';
 import { BrowserWindow, webContents as electronWebContents } from 'electron';
+import { getAllHybridWindows } from './hybrid-page-host-registry.js';
 
 const SYSTEM_ADDRESS = 'peek://system/';
 const VERB_RE = /^[a-z][a-z0-9-]*$/;
@@ -58,7 +59,14 @@ export async function dispatch(msg: CliMessage): Promise<CliResult> {
  * debug-eval.
  */
 function debugListWindows(): CliResult {
-  const out = BrowserWindow.getAllWindows().map(win => {
+  const out: Array<{
+    windowId: number;
+    webContentsId: number;
+    title: string;
+    url: string;
+    destroyed: boolean;
+    hybrid?: boolean;
+  }> = BrowserWindow.getAllWindows().map(win => {
     const wc = win.webContents;
     return {
       windowId: win.id,
@@ -68,6 +76,22 @@ function debugListWindows(): CliResult {
       destroyed: wc.isDestroyed(),
     };
   });
+
+  // P1.4a: hybrid page-hosts are BaseWindows (not BrowserWindows) and their
+  // content lives in a WebContentsView, so BrowserWindow.getAllWindows() above
+  // misses them entirely. Additive — empty when the hybrid flag is off, so
+  // non-hybrid output is unchanged. We report the CONTENT webContents id (the
+  // useful target for debug-eval) and its live url/title.
+  for (const h of getAllHybridWindows()) {
+    out.push({
+      windowId: h.windowId,
+      webContentsId: h.contentWC.id,
+      title: h.title(),
+      url: h.url(),
+      destroyed: h.contentWC.isDestroyed(),
+      hybrid: true,
+    });
+  }
   return { ok: true, data: out };
 }
 
@@ -102,6 +126,21 @@ async function debugEval(args: unknown[]): Promise<CliResult> {
       if (t.includes(needle) || u.includes(needle)) {
         wc = win.webContents;
         break;
+      }
+    }
+    // P1.4a: also consider hybrid page-host content webContents by url/title
+    // substring (NUMBER targeting by wc id already works via fromId). Additive
+    // — the loop is over an empty set when the hybrid flag is off. Only scanned
+    // if a BrowserWindow above didn't already match.
+    if (!wc) {
+      for (const h of getAllHybridWindows()) {
+        if (h.contentWC.isDestroyed()) continue;
+        const t = h.title().toLowerCase();
+        const u = h.url().toLowerCase();
+        if (t.includes(needle) || u.includes(needle)) {
+          wc = h.contentWC;
+          break;
+        }
       }
     }
   } else {
