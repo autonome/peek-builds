@@ -114,4 +114,13 @@ contextBridge.exposeInMainWorld('peekBridge', {
   log(...args) {
     console.error('[peek:bridge:page]', ...args);
   },
+
+  /**
+   * Like log(), but emits at info level (console.log forwards to main stdout).
+   * Used for benign/chatty bridge-page events (clean reconnect cycle, etc.) so
+   * they don't surface as errors.
+   */
+  logInfo(...args) {
+    console.log('[peek:bridge:page]', ...args);
+  },
 });

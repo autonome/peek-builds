@@ -23,11 +23,25 @@
     } catch (_) {}
   }
 
+  // Info-level sibling of log() for benign/chatty events (clean reconnect
+  // cycle, routine port messages). Prefers the preload's leveled logInfo;
+  // falls back to console.log. Behaviour is identical to log() except level.
+  function logInfo() {
+    var args = Array.prototype.slice.call(arguments);
+    try {
+      if (window.peekBridge && window.peekBridge.logInfo) {
+        window.peekBridge.logInfo.apply(null, args);
+      } else {
+        console.log.apply(console, ['[peek:bridge:page]'].concat(args));
+      }
+    } catch (_) {}
+  }
+
   function connect() {
     try {
       _port = chrome.runtime.connect({ name: PORT_NAME });
       _reconnectAttempts = 0;
-      log('chrome.runtime.connect() opened port name=', PORT_NAME, 'extId=', chrome.runtime.id);
+      logInfo('chrome.runtime.connect() opened port name=', PORT_NAME, 'extId=', chrome.runtime.id);
 
       _port.onMessage.addListener(function (msg) {
         // Handle scripting relay requests from the BG SW
@@ -49,20 +63,26 @@
           return;
         }
 
-        log('port.onMessage reqId=', msg && msg.reqId, 'type=', msg && msg.type);
+        logInfo('port.onMessage reqId=', msg && msg.reqId, 'type=', msg && msg.type);
         var reqId = msg && msg.reqId;
         var pending = reqId && _pendingByReqId[reqId];
         if (pending) {
           delete _pendingByReqId[reqId];
           pending.sendResponse(msg && msg.response !== undefined ? msg.response : msg);
         } else {
-          log('port.onMessage: no pending reqId=', reqId, '(unsolicited or already resolved)');
+          logInfo('port.onMessage: no pending reqId=', reqId, '(unsolicited or already resolved)');
         }
       });
 
       _port.onDisconnect.addListener(function () {
         var err = chrome.runtime.lastError;
-        log('port disconnected:', err && err.message || '(no error)');
+        if (err) {
+          log('port disconnected:', err.message);
+        } else {
+          // Clean disconnect — typically the MV3 service worker idled out.
+          // The port reconnects via scheduleReconnect(); benign, info level.
+          logInfo('port disconnected (clean, will reconnect)');
+        }
         _port = null;
         // Reject any in-flight requests whose port just dropped.
         var pendingIds = Object.keys(_pendingByReqId);
@@ -92,9 +112,9 @@
     }
     _reconnectAttempts++;
     var delay = RECONNECT_DELAY_MS * _reconnectAttempts;
-    log('scheduling reconnect attempt', _reconnectAttempts, 'in', delay, 'ms');
+    logInfo('scheduling reconnect attempt', _reconnectAttempts, 'in', delay, 'ms');
     setTimeout(function () {
-      log('reconnect attempt', _reconnectAttempts);
+      logInfo('reconnect attempt', _reconnectAttempts);
       connect();
     }, delay);
   }
