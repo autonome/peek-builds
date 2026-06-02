@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: 741e340c3bb8 -->
+<!-- last-bumped: c78c6dd5a7e9 -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -17,9 +17,41 @@ Completed work. Two formats coexist on purpose:
 
 See TODO.md for pending items, WIP.md for in-progress items.
 
+## Week of 2026-06-01 (W23)
+
+### 2026-06-02
+
+- perf: make slides lazy via the wake-shortcut registry leaning on main key-dedup for window identity
+- fix: register websearch command handlers before the settings await so a cold cmd-execute wake does not drop the first command
+- docs: document lazy feature activation the wake-shortcut registry and core page-events
+- fix: log clean chrome-ext bridge port disconnects at info not error so a normal SW-idle reconnect cycle stops spamming the console as errors
+
+### 2026-06-01
+
+- fix: cmd reuses an existing window for an already-open URL instead of duplicating
+- feat: substring matching for cmd url ghost. Frecency-best substring match becomes the suggestion and Enter opens it even when typed text is mid-string. Adds bug-1 fastmail regression test
+- fix: suppress native window.confirm/alert/prompt under headless test runs
+- perf: opaque page-host canvas windows under headless to cut WindowServer load. Headless canvas windows are opacity 0 (invisible) anyway, so making them opaque instead of transparent keeps the full-screen geometry (bounds round-trip tests pass) while eliminating the per-pixel alpha compositing that saturated macOS WindowServer when many full-screen page-host windows exist at once. Measured WindowServer drop from 56-75 to 38-49 percent in 4-worker session-restore profiling
+- docs: note the headless opaque-canvas perf exception in the desktop CLAUDE canvas-architecture section
+- perf: make websearch lazy by waking it on a new core page-search-engine-discovered event
+- feat: generic persisted lazy-wake-shortcut registry so user-configured global hotkeys register without a renderer at boot
+- perf: make peeks lazy via the persisted wake-shortcut registry with static default hotkeys in the manifest
+
 ## Week of 2026-05-25 (W22)
 
+### 2026-05-31
+
+- misc: decouple cmd history matching from command registry, route URL ghost through FSM
+
+### 2026-05-30
+
+- fix: peek-mcp-init gitignores scaffolded files, default-routing skill desc, corrected bare-tag docs
+- feat: peek-mcp-init no-arg refresh re-detects scope and params from existing install
+- fix: standardize mcp item-id param to itemId across all item tools and add clean error on missing itemId
+
 ### 2026-05-29
+
+- feat: add cmd pref to run the inline suggestion on Enter, default on
 
 - fix: make app accessory under headless to cut test-run focus steal and stop menubar churn — partial, full focus fix tracked in task d9bb2924
 - feat: inline ghost-text URL completion in cmd, replacing dead Visited Pages dropdown
