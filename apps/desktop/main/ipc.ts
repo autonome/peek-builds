@@ -5,7 +5,7 @@
  * Handlers are thin wrappers that delegate to backend functions.
  */
 
-import { ipcMain, nativeTheme, dialog, BrowserWindow, app, screen, webContents, net, Menu, clipboard } from 'electron';
+import { ipcMain, nativeTheme, dialog, BrowserWindow, BaseWindow, WebContentsView, app, screen, webContents, net, Menu, clipboard } from 'electron';
 import { getAllLiveWindows, getLiveWindow, windowFromWebContents } from './window-registry.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -118,6 +118,9 @@ import {
   getProfileSession,
   registerDownloadHandler,
 } from './session-partition.js';
+
+import { isHybridPageHost } from './debug-flag.js';
+import { markPageHostContent, registerGuest } from './webview-guest-registry.js';
 
 import {
   getIzuiCoordinator,
@@ -1017,6 +1020,164 @@ export function registerWindowHandlers(): void {
         `(${initial.x},${initial.y} ${initial.width}x${initial.height})`
       );
     }
+
+    // ────────────────────────────────────────────────────────────────────
+    // HYBRID PAGE-HOST EARLY BRANCH (P1.1, behind PEEK_PAGEHOST_HYBRID=1)
+    //
+    // When the hybrid flag is on AND this is a canvas web page, build the
+    // page as an *opaque, content-sized* `BaseWindow` hosting a single
+    // `WebContentsView` whose webContents loads the target URL directly —
+    // NO `<webview>`, NO page.js chrome, NO per-page chrome renderer (R6:
+    // a BaseWindow + WebContentsView is a true zero-extra-renderer host).
+    //
+    // This branch CONSTRUCTS + REGISTERS + RETURNS on its own and does NOT
+    // fall through to the downstream `BrowserWindow` code, which assumes a
+    // root `win.webContents`, `win.loadURL`, the tile-broadcaster keyed on
+    // the root webContents, a `<webview>` guest, etc. A `BaseWindow` has no
+    // root webContents, so none of that applies here.
+    //
+    // SCOPE (P1.1): get content on screen as one window with exactly one
+    // renderer, no crash. Chrome (navbar/widgets/panels), the shared overlay,
+    // navbar/event main-mediation, compat-preload re-attachment, popups, and
+    // window-reuse/dedup keyed on the BaseWindow are explicitly OUT of scope —
+    // they land in P1.2–P1.5. See docs/perf/page-host-hybrid-phase1-plan.md.
+    //
+    // NOTE: the page-reuse / dedup checks earlier in this handler
+    // (findWindowByUrl / findWindowByKey, ~lines 724-749, 641) resolve the
+    // candidate window via getLiveWindow == BrowserWindow.fromId, which does
+    // NOT find a BaseWindow. So in hybrid mode a repeat open of the same URL
+    // currently spawns a fresh window instead of reusing. Acceptable for the
+    // P1.1 skeleton; reuse keyed on the BaseWindow is a later-phase concern.
+    if (isHybridPageHost() && useCanvas) {
+      try {
+        // winOptions.x/y/width/height were filled in above by
+        // `computeInitialBounds` (or the caller's explicit x/y) and hold the
+        // CONTENT-RECT bounds — we deliberately skip the canvas margin
+        // expansion (the chrome-less hybrid window has no surrounding chrome).
+        const contentX = winOptions.x as number;
+        const contentY = winOptions.y as number;
+        const contentW = winOptions.width as number;
+        const contentH = winOptions.height as number;
+
+        const baseWin = new BaseWindow({
+          x: contentX,
+          y: contentY,
+          width: contentW,
+          height: contentH,
+          frame: false,
+          // Opaque, native floating look (R1). Headless: keep it invisible
+          // via opacity:0 + show:false, mirroring the canvas path's headless
+          // guard at the top of this handler so an agent/CI run never paints
+          // a real surface on the physical desktop.
+          transparent: false,
+          roundedCorners: true,
+          hasShadow: !isHeadless(),
+          show: false,
+          opacity: isHeadless() ? 0 : undefined,
+        });
+
+        // Content view: main owns this webContents handle. Session MUST match
+        // today's `<webview>`, which uses partition `persist:${profileId}`
+        // (page.js sets `webview.partition` from `api.profiles.getPartition()`).
+        // `getProfileSession()` returns exactly `session.fromPartition` of that
+        // same string, so the content lands in the IDENTICAL profile session
+        // (cookies/storage/cache) as the old path. Keep webPreferences minimal:
+        // the runtime-external/compat preload is deliberately deferred to P1.2.
+        const view = new WebContentsView({
+          webPreferences: {
+            session: profileSession,
+            contextIsolation: true,
+            devTools: true,
+          },
+        });
+
+        baseWin.contentView.addChildView(view);
+
+        // Fill the window; keep it filled on resize.
+        const fillView = () => {
+          const [w, h] = baseWin.getContentSize();
+          view.setBounds({ x: 0, y: 0, width: w, height: h });
+        };
+        fillView();
+        baseWin.on('resize', fillView);
+
+        // P0 seam: mark the content webContents so the chrome-extension compat
+        // hooks (MAIN-inject + CDP, gated on isPageHostContent in entry.ts) and
+        // the permission lookup (registerGuest → findHostWindowId) treat it as
+        // page-host content. Compat preload selection itself is P1.2.
+        markPageHostContent(view.webContents);
+        registerGuest(view.webContents, baseWin.id);
+
+        // Minimal window registration: enough for the window to be placed,
+        // tracked for the display-watcher, and known to the window manager /
+        // izui coordinator. We SKIP the tile-broadcaster + page-host token
+        // registration (there is no chrome tile in P1.1) and the root-webContents
+        // event wiring (there is no root webContents).
+        const role = inferIzuiRole(options as Parameters<typeof inferIzuiRole>[0], {
+          isWebPage,
+          parentWindowId: isRealParent ? openerWindow!.id : null,
+        });
+        const windowParams: Record<string, unknown> = {
+          ...options,
+          address: url,
+          transient: isTransient,
+          parentWindowId: isRealParent ? openerWindow!.id : null,
+          role,
+          placement,
+          // Seed canvas state from the content rect so session save / reuse
+          // logic that reads these has sane values (matches the canvas path's
+          // intent; x/y/w/h are the content rect, which IS the window here).
+          x: contentX,
+          y: contentY,
+          width: contentW,
+          height: contentH,
+          maximized: options.maximized === true,
+          // Mark this as a hybrid page-host so later phases (and any
+          // downstream code) can distinguish it from a BrowserWindow page-host.
+          hybridPageHost: true,
+        };
+        registerWindow(baseWin.id, msg.source, windowParams);
+        trackWindow(baseWin as unknown as BrowserWindow);
+        getIzuiCoordinator().pushWindow(baseWin.id);
+
+        // Load the content. Session-restore opens (skipTracking) fire-and-forget
+        // like the canvas path; everything else awaits for "ready" semantics.
+        if (options.skipTracking) {
+          view.webContents.loadURL(url).catch((err) => {
+            DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] background loadURL failed:`, err);
+          });
+        } else {
+          await view.webContents.loadURL(url);
+        }
+
+        // Show it (headless-safe: opacity already 0 above, so this never paints).
+        if (isHeadless()) {
+          try { baseWin.setOpacity(0); } catch { /* setOpacity unsupported on some platforms */ }
+        }
+        baseWin.showInactive();
+
+        publish(getSystemAddress(), 'window:opened', {
+          id: baseWin.id,
+          url,
+          source: msg.source,
+        });
+
+        if (options.key) {
+          pendingWindowKeys.delete(`${msg.source}:${options.key}`);
+        }
+
+        console.log(`[hybrid-page-host] Opened BaseWindow ${baseWin.id} with WebContentsView for ${url.substring(0, 80)}`);
+        return { success: true, id: baseWin.id };
+      } catch (error) {
+        if (options?.key) {
+          pendingWindowKeys.delete(`${msg.source}:${options.key}`);
+        }
+        console.error('[hybrid-page-host] Failed to open hybrid page window:', error);
+        const message = error instanceof Error ? error.message : String(error);
+        return { success: false, error: message };
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────
 
     if (options.modal === true) {
       // Use panel type on macOS to improve focus restoration when closed

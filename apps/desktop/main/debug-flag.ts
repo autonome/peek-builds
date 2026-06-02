@@ -36,6 +36,21 @@ export let DEBUG: boolean = !!process.env.DEBUG;
 /** Whether the devtools keyboard shortcut is armed. */
 let _devTools: boolean = false;
 
+/**
+ * Whether the page-host hybrid path is enabled. When true, a web page opens
+ * as an opaque content-sized `BaseWindow` hosting a single `WebContentsView`
+ * (main-owned content webContents, no `<webview>`, no per-page chrome) instead
+ * of the transparent fullscreen canvas `BrowserWindow` + `<webview>` model.
+ *
+ * Env-gated only for now (`PEEK_PAGEHOST_HYBRID=1`) — mirrors `isDevToolsEnabled`
+ * in shape. A datastore-backed toggle can replace the env read later without
+ * changing call sites. Read fresh on every call so a future setter can flip it
+ * at runtime without re-reading the env.
+ */
+export function isHybridPageHost(): boolean {
+  return process.env.PEEK_PAGEHOST_HYBRID === '1';
+}
+
 /** Change listeners — wired by ipc.ts to broadcast + persist on flip. */
 export interface DebugFlagsState {
   verbose: boolean;
