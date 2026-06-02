@@ -628,7 +628,7 @@ function applyPlacementOnReuse(
  *     - page:loading                 {windowId,loading}
  *     - page:nav-state               {windowId,url,canGoBack,canGoForward}
  */
-function wireHybridContentEvents(
+export function wireHybridContentEvents(
   contentWC: Electron.WebContents,
   hostWindowId: number,
   initialUrl: string,
@@ -751,6 +751,58 @@ function wireHybridContentEvents(
       publish(getSystemAddress(), 'page:find-next', { windowId: hostWindowId });
       event.preventDefault();
     }
+  });
+
+  // ── Popups / window.open / target=_blank → new hybrid page-host (P1.5) ────
+  // Risk R7: the hybrid content webContents is a `WebContentsView`, whose
+  // `getType()` is 'browserView' — NOT 'window'/'webview'. The default-deny
+  // SECURITY chokepoint in entry.ts (~495) gates ONLY on 'window'/'webview',
+  // so it does NOT install on this WC. Without an explicit handler here, a
+  // `window.open()` / `target=_blank` from hybrid content would fall through
+  // to Electron's default and spawn a raw, un-gated Chromium popup window.
+  // This handler IS the gate for the hybrid path.
+  //
+  // Policy mirrors the canvas <webview> guest's setWindowOpenHandler
+  // (ipc.ts ~2702): http(s) popups are DENIED the default BrowserWindow and
+  // re-routed through the SAME window-open IPC pipeline (`invokeWindowOpen`,
+  // the exported reference to windowOpenHandler — the identical mechanism the
+  // chrome-extensions popup handler uses, ipc.ts/chrome-extensions.ts ~1090).
+  // Because the hybrid flag is on, that re-entry takes the HYBRID EARLY BRANCH
+  // above and produces ANOTHER opaque BaseWindow + WebContentsView page-host
+  // rather than a canvas page or a raw popup. Non-http(s) URLs (about:blank,
+  // data:, etc.) are ALLOWED to open normally — byte-identical to the canvas
+  // guest policy; we do NOT invent new policy here.
+  contentWC.setWindowOpenHandler(({ url: popupUrl }) => {
+    if (popupUrl.startsWith('http://') || popupUrl.startsWith('https://')) {
+      console.log(`[hybrid-page-host] Intercepted popup from window ${hostWindowId}: ${popupUrl}`);
+
+      // Resolve the opener source the same way the canvas guest does
+      // (getWindowInfo(win.id).source), falling back to 'system'.
+      const parentInfo = getWindowInfo(hostWindowId);
+      const source = parentInfo ? parentInfo.source : 'system';
+
+      // Route asynchronously through the canonical window-open handler. We pass
+      // the content WC as ev.sender so placement/parent-tracking resolves the
+      // same as any other open (windowFromWebContents returns null for this
+      // BaseWindow-hosted WC, which the handler tolerates → default placement).
+      // The hybrid flag steers it into the hybrid branch → a new hybrid host.
+      if (invokeWindowOpen) {
+        invokeWindowOpen(
+          { sender: contentWC },
+          { source, url: popupUrl, options: {} },
+        ).catch((e) => {
+          console.error('[hybrid-page-host] window-open re-route failed:', e);
+        });
+      } else {
+        console.error('[hybrid-page-host] invokeWindowOpen not initialized — dropping popup', popupUrl);
+      }
+
+      // Deny the default BrowserWindow creation (canvas-guest parity).
+      return { action: 'deny' };
+    }
+
+    // Non-http(s) (about:blank, data:, etc.) — allow normally, like canvas.
+    return { action: 'allow' };
   });
 
   // ── Navigation → history tracking + chrome state ─────────────────────────

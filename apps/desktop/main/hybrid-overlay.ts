@@ -62,6 +62,7 @@ import {
   getActiveHybridWindowId,
   getActiveHybridWindowBounds,
   registerHybridWindow,
+  getAllHybridWindows,
   _setActiveHybridWindowForTests,
 } from './hybrid-page-host-registry.js';
 import { createTrustedBuiltinGrant } from './tile-manifest.js';
@@ -69,6 +70,13 @@ import { generateToken } from './tile-tokens.js';
 import { registerTrustedBuiltinWindow } from './tile-launcher.js';
 import { getProfileSession } from './session-partition.js';
 import { publish, subscribe, unsubscribe, getSystemAddress } from './pubsub.js';
+// P1.5 test bridge only: install the REAL hybrid popup setWindowOpenHandler on
+// a test content WC by calling the exact `wireHybridContentEvents` the ipc.ts
+// hybrid branch uses, and read the window-registry `address` to assert a popup
+// became a NEW hybrid host. ipc.ts/main.ts do NOT import hybrid-overlay, so
+// this is a one-way (acyclic) dependency.
+import { wireHybridContentEvents } from './ipc.js';
+import { getWindowInfo } from './main.js';
 
 /** Tile id / entry for the overlay's trustedBuiltin grant + pubsub routing. */
 const OVERLAY_TILE_ID = 'page-overlay';
@@ -738,6 +746,118 @@ function installTestBridge(): void {
      */
     publishTopic(topic: string, msg: unknown): void {
       publish(getSystemAddress(), topic, msg);
+    },
+    /**
+     * P1.5: create a hybrid page-host whose content WC has the REAL popup
+     * `setWindowOpenHandler` under test installed by `wireHybridContentEvents`
+     * (the same code the ipc.ts hybrid EARLY BRANCH calls). We build the
+     * BaseWindow+WebContentsView exactly like `makeFakeHybridWindow`, register
+     * it, then call the exported `wireHybridContentEvents` so the popup handler
+     * is wired, and load a `data:` opener (deterministic, network-free). Returns
+     * the new hybrid window id. Focus-free (opacity 0, never shown).
+     */
+    makeWiredHybrid(dataUrl: string): Promise<number | null> {
+      const baseWin = new BaseWindowCtor({
+        x: 100, y: 100, width: 600, height: 400, frame: false, show: false, opacity: 0,
+      });
+      const view = new WebContentsView({
+        webPreferences: { contextIsolation: true, sandbox: true },
+      });
+      baseWin.contentView.addChildView(view);
+      try {
+        const [w, h] = baseWin.getContentSize();
+        view.setBounds({ x: 0, y: 0, width: w, height: h });
+      } catch { /* getContentSize unsupported in some envs */ }
+      registerHybridWindow(baseWin.id, { baseWin, contentWC: view.webContents });
+      // Install the popup handler under test (+ the other wired events). This
+      // is the EXACT function the real hybrid branch calls.
+      wireHybridContentEvents(view.webContents, baseWin.id, dataUrl, {});
+      return view.webContents
+        .loadURL(dataUrl)
+        .then(() => baseWin.id)
+        .catch(() => baseWin.id);
+    },
+    /**
+     * P1.5: trigger a scripted `window.open(popupUrl)` INSIDE a hybrid window's
+     * content webContents. This exercises the real `setWindowOpenHandler`
+     * installed by `wireHybridContentEvents`. Returns true if the script ran.
+     */
+    triggerWindowOpen(id: number, popupUrl: string): Promise<boolean> {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.contentWC.isDestroyed()) return Promise.resolve(false);
+      return entry.contentWC
+        .executeJavaScript(`(() => { window.open(${JSON.stringify(popupUrl)}, '_blank'); return true; })()`)
+        .then(() => true)
+        .catch(() => false);
+    },
+    /**
+     * P1.5: trigger a `target="_blank"` link click inside a hybrid window's
+     * content webContents (the other path into setWindowOpenHandler). Returns
+     * true if the script ran.
+     */
+    triggerBlankLinkClick(id: number, popupUrl: string): Promise<boolean> {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.contentWC.isDestroyed()) return Promise.resolve(false);
+      return entry.contentWC
+        .executeJavaScript(
+          `(() => {
+            const a = document.createElement('a');
+            a.href = ${JSON.stringify(popupUrl)};
+            a.target = '_blank';
+            a.textContent = 'open';
+            document.body.appendChild(a);
+            a.click();
+            return true;
+          })()`,
+        )
+        .then(() => true)
+        .catch(() => false);
+    },
+    /**
+     * P1.5: wait until a NEW hybrid page-host whose REQUESTED address (window
+     * registry `address` param, set by the ipc.ts hybrid branch) equals `url`
+     * appears — and is NOT in the `excludeIds` set. Network-free: matches on the
+     * requested address, not the (possibly-pending) live content URL. Resolves
+     * its id, or null on timeout.
+     */
+    waitHybridForUrl(url: string, excludeIds: number[] = [], timeoutMs = 8000): Promise<number | null> {
+      const excluded = new Set(excludeIds);
+      return new Promise((resolve) => {
+        const deadline = Date.now() + timeoutMs;
+        const poll = () => {
+          const match = getAllHybridWindows().find((e) => {
+            if (excluded.has(e.windowId)) return false;
+            const info = getWindowInfo(e.windowId);
+            const addr = info ? (info.params?.address as string | undefined) : undefined;
+            return addr === url || (e.url() && e.url().startsWith(url));
+          });
+          if (match) return resolve(match.windowId);
+          if (Date.now() > deadline) return resolve(null);
+          setTimeout(poll, 50);
+        };
+        poll();
+      });
+    },
+    /** P1.5: count of currently-registered hybrid page-host windows. */
+    hybridCount(): number {
+      return getAllHybridWindows().length;
+    },
+    /** P1.5: ids of every currently-registered hybrid page-host window. */
+    hybridIds(): number[] {
+      return getAllHybridWindows().map((e) => e.windowId);
+    },
+    /**
+     * P1.5: the REQUESTED address (window-registry `address` param) of every
+     * registered hybrid window — the URL the hybrid branch was asked to open,
+     * independent of whether the live content load has resolved.
+     */
+    hybridAddresses(): string[] {
+      return getAllHybridWindows()
+        .map((e) => {
+          const info = getWindowInfo(e.windowId);
+          return info ? ((info.params?.address as string) || '') : '';
+        })
+        .filter(Boolean);
     },
   };
 }
