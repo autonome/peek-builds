@@ -68,6 +68,34 @@ const entries = new Map<number, InternalEntry>();
 // the active window and on close/destroy of the active window.
 let activeHybridWindowId: number | null = null;
 
+// Push-on-change subscribers for the active-window signal. Fired ONLY when
+// `activeHybridWindowId` actually transitions to a different value (see
+// `setActiveHybridWindowId`). The P1.4b shared overlay subscribes here so it
+// can retarget without polling. Empty (and never fired) when the flag is off,
+// because nothing ever calls `registerHybridWindow` / the test hook.
+type ActiveChangeListener = (id: number | null) => void;
+const activeChangeListeners = new Set<ActiveChangeListener>();
+
+/**
+ * Set the active hybrid window id and, IF the value actually changed, notify
+ * every `onActiveHybridWindowChange` subscriber. This is the single mutation
+ * chokepoint for `activeHybridWindowId` so the push signal can never miss a
+ * transition or fire spuriously on a no-op set. Listeners run in a try/catch
+ * so one throwing subscriber can't wedge the rest (or the focus handler that
+ * triggered the change).
+ */
+function setActiveHybridWindowId(id: number | null): void {
+  if (id === activeHybridWindowId) return;
+  activeHybridWindowId = id;
+  for (const cb of activeChangeListeners) {
+    try {
+      cb(id);
+    } catch {
+      /* a subscriber throwing must not break focus/blur bookkeeping */
+    }
+  }
+}
+
 function safeUrl(wc: WebContents): string {
   try {
     return wc.isDestroyed() ? '' : wc.getURL() || '';
@@ -138,7 +166,7 @@ export function registerHybridWindow(
       entries.delete(windowId);
     }
     if (activeHybridWindowId === windowId) {
-      activeHybridWindowId = null;
+      setActiveHybridWindowId(null);
     }
   };
 
@@ -148,12 +176,12 @@ export function registerHybridWindow(
   // Active-window tracking. BaseWindow emits 'focus'/'blur' in Electron 40.
   baseWin.on('focus', () => {
     if (entries.get(windowId) === entry) {
-      activeHybridWindowId = windowId;
+      setActiveHybridWindowId(windowId);
     }
   });
   baseWin.on('blur', () => {
     if (activeHybridWindowId === windowId) {
-      activeHybridWindowId = null;
+      setActiveHybridWindowId(null);
     }
   });
   // Belt-and-suspenders: focusing INTO the page focuses the content wc. Covers
@@ -161,7 +189,7 @@ export function registerHybridWindow(
   // lands directly in the WebContentsView).
   contentWC.on('focus', () => {
     if (entries.get(windowId) === entry) {
-      activeHybridWindowId = windowId;
+      setActiveHybridWindowId(windowId);
     }
   });
 
@@ -169,7 +197,7 @@ export function registerHybridWindow(
   // shown/focused), seed the active id so the first reader doesn't see null.
   try {
     if (!baseWin.isDestroyed() && baseWin.isFocused()) {
-      activeHybridWindowId = windowId;
+      setActiveHybridWindowId(windowId);
     }
   } catch {
     /* isFocused unsupported in some environments */
@@ -243,14 +271,69 @@ export function getActiveHybridWindowId(): number | null {
   if (activeHybridWindowId != null) {
     const e = entries.get(activeHybridWindowId);
     if (!e || e.baseWin.isDestroyed()) {
-      activeHybridWindowId = null;
+      setActiveHybridWindowId(null);
     }
   }
   return activeHybridWindowId;
 }
 
+/**
+ * Subscribe to active-hybrid-window changes. The callback fires with the new
+ * active window id (or null) every time `getActiveHybridWindowId()` would
+ * report a DIFFERENT value than before — driven by the BaseWindow
+ * `'focus'`/`'blur'` events, content-wc `'focus'` fallback, and close/destroy
+ * cleanup. Returns an unsubscribe function.
+ *
+ * This is the push signal the P1.4b shared chrome overlay consumes so it can
+ * retarget over the active content window WITHOUT polling
+ * `getActiveHybridWindowId()`. No-op-ish when the flag is off: nothing ever
+ * mutates the active id on the canvas path, so a subscriber simply never fires.
+ */
+export function onActiveHybridWindowChange(cb: ActiveChangeListener): () => void {
+  activeChangeListeners.add(cb);
+  return () => {
+    activeChangeListeners.delete(cb);
+  };
+}
+
+/**
+ * The active hybrid window's host-window OUTER bounds (screen coordinates), or
+ * null if there is no active hybrid window / it has no live host. This is the
+ * geometry source the overlay frames itself over. Uses `baseWin.getBounds()`
+ * (outer frame) rather than the content rect so the overlay can cover the whole
+ * window including any future native chrome/shadow region.
+ */
+export function getActiveHybridWindowBounds():
+  | { x: number; y: number; width: number; height: number }
+  | null {
+  const id = getActiveHybridWindowId();
+  if (id == null) return null;
+  const e = entries.get(id);
+  if (!e || e.baseWin.isDestroyed()) return null;
+  try {
+    return e.baseWin.getBounds();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Test-only: synthetically set the active hybrid window id and fire the change
+ * signal — WITHOUT any real OS focus change. Lets the overlay's retarget logic
+ * be exercised deterministically (and without stealing the user's focus) in
+ * headless/CI runs. `id` must be a registered hybrid window id (or null); a
+ * non-registered id is rejected (returns false) so a test typo can't drive the
+ * overlay to a phantom window.
+ */
+export function _setActiveHybridWindowForTests(id: number | null): boolean {
+  if (id != null && !entries.has(id)) return false;
+  setActiveHybridWindowId(id);
+  return true;
+}
+
 /** Test-only: clear all registry state. */
 export function _resetForTests(): void {
   entries.clear();
+  activeChangeListeners.clear();
   activeHybridWindowId = null;
 }

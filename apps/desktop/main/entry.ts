@@ -10,6 +10,7 @@
 import './headless-policy.js';
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
+import { initHybridOverlay } from './hybrid-overlay.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
@@ -1032,6 +1033,13 @@ const onReady = async () => {
 
   // Register all IPC handlers from backend
   registerAllHandlers(onQuit);
+
+  // P1.4b-1 — start the hybrid shared chrome overlay manager. No-op (no window,
+  // no subscription) unless PEEK_PAGEHOST_HYBRID=1. When on, this subscribes to
+  // the hybrid registry's active-window push signal and lazily creates the ONE
+  // shared overlay window that retargets over the frontmost hybrid content
+  // window. (The canvas path is untouched — the gate returns immediately.)
+  initHybridOverlay();
 
   // Always-on renderer log: writes every console.{log,info,warn,error,debug}
   // from any preload-managed renderer to <userData>/logs/renderer.log.
