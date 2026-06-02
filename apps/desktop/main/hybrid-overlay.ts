@@ -774,6 +774,78 @@ function installTestBridge(): void {
         .catch(() => false);
     },
     /**
+     * P1.4b-6: read the overlay NOTES panel + WIDGET container DOM state for
+     * focus-free verification. `notes` mirrors the panel's `.has-data` gate +
+     * body textContent; `widgets` reports the container's `.has-data` flag, the
+     * live widget count, the joined widget text, and whether the container carries
+     * `.interactive` (the click-capture class). Resolves null if no overlay /
+     * renderer not ready. Pure executeJavaScript, no OS focus.
+     */
+    overlayNotesWidgetState(): Promise<unknown> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(null);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const notesPanel = document.getElementById('notes-panel');
+            const notesBody = notesPanel && notesPanel.querySelector('.notes-body');
+            const wc = document.getElementById('widget-container');
+            const cards = wc ? Array.from(wc.querySelectorAll('.widget')) : [];
+            return {
+              noActive: document.body.classList.contains('no-active'),
+              notes: notesPanel ? {
+                hasData: notesPanel.classList.contains('has-data'),
+                interactive: notesPanel.classList.contains('interactive'),
+                text: notesBody ? notesBody.textContent.trim() : '',
+              } : null,
+              widgets: wc ? {
+                hasData: wc.classList.contains('has-data'),
+                interactive: wc.classList.contains('interactive'),
+                count: cards.length,
+                text: cards.map((c) => c.textContent.trim()).join(' | '),
+              } : null,
+            };
+          })()`,
+        )
+        .catch(() => null);
+    },
+    /**
+     * P1.4b-6: publish the websearch feature's confirm event (the same topic +
+     * payload the websearch tile emits after it fetches/parses/records an
+     * OpenSearch descriptor) so the overlay's OpenSearch widget can be verified
+     * without the real websearch tile present. The overlay only renders a card if
+     * a matching `page:search-engine-discovered` for the ACTIVE window armed it
+     * first (publish that via publishTopic).
+     */
+    publishWebsearchEngine(engine: { id: string; name: string; searchUrl?: string }): void {
+      publish(getSystemAddress(), 'websearch:engine-discovered', { engine });
+    },
+    /**
+     * P1.4b-6: seed a Notes item anchored to `url` through the overlay renderer's
+     * OWN api.datastore (the same datastore PageNotesPane reads). The datastore
+     * write emits item:created / tag:item-added pubsub, which the mounted notes
+     * pane subscribes to → it reloads and shows the note if `url` is its active
+     * URL. Returns the created item id (or null on failure). Focus-free.
+     */
+    seedNote(url: string, content: string): Promise<unknown> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(null);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(async () => {
+            const ds = window.app.datastore;
+            const tag = await ds.getOrCreateTag('annotation');
+            const tagId = tag && tag.data && tag.data.tag && tag.data.tag.id;
+            if (!tagId) return null;
+            const meta = JSON.stringify({ anchor: { url: ${JSON.stringify(url)}, text: '' } });
+            const created = await ds.addItem('text', { content: ${JSON.stringify(content)}, metadata: meta });
+            const itemId = created && created.data && created.data.id;
+            if (!itemId) return null;
+            await ds.tagItem(itemId, tagId);
+            return itemId;
+          })()`,
+        )
+        .catch(() => null);
+    },
+    /**
      * P1.4b-5: synthetically reveal the chrome (navbar + panels) without a real
      * pointer hover — drives the same showNavbar() path the trigger-zone hover
      * would, so a test can assert panels become visible. Focus-free.

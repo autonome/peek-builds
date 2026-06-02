@@ -901,7 +901,11 @@ export function wireHybridContentEvents(
 
     if (contentWC.isDestroyed()) return;
     const pageTitle = contentWC.getTitle() || '';
+    // windowId is added (vs the canvas page.js payload) so the shared overlay can
+    // attribute the event to the ACTIVE hybrid window (P1.4b-6 widgets gate on it).
+    // Resident consumers (pagewidgets-sample, websearch) ignore the extra field.
     publish(getSystemAddress(), 'page:loaded', {
+      windowId: hostWindowId,
       url: pageUrl,
       title: pageTitle,
       opensearchUrl,
@@ -909,9 +913,11 @@ export function wireHybridContentEvents(
     DEBUG && console.log(`[hybrid-page-host] page:loaded published: ${pageUrl}${opensearchUrl ? ` (OpenSearch: ${opensearchUrl})` : ''}`);
 
     // Lazy-wake trigger — fired ONLY when the page advertises an OpenSearch
-    // descriptor (identical condition + payload to page.js ~2612).
+    // descriptor (identical condition + payload to page.js ~2612, plus windowId
+    // so the overlay's OpenSearch widget renders only for the active window).
     if (opensearchUrl) {
       publish(getSystemAddress(), 'page:search-engine-discovered', {
+        windowId: hostWindowId,
         pageUrl,
         opensearchUrl,
       });

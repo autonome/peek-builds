@@ -710,18 +710,27 @@ test.describe('Hybrid Chrome Overlay side panels (P1.4b-5) @desktop', () => {
       .toBe(true);
   };
 
-  // Make a hybrid window, activate it, and set its active URL via a synthetic
-  // page:navigated (the panels key on http(s) URLs, which a data: fake can't
-  // carry). Returns the window id.
-  const makeActiveWithUrl = async (url: string) =>
-    app.evaluateMain!(async (_e, arg) => {
+  // Make a hybrid window + activate it, WAIT for the overlay renderer to be ready
+  // (its page:navigated subscription must be live — the overlay is created lazily
+  // on the first setActive in this describe, and a page:navigated published before
+  // the renderer subscribes is dropped, leaving the URL-keyed panels un-keyed),
+  // THEN set the active URL via a synthetic page:navigated (the panels key on
+  // http(s) URLs, which a data: fake can't carry). Returns the window id.
+  const makeActiveWithUrl = async (url: string) => {
+    const w = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
-      const w = b.makeFakeHybridWindow({ x: 100, y: 100, width: 700, height: 500 });
-      await b.loadFakeContent(w, 'data:text/html,<title>x</title>x');
-      b.setActive(w);
-      b.publishTopic('page:navigated', { windowId: w, url: (arg as any).url });
-      return w;
-    }, { url });
+      const id = b.makeFakeHybridWindow({ x: 100, y: 100, width: 700, height: 500 });
+      await b.loadFakeContent(id, 'data:text/html,<title>x</title>x');
+      b.setActive(id);
+      return id;
+    });
+    await waitOverlayReady();
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:navigated', { windowId: (arg as any).w, url: (arg as any).url });
+    }, { w, url });
+    return w;
+  };
 
   test('page-info renders the active window data, swaps on retarget, clears on null', async () => {
     test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
@@ -945,5 +954,212 @@ test.describe('Hybrid Chrome Overlay side panels (P1.4b-5) @desktop', () => {
       return b.overlayPanelsInteractive();
     });
     expect(interactive).toBe(true);
+  });
+});
+
+/**
+ * P1.4b-6 — the NOTES panel + page WIDGETS ported to the shared overlay,
+ * COMPLETING overlay parity. Focus-free: synthetic active-change + published
+ * intents + overlayNotesWidgetState() DOM reads (no real OS focus, never visible).
+ * The notes pane is URL-keyed (datastore), so it loads/swaps/clears with the
+ * active window; the OpenSearch widget is gated to the ACTIVE windowId via main's
+ * per-window page:search-engine-discovered (P1.3, now windowId-tagged).
+ */
+test.describe('Hybrid Chrome Overlay notes + widgets (P1.4b-6) @desktop', () => {
+  let app: DesktopApp;
+
+  test.beforeAll(async () => {
+    ({ app } = await createPerDescribeApp('hybrid-overlay-notes-widgets'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  const bridgePresent = async () =>
+    app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
+
+  const waitOverlayReady = async () => {
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? s.ready === true : false;
+        }),
+      )
+      .toBe(true);
+  };
+
+  // Make a hybrid window + activate it, WAIT for the overlay renderer to be ready
+  // (so its page:navigated subscription is live — the overlay is created lazily on
+  // the first setActive in this describe, and a page:navigated published before the
+  // renderer subscribes is dropped), THEN set the active http URL via a synthetic
+  // page:navigated. Returns the window id.
+  const makeActiveWithUrl = async (url: string) => {
+    const w = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const id = b.makeFakeHybridWindow({ x: 100, y: 100, width: 700, height: 500 });
+      await b.loadFakeContent(id, 'data:text/html,<title>x</title>x');
+      b.setActive(id);
+      return id;
+    });
+    await waitOverlayReady();
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:navigated', { windowId: (arg as any).w, url: (arg as any).url });
+    }, { w, url });
+    return w;
+  };
+
+  test('notes pane loads for the active URL, swaps on retarget, clears on null', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    // Seed a note in the datastore anchored to alpha, via the overlay's own
+    // api.datastore (the same path PageNotesPane reads). The note is a 'text' item
+    // tagged 'annotation' with metadata.anchor.url.
+    const id = await makeActiveWithUrl('https://notes-alpha.example.com/p');
+    await waitOverlayReady();
+
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      await b.seedNote('https://notes-alpha.example.com/p', 'Alpha note body');
+    });
+
+    // The pane (URL-keyed) should pick up the alpha note for the active window.
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayNotesWidgetState();
+          return s?.notes ? { hasData: s.notes.hasData, text: s.notes.text } : null;
+        }),
+      )
+      .toEqual(
+        expect.objectContaining({ hasData: true }),
+      );
+
+    const alphaText = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayNotesWidgetState();
+      return s?.notes?.text ?? '';
+    });
+    expect(alphaText).toContain('Alpha note body');
+
+    // The notes panel is in the click-capture set.
+    const notesInteractive = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayNotesWidgetState();
+      return s?.notes?.interactive ?? false;
+    });
+    expect(notesInteractive).toBe(true);
+
+    // Retarget to a SECOND window with its own (different) note → pane swaps.
+    await makeActiveWithUrl('https://notes-beta.example.com/q');
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      await b.seedNote('https://notes-beta.example.com/q', 'Beta note body');
+    });
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayNotesWidgetState();
+          return s?.notes?.text ?? '';
+        }),
+      )
+      .toContain('Beta note body');
+
+    const betaText = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayNotesWidgetState();
+      return s?.notes?.text ?? '';
+    });
+    expect(betaText).not.toContain('Alpha note body');
+
+    // Active → null clears the notes pane (no-active + loses has-data).
+    await app.evaluateMain!(() => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.setActive(null);
+    });
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayNotesWidgetState();
+          return s ? { noActive: s.noActive, hasData: s.notes?.hasData } : null;
+        }),
+      )
+      .toEqual({ noActive: true, hasData: false });
+  });
+
+  test('OpenSearch widget appears for active windowId, foreign ignored, clears on retarget', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await makeActiveWithUrl('https://search.example.com/home');
+    await waitOverlayReady();
+
+    // FOREIGN-window discovery must NOT arm the widget: a websearch:engine-discovered
+    // that follows it is ignored (no card rendered).
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:search-engine-discovered', {
+        windowId: (arg as any).id + 99999,
+        pageUrl: 'https://wrong.example.com/',
+        opensearchUrl: 'https://wrong.example.com/osd.xml',
+      });
+      b.publishWebsearchEngine({ id: 'wrong-engine', name: 'Wrong Engine' });
+    }, { id });
+
+    // Give the (ignored) path a beat; the container must stay empty.
+    const afterForeign = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayNotesWidgetState();
+      return s?.widgets ? { count: s.widgets.count, text: s.widgets.text } : null;
+    });
+    expect(afterForeign?.text ?? '').not.toContain('Wrong Engine');
+
+    // ACTIVE-window discovery arms the widget; the subsequent confirm renders a card.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:search-engine-discovered', {
+        windowId: (arg as any).id,
+        pageUrl: 'https://search.example.com/home',
+        opensearchUrl: 'https://search.example.com/osd.xml',
+      });
+      b.publishWebsearchEngine({ id: 'good-engine', name: 'Acme Search' });
+    }, { id });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayNotesWidgetState();
+          return s?.widgets ? { hasData: s.widgets.hasData, text: s.widgets.text, interactive: s.widgets.interactive } : null;
+        }),
+      )
+      .toEqual(
+        expect.objectContaining({ hasData: true, interactive: true }),
+      );
+
+    const widgetText = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayNotesWidgetState();
+      return s?.widgets?.text ?? '';
+    });
+    expect(widgetText).toContain('Acme Search');
+
+    // Retarget → the widget container is CLEARED (the card belonged to the prior
+    // window). New active window starts with an empty container.
+    await makeActiveWithUrl('https://other.example.com/x');
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayNotesWidgetState();
+          return s?.widgets ? { count: s.widgets.count, hasData: s.widgets.hasData } : null;
+        }),
+      )
+      .toEqual({ count: 0, hasData: false });
   });
 });

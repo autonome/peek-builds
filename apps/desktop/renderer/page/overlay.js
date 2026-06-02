@@ -50,13 +50,29 @@
  * Panels are .interactive (covered by the existing click-capture loop) and shown
  * with the navbar via body.panels-visible.
  *
- * DEFERRED to a follow-up (P1.4b-6): the NOTES panel (PageNotesPane in
- * page-notes.js — a separate component that needs its own overlay mount) and the
- * page WIDGETS host (page-widgets.js + opensearch + space-mode widgets). See the
- * report for the concrete plan.
+ * P1.4b-6: the NOTES panel (PageNotesPane in page-notes.js) and the page WIDGETS
+ * host (page-widgets.js + OpenSearch-discovery + space-mode widgets) are ported
+ * here, COMPLETING overlay parity. Both belong to the CURRENT active window and
+ * fully swap on retarget / clear on active→null:
+ *   - notes    → PageNotesPane mounted at #notes-panel-anchor; URL-keyed via
+ *                api.datastore (no main routing). loadForUrl(activeUrl) on each
+ *                setActiveUrl(); cleared (loadForUrl(null)) on retarget/null. Its
+ *                element is added to .interactive and gains .has-data when an
+ *                active http URL is set.
+ *   - widgets  → an addWidget/removeWidget/updateWidget registry over
+ *                #widget-container (ported from page.js), feeding
+ *                createPageWidgetHost. The OpenSearch widget is gated to the
+ *                ACTIVE windowId: main's per-window `page:search-engine-discovered`
+ *                (windowId-tagged, P1.3) records which engine belongs to the
+ *                active page, so the global `websearch:engine-discovered` only
+ *                renders a card when it matches the active window's discovery. The
+ *                space-mode widget mirrors the canvas mode-context behavior. The
+ *                container is cleared (all widgets removed) on retarget/null.
  */
 
 import api from '../api.js';
+import { PageNotesPane } from './page-notes.js';
+import { createPageWidgetHost } from './page-widgets.js';
 
 if (api.initialize) {
   await api.initialize();
@@ -268,7 +284,10 @@ navbar.addEventListener('mouseleave', scheduleHide);
 // P1.4b-5: keep the chrome (navbar + panels) visible while the pointer is over a
 // side panel — mirrors page.js, which cancels the hide timer on panel hover so a
 // user can interact with panels without the chrome collapsing under them.
-for (const sel of ['#page-info-panel', '#tags-panel', '#entities-panel', '#extensions-panel']) {
+// P1.4b-6: include the notes panel + widget container so they keep the chrome
+// open on hover too. The notes panel is mounted by overlay.js (see below), so it
+// may not exist yet at this point — its hover is bound at mount time instead.
+for (const sel of ['#page-info-panel', '#tags-panel', '#entities-panel', '#extensions-panel', '#widget-container']) {
   const p = document.querySelector(sel);
   if (!p) continue;
   p.addEventListener('mouseenter', () => { showNavbar(); });
@@ -639,6 +658,11 @@ function clearPanels() {
   for (const p of [pageInfoPanel, tagsPanel, entitiesPanel, extensionsPanel]) {
     if (p) p.classList.remove('has-data');
   }
+  // P1.4b-6: notes + widgets belong to the active window too — clear them on the
+  // same boundary (retarget / active→null) so a prior window's notes/widgets
+  // never bleed into the next active window's chrome.
+  clearNotes();
+  clearWidgets();
 }
 
 /** Re-key the panels onto a new active URL and kick off all four loads. Passing
@@ -652,6 +676,7 @@ function setActiveUrl(url) {
   requestEntities(token, url);
   loadTagsForUrl(token, url);
   loadExtensionsPanel(token);
+  loadNotesForUrl(token, url);
 }
 
 // ── Page Info ─────────────────────────────────────────────────────────────────
@@ -1188,6 +1213,318 @@ for (const toggle of document.querySelectorAll('.panel-toggle')) {
     toggle.classList.toggle('collapsed', collapsed);
   });
 }
+
+// ── P1.4b-6: NOTES panel ──────────────────────────────────────────────────────
+// PageNotesPane is the SAME class the canvas page.js mounts; it is URL-keyed via
+// api.datastore (no main routing). The overlay mounts it once into the right
+// stack, subscribes (init), and re-keys it per active window via loadForUrl. The
+// overlay manages the panel's .has-data flag (the rest of the overlay's panels do
+// too) so it shows alongside the chrome only once notes are loaded for an active
+// http URL — NOT page.js's per-element `.visible` toggling.
+const pageNotesPane = new PageNotesPane();
+const notesPanel = pageNotesPane.getElement();
+notesPanel.classList.add('interactive'); // join the click-capture set
+const notesPanelAnchor = document.getElementById('notes-panel-anchor');
+if (notesPanelAnchor) notesPanelAnchor.replaceWith(notesPanel);
+pageNotesPane.init();
+// Bind the chrome-hover keep-open behavior now that the element is mounted (the
+// earlier querySelectorAll loop ran before this replace).
+notesPanel.addEventListener('mouseenter', () => { showNavbar(); });
+notesPanel.addEventListener('mouseleave', scheduleHide);
+
+function loadNotesForUrl(token, url) {
+  if (token !== panelToken || !isHttp(url)) return;
+  // The Notes panel always offers its add-note affordance, so it has-data once an
+  // active http URL is set (matches the Tags panel + page.js always showing it).
+  notesPanel.classList.add('has-data');
+  pageNotesPane.loadForUrl(url);
+}
+
+function clearNotes() {
+  notesPanel.classList.remove('has-data');
+  // Clear the notes list back to empty for the no-longer-active window.
+  pageNotesPane.loadForUrl(null);
+}
+
+// ── P1.4b-6: page WIDGETS ─────────────────────────────────────────────────────
+// addWidget/removeWidget/updateWidget registry ported verbatim from page.js
+// (page.js ~3030), rendering into #widget-container. createPageWidgetHost feeds it
+// for extension widgets; the OpenSearch-discovery + space-mode widgets use it
+// directly. All widgets belong to the ACTIVE window and are removed on
+// retarget/null (clearWidgets, called from clearPanels). The container's .has-data
+// flag gates its visibility with the rest of the chrome.
+const widgetContainer = document.getElementById('widget-container');
+const widgets = new Map();
+
+function syncWidgetContainerData() {
+  if (!widgetContainer) return;
+  if (widgets.size > 0) widgetContainer.classList.add('has-data');
+  else widgetContainer.classList.remove('has-data');
+}
+
+function addWidget(id, { title, content, autoDismiss = 0, onClose, closable = true, collapsible = true } = {}) {
+  if (widgets.has(id)) removeWidget(id);
+
+  const el = document.createElement('div');
+  el.className = 'widget';
+  el.dataset.widgetId = id;
+
+  const header = document.createElement('div');
+  header.className = 'widget-header';
+
+  let toggle = null;
+  if (collapsible) {
+    toggle = document.createElement('button');
+    toggle.className = 'widget-toggle';
+    toggle.textContent = '▼';
+    toggle.title = 'Collapse';
+    header.appendChild(toggle);
+  }
+
+  const titleEl = document.createElement('span');
+  titleEl.className = 'widget-title';
+  titleEl.textContent = title || '';
+  header.appendChild(titleEl);
+
+  if (closable) {
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'widget-close';
+    closeBtn.textContent = '×';
+    closeBtn.title = 'Dismiss';
+    closeBtn.addEventListener('click', (e) => { e.stopPropagation(); removeWidget(id); });
+    header.appendChild(closeBtn);
+  }
+  el.appendChild(header);
+
+  const bodyWrap = document.createElement('div');
+  bodyWrap.className = 'widget-body-wrap';
+  const body = document.createElement('div');
+  body.className = 'widget-body';
+  if (typeof content === 'string') body.innerHTML = content;
+  else if (content instanceof HTMLElement) body.appendChild(content);
+  bodyWrap.appendChild(body);
+  el.appendChild(bodyWrap);
+
+  if (toggle) {
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const collapsed = toggle.classList.toggle('collapsed');
+      bodyWrap.classList.toggle('collapsed', collapsed);
+      toggle.title = collapsed ? 'Expand' : 'Collapse';
+    });
+  }
+
+  widgetContainer.appendChild(el);
+  const timers = [];
+  requestAnimationFrame(() => { el.classList.add('visible'); });
+  if (autoDismiss > 0) timers.push(setTimeout(() => removeWidget(id), autoDismiss));
+
+  const handle = { element: el, body, timers, onClose, close: () => removeWidget(id) };
+  widgets.set(id, handle);
+  syncWidgetContainerData();
+  DEBUG && console.log('[overlay] Widget added:', id, title);
+  return handle;
+}
+
+function removeWidget(id) {
+  const handle = widgets.get(id);
+  if (!handle) return;
+  for (const timer of handle.timers) clearTimeout(timer);
+  handle.element.classList.remove('visible');
+  handle.element.classList.add('hiding');
+  setTimeout(() => {
+    if (handle.element.isConnected) handle.element.remove();
+  }, 300);
+  if (handle.onClose) { try { handle.onClose(); } catch { /* ignore */ } }
+  widgets.delete(id);
+  syncWidgetContainerData();
+  DEBUG && console.log('[overlay] Widget removed:', id);
+}
+
+function updateWidget(id, { content, title } = {}) {
+  const handle = widgets.get(id);
+  if (!handle) return;
+  if (title !== undefined) {
+    const titleEl = handle.element.querySelector('.widget-title');
+    if (titleEl) titleEl.textContent = title;
+  }
+  if (content !== undefined) {
+    if (typeof content === 'string') handle.body.innerHTML = content;
+    else if (content instanceof HTMLElement) { handle.body.innerHTML = ''; handle.body.appendChild(content); }
+  }
+  DEBUG && console.log('[overlay] Widget updated:', id);
+}
+
+// Remove every widget at once and reset per-window widget state. Called on the
+// retarget/null boundary (clearPanels) — synchronous DOM clear, no 300ms fade, so
+// the next active window starts with an empty container.
+function clearWidgets() {
+  for (const handle of widgets.values()) {
+    for (const timer of handle.timers) clearTimeout(timer);
+    if (handle.element.isConnected) handle.element.remove();
+    if (handle.onClose) { try { handle.onClose(); } catch { /* ignore */ } }
+  }
+  widgets.clear();
+  // Drop the OpenSearch rendezvous state so a stale discovery/confirm can't
+  // render a card for the next active window after retarget.
+  activeDiscoveryArmed = false;
+  lastUnrenderedEngine = null;
+  // The space-mode widget is app-wide (mode context), not per-window: re-evaluate
+  // it after the clear so it reappears for the newly-active window if in a space.
+  syncWidgetContainerData();
+  updateSpaceModeWidget();
+}
+
+// --- Page Widget Host (extension-provided widgets via pubsub) ---
+// The hybrid content webContents is MAIN-owned; the overlay has no <webview>
+// element, so script-exec requests are not serviced here (extensions that need
+// page-script exec run against the canvas path). Widget register/render/update/
+// close still work — they only touch the overlay-owned container.
+const pageWidgetHost = createPageWidgetHost({
+  api,
+  webview: null,
+  widgetContainer,
+  addWidget,
+  updateWidget,
+  removeWidget,
+});
+pageWidgetHost.init();
+if (typeof window !== 'undefined') window.__pageWidgetHost = pageWidgetHost;
+
+// --- OpenSearch discovery widget (gated to the ACTIVE window) ---
+// Canvas page.js renders this off the global `websearch:engine-discovered`
+// (payload {engine}); each canvas window is its own page so the global event is
+// implicitly window-scoped. The overlay is ONE renderer for N windows, so the
+// card must render only for the ACTIVE window's discovery.
+//
+// Two topics correlate to do this, and they can arrive in EITHER order:
+//   - `page:search-engine-discovered {windowId, pageUrl}` — main's per-window,
+//     windowId-tagged signal (P1.3) that the active page advertised a descriptor.
+//   - `websearch:engine-discovered {engine}` — the websearch feature's confirm
+//     after it fetches/parses/records the descriptor; it carries the engine name
+//     but NO windowId, so it can't self-attribute to a window.
+// In production the confirm follows the discovery (a real fetch takes time), but
+// pubsub delivery order between the two topics is NOT guaranteed (the discovery
+// topic is also a lazy-wake trigger, intercepted by tile-lazy, which can reorder
+// it relative to the plain confirm topic). So this is an order-INDEPENDENT
+// rendezvous: we remember the most recent unrendered confirm engine AND whether
+// the active window has fired a discovery; whichever arrives second renders the
+// card. Foreign-window discoveries never set the active-armed flag → a confirm
+// without an active discovery never renders. Both are reset on retarget/null
+// (clearWidgets) so a stale confirm can't bleed into the next active window.
+let activeDiscoveryArmed = false;
+let lastUnrenderedEngine = null;
+
+function maybeRenderOpenSearchWidget() {
+  if (!activeDiscoveryArmed || !lastUnrenderedEngine || activeWindowId == null) return;
+  const engine = lastUnrenderedEngine;
+  // Consume both sides of the rendezvous so the same engine isn't re-rendered on
+  // a subsequent unrelated discovery/confirm.
+  activeDiscoveryArmed = false;
+  lastUnrenderedEngine = null;
+
+  const widgetId = `opensearch-${engine.id}`;
+  DEBUG && console.log('[overlay] OpenSearch engine discovered:', engine.name);
+
+  const contentEl = document.createElement('div');
+  const infoRow = document.createElement('div');
+  infoRow.className = 'widget-engine-found';
+  const iconSpan = document.createElement('span');
+  iconSpan.className = 'widget-engine-icon';
+  iconSpan.textContent = '🔍';
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'widget-engine-name';
+  nameSpan.textContent = engine.name;
+  infoRow.appendChild(iconSpan);
+  infoRow.appendChild(nameSpan);
+  contentEl.appendChild(infoRow);
+  const actionBtn = document.createElement('button');
+  actionBtn.className = 'widget-action-btn confirmed';
+  actionBtn.textContent = '✓ Added to search engines';
+  contentEl.appendChild(actionBtn);
+
+  addWidget(widgetId, {
+    title: 'Search engine found',
+    content: contentEl,
+    autoDismiss: 8000,
+  });
+}
+
+api.subscribe('page:search-engine-discovered', (msg) => {
+  if (!isActive(msg)) return;
+  activeDiscoveryArmed = true;
+  maybeRenderOpenSearchWidget();
+});
+
+api.subscribe('websearch:engine-discovered', (msg) => {
+  if (!msg || !msg.engine) return;
+  lastUnrenderedEngine = msg.engine;
+  maybeRenderOpenSearchWidget();
+});
+
+// --- Space mode widget (ported from page.js; mode context, app-wide) ---
+const SPACE_MODE_WIDGET_ID = '__space-mode__';
+let currentMode = 'page';
+let currentModeMetadata = {};
+
+function buildSpaceModeContent(metadata) {
+  const container = document.createElement('div');
+  container.className = 'space-mode-widget-body';
+  const dot = document.createElement('span');
+  dot.className = 'space-mode-dot';
+  dot.style.background = metadata.color || '#9966cc';
+  container.appendChild(dot);
+  const name = document.createElement('span');
+  name.className = 'space-mode-name';
+  name.textContent = metadata.spaceName || 'Space';
+  container.appendChild(name);
+  return container;
+}
+
+function updateSpaceModeWidget() {
+  // Only show while there's an active window (the container is hidden otherwise).
+  if (activeWindowId != null && currentMode === 'space' && currentModeMetadata.spaceName) {
+    if (widgets.has(SPACE_MODE_WIDGET_ID)) {
+      updateWidget(SPACE_MODE_WIDGET_ID, { title: 'Space', content: buildSpaceModeContent(currentModeMetadata) });
+    } else {
+      addWidget(SPACE_MODE_WIDGET_ID, {
+        title: 'Space',
+        content: buildSpaceModeContent(currentModeMetadata),
+        closable: false,
+        collapsible: false,
+      });
+    }
+    DEBUG && console.log('[overlay] Space mode widget shown:', currentModeMetadata);
+  } else if (widgets.has(SPACE_MODE_WIDGET_ID)) {
+    removeWidget(SPACE_MODE_WIDGET_ID);
+    DEBUG && console.log('[overlay] Space mode widget removed');
+  }
+}
+
+async function initModeContext() {
+  try {
+    const modeResult = await api.context.get('mode');
+    if (modeResult.success && modeResult.data) {
+      currentMode = modeResult.data.value || 'page';
+      currentModeMetadata = modeResult.data.metadata || {};
+      updateSpaceModeWidget();
+    }
+    api.context.watchMode((mode, entry) => {
+      if (mode) {
+        currentMode = mode;
+        currentModeMetadata = entry?.metadata || {};
+        updateSpaceModeWidget();
+      }
+    });
+  } catch (err) {
+    console.error('[overlay] Failed to initialize mode context:', err);
+  }
+}
+initModeContext();
+
+window.addEventListener('beforeunload', () => {
+  try { pageWidgetHost.destroy(); } catch { /* ignore */ }
+});
 
 // Signal readiness so main can verify the renderer is wired (and tests can wait).
 window.__overlayReady = true;
