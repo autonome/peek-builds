@@ -1163,3 +1163,219 @@ test.describe('Hybrid Chrome Overlay notes + widgets (P1.4b-6) @desktop', () => 
       .toEqual({ count: 0, hasData: false });
   });
 });
+
+/**
+ * Focus-group fix — interacting with the chrome (a SEPARATE focusable overlay
+ * window) must NOT deactivate the content window. The prior P1.4b tests drove
+ * active-changes synthetically (setActive), bypassing real focus — which is
+ * exactly why the "click the navbar → overlay instantly closes" bug slipped
+ * through. These tests drive the REAL `'focus'`/`'blur'` event SEQUENCE the OS
+ * produces (old window blur BEFORE new window focus) against simulated focus
+ * state, exercising the registry's deferred blur decision. Focus-free: headless
+ * BaseWindows never take OS focus; the bridge simulates `isFocused()` +
+ * overlay-focus deterministically.
+ */
+test.describe('Hybrid Chrome Overlay focus-group @desktop', () => {
+  let app: DesktopApp;
+
+  test.beforeAll(async () => {
+    ({ app } = await createPerDescribeApp('hybrid-overlay-focus-group'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  const bridgePresent = async () =>
+    app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
+
+  const waitOverlayReady = async () => {
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? s.ready === true : false;
+        }),
+      )
+      .toBe(true);
+  };
+
+  test('clicking the chrome (overlay focus on content blur) does NOT deactivate', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    // Content A focused → active = A, overlay shown over A.
+    const setup = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const a = b.makeFakeHybridWindow({ x: 100, y: 100, width: 600, height: 400 });
+      b.focusHost(a); // real 'focus' event → active = A, overlay retargets
+      b.installFocusGroupSim(); // overlay-focus provider reads simulated state
+      return { a, active: b.activeId(), overlay: b.overlayState() };
+    });
+    await waitOverlayReady();
+    expect(setup.active).toBe(setup.a);
+    expect(setup.overlay).not.toBeNull();
+    expect(setup.overlay.visible).toBe(true);
+
+    // THE BUG SEQUENCE: user clicks the navbar → content A blurs, then the
+    // overlay focuses. Drive that exact order, then run the deferred decision.
+    const afterClick = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.blurHost((arg as any).a); // content A 'blur' → schedules deferred decision
+      b.focusOverlay(); // focus lands on the overlay (intra-group)
+      const active = b.runDeferredBlur((arg as any).a); // run the deferred decision now
+      return { active, overlay: b.overlayState() };
+    }, { a: setup.a });
+
+    // Active STAYS A; overlay NOT hidden/cleared.
+    expect(afterClick.active).toBe(setup.a);
+    expect(afterClick.overlay).not.toBeNull();
+    expect(afterClick.overlay.visible).toBe(true);
+
+    // Overlay blurs, content A re-focuses → still active = A.
+    const back = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.blurOverlay();
+      b.focusHost((arg as any).a);
+      return b.activeId();
+    }, { a: setup.a });
+    expect(back).toBe(setup.a);
+
+    // Focus leaves the whole group (neither overlay nor any hybrid) → null, hide.
+    const left = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.blurHost((arg as any).a);
+      b.focusElsewhere();
+      const active = b.runDeferredBlur((arg as any).a);
+      return { active, overlay: b.overlayState() };
+    }, { a: setup.a });
+    expect(left.active).toBeNull();
+    expect(left.overlay).not.toBeNull();
+    expect(left.overlay.visible).toBe(false);
+  });
+
+  test('real switch between two hybrid windows still retargets (A → B)', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const result = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const a = b.makeFakeHybridWindow({ x: 100, y: 100, width: 500, height: 400 });
+      const bb = b.makeFakeHybridWindow({ x: 700, y: 100, width: 500, height: 400 });
+      b.installFocusGroupSim();
+      b.focusHost(a);
+      const afterA = { active: b.activeId(), overlay: b.overlayState()?.bounds ?? null };
+      // Switch to B: A blurs first, then B focuses (B's own focus handler sets
+      // active=B and cancels A's pending deferred decision).
+      b.blurHost(a);
+      b.focusHost(bb);
+      const afterFocusB = b.activeId();
+      // Even if the deferred decision for A runs late, active stays B.
+      const afterDefer = b.runDeferredBlur(a);
+      return {
+        a,
+        bb,
+        afterA,
+        afterFocusB,
+        afterDefer,
+        overlayB: b.overlayState()?.bounds ?? null,
+      };
+    });
+
+    expect(result.afterA.active).toBe(result.a);
+    expect(result.afterFocusB).toBe(result.bb);
+    expect(result.afterDefer).toBe(result.bb);
+    // Overlay retargeted onto B (different bounds than A).
+    expect(result.overlayB).toEqual({ x: 700, y: 100, width: 500, height: 400 });
+  });
+
+  test('back/forward unblocked: nav drives the active content WC held through an overlay interaction', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 100, y: 100, width: 600, height: 400 });
+      await b.loadFakeContent(w, 'data:text/html,<title>One</title>page-one');
+      b.installFocusGroupSim();
+      b.focusHost(w);
+      return w;
+    });
+    await waitOverlayReady();
+
+    // Simulate the user interacting with the chrome (content blur → overlay
+    // focus) — active MUST remain the content window so navbar actions work.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.blurHost((arg as any).id);
+      b.focusOverlay();
+      b.runDeferredBlur((arg as any).id);
+    }, { id });
+
+    // activeId still the content window (not nulled by the interaction).
+    const heldActive = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return { active: b.activeId(), target: (arg as any).id };
+    }, { id });
+    expect(heldActive.active).toBe(heldActive.target);
+
+    // Build history: navigate twice.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:navigate', {
+        windowId: (arg as any).id,
+        url: 'data:text/html,<title>Two</title>page-two',
+      });
+    }, { id });
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async (_e, arg) => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.contentUrl((arg as any).id);
+        }, { id }),
+      )
+      .toContain('page-two');
+
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:navigate', {
+        windowId: (arg as any).id,
+        url: 'data:text/html,<title>Three</title>page-three',
+      });
+    }, { id });
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async (_e, arg) => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.contentUrl((arg as any).id);
+        }, { id }),
+      )
+      .toContain('page-three');
+
+    // page:go-back drives the (still-active) content WC back to page-two.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:go-back', { windowId: (arg as any).id });
+    }, { id });
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async (_e, arg) => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.contentUrl((arg as any).id);
+        }, { id }),
+      )
+      .toContain('page-two');
+
+    // page:go-forward returns to page-three.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:go-forward', { windowId: (arg as any).id });
+    }, { id });
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async (_e, arg) => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.contentUrl((arg as any).id);
+        }, { id }),
+      )
+      .toContain('page-three');
+  });
+});

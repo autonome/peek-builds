@@ -63,7 +63,10 @@ import {
   getActiveHybridWindowBounds,
   registerHybridWindow,
   getAllHybridWindows,
+  setOverlayFocusProvider,
+  getActiveHybridWindowId as _getActiveHybridWindowIdForBridge,
   _setActiveHybridWindowForTests,
+  _runDeferredBlurForTests,
 } from './hybrid-page-host-registry.js';
 import { createTrustedBuiltinGrant } from './tile-manifest.js';
 import { generateToken } from './tile-tokens.js';
@@ -195,6 +198,21 @@ function ensureOverlay(): BrowserWindow {
 
   win.on('closed', () => {
     if (overlayWin === win) overlayWin = null;
+    // Drop the focus provider so the registry stops consulting a dead window.
+    setOverlayFocusProvider(null);
+  });
+
+  // Focus-group: tell the registry how to learn whether THIS overlay window is
+  // focused. The registry's deferred content-blur decision consults this so a
+  // click into the overlay (navbar URL field, panels, handles) — which blurs the
+  // content BaseWindow and focuses the overlay — does NOT deactivate the content
+  // window. Without this, interacting with the chrome instantly closes it.
+  setOverlayFocusProvider(() => {
+    try {
+      return !win.isDestroyed() && win.isFocused();
+    } catch {
+      return false;
+    }
   });
 
   overlayWin = win;
@@ -500,6 +518,25 @@ export function _getOverlayStateForTests():
  */
 function installTestBridge(): void {
   const fakeHosts = new Map<number, BaseWindow>();
+  // Focus-group verification (focus-free): headless opacity-0 BaseWindows never
+  // take REAL OS focus, so the focus-group logic — which reads `isFocused()` and
+  // the overlay-focus provider — can't be exercised by real clicks here. We
+  // SIMULATE focus deterministically: `simFocus` holds which fake host id (if
+  // any) is "focused", and `simOverlayFocused` whether the overlay is. Each fake
+  // host's `isFocused()` is overridden to read `simFocus`; an override on the
+  // overlay focus provider reads `simOverlayFocused`. This drives the EXACT
+  // blur→deferred-decision path the real focus events trigger (the prior tests
+  // bypassed focus entirely, which is why this bug slipped through).
+  let simFocus: number | null = null;
+  let simOverlayFocused = false;
+  const installFocusSim = (baseWin: BaseWindow) => {
+    try {
+      (baseWin as unknown as { isFocused: () => boolean }).isFocused = () =>
+        simFocus === baseWin.id;
+    } catch {
+      /* property non-configurable in some envs */
+    }
+  };
   (globalThis as Record<string, unknown>).__peekHybridOverlayTest = {
     makeFakeHybridWindow(bounds: { x: number; y: number; width: number; height: number }): number {
       const baseWin = new BaseWindowCtor({
@@ -511,6 +548,7 @@ function installTestBridge(): void {
         show: false,
         opacity: 0,
       });
+      installFocusSim(baseWin);
       const view = new WebContentsView({
         webPreferences: { contextIsolation: true, sandbox: true },
       });
@@ -528,6 +566,65 @@ function installTestBridge(): void {
     },
     setActive(id: number | null): boolean {
       return _setActiveHybridWindowForTests(id);
+    },
+    /**
+     * Focus-group verification: drive the REAL `'focus'`/`'blur'` event sequence
+     * on a fake host BaseWindow (the click-the-navbar sequence Electron produces:
+     * old window blur BEFORE new window focus). Unlike `setActive` (synthetic, no
+     * focus), these exercise the registry's deferred blur decision.
+     *
+     *   focusHost(id)        — set simulated focus to id + emit its 'focus'
+     *   blurHost(id)         — clear simulated focus (if it was id) + emit 'blur';
+     *                          the registry schedules the deferred decision
+     *   focusOverlay()       — simulate focus moving to the overlay window
+     *   blurOverlay()        — simulate overlay losing focus
+     *   focusElsewhere()     — simulate focus leaving the whole group (non-hybrid)
+     *   runDeferredBlur(id)  — synchronously run the registry's deferred decision
+     *                          for id (no waiting on setImmediate); returns active id
+     *   activeId()           — current registry active id
+     */
+    focusHost(id: number): boolean {
+      const w = fakeHosts.get(id);
+      if (!w || w.isDestroyed()) return false;
+      simFocus = id;
+      simOverlayFocused = false;
+      w.emit('focus');
+      return true;
+    },
+    blurHost(id: number): boolean {
+      const w = fakeHosts.get(id);
+      if (!w || w.isDestroyed()) return false;
+      if (simFocus === id) simFocus = null;
+      w.emit('blur');
+      return true;
+    },
+    focusOverlay(): void {
+      simFocus = null;
+      simOverlayFocused = true;
+    },
+    blurOverlay(): void {
+      simOverlayFocused = false;
+    },
+    focusElsewhere(): void {
+      simFocus = null;
+      simOverlayFocused = false;
+    },
+    runDeferredBlur(id: number): number | null {
+      return _runDeferredBlurForTests(id);
+    },
+    activeId(): number | null {
+      return _getActiveHybridWindowIdForBridge();
+    },
+    /**
+     * Focus-group verification: replace the registry's overlay-focus provider
+     * with one that reads the bridge's simulated `simOverlayFocused`, so the
+     * deferred blur decision sees the overlay as focused when we say it is
+     * (the real provider reads the overlay window's OS focus, which a headless
+     * test never grants). Call once before driving the blur→overlay-focus
+     * sequence.
+     */
+    installFocusGroupSim(): void {
+      setOverlayFocusProvider(() => simOverlayFocused);
     },
     setHostBounds(
       id: number,

@@ -68,6 +68,102 @@ const entries = new Map<number, InternalEntry>();
 // the active window and on close/destroy of the active window.
 let activeHybridWindowId: number | null = null;
 
+// ── Focus-group model ──────────────────────────────────────────────────────
+//
+// The P1.4b shared chrome overlay is a SEPARATE focusable window that floats
+// over whichever content window is active. Clicking the overlay (e.g. the
+// navbar URL field) makes the overlay key and BLURS the content BaseWindow. A
+// naive `baseWin 'blur' → active = null` therefore destroys the overlay the
+// instant the user touches it (and nulls `activeWindowId`, breaking
+// back/forward). The OLD canvas chrome never had this because the chrome lived
+// in the SAME window as the content — one focus surface.
+//
+// We reproduce that "one logical surface" by treating the overlay window and
+// its active content window as ONE focus group. Focus moving from the content
+// window to the overlay (or vice-versa) is INTRA-group and must NOT deactivate.
+// We only deactivate when focus leaves the WHOLE group — to a non-hybrid window
+// or another app.
+//
+// Mechanics: Electron fires the OLD window's 'blur' BEFORE the NEW window's
+// 'focus'. So on a content 'blur' we cannot yet tell where focus landed. We
+// DEFER the decision one tick (`setImmediate`) and then look at the live focus
+// state: if the overlay is focused, or another hybrid content window is
+// focused, focus stayed in-group → keep/retarget; only if focus landed on
+// neither do we null.
+
+// Reports whether the shared chrome overlay window is currently focused. The
+// overlay (hybrid-overlay.ts) registers this so the deferred blur decision can
+// ask "did focus land on the overlay?" without this module importing the
+// overlay (which would create a cycle). Null until the overlay registers.
+let isOverlayFocused: (() => boolean) | null = null;
+
+// Per-window pending deferred-blur handles, so a re-focus before the deferred
+// check fires can cancel the stale decision (and so cleanup can cancel it).
+const pendingBlurChecks = new Map<number, ReturnType<typeof setImmediate>>();
+
+/**
+ * Register a predicate the registry calls (inside the deferred blur decision)
+ * to learn whether the shared chrome overlay window is currently focused. The
+ * overlay window is part of the active window's focus group: while it is
+ * focused, the active content window must stay active. Pass `null` to clear
+ * (e.g. overlay torn down). One-way dependency: the overlay calls IN here, this
+ * module never imports the overlay.
+ */
+export function setOverlayFocusProvider(fn: (() => boolean) | null): void {
+  isOverlayFocused = fn;
+}
+
+/** Is any registered hybrid content BaseWindow currently focused? */
+function anyHybridContentFocused(): { focused: boolean; id: number | null } {
+  for (const e of entries.values()) {
+    try {
+      if (!e.baseWin.isDestroyed() && e.baseWin.isFocused()) {
+        return { focused: true, id: e.windowId };
+      }
+    } catch {
+      /* isFocused unsupported in some environments */
+    }
+  }
+  return { focused: false, id: null };
+}
+
+/**
+ * The deferred decision run one tick after a content window's 'blur'. By now
+ * Electron has delivered the new window's 'focus', so live `isFocused()` state
+ * tells us where focus actually went:
+ *   - overlay focused           → stay in-group; keep `blurredId` active.
+ *   - another hybrid focused    → real switch; that hybrid's own 'focus' handler
+ *                                 already set active to it — do nothing.
+ *   - neither                   → focus left the group → null.
+ */
+function decideAfterBlur(blurredId: number): void {
+  pendingBlurChecks.delete(blurredId);
+
+  // If active already moved off the window that blurred (a real switch already
+  // set active to the newly-focused hybrid), there is nothing to decide.
+  if (activeHybridWindowId !== blurredId) return;
+
+  // Focus landed on the shared chrome overlay → intra-group, keep active.
+  if (isOverlayFocused) {
+    try {
+      if (isOverlayFocused()) return;
+    } catch {
+      /* provider threw — fall through to the other checks */
+    }
+  }
+
+  // Focus landed on another hybrid content window → retarget to it (its own
+  // 'focus' handler may not have run yet on every platform, so be explicit).
+  const other = anyHybridContentFocused();
+  if (other.focused && other.id != null) {
+    setActiveHybridWindowId(other.id);
+    return;
+  }
+
+  // Focus left the whole group (non-hybrid window or another app) → deactivate.
+  setActiveHybridWindowId(null);
+}
+
 // Push-on-change subscribers for the active-window signal. Fired ONLY when
 // `activeHybridWindowId` actually transitions to a different value (see
 // `setActiveHybridWindowId`). The P1.4b shared overlay subscribes here so it
@@ -160,6 +256,12 @@ export function registerHybridWindow(
   entries.set(windowId, entry);
 
   const cleanup = () => {
+    // Cancel any in-flight deferred blur decision for this window.
+    const pending = pendingBlurChecks.get(windowId);
+    if (pending) {
+      clearImmediate(pending);
+      pendingBlurChecks.delete(windowId);
+    }
     // Only delete if this exact entry is still the one registered (guards
     // against a re-register having replaced us).
     if (entries.get(windowId) === entry) {
@@ -174,24 +276,34 @@ export function registerHybridWindow(
   contentWC.once('destroyed', cleanup);
 
   // Active-window tracking. BaseWindow emits 'focus'/'blur' in Electron 40.
-  baseWin.on('focus', () => {
-    if (entries.get(windowId) === entry) {
-      setActiveHybridWindowId(windowId);
+  // Focusing a content window makes it active AND cancels any pending deferred
+  // blur (e.g. focus bounced content→overlay→content within a tick).
+  const onContentFocus = () => {
+    if (entries.get(windowId) !== entry) return;
+    const pending = pendingBlurChecks.get(windowId);
+    if (pending) {
+      clearImmediate(pending);
+      pendingBlurChecks.delete(windowId);
     }
-  });
+    setActiveHybridWindowId(windowId);
+  };
+  baseWin.on('focus', onContentFocus);
+  // DO NOT null immediately on blur — the overlay (a separate focusable window)
+  // and other hybrid windows are part of the focus group. Defer the decision one
+  // tick so Electron has delivered the NEW window's 'focus' and we can read live
+  // focus state (see decideAfterBlur / the focus-group note above).
   baseWin.on('blur', () => {
-    if (activeHybridWindowId === windowId) {
-      setActiveHybridWindowId(null);
-    }
+    if (activeHybridWindowId !== windowId) return;
+    if (pendingBlurChecks.has(windowId)) return;
+    pendingBlurChecks.set(
+      windowId,
+      setImmediate(() => decideAfterBlur(windowId)),
+    );
   });
   // Belt-and-suspenders: focusing INTO the page focuses the content wc. Covers
   // edge cases where the host-window focus event is missed (e.g. a click that
   // lands directly in the WebContentsView).
-  contentWC.on('focus', () => {
-    if (entries.get(windowId) === entry) {
-      setActiveHybridWindowId(windowId);
-    }
-  });
+  contentWC.on('focus', onContentFocus);
 
   // If the window is already focused at registration time (it was just
   // shown/focused), seed the active id so the first reader doesn't see null.
@@ -333,7 +445,26 @@ export function _setActiveHybridWindowForTests(id: number | null): boolean {
 
 /** Test-only: clear all registry state. */
 export function _resetForTests(): void {
+  for (const t of pendingBlurChecks.values()) clearImmediate(t);
+  pendingBlurChecks.clear();
   entries.clear();
   activeChangeListeners.clear();
   activeHybridWindowId = null;
+  isOverlayFocused = null;
+}
+
+/**
+ * Test-only: synchronously run the deferred blur decision for a window WITHOUT
+ * waiting for the real `setImmediate` tick. Lets a focus-free test drive the
+ * exact blur→(overlay-focus?|other-hybrid?|none) sequence deterministically.
+ * Returns the active id after the decision. No-op (returns current active) if
+ * there is no pending blur for `windowId`.
+ */
+export function _runDeferredBlurForTests(windowId: number): number | null {
+  const pending = pendingBlurChecks.get(windowId);
+  if (pending) {
+    clearImmediate(pending);
+    decideAfterBlur(windowId);
+  }
+  return activeHybridWindowId;
 }
