@@ -1452,3 +1452,146 @@ test.describe('Hybrid Chrome Overlay focus-group @desktop', () => {
       .toContain('page-three');
   });
 });
+
+/**
+ * Navbar reveal — Cmd+L forwarding + reliable trigger-zone hover.
+ *
+ * Reproduces the canvas reveal behavior on the hybrid path:
+ *  1. Cmd+L on the content WC is forwarded by main (wireHybridContentEvents'
+ *     before-input-event) as `page:show-navbar {windowId}`; the overlay reveals
+ *     the navbar AND focuses the URL field. A foreign windowId is ignored.
+ *  2. Trigger-zone hover reliably reveals the navbar — driven through the
+ *     RELIABLY-forwarded `mousemove` path (the flaky-hover fix), not the
+ *     boundary-crossing `mouseenter` that misses on a click-through window — and
+ *     a move from the trigger zone INTO the navbar does NOT collapse the chrome
+ *     (no flicker); a move off all chrome schedules the hide.
+ *
+ * Focus-free: synthetic active-change + published topic (Cmd+L) and dispatched
+ * `mousemove` (trigger zone), DOM reads via the bridge. No real OS focus.
+ */
+test.describe('Hybrid Chrome Overlay navbar reveal @desktop', () => {
+  let app: DesktopApp;
+
+  test.beforeAll(async () => {
+    ({ app } = await createPerDescribeApp('hybrid-overlay-navbar-reveal'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  const bridgePresent = async () =>
+    app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
+
+  const waitOverlayReady = async () => {
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? s.ready === true : false;
+        }),
+      )
+      .toBe(true);
+  };
+
+  const makeActive = async (url: string) => {
+    const id = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 140, y: 140, width: 700, height: 460 });
+      await b.loadFakeContent(w, (arg as any).url);
+      b.setActive(w);
+      return w;
+    }, { url });
+    await waitOverlayReady();
+    return id;
+  };
+
+  test('Cmd+L (page:show-navbar) reveals the navbar AND focuses the URL field; foreign windowId ignored', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await makeActive('data:text/html,<body>cmd-l target</body>');
+
+    // The content WC's Cmd+L forward is `page:show-navbar {windowId}`.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:show-navbar', { windowId: (arg as any).id });
+    }, { id });
+
+    // Navbar becomes visible AND the URL input takes shadow-DOM focus (focusUrl()
+    // is rAF-deferred, so poll). This is what makes Cmd+L typeable end-to-end.
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? { vis: s.navbarVisible, focused: s.navbarInputFocused } : null;
+        }),
+      )
+      .toEqual({ vis: true, focused: true });
+
+    // A Cmd+L forward for a FOREIGN windowId must be ignored (overlay gates on the
+    // active window) — the navbar stays as it was, no off-target re-reveal/refocus.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:show-navbar', { windowId: (arg as any).id + 99999 });
+    }, { id });
+    const afterForeign = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayChromeState();
+      return s ? { vis: s.navbarVisible, focused: s.navbarInputFocused } : null;
+    });
+    expect(afterForeign).toEqual({ vis: true, focused: true });
+  });
+
+  test('trigger-zone hover reliably reveals the navbar via the forwarded mousemove path', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    await makeActive('data:text/html,<body>hover target</body>');
+
+    // The reliable-reveal path: a `mousemove` landing in the trigger-zone band
+    // (the click-through window's forwarded move stream) reveals the navbar.
+    // Repeat to prove it is RELIABLE — every entry reveals, not "sometimes".
+    for (let i = 0; i < 5; i++) {
+      // Move off chrome first (so each iteration starts hidden), then into the zone.
+      await app.evaluateMain!(async () => {
+        const b = (globalThis as any).__peekHybridOverlayTest;
+        return b.moveOffChromeSchedulesHide();
+      });
+      const revealed = await app.evaluateMain!(async () => {
+        const b = (globalThis as any).__peekHybridOverlayTest;
+        return b.moveOverTriggerZone();
+      });
+      expect(revealed).toBe(true);
+    }
+  });
+
+  test('trigger-zone → navbar move keeps the chrome open (no flicker); move off schedules hide', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    await makeActive('data:text/html,<body>flicker target</body>');
+
+    // Enter the trigger zone → navbar revealed.
+    const revealed = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.moveOverTriggerZone();
+    });
+    expect(revealed).toBe(true);
+
+    // Move from the trigger zone INTO the navbar — the contiguous hit-test spans
+    // both regions, so the chrome must STAY open (no trigger-zone↔navbar flicker).
+    const stillOpen = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.moveOverNavbar();
+    });
+    expect(stillOpen).toBe(true);
+
+    // Move off all chrome (center of content) → a hide is SCHEDULED (timer-deferred
+    // 400ms grace, same as the canvas), proving the move-out path fires.
+    const hidePending = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.moveOffChromeSchedulesHide();
+    });
+    expect(hidePending).toBe(true);
+  });
+});

@@ -922,6 +922,11 @@ function installTestBridge(): void {
               navbarVisible: nb.classList.contains('visible'),
               url: nb.url || '',
               inputValue: input ? input.value : null,
+              // Cmd+L verification: whether the navbar's URL input currently holds
+              // shadow-DOM focus (DOM focus is set by focusUrl() regardless of OS
+              // window focus, so this is observable focus-free in a headless run).
+              navbarInputFocused: !!(input && nb.shadowRoot &&
+                nb.shadowRoot.activeElement === input),
               canGoBack: !!nb.canGoBack,
               canGoForward: !!nb.canGoForward,
               loading: !!nb.loading,
@@ -1119,6 +1124,79 @@ function installTestBridge(): void {
             if (!tz) return false;
             tz.dispatchEvent(new Event('mouseenter'));
             return document.body.classList.contains('panels-visible');
+          })()`,
+        )
+        .catch(() => false);
+    },
+    /**
+     * Trigger-zone RELIABILITY verification: drive the navbar reveal through the
+     * RELIABLY-forwarded `mousemove` path (the flaky-hover fix), not the
+     * boundary-crossing `mouseenter` that misses on a click-through window.
+     * Dispatches a document-level `mousemove` whose coordinates land in the CENTER
+     * of the trigger-zone band, then returns the navbar's visible state. Focus-free.
+     */
+    moveOverTriggerZone(): Promise<boolean> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(false);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const tz = document.getElementById('trigger-zone');
+            if (!tz) return false;
+            const r = tz.getBoundingClientRect();
+            const x = Math.round(r.left + r.width / 2);
+            const y = Math.round(r.top + r.height / 2);
+            document.dispatchEvent(new MouseEvent('mousemove', {
+              clientX: x, clientY: y, bubbles: true,
+            }));
+            return document.getElementById('navbar').classList.contains('visible');
+          })()`,
+        )
+        .catch(() => false);
+    },
+    /**
+     * Trigger-zone NO-FLICKER verification: dispatch a `mousemove` whose
+     * coordinates land in the CENTER of the (now-visible) navbar — i.e. the
+     * pointer moved from the trigger zone INTO the navbar. The reliable-reveal
+     * mousemove hit-test spans both regions, so this must NOT schedule a hide:
+     * the navbar stays visible (no trigger-zone↔navbar flicker). Returns the
+     * navbar's visible state. Focus-free.
+     */
+    moveOverNavbar(): Promise<boolean> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(false);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const nb = document.getElementById('navbar');
+            const r = nb.getBoundingClientRect();
+            const x = Math.round(r.left + r.width / 2);
+            const y = Math.round(r.top + r.height / 2);
+            document.dispatchEvent(new MouseEvent('mousemove', {
+              clientX: x, clientY: y, bubbles: true,
+            }));
+            return nb.classList.contains('visible');
+          })()`,
+        )
+        .catch(() => false);
+    },
+    /**
+     * Trigger-zone reveal/hide verification: dispatch a `mousemove` far OUTSIDE
+     * any chrome region (center of the content area), which the reliable-reveal
+     * path reads as "outside" → schedules the navbar hide. Returns whether the
+     * hide was SCHEDULED (a pending hide timer), proving the move-out path fires;
+     * the actual class removal is timer-deferred (the same 400ms grace page.js
+     * uses) so we assert the schedule rather than racing the timer. Focus-free.
+     */
+    moveOffChromeSchedulesHide(): Promise<boolean> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(false);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const x = Math.round(window.innerWidth / 2);
+            const y = Math.round(window.innerHeight / 2);
+            document.dispatchEvent(new MouseEvent('mousemove', {
+              clientX: x, clientY: y, bubbles: true,
+            }));
+            return window.__overlayHidePending === true;
           })()`,
         )
         .catch(() => false);

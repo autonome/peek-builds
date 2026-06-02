@@ -413,6 +413,9 @@ navbar.addEventListener('dismiss', () => { hideNavbar(); });
 let hideTimer = null;
 function cancelHide() {
   if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+  // E2E-only deterministic signal: no hide is pending (consumed by the
+  // hybrid-overlay test bridge's moveOffChromeSchedulesHide). No-op in prod.
+  window.__overlayHidePending = false;
 }
 function showNavbar() {
   if (activeWindowId == null) return;
@@ -435,10 +438,29 @@ function hideNavbar() {
 function scheduleHide() {
   cancelHide();
   hideTimer = setTimeout(() => {
+    window.__overlayHidePending = false;
     // Keep visible while the user is typing in the URL field.
     if (navbar.shadowRoot && navbar.shadowRoot.activeElement) return;
     hideNavbar();
   }, 400);
+  // E2E-only deterministic signal: a hide is now pending. No-op in prod.
+  window.__overlayHidePending = true;
+}
+
+// Cmd+L (forwarded from the content WC as page:show-navbar) — reveal the navbar
+// AND focus + select the URL field for typing, mirroring page.js's
+// show({focusUrl:true, source:'shortcut'}). Unlike a hover reveal, this is an
+// explicit user intent to type an address, so we also flip the overlay to
+// pointer-opaque (setCapture(true), same as showFindBar) — otherwise the overlay
+// stays click-through and a click in the URL field would fall to the content
+// window. focusUrl() rAF-defers focus+select on the navbar's URL input; the
+// overlay is focusable:true and the focus-group keeps the content window active
+// while the overlay holds keyboard focus, so typing + Enter works end-to-end.
+function openNavbarFocused() {
+  if (activeWindowId == null) return;
+  showNavbar();
+  setCapture(true);
+  navbar.focusUrl();
 }
 
 triggerZone.addEventListener('mouseenter', showNavbar);
@@ -486,6 +508,61 @@ for (const el of document.querySelectorAll('.interactive')) {
     });
   });
 }
+
+// ── Reliable trigger-zone reveal (the flaky-hover fix) ────────────────────────
+// FLAKINESS DIAGNOSIS: the overlay window is click-through by default
+// (setIgnoreMouseEvents(true,{forward:true})). With `forward:true` Chromium
+// forwards `mousemove`, but the boundary-crossing `mouseenter`/`mouseleave` (and
+// the `:hover` pseudo-class the leave handler above hit-tests) are UNRELIABLE on
+// a click-through window: when the pointer enters the window DIRECTLY over the
+// trigger-zone strip (the common case — the strip is at the very top edge, so
+// the cursor arrives there without first moving through the window's interior),
+// there's no prior in-window position to cross a boundary from, so `mouseenter`
+// frequently never fires. Result: hovering the top strip reveals the navbar only
+// sometimes. The canvas page.js doesn't hit this because its window is NOT
+// click-through — its trigger zone is a normal interactive element.
+//
+// FIX: drive reveal/hide from the RELIABLY-forwarded `mousemove` stream instead
+// of depending on enter/leave crossings. On every move we hit-test the pointer
+// against the trigger-zone band (and, while shown, the navbar + visible panels)
+// and reveal + capture when inside, schedule-hide + release when outside. This
+// reproduces the canvas reveal feel (navbar appears every time the pointer
+// enters the top strip) and removes the trigger-zone↔navbar flicker because a
+// single contiguous "is the pointer over any chrome region" test spans both —
+// crossing from the trigger zone into the navbar never reads as "outside".
+function pointInRect(x, y, r) {
+  return r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+}
+function pointerOverChrome(x, y) {
+  if (pointInRect(x, y, triggerZone.getBoundingClientRect())) return true;
+  if (navbar.classList.contains('visible') &&
+      pointInRect(x, y, navbar.getBoundingClientRect())) return true;
+  // Visible side panels keep the chrome open on hover (mirrors the panel
+  // mouseenter handlers above) — include them so a move from the navbar onto a
+  // panel doesn't read as "outside" and collapse the chrome under the pointer.
+  if (document.body.classList.contains('panels-visible')) {
+    for (const p of document.querySelectorAll(
+      '#page-info-panel.has-data, #tags-panel.has-data, #entities-panel.has-data, ' +
+      '#extensions-panel.has-data, #widget-container, .notes-panel.has-data',
+    )) {
+      if (pointInRect(x, y, p.getBoundingClientRect())) return true;
+    }
+  }
+  return false;
+}
+document.addEventListener('mousemove', (e) => {
+  if (activeWindowId == null) return;
+  if (pointerOverChrome(e.clientX, e.clientY)) {
+    showNavbar();
+    setCapture(true);
+  } else {
+    // Outside all chrome regions: release capture so clicks fall through to the
+    // content window, and schedule the navbar hide (cancelled if the pointer
+    // re-enters or is typing in the URL field — scheduleHide guards that).
+    setCapture(false);
+    scheduleHide();
+  }
+});
 
 // ── P1.4b-3: window interaction (resize / move / maximize) ────────────────────
 // The overlay frames the active hybrid content window's FULL outer bounds, so it
@@ -774,6 +851,15 @@ api.subscribe('page:find-next', (msg) => {
 api.subscribe('page:find-prev', (msg) => {
   if (!isActive(msg) || findBarVisible) return;
   showFindBar();
+});
+
+// Cmd+L (forwarded from the content WC as page:show-navbar, windowId-tagged) —
+// reveal the navbar and focus its URL field for typing. Gated on the active
+// window so a forward for a foreign/background hybrid window is ignored (matches
+// page:find above and page.js's page:show-navbar handler).
+api.subscribe('page:show-navbar', (msg) => {
+  if (!isActive(msg)) return;
+  openNavbarFocused();
 });
 
 // ── P1.4b-5: side panels (page-info / tags / entities / extensions) ───────────

@@ -730,18 +730,32 @@ export function wireHybridContentEvents(
     });
   });
 
-  // Cmd+F / Cmd+G accelerators land on the content WC (it owns keyboard focus
-  // when the user is reading the page; the overlay is click-through). Forward
-  // them as the same `page:find` / `page:find-next` / `page:find-prev` topics
-  // the canvas page.js publishes from its host before-input-event, tagged with
-  // this window's id so the shared overlay (which gates on the active windowId)
-  // opens/advances its find bar. The actual findInPage execution is driven back
-  // by the overlay via page:find-exec / page:find-next / page:find-prev (routed
-  // in installHybridNavbarActionRouting).
+  // Page accelerators land on the content WC (it owns keyboard focus when the
+  // user is reading the page; the overlay is click-through). Forward them as the
+  // SAME topics the canvas guest's before-input-event publishes (ipc.ts ~2734),
+  // tagged with this window's id so the shared overlay (which gates on the active
+  // windowId) reacts:
+  //   - Cmd+L → page:show-navbar  → overlay reveals the navbar + focuses the URL
+  //   - Cmd+R → page:reload       → installHybridNavbarActionRouting reloads the WC
+  //   - Cmd+F / Cmd+G / Cmd+Shift+G → page:find / page:find-next / page:find-prev
+  //     → overlay opens/advances its find bar (execution routed back via
+  //     page:find-exec etc. in installHybridNavbarActionRouting).
+  //   - Cmd+[ / Cmd+ArrowLeft  → page:go-back
+  //   - Cmd+] / Cmd+ArrowRight → page:go-forward (both routed to the WC's
+  //     navigationHistory in installHybridNavbarActionRouting).
+  // This mirrors the canvas guest set exactly so the hybrid path reproduces the
+  // canvas keyboard behavior; a given window is EITHER canvas OR hybrid, and both
+  // the overlay and page.js gate strictly on windowId, so coexistence is safe.
   contentWC.on('before-input-event', (event, input) => {
     const modifier = process.platform === 'darwin' ? input.meta : input.control;
     if (input.type !== 'keyDown' || !modifier) return;
-    if (input.key === 'f') {
+    if (input.key === 'l') {
+      publish(getSystemAddress(), 'page:show-navbar', { windowId: hostWindowId });
+      event.preventDefault();
+    } else if (input.key === 'r') {
+      publish(getSystemAddress(), 'page:reload', { windowId: hostWindowId });
+      event.preventDefault();
+    } else if (input.key === 'f') {
       publish(getSystemAddress(), 'page:find', { windowId: hostWindowId });
       event.preventDefault();
     } else if (input.key === 'g' && input.shift) {
@@ -749,6 +763,12 @@ export function wireHybridContentEvents(
       event.preventDefault();
     } else if (input.key === 'g') {
       publish(getSystemAddress(), 'page:find-next', { windowId: hostWindowId });
+      event.preventDefault();
+    } else if (input.key === '[' || (input.key === 'ArrowLeft' && !input.shift)) {
+      publish(getSystemAddress(), 'page:go-back', { windowId: hostWindowId });
+      event.preventDefault();
+    } else if (input.key === ']' || (input.key === 'ArrowRight' && !input.shift)) {
+      publish(getSystemAddress(), 'page:go-forward', { windowId: hostWindowId });
       event.preventDefault();
     }
   });
