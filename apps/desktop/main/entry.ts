@@ -97,14 +97,7 @@ import {
   openChromeExtensionPage,
   cleanupChromeExtensions,
   getChromeExtensionOptionsCommands,
-  findExtensionByExternallyConnectableUrl,
-  getMatchingMainWorldContentScripts,
-  getMatchingIsolatedContentScripts,
 } from './chrome-extensions.js';
-import {
-  getPreloadPath as getRuntimeExternalPreloadPath,
-  getPagePolyfillSource as getRuntimeExternalPagePolyfillSource,
-} from './chrome-api-polyfills/runtime-external.js';
 import {
   initProfilesDb,
   migrateExistingProfiles,
@@ -131,6 +124,11 @@ import { initMainLog } from './main-log.js';
 import { DEBUG } from './config.js';
 import { isDevToolsEnabled } from './debug-flag.js';
 import { isPageHostContent } from './webview-guest-registry.js';
+import {
+  getRuntimeExternalWebPrefsForUrl,
+  installMainWorldContentScriptInjection,
+  installRuntimeExternalCdpPolyfill,
+} from './page-host-compat.js';
 
 // Early diagnostic logging for URL handling (writes to /tmp/ to avoid userData path issues)
 try {
@@ -522,61 +520,23 @@ app.on('web-contents-created', (_event, contents) => {
     // own (tile-preload). The runtime-external bridge is irrelevant for
     // peek:// URLs anyway, so this check keeps both paths exclusive.
     if (params.src && (params.src.startsWith('http://') || params.src.startsWith('https://'))) {
-      const matchedExtId = findExtensionByExternallyConnectableUrl(params.src);
-      if (matchedExtId && process.env.PEEK_DISABLE_RUNTIME_EXTERNAL_POLYFILL !== '1') {
-        webPreferences.preload = getRuntimeExternalPreloadPath();
-        const extraArgs = [`--peek-runtime-external-ext-id=${matchedExtId}`];
-        // If this URL matches ISOLATED-world content_scripts of a loaded
-        // extension, flag the preload to also forward window.postMessage events
-        // to the bridge window (where the content scripts are hosted).
-        if (getMatchingIsolatedContentScripts(params.src).length > 0) {
-          extraArgs.push('--peek-cs-relay-enabled');
-        }
+      // Shared selection: matches a loaded extension's externally_connectable
+      // OR its ISOLATED-world content scripts → runtime-external compat preload
+      // (+ flags). Identical logic now drives the hybrid WebContentsView path
+      // in ipc.ts. sandbox is disabled for these origins because Electron 40's
+      // sandbox-bundle init crashes on subsequent navigations within Proton's
+      // auth flow (/authorize → /reauth → /auth-ext), leaving the renderer in
+      // a broken state where our preload's dom-ready listener never fires.
+      const rtPrefs = getRuntimeExternalWebPrefsForUrl(params.src, 'webview');
+      if (rtPrefs) {
+        webPreferences.preload = rtPrefs.preload;
         webPreferences.additionalArguments = [
           ...(webPreferences.additionalArguments ?? []),
-          ...extraArgs,
+          ...rtPrefs.additionalArguments,
         ];
-        // Disable sandbox for these webviews. Electron 40's sandbox-bundle
-        // init crashes on subsequent navigations within Proton's auth flow
-        // (/authorize → /reauth → /auth-ext), with
-        // "TypeError: object null is not iterable" inside
-        // ___electron_webpack_init__. The renderer process gets stuck in a
-        // broken state and our preload's dom-ready listener never fires, so
-        // chrome.runtime.sendMessage is never polyfilled on the auth-ext
-        // page that needs it. Disabling sandbox for these specific origins
-        // (auth pages of a loaded extension's externally_connectable
-        // matches) sidesteps the bootstrap bug.
-        webPreferences.sandbox = false;
-        webPreferences.contextIsolation = true;
-        console.log(`[peek:runtime-external:webview] Injecting runtime-external preload for ${params.src} (ext=${matchedExtId}, sandbox=false)`);
+        webPreferences.sandbox = rtPrefs.sandbox;
+        webPreferences.contextIsolation = rtPrefs.contextIsolation;
         return;
-      } else if (DEBUG && (params.src.includes('proton.me') || params.src.includes('proton.dev'))) {
-        // Diagnostic: a Proton URL that DIDN'T match any loaded extension's
-        // externally_connectable.matches. Most likely cause is that the
-        // extension hasn't finished loading yet at attach time, or the
-        // match-pattern conversion is wrong. Surface both possibilities.
-        console.log(`[peek:runtime-external:webview] No extension matched ${params.src} — extension probably not loaded yet, or pattern mismatch`);
-      }
-
-      // Fallback: URL doesn't match externally_connectable but DOES have
-      // matching ISOLATED-world content scripts. Install the preload so
-      // peek-cs-compat.js's sendMessage shim (running in the ISOLATED world)
-      // can relay via window.postMessage → preload → IPC → bridge → BG SW.
-      // Without this, the shim's postMessages have no listener.
-      if (process.env.PEEK_DISABLE_RUNTIME_EXTERNAL_POLYFILL !== '1') {
-        const csMatches = getMatchingIsolatedContentScripts(params.src);
-        if (csMatches.length > 0) {
-          const csExtId = csMatches[0].runtimeExtId;
-          webPreferences.preload = getRuntimeExternalPreloadPath();
-          webPreferences.additionalArguments = [
-            ...(webPreferences.additionalArguments ?? []),
-            `--peek-runtime-external-ext-id=${csExtId}`,
-          ];
-          webPreferences.sandbox = false;
-          webPreferences.contextIsolation = true;
-          console.log(`[peek:runtime-external:webview] Injecting runtime-external preload for content-script URL ${params.src} (ext=${csExtId})`);
-          return;
-        }
       }
     }
 
@@ -632,70 +592,18 @@ app.on('web-contents-created', (_event, contents) => {
   // separately via the bridge-window relay in runtime-external.js. This loop
   // only handles `world: "MAIN"` entries (e.g. Proton Pass's webauthn.js).
   if (isPageHostContent(contents)) {
-    contents.on('dom-ready', () => {
-      const url = contents.getURL();
-      if (!url.startsWith('http://') && !url.startsWith('https://')) return;
-
-      const injections = getMatchingMainWorldContentScripts(url);
-      for (const inj of injections) {
-        let src: string;
-        try {
-          src = fs.readFileSync(inj.scriptPath, 'utf-8');
-        } catch (err) {
-          console.error(`[content-script-inject] Failed to read ${inj.scriptPath}:`, err);
-          continue;
-        }
-        contents.executeJavaScript(src).catch(() => {
-          // Ignore injection errors (webContents may be destroyed)
-        });
-        DEBUG && console.log(`[content-script-inject] ${inj.extId}: injected ${path.basename(inj.scriptPath)} (run_at=${inj.runAt}, world=MAIN) into ${url}`);
-      }
-    });
-
-    // Install the chrome.runtime.sendMessage page polyfill via CDP
-    // `Page.addScriptToEvaluateOnNewDocument`. CDP guarantees main-world
-    // execution BEFORE any page script on every navigation, with no IPC
-    // round-trip.
+    // MAIN-world content-script injection (dom-ready) + runtime-external CDP
+    // page polyfill (did-navigate). Both are now extracted into shared
+    // installers in page-host-compat.ts so the IDENTICAL code runs for the
+    // hybrid WebContentsView content path (called explicitly from ipc.ts after
+    // markPageHostContent, sidestepping the web-contents-created timing trap).
     //
-    // Why this matters: the previous path was `did-navigate` →
-    // `executeJavaScript`, which is async via IPC. On Proton's /auth-ext
-    // (a SPA route mount on the same React bundle as /pass), the component
-    // mounts essentially synchronously after the URL changes — fast enough
-    // that the IPC round-trip lost the race. The harness trace at
-    // tmp/harness/proton-auth-2026-04-30T13-06-32-780Z.log shows the
-    // polyfill installing 146ms post-nav, which is the same instant
-    // Proton fetches its error.svg — i.e., Proton's bundle had already read
-    // Electron's broken native chrome.runtime, decided extension delivery
-    // failed, and rendered the error UI before the polyfill landed.
-    //
-    // CDP `addScriptToEvaluateOnNewDocument` registers the script once and
-    // it runs on every subsequent document creation (full navs and history
-    // navs that produce a new document) before any page <script>. The very
-    // first document is still handled by the preload's webFrame.executeJavaScript
-    // path (runtime-external-preload.cjs), since CDP can't be registered
-    // before webContents creation. Together they cover both paths.
-    let _polyfillScriptRegistered = false;
-    const tryRegisterCDPPolyfill = async (url: string) => {
-      if (_polyfillScriptRegistered) return;
-      if (process.env.PEEK_DISABLE_RUNTIME_EXTERNAL_POLYFILL === '1') return;
-      if (!url.startsWith('http://') && !url.startsWith('https://')) return;
-      const matchedExtId = findExtensionByExternallyConnectableUrl(url);
-      if (!matchedExtId) return;
-      try {
-        if (!contents.debugger.isAttached()) {
-          contents.debugger.attach('1.3');
-        }
-        await contents.debugger.sendCommand('Page.enable');
-        await contents.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
-          source: getRuntimeExternalPagePolyfillSource(matchedExtId),
-        });
-        _polyfillScriptRegistered = true;
-        DEBUG && console.log(`[peek:runtime-external] CDP addScriptToEvaluateOnNewDocument registered (ext=${matchedExtId})`);
-      } catch (err) {
-        console.error('[peek:runtime-external] CDP install failed:', (err as Error)?.message ?? err);
-      }
-    };
-    contents.on('did-navigate', (_e, url) => { void tryRegisterCDPPolyfill(url); });
+    // For a `<webview>` guest, `isPageHostContent` is already true at
+    // web-contents-created time (getType() === 'webview'), so installing here
+    // is correct and unchanged. See page-host-compat.ts for the full rationale
+    // (CDP-vs-IPC race on Proton's SPA auth route, etc.).
+    installMainWorldContentScriptInjection(contents);
+    installRuntimeExternalCdpPolyfill(contents);
 
     // Diagnostic: forward webview-guest console + open DevTools when in DEBUG
     // mode and the URL is a Proton property. Lets us see whether our

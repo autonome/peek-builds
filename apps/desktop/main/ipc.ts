@@ -121,6 +121,11 @@ import {
 
 import { isHybridPageHost } from './debug-flag.js';
 import { markPageHostContent, registerGuest } from './webview-guest-registry.js';
+import {
+  getRuntimeExternalWebPrefsForUrl,
+  installMainWorldContentScriptInjection,
+  installRuntimeExternalCdpPolyfill,
+} from './page-host-compat.js';
 
 import {
   getIzuiCoordinator,
@@ -1081,13 +1086,31 @@ export function registerWindowHandlers(): void {
         // (page.js sets `webview.partition` from `api.profiles.getPartition()`).
         // `getProfileSession()` returns exactly `session.fromPartition` of that
         // same string, so the content lands in the IDENTICAL profile session
-        // (cookies/storage/cache) as the old path. Keep webPreferences minimal:
-        // the runtime-external/compat preload is deliberately deferred to P1.2.
+        // (cookies/storage/cache) as the old path.
+        //
+        // P1.2 — runtime-external compat preload. `preload` is construction-
+        // fixed for a WebContentsView (it cannot be added after creation), so
+        // we select it HERE using the same URL-keyed helper that drives the
+        // `<webview>` will-attach-webview path. For an http(s) URL matching a
+        // loaded extension's externally_connectable or its ISOLATED content
+        // scripts this installs runtime-external-preload.cjs +
+        // `--peek-runtime-external-ext-id` (+ `--peek-cs-relay-enabled`) and
+        // disables sandbox (Electron 40 sandbox-bundle bug on Proton's auth
+        // SPA). Otherwise webPrefs stays minimal. contextIsolation stays true
+        // either way.
+        const rtPrefs = getRuntimeExternalWebPrefsForUrl(url, 'hybrid');
         const view = new WebContentsView({
           webPreferences: {
             session: profileSession,
             contextIsolation: true,
             devTools: true,
+            ...(rtPrefs
+              ? {
+                  preload: rtPrefs.preload,
+                  additionalArguments: rtPrefs.additionalArguments,
+                  sandbox: rtPrefs.sandbox,
+                }
+              : {}),
           },
         });
 
@@ -1101,12 +1124,23 @@ export function registerWindowHandlers(): void {
         fillView();
         baseWin.on('resize', fillView);
 
-        // P0 seam: mark the content webContents so the chrome-extension compat
-        // hooks (MAIN-inject + CDP, gated on isPageHostContent in entry.ts) and
-        // the permission lookup (registerGuest → findHostWindowId) treat it as
-        // page-host content. Compat preload selection itself is P1.2.
+        // P0 seam: mark the content webContents so the permission lookup
+        // (registerGuest → findHostWindowId) treats it as page-host content.
         markPageHostContent(view.webContents);
         registerGuest(view.webContents, baseWin.id);
+
+        // P1.2 — re-attach the chrome-ext compat hooks to THIS content
+        // webContents EXPLICITLY. We cannot rely on entry.ts's
+        // `web-contents-created` handler: that event fires SYNCHRONOUSLY inside
+        // `new WebContentsView(...)` above, which is BEFORE `markPageHostContent`
+        // ran — so `isPageHostContent` was still false when entry.ts evaluated
+        // its gate, and entry.ts skipped the dom-ready/did-navigate installs for
+        // this wc. Calling the same shared installers here makes attachment
+        // timing-independent for the hybrid path. (preload was already applied
+        // at construction above — it is construction-fixed.)
+        installMainWorldContentScriptInjection(view.webContents);
+        installRuntimeExternalCdpPolyfill(view.webContents);
+        console.log(`[hybrid-page-host] compat hooks attached to content wc ${view.webContents.id} (rtPreload=${rtPrefs ? 'yes' : 'no'})`);
 
         // Minimal window registration: enough for the window to be placed,
         // tracked for the display-watcher, and known to the window manager /
