@@ -716,6 +716,43 @@ function wireHybridContentEvents(
     }
   });
 
+  // ── Find-in-page (P1.4b-4) → overlay find bar ────────────────────────────
+  // The content WC's find results are forwarded to the shared overlay so its
+  // find bar can show the match count (e.g. "2 of 7"). Payload mirrors the
+  // canvas path's `found-in-page` result fields. windowId-tagged so the overlay
+  // applies it only for the active window (matches page:title-updated etc.).
+  contentWC.on('found-in-page', (_event: Electron.Event, result: Electron.Result) => {
+    if (contentWC.isDestroyed()) return;
+    publish(getSystemAddress(), 'page:found-in-page', {
+      windowId: hostWindowId,
+      activeMatchOrdinal: result.activeMatchOrdinal,
+      matches: result.matches,
+    });
+  });
+
+  // Cmd+F / Cmd+G accelerators land on the content WC (it owns keyboard focus
+  // when the user is reading the page; the overlay is click-through). Forward
+  // them as the same `page:find` / `page:find-next` / `page:find-prev` topics
+  // the canvas page.js publishes from its host before-input-event, tagged with
+  // this window's id so the shared overlay (which gates on the active windowId)
+  // opens/advances its find bar. The actual findInPage execution is driven back
+  // by the overlay via page:find-exec / page:find-next / page:find-prev (routed
+  // in installHybridNavbarActionRouting).
+  contentWC.on('before-input-event', (event, input) => {
+    const modifier = process.platform === 'darwin' ? input.meta : input.control;
+    if (input.type !== 'keyDown' || !modifier) return;
+    if (input.key === 'f') {
+      publish(getSystemAddress(), 'page:find', { windowId: hostWindowId });
+      event.preventDefault();
+    } else if (input.key === 'g' && input.shift) {
+      publish(getSystemAddress(), 'page:find-prev', { windowId: hostWindowId });
+      event.preventDefault();
+    } else if (input.key === 'g') {
+      publish(getSystemAddress(), 'page:find-next', { windowId: hostWindowId });
+      event.preventDefault();
+    }
+  });
+
   // ── Navigation → history tracking + chrome state ─────────────────────────
   // Full main-frame navigation (link click / scripted nav). Mirrors the
   // canvas root-webContents did-navigate history tracking (ipc.ts ~2446) AND
@@ -982,8 +1019,65 @@ export function installHybridNavbarActionRouting(): void {
     } catch { /* window gone */ }
   });
 
-  // P1.4b-3: find-in-page (`page:find` / `page:find-next` / `page:find-prev`)
-  // → contentWC.findInPage routing is DEFERRED with the find-bar UI.
+  // ── P1.4b-4: find-in-page routing (overlay find bar → content WC) ───────────
+  // The shared overlay owns the find-bar UI (renderer/page/overlay.{html,js}).
+  // On the canvas path, page.js drives its own `<webview>.findInPage` directly
+  // in-renderer; the hybrid content webContents is MAIN-owned, so the overlay
+  // publishes its find intents tagged with the active windowId and main resolves
+  // `getHybridContentWC(windowId)` to drive the real `findInPage`/`stopFindInPage`.
+  //
+  // Topic split (avoids colliding with the existing `page:find` /
+  // `page:find-next` / `page:find-prev` accelerator topics, which mean "open /
+  // advance the find UI" and are consumed by the renderer — page.js on canvas,
+  // overlay.js on hybrid):
+  //   - page:find-exec {windowId, text, options}  → findInPage(text, options)
+  //   - page:find-next {windowId}                 → findInPage(last, {forward:true,  findNext:true})
+  //   - page:find-prev {windowId}                 → findInPage(last, {forward:false, findNext:true})
+  //   - page:find-stop {windowId}                 → stopFindInPage('clearSelection')
+  // Per-window last-search text so a bare next/prev (incl. the Cmd+G accelerator)
+  // repeats the active term. Cleaned lazily — a stale entry is harmless (the WC
+  // for that windowId is gone, so wcFor returns null first).
+  const lastFindText = new Map<number, string>();
+
+  subscribe(getSystemAddress(), 'page:find-exec', (raw) => {
+    const r = wcFor(raw);
+    if (!r) return;
+    const text = (raw as { text?: string }).text;
+    if (text == null) return;
+    if (!text) {
+      // Empty query clears the active highlight (matches page.js findInPage('')).
+      lastFindText.delete(r.windowId);
+      try { r.wc.stopFindInPage('clearSelection'); } catch { /* wc gone */ }
+      return;
+    }
+    lastFindText.set(r.windowId, text);
+    const opts = (raw as { options?: Electron.FindInPageOptions }).options || {};
+    try { r.wc.findInPage(text, opts); } catch { /* wc gone */ }
+  });
+
+  subscribe(getSystemAddress(), 'page:find-next', (raw) => {
+    const r = wcFor(raw);
+    if (!r) return;
+    const text = lastFindText.get(r.windowId);
+    if (!text) return;
+    try { r.wc.findInPage(text, { forward: true, findNext: true }); } catch { /* wc gone */ }
+  });
+
+  subscribe(getSystemAddress(), 'page:find-prev', (raw) => {
+    const r = wcFor(raw);
+    if (!r) return;
+    const text = lastFindText.get(r.windowId);
+    if (!text) return;
+    try { r.wc.findInPage(text, { forward: false, findNext: true }); } catch { /* wc gone */ }
+  });
+
+  subscribe(getSystemAddress(), 'page:find-stop', (raw) => {
+    const r = wcFor(raw);
+    if (!r) return;
+    lastFindText.delete(r.windowId);
+    try { r.wc.stopFindInPage('clearSelection'); } catch { /* wc gone */ }
+  });
+
   DEBUG && console.log('[hybrid-page-host] navbar action routing installed');
 }
 

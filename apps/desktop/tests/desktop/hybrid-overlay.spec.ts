@@ -501,3 +501,178 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
     expect(capturedOff).toBe(false);
   });
 });
+
+/**
+ * P1.4b-4 — the small navbar completions: find-in-page + title/favicon display
+ * in the shared overlay. Focus-free: synthetic active-change + published intents
+ * + content-WC reads (no real OS focus, never visible).
+ */
+test.describe('Hybrid Chrome Overlay find + title/favicon (P1.4b-4) @desktop', () => {
+  let app: DesktopApp;
+
+  test.beforeAll(async () => {
+    ({ app } = await createPerDescribeApp('hybrid-overlay-find'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  const bridgePresent = async () =>
+    app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
+
+  const waitOverlayReady = async () => {
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? s.ready === true : false;
+        }),
+      )
+      .toBe(true);
+  };
+
+  test('page:find-exec routes to the active content WC and finds a match; next advances; stop clears', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    // A page with the term "needle" appearing 3 times.
+    const id = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 100, y: 100, width: 600, height: 400 });
+      await b.loadFakeContent(
+        w,
+        'data:text/html,<body>needle one needle two needle three</body>',
+      );
+      b.setActive(w);
+      return w;
+    });
+    await waitOverlayReady();
+
+    // Drive find via the SAME pubsub path the overlay find bar uses; assert the
+    // content WC reported matches (proves page:find-exec → main → findInPage).
+    const found = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.findInContent((arg as any).id, 'needle');
+    }, { id });
+    expect(found).not.toBeNull();
+    expect(found.matches).toBe(3);
+    expect(found.activeMatchOrdinal).toBe(1);
+
+    // page:find-next advances the active match ordinal on the same content WC.
+    const advanced = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.nextFindAndWait((arg as any).id);
+    }, { id });
+    expect(advanced).not.toBeNull();
+    expect((advanced as any).activeMatchOrdinal).toBe(2);
+
+    // Stop clears the active find (no throw; subsequent state is clean).
+    const stopped = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.stopFindInContent((arg as any).id);
+      return true;
+    }, { id });
+    expect(stopped).toBe(true);
+  });
+
+  test('Cmd+F forward (page:find) opens the overlay find bar for the active window', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 120, y: 120, width: 600, height: 400 });
+      await b.loadFakeContent(w, 'data:text/html,<body>findme findme</body>');
+      b.setActive(w);
+      return w;
+    });
+    await waitOverlayReady();
+
+    // The content WC's Cmd+F forward is `page:find {windowId}` → overlay opens bar.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:find', { windowId: (arg as any).id });
+    }, { id });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? s.findVisible : false;
+        }),
+      )
+      .toBe(true);
+
+    // A find-open for a FOREIGN windowId must not toggle the bar back/off-target.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:find', { windowId: (arg as any).id + 99999 });
+    }, { id });
+    const stillVisible = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayChromeState();
+      return s ? s.findVisible : null;
+    });
+    expect(stillVisible).toBe(true);
+  });
+
+  test('page:title-updated + page:favicon surface in the navbar (foreign windowId ignored)', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 140, y: 140, width: 600, height: 400 });
+      await b.loadFakeContent(w, 'data:text/html,<title>Init</title>x');
+      b.setActive(w);
+      return w;
+    });
+    await waitOverlayReady();
+
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:title-updated', {
+        windowId: (arg as any).id,
+        url: 'https://example.com/page',
+        title: 'My Page Title',
+      });
+      b.publishTopic('page:favicon', {
+        windowId: (arg as any).id,
+        url: 'https://example.com/page',
+        favicon: 'https://example.com/favicon.ico',
+      });
+    }, { id });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? { t: s.pageTitle, f: s.favicon } : null;
+        }),
+      )
+      .toEqual({ t: 'My Page Title', f: 'https://example.com/favicon.ico' });
+
+    // Foreign windowId → ignored (title/favicon unchanged).
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:title-updated', {
+        windowId: (arg as any).id + 99999,
+        url: 'https://wrong.example.com/',
+        title: 'WRONG TITLE',
+      });
+      b.publishTopic('page:favicon', {
+        windowId: (arg as any).id + 99999,
+        url: 'https://wrong.example.com/',
+        favicon: 'https://wrong.example.com/favicon.ico',
+      });
+    }, { id });
+
+    const after = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayChromeState();
+      return s ? { t: s.pageTitle, f: s.favicon } : null;
+    });
+    expect(after).toEqual({ t: 'My Page Title', f: 'https://example.com/favicon.ico' });
+  });
+});

@@ -48,6 +48,13 @@ const DEBUG = false;
 const navbar = document.getElementById('navbar');
 const triggerZone = document.getElementById('trigger-zone');
 const dragZone = document.getElementById('drag-zone');
+// P1.4b-4: find-bar elements (mirror page.js's find UI element refs).
+const findBar = document.getElementById('find-bar');
+const findInput = document.getElementById('find-input');
+const findCount = document.getElementById('find-count');
+const findPrevBtn = document.getElementById('find-prev');
+const findNextBtn = document.getElementById('find-next');
+const findCloseBtn = document.getElementById('find-close');
 
 // P1.4b-3 window-interaction constants — mirror page.js so resize feels identical.
 const MIN_WIDTH = 200;
@@ -81,8 +88,11 @@ function clearChrome() {
   navbar.canGoBack = false;
   navbar.canGoForward = false;
   navbar.loading = false;
+  navbar.pageTitle = '';
+  navbar.favicon = '';
   navbar.classList.remove('visible');
   document.body.classList.add('no-active');
+  hideFindBar();
   setCapture(false);
 }
 
@@ -93,6 +103,10 @@ function paintFromSnapshot(snap) {
   navbar.canGoBack = !!snap.canGoBack;
   navbar.canGoForward = !!snap.canGoForward;
   navbar.loading = !!snap.loading;
+  // P1.4b-4: seed title/favicon from the snapshot if present; otherwise clear so
+  // the previous window's title/favicon never bleeds across a retarget.
+  navbar.pageTitle = snap.title || '';
+  navbar.favicon = snap.favicon || '';
 }
 
 // ── main → overlay: active-window handoff ────────────────────────────────────
@@ -116,8 +130,10 @@ api.subscribe('page-overlay:active', (msg) => {
   maximized = false;
   preMaxBounds = null;
   // Hard reset before painting the new window so stale loading/nav state can
-  // never bleed across a retarget.
+  // never bleed across a retarget. Also close any open find bar (find is
+  // per-window; the new window starts with no active search).
   navbar.loading = false;
+  hideFindBar();
   paintFromSnapshot(msg);
   DEBUG && console.log('[overlay] active →', activeWindowId, msg.url);
 });
@@ -129,16 +145,16 @@ function isActive(msg) {
 
 api.subscribe('page:title-updated', (msg) => {
   if (!isActive(msg)) return;
-  // Title is not shown in the navbar itself, but a URL refresh keeps the bar in
-  // sync if the navigation changed the address. (Title surfacing is a P1.4b-3
-  // panel concern.)
+  // P1.4b-4: surface the page title in the navbar title chip + keep the URL in
+  // sync if the navigation changed the address.
+  if (msg.title != null) navbar.pageTitle = msg.title;
   if (msg.url) navbar.setUrl(msg.url);
 });
 
 api.subscribe('page:favicon', (msg) => {
   if (!isActive(msg)) return;
-  // P1.4b-3: the navbar has no favicon slot yet; favicon surfaces in the
-  // (deferred) page-info panel. No-op for now beyond keeping the topic wired.
+  // P1.4b-4: surface the favicon in the navbar title chip.
+  navbar.favicon = msg.favicon || '';
 });
 
 api.subscribe('page:loading', (msg) => {
@@ -406,9 +422,123 @@ navbar.addEventListener('dblclick', (e) => {
   toggleMaximize();
 });
 
-// P1.4b-4: side panels (info/tags/entities/notes/extensions), page widgets,
-// navbar title/favicon slots, and find-in-page are DEFERRED. Their chrome would
-// hang off this same overlay surface + main routing.
+// ── P1.4b-4: find-in-page ─────────────────────────────────────────────────────
+// The overlay owns the find-bar UI (mirrors page.js's in-renderer find bar). The
+// hybrid content webContents is MAIN-owned, so instead of calling findInPage
+// directly the overlay publishes find intents tagged with the active windowId and
+// main routes them to getHybridContentWC(windowId) (ipc.ts
+// installHybridNavbarActionRouting):
+//   - page:find-exec {windowId, text, options}  ← typing in the find input
+//   - page:find-next {windowId}                 ← Enter / next button
+//   - page:find-prev {windowId}                 ← Shift+Enter / prev button
+//   - page:find-stop {windowId}                 ← close / Esc
+// Match-count display is fed by main forwarding the content WC's `found-in-page`
+// result as `page:found-in-page {windowId, activeMatchOrdinal, matches}`.
+//
+// Cmd+F / Cmd+G land on the content WC (it owns keyboard focus while the user
+// reads the page); main forwards them as `page:find` / `page:find-next` /
+// `page:find-prev` (windowId-tagged), which open/advance this bar.
+
+let findBarVisible = false;
+let currentFindText = '';
+
+function showFindBar() {
+  if (activeWindowId == null) return;
+  document.body.classList.add('find-visible');
+  findBarVisible = true;
+  findInput.focus();
+  findInput.select();
+  // Surfacing the find bar means the overlay must be pointer-opaque so the user
+  // can type/click in it (same as the navbar's .interactive regions).
+  setCapture(true);
+}
+
+function hideFindBar() {
+  document.body.classList.remove('find-visible');
+  findBarVisible = false;
+  currentFindText = '';
+  findCount.textContent = '';
+  findInput.value = '';
+  if (activeWindowId != null) {
+    api.publish('page:find-stop', { windowId: activeWindowId });
+  }
+}
+
+function execFind(text) {
+  if (activeWindowId == null) return;
+  currentFindText = text;
+  if (!text) {
+    findCount.textContent = '';
+    api.publish('page:find-exec', { windowId: activeWindowId, text: '' });
+    return;
+  }
+  api.publish('page:find-exec', { windowId: activeWindowId, text, options: {} });
+}
+
+// next/prev EXECUTION is driven by main routing the `page:find-next` /
+// `page:find-prev` topics to contentWC.findInPage. The overlay's own buttons +
+// the forwarded Cmd+G accelerator both arrive on those SAME topics. To avoid a
+// publish→self-subscribe→republish loop, the buttons publish directly here and
+// the topic SUBSCRIPTIONS below only open the bar (never re-publish).
+function findNext() {
+  if (activeWindowId == null || !currentFindText) return;
+  api.publish('page:find-next', { windowId: activeWindowId });
+}
+function findPrev() {
+  if (activeWindowId == null || !currentFindText) return;
+  api.publish('page:find-prev', { windowId: activeWindowId });
+}
+
+// Match-count results forwarded from main (content WC found-in-page).
+api.subscribe('page:found-in-page', (msg) => {
+  if (!isActive(msg) || !findBarVisible) return;
+  const matches = msg.matches || 0;
+  if (matches > 0) {
+    findCount.textContent = `${msg.activeMatchOrdinal} of ${matches}`;
+  } else {
+    findCount.textContent = 'No matches';
+  }
+});
+
+findInput.addEventListener('input', () => { execFind(findInput.value); });
+findInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.shiftKey) {
+    e.preventDefault();
+    findPrev();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    findNext();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    hideFindBar();
+  }
+});
+findNextBtn.addEventListener('click', () => findNext());
+findPrevBtn.addEventListener('click', () => findPrev());
+findCloseBtn.addEventListener('click', () => hideFindBar());
+
+// Open/advance triggers forwarded from main (Cmd+F / Cmd+G on the content WC).
+api.subscribe('page:find', (msg) => {
+  if (!isActive(msg)) return;
+  showFindBar();
+});
+// page:find-next / page:find-prev are EXECUTION topics (main runs findInPage).
+// The overlay subscribes only to ensure its find bar is open when a bare Cmd+G
+// arrives with no bar showing — it must NOT call findNext()/findPrev() here, or
+// it would re-publish the same topic and loop. When the bar is already open the
+// button/accelerator already published the topic main acts on; nothing to do.
+api.subscribe('page:find-next', (msg) => {
+  if (!isActive(msg) || findBarVisible) return;
+  showFindBar();
+});
+api.subscribe('page:find-prev', (msg) => {
+  if (!isActive(msg) || findBarVisible) return;
+  showFindBar();
+});
+
+// P1.4b-5: side panels (info/tags/entities/notes/extensions) and page widgets
+// are DEFERRED. P1.5: popups. Their chrome would hang off this same overlay
+// surface + main routing.
 
 // Signal readiness so main can verify the renderer is wired (and tests can wait).
 window.__overlayReady = true;

@@ -112,11 +112,78 @@
     }
     body.chrome-visible .drag-zone.dragging { cursor: grabbing; }
 
+    /* P1.4b-4: find-in-page bar. Top-right floating chip, mirrors the canvas
+     * page.js find bar. It is .interactive so the click-capture path turns the
+     * overlay opaque to the pointer while the user types/clicks in it. Hidden
+     * by default (display:none) and shown by overlay.js on page:find. */
+    .find-bar {
+      position: absolute;
+      top: 6px;
+      right: 12px;
+      z-index: 110;
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 6px 4px 10px;
+      background: var(--theme-bg-secondary, rgba(30, 30, 30, 0.92));
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: var(--theme-surface-border, 1px solid rgba(255, 255, 255, 0.2));
+      box-shadow: var(--theme-surface-ring, 0 0 0 1px rgba(0, 0, 0, 0.5));
+      border-radius: 10px;
+      color: var(--theme-text, #e0e0e0);
+      font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
+      font-size: 14px;
+      pointer-events: auto;
+    }
+    body.find-visible .find-bar { display: flex; }
+
+    .find-bar input {
+      background: var(--theme-bg-tertiary, rgba(128, 128, 128, 0.12));
+      border: none;
+      outline: none;
+      color: var(--theme-text, #e0e0e0);
+      font: inherit;
+      padding: 5px 8px;
+      border-radius: 6px;
+      width: 180px;
+      min-width: 0;
+    }
+
+    .find-bar .find-count {
+      color: var(--theme-text-secondary, #aaa);
+      font-size: 13px;
+      min-width: 56px;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .find-bar button {
+      background: none;
+      border: none;
+      color: var(--theme-text-secondary, #bbb);
+      font-size: 16px;
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      flex-shrink: 0;
+    }
+    .find-bar button:hover {
+      background: var(--theme-bg-tertiary, rgba(255, 255, 255, 0.12));
+      color: var(--theme-text, #fff);
+    }
+
     /* When there is no active window, hide everything (belt-and-suspenders on
      * top of main-side overlayWin.hide()). */
     body.no-active .trigger-zone,
     body.no-active .resize-handle,
     body.no-active .drag-zone,
+    body.no-active .find-bar,
     body.no-active peek-navbar {
       display: none;
     }
@@ -135,6 +202,14 @@
   <div class="resize-handle interactive" data-dir="s"></div>
   <div class="resize-handle interactive" data-dir="e"></div>
   <div class="resize-handle interactive" data-dir="w"></div>
+  <!-- P1.4b-4: find-in-page bar (mirrors the canvas page.js find UI). -->
+  <div class="find-bar interactive" id="find-bar">
+    <input type="text" id="find-input" placeholder="Find in page" spellcheck="false" autocomplete="off">
+    <span class="find-count" id="find-count"></span>
+    <button id="find-prev" title="Previous (Shift+Enter)">&#8593;</button>
+    <button id="find-next" title="Next (Enter)">&#8595;</button>
+    <button id="find-close" title="Close (Esc)">&#215;</button>
+  </div>
   <script type="module">
     import 'peek://app/components/peek-navbar.js';
   </script>

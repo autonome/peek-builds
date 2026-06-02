@@ -45,6 +45,12 @@ export class PeekNavbar extends PeekElement {
     /** When true, component registers its own document-level keyboard shortcuts
      * (Cmd+L, Cmd+R, Cmd+[, Cmd+]). Set to false if the host manages these. */
     shortcuts: { type: Boolean },
+    /** Page title to display (favicon + title chip left of the URL). Empty =
+     * hidden. Additive: the canvas page.js never sets these, so the chip stays
+     * hidden and the bar renders exactly as before on that path. */
+    pageTitle: { type: String, attribute: 'page-title' },
+    /** Favicon URL for the title chip. Empty = no favicon image shown. */
+    favicon: { type: String },
   };
 
   static styles = [
@@ -160,6 +166,33 @@ export class PeekNavbar extends PeekElement {
       @keyframes navbar-spin {
         to { transform: rotate(360deg); }
       }
+
+      /* Title chip — favicon + page title, shown left of the URL. Hidden
+       * entirely when neither favicon nor title is set (the canvas path never
+       * sets them, so the bar is byte-identical there). */
+      .title-chip {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 220px;
+        flex-shrink: 0;
+        color: var(--theme-text, #e0e0e0);
+        font-size: 14px;
+      }
+
+      .title-favicon {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        border-radius: 3px;
+        object-fit: contain;
+      }
+
+      .title-text {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
     `
   ];
 
@@ -171,6 +204,8 @@ export class PeekNavbar extends PeekElement {
     this.visible = false;
     this.loading = false;
     this.shortcuts = true;
+    this.pageTitle = '';
+    this.favicon = '';
     this._handleKeydown = this._handleKeydown.bind(this);
   }
 
@@ -313,6 +348,12 @@ export class PeekNavbar extends PeekElement {
           title="Reload (Cmd+R)"
           @click=${(e) => { e.stopPropagation(); this.emit('reload'); }}
         >&#8635;</button>
+        ${this.favicon || this.pageTitle ? html`
+          <div class="title-chip" title=${this.pageTitle || ''}>
+            ${this.favicon ? html`<img class="title-favicon" src=${this.favicon} alt="">` : ''}
+            ${this.pageTitle ? html`<span class="title-text">${this.pageTitle}</span>` : ''}
+          </div>
+        ` : ''}
         <div class="url-container">
           <input
             type="text"

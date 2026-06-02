@@ -507,6 +507,13 @@ function installTestBridge(): void {
         webPreferences: { contextIsolation: true, sandbox: true },
       });
       baseWin.contentView.addChildView(view);
+      // Fill the view to the window's content size (matches the real hybrid
+      // path's fillView). Without non-zero view bounds the content has no
+      // layout, so findInPage would report 0 matches.
+      try {
+        const [w, h] = baseWin.getContentSize();
+        view.setBounds({ x: 0, y: 0, width: w, height: h });
+      } catch { /* getContentSize unsupported in some envs */ }
       registerHybridWindow(baseWin.id, { baseWin, contentWC: view.webContents });
       fakeHosts.set(baseWin.id, baseWin);
       return baseWin.id;
@@ -596,6 +603,73 @@ function installTestBridge(): void {
       const entry = getHybridWindow(id);
       return entry ? entry.url() : '';
     },
+    /**
+     * P1.4b-4: drive find-in-page end-to-end via the SAME pubsub path the
+     * overlay find bar uses — publish `page:find-exec {windowId, text}` (which
+     * installHybridNavbarActionRouting routes to contentWC.findInPage) and
+     * resolve with the content WC's first `found-in-page` result. Proves the
+     * publish → main-routing → findInPage chain hits the right content WC.
+     * Resolves null on timeout / no live content. Focus-free (no OS focus).
+     */
+    findInContent(id: number, text: string): Promise<{ matches: number; activeMatchOrdinal: number } | null> {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.contentWC.isDestroyed()) return Promise.resolve(null);
+      const wc = entry.contentWC;
+      return new Promise((resolve) => {
+        let done = false;
+        // Electron fires found-in-page multiple times per search (preliminary
+        // results then a `finalUpdate:true`); resolve on the final one so the
+        // match count is settled.
+        const onFound = (_e: Electron.Event, result: Electron.Result) => {
+          if (done || !result.finalUpdate) return;
+          done = true;
+          clearTimeout(timer);
+          try { wc.off('found-in-page', onFound); } catch { /* gone */ }
+          resolve({ matches: result.matches, activeMatchOrdinal: result.activeMatchOrdinal });
+        };
+        const timer = setTimeout(() => {
+          if (done) return;
+          done = true;
+          try { wc.off('found-in-page', onFound); } catch { /* gone */ }
+          resolve(null);
+        }, 3000);
+        wc.on('found-in-page', onFound);
+        publish(getSystemAddress(), 'page:find-exec', { windowId: id, text, options: {} });
+      });
+    },
+    /**
+     * P1.4b-4: publish the routed `page:find-next` topic and resolve with the
+     * content WC's next `found-in-page` result (proves next advances the active
+     * match via main → findInPage({forward:true,findNext:true})). Requires a
+     * prior findInContent so main has the last-search text for this window.
+     */
+    nextFindAndWait(id: number): Promise<{ matches: number; activeMatchOrdinal: number } | null> {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.contentWC.isDestroyed()) return Promise.resolve(null);
+      const wc = entry.contentWC;
+      return new Promise((resolve) => {
+        let done = false;
+        const onFound = (_e: Electron.Event, result: Electron.Result) => {
+          if (done || !result.finalUpdate) return;
+          done = true;
+          clearTimeout(timer);
+          try { wc.off('found-in-page', onFound); } catch { /* gone */ }
+          resolve({ matches: result.matches, activeMatchOrdinal: result.activeMatchOrdinal });
+        };
+        const timer = setTimeout(() => {
+          if (done) return;
+          done = true;
+          try { wc.off('found-in-page', onFound); } catch { /* gone */ }
+          resolve(null);
+        }, 3000);
+        wc.on('found-in-page', onFound);
+        publish(getSystemAddress(), 'page:find-next', { windowId: id });
+      });
+    },
+    /** P1.4b-4: stop find-in-page via the routed `page:find-stop` topic. */
+    stopFindInContent(id: number): void {
+      publish(getSystemAddress(), 'page:find-stop', { windowId: id });
+    },
     /** Whether a fake hybrid window's content can go back (post-navigation). */
     contentCanGoBack(id: number): boolean {
       const entry = getHybridWindow(id);
@@ -619,6 +693,9 @@ function installTestBridge(): void {
             const nb = document.getElementById('navbar');
             if (!nb) return null;
             const input = nb.shadowRoot && nb.shadowRoot.querySelector('.url-text');
+            const findBar = document.getElementById('find-bar');
+            const findCount = document.getElementById('find-count');
+            const findInput = document.getElementById('find-input');
             return {
               ready: window.__overlayReady === true,
               noActive: document.body.classList.contains('no-active'),
@@ -628,6 +705,11 @@ function installTestBridge(): void {
               canGoBack: !!nb.canGoBack,
               canGoForward: !!nb.canGoForward,
               loading: !!nb.loading,
+              pageTitle: nb.pageTitle || '',
+              favicon: nb.favicon || '',
+              findVisible: document.body.classList.contains('find-visible'),
+              findCount: findCount ? findCount.textContent : '',
+              findInputValue: findInput ? findInput.value : null,
             };
           })()`,
         )
