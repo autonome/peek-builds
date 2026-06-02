@@ -592,6 +592,240 @@ function applyPlacementOnReuse(
   }
 }
 
+/**
+ * P1.3 — MAIN-mediated content→chrome event forwarding for the hybrid
+ * page-host. On the OLD canvas path, page.js (running in the per-page chrome
+ * renderer) listens to the `<webview>`'s events directly and emits the
+ * `page:*` pubsub topics. The hybrid path has NO page.js — the content is a
+ * main-owned `WebContentsView` webContents. So MAIN must reproduce those
+ * emissions + datastore side-effects off the content webContents's own
+ * Electron lifecycle events.
+ *
+ * The two paths are MUTUALLY EXCLUSIVE per window (a given window is either a
+ * canvas BrowserWindow+webview OR a hybrid BaseWindow+WebContentsView), so
+ * there is no double-emit: page.js never runs for a hybrid window.
+ *
+ * Gating: only ever called from the hybrid branch, which already gates on
+ * `isHybridPageHost() && useCanvas`. The content wc is the only main-owned
+ * content webContents, so attaching here is the hybrid-only path.
+ *
+ * Topics (see docs/perf/page-host-hybrid-design.md §4):
+ *   REUSED (existing subscribers — payloads identical to page.js / canvas main):
+ *     - page:loaded                  {url,title,opensearchUrl}   (websearch home.js)
+ *     - page:search-engine-discovered{pageUrl,opensearchUrl}     (websearch LAZY-WAKE)
+ *     - page:content-ready           {url,title,windowId}        (entities)
+ *     - page:navigated               {url,title}                 (pagewidgets-sample)
+ *   INVENTED for the P1.4 overlay (no existing consumer; names per design §4):
+ *     - page:title-updated           {windowId,url,title}
+ *     - page:favicon                 {windowId,url,favicon}
+ *     - page:loading                 {windowId,loading}
+ *     - page:nav-state               {windowId,url,canGoBack,canGoForward}
+ */
+function wireHybridContentEvents(
+  contentWC: Electron.WebContents,
+  hostWindowId: number,
+  initialUrl: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  options: any,
+): void {
+  const isHttp = (u: string | null | undefined): u is string =>
+    !!u && (u.startsWith('http://') || u.startsWith('https://'));
+
+  // Mutable copy of the skipTracking flag — consumed once by the first
+  // redirect-driven did-navigate, mirroring the canvas path (ipc.ts ~2465).
+  let skipTracking = options?.skipTracking === true;
+
+  const publishNavState = () => {
+    if (contentWC.isDestroyed()) return;
+    const url = contentWC.getURL() || initialUrl;
+    publish(getSystemAddress(), 'page:nav-state', {
+      windowId: hostWindowId,
+      url,
+      canGoBack: contentWC.navigationHistory.canGoBack(),
+      canGoForward: contentWC.navigationHistory.canGoForward(),
+    });
+  };
+
+  // ── Loading lifecycle → overlay (P1.4 consumes) ──────────────────────────
+  contentWC.on('did-start-loading', () => {
+    if (contentWC.isDestroyed()) return;
+    publish(getSystemAddress(), 'page:loading', { windowId: hostWindowId, loading: true });
+  });
+  contentWC.on('did-stop-loading', () => {
+    if (contentWC.isDestroyed()) return;
+    publish(getSystemAddress(), 'page:loading', { windowId: hostWindowId, loading: false });
+    // Thumbnail capture, matching the canvas guest's did-stop-loading (ipc.ts ~2102).
+    const pageUrl = contentWC.getURL() || initialUrl;
+    if (isHttp(pageUrl)) {
+      setTimeout(() => {
+        if (contentWC.isDestroyed()) return;
+        captureThumbnail(contentWC, pageUrl).then((hash) => {
+          if (hash) {
+            try { updateItemThumbnail(pageUrl, hash); } catch (e) {
+              DEBUG && console.log('[hybrid-page-host] thumbnail update failed:', e);
+            }
+          }
+        });
+      }, 1500);
+    }
+  });
+
+  // ── Title → datastore + chrome state ─────────────────────────────────────
+  contentWC.on('page-title-updated', (_event: Electron.Event, title: string) => {
+    if (title && title !== 'Loading...') {
+      const pageUrl = contentWC.getURL() || initialUrl;
+      if (isHttp(pageUrl)) {
+        try { updateItemTitle(pageUrl, title); } catch (e) {
+          DEBUG && console.log('[hybrid-page-host] title update failed:', e);
+        }
+        // Existing consumer (entities) — identical payload to the canvas path.
+        publish('system', 'page:content-ready', { url: pageUrl, title, windowId: hostWindowId });
+      }
+      // Overlay chrome state (P1.4).
+      publish(getSystemAddress(), 'page:title-updated', {
+        windowId: hostWindowId,
+        url: pageUrl,
+        title,
+      });
+    }
+  });
+
+  // ── Favicon → datastore + chrome state ───────────────────────────────────
+  contentWC.on('page-favicon-updated', (_event: Electron.Event, favicons: string[]) => {
+    const pageUrl = contentWC.getURL() || initialUrl;
+    if (isHttp(pageUrl) && favicons.length > 0) {
+      const best = favicons.find(f => f.endsWith('.svg')) ||
+                   favicons.find(f => f.endsWith('.png')) ||
+                   favicons[favicons.length - 1];
+      try { updateItemFavicon(pageUrl, best); } catch (e) {
+        DEBUG && console.log('[hybrid-page-host] favicon update failed:', e);
+      }
+      // Overlay chrome state (P1.4).
+      publish(getSystemAddress(), 'page:favicon', {
+        windowId: hostWindowId,
+        url: pageUrl,
+        favicon: best,
+      });
+    }
+  });
+
+  // ── Navigation → history tracking + chrome state ─────────────────────────
+  // Full main-frame navigation (link click / scripted nav). Mirrors the
+  // canvas root-webContents did-navigate history tracking (ipc.ts ~2446) AND
+  // the canvas guest's currentUrl bookkeeping (ipc.ts ~2150).
+  contentWC.on('did-navigate', (_event: Electron.Event, navUrl: string) => {
+    // Keep undo-close's restore URL current.
+    if (isHttp(navUrl)) {
+      const winInfo = getWindowInfo(hostWindowId);
+      if (winInfo) winInfo.params.currentUrl = navUrl;
+    }
+    publishNavState();
+    publish(getSystemAddress(), 'page:navigated', { windowId: hostWindowId, url: navUrl, title: contentWC.getTitle() || '' });
+
+    // History tracking — same skip rules as the canvas path (ipc.ts ~2446).
+    if (navUrl === initialUrl) return;
+    if (navUrl.startsWith('peek://')) return;
+    try {
+      const navParsed = new URL(navUrl);
+      if ((navParsed.hostname === '127.0.0.1' || navParsed.hostname === 'localhost') &&
+          navParsed.pathname.includes('/callback')) {
+        return;
+      }
+    } catch {}
+    // Session-restored windows: skip the first redirect-driven did-navigate,
+    // then track normally (matches canvas ipc.ts ~2465).
+    if (skipTracking) {
+      skipTracking = false;
+      return;
+    }
+    if (!isHttp(navUrl)) return;
+    try {
+      const navTrack = trackWindowLoad(navUrl, {
+        source: 'navigation',
+        sourceId: '',
+        windowType: options?.modal ? 'modal' : 'main',
+        title: (contentWC.getTitle() !== 'Loading...' ? contentWC.getTitle() : '') || '',
+      });
+      if (navTrack.created) {
+        publish('system', 'item:created', {
+          itemId: navTrack.itemId,
+          itemType: 'url',
+          content: navUrl,
+          windowId: hostWindowId,
+        });
+      }
+    } catch (e) {
+      DEBUG && console.log('[hybrid-page-host] did-navigate track failed:', e);
+    }
+  });
+
+  // In-page (hash/pushState) navigation: update currentUrl + chrome state,
+  // publish page:navigated (pagewidgets consumer), but do NOT add a history
+  // row (canvas path doesn't either).
+  contentWC.on('did-navigate-in-page', (_event: Electron.Event, navUrl: string, isMainFrame: boolean) => {
+    if (!isMainFrame) return;
+    if (isHttp(navUrl)) {
+      const winInfo = getWindowInfo(hostWindowId);
+      if (winInfo) winInfo.params.currentUrl = navUrl;
+    }
+    publishNavState();
+    publish(getSystemAddress(), 'page:navigated', { windowId: hostWindowId, url: navUrl, title: contentWC.getTitle() || '' });
+  });
+
+  // ── did-finish-load → page:loaded + OpenSearch lazy-wake ─────────────────
+  // CRITICAL: this replicates page.js's did-finish-load (page.js ~2567) so the
+  // websearch lazy tile still wakes on the hybrid path. The executeJavaScript
+  // OpenSearch query, the topic names, and the payload shapes are IDENTICAL to
+  // page.js. The pre-publish lazy hook (tile-lazy.ts) matches on TOPIC only, so
+  // a main-side publish of page:search-engine-discovered wakes websearch the
+  // same as a renderer-side one.
+  contentWC.on('did-finish-load', async () => {
+    if (contentWC.isDestroyed()) return;
+    const pageUrl = contentWC.getURL();
+    if (!isHttp(pageUrl)) return;
+
+    let opensearchUrl: string | null = null;
+    try {
+      const detectedUrl = await contentWC.executeJavaScript(`
+        (function() {
+          const link = document.querySelector('link[rel="search"][type="application/opensearchdescription+xml"]');
+          return link ? link.href : null;
+        })();
+      `);
+      if (detectedUrl) {
+        try {
+          opensearchUrl = new URL(detectedUrl, pageUrl).href;
+        } catch {
+          // Invalid URL, skip.
+        }
+      }
+    } catch (err) {
+      DEBUG && console.log('[hybrid-page-host] OpenSearch detection failed:', err instanceof Error ? err.message : err);
+    }
+
+    if (contentWC.isDestroyed()) return;
+    const pageTitle = contentWC.getTitle() || '';
+    publish(getSystemAddress(), 'page:loaded', {
+      url: pageUrl,
+      title: pageTitle,
+      opensearchUrl,
+    });
+    DEBUG && console.log(`[hybrid-page-host] page:loaded published: ${pageUrl}${opensearchUrl ? ` (OpenSearch: ${opensearchUrl})` : ''}`);
+
+    // Lazy-wake trigger — fired ONLY when the page advertises an OpenSearch
+    // descriptor (identical condition + payload to page.js ~2612).
+    if (opensearchUrl) {
+      publish(getSystemAddress(), 'page:search-engine-discovered', {
+        pageUrl,
+        opensearchUrl,
+      });
+      console.log(`[hybrid-page-host] page:search-engine-discovered published: ${pageUrl} ${opensearchUrl}`);
+    }
+
+    publishNavState();
+  });
+}
+
 // Exported reference to the window-open handler so other IPC surfaces (like tile
 // IPC) can delegate to it without duplicating ~1300 lines of window creation logic.
 // Populated by registerWindowHandlers() at startup.
@@ -1141,6 +1375,38 @@ export function registerWindowHandlers(): void {
         installMainWorldContentScriptInjection(view.webContents);
         installRuntimeExternalCdpPolyfill(view.webContents);
         console.log(`[hybrid-page-host] compat hooks attached to content wc ${view.webContents.id} (rtPreload=${rtPrefs ? 'yes' : 'no'})`);
+
+        // P1.3 — forward the content webContents's lifecycle events as the
+        // `page:*` pubsub topics + datastore side-effects the canvas path's
+        // page.js / guest-webContents handlers produce today. Attach BEFORE
+        // loadURL so did-start-loading / did-navigate / did-finish-load are
+        // not missed. (Action mediation — navbar→content — is DEFERRED to
+        // P1.4, where the shared overlay is the consumer.)
+        wireHybridContentEvents(view.webContents, baseWin.id, url, options);
+
+        // P1.3 — initial history insert, matching the canvas path's
+        // trackWindowLoad (ipc.ts ~2422). Skip internal peek:// URLs and
+        // session restores (skipTracking), exactly like the canvas path.
+        if (!url.startsWith('peek://') && !options.skipTracking) {
+          try {
+            const trackResult = trackWindowLoad(url, {
+              source: options.trackingSource || options.feature || 'window',
+              sourceId: options.trackingSourceId || '',
+              windowType: options.modal ? 'modal' : 'main',
+              title: options.title || '',
+            });
+            if (trackResult.created) {
+              publish('system', 'item:created', {
+                itemId: trackResult.itemId,
+                itemType: 'url',
+                content: url,
+                windowId: baseWin.id,
+              });
+            }
+          } catch (e) {
+            DEBUG && console.log('[hybrid-page-host] initial trackWindowLoad failed:', e);
+          }
+        }
 
         // Minimal window registration: enough for the window to be placed,
         // tracked for the display-watcher, and known to the window manager /
