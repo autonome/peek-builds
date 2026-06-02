@@ -80,6 +80,7 @@ import { publish, subscribe, unsubscribe, getSystemAddress } from './pubsub.js';
 // this is a one-way (acyclic) dependency.
 import { wireHybridContentEvents } from './ipc.js';
 import { getWindowInfo } from './main.js';
+import { getWindowPresentation } from './window-presenter.js';
 
 /** Tile id / entry for the overlay's trustedBuiltin grant + pubsub routing. */
 const OVERLAY_TILE_ID = 'page-overlay';
@@ -667,6 +668,23 @@ function installTestBridge(): void {
     },
     setActive(id: number | null): boolean {
       return _setActiveHybridWindowForTests(id);
+    },
+    /**
+     * Tear down a fake hybrid host: destroy its BaseWindow (firing the 'closed'
+     * cleanup that drops it from the hybrid registry). Lets a test return the
+     * registry to its empty (flag-off-equivalent) state and assert the
+     * windows-feature hybrid loop is then additive-empty.
+     */
+    destroyFakeHybridWindow(id: number): boolean {
+      const w = fakeHosts.get(id);
+      if (!w) return false;
+      try {
+        if (!w.isDestroyed()) w.destroy();
+      } catch {
+        /* already torn down */
+      }
+      fakeHosts.delete(id);
+      return true;
     },
     /**
      * Focus-group verification: drive the REAL `'focus'`/`'blur'` event sequence
@@ -1345,6 +1363,47 @@ function installTestBridge(): void {
           return info ? ((info.params?.address as string) || '') : '';
         })
         .filter(Boolean);
+    },
+    /**
+     * Windows-feature enumeration check: replicate the EXACT hybrid loop the
+     * `tile:window:list` handler runs (getAllHybridWindows → getWindowPresentation
+     * → the windows-feature entry shape). Returns the same `{ id, url, title,
+     * visible, focused, favicon, ... }` entries the feature's renderer receives,
+     * so a test can assert a hybrid window is indistinguishable from a canvas
+     * page in the list. Empty when the hybrid flag is off (registry empty).
+     */
+    windowsFeatureHybridEntries(): Array<{
+      id: number;
+      url: string;
+      title: string;
+      visible: boolean;
+      focused: boolean;
+      favicon: string;
+      thumbnail: string;
+    }> {
+      const out: Array<{
+        id: number;
+        url: string;
+        title: string;
+        visible: boolean;
+        focused: boolean;
+        favicon: string;
+        thumbnail: string;
+      }> = [];
+      for (const h of getAllHybridWindows()) {
+        const p = getWindowPresentation(h.windowId);
+        if (!p) continue;
+        out.push({
+          id: p.id,
+          url: p.address,
+          title: p.title,
+          visible: p.visible,
+          focused: p.focused,
+          favicon: p.favicon,
+          thumbnail: p.thumbnail,
+        });
+      }
+      return out;
     },
   };
 }

@@ -7,6 +7,7 @@
 
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, webContents } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
+import { getHybridWindow } from './hybrid-page-host-registry.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -621,6 +622,16 @@ export async function initialize(): Promise<void> {
                 if (targetWin) {
                   DEBUG && console.log('[izui] Overlay explicit selection focus:', selectedTargetId);
                   targetWin.focus();
+                } else {
+                  // Hybrid page-hosts are BaseWindows, invisible to
+                  // getLiveWindow. Route focus to the host BaseWindow so
+                  // selecting a hybrid window in the switcher focuses it just
+                  // like a canvas page. No-op (null) when the flag is off.
+                  const hybrid = getHybridWindow(selectedTargetId);
+                  if (hybrid && !hybrid.baseWin.isDestroyed()) {
+                    DEBUG && console.log('[izui] Overlay explicit selection focus (hybrid):', selectedTargetId);
+                    hybrid.baseWin.focus();
+                  }
                 }
               }
             } else {
@@ -655,6 +666,10 @@ export async function initialize(): Promise<void> {
                 const targetWin = getLiveWindow(restoreFocusId);
                 if (targetWin) {
                   targetWin.focus();
+                } else {
+                  // Hybrid page-host (BaseWindow) — focus the host directly.
+                  const hybrid = getHybridWindow(restoreFocusId);
+                  if (hybrid && !hybrid.baseWin.isDestroyed()) hybrid.baseWin.focus();
                 }
               }
             } else if (isTransient && hiddenWindowIds && hiddenWindowIds.length > 0) {

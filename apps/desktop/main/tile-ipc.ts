@@ -117,6 +117,7 @@ import {
   validateThemeCSS,
 } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
+import { getAllHybridWindows, getHybridWindow } from './hybrid-page-host-registry.js';
 import {
   registerGlobalShortcut,
   unregisterGlobalShortcut,
@@ -2778,6 +2779,16 @@ export function registerTileIpcHandlers(): void {
       // defeating the reuse path and causing cmd panel-like "rapid
       // invocation stalls" that the repeat-invocation spec catches.
       closeOrHideWindow(target.id);
+      return;
+    }
+    // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Close the
+    // host BaseWindow directly (no keepLive concept for hybrids yet). No-op
+    // (null) when the flag is off.
+    if (args.id != null) {
+      const hybrid = getHybridWindow(args.id);
+      if (hybrid && !hybrid.baseWin.isDestroyed()) {
+        hybrid.baseWin.close();
+      }
     }
   });
 
@@ -2865,6 +2876,36 @@ export function registerTileIpcHandlers(): void {
           params,
         });
       }
+
+      // Hybrid page-host windows are BaseWindows, so `getAllWindowRefs()`
+      // (BrowserWindow.getAllWindows-backed) never enumerates them — without
+      // this the windows feature can't see them. ADDITIVE: the registry is
+      // empty when `PEEK_PAGEHOST_HYBRID` is off, so this loop runs zero times
+      // and the canvas-only list is byte-identical. Each hybrid is presented
+      // through the SAME `getWindowPresentation` path as a canvas page, so its
+      // entry shape (id/url/title/favicon/…) is indistinguishable from one. The
+      // `seen` guard is belt-and-suspenders against a future id overlap.
+      const seen = new Set(windows.map((w) => w.id));
+      for (const h of getAllHybridWindows()) {
+        if (seen.has(h.windowId)) continue;
+        const presentation = getWindowPresentation(h.windowId);
+        if (!presentation) continue;
+        windows.push({
+          id: presentation.id,
+          url: presentation.address,
+          title: presentation.title,
+          focused: presentation.focused,
+          visible: presentation.visible,
+          favicon: presentation.favicon,
+          thumbnail: presentation.thumbnail,
+          bounds: presentation.bounds,
+          maximized: presentation.maximized,
+          preMaxBounds: presentation.preMaxBounds,
+          // Hybrid windows have no windowRegistry `info.params`; expose an
+          // empty params object so the entry shape matches a canvas page.
+          params: {},
+        });
+      }
       return { success: true, windows };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2900,6 +2941,12 @@ export function registerTileIpcHandlers(): void {
       }
       const win = getLiveWindow(args.id);
       if (!win) {
+        // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. A live
+        // hybrid window still "exists". No-op (null) when the flag is off.
+        const hybrid = getHybridWindow(args.id);
+        if (hybrid && !hybrid.baseWin.isDestroyed()) {
+          return { exists: true, success: true, data: true };
+        }
         return { exists: false, success: true, data: false };
       }
       return { exists: true, success: true, data: true };
@@ -2929,6 +2976,13 @@ export function registerTileIpcHandlers(): void {
       }
       const win = getLiveWindow(args.id);
       if (!win) {
+        // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Show the
+        // host BaseWindow directly. No-op (null) when the flag is off.
+        const hybrid = getHybridWindow(args.id);
+        if (hybrid && !hybrid.baseWin.isDestroyed()) {
+          if (!isHeadless()) hybrid.baseWin.show();
+          return { success: true };
+        }
         return { success: false, error: 'Window not found' };
       }
       showWindowHeadlessSafe(win, { active: true });
@@ -2991,6 +3045,14 @@ export function registerTileIpcHandlers(): void {
       }
       const ref = getWindowRef(args.id);
       if (!ref) {
+        // Hybrid page-host (BaseWindow) — invisible to getWindowRef. Focus
+        // the host BaseWindow directly so focusing a hybrid window matches a
+        // canvas page. No-op (null) when the flag is off.
+        const hybrid = getHybridWindow(args.id);
+        if (hybrid && !hybrid.baseWin.isDestroyed()) {
+          if (!isHeadless()) hybrid.baseWin.focus();
+          return { success: true };
+        }
         return { success: false, error: 'Window not found' };
       }
       // Pending refs realize on focus — this is the primary user-driven

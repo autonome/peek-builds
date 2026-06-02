@@ -21,6 +21,8 @@ import { getWindowInfo } from './main.js';
 import { findUrlItem } from './datastore.js';
 import { resolveWindowAddress } from './window-address.js';
 import { urlToHash, getThumbnailPath } from './thumbnails.js';
+import { getHybridWindow } from './hybrid-page-host-registry.js';
+import type { HybridWindowEntry } from './hybrid-page-host-registry.js';
 
 export { resolveWindowAddress };
 
@@ -59,10 +61,90 @@ export interface WindowPresentation {
  * windows (state read from their descriptor + thumbnail cache).
  */
 export function getWindowPresentation(windowId: number): WindowPresentation | null {
+  // Hybrid page-hosts are BaseWindows, invisible to `getWindowRef`
+  // (BrowserWindow.fromId-backed). Check the hybrid registry FIRST so a
+  // hybrid id resolves to its content-webContents presentation rather than
+  // falling through to a null ref. No-op when the flag is off: the registry
+  // is empty, so `getHybridWindow` returns null and we fall through to the
+  // canvas/pending path exactly as before.
+  const hybrid = getHybridWindow(windowId);
+  if (hybrid) return getHybridPresentation(hybrid);
+
   const ref = getWindowRef(windowId);
   if (!ref) return null;
   if (ref.kind === 'pending') return getPendingPresentation(ref);
   return getLivePresentation(ref);
+}
+
+/**
+ * Build a presentation for a hybrid page-host window. A hybrid window is a
+ * `BaseWindow` hosting a single `WebContentsView`; its user-facing address,
+ * title, visibility and focus are read live off that content webContents /
+ * host BaseWindow (via the registry entry). Favicon/thumbnail resolution
+ * mirrors the Live and Pending paths byte-for-byte so a hybrid window is
+ * indistinguishable from a canvas page in the windows feature.
+ *
+ * Maximize/preMaxBounds are canvas-internal concepts that don't apply to a
+ * hybrid window's native BaseWindow, so they're reported as not-maximized.
+ */
+function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
+  const address = entry.url();
+  let bounds: Electron.Rectangle = { x: 0, y: 0, width: 0, height: 0 };
+  let visible = true;
+  let focused = false;
+  try {
+    if (!entry.baseWin.isDestroyed()) {
+      bounds = entry.baseWin.getBounds();
+      visible = entry.baseWin.isVisible();
+      focused = entry.baseWin.isFocused();
+    }
+  } catch {
+    // best-effort — a destroyed/odd BaseWindow still presents with defaults
+  }
+
+  let favicon = '';
+  let thumbnail = '';
+  if (address.startsWith('http://') || address.startsWith('https://')) {
+    try {
+      const item = findUrlItem(address) as { favicon?: string; thumbnail?: string } | null;
+      if (item) {
+        favicon = item.favicon || '';
+        thumbnail = item.thumbnail || '';
+      }
+    } catch {
+      // best-effort — store lookup failures shouldn't break window listings
+    }
+    if (!favicon) {
+      try {
+        const host = new URL(address).hostname;
+        if (host) favicon = `https://www.google.com/s2/favicons?domain=${host}&sz=32`;
+      } catch {
+        // unparseable address — leave favicon empty
+      }
+    }
+  } else if (address.startsWith('peek://')) {
+    try {
+      const hash = urlToHash(address);
+      if (fs.existsSync(getThumbnailPath(hash))) {
+        thumbnail = hash;
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
+  return {
+    id: entry.windowId,
+    address,
+    title: entry.title(),
+    favicon,
+    thumbnail,
+    bounds,
+    maximized: false,
+    preMaxBounds: null,
+    visible,
+    focused,
+  };
 }
 
 function getLivePresentation(ref: WindowRef & { kind: 'live' }): WindowPresentation | null {
