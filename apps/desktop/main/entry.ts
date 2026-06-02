@@ -130,6 +130,7 @@ import { initRendererLog } from './renderer-log.js';
 import { initMainLog } from './main-log.js';
 import { DEBUG } from './config.js';
 import { isDevToolsEnabled } from './debug-flag.js';
+import { isPageHostContent } from './webview-guest-registry.js';
 
 // Early diagnostic logging for URL handling (writes to /tmp/ to avoid userData path issues)
 try {
@@ -630,7 +631,7 @@ app.on('web-contents-created', (_event, contents) => {
   // isolated context with the extension's own chrome.runtime — handled
   // separately via the bridge-window relay in runtime-external.js. This loop
   // only handles `world: "MAIN"` entries (e.g. Proton Pass's webauthn.js).
-  if (contents.getType() === 'webview') {
+  if (isPageHostContent(contents)) {
     contents.on('dom-ready', () => {
       const url = contents.getURL();
       if (!url.startsWith('http://') && !url.startsWith('https://')) return;

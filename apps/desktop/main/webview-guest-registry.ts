@@ -19,6 +19,13 @@ import { getLiveWindow, windowFromWebContents } from './window-registry.js';
 const guestToHost = new Map<number, number>();
 
 /**
+ * Set of WebContents IDs that have been explicitly marked as page-host content
+ * via `markPageHostContent`. This is the opt-in path for future content hosts
+ * (e.g. WebContentsView) that are not `<webview>` elements.
+ */
+const pageHostContentIds = new Set<number>();
+
+/**
  * Register a guest WebContents as belonging to a host BrowserWindow.
  * Idempotent — a second call for the same guestId overwrites.
  *
@@ -61,6 +68,40 @@ export function findHostWindowId(wc: WebContents): number | null {
 }
 
 /**
+ * Mark a WebContents as page-host content so that compat hooks gate on it
+ * in addition to native `<webview>` guests.
+ *
+ * Call this during construction of any non-webview content host (e.g. a
+ * WebContentsView carrying page content in the future hybrid architecture).
+ * Today nothing calls this, so `isPageHostContent` is exactly equivalent to
+ * `getType() === 'webview'` and there is NO behavior change.
+ *
+ * Wires a `destroyed` listener so the entry self-cleans, mirroring the
+ * pattern used in `registerGuest`.
+ */
+export function markPageHostContent(wc: WebContents): void {
+  const id = wc.id;
+  pageHostContentIds.add(id);
+  wc.once('destroyed', () => {
+    pageHostContentIds.delete(id);
+  });
+}
+
+/**
+ * Returns true if `wc` is content that the chrome-extension compat hooks
+ * should apply to.
+ *
+ * This is the seam that compat hooks gate on instead of the literal webview
+ * type. The future WebContentsView content path opts in via
+ * `markPageHostContent`. Today this is exactly equivalent to
+ * `getType() === 'webview'` because nothing calls `markPageHostContent` yet,
+ * so there is NO behavior change.
+ */
+export function isPageHostContent(wc: WebContents): boolean {
+  return wc.getType() === 'webview' || pageHostContentIds.has(wc.id);
+}
+
+/**
  * Manually drop a guest entry. Normally not needed (the `destroyed` listener
  * handles it) but useful when batch-cleaning a closed window.
  */
@@ -84,4 +125,5 @@ export function getGuestsForWindow(hostWindowId: number): number[] {
 /** Test-only: clear all registry state. */
 export function _resetForTests(): void {
   guestToHost.clear();
+  pageHostContentIds.clear();
 }
