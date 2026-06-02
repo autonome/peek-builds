@@ -451,7 +451,21 @@ export function setupMainProcess(session, options = {}) {
 
   return {
     cleanup() {
-      try { ipcMain.removeHandler(IPC_SEND_FROM_PAGE); } catch { /* idempotent */ }
+      // Deliberately DO NOT removeHandler(IPC_SEND_FROM_PAGE) here.
+      //
+      // This cleanup() is only ever called from cleanupChromeExtensions(),
+      // which is only ever called from entry.ts onQuit — i.e. at process
+      // shutdown. Windows/webviews are still alive at that point (app.quit
+      // happens later in quitApp). The TWP <all_urls> content-script in the
+      // localhost peek/slide panels can fire a final LOG_EVENT →
+      // ipcRenderer.invoke('peek:runtime-external:send') DURING teardown. If we
+      // remove the handler first, that in-flight invoke logs a cosmetic
+      // "No handler registered" error in the main console. Removing the handler
+      // at quit is pointless anyway (the process is exiting; the handler dies
+      // with it), and there is no reload/disable path that calls cleanup() then
+      // re-registers (registration is guarded by `if (!polyfillHandle)` and
+      // polyfillHandle is only nulled during this same quit teardown). So leave
+      // the handler registered and let it die with the module on app exit.
       _attachedSwIpc.clear();
       _pendingByReqId.clear();
       // Note: _bridgeResponseListenerAttached stays true — ipcMain.on doesn't
