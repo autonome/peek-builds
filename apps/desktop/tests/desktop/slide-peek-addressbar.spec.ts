@@ -213,4 +213,83 @@ test.describe('slide peek addressbar @desktop', () => {
       await (window as any).app.window.close(id);
     }, result.id);
   });
+
+  // ---------------------------------------------------------------------------
+  // Panel gate plumbing: canvas quick-view/modal windows (peek/slide panels)
+  // carry `panel=1` in their page-host URL so the renderer suppresses the
+  // LOADING-time navbar summon (no address-bar flash before user activation).
+  // Chrome stays summonable on hover/Cmd+L/activate — that's verified by the
+  // navbar-element tests above (the element is always present; only its
+  // .visible class changes). Here we assert the deterministic main-side
+  // plumbing: the param is set for panels and NOT for content windows.
+  // ---------------------------------------------------------------------------
+
+  test('canvas quick-view panel window carries panel=1 in its page-host URL', async () => {
+    const result = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('https://example.com', {
+        role: 'quick-view',
+        modal: true,
+        canvas: true,
+        type: 'panel',
+        width: 800,
+        height: 600,
+        key: 'test-panel-gate-quickview',
+        center: true,
+        show: false,
+      });
+    });
+    expect(result.success).toBe(true);
+
+    if (!app.evaluateMain) throw new Error('evaluateMain not available');
+    const windowUrl = await app.evaluateMain<string | null, number>(
+      ({ BrowserWindow }, wid) => {
+        const w = BrowserWindow.fromId(wid);
+        if (!w || w.isDestroyed()) return null;
+        return w.webContents.getURL();
+      },
+      result.id,
+    );
+
+    expect(windowUrl).toContain('page/index.html');
+    expect(windowUrl).toContain('panel=1');
+
+    // Clean up
+    await bgWindow.evaluate(async (id: number) => {
+      await (window as any).app.window.close(id);
+    }, result.id);
+  });
+
+  test('regular canvas content window does NOT carry panel=1', async () => {
+    // A plain web page (no modal/quick-view/overlay role) routes through the
+    // canvas page-host but must NOT be flagged as a panel — its loading-navbar
+    // behavior is unchanged.
+    const result = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('https://example.com', {
+        canvas: true,
+        width: 800,
+        height: 600,
+        key: 'test-panel-gate-content',
+        show: false,
+      });
+    });
+    expect(result.success).toBe(true);
+
+    if (!app.evaluateMain) throw new Error('evaluateMain not available');
+    const windowUrl = await app.evaluateMain<string | null, number>(
+      ({ BrowserWindow }, wid) => {
+        const w = BrowserWindow.fromId(wid);
+        if (!w || w.isDestroyed()) return null;
+        return w.webContents.getURL();
+      },
+      result.id,
+    );
+
+    expect(windowUrl).toContain('page/index.html');
+    expect(windowUrl).not.toContain('panel=1');
+
+    // Clean up
+    await bgWindow.evaluate(async (id: number) => {
+      await (window as any).app.window.close(id);
+    }, result.id);
+  });
 });

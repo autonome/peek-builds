@@ -168,6 +168,14 @@ const hasInitialPreMaxBounds =
 // keyboard hooks, drag/resize handles, and command-channel pubsub remain
 // always-on so the window is immediately usable on focus.
 const chromeEnabled = params.get('chrome') !== '0';
+// `panel` query param marks page-host windows opened as a peek/slide panel
+// (modal / quick-view / overlay roles). These open focused with chrome ENABLED
+// (chrome stays summonable on user intent), but the navbar doubles as a loading
+// indicator and would otherwise fade in on initial load — a flash of the
+// address bar before the page settles. When `panel=1` we suppress only the
+// LOADING-time chrome summon in show(); hover / Cmd+L / activate still summon
+// chrome normally. Content windows carry no `panel` param and are unaffected.
+const isPanel = params.get('panel') === '1';
 let chromeInited = false;
 const chromeInitHooks = [];
 const pageBootStartedAt = Date.now();
@@ -1834,6 +1842,16 @@ function updateState() {
 
 async function show(opts) {
   console.log('[page] show() called, source:', opts?.source);
+  // Panel windows (peek/slide modal/quick-view/overlay) open focused with chrome
+  // ENABLED, so the chromeInited gate below does NOT suppress the loading-navbar
+  // for them (initChrome ran synchronously at boot). Suppress the LOADING-time
+  // summon explicitly so the navbar doesn't flash before the user engages. Other
+  // sources (hover / shortcut / pubsub / activate) represent user intent and
+  // still summon chrome normally.
+  if (opts?.source === 'loading' && isPanel) {
+    console.log('[page] show() suppressed — panel loading source');
+    return;
+  }
   // Chrome-deferred behavior:
   //  - source 'loading' fires automatically at module-eval time (via
   //    loadingLifecycle.startLoading) and would otherwise flash the navbar

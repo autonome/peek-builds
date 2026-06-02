@@ -1298,6 +1298,15 @@ export function registerWindowHandlers(): void {
         // `chrome=0` and queues chrome work until first focus. Default is
         // chrome on, so direct opens (cmd panel, popups) are unaffected.
         if (options.chrome === false) pageParams.set('chrome', '0');
+        // Panel gate: peek/slide panels (modal/quick-view/overlay roles) route
+        // through the canvas page-host with chrome ENABLED, but the page-host
+        // navbar doubles as a loading indicator and fades in on every canvas
+        // open — for a focused panel that reads as a flash of the address bar
+        // before the page settles. Mark these opens as `panel=1` so the
+        // renderer suppresses the LOADING-time chrome summon (hover / Cmd+L /
+        // activate still summon chrome on user intent). Content windows carry
+        // no `panel` param and are unaffected.
+        if (isModalOrQuickView || options.role === 'quick-view' || options.role === 'overlay') pageParams.set('panel', '1');
         loadUrl = `peek://app/page/index.html?${pageParams.toString()}`;
         DEBUG && console.log('Routing web page through peek://app/page:', url, '->', loadUrl);
 
