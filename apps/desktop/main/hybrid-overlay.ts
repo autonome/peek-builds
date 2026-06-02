@@ -31,7 +31,11 @@
  * the first time a hybrid window becomes active. It is reused thereafter for
  * every active-window change — never one-per-page.
  *
- * **No focus-steal / full click-through (this step).** The overlay is shown
+ * **No focus-STEAL, but focusABLE (P1.4b-3).** The window is `focusable:true`
+ * (so a user click into the navbar URL field CAN make it key — required for
+ * keyboard input), but it is only ever shown via `showInactive()` and we never
+ * proactively call `.focus()`/`.show()`/`.activate()`, so it still never steals
+ * focus on appearance. **Full click-through (this step).** The overlay is shown
  * with `showInactive()` (never `.focus()`/`.show()`), and
  * `setIgnoreMouseEvents(true, { forward: true })` so EVERY click passes through
  * to the content window below. Real click-capture for the navbar / resize
@@ -48,7 +52,7 @@
  * to nothing, and never creates a window — the canvas path is byte-identical.
  */
 
-import { BrowserWindow, BaseWindow as BaseWindowCtor, WebContentsView } from 'electron';
+import { BrowserWindow, BaseWindow as BaseWindowCtor, WebContentsView, screen } from 'electron';
 import type { BaseWindow, WebContents } from 'electron';
 import { isHeadless, getTilePreloadPath } from './config.js';
 import { isHybridPageHost, DEBUG } from './debug-flag.js';
@@ -123,7 +127,14 @@ function ensureOverlay(): BrowserWindow {
     hasShadow: false,
     resizable: false,
     movable: false,
-    focusable: false, // never steal focus, even if something calls focus()
+    // P1.4b-3: focusable MUST be true. A `focusable:false` window can never
+    // become key on macOS, so the navbar URL input could not receive keyboard
+    // focus — typing a URL into the overlay was broken. We keep it focusable so
+    // a USER CLICK into the URL field can focus it, but never proactively call
+    // `.focus()`/`.show()`/`.activate()`: the overlay still only ever appears
+    // via `showInactive()` (see `frameBounds`), so it never STEALS focus on
+    // appearance — it can only take focus on explicit user interaction.
+    focusable: true,
     skipTaskbar: true,
     alwaysOnTop: true,
     opacity: isHeadless() ? 0 : 1,
@@ -214,6 +225,16 @@ function sendActiveHandoff(id: number | null): void {
   } catch {
     /* wc torn down between active-change and snapshot */
   }
+  // P1.4b-3: include the host window's current outer bounds so the overlay's
+  // resize/move chrome can seed its drag math (page.js tracks `screenBounds`
+  // locally; the hybrid overlay seeds the same from the handoff). Safe-guarded
+  // because the baseWin may be torn down between active-change and snapshot.
+  let bounds: { x: number; y: number; width: number; height: number } | null = null;
+  try {
+    if (!entry.baseWin.isDestroyed()) bounds = entry.baseWin.getBounds();
+  } catch {
+    /* baseWin gone */
+  }
   publish(getSystemAddress(), 'page-overlay:active', {
     windowId: id,
     url: entry.url(),
@@ -221,6 +242,7 @@ function sendActiveHandoff(id: number | null): void {
     canGoBack,
     canGoForward,
     loading,
+    bounds,
   });
 }
 
@@ -501,8 +523,57 @@ function installTestBridge(): void {
       w.setBounds(bounds);
       return true;
     },
+    /**
+     * P1.4b-3: read a fake host BaseWindow's current OUTER bounds. Used to
+     * assert that a published `page:set-bounds` / `page:maximize` /
+     * `page:unmaximize` intent actually moved/resized the content window.
+     */
+    hostBounds(id: number): { x: number; y: number; width: number; height: number } | null {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.baseWin.isDestroyed()) return null;
+      try {
+        return entry.baseWin.getBounds();
+      } catch {
+        return null;
+      }
+    },
+    /**
+     * P1.4b-3: the work area of the display the given host currently sits on.
+     * Maximize snaps the host to exactly this rect, so the maximize test can
+     * compare `hostBounds(id)` against it (the hybrid path maximizes via explicit
+     * work-area bounds, not native `maximize()`, so `isMaximized()` is unreliable
+     * for frameless windows — same reason page.js sets work-area bounds directly).
+     */
+    hostWorkArea(id: number): { x: number; y: number; width: number; height: number } | null {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.baseWin.isDestroyed()) return null;
+      try {
+        const b = entry.baseWin.getBounds();
+        const display = screen.getDisplayNearestPoint({
+          x: b.x + Math.floor(b.width / 2),
+          y: b.y + Math.floor(b.height / 2),
+        });
+        return display.workArea;
+      } catch {
+        return null;
+      }
+    },
     overlayState() {
       return _getOverlayStateForTests();
+    },
+    /**
+     * P1.4b-3: read the overlay window's focusABLE / focusED state directly off
+     * the singleton (focus-free assertion). The overlay must be focusable:true
+     * (so a click into the URL field can make it key) yet never focused on
+     * appearance (shown via showInactive, nothing proactively focuses it).
+     */
+    overlayFocus(): { focusable: boolean; focused: boolean } | null {
+      if (!overlayWin || overlayWin.isDestroyed()) return null;
+      try {
+        return { focusable: overlayWin.isFocusable(), focused: overlayWin.isFocused() };
+      } catch {
+        return null;
+      }
     },
     browserWindowCount(): number {
       return BrowserWindow.getAllWindows().length;

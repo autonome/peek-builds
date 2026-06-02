@@ -47,6 +47,11 @@ const DEBUG = false;
 
 const navbar = document.getElementById('navbar');
 const triggerZone = document.getElementById('trigger-zone');
+const dragZone = document.getElementById('drag-zone');
+
+// P1.4b-3 window-interaction constants — mirror page.js so resize feels identical.
+const MIN_WIDTH = 200;
+const MIN_HEIGHT = 150;
 
 // Component-level keyboard shortcuts are managed by the navbar; keep them on so
 // Cmd+L/Cmd+R/Cmd+[/Cmd+] work while the overlay is focused. (The canvas page
@@ -58,6 +63,17 @@ navbar.shortcuts = true;
 // The single windowId the overlay currently reflects/drives. null = no active
 // hybrid window (overlay cleared + hidden by main).
 let activeWindowId = null;
+
+// P1.4b-3: the active host window's current OUTER bounds, seeded from the active
+// handoff and kept in sync as the user resizes/moves through the overlay chrome.
+// The overlay frames the content window's full outer rect, so these ARE the
+// overlay's own bounds — the renderer tracks them locally (exactly as page.js
+// tracks `screenBounds`) and publishes new bounds for main to apply.
+let activeBounds = null;
+// Whether the active window is currently maximized (toggled by the maximize
+// affordance). preMaxBounds holds the bounds to restore to on unmaximize.
+let maximized = false;
+let preMaxBounds = null;
 
 /** Reset the navbar to empty (active→null or before painting a new window). */
 function clearChrome() {
@@ -86,11 +102,19 @@ function paintFromSnapshot(snap) {
 api.subscribe('page-overlay:active', (msg) => {
   if (!msg || msg.windowId == null) {
     activeWindowId = null;
+    activeBounds = null;
+    maximized = false;
+    preMaxBounds = null;
     clearChrome();
     DEBUG && console.log('[overlay] active → null (cleared)');
     return;
   }
   activeWindowId = msg.windowId;
+  // P1.4b-3: seed the locally-tracked outer bounds for resize/move math. Reset
+  // maximize state for the newly-active window (each window owns its own).
+  activeBounds = msg.bounds ? { ...msg.bounds } : null;
+  maximized = false;
+  preMaxBounds = null;
   // Hard reset before painting the new window so stale loading/nav state can
   // never bleed across a retarget.
   navbar.loading = false;
@@ -167,9 +191,12 @@ function showNavbar() {
   if (activeWindowId == null) return;
   cancelHide();
   navbar.classList.add('visible');
+  // P1.4b-3: arm the drag-zone (window move) only while the chrome is visible.
+  document.body.classList.add('chrome-visible');
 }
 function hideNavbar() {
   navbar.classList.remove('visible');
+  document.body.classList.remove('chrome-visible');
 }
 function scheduleHide() {
   cancelHide();
@@ -212,6 +239,176 @@ for (const el of document.querySelectorAll('.interactive')) {
     });
   });
 }
+
+// ── P1.4b-3: window interaction (resize / move / maximize) ────────────────────
+// The overlay frames the active hybrid content window's FULL outer bounds, so it
+// owns the resize handles / drag surface / maximize affordance for that window.
+// All three drive the content BaseWindow via main: the renderer computes new
+// OUTER bounds (tracked locally in activeBounds, seeded from the handoff) and
+// publishes `page:set-bounds {windowId, bounds}`; main resolves the host baseWin
+// and applies them (ipc.ts installHybridNavbarActionRouting). Maximize/unmaximize
+// publish `page:maximize` / `page:unmaximize` and main snaps to the display work
+// area / restores the pre-maximize bounds.
+//
+// REUSED from page.js: the per-direction resize math (se/sw/ne/nw/n/s/e/w using
+// screen-coordinate deltas + MIN_WIDTH/MIN_HEIGHT clamps) and the navbar-double-
+// click maximize toggle. REIMPLEMENTED (much simpler): page.js applies a canvas
+// MARGIN via computeWindowBounds() and updates per-window-element positions; the
+// chrome-less hybrid window has no margin and no in-window chrome elements, so
+// the overlay applies the math DIRECTLY to outer bounds and lets P1.1 fillView +
+// P1.4b-1 follow handle the content/overlay reframe.
+
+function publishBounds() {
+  if (activeWindowId == null || !activeBounds) return;
+  api.publish('page:set-bounds', {
+    windowId: activeWindowId,
+    bounds: {
+      x: Math.round(activeBounds.x),
+      y: Math.round(activeBounds.y),
+      width: Math.round(activeBounds.width),
+      height: Math.round(activeBounds.height),
+    },
+  });
+}
+
+// --- Resize handles (reuses page.js per-direction math) ---
+let resizeDir = null;
+let resizeStartX = 0;
+let resizeStartY = 0;
+let resizeStartW = 0;
+let resizeStartH = 0;
+let resizeStartBx = 0;
+let resizeStartBy = 0;
+let activeHandle = null;
+
+for (const handle of document.querySelectorAll('.resize-handle')) {
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || activeWindowId == null || !activeBounds || maximized) return;
+    resizeDir = handle.dataset.dir;
+    resizeStartX = e.screenX;
+    resizeStartY = e.screenY;
+    resizeStartW = activeBounds.width;
+    resizeStartH = activeBounds.height;
+    resizeStartBx = activeBounds.x;
+    resizeStartBy = activeBounds.y;
+    activeHandle = handle;
+    handle.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  handle.addEventListener('pointermove', (e) => {
+    if (activeHandle !== handle || !activeBounds) return;
+    if (e.buttons === 0) { endResize(handle, e); return; }
+    const dx = e.screenX - resizeStartX;
+    const dy = e.screenY - resizeStartY;
+    // Per-direction math copied from page.js (apps/desktop/renderer/page/page.js
+    // initResizeHandle pointermove), applied directly to OUTER bounds.
+    if (resizeDir === 'se') {
+      activeBounds.width = Math.max(MIN_WIDTH, resizeStartW + dx);
+      activeBounds.height = Math.max(MIN_HEIGHT, resizeStartH + dy);
+    } else if (resizeDir === 'sw') {
+      const nw = Math.max(MIN_WIDTH, resizeStartW - dx);
+      activeBounds.x = resizeStartBx + (resizeStartW - nw);
+      activeBounds.width = nw;
+      activeBounds.height = Math.max(MIN_HEIGHT, resizeStartH + dy);
+    } else if (resizeDir === 'ne') {
+      activeBounds.width = Math.max(MIN_WIDTH, resizeStartW + dx);
+      const nh = Math.max(MIN_HEIGHT, resizeStartH - dy);
+      activeBounds.y = resizeStartBy + (resizeStartH - nh);
+      activeBounds.height = nh;
+    } else if (resizeDir === 'nw') {
+      const nw = Math.max(MIN_WIDTH, resizeStartW - dx);
+      activeBounds.x = resizeStartBx + (resizeStartW - nw);
+      activeBounds.width = nw;
+      const nh = Math.max(MIN_HEIGHT, resizeStartH - dy);
+      activeBounds.y = resizeStartBy + (resizeStartH - nh);
+      activeBounds.height = nh;
+    } else if (resizeDir === 'e') {
+      activeBounds.width = Math.max(MIN_WIDTH, resizeStartW + dx);
+    } else if (resizeDir === 'w') {
+      const nw = Math.max(MIN_WIDTH, resizeStartW - dx);
+      activeBounds.x = resizeStartBx + (resizeStartW - nw);
+      activeBounds.width = nw;
+    } else if (resizeDir === 's') {
+      activeBounds.height = Math.max(MIN_HEIGHT, resizeStartH + dy);
+    } else if (resizeDir === 'n') {
+      const nh = Math.max(MIN_HEIGHT, resizeStartH - dy);
+      activeBounds.y = resizeStartBy + (resizeStartH - nh);
+      activeBounds.height = nh;
+    }
+    publishBounds();
+  });
+
+  const onEnd = (e) => endResize(handle, e);
+  handle.addEventListener('pointerup', onEnd);
+  handle.addEventListener('pointercancel', onEnd);
+}
+
+function endResize(handle, e) {
+  if (activeHandle !== handle) return;
+  resizeDir = null;
+  activeHandle = null;
+  try { if (e && e.pointerId != null) handle.releasePointerCapture(e.pointerId); } catch { /* not captured */ }
+}
+
+// --- Drag-to-move (mirrors page.js navbar-background instant drag) ---
+let dragging = false;
+let dragStartX = 0;
+let dragStartY = 0;
+let dragStartBx = 0;
+let dragStartBy = 0;
+
+dragZone.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || activeWindowId == null || !activeBounds || maximized) return;
+  dragging = true;
+  dragStartX = e.screenX;
+  dragStartY = e.screenY;
+  dragStartBx = activeBounds.x;
+  dragStartBy = activeBounds.y;
+  dragZone.classList.add('dragging');
+  dragZone.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+dragZone.addEventListener('pointermove', (e) => {
+  if (!dragging || !activeBounds) return;
+  if (e.buttons === 0) { endDrag(e); return; }
+  activeBounds.x = dragStartBx + (e.screenX - dragStartX);
+  activeBounds.y = dragStartBy + (e.screenY - dragStartY);
+  publishBounds();
+});
+function endDrag(e) {
+  if (!dragging) return;
+  dragging = false;
+  dragZone.classList.remove('dragging');
+  try { if (e && e.pointerId != null) dragZone.releasePointerCapture(e.pointerId); } catch { /* not captured */ }
+}
+dragZone.addEventListener('pointerup', endDrag);
+dragZone.addEventListener('pointercancel', endDrag);
+
+// --- Maximize / restore (navbar double-click, mirrors page.js toggleMaximize) ---
+function toggleMaximize() {
+  if (activeWindowId == null) return;
+  if (maximized) {
+    maximized = false;
+    // Restore the locally-tracked bounds so subsequent resize/move math is right.
+    if (preMaxBounds) activeBounds = { ...preMaxBounds };
+    preMaxBounds = null;
+    api.publish('page:unmaximize', { windowId: activeWindowId });
+  } else {
+    if (activeBounds) preMaxBounds = { ...activeBounds };
+    maximized = true;
+    api.publish('page:maximize', { windowId: activeWindowId });
+  }
+}
+navbar.addEventListener('dblclick', (e) => {
+  e.preventDefault();
+  toggleMaximize();
+});
+
+// P1.4b-4: side panels (info/tags/entities/notes/extensions), page widgets,
+// navbar title/favicon slots, and find-in-page are DEFERRED. Their chrome would
+// hang off this same overlay surface + main routing.
 
 // Signal readiness so main can verify the renderer is wired (and tests can wait).
 window.__overlayReady = true;

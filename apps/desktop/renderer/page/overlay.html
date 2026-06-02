@@ -70,9 +70,53 @@
       pointer-events: auto;
     }
 
+    /* P1.4b-3: resize handles. The overlay frames the content window's FULL
+     * outer bounds, so the handles sit at the window edges/corners (the same
+     * positions page.js uses in its MAXIMIZED layout, where the window has no
+     * surrounding canvas margin — identical to the chrome-less hybrid window).
+     * They are .interactive so the click-capture IPC turns the overlay opaque to
+     * the pointer while a drag is in progress. */
+    .resize-handle {
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      z-index: 10;
+      pointer-events: auto;
+      touch-action: none;
+    }
+    .resize-handle[data-dir="se"] { right: 0; bottom: 0; cursor: se-resize; }
+    .resize-handle[data-dir="sw"] { left: 0; bottom: 0; cursor: sw-resize; }
+    .resize-handle[data-dir="ne"] { right: 0; top: 0; cursor: ne-resize; }
+    .resize-handle[data-dir="nw"] { left: 0; top: 0; cursor: nw-resize; }
+    /* Edge handles span between the corners. EDGE_HIT=6 matches page.js. */
+    .resize-handle[data-dir="n"]  { left: 24px; right: 24px; top: 0; height: 6px; width: auto; cursor: n-resize; }
+    .resize-handle[data-dir="s"]  { left: 24px; right: 24px; bottom: 0; height: 6px; width: auto; cursor: s-resize; }
+    .resize-handle[data-dir="e"]  { right: 0; top: 24px; bottom: 24px; width: 6px; height: auto; cursor: e-resize; }
+    .resize-handle[data-dir="w"]  { left: 0; top: 24px; bottom: 24px; width: 6px; height: auto; cursor: w-resize; }
+
+    /* Drag-move surface: an invisible strip behind the navbar. Dragging it moves
+     * the content window (mirrors page.js navbar-background instant-drag). It is
+     * shown only while the navbar is visible. */
+    .drag-zone {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 44px;
+      z-index: 40;
+      pointer-events: none;
+    }
+    body.chrome-visible .drag-zone {
+      pointer-events: auto;
+      cursor: grab;
+    }
+    body.chrome-visible .drag-zone.dragging { cursor: grabbing; }
+
     /* When there is no active window, hide everything (belt-and-suspenders on
      * top of main-side overlayWin.hide()). */
     body.no-active .trigger-zone,
+    body.no-active .resize-handle,
+    body.no-active .drag-zone,
     body.no-active peek-navbar {
       display: none;
     }
@@ -80,6 +124,17 @@
 </head>
 <body class="no-active" data-no-drag>
   <div class="trigger-zone interactive" id="trigger-zone"></div>
+  <!-- P1.4b-3: window-interaction chrome. Handles + drag-zone are .interactive so
+       the click-capture path turns the overlay opaque to the pointer over them. -->
+  <div class="drag-zone interactive" id="drag-zone"></div>
+  <div class="resize-handle interactive" data-dir="se"></div>
+  <div class="resize-handle interactive" data-dir="sw"></div>
+  <div class="resize-handle interactive" data-dir="ne"></div>
+  <div class="resize-handle interactive" data-dir="nw"></div>
+  <div class="resize-handle interactive" data-dir="n"></div>
+  <div class="resize-handle interactive" data-dir="s"></div>
+  <div class="resize-handle interactive" data-dir="e"></div>
+  <div class="resize-handle interactive" data-dir="w"></div>
   <script type="module">
     import 'peek://app/components/peek-navbar.js';
   </script>

@@ -126,6 +126,7 @@ import {
   findHybridWindowByUrl,
   findHybridWindowByKey,
   getHybridContentWC,
+  getHybridWindow,
 } from './hybrid-page-host-registry.js';
 import {
   getRuntimeExternalWebPrefsForUrl,
@@ -894,6 +895,91 @@ export function installHybridNavbarActionRouting(): void {
     try {
       if (r.wc.navigationHistory.canGoForward()) r.wc.navigationHistory.goForward();
     } catch { /* wc gone */ }
+  });
+
+  // ── P1.4b-3: window-interaction routing (resize / move / maximize) ──────────
+  // The shared overlay frames the active hybrid window's FULL outer bounds, so
+  // the overlay's chrome (resize handles, navbar drag) computes new OUTER bounds
+  // for the content window and publishes them tagged with the active windowId.
+  // Main resolves the host `BaseWindow` and applies them. Non-hybrid windowIds
+  // resolve to null → no-op (canvas windows drive their own BrowserWindow via the
+  // `api.window.setBounds` IPC, never these topics).
+
+  // Resolve the host BaseWindow for a geometry intent (null for non-hybrid /
+  // torn-down windows).
+  const baseWinFor = (raw: unknown): { baseWin: Electron.BaseWindow; windowId: number } | null => {
+    const msg = raw as { windowId?: number } | null;
+    if (!msg || typeof msg.windowId !== 'number') return null;
+    const entry = getHybridWindow(msg.windowId);
+    if (!entry || entry.baseWin.isDestroyed()) return null;
+    return { baseWin: entry.baseWin, windowId: msg.windowId };
+  };
+
+  // Restore-bounds map: the outer bounds a window had before it was maximized,
+  // keyed by windowId, so an unmaximize restores the exact pre-maximize size/pos.
+  // (Mirrors page.js's renderer-side `preMaximizeBounds`, kept main-side here
+  // because the content window's geometry is main-owned in the hybrid path.)
+  const preMaximizeBounds = new Map<number, Electron.Rectangle>();
+
+  // page:set-bounds — used for BOTH resize (overlay resize-handle drag) and move
+  // (overlay navbar drag). The renderer computes the new outer bounds; main just
+  // applies them. The content WebContentsView already refills on the host's
+  // 'resize' (P1.1 fillView) and the overlay already follows the host's
+  // 'move'/'resize' (P1.4b-1), so no extra plumbing is needed here.
+  subscribe(getSystemAddress(), 'page:set-bounds', (raw) => {
+    const r = baseWinFor(raw);
+    if (!r) return;
+    const b = (raw as { bounds?: Electron.Rectangle }).bounds;
+    if (
+      !b ||
+      typeof b.x !== 'number' ||
+      typeof b.y !== 'number' ||
+      typeof b.width !== 'number' ||
+      typeof b.height !== 'number'
+    ) {
+      return;
+    }
+    try {
+      r.baseWin.setBounds({
+        x: Math.round(b.x),
+        y: Math.round(b.y),
+        width: Math.round(b.width),
+        height: Math.round(b.height),
+      });
+    } catch { /* window gone mid-set */ }
+  });
+
+  // page:maximize — snap the host to its display's work area, after stashing the
+  // current bounds for restore. We use explicit work-area bounds rather than
+  // baseWin.maximize() because frameless/panel-style windows on macOS don't
+  // respond to native maximize() reliably (same rationale as page.js's
+  // doMaximize, which sets workArea bounds directly).
+  subscribe(getSystemAddress(), 'page:maximize', (raw) => {
+    const r = baseWinFor(raw);
+    if (!r) return;
+    try {
+      const cur = r.baseWin.getBounds();
+      preMaximizeBounds.set(r.windowId, cur);
+      const display = screen.getDisplayNearestPoint({
+        x: cur.x + Math.floor(cur.width / 2),
+        y: cur.y + Math.floor(cur.height / 2),
+      });
+      const wa = display.workArea;
+      r.baseWin.setBounds({ x: wa.x, y: wa.y, width: wa.width, height: wa.height });
+    } catch { /* window gone */ }
+  });
+
+  // page:unmaximize — restore the pre-maximize bounds captured by page:maximize.
+  // No-op if we have no stashed bounds (was never maximized via this path).
+  subscribe(getSystemAddress(), 'page:unmaximize', (raw) => {
+    const r = baseWinFor(raw);
+    if (!r) return;
+    const prev = preMaximizeBounds.get(r.windowId);
+    if (!prev) return;
+    preMaximizeBounds.delete(r.windowId);
+    try {
+      r.baseWin.setBounds(prev);
+    } catch { /* window gone */ }
   });
 
   // P1.4b-3: find-in-page (`page:find` / `page:find-next` / `page:find-prev`)

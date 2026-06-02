@@ -360,6 +360,118 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
     expect(after).toBe('https://example.com/navstate');
   });
 
+  test('overlay is focusable but not focused after a retarget (P1.4b-3)', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    // Make + activate a hybrid window → overlay retargets onto it.
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 120, y: 140, width: 600, height: 400 });
+      b.setActive(w);
+    });
+    await waitOverlayReady();
+
+    // The overlay window itself must be focusABLE (so a user click into the URL
+    // field can make it key) yet never FOCUSED on appearance (shown via
+    // showInactive, nothing proactively focuses it).
+    const focusState = await app.evaluateMain!(() => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.overlayFocus();
+    });
+    expect(focusState).not.toBeNull();
+    expect(focusState.focusable).toBe(true);
+    expect(focusState.focused).toBe(false);
+  });
+
+  test('resize intent resizes the content window + overlay reframes (P1.4b-3)', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const start = { x: 100, y: 120, width: 500, height: 400 };
+    const resized = { x: 100, y: 120, width: 760, height: 560 };
+
+    const result = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const id = b.makeFakeHybridWindow((arg as any).start);
+      b.setActive(id);
+      // Renderer would compute these from a resize-handle drag; publish directly.
+      b.publishTopic('page:set-bounds', { windowId: id, bounds: (arg as any).resized });
+      return {
+        id,
+        host: b.hostBounds(id),
+        overlay: b.overlayState()?.bounds ?? null,
+      };
+    }, { start, resized });
+
+    // The content BaseWindow took the requested bounds...
+    expect(result.host).toEqual(resized);
+    // ...and the overlay followed (P1.4b-1 follow on the host 'resize').
+    expect(result.overlay).toEqual(resized);
+  });
+
+  test('move intent moves the content window + overlay follows (P1.4b-3)', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const start = { x: 200, y: 200, width: 480, height: 360 };
+    const moved = { x: 640, y: 330, width: 480, height: 360 };
+
+    const result = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const id = b.makeFakeHybridWindow((arg as any).start);
+      b.setActive(id);
+      b.publishTopic('page:set-bounds', { windowId: id, bounds: (arg as any).moved });
+      return { host: b.hostBounds(id), overlay: b.overlayState()?.bounds ?? null };
+    }, { start, moved });
+
+    expect(result.host).toEqual(moved);
+    expect(result.overlay).toEqual(moved);
+  });
+
+  test('maximize snaps to work area; restore returns to prior bounds (P1.4b-3)', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const start = { x: 150, y: 160, width: 520, height: 380 };
+
+    const max = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const id = b.makeFakeHybridWindow((arg as any).start);
+      b.setActive(id);
+      b.publishTopic('page:maximize', { windowId: id });
+      return { id, host: b.hostBounds(id), workArea: b.hostWorkArea(id) };
+    }, { start });
+
+    // Maximize snaps the content window to its display's work area.
+    expect(max.host).toEqual(max.workArea);
+
+    const restored = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:unmaximize', { windowId: (arg as any).id });
+      return b.hostBounds((arg as any).id);
+    }, { id: max.id });
+
+    // Restore returns to the exact pre-maximize bounds.
+    expect(restored).toEqual(start);
+  });
+
+  test('geometry intents for a non-hybrid windowId are a no-op (P1.4b-3)', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    // A windowId that is not a registered hybrid window must not throw and must
+    // leave any real hybrid window untouched.
+    const result = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const id = b.makeFakeHybridWindow({ x: 300, y: 300, width: 400, height: 300 });
+      b.setActive(id);
+      const before = b.hostBounds(id);
+      // Publish a set-bounds for a bogus windowId → baseWinFor returns null → no-op.
+      b.publishTopic('page:set-bounds', {
+        windowId: id + 987654,
+        bounds: { x: 0, y: 0, width: 100, height: 100 },
+      });
+      return { before, after: b.hostBounds(id) };
+    });
+    expect(result.after).toEqual(result.before);
+  });
+
   test('click-capture toggles overlay window between capture and click-through', async () => {
     test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
 
