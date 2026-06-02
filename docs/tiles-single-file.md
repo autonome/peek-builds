@@ -169,7 +169,7 @@ A `resident: true` tile is loaded at startup (hidden). `api.initialize()` runs
 immediately; commands are registered before any user action. No lazy stub/replay
 needed.
 
-Lazy tiles (default) follow the existing lazy stub/replay system — unchanged.
+Lazy tiles (default) are loaded on first use via the load-on-dispatch hook in `main/tile-lazy.ts`. See "Lazy feature activation" in `docs/architecture.md` for the full mechanics.
 
 ---
 

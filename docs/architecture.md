@@ -112,6 +112,142 @@ at every site (grep for `trustedBuiltin` to audit). Core renderers use the
 same tile mechanics as feature tiles; they just skip enforcement because they
 ship as part of the trusted codebase.
 
+### Lazy feature activation
+
+Built-in feature tiles (mcp-server, windows, websearch, peeks, slides) are **lazy** — they spawn on demand, not at boot. Production fixed boot dropped from 6 to 2 windows.
+
+#### Making a tile lazy
+
+Remove `resident: true` from the manifest `TileEntry`. `main/tile-compat.ts`
+routes any tile with `!resident && (hasCommands || hasLazyEvents)` through
+`registerLazyTile()` instead of the eager launch path. A tile with no
+commands but event-driven behavior needs `lazyEvents: [...]` on its entry
+(otherwise the lazy registrar has nothing to intercept and the tile never
+wakes).
+
+#### Wake triggers
+
+`main/tile-lazy.ts` installs one pre-publish hook via
+`installLoadOnDispatchHook`. The hook's predicate is a single `Set` lookup
+plus a `startsWith` check — it runs on every publish with O(1) cost. It
+intercepts two kinds of publish:
+
+- **Command dispatch** — `cmd:execute:<name>` for any command declared in the
+  tile's manifest `commands[]`. CLI verb topics (`cli:*`) are pubsub topics,
+  so they also wake a tile that lists them in `lazyEvents`.
+- **Declared lazy events** — any topic listed in `TileEntry.lazyEvents[]`.
+
+When the hook fires it calls `ensureTileLoaded(tileId)` →
+`waitForTileReady(tileId, entryId)`, then returns `'continue'` so the
+deferred publish reaches the now-live handler.
+
+Declarative commands (`action.type === 'window'` and `action.type ===
+'publish'`) are short-circuited: the hook handles them directly and returns
+`'skip'` — no tile load required and no dangling publish.
+
+Timeout UX: if a tile fails to reach READY within 10 s, the hook publishes
+`notification:show` with an error message and resolves the caller's result
+topic with an `{ error }` shape so the cmd panel returns to IDLE.
+
+#### Global hotkeys without a renderer
+
+A lazy tile's renderer isn't running at boot, so it cannot register its own
+OS global shortcuts. `main/feature-shortcut-registrar.ts`
+`registerWakeShortcuts(tileId, manifest)` fills the gap: it registers OS
+accelerators in the main process at tile-registration time, with no renderer
+present. Each accelerator's callback publishes the wake topic, which flows
+through the load-on-dispatch hook to boot the tile.
+
+Manifest `TileShortcut` supports two forms:
+
+| Form | Manifest fields | Keypress publishes |
+|------|-----------------|--------------------|
+| Command form | `{ keys, command }` | `cmd:execute:<command>` |
+| Topic form | `{ keys, wakeTopic, wakeArgs? }` | `wakeTopic` with `{ args: wakeArgs }` |
+
+Accelerators are tracked under `peek://<tileId>/lazy-shortcut` so teardown
+is a single `unregisterShortcutsForAddress` call.
+
+#### Wake-shortcut registry (user-configured hotkeys)
+
+Users can override manifest defaults. The persisted state lives in two
+datastore tables:
+
+- `lazy_wake_shortcuts` — rows keyed by `ownerTileId`, each holding
+  `(accelerator, wakeTopic, wakeArgs)`.
+- `lazy_wake_declared` — a marker row written the first time a tile calls
+  `api.shortcuts.declareWakeShortcuts(list)` (IPC: `tile:shortcuts:declare-wake`,
+  requires `shortcuts` capability). The marker distinguishes "declared empty
+  — register nothing" from "never declared — use manifest defaults".
+
+Precedence at boot (inside `registerWakeShortcuts`):
+
+1. If `hasDeclaredWakeShortcuts(tileId)` → register exactly the persisted
+   `lazy_wake_shortcuts` rows (may be empty → register nothing).
+2. Otherwise → register the manifest's static `shortcuts[]` entries
+   (fresh-profile defaults).
+
+The renderer computes accelerators from its own settings UI and calls
+`declareWakeShortcuts` once loaded; main re-registers at next boot.
+
+#### Core page events
+
+`renderer/page/page.js` emits semantic events from its `did-finish-load`
+handler that lazy features wake on, keeping feature logic out of core:
+
+- `page:search-engine-discovered` — published when a page advertises an
+  OpenSearch descriptor. The websearch tile declares
+  `lazyEvents: ["page:search-engine-discovered"]` and boots hidden on first
+  match, running its fetch/parse/record logic there. Core detects the
+  descriptor (a lightweight DOM check it already does for `page:loaded`);
+  the feature logic stays in the websearch renderer.
+
+Additional semantic page events follow this same pattern as features are
+added.
+
+#### CRITICAL init-ordering rule for lazy tile authors
+
+> **Register all wake handlers synchronously in `init()` BEFORE the first
+> `await`.** The preload fires `tile:lifecycle:ready` on a `setTimeout(0)`
+> macrotask before async `init()` awaits resolve. Any handler registered
+> after an `await` may miss the first deferred publish — the exact message
+> that woke the tile.
+
+The recommended pattern:
+
+```js
+async function init() {
+  await api.initialize();          // synchronous token exchange
+
+  // Register SYNCHRONOUSLY — before any await below
+  api.pubsub.subscribe('my:lazy-event', handler);
+  api.commands.register('my-command', handler);
+
+  // Handler bodies gate on initReady so they read loaded state
+  await loadState();
+  resolveInitReady();
+}
+
+let resolveInitReady;
+const initReady = new Promise(r => { resolveInitReady = r; });
+
+async function handler(msg) {
+  await initReady;   // wait for state before acting
+  // ... use loaded state safely
+}
+```
+
+See `features/websearch/home.js` for the reference implementation.
+
+#### Constraints upheld
+
+- Features stay **modular** — not folded into core. Each feature tile owns
+  its logic; core owns only generic infra (the hook predicate, the
+  OS-accelerator registrar, the opaque wake-shortcut registry).
+- Features stay **frontend** — no feature logic lives in main. Only
+  feature-agnostic infrastructure (OS shortcut registration, the persisted
+  registry, the dispatch hook) lives in main.
+
 ### The IPC chokepoint
 
 Every `tile:*` IPC frame goes through a single main-process pipeline,
