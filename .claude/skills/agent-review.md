@@ -6,7 +6,7 @@ brief, the land + verify loop, and the retry-in-clone path on test failure.
 
 This is **distinct from `/review`**. `/review` reviews uncommitted local diffs.
 `/agent-review` reviews a clone agent's committed work + drives it through the
-chaos-defense chokepoints (finalize → `test:electron` → mark done).
+chaos-defense chokepoints (finalize → `test:desktop:electron` → mark done).
 
 ---
 
@@ -21,7 +21,7 @@ chaos-defense chokepoints (finalize → `test:electron` → mark done).
 
 A reviewer subagent is overkill for tiny diffs *and* prone to the grep-shortcut
 failure mode (see [Failure modes](#failure-modes-name-them-in-the-brief)). The
-real gate is `yarn test:electron` in the main checkout — not a second LLM read.
+real gate is `yarn test:desktop:electron` in the main checkout — not a second LLM read.
 
 Orchestrator review:
 1. `jj -R ../mpeek-clone-<name> diff --stat -r 'main..@'` — scope check.
@@ -88,11 +88,11 @@ Reviewer subagents drift toward these. Naming them in the brief reduces it.
            jj -R ../mpeek-clone-<name> rebase -s 'roots(::@ ~ ::main)' -d main)
         Then retry finalize.
 3. After ALL targeted clones finalized:
-     yarn test:electron   # run_in_background, ~2.5 min, canonical gate
-4. test:electron green → tasks move to NEEDS-REVIEW. **Do NOT auto-mark
+     yarn test:desktop:electron   # run_in_background, FULL suite (all 6 runners, ~3300+, ~10 min), canonical gate
+4. test:desktop:electron green → tasks move to NEEDS-REVIEW. **Do NOT auto-mark
    peek:done.** Surface the diff + test result to the user; only the user
    authorises `peek:done`. See [Needs-review handoff](#needs-review-handoff).
-5. test:electron RED → see [Retry-in-clone](#retry-in-clone-on-test-failure).
+5. test:desktop:electron RED → see [Retry-in-clone](#retry-in-clone-on-test-failure).
 6. Clean clones (`scripts/clean-isolated-clone.sh` per slot) unless the build
    cache is reusable for follow-up work — but only AFTER the user has approved
    peek:done. Clean'd clones can't be re-driven without respawn.
@@ -123,7 +123,7 @@ sufficient.
 
 ## Retry-in-clone on test failure
 
-When `test:electron` fails after landing:
+When `test:desktop:electron` fails after landing:
 
 1. Identify which finalized commit caused the failure (often obvious from the
    failing test's surface area; if not, `jj log main@tangled..main` + bisect by
@@ -133,7 +133,7 @@ When `test:electron` fails after landing:
 3. The clone still exists (preserved by finalize). SendMessage the **original
    agent** (not a fresh spawn) with:
    ```
-   Your <task> landed but yarn test:electron failed: <paste failing test +
+   Your <task> landed but yarn test:desktop:electron failed: <paste failing test +
    relevant log lines>. The commit was abandoned from main. The clone at
    ../mpeek-clone-<name>/ still has your work. Diagnose, fix in the clone,
    commit, and report back. Same brief as before re: do-not-finalize,

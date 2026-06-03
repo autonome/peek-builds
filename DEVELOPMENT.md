@@ -57,10 +57,10 @@ yarn server:healthcheck   # Verify server starts
 
 ### Testing
 ```bash
-yarn test                 # Run all tests (headless)
-yarn test:electron        # Run Electron tests only
-yarn test:visible         # Run with visible windows
-yarn test:grep "pattern"  # Run specific test by name
+yarn test:desktop:electron   # Full desktop (electron) suite — all 6 runners (~3300+), canonical
+yarn test:desktop:tauri      # Full Tauri desktop suite (off critical path)
+yarn test:visible            # Run with visible windows
+yarn test:grep "pattern"     # Run specific test by name (fast, source-only)
 ```
 
 **Testing Policy**: When fixing bugs or adding features, always add tests to cover the change. Tests live in `tests/desktop/smoke.spec.ts`.
@@ -543,7 +543,7 @@ yarn kill  # ONLY way to kill dev Peek
 **Testing without UI**: When testing startup, logs, or non-interactive behavior, use headless mode:
 ```bash
 ./scripts/test-headless.sh 8    # Run headless for 8 seconds, auto-kills
-yarn test:electron              # Run automated tests
+yarn test:desktop:electron      # Run automated tests (full desktop electron suite)
 ```
 
 ## Common Pitfalls

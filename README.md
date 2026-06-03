@@ -374,7 +374,7 @@ peek/
 |-------|--------|------:|---------|
 | **Electron Unit (TS)** | Node `--test` via Electron | 764 | `yarn test:unit` |
 | **Unit (JS)** | Node `--test` | 459 | `yarn test:unit` |
-| **Playwright Desktop** | Playwright | 211 | `yarn test:electron` |
+| **Playwright Desktop** | Playwright | 211 | part of `yarn test:desktop:electron` |
 | **Playwright Components** | Playwright | 56 | `npx playwright test tests/components/` |
 | **Playwright Editor** | Playwright | 90 | `npx playwright test tests/editor/` |
 | **Playwright Extension** | Playwright | 41 | `yarn test:extension:browser` |
@@ -384,7 +384,7 @@ peek/
 | **Sync Integration** | Script-style | 59 | `yarn test:sync` and variants |
 | **Mobile (JS)** | Script-style | 9 | `yarn test:mobile` |
 | **Mobile (Rust)** | `cargo test` | 19 | In `backend/tauri-mobile/` |
-| **Tauri Desktop (Rust)** | `cargo test` | 16 | `yarn test:tauri:rust` |
+| **Tauri Desktop (Rust)** | `cargo test` | 16 | `yarn test:desktop:tauri:rust` |
 | **Lex** | Node `--test` | 38 | `node --test features/lex/tests/` |
 
 **Electron Unit (TS)** — Backend logic: entities extraction, session management, IZUI state, cmd palette logic, cmd chaining, OAuth bridge, display watcher, noun registry, shortcuts, datastore, completers, tag affordances, page loading.
@@ -409,7 +409,7 @@ peek/
 
 **Lex** — Lexicon feature: UI logic and background processing.
 
-Background test commands: `yarn test:electron:bg` runs Playwright headless in background (logs to `/tmp/test-electron.log`).
+Background test commands: `yarn test:desktop:electron:bg` runs the full desktop (electron) gate headless in background (logs to `/tmp/test-electron.log`).
 
 ### Notes
 

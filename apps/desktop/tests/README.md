@@ -31,9 +31,9 @@ yarn test:unit:datastore    # Datastore tests only
 yarn test:unit:modes        # Modes tests only
 yarn test:unit:shortcuts    # Shortcuts tests only
 
-# Run specific backend
-yarn test:electron          # Electron Playwright tests (headless)
-yarn test:tauri             # Tauri Rust unit tests
+# Run full desktop suite per implementation
+yarn test:desktop:electron  # Electron — full suite, all 6 runners (~3300+), headless
+yarn test:desktop:tauri     # Tauri — frontend mock + Rust unit tests
 
 # Run with visible windows (Electron only)
 yarn test:visible
@@ -49,15 +49,15 @@ yarn test:debug
 
 | Backend | Status | Test Framework | Command |
 |---------|--------|----------------|---------|
-| Electron | ✅ Working | Playwright | `yarn test:electron` |
-| Electron | ✅ Working | Node unit tests (ELECTRON_RUN_AS_NODE=1) | `yarn test:unit` |
-| Tauri | ✅ Working | Frontend Mock + Rust | `yarn test:tauri` |
+| Electron | ✅ Working | Playwright + node unit (all 6 runners) | `yarn test:desktop:electron` |
+| Electron | ✅ Working | Node unit tests only (ELECTRON_RUN_AS_NODE=1) | `yarn test:unit` |
+| Tauri | ✅ Working | Frontend Mock + Rust | `yarn test:desktop:tauri` |
 
 ### Tauri Testing Notes
 
 **Tauri testing uses a two-part approach:**
-1. **Frontend Tests** (`yarn test:tauri:frontend`) - Runs the same Playwright tests against a mocked backend served via HTTP. Tests frontend UI behavior.
-2. **Rust Unit Tests** (`yarn test:tauri:rust`) - Tests backend datastore and API functionality.
+1. **Frontend Tests** (`yarn test:desktop:tauri:frontend`) - Runs the same Playwright tests against a mocked backend served via HTTP. Tests frontend UI behavior.
+2. **Rust Unit Tests** (`yarn test:desktop:tauri:rust`) - Tests backend datastore and API functionality.
 
 **Known Limitations of Frontend Mock:**
 - Each page has its own mock instance - data doesn't share across pages (e.g., Groups Navigation test fails)
@@ -316,7 +316,7 @@ or slowing down tests.
 
 ### Tests hang or timeout
 - Check if previous test left app running: `pkill -f "peek-tauri\|electron"`
-- Increase timeout: `yarn test:desktop --timeout=120000`
+- Increase timeout: `yarn test:desktop:electron --timeout=120000`
 
 ### Window not found
 - Increase wait time in test

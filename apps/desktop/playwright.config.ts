@@ -2,8 +2,8 @@
  * Playwright Configuration for Peek Tests
  *
  * Supports multiple backends via BACKEND environment variable:
- *   BACKEND=electron yarn test:desktop
- *   BACKEND=tauri yarn test:desktop
+ *   BACKEND=electron yarn test:desktop:electron
+ *   BACKEND=tauri yarn test:desktop:tauri
  *
  * Test organization:
  *   tests/desktop/     - Cross-backend desktop tests
@@ -34,7 +34,7 @@ export default defineConfig({
     {
       // Tests that exercise OS-integration behavior (modal panel focus/blur,
       // keyboard flows driving the cmd panel) are fragile under fullyParallel +
-      // workers>1. yarn test:electron runs this project as a SEPARATE
+      // workers>1. yarn test:desktop:electron runs this project as a SEPARATE
       // playwright invocation with --workers=1, after the parallel project
       // finishes, so no other Electron instances are competing.
       name: 'desktop-serial',
@@ -65,7 +65,7 @@ export default defineConfig({
     },
     {
       // Manual debugging harness — see tests/manual/README.md.
-      // Not included in `yarn test:electron`; run via `yarn harness`.
+      // Not included in `yarn test:desktop:electron`; run via `yarn harness`.
       // Long timeout because runs are interactive (humans drive the UI
       // while the tracer records). Workers must be 1 (set via CLI in the
       // yarn script) so the human only has to deal with one window stack.
@@ -104,7 +104,7 @@ export default defineConfig({
   //
   // Cmd-panel-keyboard-flow tests live in tests/desktop-serial/ (separate
   // project) because they hit OS-level modal focus/blur that misbehaves
-  // when N Electron instances are competing. `yarn test:electron` runs
+  // when N Electron instances are competing. `yarn test:desktop:electron` runs
   // the desktop project at PEEK_TEST_WORKERS, then runs desktop-serial
   // afterward at --workers=1.
   fullyParallel: false,

@@ -13,18 +13,60 @@ For cross-cutting rules (jj workflow, subagent dispatch, Bash discipline), see t
 
 ## Testing
 
-`yarn test:electron` is the canonical gate. It runs `electron-builder --dir`, then Playwright `desktop` + `desktop-serial` projects with `PACKAGED=1`. Always run this before considering a change done — source-only tests miss asar/asar.unpacked path bugs and electron-builder file inclusion problems.
+Test commands follow a `test:{environment}:{implementation}` system. The canonical
+gate for this app is **`yarn test:desktop:electron`** — and it is the *whole* suite, not a
+subset. It runs `electron-builder --dir`, then **all six runners** with `PACKAGED=1` where
+applicable:
+
+| # | Runner | Approx count |
+|---|---|---|
+| 1 | main-process unit (`main/*.test.ts` → `dist/main/*.test.js`, `electron --test`) | ~1900 |
+| 2 | node unit (`tests/unit/*.test.js`, `node --test`) | ~700 |
+| 3 | Playwright `desktop` project | ~510 |
+| 4 | Playwright `desktop-serial` project (`--workers=1`) | ~38 |
+| 5 | Playwright `components` project | ~56 |
+| 6 | Playwright `editor` project | ~90 |
+
+**Total ≈ 3300+, ~10 min wall-clock.** When reporting a full-suite result, cite the
+per-runner numbers AND the grand total — never report one project's tail (e.g. "549 passed")
+as if it were the suite. The Playwright `desktop`+`desktop-serial` pair alone is ~549 tests;
+that is **~17% of the suite**, not the suite.
+
+### Coverage caveats — what "all 6 green" does NOT cover
+
+A clean run still reports ~97 *skipped*, and they are NOT just "macOS-headless OS
+surfaces." The two big buckets are real coverage gaps to keep in mind:
+
+- **Hybrid page-host suite (~40 tests) is flag-gated OUT by default.** The
+  `hybrid-overlay` / `hybrid-popups` / `hybrid-windows-feature` specs self-skip via
+  `test.skip(!bridgePresent())` because `PEEK_PAGEHOST_HYBRID` defaults off. So a green
+  `yarn test:desktop:electron` does **not** exercise the hybrid path at all. To cover it,
+  run with the flag on: `PEEK_PAGEHOST_HYBRID=1 yarn test:desktop:electron`. (Tracked: make
+  the gate run both flag states — see peek task.)
+- **Chrome-extension UI specs (~41, `tests/extension/options|popup`) need a real display**
+  and skip on macOS-headless (`HEADLESS=1 && platform!==linux`). They're covered by
+  `yarn test:extension:browser` (non-headless) or on Linux/Xvfb, NOT by this gate on macOS.
+- The remainder: ~13 unconditionally-parked feature describes (HUD, Proton Pass) and only
+  ~3 genuine macOS-headless OS-surface skips (geolocation grant, devtools-open).
 
 ```bash
-yarn test:electron          # Full packaged build + Playwright (canonical)
-yarn test:grep "<pattern>"  # Fast inner-loop: source-only, single test
-yarn test:electron:source   # Escape hatch: source-only, no packaging
-yarn test:packaged          # Re-run against existing out/mac-arm64/Peek.app
+yarn test:desktop:electron          # CANONICAL: full build + all 6 runners (~3300+)
+yarn test:desktop:electron:bg       # same, backgrounded → tail /tmp/test-electron.log
+yarn test:grep "<pattern>"          # Fast inner-loop: source-only, single test
+yarn test:desktop:electron:source   # Escape hatch: source-only, no packaging (runners 3+4 only)
+yarn test:desktop:electron:x        # Packaged desktop project, stop on first failure
+yarn test:packaged                  # Re-run desktop project against existing out/mac-arm64/Peek.app
 ```
 
-`yarn test:grep` iterates fast during editing. Validate with `yarn test:electron` before declaring done.
+`yarn test:grep` iterates fast during editing. Validate with **`yarn test:desktop:electron`**
+(the full gate) before declaring done — source-only / single-project runs miss asar /
+asar.unpacked path bugs, electron-builder file-inclusion problems, and entire surfaces (unit,
+components, editor).
 
-**Tauri desktop (`apps/tauri-desktop/`) is off the critical path.** Do NOT gate on `yarn test` (which includes tauri tests); use `yarn test:electron` only.
+**Tauri desktop (`apps/tauri-desktop/`) is off the critical path.** Its full suite is
+`yarn test:desktop:tauri` (frontend + Rust). Do NOT gate desktop work on it; use
+`yarn test:desktop:electron` only. There is intentionally **no bare `yarn test`** — name the
+environment + implementation explicitly.
 
 ---
 
