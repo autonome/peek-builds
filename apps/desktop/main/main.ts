@@ -806,6 +806,24 @@ export async function initialize(): Promise<void> {
           if (addr && (addr.startsWith('http://') || addr.startsWith('https://') || addr.startsWith('file:///'))) {
             return; // Let the page host's own handler deal with Cmd+L
           }
+          // Hybrid page-host shared-chrome overlay: a real BrowserWindow
+          // loading peek://app/page/overlay.html. When R1/R2/R3 focuses it
+          // (overlayWin.focus on page:show-navbar), Cmd+L lands here. Its
+          // params.address is the peek:// overlay URL (not http/https/file),
+          // so the check above doesn't skip it. Skip the local-shortcut
+          // dispatch so the overlay's <peek-navbar> (shortcuts=true) handles
+          // Cmd+L → focusUrl instead of opening the cmd panel. Detected via
+          // the focused window's own webContents URL to avoid importing
+          // hybrid-overlay.ts (which imports from main.js → cycle).
+          let focusedUrl = '';
+          try {
+            focusedUrl = window.webContents.getURL();
+          } catch {
+            // webContents may be gone mid-teardown; treat as non-overlay.
+          }
+          if (focusedUrl.includes('page/overlay.html')) {
+            return; // Let the overlay's <peek-navbar> handle Cmd+L
+          }
         }
       }
 

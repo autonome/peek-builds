@@ -17,6 +17,10 @@
 import { describe, it, before, after, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
 import Database from 'better-sqlite3';
+// Electron-free, so safe to import the REAL implementation here (no
+// replication drift): the session-save early-skip decision shared by
+// `saveSessionSnapshot`'s loop.
+import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
 
 // ============================================================================
 // Types (mirrored from session.ts to avoid import issues with Electron deps)
@@ -2086,6 +2090,91 @@ describe('Session Integration Tests', () => {
         false
       );
       assert.strictEqual(skip, false, 'Windows with no role should be included');
+    });
+  });
+
+  // ========================================================================
+  // Early window-type skip — the REAL `shouldSkipWindowForSaveEarly` from
+  // session-save-filter.ts (imported, not replicated). This is the decision
+  // the save loop runs for BOTH canvas BrowserWindows and hybrid page-host
+  // BaseWindows.
+  //
+  // BUG THIS CATCHES: hybrid page-host (web) windows were dropped from the
+  // session snapshot because the loop's `getLiveWindow(id)` returns null for
+  // a BaseWindow, so every hybrid window hit `if (!win) continue;` and was
+  // never saved. After the fix the caller resolves visibility/url from the
+  // hybrid registry and feeds it here; a visible hybrid http window is NOT
+  // skipped, so it reaches the descriptor build and is saved/restored.
+  // ========================================================================
+  describe('shouldSkipWindowForSaveEarly (hybrid + canvas)', () => {
+    it('does NOT skip a visible hybrid page-host http window (regression: web pages dropped from session)', () => {
+      // A hybrid window: BrowserWindow.fromId is null, but the caller resolved
+      // visible + url from the hybrid registry's BaseWindow / entry.url().
+      const skip = shouldSkipWindowForSaveEarly({
+        destroyed: false,
+        visible: true,
+        url: 'https://example.com/article',
+      });
+      assert.strictEqual(skip, false,
+        'A visible hybrid http window must be SAVED, not skipped');
+    });
+
+    it('skips a destroyed hybrid window', () => {
+      const skip = shouldSkipWindowForSaveEarly({
+        destroyed: true,
+        visible: false,
+        url: '',
+      });
+      assert.strictEqual(skip, true, 'Destroyed hybrid window should be skipped');
+    });
+
+    it('skips an invisible hybrid window with no overlay carve-out', () => {
+      const skip = shouldSkipWindowForSaveEarly({
+        destroyed: false,
+        visible: false,
+        url: 'https://example.com/',
+      });
+      assert.strictEqual(skip, true, 'Invisible hybrid window should be skipped');
+    });
+
+    it('SAVES an invisible window hidden by an active overlay (carve-out)', () => {
+      const skip = shouldSkipWindowForSaveEarly({
+        destroyed: false,
+        visible: false,
+        url: 'https://example.com/',
+        hiddenByActiveOverlay: true,
+      });
+      assert.strictEqual(skip, false,
+        'Overlay-hidden content windows should still be saved');
+    });
+
+    it('forceForTest overrides the invisible skip (Playwright direct-save path)', () => {
+      const skip = shouldSkipWindowForSaveEarly({
+        destroyed: false,
+        visible: false,
+        url: 'https://example.com/',
+        forceForTest: true,
+      });
+      assert.strictEqual(skip, false,
+        '_forceForTest bypasses the visibility skip');
+    });
+
+    it('skips the background window (canvas path)', () => {
+      const skip = shouldSkipWindowForSaveEarly({
+        destroyed: false,
+        visible: true,
+        url: 'peek://app/background.html',
+      });
+      assert.strictEqual(skip, true, 'Background window should be skipped');
+    });
+
+    it('does NOT skip a visible canvas page-host', () => {
+      const skip = shouldSkipWindowForSaveEarly({
+        destroyed: false,
+        visible: true,
+        url: 'peek://app/page?url=https%3A%2F%2Fexample.com',
+      });
+      assert.strictEqual(skip, false, 'Visible canvas page-host should be saved');
     });
   });
 

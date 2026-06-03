@@ -17,6 +17,8 @@ import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWin
 import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
+import { getHybridWindow } from './hybrid-page-host-registry.js';
+import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
 import { invokeWindowOpen, getLastFocusedVisibleWindowId } from './ipc.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { WEB_CORE_ADDRESS } from './config.js';
@@ -360,23 +362,47 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   for (const [id, winData] of registeredWindows) {
     const win = getLiveWindow(id);
 
-    // Skip destroyed windows
-    if (!win) {
-      continue;
+    // Hybrid page-hosts are BaseWindows, so `getLiveWindow` (BrowserWindow.fromId)
+    // returns null for them. They live in the hybrid registry instead. Detect
+    // them up-front so we source visibility/URL from the hybrid registry rather
+    // than the (absent) BrowserWindow, then fall through to the same
+    // presentation-based descriptor build the canvas path uses (which already
+    // handles hybrid's two-layer URL, bounds, maximized, title, visible).
+    const hybridEntry =
+      winData.params.hybridPageHost === true ? getHybridWindow(id) : null;
+
+    // Resolve the early-skip inputs from whichever window kind this is, then
+    // run the shared (unit-tested) decision so the two paths can't drift.
+    let earlyDestroyed: boolean;
+    let earlyVisible: boolean;
+    let earlyUrl: string;
+    if (hybridEntry) {
+      earlyDestroyed = hybridEntry.baseWin.isDestroyed();
+      // A destroyed baseWin's isVisible() throws; guard it.
+      earlyVisible = earlyDestroyed ? false : hybridEntry.baseWin.isVisible();
+      // A hybrid window is never the background page; its content URL is safe
+      // for the background-URL skip (it can never match background.html).
+      earlyUrl = earlyDestroyed ? '' : hybridEntry.url();
+    } else if (win) {
+      earlyDestroyed = false;
+      earlyVisible = win.isVisible();
+      earlyUrl = win.webContents.getURL();
+    } else {
+      // Neither a live BrowserWindow nor a hybrid entry — destroyed/unknown.
+      earlyDestroyed = true;
+      earlyVisible = false;
+      earlyUrl = '';
     }
 
-    // Skip invisible windows. Carve-out: windows hidden by an active
-    // overlay (tracked above in overlayHiddenIds) should still be saved
-    // so the user gets them back on next launch — they're real content
-    // that just happens to be temporarily covered by a transient picker.
-    if (!win.isVisible() && !opts?._forceForTest && !overlayHiddenIds.has(id)) {
-      continue;
-    }
-
-    const url = win.webContents.getURL();
-
-    // Skip the background window
-    if (url.includes('peek://app/background.html')) {
+    if (
+      shouldSkipWindowForSaveEarly({
+        destroyed: earlyDestroyed,
+        visible: earlyVisible,
+        url: earlyUrl,
+        forceForTest: opts?._forceForTest,
+        hiddenByActiveOverlay: overlayHiddenIds.has(id),
+      })
+    ) {
       continue;
     }
 
