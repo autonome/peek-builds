@@ -4,9 +4,58 @@
     <title>Peek Changelog</title>
     <link>https://tangled.org/burrito.space/peek</link>
     <description>Recent changes to Peek</description>
-    <lastBuildDate>Tue, 02 Jun 2026 12:02:48 GMT</lastBuildDate>
+    <lastBuildDate>Wed, 03 Jun 2026 18:44:16 GMT</lastBuildDate>
     <generator>changelog-to-rss.js</generator>
     <atom:link href="https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml" rel="self" type="application/rss+xml"/>
+    <item>
+      <title>fix: remove the Cmd+T global hotkey for tags so the lazy wake-shortcut registrar no longer grabs it system-wide</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-06-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-06-03:26f9850c264d</guid>
+      <pubDate>Wed, 03 Jun 2026 12:00:00 GMT</pubDate>
+      <description>fix: remove the Cmd+T global hotkey for tags so the lazy wake-shortcut registrar no longer grabs it system-wide</description>
+    </item>
+    <item>
+      <title>perf: hybrid page-host P1.4b-6 port notes pane and page widgets to the shared overlay</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-06-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-06-03:c0abe0683540</guid>
+      <pubDate>Wed, 03 Jun 2026 12:00:00 GMT</pubDate>
+      <description>perf: hybrid page-host P1.4b-6 port notes pane and page widgets to the shared overlay</description>
+    </item>
+    <item>
+      <title>fix: include hybrid page-host windows in session save so web pages restore, and skip the cmd Cmd+L local shortcut on the overlay so Cmd+L focuses the page address bar</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-06-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-06-03:7c0de9b13069</guid>
+      <pubDate>Wed, 03 Jun 2026 12:00:00 GMT</pubDate>
+      <description>fix: include hybrid page-host windows in session save so web pages restore, and skip the cmd Cmd+L local shortcut on the overlay so Cmd+L focuses the page address bar</description>
+    </item>
+    <item>
+      <title>feat: uniform hold-to-drag window moves for the hybrid page-host across chrome and web content, cancelled by pre-threshold movement so drag-and-drop and selection are preserved</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-06-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-06-03:59684a79b560</guid>
+      <pubDate>Wed, 03 Jun 2026 12:00:00 GMT</pubDate>
+      <description>feat: uniform hold-to-drag window moves for the hybrid page-host across chrome and web content, cancelled by pre-threshold movement so drag-and-drop and selection are preserved</description>
+    </item>
+    <item>
+      <title>fix: make hybrid session-restore focus-order deterministic so the saved focused window wins over trailing focus events from other restored windows</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-06-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-06-03:d19bb10ac61b</guid>
+      <pubDate>Wed, 03 Jun 2026 12:00:00 GMT</pubDate>
+      <description>fix: make hybrid session-restore focus-order deterministic so the saved focused window wins over trailing focus events from other restored windows</description>
+    </item>
+    <item>
+      <title>refactor: rename desktop test scripts to a test:{environment}:{implementation} system</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-06-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-06-03:b35c970428a7</guid>
+      <pubDate>Wed, 03 Jun 2026 12:00:00 GMT</pubDate>
+      <description>refactor: rename desktop test scripts to a test:{environment}:{implementation} system</description>
+    </item>
+    <item>
+      <title>fix: give the IZUI ESC handler a tile-aware role lookup so feature-tile windows run the escape protocol</title>
+      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-06-03</link>
+      <guid isPermaLink="false">urn:peek:changelog:2026-06-03:0cb713d914c1</guid>
+      <pubDate>Wed, 03 Jun 2026 12:00:00 GMT</pubDate>
+      <description>fix: give the IZUI ESC handler a tile-aware role lookup so feature-tile windows run the escape protocol</description>
+    </item>
     <item>
       <title>perf: make slides lazy via the wake-shortcut registry leaning on main key-dedup for window identity</title>
       <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-06-02</link>
@@ -230,62 +279,6 @@
       <guid isPermaLink="false">urn:peek:changelog:2026-05-28:e47dc37445de</guid>
       <pubDate>Thu, 28 May 2026 12:00:00 GMT</pubDate>
       <description>mcp-server: add README covering install/use/conventions</description>
-    </item>
-    <item>
-      <title>desktop: ship MCP server in app + Settings → Integrations → MCP toggle</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:d9a705303de8</guid>
-      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
-      <description>desktop: ship MCP server in app + Settings → Integrations → MCP toggle</description>
-    </item>
-    <item>
-      <title>desktop: decouple devtools auto-open from Settings Verbose Logging toggle</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:21fe83950553</guid>
-      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
-      <description>desktop: decouple devtools auto-open from Settings Verbose Logging toggle</description>
-    </item>
-    <item>
-      <title>mcp-server: peek-mcp-init scaffolder for per-project scope</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:ebb3246af5a8</guid>
-      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
-      <description>mcp-server: peek-mcp-init scaffolder for per-project scope</description>
-    </item>
-    <item>
-      <title>wip: MCP followups — drift check, sandbox path, restart banner, project scopes UI</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:27508212c2d2</guid>
-      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
-      <description>wip: MCP followups — drift check, sandbox path, restart banner, project scopes UI</description>
-    </item>
-    <item>
-      <title>mcp-server: capture current state in PLAN.md — scope tag, readonly mode, dev sandbox path, drift self-exit, restart-required UX</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:b0c739568aaa</guid>
-      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
-      <description>mcp-server: capture current state in PLAN.md — scope tag, readonly mode, dev sandbox path, drift self-exit, restart-required UX</description>
-    </item>
-    <item>
-      <title>desktop: policy — chrome ext compat layer only, never modify imported source</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:6cedba762828</guid>
-      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
-      <description>desktop: policy — chrome ext compat layer only, never modify imported source</description>
-    </item>
-    <item>
-      <title>chrome-ext: compat-layer fixes that land Proton Pass auth end-to-end</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:9238699ca0fe</guid>
-      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
-      <description>chrome-ext: compat-layer fixes that land Proton Pass auth end-to-end</description>
-    </item>
-    <item>
-      <title>desktop: dev tooling for fast chrome-ext compat-layer iteration</title>
-      <link>https://tangled.org/burrito.space/peek/blob/main/CHANGELOG.md#2026-05-27</link>
-      <guid isPermaLink="false">urn:peek:changelog:2026-05-27:9ae4ade6accb</guid>
-      <pubDate>Wed, 27 May 2026 12:00:00 GMT</pubDate>
-      <description>desktop: dev tooling for fast chrome-ext compat-layer iteration</description>
     </item>
   </channel>
 </rss>

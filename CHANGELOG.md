@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: c78c6dd5a7e9 -->
+<!-- last-bumped: b4cd7c66ff24 -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -18,6 +18,16 @@ Completed work. Two formats coexist on purpose:
 See TODO.md for pending items, WIP.md for in-progress items.
 
 ## Week of 2026-06-01 (W23)
+
+### 2026-06-03
+
+- fix: remove the Cmd+T global hotkey for tags so the lazy wake-shortcut registrar no longer grabs it system-wide
+- perf: hybrid page-host P1.4b-6 port notes pane and page widgets to the shared overlay
+- fix: include hybrid page-host windows in session save so web pages restore, and skip the cmd Cmd+L local shortcut on the overlay so Cmd+L focuses the page address bar
+- feat: uniform hold-to-drag window moves for the hybrid page-host across chrome and web content, cancelled by pre-threshold movement so drag-and-drop and selection are preserved
+- fix: make hybrid session-restore focus-order deterministic so the saved focused window wins over trailing focus events from other restored windows
+- refactor: rename desktop test scripts to a test:{environment}:{implementation} system
+- fix: give the IZUI ESC handler a tile-aware role lookup so feature-tile windows run the escape protocol
 
 ### 2026-06-02
 
