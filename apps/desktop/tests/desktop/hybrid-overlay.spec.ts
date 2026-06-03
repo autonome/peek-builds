@@ -1595,3 +1595,232 @@ test.describe('Hybrid Chrome Overlay navbar reveal @desktop', () => {
     expect(hidePending).toBe(true);
   });
 });
+
+/**
+ * Regression fixes R1 / R2 / R3.
+ *
+ *  R1 — overlay no longer steals APP focus when backgrounded. The transparent
+ *       alwaysOnTop:'floating' overlay must, while the app is NOT frontmost,
+ *       force click-through AND drop its floating level so a click in another
+ *       app can neither hit it nor be swallowed by an Electron activation. On
+ *       become-active the floating level + forwarded click-through are restored.
+ *  R2 — click-and-hold on the navbar BACKGROUND drags the active hybrid window
+ *       (the canvas gesture), publishing page:set-bounds which main routes to
+ *       the host BaseWindow. The old dedicated #drag-zone was occluded by the
+ *       navbar/trigger zone and never fired.
+ *  R3 — Cmd+L (page:show-navbar) for the active window focuses the overlay
+ *       WINDOW so the DOM-focused URL input is typeable — but ONLY when the app
+ *       is active and the target is the active hybrid window (so it never
+ *       reintroduces R1 focus theft).
+ *
+ * Focus-free: app resign/become and navbar-background drag are driven through
+ * the test bridge (no real OS focus / app-active change), and R3 asserts the
+ * focus INTENT count (real OS focus is unobservable on macOS-headless).
+ */
+test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
+  let app: DesktopApp;
+
+  test.beforeAll(async () => {
+    ({ app } = await createPerDescribeApp('hybrid-overlay-r1r2r3'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  const bridgePresent = async () =>
+    app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
+
+  const waitOverlayReady = async () => {
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? s.ready === true : false;
+        }),
+      )
+      .toBe(true);
+  };
+
+  const makeActive = async (url: string) => {
+    const id = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 160, y: 160, width: 700, height: 460 });
+      await b.loadFakeContent(w, (arg as any).url);
+      b.setActive(w);
+      return w;
+    }, { url });
+    await waitOverlayReady();
+    return id;
+  };
+
+  test('R1: app resign-active forces click-through + drops floating; become-active restores', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    await makeActive('data:text/html,<body>r1 target</body>');
+
+    // Baseline (app active): the overlay floats and capture CAN be armed by the
+    // renderer's pointer-over-chrome path.
+    const baseline = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishCapture(true); // renderer would do this on chrome hover
+      const st = b.overlayState();
+      return { appActive: b.appActiveState(), alwaysOnTop: st?.alwaysOnTop, capture: b.captureState() };
+    });
+    expect(baseline.appActive).toBe(true);
+    expect(baseline.alwaysOnTop).toBe(true);
+    expect(baseline.capture).toBe(true);
+
+    // App resigns active (user clicked into another app). The overlay must drop
+    // its floating level AND be forced click-through so it cannot capture / float.
+    const afterResign = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const ok = b.simAppResignActive();
+      const st = b.overlayState();
+      return { ok, appActive: b.appActiveState(), alwaysOnTop: st?.alwaysOnTop, capture: b.captureState() };
+    });
+    expect(afterResign.ok).toBe(true);
+    expect(afterResign.appActive).toBe(false);
+    expect(afterResign.alwaysOnTop).toBe(false);
+    expect(afterResign.capture).toBe(false);
+
+    // While backgrounded, a renderer capture request (its mousemove loop firing
+    // over the chrome band beneath another app) must be IGNORED — capture stays
+    // off, so a click in the other app falls through.
+    const capWhileBg = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishCapture(true);
+      return b.captureState();
+    });
+    expect(capWhileBg).toBe(false);
+
+    // App becomes active again → floating level restored, click-through re-armed.
+    const afterBecome = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const ok = b.simAppBecomeActive();
+      const st = b.overlayState();
+      return { ok, appActive: b.appActiveState(), alwaysOnTop: st?.alwaysOnTop };
+    });
+    expect(afterBecome.ok).toBe(true);
+    expect(afterBecome.appActive).toBe(true);
+    expect(afterBecome.alwaysOnTop).toBe(true);
+
+    // After become-active, capture can be armed again.
+    const capAfterBecome = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishCapture(true);
+      return b.captureState();
+    });
+    expect(capAfterBecome).toBe(true);
+  });
+
+  test('R2: navbar-background drag publishes page:set-bounds and moves the host', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const start = { x: 200, y: 220, width: 520, height: 400 };
+    const id = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow((arg as any).start);
+      await b.loadFakeContent(w, 'data:text/html,<body>drag target</body>');
+      b.setActive(w);
+      return w;
+    }, { start });
+    await waitOverlayReady();
+
+    // Reveal the chrome so the navbar is interactive (the drag binds on it).
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.revealOverlayChrome();
+    });
+
+    const before = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.hostBounds((arg as any).id);
+    }, { id });
+
+    // Click-and-hold the navbar background and move it +120,+80 in screen coords.
+    const dragged = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.dragNavbarBackground(120, 80);
+    });
+    expect(dragged).toBe(true);
+
+    // The host BaseWindow moved by the drag delta (size unchanged).
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async (_e, arg) => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.hostBounds((arg as any).id);
+        }, { id }),
+      )
+      .toEqual({ x: before.x + 120, y: before.y + 80, width: start.width, height: start.height });
+  });
+
+  test('R3: Cmd+L focuses the overlay window for the active window only, never when backgrounded', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await makeActive('data:text/html,<body>cmd-l focus target</body>');
+
+    const start = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.showNavbarFocusCount();
+    });
+
+    // Cmd+L for the ACTIVE window → overlay window focus intent fires once, AND
+    // the navbar URL input takes shadow-DOM focus (typeable end-to-end).
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:show-navbar', { windowId: (arg as any).id });
+    }, { id });
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? { vis: s.navbarVisible, focused: s.navbarInputFocused } : null;
+        }),
+      )
+      .toEqual({ vis: true, focused: true });
+
+    const afterActive = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.showNavbarFocusCount();
+    });
+    expect(afterActive).toBe(start + 1);
+
+    // A Cmd+L for a FOREIGN windowId must NOT focus the overlay window.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:show-navbar', { windowId: (arg as any).id + 99999 });
+    }, { id });
+    const afterForeign = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.showNavbarFocusCount();
+    });
+    expect(afterForeign).toBe(afterActive);
+
+    // R1×R3 interaction: while the app is BACKGROUNDED a Cmd+L for the active
+    // window must NOT steal focus (no overlay-window focus intent).
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.simAppResignActive();
+    });
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.publishTopic('page:show-navbar', { windowId: (arg as any).id });
+    }, { id });
+    const afterBg = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.showNavbarFocusCount();
+    });
+    expect(afterBg).toBe(afterActive);
+
+    // Restore app-active so a later describe / teardown isn't left backgrounded.
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.simAppBecomeActive();
+    });
+  });
+});

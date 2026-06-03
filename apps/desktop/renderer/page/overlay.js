@@ -680,24 +680,58 @@ function endResize(handle, e) {
 }
 
 // --- Drag-to-move (mirrors page.js navbar-background instant drag) ---
+// R2: the dedicated invisible `#drag-zone` strip is z-index:40 and shares the
+// top-gutter band with the navbar (z100) and trigger zone (z50), which occlude
+// it — so its pointerdown never fired and click-and-hold-to-drag was lost.
+// The FAITHFUL canvas gesture (page.js ~line 1398) is a `mousedown` on the
+// NAVBAR BACKGROUND: the peek-navbar component stopPropagations mousedowns on
+// its own buttons / URL field, so any mousedown that reaches the navbar element
+// is on its background → start an instant window drag. We reproduce that here
+// (mousedown on the navbar element) and reuse the existing activeBounds /
+// publishBounds plumbing, so the active hybrid content window moves via the
+// already-wired page:set-bounds routing. The navbar buttons / URL field / the
+// dblclick-maximize keep working because the component swallows their events.
 let dragging = false;
 let dragStartX = 0;
 let dragStartY = 0;
 let dragStartBx = 0;
 let dragStartBy = 0;
 
-dragZone.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || activeWindowId == null || !activeBounds || maximized) return;
+function beginDrag(screenX, screenY) {
+  if (activeWindowId == null || !activeBounds || maximized) return false;
   dragging = true;
-  dragStartX = e.screenX;
-  dragStartY = e.screenY;
+  dragStartX = screenX;
+  dragStartY = screenY;
   dragStartBx = activeBounds.x;
   dragStartBy = activeBounds.y;
-  dragZone.classList.add('dragging');
-  dragZone.setPointerCapture(e.pointerId);
+  return true;
+}
+
+// Navbar-background instant drag (the canvas gesture). The navbar is only
+// pointer-interactive while visible + capturing, which is exactly when a drag
+// is wanted; the component swallows button/URL-field mousedowns first.
+navbar.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  if (!beginDrag(e.screenX, e.screenY)) return;
+  navbar.style.cursor = 'grabbing';
   e.preventDefault();
 });
-dragZone.addEventListener('pointermove', (e) => {
+
+// Keep the invisible drag-zone strip wired too (the gutter strip above the
+// navbar), using the same drag state.
+dragZone.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  if (!beginDrag(e.screenX, e.screenY)) return;
+  dragZone.classList.add('dragging');
+  try { dragZone.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
+  e.preventDefault();
+});
+
+// Document-level move/up drive the drag regardless of which element started it
+// (mirrors page.js, whose drag is driven by document/webview mousemove). Using
+// document listeners means the navbar-background mousedown drag works even
+// though the navbar component owns its own pointer events.
+document.addEventListener('mousemove', (e) => {
   if (!dragging || !activeBounds) return;
   if (e.buttons === 0) { endDrag(e); return; }
   activeBounds.x = dragStartBx + (e.screenX - dragStartX);
@@ -708,9 +742,10 @@ function endDrag(e) {
   if (!dragging) return;
   dragging = false;
   dragZone.classList.remove('dragging');
+  navbar.style.cursor = '';
   try { if (e && e.pointerId != null) dragZone.releasePointerCapture(e.pointerId); } catch { /* not captured */ }
 }
-dragZone.addEventListener('pointerup', endDrag);
+document.addEventListener('mouseup', endDrag);
 dragZone.addEventListener('pointercancel', endDrag);
 
 // --- Maximize / restore (navbar double-click, mirrors page.js toggleMaximize) ---

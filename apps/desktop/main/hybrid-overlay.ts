@@ -52,7 +52,7 @@
  * to nothing, and never creates a window — the canvas path is byte-identical.
  */
 
-import { BrowserWindow, BaseWindow as BaseWindowCtor, WebContentsView, screen } from 'electron';
+import { app, BrowserWindow, BaseWindow as BaseWindowCtor, WebContentsView, screen } from 'electron';
 import type { BaseWindow, WebContents } from 'electron';
 import { isHeadless, getTilePreloadPath } from './config.js';
 import { isHybridPageHost, DEBUG } from './debug-flag.js';
@@ -198,6 +198,33 @@ let lastCaptureState = false;
 // changes (we only ever track the FRONTMOST window's geometry).
 let followedBaseWin: BaseWindow | null = null;
 let onFollowedMove: (() => void) | null = null;
+
+// ── R1 app-active gate ──────────────────────────────────────────────────────
+// Whether THE APP (Electron) is currently the frontmost (active) application.
+// The overlay is a transparent `alwaysOnTop:'floating'` window that, when Peek
+// is backgrounded, can float OVER another app AND — because overlay.js drives
+// `setCapture(true)` from forwarded `mousemove`s over the chrome band — capture
+// a click meant for that other app (activating Electron and swallowing the
+// click). The app-active gate forces the overlay click-through + drops its
+// floating level whenever the app resigns active, so it can neither capture nor
+// float over other apps; on become-active we restore the floating + default
+// click-through and re-frame onto the current active hybrid window. We seed it
+// true (the app is normally active at init); `app.isActive?.()` is consulted
+// where available as a belt-and-suspenders read. Listeners are installed only
+// behind `isHybridPageHost()` (see initHybridOverlay), so this is dead state on
+// the canvas path.
+let appActive = true;
+// The bound resign/become handlers, kept so teardown can detach them.
+let onAppResignActive: (() => void) | null = null;
+let onAppBecomeActive: (() => void) | null = null;
+
+// R3 test-observability: how many times the `page:show-navbar` handler actually
+// called `overlayWin.focus()` (i.e. passed the app-active + active-window gates).
+// On macOS-headless `.focus()` does not grant real OS focus (no virtual
+// display), so `isFocused()` can't be asserted; this counter lets a focus-free
+// test verify the focus INTENT fired exactly when gated correctly (and never
+// when backgrounded / for a foreign window — the R1 interaction guard).
+let showNavbarFocusCount = 0;
 
 /**
  * Lazily create the singleton overlay window and mount the REAL shared chrome
@@ -384,13 +411,122 @@ function wireClickCapture(): void {
   captureWired = true;
   subscribe(getSystemAddress(), 'page-overlay:set-capture', (raw) => {
     const msg = raw as { capture?: boolean } | null;
-    const capture = !!(msg && msg.capture);
+    // R1: while the app is backgrounded, NEVER honor a capture request. The
+    // renderer's mousemove→setCapture loop fires from forwarded moves even while
+    // the pointer is working in another app beneath the floating overlay; if we
+    // turned the overlay opaque then, the next click would hit it (activating
+    // Electron and swallowing the click meant for the other app). Force
+    // click-through until the app is active again (become-active restores it).
+    const capture = !!(msg && msg.capture) && appActive;
     lastCaptureState = capture;
     if (!overlayWin || overlayWin.isDestroyed()) return;
     if (capture) {
       overlayWin.setIgnoreMouseEvents(false);
     } else {
       overlayWin.setIgnoreMouseEvents(true, { forward: true });
+    }
+  });
+}
+
+/**
+ * R1: install the app-active gate. When Electron resigns active (the user
+ * clicks into ANOTHER app), the floating overlay must neither capture pointer
+ * events nor float above the other app — otherwise a click in the other app
+ * lands on the (then-opaque) overlay, activates Electron, and is swallowed. On
+ * resign-active we force the overlay click-through AND drop its always-on-top
+ * level; on become-active we restore the floating level + default forwarded
+ * click-through and re-frame onto the current active hybrid window so the
+ * overlay snaps back over it. Idempotent: a second call is a no-op. Every
+ * overlayWin access is guarded with isDestroyed().
+ */
+function wireAppActiveGate(): void {
+  if (onAppResignActive || onAppBecomeActive) return;
+
+  onAppResignActive = () => {
+    appActive = false;
+    if (!overlayWin || overlayWin.isDestroyed()) return;
+    try {
+      // Force click-through (no forwarding either — we don't want the renderer's
+      // mousemove loop to fire while we're backgrounded), so no click over the
+      // overlay can hit it / activate Electron.
+      overlayWin.setIgnoreMouseEvents(true, { forward: false });
+      lastCaptureState = false;
+    } catch {
+      /* setIgnoreMouseEvents unsupported in some envs */
+    }
+    try {
+      // Drop the floating level so the overlay no longer sits above other apps.
+      overlayWin.setAlwaysOnTop(false);
+    } catch {
+      /* level arg unsupported on some platforms */
+    }
+  };
+
+  onAppBecomeActive = () => {
+    appActive = true;
+    if (!overlayWin || overlayWin.isDestroyed()) {
+      // No overlay yet — re-frame below will lazily create it if there is an
+      // active hybrid window.
+      const currentId = getActiveHybridWindowId();
+      if (currentId != null) retarget(currentId);
+      return;
+    }
+    try {
+      // Restore the floating level above the content window.
+      overlayWin.setAlwaysOnTop(true, 'floating');
+    } catch {
+      /* level arg unsupported */
+    }
+    try {
+      // Restore default click-through WITH forwarding (so the renderer's
+      // mousemove loop can re-arm capture over the chrome band as normal).
+      overlayWin.setIgnoreMouseEvents(true, { forward: true });
+      lastCaptureState = false;
+    } catch {
+      /* unsupported */
+    }
+    // Re-frame onto the current active hybrid window so the overlay snaps back
+    // over it (its geometry/level was just restored).
+    const currentId = getActiveHybridWindowId();
+    if (currentId != null) {
+      try {
+        retarget(currentId);
+      } catch {
+        /* retarget guarded internally */
+      }
+    }
+  };
+
+  app.on('did-resign-active', onAppResignActive);
+  app.on('did-become-active', onAppBecomeActive);
+}
+
+/**
+ * R3: focus the overlay WINDOW when Cmd+L (forwarded as `page:show-navbar`)
+ * targets the active hybrid window, so the overlay becomes key and the
+ * DOM-focused URL input (openNavbarFocused → focusUrl) is actually typeable.
+ * Without this the overlay is only ever `showInactive()`'d, so keystrokes keep
+ * going to the content WebContents and never reach the URL field.
+ *
+ * The focus-group (registry `setOverlayFocusProvider` + deferred blur) keeps the
+ * content window active while the overlay holds focus, so this does NOT
+ * deactivate/hide the content. R1 interaction: we gate on `appActive` and on the
+ * message targeting the ACTIVE hybrid window, so a `page:show-navbar` for a
+ * background/foreign window — or one that arrives while the app is backgrounded
+ * — never steals focus (which would re-introduce the R1 focus theft).
+ */
+function wireShowNavbarFocus(): void {
+  subscribe(getSystemAddress(), 'page:show-navbar', (raw) => {
+    const msg = raw as { windowId?: number } | null;
+    if (!msg || msg.windowId == null) return;
+    if (!appActive) return; // never steal focus while backgrounded (R1)
+    if (msg.windowId !== getActiveHybridWindowId()) return; // active window only
+    if (!overlayWin || overlayWin.isDestroyed()) return;
+    showNavbarFocusCount++;
+    try {
+      overlayWin.focus();
+    } catch {
+      /* focus unsupported / window gone */
     }
   });
 }
@@ -528,6 +664,23 @@ export function initHybridOverlay(): void {
   // the overlay window's lifetime.
   wireClickCapture();
 
+  // R1: seed the app-active state (the app is normally active at init) and
+  // install the resign/become gate so a backgrounded overlay can neither
+  // capture clicks nor float over other apps. `app.isActive()` exists at
+  // runtime on macOS but is absent from this Electron's type defs, so read it
+  // through a guarded cast (it stays `true` when the method is unavailable).
+  try {
+    const maybeIsActive = (app as unknown as { isActive?: () => boolean }).isActive;
+    appActive = typeof maybeIsActive === 'function' ? maybeIsActive.call(app) : true;
+  } catch {
+    appActive = true;
+  }
+  wireAppActiveGate();
+
+  // R3: focus the overlay window on a Cmd+L (page:show-navbar) for the active
+  // hybrid window so the URL field is typeable (gated on app-active, see above).
+  wireShowNavbarFocus();
+
   unsubscribeActive = onActiveHybridWindowChange((id) => {
     try {
       retarget(id);
@@ -566,13 +719,30 @@ export function teardownHybridOverlay(): void {
     unsubscribeActive = null;
   }
   unfollow();
+  // R1: detach the app-active gate listeners.
+  if (onAppResignActive) {
+    try { app.removeListener('did-resign-active', onAppResignActive); } catch { /* gone */ }
+    onAppResignActive = null;
+  }
+  if (onAppBecomeActive) {
+    try { app.removeListener('did-become-active', onAppBecomeActive); } catch { /* gone */ }
+    onAppBecomeActive = null;
+  }
+  appActive = true;
+  showNavbarFocusCount = 0;
   if (overlayWin && !overlayWin.isDestroyed()) {
     overlayWin.destroy();
   }
   overlayWin = null;
-  // Drop the click-capture subscription so a later re-init re-wires cleanly.
+  // Drop the click-capture + show-navbar-focus subscriptions so a later re-init
+  // re-wires cleanly.
   try {
     unsubscribe(getSystemAddress(), 'page-overlay:set-capture');
+  } catch {
+    /* never throw on teardown */
+  }
+  try {
+    unsubscribe(getSystemAddress(), 'page:show-navbar');
   } catch {
     /* never throw on teardown */
   }
@@ -791,6 +961,39 @@ function installTestBridge(): void {
     },
     overlayState() {
       return _getOverlayStateForTests();
+    },
+    /**
+     * R1 (app-active gate) verification, focus-free. A headless test cannot
+     * drive REAL app resign/become-active (no virtual display on macOS), so we
+     * invoke the SAME handlers the `app` `'did-resign-active'`/`'did-become-active'`
+     * events would run. After resign: the overlay must be forced click-through
+     * (captureState false) and drop its floating level (overlayState().alwaysOnTop
+     * false). After become: floating restored (alwaysOnTop true) and click-through
+     * re-armed with forwarding.
+     */
+    simAppResignActive(): boolean {
+      if (!onAppResignActive) return false;
+      onAppResignActive();
+      return true;
+    },
+    simAppBecomeActive(): boolean {
+      if (!onAppBecomeActive) return false;
+      onAppBecomeActive();
+      return true;
+    },
+    /** R1: whether the app-active gate currently considers the app active. */
+    appActiveState(): boolean {
+      return appActive;
+    },
+    /**
+     * R3: how many times the `page:show-navbar` handler called `overlayWin.focus()`
+     * (passed the app-active + active-window gates). Lets a focus-free test verify
+     * the overlay-window focus INTENT fires when Cmd+L targets the active window —
+     * and NEVER when the app is backgrounded or the target is a foreign window —
+     * without relying on real OS focus (unobservable on macOS-headless).
+     */
+    showNavbarFocusCount(): number {
+      return showNavbarFocusCount;
     },
     /**
      * Gutter geometry verification: the per-side insets from the overlay frame to
@@ -1242,6 +1445,41 @@ function installTestBridge(): void {
     /** The last click-capture state applied to the overlay window. */
     captureState(): boolean {
       return lastCaptureState;
+    },
+    /**
+     * R2 (navbar-background drag) verification, focus-free. Drives the exact DOM
+     * gesture the restored drag binds: a `mousedown` on the navbar BACKGROUND
+     * (not a button/URL field), then a document `mousemove` translated by
+     * (dxScreen,dyScreen) in SCREEN coords, then `mouseup`. The renderer's drag
+     * handler computes new bounds and publishes `page:set-bounds`, which main
+     * routes to the host BaseWindow — so a test can assert `hostBounds(id)` moved
+     * by the delta. Resolves true if the gesture dispatched. Pure executeJavaScript.
+     */
+    dragNavbarBackground(dxScreen: number, dyScreen: number): Promise<boolean> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(false);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const nb = document.getElementById('navbar');
+            if (!nb) return false;
+            // Start coords (arbitrary in-navbar point in screen space).
+            const startX = 500, startY = 30;
+            nb.dispatchEvent(new MouseEvent('mousedown', {
+              button: 0, buttons: 1, screenX: startX, screenY: startY, bubbles: true,
+            }));
+            document.dispatchEvent(new MouseEvent('mousemove', {
+              buttons: 1,
+              screenX: startX + ${Math.round(dxScreen)},
+              screenY: startY + ${Math.round(dyScreen)},
+              bubbles: true,
+            }));
+            document.dispatchEvent(new MouseEvent('mouseup', {
+              button: 0, buttons: 0, bubbles: true,
+            }));
+            return true;
+          })()`,
+        )
+        .catch(() => false);
     },
     /**
      * Publish an arbitrary `page:*` topic on the system address (the same path
