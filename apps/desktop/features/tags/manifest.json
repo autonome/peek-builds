@@ -87,10 +87,6 @@
       "keys": "Option+t",
       "command": "open tags",
       "global": true
-    },
-    {
-      "keys": "CommandOrControl+T",
-      "command": "open tags"
     }
   ]
 }

@@ -446,9 +446,6 @@ const extension = {
 
     // Register global shortcut Option+T (works when Peek is not focused)
     api.shortcuts.register('Option+t', openTags, { global: true });
-
-    // Register local shortcut Cmd+T (works when a Peek window is focused)
-    api.shortcuts.register('CommandOrControl+T', openTags);
   },
 
   uninit() {
@@ -460,7 +457,6 @@ const extension = {
       api.commands.unregister('untag');
       api.commands.unregister('tagset');
       api.shortcuts.unregister('Option+t', { global: true });
-      api.shortcuts.unregister('CommandOrControl+T');
     }
   }
 };
