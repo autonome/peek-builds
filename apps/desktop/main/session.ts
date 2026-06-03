@@ -1157,6 +1157,31 @@ export async function restoreSessionSnapshot(
                 resolveFocusedDomReady = null;
               }
             });
+          } else {
+            // Hybrid page-hosts are BaseWindows — getLiveWindow returns null for
+            // them. The hybrid branch in ipc.ts already showInactive()'d the
+            // window during open, so it is visible; here we just (a) raise +
+            // activate the FOCUSED hybrid window if the app is still focused,
+            // and (b) resolve the focused-head-start off its content wc's
+            // dom-ready so the loop's head-start pause behaves like the canvas
+            // path. The final z-order/focus raise still happens in the post-loop
+            // focus block below.
+            const hybrid = getHybridWindow(restoredId);
+            if (hybrid && !hybrid.baseWin.isDestroyed()) {
+              const wasFocused = descriptor.focused === true;
+              if (wasFocused && getIzuiCoordinator().isAppFocused()) {
+                try { hybrid.baseWin.moveTop(); } catch { /* unsupported on some platforms */ }
+                try { hybrid.baseWin.focus(); } catch { /* unsupported on some platforms */ }
+              }
+              if (wasFocused && !hybrid.contentWC.isDestroyed()) {
+                hybrid.contentWC.once('dom-ready', () => {
+                  if (resolveFocusedDomReady) {
+                    resolveFocusedDomReady();
+                    resolveFocusedDomReady = null;
+                  }
+                });
+              }
+            }
           }
         }
 
@@ -1239,12 +1264,25 @@ export async function restoreSessionSnapshot(
       const coordinator = getIzuiCoordinator();
       coordinator.setFocusedWindow(focusedWindowId);
       DEBUG && console.log(`[session] Seeded izui focusedWindowId=${focusedWindowId}`);
+      // Resolve the focused window. A hybrid page-host is a BaseWindow, so
+      // getLiveWindow (BrowserWindow.fromId) returns null for it — fall back to
+      // the hybrid registry's baseWin. Without this, the web page the user left
+      // in front is never raised on restore and Settings (or whatever
+      // BrowserWindow restored last) stays frontmost.
       const focusWin = getLiveWindow(focusedWindowId);
+      const hybridFocus = focusWin ? null : getHybridWindow(focusedWindowId);
       if (focusWin && coordinator.isAppFocused()) {
         focusWin.focus();
         _restoreFocusCount++;
         DEBUG && console.log(`[session] Focused restored window: ${focusedWindowId}`);
-      } else if (focusWin) {
+      } else if (hybridFocus && !hybridFocus.baseWin.isDestroyed() && coordinator.isAppFocused()) {
+        // Raise + focus the hybrid host BaseWindow. moveTop() puts it above the
+        // other restored windows in z-order; focus() makes it the key window.
+        try { hybridFocus.baseWin.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
+        hybridFocus.baseWin.focus();
+        _restoreFocusCount++;
+        DEBUG && console.log(`[session] Focused restored hybrid window: ${focusedWindowId}`);
+      } else if (focusWin || hybridFocus) {
         DEBUG && console.log(`[session] Skipped focus on ${focusedWindowId} — user switched away`);
       }
     } catch {

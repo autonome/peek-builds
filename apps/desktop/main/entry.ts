@@ -112,6 +112,7 @@ import {
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest } from './session.js';
 import { getIzuiCoordinator } from './izui-state.js';
+import { getHybridWindow } from './hybrid-page-host-registry.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
 import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
 import { getLazyTileManifest } from './tile-lazy.js';
@@ -211,6 +212,35 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    * See tests/desktop/session-restore-save-during-restore.spec.ts.
    */
   setRestoreCompleteForTest: (value: boolean) => setRestoreCompleteForTest(value),
+  /**
+   * Test-only: simulate a hybrid page-host window gaining OS focus by emitting
+   * the REAL `'focus'` event on its host BaseWindow — the exact event Electron
+   * fires when the user clicks into the page. On macOS-headless `baseWin.focus()`
+   * does NOT grant real OS focus (no virtual display), so a test must drive the
+   * event the way the OS would. This exercises the genuine focus-tracker wiring
+   * (hybrid registry active id + ipc.ts lastFocusedVisibleWindowId), NOT an
+   * internal setter. Returns false if the id is not a live hybrid window.
+   * See tests/desktop/session-restore-page-host.spec.ts.
+   */
+  focusHybridWindowForTest: (windowId: number): boolean => {
+    const entry = getHybridWindow(windowId);
+    if (!entry || entry.baseWin.isDestroyed()) return false;
+    (entry.baseWin as unknown as { emit(name: string): boolean }).emit('focus');
+    return true;
+  },
+  /**
+   * Test-only: is `windowId` a live hybrid page-host (BaseWindow) window?
+   * Lets the session-restore-page-host spec skip its hybrid-focus assertions
+   * when run on the canvas path (PEEK_PAGEHOST_HYBRID off), the same way the
+   * hybrid-overlay suite skips on a missing bridge.
+   */
+  isHybridWindowForTest: (windowId: number): boolean => {
+    const entry = getHybridWindow(windowId);
+    return !!(entry && !entry.baseWin.isDestroyed());
+  },
+  /** Test-only: the IZUI coordinator's current focused-window id (or null). */
+  getIzuiFocusedWindowId: (): number | null =>
+    getIzuiCoordinator().getFocusedWindowId(),
   /**
    * Read the current on-disk session snapshot directly. Returns the parsed
    * SessionSnapshot object or null if no snapshot exists. Used by tests to

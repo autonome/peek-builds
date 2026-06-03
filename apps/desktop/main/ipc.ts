@@ -260,6 +260,31 @@ export function clearLastFocusedVisibleWindowId(windowId: number): void {
   }
 }
 
+/**
+ * Update the focus trackers for a hybrid page-host window.
+ *
+ * Hybrid page-hosts are `BaseWindow`s, not `BrowserWindow`s, so they never
+ * flow through `trackOnWindowFocus`/`trackVisibleWindowFocus` (which read
+ * `win.webContents.getURL()` — a BaseWindow has no root `.webContents`). The
+ * hybrid branch in `setWindowOpenHandler` calls this from the host
+ * BaseWindow's `'focus'` event so a focused web page becomes
+ * `lastFocusedVisibleWindowId` (and, for an http(s) page, `lastContentWindowId`)
+ * exactly like a canvas web window does. Without this, session-save records the
+ * WRONG window (the last-focused BrowserWindow, e.g. Settings) as the focused
+ * descriptor, and restore brings that window — not the web page — to the front.
+ */
+export function trackHybridWindowFocus(windowId: number, url: string): void {
+  // Mirror trackContentWindowFocus: only http(s) pages are "content" windows.
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    lastContentWindowId = windowId;
+  }
+  // Mirror trackVisibleWindowFocus: a hybrid page-host is always a focusable,
+  // non-background, non-overlay visible content window, so it is unconditionally
+  // the last-focused visible window when it gains focus.
+  lastFocusedVisibleWindowId = windowId;
+  console.log(`[focus-tracker] updated lastFocusedVisibleWindowId=${lastFocusedVisibleWindowId} (hybrid) url=${url.slice(0, 80)}`);
+}
+
 // ============================================================================
 // Popup-to-Opener Bridge (OAuth / window.opener shim)
 // ============================================================================
@@ -1852,6 +1877,28 @@ export function registerWindowHandlers(): void {
           contentWC: view.webContents,
           key: options.key,
         });
+
+        // Feed the per-app focus trackers (lastFocusedVisibleWindowId /
+        // lastContentWindowId) from the host BaseWindow's focus event. The
+        // hybrid registry tracks its OWN active-window id off this same event,
+        // but those ipc.ts trackers are what session-save reads to mark the
+        // focused descriptor (and what per-window commands target). A BaseWindow
+        // never flows through trackOnWindowFocus (it has no root webContents),
+        // so without this a focused web page is never recorded as focused —
+        // session restore then raises the last-focused BrowserWindow (e.g.
+        // Settings) instead of the web page the user left in front.
+        const onHybridHostFocus = () => {
+          try {
+            if (view.webContents.isDestroyed()) return;
+            trackHybridWindowFocus(baseWin.id, view.webContents.getURL());
+          } catch {
+            /* getURL can throw on a torn-down wc — ignore */
+          }
+        };
+        baseWin.on('focus', onHybridHostFocus);
+        // Belt-and-suspenders: clicking directly into the page focuses the
+        // content webContents even when the host-window focus event is missed.
+        view.webContents.on('focus', onHybridHostFocus);
 
         // P1.2 — re-attach the chrome-ext compat hooks to THIS content
         // webContents EXPLICITLY. We cannot rely on entry.ts's

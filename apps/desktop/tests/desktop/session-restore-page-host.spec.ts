@@ -525,4 +525,148 @@ test.describe('Session Restore Page Host @desktop', () => {
     expect(endW, 'width should have shrunk from maximized size').toBeLessThan(maxW);
     expect(endH, 'height should have shrunk from maximized size').toBeLessThan(maxH);
   });
+
+  // ── Focus-order regression (hybrid page-host) ──────────────────────────
+  //
+  // User-observed bug (PEEK_PAGEHOST_HYBRID=1): open a Settings window, then
+  // open a web page (a hybrid page-host) so the WEB PAGE is the frontmost /
+  // focused window. Quit. Relaunch. EXPECTED: the web page is restored as the
+  // frontmost/focused window. ACTUAL (bug): Settings is in front; the web page
+  // is not raised.
+  //
+  // This is a REAL-OUTCOME test, not a proxy: it drives the genuine focus path
+  // (the host BaseWindow's 'focus' event — the exact event Electron fires on OS
+  // focus; `baseWin.focus()` cannot grant real focus on macOS-headless), then
+  // the real save→restore cycle, and asserts the OUTCOME — the snapshot marks
+  // the web page focused, and after restore the IZUI coordinator's focused
+  // window IS the restored web page (not Settings).
+  test('focus-order: a focused hybrid web page is restored frontmost over a Settings window', async () => {
+    const slug = 'focus-order-roundtrip';
+    const url = `http://127.0.0.1:${serverPort}/${slug}`;
+
+    // Open Settings (a peek:// BrowserWindow). It updates the per-app focus
+    // tracker (lastFocusedVisibleWindowId) on focus, exactly like the real app.
+    const settingsResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://app/settings/settings.html', {
+        width: 1000, height: 700, key: 'focus-order-settings',
+      });
+    });
+    expect(settingsResult.success).toBe(true);
+    const settingsWindowId = settingsResult.id as number;
+    const settingsWindow = await app.getWindow('settings/settings.html', 15000);
+    await settingsWindow.waitForLoadState('domcontentloaded');
+
+    // Open the web page. Under the hybrid flag this is a BaseWindow page-host;
+    // its content webContents loads the bare http URL (no canvas ?width/height
+    // wrapper), so we just wait for the page to load.
+    const { pageWindow, windowId: webWindowId } = await openPageHost(url);
+    await pageWindow.waitForLoadState('domcontentloaded');
+
+    // Only meaningful on the hybrid path — skip cleanly on the canvas path
+    // (PEEK_PAGEHOST_HYBRID off) the same way the hybrid-overlay suite does.
+    const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
+      (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, webWindowId) as boolean;
+    test.skip(!isHybrid, 'hybrid flag off — focus-order bug is hybrid-only');
+
+    // The user clicks into the web page → it becomes frontmost/focused. Drive
+    // the REAL host-BaseWindow 'focus' event (Electron's own event on OS focus).
+    const focused = await app.evaluateMain!(((_e: unknown, id: number) =>
+      (globalThis as any).__peek_test.focusHybridWindowForTest(id)) as any, webWindowId) as boolean;
+    expect(focused, 'focusHybridWindowForTest should find the live hybrid window').toBe(true);
+
+    // Save the snapshot.
+    await app.evaluateMain!((() =>
+      (globalThis as any).__peek_test.forceSaveSession()) as any);
+
+    // OUTCOME 1 (save side): the snapshot must mark the WEB PAGE as the focused
+    // descriptor — not Settings. With the bug, the hybrid focus never updates
+    // lastFocusedVisibleWindowId, so Settings (the last BrowserWindow to update
+    // it) is recorded focused.
+    const snapshot = await app.evaluateMain!((() =>
+      (globalThis as any).__peek_test.getLastSnapshot()) as any) as
+      { windows: Array<{ url: string; focused: boolean }> } | null;
+    expect(snapshot, 'snapshot should exist after forceSaveSession').not.toBeNull();
+    const focusedDescriptor = (snapshot!.windows || []).find((w) => w.focused) || null;
+    expect(focusedDescriptor, 'snapshot must carry exactly one focused descriptor').not.toBeNull();
+    expect(
+      focusedDescriptor!.url,
+      'snapshot focused window must be the WEB PAGE, not Settings (save-side: hybrid focus must feed lastFocusedVisibleWindowId)',
+    ).toContain(slug);
+
+    // Close both windows so restore has work to do.
+    await bgWindow.evaluate(async (ids: number[]) => {
+      for (const id of ids) {
+        await (window as any).app.window.close(id);
+      }
+    }, [webWindowId, settingsWindowId]);
+    await bgWindow.waitForFunction(async (ids: number[]) => {
+      const list = await (window as any).app.window.list({ includeInternal: false });
+      if (!list?.success) return false;
+      const live = new Set((list.windows || []).map((w: any) => w.id));
+      return ids.every((id) => !live.has(id));
+    }, [webWindowId, settingsWindowId]);
+
+    // Restore with the app focused (so the restore focus path actually runs).
+    await app.evaluateMain!(((_e: unknown) =>
+      (globalThis as any).__peek_test.setAppFocusedForTest(true)) as any);
+    const restoreResult = await app.evaluateMain!((() =>
+      (globalThis as any).__peek_test.forceRestoreSession()) as any) as
+      { restored: number; failed: number; total: number };
+    expect(restoreResult.restored, 'both windows should restore').toBeGreaterThanOrEqual(2);
+
+    // Find the restored web page window (its content URL carries the slug).
+    const restoredPageWindow = await app.getWindow(slug, 15000);
+    await restoredPageWindow.waitForLoadState('domcontentloaded');
+    // Resolve the restored hybrid window id by matching the slug in the live
+    // window list (the restored window has a fresh id; match on content URL).
+    const restoredId = await bgWindow.evaluate(async (s: string) => {
+      const list = await (window as any).app.window.list({ includeInternal: false });
+      if (!list?.success) return null;
+      const match = (list.windows || []).find(
+        (w: any) => typeof w.url === 'string' && w.url.includes(s),
+      );
+      return match ? match.id : null;
+    }, slug) as number | null;
+    expect(restoredId, 'restored web window must be enumerable').not.toBeNull();
+
+    // OUTCOME 2 (restore side): the focused hybrid window must have actually
+    // been RAISED + focused. restoreSessionSnapshot's post-loop focus block
+    // resolves the focused window via getLiveWindow (BrowserWindow.fromId) —
+    // which returns null for a hybrid BaseWindow — and only increments the
+    // `focuses` counter when it actually calls .focus() on the resolved window.
+    // With the bug, the hybrid window is never resolved, so .focus() is skipped
+    // and `focuses` stays 0 (Settings stays frontmost). The fix falls back to
+    // the hybrid registry's baseWin and raises it. This counter is the real
+    // signal that the raise happened — not just that izui's id was seeded.
+    const counters = await app.evaluateMain!(((_e: unknown) =>
+      (globalThis as any).__peek_test.getRestoreFocusCounters()) as any) as
+      { shows: number; showInactives: number; focuses: number };
+    expect(
+      counters.focuses,
+      'restore must actually raise+focus the restored hybrid web page (not skip it because getLiveWindow returns null for a BaseWindow)',
+    ).toBeGreaterThanOrEqual(1);
+
+    // The IZUI coordinator's focused window — the app's notion of which window
+    // is frontmost — must be the restored WEB PAGE, not Settings.
+    const izuiFocusedId = await app.evaluateMain!(((_e: unknown) =>
+      (globalThis as any).__peek_test.getIzuiFocusedWindowId()) as any) as number | null;
+    expect(
+      izuiFocusedId,
+      'after restore, the focused window must be the restored web page (raised over Settings), not Settings',
+    ).toBe(restoredId);
+
+    // Cleanup: close everything this test opened + release the focus override.
+    await app.evaluateMain!(((_e: unknown) =>
+      (globalThis as any).__peek_test.clearAppFocusedForTest()) as any);
+    await bgWindow.evaluate(async () => {
+      const list = await (window as any).app.window.list({ includeInternal: false });
+      if (!list?.success) return;
+      for (const w of list.windows || []) {
+        if (typeof w.url === 'string'
+          && (w.url.includes('focus-order-roundtrip') || w.url.includes('settings/settings.html'))) {
+          await (window as any).app.window.close(w.id);
+        }
+      }
+    });
+  });
 });
