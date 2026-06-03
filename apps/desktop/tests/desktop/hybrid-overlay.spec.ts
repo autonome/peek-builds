@@ -1715,7 +1715,42 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
     expect(capAfterBecome).toBe(true);
   });
 
-  test('R2: navbar-background drag publishes page:set-bounds and moves the host', async () => {
+  test('hold-to-drag FSM: hold-then-move drags; pre-threshold move cancels (pure, manual clock)', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    // Ensure the overlay renderer exists + is ready (the FSM factory lives there).
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 100, y: 100, width: 600, height: 400 });
+      b.setActive(w);
+    });
+    await waitOverlayReady();
+
+    const r = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.holdDragFsmUnit();
+    });
+    expect(r).not.toBeNull();
+    const res = r as any;
+
+    // Case 1 — press → hold fires → move drags: grab cursor shown once on fire,
+    // a drag started from the press point, and subsequent moves drove it.
+    expect(res.caseDrag.grab).toBe(1);
+    expect(res.caseDrag.starts).toEqual([[100, 100]]);
+    expect(res.caseDrag.draggedDuring).toBe(true);
+    expect(res.caseDrag.moves).toEqual([[140, 130], [160, 150]]);
+    expect(res.caseDrag.ends).toBe(1);
+
+    // Case 2 — press → move BEFORE threshold cancels: even after the threshold
+    // would elapse, the FSM never becomes ready/dragging and never starts/moves.
+    expect(res.caseCancel.state).toEqual({
+      buttonDown: true, pending: false, ready: false, dragging: false,
+    });
+    expect(res.caseCancel.starts).toEqual([]);
+    expect(res.caseCancel.moves).toEqual([]);
+  });
+
+  test('hold-to-drag: navbar background HOLD then move publishes page:set-bounds and moves the host', async () => {
     test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
 
     const start = { x: 200, y: 220, width: 520, height: 400 };
@@ -1739,10 +1774,11 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
       return b.hostBounds((arg as any).id);
     }, { id });
 
-    // Click-and-hold the navbar background and move it +120,+80 in screen coords.
+    // Press-and-HOLD the navbar background (still, past the threshold), THEN move
+    // +120,+80 in screen coords. Only the deliberate hold-then-move drags.
     const dragged = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
-      return b.dragNavbarBackground(120, 80);
+      return b.holdDragNavbar(120, 80);
     });
     expect(dragged).toBe(true);
 
@@ -1755,6 +1791,44 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
         }, { id }),
       )
       .toEqual({ x: before.x + 120, y: before.y + 80, width: start.width, height: start.height });
+  });
+
+  test('hold-to-drag: pre-threshold movement CANCELS candidacy (dnd / selection / click preserved) and does NOT move the host', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const start = { x: 260, y: 280, width: 500, height: 380 };
+    const id = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow((arg as any).start);
+      await b.loadFakeContent(w, 'data:text/html,<body>no drag</body>');
+      b.setActive(w);
+      return w;
+    }, { start });
+    await waitOverlayReady();
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.revealOverlayChrome();
+    });
+
+    const before = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.hostBounds((arg as any).id);
+    }, { id });
+
+    // Press, move beyond tolerance BEFORE the hold fires → candidacy cancels even
+    // though the threshold then elapses: FSM never enters ready/dragging.
+    const fsm = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.holdDragCancelByEarlyMove();
+    });
+    expect(fsm).toEqual({ buttonDown: true, pending: false, ready: false, dragging: false });
+
+    // Host did NOT move (no page:set-bounds from a window drag).
+    const after = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.hostBounds((arg as any).id);
+    }, { id });
+    expect(after).toEqual(before);
   });
 
   test('R3: Cmd+L focuses the overlay window for the active window only, never when backgrounded', async () => {

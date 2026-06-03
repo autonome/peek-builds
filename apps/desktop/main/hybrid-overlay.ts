@@ -1447,25 +1447,37 @@ function installTestBridge(): void {
       return lastCaptureState;
     },
     /**
-     * R2 (navbar-background drag) verification, focus-free. Drives the exact DOM
-     * gesture the restored drag binds: a `mousedown` on the navbar BACKGROUND
-     * (not a button/URL field), then a document `mousemove` translated by
-     * (dxScreen,dyScreen) in SCREEN coords, then `mouseup`. The renderer's drag
-     * handler computes new bounds and publishes `page:set-bounds`, which main
-     * routes to the host BaseWindow — so a test can assert `hostBounds(id)` moved
-     * by the delta. Resolves true if the gesture dispatched. Pure executeJavaScript.
+     * Hold-to-drag (navbar-background) verification, focus-free. Drives the
+     * UNIFORM hold-to-drag gesture the overlay now binds: a `mousedown` on the
+     * navbar BACKGROUND (not a button/URL field), HOLD still for the
+     * `dragHoldDelay` threshold (read live from the overlay's FSM), THEN a
+     * document `mousemove` translated by (dxScreen,dyScreen) in SCREEN coords,
+     * then `mouseup`. The renderer's hold-drag FSM begins the window drag only
+     * after the hold fires, computes new bounds and publishes `page:set-bounds`,
+     * which main routes to the host BaseWindow — so a test can assert
+     * `hostBounds(id)` moved by the delta. Resolves true if the gesture dragged.
+     * Pure executeJavaScript (waits the real threshold inside the renderer).
      */
-    dragNavbarBackground(dxScreen: number, dyScreen: number): Promise<boolean> {
+    holdDragNavbar(dxScreen: number, dyScreen: number): Promise<boolean> {
       if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(false);
       return overlayWin.webContents
         .executeJavaScript(
-          `(() => {
+          `(async () => {
             const nb = document.getElementById('navbar');
-            if (!nb) return false;
-            // Start coords (arbitrary in-navbar point in screen space).
+            const t = globalThis.__peekHoldDragTest;
+            if (!nb || !t) return false;
             const startX = 500, startY = 30;
             nb.dispatchEvent(new MouseEvent('mousedown', {
               button: 0, buttons: 1, screenX: startX, screenY: startY, bubbles: true,
+            }));
+            // Hold STILL past the threshold (read from the live prefs-driven FSM,
+            // default 1000ms) so the hold fires; generous margin for the timer to
+            // fire under a loaded test run before we move.
+            await new Promise((r) => setTimeout(r, 1500));
+            // First post-hold move begins the drag; a second move drives it to
+            // the destination delta.
+            document.dispatchEvent(new MouseEvent('mousemove', {
+              buttons: 1, screenX: startX + 1, screenY: startY + 1, bubbles: true,
             }));
             document.dispatchEvent(new MouseEvent('mousemove', {
               buttons: 1,
@@ -1473,13 +1485,119 @@ function installTestBridge(): void {
               screenY: startY + ${Math.round(dyScreen)},
               bubbles: true,
             }));
+            const wasDragging = t.holdDrag.isDragging();
             document.dispatchEvent(new MouseEvent('mouseup', {
               button: 0, buttons: 0, bubbles: true,
             }));
-            return true;
+            return wasDragging;
           })()`,
         )
         .catch(() => false);
+    },
+    /**
+     * Pure hold-to-drag FSM coverage (no real timers / pointer): drive the
+     * exported `createHoldDrag` factory with an INJECTED manual clock + recording
+     * effects, and assert both transitions deterministically:
+     *   - press → hold-fires → move ⇒ a window drag starts + moves
+     *   - press → move-before-threshold ⇒ candidacy cancels, no drag even after
+     *     the threshold would have elapsed
+     * Resolves the recorded effects so the test can assert the exact behavior.
+     */
+    holdDragFsmUnit(): Promise<unknown> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(null);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const t = globalThis.__peekHoldDragTest;
+            if (!t) return null;
+            const make = (canStart) => {
+              const rec = { starts: [], moves: [], ends: 0, grab: 0 };
+              let pending = null; // queued scheduled fn (manual clock)
+              const fsm = t.createHoldDrag({
+                getThreshold: () => 1000,
+                getTolerance: () => 5,
+                canStart: () => canStart,
+                onDragStart: (x, y) => rec.starts.push([x, y]),
+                onDragMove: (x, y) => rec.moves.push([x, y]),
+                onDragEnd: () => { rec.ends++; },
+                setGrabCursor: () => { rec.grab++; },
+                clearCursor: () => {},
+                setSchedule: (fn) => { pending = fn; return 1; },
+                clearSchedule: () => { pending = null; },
+              });
+              return { fsm, rec, fire: () => { if (pending) { const f = pending; pending = null; f(); } } };
+            };
+
+            // Case 1: press → hold fires → move → drag starts + moves.
+            const a = make(true);
+            a.fsm.onDown(100, 100);
+            a.fire();                 // hold threshold elapses (still held, no move)
+            a.fsm.onMove(140, 130);   // first post-hold move begins the drag
+            a.fsm.onMove(160, 150);   // drives it
+            const draggedDuringA = a.fsm.isDragging();
+            a.fsm.onUp();
+
+            // Case 2: press → move BEFORE threshold → cancelled (no drag).
+            const b = make(true);
+            b.fsm.onDown(100, 100);
+            b.fsm.onMove(110, 100);   // 10px > tolerance, before fire → cancel
+            b.fire();                 // threshold elapses, but candidacy cancelled
+            const stateB = b.fsm._state();
+            b.fsm.onMove(200, 200);   // further move must NOT drag
+            b.fsm.onUp();
+
+            return {
+              caseDrag: {
+                grab: a.rec.grab,
+                starts: a.rec.starts,
+                moves: a.rec.moves,
+                draggedDuring: draggedDuringA,
+                ends: a.rec.ends,
+              },
+              caseCancel: {
+                state: stateB,
+                starts: b.rec.starts,
+                moves: b.rec.moves,
+              },
+            };
+          })()`,
+        )
+        .catch(() => null);
+    },
+    /**
+     * Pre-threshold-move CANCELS the window-drag candidacy (dnd / selection /
+     * click safety). Drives: mousedown on the navbar background, then an
+     * IMMEDIATE move beyond tolerance (before the hold fires), then a settle past
+     * the threshold. Resolves the FSM state — `dragging`/`ready`/`pending` must
+     * all be false (candidacy was cancelled, so no window move starts even though
+     * the threshold elapsed). Pure executeJavaScript.
+     */
+    holdDragCancelByEarlyMove(): Promise<unknown> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(null);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(async () => {
+            const nb = document.getElementById('navbar');
+            const t = globalThis.__peekHoldDragTest;
+            if (!nb || !t) return null;
+            const startX = 500, startY = 30;
+            nb.dispatchEvent(new MouseEvent('mousedown', {
+              button: 0, buttons: 1, screenX: startX, screenY: startY, bubbles: true,
+            }));
+            // Move FAR beyond tolerance immediately (pre-threshold) → cancel.
+            document.dispatchEvent(new MouseEvent('mousemove', {
+              buttons: 1, screenX: startX + 60, screenY: startY + 60, bubbles: true,
+            }));
+            // Let the (now-cleared) threshold window elapse; nothing should fire.
+            await new Promise((r) => setTimeout(r, 1200));
+            const st = t.holdDrag._state();
+            document.dispatchEvent(new MouseEvent('mouseup', {
+              button: 0, buttons: 0, bubbles: true,
+            }));
+            return st;
+          })()`,
+        )
+        .catch(() => null);
     },
     /**
      * Publish an arbitrary `page:*` topic on the system address (the same path

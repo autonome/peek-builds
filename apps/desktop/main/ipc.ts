@@ -773,6 +773,44 @@ export function wireHybridContentEvents(
     }
   });
 
+  // ── Hold-to-drag over web CONTENT: forward content pointer signals to overlay ─
+  // The web page is a MAIN-owned WebContentsView; the shared overlay sits above it
+  // CLICK-THROUGH (R1), so the overlay never natively sees button-down/up over the
+  // page — only forwarded moves. To support the Peek-wide HOLD-to-drag gesture
+  // (press → hold still for dragHoldDelay → move → window moves) UNIFORMLY over the
+  // page too, main observes the content WC's raw `input-event` mouse stream
+  // (SPIKE-confirmed to emit mouseDown/mouseMove/mouseUp with screen coords
+  // globalX/globalY on a WebContentsView in Electron 40) and forwards each as
+  // `page-overlay:content-pointer {windowId, phase, screenX, screenY}`. The overlay
+  // runs the SINGLE hold-to-drag state machine for BOTH chrome and content: it
+  // starts the hold timer on `down`, CANCELS on any `move` beyond tolerance before
+  // the threshold (so link/image drag + text selection + clicks proceed untouched),
+  // and on threshold-fire begins the window drag — flipping the overlay to capture
+  // so post-hold moves land on it and stop the page from selecting. windowId-tagged
+  // so the overlay (which gates on the active windowId) only acts for the active
+  // page. Only forwarded while the button is held (down→up) to avoid flooding.
+  let leftButtonDown = false;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  contentWC.on('input-event', (_event: unknown, input: any) => {
+    const t = input && input.type;
+    if (t === 'mouseDown' && input.button === 'left') {
+      leftButtonDown = true;
+      publish(getSystemAddress(), 'page-overlay:content-pointer', {
+        windowId: hostWindowId, phase: 'down', screenX: input.globalX, screenY: input.globalY,
+      });
+    } else if (t === 'mouseMove' && leftButtonDown) {
+      publish(getSystemAddress(), 'page-overlay:content-pointer', {
+        windowId: hostWindowId, phase: 'move', screenX: input.globalX, screenY: input.globalY,
+      });
+    } else if (t === 'mouseUp' && input.button === 'left') {
+      if (!leftButtonDown) return;
+      leftButtonDown = false;
+      publish(getSystemAddress(), 'page-overlay:content-pointer', {
+        windowId: hostWindowId, phase: 'up', screenX: input.globalX, screenY: input.globalY,
+      });
+    }
+  });
+
   // ── Popups / window.open / target=_blank → new hybrid page-host (P1.5) ────
   // Risk R7: the hybrid content webContents is a `WebContentsView`, whose
   // `getType()` is 'browserView' — NOT 'window'/'webview'. The default-deny
