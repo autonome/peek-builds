@@ -98,6 +98,27 @@ class IzuiStateCoordinator {
   // activation). This cooldown lets the overlay survive that initial focus dance.
   private lastOverlayEntryTime: number = 0;
 
+  // Session-restore focus guard.
+  //
+  // During session restore, every restored window that the app shows active
+  // (`win.show()`) fires Electron's `'focus'` event asynchronously, and each
+  // such event calls `setFocusedWindow(thatId)` via the per-window focus
+  // handler in ipc.ts. The window that was focused at SAVE time (which restore
+  // explicitly raises + seeds as the focused id) is position 0 in the restore
+  // order, so its focus event lands FIRST and the trailing focus event from a
+  // later-restored window (e.g. a Settings BrowserWindow) clobbers the seed —
+  // leaving the wrong window recorded as focused.
+  //
+  // The guard makes the end state deterministic by CONSTRUCTION, independent of
+  // event timing: restore declares the intended focused id plus the set of the
+  // OTHER windows it restored. While the guard is active, a `setFocusedWindow`
+  // for any id in that other-restored set is ignored (it is a trailing restore
+  // focus event, not a genuine user action) and that id is struck from the set.
+  // Once every other-restored window has emitted its single trailing focus
+  // event the set is empty and the guard self-releases — so a subsequent
+  // genuine user click on any of those windows is honored normally. No timer.
+  private restoreFocusGuard: { intendedId: number; pending: Set<number> } | null = null;
+
   /**
    * Set custom window provider (for testing)
    */
@@ -388,10 +409,58 @@ class IzuiStateCoordinator {
    * @param windowId The window that gained focus
    */
   setFocusedWindow(windowId: number): void {
+    // Restore focus guard: ignore trailing focus events from the OTHER windows
+    // that session restore just showed. They arrive after restore seeded the
+    // intended focused window and would otherwise clobber it. Striking the id
+    // off the pending set lets the guard self-release once every other restored
+    // window has emitted its one trailing focus event. See restoreFocusGuard.
+    const guard = this.restoreFocusGuard;
+    if (guard && windowId !== guard.intendedId && guard.pending.has(windowId)) {
+      guard.pending.delete(windowId);
+      if (guard.pending.size === 0) {
+        this.restoreFocusGuard = null;
+      }
+      console.log('[izui] Ignored trailing restore focus for window:', windowId,
+        '(intended:', guard.intendedId, ')');
+      return;
+    }
+    // A genuine focus that is neither the intended window nor a guarded
+    // restore window releases the guard — the user has moved focus for real.
+    if (guard && windowId !== guard.intendedId) {
+      this.restoreFocusGuard = null;
+    }
     if (this.session) {
       this.session.focusedWindowId = windowId;
     }
     console.log('[izui] Focused window set:', windowId);
+  }
+
+  /**
+   * Begin the session-restore focus guard. Records the window restore intends
+   * to leave focused plus the other windows it restored (whose trailing focus
+   * events must be suppressed). Seeds the intended id as focused immediately so
+   * the coordinator's state is correct from this point; the guard then protects
+   * that state against the async trailing focus events until every other
+   * restored window has emitted its single focus event (deterministic, no
+   * timer). Passing an empty `otherRestoredIds` is a no-op guard that simply
+   * seeds focus (nothing to suppress).
+   */
+  beginRestoreFocusGuard(intendedId: number, otherRestoredIds: number[]): void {
+    const pending = new Set(otherRestoredIds.filter((id) => id !== intendedId));
+    if (this.session) {
+      this.session.focusedWindowId = intendedId;
+    }
+    this.restoreFocusGuard = pending.size > 0 ? { intendedId, pending } : null;
+    console.log('[izui] Restore focus guard set. intended:', intendedId,
+      'guarding:', [...pending]);
+  }
+
+  /**
+   * Clear any active restore focus guard (best-effort; the guard normally
+   * self-releases). Exposed for tests and for abnormal restore teardown.
+   */
+  clearRestoreFocusGuard(): void {
+    this.restoreFocusGuard = null;
   }
 
   /**

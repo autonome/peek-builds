@@ -965,6 +965,10 @@ export async function restoreSessionSnapshot(
 
   // Track which window was focused for later focus restoration
   let focusedWindowId: number | null = null;
+  // Every window we successfully restore + show active. Used to arm the IZUI
+  // restore focus guard: the trailing 'focus' events from the NON-focused
+  // members of this set must not clobber the focused window we seed below.
+  const restoredWindowIds: number[] = [];
 
   // Single-display restore policy: every window goes to the current primary
   // display. Avoids the case where reconnecting/swapping displays between
@@ -1099,6 +1103,9 @@ export async function restoreSessionSnapshot(
 
       if (ok) {
         result.restored++;
+        if (openResult.id != null) {
+          restoredWindowIds.push(openResult.id);
+        }
 
         // Attach did-finish-load / did-fail-load listeners to measure the
         // renderer-boot tail. Listener is attached after invokeWindowOpen
@@ -1262,8 +1269,17 @@ export async function restoreSessionSnapshot(
   if (focusedWindowId) {
     try {
       const coordinator = getIzuiCoordinator();
-      coordinator.setFocusedWindow(focusedWindowId);
-      DEBUG && console.log(`[session] Seeded izui focusedWindowId=${focusedWindowId}`);
+      // Seed the focused window AND arm the restore focus guard in one step.
+      // The guard makes the seed survive the async trailing 'focus' events that
+      // the OTHER restored windows fire from their .show() during the loop —
+      // without it, whichever non-focused window's focus event lands last (e.g.
+      // a Settings BrowserWindow restored after the focused page) clobbers the
+      // seed. The guard self-releases once those windows have each fired once,
+      // so genuine later user focus changes are honored. Deterministic by
+      // construction (independent of focus-event ordering), no timer.
+      const otherRestoredIds = restoredWindowIds.filter((id) => id !== focusedWindowId);
+      coordinator.beginRestoreFocusGuard(focusedWindowId, otherRestoredIds);
+      DEBUG && console.log(`[session] Seeded izui focusedWindowId=${focusedWindowId}, guarding ${otherRestoredIds.length} other restored windows`);
       // Resolve the focused window. A hybrid page-host is a BaseWindow, so
       // getLiveWindow (BrowserWindow.fromId) returns null for it — fall back to
       // the hybrid registry's baseWin. Without this, the web page the user left
