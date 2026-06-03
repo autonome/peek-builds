@@ -30,8 +30,8 @@ Tests use `fake-indexeddb` and `linkedom` to run without a real browser. Tests l
 Extension Playwright tests live in `apps/desktop/tests/extension/` (not `apps/extension/tests/`). They use the `extension-chrome` project in `apps/desktop/playwright.config.ts` and a custom fixture that launches Chrome with the extension loaded.
 
 ```bash
-yarn test:extension:browser          # Chrome E2E (automated, HEADLESS)
-yarn test:extension:browser:visible  # Chrome E2E (headed, for debugging)
+yarn test:extension:chrome          # Chrome E2E (automated, HEADLESS)
+yarn test:extension:chrome:visible  # Chrome E2E (headed, for debugging)
 ```
 
 **Firefox Playwright extension testing is not supported.** Firefox limits how Playwright installs extensions. Use manual testing for Firefox:

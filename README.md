@@ -377,7 +377,7 @@ peek/
 | **Playwright Desktop** | Playwright | 211 | part of `yarn test:desktop:electron` |
 | **Playwright Components** | Playwright | 56 | `npx playwright test tests/components/` |
 | **Playwright Editor** | Playwright | 90 | `npx playwright test tests/editor/` |
-| **Playwright Extension** | Playwright | 41 | `yarn test:extension:browser` |
+| **Playwright Extension** | Playwright | 41 | `yarn test:extension:chrome` |
 | **Extension Backend** | Node `--test` | 130 | `yarn test:extension` |
 | **Server** | Node `--test` | 110 | `yarn server:test` |
 | **Schema Fidelity** | Node `--test` | 40 | `yarn schema:test` |

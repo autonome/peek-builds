@@ -20,42 +20,51 @@ applicable:
 
 | # | Runner | Approx count |
 |---|---|---|
-| 1 | main-process unit (`main/*.test.ts` → `dist/main/*.test.js`, `electron --test`) | ~1900 |
-| 2 | node unit (`tests/unit/*.test.js`, `node --test`) | ~700 |
-| 3 | Playwright `desktop` project | ~510 |
+| 1 | main-process unit (`main/*.test.ts` → `dist/main/*.test.js`, `electron --test`) | ~1950 |
+| 2 | node unit (`tests/unit/*.test.js`, `node --test`) | ~670 |
+| 3 | Playwright `desktop` project | ~383 |
 | 4 | Playwright `desktop-serial` project (`--workers=1`) | ~38 |
-| 5 | Playwright `components` project | ~56 |
-| 6 | Playwright `editor` project | ~90 |
+| 5 | Playwright `components` project (chromium, not Electron) | ~56 |
+| 6 | Playwright `editor` project (chromium, not Electron) | ~90 |
 
-**Total ≈ 3300+, ~10 min wall-clock.** When reporting a full-suite result, cite the
-per-runner numbers AND the grand total — never report one project's tail (e.g. "549 passed")
-as if it were the suite. The Playwright `desktop`+`desktop-serial` pair alone is ~549 tests;
-that is **~17% of the suite**, not the suite.
+**Total ≈ 3190 unique tests (~3135 pass + ~56 skip), ~10 min wall-clock.** Each spec runs in
+exactly ONE project — every project's `testMatch` is anchored to its own `tests/<dir>/`, so
+nothing double-runs. When reporting a full-suite result, cite the per-runner numbers AND the
+grand total — never report one project's tail as if it were the suite. The Electron-launched
+Playwright pair (`desktop`+`desktop-serial`, ~365 run) is **~11% of the suite**, not the suite.
+
+The Chrome **extension** Playwright suite is NOT part of this gate — it's a different
+environment, run via `yarn test:extension:chrome` (see Coverage caveats).
 
 ### Coverage caveats — what "all 6 green" does NOT cover
 
-A clean run still reports ~97 *skipped*, and they are NOT just "macOS-headless OS
-surfaces." The two big buckets are real coverage gaps to keep in mind:
+A clean run reports ~56 *skipped*, and they are NOT "macOS-headless OS surfaces" — that's
+only ~3. The buckets:
 
 - **Hybrid page-host suite (~40 tests) is flag-gated OUT by default.** The
   `hybrid-overlay` / `hybrid-popups` / `hybrid-windows-feature` specs self-skip via
   `test.skip(!bridgePresent())` because `PEEK_PAGEHOST_HYBRID` defaults off. So a green
-  `yarn test:desktop:electron` does **not** exercise the hybrid path at all. To cover it,
-  run with the flag on: `PEEK_PAGEHOST_HYBRID=1 yarn test:desktop:electron`. (Tracked: make
-  the gate run both flag states — see peek task.)
-- **Chrome-extension UI specs (~41, `tests/extension/options|popup`) need a real display**
-  and skip on macOS-headless (`HEADLESS=1 && platform!==linux`). They're covered by
-  `yarn test:extension:browser` (non-headless) or on Linux/Xvfb, NOT by this gate on macOS.
-- The remainder: ~13 unconditionally-parked feature describes (HUD, Proton Pass) and only
-  ~3 genuine macOS-headless OS-surface skips (geolocation grant, devtools-open).
+  `yarn test:desktop:electron` does **not** exercise the hybrid path. Cover it with
+  `PEEK_PAGEHOST_HYBRID=1 yarn test:desktop:electron` (verified green: 48 passed). Tracked:
+  fold both flag states into the gate (peek task).
+- **~13 unconditionally-parked feature describes** (`HUD Extension`, `Proton Pass`) —
+  disabled features, `describe.skip` in source.
+- **~3 genuine macOS-headless OS-surface skips** (geolocation grant, devtools-open) — need a
+  real display.
+
+Separately: the Chrome **extension** UI specs (`tests/extension/`) are their own environment
+and run via `yarn test:extension:chrome` (headed Chrome, or Linux+Xvfb), NOT this gate. They
+previously leaked into the `desktop` project through an unanchored `testMatch` — fixed by
+anchoring each project to its own `tests/<dir>/`.
 
 ```bash
-yarn test:desktop:electron          # CANONICAL: full build + all 6 runners (~3300+)
+yarn test:desktop:electron          # CANONICAL: full build + all 6 runners (~3190)
 yarn test:desktop:electron:bg       # same, backgrounded → tail /tmp/test-electron.log
 yarn test:grep "<pattern>"          # Fast inner-loop: source-only, single test
 yarn test:desktop:electron:source   # Escape hatch: source-only, no packaging (runners 3+4 only)
 yarn test:desktop:electron:x        # Packaged desktop project, stop on first failure
 yarn test:packaged                  # Re-run desktop project against existing out/mac-arm64/Peek.app
+yarn test:extension:chrome          # SEPARATE env: Chrome extension UI suite (headed)
 ```
 
 `yarn test:grep` iterates fast during editing. Validate with **`yarn test:desktop:electron`**

@@ -152,7 +152,7 @@ async function launchFirefox(_profile: string): Promise<ExtensionApp> {
     'For Firefox extension testing, use:\n' +
     '  yarn extension:firefox\n\n' +
     'This launches Firefox with web-ext for manual testing.\n' +
-    'Chrome automated tests: yarn test:extension:browser'
+    'Chrome automated tests: yarn test:extension:chrome'
   );
 }
 

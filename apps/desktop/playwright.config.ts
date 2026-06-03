@@ -11,7 +11,7 @@
  *   apps/{name}/tests/ - Backend-specific tests
  *
  * Extension tests:
- *   yarn test:extension:browser  - Run in Chrome (automated)
+ *   yarn test:extension:chrome  - Run in Chrome (automated)
  *   yarn extension:firefox       - Run in Firefox (manual, web-ext)
  *
  * Note: Firefox Playwright extension testing is not supported due to
@@ -29,7 +29,12 @@ export default defineConfig({
   projects: [
     {
       name: 'desktop',
-      testMatch: /desktop\/.*\.spec\.ts/,
+      // Anchor to /tests/desktop/. A bare /desktop\// also matches the shared
+      // apps/desktop/ path prefix, so it greedily pulls in EVERY sibling
+      // project's specs (desktop-serial, components, editor, extension) —
+      // double-running them and, worse, running the serial specs in parallel.
+      // Keep the /tests/ anchor + trailing $.
+      testMatch: /\/tests\/desktop\/.*\.spec\.ts$/,
     },
     {
       // Tests that exercise OS-integration behavior (modal panel focus/blur,
@@ -38,12 +43,12 @@ export default defineConfig({
       // playwright invocation with --workers=1, after the parallel project
       // finishes, so no other Electron instances are competing.
       name: 'desktop-serial',
-      testMatch: /desktop-serial\/.*\.spec\.ts/,
+      testMatch: /\/tests\/desktop-serial\/.*\.spec\.ts$/,
       fullyParallel: false,
     },
     {
       name: 'components',
-      testMatch: /components\/.*\.spec\.ts/,
+      testMatch: /\/tests\/components\/.*\.spec\.ts$/,
       use: {
         // Component tests run in browser, not Electron
         browserName: 'chromium',
@@ -51,7 +56,7 @@ export default defineConfig({
     },
     {
       name: 'editor',
-      testMatch: /editor\/.*\.spec\.ts/,
+      testMatch: /\/tests\/editor\/.*\.spec\.ts$/,
       use: {
         // Editor tests run in browser
         browserName: 'chromium',
@@ -59,7 +64,7 @@ export default defineConfig({
     },
     {
       name: 'extension-chrome',
-      testMatch: /extension\/.*\.spec\.ts/,
+      testMatch: /\/tests\/extension\/.*\.spec\.ts$/,
       // Extension tests use custom fixture that launches Chrome with extension
       // Firefox not supported - use yarn extension:firefox for manual testing
     },
@@ -70,7 +75,7 @@ export default defineConfig({
       // while the tracer records). Workers must be 1 (set via CLI in the
       // yarn script) so the human only has to deal with one window stack.
       name: 'manual',
-      testMatch: /manual\/.*\.harness\.ts$/,
+      testMatch: /\/tests\/manual\/.*\.harness\.ts$/,
       fullyParallel: false,
       timeout: 600_000,
     },
