@@ -18,9 +18,14 @@ import { app } from 'electron';
 if (process.env.PEEK_HEADLESS && process.platform === 'darwin') {
   try {
     if (app.dock) app.dock.hide();
-    // 'prohibited': the app can never become the active application — strongest
-    // mitigation for the launch-time focus grab (accessory still allowed it).
-    if (app.setActivationPolicy) app.setActivationPolicy('prohibited');
+    // 'accessory': dock-less and never in the menubar, but the app can still be
+    // activated by clicking a window — which keeps macOS key-window handoff
+    // working. Do NOT use 'prohibited': a 'prohibited' app can never own the key
+    // window, so during headless launches it strands the user's foreground app
+    // frontmost-but-not-key (input dead until a cmd-tab cycle). 'prohibited' was
+    // tried (commit c9e892fa, 2026-06-01) to kill the residual launch-time focus
+    // blip and reverted after it caused that stuck-focus regression.
+    if (app.setActivationPolicy) app.setActivationPolicy('accessory');
   } catch {
     /* best effort — never block startup on this */
   }

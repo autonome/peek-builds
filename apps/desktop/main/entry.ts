@@ -1498,11 +1498,15 @@ if (isHeadless() && process.platform === 'darwin' && app.dock) {
 // menubar during headless test runs. See tasks d9bb2924 (focus steal) and
 // cdf2e5f8 (menubar churn).
 if (isHeadless() && process.platform === 'darwin' && app.setActivationPolicy) {
-  // EXPERIMENT: 'prohibited' (vs 'accessory') — accessory still lets a freshly
-  // launched instance activate/grab focus; prohibited forbids the app from ever
-  // becoming the active application. Testing whether it kills the launch dip
-  // without breaking focus/blur-dependent tests (transient-on-blur / izui).
-  app.setActivationPolicy('prohibited');
+  // 'accessory', NOT 'prohibited'. A 2026-06-01 experiment (commit c9e892fa) set
+  // 'prohibited' to kill the residual launch-time focus blip, but it caused a
+  // worse bug: a 'prohibited' app can never own the macOS key window, so headless
+  // test launches left the user's foreground app frontmost-but-not-key (input
+  // dead until a cmd-tab cycle). Reverted to 'accessory' — it removes the dock
+  // tile + menubar churn while keeping key-window handoff intact. Kill the
+  // residual blip (if ever needed) via LSUIElement on the TEST build's Info.plist,
+  // never 'prohibited'.
+  app.setActivationPolicy('accessory');
 }
 
 // Headless strict guard: no BrowserWindow must appear visible immediately
