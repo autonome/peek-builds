@@ -185,6 +185,7 @@ If a bug only appears in the packaged build (not `yarn start`), suspect asar pat
 - `PROFILE` env var overrides for tests.
 - **Never use the default (production) profile for repros or debugging.** Use an isolated profile or copy production data to a tmp path.
 - `workspaceKey`-keyed tiles collapse opens; Playwright cannot get a fresh window unless it uses an isolated profile.
+- Prod profile data lives at `~/Library/Application Support/Peek/default/` (mostly regenerable chromium cache/partitions; the real data is `datastore.sqlite`). Before installing a new build over production, back it up: **`yarn profile:backup`** (full) or **`yarn profile:backup:datastore`** (just the DB — the only thing a new build migrates). Restore with **`yarn profile:restore <backup-dir>`** (refuses while Peek/its MCP server are running). Backups land in `~/Library/Application Support/Peek-backups/`.
 
 ---
 
@@ -205,3 +206,4 @@ Never `pkill -f electron` or `pkill -f Peek` — those will kill the production 
 - `peek://groups/` and `peek://ext/groups/` are URL substrings of each other. Always pair tile moves with a URL migration to avoid Playwright selector collisions.
 - "Works in `yarn start`, broken in packaged" usually means profile-scoped `localStorage` or an asar path issue, not a code bug.
 - Never disable `webSecurity` or `nodeIntegration` to fix a bug. Wire a narrow capability instead.
+- **Headless/test runs (macOS): the activation policy must be `'accessory'`, never `'prohibited'`** (`main/headless-policy.ts` + `entry.ts`). A `'prohibited'` app can't own the macOS key window, so headless test launches strand the user's foreground app frontmost-but-not-key — input dead until a cmd-tab cycle. To also kill the residual launch-time focus *blip*, use `LSUIElement` on the **test** build's `Info.plist` (never production), not `'prohibited'`. Diagnostic probes: `tools/focus-probes/`. Regression history: peek task `2b55f3af`.

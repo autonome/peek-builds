@@ -194,7 +194,11 @@
     "restart:tauri": "yarn kill:tauri && sleep 1 && yarn debug:tauri",
     "lint": "echo \"No linting configured\"",
     "rss": "node scripts/changelog-to-rss.js",
-    "changelog:bump": "node scripts/changelog-bump.js"
+    "changelog:bump": "node scripts/changelog-bump.js",
+    "//-- Prod profile backup/restore (desktop, macOS) --//": "",
+    "profile:backup": "scripts/backup-prod-profile.sh",
+    "profile:backup:datastore": "scripts/backup-prod-profile.sh --datastore",
+    "profile:restore": "scripts/restore-prod-profile.sh"
   },
   "workspaces": [
     "apps/desktop",
