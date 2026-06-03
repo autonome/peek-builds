@@ -33,7 +33,7 @@ import { createRuleEngine, type RuleEngine } from './rule-engine.js';
 import { listRules as rulesList, type RulesDb } from './rules.js';
 import { installDirectSendGuard, installOffPathWindowGuard, unguardedWebContentsSend } from './tile-ipc-gate.js';
 import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHeadless, getProfile, setTilePreloadPath, getTilePreloadPath, DEBUG } from './config.js';
-import { getSystemThemeBackgroundColor, showWindowHeadlessSafe } from './windows.js';
+import { getSystemThemeBackgroundColor, showWindowHeadlessSafe, addEscHandler } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { clearLastFocusedVisibleWindowId, trackOnWindowFocus } from './ipc.js';
@@ -279,6 +279,12 @@ export async function initialize(): Promise<void> {
     getProfileSession,
     getSystemThemeBackgroundColor,
     onWindowFocus: trackOnWindowFocus,
+    // Wire the IZUI ESC handler into the tile-launch path so feature-tile
+    // windows run the escape protocol, matching the `window-open` IPC path.
+    // addEscHandler lives in windows.ts. The handler resolves a tile
+    // window's escape role via tile-launcher's own getTileWindowInfo map,
+    // so tile windows are NOT entered into the shared window-registry.
+    addEscHandler,
   });
 
   // Install the load-on-dispatch pre-publish hook. Every subsequent

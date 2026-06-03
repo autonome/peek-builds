@@ -24,6 +24,7 @@ import {
   getChildWindows,
 } from './main.js';
 import { registerGuest } from './webview-guest-registry.js';
+import { getTileWindowInfo } from './tile-launcher.js';
 
 import {
   getIzuiCoordinator,
@@ -193,10 +194,18 @@ export function escUnhandledPolicy(sessionState: string, role: string): 'open-sw
  * @param source - 'host' if from the window's own webContents, 'webview' if from a guest
  */
 async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webview'): Promise<void> {
-  const entry = getWindowInfo(bw.id);
+  // Resolve escape role/address from the shared window-registry first
+  // (IPC-opened windows), then fall back to tile-launcher's own info map
+  // (feature-tile windows, which are deliberately kept OUT of the shared
+  // registry so they don't pollute the "reopen last closed window" stack).
+  // The registry entry is `{ source, params }`; the tile-info entry is the
+  // flat `params` itself — normalize to `params` either way.
+  const registryEntry = getWindowInfo(bw.id);
+  const tileEntry = registryEntry ? undefined : getTileWindowInfo(bw.id);
+  const entry = registryEntry ?? tileEntry;
   if (!entry || bw.isDestroyed()) return;
 
-  const params = entry.params;
+  const params = (registryEntry ? registryEntry.params : tileEntry) as Record<string, unknown>;
   // Should always be set by ipc.ts window-open inference (line ~1167); fallback
   // mirrors that inference's default-default — workspace, not utility — so the
   // ESC behaviour never silently regresses to "always close" if a window

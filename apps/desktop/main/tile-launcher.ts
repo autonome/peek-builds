@@ -81,6 +81,32 @@ import * as tileLifecycle from './tile-lifecycle.js';
 let _getProfileSession: (() => Electron.Session) | null = null;
 let _getSystemThemeBackgroundColor: (() => string) | null = null;
 let _onWindowFocus: ((win: BrowserWindow, role: string | undefined) => void) | null = null;
+// Injected from windows.ts. Like the hooks above, this lives on an
+// electron-heavy module that tile-launcher can't import at top level
+// (it transitively ESM-imports `BrowserWindow`, which is empty under
+// ELECTRON_RUN_AS_NODE=1 unit tests). Without it, tile-launched feature
+// windows get no `before-input-event` ESC interceptor, so the IZUI escape
+// protocol (root ESC → open-switcher) never runs for them — only the
+// `window-open` IPC path wired this, which is why ESC worked for
+// IPC-opened windows but not tile windows.
+let _addEscHandler: ((win: BrowserWindow) => void) | null = null;
+
+/**
+ * Lightweight role/address info for every live tile window, keyed by
+ * `BrowserWindow.id`. The IZUI ESC handler (`handleEscapeForWindow` in
+ * windows.ts) resolves a tile window's escape role from here via the
+ * exported `getTileWindowInfo`, so tile windows run the escape protocol
+ * WITHOUT being entered into the shared window-registry (which feeds the
+ * "reopen last closed window" stack — and would wrongly remember closed
+ * feature-tile windows if they were registered there).
+ */
+const tileWindowInfo = new Map<number, { role: string; address: string; escapeMode?: string }>();
+
+/** Role/address info for a live tile window, or undefined if unknown.
+ *  Reads only this module's own map — no Electron required. */
+export function getTileWindowInfo(windowId: number): { role: string; address: string; escapeMode?: string } | undefined {
+  return tileWindowInfo.get(windowId);
+}
 
 /**
  * Wire tile-launcher up to its electron-side dependencies. Called once
@@ -100,10 +126,17 @@ export function configureTileLauncher(hooks: {
    * then resolve to whatever non-tile window was focused last.
    */
   onWindowFocus?: (win: BrowserWindow, role: string | undefined) => void;
+  /**
+   * Attaches the IZUI before-input-event ESC interceptor to the tile
+   * window (and its webview guests). Mirrors `addEscHandler(win)` from
+   * the `window-open` IPC path.
+   */
+  addEscHandler?: (win: BrowserWindow) => void;
 }): void {
   if (hooks.getProfileSession) _getProfileSession = hooks.getProfileSession;
   if (hooks.getSystemThemeBackgroundColor) _getSystemThemeBackgroundColor = hooks.getSystemThemeBackgroundColor;
   if (hooks.onWindowFocus) _onWindowFocus = hooks.onWindowFocus;
+  if (hooks.addEscHandler) _addEscHandler = hooks.addEscHandler;
 }
 
 // Short grace period given to tiles to run their `api.onShutdown()` callbacks
@@ -346,6 +379,24 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
   tileWindowsAll.add(win);
   if (manifest) loadedManifests.set(tileId, manifest);
 
+  // Record the tile window's role/address for the IZUI ESC handler, and
+  // attach the `before-input-event` ESC interceptor — exactly what the
+  // `window-open` IPC path does for IPC-opened windows, minus the shared
+  // window-registry entry. The ESC handler resolves this window's role
+  // via `getTileWindowInfo(win.id)` (not `getWindowInfo`), so feature-tile
+  // windows run the escape protocol (root ESC → escPolicy 'nothing' →
+  // escUnhandledPolicy 'open-switcher' → cmd:execute:windows) without
+  // polluting the "reopen last closed window" stack. Default role to
+  // 'workspace' (root window) so the policy resolves correctly; overlay
+  // tiles that declare role:'overlay' keep it and close-and-restore.
+  tileWindowInfo.set(win.id, {
+    role: entry?.role ?? 'workspace',
+    address: `peek://${tileId}/${entry?.url ?? ''}`,
+  });
+  if (_addEscHandler) {
+    _addEscHandler(win);
+  }
+
   // Forward focus events so the per-window-targeting tracker
   // (`lastFocusedVisibleWindowId` in ipc.ts) sees tile windows. Without
   // this, focusing the tags or search tile leaves the tracker pointing
@@ -394,6 +445,7 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
     tileWindowsAll.delete(win);
     readyTiles.delete(key);
     revokeToken(token);
+    tileWindowInfo.delete(win.id);
     try {
       unsubscribeAll(`peek://${tileId}/${entryId}`);
     } catch (err) {
@@ -445,6 +497,9 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
     tileWindowsAll.delete(win);
     readyTiles.delete(key);
     revokeToken(token);
+    // Drop the tile-window info entry we added on launch, so stale entries
+    // don't accumulate and getTileWindowInfo can't resolve a dead id.
+    tileWindowInfo.delete(win.id);
     try {
       unsubscribeAll(`peek://${tileId}/${entryId}`);
     } catch (err) {
