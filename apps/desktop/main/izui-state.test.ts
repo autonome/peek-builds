@@ -779,27 +779,25 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(escPolicy('active', 'workspace'), 'nothing');
     });
 
-    // child-content always closes on ESC, regardless of session state.
-    // It was opened from a real parent (groups → page, search → page) and
-    // ESC means "go back to where I came from". Electron naturally focuses
-    // the parent when the child closes. Holding the page open behind the
-    // parent felt buggy to users (lost focus but stayed visible).
-    //
-    // Earlier policy returned 'nothing' in active/idle to preserve the page;
-    // that was reverted 2026-05-08 in favour of the close-on-ESC contract.
-    // Root-level 'content' (no parent) keeps the old behaviour — see below.
+    // child-content follows the same rule as content: it closes on ESC ONLY in
+    // a transient session (app woken without OS focus — ESC returns to the
+    // previous app). When the app is OS-focused (active/idle), ESC must NEVER
+    // close a real window; escUnhandledPolicy opens the Windows switcher
+    // instead. Feature-internal closes (groups → page, search → page) are
+    // renderer-driven — the renderer returns { handled: true } before policy
+    // is consulted, so they never reach this branch.
     it('should close child-content in transient session', () => {
       assert.strictEqual(escPolicy('transient', 'child-content'), 'close');
     });
 
-    it('should close child-content in active session', () => {
-      assert.strictEqual(escPolicy('active', 'child-content'), 'close',
-        'child-content windows close on ESC in active sessions — ' +
-        'they were opened from a real parent and ESC means "go back"');
+    it('should NOT close child-content in active session — opens switcher', () => {
+      assert.strictEqual(escPolicy('active', 'child-content'), 'nothing',
+        'child-content windows must NOT close on ESC while the app is OS-focused ' +
+        '(active session); escUnhandledPolicy opens the switcher instead');
     });
 
-    it('should close child-content in idle session', () => {
-      assert.strictEqual(escPolicy('idle', 'child-content'), 'close');
+    it('should NOT close child-content in idle session — opens switcher', () => {
+      assert.strictEqual(escPolicy('idle', 'child-content'), 'nothing');
     });
 
     // Idle state: content roles should not close
@@ -825,11 +823,13 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(coordinator.getState(), 'active');
       assert.strictEqual(coordinator.isTransient(), false);
 
-      // escPolicy for child-content in active session should be 'close'
-      // (child-content has a real parent — ESC means "go back").
+      // escPolicy for child-content in active session is 'nothing' — the app
+      // is OS-focused, so ESC must NOT close the window. escUnhandledPolicy
+      // opens the switcher instead.
       const action = escPolicy(coordinator.getState(), 'child-content');
-      assert.strictEqual(action, 'close',
-        'ESC on child-content in active session closes the child; parent gets focus naturally');
+      assert.strictEqual(action, 'nothing',
+        'ESC on child-content in an active (OS-focused) session does NOT close the window; ' +
+        'escUnhandledPolicy opens the switcher');
 
       // Plain content role (no parent) is still 'nothing' in active session —
       // there's no obvious return target, the renderer handles internal nav.

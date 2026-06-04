@@ -409,12 +409,13 @@ function escPolicy(sessionState, role) {
   // They must NEVER close on ESC regardless of session state — the renderer handles
   // internal navigation and the window persists.
   if (role === 'workspace') return 'nothing';
-  // child-content windows always close on ESC — they were opened from a real
-  // parent (groups → page, search → page, etc.) and ESC means "go back to
-  // where I came from". Electron naturally re-focuses the next visible
-  // window (the parent) when the child closes.
-  if (role === 'child-content') return 'close';
-  // Root-level content windows: only close in transient sessions.
+  // content AND child-content both follow the same rule: ESC closes the window
+  // ONLY when the session is `transient` (app woken without OS focus — ESC
+  // returns the user to the previous app). When the app is OS-focused
+  // (session active/idle), ESC must NEVER close a real content window;
+  // escUnhandledPolicy then opens the Windows switcher. Feature-internal
+  // closes (groups → group → page → esc, space mode, etc.) are renderer-driven
+  // — the renderer returns { handled: true } before policy is ever consulted.
   if (sessionState === 'transient') return 'close';
   return 'nothing';
 }
