@@ -29,6 +29,25 @@ import { showWindowHeadlessSafe } from './windows.js';
 
 export type { WindowContext, WindowDescriptor };
 
+// Staged session restore: the first N windows (by recency = zOrder desc, with
+// the saved-focused window hoisted to the front) restore EAGERLY — their
+// <webview> navigates and loads content immediately, as before. Every window
+// beyond N restores DEFERRED: the canvas page-host + window are created (so the
+// window is present and save-safe), but the <webview> is NOT navigated. The
+// deferred host shows a cheap static placeholder (title + URL + favicon) and
+// does zero content compositing until the user first focuses it, at which point
+// it navigates to the real URL (navigate-on-focus, wired in ipc.ts).
+//
+// Why: sustained restore GPU/WindowServer load is dominated by COMPOSITING the
+// loaded content of many full-screen webviews — window/canvas creation itself
+// is cheap. Deferring content on stale windows cuts sustained GPU ~10-20x while
+// keeping every window in place. Measured on the cpu-perf harness.
+//
+// Tuneable at the code layer only (no UI/pref): bump this constant to keep more
+// windows hot at boot. Recency signal is the existing zOrder sort — no
+// lastFocusedAt bookkeeping.
+const SESSION_EAGER_RESTORE_COUNT = 5;
+
 // ============================================================================
 // Restore-complete flag (mid-restore corruption guard)
 //
@@ -963,6 +982,13 @@ export async function restoreSessionSnapshot(
     ? [focusedDescriptor, ...zOrderSorted.filter((w) => w !== focusedDescriptor)]
     : zOrderSorted;
 
+  // Recency split: index < SESSION_EAGER_RESTORE_COUNT restore eagerly (content
+  // loaded); the rest restore deferred (placeholder, navigate-on-focus). The
+  // loop reads `i < eagerCount` to set `restoreBlank` per window.
+  const eagerCount = Math.min(SESSION_EAGER_RESTORE_COUNT, orderedWindows.length);
+  const deferredCount = orderedWindows.length - eagerCount;
+  console.log(`[session:perf] staged-restore eager=${eagerCount} deferred=${deferredCount} eager_cap=${SESSION_EAGER_RESTORE_COUNT}`);
+
   // Track which window was focused for later focus restoration
   let focusedWindowId: number | null = null;
   // Every window we successfully restore + show active. Used to arm the IZUI
@@ -1070,6 +1096,18 @@ export async function restoreSessionSnapshot(
         show: false,
       };
 
+      // Staged restore: windows beyond the eager set restore DEFERRED. The
+      // page-host creates the canvas + window but leaves the <webview>
+      // un-navigated, showing a static placeholder (title + URL + favicon) with
+      // zero content compositing until first focus. ipc.ts reads `restoreBlank`
+      // to emit `blank=1` into the page params and to arm navigate-on-focus.
+      // `title` rides along so the placeholder renders the saved title
+      // immediately. Eager windows (i < eagerCount) load content as before.
+      if (i >= eagerCount) {
+        options.restoreBlank = true;
+        options.title = descriptor.title;
+      }
+
       // Ensure the window key is set for deduplication
       if (descriptor.key) {
         options.key = descriptor.key;
@@ -1099,7 +1137,7 @@ export async function restoreSessionSnapshot(
 
       const ok = !!(openResult && openResult.success && openResult.id);
       perWindowTimings.push({ url: descriptor.url, ms: windowMs, ok });
-      console.log(`[session:perf] window-open ms=${windowMs} ok=${ok} url=${descriptor.url.substring(0, 100)}`);
+      console.log(`[session:perf] window-open ms=${windowMs} ok=${ok} mode=${i < eagerCount ? 'eager' : 'deferred'} url=${descriptor.url.substring(0, 100)}`);
 
       if (ok) {
         result.restored++;

@@ -313,6 +313,34 @@ function buildAPI(): Record<string, unknown> {
     }
   };
 
+  /**
+   * Register a callback that fires when a deferred session-restore window is
+   * first focused and main signals it to load its real URL. Same install-once
+   * semantics as api.onVisible.
+   *
+   * Purpose: deterministic "navigate now" hook for the page-host renderer.
+   * Windows restored beyond the eager set boot with their <webview>
+   * un-navigated (showing a static placeholder, zero content compositing). On
+   * first focus the main process sends `page:navigate-deferred`; the renderer
+   * loads the real URL and becomes an ordinary live window. Private lifecycle
+   * IPC (not pubsub) so it can't be observed/forged by tile content.
+   */
+  let navigateDeferredCallback: (() => void) | null = null;
+  let navigateDeferredListenerInstalled = false;
+  api.onNavigateDeferred = (callback: () => void) => {
+    navigateDeferredCallback = typeof callback === 'function' ? callback : null;
+    if (!navigateDeferredListenerInstalled) {
+      navigateDeferredListenerInstalled = true;
+      ipcRenderer.on('page:navigate-deferred', () => {
+        try {
+          navigateDeferredCallback?.();
+        } catch (err) {
+          console.error('[tile-preload] onNavigateDeferred callback threw:', err);
+        }
+      });
+    }
+  };
+
   // ── Profiles (admin surface) ──
   //
   // Strict tile:profiles:* counterparts of the legacy `profiles:*`

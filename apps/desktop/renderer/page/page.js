@@ -176,6 +176,16 @@ const chromeEnabled = params.get('chrome') !== '0';
 // LOADING-time chrome summon in show(); hover / Cmd+L / activate still summon
 // chrome normally. Content windows carry no `panel` param and are unaffected.
 const isPanel = params.get('panel') === '1';
+// Deferred session-restore. When `blank=1`, this page-host was restored beyond
+// the eager set (SESSION_EAGER_RESTORE_COUNT in session.ts): create the host
+// but DO NOT navigate the <webview> at boot. We render a cheap static
+// placeholder (saved title + URL + favicon) and stay quiescent — no content
+// load, no loading lifecycle, no compositing — until the window is first
+// focused, at which point navigateDeferred() loads the real URL. `deferredTitle`
+// is the saved title threaded through page params so the placeholder can render
+// without waiting for the page.
+const isDeferredRestore = params.get('blank') === '1';
+const deferredTitle = params.get('title') || '';
 let chromeInited = false;
 const chromeInitHooks = [];
 const pageBootStartedAt = Date.now();
@@ -213,7 +223,16 @@ function initChrome() {
 if (chromeEnabled) {
   initChrome();
 } else {
-  const triggerInit = () => initChrome();
+  const triggerInit = () => {
+    initChrome();
+    // Deferred-restore hosts also navigate-on-focus here: the user clicking or
+    // typing into the window implies they've focused it, so load the real URL
+    // alongside chrome init. navigateDeferred() is hoisted and idempotent — it
+    // no-ops for non-deferred hosts and after the first navigation (the focus
+    // IPC may have already fired it). Folds navigate-on-focus into the EXISTING
+    // first-focus chrome-init path.
+    navigateDeferred();
+  };
   window.addEventListener('pointerdown', triggerInit, { once: true, capture: true });
   window.addEventListener('keydown', triggerInit, { once: true, capture: true });
 }
@@ -1012,6 +1031,17 @@ async function initWebview() {
     console.error('[page] Failed to get partition:', err);
   }
 
+  // Deferred session-restore: leave the <webview> un-navigated so it does no
+  // content compositing while the window sits unfocused. The navbar still shows
+  // the real URL (as today); navigateDeferred() performs the actual src
+  // assignment on first focus. Partition was resolved above so the eventual
+  // load uses the right session.
+  if (isDeferredRestore) {
+    console.log('[page] initWebview: deferred restore — skipping webview.src (navigate-on-focus)');
+    navbar.setUrl(targetUrl);
+    return;
+  }
+
   console.log('[page] initWebview: partition resolved, setting src:', targetUrl);
   webview.src = targetUrl;
   console.log('[page] initWebview: src set');
@@ -1207,8 +1237,97 @@ function pageIsLikelyRendered(wv) {
   }
 }
 
+// --- Deferred session-restore: static placeholder + navigate-on-focus ---
+// For `blank=1` hosts we render a cheap, fully STATIC placeholder (favicon +
+// saved title + URL on a neutral background) instead of loading content. It
+// must paint once and quiesce — no animation, no transition, no glow — so a
+// restored-but-unfocused window does zero ongoing compositing. The real load is
+// deferred to navigateDeferred(), fired on first focus.
+let deferredPlaceholderEl = null;
+
+function hostnameOf(u) {
+  try { return new URL(u).hostname; } catch { return ''; }
+}
+
+function renderDeferredPlaceholder() {
+  const el = document.createElement('div');
+  el.className = 'deferred-placeholder';
+  el.id = 'deferred-placeholder';
+
+  const host = hostnameOf(targetUrl);
+  // Favicon via the same Google s2 service the rest of the page-host uses; fall
+  // back to a neutral glyph if the descriptor has no usable host or the icon
+  // 404s. Static <img> — no spinners.
+  if (host) {
+    const fav = document.createElement('img');
+    fav.className = 'deferred-favicon';
+    fav.alt = '';
+    fav.src = `https://www.google.com/s2/favicons?domain=${host}&sz=64`;
+    fav.onerror = () => {
+      fav.onerror = null;
+      const glyph = document.createElement('div');
+      glyph.className = 'deferred-glyph';
+      glyph.textContent = '▢'; // white square with rounded corners — neutral
+      fav.replaceWith(glyph);
+    };
+    el.appendChild(fav);
+  } else {
+    const glyph = document.createElement('div');
+    glyph.className = 'deferred-glyph';
+    glyph.textContent = '▢';
+    el.appendChild(glyph);
+  }
+
+  const titleEl = document.createElement('div');
+  titleEl.className = 'deferred-title';
+  titleEl.textContent = deferredTitle || host || targetUrl;
+  el.appendChild(titleEl);
+
+  const urlEl = document.createElement('div');
+  urlEl.className = 'deferred-url';
+  urlEl.textContent = targetUrl;
+  el.appendChild(urlEl);
+
+  centerColumn.appendChild(el);
+  deferredPlaceholderEl = el;
+  // Mirror the saved title into the document so the window/title surfaces show
+  // something meaningful before the page loads.
+  if (deferredTitle) document.title = deferredTitle;
+  console.log('[page] deferred restore: static placeholder rendered for', targetUrl);
+}
+
+// Idempotent. The first call (from first focus, via api.onNavigateDeferred or
+// the chrome-init engagement listeners) tears down the placeholder, navigates
+// the <webview> to the real URL, and starts the normal loading lifecycle. After
+// that this is an ordinary live page-host; subsequent calls are no-ops.
+let deferredNavigated = false;
+function navigateDeferred() {
+  if (!isDeferredRestore || deferredNavigated) return;
+  deferredNavigated = true;
+  console.log('[page] navigate-on-focus: loading deferred URL', targetUrl);
+  if (deferredPlaceholderEl) {
+    deferredPlaceholderEl.remove();
+    deferredPlaceholderEl = null;
+  }
+  webview.src = targetUrl;
+  loadingLifecycle.startLoading();
+}
+
 initWebview();
-loadingLifecycle.startLoading();
+if (isDeferredRestore) {
+  renderDeferredPlaceholder();
+  // Navigate when the window is first focused. Primary signal: a dedicated
+  // private IPC from main's win.on('focus') (covers focus-without-click such as
+  // Cmd+Tab / programmatic raise during restore). api.onNavigateDeferred is a
+  // no-op surface if absent (older preload), so also fold into the EXISTING
+  // chrome-init engagement path below (pointerdown/keydown) so a click-to-focus
+  // always navigates even without the IPC.
+  if (typeof api.onNavigateDeferred === 'function') {
+    api.onNavigateDeferred(() => navigateDeferred());
+  }
+} else {
+  loadingLifecycle.startLoading();
+}
 
 // --- In-page navigation loading indicator ---
 // --- Webview crash handler ---

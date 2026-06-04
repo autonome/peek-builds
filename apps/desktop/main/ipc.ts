@@ -2296,6 +2296,22 @@ export function registerWindowHandlers(): void {
         // `chrome=0` and queues chrome work until first focus. Default is
         // chrome on, so direct opens (cmd panel, popups) are unaffected.
         if (options.chrome === false) pageParams.set('chrome', '0');
+        // Deferred session-restore gate. Windows restored beyond the eager set
+        // (see SESSION_EAGER_RESTORE_COUNT in session.ts) pass `restoreBlank:
+        // true`. The page-host renderer reads `blank=1` and DOES NOT navigate
+        // the <webview> — it shows a cheap static placeholder (title + URL +
+        // favicon) instead, so a restored-but-unfocused window does no content
+        // compositing (the dominant sustained restore GPU cost). The real URL
+        // stays in `url` (already set above) so navigate-on-focus can load it;
+        // `title` rides along so the placeholder can render the saved title
+        // without waiting for the page. See docs/page-host-state-machine.md
+        // and session.ts restoreSessionSnapshot.
+        if (options.restoreBlank === true) {
+          pageParams.set('blank', '1');
+          if (typeof options.title === 'string' && options.title) {
+            pageParams.set('title', options.title);
+          }
+        }
         // Panel gate: peek/slide panels (modal/quick-view/overlay roles) route
         // through the canvas page-host with chrome ENABLED, but the page-host
         // navbar doubles as a loading indicator and fades in on every canvas
@@ -3293,9 +3309,30 @@ export function registerWindowHandlers(): void {
       // Add escape key handler to all windows
       addEscHandler(win);
 
-      // Track content window focus for devtools command
+      // Navigate-on-focus for deferred session-restore windows. A window
+      // restored with `restoreBlank: true` came up showing the static
+      // placeholder with its <webview> un-navigated (zero content compositing
+      // while it sits unfocused). The first time the user focuses it, tell the
+      // page-host renderer to load the real URL — after which it is an ordinary
+      // live window. One-shot: the flag flips on the first focus so re-focusing
+      // never re-triggers navigation (idempotent; the renderer also guards).
+      // The renderer's pointerdown/keydown engagement path (chrome-init) is the
+      // other trigger, so a click-to-focus also loads; this focus IPC covers
+      // focus-without-click (Cmd+Tab, programmatic raise during restore).
+      let deferredRestoreNavSent = options.restoreBlank !== true;
       win.on('focus', () => {
         console.log(`[focus-tracker] win.on(focus) fired id=${win.id}`);
+        if (!deferredRestoreNavSent) {
+          deferredRestoreNavSent = true;
+          try {
+            if (!win.isDestroyed()) {
+              win.webContents.send('page:navigate-deferred');
+              DEBUG && console.log(`[session] navigate-on-focus: signaled deferred window ${win.id} to load real URL`);
+            }
+          } catch (err) {
+            console.error('[session] navigate-on-focus send threw:', err);
+          }
+        }
         trackContentWindowFocus(win);
         // Only track non-modal windows for visible window targeting
         // Modal windows (like cmd palette) shouldn't override the target window
