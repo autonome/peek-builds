@@ -51,7 +51,9 @@ import {
   getClosedWindowCount,
   getBackgroundWindow,
   scheduleSnapshotOnLifecycleChange,
+  finalizeWindowClose,
 } from './main.js';
+import { getWindowPresentation } from './window-presenter.js';
 
 import {
   APP_DEF_WIDTH,
@@ -1976,6 +1978,72 @@ export function registerWindowHandlers(): void {
         registerWindow(baseWin.id, msg.source, windowParams);
         trackWindow(baseWin as unknown as BrowserWindow);
         getIzuiCoordinator().pushWindow(baseWin.id);
+
+        // Close-finalize tail. A hybrid page-host is a BaseWindow, so it never
+        // flows through main.ts's `app.on('browser-window-created') → win 'closed'`
+        // handler — meaning without this wiring a closed hybrid would never push
+        // onto the reopen stack (Cmd+Shift+T), never publish `window:removed`
+        // (close-awaits would hang), and never schedule the close-snapshot (an
+        // explicitly-closed window could reappear after a force-kill). Run the
+        // SAME shared `finalizeWindowClose` the BrowserWindow path runs.
+        //
+        // Capture the content-rect bounds/presentation in the pre-destroy
+        // 'close' event (BaseWindow emits 'close' before destruction); the hybrid
+        // registry entry — and the BaseWindow itself — are still alive then, so
+        // `getWindowPresentation` resolves the hybrid content rect. Reading
+        // bounds after destruction would be too late (the native handle is gone).
+        let hybridLastBounds: { x: number; y: number; width: number; height: number } | null = null;
+        let hybridLastPresentation: import('./window-presenter.js').WindowPresentation | null = null;
+
+        // Run the finalize tail exactly once, driven by the FIRST signal to fire.
+        //
+        // Electron 40 reality for a `BaseWindow` whose only child is a
+        // `WebContentsView`, closed via `baseWin.close()` (verified by runtime
+        // instrumentation): the host emits `'close'` and then tears down
+        // SYNCHRONOUSLY (`isDestroyed()` is already true when `close()` returns),
+        // but it never emits `'closed'`, AND the main-owned content
+        // `WebContents` is left ALIVE (orphaned) — so its `'destroyed'` never
+        // fires either. Gating the tail on `'closed'`/`'destroyed'` therefore
+        // left it dead: a closed hybrid never pushed to the reopen stack
+        // (Cmd+Shift+T did nothing) and never published `window:removed`
+        // (`closeWindowById` / window:removed awaits hung ~60s).
+        //
+        // The only reliable terminal signal is `'close'`, which fires
+        // pre-destruction while the registry entry and bounds are still readable
+        // — so we finalize from the `'close'` handler below (right after
+        // capturing bounds). The host `'close'` is never `preventDefault()`-ed
+        // for a hybrid (no beforeunload veto on the BaseWindow host), so it
+        // always means the window is really going away. The `'closed'` /
+        // content-wc `'destroyed'` bindings stay as once-guarded fallbacks for
+        // any teardown path that DOES emit them (e.g. app-quit, or the content
+        // wc being destroyed directly).
+        let hybridFinalized = false;
+        const runHybridFinalize = () => {
+          if (hybridFinalized) return;
+          hybridFinalized = true;
+          finalizeWindowClose(baseWin.id, {
+            bounds: hybridLastBounds,
+            // Hybrid windows never use the `peek://app/page/` shell URL, so the
+            // canvas-margin fallback inside finalizeWindowClose (gated on that
+            // prefix) can't fire; null is correct here.
+            hostUrl: null,
+            presentation: hybridLastPresentation,
+          });
+        };
+
+        baseWin.on('close', () => {
+          try {
+            if (!baseWin.isDestroyed()) {
+              hybridLastBounds = baseWin.getBounds();
+              hybridLastPresentation = getWindowPresentation(baseWin.id);
+            }
+          } catch {
+            // Ignore errors during shutdown
+          }
+          runHybridFinalize();
+        });
+        baseWin.once('closed', runHybridFinalize);
+        view.webContents.once('destroyed', runHybridFinalize);
 
         // Load the content. Session-restore opens (skipTracking) fire-and-forget
         // like the canvas path; everything else awaits for "ready" semantics.

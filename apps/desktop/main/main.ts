@@ -101,6 +101,145 @@ export function flushPendingCloseSave(): void {
   }
 }
 
+/**
+ * Bounds/presentation captured for a window BEFORE its native handle is
+ * destroyed, so the close-finalize tail can persist the correct content rect
+ * for reopen-last-closed. Both window kinds capture this in their own `'close'`
+ * (pre-destroy) listener and hand it to `finalizeWindowClose`.
+ */
+export interface CapturedClosePresentation {
+  bounds: { x: number; y: number; width: number; height: number } | null;
+  hostUrl: string | null;
+  presentation: import('./window-presenter.js').WindowPresentation | null;
+}
+
+/**
+ * The shared "close finalize tail" run for EVERY window when it is destroyed,
+ * regardless of whether it is a `BrowserWindow` (canvas / generic) or a
+ * `BaseWindow` (hybrid page-host). It does the three lifecycle side-effects a
+ * close must produce once the window is gone:
+ *
+ *   (a) push the closed window onto the reopen stack (Cmd+Shift+T), gated by
+ *       the same reopen-able / content-role / not-keepLive / not-modal /
+ *       not-suppressed-during-quit policy the canvas path has always used;
+ *   (b) delete the window from `windowRegistry` and publish the post-delete
+ *       `window:removed` signal (the deterministic "fully gone" gate that
+ *       close-awaits and dedup-on-reopen wait on);
+ *   (c) `scheduleSnapshotOnClose()` so a force-kill before the next autosave
+ *       can't resurrect the just-closed window from a stale on-disk snapshot.
+ *
+ * This was extracted verbatim from the `browser-window-created → 'closed'`
+ * handler below so the canvas behavior stays byte-identical, and is the SAME
+ * routine the hybrid page-host's `baseWin 'closed'` handler invokes (ipc.ts
+ * hybrid branch) — a `BaseWindow` never flows through `browser-window-created`,
+ * so without this its reopen-stack push, `window:removed`, and close-snapshot
+ * never ran. Each window finalizes EXACTLY ONCE: the two call sites are gated
+ * to disjoint window kinds (BrowserWindow vs hybrid BaseWindow).
+ *
+ * `captured` carries the pre-destroy bounds/presentation; pass it from the
+ * matching `'close'` listener (the window must still be alive when captured).
+ */
+export function finalizeWindowClose(windowId: number, captured: CapturedClosePresentation): void {
+  const windowData = windowRegistry.get(windowId);
+
+  // (a) Save to closed window stack for reopen-last-closed.
+  // Only save user-facing content windows with web URLs (not background, modals, palettes, etc.)
+  // Skip during quit — session.ts already pushes all open windows during before-quit,
+  // so pushing here too would create duplicates that shadow session-restored windows.
+  if (windowData && !_suppressClosedWindowPush) {
+    const address = windowData.params.address as string | undefined;
+    const role = windowData.params.role as string | undefined;
+    const isKeepLive = windowData.params.keepLive === true;
+    const isModal = windowData.params.modal === true;
+    const isWebUrl = address && (address.startsWith('http://') || address.startsWith('https://'));
+    const isPeekUrl = address && address.startsWith('peek://');
+    const isBackgroundPage = address && address.includes('background.html');
+    const isReopenable = (isWebUrl || (isPeekUrl && !isBackgroundPage)) && !!address;
+    const isContentRole = !role || role === 'content' || role === 'child-content' || role === 'workspace';
+
+    if (isReopenable && isContentRole && !isKeepLive && !isModal) {
+      // Check for space mode context
+      let spaceMode: ClosedWindowEntry['spaceMode'] = null;
+      try {
+        const modeEntry = getContextEntry('mode', windowId);
+        if (modeEntry && modeEntry.value === 'space' && modeEntry.metadata) {
+          spaceMode = {
+            spaceId: modeEntry.metadata.spaceId as string,
+            spaceName: modeEntry.metadata.spaceName as string,
+            color: modeEntry.metadata.color as string | undefined,
+          };
+        }
+      } catch {
+        // Context may be cleaned up already during shutdown
+      }
+
+      // Pull bounds + maximize state from the presentation captured
+      // pre-destruction. The presenter already returns canvas-aware
+      // bounds for page-hosts (info.params x/y/width/height), the
+      // hybrid content rect for hybrid page-hosts (baseWin.getBounds()),
+      // and BrowserWindow bounds for everything else.
+      let saveBounds = captured.presentation?.bounds ?? captured.bounds;
+      const saveMaximized = captured.presentation?.maximized ?? false;
+      const savePreMaxBounds: ClosedWindowEntry['preMaximizeBounds'] =
+        captured.presentation?.preMaxBounds ?? undefined;
+
+      // Fallback for canvas pages whose presentation didn't capture
+      // (presenter returned null because the window was already
+      // destroyed before our close listener fired): subtract the
+      // fixed canvas chrome from window bounds. Slightly inflated
+      // when panels were open in non-maximized mode, but only
+      // reached on the unhappy path. (Gated on the canvas shell URL,
+      // so it never fires for a hybrid page-host's content URL.)
+      if (saveBounds === captured.bounds && captured.bounds && isWebUrl
+        && captured.hostUrl && captured.hostUrl.startsWith('peek://app/page/')) {
+        const CANVAS_MARGIN = 8;
+        const CANVAS_TRIGGER_ZONE = 8;
+        const CANVAS_NAVBAR_HEIGHT = 36;
+        saveBounds = {
+          x: captured.bounds.x + CANVAS_MARGIN,
+          y: captured.bounds.y + CANVAS_TRIGGER_ZONE + CANVAS_NAVBAR_HEIGHT,
+          width: captured.bounds.width - CANVAS_MARGIN * 2,
+          height: captured.bounds.height - CANVAS_TRIGGER_ZONE - CANVAS_MARGIN - CANVAS_NAVBAR_HEIGHT,
+        };
+      }
+
+      // Use the current navigated URL if available (tracks where user actually was)
+      const currentUrl = windowData.params.currentUrl as string | undefined;
+      const scrollX = windowData.params.scrollX as number | undefined;
+      const scrollY = windowData.params.scrollY as number | undefined;
+
+      pushClosedWindow({
+        url: currentUrl || address,
+        originalUrl: currentUrl ? address : undefined,
+        source: windowData.source,
+        bounds: saveBounds,
+        spaceMode,
+        role: role || undefined,
+        scrollX: scrollX || undefined,
+        scrollY: scrollY || undefined,
+        maximized: saveMaximized || undefined,
+        preMaximizeBounds: savePreMaxBounds,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  // (b) Drop from the registry, then publish the post-delete event — the
+  // deterministic "the window is fully gone from the registry" signal.
+  // Distinct from `window:closed`, which fires earlier (before pushClosedWindow
+  // + delete) and so isn't a safe gate for "you can now re-open the same URL
+  // without dedup matching the previous instance".
+  windowRegistry.delete(windowId);
+  try {
+    publish('system', 'window:removed', { id: windowId });
+  } catch (publishErr) {
+    DEBUG && console.error('[lifecycle] window:removed publish failed:', publishErr);
+  }
+  // (c) Persist the now-shorter window list so a force-kill before the
+  // next autosave tick doesn't bring the closed window back.
+  scheduleSnapshotOnClose();
+}
+
 // Configuration
 export interface AppConfig {
   rootDir: string;
@@ -690,102 +829,20 @@ export async function initialize(): Promise<void> {
             id: windowId,
             source: windowData.source
           });
-
-          // Save to closed window stack for reopen-last-closed
-          // Only save user-facing content windows with web URLs (not background, modals, palettes, etc.)
-          // Skip during quit — session.ts already pushes all open windows during before-quit,
-          // so pushing here too would create duplicates that shadow session-restored windows.
-          if (!_suppressClosedWindowPush) {
-            const address = windowData.params.address as string | undefined;
-            const role = windowData.params.role as string | undefined;
-            const isKeepLive = windowData.params.keepLive === true;
-            const isModal = windowData.params.modal === true;
-            const isWebUrl = address && (address.startsWith('http://') || address.startsWith('https://'));
-            const isPeekUrl = address && address.startsWith('peek://');
-            const isBackgroundPage = address && address.includes('background.html');
-            const isReopenable = (isWebUrl || (isPeekUrl && !isBackgroundPage)) && !!address;
-            const isContentRole = !role || role === 'content' || role === 'child-content' || role === 'workspace';
-
-            if (isReopenable && isContentRole && !isKeepLive && !isModal) {
-              // Check for space mode context
-              let spaceMode: ClosedWindowEntry['spaceMode'] = null;
-              try {
-                const modeEntry = getContextEntry('mode', windowId);
-                if (modeEntry && modeEntry.value === 'space' && modeEntry.metadata) {
-                  spaceMode = {
-                    spaceId: modeEntry.metadata.spaceId as string,
-                    spaceName: modeEntry.metadata.spaceName as string,
-                    color: modeEntry.metadata.color as string | undefined,
-                  };
-                }
-              } catch {
-                // Context may be cleaned up already during shutdown
-              }
-
-              // Pull bounds + maximize state from the presentation captured
-              // pre-destruction. The presenter already returns canvas-aware
-              // bounds for page-hosts (info.params x/y/width/height) and
-              // BrowserWindow bounds for everything else.
-              let saveBounds = lastPresentation?.bounds ?? lastBounds;
-              const saveMaximized = lastPresentation?.maximized ?? false;
-              const savePreMaxBounds: ClosedWindowEntry['preMaximizeBounds'] =
-                lastPresentation?.preMaxBounds ?? undefined;
-
-              // Fallback for canvas pages whose presentation didn't capture
-              // (presenter returned null because the window was already
-              // destroyed before our close listener fired): subtract the
-              // fixed canvas chrome from window bounds. Slightly inflated
-              // when panels were open in non-maximized mode, but only
-              // reached on the unhappy path.
-              if (saveBounds === lastBounds && lastBounds && isWebUrl
-                && lastHostUrl && lastHostUrl.startsWith('peek://app/page/')) {
-                const CANVAS_MARGIN = 8;
-                const CANVAS_TRIGGER_ZONE = 8;
-                const CANVAS_NAVBAR_HEIGHT = 36;
-                saveBounds = {
-                  x: lastBounds.x + CANVAS_MARGIN,
-                  y: lastBounds.y + CANVAS_TRIGGER_ZONE + CANVAS_NAVBAR_HEIGHT,
-                  width: lastBounds.width - CANVAS_MARGIN * 2,
-                  height: lastBounds.height - CANVAS_TRIGGER_ZONE - CANVAS_MARGIN - CANVAS_NAVBAR_HEIGHT,
-                };
-              }
-
-              // Use the current navigated URL if available (tracks where user actually was)
-              const currentUrl = windowData.params.currentUrl as string | undefined;
-              const scrollX = windowData.params.scrollX as number | undefined;
-              const scrollY = windowData.params.scrollY as number | undefined;
-
-              pushClosedWindow({
-                url: currentUrl || address,
-                originalUrl: currentUrl ? address : undefined,
-                source: windowData.source,
-                bounds: saveBounds,
-                spaceMode,
-                role: role || undefined,
-                scrollX: scrollX || undefined,
-                scrollY: scrollY || undefined,
-                maximized: saveMaximized || undefined,
-                preMaximizeBounds: savePreMaxBounds,
-                timestamp: Date.now(),
-              });
-            }
-          }
         }
 
-        windowRegistry.delete(windowId);
-        // Post-delete event — the deterministic "the window is fully gone
-        // from the registry" signal. Distinct from `window:closed`, which
-        // fires earlier (before pushClosedWindow + delete) and so isn't a
-        // safe gate for "you can now re-open the same URL without dedup
-        // matching the previous instance".
-        try {
-          publish('system', 'window:removed', { id: windowId });
-        } catch (publishErr) {
-          DEBUG && console.error('[lifecycle] window:removed publish failed:', publishErr);
-        }
-        // Persist the now-shorter window list so a force-kill before the
-        // next autosave tick doesn't bring the closed window back.
-        scheduleSnapshotOnClose();
+        // Close-finalize tail — push to the reopen stack, drop from the
+        // registry + publish `window:removed`, and schedule the close-snapshot.
+        // Extracted into a shared routine so a hybrid page-host BaseWindow
+        // (which never flows through `browser-window-created`) runs the
+        // identical tail from its own `baseWin 'closed'` handler. Bounds come
+        // from the presentation captured in this window's pre-destroy 'close'
+        // listener above.
+        finalizeWindowClose(windowId, {
+          bounds: lastBounds,
+          hostUrl: lastHostUrl,
+          presentation: lastPresentation,
+        });
       } catch (err) {
         // During shutdown, errors here must not prevent the quit sequence
         DEBUG && console.error('[lifecycle] Error in window closed handler:', err);
