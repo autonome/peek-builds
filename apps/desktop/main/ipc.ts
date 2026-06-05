@@ -125,6 +125,7 @@ import { isHybridPageHost } from './debug-flag.js';
 import { markPageHostContent, registerGuest } from './webview-guest-registry.js';
 import {
   registerHybridWindow,
+  unregisterHybridWindow,
   findHybridWindowByUrl,
   findHybridWindowByKey,
   getHybridContentWC,
@@ -2029,6 +2030,45 @@ export function registerWindowHandlers(): void {
             hostUrl: null,
             presentation: hybridLastPresentation,
           });
+
+          // P0 LEAK FIX (A1d). In Electron 40 a hybrid page-host closed via
+          // `baseWin.close()` tears the BaseWindow down SYNCHRONOUSLY but never
+          // emits `'closed'`, AND leaves the main-owned content `WebContents`
+          // (this WebContentsView's wc — a live renderer process) ORPHANED:
+          // `view.webContents.isDestroyed()` stays false and its `'destroyed'`
+          // never fires. A1c finalized only the lifecycle SIGNALS (reopen-stack
+          // / window:removed / snapshot) off the `'close'` event; it did NOT
+          // free those resources. Without this, every hybrid page close leaks a
+          // renderer process AND the registry entry (whose self-clean is wired
+          // to the `'closed'`/`'destroyed'` events that never fire) — a long
+          // session accumulates orphaned renderers, undercutting the cutover's
+          // perf justification.
+          //
+          // This runs ONLY on a REAL close: it's inside the once-guarded
+          // `runHybridFinalize`, which is driven by the host BaseWindow's
+          // `'close'` event. A keepLive HIDE never reaches here — hybrids have
+          // no keepLive path (tile-ipc.ts routes BrowserWindows through
+          // closeOrHideWindow, and only takes the `hybrid.baseWin.close()`
+          // branch for a BaseWindow, which `getLiveWindow` cannot resolve), and
+          // `baseWin.hide()` does not emit `'close'`. So hide keeps the wc alive
+          // for reuse, exactly as required; only a genuine close frees it.
+          try {
+            // `webContents.close()` is the documented teardown: with
+            // `waitForBeforeUnload` unspecified it does NOT honor a beforeunload
+            // veto and destroys the wc (firing `'destroyed'`). The host window
+            // is already gone, so a beforeunload prompt would be meaningless.
+            if (!view.webContents.isDestroyed()) {
+              view.webContents.close();
+            }
+          } catch (e) {
+            DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] content wc close on finalize failed:`, e);
+          }
+          // Drop the registry entry deterministically. Its self-clean hooks
+          // (`baseWin 'closed'` / content-wc `'destroyed'`) are unreliable on
+          // this path — `'closed'` never fires, and `'destroyed'` (if the
+          // `close()` above triggers it) would race the close handler. This is
+          // idempotent, so a later `'destroyed'` self-clean is a harmless no-op.
+          unregisterHybridWindow(baseWin.id);
         };
 
         baseWin.on('close', () => {

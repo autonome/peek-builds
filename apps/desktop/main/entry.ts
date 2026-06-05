@@ -8,7 +8,7 @@
 // MUST be first: sets the macOS headless activation policy before any other
 // (side-effectful) import runs, minimizing the launch-time focus flash.
 import './headless-policy.js';
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, Menu, webContents } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import { initHybridOverlay } from './hybrid-overlay.js';
 import fs from 'node:fs';
@@ -112,7 +112,7 @@ import {
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest } from './session.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import { getHybridWindow } from './hybrid-page-host-registry.js';
+import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
 import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
 import { getLazyTileManifest } from './tile-lazy.js';
@@ -237,6 +237,28 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
   isHybridWindowForTest: (windowId: number): boolean => {
     const entry = getHybridWindow(windowId);
     return !!(entry && !entry.baseWin.isDestroyed());
+  },
+  /**
+   * Test-only: the content `WebContents` id for a live hybrid page-host
+   * window, or null if it's not a registered hybrid. Captured BEFORE close so
+   * the A1d leak-fix spec can later look the wc up by id (via
+   * `isWebContentsAliveForTest`) and assert it was actually destroyed on close
+   * — the registry no longer holds it post-close. See
+   * tests/desktop/hybrid-close-leak.spec.ts.
+   */
+  getHybridContentWcIdForTest: (windowId: number): number | null => {
+    const wc = getHybridContentWC(windowId);
+    return wc ? wc.id : null;
+  },
+  /**
+   * Test-only: is a `WebContents` with this id still alive (exists and not
+   * destroyed)? Used by the A1d leak-fix spec to prove the orphaned content
+   * renderer is freed on hybrid close — `webContents.fromId(id)` returns
+   * undefined once the renderer is gone. Returns false for an unknown id.
+   */
+  isWebContentsAliveForTest: (wcId: number): boolean => {
+    const wc = webContents.fromId(wcId);
+    return !!(wc && !wc.isDestroyed());
   },
   /** Test-only: the IZUI coordinator's current focused-window id (or null). */
   getIzuiFocusedWindowId: (): number | null =>

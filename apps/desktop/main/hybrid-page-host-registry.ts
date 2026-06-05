@@ -322,6 +322,36 @@ export function getHybridWindow(windowId: number): HybridWindowEntry | null {
   return e ? toPublic(e) : null;
 }
 
+/**
+ * Explicitly drop a hybrid window's registry entry.
+ *
+ * Self-cleanup is normally wired to `baseWin 'closed'` / content-wc
+ * `'destroyed'` (see `registerHybridWindow`), but in Electron 40 a hybrid
+ * page-host closed via `baseWin.close()` tears the BaseWindow down
+ * SYNCHRONOUSLY without ever emitting `'closed'`, and leaves its main-owned
+ * content `WebContents` orphaned (so `'destroyed'` never fires either). Neither
+ * self-clean hook runs, so the entry would leak for the life of the process.
+ * The close-finalize seam in `ipc.ts` calls this from the once-guarded hybrid
+ * `'close'` handler to drop the entry deterministically (and separately
+ * destroys the orphaned content wc).
+ *
+ * Idempotent: a no-op if `windowId` is not (or no longer) registered. Performs
+ * the same teardown the self-clean closure does — cancels any pending deferred
+ * blur decision and clears the active-window id if it pointed at this window.
+ * It does NOT touch the content webContents; the caller owns that lifecycle.
+ */
+export function unregisterHybridWindow(windowId: number): void {
+  const pending = pendingBlurChecks.get(windowId);
+  if (pending) {
+    clearImmediate(pending);
+    pendingBlurChecks.delete(windowId);
+  }
+  entries.delete(windowId);
+  if (activeHybridWindowId === windowId) {
+    setActiveHybridWindowId(null);
+  }
+}
+
 /** Every registered hybrid window. Empty when the hybrid flag is off. */
 export function getAllHybridWindows(): HybridWindowEntry[] {
   return Array.from(entries.values(), toPublic);
