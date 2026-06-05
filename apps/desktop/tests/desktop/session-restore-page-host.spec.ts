@@ -137,7 +137,11 @@ test.describe('Session Restore Page Host @desktop', () => {
 
   test('non-maximized page host: bounds round-trip through save+restore', async () => {
     const url = `http://127.0.0.1:${serverPort}/normal-roundtrip`;
-    const { pageWindow } = await openPageHost(url);
+    const { pageWindow, windowId } = await openPageHost(url);
+
+    const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
+      (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, windowId) as boolean;
+    test.skip(isHybrid, 'canvas page-host only — hybrid loads the bare site URL with no ?width/?height chrome params these assertions need');
 
     // Wait for page-host to fully initialize (URL params populated).
     await pageWindow.waitForFunction(() => {
@@ -194,6 +198,10 @@ test.describe('Session Restore Page Host @desktop', () => {
   test('maximized page host: maximize state survives save+restore (regression: restored windows lose maximized state)', async () => {
     const url = `http://127.0.0.1:${serverPort}/maximized-roundtrip`;
     const { pageWindow, windowId } = await openPageHost(url);
+
+    const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
+      (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, windowId) as boolean;
+    test.skip(isHybrid, 'canvas page-host only — hybrid loads the bare site URL with no ?width/?height chrome params these assertions need');
 
     // Wait for init.
     await pageWindow.waitForFunction(() => {
@@ -260,6 +268,10 @@ test.describe('Session Restore Page Host @desktop', () => {
   test('maximize → unmaximize → resize smaller → restart: bounds restore at resized size, not maximized', async () => {
     const url = `http://127.0.0.1:${serverPort}/unmax-resize-roundtrip`;
     const { pageWindow, windowId } = await openPageHost(url);
+
+    const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
+      (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, windowId) as boolean;
+    test.skip(isHybrid, 'canvas page-host only — hybrid loads the bare site URL with no ?width/?height chrome params these assertions need');
 
     await pageWindow.waitForFunction(() => {
       const p = new URL(window.location.href).searchParams;
@@ -359,6 +371,10 @@ test.describe('Session Restore Page Host @desktop', () => {
     const url = `http://127.0.0.1:${serverPort}/premax-roundtrip`;
     const { pageWindow, windowId } = await openPageHost(url);
 
+    const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
+      (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, windowId) as boolean;
+    test.skip(isHybrid, 'canvas page-host only — hybrid loads the bare site URL with no ?width/?height chrome params these assertions need');
+
     await pageWindow.waitForFunction(() => {
       const p = new URL(window.location.href).searchParams;
       return p.get('width') && p.get('height');
@@ -450,7 +466,11 @@ test.describe('Session Restore Page Host @desktop', () => {
 
   test('edge resize handle: dragging E changes width only, not height', async () => {
     const url = `http://127.0.0.1:${serverPort}/edge-resize`;
-    const { pageWindow } = await openPageHost(url);
+    const { pageWindow, windowId } = await openPageHost(url);
+
+    const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
+      (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, windowId) as boolean;
+    test.skip(isHybrid, 'canvas page-host only — hybrid loads the bare site URL with no ?width/?height chrome params these assertions need');
 
     await pageWindow.waitForFunction(() => {
       const p = new URL(window.location.href).searchParams;
@@ -488,7 +508,11 @@ test.describe('Session Restore Page Host @desktop', () => {
 
   test('maximized corner resize: drag SE inward exits maximize and shrinks in one gesture', async () => {
     const url = `http://127.0.0.1:${serverPort}/max-corner-resize`;
-    const { pageWindow } = await openPageHost(url);
+    const { pageWindow, windowId } = await openPageHost(url);
+
+    const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
+      (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, windowId) as boolean;
+    test.skip(isHybrid, 'canvas page-host only — hybrid loads the bare site URL with no ?width/?height chrome params these assertions need');
 
     await pageWindow.waitForFunction(() => {
       const p = new URL(window.location.href).searchParams;
