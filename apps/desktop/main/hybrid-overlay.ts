@@ -939,6 +939,31 @@ function installTestBridge(): void {
       }
     },
     /**
+     * Batch C (headless-flash / focus-theft gates): read a hybrid host
+     * BaseWindow's current visibility, opacity, and focus. The hybrid content
+     * window is a BaseWindow, invisible to `BrowserWindow.fromId`, so the
+     * headless-no-permission-flash / headless-no-focus-theft specs can no longer
+     * read `fromId(id).isVisible()/getOpacity()/isFocused()`. They read them here
+     * instead to assert the host stays hidden (never painted: opacity 0 or not
+     * shown — never a 0→nonzero flash) and never steals OS focus on open.
+     * Returns null if the id is not a live hybrid window.
+     */
+    hostVisibility(
+      id: number,
+    ): { visible: boolean; opacity: number; focused: boolean } | null {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.baseWin.isDestroyed()) return null;
+      try {
+        return {
+          visible: entry.baseWin.isVisible(),
+          opacity: entry.baseWin.getOpacity(),
+          focused: entry.baseWin.isFocused(),
+        };
+      } catch {
+        return null;
+      }
+    },
+    /**
      * P1.4b-3: the work area of the display the given host currently sits on.
      * Maximize snaps the host to exactly this rect, so the maximize test can
      * compare `hostBounds(id)` against it (the hybrid path maximizes via explicit

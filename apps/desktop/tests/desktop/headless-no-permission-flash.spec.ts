@@ -23,6 +23,7 @@ import { test, expect } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 import { DesktopApp } from '../fixtures/desktop-app';
+import { isHybridWindow, hostVisibility } from '../helpers/hybrid-page';
 import http from 'http';
 
 test.describe('headless no permission flash @desktop', () => {
@@ -52,7 +53,7 @@ test.describe('headless no permission flash @desktop', () => {
     if (app) await app.close();
   });
 
-  test('canvas page-host window for HTTP origin stays hidden after open', async () => {
+  test('page-host window for HTTP origin stays hidden after open', async () => {
     if (!app.evaluateMain) throw new Error('evaluateMain not available');
 
     const url = `http://127.0.0.1:${serverPort}/perm-flash`;
@@ -63,41 +64,74 @@ test.describe('headless no permission flash @desktop', () => {
     const winId: number = result.id;
     expect(winId).toBeTruthy();
 
-    // Poll until the BrowserWindow exists in the main process.
-    await app.evaluateMain<void, number>(({ BrowserWindow }, wid) => {
-      return new Promise<void>((resolve) => {
-        const w = BrowserWindow.fromId(wid);
-        if (w && !w.isDestroyed()) { resolve(); return; }
-        resolve();
-      });
-    }, winId);
+    // Resolve the page-host window's visibility + opacity through the right path.
+    // On the canvas path the page-host is a BrowserWindow (`fromId`). On the
+    // hybrid path (PEEK_PAGEHOST_HYBRID=1) it's a BaseWindow + WebContentsView,
+    // invisible to `BrowserWindow.fromId` — its visible/opacity state lives in
+    // the hybrid registry, read via the `hostVisibility` bridge. Either way the
+    // assertion is identical: the page-host (the permission-prompt vector) must
+    // stay hidden in headless, with opacity never restored 0→nonzero.
+    const hybrid = await isHybridWindow(app, winId);
 
-    // The page-host window must not be visible in headless.
-    const isVisible = await app.evaluateMain<boolean, number>(
-      ({ BrowserWindow }, wid) => {
-        const w = BrowserWindow.fromId(wid);
-        if (!w || w.isDestroyed()) return false;
-        return w.isVisible();
-      },
-      winId,
-    );
-    expect(isVisible).toBe(false);
+    let isVisible: boolean;
+    let opacity: number;
+    if (hybrid) {
+      const vis = await hostVisibility(app, winId);
+      expect(vis).not.toBeNull();
+      isVisible = vis!.visible;
+      opacity = vis!.opacity;
+    } else {
+      // Poll until the BrowserWindow exists in the main process.
+      await app.evaluateMain<void, number>(({ BrowserWindow }, wid) => {
+        return new Promise<void>((resolve) => {
+          const w = BrowserWindow.fromId(wid);
+          if (w && !w.isDestroyed()) { resolve(); return; }
+          resolve();
+        });
+      }, winId);
 
-    // Opacity must be at the default (1) or 0 — never 0→nonzero restored.
-    // The entry.ts guard throws process.exitCode=1 if opacity goes 0→nonzero,
-    // which would have crashed the test above. This assertion is belt-and-
-    // suspenders for the opacity value after the full page load cycle.
-    const opacity = await app.evaluateMain<number, number>(
-      ({ BrowserWindow }, wid) => {
-        const w = BrowserWindow.fromId(wid);
-        if (!w || w.isDestroyed()) return -1;
-        return w.getOpacity();
-      },
-      winId,
-    );
-    // Opacity must not be a nonzero value restored from 0 (flash indicator).
-    // Acceptable: 1 (never shown via headless safe path) or 0 (shown headless-safe).
-    expect(opacity === 0 || opacity === 1).toBe(true);
+      isVisible = await app.evaluateMain<boolean, number>(
+        ({ BrowserWindow }, wid) => {
+          const w = BrowserWindow.fromId(wid);
+          if (!w || w.isDestroyed()) return false;
+          return w.isVisible();
+        },
+        winId,
+      );
+      // The entry.ts guard throws process.exitCode=1 if opacity goes 0→nonzero,
+      // which would have crashed the test above. This read is belt-and-
+      // suspenders for the opacity value after the full page load cycle.
+      opacity = await app.evaluateMain<number, number>(
+        ({ BrowserWindow }, wid) => {
+          const w = BrowserWindow.fromId(wid);
+          if (!w || w.isDestroyed()) return -1;
+          return w.getOpacity();
+        },
+        winId,
+      );
+    }
+
+    // The page-host (permission-prompt vector) must never PAINT in headless —
+    // no visible flash. The two page-host implementations satisfy this two
+    // different but equivalent ways, and the assertion encodes the shared
+    // invariant ("not paintable") rather than a single implementation's shape:
+    //
+    //  - Canvas page-host:  born `show:false` → `isVisible() === false`
+    //    (opacity stays at default 1; never shown so never painted).
+    //  - Hybrid page-host:  `setOpacity(0)` then `showInactive()` in the
+    //    headless branch (ipc.ts) → `isVisible() === true` but `opacity === 0`,
+    //    so the compositor never paints it (the documented headless-safe show).
+    //
+    // Invariant: the host is not painted — it's either hidden, or visible at
+    // opacity 0. A regression that restored opacity to a nonzero value on a
+    // visible host (the actual flash) fails this. The entry.ts 0→nonzero guard
+    // catches the same class of regression by crashing the run.
+    const notPainted = isVisible === false || opacity === 0;
+    expect(notPainted).toBe(true);
+
+    // Opacity must never be a nonzero value on a visible host (the flash
+    // indicator). Acceptable: 0 (shown headless-safe) or 1 only when hidden.
+    expect(opacity === 0 || (opacity === 1 && isVisible === false)).toBe(true);
 
     // Clean up
     await bgWindow.evaluate(async (id: number) => {

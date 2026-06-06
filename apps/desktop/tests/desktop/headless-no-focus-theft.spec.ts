@@ -20,6 +20,7 @@ import { test, expect } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 import { DesktopApp } from '../fixtures/desktop-app';
+import { isHybridWindow, hostVisibility } from '../helpers/hybrid-page';
 
 test.describe('headless no focus theft @desktop', () => {
   let app: DesktopApp;
@@ -89,7 +90,10 @@ test.describe('headless no focus theft @desktop', () => {
       });
     }, newWinId);
 
-    // Assert: focused window must NOT be the new canvas window
+    // Assert: focused window must NOT be the new canvas window.
+    // (BrowserWindow.getFocusedWindow() only ever returns BrowserWindows, so a
+    // hybrid BaseWindow page-host can never appear here — but the assertion still
+    // catches a canvas page-host that grabbed focus.)
     const focusedIdAfter = await app.evaluateMain<number | null>(({ BrowserWindow }) => {
       const focused = BrowserWindow.getFocusedWindow();
       return focused ? focused.id : null;
@@ -97,15 +101,28 @@ test.describe('headless no focus theft @desktop', () => {
 
     expect(focusedIdAfter).not.toBe(newWinId);
 
-    // Assert: the new window itself must report isFocused() === false
-    const newWinFocused = await app.evaluateMain<boolean, number>(
-      ({ BrowserWindow }, wid) => {
-        const w = BrowserWindow.fromId(wid);
-        if (!w || w.isDestroyed()) return false;
-        return w.isFocused();
-      },
-      newWinId,
-    );
+    // Assert: the new page-host window itself must report isFocused() === false.
+    // On the canvas path it's a BrowserWindow (`fromId`); on the hybrid path
+    // (PEEK_PAGEHOST_HYBRID=1) it's a BaseWindow invisible to `fromId` — its
+    // focus state lives in the hybrid registry, read via the `hostVisibility`
+    // bridge. Without this branch the hybrid assertion would pass vacuously
+    // (fromId(null).isFocused() defaults to false), never exercising the host.
+    const hybrid = await isHybridWindow(app, newWinId);
+    let newWinFocused: boolean;
+    if (hybrid) {
+      const vis = await hostVisibility(app, newWinId);
+      expect(vis).not.toBeNull();
+      newWinFocused = vis!.focused;
+    } else {
+      newWinFocused = await app.evaluateMain<boolean, number>(
+        ({ BrowserWindow }, wid) => {
+          const w = BrowserWindow.fromId(wid);
+          if (!w || w.isDestroyed()) return false;
+          return w.isFocused();
+        },
+        newWinId,
+      );
+    }
     expect(newWinFocused).toBe(false);
 
     // Assert: overall focused window id unchanged (null or bgWindow id)
@@ -126,7 +143,7 @@ test.describe('headless no focus theft @desktop', () => {
   // Belt-and-suspenders alongside slide-peek-addressbar.spec.ts.
   // ---------------------------------------------------------------------------
 
-  test('canvas page-host window is not visible after open in headless', async () => {
+  test('page-host window does not paint after open in headless', async () => {
     if (!app.evaluateMain) throw new Error('evaluateMain not available');
 
     const result = await bgWindow.evaluate(async () => {
@@ -143,15 +160,40 @@ test.describe('headless no focus theft @desktop', () => {
     });
     expect(result.success).toBe(true);
 
-    const isVisible = await app.evaluateMain<boolean, number>(
-      ({ BrowserWindow }, wid) => {
-        const w = BrowserWindow.fromId(wid);
-        if (!w || w.isDestroyed()) return false;
-        return w.isVisible();
-      },
-      result.id,
-    );
-    expect(isVisible).toBe(false);
+    // The page-host must never PAINT in headless. Canvas: born `show:false`
+    // (isVisible false). Hybrid: `setOpacity(0)` then `showInactive()` in the
+    // headless branch (ipc.ts) → isVisible true but opacity 0, so the compositor
+    // never paints it. Encode the shared invariant ("not painted") rather than a
+    // single implementation's shape, resolving the hybrid host via the registry
+    // bridge (BaseWindows are invisible to `fromId`).
+    const hybrid = await isHybridWindow(app, result.id);
+    let isVisible: boolean;
+    let opacity: number;
+    if (hybrid) {
+      const vis = await hostVisibility(app, result.id);
+      expect(vis).not.toBeNull();
+      isVisible = vis!.visible;
+      opacity = vis!.opacity;
+    } else {
+      isVisible = await app.evaluateMain<boolean, number>(
+        ({ BrowserWindow }, wid) => {
+          const w = BrowserWindow.fromId(wid);
+          if (!w || w.isDestroyed()) return false;
+          return w.isVisible();
+        },
+        result.id,
+      );
+      opacity = await app.evaluateMain<number, number>(
+        ({ BrowserWindow }, wid) => {
+          const w = BrowserWindow.fromId(wid);
+          if (!w || w.isDestroyed()) return -1;
+          return w.getOpacity();
+        },
+        result.id,
+      );
+    }
+    const notPainted = isVisible === false || opacity === 0;
+    expect(notPainted).toBe(true);
 
     // Clean up
     await bgWindow.evaluate(async (id: number) => {

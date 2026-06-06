@@ -216,6 +216,42 @@ export async function hostBounds(
 }
 
 /**
+ * The hybrid host BaseWindow's current visibility, opacity, and focus, or null
+ * if `id` isn't a live hybrid window. The hybrid content window is a BaseWindow,
+ * invisible to `BrowserWindow.fromId`, so headless-flash / focus-theft specs
+ * read its visible/opacity/focused state here instead of via `fromId(id)`.
+ */
+export async function hostVisibility(
+  app: DesktopApp,
+  id: number,
+): Promise<{ visible: boolean; opacity: number; focused: boolean } | null> {
+  return app.evaluateMain!((_e, arg) => {
+    const b = (globalThis as Record<string, unknown>).__peekHybridOverlayTest as {
+      hostVisibility(
+        id: number,
+      ): { visible: boolean; opacity: number; focused: boolean } | null;
+    };
+    return b.hostVisibility(arg.id);
+  }, { id } as { id: number });
+}
+
+/**
+ * Is `id` a live hybrid page-host (BaseWindow) window? Thin wrapper over the
+ * `__peek_test.isHybridWindowForTest` bridge so a spec can branch its lookup
+ * (hybrid registry vs `BrowserWindow.fromId`) without re-deriving the bridge.
+ */
+export async function isHybridWindow(app: DesktopApp, id: number): Promise<boolean> {
+  return app.evaluateMain!((_e, arg) => {
+    const pt = (globalThis as Record<string, unknown>).__peek_test as
+      | { isHybridWindowForTest?: (id: number) => boolean }
+      | undefined;
+    return !!(pt && typeof pt.isHybridWindowForTest === 'function'
+      ? pt.isHybridWindowForTest(arg.id)
+      : false);
+  }, { id } as { id: number });
+}
+
+/**
  * Forward a Cmd+L to the active hybrid window: publish `page:show-navbar`
  * (windowId-tagged), exactly as the content WC's before-input-event forward
  * does. The overlay reveals the navbar and DOM-focuses its URL field (gated on
