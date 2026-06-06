@@ -43,6 +43,7 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
+import { hybridBridgePresent } from '../helpers/hybrid-page';
 import http from 'http';
 
 let app: DesktopApp;
@@ -138,6 +139,30 @@ test.describe('Boot Window Inventory @desktop', () => {
   }
 
   test('fixed background inventory vs per-page-host cost', async () => {
+    // CANVAS-ONLY structural measurement — skipped under PEEK_PAGEHOST_HYBRID=1.
+    // The PER-PAGE-HOST half of this test asserts the canvas page-host SHAPE:
+    // each opened page-host is a window whose URL contains `peek://app/page/`
+    // (the canvas shell) PLUS exactly one embedded `<webview>` webContents
+    // (expectations at the bottom: pageHostWindows===K, pageHostWebviews===K,
+    // and the deterministic wait that polls for K `peek://app/page/` windows +
+    // K `getType()==='webview'` WCs). Under the hybrid flag a page-host is an
+    // OPAQUE WebContentsView inside a BaseWindow: the host window's URL is the
+    // real http(s) content URL (no `peek://app/page/` shell) and there is NO
+    // `<webview>` (the content WC type is 'browserView'). So the page-host poll
+    // never satisfies (60s timeout) and the per-page structural counts can't
+    // hold — this is a fundamental measurement-shape difference, NOT a product
+    // bug. Hybrid page-host enumeration/structure is covered by
+    // hybrid-windows-feature.spec.ts and hybrid-overlay.spec.ts; a hybrid
+    // boot-inventory measurement (1 BaseWindow + 1 WebContentsView per page,
+    // no shell/webview) is a separate rewrite. TODO(pagehost-hybrid): port the
+    // per-page-host cost measurement to the hybrid shape. Tracked for Batch D.
+    // (The FIXED boot-count regression guard still passes flag-on — observed
+    // FIXED windows=3 — but it's interleaved with the canvas per-page asserts,
+    // so the whole test is skipped rather than partially masked.)
+    test.skip(
+      await hybridBridgePresent(app),
+      'canvas-only page-host structural measurement (peek://app/page/ shell + embedded <webview>); hybrid page-hosts have neither (TODO Batch D rewrite)',
+    );
     // ── 1. Deterministically wait for boot to settle ──────────────────────
     // Poll the live window set (MAIN process) until every expected
     // resident-tile URL is present. No timers — this resolves the instant the
