@@ -13,6 +13,7 @@
 import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { waitForExtensionsReady } from '../helpers/window-utils';
+import { hybridFlagOn } from '../helpers/hybrid-page';
 import http from 'http';
 
 let sharedApp: DesktopApp;
@@ -85,6 +86,7 @@ async function waitForErrorOverlay(pageWindow: Page, timeout = 15000) {
 
 test.describe('Page Host Load Failure @desktop', () => {
   test('DNS failure: shows branded error overlay with URL and retry button', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: branded load-error-overlay chrome not in overlay yet');
     // .invalid is reserved by RFC 2606 — guaranteed to never resolve.
     const badUrl = 'http://nonexistent-host-xyz123.invalid/';
     const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, badUrl);
@@ -115,6 +117,7 @@ test.describe('Page Host Load Failure @desktop', () => {
   });
 
   test('Connection refused: shows branded error overlay', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: branded load-error-overlay chrome not in overlay yet');
     // Port 1 is reserved and nothing listens — connection refused.
     const badUrl = 'http://127.0.0.1:1/';
     const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, badUrl);
@@ -132,6 +135,7 @@ test.describe('Page Host Load Failure @desktop', () => {
   });
 
   test('Successful load after error: clicking Retry on a now-reachable URL clears the overlay', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: branded load-error-overlay chrome not in overlay yet');
     // Start by hitting a port we can later make reachable: instead of stopping a server,
     // we navigate first to a bad URL, then call the address bar with a good one.
     const badUrl = 'http://nonexistent-host-xyz456.invalid/';
@@ -159,6 +163,7 @@ test.describe('Page Host Load Failure @desktop', () => {
   });
 
   test('Successful initial load: no error overlay appears', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: branded load-error-overlay chrome not in overlay yet');
     const goodUrl = `http://127.0.0.1:${serverPort}/ok`;
     const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, goodUrl);
 
@@ -182,6 +187,7 @@ test.describe('Page Host Load Failure @desktop', () => {
   });
 
   test('Re-opening a previously-failed URL still shows the overlay (session-restore parity)', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: branded load-error-overlay chrome not in overlay yet');
     // User-reported regression: closing the app while a tab is on a failed
     // URL, then restarting, leaves the restored tab stuck on a blank page
     // with the loading glow permanently on. Session restore re-opens the
@@ -232,6 +238,7 @@ test.describe('Page Host Load Failure @desktop', () => {
   });
 
   test('Hung load: loading-timeout safety net surfaces the error overlay (regression: blank-white-page-forever)', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: branded load-error-overlay chrome not in overlay yet');
     // User-reported: http://www.metikmusic.com/ — DNS resolves, server
     // accepts the connection, but never responds. Before this fix, the
     // page-host's 30s loading timeout silently flipped the spinner off

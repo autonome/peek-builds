@@ -19,6 +19,7 @@
 import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { waitForExtensionsReady } from '../helpers/window-utils';
+import { hybridFlagOn } from '../helpers/hybrid-page';
 
 let sharedApp: DesktopApp;
 let sharedBgWindow: Page;
@@ -51,6 +52,7 @@ async function openCanvasPage(
 
 test.describe('Cmd+L on error page @desktop', () => {
   test('Cmd+L on a page-host with a load-error overlay shows navbar without maximizing', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: depends on the load-error-overlay chrome the overlay lacks yet');
     const badUrl = 'http://nonexistent-cmdl-bug-xyz.invalid/';
     const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, badUrl);
 

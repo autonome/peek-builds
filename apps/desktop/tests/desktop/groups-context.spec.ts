@@ -11,6 +11,7 @@
 import { test, expect, DesktopApp, getSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { waitForExtensionsReady, sleep } from '../helpers/window-utils';
+import { hybridFlagOn } from '../helpers/hybrid-page';
 
 // Shared app and background window
 let sharedApp: DesktopApp;
@@ -201,6 +202,7 @@ test.describe('Group Mode Context @desktop', () => {
   });
 
   test('child page inherits group context', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: blocked by hybrid window.open content-open contract, peek ticket e276b0d3');
     const { groupsWindow, windowId } = await openGroupsHome(sharedBgWindow);
     let childWindowId: number | null = null;
 
@@ -245,6 +247,7 @@ test.describe('Group Mode Context @desktop', () => {
   });
 
   test('mode preserved after group -> page -> back to group', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: blocked by hybrid window.open content-open contract, peek ticket e276b0d3');
     const { groupsWindow, windowId } = await openGroupsHome(sharedBgWindow);
     let childWindowId: number | null = null;
 

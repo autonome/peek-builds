@@ -24,6 +24,7 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
+import { hybridFlagOn } from '../helpers/hybrid-page';
 import http from 'http';
 
 let app: DesktopApp;
@@ -124,6 +125,7 @@ test.describe('Session Restore Focus @desktop', () => {
   // Tests ----------------------------------------------------------------
 
   test('appFocused=false at restore: no .show() and no .focus() called on restored windows', async () => {
+    test.skip(await hybridFlagOn(app), 'deferred to Stage B: drift counters instrument only the BrowserWindow show path; hybrid show is via ipc.ts, Batch D test-instrumentation port');
     // Open 3 windows so the snapshot has multiple descriptors. The
     // focused-descriptor handling is what matters most; the others
     // exercise the per-window show gate.
@@ -164,6 +166,7 @@ test.describe('Session Restore Focus @desktop', () => {
   });
 
   test('appFocused=true at restore: positive case — .show() per restored window + .focus() on focused descriptor', async () => {
+    test.skip(await hybridFlagOn(app), 'deferred to Stage B: drift counters instrument only the BrowserWindow show path; hybrid show is via ipc.ts, Batch D test-instrumentation port');
     // Open and save with a focused descriptor (last-focused tracker
     // marks the most-recent window). saveSessionSnapshot encodes that
     // as `descriptor.focused = true`.

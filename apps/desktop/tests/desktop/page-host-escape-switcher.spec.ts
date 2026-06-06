@@ -24,6 +24,7 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
+import { hybridFlagOn } from '../helpers/hybrid-page';
 import http from 'http';
 
 let app: DesktopApp;
@@ -53,6 +54,7 @@ test.describe('Page-host ESC opens switcher @desktop', () => {
   });
 
   test('pressing Escape on a top-level http page opens the switcher and keeps the page', async () => {
+    test.skip(await hybridFlagOn(app), 'deferred to Stage B: ESC→switcher routing deferred to Stage B');
     const httpUrl = `http://127.0.0.1:${serverPort}/esc-repro-page`;
 
     // Sanity: switcher not open yet.
@@ -171,6 +173,7 @@ test.describe('Page-host ESC opens switcher @desktop', () => {
   });
 
   test('pressing Escape on a CHILD-CONTENT http page opens the switcher and keeps the page', async () => {
+    test.skip(await hybridFlagOn(app), 'deferred to Stage B: ESC→switcher routing deferred to Stage B');
     // The actual regression: a page opened FROM A REAL CONTENT PARENT gets
     // role 'child-content'. The prior policy closed child-content on ESC even
     // while the app was OS-focused; the fix makes it open the switcher instead

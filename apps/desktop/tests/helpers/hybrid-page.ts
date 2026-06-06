@@ -72,6 +72,16 @@ export async function hybridBridgePresent(app: DesktopApp): Promise<boolean> {
 }
 
 /**
+ * Is the hybrid page-host flag on? Reads `PEEK_PAGEHOST_HYBRID === '1'` in the
+ * MAIN process directly — deterministic, unlike {@link hybridBridgePresent}
+ * which only becomes true once a hybrid page has actually been opened. Use this
+ * for skip guards on canvas-only / Stage-B-deferred specs.
+ */
+export async function hybridFlagOn(app: DesktopApp): Promise<boolean> {
+  return app.evaluateMain!(() => process.env.PEEK_PAGEHOST_HYBRID === '1');
+}
+
+/**
  * Wait until the overlay renderer has loaded + subscribed
  * (`window.__overlayReady`), so chrome-state reads and pubsub-driven reveals
  * (Cmd+L, loading) are observable. The overlay is created lazily on the first

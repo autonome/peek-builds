@@ -15,6 +15,7 @@ import { test, expect } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 import { DesktopApp } from '../fixtures/desktop-app';
+import { hybridFlagOn } from '../helpers/hybrid-page';
 
 test.describe('slide peek addressbar @desktop', () => {
   let app: DesktopApp;
@@ -33,6 +34,7 @@ test.describe('slide peek addressbar @desktop', () => {
   // ---------------------------------------------------------------------------
 
   test('slide-style window with canvas:true has a navbar element', async () => {
+    test.skip(await hybridFlagOn(app), 'canvas-only, delete at Stage B: canvas navbar element / panel=1 URL param / canvas visibility — canvas-only machinery');
     const result = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('https://example.com', {
         role: 'quick-view',
@@ -71,6 +73,7 @@ test.describe('slide peek addressbar @desktop', () => {
   });
 
   test('peek-style window with canvas:true has a navbar element', async () => {
+    test.skip(await hybridFlagOn(app), 'canvas-only, delete at Stage B: canvas navbar element / panel=1 URL param / canvas visibility — canvas-only machinery');
     const result = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('https://example.com', {
         role: 'quick-view',
@@ -121,6 +124,7 @@ test.describe('slide peek addressbar @desktop', () => {
   // ---------------------------------------------------------------------------
 
   test('canvas window is NOT visible immediately after creation in headless', async () => {
+    test.skip(await hybridFlagOn(app), 'canvas-only, delete at Stage B: canvas navbar element / panel=1 URL param / canvas visibility — canvas-only machinery');
     if (!app.evaluateMain) throw new Error('evaluateMain not available');
 
     // Open a canvas window without show: false — mimics actual slide/peek feature
@@ -225,6 +229,7 @@ test.describe('slide peek addressbar @desktop', () => {
   // ---------------------------------------------------------------------------
 
   test('canvas quick-view panel window carries panel=1 in its page-host URL', async () => {
+    test.skip(await hybridFlagOn(app), 'canvas-only, delete at Stage B: canvas navbar element / panel=1 URL param / canvas visibility — canvas-only machinery');
     const result = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('https://example.com', {
         role: 'quick-view',
@@ -260,6 +265,7 @@ test.describe('slide peek addressbar @desktop', () => {
   });
 
   test('regular canvas content window does NOT carry panel=1', async () => {
+    test.skip(await hybridFlagOn(app), 'canvas-only, delete at Stage B: canvas navbar element / panel=1 URL param / canvas visibility — canvas-only machinery');
     // A plain web page (no modal/quick-view/overlay role) routes through the
     // canvas page-host but must NOT be flagged as a panel — its loading-navbar
     // behavior is unchanged.

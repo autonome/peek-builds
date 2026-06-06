@@ -21,6 +21,7 @@
 import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { waitForExtensionsReady } from '../helpers/window-utils';
+import { hybridFlagOn } from '../helpers/hybrid-page';
 
 let sharedApp: DesktopApp;
 let sharedBgWindow: Page;
@@ -37,6 +38,7 @@ test.afterAll(async () => {
 
 test.describe('Module Health @desktop', () => {
   test('page.js module evaluates to completion (no silent halt from api drift)', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'canvas-only, delete at Stage B: canvas page.js module sentinel; page.js is removed at Stage B');
     const openResult = await sharedBgWindow.evaluate(async () => {
       return await (window as any).app.window.open('https://example.com', {
         width: 800,

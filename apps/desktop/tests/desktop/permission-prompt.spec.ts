@@ -20,6 +20,7 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
+import { hybridFlagOn } from '../helpers/hybrid-page';
 import http from 'http';
 
 let app: DesktopApp;
@@ -102,6 +103,7 @@ test.describe('Permission Prompt @desktop', () => {
   }
 
   test('geolocation request renders prompt; Deny resolves with PERMISSION_DENIED', async () => {
+    test.skip(await hybridFlagOn(app), 'deferred to Stage B: permission-prompt UI not in overlay yet');
     const pageWindow = await openPageHost('perm-deny');
 
     const webview = await pageWindow.evaluateHandle(() => document.getElementById('content'));
@@ -168,6 +170,7 @@ test.describe('Permission Prompt @desktop', () => {
   });
 
   test('Remember-this-decision: clicking Deny + checkbox persists, second request skips prompt', async () => {
+    test.skip(await hybridFlagOn(app), 'deferred to Stage B: permission-prompt UI not in overlay yet');
     // First page-host: deny + remember.
     const first = await openPageHost('perm-remember-1');
     const webview1 = await first.evaluateHandle(() => document.getElementById('content'));
@@ -252,6 +255,7 @@ test.describe('Permission Prompt @desktop', () => {
   });
 
   test('Phase 5 — queueing: synthetic concurrent requests show one prompt + pending badge; resolving advances queue', async () => {
+    test.skip(await hybridFlagOn(app), 'deferred to Stage B: permission-prompt UI not in overlay yet');
     const pageWindow = await openPageHost('perm-queue');
     const myWindowId = await pageWindow.evaluate(async () => {
       const r = await (window as any).app.window.getWindowId();
@@ -322,6 +326,7 @@ test.describe('Permission Prompt @desktop', () => {
   });
 
   test('Phase 5 — favicon img renders with origin-derived src in the prompt', async () => {
+    test.skip(await hybridFlagOn(app), 'deferred to Stage B: permission-prompt UI not in overlay yet');
     const pageWindow = await openPageHost('perm-favicon');
     const webview = await pageWindow.evaluateHandle(() => document.getElementById('content'));
     await pageWindow.evaluate((wv: any) => {

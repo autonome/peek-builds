@@ -17,6 +17,7 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
+import { hybridFlagOn } from '../helpers/hybrid-page';
 import http from 'http';
 
 let app: DesktopApp;
@@ -62,11 +63,13 @@ test.describe('Page Host FSM @desktop', () => {
   }
 
   test('initial state is NORMAL after init.complete (non-maximized url params)', async () => {
+    test.skip(await hybridFlagOn(app), 'deferred to Stage B: page-host FSM drag/resize/maximize re-home is Stage B');
     const pageWindow = await openPageHost('fsm-initial');
     expect(await fsmState(pageWindow)).toBe('NORMAL');
   });
 
   test('drag round-trip: NORMAL → DRAGGING → NORMAL', async () => {
+    test.skip(await hybridFlagOn(app), 'deferred to Stage B: page-host FSM drag/resize/maximize re-home is Stage B');
     const pageWindow = await openPageHost('fsm-drag');
     expect(await fsmState(pageWindow)).toBe('NORMAL');
 
@@ -87,6 +90,7 @@ test.describe('Page Host FSM @desktop', () => {
   });
 
   test('resize round-trip: NORMAL → RESIZING → NORMAL', async () => {
+    test.skip(await hybridFlagOn(app), 'deferred to Stage B: page-host FSM drag/resize/maximize re-home is Stage B');
     const pageWindow = await openPageHost('fsm-resize');
     expect(await fsmState(pageWindow)).toBe('NORMAL');
 
@@ -109,6 +113,7 @@ test.describe('Page Host FSM @desktop', () => {
   });
 
   test('maximize via dblclick transitions NORMAL → MAXIMIZED', async () => {
+    test.skip(await hybridFlagOn(app), 'deferred to Stage B: page-host FSM drag/resize/maximize re-home is Stage B');
     const pageWindow = await openPageHost('fsm-max');
     expect(await fsmState(pageWindow)).toBe('NORMAL');
 
@@ -120,6 +125,7 @@ test.describe('Page Host FSM @desktop', () => {
   });
 
   test('drag-out-of-maximize: MAXIMIZED → DRAGGING_OUT_OF_MAXIMIZED → NORMAL (never re-enters MAXIMIZED)', async () => {
+    test.skip(await hybridFlagOn(app), 'deferred to Stage B: page-host FSM drag/resize/maximize re-home is Stage B');
     const pageWindow = await openPageHost('fsm-dragout');
 
     // First maximize.

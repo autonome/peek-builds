@@ -16,6 +16,7 @@
 import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { waitForExtensionsReady } from '../helpers/window-utils';
+import { hybridFlagOn } from '../helpers/hybrid-page';
 
 // Layout constants (must match page.js)
 const NAVBAR_HEIGHT = 36;
@@ -143,6 +144,7 @@ test.describe('Page Layout Regression @desktop', () => {
 
   // Test 1: Webview positioned below navbar space (44px from window top)
   test('webview is positioned 44px from window top', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'canvas-only, delete at Stage B: canvas-DOM pixel math; measured elements removed at Stage B');
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -164,6 +166,7 @@ test.describe('Page Layout Regression @desktop', () => {
   // CSS-only (opacity + pointer-events). The only setBounds calls during
   // show/hide are for width changes (panel overhang). Height stays the same.
   test('navbar show/hide does not change window height', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'canvas-only, delete at Stage B: canvas-DOM pixel math; measured elements removed at Stage B');
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -250,6 +253,7 @@ test.describe('Page Layout Regression @desktop', () => {
   // effective minimum left is 0 — left panels overlap the webview rather
   // than render off-screen.
   test('panel positions: clamped to visible range, never off the screen edge', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'canvas-only, delete at Stage B: canvas-DOM pixel math; measured elements removed at Stage B');
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -333,6 +337,7 @@ test.describe('Page Layout Regression @desktop', () => {
 
   // Test 4: Resize handles at webview corners
   test('resize handles positioned at webview corners', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'canvas-only, delete at Stage B: canvas-DOM pixel math; measured elements removed at Stage B');
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -368,6 +373,7 @@ test.describe('Page Layout Regression @desktop', () => {
 
   // Test 5: URL params update on drag
   test('URL params update after drag completes', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'canvas-only, delete at Stage B: canvas-DOM pixel math; measured elements removed at Stage B');
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -447,6 +453,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
   // Test 6: Maximize command fills work area
   test('maximize command fills work area', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -476,6 +483,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
   // Test 7: Maximize toggle restores original size
   test('maximize toggle restores original size', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -520,6 +528,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
   // Test 8: Webview edge-to-edge when maximized (left=0, top=0)
   test('webview fills window when maximized', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -548,6 +557,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
   // Test 9: Navbar floats over webview when maximized
   test('navbar floats over webview when maximized', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -600,6 +610,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
   // Test 10: Panels clamped to screen edge when maximized
   test('panels clamped to screen edges when maximized', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -662,6 +673,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
   // Test 11: Resize handles stay reachable when maximized
   test('resize handles stay reachable when maximized so a corner-grab can exit-and-resize', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -700,6 +712,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
   // Test 12: Drag out of maximized state restores
   test('drag out of maximized state restores original size', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -772,6 +785,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
   // Test 13: Webview border-radius removed when maximized
   test('webview border-radius removed when maximized', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
@@ -809,6 +823,7 @@ test.describe('Page Layout Maximize @desktop', () => {
 
   // Test 14: Double-click navbar maximizes
   test('double-click navbar triggers maximize', async () => {
+    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
     const { pageWindow, windowId } = await openCanvasPage(
       sharedBgWindow,
       'https://example.com'
