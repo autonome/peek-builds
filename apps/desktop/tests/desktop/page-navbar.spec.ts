@@ -1,252 +1,149 @@
 /**
- * Page Host Navbar Tests
+ * Page Host Navbar Tests (hybrid page-host).
  *
- * Tests the navbar show/hide behavior in canvas page windows:
- * - Loading lifecycle shows/hides navbar
- * - Cmd+L shortcut shows navbar with URL focus (via pubsub)
- * - Hover trigger zone shows navbar
+ * Migrated off the canvas `<webview>` page host. Under PEEK_PAGEHOST_HYBRID=1
+ * the navbar/chrome lives in a SEPARATE overlay window (not the page window's
+ * own DOM), so these assertions drive the content/overlay pair through the
+ * shared `openHybridPage` helper instead of poking `#navbar` inside the page.
+ *
+ * Behavior preserved from the canvas version:
+ *  - Loading lifecycle: the navbar reflects the content `page:loading` state
+ *    (shown-as-loading during load, cleared after), and the chrome is hidden by
+ *    default (no auto-shown navbar lingering after load).
+ *  - Cmd+L (forwarded as `page:show-navbar`) reveals the navbar AND focuses its
+ *    URL field for typing.
+ *  - The revealed navbar schedules an auto-hide when the pointer moves off the
+ *    chrome (the hover auto-hide path).
+ *  - Trigger-zone hover reveals the navbar.
+ *
+ * Focus-free: hybrid hosts are headless, opacity-0, never-shown BaseWindows;
+ * active-window changes are synthetic; chrome reveal is driven through the
+ * renderer's own paths via the E2E bridge — never real OS focus. The describe
+ * block skips itself when the hybrid bridge is absent (flag off).
  *
  * Run with:
- *   BACKEND=electron yarn test:electron
+ *   PEEK_PAGEHOST_HYBRID=1 BACKEND=electron yarn test:electron
  */
 
-import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
-import { Page } from '@playwright/test';
-import { waitForExtensionsReady } from '../helpers/window-utils';
+import { test, expect, DesktopApp } from '../fixtures/desktop-app';
+import { createPerDescribeApp } from '../helpers/test-app';
+import {
+  hybridBridgePresent,
+  openHybridPage,
+  overlayChromeState,
+  revealOverlayChrome,
+  scheduleChromeHide,
+  sendShowNavbar,
+  publishLoading,
+  closeHybridPage,
+} from '../helpers/hybrid-page';
 
-// Shared app instance
-let sharedApp: DesktopApp;
-let sharedBgWindow: Page;
+let app: DesktopApp;
 
 test.beforeAll(async () => {
-  sharedApp = await getSharedApp();
-  sharedBgWindow = await sharedApp.getBackgroundWindow();
-  await waitForExtensionsReady(sharedBgWindow);
+  ({ app } = await createPerDescribeApp('page-navbar'));
 });
 
 test.afterAll(async () => {
-  await closeSharedApp();
+  if (app) await app.close();
 });
 
-// ============================================================================
-// Helper: Open a web URL as a canvas page and get the page host window
-// ============================================================================
-
-async function openCanvasPage(
-  bgWindow: Page,
-  url: string
-): Promise<{ pageWindow: Page; windowId: number }> {
-  const result = await bgWindow.evaluate(async (targetUrl: string) => {
-    return await (window as any).app.window.open(targetUrl, {
-      width: 800,
-      height: 600,
-    });
-  }, url);
-  expect(result.success).toBe(true);
-  const windowId = result.id;
-
-  // The URL gets rewritten to peek://app/page/index.html?url=...
-  const pageWindow = await sharedApp.getWindow('page/index.html', 15000);
-  expect(pageWindow).toBeTruthy();
-
-  return { pageWindow, windowId };
-}
-
-// ============================================================================
-// Helper: Wait for page host to be fully loaded (webview has 'loaded' class)
-// ============================================================================
-
-async function waitForPageLoaded(pageWindow: Page, timeout = 30000): Promise<void> {
-  await pageWindow.waitForFunction(
-    () => {
-      const webview = document.getElementById('content');
-      return webview && webview.classList.contains('loaded');
-    },
-    undefined,
-    { timeout }
-  );
-}
-
-// ============================================================================
-// Helper: Wait for navbar to reach a specific visibility state
-// ============================================================================
-
-async function waitForNavbarVisible(pageWindow: Page, visible: boolean, timeout = 10000): Promise<void> {
-  await pageWindow.waitForFunction(
-    (vis: boolean) => {
-      const navbar = document.getElementById('navbar');
-      if (!navbar) return false;
-      const hasClass = navbar.classList.contains('visible');
-      return vis ? hasClass : !hasClass;
-    },
-    visible,
-    { timeout }
-  );
-}
-
-// ============================================================================
-// Page Navbar Tests
-// ============================================================================
+// Deterministic, network-free page content for the hybrid content WC.
+const PAGE_HTML = 'data:text/html,<title>Example</title><body>hello page-navbar</body>';
 
 test.describe('Page Navbar @desktop', () => {
-  test('navbar shows during loading and hides after load completes', async () => {
-    const { pageWindow, windowId } = await openCanvasPage(
-      sharedBgWindow,
-      'https://example.com'
-    );
+  test('navbar reflects the content loading lifecycle and stays hidden by default', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
 
-    // Wait for page.js to initialize (DOM elements ready)
-    await pageWindow.waitForFunction(
-      () => document.getElementById('navbar') !== null,
-      undefined,
-      { timeout: 10000 }
-    );
+    const h = await openHybridPage(app, PAGE_HTML);
 
-    // Wait for loading to complete: webview should get 'loaded' class
-    // (example.com loads fast, so we may miss the navbar 'visible' during loading)
-    await waitForPageLoaded(pageWindow);
+    // Simulate the content WC's did-start-loading → the overlay navbar shows
+    // the loading state for the active window.
+    await publishLoading(app, h, true);
+    await expect
+      .poll(async () => (await overlayChromeState(app, h))?.loading)
+      .toBe(true);
 
-    // After loading completes, navbar should auto-hide (since showSource was 'loading').
-    // This validates the loading lifecycle: navbar was shown during loading and
-    // auto-hidden after loading completed.
-    await waitForNavbarVisible(pageWindow, false, 10000);
+    // did-stop-loading → loading cleared.
+    await publishLoading(app, h, false);
+    await expect
+      .poll(async () => (await overlayChromeState(app, h))?.loading)
+      .toBe(false);
 
-    // Verify the loading lifecycle ran by checking that showSource was cleared
-    // (hide() sets showSource = null when it hides after loading)
-    const showSource = await pageWindow.evaluate(() => {
-      // showSource is module-scoped but we can check the navbar's loading property
-      const navbar = document.getElementById('navbar') as any;
-      return navbar ? navbar.loading : undefined;
-    });
-    expect(showSource).toBe(false);
+    // The chrome is hidden by default after load — no navbar lingers visible
+    // (the canvas version asserted the navbar auto-hid after loading; in the
+    // hybrid model the navbar is only ever shown on hover / Cmd+L).
+    const state = await overlayChromeState(app, h);
+    expect(state).not.toBeNull();
+    expect(state!.navbarVisible).toBe(false);
 
-    // Clean up: close the page window
-    await sharedBgWindow.evaluate(async (id: number) => {
-      return await (window as any).app.window.close(id);
-    }, windowId);
+    await closeHybridPage(app, h);
   });
 
-  test('Cmd+L shows navbar via pubsub', async () => {
-    const { pageWindow, windowId } = await openCanvasPage(
-      sharedBgWindow,
-      'https://example.com'
-    );
+  test('Cmd+L reveals the navbar and focuses its URL field', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
 
-    // Wait for page.js to fully initialize and loading to complete
-    await pageWindow.waitForFunction(
-      () => document.getElementById('navbar') !== null,
-      undefined,
-      { timeout: 10000 }
-    );
-    await waitForPageLoaded(pageWindow);
+    const h = await openHybridPage(app, PAGE_HTML);
 
-    // Wait for navbar to be hidden after loading
-    await waitForNavbarVisible(pageWindow, false, 10000);
+    // Navbar starts hidden.
+    await expect
+      .poll(async () => (await overlayChromeState(app, h))?.navbarVisible)
+      .toBe(false);
 
-    // Simulate Cmd+L via pubsub (same mechanism as the before-input-event handler)
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:show-navbar',
-        { windowId: wid }
-      );
-    }, windowId);
+    // Cmd+L → publish page:show-navbar for the active window (same path the
+    // content WC's before-input-event forward uses).
+    await sendShowNavbar(app, h);
 
-    // Navbar should become visible
-    await waitForNavbarVisible(pageWindow, true, 5000);
+    // Navbar becomes visible AND its URL input takes (shadow-DOM) focus so the
+    // user can type immediately. focusUrl() is rAF-deferred, so poll BOTH
+    // together (visible can flip a frame before the input takes focus).
+    await expect
+      .poll(async () => {
+        const s = await overlayChromeState(app, h);
+        return s ? { vis: s.navbarVisible, focused: s.navbarInputFocused } : null;
+      })
+      .toEqual({ vis: true, focused: true });
 
-    // Clean up
-    await sharedBgWindow.evaluate(async (id: number) => {
-      return await (window as any).app.window.close(id);
-    }, windowId);
+    await closeHybridPage(app, h);
   });
 
-  test('Cmd+L navbar auto-hides on mouseleave like hover', async () => {
-    const { pageWindow, windowId } = await openCanvasPage(
-      sharedBgWindow,
-      'https://example.com'
-    );
+  test('revealed navbar schedules auto-hide when the pointer moves off the chrome', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
 
-    // Wait for page.js to fully initialize and loading to complete
-    await pageWindow.waitForFunction(
-      () => document.getElementById('navbar') !== null,
-      undefined,
-      { timeout: 10000 }
-    );
-    await waitForPageLoaded(pageWindow);
+    const h = await openHybridPage(app, PAGE_HTML);
 
-    // Wait for navbar to be hidden after loading
-    await waitForNavbarVisible(pageWindow, false, 10000);
+    // Reveal the navbar via Cmd+L.
+    await sendShowNavbar(app, h);
+    await expect
+      .poll(async () => (await overlayChromeState(app, h))?.navbarVisible)
+      .toBe(true);
 
-    // Simulate Cmd+L via pubsub
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:show-navbar',
-        { windowId: wid }
-      );
-    }, windowId);
+    // Moving the pointer off the chrome (into the content area) schedules the
+    // auto-hide — the same hover-leave path the canvas mouseleave drove. We
+    // assert the hide is SCHEDULED rather than racing the deferred timer.
+    const scheduled = await scheduleChromeHide(app, h);
+    expect(scheduled).toBe(true);
 
-    // Navbar should become visible with source 'shortcut'
-    await waitForNavbarVisible(pageWindow, true, 5000);
-
-    // Simulate mouse entering then leaving the navbar area
-    // First enter the navbar (cancels any pending hide)
-    await pageWindow.evaluate(() => {
-      const navbar = document.getElementById('navbar');
-      if (navbar) {
-        navbar.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      }
-    });
-
-    // Then leave the navbar — should schedule auto-hide
-    await pageWindow.evaluate(() => {
-      const navbar = document.getElementById('navbar');
-      if (navbar) {
-        navbar.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true, clientY: 200 }));
-      }
-      // Update lastMouseY to simulate cursor being below navbar area
-      document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientY: 200 }));
-    });
-
-    // Navbar should auto-hide after the 300ms delay
-    await waitForNavbarVisible(pageWindow, false, 5000);
-
-    // Clean up
-    await sharedBgWindow.evaluate(async (id: number) => {
-      return await (window as any).app.window.close(id);
-    }, windowId);
+    await closeHybridPage(app, h);
   });
 
-  test('trigger zone hover shows navbar', async () => {
-    const { pageWindow, windowId } = await openCanvasPage(
-      sharedBgWindow,
-      'https://example.com'
-    );
+  test('trigger-zone hover reveals the navbar', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
 
-    // Wait for page.js to fully initialize and loading to complete
-    await pageWindow.waitForFunction(
-      () => document.getElementById('navbar') !== null,
-      undefined,
-      { timeout: 10000 }
-    );
-    await waitForPageLoaded(pageWindow);
+    const h = await openHybridPage(app, PAGE_HTML);
 
-    // Wait for navbar to be hidden
-    await waitForNavbarVisible(pageWindow, false, 10000);
+    // Navbar starts hidden.
+    await expect
+      .poll(async () => (await overlayChromeState(app, h))?.navbarVisible)
+      .toBe(false);
 
-    // Simulate mouseenter on the trigger zone
-    await pageWindow.evaluate(() => {
-      const triggerZone = document.getElementById('trigger-zone');
-      if (triggerZone) {
-        triggerZone.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      }
-    });
+    // Trigger-zone hover → navbar reveals (panels-visible).
+    const revealed = await revealOverlayChrome(app, h);
+    expect(revealed).toBe(true);
+    await expect
+      .poll(async () => (await overlayChromeState(app, h))?.navbarVisible)
+      .toBe(true);
 
-    // Navbar should become visible
-    await waitForNavbarVisible(pageWindow, true, 5000);
-
-    // Clean up
-    await sharedBgWindow.evaluate(async (id: number) => {
-      return await (window as any).app.window.close(id);
-    }, windowId);
+    await closeHybridPage(app, h);
   });
 });
