@@ -3013,6 +3013,14 @@ export function registerTileIpcHandlers(): void {
       }
       const win = getLiveWindow(args.id);
       if (!win) {
+        // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Hide the
+        // host BaseWindow directly so the windows-feature hide/unhide affordance
+        // works for a web-page window. No-op (null) when the flag is off.
+        const hybrid = getHybridWindow(args.id);
+        if (hybrid && !hybrid.baseWin.isDestroyed()) {
+          hybrid.baseWin.hide();
+          return { success: true };
+        }
         return { success: false, error: 'Window not found' };
       }
       win.hide();
