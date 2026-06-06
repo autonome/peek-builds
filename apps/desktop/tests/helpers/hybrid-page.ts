@@ -270,6 +270,53 @@ export async function publishLoading(
   }, { id: h.id, loading } as { id: number; loading: boolean });
 }
 
+/** Painted extension-widget host state read from the overlay renderer. */
+export interface WidgetHostState {
+  hostPresent: boolean;
+  registered: number | null;
+  active: number | null;
+  domCount: number;
+  byId: Record<string, { present: boolean; title: string; bodyHtml: string }>;
+}
+
+/**
+ * Read the overlay's extension widget HOST state (`__pageWidgetHost` +
+ * widget-container DOM). On the hybrid path the widget host lives in the SHARED
+ * overlay renderer, not a per-page chrome — so a page-widgets spec drives the
+ * widget:register/render/update/close pubsub lifecycle via
+ * {@link publishOverlayTopic} and reads the result here. Requires an active
+ * hybrid page (open with `activate:true`); resolves null if the overlay/renderer
+ * isn't ready.
+ */
+export async function widgetHostState(app: DesktopApp): Promise<WidgetHostState | null> {
+  return app.evaluateMain!(() => {
+    const b = (globalThis as Record<string, unknown>).__peekHybridOverlayTest as {
+      widgetHostState(): Promise<unknown>;
+    };
+    return b.widgetHostState() as Promise<WidgetHostState | null>;
+  });
+}
+
+/**
+ * Publish an arbitrary `page:*` / `widget:*` topic on the overlay's system
+ * address (the same path the canvas page renderer's `api.publish` reaches). Used
+ * to drive the overlay widget host's pubsub lifecycle from a test without a
+ * per-page chrome. The overlay's widget host subscribes globally (not
+ * windowId-gated), so an active hybrid page is enough.
+ */
+export async function publishOverlayTopic(
+  app: DesktopApp,
+  topic: string,
+  msg: unknown,
+): Promise<void> {
+  await app.evaluateMain!((_e, arg) => {
+    const b = (globalThis as Record<string, unknown>).__peekHybridOverlayTest as {
+      publishTopic(topic: string, msg: unknown): void;
+    };
+    b.publishTopic(arg.topic, arg.msg);
+  }, { topic, msg } as { topic: string; msg: unknown });
+}
+
 /** Destroy a hybrid page-host (fires the registry's 'closed' cleanup). */
 export async function closeHybridPage(
   app: DesktopApp,

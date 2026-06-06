@@ -1,32 +1,43 @@
 /**
- * Page Host Redirect Navigation Tests
+ * Page Host Redirect Navigation Tests (hybrid page-host).
  *
- * Tests that server-side HTTP 301/302 redirects are handled correctly.
- * Previously, server redirects (did-redirect-navigation) were not tracked,
- * so did-fail-load(-3) for the original URL would call stopLoading() while
+ * Tests that server-side HTTP 301/302 redirects are handled correctly: the
+ * content webContents follows the redirect and ends up at the final target URL
+ * (not a blank page). The original bug was that did-redirect-navigation was not
+ * tracked, so did-fail-load(-3) for the original URL called stopLoading() while
  * the redirect target was still loading — leaving the page blank.
  *
  * Bug: post.nl (301→postnl.nl) shows blank page instead of following redirect.
  *
+ * Migrated off the canvas `<webview>` page host. Under PEEK_PAGEHOST_HYBRID=1
+ * the page content lives in an OPAQUE content `BaseWindow` (no in-window
+ * `#content` webview, no `.loading`/`.loaded` CSS classes). The redirect intent
+ * is a CONTENT-WC behavior, so these assertions drive the hybrid content WC via
+ * the shared `openHybridPage` helper: `loadFakeContent` runs `contentWC.loadURL`
+ * to completion (following redirects), and `contentUrl` reports the live final
+ * URL. The describe block skips itself when the hybrid bridge is absent.
+ *
  * Run with:
- *   yarn test:electron -- --grep "redirect"
+ *   PEEK_PAGEHOST_HYBRID=1 BACKEND=electron yarn test:electron -- --grep "redirect"
  */
 
-import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
-import { Page } from '@playwright/test';
-import { waitForExtensionsReady, sleep } from '../helpers/window-utils';
+import { test, expect, DesktopApp } from '../fixtures/desktop-app';
+import { createPerDescribeApp } from '../helpers/test-app';
+import {
+  hybridBridgePresent,
+  openHybridPage,
+  contentUrl,
+  closeHybridPage,
+  HybridPageHandle,
+} from '../helpers/hybrid-page';
 import http from 'http';
 
-// Shared app instance
-let sharedApp: DesktopApp;
-let sharedBgWindow: Page;
+let app: DesktopApp;
 let redirectServer: http.Server;
 let serverPort: number;
 
 test.beforeAll(async () => {
-  sharedApp = await getSharedApp();
-  sharedBgWindow = await sharedApp.getBackgroundWindow();
-  await waitForExtensionsReady(sharedBgWindow);
+  ({ app } = await createPerDescribeApp('page-redirect'));
 
   // Local HTTP server that serves redirect responses
   await new Promise<void>((resolve) => {
@@ -66,54 +77,32 @@ test.afterAll(async () => {
   if (redirectServer) {
     redirectServer.close();
   }
-  await closeSharedApp();
+  if (app) await app.close();
 });
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
-async function openCanvasPage(
-  bgWindow: Page,
-  url: string
-): Promise<{ pageWindow: Page; windowId: number }> {
-  const result = await bgWindow.evaluate(async (targetUrl: string) => {
-    return await (window as any).app.window.open(targetUrl, {
-      width: 800,
-      height: 600,
-    });
-  }, url);
-  expect(result.success).toBe(true);
-  const windowId = result.id;
-
-  const pageWindow = await sharedApp.getWindow('page/index.html', 15000);
-  expect(pageWindow).toBeTruthy();
-
-  return { pageWindow, windowId };
-}
-
-async function waitForPageLoaded(pageWindow: Page, timeout = 20000): Promise<void> {
-  await pageWindow.waitForFunction(
-    () => {
-      const webview = document.getElementById('content');
-      return webview && webview.classList.contains('loaded');
-    },
-    undefined,
-    { timeout }
-  );
-}
-
-async function getWebviewUrl(pageWindow: Page): Promise<string> {
-  return pageWindow.evaluate(() => {
-    const webview = document.getElementById('content') as any;
-    return webview ? webview.getURL() : '';
-  });
-}
-
-async function closeWindow(bgWindow: Page, windowId: number): Promise<void> {
-  await bgWindow.evaluate(async (id: number) => {
-    return await (window as any).app.window.close(id);
-  }, windowId);
+/**
+ * Read the text content of an element in the hybrid content WC. Used to confirm
+ * the redirect target's body actually rendered (not a blank page). This is a
+ * test-local read of the content WC by id (from the handle); it does not poke
+ * any in-window chrome DOM.
+ */
+async function contentElementText(
+  a: DesktopApp,
+  h: HybridPageHandle,
+  selector: string,
+): Promise<string | null> {
+  if (h.contentWcId == null) return null;
+  return a.evaluateMain!(async ({ webContents }, arg) => {
+    const wc = webContents.fromId(arg.wcId);
+    if (!wc || wc.isDestroyed()) return null;
+    return wc.executeJavaScript(
+      `document.querySelector(${JSON.stringify(arg.selector)})?.textContent ?? null`,
+    );
+  }, { wcId: h.contentWcId, selector } as { wcId: number; selector: string });
 }
 
 // ============================================================================
@@ -121,88 +110,62 @@ async function closeWindow(bgWindow: Page, windowId: number): Promise<void> {
 // ============================================================================
 
 test.describe('Page Host Redirect Navigation @desktop', () => {
-  test('HTTP 301 redirect: webview loads the redirect target, not blank', async () => {
+  test('HTTP 301 redirect: content loads the redirect target, not blank', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+
     const redirectUrl = `http://127.0.0.1:${serverPort}/redirect-301`;
-    const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, redirectUrl);
+    // openHybridPage runs contentWC.loadURL to completion, following redirects.
+    const h = await openHybridPage(app, redirectUrl);
 
-    // The page should reach 'loaded' state (not stay on 'loading' blank page)
-    await waitForPageLoaded(pageWindow);
+    // The content WC should now be at the redirect target URL (not stalled blank).
+    expect(await contentUrl(app, h)).toContain('/target');
 
-    // The webview should now be at the redirect target URL
-    const finalUrl = await getWebviewUrl(pageWindow);
-    expect(finalUrl).toContain('/target');
+    // Confirm the redirect target content actually rendered (not a blank page).
+    expect(await contentElementText(app, h, '#title')).toBe('Redirect Target');
 
-    // Confirm the redirect target content loaded (not a blank page)
-    const titleText = await pageWindow.evaluate(() => {
-      const webview = document.getElementById('content') as any;
-      return webview ? webview.executeJavaScript('document.getElementById("title")?.textContent') : null;
-    });
-    expect(titleText).toBe('Redirect Target');
-
-    await closeWindow(sharedBgWindow, windowId);
+    await closeHybridPage(app, h);
   });
 
-  test('HTTP 302 redirect: webview loads the redirect target', async () => {
+  test('HTTP 302 redirect: content loads the redirect target', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+
     const redirectUrl = `http://127.0.0.1:${serverPort}/redirect-302`;
-    const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, redirectUrl);
+    const h = await openHybridPage(app, redirectUrl);
 
-    await waitForPageLoaded(pageWindow);
+    expect(await contentUrl(app, h)).toContain('/target');
 
-    const finalUrl = await getWebviewUrl(pageWindow);
-    expect(finalUrl).toContain('/target');
-
-    await closeWindow(sharedBgWindow, windowId);
+    await closeHybridPage(app, h);
   });
 
-  test('Redirect chain (301→302): webview loads the final target', async () => {
+  test('Redirect chain (301→302): content loads the final target', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+
     const redirectUrl = `http://127.0.0.1:${serverPort}/redirect-chain`;
-    const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, redirectUrl);
+    const h = await openHybridPage(app, redirectUrl);
 
-    await waitForPageLoaded(pageWindow);
+    // Should end up at /target after two hops.
+    expect(await contentUrl(app, h)).toContain('/target');
 
-    // Should end up at /target after two hops
-    const finalUrl = await getWebviewUrl(pageWindow);
-    expect(finalUrl).toContain('/target');
-
-    await closeWindow(sharedBgWindow, windowId);
+    await closeHybridPage(app, h);
   });
 
-  test('Redirect: webview never shows blank white page during loading', async () => {
+  test('Redirect: content reaches the target without stalling blank', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+
+    // The canvas version polled webview CSS classes to detect a blank
+    // (opacity-0, no loading/loaded class) frame. In the hybrid model the
+    // content paints opaque from its own BaseWindow — there is no canvas
+    // opacity/class to go blank. The load-stall regression manifests as the
+    // load NEVER completing at the target. openHybridPage awaits the loadURL
+    // promise, so its resolution + the final URL is the real assertion: if the
+    // did-fail-load stopLoading() bug were present, the URL would not reach
+    // /target.
     const redirectUrl = `http://127.0.0.1:${serverPort}/redirect-301`;
-    const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, redirectUrl);
+    const h = await openHybridPage(app, redirectUrl);
 
-    // Poll frequently during loading to check webview is never blank
-    // (no period where opacity=0 AND no loading/loaded class)
-    let blankDetected = false;
-    const pollInterval = setInterval(async () => {
-      try {
-        const state = await pageWindow.evaluate(() => {
-          const webview = document.getElementById('content');
-          if (!webview) return null;
-          return {
-            hasLoading: webview.classList.contains('loading'),
-            hasLoaded: webview.classList.contains('loaded'),
-          };
-        });
-        if (state && !state.hasLoading && !state.hasLoaded) {
-          blankDetected = true;
-        }
-      } catch {
-        // Page may not be ready yet
-      }
-    }, 50);
+    expect(await contentUrl(app, h)).toContain('/target');
+    expect(await contentElementText(app, h, '#title')).toBe('Redirect Target');
 
-    await waitForPageLoaded(pageWindow);
-    clearInterval(pollInterval);
-
-    // During a server-redirect, the webview might briefly lose its class while
-    // transitioning from loading→loaded (one synchronous frame). This is acceptable.
-    // What's NOT acceptable is staying blank for an extended period.
-    // The test's real assertion is that waitForPageLoaded() completes at all.
-    // If it times out, the blank page bug is present.
-    const finalUrl = await getWebviewUrl(pageWindow);
-    expect(finalUrl).toContain('/target');
-
-    await closeWindow(sharedBgWindow, windowId);
+    await closeHybridPage(app, h);
   });
 });

@@ -1247,6 +1247,51 @@ function installTestBridge(): void {
         .catch(() => null);
     },
     /**
+     * Read the overlay's extension widget HOST state (the `__pageWidgetHost`
+     * created by overlay.js from createPageWidgetHost) for the page-widgets spec
+     * migrated off the canvas page chrome. On the hybrid path the widget host
+     * lives in the SHARED overlay renderer (not a per-page chrome), so a test
+     * drives the widget:register/render/update/close pubsub lifecycle through the
+     * system address and reads the resulting state here.
+     *
+     * Returns:
+     *   - hostPresent: `__pageWidgetHost` is wired
+     *   - registered / active: registered-widget count and rendered-widget count
+     *   - byId[<extensionId:widgetId>]: { present, title, bodyHtml } read straight
+     *     off the overlay widget container DOM (data-widget-id === the key)
+     * Resolves null if no overlay / renderer not ready. Pure executeJavaScript.
+     */
+    widgetHostState(): Promise<unknown> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(null);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const host = window.__pageWidgetHost;
+            const wc = document.getElementById('widget-container');
+            const cards = wc ? Array.from(wc.querySelectorAll('.widget')) : [];
+            const byId = {};
+            for (const c of cards) {
+              const id = c.dataset.widgetId;
+              const body = c.querySelector('.widget-body');
+              const title = c.querySelector('.widget-title');
+              byId[id] = {
+                present: true,
+                title: title ? title.textContent : '',
+                bodyHtml: body ? body.innerHTML : '',
+              };
+            }
+            return {
+              hostPresent: host != null,
+              registered: host && typeof host.getWidgets === 'function' ? host.getWidgets().size : null,
+              active: host && typeof host.getActiveWidgets === 'function' ? host.getActiveWidgets().size : null,
+              domCount: cards.length,
+              byId,
+            };
+          })()`,
+        )
+        .catch(() => null);
+    },
+    /**
      * Gutter-placement verification (the gutter fix). Reveals the chrome and reads
      * the overlay-local geometry: the inner content rect (where the content
      * window shows through), each widget card's top/left/right, and each

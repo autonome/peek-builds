@@ -1,34 +1,38 @@
 /**
- * Smoke test for the chrome.runtime.sendMessage cross-origin polyfill.
+ * Smoke test for the chrome.runtime.sendMessage cross-origin polyfill
+ * (hybrid page-host).
  *
- * Covers:
- *   1. After loading the Proton Pass extension, navigating a webview to a
- *      URL matching its externally_connectable.matches (https://account.proton.me/*)
- *      should result in window.chrome.runtime.sendMessage being defined
- *      in the page's MAIN world by our preload polyfill.
- *   2. Calling sendMessage with the extension ID either resolves with a
- *      response or rejects with a recognizable error — never silently hangs.
+ * Covers the NEGATIVE case of the runtime-external preload URL matcher: after
+ * loading the Proton Pass extension, navigating a page-host to a URL that does
+ * NOT match its externally_connectable.matches (https://account.proton.me/*)
+ * must NOT install our `peek-rt` sendMessage polyfill in the page's MAIN world.
+ * This confirms the URL-matcher in entry.ts / getRuntimeExternalWebPrefsForUrl
+ * does not false-positive on an unrelated origin.
+ *
+ * Migrated off the canvas `<webview>` page host. Under PEEK_PAGEHOST_HYBRID=1
+ * the page content is an OPAQUE WebContentsView whose runtime-external preload
+ * is selected at CONSTRUCTION via `getRuntimeExternalWebPrefsForUrl(url,
+ * 'hybrid')` — there is no in-window `#content` webview to read. We still drive
+ * the REAL page-host pipeline (`app.window.open`, which under the flag takes the
+ * hybrid early branch and applies the real preload selection), then read the
+ * content WC's MAIN world directly via the `__peek_test` content-wc accessor.
+ * The describe block skips itself when the hybrid bridge is absent (flag off).
  *
  * What this does NOT cover (deferred to manual verification / follow-up):
  *   - The full Proton OAuth fork flow ending in /auth-ext delivering tokens
  *     to the BG SW. That requires authenticated Proton credentials and a
  *     real network round-trip.
- *
- * Why it's worth running anyway: a passing test means the wiring (entry.ts
- * will-attach-webview → preload → polyfill installs in MAIN world) works
- * end-to-end up to the point where the BG SW is asked to respond. A
- * failure isolates the broken layer (preload not loaded, polyfill not
- * installed, IPC not connected, BG SW shim missing).
  */
 
-import { test, expect } from '../fixtures/desktop-app';
+import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 import { waitForExtensionsReady } from '../helpers/window-utils';
+import { hybridBridgePresent } from '../helpers/hybrid-page';
 import http from 'http';
 
 test.describe('runtime-external polyfill @desktop', () => {
-  let app: any;
+  let app: DesktopApp;
   let bgWindow: Page;
   let server: http.Server;
   let port: number;
@@ -58,50 +62,59 @@ test.describe('runtime-external polyfill @desktop', () => {
     if (app) await app.close();
   });
 
-  test('preload + page polyfill are injected when URL matches externally_connectable', async () => {
-    // Note: this test deliberately uses a NON-matching URL (127.0.0.1) to
-    // confirm the negative case. With a non-matching URL, no preload should
-    // be injected; chrome.runtime should NOT be present (or should be
-    // Electron's native partial stub, which is fine).
+  test('preload + page polyfill are NOT injected when URL does not match externally_connectable', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+
+    // Deliberately a NON-matching URL (127.0.0.1) to confirm the negative case:
+    // no runtime-external preload should be selected, so chrome.runtime should
+    // NOT carry our `peek-rt` sendMessage polyfill.
     const url = `http://127.0.0.1:${port}/`;
     const openResult = await bgWindow.evaluate(async (targetUrl: string) => {
       return await (window as any).app.window.open(targetUrl, { width: 800, height: 600 });
     }, url);
     expect(openResult.success).toBe(true);
+    const windowId = openResult.id as number;
 
-    const pageWindow = await app.getWindow('page/index.html', 15000);
+    // Wait for the hybrid content WC to surface as a Playwright page + load.
+    const pageWindow = await app.getWindow('127.0.0.1', 15000);
     expect(pageWindow).toBeTruthy();
+    await pageWindow.waitForLoadState('domcontentloaded');
 
-    await pageWindow.waitForFunction(
-      () => {
-        const wv = document.getElementById('content');
-        return wv && wv.classList.contains('loaded');
-      },
-      undefined,
-      { timeout: 20000 },
-    );
+    // Confirm this is the hybrid path (it must be, since the bridge is present),
+    // and resolve the content WC id for a direct MAIN-world read.
+    const contentWcId = await app.evaluateMain!(
+      ((_e: unknown, id: number) =>
+        (globalThis as any).__peek_test.getHybridContentWcIdForTest(id)) as any,
+      windowId,
+    ) as number | null;
+    expect(contentWcId, 'a live hybrid must expose its content wc id').not.toBeNull();
 
-    // Sanity probe: chrome.runtime.sendMessage from a non-matching origin
-    // should NOT be our polyfilled function. Either undefined or the
-    // Electron native stub — we just make sure our marker isn't present.
-    const probe = await pageWindow.evaluate(async () => {
-      const wv = document.getElementById('content') as any;
-      return await wv.executeJavaScript(`(function(){
-        return {
-          hasChrome: typeof chrome !== 'undefined',
-          hasRuntime: !!(typeof chrome !== 'undefined' && chrome.runtime),
-          hasSendMessage: !!(typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage),
-          isPeekPolyfilled: !!(typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage &&
-            chrome.runtime.sendMessage.toString().includes('peek-rt')),
-        };
-      })()`);
-    });
+    // Sanity probe in the content WC's MAIN world: chrome.runtime.sendMessage
+    // from a non-matching origin must NOT be our polyfilled function. Either
+    // undefined or the Electron native stub — we just make sure our `peek-rt`
+    // marker isn't present (proves the URL matcher didn't false-positive).
+    const probe = await app.evaluateMain!(
+      (async ({ webContents }, wcId: number) => {
+        const wc = webContents.fromId(wcId);
+        if (!wc || wc.isDestroyed()) return null;
+        return wc.executeJavaScript(`(function(){
+          return {
+            hasChrome: typeof chrome !== 'undefined',
+            hasRuntime: !!(typeof chrome !== 'undefined' && chrome.runtime),
+            hasSendMessage: !!(typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage),
+            isPeekPolyfilled: !!(typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage &&
+              chrome.runtime.sendMessage.toString().includes('peek-rt')),
+          };
+        })()`);
+      }) as any,
+      contentWcId as number,
+    ) as { hasChrome: boolean; hasRuntime: boolean; hasSendMessage: boolean; isPeekPolyfilled: boolean } | null;
     console.log('[runtime-external-polyfill] non-matching origin probe:', probe);
 
-    // We don't assert hasChrome/hasRuntime here — Electron's behavior on
+    expect(probe).not.toBeNull();
+    // We don't assert hasChrome/hasRuntime — Electron's behavior on
     // non-extension origins is version-dependent. We DO assert that our
-    // polyfill (signature contains 'peek-rt') is NOT installed — confirms
-    // the URL-matcher in entry.ts didn't false-positive.
-    expect(probe.isPeekPolyfilled).toBe(false);
+    // polyfill (signature contains 'peek-rt') is NOT installed.
+    expect(probe!.isPeekPolyfilled).toBe(false);
   });
 });
