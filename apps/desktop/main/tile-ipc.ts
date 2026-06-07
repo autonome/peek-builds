@@ -2901,9 +2901,11 @@ export function registerTileIpcHandlers(): void {
           bounds: presentation.bounds,
           maximized: presentation.maximized,
           preMaxBounds: presentation.preMaxBounds,
-          // Hybrid windows have no windowRegistry `info.params`; expose an
-          // empty params object so the entry shape matches a canvas page.
-          params: {},
+          // Hybrid windows DO have windowRegistry params (registered via
+          // registerWindow on the hybrid open branch). Read them the same way
+          // the canvas branch above does, so parentWindowId/role/placement/
+          // escapeMode survive in the listed entry instead of being dropped.
+          params: getWindowInfo(h.windowId)?.params ?? {},
         });
       }
       return { success: true, windows };

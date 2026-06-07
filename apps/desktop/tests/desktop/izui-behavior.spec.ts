@@ -2,7 +2,6 @@ import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 import { sleep } from '../helpers/window-utils';
-import { hybridBridgePresent } from '../helpers/hybrid-page';
 import http from 'http';
 
 test.describe('IZUI Behavior @desktop', () => {
@@ -11,9 +10,6 @@ test.describe('IZUI Behavior @desktop', () => {
   let server: http.Server;
   let serverPort: number;
 
-  // True when the hybrid page-host flag is on (the path where window.list drops
-  // hybrid params — see the TODO on the parentWindowId test).
-  const hybridParamsListBug = () => hybridBridgePresent(app);
 
   test.beforeAll(async () => {
     ({ app, bgWindow } = await createPerDescribeApp('izui-behavior'));
@@ -46,26 +42,6 @@ test.describe('IZUI Behavior @desktop', () => {
   });
 
   test('parentWindowId is set when opened from a content window', async () => {
-    // TODO(pagehost hybrid / Batch D): real product bug — under
-    // PEEK_PAGEHOST_HYBRID=1 `window.list` reports `params: {}` for hybrid
-    // page-host windows (tile-ipc.ts ~2904), so parentWindowId (and role,
-    // placement, escapeMode, hybridPageHost, …) are all dropped from the listed
-    // entry. The hybrid open branch DOES register full windowParams via
-    // `registerWindow` (ipc.ts ~1979), but the list handler hardcodes an empty
-    // params object for the hybrid loop instead of reading
-    // `getWindowInfo(h.windowId)?.params` the way the canvas branch does. This
-    // is a genuine hybrid gap (parent-tracking / session relationships /
-    // escape-mode introspection all read window.list params) — NOT a canvas-DOM
-    // assertion — so we skip rather than mask. The child open itself now
-    // succeeds (was a separate, also-real issue: the hybrid branch awaits
-    // loadURL and returned success:false on a non-resolvable URL; fixed here by
-    // pointing the child at a resolvable local server). Remove this skip once
-    // the list handler exposes hybrid params.
-    test.skip(
-      await hybridParamsListBug(),
-      'hybrid page-host: window.list reports empty params for hybrid windows, dropping parentWindowId; see Batch D ticket',
-    );
-
     // Step 1: Open a content window (groups home) from the background window.
     // Since background.html is an internal URL, parentWindowId should be null.
     const groupsResult = await bgWindow.evaluate(async () => {
