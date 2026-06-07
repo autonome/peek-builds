@@ -261,7 +261,14 @@ export function createPageWidgetHost(deps) {
     subscribe('widget:render', handleRender);
     subscribe('widget:update', handleUpdate);
     subscribe('widget:close', handleClose);
-    subscribe('page:execute-script', handleExecuteScript);
+    // Only the canvas page host (real <webview>) services page-script exec here.
+    // The hybrid overlay host has webview:null — the MAIN process runs the script
+    // against the content WebContentsView instead (see hybrid-overlay.ts). Without
+    // this guard the overlay would answer "No webview available" and race the
+    // main handler's real result.
+    if (webview && typeof webview.executeJavaScript === 'function') {
+      subscribe('page:execute-script', handleExecuteScript);
+    }
 
     DEBUG && console.log('[page-widgets] Initialized');
   }

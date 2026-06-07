@@ -59,6 +59,7 @@ import { isHybridPageHost, DEBUG } from './debug-flag.js';
 import {
   onActiveHybridWindowChange,
   getHybridWindow,
+  getHybridContentWC,
   getActiveHybridWindowId,
   getActiveHybridWindowBounds,
   registerHybridWindow,
@@ -531,6 +532,56 @@ function wireShowNavbarFocus(): void {
   });
 }
 
+/**
+ * Run extension page-script execution against the active hybrid content
+ * WebContents. The hybrid overlay widget host is built with `webview: null`
+ * (the page content is a MAIN-owned WebContentsView, not an in-window
+ * `<webview>`), so the renderer overlay can only ever answer
+ * "No webview available". This main handler mirrors the canvas
+ * `handleExecuteScript` contract (10s timeout race; publishes
+ * `page:script-result`) but targets the active hybrid content WC.
+ */
+function wireExecuteScript(): void {
+  subscribe(getSystemAddress(), 'page:execute-script', (raw) => {
+    const msg = raw as { extensionId?: string; requestId?: string; script?: string };
+    if (!msg || !msg.extensionId || !msg.requestId || !msg.script) return;
+    // Resolve the page the script should run in: the active hybrid content WC.
+    // No active hybrid window → this request isn't for us (canvas path or none) →
+    // stay silent so we don't publish a spurious result.
+    const activeId = getActiveHybridWindowId();
+    if (activeId == null) return;
+    const wc = getHybridContentWC(activeId);
+    if (!wc || wc.isDestroyed()) return;
+
+    const SCRIPT_TIMEOUT = 10000;
+    let promise: Promise<unknown>;
+    try {
+      promise = wc.executeJavaScript(msg.script);
+    } catch (err) {
+      publish(getSystemAddress(), 'page:script-result', {
+        requestId: msg.requestId, extensionId: msg.extensionId,
+        error: err instanceof Error ? err.message : String(err), success: false,
+      });
+      return;
+    }
+    const timeout = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Script execution timed out')), SCRIPT_TIMEOUT);
+    });
+    Promise.race([promise, timeout])
+      .then((result) => {
+        publish(getSystemAddress(), 'page:script-result', {
+          requestId: msg.requestId, extensionId: msg.extensionId, result, success: true,
+        });
+      })
+      .catch((err) => {
+        publish(getSystemAddress(), 'page:script-result', {
+          requestId: msg.requestId, extensionId: msg.extensionId,
+          error: err instanceof Error ? err.message : String(err), success: false,
+        });
+      });
+  });
+}
+
 /** Stop following the currently-followed host window (detach move/resize). */
 function unfollow(): void {
   if (followedBaseWin && onFollowedMove && !followedBaseWin.isDestroyed()) {
@@ -681,6 +732,10 @@ export function initHybridOverlay(): void {
   // hybrid window so the URL field is typeable (gated on app-active, see above).
   wireShowNavbarFocus();
 
+  // Run extension page-script execution against the active hybrid content WC
+  // (the overlay host has webview:null and cannot service it; see above).
+  wireExecuteScript();
+
   unsubscribeActive = onActiveHybridWindowChange((id) => {
     try {
       retarget(id);
@@ -743,6 +798,11 @@ export function teardownHybridOverlay(): void {
   }
   try {
     unsubscribe(getSystemAddress(), 'page:show-navbar');
+  } catch {
+    /* never throw on teardown */
+  }
+  try {
+    unsubscribe(getSystemAddress(), 'page:execute-script');
   } catch {
     /* never throw on teardown */
   }
@@ -1677,6 +1737,22 @@ function installTestBridge(): void {
      */
     publishTopic(topic: string, msg: unknown): void {
       publish(getSystemAddress(), topic, msg);
+    },
+    /**
+     * Test-only: publish page:execute-script and resolve with the matching
+     * page:script-result. Exercises the SAME main pubsub path the extension uses.
+     */
+    runPageScript(extensionId: string, requestId: string, script: string): Promise<unknown> {
+      return new Promise((resolve) => {
+        const src = 'test-exec-' + requestId;
+        subscribe(src, 'page:script-result', (raw) => {
+          const m = raw as { requestId?: string };
+          if (m.requestId !== requestId) return;
+          unsubscribe(src, 'page:script-result');
+          resolve(m);
+        });
+        publish('test-exec', 'page:execute-script', { extensionId, requestId, script });
+      });
     },
     /**
      * P1.5: create a hybrid page-host whose content WC has the REAL popup

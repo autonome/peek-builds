@@ -17,12 +17,13 @@
  * state via `widgetHostState`. The describe block skips itself when the hybrid
  * bridge is absent (flag off).
  *
- * NOTE — page:execute-script is a deliberate hybrid GAP, not migrated: the
- * overlay's widget host is constructed with `webview: null` (overlay.js ~1799),
- * so script-exec requests are answered only with `{success:false, error:'No
- * webview available'}`. Extensions that need page-script execution run against
- * the canvas path today. Asserting on the no-webview error would test the gap,
- * not the feature, so those two tests are skipped with a TODO (Batch D ticket).
+ * NOTE — page:execute-script: the overlay's widget host is constructed with
+ * `webview: null` (overlay.js ~1799), so it can't run page scripts itself.
+ * Instead the MAIN process (hybrid-overlay.ts `wireExecuteScript`) subscribes to
+ * `page:execute-script` and runs the script against the active hybrid content
+ * WebContentsView, publishing `page:script-result` (mirroring the canvas
+ * handler's timeout-and-result contract). The two tests below drive that round
+ * trip through the `__peekHybridOverlayTest.runPageScript` bridge.
  *
  * Focus-free: hybrid hosts are headless, opacity-0, never-shown BaseWindows;
  * widget pubsub is driven through the overlay's own subscribe path. The describe
@@ -182,20 +183,39 @@ test.describe('Page Widgets @desktop', () => {
     await closeHybridPage(app, h);
   });
 
-  // ── page:execute-script — deliberate hybrid GAP (NOT migrated) ────────────
+  // ── page:execute-script — runs in MAIN against the hybrid content WC ───────
   test('page:execute-script runs code in webview and returns result', async () => {
     test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
-    test.skip(
-      true,
-      'hybrid page-host: page-script execution is not implemented on the overlay (widget host has webview:null; answers only "No webview available"); deferred to canvas path — see Batch D ticket',
-    );
+
+    const h = await openHybridPage(app, PAGE_HTML);
+    const res = await app.evaluateMain!((_e, arg) => {
+      const b = (globalThis as Record<string, unknown>).__peekHybridOverlayTest as {
+        runPageScript(e: string, r: string, s: string): Promise<{ success: boolean; result?: unknown; error?: string }>;
+      };
+      return b.runPageScript(arg.extensionId, arg.requestId, arg.script);
+    }, { extensionId: 'test-ext', requestId: 'req-ok-1', script: 'document.title' });
+    expect(res.success).toBe(true);
+    expect(res.result).toBe('Example');
+    await closeHybridPage(app, h);
   });
 
   test('page:execute-script returns error for invalid script', async () => {
     test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
-    test.skip(
-      true,
-      'hybrid page-host: page-script execution is not implemented on the overlay (widget host has webview:null); deferred to canvas path — see Batch D ticket',
-    );
+
+    const h = await openHybridPage(app, PAGE_HTML);
+    const res = await app.evaluateMain!((_e, arg) => {
+      const b = (globalThis as Record<string, unknown>).__peekHybridOverlayTest as {
+        runPageScript(e: string, r: string, s: string): Promise<{ success: boolean; result?: unknown; error?: string }>;
+      };
+      return b.runPageScript(arg.extensionId, arg.requestId, arg.script);
+    }, { extensionId: 'test-ext', requestId: 'req-err-1', script: 'throw new Error("boom")' });
+    expect(res.success).toBe(false);
+    // NB: WebContents.executeJavaScript (main → content WC) rejects with a
+    // GENERIC "Script failed to execute…" string — unlike <webview>.execute-
+    // JavaScript it does not surface the thrown Error's own message. So we assert
+    // the failure path fired and carries a non-empty error, not the "boom" text.
+    expect(typeof res.error).toBe('string');
+    expect((res.error as string).length).toBeGreaterThan(0);
+    await closeHybridPage(app, h);
   });
 });
