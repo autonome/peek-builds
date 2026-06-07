@@ -98,6 +98,7 @@ import {
   loadEnabledChromeExtensions,
   openChromeExtensionPage,
   cleanupChromeExtensions,
+  destroyChromeExtensionWindowsForShutdown,
   getChromeExtensionOptionsCommands,
 } from './chrome-extensions.js';
 import {
@@ -877,6 +878,12 @@ app.on('before-quit', () => {
   // inside -[NSWindow __close] → EXC_BAD_ACCESS (peek d1cf0b9a). Runs AFTER
   // saveSessionSnapshot above so session restore still sees live guests.
   try { destroyAllPageHostGuests(); } catch (e) { DEBUG && console.error('[lifecycle] destroyAllPageHostGuests error:', e); }
+  // Same rationale for the chrome-extension bridge windows: they relay
+  // structured-clone messages over a live BG-SW Port and must be destroy()'d
+  // (not left to the native quit __close) or they fault the same way. The async
+  // cleanupChromeExtensions() that normally does this only runs via onQuit,
+  // which a direct app.quit() bypasses — so do the window teardown here too.
+  try { destroyChromeExtensionWindowsForShutdown(); } catch (e) { DEBUG && console.error('[lifecycle] destroyChromeExtensionWindowsForShutdown error:', e); }
   DEBUG && console.log('[lifecycle] before-quit: cleanup complete');
 });
 

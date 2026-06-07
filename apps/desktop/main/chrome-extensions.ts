@@ -1163,6 +1163,36 @@ export async function cleanupChromeExtensions(): Promise<void> {
 
 
 /**
+ * Synchronously destroy the chrome-extension infrastructure windows — the
+ * hidden bridge windows (peek-bridge.html, which hold a live chrome.runtime
+ * Port to the BG SW and relay structured-clone messages) and any open
+ * extension UI windows.
+ *
+ * Why a separate sync entry point: the full async `cleanupChromeExtensions()`
+ * only runs from `onQuit`, which is BYPASSED when something calls `app.quit()`
+ * directly (e.g. tests' app.close(), or any quit not routed through Peek's quit
+ * shortcut). In that path the bridge window is left to close via the native
+ * quit teardown (`-[NSWindow __close]`) WITH an in-flight relay message →
+ * EXC_BAD_ACCESS in the main process (peek d1cf0b9a). `destroy()` (used here,
+ * same as cleanupChromeExtensions) is the forceful teardown that severs the
+ * port/messaging immediately and skips the crashing performClose path. Call
+ * from `before-quit` so these windows are gone before the native quit closes
+ * the rest. Idempotent: cleanupChromeExtensions guards on isDestroyed() and the
+ * maps are cleared here, so a later cleanup call is a no-op.
+ */
+export function destroyChromeExtensionWindowsForShutdown(): void {
+  for (const [, win] of extensionUiWindows) {
+    if (!win.isDestroyed()) win.destroy();
+  }
+  extensionUiWindows.clear();
+  for (const [, win] of _bridgeWindows) {
+    if (!win.isDestroyed()) win.destroy();
+  }
+  _bridgeWindows.clear();
+  setBridgeWindowsRegistry(_bridgeWindows);
+}
+
+/**
  * Info needed to register a single "options" command for a loaded chrome extension.
  */
 export interface ChromeExtensionOptionsCommand {
