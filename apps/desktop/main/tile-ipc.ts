@@ -159,7 +159,7 @@ import {
   createBackup,
   listBackups,
 } from './backup.js';
-import { getPrefs, closeOrHideWindow, showWindowHeadlessSafe } from './windows.js';
+import { getPrefs, closeOrHideWindow, closeHostWindow, showWindowHeadlessSafe } from './windows.js';
 import {
   saveSessionSnapshot,
   restoreSessionSnapshot,
@@ -2783,11 +2783,13 @@ export function registerTileIpcHandlers(): void {
     }
     // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Close the
     // host BaseWindow directly (no keepLive concept for hybrids yet). No-op
-    // (null) when the flag is off.
+    // (null) when the flag is off. Route through closeHostWindow so the content
+    // WebContents (registered as a guest of baseWin.id) is destroyed BEFORE the
+    // BaseWindow closes — same page-host close UAF guard as the canvas path.
     if (args.id != null) {
       const hybrid = getHybridWindow(args.id);
       if (hybrid && !hybrid.baseWin.isDestroyed()) {
-        hybrid.baseWin.close();
+        closeHostWindow(args.id, hybrid.baseWin);
       }
     }
   });

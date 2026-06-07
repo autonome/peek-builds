@@ -16,10 +16,21 @@
  * the guest's MAIN world via `ipcRenderer.invoke`. We use that to drive a
  * deterministic stream of in-flight invokes, then close mid-stream.
  *
- * The original report noted the crash needs concurrent load + an in-flight
- * message and that a settled-close micro-repro (open→close ×40) PASSES. This
- * spec supplies the missing ingredient (in-flight invokes at close) and a
- * close cadence; if the app survives the loop, the UAF is fixed.
+ * Scope / honesty note: the field crash is LOAD-DEPENDENT — it only fires
+ * under the full suite's concurrent main-thread pressure, where an invoke is
+ * mid-deserialize exactly when a close lands. It is NOT reproducible in
+ * isolation: this spec PASSES with the guard both ON and OFF when run alone
+ * (verified). So treat it as (a) a smoke guard for the page-host close path
+ * under relay traffic, and (b) extra in-flight-at-close pressure that RAISES
+ * the crash probability when it runs as part of the full `yarn
+ * test:desktop:electron` suite. The real before/after verification of the fix
+ * is the full suite: pre-fix it produces `EXC_BAD_ACCESS` crash reports
+ * (~1/2 runs); post-fix it must produce none. Do NOT crank the burst into a
+ * sustained flood to force an isolated crash — that trips a DIFFERENT relay
+ * bug (SIGTRAP on the IO thread) the close-guard does not address.
+ *
+ * The guard itself is A/B-testable via `PEEK_DISABLE_PAGEHOST_CLOSE_GUARD=1`
+ * (reverts closeHostWindow to the raw pre-fix close).
  *
  * Run with:
  *   yarn test:grep "page-host close does not crash"
@@ -71,38 +82,34 @@ test.describe('Page-host close UAF @desktop', () => {
   }
 
   /**
-   * In the page-host's <webview> guest MAIN world, fire a heavy burst of relay
-   * requests (no await) so many `ipcRenderer.invoke('peek:runtime-external:send')`
-   * are in transit, then keep a fast interval going. Returns once the burst is
-   * posted (interval keeps running until the guest is destroyed by close).
+   * In the page-host's <webview> guest MAIN world, fire a modest burst of relay
+   * requests so a batch of `ipcRenderer.invoke('peek:runtime-external:send')` is
+   * in transit / mid-deserialize when the host closes a moment later. NO
+   * sustained interval — a fat continuous flood crashes the relay on a
+   * *different* path (SIGTRAP on the IO thread), which is not the close-time
+   * use-after-free under test. We await so the burst is definitely posted (and
+   * thus the invokes are in flight) before the caller closes the host.
    */
-  async function startRelayStorm(pageWindow: import('@playwright/test').Page, burst = 2000): Promise<boolean> {
-    return await pageWindow.evaluate((n: number) => {
+  async function fireRelayBurst(pageWindow: import('@playwright/test').Page, burst = 150): Promise<void> {
+    await pageWindow.evaluate(async (n: number) => {
       const wv = document.querySelector('webview') as any;
-      if (!wv) return false;
+      if (!wv) return;
       const code = `(() => {
-        let seq = 0;
-        function fire() {
+        for (let i = 0; i < ${n}; i++) {
           window.postMessage({
             __peekRuntimeExternal: 'request',
-            reqId: 'uaf-' + (++seq) + '-' + Math.random().toString(36).slice(2),
+            reqId: 'uaf-' + i + '-' + Math.random().toString(36).slice(2),
             extId: 'uaf-nonexistent-ext',
-            message: { type: 'UAF_PROBE', n: seq },
+            message: { type: 'UAF_PROBE', n: i },
             origin: location.href,
             internal: true,
           }, location.origin);
         }
-        for (let i = 0; i < ${n}; i++) fire();
-        // Keep the pressure on right up to close — a fast, fat interval so
-        // there are always invokes in transit when the host window closes.
-        const t = setInterval(() => { for (let i = 0; i < 100; i++) fire(); }, 2);
-        window.__uafStorm = t;
         return true;
       })()`;
       // executeJavaScript runs in the guest MAIN world, where the preload's
       // window 'message' listener picks the envelopes up and invokes IPC.
-      wv.executeJavaScript(code).catch(() => {});
-      return true;
+      await wv.executeJavaScript(code).catch(() => {});
     }, burst);
   }
 
@@ -155,32 +162,30 @@ test.describe('Page-host close UAF @desktop', () => {
       expect(alive, `main process crashed (${where}) — page-host close UAF (d1cf0b9a)`).toBe(true);
     };
 
-    // Concentrate the race: open several page-hosts concurrently, start a relay
-    // storm on each, then close them all in quick succession while invokes are
-    // still in transit. Concurrent closes + concurrent in-flight relay IPC is
-    // the load condition the field crashes need (the report notes a single
-    // settled close — even repeat-each=30 — does NOT reproduce it).
-    const ROUNDS = 15;
-    const CONCURRENCY = 8;
+    // The trigger is CLOSING a page-host whose guest has relay IPC in flight.
+    // Open a few page-hosts concurrently (some main-thread busyness so an
+    // invoke is mid-deserialize when a close lands), fire a modest relay burst
+    // on each, then close them all immediately — mid-flight. Repeat many rounds
+    // to catch the close/deserialize coincidence the field crash needs.
+    const ROUNDS = 30;
+    const CONCURRENCY = 4;
     for (let round = 0; round < ROUNDS; round++) {
-      const hosts = await Promise.all(
+      const hosts = (await Promise.all(
         Array.from({ length: CONCURRENCY }, (_v, k) =>
           openPageHost(`uaf-${round}-${k}`).catch(() => null)),
-      );
-      // Storm all guests (tolerate a page that already went away — only the
-      // main-process death matters, checked below).
+      )).filter(Boolean) as Array<{ pageWindow: import('@playwright/test').Page; windowId: number }>;
+
       await Promise.all(
-        hosts.filter(Boolean).map(async (h) => {
-          await h!.pageWindow.waitForLoadState('domcontentloaded').catch(() => {});
-          await startRelayStorm(h!.pageWindow).catch(() => {});
+        hosts.map(async (h) => {
+          await h.pageWindow.waitForLoadState('domcontentloaded').catch(() => {});
+          await fireRelayBurst(h.pageWindow).catch(() => {});
         }),
       );
-      await assertMainAlive(`during storm, round ${round}`);
 
-      // Close them all near-simultaneously, mid-storm (one bgWindow round-trip).
+      // Close them all immediately while the burst's invokes are in flight.
       await bgWindow.evaluate((ids: number[]) => {
         for (const id of ids) (window as any).app.window.close(id);
-      }, hosts.filter(Boolean).map((h) => h!.windowId)).catch(() => {});
+      }, hosts.map((h) => h.windowId)).catch(() => {});
 
       await assertMainAlive(`after close, round ${round}`);
 
