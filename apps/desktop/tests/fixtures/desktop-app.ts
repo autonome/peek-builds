@@ -326,27 +326,36 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
       // page-layout, page-redirect, permission-prompt, transient-on-blur.
       //
       // The retry is bounded and specific: catches ONLY the named
-      // navigation transient (which is provably resolved within a
-      // tick or two when the new/closing window's CDP session settles),
-      // retries up to 3 times with a small delay, and lets every other
-      // error propagate immediately. NOT a generic "retry until passes"
-      // — the navigation IS a one-shot event with bounded duration.
-      // Any failure that survives 3 retries is a real bug, not a race.
+      // navigation transient (provably resolved once the new/closing
+      // window's CDP session settles) and lets every other error
+      // propagate immediately. NOT a generic "retry until passes" — the
+      // rotation IS a one-shot event with bounded duration.
+      //
+      // Budget, not a fixed count: the settle time scales with machine
+      // load. A fixed 3×~100ms budget under-provisioned under full-suite
+      // load (4 parallel workers + many windows attaching/detaching),
+      // exhausting the retries while the helper context was still rotating
+      // — the slides.spec.ts:150/160 flake (peek f8985201) and its
+      // siblings. Retry the named transient on a bounded time budget with
+      // capped exponential backoff instead, so a busier machine just waits
+      // a little longer. A real crash surfaces as a DIFFERENT message
+      // ("Target page/context/browser has been closed"), so it is not
+      // caught here and fails fast; only the rotation transient is retried,
+      // and only until the deadline.
       const NAVIGATION_RACE = 'Execution context was destroyed';
-      const RETRIES = 3;
-      let lastErr: unknown;
-      for (let attempt = 0; attempt <= RETRIES; attempt++) {
+      const DEADLINE_MS = 5000;
+      const startedAt = Date.now();
+      let delay = 50;
+      for (;;) {
         try {
           return await electronApp.evaluate(fn as any, arg);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          if (!msg.includes(NAVIGATION_RACE) || attempt === RETRIES) throw err;
-          lastErr = err;
-          await new Promise(r => setTimeout(r, 50 * (attempt + 1)));
+          if (!msg.includes(NAVIGATION_RACE) || Date.now() - startedAt >= DEADLINE_MS) throw err;
+          await new Promise(r => setTimeout(r, delay));
+          delay = Math.min(delay * 2, 500);
         }
       }
-      // unreachable — the loop always returns or throws
-      throw lastErr;
     },
 
     getExtensionWindows: () => {
