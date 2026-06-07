@@ -1346,8 +1346,24 @@ export function registerWindowHandlers(): void {
         const existingHybrid = findHybridWindowByKey(options.key);
         if (existingHybrid) {
           DEBUG && console.log('[hybrid-page-host] Reusing existing hybrid window with key:', options.key);
+          // Parity with the canvas key-reuse below: refresh the per-window
+          // transient flag from real-time OS focus (the session's isTransient()
+          // has a one-way active→never-transient ratchet, so reuse from another
+          // app must read appFocused directly) and let the stored Placement
+          // intent rescue/re-center the window on a display change. A hybrid
+          // window is a BaseWindow, but applyPlacementOnReuse only touches
+          // getBounds/setBounds/id — BaseWindow-safe, same cast trackWindow uses.
+          const hybridInfo = getWindowInfo(existingHybrid.windowId);
+          if (hybridInfo) {
+            hybridInfo.params.transient = !coordinator.isAppFocused();
+          }
           if (!isHeadless()) {
             try {
+              applyPlacementOnReuse(
+                existingHybrid.baseWin as unknown as BrowserWindow,
+                hybridInfo?.params.placement as Placement | undefined,
+                'hybrid-keepLive-reuse',
+              );
               existingHybrid.baseWin.show();
               existingHybrid.baseWin.focus();
             } catch (e) {
@@ -1454,6 +1470,15 @@ export function registerWindowHandlers(): void {
           DEBUG && console.log('[hybrid-page-host] Reusing existing hybrid window with same URL:', url);
           if (!isHeadless()) {
             try {
+              // Parity with the canvas url-reuse below: honor the stored
+              // Placement intent so a reused window stranded on a now-disconnected
+              // display (or a 'centered' window) is rescued/re-centered.
+              const hybridInfo = getWindowInfo(existingHybridByUrl.windowId);
+              applyPlacementOnReuse(
+                existingHybridByUrl.baseWin as unknown as BrowserWindow,
+                hybridInfo?.params.placement as Placement | undefined,
+                'hybrid-url-reuse',
+              );
               existingHybridByUrl.baseWin.show();
               existingHybridByUrl.baseWin.focus();
             } catch (e) {
@@ -1781,18 +1806,19 @@ export function registerWindowHandlers(): void {
     // the root webContents, a `<webview>` guest, etc. A `BaseWindow` has no
     // root webContents, so none of that applies here.
     //
-    // SCOPE (P1.1): get content on screen as one window with exactly one
-    // renderer, no crash. Chrome (navbar/widgets/panels), the shared overlay,
-    // navbar/event main-mediation, compat-preload re-attachment, popups, and
-    // window-reuse/dedup keyed on the BaseWindow are explicitly OUT of scope —
-    // they land in P1.2–P1.5. See docs/perf/page-host-hybrid-phase1-plan.md.
+    // SCOPE: P1.1 built this branch (content on screen as one window, one
+    // renderer, no crash); P1.2–P1.5 then layered on compat-preload
+    // re-attachment, content→chrome event mediation, the shared overlay, and
+    // popup routing.
     //
-    // NOTE: the page-reuse / dedup checks earlier in this handler
-    // (findWindowByUrl / findWindowByKey, ~lines 724-749, 641) resolve the
-    // candidate window via getLiveWindow == BrowserWindow.fromId, which does
-    // NOT find a BaseWindow. So in hybrid mode a repeat open of the same URL
-    // currently spawns a fresh window instead of reusing. Acceptable for the
-    // P1.1 skeleton; reuse keyed on the BaseWindow is a later-phase concern.
+    // Window-reuse/dedup IS handled — just not here. The canvas dedup checks
+    // earlier in this handler (findWindowByUrl / findWindowByKey) resolve via
+    // getLiveWindow == BrowserWindow.fromId, which cannot find a BaseWindow. So
+    // P1.4a added a PARALLEL dedup against the hybrid registry at the top of
+    // this handler (findHybridWindowByKey / findHybridWindowByUrl), gated on
+    // isHybridPageHost(), which reuses+focuses the existing hybrid window
+    // (with placement-on-reuse + transient-refresh parity) before we ever reach
+    // this construction branch. We only get here on a genuine first open.
     if (isHybridPageHost() && useCanvas) {
       try {
         // winOptions.x/y/width/height were filled in above by
@@ -1879,6 +1905,7 @@ export function registerWindowHandlers(): void {
           baseWin,
           contentWC: view.webContents,
           key: options.key,
+          url,
         });
 
         // Feed the per-app focus trackers (lastFocusedVisibleWindowId /

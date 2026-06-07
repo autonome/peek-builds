@@ -39,15 +39,18 @@ import type { BaseWindow, WebContents } from 'electron';
 
 /**
  * One hybrid page-host window: its host `BaseWindow`, the main-owned content
- * `WebContents`, and the optional dedup `key` it was opened with. `url` /
- * `title` are read live off the content webContents (not cached) so they
- * always reflect the current navigation.
+ * `WebContents`, the optional dedup `key` it was opened with, and the
+ * `requestedUrl` it was opened FOR. `url` / `title` are read live off the
+ * content webContents (not cached) so they always reflect the current
+ * navigation; `requestedUrl` is the static open address used for dedup.
  */
 export interface HybridWindowEntry {
   windowId: number;
   baseWin: BaseWindow;
   contentWC: WebContents;
   key?: string;
+  /** The static open address this window was created for (dedup key). */
+  requestedUrl?: string;
   /** Current live URL of the content webContents (empty if unavailable). */
   url(): string;
   /** Current live title of the content webContents (empty if unavailable). */
@@ -59,6 +62,7 @@ interface InternalEntry {
   baseWin: BaseWindow;
   contentWC: WebContents;
   key?: string;
+  requestedUrl?: string;
 }
 
 const entries = new Map<number, InternalEntry>();
@@ -214,6 +218,7 @@ function toPublic(e: InternalEntry): HybridWindowEntry {
     baseWin: e.baseWin,
     contentWC: e.contentWC,
     key: e.key,
+    requestedUrl: e.requestedUrl,
     url: () => safeUrl(e.contentWC),
     title: () => safeTitle(e.contentWC),
   };
@@ -245,14 +250,17 @@ function normalizeForDedup(url: string): string {
  * so a closed hybrid window never lingers in the registry. Focus/blur
  * listeners maintain `getActiveHybridWindowId()`.
  *
+ * `opts.url` is the static open address this window was created for; it is what
+ * `findHybridWindowByUrl` dedups against (canvas-parity — see that function).
+ *
  * Idempotent on `windowId`: re-registering overwrites the prior entry.
  */
 export function registerHybridWindow(
   windowId: number,
-  opts: { baseWin: BaseWindow; contentWC: WebContents; key?: string },
+  opts: { baseWin: BaseWindow; contentWC: WebContents; key?: string; url?: string },
 ): void {
-  const { baseWin, contentWC, key } = opts;
-  const entry: InternalEntry = { windowId, baseWin, contentWC, key };
+  const { baseWin, contentWC, key, url } = opts;
+  const entry: InternalEntry = { windowId, baseWin, contentWC, key, requestedUrl: url };
   entries.set(windowId, entry);
 
   const cleanup = () => {
@@ -384,18 +392,22 @@ export function getHybridWindowByContentWC(wc: WebContents): HybridWindowEntry |
 }
 
 /**
- * Find a hybrid window whose content currently loads `url` (for dedup/reuse on
- * a repeat open). Matches on normalized url (trailing-slash tolerant) against
- * the content webContents's live URL — mirroring the canvas path's
- * `findWindowByUrl`. Only http(s) urls participate, matching the canvas path.
- * Returns null if none.
+ * Find a hybrid window opened FOR `url` (for dedup/reuse on a repeat open).
+ * Matches on the normalized REQUESTED address (the static open url the window
+ * was created with), trailing-slash tolerant — exactly mirroring the canvas
+ * path's `findWindowByUrl`, which dedups on the stored `params.address` rather
+ * than the live webview URL. Matching the requested address (not the live
+ * content URL) is what makes dedup survive in-page navigation / redirects: a
+ * window opened for `https://x/` that then redirects to `https://x/login`
+ * still dedups a repeat open of `https://x/`. Only http(s) urls participate,
+ * matching the canvas path. Returns null if none.
  */
 export function findHybridWindowByUrl(url: string): HybridWindowEntry | null {
   if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return null;
   const target = normalizeForDedup(url);
   for (const e of entries.values()) {
-    if (e.contentWC.isDestroyed()) continue;
-    if (normalizeForDedup(safeUrl(e.contentWC)) === target) {
+    if (e.baseWin.isDestroyed()) continue;
+    if (e.requestedUrl && normalizeForDedup(e.requestedUrl) === target) {
       return toPublic(e);
     }
   }
