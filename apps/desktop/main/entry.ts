@@ -126,7 +126,7 @@ import { initRendererLog } from './renderer-log.js';
 import { initMainLog } from './main-log.js';
 import { DEBUG } from './config.js';
 import { isDevToolsEnabled } from './debug-flag.js';
-import { isPageHostContent } from './webview-guest-registry.js';
+import { isPageHostContent, destroyAllPageHostGuests } from './webview-guest-registry.js';
 import {
   getRuntimeExternalWebPrefsForUrl,
   installMainWorldContentScriptInjection,
@@ -870,6 +870,13 @@ app.on('before-quit', () => {
   try { stopHotReload(); } catch (e) { DEBUG && console.error('[lifecycle] stopHotReload error:', e); }
   try { cleanupThumbnails(getActiveThumbnailHashes); } catch (e) { DEBUG && console.error('[lifecycle] cleanupThumbnails error:', e); }
   try { shutdown(); } catch (e) { DEBUG && console.error('[lifecycle] shutdown error:', e); }
+  // Tear down page-host guests BEFORE Electron closes their host windows during
+  // quit. App-quit (incl. tests' app.close() → app.quit()) closes leftover
+  // page-host windows via the native quit path, bypassing closeHostWindow — a
+  // guest with an in-flight chrome-ext relay invoke would otherwise be derefed
+  // inside -[NSWindow __close] → EXC_BAD_ACCESS (peek d1cf0b9a). Runs AFTER
+  // saveSessionSnapshot above so session restore still sees live guests.
+  try { destroyAllPageHostGuests(); } catch (e) { DEBUG && console.error('[lifecycle] destroyAllPageHostGuests error:', e); }
   DEBUG && console.log('[lifecycle] before-quit: cleanup complete');
 });
 

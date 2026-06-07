@@ -13,7 +13,7 @@
  * fragile. This registry makes the lookup O(1) and reliable.
  */
 
-import { type WebContents } from 'electron';
+import { type WebContents, webContents } from 'electron';
 import { getLiveWindow, windowFromWebContents } from './window-registry.js';
 
 const guestToHost = new Map<number, number>();
@@ -120,6 +120,30 @@ export function getGuestsForWindow(hostWindowId: number): number[] {
     if (hostId === hostWindowId) out.push(guestId);
   }
   return out;
+}
+
+/**
+ * Destroy every registered page-host guest WebContents synchronously.
+ *
+ * Called from the `before-quit` handler so guests (which may carry an in-flight
+ * chrome-extension relay `ipcRenderer.invoke`) are torn down BEFORE Electron
+ * closes their host windows during quit. Without this, app-quit closes leftover
+ * page-host windows via the native quit path (NOT closeHostWindow), so a guest
+ * is derefed inside `-[NSWindow __close]` → EXC_BAD_ACCESS (peek d1cf0b9a). The
+ * interactive close path is already covered by `closeHostWindow`; this closes
+ * the quit/teardown gap. Best-effort and synchronous — `destroy()` marks each
+ * guest destroyed immediately so the subsequent window closes have no live
+ * guest to dereference.
+ */
+export function destroyAllPageHostGuests(): void {
+  for (const guestId of [...guestToHost.keys()]) {
+    try {
+      const wc = webContents.fromId(guestId);
+      if (wc && !wc.isDestroyed()) {
+        (wc as unknown as { destroy(): void }).destroy();
+      }
+    } catch { /* best-effort during shutdown */ }
+  }
 }
 
 /** Test-only: clear all registry state. */
