@@ -18,6 +18,7 @@
 
 import { app, session, Session, BrowserWindow, Notification, shell } from 'electron';
 import { getAllLiveWindows, windowFromWebContents } from './window-registry.js';
+import { getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -341,6 +342,16 @@ function _registerDownloadHandlerImpl(ses: Session): void {
       if (win) {
         DEBUG && console.log('[download] Closing download-trigger window:', win.id);
         win.close();
+      } else {
+        // Hybrid page-host: the content WC is a BaseWindow-hosted WebContentsView,
+        // invisible to windowFromWebContents (BrowserWindow-only). Resolve it via
+        // the hybrid registry and close the host so a target=_blank download into
+        // a fresh page-host doesn't leave it orphaned. No-op when the flag is off.
+        const hybrid = getHybridWindowByContentWC(webContents);
+        if (hybrid && !hybrid.baseWin.isDestroyed()) {
+          DEBUG && console.log('[download] Closing hybrid download-trigger host:', hybrid.windowId);
+          hybrid.baseWin.close();
+        }
       }
     } else {
       // Download from a webview guest. Two cases:

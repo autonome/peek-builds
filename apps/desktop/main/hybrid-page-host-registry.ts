@@ -368,6 +368,22 @@ export function getHybridContentWC(windowId: number): WebContents | null {
 }
 
 /**
+ * Reverse lookup: find the hybrid window whose content WebContents IS `wc`.
+ * Used by the will-download cleanup to resolve a BaseWindow-hosted content WC
+ * (windowFromWebContents can't — it only knows BrowserWindows) back to its host
+ * so a download-trigger page-host can be closed. Returns null when no live entry
+ * matches (and always null when the flag is off — the registry is empty).
+ */
+export function getHybridWindowByContentWC(wc: WebContents): HybridWindowEntry | null {
+  for (const e of entries.values()) {
+    if (e.contentWC === wc && !e.baseWin.isDestroyed()) {
+      return toPublic(e);
+    }
+  }
+  return null;
+}
+
+/**
  * Find a hybrid window whose content currently loads `url` (for dedup/reuse on
  * a repeat open). Matches on normalized url (trailing-slash tolerant) against
  * the content webContents's live URL — mirroring the canvas path's

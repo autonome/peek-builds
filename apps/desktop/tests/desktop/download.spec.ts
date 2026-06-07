@@ -122,35 +122,31 @@ test.describe('Download Navigation @desktop', () => {
   // These tests assert against the canvas `<webview>` page host (`#content`
   // webview, `.loaded` class, `webview.getURL()/executeJavaScript`). Under the
   // hybrid flag the page content is an OPAQUE WebContentsView in a BaseWindow,
-  // so there is no in-window webview to drive — and the download-cleanup
-  // behavior these tests verify is NOT yet correct on the hybrid path:
+  // so there is no in-window webview to drive.
   //
-  //   The will-download handler in main/session-partition.ts branches on
-  //   `webContents.getType() === 'webview'` and, for the non-webview branch,
-  //   closes the download-trigger window via `windowFromWebContents(wc)`. A
-  //   hybrid content WC is a WebContentsView whose getType() is 'browserView'
-  //   (NOT 'webview'), and `windowFromWebContents` returns null for a
-  //   BaseWindow-hosted WC — there is no hybrid-registry fallback. So a
-  //   `target=_blank` download that routes (via the hybrid setWindowOpenHandler)
-  //   into a NEW hybrid page-host leaves that host ORPHANED: nothing closes it
-  //   after the download aborts the navigation. The popup-cleanup intent of the
-  //   second test is a real hybrid product gap (Batch D / separate ticket), not
-  //   a canvas-DOM assertion that can be mechanically re-pointed.
+  // The product cleanup gap is now FIXED: the will-download handler in
+  // main/session-partition.ts no longer dead-ends on a hybrid content WC. After
+  // `windowFromWebContents(wc)` returns null (it only knows BrowserWindows, not
+  // a BaseWindow-hosted WebContentsView whose getType() is 'browserView'), it
+  // falls back to the hybrid registry's `getHybridWindowByContentWC(wc)` and
+  // closes the resolved host. So a `target=_blank` download that routes (via the
+  // hybrid setWindowOpenHandler) into a NEW hybrid page-host no longer leaves
+  // that host orphaned. That reverse lookup is covered by a focused unit test in
+  // main/hybrid-page-host-registry.test.ts.
   //
-  // Additionally, the shared hybrid test bridge (`makeFakeHybridWindow` /
+  // The describe nonetheless stays SKIPPED under the hybrid flag for a NARROWER,
+  // harness-only reason: the shared hybrid test bridge (`makeFakeHybridWindow` /
   // `makeWiredHybrid`) builds its content WebContentsView on the DEFAULT session
   // (no `session: profileSession`), so `will-download` — which is registered on
-  // profileSession at init — never fires for bridge-driven windows. There is no
-  // focus-free way to drive a real download on hybrid through the current
-  // helper/bridge surface even for the same-page case.
+  // profileSession at init — never fires for bridge-driven windows. Driving a
+  // real hybrid download e2e (and asserting the host actually closes) needs a
+  // partitioned-session test bridge; that's tracked as a separate follow-up.
   //
-  // We therefore SKIP this whole describe under the hybrid flag rather than mask
-  // either the missing bridge wiring or the orphan-cleanup product gap. The
-  // tests remain fully valid on the canvas path (flag off).
+  // The tests remain fully valid on the canvas path (flag off).
   test.beforeEach(async () => {
     test.skip(
       await hybridBridgePresent(sharedApp),
-      'hybrid page-host: download popup-cleanup is an unresolved product gap (getType/windowFromWebContents do not cover BaseWindow-hosted content WCs); see Batch D ticket',
+      'hybrid page-host: cleanup fix landed (will-download closes the orphaned host via the hybrid registry; see hybrid-page-host-registry.test.ts) but the shared test bridge uses the default session so will-download never fires; needs a partitioned-session bridge (follow-up)',
     );
   });
 
