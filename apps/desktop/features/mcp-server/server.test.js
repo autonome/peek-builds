@@ -300,6 +300,122 @@ describe('MCP Server', () => {
     });
   });
 
+  describe('search_items', () => {
+    // Regression headline: items engineered so the two query terms live in
+    // DIFFERENT fields (and one only in a tag). The old whole-string LIKE
+    // returned [] for "mcp fix"; the tokenized AND must find them.
+    let mcpTitleItem;   // title="mcp server", content has "fix"
+    let mcpTagItem;     // tag "mcp", content has "fix"
+    let titleMatch;     // title="searchterm in title"
+    let contentMatch;   // content has "searchterm"
+    let wildcardItem;   // content has literal "100% done_now"
+
+    before(async () => {
+      mcpTitleItem = await client.callTool('create_item', {
+        type: 'text', title: 'mcp server notes',
+        content: 'need to fix the search handler later',
+      });
+      mcpTagItem = await client.callTool('create_item', {
+        type: 'text', title: 'unrelated heading',
+        content: 'remember to fix this thing', tags: ['mcp'],
+      });
+      titleMatch = await client.callTool('create_item', {
+        type: 'text', title: 'searchterm lives in the title',
+        content: 'body without the word',
+      });
+      contentMatch = await client.callTool('create_item', {
+        type: 'text', title: 'plain heading',
+        content: 'the searchterm lives only in the content here',
+      });
+      wildcardItem = await client.callTool('create_item', {
+        type: 'text', title: 'progress',
+        content: 'we are 100% done_now with the rollout',
+      });
+    });
+
+    it('REGRESSION: multi-term query finds an item with terms in different fields', async () => {
+      // "mcp fix": "mcp" in title, "fix" in content. Old search returned [].
+      const results = await client.callTool('search_items', { query: 'mcp fix' });
+      const ids = results.map((r) => r.id);
+      assert.ok(ids.includes(mcpTitleItem.id),
+        `expected "mcp fix" to find the item with mcp-in-title + fix-in-content, got ids: ${ids.join(', ')}`);
+    });
+
+    it('multi-term query matches a term that only appears in a tag', async () => {
+      // mcpTagItem: "mcp" is ONLY a tag, "fix" is in content.
+      const results = await client.callTool('search_items', { query: 'mcp fix' });
+      const ids = results.map((r) => r.id);
+      assert.ok(ids.includes(mcpTagItem.id),
+        `expected tag-only "mcp" + content "fix" item to be found, got: ${ids.join(', ')}`);
+    });
+
+    it('AND semantics: an item missing one term is excluded', async () => {
+      // titleMatch has neither "mcp" nor "fix" → excluded from "mcp fix".
+      const results = await client.callTool('search_items', { query: 'mcp fix' });
+      const ids = results.map((r) => r.id);
+      assert.ok(!ids.includes(titleMatch.id));
+    });
+
+    it('a query matching only via a tag returns the item (tags are searchable)', async () => {
+      const results = await client.callTool('search_items', { query: 'reading' });
+      const ids = results.map((r) => r.id);
+      // item-1 carries the seeded 'reading' tag, with no "reading" text.
+      assert.ok(ids.includes('item-1'),
+        `expected tag-only match to surface item-1, got: ${ids.join(', ')}`);
+    });
+
+    it('ranks a title match above a content-only match for the same term', async () => {
+      const results = await client.callTool('search_items', { query: 'searchterm' });
+      const titleIdx = results.findIndex((r) => r.id === titleMatch.id);
+      const contentIdx = results.findIndex((r) => r.id === contentMatch.id);
+      assert.ok(titleIdx !== -1 && contentIdx !== -1, 'both should be found');
+      assert.ok(titleIdx < contentIdx,
+        `title match (idx ${titleIdx}) should rank above content match (idx ${contentIdx})`);
+      // And the title-hit score should exceed the content-hit score.
+      assert.ok(results[titleIdx].score > results[contentIdx].score);
+    });
+
+    it('returns a snippet containing the matched term', async () => {
+      const results = await client.callTool('search_items', { query: 'searchterm' });
+      const hit = results.find((r) => r.id === contentMatch.id);
+      assert.ok(hit, 'content match should be present');
+      assert.ok(typeof hit.snippet === 'string' && hit.snippet.length > 0, 'snippet should be present');
+      assert.ok(hit.snippet.toLowerCase().includes('searchterm'),
+        `snippet should contain the term, got: "${hit.snippet}"`);
+    });
+
+    it('field-aware: query + tags filter returns only items satisfying BOTH', async () => {
+      // "fix" matches both mcpTitleItem and mcpTagItem; only mcpTagItem has tag 'mcp'.
+      const results = await client.callTool('search_items', { query: 'fix', tags: ['mcp'] });
+      const ids = results.map((r) => r.id);
+      assert.ok(ids.includes(mcpTagItem.id));
+      assert.ok(!ids.includes(mcpTitleItem.id),
+        `tag filter should exclude the untagged text match, got: ${ids.join(', ')}`);
+    });
+
+    it('treats wildcard chars (% _) in the query as literal', async () => {
+      // "100%" must NOT match via LIKE wildcard semantics; it must match the
+      // literal "100%" in wildcardItem and not, say, every item.
+      const results = await client.callTool('search_items', { query: '100% done_now' });
+      const ids = results.map((r) => r.id);
+      assert.ok(ids.includes(wildcardItem.id), `literal "100% done_now" should match, got: ${ids.join(', ')}`);
+      // Sanity: a bare "%" would match everything if treated as a wildcard.
+      // Here "100%" is anchored to a literal that only one item has.
+      assert.equal(ids.filter((id) => id === wildcardItem.id).length, 1);
+    });
+
+    it('empty/whitespace query returns no results (text search needs terms)', async () => {
+      const results = await client.callTool('search_items', { query: '   ' });
+      assert.deepEqual(results, []);
+    });
+
+    it('does not return deleted items', async () => {
+      const results = await client.callTool('search_items', { query: 'Deleted' });
+      const ids = results.map((r) => r.id);
+      assert.ok(!ids.includes('item-deleted'));
+    });
+  });
+
   describe('get_item', () => {
     it('should return item with tags', async () => {
       const item = await client.callTool('get_item', { itemId: 'item-2' });
@@ -847,6 +963,17 @@ describe('MCP Server scope enforcement (PEEK_MCP_SCOPE_TAG=peek)', () => {
       const tags = await client.callTool('list_tags', {});
       const names = tags.map((t) => t.name).sort();
       assert.deepEqual(names, ['peek', 'peek:scope:desktop']);
+    });
+
+    it('search_items never returns out-of-scope items', async () => {
+      // "thing" appears in p-only ("peek thing"), u-only ("untense thing"),
+      // and the bare/untagged items' content. Scoped search must surface only
+      // the in-scope match (p-only) and hide the foreign + untagged ones.
+      const results = await client.callTool('search_items', { query: 'thing' });
+      const ids = results.map((r) => r.id).sort();
+      assert.ok(ids.includes('p-only'), `expected in-scope match, got: ${ids.join(', ')}`);
+      assert.ok(!ids.includes('u-only'), `out-of-scope item leaked: ${ids.join(', ')}`);
+      assert.ok(!ids.includes('bare'), `untagged item leaked: ${ids.join(', ')}`);
     });
   });
 

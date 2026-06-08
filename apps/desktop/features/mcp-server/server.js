@@ -163,12 +163,12 @@ const TOOLS = [
   },
   {
     name: 'search_items',
-    description: 'Full-text search across Peek items. Searches content, title, and domain fields. Optionally filter by tags and/or type.',
+    description: 'Tokenized, ranked text search across Peek items. The query is split on whitespace into terms; ALL terms must appear (AND), but each term may match in ANY field — title, content, domain, or tags. So "mcp fix" matches an item whose title has "mcp" and whose content has "fix". Results are ranked by relevance (title > tag > domain > content; more distinct terms matched ranks higher; frecency as tiebreak) and each carries a `score` and a `snippet` (a short window of text around the first match). Optionally combine with a `tags` filter (text match restricted to items also carrying ALL listed tags) and/or a `type` filter. Wildcard characters (% _) in the query are matched literally.',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Search string (matched against content, title, and domain)' },
-        tags: { type: 'array', items: { type: 'string' }, description: 'Only return items that have ALL listed tags' },
+        query: { type: 'string', description: 'Search string. Split on whitespace into terms; every term must appear (AND), each matchable in title, content, domain, or a tag name.' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Restrict text matches to items that ALSO have ALL listed tags' },
         type: { type: 'string', description: 'Filter by item type (url, text, tagset, image, series, feed, entity)' },
         limit: { type: 'number', description: 'Max results (default 20)' },
         offset: { type: 'number', description: 'Pagination offset' },

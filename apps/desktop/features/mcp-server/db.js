@@ -217,14 +217,100 @@ export function queryItems({ tags, type, limit = 50, offset = 0, sort = 'recent'
   });
 }
 
+/**
+ * Tokenized, ranked, field-aware text search over items.
+ *
+ * Old behavior (the bug this replaces): the whole query string was wrapped in
+ * a single `%query%` and matched against content/title/domain only. A
+ * multi-word query like "mcp fix" only matched if that exact adjacent
+ * substring existed somewhere — so an item with "mcp" in its title and "fix"
+ * in its content returned NOTHING. Tags were never searched at all.
+ *
+ * New behavior:
+ *  - TOKENIZE the query on whitespace into terms; default semantics is AND —
+ *    every term must appear, but each term may match in ANY field
+ *    (title / content / domain / tags). So "mcp fix" matches an item whose
+ *    title has "mcp" and whose content has "fix".
+ *  - SEARCH title + content + domain + tags. Tags are matched via the existing
+ *    item↔tag join (same shape queryItems/resolveItemId use), folded into a
+ *    per-item concatenated tag blob so a term can match a tag name.
+ *  - ESCAPE `%`, `_`, `\` in each term so user wildcards are treated literally
+ *    (LIKE ... ESCAPE '\'), mirroring escapeLikePrefix used by resolveItemId.
+ *  - RANK in JS (dataset is a personal store; candidate set is small). Per
+ *    matched term we add a field-weighted score; matching more distinct terms
+ *    scores higher. frecencyScore is a tiebreak only. Weights:
+ *        title   : 10  (a hit in the title is the strongest signal)
+ *        tag     :  6  (curated, deliberate metadata)
+ *        domain  :  4
+ *        content :  2  (largest/noisiest field — weakest per-hit signal)
+ *    Per-term contribution = highest-weight field that term hit, PLUS a small
+ *    bonus for each additional field the same term also hit. Total score is the
+ *    sum over all (distinct) query terms, so an item matching 2 terms always
+ *    outranks one matching 1 term of equal field strength.
+ *  - SNIPPET: each result carries `snippet` — a short window of content (or,
+ *    if the first matched term isn't in content, of title) around the first
+ *    matched term, so a caller can judge relevance without fetching each item.
+ *
+ * SQL pre-filter: we push the AND-of-terms down as a WHERE so only candidate
+ * rows come back (each term: title OR content OR domain OR tag-blob LIKE).
+ * Ranking/snippet then run over that candidate set in JS. Existing returned
+ * shape is preserved; `score` and `snippet` are ADDED fields.
+ */
+
+const SEARCH_WEIGHTS = { title: 10, tag: 6, domain: 4, content: 2 };
+const SNIPPET_RADIUS = 40; // chars of context on each side of the first match.
+
+function tokenizeQuery(query) {
+  if (typeof query !== 'string') return [];
+  return query
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+}
+
+function buildSnippet(text, term) {
+  if (!text) return '';
+  const idx = text.toLowerCase().indexOf(term.toLowerCase());
+  if (idx === -1) return '';
+  const start = Math.max(0, idx - SNIPPET_RADIUS);
+  const end = Math.min(text.length, idx + term.length + SNIPPET_RADIUS);
+  let snip = text.slice(start, end).replace(/\s+/g, ' ').trim();
+  if (start > 0) snip = '…' + snip;
+  if (end < text.length) snip = snip + '…';
+  return snip;
+}
+
 export function searchItems({ query, tags, type, limit = 20, offset = 0 } = {}) {
   const d = requireDb();
-  const params = [];
-  const conditions = ['i.deletedAt = 0'];
+  const terms = tokenizeQuery(query);
 
-  const likePattern = `%${query}%`;
-  conditions.push('(i.content LIKE ? OR i.title LIKE ? OR i.domain LIKE ?)');
-  params.push(likePattern, likePattern, likePattern);
+  // No usable terms → nothing to match (caller asked for a text search with an
+  // empty/whitespace query). Returning [] keeps the contract that search_items
+  // is text-driven; tag-only listing is list_items' job.
+  if (terms.length === 0) return [];
+
+  // We fetch a tag blob per item via a correlated subquery (GROUP_CONCAT over
+  // the join) so a term can match a tag name in the SAME WHERE pass. Aliased
+  // `tagBlob` is used both for filtering and later for JS scoring.
+  const tagBlobExpr = `(
+    SELECT COALESCE(GROUP_CONCAT(t2.name, ' '), '')
+    FROM item_tags it2 JOIN tags t2 ON t2.id = it2.tagId
+    WHERE it2.itemId = i.id
+  )`;
+
+  const conditions = ['i.deletedAt = 0'];
+  const params = [];
+
+  // Each term: must appear in ANY of title/content/domain/tagBlob (AND across
+  // terms). Wildcards in the term are escaped so `%`/`_` match literally.
+  for (const term of terms) {
+    const like = '%' + escapeLikePrefix(term) + '%';
+    conditions.push(
+      `(i.title LIKE ? ESCAPE '\\' OR i.content LIKE ? ESCAPE '\\' ` +
+      `OR i.domain LIKE ? ESCAPE '\\' OR ${tagBlobExpr} LIKE ? ESCAPE '\\')`
+    );
+    params.push(like, like, like, like);
+  }
 
   if (type) {
     conditions.push('i.type = ?');
@@ -233,37 +319,97 @@ export function searchItems({ query, tags, type, limit = 20, offset = 0 } = {}) 
 
   let sql;
   if (tags && tags.length > 0) {
+    // Field-aware: text query AND a tags filter combined in one call — text
+    // candidates are further restricted to items carrying ALL listed tags
+    // (mirrors queryItems' GROUP BY / HAVING COUNT(DISTINCT) shape).
     const placeholders = tags.map(() => '?').join(',');
     sql = `
       SELECT i.id, i.type, i.content, i.title, i.domain, i.metadata,
-             i.createdAt, i.updatedAt, i.starred, i.archived, i.visitCount, i.frecencyScore
+             i.createdAt, i.updatedAt, i.starred, i.archived, i.visitCount, i.frecencyScore,
+             ${tagBlobExpr} AS tagBlob
       FROM items i
       JOIN item_tags it ON i.id = it.itemId
       JOIN tags t ON it.tagId = t.id
       WHERE t.name IN (${placeholders}) AND ${conditions.join(' AND ')}
       GROUP BY i.id
       HAVING COUNT(DISTINCT t.id) = ?
-      ORDER BY i.updatedAt DESC
-      LIMIT ? OFFSET ?
     `;
     params.unshift(...tags);
-    params.push(tags.length, limit, offset);
+    params.push(tags.length);
   } else {
     sql = `
       SELECT i.id, i.type, i.content, i.title, i.domain, i.metadata,
-             i.createdAt, i.updatedAt, i.starred, i.archived, i.visitCount, i.frecencyScore
+             i.createdAt, i.updatedAt, i.starred, i.archived, i.visitCount, i.frecencyScore,
+             ${tagBlobExpr} AS tagBlob
       FROM items i
       WHERE ${conditions.join(' AND ')}
-      ORDER BY i.updatedAt DESC
-      LIMIT ? OFFSET ?
     `;
-    params.push(limit, offset);
   }
 
-  const rows = d.prepare(sql).all(...params);
-  if (rows.length === 0) return [];
+  const candidates = d.prepare(sql).all(...params);
+  if (candidates.length === 0) return [];
 
-  const ids = rows.map(r => r.id);
+  // --- Rank in JS over the candidate set. ---
+  const lowerTerms = terms.map((t) => t.toLowerCase());
+  const scored = candidates.map((r) => {
+    const title = (r.title || '').toLowerCase();
+    const content = (r.content || '').toLowerCase();
+    const domain = (r.domain || '').toLowerCase();
+    const tagBlob = (r.tagBlob || '').toLowerCase();
+
+    let score = 0;
+    let firstSnippetTerm = null;
+    let firstSnippetInContent = false;
+
+    for (const term of lowerTerms) {
+      const inTitle = title.includes(term);
+      const inTag = tagBlob.includes(term);
+      const inDomain = domain.includes(term);
+      const inContent = content.includes(term);
+      if (!inTitle && !inTag && !inDomain && !inContent) continue; // (shouldn't happen post-filter)
+
+      // Per-term: take the strongest field this term hit, add a small bonus
+      // (+1) for each additional field the same term also matched.
+      const hitWeights = [];
+      if (inTitle) hitWeights.push(SEARCH_WEIGHTS.title);
+      if (inTag) hitWeights.push(SEARCH_WEIGHTS.tag);
+      if (inDomain) hitWeights.push(SEARCH_WEIGHTS.domain);
+      if (inContent) hitWeights.push(SEARCH_WEIGHTS.content);
+      const best = Math.max(...hitWeights);
+      score += best + (hitWeights.length - 1);
+
+      if (firstSnippetTerm === null) {
+        firstSnippetTerm = term;
+        firstSnippetInContent = inContent;
+      }
+    }
+
+    // Snippet: window around the first matched term, preferring content;
+    // fall back to title (e.g. a term that only matched the title/tag).
+    let snippet = '';
+    if (firstSnippetTerm !== null) {
+      snippet = firstSnippetInContent
+        ? buildSnippet(r.content, firstSnippetTerm)
+        : buildSnippet(r.title, firstSnippetTerm) || buildSnippet(r.content, firstSnippetTerm);
+    }
+
+    return { row: r, score, snippet };
+  });
+
+  // Sort: score desc, frecencyScore desc as tiebreak, then updatedAt desc.
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    const fa = a.row.frecencyScore || 0;
+    const fb = b.row.frecencyScore || 0;
+    if (fb !== fa) return fb - fa;
+    return (b.row.updatedAt || 0) - (a.row.updatedAt || 0);
+  });
+
+  const page = scored.slice(offset, offset + limit);
+  if (page.length === 0) return [];
+
+  // Single tag fetch for the page (replaces the tagBlob, which is search-only).
+  const ids = page.map((s) => s.row.id);
   const tagPlaceholders = ids.map(() => '?').join(',');
   const tagRows = d.prepare(`
     SELECT it.itemId, t.name
@@ -278,8 +424,12 @@ export function searchItems({ query, tags, type, limit = 20, offset = 0 } = {}) 
     tagsById.get(tr.itemId).push(tr.name);
   }
 
-  return rows.map(r => {
+  return page.map((s) => {
+    const r = s.row;
+    delete r.tagBlob; // internal scoring column — not part of the item shape.
     r.tags = tagsById.get(r.id) || [];
+    r.score = s.score;
+    r.snippet = s.snippet;
     return parseMetadata(r);
   });
 }

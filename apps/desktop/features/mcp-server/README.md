@@ -65,11 +65,38 @@ idempotent:
 
 Read-only (always available):
 
-- `list_items`, `get_item`, `list_tags`, `list_tasks`, `get_task_context`
+- `list_items`, `search_items`, `get_item`, `list_tags`, `list_tasks`, `get_task_context`
 
 Mutating (only when `PEEK_MCP_READONLY=0`, set by `--writes`):
 
 - `create_item`, `update_item`, `delete_item`, `tag_item`, `untag_item`, `record_event`, `complete_task`
+
+#### `search_items` — tokenized, ranked text search
+
+`search_items({ query })` is the tool to reach for when you don't already know
+an item's id or exact tag. It is **not** a single-substring match:
+
+- **Tokenized, AND semantics.** The `query` is split on whitespace into terms.
+  EVERY term must appear, but each term may match in ANY field. So
+  `query: "mcp fix"` matches an item whose title has "mcp" and whose content
+  has "fix" — the old whole-string `%mcp fix%` match returned nothing for that.
+- **Fields searched:** `title`, `content`, `domain`, and `tags` (a term can
+  match a tag name).
+- **Ranked by relevance.** Per term, the strongest field it hit drives the
+  score (`title` 10 > `tag` 6 > `domain` 4 > `content` 2), plus a small bonus
+  for each additional field the same term also hit; matching more distinct
+  terms always outranks fewer. `frecencyScore` then `updatedAt` are tiebreaks
+  only. The numeric `score` is returned on each result.
+- **Snippets.** Each result carries a `snippet` — a short window of text around
+  the first matched term — so you can judge relevance without opening each item.
+- **Field-aware (`tags` filter).** Combine text + tags in one call:
+  `search_items({ query: "fix", tags: ["mcp"] })` restricts text matches to
+  items that ALSO carry all listed tags (same shape as `list_items`' filter).
+  Add a `type` filter the same way.
+- **Wildcards are literal.** `%` and `_` in the query are escaped, so
+  `"100% done"` matches that literal text rather than acting as LIKE wildcards.
+- Scope-confined like every other read: a scoped session never sees
+  out-of-scope or untagged items in search results.
 
 ### Resources
 

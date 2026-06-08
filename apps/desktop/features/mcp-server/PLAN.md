@@ -263,6 +263,40 @@ Once configured, the workflow:
 - `better-sqlite3` — already used by Peek, but the MCP server needs its own instance (separate process)
 - Node.js — MCP server runs as standalone Node process
 
+## Decision: do we need FTS5 for search? (2026-06-08)
+
+Question raised: now that `search_items` does tokenized, ranked, field-aware
+search (split on whitespace, AND across terms, each term matchable in
+title/content/domain/tags; relevance-ranked in JS; snippets), do we still need
+a proper SQLite FTS5 index?
+
+**What FTS5 would add over the current implementation:**
+- Porter/unicode stemming ("fixing" matches "fix"); the current search is
+  substring-only, so it already matches "fix" inside "fixing" but NOT the
+  reverse stem ("fixed" → "fix" works as substring, "fix" → "fixing" works,
+  but true stemming like "ran" → "run" does not).
+- Phrase + proximity queries (`"search handler"`, NEAR).
+- BM25 ranking (TF-IDF weighting) instead of our hand-tuned field weights.
+- Fast snippet/highlight at scale (built-in `snippet()` / `highlight()`).
+- O(log n) index lookups instead of a per-term `LIKE '%term%'` table scan.
+
+**Real costs HERE (why it's deferred):**
+- It's a **schema change owned by `apps/desktop/main/datastore.ts`**, not by the
+  MCP. The MCP is a *secondary* writer against the same sqlite file; it must not
+  introduce tables/triggers/columns the app doesn't know about.
+- An FTS5 contentless/external-content table must be **kept in sync on every
+  write** — and writes come from BOTH the Electron app and the MCP server
+  (dual-writer). That means either shared triggers (owned by datastore.ts) or
+  duplicated sync logic in both writers, a new drift hazard.
+- A one-time **backfill migration** over all existing items.
+
+**Recommendation:** the non-invasive tokenized/ranked search is sufficient for
+the current personal-scale datastore — keep it. Revisit FTS5 only if the store
+grows large enough that per-term `LIKE` scans become slow, or if stemming /
+phrase / proximity become real user needs. If/when that happens it must be
+**led by `datastore.ts`** (define the FTS table + sync triggers there); the MCP
+then queries the existing index rather than maintaining its own.
+
 ## Risks
 
 1. **better-sqlite3 native module** — the MCP server process needs better-sqlite3 compiled for system Node, not Electron's Node. May need separate install or use `sql.js` (pure JS SQLite) instead.
