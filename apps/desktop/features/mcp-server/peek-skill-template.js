@@ -65,7 +65,7 @@ mcp__peek__create_item({
 })
 \`\`\`
 
-**\`create_item\` force-adds the bare \`{SCOPE}\` tag.** The scope guard appends bare \`{SCOPE}\` — the membership tag — to every item you create, so it can't land outside your namespace. The \`tags\` array you pass IS honored alongside it — it is not ignored or collapsed. Passing a \`{SCOPE}:*\` status tag like \`{SCOPE}:todo\` lands the item straight in the worked queue; pass no \`{SCOPE}:*\` tag and the item sits in the triage inbox until you status it.
+**\`create_item\` auto-adds the bare \`{SCOPE}\` membership tag** so the item can't land outside your namespace; the \`tags\` you pass are kept alongside it. Pass a \`{SCOPE}:*\` status tag to land the item in the worked queue; omit one and it waits in the triage inbox.
 
 **Hashtags in content do NOT auto-tag by default.** \`#123\` issue refs and \`#3)\` enumerations stay as plain text. Pass \`extractHashtags: true\` only when you genuinely want \`#word\` patterns from text-type content auto-tagged.
 
@@ -81,9 +81,28 @@ mcp__peek__list_items({ tags: ['{SCOPE}:todo'] })
 mcp__peek__list_items({ tags: ['{SCOPE}:future'] })
 \`\`\`
 
+## Find an item
+
+**Search by content with \`search_items\` — don't dump \`list_items\` and eyeball it.**
+
+\`\`\`js
+mcp__peek__search_items({ query: 'sync retry' })                     // all terms must match
+mcp__peek__search_items({ query: 'retry', tags: ['{SCOPE}:todo'] })  // text + tag filter
+\`\`\`
+
+The query is tokenized on whitespace with AND semantics — every term must appear, each matchable in the title, content, or tags. Results are relevance-ranked (title > tag > content) and each carries a \`snippet\` around the first match, so you can pick the right item without opening each one.
+
+**Look up by id prefix.** \`get_item\` — and every lookup-by-id tool — accepts a unique leading PREFIX of an id, git-short-hash style. Paste the short id you saw in a listing or reference:
+
+\`\`\`js
+mcp__peek__get_item({ itemId: '14efdd97' })   // resolves when the prefix is unique
+\`\`\`
+
+An ambiguous prefix errors and lists the candidates — pass more of the id to disambiguate.
+
 ## Status changes — manual untag + tag + event
 
-\`mcp__peek__complete_task\` won't work (bare tags). Do it by hand:
+Tag the new status, untag the old, and record an event:
 
 \`\`\`js
 mcp__peek__tag_item({ itemId, tagName: '{SCOPE}:done' })
