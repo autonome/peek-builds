@@ -16,12 +16,19 @@ This session is scoped to items tagged `peek` or `peek:*`
 (enforced server-side via `PEEK_MCP_SCOPE_TAG=peek`). Keep all work
 inside that namespace so tag conventions stay clean.
 
-## Avoid the bare-tag defaults
+## Tag model
 
-- `mcp__peek__list_tasks()` defaults to `tags: ['todo']` (BARE) — surfaces every project's todos. Use `list_items({ tags: ['peek:todo'] })` instead.
-- `mcp__peek__complete_task({ itemId })` adds bare `done`, removes bare `todo` — does NOT touch `peek:todo` / `peek:done`. Do status changes manually (below).
+- **`peek` is the membership tag.** Every item in this scope carries the bare `peek` tag, always. It is what makes the item part of this project. All `peek:*` tags are additive refinements layered on top of it — status, area, topic.
+- **`peek` and nothing else means untriaged.** An item tagged only `peek` (no `peek:*` tag) is in the triage inbox. The scope-tag-only set is your intake queue — process it regularly. Adding a `peek:*` status tag (e.g. `peek:todo`) moves the item out of intake and into the worked queue.
 
-## Status vocabulary
+```js
+// The triage inbox: items that carry only the membership tag.
+mcp__peek__list_items({ tags: ['peek'] })
+```
+
+## Status lives in the `peek:*` namespace
+
+Status is one of these namespaced tags:
 
 | Tag | Meaning |
 |---|---|
@@ -32,7 +39,10 @@ inside that namespace so tag conventions stay clean.
 | `peek:future` | Parking lot — not now, not no |
 | `peek:wontfix` | Closed without shipping |
 
-Don't invent new statuses. Don't use bare `todo` / `done` — those are cross-project.
+Don't invent new statuses. Never use bare `todo` / `done` — those are unnamespaced and shared across every project. Two MCP defaults trip on this, so do status changes by hand in the `peek:*` namespace:
+
+- `mcp__peek__list_tasks()` defaults to `tags: ['todo']` (BARE) — surfaces every project's todos. Use `list_items({ tags: ['peek:todo'] })` instead.
+- `mcp__peek__complete_task({ itemId })` writes bare `done` / `todo` — does NOT touch `peek:todo` / `peek:done`. Do status changes manually (below).
 
 ## Add a task
 
@@ -45,14 +55,7 @@ mcp__peek__create_item({
 })
 ```
 
-**`create_item` force-adds the bare `peek` tag.** The scope guard appends bare `peek` to every item you create so it can't land outside your namespace. The `tags` array you pass IS honored — it is not ignored or collapsed. Because you already pass a `peek:*` status tag, the bare `peek` is redundant and pollutes the reserved bare-tag intake; drop it with one `untag_item` call right after create:
-
-```js
-const item = mcp__peek__create_item({ type: 'text', title: '…', content: '…', tags: ['peek:todo'] })
-mcp__peek__untag_item({ itemId: item.id, tagName: 'peek' })  // remove the auto-added bare tag
-```
-
-This is safe: the `peek:todo` tag keeps the item in scope, so the orphan guard allows the untag.
+**`create_item` auto-adds the bare `peek` membership tag** so the item can't land outside your namespace; the `tags` you pass are kept alongside it. Pass a `peek:*` status tag to land the item in the worked queue; omit one and it waits in the triage inbox.
 
 **Hashtags in content do NOT auto-tag by default.** `#123` issue refs and `#3)` enumerations stay as plain text. Pass `extractHashtags: true` only when you genuinely want `#word` patterns from text-type content auto-tagged.
 
@@ -68,9 +71,28 @@ mcp__peek__list_items({ tags: ['peek:todo'] })
 mcp__peek__list_items({ tags: ['peek:future'] })
 ```
 
+## Find an item
+
+**Search by content with `search_items` — don't dump `list_items` and eyeball it.**
+
+```js
+mcp__peek__search_items({ query: 'sync retry' })                     // all terms must match
+mcp__peek__search_items({ query: 'retry', tags: ['peek:todo'] })  // text + tag filter
+```
+
+The query is tokenized on whitespace with AND semantics — every term must appear, each matchable in the title, content, or tags. Results are relevance-ranked (title > tag > content) and each carries a `snippet` around the first match, so you can pick the right item without opening each one.
+
+**Look up by id prefix.** `get_item` — and every lookup-by-id tool — accepts a unique leading PREFIX of an id, git-short-hash style. Paste the short id you saw in a listing or reference:
+
+```js
+mcp__peek__get_item({ itemId: '14efdd97' })   // resolves when the prefix is unique
+```
+
+An ambiguous prefix errors and lists the candidates — pass more of the id to disambiguate.
+
 ## Status changes — manual untag + tag + event
 
-`mcp__peek__complete_task` won't work (bare tags). Do it by hand:
+Tag the new status, untag the old, and record an event:
 
 ```js
 mcp__peek__tag_item({ itemId, tagName: 'peek:done' })
