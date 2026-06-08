@@ -1168,57 +1168,11 @@ const onReady = async () => {
   // Restore saved theme preference (must be after themes are discovered)
   restoreSavedTheme();
 
-  // Register as default handler for http/https URLs (if not already and user hasn't declined)
-  // Only prompt in production packaged builds - skip for dev, test, and dev-packaged builds
-  const isProductionBuild = app.isPackaged && !isDevPackagedBuild();
-  if (!isProductionBuild) {
-    DEBUG && console.log('Skipping default browser check for non-production build:', PROFILE);
-  }
-
-  const defaultBrowserPrefFile = path.join(profileDataPath, 'default-browser-pref.json');
-  let shouldPromptForDefault = isProductionBuild && !isTestProfile();
-
-  // Check if user has previously declined
-  try {
-    if (fs.existsSync(defaultBrowserPrefFile)) {
-      const pref = JSON.parse(fs.readFileSync(defaultBrowserPrefFile, 'utf8'));
-      if (pref.declined === true) {
-        shouldPromptForDefault = false;
-        DEBUG && console.log('User previously declined default browser prompt');
-      }
-    }
-  } catch {
-    // Ignore errors reading pref file
-  }
-
-  // Only try to register if user hasn't declined and we're not already default
-  if (shouldPromptForDefault) {
-    const isDefaultHttp = app.isDefaultProtocolClient('http');
-    const isDefaultHttps = app.isDefaultProtocolClient('https');
-
-    if (!isDefaultHttp || !isDefaultHttps) {
-      DEBUG && console.log('Registering as default protocol client for http/https');
-      app.setAsDefaultProtocolClient('http');
-      app.setAsDefaultProtocolClient('https');
-
-      // Check if registration succeeded - if not, user likely declined
-      setTimeout(() => {
-        const nowDefaultHttp = app.isDefaultProtocolClient('http');
-        const nowDefaultHttps = app.isDefaultProtocolClient('https');
-        if (!nowDefaultHttp && !nowDefaultHttps) {
-          // User declined, save preference
-          DEBUG && console.log('User declined default browser, saving preference');
-          try {
-            fs.writeFileSync(defaultBrowserPrefFile, JSON.stringify({ declined: true, timestamp: Date.now() }));
-          } catch {
-            console.error('Failed to save default browser preference');
-          }
-        }
-      }, 2000);
-    } else {
-      DEBUG && console.log('Already default protocol client for http/https');
-    }
-  }
+  // Peek does NOT auto-register as the default http/https handler on launch.
+  // That only happens via the Settings button (the tile:app:set-default-browser
+  // IPC handler in tile-ipc.ts). Auto-registering on startup popped a macOS
+  // "make Electron your default browser?" prompt on every background launch.
+  // Guarded by tests/unit/no-auto-default-browser.test.js.
 
   // Handle CLI arguments (e.g., yarn start -- "https://example.com")
   handleCliUrl();
