@@ -26,12 +26,19 @@ This session is scoped to items tagged \`{SCOPE}\` or \`{SCOPE}:*\`
 (enforced server-side via \`PEEK_MCP_SCOPE_TAG={SCOPE}\`). Keep all work
 inside that namespace so tag conventions stay clean.
 
-## Avoid the bare-tag defaults
+## Tag model
 
-- \`mcp__peek__list_tasks()\` defaults to \`tags: ['todo']\` (BARE) — surfaces every project's todos. Use \`list_items({ tags: ['{SCOPE}:todo'] })\` instead.
-- \`mcp__peek__complete_task({ itemId })\` adds bare \`done\`, removes bare \`todo\` — does NOT touch \`{SCOPE}:todo\` / \`{SCOPE}:done\`. Do status changes manually (below).
+- **\`{SCOPE}\` is the membership tag.** Every item in this scope carries the bare \`{SCOPE}\` tag, always. It is what makes the item part of this project. All \`{SCOPE}:*\` tags are additive refinements layered on top of it — status, area, topic.
+- **\`{SCOPE}\` and nothing else means untriaged.** An item tagged only \`{SCOPE}\` (no \`{SCOPE}:*\` tag) is in the triage inbox. The scope-tag-only set is your intake queue — process it regularly. Adding a \`{SCOPE}:*\` status tag (e.g. \`{SCOPE}:todo\`) moves the item out of intake and into the worked queue.
 
-## Status vocabulary
+\`\`\`js
+// The triage inbox: items that carry only the membership tag.
+mcp__peek__list_items({ tags: ['{SCOPE}'] })
+\`\`\`
+
+## Status lives in the \`{SCOPE}:*\` namespace
+
+Status is one of these namespaced tags:
 
 | Tag | Meaning |
 |---|---|
@@ -42,7 +49,10 @@ inside that namespace so tag conventions stay clean.
 | \`{SCOPE}:future\` | Parking lot — not now, not no |
 | \`{SCOPE}:wontfix\` | Closed without shipping |
 
-Don't invent new statuses. Don't use bare \`todo\` / \`done\` — those are cross-project.
+Don't invent new statuses. Never use bare \`todo\` / \`done\` — those are unnamespaced and shared across every project. Two MCP defaults trip on this, so do status changes by hand in the \`{SCOPE}:*\` namespace:
+
+- \`mcp__peek__list_tasks()\` defaults to \`tags: ['todo']\` (BARE) — surfaces every project's todos. Use \`list_items({ tags: ['{SCOPE}:todo'] })\` instead.
+- \`mcp__peek__complete_task({ itemId })\` writes bare \`done\` / \`todo\` — does NOT touch \`{SCOPE}:todo\` / \`{SCOPE}:done\`. Do status changes manually (below).
 
 ## Add a task
 
@@ -55,14 +65,7 @@ mcp__peek__create_item({
 })
 \`\`\`
 
-**\`create_item\` force-adds the bare \`{SCOPE}\` tag.** The scope guard appends bare \`{SCOPE}\` to every item you create so it can't land outside your namespace. The \`tags\` array you pass IS honored — it is not ignored or collapsed. Because you already pass a \`{SCOPE}:*\` status tag, the bare \`{SCOPE}\` is redundant and pollutes the reserved bare-tag intake; drop it with one \`untag_item\` call right after create:
-
-\`\`\`js
-const item = mcp__peek__create_item({ type: 'text', title: '…', content: '…', tags: ['{SCOPE}:todo'] })
-mcp__peek__untag_item({ itemId: item.id, tagName: '{SCOPE}' })  // remove the auto-added bare tag
-\`\`\`
-
-This is safe: the \`{SCOPE}:todo\` tag keeps the item in scope, so the orphan guard allows the untag.
+**\`create_item\` force-adds the bare \`{SCOPE}\` tag.** The scope guard appends bare \`{SCOPE}\` — the membership tag — to every item you create, so it can't land outside your namespace. The \`tags\` array you pass IS honored alongside it — it is not ignored or collapsed. Passing a \`{SCOPE}:*\` status tag like \`{SCOPE}:todo\` lands the item straight in the worked queue; pass no \`{SCOPE}:*\` tag and the item sits in the triage inbox until you status it.
 
 **Hashtags in content do NOT auto-tag by default.** \`#123\` issue refs and \`#3)\` enumerations stay as plain text. Pass \`extractHashtags: true\` only when you genuinely want \`#word\` patterns from text-type content auto-tagged.
 

@@ -122,6 +122,105 @@ describe('setup.js refresh mode', () => {
   });
 });
 
+describe('scaffolded skill — tag model', () => {
+  let tmpDirs = [];
+
+  after(() => {
+    for (const dir of tmpDirs) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function readSkill(projDir) {
+    return readFileSync(join(projDir, '.claude', 'skills', 'peek.md'), 'utf-8');
+  }
+
+  it('does NOT instruct untagging the bare scope tag', () => {
+    const { projDir, dbPath } = scaffoldProject(['--scope', 'membertag']);
+    tmpDirs.push(projDir);
+    const skill = readSkill(projDir);
+
+    // The old model told agents to untag_item the auto-added bare scope tag.
+    assert.ok(
+      !/untag_item\([^)]*tagName:\s*'membertag'\s*[}),]/.test(skill),
+      'skill must not tell agents to untag the bare scope tag',
+    );
+    assert.ok(
+      !/redundant|pollutes the reserved/i.test(skill),
+      'skill must not frame the bare scope tag as redundant/pollution',
+    );
+    // No "this used to be X" / reversal framing.
+    assert.ok(
+      !/used to|previously|no longer|formerly|reversal/i.test(skill),
+      'skill must state the model as a present-tense spec, not a changelog',
+    );
+  });
+
+  it('states the bare scope tag is the membership tag, always present', () => {
+    const { projDir, dbPath } = scaffoldProject(['--scope', 'membertag']);
+    tmpDirs.push(projDir);
+    const skill = readSkill(projDir);
+
+    assert.ok(/membership tag/i.test(skill), 'skill should name the membership tag');
+    assert.ok(
+      /[Ee]very item.*membertag/.test(skill) || /membertag.*every item/i.test(skill),
+      'skill should state every item carries the scope tag',
+    );
+    assert.ok(
+      /triage|untriaged|intake/i.test(skill),
+      'skill should describe the scope-tag-only triage inbox',
+    );
+  });
+
+  it('keeps the bare todo/done cross-project warning (separate concern)', () => {
+    const { projDir, dbPath } = scaffoldProject(['--scope', 'membertag']);
+    tmpDirs.push(projDir);
+    const skill = readSkill(projDir);
+
+    assert.ok(
+      /bare `?todo`? \/? ?`?done`?/i.test(skill) || /bare `todo`/.test(skill),
+      'skill should still warn about bare todo/done',
+    );
+    assert.ok(
+      /cross-project|shared across every project|unnamespaced/i.test(skill),
+      'skill should explain bare todo/done are cross-project',
+    );
+  });
+
+  it('substitutes a non-peek scope tag with no stray literal "peek" in the rule', () => {
+    const { projDir, dbPath } = scaffoldProject(['--scope', 'hezo']);
+    tmpDirs.push(projDir);
+    const skill = readSkill(projDir);
+
+    // Isolate the auto-managed body.
+    const begin = skill.indexOf('<!-- PEEK_SKILL_BODY_BEGIN -->');
+    const end = skill.indexOf('<!-- PEEK_SKILL_BODY_END -->');
+    const body = skill.slice(begin, end);
+
+    assert.ok(/hezo:todo/.test(body), 'scope tag should be substituted in');
+
+    // No leaked literal "peek" standing in for the scope tag: backtick-quoted
+    // tag references should use the substituted scope, never `peek` / `peek:*`.
+    assert.ok(
+      !/`peek(:[\w-]+)?`/.test(body),
+      'no backtick-quoted literal `peek` tag should leak into a non-peek scope',
+    );
+
+    // The Tag model section in particular must be fully substituted.
+    const tagModel = body.slice(
+      body.indexOf('## Tag model'),
+      body.indexOf('## Status lives'),
+    );
+    assert.ok(tagModel.length > 0, 'Tag model section should exist');
+    assert.ok(/membership tag/i.test(tagModel), 'Tag model names the membership tag');
+    assert.ok(/hezo/.test(tagModel), 'Tag model uses the substituted scope tag');
+    assert.ok(
+      !/\bpeek\b/i.test(tagModel.replace(/mcp__peek__/g, '')),
+      'no stray literal "peek" in the Tag model rule text for a non-peek scope',
+    );
+  });
+});
+
 describe('setup.js .gitignore managed block', () => {
   let tmpDirs = [];
 
