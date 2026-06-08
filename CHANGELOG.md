@@ -8,7 +8,7 @@ feedUrl: https://tangled.org/burrito.space/peek/raw/main/docs/feed.xml
 description: Recent changes to Peek
 -->
 
-<!-- last-bumped: b4cd7c66ff24 -->
+<!-- last-bumped: 4554b9efb06e -->
 
 Completed work. Two formats coexist on purpose:
 
@@ -17,9 +17,39 @@ Completed work. Two formats coexist on purpose:
 
 See TODO.md for pending items, WIP.md for in-progress items.
 
+## Week of 2026-06-08 (W24)
+
+### 2026-06-08
+
+- feat: complete + test hybrid page-host window-reuse dedup (P1.4a)
+- fix: tear down chrome-ext bridge + extension UI windows on app quit so in-flight relay messages aren't derefed during native teardown
+- perf: record hybrid before/after result (2026-06-08) — both levers validated
+- feat: flip PEEK_PAGEHOST_HYBRID to default-on — hybrid page-host is now the standard path
+
 ## Week of 2026-06-01 (W23)
 
+### 2026-06-07
+
+- fix: close orphaned hybrid page-host on target-blank download via a content-WC reverse lookup
+- feat: run page-script execution against the hybrid content WebContents in main
+
+### 2026-06-06
+
+- fix: add hybrid page-host fallback to tile:window:hide so a web-page window can be hidden under the flag
+
+### 2026-06-05
+
+- fix: destroy the orphaned content webContents and clean the registry on hybrid page-host close so closing a page does not leak a renderer
+
+### 2026-06-04
+
+- feat: staged session restore - eager top-5, defer rest with static placeholder + navigate-on-focus, remove loading glow
+- fix: ESC opens the windows switcher instead of closing content/child-content windows while Peek is OS-focused
+
 ### 2026-06-03
+
+- fix: revert the headless macOS activation policy from prohibited to accessory so test launches stop stranding the user foreground app
+- feat: add prod profile backup/restore commands and document the headless activation-policy gotcha
 
 - fix: remove the Cmd+T global hotkey for tags so the lazy wake-shortcut registrar no longer grabs it system-wide
 - perf: hybrid page-host P1.4b-6 port notes pane and page widgets to the shared overlay
