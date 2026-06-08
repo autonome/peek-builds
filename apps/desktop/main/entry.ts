@@ -8,6 +8,7 @@
 // MUST be first: sets the macOS headless activation policy before any other
 // (side-effectful) import runs, minimizing the launch-time focus flash.
 import './headless-policy.js';
+import { headlessActivationPolicy } from './headless-policy.js';
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, webContents } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import { initHybridOverlay } from './hybrid-overlay.js';
@@ -1487,16 +1488,16 @@ if (isHeadless() && process.platform === 'darwin' && app.dock) {
 // but the app cannot yank focus from the user's foreground app or own the
 // menubar during headless test runs. See tasks d9bb2924 (focus steal) and
 // cdf2e5f8 (menubar churn).
-if (isHeadless() && process.platform === 'darwin' && app.setActivationPolicy) {
-  // 'accessory', NOT 'prohibited'. A 2026-06-01 experiment (commit c9e892fa) set
-  // 'prohibited' to kill the residual launch-time focus blip, but it caused a
-  // worse bug: a 'prohibited' app can never own the macOS key window, so headless
-  // test launches left the user's foreground app frontmost-but-not-key (input
-  // dead until a cmd-tab cycle). Reverted to 'accessory' — it removes the dock
-  // tile + menubar churn while keeping key-window handoff intact. Kill the
-  // residual blip (if ever needed) via LSUIElement on the TEST build's Info.plist,
-  // never 'prohibited'.
-  app.setActivationPolicy('accessory');
+if (process.platform === 'darwin' && app.setActivationPolicy) {
+  // Centralized invariant (see headlessActivationPolicy): non-headless → null
+  // (leave the app 'regular'/activatable so it owns the menubar + key window —
+  // peek 8f7010a8); headless → 'accessory' (dock-less + no menubar churn, but
+  // still activatable for key-window handoff), NEVER 'prohibited' (commit
+  // c9e892fa stuck-focus regression, reverted by 94121bc1). Applying it
+  // unconditionally (with null = no-op for the real app) keeps the real app from
+  // ever being silently left on a stale accessory policy.
+  const policy = headlessActivationPolicy(isHeadless());
+  if (policy) app.setActivationPolicy(policy);
 }
 
 // Headless strict guard: no BrowserWindow must appear visible immediately

@@ -89,6 +89,70 @@ export function showWindowHeadlessSafe(
 }
 
 /**
+ * The hybrid page-host SHOW decision, as a pure function of headless-ness.
+ *
+ * A freshly-opened hybrid page-host is an opaque content-sized `BaseWindow` +
+ * `WebContentsView`. The canvas path it replaced showed its `BrowserWindow`
+ * with `show()` (constructor `show:true` → activates the app + makes the window
+ * key) and `focus()`, so the page's webContents became the macOS FIRST
+ * RESPONDER. The hybrid path must reproduce that or it enters a dead-focus
+ * state (peek items 1b6eaf0b / 363e7cff / 8f7010a8):
+ *   - no first responder  → cmd+L key equivalents hit AppKit with no target → NSBeep
+ *   - app never activated  → windows show but Peek isn't frontmost / no menubar
+ *   - host never focused   → the active-hybrid id stays null → overlay never reveals
+ *
+ * Under HEADLESS (agent/CI) we must NOT activate or focus — that would steal the
+ * user's OS focus (peek task 2b55f3af; activation policy is 'accessory' there).
+ * So:
+ *   - non-headless → activate (show) + focus the content WC (first responder)
+ *   - headless     → showInactive only, never focus (focus-free)
+ *
+ * Pure + deterministic so the regression is testable focus-free for BOTH modes
+ * (real OS focus is unobservable in a macOS-headless test).
+ */
+export function hybridShowIntent(headless: boolean): {
+  activated: boolean;
+  contentFocused: boolean;
+  showInactive: boolean;
+} {
+  if (headless) {
+    return { activated: false, contentFocused: false, showInactive: true };
+  }
+  return { activated: true, contentFocused: true, showInactive: false };
+}
+
+/**
+ * Show a freshly-opened hybrid page-host: apply the `hybridShowIntent` decision
+ * for the current run mode. Non-headless activates the app + makes the content
+ * `WebContentsView` the first responder (cmd+L works, no NSBeep, overlay reveals);
+ * headless stays inactive + opacity-0 (focus-free). Returns the applied intent so
+ * callers/tests can assert what was done without relying on real OS focus.
+ */
+export function showHybridHost(
+  baseWin: import('electron').BaseWindow,
+  contentWC: import('electron').WebContents,
+): { activated: boolean; contentFocused: boolean; showInactive: boolean } {
+  const intent = hybridShowIntent(isHeadless());
+  if (isHeadless()) {
+    // Keep it invisible (opacity 0) — never paints on the physical desktop.
+    try { baseWin.setOpacity(0); } catch { /* setOpacity unsupported on some platforms */ }
+  }
+  if (intent.activated) {
+    // show() activates the app (frontmost + key window) AND raises this window.
+    try { baseWin.show(); } catch { /* show unsupported in some envs */ }
+  } else {
+    // Focus-free: visible (state) but never activated.
+    try { baseWin.showInactive(); } catch { /* showInactive unsupported in some envs */ }
+  }
+  if (intent.contentFocused) {
+    // Make the content WebContentsView the macOS first responder so key
+    // equivalents (cmd+L etc.) route to it instead of beeping at AppKit.
+    try { if (!contentWC.isDestroyed()) contentWC.focus(); } catch { /* wc gone */ }
+  }
+  return intent;
+}
+
+/**
  * Modify window state (close, hide, show)
  */
 export function modWindow(bw: BrowserWindow, params: { action: string }): void {

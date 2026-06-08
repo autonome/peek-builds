@@ -15,17 +15,32 @@
  */
 import { app } from 'electron';
 
+/**
+ * The macOS activation policy to apply for a given headless-ness, or `null` to
+ * leave the app at its default (`'regular'`) policy.
+ *
+ * INVARIANT (peek tasks 2b55f3af, 8f7010a8): the REAL (non-headless) app must
+ * stay a `'regular'`, activatable app — never `'accessory'` (which strands it
+ * frontmost-but-not-key, no menubar) and never `'prohibited'` (which can't own
+ * the key window at all). So we return `null` (leave default) when not headless.
+ * Under headless we suppress the dock + menubar churn with `'accessory'` —
+ * NEVER `'prohibited'` (it caused the stuck-focus regression, commit c9e892fa,
+ * reverted by 94121bc1).
+ *
+ * Pure + side-effect-free so the invariant is unit/E2E testable without driving
+ * real OS activation (unobservable in a macOS-headless test).
+ */
+export function headlessActivationPolicy(
+  headless: boolean,
+): 'regular' | 'accessory' | 'prohibited' | null {
+  return headless ? 'accessory' : null;
+}
+
 if (process.env.PEEK_HEADLESS && process.platform === 'darwin') {
   try {
     if (app.dock) app.dock.hide();
-    // 'accessory': dock-less and never in the menubar, but the app can still be
-    // activated by clicking a window — which keeps macOS key-window handoff
-    // working. Do NOT use 'prohibited': a 'prohibited' app can never own the key
-    // window, so during headless launches it strands the user's foreground app
-    // frontmost-but-not-key (input dead until a cmd-tab cycle). 'prohibited' was
-    // tried (commit c9e892fa, 2026-06-01) to kill the residual launch-time focus
-    // blip and reverted after it caused that stuck-focus regression.
-    if (app.setActivationPolicy) app.setActivationPolicy('accessory');
+    const policy = headlessActivationPolicy(true);
+    if (policy && app.setActivationPolicy) app.setActivationPolicy(policy);
   } catch {
     /* best effort — never block startup on this */
   }

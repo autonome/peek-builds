@@ -82,6 +82,8 @@ import { publish, subscribe, unsubscribe, getSystemAddress } from './pubsub.js';
 import { wireHybridContentEvents } from './ipc.js';
 import { getWindowInfo } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
+import { hybridShowIntent, showHybridHost } from './windows.js';
+import { headlessActivationPolicy } from './headless-policy.js';
 
 /** Tile id / entry for the overlay's trustedBuiltin grant + pubsub routing. */
 const OVERLAY_TILE_ID = 'page-overlay';
@@ -460,6 +462,15 @@ function wireAppActiveGate(): void {
       overlayWin.setAlwaysOnTop(false);
     } catch {
       /* level arg unsupported on some platforms */
+    }
+    try {
+      // R6 (peek item 88797f2d): hide the chrome entirely while Peek is not the
+      // active app. The overlay is chrome for the ACTIVE page; when the user
+      // switches to another app it must not linger on screen. become-active
+      // re-frames + re-shows it over the current active hybrid window.
+      if (overlayWin.isVisible()) overlayWin.hide();
+    } catch {
+      /* hide unsupported in some envs */
     }
   };
 
@@ -946,6 +957,62 @@ function installTestBridge(): void {
       if (simFocus === id) simFocus = null;
       w.emit('blur');
       return true;
+    },
+    /**
+     * R5: drive ONLY the content WebContentsView's `'focus'` event (the
+     * belt-and-suspenders signal a fresh non-headless show produces via
+     * `contentWC.focus()`), NOT the host BaseWindow focus. The registry must
+     * treat content-WC focus as activating so the active-hybrid id is set and the
+     * overlay can reveal — even when the host-window focus event is missed.
+     */
+    focusContentWC(id: number): boolean {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.contentWC.isDestroyed()) return false;
+      simFocus = id;
+      simOverlayFocused = false;
+      entry.contentWC.emit('focus');
+      return true;
+    },
+    /**
+     * R4/R7: the PURE hybrid show decision for a given headless-ness — what the
+     * fresh-open show path WOULD do. Lets a focus-free test assert BOTH modes
+     * (real OS focus is unobservable in a macOS-headless test): non-headless must
+     * activate + focus the content WC; headless must stay inactive.
+     */
+    hybridShowIntent(headless: boolean): {
+      activated: boolean;
+      contentFocused: boolean;
+      showInactive: boolean;
+    } {
+      return hybridShowIntent(headless);
+    },
+    /**
+     * R4/R7: drive the REAL ipc.ts show seam (`showHybridHost`) against a fake
+     * host and return the applied intent. Under headless it must take the
+     * inactive, focus-free branch.
+     */
+    showHybridHost(id: number): {
+      activated: boolean;
+      contentFocused: boolean;
+      showInactive: boolean;
+    } | null {
+      const w = fakeHosts.get(id);
+      const entry = getHybridWindow(id);
+      if (!w || w.isDestroyed() || !entry || entry.contentWC.isDestroyed()) return null;
+      return showHybridHost(w, entry.contentWC);
+    },
+    /** Whether THIS run is headless (so the applied-show test asserts the right branch). */
+    isHeadlessRun(): boolean {
+      return isHeadless();
+    },
+    /**
+     * R7 regression guard: the macOS activation policy the app applies for a
+     * given headless-ness. null → leave default ('regular'); the REAL app must
+     * NEVER be 'accessory'/'prohibited'. Pure decision (no getter exists in
+     * Electron 40), so the invariant is assertable for both modes focus-free.
+     */
+    headlessActivationPolicy(headless: boolean): 'regular' | 'accessory' | 'prohibited' | null {
+      return headlessActivationPolicy(headless);
     },
     focusOverlay(): void {
       simFocus = null;

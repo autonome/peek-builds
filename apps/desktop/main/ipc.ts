@@ -82,6 +82,7 @@ import {
   getSystemThemeBackgroundColor,
   getPrefs,
   showWindowHeadlessSafe,
+  showHybridHost,
 } from './windows.js';
 import {
   TRANSIENT_ROLES,
@@ -2122,11 +2123,13 @@ export function registerWindowHandlers(): void {
           await view.webContents.loadURL(url);
         }
 
-        // Show it (headless-safe: opacity already 0 above, so this never paints).
-        if (isHeadless()) {
-          try { baseWin.setOpacity(0); } catch { /* setOpacity unsupported on some platforms */ }
-        }
-        baseWin.showInactive();
+        // Show it. Non-headless ACTIVATES (app frontmost + key window) and makes
+        // the content WebContentsView the macOS first responder, so cmd+L and
+        // other key equivalents have a target (no NSBeep) and the host's focus
+        // drives the active-hybrid id that reveals the overlay (regressions
+        // 1b6eaf0b / 363e7cff / 8f7010a8). Headless stays inactive + opacity-0,
+        // so an agent/CI run never steals the user's focus (peek task 2b55f3af).
+        showHybridHost(baseWin, view.webContents);
 
         publish(getSystemAddress(), 'window:opened', {
           id: baseWin.id,
