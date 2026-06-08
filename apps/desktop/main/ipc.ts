@@ -799,6 +799,21 @@ export function wireHybridContentEvents(
     } else if (input.key === ']' || (input.key === 'ArrowRight' && !input.shift)) {
       publish(getSystemAddress(), 'page:go-forward', { windowId: hostWindowId });
       event.preventDefault();
+    } else if (handleLocalShortcut(input, hostWindowId)) {
+      // R2/R3 (peek items b1dd4e7c / bd00bf01): when a hybrid page-host is
+      // frontmost, its content WebContentsView is the macOS first responder
+      // (A's R4 fix), so keystrokes flow to THIS handler — NOT to the per-
+      // BrowserWindow before-input-event in main.ts that routes to
+      // handleLocalShortcut. The page-specific accelerators above are handled
+      // inline; everything else (cmd+N → new empty page-host, and any other
+      // registered LOCAL shortcut) was silently dropped, so those features
+      // stopped firing with a hybrid host focused. Route the leftover modifier
+      // keystrokes through the SAME local-shortcut dispatcher the canvas/core
+      // windows use, tagged with this host's id for mode-conditional matching.
+      // (Global wake hotkeys — peeks Option+0 / slides Option+Up — are OS-level
+      // grabs that pre-empt before-input-event and are unaffected; this closes
+      // the LOCAL-shortcut gap that the hybrid first-responder opened.)
+      event.preventDefault();
     }
   });
 

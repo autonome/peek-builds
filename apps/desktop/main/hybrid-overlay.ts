@@ -82,8 +82,9 @@ import { publish, subscribe, unsubscribe, getSystemAddress } from './pubsub.js';
 import { wireHybridContentEvents } from './ipc.js';
 import { getWindowInfo } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
-import { hybridShowIntent, showHybridHost } from './windows.js';
+import { hybridShowIntent, showHybridHost, closeFocusedWindow } from './windows.js';
 import { headlessActivationPolicy } from './headless-policy.js';
+import { registerLocalShortcut, unregisterLocalShortcut } from './shortcuts.js';
 
 /** Tile id / entry for the overlay's trustedBuiltin grant + pubsub routing. */
 const OVERLAY_TILE_ID = 'page-overlay';
@@ -220,6 +221,10 @@ let appActive = true;
 // The bound resign/become handlers, kept so teardown can detach them.
 let onAppResignActive: (() => void) | null = null;
 let onAppBecomeActive: (() => void) | null = null;
+
+// R3 (Cluster B) probe-shortcut fire counter (module scope so the bridge
+// closure + the registered local-shortcut callback share it). Test-only.
+let __probeShortcutFireCount = 0;
 
 // R3 test-observability: how many times the `page:show-navbar` handler actually
 // called `overlayWin.focus()` (i.e. passed the app-active + active-window gates).
@@ -1973,6 +1978,102 @@ function installTestBridge(): void {
         });
       }
       return out;
+    },
+
+    // ── Cluster B (R1/R2/R3) menu + accelerator routing, focus-free ──────────
+    /**
+     * R1: the id `BrowserWindow.getFocusedWindow()` reports — null for a hybrid
+     * page-host (a BaseWindow), which is the whole reason cmd+W's old
+     * getFocusedWindow()-based close handler no-op'd on a hybrid host. A test
+     * asserts this is null while a hybrid window is the active one, proving the
+     * close path can't rely on it.
+     */
+    focusedBrowserWindowId(): number | null {
+      const w = BrowserWindow.getFocusedWindow();
+      return w ? w.id : null;
+    },
+    /** R1: whether a hybrid host id still has a live (non-destroyed) BaseWindow. */
+    hybridWindowExists(id: number): boolean {
+      const entry = getHybridWindow(id);
+      return !!entry && !entry.baseWin.isDestroyed();
+    },
+    /**
+     * R1: drive the EXACT cmd+W close path the menu item / non-darwin shortcut
+     * use — `closeFocusedWindow()` resolves a focused BrowserWindow OR (none →)
+     * the registry's active-hybrid window and closes it. Returns the id it acted
+     * on (or null). A focus-free test sets a fake hybrid window active (no real
+     * BrowserWindow is focused in a headless run, so getFocusedWindow() is null —
+     * the real-world hybrid-frontmost condition) and asserts this closes it.
+     */
+    closeFocusedWindow(): number | null {
+      return closeFocusedWindow();
+    },
+    /**
+     * R2/R3: drive the hybrid content WC's `before-input-event` handler
+     * SYNTHETICALLY with a parsed key (focus-free; real keystrokes need OS focus
+     * a headless run can't grant). Emits the same `(event, input)` shape Electron
+     * delivers; the handler's leftover-modifier branch routes to
+     * handleLocalShortcut. Returns whether the synthetic event was
+     * `preventDefault()`-ed (i.e. a local shortcut consumed it).
+     *
+     * `key` is the logical key (e.g. 'n'); modifiers default to the
+     * platform's primary (meta on darwin, control elsewhere). `code` is derived
+     * for the common letters so before-input-event matching (which keys on
+     * `input.code`) works the same as a real keystroke.
+     */
+    dispatchContentKey(
+      id: number,
+      key: string,
+      opts?: { meta?: boolean; control?: boolean; alt?: boolean; shift?: boolean },
+    ): boolean {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.contentWC.isDestroyed()) return false;
+      const isDarwin = process.platform === 'darwin';
+      const meta = opts?.meta ?? (isDarwin ? true : false);
+      const control = opts?.control ?? (isDarwin ? false : true);
+      const code =
+        key.length === 1 && /[a-z]/i.test(key) ? `Key${key.toUpperCase()}` : key;
+      let prevented = false;
+      const fakeEvent = {
+        preventDefault() {
+          prevented = true;
+        },
+      };
+      const input = {
+        type: 'keyDown',
+        key,
+        code,
+        meta,
+        control,
+        alt: opts?.alt ?? false,
+        shift: opts?.shift ?? false,
+      };
+      try {
+        entry.contentWC.emit('before-input-event', fakeEvent, input);
+      } catch {
+        /* handler threw — treat as not prevented */
+      }
+      return prevented;
+    },
+    /**
+     * R3: register a probe LOCAL shortcut and return a token a test can use to
+     * assert it fired (via `probeShortcutFireCount`) when driven through the
+     * hybrid content WC's before-input-event. Proves the leftover-modifier
+     * branch reaches the SAME handleLocalShortcut dispatcher the canvas/core
+     * windows use. The probe is registered under a throwaway source so it never
+     * collides with a real binding.
+     */
+    registerProbeShortcut(accelerator: string): void {
+      __probeShortcutFireCount = 0;
+      registerLocalShortcut(accelerator, '__cluster-b-probe', () => {
+        __probeShortcutFireCount++;
+      });
+    },
+    unregisterProbeShortcut(accelerator: string): void {
+      unregisterLocalShortcut(accelerator, '__cluster-b-probe');
+    },
+    probeShortcutFireCount(): number {
+      return __probeShortcutFireCount;
     },
   };
 }

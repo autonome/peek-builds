@@ -25,6 +25,7 @@ import {
 } from './main.js';
 import { registerGuest, getGuestsForWindow } from './webview-guest-registry.js';
 import { getTileWindowInfo } from './tile-launcher.js';
+import { getHybridWindow, getActiveHybridWindowId } from './hybrid-page-host-registry.js';
 
 import {
   getIzuiCoordinator,
@@ -621,6 +622,21 @@ export function closeOrHideWindow(id: number): void {
   try {
     const win = getLiveWindow(id);
     if (!win) {
+      // Hybrid page-host (BaseWindow) — invisible to getLiveWindow /
+      // BrowserWindow.fromId. cmd+W (R1, peek ca4ee5e6) and any other
+      // close-by-id path must still close it. Route through closeHostWindow so
+      // the content WebContents (registered as a guest of baseWin.id) is
+      // destroyed BEFORE the BaseWindow closes — same page-host close UAF guard
+      // as the canvas/tile-ipc paths. No keepLive concept for hybrids yet, so
+      // it always closes. No-op (null) when the hybrid flag is off (registry
+      // empty), preserving canvas-path behavior byte-for-byte.
+      const hybrid = getHybridWindow(id);
+      if (hybrid && !hybrid.baseWin.isDestroyed()) {
+        DEBUG && console.log(`CLOSING hybrid page-host BaseWindow ${id}`);
+        closeHostWindow(id, hybrid.baseWin);
+        maybeHideApp(id);
+        return;
+      }
       DEBUG && console.log('Window already destroyed or invalid');
       return;
     }
@@ -674,6 +690,45 @@ export function closeOrHideWindow(id: number): void {
   } catch (error) {
     console.error('Error in closeOrHideWindow:', error);
   }
+}
+
+/**
+ * Resolve the window id that a "close the current window" command (cmd+W menu
+ * item / Close Window) should target.
+ *
+ * R1 (peek ca4ee5e6): the frontmost window may be a hybrid page-host, which is
+ * a `BaseWindow` — and `BrowserWindow.getFocusedWindow()` does NOT return
+ * BaseWindows (it returns null). A close handler that relied on
+ * `getFocusedWindow()` alone therefore got null and no-op'd cmd+W on a hybrid
+ * host. We resolve the focused BrowserWindow first (covers settings, modals,
+ * canvas page-hosts, etc.); when there is none, we fall back to the registry's
+ * active-hybrid window id (A's `getActiveHybridWindowId`, maintained off the
+ * host BaseWindow's focus/blur). Returns null only when neither resolves.
+ *
+ * Pure-ish (reads window state); the actual close is `closeFocusedWindow`.
+ */
+export function resolveFocusedWindowIdForClose(): number | null {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused) return focused.id;
+  // No focused BrowserWindow — a hybrid BaseWindow may be frontmost. Null when
+  // the hybrid flag is off (registry never tracks an active id) or nothing is
+  // active, so canvas-path behavior is unchanged.
+  return getActiveHybridWindowId();
+}
+
+/**
+ * Close the frontmost window for a cmd+W / "Close Window" command, resolving a
+ * focused hybrid page-host (BaseWindow) the same as a focused BrowserWindow.
+ * Routes through `closeOrHideWindow`, which now handles both window kinds
+ * (BrowserWindow via the registry, hybrid BaseWindow via the registry fallback
+ * added above). No-op when nothing resolves. Returns the id it acted on (or
+ * null) so the menu/shortcut callers and tests can assert what was targeted.
+ */
+export function closeFocusedWindow(): number | null {
+  const id = resolveFocusedWindowIdForClose();
+  if (id == null) return null;
+  closeOrHideWindow(id);
+  return id;
 }
 
 /**

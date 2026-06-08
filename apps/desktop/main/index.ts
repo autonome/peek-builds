@@ -208,6 +208,8 @@ export {
   applyDockPreference,
   maybeHideApp,
   closeOrHideWindow,
+  closeFocusedWindow,
+  resolveFocusedWindowIdForClose,
   closeChildWindows,
   getSystemThemeBackgroundColor,
 } from './windows.js';

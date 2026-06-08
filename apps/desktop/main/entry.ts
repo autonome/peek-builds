@@ -73,6 +73,7 @@ import {
   isHeadless,
   // Window helpers
   closeOrHideWindow,
+  closeFocusedWindow,
   showWindowHeadlessSafe,
   setPrefsGetter,
   applyDockPreference,
@@ -1010,20 +1011,28 @@ const onReady = async () => {
         submenu: [
           { label: 'Close Window', accelerator: 'CommandOrControl+W', click: () => {
               const win = BrowserWindow.getFocusedWindow();
-              if (!win) return;
-              // Devtools (detached) isn't a BrowserWindow — it's a child of
-              // the parent's webContents. When the user focuses devtools and
-              // hits Cmd+W, getFocusedWindow() still returns the parent.
-              // Detect via "devtools open AND parent webContents not
-              // focused" — `isDevToolsFocused()` alone has been observed to
-              // return false in Electron 40 when devtools is the OS-focused
-              // window. Route to closeDevTools so the parent survives.
-              const wc = win.webContents;
-              if (wc.isDevToolsOpened() && (wc.isDevToolsFocused() || !wc.isFocused())) {
-                wc.closeDevTools();
+              if (win) {
+                // Devtools (detached) isn't a BrowserWindow — it's a child of
+                // the parent's webContents. When the user focuses devtools and
+                // hits Cmd+W, getFocusedWindow() still returns the parent.
+                // Detect via "devtools open AND parent webContents not
+                // focused" — `isDevToolsFocused()` alone has been observed to
+                // return false in Electron 40 when devtools is the OS-focused
+                // window. Route to closeDevTools so the parent survives.
+                const wc = win.webContents;
+                if (wc.isDevToolsOpened() && (wc.isDevToolsFocused() || !wc.isFocused())) {
+                  wc.closeDevTools();
+                  return;
+                }
+                closeOrHideWindow(win.id);
                 return;
               }
-              closeOrHideWindow(win.id);
+              // R1 (peek ca4ee5e6): no focused BrowserWindow — the frontmost
+              // window may be a hybrid page-host, which is a BaseWindow that
+              // getFocusedWindow() never returns. closeFocusedWindow() resolves
+              // the registry's active-hybrid window and closes it; no-op when
+              // nothing resolves (so cmd+W is harmless with no window).
+              closeFocusedWindow();
           }},
           { role: 'minimize' },
         ]
@@ -1399,8 +1408,9 @@ const onReady = async () => {
   // OS-standard "close current window" behaviour.
   if (process.platform !== 'darwin') {
     registerLocalShortcut('CommandOrControl+W', 'system', () => {
-      const win = BrowserWindow.getFocusedWindow();
-      if (win) closeOrHideWindow(win.id);
+      // R1: resolve a focused hybrid page-host (BaseWindow) too, not just a
+      // focused BrowserWindow (which getFocusedWindow() can't see).
+      closeFocusedWindow();
     });
   }
 
