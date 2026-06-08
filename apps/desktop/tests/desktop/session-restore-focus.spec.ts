@@ -120,7 +120,7 @@ test.describe('Session Restore Focus @desktop', () => {
   const getCounters = () =>
     app.evaluateMain!(((_e: unknown) => {
       return (globalThis as any).__peek_test.getRestoreFocusCounters();
-    }) as any) as Promise<{ shows: number; showInactives: number; focuses: number }>;
+    }) as any) as Promise<{ shows: number; showInactives: number; focuses: number; moveTops: number }>;
 
   // Tests ----------------------------------------------------------------
 
@@ -156,6 +156,9 @@ test.describe('Session Restore Focus @desktop', () => {
       .toBe(0);
     expect(counters.focuses,
       `restore must NOT call .focus() on focused descriptor while user is away`)
+      .toBe(0);
+    expect(counters.moveTops,
+      `restore must NOT moveTop() the focused descriptor while user is away`)
       .toBe(0);
     expect(counters.showInactives,
       `every restored window must go through .showInactive() when appFocused=false`)
@@ -199,5 +202,11 @@ test.describe('Session Restore Focus @desktop', () => {
     expect(counters.focuses,
       `appFocused=true happy path: .focus() called 0 or 1 times (only on focused descriptor)`)
       .toBeLessThanOrEqual(1);
+    // Regression guard: the focused descriptor must be raised via moveTop(), not
+    // just .focus(). focus() alone does not reliably reorder above the other
+    // restored windows on macOS (canvas-branch parity with the hybrid branch).
+    expect(counters.moveTops,
+      `focused descriptor must be raised with moveTop() exactly when .focus() is called`)
+      .toBe(counters.focuses);
   });
 });

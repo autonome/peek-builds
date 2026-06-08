@@ -110,21 +110,25 @@ export function setRestoreCompleteForTest(value: boolean): void {
 let _restoreShowCount = 0;
 let _restoreShowInactiveCount = 0;
 let _restoreFocusCount = 0;
+let _restoreMoveTopCount = 0;
 export function getRestoreFocusCounters(): {
   shows: number;
   showInactives: number;
   focuses: number;
+  moveTops: number;
 } {
   return {
     shows: _restoreShowCount,
     showInactives: _restoreShowInactiveCount,
     focuses: _restoreFocusCount,
+    moveTops: _restoreMoveTopCount,
   };
 }
 export function resetRestoreFocusCounters(): void {
   _restoreShowCount = 0;
   _restoreShowInactiveCount = 0;
   _restoreFocusCount = 0;
+  _restoreMoveTopCount = 0;
 }
 
 export interface SessionMetadata {
@@ -1326,6 +1330,14 @@ export async function restoreSessionSnapshot(
       const focusWin = getLiveWindow(focusedWindowId);
       const hybridFocus = focusWin ? null : getHybridWindow(focusedWindowId);
       if (focusWin && coordinator.isAppFocused()) {
+        // moveTop() reorders the focused window above the other restored windows
+        // (each was show()'d active during the loop, orderFront'd over this one).
+        // focus() alone makes it the key window but does NOT reliably reorder it
+        // above many windows on macOS — a lone focus() loses the z-order race
+        // against a large rapid show() storm (prod sessions with >5 windows; dev's
+        // <=5 masked it). Mirrors the hybrid branch below.
+        try { focusWin.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
+        _restoreMoveTopCount++;
         focusWin.focus();
         _restoreFocusCount++;
         DEBUG && console.log(`[session] Focused restored window: ${focusedWindowId}`);
@@ -1333,6 +1345,7 @@ export async function restoreSessionSnapshot(
         // Raise + focus the hybrid host BaseWindow. moveTop() puts it above the
         // other restored windows in z-order; focus() makes it the key window.
         try { hybridFocus.baseWin.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
+        _restoreMoveTopCount++;
         hybridFocus.baseWin.focus();
         _restoreFocusCount++;
         DEBUG && console.log(`[session] Focused restored hybrid window: ${focusedWindowId}`);
