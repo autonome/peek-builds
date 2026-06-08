@@ -72,13 +72,15 @@ export async function hybridBridgePresent(app: DesktopApp): Promise<boolean> {
 }
 
 /**
- * Is the hybrid page-host flag on? Reads `PEEK_PAGEHOST_HYBRID === '1'` in the
- * MAIN process directly — deterministic, unlike {@link hybridBridgePresent}
- * which only becomes true once a hybrid page has actually been opened. Use this
- * for skip guards on canvas-only / Stage-B-deferred specs.
+ * Is the hybrid page-host flag on? Mirrors `isHybridPageHost()` in the MAIN
+ * process: hybrid is the DEFAULT as of 2026-06-08, so this is true unless
+ * `PEEK_PAGEHOST_HYBRID=0` opts back into the legacy canvas path. Deterministic,
+ * unlike {@link hybridBridgePresent} which only becomes true once a hybrid page
+ * has actually been opened. Use this for skip guards on canvas-only /
+ * Stage-B-deferred specs.
  */
 export async function hybridFlagOn(app: DesktopApp): Promise<boolean> {
-  return app.evaluateMain!(() => process.env.PEEK_PAGEHOST_HYBRID === '1');
+  return app.evaluateMain!(() => process.env.PEEK_PAGEHOST_HYBRID !== '0');
 }
 
 /**

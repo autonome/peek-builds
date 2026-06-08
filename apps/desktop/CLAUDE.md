@@ -41,12 +41,16 @@ environment, run via `yarn test:extension:chrome` (see Coverage caveats).
 A clean run reports ~56 *skipped*, and they are NOT "macOS-headless OS surfaces" — that's
 only ~3. The buckets:
 
-- **Hybrid page-host suite (~40 tests) is flag-gated OUT by default.** The
-  `hybrid-overlay` / `hybrid-popups` / `hybrid-windows-feature` specs self-skip via
-  `test.skip(!bridgePresent())` because `PEEK_PAGEHOST_HYBRID` defaults off. So a green
-  `yarn test:desktop:electron` does **not** exercise the hybrid path. Cover it with
-  `PEEK_PAGEHOST_HYBRID=1 yarn test:desktop:electron` (verified green: 48 passed). Tracked:
-  fold both flag states into the gate (peek task).
+- **Hybrid page-host is the DEFAULT path (since 2026-06-08); the legacy CANVAS suite
+  (~44 specs) is now flag-gated OUT by default.** `PEEK_PAGEHOST_HYBRID` defaults **on**;
+  only `=0` selects canvas. So a green `yarn test:desktop:electron` now exercises the
+  HYBRID path — the `hybrid-overlay` / `hybrid-popups` / `hybrid-windows-feature` specs
+  run, and the canvas-only specs self-skip via `test.skip(await hybridFlagOn(app))`. To
+  exercise the legacy canvas path instead, run
+  `PEEK_PAGEHOST_HYBRID=0 yarn test:desktop:electron`. (Pre-flip this was inverted: hybrid
+  was the opt-in `=1` suite. Verified green at the flip: **3162 passed, 0 failed, 75 skipped**
+  in the default hybrid run — the ~44-spec canvas bucket now skips instead of the ~40-spec
+  hybrid bucket, so whole-suite skips rose ~56 → ~75.)
 - **~13 unconditionally-parked feature describes** (`HUD Extension`, `Proton Pass`) —
   disabled features, `describe.skip` in source.
 - **~3 genuine macOS-headless OS-surface skips** (geolocation grant, devtools-open) — need a
@@ -120,6 +124,12 @@ These are the **default hotkeys** for fresh profiles. The registrar checks the d
 ## Page View Canvas Architecture — FROZEN
 
 **Do not replace or restructure this architecture.** It was accidentally destroyed once and had to be restored.
+
+> **Status (2026-06-08): this canvas path is now the OPT-OUT, not the default.** Web pages
+> default to the **hybrid** page-host (`WebContentsView` content + one shared chrome overlay —
+> `main/hybrid-overlay.ts`, `isHybridPageHost()` defaults on). The canvas path described below
+> is selected with `PEEK_PAGEHOST_HYBRID=0` and remains fully supported + frozen as the
+> fallback. Measured win behind the flip: `docs/perf/page-host-cost-baseline.md`.
 
 Content and child-content web pages use a **fullscreen transparent canvas** BrowserWindow:
 

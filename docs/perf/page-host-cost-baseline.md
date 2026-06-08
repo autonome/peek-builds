@@ -125,9 +125,10 @@ materialized.**
   opacity), so the compositor cost is paid and comparable to the baseline's *visible* column.
   Display config is immaterial — the baseline A/B showed <1.5% across 5K-external vs
   laptop-alone — so one visible measurement is representative.
-- **Hybrid enabled via `PEEK_PAGEHOST_HYBRID=1`** (defaults **off** — `main/debug-flag.ts:51`).
-  Fresh build from source. **No `DEBUG`** (it auto-opens DevTools on every `peek://` window →
-  contaminated counts).
+- **Hybrid enabled via `PEEK_PAGEHOST_HYBRID=1`.** At measurement time the flag was opt-in
+  (default-off); on the strength of this result it was **flipped to default-on 2026-06-08**
+  (`main/debug-flag.ts` — opt back into canvas with `PEEK_PAGEHOST_HYBRID=0`). Fresh build from
+  source. **No `DEBUG`** (it auto-opens DevTools on every `peek://` window → contaminated counts).
 - **Same sampler + settle.** `scripts/perf/sample.sh ITERS=14 INTERVAL=15 DELTA=3`; figures
   read from the **settled plateau** (t=120–195 s: `loading=0`, load avg ~2.3, RSS flat, ~93%
   system idle), not the restore spike. CPU via cputime-delta (true instantaneous).
@@ -192,6 +193,9 @@ are large and stable across the whole settled plateau.)
 
 **Net:** on the identical session, the hybrid removes ~41% of processes, ~⅓ of RAM, and nearly
 all of the continuous idle CPU + compositor tax.
+
+**Shipped:** on the strength of this result, `PEEK_PAGEHOST_HYBRID` was **flipped to default-on
+2026-06-08** — hybrid is now the standard page-host; the canvas path is the `=0` opt-out.
 
 ## Implication for the redesign (`ed717516`)
 
