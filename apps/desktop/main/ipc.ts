@@ -1367,6 +1367,10 @@ export function registerWindowHandlers(): void {
               );
               existingHybrid.baseWin.show();
               existingHybrid.baseWin.focus();
+              // Make the content view the first responder too (R4 — so cmd+L and
+              // other key equivalents route to a responder, no NSBeep), matching
+              // the fresh-open show path (showHybridHost).
+              if (!existingHybrid.contentWC.isDestroyed()) existingHybrid.contentWC.focus();
             } catch (e) {
               DEBUG && console.log('[hybrid-page-host] focus-on-key-reuse failed:', e);
             }
@@ -1482,6 +1486,9 @@ export function registerWindowHandlers(): void {
               );
               existingHybridByUrl.baseWin.show();
               existingHybridByUrl.baseWin.focus();
+              // First-responder parity with the fresh-open show path (R4): focus
+              // the content view so key equivalents route to a responder.
+              if (!existingHybridByUrl.contentWC.isDestroyed()) existingHybridByUrl.contentWC.focus();
             } catch (e) {
               DEBUG && console.log('[hybrid-page-host] focus-on-url-reuse failed:', e);
             }
