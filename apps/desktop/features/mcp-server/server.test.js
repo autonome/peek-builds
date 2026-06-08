@@ -93,7 +93,10 @@ function createTestDb() {
       ('item-1', 'url', 'https://example.com', 'Example', 'example.com', '{}', ${now - 3000}, ${now - 3000}, 0),
       ('item-2', 'text', 'Buy groceries', 'Shopping list', '', '{}', ${now - 2000}, ${now - 2000}, 0),
       ('item-3', 'url', 'https://test.com', 'Test Page', 'test.com', '{}', ${now - 1000}, ${now - 1000}, 0),
-      ('item-deleted', 'text', 'Deleted note', 'Gone', '', '{}', ${now - 500}, ${now - 500}, ${now});
+      ('item-deleted', 'text', 'Deleted note', 'Gone', '', '{}', ${now - 500}, ${now - 500}, ${now}),
+      ('14efdd97-5f8b-4a6b-9dc3-a3745c276fa8', 'text', 'uuid item', 'UUID Item', '', '{}', ${now - 4000}, ${now - 4000}, 0),
+      ('item_1780235197219_0biqk0wf9', 'text', 'ts item', 'Timestamp Item', '', '{}', ${now - 4500}, ${now - 4500}, 0),
+      ('item_1780235197219_zzzzzzzz9', 'text', 'ts twin', 'Timestamp Twin', '', '{}', ${now - 4600}, ${now - 4600}, 0);
 
     INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
     VALUES
@@ -262,9 +265,10 @@ describe('MCP Server', () => {
 
   describe('list_items', () => {
     it('should return non-deleted items', async () => {
-      const items = await client.callTool('list_items');
+      const items = await client.callTool('list_items', { limit: 100 });
       assert.ok(Array.isArray(items));
-      assert.equal(items.length, 3);
+      // 3 original (item-1/2/3) + 3 prefix-resolution fixtures (uuid, ts, ts-twin).
+      assert.equal(items.length, 6);
       // Should not include deleted item
       const ids = items.map(i => i.id);
       assert.ok(!ids.includes('item-deleted'));
@@ -322,6 +326,105 @@ describe('MCP Server', () => {
       const r = await client.callToolRaw('get_item', {});
       assert.equal(r.isError, true);
       assert.ok(r.content[0].text.includes('itemId'), `expected error to mention itemId, got: ${r.content[0].text}`);
+    });
+  });
+
+  describe('get_item id-prefix resolution', () => {
+    it('resolves a UUID-style id by unique prefix', async () => {
+      const item = await client.callTool('get_item', { itemId: '14efdd97' });
+      assert.ok(item, 'expected the uuid item to resolve from its prefix');
+      assert.equal(item.id, '14efdd97-5f8b-4a6b-9dc3-a3745c276fa8');
+      assert.equal(item.title, 'UUID Item');
+    });
+
+    it('resolves a timestamp-style id by unique prefix', async () => {
+      // `item_1780235197219_0` is unique (the twin diverges at the suffix).
+      const item = await client.callTool('get_item', { itemId: 'item_1780235197219_0' });
+      assert.ok(item, 'expected the timestamp item to resolve from its prefix');
+      assert.equal(item.id, 'item_1780235197219_0biqk0wf9');
+      assert.equal(item.title, 'Timestamp Item');
+    });
+
+    it('treats literal underscores in a prefix as literal, not LIKE wildcards', async () => {
+      // If `_` were a LIKE wildcard, the prefix `item_1` would also match
+      // `item-1` (dash). It must NOT — underscores are escaped.
+      const item = await client.callTool('get_item', { itemId: 'item_1780235197219_0biqk0wf9' });
+      assert.equal(item.id, 'item_1780235197219_0biqk0wf9');
+    });
+
+    it('exact full id wins (and is returned even when it is a prefix of others)', async () => {
+      // `item_1780235197219_0biqk0wf9` is a full id; it is NOT a prefix of the
+      // twin, but the broader point: an exact match short-circuits. Verify the
+      // shared prefix `item_1780235197219_` (ambiguous across both twins) errors,
+      // while either full id resolves cleanly.
+      const a = await client.callTool('get_item', { itemId: 'item_1780235197219_0biqk0wf9' });
+      assert.equal(a.id, 'item_1780235197219_0biqk0wf9');
+      const b = await client.callTool('get_item', { itemId: 'item_1780235197219_zzzzzzzz9' });
+      assert.equal(b.id, 'item_1780235197219_zzzzzzzz9');
+    });
+
+    it('errors on an ambiguous prefix and names the candidates', async () => {
+      // `item_1780235197219_` is a prefix of BOTH timestamp twins.
+      const r = await client.callToolRaw('get_item', { itemId: 'item_1780235197219_' });
+      assert.equal(r.isError, true);
+      const text = r.content[0].text;
+      assert.match(text, /[Aa]mbiguous/);
+      assert.match(text, /item_1780235197219_0biqk0wf9/);
+      assert.match(text, /item_1780235197219_zzzzzzzz9/);
+    });
+
+    it('returns null for an unknown prefix (not-found, same as exact miss)', async () => {
+      const r = await client.callTool('get_item', { itemId: 'zzzzznope' });
+      assert.equal(r, null);
+    });
+
+    it('get_task_context also resolves a unique prefix', async () => {
+      const ctx = await client.callTool('get_task_context', { itemId: '14efdd97' });
+      assert.ok(ctx);
+      assert.equal(ctx.id, '14efdd97-5f8b-4a6b-9dc3-a3745c276fa8');
+      assert.ok(Array.isArray(ctx.events));
+    });
+  });
+
+  describe('mutating tools + id-prefix resolution', () => {
+    it('update_item resolves a unique prefix', async () => {
+      const item = await client.callTool('update_item', {
+        itemId: '14efdd97', title: 'UUID Item (renamed)',
+      });
+      assert.equal(item.id, '14efdd97-5f8b-4a6b-9dc3-a3745c276fa8');
+      assert.equal(item.title, 'UUID Item (renamed)');
+    });
+
+    it('update_item refuses an ambiguous prefix (never mutates a guess)', async () => {
+      const r = await client.callToolRaw('update_item', {
+        itemId: 'item_1780235197219_', title: 'should not apply',
+      });
+      assert.equal(r.isError, true);
+      assert.match(r.content[0].text, /[Aa]mbiguous/);
+      // Neither twin should have been touched.
+      const a = await client.callTool('get_item', { itemId: 'item_1780235197219_0biqk0wf9' });
+      const b = await client.callTool('get_item', { itemId: 'item_1780235197219_zzzzzzzz9' });
+      assert.notEqual(a.title, 'should not apply');
+      assert.notEqual(b.title, 'should not apply');
+    });
+
+    it('mutating tool errors (not null) on an unknown prefix', async () => {
+      const r = await client.callToolRaw('update_item', {
+        itemId: 'zzzzznope', title: 'x',
+      });
+      assert.equal(r.isError, true);
+      assert.match(r.content[0].text, /No item found/);
+    });
+
+    it('delete_item resolves a unique prefix and surfaces the resolved id', async () => {
+      const created = await client.callTool('create_item', {
+        type: 'text', title: 'prefix-delete-me', content: 'x',
+      });
+      const prefix = created.id.slice(0, 8);
+      const result = await client.callTool('delete_item', { itemId: prefix });
+      assert.equal(result.success, true);
+      // The full resolved id is surfaced so the caller sees what got deleted.
+      assert.equal(result.id, created.id);
     });
   });
 
@@ -646,6 +749,14 @@ function createScopedTestDb() {
   execSync(`sqlite3 "${dbPath}"`, { input: schema, encoding: 'utf-8' });
 
   const now = Date.now();
+  // Prefix-collision fixtures (ids sharing the `shared-` / `amb-` prefix
+  // across the scope boundary) exercise scope-confined resolveItemId:
+  //   shared-in  (peek)     + shared-out (untense)   → prefix `shared-` is
+  //     ambiguous table-wide but unique IN scope.
+  //   amb-a / amb-b (both peek) + amb-c (untense)    → prefix `amb-` is
+  //     ambiguous IN scope (a,b); candidate list must NOT name amb-c.
+  //   oos-1 (untense only)                            → prefix `oos-` / full
+  //     id matches only an out-of-scope item → not-found from scoped view.
   const seed = `
     INSERT INTO items (id, type, content, title, createdAt, updatedAt) VALUES
       ('p-only', 'text', 'peek thing', 'P', ${now - 6000}, ${now - 6000}),
@@ -653,7 +764,13 @@ function createScopedTestDb() {
       ('u-only', 'text', 'untense thing', 'U', ${now - 4000}, ${now - 4000}),
       ('u-sub',  'text', 'untense sub', 'US', ${now - 3000}, ${now - 3000}),
       ('cross',  'text', 'both',        'C', ${now - 2000}, ${now - 2000}),
-      ('bare',   'text', 'no tags',     'B', ${now - 1000}, ${now - 1000});
+      ('bare',   'text', 'no tags',     'B', ${now - 1000}, ${now - 1000}),
+      ('shared-in',  'text', 'in scope',  'SharedIn',  ${now - 900}, ${now - 900}),
+      ('shared-out', 'text', 'out scope', 'SharedOut', ${now - 800}, ${now - 800}),
+      ('amb-a', 'text', 'amb in a', 'AmbA', ${now - 700}, ${now - 700}),
+      ('amb-b', 'text', 'amb in b', 'AmbB', ${now - 600}, ${now - 600}),
+      ('amb-c', 'text', 'amb out c', 'AmbOutTitle', ${now - 500}, ${now - 500}),
+      ('oos-1', 'text', 'only out', 'OosOnly', ${now - 400}, ${now - 400});
     INSERT INTO tags (id, name, lastUsed, createdAt, updatedAt) VALUES
       ('t-p',  'peek',              ${now}, ${now}, ${now}),
       ('t-ps', 'peek:scope:desktop',${now}, ${now}, ${now}),
@@ -665,7 +782,13 @@ function createScopedTestDb() {
       ('it-3', 'u-only', 't-u',  ${now}),
       ('it-4', 'u-sub',  't-us', ${now}),
       ('it-5', 'cross',  't-p',  ${now}),
-      ('it-6', 'cross',  't-u',  ${now});
+      ('it-6', 'cross',  't-u',  ${now}),
+      ('it-7',  'shared-in',  't-p', ${now}),
+      ('it-8',  'shared-out', 't-u', ${now}),
+      ('it-9',  'amb-a', 't-p', ${now}),
+      ('it-10', 'amb-b', 't-p', ${now}),
+      ('it-11', 'amb-c', 't-u', ${now}),
+      ('it-12', 'oos-1', 't-u', ${now});
   `;
   execSync(`sqlite3 "${dbPath}"`, { input: seed, encoding: 'utf-8' });
   return dbPath;
@@ -692,7 +815,7 @@ describe('MCP Server scope enforcement (PEEK_MCP_SCOPE_TAG=peek)', () => {
     it('list_items hides foreign and untagged items', async () => {
       const items = await client.callTool('list_items', { limit: 100 });
       const ids = items.map((i) => i.id).sort();
-      assert.deepEqual(ids, ['cross', 'p-only', 'p-sub']);
+      assert.deepEqual(ids, ['amb-a', 'amb-b', 'cross', 'p-only', 'p-sub', 'shared-in']);
     });
 
     it('list_items honors client tag filters within scope', async () => {
@@ -727,6 +850,53 @@ describe('MCP Server scope enforcement (PEEK_MCP_SCOPE_TAG=peek)', () => {
     });
   });
 
+  describe('scope-confined id-prefix resolution', () => {
+    it('resolves a prefix that collides across the scope boundary to the in-scope item', async () => {
+      // `shared-` matches shared-in (peek) AND shared-out (untense) table-wide,
+      // but uniquely identifies shared-in from the scoped session's view.
+      const item = await client.callTool('get_item', { itemId: 'shared-' });
+      assert.ok(item, 'expected scoped resolution to pick the single in-scope match');
+      assert.equal(item.id, 'shared-in');
+    });
+
+    it('ambiguous IN-scope prefix errors with only in-scope candidates (no out-of-scope leak)', async () => {
+      // `amb-` matches amb-a + amb-b (both peek) and amb-c (untense). The error
+      // must name the two in-scope items and NOT the out-of-scope one's id/title.
+      const r = await client.callToolRaw('get_item', { itemId: 'amb-' });
+      assert.equal(r.isError, true);
+      const text = r.content[0].text;
+      assert.match(text, /[Aa]mbiguous/);
+      assert.match(text, /amb-a/);
+      assert.match(text, /amb-b/);
+      assert.ok(!text.includes('amb-c'), `out-of-scope id leaked: ${text}`);
+      assert.ok(!text.includes('AmbOutTitle'), `out-of-scope title leaked: ${text}`);
+    });
+
+    it('a prefix matching only an out-of-scope item resolves to not-found (get_item → null)', async () => {
+      const r = await client.callTool('get_item', { itemId: 'oos-' });
+      assert.equal(r, null);
+    });
+
+    it('an exact full id matching only an out-of-scope item resolves to not-found', async () => {
+      const r = await client.callTool('get_item', { itemId: 'oos-1' });
+      assert.equal(r, null);
+    });
+
+    it('mutating tool on an out-of-scope-only prefix errors as not-found (no leak)', async () => {
+      const r = await client.callToolRaw('update_item', { itemId: 'oos-', title: 'x' });
+      assert.equal(r.isError, true);
+      assert.match(r.content[0].text, /No item found/);
+      assert.ok(!r.content[0].text.includes('OosOnly'), `out-of-scope title leaked: ${r.content[0].text}`);
+    });
+
+    it('mutating tool resolves a cross-boundary-colliding prefix to the in-scope item', async () => {
+      // `shared-` is unique in scope → update applies to shared-in only.
+      const item = await client.callTool('update_item', { itemId: 'shared-', title: 'SharedIn renamed' });
+      assert.equal(item.id, 'shared-in');
+      assert.equal(item.title, 'SharedIn renamed');
+    });
+  });
+
   describe('writes', () => {
     it('create_item force-adds scope tag', async () => {
       const item = await client.callTool('create_item', {
@@ -751,12 +921,16 @@ describe('MCP Server scope enforcement (PEEK_MCP_SCOPE_TAG=peek)', () => {
       assert.match(r.content[0].text, /outside scope/);
     });
 
-    it('update_item refuses out-of-scope id', async () => {
+    it('update_item refuses out-of-scope id (as not-found — no exists-but-out-of-scope leak)', async () => {
+      // Scope-confined resolution makes an out-of-scope full id read as
+      // not-found, indistinguishable from a truly missing id. The earlier
+      // "not in scope" message confirmed the item existed, which was itself a
+      // leak; "No item found" preserves indistinguishability.
       const r = await client.callToolRaw('update_item', {
         itemId: 'u-only', title: 'hijacked',
       });
       assert.equal(r.isError, true);
-      assert.match(r.content[0].text, /not in scope/);
+      assert.match(r.content[0].text, /No item found/);
     });
 
     it('delete_item refuses out-of-scope id', async () => {

@@ -298,6 +298,87 @@ export function getItem(id) {
   return parseMetadata(item);
 }
 
+/**
+ * Resolve an item-id PREFIX to a full id, git-short-hash style.
+ *
+ * Resolution order (exact wins, short-circuits before any prefix logic):
+ *   1. Exact full-id match → { id } (even if it's also a prefix of others).
+ *   2. Exactly one id STARTS WITH the input → { id }.
+ *   3. Zero matches → { id: null }.
+ *   4. >1 prefix match → { id: null, ambiguous: true, candidates: [{id,title}] }.
+ *
+ * The prefix query is anchored (`LIKE 'prefix%'`) so SQLite uses the
+ * `items.id` PRIMARY KEY index instead of scanning. `_` and `%` in the
+ * prefix are escaped (timestamp ids like `item_1780…_0biqk…` carry literal
+ * underscores, which LIKE would otherwise treat as single-char wildcards).
+ *
+ * Scope-aware: when `scopeTag` is given, resolution considers ONLY items that
+ * carry a tag equal to `scopeTag` or starting with `scopeTag + ':'` — for BOTH
+ * the exact-match path and the prefix path. The restriction is applied IN the
+ * SQL (an EXISTS subquery over the item↔tag join) rather than by post-filtering
+ * JS, so the candidate LIMIT can never cut off an in-scope match that sorts
+ * after an out-of-scope one. This mirrors server.js's inScope() semantics
+ * exactly (`tag === scopeTag` OR `tag LIKE scopeTag || ':%'`). The scopeTag is
+ * escaped for LIKE the same way the prefix is, so `_`/`%` in a scope tag can't
+ * act as wildcards. No scopeTag = unscoped = whole-table resolution.
+ *
+ * Pure lookup: does NOT honor deletedAt — callers (getItem etc.) apply their
+ * own deleted/scope policy on the resolved id, matching the exact-id path.
+ */
+function escapeLikePrefix(prefix) {
+  return prefix.replace(/[\\%_]/g, (ch) => '\\' + ch);
+}
+
+const PREFIX_AMBIGUITY_LIMIT = 10;
+
+export function resolveItemId(prefix, { scopeTag = '' } = {}) {
+  if (typeof prefix !== 'string' || prefix === '') return { id: null };
+  const d = requireDb();
+
+  // When scoped, restrict every candidate to in-scope items via an EXISTS
+  // subquery on the item↔tag join. The escaped scopeTag drives the same
+  // `name === scope OR name LIKE scope || ':%'` match server.js enforces.
+  const scoped = typeof scopeTag === 'string' && scopeTag !== '';
+  const scopeClause = scoped
+    ? ` AND EXISTS (
+          SELECT 1 FROM item_tags it
+          JOIN tags t ON t.id = it.tagId
+          WHERE it.itemId = items.id
+            AND (t.name = ? OR t.name LIKE ? ESCAPE '\\')
+        )`
+    : '';
+  const scopeParams = scoped
+    ? [scopeTag, escapeLikePrefix(scopeTag) + ':%']
+    : [];
+
+  // 1. Exact match always wins and short-circuits — but only among in-scope
+  //    items when scoped (an exact full id matching only an out-of-scope item
+  //    must read as not-found from a scoped session's perspective).
+  const exact = d.prepare(
+    `SELECT id FROM items WHERE id = ?${scopeClause}`
+  ).get(prefix, ...scopeParams);
+  if (exact) return { id: exact.id };
+
+  // 2. Prefix-anchored scan (index-usable, escaped wildcards), scope-confined.
+  const pattern = escapeLikePrefix(prefix) + '%';
+  const rows = d.prepare(`
+    SELECT id, title FROM items
+    WHERE id LIKE ? ESCAPE '\\'${scopeClause}
+    ORDER BY id
+    LIMIT ?
+  `).all(pattern, ...scopeParams, PREFIX_AMBIGUITY_LIMIT + 1);
+
+  if (rows.length === 0) return { id: null };
+  if (rows.length === 1) return { id: rows[0].id };
+
+  return {
+    id: null,
+    ambiguous: true,
+    candidates: rows.slice(0, PREFIX_AMBIGUITY_LIMIT).map((r) => ({ id: r.id, title: r.title })),
+    truncated: rows.length > PREFIX_AMBIGUITY_LIMIT,
+  };
+}
+
 export function getItemTags(itemId) {
   const d = requireDb();
   return d.prepare(`

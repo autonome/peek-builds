@@ -32,6 +32,38 @@ A Peek feature (tile) that exposes Peek's data and capabilities via Model Contex
 > - **Settings UI banner.** After any save that changes the effective MCP snippet (enabled/profile/scope/readonly), a yellow info banner appears: *"Restart Claude Code to apply. The change is saved, but any MCP client already running won't pick it up until you fully quit and reopen it. Re-approving in /mcp is not enough."* Persists until dismissed; idempotent saves don't re-trigger.
 > - **`peek-mcp-init` post-write warning.** TTY bold/yellow text on stderr after the snippet is written, explicit that `/mcp` re-approval is insufficient and that the reinstall case has the same hazard (running child has the old binary).
 >
+> ### Item-id prefix resolution (shipped)
+> Every tool that accepts an `itemId` resolves a unique leading PREFIX of an
+> id (git-short-hash style), not just the full id. One shared resolver
+> (`resolveItemId` in `db.js`) does exact-match-first (short-circuits), then a
+> single index-anchored `id LIKE 'prefix%'` query (escaped `_`/`%`) against the
+> `items.id` primary key. Exact match always wins; ambiguous prefixes hard-error
+> with the candidate id+title list (never silently pick / never mutate a guess);
+> unknown prefixes are not-found (read tools → `null`, mutating tools → error).
+> `delete_item` echoes the resolved full id. Motivation: agents already cite the
+> leading id segment (`14efdd97`); this makes that shorthand resolve instead of
+> forcing a `list_items` + content-triangulation fallback.
+>
+> ### Minted short canonical IDs — DEFERRED (intentionally not done)
+> A more invasive alternative to prefix resolution is to mint a *short canonical
+> id* (e.g. a 7–8 char base32 handle) and make it the primary item handle.
+> What it would take:
+> - **Schema:** add a `shortId` column on `items` in `packages/schema/v1.json`
+>   with a UNIQUE index; collision-retry on mint.
+> - **Backfill migration:** generate a `shortId` for every existing row
+>   (one-time, owned by the datastore — and the schema-drift test would need the
+>   new column).
+> - **Mint path:** new ids get a `shortId` at creation; `apps/desktop/main/datastore.ts`
+>   is the policy owner for id minting, so it would have to lead — the MCP `db.js`
+>   only mirrors datastore policy, it must not unilaterally introduce an id scheme.
+> - **Surfacing:** every MCP response (and ideally the app UI) would expose the
+>   short id as the primary handle so callers learn/use it.
+> This was deferred because prefix resolution is **zero-migration**, touches only
+> the MCP server, and immediately makes the shorthand agents already use work.
+> Minted ids are a future call if/when a stable, human-quotable short handle (not
+> just "a unique prefix of the moment") is wanted — revisit with datastore.ts as
+> the owner.
+>
 > Original Phase-3 plan below stays for historical reference. The MCP feature is shipped — keep this doc updated as the surface evolves.
 
 ## Overview

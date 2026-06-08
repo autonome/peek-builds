@@ -108,6 +108,55 @@ bare `todo`. Neither respects the scope tag's namespace.
 - ✅ Manual `tag_item` (new status) + `untag_item` (old status) +
   `record_event` for status changes
 
+### Item-id prefix resolution (git-short-hash style)
+
+Every tool that takes an `itemId` accepts a **unique leading prefix** of
+an id, not just the full id — exactly like a git short hash. Both id
+shapes work: UUID (`14efdd97-…`) and timestamp (`item_1780…_0biqk…`).
+
+- **Exact full-id match always wins** and short-circuits before any
+  prefix logic (so a full id is never treated as ambiguous even if it is
+  also a prefix of other ids).
+- **Unique prefix** → resolves to that one item.
+- **Ambiguous prefix** → hard error listing the candidate ids + titles,
+  so you can disambiguate. Mutating tools never act on a guess.
+- **Unknown prefix** → not-found (read tools return `null`, the same as a
+  full-id miss; mutating tools error).
+
+This applies to the read paths (`get_item`, `get_task_context`) and the
+lookup-by-id mutating tools (`update_item`, `delete_item`, `tag_item`,
+`untag_item`, `record_event`, `complete_task`). For `delete_item` the
+**resolved full id** is echoed back in the result so you see exactly what
+was deleted.
+
+Resolution is a single index-anchored SQL query (`id LIKE 'prefix%'`
+against the `items.id` primary key, with `_`/`%` escaped so literal
+underscores in timestamp ids aren't treated as wildcards) — no JS table
+scan.
+
+**Scope-confined.** In a scoped session (`PEEK_MCP_SCOPE_TAG` set),
+resolution considers ONLY in-scope items (tagged `<scope>` or `<scope>:*`)
+for both the exact-match and prefix paths — the scope restriction is part
+of the same SQL query (an `EXISTS` over the item↔tag join), so the
+candidate limit can't cut off an in-scope match that sorts behind an
+out-of-scope one. Consequences from the scoped session's view:
+
+- A prefix that uniquely identifies one in-scope item resolves cleanly,
+  even if out-of-scope items share that prefix.
+- Ambiguity is computed over in-scope candidates only, and the candidate
+  list in the error never names out-of-scope ids/titles (no leak).
+- A prefix — or even an exact full id — matching only out-of-scope items
+  reads as **not-found**, indistinguishable from a missing id (it does not
+  report "exists but out of scope", which would itself leak existence).
+
+Unscoped sessions are unaffected — resolution spans the whole table.
+
+```js
+// Agents already refer to items by the leading id segment — now it just works.
+mcp__peek__get_item({ itemId: '14efdd97' })       // → the 14efdd97-… item
+mcp__peek__update_item({ itemId: '14efdd97', title: '…' })
+```
+
 ### Hashtag extraction is opt-in
 
 By default `create_item` treats `#word` patterns in `content` as

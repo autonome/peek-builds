@@ -22,7 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { openDb, queryItems, searchItems, getItem, createItem, updateItem, deleteItem,
          listTags, tagItem, untagItem, recordEvent, listTasks, completeTask,
-         getTaskContext, getItemTags } from './db.js';
+         getTaskContext, getItemTags, resolveItemId } from './db.js';
 
 const SERVER_NAME = 'peek-mcp';
 const SERVER_VERSION = '1.0.0';
@@ -84,6 +84,50 @@ function requireItemId(args) {
   return id;
 }
 
+// --- Item-id prefix resolution (git-short-hash style) ---
+//
+// Callers may pass a full item id OR a leading PREFIX of one. A unique prefix
+// resolves to its full id; an exact full-id match always wins (short-circuits
+// before prefix logic). Ambiguity is NEVER silently resolved — it always hard-
+// errors with the candidate ids + titles so the caller can disambiguate. This
+// matters most for mutating tools: we must never mutate a guessed item.
+//
+// `resolveItemIdFromArgs` returns the resolved id, or null when the prefix
+// matches nothing (read tools turn that into their existing null/not-found
+// response). Ambiguity throws regardless of read-vs-write.
+function formatAmbiguous(prefix, candidates, truncated) {
+  const lines = candidates.map((c) => `  ${c.id}  ${c.title || '(untitled)'}`);
+  let msg =
+    `Ambiguous item id prefix "${prefix}" matches ${candidates.length}${truncated ? '+' : ''} items:\n` +
+    lines.join('\n') +
+    `\nPass more of the id (or the full id) to disambiguate.`;
+  return msg;
+}
+
+function resolveItemIdFromArgs(args) {
+  const raw = requireItemId(args);
+  // Pass SCOPE down so resolution is confined to in-scope items: an exact id
+  // or prefix matching only out-of-scope items reads as not-found, ambiguity
+  // is computed over in-scope candidates only, and the candidate list never
+  // leaks out-of-scope id/title. SCOPE='' (unscoped) = whole-table behavior.
+  const res = resolveItemId(raw, { scopeTag: SCOPE });
+  if (res.ambiguous) {
+    throw new Error(formatAmbiguous(raw, res.candidates, res.truncated));
+  }
+  return res.id; // full id, or null when nothing matched
+}
+
+// For mutating tools: resolution must yield exactly one item. Not-found and
+// ambiguity both hard-error (never mutate a guessed/missing item).
+function resolveItemIdForMutation(args) {
+  const raw = args.itemId;
+  const id = resolveItemIdFromArgs(args);
+  if (id === null) {
+    throw new Error(`No item found with id (or id prefix) "${raw}".`);
+  }
+  return id;
+}
+
 function validateWriteTags(tags) {
   if (!SCOPE || !tags) return;
   for (const t of tags) {
@@ -134,11 +178,11 @@ const TOOLS = [
   },
   {
     name: 'get_item',
-    description: 'Get a single Peek item by ID, with all metadata, tags, and details.',
+    description: 'Get a single Peek item by ID, with all metadata, tags, and details. Accepts a unique ID PREFIX (git-short-hash style): a leading segment that uniquely identifies one item resolves to it. An ambiguous prefix errors with the candidate ids.',
     inputSchema: {
       type: 'object',
       properties: {
-        itemId: { type: 'string', description: 'Item ID' },
+        itemId: { type: 'string', description: 'Item ID, or a unique leading prefix of one (e.g. "14efdd97").' },
       },
       required: ['itemId'],
     },
@@ -308,7 +352,8 @@ function handleToolCall(name, args) {
       return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
     }
     case 'get_item': {
-      const itemId = requireItemId(args);
+      const itemId = resolveItemIdFromArgs(args);
+      if (itemId === null) return null;
       const item = getItem(itemId);
       if (!item) return null;
       if (SCOPE && !inScope(item.tags)) return null;
@@ -319,13 +364,17 @@ function handleToolCall(name, args) {
       return createItem({ ...args, tags: withScopeTag(args.tags) });
     }
     case 'update_item': {
-      const itemId = requireItemId(args);
+      const itemId = resolveItemIdForMutation(args);
       const { itemId: _omit, ...rest } = args;
       assertItemInScope(itemId);
       return updateItem(itemId, rest);
     }
     case 'delete_item': {
-      const itemId = requireItemId(args);
+      // Conservative: exact match OR unambiguous prefix only (mutation
+      // resolver hard-errors on both not-found and ambiguity). The resolved
+      // full id is surfaced in deleteItem's result so the caller sees exactly
+      // what got deleted.
+      const itemId = resolveItemIdForMutation(args);
       assertItemInScope(itemId);
       return deleteItem(itemId);
     }
@@ -333,17 +382,20 @@ function handleToolCall(name, args) {
       const rows = listTags(args || {});
       return SCOPE ? rows.filter((t) => tagIsScopeOwned(t.name)) : rows;
     }
-    case 'tag_item':
-      assertItemInScope(args.itemId);
+    case 'tag_item': {
+      const itemId = resolveItemIdForMutation(args);
+      assertItemInScope(itemId);
       validateWriteTags([args.tagName]);
-      return tagItem(args.itemId, args.tagName);
+      return tagItem(itemId, args.tagName);
+    }
     case 'untag_item': {
-      assertItemInScope(args.itemId);
+      const itemId = resolveItemIdForMutation(args);
+      assertItemInScope(itemId);
       // Only refuse a scope-owned untag if it would actually orphan the item.
       // If other in-scope tags remain (e.g. bare `peek` plus `peek:todo` →
       // dropping `peek:todo` leaves bare `peek`), the untag is safe.
       if (SCOPE && tagIsScopeOwned(args.tagName)) {
-        const remaining = getItemTags(args.itemId).filter((t) => t !== args.tagName);
+        const remaining = getItemTags(itemId).filter((t) => t !== args.tagName);
         if (!inScope(remaining)) {
           throw new Error(
             `Cannot untag "${args.tagName}" — it is the only tag keeping this item in scope "${SCOPE}". ` +
@@ -351,22 +403,25 @@ function handleToolCall(name, args) {
           );
         }
       }
-      return untagItem(args.itemId, args.tagName);
+      return untagItem(itemId, args.tagName);
     }
-    case 'record_event':
-      assertItemInScope(args.itemId);
-      return recordEvent(args.itemId, args.type, args.value);
+    case 'record_event': {
+      const itemId = resolveItemIdForMutation(args);
+      assertItemInScope(itemId);
+      return recordEvent(itemId, args.type, args.value);
+    }
     case 'list_tasks': {
       const rows = listTasks(args || {});
       return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
     }
     case 'complete_task': {
-      const itemId = requireItemId(args);
+      const itemId = resolveItemIdForMutation(args);
       assertItemInScope(itemId);
       return completeTask(itemId, args.notes);
     }
     case 'get_task_context': {
-      const itemId = requireItemId(args);
+      const itemId = resolveItemIdFromArgs(args);
+      if (itemId === null) return null;
       const ctx = getTaskContext(itemId);
       if (!ctx) return null;
       if (SCOPE && !inScope(ctx.tags)) return null;
