@@ -189,6 +189,16 @@ the decision/state via the hybrid test bridge, not real focus. Coverage added:
 fails on macOS** — run `HEADLESS=1 yarn test:desktop:electron` directly (background it via the
 harness) instead.
 
+**Caveat / still open (2026-06-09):** 6 of the 7 original cluster items were confirmed fixed by
+manual test, but **the top-border gesture overlay-reveal is still broken (maybe worsened) — peek
+`363e7cff`.** Making the content WC the first responder appears to **starve the overlay's
+top-border hover region of `mousemove`**: when the content `WebContentsView` is first responder
+AND fills the window, it captures the pointer events the reveal trigger needs. The reveal
+tracking must live above/around the content view (not rely on the BaseWindow/overlay receiving
+`mouse-moved`). Also still open: **peek/slide transient surfaces don't auto-dismiss on blur**
+under the hybrid era — peek `8e5c3174` (transient-on-blur not wired for those window types).
+These two are the remainder of the cluster.
+
 ---
 
 ## Chrome extensions: compat layer only — never modify imported source
