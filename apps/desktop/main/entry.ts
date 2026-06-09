@@ -339,6 +339,16 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
     app.emit('did-resign-active');
     return true;
   },
+  /**
+   * Emit the app-level `did-become-active` event — Peek returning to the
+   * foreground. Paired with {@link fireAppResignActive} to simulate the macOS
+   * resign→become activation dance that window restoration fires at startup, so
+   * a test can assert the dance does NOT dismiss a freshly opened slide/peek.
+   */
+  fireAppBecomeActive: (): boolean => {
+    app.emit('did-become-active');
+    return true;
+  },
   /** Returns the page-host URL-param bounds (the canonical webview screenBounds). */
   getHostUrlParamsByUrl: (urlSubstr: string) => {
     let last: { x: number; y: number; width: number; height: number } | null = null;

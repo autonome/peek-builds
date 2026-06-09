@@ -177,6 +177,12 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
     await app.evaluateMain(() => (globalThis as any).__peek_test.fireAppResignActive());
   }
 
+  /** Emit the app-level did-become-active (Peek returns to foreground). */
+  async function fireAppBecome(): Promise<void> {
+    if (!app.evaluateMain) throw new Error('evaluateMain not available');
+    await app.evaluateMain(() => (globalThis as any).__peek_test.fireAppBecomeActive());
+  }
+
   /**
    * Open a hybrid web page (NON-transient: role 'workspace'). `canvas: true`
    * with no modal routes to the hybrid branch; inferIzuiRole yields 'workspace'
@@ -215,12 +221,37 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
     expect(await hybridAlive(page)).toBe(true);
 
     await fireAppResign();
-    // Give any erroneous close a chance to land, then assert it's still alive.
-    await new Promise((r) => setTimeout(r, 300));
+    // Wait past the deferred-close settle window (HYBRID_APP_RESIGN_SETTLE_MS),
+    // then assert the non-transient page survived the close pass.
+    await new Promise((r) => setTimeout(r, 800));
     expect(await hybridAlive(page)).toBe(true);
 
     await bgWindow.evaluate(async (wid: number) => {
       try { await (window as any).app.window.close(wid); } catch { /* ignore */ }
     }, page);
+  });
+
+  test('the startup resign→become activation dance does NOT dismiss a fresh slide', async () => {
+    test.skip(!(await hybridFlagOn(app)), 'hybrid page-host flag off');
+
+    // Reproduces the user-reported "slide hotkey does nothing the first time
+    // after startup" bug: macOS fires a brief did-resign-active → did-become-
+    // active dance during boot window restoration. A slide opened right then
+    // must survive — the resign must NOT close it because a become immediately
+    // follows. (Without the deferred-with-cancel guard, the resign edge closed
+    // the slide instantly.)
+    const qv = await openHybridQuickView('qv-startup-dance');
+    expect(await hybridAlive(qv)).toBe(true);
+
+    await fireAppResign();   // resign edge of the dance
+    await fireAppBecome();    // become edge cancels the pending close
+
+    // Wait well past the settle window; the slide must still be alive.
+    await new Promise((r) => setTimeout(r, 800));
+    expect(await hybridAlive(qv)).toBe(true);
+
+    await bgWindow.evaluate(async (wid: number) => {
+      try { await (window as any).app.window.close(wid); } catch { /* ignore */ }
+    }, qv);
   });
 });

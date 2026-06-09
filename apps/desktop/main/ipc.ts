@@ -205,29 +205,17 @@ function closeTransientSiblingsOnFocus(focusedId: number): void {
 }
 
 /**
- * Dismiss transient HYBRID peek/slide surfaces when Peek stops being the
- * frontmost app (Cmd+Tab away). The focuser-driven autoclose only fires when
- * ANOTHER Peek window gains focus — it can't fire when focus leaves Peek
- * entirely. Transient BrowserWindow modals already self-close via their
- * per-window `blur` handler on app blur; hybrid peek/slide windows are
- * BaseWindows with NO blur handler, so without this they linger after an
- * app-switch (regression peek 8e5c3174, second half). `did-resign-active` is
- * the deterministic app-level signal.
- *
- * Scoped to HYBRID windows so we don't race the BrowserWindow modal blur path.
- * Guarded by the SAME overlay focus-dance cooldowns the windows-switcher uses:
- * window restoration / overlay open can fire a brief
- * did-resign-active → did-become-active cycle, and we must not tear down a
- * surface the app is mid-(re)activating. (fsm-pilled: reuse the existing dance
- * state, not a fresh speculative timer.)
+ * Close every visible transient (palette / quick-view, non-overlay) HYBRID
+ * peek/slide window. Scoped to HYBRID windows so we don't race the BrowserWindow
+ * modal blur path. The actual close-body for the app-resign dismissal below.
  */
-function closeTransientHybridWindowsOnAppResign(): void {
+function doCloseTransientHybridWindows(): void {
   const coordinator = getIzuiCoordinator();
   if (
     coordinator.isWithinOverlayExitCooldown() ||
     coordinator.isWithinOverlayEntryCooldown()
   ) {
-    DEBUG && console.log('[izui] did-resign-active: skip hybrid transient close (overlay cooldown)');
+    DEBUG && console.log('[izui] app-resign: skip hybrid transient close (overlay cooldown)');
     return;
   }
   const candidates: TransientSiblingCandidate[] = [];
@@ -248,12 +236,54 @@ function closeTransientHybridWindowsOnAppResign(): void {
   // undefined focuser-role is not 'utility', so the selector returns every
   // visible transient (non-overlay) hybrid window.
   for (const id of selectTransientSiblingsToClose(-1, undefined, candidates)) {
-    DEBUG && console.log('[izui] did-resign-active autoclose transient hybrid:', id);
+    DEBUG && console.log('[izui] app-resign autoclose transient hybrid:', id);
     try {
       closeOrHideWindow(id);
     } catch (err) {
-      DEBUG && console.log('[izui] did-resign-active hybrid close failed:', err);
+      DEBUG && console.log('[izui] app-resign hybrid close failed:', err);
     }
+  }
+}
+
+// macOS fires a brief `did-resign-active` → `did-become-active` DANCE (no real
+// app-switch) during window restoration at startup and around overlay/activation
+// transitions — see the cooldown comments in izui-state.ts (300/500 ms windows).
+// A slide/peek opened via global hotkey right at boot would otherwise be
+// opened-then-instantly-closed by the resign edge of that dance (user-visible
+// as "the slide hotkey did nothing the first time after startup"). So we DEFER
+// the close and let a following `did-become-active` CANCEL it — the same
+// deferred-decision shape the hybrid registry uses for content/overlay blur.
+// Only a resign with NO become within the settle window is a real app-switch.
+const HYBRID_APP_RESIGN_SETTLE_MS = 500;
+let pendingAppResignClose: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Dismiss transient HYBRID peek/slide surfaces when Peek stops being the
+ * frontmost app (Cmd+Tab away). The focuser-driven autoclose only fires when
+ * ANOTHER Peek window gains focus — it can't fire when focus leaves Peek
+ * entirely. Transient BrowserWindow modals already self-close via their
+ * per-window `blur` handler on app blur; hybrid peek/slide windows are
+ * BaseWindows with NO blur handler, so without this they linger after an
+ * app-switch (regression peek 8e5c3174, second half).
+ *
+ * Deferred (not immediate) to ride out the macOS resign→become activation dance
+ * — see HYBRID_APP_RESIGN_SETTLE_MS. `onAppDidBecomeActive` cancels a pending
+ * close, so the dance (which re-activates Peek) never dismisses a freshly opened
+ * surface.
+ */
+function onAppDidResignActive(): void {
+  if (pendingAppResignClose) clearTimeout(pendingAppResignClose);
+  pendingAppResignClose = setTimeout(() => {
+    pendingAppResignClose = null;
+    doCloseTransientHybridWindows();
+  }, HYBRID_APP_RESIGN_SETTLE_MS);
+}
+
+/** Peek became frontmost again — cancel any pending app-resign dismissal. */
+function onAppDidBecomeActive(): void {
+  if (pendingAppResignClose) {
+    clearTimeout(pendingAppResignClose);
+    pendingAppResignClose = null;
   }
 }
 
@@ -1437,10 +1467,13 @@ export function registerWindowHandlers(): void {
   // Dismiss transient hybrid peek/slide surfaces when Peek loses app focus
   // (Cmd+Tab away). Registered once here (app is ready by the time IPC handlers
   // are wired). Unconditional: macOS is the only platform that emits
-  // `did-resign-active`, so on other platforms this listener simply never fires.
+  // `did-resign-active`, so on other platforms these listeners simply never
+  // fire. The become-active listener cancels the deferred close so the startup
+  // resign→become activation dance can't dismiss a freshly opened slide.
   if (!appResignHybridWired) {
     appResignHybridWired = true;
-    app.on('did-resign-active', closeTransientHybridWindowsOnAppResign);
+    app.on('did-resign-active', onAppDidResignActive);
+    app.on('did-become-active', onAppDidBecomeActive);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
