@@ -624,14 +624,32 @@ export function closeOrHideWindow(id: number): void {
     if (!win) {
       // Hybrid page-host (BaseWindow) — invisible to getLiveWindow /
       // BrowserWindow.fromId. cmd+W (R1, peek ca4ee5e6) and any other
-      // close-by-id path must still close it. Route through closeHostWindow so
-      // the content WebContents (registered as a guest of baseWin.id) is
-      // destroyed BEFORE the BaseWindow closes — same page-host close UAF guard
-      // as the canvas/tile-ipc paths. No keepLive concept for hybrids yet, so
-      // it always closes. No-op (null) when the hybrid flag is off (registry
-      // empty), preserving canvas-path behavior byte-for-byte.
+      // close-by-id path must still close it. No-op (null) when the hybrid flag
+      // is off (registry empty), preserving canvas-path behavior byte-for-byte.
       const hybrid = getHybridWindow(id);
       if (hybrid && !hybrid.baseWin.isDestroyed()) {
+        // keepLive parity with the BrowserWindow branch below: a hybrid
+        // peek/slide opened with keepLive:true (e.g. the left slide playing
+        // music) must be HIDDEN, not destroyed, so its WebContentsView keeps
+        // running in the background and the window-open key/url-reuse path can
+        // re-show it (ipc.ts → baseWin.show()). The window params (incl.
+        // keepLive) are registered for the hybrid baseWin id at creation
+        // (ipc.ts ~2211), so getWindowInfo resolves the same flag the canvas
+        // path reads. `baseWin.hide()` does NOT emit 'close', so the
+        // close-finalize tail (which destroys the content wc + unregisters)
+        // never runs on hide — exactly the keep-alive semantics required (see
+        // the runHybridFinalize comment in ipc.ts). Only a genuine
+        // closeHostWindow frees the resources.
+        const hybridEntry = getWindowInfo(id);
+        if (hybridEntry?.params.keepLive === true) {
+          DEBUG && console.log(`HIDING keepLive hybrid page-host BaseWindow ${id}`);
+          hybrid.baseWin.hide();
+          maybeHideApp(id);
+          return;
+        }
+        // Route through closeHostWindow so the content WebContents (registered
+        // as a guest of baseWin.id) is destroyed BEFORE the BaseWindow closes —
+        // same page-host close UAF guard as the canvas/tile-ipc paths.
         DEBUG && console.log(`CLOSING hybrid page-host BaseWindow ${id}`);
         closeHostWindow(id, hybrid.baseWin);
         maybeHideApp(id);

@@ -80,9 +80,9 @@ import { publish, subscribe, unsubscribe, getSystemAddress } from './pubsub.js';
 // became a NEW hybrid host. ipc.ts/main.ts do NOT import hybrid-overlay, so
 // this is a one-way (acyclic) dependency.
 import { wireHybridContentEvents } from './ipc.js';
-import { getWindowInfo } from './main.js';
+import { getWindowInfo, registerWindow } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
-import { hybridShowIntent, showHybridHost, closeFocusedWindow } from './windows.js';
+import { hybridShowIntent, showHybridHost, closeFocusedWindow, closeOrHideWindow } from './windows.js';
 import { headlessActivationPolicy } from './headless-policy.js';
 import { registerLocalShortcut, unregisterLocalShortcut } from './shortcuts.js';
 
@@ -914,6 +914,21 @@ function installTestBridge(): void {
     },
     setActive(id: number | null): boolean {
       return _setActiveHybridWindowForTests(id);
+    },
+    /**
+     * Make a fake hybrid host visible WITHOUT stealing OS focus (`showInactive`,
+     * stays opacity 0). Lets the keepLive close test assert the host was
+     * actively HIDDEN (`isVisible()` true→false), not merely never shown.
+     */
+    showFakeHybridWindowInactive(id: number): boolean {
+      const w = fakeHosts.get(id);
+      if (!w || w.isDestroyed()) return false;
+      try {
+        w.showInactive();
+      } catch {
+        return false;
+      }
+      return true;
     },
     /**
      * Tear down a fake hybrid host: destroy its BaseWindow (firing the 'closed'
@@ -2074,6 +2089,35 @@ function installTestBridge(): void {
     },
     probeShortcutFireCount(): number {
       return __probeShortcutFireCount;
+    },
+    /**
+     * keepLive regression (2026-06-09): `makeFakeHybridWindow` registers the
+     * window in the hybrid registry but NOT in the window-manager registry
+     * (`registerWindow`), so `getWindowInfo(id)` is undefined and the close path
+     * can't read `params.keepLive`. The real hybrid open ALWAYS calls
+     * `registerWindow(baseWin.id, source, windowParams)` (ipc.ts ~2211). This
+     * hook seeds the same registry entry so a test can mark a fake hybrid host
+     * `keepLive: true` (the music-slide case) or `false` and then drive a close
+     * path that must hide-vs-destroy on that flag. Returns false if the id is
+     * not a live fake hybrid host.
+     */
+    registerHybridWindowParams(id: number, params: Record<string, unknown>): boolean {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.baseWin.isDestroyed()) return false;
+      registerWindow(id, params.source ? String(params.source) : 'page', params);
+      return true;
+    },
+    /**
+     * keepLive regression: drive the EXACT close path that app-switch dismissal
+     * (`doCloseTransientHybridWindows`) and focus-driven autoclose
+     * (`closeTransientSiblingsOnFocus`) funnel a hybrid peek/slide through —
+     * `closeOrHideWindow(id)`. A keepLive:true hybrid host must be HIDDEN (its
+     * BaseWindow stays live, just `isVisible() === false`); a keepLive:false one
+     * must be CLOSED (BaseWindow destroyed, dropped from the registry). The test
+     * reads the outcome via `hybridWindowExists(id)` / `hostVisibility(id)`.
+     */
+    closeOrHideHybrid(id: number): void {
+      closeOrHideWindow(id);
     },
   };
 }

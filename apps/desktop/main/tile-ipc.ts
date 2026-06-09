@@ -159,7 +159,7 @@ import {
   createBackup,
   listBackups,
 } from './backup.js';
-import { getPrefs, closeOrHideWindow, closeHostWindow, showWindowHeadlessSafe } from './windows.js';
+import { getPrefs, closeOrHideWindow, showWindowHeadlessSafe } from './windows.js';
 import {
   saveSessionSnapshot,
   restoreSessionSnapshot,
@@ -2781,15 +2781,18 @@ export function registerTileIpcHandlers(): void {
       closeOrHideWindow(target.id);
       return;
     }
-    // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Close the
-    // host BaseWindow directly (no keepLive concept for hybrids yet). No-op
-    // (null) when the flag is off. Route through closeHostWindow so the content
-    // WebContents (registered as a guest of baseWin.id) is destroyed BEFORE the
-    // BaseWindow closes — same page-host close UAF guard as the canvas path.
+    // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Route through
+    // closeOrHideWindow (NOT closeHostWindow directly) so a hybrid window with
+    // keepLive:true is HIDDEN rather than destroyed — same gate the
+    // BrowserWindow `target` branch above goes through, and the same gate the
+    // app-switch / focus-autoclose dismissal paths use. Its hybrid branch
+    // honors keepLive (hide) and otherwise closeHostWindow's the BaseWindow
+    // (content WebContents destroyed first — the page-host close UAF guard).
+    // No-op (null) when the flag is off (registry empty).
     if (args.id != null) {
       const hybrid = getHybridWindow(args.id);
       if (hybrid && !hybrid.baseWin.isDestroyed()) {
-        closeHostWindow(args.id, hybrid.baseWin);
+        closeOrHideWindow(args.id);
       }
     }
   });
