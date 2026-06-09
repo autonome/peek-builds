@@ -83,6 +83,7 @@ import {
   getPrefs,
   showWindowHeadlessSafe,
   showHybridHost,
+  handleHybridEscape,
 } from './windows.js';
 import {
   TRANSIENT_ROLES,
@@ -933,7 +934,32 @@ export function wireHybridContentEvents(
   // This mirrors the canvas guest set exactly so the hybrid path reproduces the
   // canvas keyboard behavior; a given window is EITHER canvas OR hybrid, and both
   // the overlay and page.js gate strictly on windowId, so coexistence is safe.
+  // Debounce ESC the same 200ms the canvas BrowserWindow path does
+  // (windows.ts addEscHandler) so a single press never double-fires from key
+  // propagation / OS focus churn.
+  let lastHybridEscTime = 0;
   contentWC.on('before-input-event', (event, input) => {
+    // ── ESC → close (no modifier) ────────────────────────────────────────────
+    // A focused hybrid page-host makes its content WebContentsView the macOS
+    // first responder, so ESC arrives HERE, not at the per-BrowserWindow
+    // before-input-event (windows.ts addEscHandler) that owns the canvas ESC→
+    // close path. Peeks/slides open `role:'quick-view' + modal + canvas` → under
+    // the hybrid default they are BaseWindows, and their ESC→close regressed
+    // (peek e8081cce companion). Route through the SAME policy decision the
+    // canvas path uses (handleHybridEscape → escPolicy/escUnhandledPolicy, one
+    // source of truth). The early `!modifier` return below would otherwise drop
+    // ESC entirely, so this MUST sit above it.
+    if (input.type === 'keyDown' && input.key === 'Escape') {
+      const now = Date.now();
+      if (now - lastHybridEscTime < 200) return;
+      lastHybridEscTime = now;
+      // Block ESC from reaching the page DOM (matches the canvas path's
+      // preventDefault) so the policy decision — not a page handler — owns it.
+      event.preventDefault();
+      void handleHybridEscape(hostWindowId, contentWC);
+      return;
+    }
+
     const modifier = process.platform === 'darwin' ? input.meta : input.control;
     if (input.type !== 'keyDown' || !modifier) return;
     if (input.key === 'l') {

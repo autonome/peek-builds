@@ -180,8 +180,25 @@ export function modWindow(bw: BrowserWindow, params: { action: string }): void {
  * For 'auto' mode, { handled: false } is sufficient (active mode won't close anyway).
  */
 export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled: boolean; close?: boolean; timeout?: boolean }> {
+  return askWebContentsToHandleEscape(bw.id, bw.webContents);
+}
+
+/**
+ * Lower-level form of `askRendererToHandleEscape` that targets an explicit
+ * WebContents + id rather than a BrowserWindow. A hybrid page-host is a
+ * `BaseWindow` with no root webContents — the renderer that owns the `onEscape`
+ * callback is its content `WebContentsView`. This lets the hybrid ESC path ask
+ * the SAME `escape-pressed` IPC question the BrowserWindow path asks, so the
+ * renderer-handled-first contract (dialog close, internal nav) is identical for
+ * both kinds. A page-host content WC that never registered an `onEscape` handler
+ * simply times out → `{ handled: false }`, falling through to policy below.
+ */
+export function askWebContentsToHandleEscape(
+  winId: number,
+  askWC: Electron.WebContents,
+): Promise<{ handled: boolean; close?: boolean; timeout?: boolean }> {
   return new Promise((resolve) => {
-    const responseChannel = `escape-response-${bw.id}-${Date.now()}`;
+    const responseChannel = `escape-response-${winId}-${Date.now()}`;
     DEBUG && console.log(`[esc] Asking renderer to handle escape, channel: ${responseChannel}`);
 
     const timeout = setTimeout(() => {
@@ -196,7 +213,12 @@ export function askRendererToHandleEscape(bw: BrowserWindow): Promise<{ handled:
       resolve(response || { handled: false });
     });
 
-    bw.webContents.send('escape-pressed', { responseChannel });
+    try {
+      askWC.send('escape-pressed', { responseChannel });
+    } catch {
+      // WC torn down between resolve of the keystroke and this send — no
+      // renderer to answer, so let the timeout fire { handled: false }.
+    }
   });
 }
 
@@ -255,16 +277,66 @@ export function escUnhandledPolicy(sessionState: string, role: string): 'open-sw
  * @param source - 'host' if from the window's own webContents, 'webview' if from a guest
  */
 async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webview'): Promise<void> {
+  if (bw.isDestroyed()) return;
+  // The BrowserWindow's own webContents is the renderer that owns the onEscape
+  // callback for a canvas/legacy window.
+  await handleEscapeForWindowId(bw.id, bw.webContents, source, () => bw.isDestroyed());
+}
+
+/**
+ * ESC handler for a hybrid page-host (`BaseWindow`).
+ *
+ * Regression (Cluster B, peek e8081cce/companion): when the hybrid page-host
+ * became the default web-page renderer, peeks/slides — which open with
+ * `role:'quick-view' + modal + canvas` and are therefore BaseWindows under the
+ * hybrid default — stopped closing on ESC. The ESC→close path lived ENTIRELY on
+ * the per-`BrowserWindow` `before-input-event` (`addEscHandler`), which is never
+ * wired for a BaseWindow host. A focused hybrid host makes its content
+ * `WebContentsView` the macOS first responder, so ESC arrives at the content
+ * WC's `before-input-event` (`wireHybridContentEvents` in ipc.ts) instead — the
+ * SAME class of break as the cmd+W/L/N cluster.
+ *
+ * This routes the hybrid ESC through the IDENTICAL policy decision the canvas
+ * path uses (`handleEscapeForWindowId` → escPolicy / escUnhandledPolicy), with
+ * the content WC as the renderer to ask. ONE source of truth — no forked policy.
+ * The hostWindowId is the BaseWindow id, which is registered in the shared
+ * window registry by the ipc.ts hybrid branch (`registerWindow(baseWin.id, …)`),
+ * so role/escapeMode resolve exactly as for a BrowserWindow.
+ *
+ * @param hostWindowId - the hybrid BaseWindow id
+ * @param contentWC - the host's content WebContentsView (the renderer to ask)
+ */
+export async function handleHybridEscape(
+  hostWindowId: number,
+  contentWC: Electron.WebContents,
+): Promise<void> {
+  await handleEscapeForWindowId(hostWindowId, contentWC, 'host', () => contentWC.isDestroyed());
+}
+
+/**
+ * Shared core for ESC handling, keyed by window id + the WebContents to ask.
+ * Drives the SINGLE escPolicy/escUnhandledPolicy decision for both the canvas
+ * BrowserWindow path (`handleEscapeForWindow`) and the hybrid BaseWindow path
+ * (`handleHybridEscape`). The only kind-specific inputs are the `askWC` (the
+ * renderer that owns `onEscape`) and `isDestroyed` (the liveness probe for the
+ * window/wc that owns it).
+ */
+async function handleEscapeForWindowId(
+  winId: number,
+  askWC: Electron.WebContents,
+  source: 'host' | 'webview',
+  isDestroyed: () => boolean,
+): Promise<void> {
   // Resolve escape role/address from the shared window-registry first
-  // (IPC-opened windows), then fall back to tile-launcher's own info map
-  // (feature-tile windows, which are deliberately kept OUT of the shared
-  // registry so they don't pollute the "reopen last closed window" stack).
-  // The registry entry is `{ source, params }`; the tile-info entry is the
-  // flat `params` itself — normalize to `params` either way.
-  const registryEntry = getWindowInfo(bw.id);
-  const tileEntry = registryEntry ? undefined : getTileWindowInfo(bw.id);
+  // (IPC-opened windows, including hybrid page-hosts), then fall back to
+  // tile-launcher's own info map (feature-tile windows, which are deliberately
+  // kept OUT of the shared registry so they don't pollute the "reopen last
+  // closed window" stack). The registry entry is `{ source, params }`; the
+  // tile-info entry is the flat `params` itself — normalize to `params` either way.
+  const registryEntry = getWindowInfo(winId);
+  const tileEntry = registryEntry ? undefined : getTileWindowInfo(winId);
   const entry = registryEntry ?? tileEntry;
-  if (!entry || bw.isDestroyed()) return;
+  if (!entry || isDestroyed()) return;
 
   const params = (registryEntry ? registryEntry.params : tileEntry) as Record<string, unknown>;
   // Should always be set by ipc.ts window-open inference (line ~1167); fallback
@@ -272,7 +344,7 @@ async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webvie
   // ESC behaviour never silently regresses to "always close" if a window
   // somehow lands here without role on its registry params.
   const role = (params.role as string) || 'workspace';
-  DEBUG && console.log(`[esc] ESC keyDown - window ${bw.id}, source: ${source}, role: ${role}, url: ${params.address}`);
+  DEBUG && console.log(`[esc] ESC keyDown - window ${winId}, source: ${source}, role: ${role}, url: ${params.address}`);
 
   // escapeMode: 'ignore' is a hard override — let ESC pass through entirely
   if (params.escapeMode === 'ignore') {
@@ -281,7 +353,7 @@ async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webvie
   }
 
   // Ask renderer first (dialog close, internal navigation, etc.)
-  const response = await askRendererToHandleEscape(bw);
+  const response = await askWebContentsToHandleEscape(winId, askWC);
   if (response.handled) return;
 
   // Look up session state and apply role-based policy
@@ -291,7 +363,7 @@ async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webvie
   DEBUG && console.log(`[esc] escPolicy(${sessionState}, ${role}) -> ${action}`);
 
   if (action === 'close' || action === 'close-and-restore') {
-    closeOrHideWindow(bw.id);
+    closeOrHideWindow(winId);
   } else {
     // escPolicy returned 'nothing' — renderer is at root and window won't close.
     // Consult second-phase policy for unhandled ESC.

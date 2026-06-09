@@ -82,7 +82,7 @@ import { publish, subscribe, unsubscribe, getSystemAddress } from './pubsub.js';
 import { wireHybridContentEvents } from './ipc.js';
 import { getWindowInfo, registerWindow } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
-import { hybridShowIntent, showHybridHost, closeFocusedWindow, closeOrHideWindow } from './windows.js';
+import { hybridShowIntent, showHybridHost, closeFocusedWindow, closeOrHideWindow, handleHybridEscape } from './windows.js';
 import { headlessActivationPolicy } from './headless-policy.js';
 import { registerLocalShortcut, unregisterLocalShortcut } from './shortcuts.js';
 
@@ -2022,6 +2022,71 @@ function installTestBridge(): void {
      */
     closeFocusedWindow(): number | null {
       return closeFocusedWindow();
+    },
+    /**
+     * ESC-close (peek e8081cce companion): build a wired hybrid page-host AND
+     * register it in the shared window registry with the given window params
+     * (role / escapeMode / address), so the ESC policy path resolves role the
+     * SAME way it does for a real peek/slide (`role:'quick-view'`). `makeWiredHybrid`
+     * alone never registers window params, so its `getWindowInfo` is empty and
+     * the policy can't classify it. Returns the new hybrid window id.
+     */
+    makeRoledHybrid(
+      dataUrl: string,
+      params: Record<string, unknown>,
+    ): Promise<number | null> {
+      // Same build as makeWiredHybrid (installs the REAL wireHybridContentEvents
+      // before-input-event handler), plus a shared-registry window record so the
+      // ESC policy can resolve role/escapeMode.
+      const baseWin = new BaseWindowCtor({
+        x: 100, y: 100, width: 600, height: 400, frame: false, show: false, opacity: 0,
+      });
+      const view = new WebContentsView({
+        webPreferences: { contextIsolation: true, sandbox: true },
+      });
+      baseWin.contentView.addChildView(view);
+      try {
+        const [w, h] = baseWin.getContentSize();
+        view.setBounds({ x: 0, y: 0, width: w, height: h });
+      } catch { /* getContentSize unsupported in some envs */ }
+      registerHybridWindow(baseWin.id, { baseWin, contentWC: view.webContents });
+      wireHybridContentEvents(view.webContents, baseWin.id, dataUrl, {});
+      registerWindow(baseWin.id, 'test-esc', { address: dataUrl, ...params });
+      return view.webContents
+        .loadURL(dataUrl)
+        .then(() => baseWin.id)
+        .catch(() => baseWin.id);
+    },
+    /**
+     * ESC-close: drive the EXACT hybrid ESC policy path (`handleHybridEscape` →
+     * escPolicy/escUnhandledPolicy → closeOrHideWindow), awaitable so a test is
+     * deterministic (no polling for the async renderer-ask timeout). A roled
+     * hybrid whose content WC registered no `onEscape` resolves once the policy
+     * decision (and any close) has run. Returns the window id (or null when the
+     * hybrid window is gone).
+     */
+    runHybridEscape(id: number): Promise<number | null> {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.contentWC.isDestroyed()) return Promise.resolve(null);
+      return handleHybridEscape(id, entry.contentWC).then(() => id);
+    },
+    /**
+     * ESC-close: resolve once a hybrid host id is GONE from the registry (its
+     * BaseWindow destroyed), or false on timeout. Lets a test that drove the REAL
+     * `before-input-event` (fire-and-forget `handleHybridEscape`) await the
+     * async close deterministically instead of fixed-sleeping.
+     */
+    waitHybridGone(id: number, timeoutMs = 4000): Promise<boolean> {
+      return new Promise((resolve) => {
+        const deadline = Date.now() + timeoutMs;
+        const poll = () => {
+          const entry = getHybridWindow(id);
+          if (!entry || entry.baseWin.isDestroyed()) return resolve(true);
+          if (Date.now() > deadline) return resolve(false);
+          setTimeout(poll, 25);
+        };
+        poll();
+      });
     },
     /**
      * R2/R3: drive the hybrid content WC's `before-input-event` handler
