@@ -25,7 +25,8 @@ import {
 } from './main.js';
 import { registerGuest, getGuestsForWindow } from './webview-guest-registry.js';
 import { getTileWindowInfo } from './tile-launcher.js';
-import { getHybridWindow, getActiveHybridWindowId } from './hybrid-page-host-registry.js';
+import { getHybridWindow, getActiveHybridWindowId, getHybridContentWC } from './hybrid-page-host-registry.js';
+import { resolveHybridEscapeTarget } from './izui-roles.js';
 
 import {
   getIzuiCoordinator,
@@ -324,13 +325,52 @@ async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webvie
  * window registry by the ipc.ts hybrid branch (`registerWindow(baseWin.id, …)`),
  * so role/escapeMode resolve exactly as for a BrowserWindow.
  *
- * @param hostWindowId - the hybrid BaseWindow id
- * @param contentWC - the host's content WebContentsView (the renderer to ask)
+ * WRONG-WINDOW / first-responder redirect (peek ebb10894): `before-input-event`
+ * only fires for the macOS first responder. On a fresh peek/slide open the
+ * previously-focused hybrid CONTENT host can still hold first-responder for a
+ * beat, so ESC lands on ITS content WC and resolves role 'content' → escPolicy
+ * 'nothing' → escUnhandledPolicy → the Windows SWITCHER, instead of closing the
+ * quick-view the user just opened (the reported "ESC opens the switcher most of
+ * the time, unless I click the content first" intermittency). The hybrid
+ * registry's `getActiveHybridWindowId()` is the focus source of truth — driven
+ * by our OWN `focus` events from `showHybridHost` on open, not the laggy macOS
+ * first-responder — so it already points at the just-opened peek/slide. When the
+ * ESC landed on a DIFFERENT host than the active hybrid window AND the active
+ * window is an always-closeable transient (quick-view/palette/utility/overlay),
+ * redirect the ESC to the active host's content WC so it resolves 'close'. The
+ * decision is the pure `resolveHybridEscapeTarget` (izui-roles.ts) so it is
+ * unit-testable without real OS focus. Same policy core (`handleEscapeForWindowId`
+ * → escPolicy) runs afterward — no forked policy, no new ESC path.
+ *
+ * @param hostWindowId - the hybrid BaseWindow id whose content WC received ESC
+ * @param contentWC - that host's content WebContentsView (the renderer to ask)
  */
 export async function handleHybridEscape(
   hostWindowId: number,
   contentWC: Electron.WebContents,
 ): Promise<void> {
+  // Resolve the ACTUAL target: if ESC landed on the wrong (non-active) hybrid
+  // host because its content WC was still first responder, redirect to the
+  // active hybrid window when that one is an always-closeable transient (the
+  // freshly-opened quick-view peek/slide). Focus source of truth = the registry.
+  const activeId = getActiveHybridWindowId();
+  const activeRole = activeId != null
+    ? (getWindowInfo(activeId)?.params?.role as string | undefined)
+    : undefined;
+  const targetId = resolveHybridEscapeTarget(hostWindowId, activeId, activeRole);
+
+  if (targetId !== hostWindowId) {
+    // Redirecting to the active host — ask ITS content WC (the renderer that
+    // owns the quick-view) and use ITS liveness probe. Fall back to the landed
+    // host if the active content WC vanished between the decision and here.
+    const activeWC = getHybridContentWC(targetId);
+    if (activeWC && !activeWC.isDestroyed()) {
+      DEBUG && console.log(`[esc] hybrid ESC redirected from host ${hostWindowId} to active host ${targetId} (role ${activeRole})`);
+      await handleEscapeForWindowId(targetId, activeWC, 'host', () => activeWC.isDestroyed());
+      return;
+    }
+  }
+
   await handleEscapeForWindowId(hostWindowId, contentWC, 'host', () => contentWC.isDestroyed());
 }
 

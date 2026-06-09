@@ -13,6 +13,8 @@ import {
   inferIzuiRole,
   spacesPolicyForRole,
   selectTransientSiblingsToClose,
+  resolveHybridEscapeTarget,
+  ALWAYS_CLOSEABLE_ESC_ROLES,
   TRANSIENT_ROLES,
 } from './izui-roles.js';
 
@@ -170,6 +172,59 @@ describe('selectTransientSiblingsToClose', () => {
       { id: 4, role: 'workspace', visible: true },
     ]);
     assert.deepStrictEqual(out, [2, 3]);
+  });
+});
+
+describe('resolveHybridEscapeTarget (wrong-window / first-responder redirect — peek ebb10894)', () => {
+  // The live regression: ESC on a freshly opened peek/slide opens the Windows
+  // switcher MOST of the time, but closes correctly if the user first clicks the
+  // content. Root cause = first-responder lag: ESC lands on the PREVIOUS hybrid
+  // content host's before-input-event (role 'content' → escPolicy 'nothing' →
+  // escUnhandledPolicy → switcher) while the just-opened quick-view IS the active
+  // hybrid window (the registry's focus source of truth, set on open). The
+  // resolver redirects ESC to the active host when that one is always-closeable.
+
+  it('redirects ESC to the active quick-view when it landed on a DIFFERENT content host', () => {
+    // ESC landed on host 11 (the previous page, role 'content'); the active
+    // hybrid window is 22, a quick-view peek/slide. Must resolve against 22.
+    assert.strictEqual(resolveHybridEscapeTarget(11, 22, 'quick-view'), 22);
+  });
+
+  it('redirects for any always-closeable active role (palette / utility / overlay)', () => {
+    assert.strictEqual(resolveHybridEscapeTarget(11, 22, 'palette'), 22);
+    assert.strictEqual(resolveHybridEscapeTarget(11, 22, 'utility'), 22);
+    assert.strictEqual(resolveHybridEscapeTarget(11, 22, 'overlay'), 22);
+  });
+
+  it('does NOT redirect when ESC already landed on the active hybrid window', () => {
+    // Common case once the content WC is first responder: landed === active.
+    assert.strictEqual(resolveHybridEscapeTarget(22, 22, 'quick-view'), 22);
+  });
+
+  it('does NOT redirect when there is no active hybrid window', () => {
+    assert.strictEqual(resolveHybridEscapeTarget(11, null, undefined), 11);
+  });
+
+  it("does NOT redirect toward a content/workspace active window (never force-close a page)", () => {
+    // A 'content' or 'workspace' active window has its own ESC semantics — ESC
+    // must resolve against the host it actually landed on, not be hijacked.
+    assert.strictEqual(resolveHybridEscapeTarget(11, 22, 'content'), 11);
+    assert.strictEqual(resolveHybridEscapeTarget(11, 22, 'workspace'), 11);
+    assert.strictEqual(resolveHybridEscapeTarget(11, 22, 'child-content'), 11);
+  });
+
+  it('does NOT redirect when the active role is unknown/unregistered', () => {
+    assert.strictEqual(resolveHybridEscapeTarget(11, 22, undefined), 11);
+  });
+
+  it('ALWAYS_CLOSEABLE_ESC_ROLES matches escPolicy close roles, excludes session-dependent', () => {
+    assert.ok(ALWAYS_CLOSEABLE_ESC_ROLES.has('quick-view'));
+    assert.ok(ALWAYS_CLOSEABLE_ESC_ROLES.has('palette'));
+    assert.ok(ALWAYS_CLOSEABLE_ESC_ROLES.has('utility'));
+    assert.ok(ALWAYS_CLOSEABLE_ESC_ROLES.has('overlay'));
+    assert.ok(!ALWAYS_CLOSEABLE_ESC_ROLES.has('content'));
+    assert.ok(!ALWAYS_CLOSEABLE_ESC_ROLES.has('child-content'));
+    assert.ok(!ALWAYS_CLOSEABLE_ESC_ROLES.has('workspace'));
   });
 });
 

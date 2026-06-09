@@ -84,6 +84,71 @@ export function inferIzuiRole(
 }
 
 /**
+ * Roles whose ESC action is `close` (or `close-and-restore`) IRRESPECTIVE of
+ * session state — the always-closeable transient/quick surfaces. This is the
+ * role set `escPolicy()` resolves to a close (not 'nothing') no matter what the
+ * IZUI session state is. Kept here, next to the role taxonomy, so the
+ * ESC-target resolver below can reason about "is the active hybrid window one
+ * that ESC should close?" without importing the Electron-bound `escPolicy`.
+ *
+ * MUST stay in sync with `escPolicy()` in windows.ts (the single policy source
+ * of truth): quick-view / palette / utility → 'close'; overlay →
+ * 'close-and-restore'. content / child-content / workspace are session-
+ * dependent or never-close, so they are deliberately EXCLUDED.
+ */
+export const ALWAYS_CLOSEABLE_ESC_ROLES = new Set([
+  'quick-view',
+  'palette',
+  'utility',
+  'overlay',
+]);
+
+/**
+ * Decide which hybrid host id an ESC keystroke must resolve against.
+ *
+ * The wrong-window / first-responder regression (peek ebb10894): the hybrid
+ * ESC→close handler lives on the content `WebContents`'s `before-input-event`,
+ * which only fires for the macOS FIRST RESPONDER. On a fresh peek/slide open the
+ * previously-focused hybrid CONTENT host (also a BaseWindow) can still hold
+ * first-responder for a beat, so ESC lands on ITS handler → resolves role
+ * 'content' → escPolicy 'nothing' → escUnhandledPolicy → the Windows switcher,
+ * instead of closing the quick-view that the user actually just opened. (Once
+ * the user clicks the peek/slide content, its WC becomes first responder and ESC
+ * closes — the reported intermittency.)
+ *
+ * The registry's `getActiveHybridWindowId()` is the focus source of truth for
+ * hybrids — it is driven by our OWN JS `focus` events (`showHybridHost`'s
+ * `baseWin.show()` + `contentWC.focus()` on open), NOT the laggy macOS
+ * first-responder — so it reliably points at the just-opened peek/slide. So when
+ * ESC lands on a host that is NOT the active hybrid window, and the active hybrid
+ * window is an always-closeable transient (quick-view peek/slide etc.), the ESC
+ * is redirected to the active host. Otherwise the landed host is used unchanged.
+ *
+ * Pure + deterministic so the wrong-window resolution is unit-testable WITHOUT
+ * real OS focus (which a macOS-headless run can never grant).
+ *
+ * @param landedHostId  the hybrid host id whose content WC actually received ESC
+ * @param activeHybridId  `getActiveHybridWindowId()` (the focus source of truth)
+ * @param activeRole  the registry role of `activeHybridId` (undefined if none)
+ * @returns the host id ESC should resolve against
+ */
+export function resolveHybridEscapeTarget(
+  landedHostId: number,
+  activeHybridId: number | null,
+  activeRole: string | undefined,
+): number {
+  // ESC already landed on the active hybrid window (the common case once the
+  // content WC is first responder) — resolve against it, no redirect.
+  if (activeHybridId == null || activeHybridId === landedHostId) return landedHostId;
+  // ESC landed on a DIFFERENT host than the active hybrid window. Only redirect
+  // when the active window is one ESC should always close (a quick-view peek/
+  // slide, palette, etc.) — never hijack ESC toward a content/workspace active
+  // window (those have their own ESC semantics and must not be force-closed).
+  if (activeRole && ALWAYS_CLOSEABLE_ESC_ROLES.has(activeRole)) return activeHybridId;
+  return landedHostId;
+}
+
+/**
  * One window's role + visibility, as seen by the focus-driven transient
  * autoclose. `role` is `undefined` for a window with no registry entry (those
  * are never transient candidates). `visible` gates out already-hidden windows.

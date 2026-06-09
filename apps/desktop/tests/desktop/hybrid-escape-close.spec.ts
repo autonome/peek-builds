@@ -129,6 +129,87 @@ test.describe('Hybrid page-host ESC close @desktop', () => {
     expect(result.existsAfter).toBe(true);
   });
 
+  // WRONG-WINDOW / first-responder redirect (peek ebb10894) — the LIVE bug the
+  // headless escPolicy unit could not catch. Reproduces the exact intermittency:
+  // ESC lands on the PREVIOUS hybrid CONTENT host (still first responder for a
+  // beat after a peek/slide opens over it) instead of the just-opened quick-view.
+  // Pre-fix, handleHybridEscape resolved against the content host → escPolicy
+  // 'nothing' → escUnhandledPolicy → the Windows SWITCHER, and the quick-view
+  // survived. Post-fix, handleHybridEscape consults the registry's active-hybrid
+  // id (the focus source of truth, set on open) and, because the active window
+  // is an always-closeable quick-view, redirects the ESC to it → it CLOSES.
+  //
+  // This asserts the ACTUAL resolution path (which host id + role ESC resolves
+  // against, driven by the active-hybrid id), not just escPolicy(state, role) —
+  // so it covers the live path a green headless escPolicy spec missed.
+  test('ESC on the wrong (content) host closes the ACTIVE quick-view, not the switcher', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const result = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      // The PREVIOUS page the user was on — a hybrid CONTENT host. ESC lands here
+      // because its content WC is still the macOS first responder for a beat
+      // after the peek/slide opens over it.
+      const contentId = await b.makeRoledHybrid('data:text/html,<title>Prev page</title>x', {
+        role: 'content',
+      });
+      // The just-opened peek/slide — a quick-view that is the ACTIVE hybrid
+      // window (its show() + content focus on open set the registry active id).
+      const quickViewId = await b.makeRoledHybrid('data:text/html,<title>Peek</title>y', {
+        role: 'quick-view',
+        modal: true,
+      });
+      b.setActive(quickViewId);
+
+      const quickViewExistedBefore = b.hybridWindowExists(quickViewId);
+      // Drive ESC against the WRONG host (the content page) — exactly what
+      // happens when the content WC, not the quick-view, is first responder.
+      await b.runHybridEscape(contentId);
+
+      const quickViewGone = !b.hybridWindowExists(quickViewId);
+      const contentSurvives = b.hybridWindowExists(contentId);
+      return { quickViewId, contentId, quickViewExistedBefore, quickViewGone, contentSurvives };
+    });
+
+    expect(result.quickViewExistedBefore).toBe(true);
+    // The redirect closed the active quick-view — the regression is fixed.
+    expect(result.quickViewGone).toBe(true);
+    // ...and the content page the ESC literally landed on is untouched (it was
+    // never the target; no switcher, no spurious close).
+    expect(result.contentSurvives).toBe(true);
+  });
+
+  // Guard the redirect's boundary: when the ACTIVE hybrid window is itself a
+  // content/workspace page (not a closeable transient), ESC must NOT be hijacked
+  // toward it — it resolves against the host it landed on, preserving the
+  // deferred ESC→switcher routing for real content pages (peek e8081cce).
+  test('ESC does NOT redirect toward a content active window (no force-close)', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const result = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const landedId = await b.makeRoledHybrid('data:text/html,<title>Landed</title>x', {
+        role: 'content',
+      });
+      const activeContentId = await b.makeRoledHybrid('data:text/html,<title>Active page</title>y', {
+        role: 'content',
+      });
+      b.setActive(activeContentId);
+      // ESC on the landed content host with a CONTENT (non-closeable) active
+      // window: neither must be force-closed by the redirect.
+      await b.runHybridEscape(landedId);
+      return {
+        landedSurvives: b.hybridWindowExists(landedId),
+        activeSurvives: b.hybridWindowExists(activeContentId),
+      };
+    });
+
+    // Neither content page is force-closed — the redirect only fires toward
+    // always-closeable transient active windows (quick-view/palette/…).
+    expect(result.landedSurvives).toBe(true);
+    expect(result.activeSurvives).toBe(true);
+  });
+
   // Canvas-path guard: the close DECISION is shared — escPolicy is the SINGLE
   // source of truth both the canvas BrowserWindow path (addEscHandler →
   // handleEscapeForWindow) and the new hybrid path (handleHybridEscape) consult
