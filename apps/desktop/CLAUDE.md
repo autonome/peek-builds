@@ -189,15 +189,40 @@ the decision/state via the hybrid test bridge, not real focus. Coverage added:
 fails on macOS** — run `HEADLESS=1 yarn test:desktop:electron` directly (background it via the
 harness) instead.
 
-**Caveat / still open (2026-06-09):** 6 of the 7 original cluster items were confirmed fixed by
-manual test, but **the top-border gesture overlay-reveal is still broken (maybe worsened) — peek
-`363e7cff`.** Making the content WC the first responder appears to **starve the overlay's
+**Fixed since (2026-06-09, second pass):**
+
+- **peek/slide transient-on-blur — DONE (peek `8e5c3174`).** Peeks/slides open with
+  `role:'quick-view' + modal + canvas`, so under the hybrid default they are **BaseWindows**, and
+  the old transient-autoclose lived entirely on `BrowserWindow` (focuser-driven loop over
+  `getAllLiveWindows()` only). Fix, FSM-aligned (extend the existing focuser-driven mechanism, no
+  new blur listener): pure `selectTransientSiblingsToClose()` in `izui-roles.ts`; an `ipc.ts`
+  wrapper gathers candidates from BOTH the BrowserWindow and hybrid registries and runs from BOTH
+  the `win.on('focus')` handler AND the hybrid `onHybridHostFocus` path. App-switch
+  (Cmd+Tab-away) is handled separately via `did-resign-active`, **deferred** with a
+  `did-become-active` cancel (`HYBRID_APP_RESIGN_SETTLE_MS`) so the macOS startup activation
+  **dance** can't dismiss a freshly opened slide. Tests: `hybrid-transient-on-blur.spec` +
+  `izui-roles` selector units.
+- **slides/peeks cold-wake settings race — DONE.** Separate bug found dogfooding: `yarn start` →
+  first slide hotkey did nothing, second worked. The lazy `cli:slide-open` / `cli:peek-open` wake
+  handler is registered synchronously (good) but its BODY read `currentSettings` while it was
+  still the bundled **defaults** (only `Up` / peek-key-`0` enabled) — the wake publish lands at
+  FSM `ready`, which beats the datastore `loadSettings()`. A user slide/peek on any other
+  edge/key was missed on the first, tile-spawning press. Fix (CLAUDE.md lazy-tile rule): guard the
+  handler BODY on a `settingsLoaded` promise resolved after `loadSettings()`. Applied to both
+  `features/slides/background.js` and `features/peeks/background.js`. Tests:
+  `slides-settings-race.spec` + `peeks-settings-race.spec` (failing-first: pre-fix the window
+  never appears; post-fix ~300 ms).
+
+**Still open — the ONE remaining cluster item: top-border gesture overlay-reveal (peek
+`363e7cff`).** Making the content WC the first responder appears to **starve the overlay's
 top-border hover region of `mousemove`**: when the content `WebContentsView` is first responder
-AND fills the window, it captures the pointer events the reveal trigger needs. The reveal
-tracking must live above/around the content view (not rely on the BaseWindow/overlay receiving
-`mouse-moved`). Also still open: **peek/slide transient surfaces don't auto-dismiss on blur**
-under the hybrid era — peek `8e5c3174` (transient-on-blur not wired for those window types).
-These two are the remainder of the cluster.
+AND fills the window, it captures the pointer events the reveal trigger needs (worst in the
+**maximized / no-gutter** case, where the overlay frame == content rect so the trigger strip sits
+directly over the content WC). The reveal tracking must live above/around the content view (not
+rely on the BaseWindow/overlay receiving `mouse-moved`). Candidate fix: in `wireHybridContentEvents`
+(`ipc.ts`), forward idle (no-button) `mouseMove` near the top edge — currently only button-down
+`mouseMove` is forwarded — to wake the overlay reveal; the overlay renderer (`overlay.js`) then
+takes over once it captures.
 
 ---
 
