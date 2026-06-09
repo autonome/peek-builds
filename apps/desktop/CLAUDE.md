@@ -151,6 +151,46 @@ See "Page View Canvas Architecture" in `DEVELOPMENT.md` for the canonical descri
 
 ---
 
+## Hybrid page-host: input / focus / menu wiring (regression cluster fixed 2026-06-08/09)
+
+The hybrid page-host is a **`BaseWindow`** (a `WebContentsView` content view + the shared
+`hybrid-overlay.ts` chrome), and that invalidates assumptions the canvas era baked in. When
+the hybrid path flipped to default (2026-06-08) the whole suite still passed because NONE of
+the below was covered — every one became a user-visible regression. Invariants:
+
+- **`BrowserWindow.getFocusedWindow()` / `.fromId()` return `null` for a hybrid host.** Any
+  menu item, command, or close path that resolves "the current window" through those misses
+  hybrid hosts (this is why cmd+W no-op'd). Fall back to the hybrid registry's
+  `getActiveHybridWindowId()` — see `resolveFocusedWindowIdForClose()` / `closeFocusedWindow()`
+  in `windows.ts`, and the `closeOrHideWindow()` BaseWindow branch.
+- **Show a fresh hybrid host with `show()` + `contentWC.focus()`, NEVER `showInactive()` alone**
+  (non-headless). `show()` activates the app (frontmost + key window); `contentWC.focus()` makes
+  the `WebContentsView` the macOS **first responder**. Miss either and you get the dead-focus
+  cluster: cmd+L / any key equivalent → **NSBeep** (no responder), overlay never reveals (host
+  `'focus'` never fires → active-hybrid id stays null), app frontmost-but-not-key (no menubar).
+  Headless stays `showInactive()` + `opacity:0` so an agent/CI run never steals focus. Seam:
+  `showHybridHost()` / `hybridShowIntent()` in `windows.ts`.
+- **Local keyboard shortcuts:** once the content WC is first responder, keystrokes hit the
+  **content WC's `before-input-event`** (`wireHybridContentEvents` in `ipc.ts`), NOT the
+  per-`BrowserWindow` handler in `main.ts`. Route leftover modifier keys through
+  `handleLocalShortcut` there, or cmd+N / peeks / slides / any registered local shortcut
+  silently dies with a hybrid host frontmost. (OS-level `globalShortcut` wake hotkeys are
+  unaffected — they pre-empt `before-input-event`.)
+- **Overlay must `hide()` on `did-resign-active`** (`hybrid-overlay.ts` app-active gate) or the
+  chrome lingers on screen when Peek isn't the active app.
+- **Activation policy:** the non-headless app MUST stay `regular` (activatable, owns
+  menubar/key window) — `headlessActivationPolicy(false) === null`. Never `accessory`/`prohibited`
+  for the real app (headless = `accessory`). See also the Key Pitfalls note below.
+
+**Testing these:** real OS focus/first-responder is **unobservable in macOS-headless**, so assert
+the decision/state via the hybrid test bridge, not real focus. Coverage added:
+`hybrid-show-activate`, `hybrid-activation-policy`, `hybrid-close-shortcut`,
+`hybrid-shortcut-routing`. **`yarn test:desktop:electron:bg` uses `setsid` (Linux-only) and
+fails on macOS** — run `HEADLESS=1 yarn test:desktop:electron` directly (background it via the
+harness) instead.
+
+---
+
 ## Chrome extensions: compat layer only — never modify imported source
 
 Imported chrome extensions under `apps/desktop/chrome-extensions/<ext>/` are upstream CRX downloads (refreshed by `scripts/install-chrome-extension.js`). **Never** edit their source directly — any in-place change is blown away on refresh, and Proton-/extension-specific patches make the integration fragile instead of generalizing.
