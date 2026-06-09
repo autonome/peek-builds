@@ -601,3 +601,25 @@ export function getLazyTileManifest(tileId: string): TileManifest | null {
 export function getLazyTileIds(): string[] {
   return Array.from(lazyTileRegistry.keys());
 }
+
+/**
+ * One-time boot-time backfill: WAKE a lazy tile (load + wait for ready)
+ * WITHOUT delivering any dispatch, so its renderer can (re)declare its
+ * settings-derived global wake hotkeys via `declareWakeShortcuts`. This
+ * breaks the migrated-profile deadlock where a user whose saved hotkey
+ * prefix differs from the manifest static default would otherwise have NO
+ * working hotkeys (the tile never boots to declare them). Gated by
+ * `wakeDeclarationBackfillNeeded` at the call site.
+ *
+ * Fire-and-forget: errors are logged, never thrown — boot must not fail on
+ * a backfill. Idempotent via `loadLazyTile`'s in-flight dedup. The wake is
+ * inert (no peek/slide opens) because we boot the tile rather than publish
+ * its wake topic; the declare it performs sets the `lazy_wake_declared`
+ * marker, so this never fires again for the tile.
+ */
+export function backfillWakeDeclaration(tileId: string): void {
+  ensureTileLoaded(tileId).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[tile-lazy] wake-declaration backfill failed for ${tileId}: ${message}`);
+  });
+}

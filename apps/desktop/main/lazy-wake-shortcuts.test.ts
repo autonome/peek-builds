@@ -32,6 +32,7 @@ import {
   manifestShortcutsToWake,
   lazyShortcutSource,
   unregisterManifestShortcuts,
+  wakeDeclarationBackfillNeeded,
   __setFeatureShortcutRegistrarDepsForTest,
 } from './feature-shortcut-registrar.js';
 import type { TileManifest } from './tile-manifest.js';
@@ -59,6 +60,7 @@ let publishCalls: PublishCall[];
 let unregisterCalls: string[];
 let persistedFake: Map<string, WakeShortcut[]>;
 let declaredFake: Set<string>;
+let featureSettingsFake: Set<string>;
 
 function installSpies(): void {
   registerCalls = [];
@@ -66,6 +68,7 @@ function installSpies(): void {
   unregisterCalls = [];
   persistedFake = new Map();
   declaredFake = new Set();
+  featureSettingsFake = new Set();
   __setFeatureShortcutRegistrarDepsForTest({
     registerGlobalShortcut: (keys: string, source: string, callback: () => void) => {
       registerCalls.push({ keys, source, callback });
@@ -80,7 +83,22 @@ function installSpies(): void {
     getSystemAddress: () => STUB_SYSTEM_ADDRESS,
     getWakeShortcuts: (ownerTileId: string) => persistedFake.get(ownerTileId) ?? [],
     hasDeclaredWakeShortcuts: (ownerTileId: string) => declaredFake.has(ownerTileId),
+    hasFeatureSettings: (ownerTileId: string) => featureSettingsFake.has(ownerTileId),
   });
+}
+
+/**
+ * A settings-derived lazy feature manifest (peeks/slides shape): a single
+ * STATIC default shortcut + the `wakeShortcutsFromSettings` flag that marks the
+ * real hotkeys as renderer-declared-from-settings.
+ */
+function makeSettingsDerivedManifest(withFlag = true): TileManifest {
+  return {
+    id: 'slides',
+    wakeShortcutsFromSettings: withFlag,
+    settingsSchema: './settings-schema.json',
+    shortcuts: [{ keys: 'Option+Up', wakeTopic: 'cli:slide-open', wakeArgs: ['Up'] }],
+  } as unknown as TileManifest;
 }
 
 function makeWindowsManifest(): TileManifest {
@@ -324,5 +342,76 @@ describe('feature-shortcut-registrar wake replay', () => {
     registerWakeShortcuts('quiet', { id: 'quiet' } as unknown as TileManifest);
     assert.strictEqual(registerCalls.length, 0);
     assert.strictEqual(publishCalls.length, 0);
+  });
+});
+
+// ─── Wake-declaration backfill (migrated-profile self-heal) ──────────
+//
+// Repro for the prod-profile dead-hotkeys bug: a user whose saved hotkey
+// prefix (e.g. `Option+Shift+`) differs from the manifest static default
+// (`Option+Up`) gets ONLY the default registered at boot, because the lazy
+// tile that would declare the real, settings-derived set never boots (the
+// user never presses the default). `wakeDeclarationBackfillNeeded` decides
+// whether to break that deadlock by waking the tile once at boot.
+describe('wake-declaration backfill (migrated-profile self-heal)', () => {
+  beforeEach(() => {
+    installSpies();
+  });
+  afterEach(() => {
+    __setFeatureShortcutRegistrarDepsForTest(null);
+  });
+
+  it('MIGRATED profile (settings saved, never declared, settings-derived flag) → backfill needed', () => {
+    // THE BUG: feature_settings present (user configured a non-default prefix),
+    // but lazy_wake_* never declared (settings predate the lazy-wake system).
+    // Boot-replay would register only the manifest default → user's real keys
+    // dead. This MUST request a one-time wake so the tile declares its real set.
+    featureSettingsFake.add('slides'); // user has configured slides
+    // declaredFake intentionally does NOT contain 'slides' (never declared)
+    assert.strictEqual(
+      wakeDeclarationBackfillNeeded('slides', makeSettingsDerivedManifest()),
+      true,
+    );
+  });
+
+  it('already-declared profile → no backfill (heals once, then stays lazy)', () => {
+    featureSettingsFake.add('slides');
+    declaredFake.add('slides'); // declared at least once → persisted set authoritative
+    assert.strictEqual(
+      wakeDeclarationBackfillNeeded('slides', makeSettingsDerivedManifest()),
+      false,
+    );
+  });
+
+  it('fresh profile (no saved settings) → no backfill (manifest defaults + first press bootstrap it lazily)', () => {
+    // featureSettingsFake empty → not a configured/migrated profile.
+    assert.strictEqual(declaredFake.has('slides'), false);
+    assert.strictEqual(
+      wakeDeclarationBackfillNeeded('slides', makeSettingsDerivedManifest()),
+      false,
+    );
+  });
+
+  it('static-shortcut feature without the flag → never backfills, even with saved settings', () => {
+    // windows: a fixed `CommandOrControl+Shift+W` command shortcut, never calls
+    // declareWakeShortcuts. Waking it would NOT set the declared marker, so it
+    // would re-fire every boot — the flag gate prevents that.
+    featureSettingsFake.add('windows');
+    assert.strictEqual(
+      wakeDeclarationBackfillNeeded('windows', makeWindowsManifest()),
+      false,
+    );
+  });
+
+  it('flag set but renderer somehow cleared all hotkeys (declared-empty) → no backfill', () => {
+    // declared-empty is still "declared" — the user's explicit empty set wins;
+    // do not resurrect via a wake.
+    featureSettingsFake.add('slides');
+    declaredFake.add('slides');
+    persistedFake.set('slides', []);
+    assert.strictEqual(
+      wakeDeclarationBackfillNeeded('slides', makeSettingsDerivedManifest()),
+      false,
+    );
   });
 });

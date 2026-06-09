@@ -22,6 +22,7 @@
       "wakeArgs": ["0"]
     }
   ],
+  "wakeShortcutsFromSettings": true,
   "capabilities": {
     "pubsub": {
       "scopes": ["global", "system"],

@@ -22,6 +22,7 @@
       "wakeArgs": ["Up"]
     }
   ],
+  "wakeShortcutsFromSettings": true,
   "capabilities": {
     "pubsub": {
       "scopes": ["global"],

@@ -30,7 +30,7 @@
 
 import { registerGlobalShortcut as _registerGlobalShortcut, unregisterShortcutsForAddress as _unregisterShortcutsForAddress } from './shortcuts.js';
 import { publish as _publish, getSystemAddress as _getSystemAddress } from './pubsub.js';
-import { getWakeShortcuts as _getWakeShortcuts, hasDeclaredWakeShortcuts as _hasDeclaredWakeShortcuts, type WakeShortcut } from './datastore.js';
+import { getWakeShortcuts as _getWakeShortcuts, hasDeclaredWakeShortcuts as _hasDeclaredWakeShortcuts, hasFeatureSettings as _hasFeatureSettings, type WakeShortcut } from './datastore.js';
 import { type TileManifest, type TileShortcut } from './tile-manifest.js';
 import { DEBUG } from './config.js';
 
@@ -48,6 +48,7 @@ interface RegistrarDeps {
   getSystemAddress: () => string;
   getWakeShortcuts: (ownerTileId: string) => WakeShortcut[];
   hasDeclaredWakeShortcuts: (ownerTileId: string) => boolean;
+  hasFeatureSettings: (ownerTileId: string) => boolean;
 }
 
 function defaultDeps(): RegistrarDeps {
@@ -58,6 +59,7 @@ function defaultDeps(): RegistrarDeps {
     getSystemAddress: _getSystemAddress,
     getWakeShortcuts: _getWakeShortcuts,
     hasDeclaredWakeShortcuts: _hasDeclaredWakeShortcuts,
+    hasFeatureSettings: _hasFeatureSettings,
   };
 }
 
@@ -76,6 +78,7 @@ export function __setFeatureShortcutRegistrarDepsForTest(override: Partial<Regis
     getSystemAddress: override.getSystemAddress ?? base.getSystemAddress,
     getWakeShortcuts: override.getWakeShortcuts ?? base.getWakeShortcuts,
     hasDeclaredWakeShortcuts: override.hasDeclaredWakeShortcuts ?? base.hasDeclaredWakeShortcuts,
+    hasFeatureSettings: override.hasFeatureSettings ?? base.hasFeatureSettings,
   };
 }
 
@@ -161,6 +164,41 @@ export function registerWakeShortcuts(tileId: string, manifest: TileManifest): v
     return;
   }
   registerWakeShortcutList(tileId, manifestShortcutsToWake(manifest.shortcuts));
+}
+
+/**
+ * Decide whether a lazy tile needs a one-time boot-time WAKE so its renderer
+ * can declare its settings-derived global hotkeys.
+ *
+ * The hazard this closes: a feature whose real wake hotkeys are DERIVED FROM
+ * USER SETTINGS (peeks/slides: `prefix × enabled items`) computes them in its
+ * renderer and persists them via `declareWakeShortcuts` — but only when the
+ * lazy tile boots. On a MIGRATED profile (settings saved before the lazy-wake
+ * system, so `hasDeclaredWakeShortcuts` is false), boot-replay registers only
+ * the manifest's STATIC default (`registerWakeShortcuts`). If the user's saved
+ * prefix differs from that default, the user presses keys that aren't
+ * registered → the tile is never woken → it never declares → the table stays
+ * empty forever (a deadlock). Waking it once breaks the cycle: the renderer
+ * declares the real set, which both registers it now and sets the declared
+ * marker so this never fires again.
+ *
+ * True iff ALL hold:
+ *   - `manifest.wakeShortcutsFromSettings === true` (hotkeys are settings-
+ *     derived AND the renderer is known to declare them — gating on this
+ *     avoids re-waking static-shortcut tiles like windows every boot), AND
+ *   - the tile has NEVER declared its wake set (`!hasDeclaredWakeShortcuts`),
+ *     AND
+ *   - the tile has SAVED feature settings (`hasFeatureSettings`) — i.e. a
+ *     configured/migrated profile, not a fresh one (a fresh profile keeps the
+ *     manifest defaults and boots the tile lazily on the first hotkey press).
+ *
+ * Pure (no side effects) so it's unit-testable via the injection seam; the
+ * actual wake is the caller's job (tile-compat → tile-lazy backfill).
+ */
+export function wakeDeclarationBackfillNeeded(tileId: string, manifest: TileManifest): boolean {
+  if (!manifest || manifest.wakeShortcutsFromSettings !== true) return false;
+  if (deps.hasDeclaredWakeShortcuts(tileId)) return false;
+  return deps.hasFeatureSettings(tileId);
 }
 
 /**

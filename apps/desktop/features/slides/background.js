@@ -242,9 +242,11 @@ const reinit = async () => {
 
   currentSettings = await loadSettings();
 
-  if (currentSettings.items && currentSettings.items.length > 0) {
-    initItems(currentSettings.prefs, currentSettings.items);
-  }
+  // Always (re)declare the wake set — even with zero items. An empty
+  // declaration still sets the `lazy_wake_declared` marker, which the main-
+  // process boot-time backfill relies on to know this tile has declared and
+  // STOP re-waking it every startup. initItems handles an empty list.
+  initItems(currentSettings.prefs, currentSettings.items || []);
 };
 
 const init = async () => {
@@ -307,10 +309,11 @@ const init = async () => {
   try {
     currentSettings = await loadSettings();
 
-    // Initialize slides
-    if (currentSettings.items && currentSettings.items.length > 0) {
-      initItems(currentSettings.prefs, currentSettings.items);
-    }
+    // Always declare the wake set on boot — even with zero items — so an empty
+    // declaration sets the `lazy_wake_declared` marker and the main-process
+    // boot-time backfill won't re-wake this tile every startup. initItems
+    // filters to enabled items internally and is safe on an empty list.
+    initItems(currentSettings.prefs, currentSettings.items || []);
   } finally {
     // Unblock the wake handlers — even on a load failure they fall back to the
     // in-memory defaults rather than hanging forever.

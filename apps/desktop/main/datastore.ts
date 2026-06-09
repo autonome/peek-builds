@@ -3032,6 +3032,24 @@ export function getAllWakeShortcuts(): Map<string, WakeShortcut[]> {
   return byTile;
 }
 
+/**
+ * Whether `featureId` has ANY saved row in `feature_settings` (i.e. the user
+ * has configured this feature at least once). Used by the boot-time wake-
+ * shortcut backfill: a settings-derived lazy feature that has saved settings
+ * but has never declared its wake set (`hasDeclaredWakeShortcuts` false) is a
+ * MIGRATED profile from before the lazy-wake system — its real, settings-
+ * derived hotkeys were never persisted, so only the manifest defaults register
+ * at boot. The backfill wakes such a tile once so it can declare. A fresh
+ * profile (no rows) is left alone: manifest defaults + the first hotkey press
+ * bootstrap it without an eager boot.
+ */
+export function hasFeatureSettings(featureId: string): boolean {
+  const row = getDb()
+    .prepare('SELECT 1 FROM feature_settings WHERE featureId = ? LIMIT 1')
+    .get(featureId);
+  return row != null;
+}
+
 // ==================== Window Load Tracking (delegates to items system) ====================
 
 /**

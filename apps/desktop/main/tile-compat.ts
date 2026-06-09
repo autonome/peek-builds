@@ -6,8 +6,8 @@
 
 import { type TileManifest } from './tile-manifest.js';
 import { launchTile, type TileLaunchResult } from './tile-launcher.js';
-import { registerLazyTile } from './tile-lazy.js';
-import { registerWakeShortcuts } from './feature-shortcut-registrar.js';
+import { registerLazyTile, backfillWakeDeclaration } from './tile-lazy.js';
+import { registerWakeShortcuts, wakeDeclarationBackfillNeeded } from './feature-shortcut-registrar.js';
 import { registerTileIpcHandlers } from './tile-ipc.js';
 import { registerTilePath } from './protocol.js';
 import { DEBUG } from './config.js';
@@ -96,6 +96,18 @@ export function loadTile(
     // so windows (manifest `{keys, command}`, no persisted rows) still
     // registers exactly as before. Feature-agnostic.
     registerWakeShortcuts(tile.id, manifest);
+    // Migrated-profile self-heal: a feature whose REAL hotkeys are settings-
+    // derived (peeks/slides) only persists them when its renderer boots. On a
+    // profile that has saved settings but never declared (settings predate the
+    // lazy-wake system), boot-replay above registered only the manifest static
+    // default — so a user whose configured prefix differs has NO working
+    // hotkeys, and the tile never boots to fix it (it never gets the keypress
+    // that would wake it). Wake it ONCE so it declares the real set; the
+    // declare sets the `lazy_wake_declared` marker, so this won't fire again.
+    if (wakeDeclarationBackfillNeeded(tile.id, manifest)) {
+      DEBUG && console.log(`[tile-compat] wake-declaration backfill: waking ${tile.id} to declare settings-derived hotkeys`);
+      backfillWakeDeclaration(tile.id);
+    }
     DEBUG && console.log(`[tile-compat] Registered ${tile.id} for lazy loading`);
     return null;
   }

@@ -513,6 +513,22 @@ export interface TileManifest {
   commands?: TileCommand[];
   /** Keyboard shortcuts */
   shortcuts?: TileShortcut[];
+  /**
+   * If true, this tile's REAL global wake hotkeys are DERIVED FROM USER
+   * SETTINGS by its renderer (via `declareWakeShortcuts`) — the static
+   * `shortcuts[]` above are only fresh-profile bootstrap defaults. On a
+   * MIGRATED profile (saved `feature_settings` present but the tile has
+   * never declared its wake set, e.g. settings predating the lazy-wake
+   * system), main wakes the tile once at boot so it can declare; otherwise
+   * a user whose configured hotkey prefix differs from the static default
+   * has NO working hotkeys until they happen to press the default. Self-
+   * heals: `declareWakeShortcuts` sets the declared marker, so later boots
+   * skip the wake and stay lazy. See `wakeDeclarationBackfillNeeded` in
+   * feature-shortcut-registrar.ts. Tiles with static (non-settings) hotkeys
+   * (e.g. windows) MUST omit this — they never declare, so waking them
+   * would re-fire every boot.
+   */
+  wakeShortcutsFromSettings?: boolean;
   /** Event-dispatch rules contributed by this feature. */
   rules?: TileRule[];
   /** Settings schema file path */
