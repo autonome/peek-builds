@@ -1029,19 +1029,22 @@ function installTestBridge(): void {
      * (real OS focus is unobservable in a macOS-headless test): non-headless must
      * activate + focus the content WC; headless must stay inactive.
      */
-    hybridShowIntent(headless: boolean): {
+    hybridShowIntent(headless: boolean, inactive?: boolean): {
       activated: boolean;
       contentFocused: boolean;
       showInactive: boolean;
     } {
-      return hybridShowIntent(headless);
+      return hybridShowIntent(headless, inactive === true);
     },
     /**
      * R4/R7: drive the REAL ipc.ts show seam (`showHybridHost`) against a fake
      * host and return the applied intent. Under headless it must take the
-     * inactive, focus-free branch.
+     * inactive, focus-free branch. `opts.inactive` exercises the session-restore
+     * path: a `show:false` open must NOT activate even in a NON-headless run —
+     * each restored hybrid window activating itself is the wrong-focus-on-restart
+     * regression.
      */
-    showHybridHost(id: number): {
+    showHybridHost(id: number, opts?: { inactive?: boolean }): {
       activated: boolean;
       contentFocused: boolean;
       showInactive: boolean;
@@ -1049,7 +1052,7 @@ function installTestBridge(): void {
       const w = fakeHosts.get(id);
       const entry = getHybridWindow(id);
       if (!w || w.isDestroyed() || !entry || entry.contentWC.isDestroyed()) return null;
-      return showHybridHost(w, entry.contentWC);
+      return showHybridHost(w, entry.contentWC, opts);
     },
     /** Whether THIS run is headless (so the applied-show test asserts the right branch). */
     isHeadlessRun(): boolean {

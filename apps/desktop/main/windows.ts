@@ -111,11 +111,23 @@ export function showWindowHeadlessSafe(
  * Pure + deterministic so the regression is testable focus-free for BOTH modes
  * (real OS focus is unobservable in a macOS-headless test).
  */
-export function hybridShowIntent(headless: boolean): {
+export function hybridShowIntent(headless: boolean, inactive: boolean = false): {
   activated: boolean;
   contentFocused: boolean;
   showInactive: boolean;
 } {
+  // `inactive` is the session-restore (and any `show:false` caller) intent: make
+  // the host VISIBLE but never activate the app or steal first-responder. Each
+  // restored hybrid window must NOT activate itself — otherwise the last one
+  // dispatched (or whichever wins the macOS show-storm race) ends up frontmost,
+  // and the page the user actually left focused at quit is not the one raised.
+  // The canvas path already honors `show:false` this way (ipc.ts BrowserWindow
+  // ctor `show: options.show !== false`); the hybrid path must match. The
+  // restore loop's focus block is then the SINGLE authority that activates +
+  // focuses the one focused descriptor (via an activating showHybridHost call).
+  if (inactive) {
+    return { activated: false, contentFocused: false, showInactive: true };
+  }
   if (headless) {
     return { activated: false, contentFocused: false, showInactive: true };
   }
@@ -128,12 +140,21 @@ export function hybridShowIntent(headless: boolean): {
  * `WebContentsView` the first responder (cmd+L works, no NSBeep, overlay reveals);
  * headless stays inactive + opacity-0 (focus-free). Returns the applied intent so
  * callers/tests can assert what was done without relying on real OS focus.
+ *
+ * `opts.inactive` (session restore / any `show:false` open) forces the
+ * non-activating, focus-free branch in BOTH run modes — the host becomes visible
+ * but never activates the app or steals first responder. Restore opens many
+ * hybrid windows in sequence; if each one activated, the last to show (or the
+ * race winner) would end up frontmost instead of the page the user left focused.
+ * The restore loop re-activates ONLY the focused descriptor afterwards via an
+ * ordinary (non-inactive) `showHybridHost` call — the single activation seam.
  */
 export function showHybridHost(
   baseWin: import('electron').BaseWindow,
   contentWC: import('electron').WebContents,
+  opts?: { inactive?: boolean },
 ): { activated: boolean; contentFocused: boolean; showInactive: boolean } {
-  const intent = hybridShowIntent(isHeadless());
+  const intent = hybridShowIntent(isHeadless(), opts?.inactive === true);
   if (isHeadless()) {
     // Keep it invisible (opacity 0) — never paints on the physical desktop.
     try { baseWin.setOpacity(0); } catch { /* setOpacity unsupported on some platforms */ }

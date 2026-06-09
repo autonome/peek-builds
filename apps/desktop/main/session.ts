@@ -25,7 +25,7 @@ import { WEB_CORE_ADDRESS } from './config.js';
 
 import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile, isHeadless } from './config.js';
-import { showWindowHeadlessSafe } from './windows.js';
+import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
 
 export type { WindowContext, WindowDescriptor };
 
@@ -111,17 +111,34 @@ let _restoreShowCount = 0;
 let _restoreShowInactiveCount = 0;
 let _restoreFocusCount = 0;
 let _restoreMoveTopCount = 0;
+// `hybridActivations`: number of restored HYBRID page-host windows the restore
+// loop's focus block activated (raised + made first responder via an activating
+// showHybridHost). It must be 0 or 1 — exactly the number of focused
+// descriptors. The wrong-focus-on-restart regression was every restored hybrid
+// window activating itself at open time (showHybridHost ignored `show:false`),
+// so the page the user left focused was not the one raised. With the fix,
+// restore opens are inactive and ONLY the focused descriptor is re-activated
+// here — so this counter pins the activation to exactly that one window.
+// `restoreFocusedId`: the live window id of the window the restore focus block
+// raised (BrowserWindow OR hybrid), so an identity test can assert it matches
+// the focused descriptor's restored window — not just that *a* focus happened.
+let _restoreHybridActivationCount = 0;
+let _restoreFocusedId: number | null = null;
 export function getRestoreFocusCounters(): {
   shows: number;
   showInactives: number;
   focuses: number;
   moveTops: number;
+  hybridActivations: number;
+  focusedId: number | null;
 } {
   return {
     shows: _restoreShowCount,
     showInactives: _restoreShowInactiveCount,
     focuses: _restoreFocusCount,
     moveTops: _restoreMoveTopCount,
+    hybridActivations: _restoreHybridActivationCount,
+    focusedId: _restoreFocusedId,
   };
 }
 export function resetRestoreFocusCounters(): void {
@@ -129,6 +146,8 @@ export function resetRestoreFocusCounters(): void {
   _restoreShowInactiveCount = 0;
   _restoreFocusCount = 0;
   _restoreMoveTopCount = 0;
+  _restoreHybridActivationCount = 0;
+  _restoreFocusedId = null;
 }
 
 export interface SessionMetadata {
@@ -1208,20 +1227,19 @@ export async function restoreSessionSnapshot(
             });
           } else {
             // Hybrid page-hosts are BaseWindows — getLiveWindow returns null for
-            // them. The hybrid branch in ipc.ts already showInactive()'d the
-            // window during open, so it is visible; here we just (a) raise +
-            // activate the FOCUSED hybrid window if the app is still focused,
-            // and (b) resolve the focused-head-start off its content wc's
-            // dom-ready so the loop's head-start pause behaves like the canvas
-            // path. The final z-order/focus raise still happens in the post-loop
-            // focus block below.
+            // them. The hybrid branch in ipc.ts showed the window INACTIVE during
+            // open (restore passes `show:false`, which the hybrid show seam now
+            // honors), so it is visible but NOT activated — crucially, a restored
+            // NON-focused hybrid window must never activate itself and steal
+            // frontmost from the page the user left focused at quit. We do NOT
+            // raise/activate here; the post-loop focus block is the SINGLE
+            // authority that activates exactly the focused descriptor. Here we
+            // only resolve the focused-head-start off the focused window's content
+            // wc dom-ready so the loop's head-start pause behaves like the canvas
+            // path.
             const hybrid = getHybridWindow(restoredId);
             if (hybrid && !hybrid.baseWin.isDestroyed()) {
               const wasFocused = descriptor.focused === true;
-              if (wasFocused && getIzuiCoordinator().isAppFocused()) {
-                try { hybrid.baseWin.moveTop(); } catch { /* unsupported on some platforms */ }
-                try { hybrid.baseWin.focus(); } catch { /* unsupported on some platforms */ }
-              }
               if (wasFocused && !hybrid.contentWC.isDestroyed()) {
                 hybrid.contentWC.once('dom-ready', () => {
                   if (resolveFocusedDomReady) {
@@ -1340,15 +1358,24 @@ export async function restoreSessionSnapshot(
         _restoreMoveTopCount++;
         focusWin.focus();
         _restoreFocusCount++;
+        _restoreFocusedId = focusedWindowId;
         DEBUG && console.log(`[session] Focused restored window: ${focusedWindowId}`);
       } else if (hybridFocus && !hybridFocus.baseWin.isDestroyed() && coordinator.isAppFocused()) {
-        // Raise + focus the hybrid host BaseWindow. moveTop() puts it above the
-        // other restored windows in z-order; focus() makes it the key window.
+        // Raise + ACTIVATE the focused hybrid host. The restore-opens were shown
+        // INACTIVE (none stole frontmost), so this is the SINGLE place a restored
+        // hybrid window gets activated. moveTop() puts it above the other restored
+        // windows in z-order; an activating showHybridHost() (non-inactive) then
+        // raises it + makes its content WebContentsView the macOS first responder
+        // (cmd+L works, overlay reveals) — the same full activation a fresh open
+        // does, NOT a host-only .focus() that leaves a non-focused window's
+        // content as first responder. Headless stays focus-free inside the seam.
         try { hybridFocus.baseWin.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
         _restoreMoveTopCount++;
-        hybridFocus.baseWin.focus();
+        showHybridHost(hybridFocus.baseWin, hybridFocus.contentWC);
         _restoreFocusCount++;
-        DEBUG && console.log(`[session] Focused restored hybrid window: ${focusedWindowId}`);
+        _restoreHybridActivationCount++;
+        _restoreFocusedId = focusedWindowId;
+        DEBUG && console.log(`[session] Activated restored hybrid window: ${focusedWindowId}`);
       } else if (focusWin || hybridFocus) {
         DEBUG && console.log(`[session] Skipped focus on ${focusedWindowId} — user switched away`);
       }

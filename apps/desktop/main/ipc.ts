@@ -2411,7 +2411,15 @@ export function registerWindowHandlers(): void {
         // drives the active-hybrid id that reveals the overlay (regressions
         // 1b6eaf0b / 363e7cff / 8f7010a8). Headless stays inactive + opacity-0,
         // so an agent/CI run never steals the user's focus (peek task 2b55f3af).
-        showHybridHost(baseWin, view.webContents);
+        //
+        // EXCEPTION — `show:false` opens (session restore): the caller wants the
+        // host visible but NOT activated. Each restored hybrid window activating
+        // itself is the wrong-focus-on-restart regression — the last to show (or
+        // the race winner) ends up frontmost instead of the page the user left
+        // focused at quit. The restore loop re-activates ONLY the focused
+        // descriptor afterwards. Mirrors the canvas ctor `show: options.show !==
+        // false` above.
+        showHybridHost(baseWin, view.webContents, { inactive: options.show === false });
 
         publish(getSystemAddress(), 'window:opened', {
           id: baseWin.id,
