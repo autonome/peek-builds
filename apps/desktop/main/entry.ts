@@ -327,6 +327,18 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
     }
     return false;
   },
+  /**
+   * Emit the app-level `did-resign-active` event — the deterministic signal
+   * macOS fires when Peek stops being the frontmost app (Cmd+Tab away). Drives
+   * the production app-blur handlers (overlay close, HUD hide, and the hybrid
+   * transient peek/slide dismissal) without needing real OS app-switching, which
+   * is unobservable under headless. Faithful: it runs the SAME listeners the OS
+   * event would.
+   */
+  fireAppResignActive: (): boolean => {
+    app.emit('did-resign-active');
+    return true;
+  },
   /** Returns the page-host URL-param bounds (the canonical webview screenBounds). */
   getHostUrlParamsByUrl: (urlSubstr: string) => {
     let last: { x: number; y: number; width: number; height: number } | null = null;

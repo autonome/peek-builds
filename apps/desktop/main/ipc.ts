@@ -203,6 +203,63 @@ function closeTransientSiblingsOnFocus(focusedId: number): void {
     }
   }
 }
+
+/**
+ * Dismiss transient HYBRID peek/slide surfaces when Peek stops being the
+ * frontmost app (Cmd+Tab away). The focuser-driven autoclose only fires when
+ * ANOTHER Peek window gains focus — it can't fire when focus leaves Peek
+ * entirely. Transient BrowserWindow modals already self-close via their
+ * per-window `blur` handler on app blur; hybrid peek/slide windows are
+ * BaseWindows with NO blur handler, so without this they linger after an
+ * app-switch (regression peek 8e5c3174, second half). `did-resign-active` is
+ * the deterministic app-level signal.
+ *
+ * Scoped to HYBRID windows so we don't race the BrowserWindow modal blur path.
+ * Guarded by the SAME overlay focus-dance cooldowns the windows-switcher uses:
+ * window restoration / overlay open can fire a brief
+ * did-resign-active → did-become-active cycle, and we must not tear down a
+ * surface the app is mid-(re)activating. (fsm-pilled: reuse the existing dance
+ * state, not a fresh speculative timer.)
+ */
+function closeTransientHybridWindowsOnAppResign(): void {
+  const coordinator = getIzuiCoordinator();
+  if (
+    coordinator.isWithinOverlayExitCooldown() ||
+    coordinator.isWithinOverlayEntryCooldown()
+  ) {
+    DEBUG && console.log('[izui] did-resign-active: skip hybrid transient close (overlay cooldown)');
+    return;
+  }
+  const candidates: TransientSiblingCandidate[] = [];
+  for (const h of getAllHybridWindows()) {
+    let visible = false;
+    try {
+      visible = !h.baseWin.isDestroyed() && h.baseWin.isVisible();
+    } catch {
+      /* BaseWindow gone — treat as not visible */
+    }
+    candidates.push({
+      id: h.windowId,
+      role: getWindowInfo(h.windowId)?.params?.role as string | undefined,
+      visible,
+    });
+  }
+  // No focuser — focus left the app entirely. id -1 matches nothing and an
+  // undefined focuser-role is not 'utility', so the selector returns every
+  // visible transient (non-overlay) hybrid window.
+  for (const id of selectTransientSiblingsToClose(-1, undefined, candidates)) {
+    DEBUG && console.log('[izui] did-resign-active autoclose transient hybrid:', id);
+    try {
+      closeOrHideWindow(id);
+    } catch (err) {
+      DEBUG && console.log('[izui] did-resign-active hybrid close failed:', err);
+    }
+  }
+}
+
+// One-time guard so repeated `registerWindowHandlers()` calls don't stack
+// duplicate app-level listeners.
+let appResignHybridWired = false;
 import {
   getRuntimeExternalWebPrefsForUrl,
   installMainWorldContentScriptInjection,
@@ -1377,6 +1434,15 @@ export function installHybridNavbarActionRouting(): void {
 export let invokeWindowOpen: ((ev: any, msg: any) => Promise<unknown>) | null = null;
 
 export function registerWindowHandlers(): void {
+  // Dismiss transient hybrid peek/slide surfaces when Peek loses app focus
+  // (Cmd+Tab away). Registered once here (app is ready by the time IPC handlers
+  // are wired). Unconditional: macOS is the only platform that emits
+  // `did-resign-active`, so on other platforms this listener simply never fires.
+  if (!appResignHybridWired) {
+    appResignHybridWired = true;
+    app.on('did-resign-active', closeTransientHybridWindowsOnAppResign);
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const windowOpenHandler = async (ev: any, msg: any) => {
     DEBUG && console.log('window-open', msg);

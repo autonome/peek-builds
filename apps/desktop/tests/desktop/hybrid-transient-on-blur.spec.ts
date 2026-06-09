@@ -170,4 +170,57 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
     await expect.poll(() => hybridAlive(a), { timeout: 4000 }).toBe(false);
     expect(await hybridAlive(b)).toBe(true);
   });
+
+  /** Emit the app-level did-resign-active (Cmd+Tab to another app). */
+  async function fireAppResign(): Promise<void> {
+    if (!app.evaluateMain) throw new Error('evaluateMain not available');
+    await app.evaluateMain(() => (globalThis as any).__peek_test.fireAppResignActive());
+  }
+
+  /**
+   * Open a hybrid web page (NON-transient: role 'workspace'). `canvas: true`
+   * with no modal routes to the hybrid branch; inferIzuiRole yields 'workspace'
+   * for a non-modal non-webpage URL. Used to prove app-blur dismissal is scoped
+   * to transient surfaces only.
+   */
+  async function openHybridPage(key: string): Promise<number> {
+    const result = await bgWindow.evaluate(async (key: string) => {
+      return await (window as any).app.window.open(
+        'data:text/html,<title>Page</title>page',
+        { canvas: true, width: 800, height: 600, key: `hybrid-transient-on-blur-${key}` },
+      );
+    }, key);
+    if (!result.success) {
+      throw new Error(`hybrid page open failed for key=${key}: ${JSON.stringify(result)}`);
+    }
+    return result.id as number;
+  }
+
+  test('switching to another app dismisses an open hybrid quick-view', async () => {
+    test.skip(!(await hybridFlagOn(app)), 'hybrid page-host flag off — peek/slide are BrowserWindows');
+
+    const qv = await openHybridQuickView('qv-app-switch');
+    expect(await hybridAlive(qv)).toBe(true);
+
+    // Cmd+Tab to another app — the transient peek/slide must dismiss even though
+    // no OTHER Peek window gained focus (the focuser-driven path can't fire).
+    await fireAppResign();
+    await expect.poll(() => hybridAlive(qv), { timeout: 4000 }).toBe(false);
+  });
+
+  test('switching apps does NOT close a non-transient hybrid web page', async () => {
+    test.skip(!(await hybridFlagOn(app)), 'hybrid page-host flag off');
+
+    const page = await openHybridPage('page-survives-app-switch');
+    expect(await hybridAlive(page)).toBe(true);
+
+    await fireAppResign();
+    // Give any erroneous close a chance to land, then assert it's still alive.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await hybridAlive(page)).toBe(true);
+
+    await bgWindow.evaluate(async (wid: number) => {
+      try { await (window as any).app.window.close(wid); } catch { /* ignore */ }
+    }, page);
+  });
 });
