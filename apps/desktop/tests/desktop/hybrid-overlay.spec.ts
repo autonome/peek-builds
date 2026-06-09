@@ -1597,6 +1597,164 @@ test.describe('Hybrid Chrome Overlay navbar reveal @desktop', () => {
 });
 
 /**
+ * Top-border GESTURE reveal — the last hybrid dead-focus cluster item (peek
+ * 363e7cff). Distinct from the trigger-zone test above (which dispatches a DOM
+ * `mousemove` DIRECTLY on the overlay's document and so always works): this
+ * drives the REAL content→overlay path that the maximized / no-gutter case
+ * depends on.
+ *
+ * Root cause: when the content `WebContentsView` is the macOS first responder
+ * AND fills the overlay frame (maximized / no-gutter — overlay frame == content
+ * rect, so the trigger strip sits directly over the content WC), the content WC
+ * CAPTURES the idle (no-button) `mousemove` the overlay's click-through
+ * forwarded-move reveal loop needs. The loop is starved → hovering the top
+ * border never reveals the navbar. Before the fix, `wireHybridContentEvents`
+ * forwarded content moves ONLY while a button was held (for hold-to-drag), so an
+ * idle top-border hover produced NO signal at all → the overlay could never
+ * reveal there.
+ *
+ * Fix: main forwards idle top-band moves as `page-overlay:content-pointer
+ * {phase:'reveal'}` (it owns the host geometry, so the band check works
+ * edge-to-edge incl. maximized); the overlay's content-pointer subscriber turns
+ * that into the same showNavbar() the trigger-zone hover uses.
+ *
+ * FAILING-FIRST: before the fix, `emitContentTopEdgeHover` drives a real idle
+ * top-edge `input-event` on the content WC, but no `reveal` is forwarded, so the
+ * navbar never becomes visible — this test's `toBe(true)` assertion fails.
+ *
+ * Focus-free: real `input-event` emit on the content WC, DOM read via the
+ * bridge, synthetic active-change. No real OS focus/pointer.
+ */
+test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @desktop', () => {
+  let app: DesktopApp;
+
+  test.beforeAll(async () => {
+    ({ app } = await createPerDescribeApp('hybrid-overlay-topborder-reveal'));
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  const bridgePresent = async () =>
+    app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
+
+  const waitOverlayReady = async () => {
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? s.ready === true : false;
+        }),
+      )
+      .toBe(true);
+  };
+
+  const navbarVisible = async () =>
+    app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayChromeState();
+      return s ? s.navbarVisible : null;
+    });
+
+  // The describe shares ONE app (beforeAll), and a reveal leaves the navbar
+  // visible — setting a NEW active window does not auto-hide it. Reset to hidden
+  // deterministically (immediate, no 400ms grace) so each test starts clean.
+  const resetHidden = async () => {
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.hideOverlayChrome();
+    });
+    expect(await navbarVisible()).toBe(false);
+  };
+
+  // The maximized / no-gutter case is the WORST one (overlay frame == content
+  // rect, so the trigger strip sits directly over the content WC). We frame the
+  // host onto the display work area so expandToOverlayFrame takes its maximized
+  // branch (overlay == work area, no gutter).
+  const makeActiveMaximized = async () => {
+    const id = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      // Make a WIRED host (real wireHybridContentEvents installed, so the content
+      // WC's idle-move reveal stream is driven by production code), set it active
+      // so the overlay frames over it, then snap it to the work area so the
+      // overlay is the no-gutter (maximized) frame — the worst case.
+      const tmp = b.makeWiredHybridHost({ x: 100, y: 100, width: 600, height: 400 });
+      b.setActive(tmp);
+      const wa = b.hostWorkArea(tmp);
+      b.setHostBounds(tmp, wa);
+      await b.loadFakeContent(tmp, 'data:text/html,<body>top-border target</body>');
+      return tmp;
+    });
+    await waitOverlayReady();
+    return id;
+  };
+
+  test('idle top-border hover over the content WC reveals the navbar (no-gutter/maximized)', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await makeActiveMaximized();
+    await resetHidden();
+
+    // A real idle (no-button) move 10px below the host top edge — squarely inside
+    // the 44px reveal band — drives the content WC's input-event handler, which
+    // (post-fix) forwards `page-overlay:content-pointer {phase:'reveal'}`.
+    const emitted = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.emitContentTopEdgeHover((arg as any).id, 10);
+    }, { id });
+    expect(emitted).toBe(true);
+
+    // The navbar reveals (cross-process pubsub delivery is async → poll).
+    await expect.poll(navbarVisible).toBe(true);
+  });
+
+  test('idle move BELOW the reveal band does not reveal; entering it does', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await makeActiveMaximized();
+    await resetHidden();
+
+    // A move far below the top edge (200px) is outside the 44px band → no reveal.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.emitContentTopEdgeHover((arg as any).id, 200);
+    }, { id });
+    // Give any (erroneous) reveal a chance to land, then assert still hidden.
+    await app.evaluateMain!(() => new Promise((r) => setTimeout(r, 100)));
+    expect(await navbarVisible()).toBe(false);
+
+    // Now move INTO the band (5px below the top) → reveals.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      b.emitContentTopEdgeHover((arg as any).id, 5);
+    }, { id });
+    await expect.poll(navbarVisible).toBe(true);
+  });
+
+  test('top-border reveal also works in the GUTTERED (non-maximized) case', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const id = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeWiredHybridHost({ x: 160, y: 160, width: 700, height: 460 });
+      await b.loadFakeContent(w, 'data:text/html,<body>guttered target</body>');
+      b.setActive(w);
+      return w;
+    });
+    await waitOverlayReady();
+    await resetHidden();
+
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.emitContentTopEdgeHover((arg as any).id, 12);
+    }, { id });
+    await expect.poll(navbarVisible).toBe(true);
+  });
+});
+
+/**
  * Regression fixes R1 / R2 / R3.
  *
  *  R1 — overlay no longer steals APP focus when backgrounded. The transparent

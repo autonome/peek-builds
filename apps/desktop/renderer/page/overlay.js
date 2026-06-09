@@ -852,11 +852,24 @@ document.addEventListener('mouseup', () => holdDrag.onUp());
 // CONTENT region: main forwards the page's pointer stream here (the overlay is
 // click-through over the WebContentsView so it can't see content button-down/up
 // natively). Same FSM. Active-window-gated (ignore foreign windows).
+//
+// Top-border reveal (peek 363e7cff): the overlay's own forwarded-`mousemove`
+// reveal loop (above) is STARVED when the content WebContentsView is the macOS
+// first responder and fills the overlay frame (the maximized / no-gutter case) —
+// the content WC captures the idle moves the reveal loop needs. So main also
+// forwards IDLE top-band moves as `phase:'reveal'` / `phase:'reveal-out'` (it owns
+// the host geometry, so this works edge-to-edge incl. maximized). We drive the
+// SAME showNavbar()/scheduleHide() the trigger-zone hover uses. The local
+// reveal loop still owns the gutter case (where the overlay sees moves natively);
+// both feeding showNavbar/scheduleHide is idempotent (cancelHide/scheduleHide
+// guard each other), so the two paths never fight.
 api.subscribe('page-overlay:content-pointer', (msg) => {
   if (!isActive(msg)) return;
   if (msg.phase === 'down') holdDrag.onDown(msg.screenX, msg.screenY);
   else if (msg.phase === 'move') holdDrag.onMove(msg.screenX, msg.screenY);
   else if (msg.phase === 'up') holdDrag.onUp();
+  else if (msg.phase === 'reveal') showNavbar();
+  else if (msg.phase === 'reveal-out') scheduleHide();
 });
 
 // Expose the pure FSM factory + the live instance for focus-free unit coverage

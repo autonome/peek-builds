@@ -912,6 +912,36 @@ function installTestBridge(): void {
       fakeHosts.set(baseWin.id, baseWin);
       return baseWin.id;
     },
+    /**
+     * Like `makeFakeHybridWindow` but ALSO installs the REAL
+     * `wireHybridContentEvents` (the exact function the ipc.ts hybrid EARLY BRANCH
+     * calls) on the content WC, so the content WC's `input-event` reveal stream is
+     * driven by the production code — not a bridge stub. Tracked in `fakeHosts`
+     * (so setHostBounds / hostWorkArea / showFakeHybridWindowInactive work), which
+     * `makeWiredHybrid` (untracked, popup-focused) is not. Used by the top-border
+     * reveal spec to exercise the idle-move→reveal forward end-to-end.
+     */
+    makeWiredHybridHost(bounds: { x: number; y: number; width: number; height: number }): number {
+      const baseWin = new BaseWindowCtor({
+        x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+        frame: false, show: false, opacity: 0,
+      });
+      installFocusSim(baseWin);
+      const view = new WebContentsView({
+        webPreferences: { contextIsolation: true, sandbox: true },
+      });
+      baseWin.contentView.addChildView(view);
+      try {
+        const [w, h] = baseWin.getContentSize();
+        view.setBounds({ x: 0, y: 0, width: w, height: h });
+      } catch { /* getContentSize unsupported in some envs */ }
+      registerHybridWindow(baseWin.id, { baseWin, contentWC: view.webContents });
+      fakeHosts.set(baseWin.id, baseWin);
+      // Install the REAL content→overlay event forwarding (incl. the idle
+      // top-band reveal path under test).
+      wireHybridContentEvents(view.webContents, baseWin.id, 'about:blank', {});
+      return baseWin.id;
+    },
     setActive(id: number | null): boolean {
       return _setActiveHybridWindowForTests(id);
     },
@@ -1638,6 +1668,62 @@ function installTestBridge(): void {
           })()`,
         )
         .catch(() => false);
+    },
+    /**
+     * Top-border reveal (peek 363e7cff): drive the REAL content→overlay reveal
+     * path the maximized / no-gutter case depends on. Emits a genuine idle
+     * (no-button) `input-event` `mouseMove` on the fake host's content
+     * WebContentsView at `dyBelowTop` px below the host window's top edge (screen
+     * coords) — exactly the event Electron delivers when the pointer hovers the
+     * content top border. The `wireHybridContentEvents` input-event handler then
+     * decides whether to forward `page-overlay:content-pointer {phase:'reveal'}`,
+     * which the overlay's content-pointer subscriber turns into showNavbar().
+     *
+     * This is the path that was DEAD before the fix: idle moves were never
+     * forwarded (only button-held moves), so a content-WC-starved overlay never
+     * revealed on a top-border gesture. The publish→overlay delivery is async
+     * (cross-process pubsub), so the caller polls `overlayChromeState().navbarVisible`
+     * after this resolves. Focus-free (no OS pointer / focus). Returns whether the
+     * event was emitted (false if the host / content WC is gone).
+     */
+    /**
+     * Force the overlay navbar HIDDEN immediately (no 400ms grace timer) so a
+     * shared-app test can deterministically reset to the hidden state between
+     * reveal assertions. Dispatches `mouseleave` on the navbar then removes the
+     * `visible` class directly. Returns the navbar's visible state (should be
+     * false). Focus-free.
+     */
+    hideOverlayChrome(): Promise<boolean> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(false);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const nb = document.getElementById('navbar');
+            if (!nb) return false;
+            nb.classList.remove('visible');
+            document.body.classList.remove('chrome-visible');
+            document.body.classList.remove('panels-visible');
+            window.__overlayHidePending = false;
+            return nb.classList.contains('visible');
+          })()`,
+        )
+        .catch(() => false);
+    },
+    emitContentTopEdgeHover(id: number, dyBelowTop: number): boolean {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.contentWC.isDestroyed() || entry.baseWin.isDestroyed()) return false;
+      try {
+        const top = entry.baseWin.getBounds().y;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (entry.contentWC as unknown as { emit: (...a: unknown[]) => void }).emit(
+          'input-event',
+          {},
+          { type: 'mouseMove', globalX: 100, globalY: top + dyBelowTop },
+        );
+      } catch {
+        return false;
+      }
+      return true;
     },
     /**
      * P1.4b-5: publish an entities response on the SAME topic the entities

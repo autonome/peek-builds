@@ -816,6 +816,12 @@ function applyPlacementOnReuse(
  *     - page:loading                 {windowId,loading}
  *     - page:nav-state               {windowId,url,canGoBack,canGoForward}
  */
+// Top-border reveal band geometry — mirrors the canvas trigger zone + navbar
+// reserve (CANVAS_TRIGGER_ZONE / CANVAS_NAVBAR_HEIGHT) and hybrid-overlay.ts's
+// GUTTER_TOP (= TRIGGER_ZONE + NAVBAR_HEIGHT). An idle move within this many px
+// below the content window's top edge reveals the overlay chrome.
+const TRIGGER_ZONE_PX = 8;
+const NAVBAR_HEIGHT_PX = 36;
 export function wireHybridContentEvents(
   contentWC: Electron.WebContents,
   hostWindowId: number,
@@ -1016,8 +1022,27 @@ export function wireHybridContentEvents(
   // and on threshold-fire begins the window drag — flipping the overlay to capture
   // so post-hold moves land on it and stop the page from selecting. windowId-tagged
   // so the overlay (which gates on the active windowId) only acts for the active
-  // page. Only forwarded while the button is held (down→up) to avoid flooding.
+  // page. Button-held moves (down→up) are forwarded for the drag FSM.
+  //
+  // ── Top-border reveal (peek 363e7cff — the last hybrid dead-focus cluster item) ─
+  // Separately, IDLE (no-button) moves near the content's TOP EDGE are forwarded as
+  // `phase:'reveal'` so the overlay can reveal its navbar/widgets there. This is the
+  // gesture-reveal the trigger zone provides. On the canvas path the trigger strip
+  // lived in the chrome window's gutter, so the (non-click-through) chrome saw the
+  // hover natively. On the hybrid path the content `WebContentsView` is the macOS
+  // first responder and — in the MAXIMIZED / no-gutter case, where the overlay frame
+  // == the content rect so the trigger strip sits directly over the content WC —
+  // CAPTURES the idle `mousemove` the click-through overlay's reveal loop needs (the
+  // overlay's `setIgnoreMouseEvents(true,{forward:true})` move stream is starved).
+  // Result: hovering the top border did NOT reveal the overlay (worst in the
+  // maximized state). We already observe the content WC's raw pointer stream here, so
+  // forward idle top-band moves too — main owns the geometry (host top edge), so this
+  // works edge-to-edge including maximized; the overlay's own forwarded-move loop
+  // still owns the gutter case. We only emit on band ENTER and band EXIT (not every
+  // move) to avoid flooding pubsub.
+  const REVEAL_BAND = TRIGGER_ZONE_PX + NAVBAR_HEIGHT_PX; // 8 + 36 = 44 (mirrors GUTTER_TOP)
   let leftButtonDown = false;
+  let inRevealBand = false;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   contentWC.on('input-event', (_event: unknown, input: any) => {
     const t = input && input.type;
@@ -1030,6 +1055,33 @@ export function wireHybridContentEvents(
       publish(getSystemAddress(), 'page-overlay:content-pointer', {
         windowId: hostWindowId, phase: 'move', screenX: input.globalX, screenY: input.globalY,
       });
+    } else if (t === 'mouseMove') {
+      // Idle (no-button) move → top-border reveal. Compute the pointer's offset
+      // below the host window's top edge (screen coords) and reveal/hide on the
+      // band-cross transitions only. Guarded: a torn-down host or missing geometry
+      // simply skips the reveal (never throws inside the input stream).
+      let topY: number | null = null;
+      try {
+        const hw = getHybridWindow(hostWindowId);
+        if (hw && !hw.baseWin.isDestroyed()) topY = hw.baseWin.getBounds().y;
+      } catch {
+        /* baseWin gone — skip reveal */
+      }
+      if (topY != null) {
+        const dy = input.globalY - topY;
+        const nowInBand = dy >= 0 && dy <= REVEAL_BAND;
+        if (nowInBand && !inRevealBand) {
+          inRevealBand = true;
+          publish(getSystemAddress(), 'page-overlay:content-pointer', {
+            windowId: hostWindowId, phase: 'reveal', screenX: input.globalX, screenY: input.globalY,
+          });
+        } else if (!nowInBand && inRevealBand) {
+          inRevealBand = false;
+          publish(getSystemAddress(), 'page-overlay:content-pointer', {
+            windowId: hostWindowId, phase: 'reveal-out', screenX: input.globalX, screenY: input.globalY,
+          });
+        }
+      }
     } else if (t === 'mouseUp' && input.button === 'left') {
       if (!leftButtonDown) return;
       leftButtonDown = false;
