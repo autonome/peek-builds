@@ -312,9 +312,20 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    */
   fireWindowFocus: (id: number): boolean => {
     const win = getLiveWindow(id);
-    if (!win) return false;
-    win.emit('focus');
-    return true;
+    if (win) {
+      win.emit('focus');
+      return true;
+    }
+    // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Emit 'focus'
+    // on its host BaseWindow so the production `onHybridHostFocus` listener
+    // (active-id tracking + transient-sibling autoclose) runs, exactly as a real
+    // OS focus would. Lets a focus-free test drive the hybrid focus path.
+    const hybrid = getHybridWindow(id);
+    if (hybrid && !hybrid.baseWin.isDestroyed()) {
+      hybrid.baseWin.emit('focus');
+      return true;
+    }
+    return false;
   },
   /** Returns the page-host URL-param bounds (the canonical webview screenBounds). */
   getHostUrlParamsByUrl: (urlSubstr: string) => {

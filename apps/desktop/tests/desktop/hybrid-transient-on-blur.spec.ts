@@ -1,0 +1,173 @@
+import { test, expect, DesktopApp } from '../fixtures/desktop-app';
+import { Page } from '@playwright/test';
+import { createPerDescribeApp } from '../helpers/test-app';
+import { hybridFlagOn } from '../helpers/hybrid-page';
+
+// Regression (peek item 8e5c3174), found dogfooding 2026-06-09 right after the
+// hybrid page-host menu/shortcut fix (b1dd4e7c) restored the peek/slide hotkeys.
+//
+// Peeks and slides open with `{ role: 'quick-view', modal: true, canvas: true }`.
+// Under the hybrid page-host default (2026-06-08) `canvas: true` routes them to
+// the hybrid BaseWindow branch — so they are now BaseWindows, NOT BrowserWindows.
+//
+// The IZUI transient-on-blur autoclose (a window gaining focus closes its
+// transient palette/quick-view siblings) lived ENTIRELY on `BrowserWindow`:
+//   - the focuser-driven loop ran only in `win.on('focus')` (BrowserWindow), and
+//   - it enumerated only `getAllLiveWindows()` (BrowserWindow.getAllWindows).
+// So a hybrid quick-view was invisible to the loop as a CANDIDATE, and a hybrid
+// window gaining focus never RAN the loop. Net effect: open a peek/slide, click
+// another window — the peek/slide stayed open. This is the failing repro.
+//
+// Test mechanics mirror transient-on-blur.spec.ts: HEADLESS Electron and
+// Playwright don't deliver reliable native panel focus, so focus is driven
+// synthetically through `__peek_test.fireWindowFocus`, which emits the window's
+// 'focus' event directly and runs the production autoclose handler.
+test.describe('Hybrid transient on blur auto-hide @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  // A non-transient visible workspace BrowserWindow that (a) keeps `maybeHideApp`
+  // from hiding the whole app when a transient auto-closes, and (b) acts as the
+  // focuser whose `fireWindowFocus` drives the autoclose loop.
+  let anchorId: number | null = null;
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('hybrid-transient-on-blur'));
+
+    const anchorResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('about:blank', {
+        role: 'workspace',
+        width: 800,
+        height: 600,
+        key: 'hybrid-transient-on-blur-anchor',
+        // show:false + focusable:false keep the anchor out of the WM focus race;
+        // the test is the sole focus driver (see transient-on-blur.spec.ts).
+        show: false,
+        focusable: false,
+      });
+    });
+    if (!anchorResult.success) {
+      throw new Error(`anchor window failed: ${JSON.stringify(anchorResult)}`);
+    }
+    anchorId = anchorResult.id as number;
+    if (!app.evaluateMain) throw new Error('evaluateMain not available');
+    await app.evaluateMain<boolean, number>(
+      (_ctx, wid) => (globalThis as any).__peek_test.showWindow(wid),
+      anchorId,
+    );
+  });
+
+  test.afterAll(async () => {
+    if (anchorId != null && bgWindow) {
+      try {
+        await bgWindow.evaluate(async (wid: number) => {
+          await (window as any).app.window.close(wid);
+        }, anchorId);
+      } catch { /* ignore */ }
+    }
+    if (app) await app.close();
+  });
+
+  // Sweep any leaked hybrid quick-view test windows between tests so a failure
+  // mid-flight doesn't bleed into the next test's autoclose iteration.
+  test.afterEach(async () => {
+    if (!bgWindow) return;
+    try {
+      await bgWindow.evaluate(async (keepId: number) => {
+        const r = await (window as any).app.window.list({ includeInternal: true });
+        if (!r?.success) return;
+        for (const w of r.windows) {
+          if (w.id === keepId) continue;
+          if (w.params?.role !== 'quick-view') continue;
+          try { await (window as any).app.window.close(w.id); } catch { /* maybe gone */ }
+        }
+      }, anchorId ?? -1);
+    } catch { /* test may have torn things down */ }
+  });
+
+  /**
+   * Open a real hybrid quick-view (peek/slide shape: role quick-view + modal +
+   * canvas). `canvas: true` forces the hybrid BaseWindow branch under the hybrid
+   * default. Returns the hybrid window id. Uses a data: URL for network-free,
+   * deterministic content (the hybrid branch awaits the content load).
+   */
+  async function openHybridQuickView(key: string): Promise<number> {
+    const result = await bgWindow.evaluate(async (key: string) => {
+      return await (window as any).app.window.open(
+        'data:text/html,<title>QuickView</title>peek',
+        {
+          role: 'quick-view',
+          modal: true,
+          canvas: true,
+          type: 'panel',
+          width: 400,
+          height: 300,
+          key: `hybrid-transient-on-blur-${key}`,
+        },
+      );
+    }, key);
+    if (!result.success) {
+      throw new Error(`hybrid quick-view open failed for key=${key}: ${JSON.stringify(result)}`);
+    }
+    return result.id as number;
+  }
+
+  /** Synchronously dispatch the window's 'focus' event (runs the autoclose loop). */
+  async function fireFocus(windowId: number): Promise<void> {
+    if (!app.evaluateMain) throw new Error('evaluateMain not available');
+    const fired = await app.evaluateMain<boolean, number>(
+      (_ctx, wid) => (globalThis as any).__peek_test.fireWindowFocus(wid),
+      windowId,
+    );
+    if (!fired) throw new Error(`fireWindowFocus returned false for id=${windowId}`);
+  }
+
+  /**
+   * Ground truth for "is this hybrid BaseWindow still alive": the hybrid
+   * registry, via `__peek_test.isHybridWindowForTest`. We deliberately do NOT
+   * use `app.window.list().visible` here — `getWindowPresentation` for a hybrid
+   * window can transiently return null (dropping it from the list) even while the
+   * BaseWindow is fully alive, which makes a list-based "is it gone?" check pass
+   * falsely. The registry entry is removed only on a real close.
+   */
+  async function hybridAlive(windowId: number): Promise<boolean> {
+    return app.evaluateMain!((_e, id) => {
+      const pt = (globalThis as any).__peek_test;
+      return !!(pt?.isHybridWindowForTest && pt.isHybridWindowForTest(id));
+    }, windowId);
+  }
+
+  test('a focused workspace window closes a hybrid quick-view sibling', async () => {
+    test.skip(!(await hybridFlagOn(app)), 'hybrid page-host flag off — peek/slide are BrowserWindows');
+
+    const qv = await openHybridQuickView('qv-vs-workspace');
+    // Precondition: the hybrid quick-view BaseWindow is alive in the registry.
+    expect(await hybridAlive(qv)).toBe(true);
+
+    // Focus the workspace anchor — the production transient-on-blur autoclose
+    // must dismiss the transient hybrid quick-view sibling.
+    await fireFocus(anchorId!);
+
+    // Poll the registry (not the window list) until the hybrid BaseWindow is
+    // actually destroyed.
+    await expect.poll(() => hybridAlive(qv), { timeout: 4000 }).toBe(false);
+  });
+
+  test('opening (focusing) a second hybrid quick-view closes the first', async () => {
+    test.skip(!(await hybridFlagOn(app)), 'hybrid page-host flag off — peek/slide are BrowserWindows');
+
+    // Two hybrid quick-views (the peek/slide "open B over A" scenario). This
+    // drives the autoclose through the HYBRID focus path (onHybridHostFocus),
+    // not the BrowserWindow one — the second half of the regression: a hybrid
+    // window gaining focus must also run the transient-sibling autoclose.
+    const a = await openHybridQuickView('qv-a');
+    const b = await openHybridQuickView('qv-b');
+    expect(await hybridAlive(a)).toBe(true);
+    expect(await hybridAlive(b)).toBe(true);
+
+    // Focus B (hybrid focuser) → A must close, B must stand.
+    await fireFocus(b);
+    await expect.poll(() => hybridAlive(a), { timeout: 4000 }).toBe(false);
+    expect(await hybridAlive(b)).toBe(true);
+  });
+});

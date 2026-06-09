@@ -12,6 +12,7 @@ import * as assert from 'node:assert';
 import {
   inferIzuiRole,
   spacesPolicyForRole,
+  selectTransientSiblingsToClose,
   TRANSIENT_ROLES,
 } from './izui-roles.js';
 
@@ -99,6 +100,76 @@ describe('TRANSIENT_ROLES', () => {
     assert.ok(!TRANSIENT_ROLES.has('content'));
     assert.ok(!TRANSIENT_ROLES.has('child-content'));
     assert.ok(!TRANSIENT_ROLES.has('utility'));
+  });
+});
+
+describe('selectTransientSiblingsToClose', () => {
+  // The candidate set deliberately mixes BrowserWindow and hybrid (BaseWindow)
+  // windows — the selector is role/visibility-based and kind-agnostic. The
+  // close-on-blur regression (peek 8e5c3174) was that hybrid peek/slide windows
+  // (role 'quick-view') were never in the candidate set at all.
+  const visibleQuickView = (id: number) => ({ id, role: 'quick-view', visible: true });
+
+  it('closes a visible quick-view sibling when a workspace window focuses', () => {
+    const out = selectTransientSiblingsToClose(1, 'workspace', [
+      { id: 1, role: 'workspace', visible: true },
+      visibleQuickView(2),
+    ]);
+    assert.deepStrictEqual(out, [2]);
+  });
+
+  it('closes a quick-view sibling when ANOTHER quick-view focuses (new transient stands)', () => {
+    const out = selectTransientSiblingsToClose(2, 'quick-view', [
+      visibleQuickView(1),
+      visibleQuickView(2),
+    ]);
+    assert.deepStrictEqual(out, [1]);
+  });
+
+  it('never closes the focuser itself', () => {
+    const out = selectTransientSiblingsToClose(1, 'quick-view', [visibleQuickView(1)]);
+    assert.deepStrictEqual(out, []);
+  });
+
+  it('closes NOTHING when the focuser is a utility window (chain-popup invariant)', () => {
+    const out = selectTransientSiblingsToClose(9, 'utility', [
+      visibleQuickView(1),
+      { id: 2, role: 'palette', visible: true },
+    ]);
+    assert.deepStrictEqual(out, []);
+  });
+
+  it('skips non-visible transient siblings', () => {
+    const out = selectTransientSiblingsToClose(1, 'workspace', [
+      { id: 2, role: 'quick-view', visible: false },
+    ]);
+    assert.deepStrictEqual(out, []);
+  });
+
+  it('skips non-transient windows (workspace / content) and roleless windows', () => {
+    const out = selectTransientSiblingsToClose(1, 'workspace', [
+      { id: 2, role: 'content', visible: true },
+      { id: 3, role: 'workspace', visible: true },
+      { id: 4, role: undefined, visible: true },
+    ]);
+    assert.deepStrictEqual(out, []);
+  });
+
+  it("exempts 'overlay' — it manages its own restoration via the IZUI coordinator", () => {
+    const out = selectTransientSiblingsToClose(1, 'workspace', [
+      { id: 2, role: 'overlay', visible: true },
+      visibleQuickView(3),
+    ]);
+    assert.deepStrictEqual(out, [3]);
+  });
+
+  it('closes both palette and quick-view siblings together', () => {
+    const out = selectTransientSiblingsToClose(1, 'workspace', [
+      { id: 2, role: 'palette', visible: true },
+      visibleQuickView(3),
+      { id: 4, role: 'workspace', visible: true },
+    ]);
+    assert.deepStrictEqual(out, [2, 3]);
   });
 });
 

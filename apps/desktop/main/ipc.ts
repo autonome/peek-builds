@@ -88,6 +88,8 @@ import {
   TRANSIENT_ROLES,
   inferIzuiRole,
   spacesPolicyForRole,
+  selectTransientSiblingsToClose,
+  type TransientSiblingCandidate,
 } from './izui-roles.js';
 
 
@@ -131,7 +133,76 @@ import {
   findHybridWindowByKey,
   getHybridContentWC,
   getHybridWindow,
+  getAllHybridWindows,
 } from './hybrid-page-host-registry.js';
+
+/**
+ * Gather every live window — BrowserWindow AND hybrid page-host (BaseWindow) —
+ * as transient-autoclose candidates, tagged with its registry role and current
+ * visibility. Hybrid windows are NOT BrowserWindows, so `getAllLiveWindows()`
+ * (BrowserWindow.getAllWindows-backed) can't see them; we union the hybrid
+ * registry in. Empty hybrid contribution when the flag is off (registry empty).
+ */
+function gatherTransientSiblingCandidates(): TransientSiblingCandidate[] {
+  const out: TransientSiblingCandidate[] = [];
+  for (const w of getAllLiveWindows()) {
+    let visible = false;
+    try {
+      visible = !w.isDestroyed() && w.isVisible();
+    } catch {
+      /* a window torn down mid-iteration — treat as not visible */
+    }
+    out.push({
+      id: w.id,
+      role: getWindowInfo(w.id)?.params?.role as string | undefined,
+      visible,
+    });
+  }
+  for (const h of getAllHybridWindows()) {
+    let visible = false;
+    try {
+      visible = !h.baseWin.isDestroyed() && h.baseWin.isVisible();
+    } catch {
+      /* BaseWindow gone — treat as not visible */
+    }
+    out.push({
+      id: h.windowId,
+      role: getWindowInfo(h.windowId)?.params?.role as string | undefined,
+      visible,
+    });
+  }
+  return out;
+}
+
+/**
+ * Auto-dismiss the transient (palette / quick-view) siblings of a window that
+ * just gained focus. IZUI policy: transient surfaces dismiss as soon as focus
+ * moves to ANY other window. The focuser-driven model (vs per-window blur) is
+ * used because macOS panel-type windows don't fire reliable per-window `blur`
+ * on intra-app focus shifts.
+ *
+ * Called from BOTH the BrowserWindow `win.on('focus')` handler AND the hybrid
+ * page-host `onHybridHostFocus` path, so a hybrid peek/slide either closing OR
+ * being closed both work (the regression — peek 8e5c3174 — was that this lived
+ * only on the BrowserWindow side, over BrowserWindow candidates only). The pure
+ * decision is `selectTransientSiblingsToClose`; here we just gather candidates
+ * and fire the close.
+ */
+function closeTransientSiblingsOnFocus(focusedId: number): void {
+  const focusedRole = getWindowInfo(focusedId)?.params?.role as string | undefined;
+  const candidates = gatherTransientSiblingCandidates();
+  for (const id of selectTransientSiblingsToClose(focusedId, focusedRole, candidates)) {
+    DEBUG && console.log(
+      '[izui] window-focused autoclose transient sibling:', id,
+      'focused:', focusedId, 'role:', focusedRole,
+    );
+    try {
+      closeOrHideWindow(id);
+    } catch (err) {
+      DEBUG && console.log('[izui] autoclose transient failed:', err);
+    }
+  }
+}
 import {
   getRuntimeExternalWebPrefsForUrl,
   installMainWorldContentScriptInjection,
@@ -1947,6 +2018,18 @@ export function registerWindowHandlers(): void {
           } catch {
             /* getURL can throw on a torn-down wc — ignore */
           }
+          // A hybrid host gaining focus must run the SAME transient-sibling
+          // autoclose the BrowserWindow focus handler does — otherwise focusing
+          // a web page (or opening peek/slide B) never dismisses an open
+          // peek/slide A (both are now BaseWindows). The wrapper resolves this
+          // host's own role; a transient focuser still closes OTHER transients.
+          // Regression: peek 8e5c3174. Guarded so a focus-bookkeeping throw can
+          // never wedge the close (and vice-versa).
+          try {
+            closeTransientSiblingsOnFocus(baseWin.id);
+          } catch (err) {
+            DEBUG && console.log('[izui] hybrid-focus autoclose failed:', err);
+          }
         };
         baseWin.on('focus', onHybridHostFocus);
         // Belt-and-suspenders: clicking directly into the page focuses the
@@ -3515,44 +3598,22 @@ export function registerWindowHandlers(): void {
         });
 
         // Auto-hide sibling transient windows when another window gains
-        // focus. IZUI policy: palette / quick-view / overlay windows are
-        // transient — they should dismiss as soon as focus moves to any
-        // other window. The per-window `blur` handler attached to modals
-        // covers Cmd+Tab and clicks into other apps, but macOS NSPanels
-        // (type:'panel' + alwaysOnTop) don't fire reliable `blur` when
-        // focus shifts to another panel-type window in the same app — so
-        // opening slide B from edge X never closes slide A on edge Y. The
-        // cmd panel restored this on the renderer side via a
-        // `window:focused` subscription (commit 6361cf19); generalize it
-        // here for all transient roles in the main process so we don't
-        // need a per-feature renderer hook for every panel-style tile.
+        // focus. IZUI policy: palette / quick-view windows are transient —
+        // they should dismiss as soon as focus moves to any other window. The
+        // per-window `blur` handler attached to modals covers Cmd+Tab and
+        // clicks into other apps, but macOS NSPanels (type:'panel' +
+        // alwaysOnTop) don't fire reliable `blur` when focus shifts to another
+        // panel-type window in the same app — so opening slide B from edge X
+        // never closes slide A on edge Y. The cmd panel restored this on the
+        // renderer side via a `window:focused` subscription (commit 6361cf19);
+        // generalize it here for all transient roles in the main process so we
+        // don't need a per-feature renderer hook for every panel-style tile.
         //
-        // Skip when the focusing window is itself transient/utility:
-        //   - utility (chain popup) is a child of a transient and must
-        //     not dismiss its parent
-        //   - palette/quick-view/overlay focusing each other would cause
-        //     the just-opened transient to immediately close itself in
-        //     the wrong order; let the new transient stand and dismiss
-        //     the previous one(s).
-        const focusedRole = winInfo?.params?.role as string | undefined;
-        if (focusedRole !== 'utility') {
-          for (const other of getAllLiveWindows()) {
-            if (other.id === win.id) continue;
-            if (!other.isVisible()) continue;
-            const otherInfo = getWindowInfo(other.id);
-            const otherRole = otherInfo?.params?.role as string | undefined;
-            if (!otherRole || !TRANSIENT_ROLES.has(otherRole)) continue;
-            // Overlays manage their own restoration flow via the IZUI
-            // coordinator — don't drive them through closeOrHideWindow.
-            if (otherRole === 'overlay') continue;
-            DEBUG && console.log('[izui] window-focused autoclose transient sibling:', other.id, 'role:', otherRole, 'focused:', win.id, 'role:', focusedRole);
-            try {
-              closeOrHideWindow(other.id);
-            } catch (err) {
-              DEBUG && console.log('[izui] autoclose transient failed:', err);
-            }
-          }
-        }
+        // The candidate set spans BOTH BrowserWindows and hybrid page-host
+        // BaseWindows (peeks/slides are the latter under the hybrid default),
+        // and the same close runs from the hybrid focus path — see
+        // `closeTransientSiblingsOnFocus`.
+        closeTransientSiblingsOnFocus(win.id);
       });
       // Also track immediately if this is a content/visible window (non-modal only)
       trackContentWindowFocus(win);
