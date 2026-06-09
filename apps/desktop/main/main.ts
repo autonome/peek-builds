@@ -36,6 +36,8 @@ import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHe
 import { getSystemThemeBackgroundColor, showWindowHeadlessSafe, addEscHandler } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
+import { shouldRegisterGlobalEscFallback } from './izui-roles.js';
+import { getActiveHybridWindowId, onActiveHybridWindowChange } from './hybrid-page-host-registry.js';
 import { clearLastFocusedVisibleWindowId, trackOnWindowFocus } from './ipc.js';
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation } from './window-presenter.js';
@@ -554,7 +556,16 @@ export async function initialize(): Promise<void> {
     // OS-wide Escape grab happens regardless of how often focus/blur churn.
     const appActive = getIzuiCoordinator().isAppFocused();
     const focusedWin = BrowserWindow.getFocusedWindow();
-    const shouldRegister = appActive && focusedWin === null;
+    // A hybrid page-host (slide/peek/content) is a BaseWindow, so
+    // getFocusedWindow() returns null for it — counting it as "no focused
+    // window" wrongly grabs ESC away from its own close handler (peek ebb10894).
+    // Treat an active hybrid window as a focused Peek window.
+    const activeHybridId = getActiveHybridWindowId();
+    const shouldRegister = shouldRegisterGlobalEscFallback(
+      appActive,
+      focusedWin !== null,
+      activeHybridId !== null,
+    );
     if (shouldRegister && !_escGlobalRegistered) {
       try {
         const ok = globalShortcut.register('Escape', escGlobalHandler);
@@ -586,6 +597,12 @@ export async function initialize(): Promise<void> {
     // window switching) can settle before we re-check getFocusedWindow.
     setImmediate(() => updateEscGlobalRegistration());
   });
+  // Hybrid page-hosts (slides/peeks/content BaseWindows) do NOT fire
+  // app.browser-window-focus/blur, so without this the esc-fallback predicate
+  // would never re-evaluate when a slide/peek gains or loses focus — leaving a
+  // stale global ESC grab that pre-empts the slide's own ESC→close
+  // (peek ebb10894). Re-check on every active-hybrid-window transition.
+  onActiveHybridWindowChange(() => updateEscGlobalRegistration());
 
   // Track OS-level app focus for IZUI transient detection.
   // When Peek is the active app, windows opened are "active."

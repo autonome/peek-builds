@@ -149,6 +149,44 @@ export function resolveHybridEscapeTarget(
 }
 
 /**
+ * Whether to register the OS-level global ESC fallback (`globalShortcut`
+ * 'Escape' → open the windows switcher).
+ *
+ * The fallback exists for ONE case: Peek is the active app but has NO focused
+ * window the keystroke can reach (e.g. the user Cmd+Tabbed to Peek on a macOS
+ * Space that holds none of Peek's windows). Then ESC has nowhere to land, so a
+ * global grab opens the switcher.
+ *
+ * The regression (peek ebb10894): the old predicate was
+ * `appActive && BrowserWindow.getFocusedWindow() === null`. But
+ * `getFocusedWindow()` returns `null` for a **hybrid page-host (`BaseWindow`)** —
+ * see the desktop CLAUDE.md hybrid invariant. So whenever a slide/peek/content
+ * hybrid host is the focused window, the predicate falsely concluded "no Peek
+ * window focused", registered the global ESC grab, and that grab — which
+ * pre-empts the content WC's `before-input-event` — opened the windows switcher
+ * INSTEAD of letting the focused slide/peek close on ESC. The intermittency the
+ * user saw ("sometimes focusing the content closes it") is the overlay (a real
+ * `BrowserWindow`) transiently taking focus → `getFocusedWindow()` non-null →
+ * grab unregisters → ESC reaches the close handler.
+ *
+ * Fix: a hybrid host counts as a focused Peek window. Register ONLY when the app
+ * is active AND there is neither a focused `BrowserWindow` NOR an active hybrid
+ * window. Pure + deterministic so the regression is unit-testable without real
+ * OS focus.
+ *
+ * @param appActive  Peek is the OS-active app
+ * @param hasFocusedBrowserWindow  `BrowserWindow.getFocusedWindow() !== null`
+ * @param hasActiveHybridWindow  `getActiveHybridWindowId() !== null`
+ */
+export function shouldRegisterGlobalEscFallback(
+  appActive: boolean,
+  hasFocusedBrowserWindow: boolean,
+  hasActiveHybridWindow: boolean,
+): boolean {
+  return appActive && !hasFocusedBrowserWindow && !hasActiveHybridWindow;
+}
+
+/**
  * One window's role + visibility, as seen by the focus-driven transient
  * autoclose. `role` is `undefined` for a window with no registry entry (those
  * are never transient candidates). `visible` gates out already-hidden windows.

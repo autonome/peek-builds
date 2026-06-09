@@ -14,6 +14,7 @@ import {
   spacesPolicyForRole,
   selectTransientSiblingsToClose,
   resolveHybridEscapeTarget,
+  shouldRegisterGlobalEscFallback,
   ALWAYS_CLOSEABLE_ESC_ROLES,
   TRANSIENT_ROLES,
 } from './izui-roles.js';
@@ -225,6 +226,42 @@ describe('resolveHybridEscapeTarget (wrong-window / first-responder redirect —
     assert.ok(!ALWAYS_CLOSEABLE_ESC_ROLES.has('content'));
     assert.ok(!ALWAYS_CLOSEABLE_ESC_ROLES.has('child-content'));
     assert.ok(!ALWAYS_CLOSEABLE_ESC_ROLES.has('workspace'));
+  });
+});
+
+describe('shouldRegisterGlobalEscFallback (global ESC grab vs hybrid focus — peek ebb10894)', () => {
+  // The live regression: open a slide/peek → ESC opens the Windows switcher and
+  // the slide stays open. Root cause = the OS-level global ESC fallback grabs
+  // ESC (pre-empting the slide's own before-input close handler) because its
+  // predicate was `appActive && getFocusedWindow() === null`, and
+  // getFocusedWindow() returns null for a hybrid BaseWindow (slide/peek). So a
+  // focused slide looked like "no focused Peek window" → grab → switcher.
+  //
+  // THE FAILING-FIRST ASSERTION: a focused hybrid slide/peek (no focused
+  // BrowserWindow, but an active hybrid window) must NOT register the grab.
+  // The pre-fix predicate (ignoring hasActiveHybridWindow) returned true here.
+  it('does NOT register when a hybrid window is active (slide/peek focused, no BrowserWindow)', () => {
+    // appActive, no focused BrowserWindow (getFocusedWindow null for BaseWindow),
+    // but a slide/peek IS the active hybrid window → the grab must be declined so
+    // ESC reaches the slide's own close handler.
+    assert.strictEqual(shouldRegisterGlobalEscFallback(true, false, true), false);
+  });
+
+  it('DOES register when Peek is active with no focused window of any kind', () => {
+    // The genuine fallback case: Peek active, no focused BrowserWindow AND no
+    // active hybrid window (e.g. Cmd+Tab to Peek on a Space holding none of its
+    // windows) → ESC has nowhere to land, so the global grab opens the switcher.
+    assert.strictEqual(shouldRegisterGlobalEscFallback(true, false, false), true);
+  });
+
+  it('does NOT register when a real BrowserWindow is focused', () => {
+    assert.strictEqual(shouldRegisterGlobalEscFallback(true, true, false), false);
+    assert.strictEqual(shouldRegisterGlobalEscFallback(true, true, true), false);
+  });
+
+  it('does NOT register when Peek is not the active app', () => {
+    assert.strictEqual(shouldRegisterGlobalEscFallback(false, false, false), false);
+    assert.strictEqual(shouldRegisterGlobalEscFallback(false, false, true), false);
   });
 });
 
