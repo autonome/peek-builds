@@ -25,6 +25,16 @@ let currentSettings = {
   items: defaults.items
 };
 
+// Resolves once init() has loaded the user's real settings from the datastore
+// into `currentSettings`. The lazy `cli:slide-open` wake handler awaits this
+// before resolving an edge to a slide, so the FIRST press that spawns this tile
+// uses the user's saved slides — NOT the bundled defaults (where only 'Up' is
+// enabled). Without it, a slide on any other edge (e.g. a 'Down' hotkey)
+// silently no-op'd on the first press after startup, then worked on the second
+// (settings had loaded by then). See slides-settings-race.spec.ts.
+let resolveSettingsLoaded;
+const settingsLoaded = new Promise((resolve) => { resolveSettingsLoaded = resolve; });
+
 /**
  * Load settings from datastore
  * @returns {Promise<{prefs: object, items: array}>}
@@ -247,9 +257,13 @@ const init = async () => {
   // signals (deferred a tick) inside api.initialize() — i.e. BEFORE this
   // init()'s awaits resolve. If we subscribed AFTER `await loadSettings()`,
   // the woken publish would land with no subscriber and be dropped (the
-  // cold-boot subscribe-race). The handlers read `currentSettings` lazily,
-  // so subscribing pre-load is safe; currentSettings is seeded with defaults
-  // (the 'Up' slide enabled) until the datastore read completes.
+  // cold-boot subscribe-race).
+  //
+  // Registration must be synchronous (above), but the `cli:slide-open` handler
+  // BODY must NOT run against the bundled defaults: the wake publish arrives at
+  // READY, which beats the datastore-backed loadSettings() below, so a user
+  // slide on a non-default edge would be missed on the first press. The handler
+  // therefore awaits `settingsLoaded` before reading `currentSettings`.
 
   // Listen for settings changes to hot-reload (GLOBAL scope for cross-process)
   api.pubsub.subscribe('slides:settings-changed', () => {
@@ -261,7 +275,11 @@ const init = async () => {
   // Case-insensitive on input. Also the wake target for the static-default /
   // persisted global hotkeys (see initItems + feature-shortcut-registrar.ts).
   // See cli-router.ts and docs/global-hotkeys-on-wayland.md.
-  api.pubsub.subscribe('cli:slide-open', (msg) => {
+  api.pubsub.subscribe('cli:slide-open', async (msg) => {
+    // Wait for the user's real settings before resolving the edge, so the
+    // tile-spawning FIRST press doesn't run against the bundled defaults (where
+    // only 'Up' is enabled). See settingsLoaded.
+    await settingsLoaded;
     const raw = String(msg?.args?.[0] ?? '');
     const edge = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
     const item = (currentSettings.items || []).find(i => i.screenEdge === edge && i.enabled);
@@ -286,11 +304,17 @@ const init = async () => {
   });
 
   // Load settings from datastore
-  currentSettings = await loadSettings();
+  try {
+    currentSettings = await loadSettings();
 
-  // Initialize slides
-  if (currentSettings.items && currentSettings.items.length > 0) {
-    initItems(currentSettings.prefs, currentSettings.items);
+    // Initialize slides
+    if (currentSettings.items && currentSettings.items.length > 0) {
+      initItems(currentSettings.prefs, currentSettings.items);
+    }
+  } finally {
+    // Unblock the wake handlers — even on a load failure they fall back to the
+    // in-memory defaults rather than hanging forever.
+    resolveSettingsLoaded();
   }
 
   // Listen for settings updates from Settings UI

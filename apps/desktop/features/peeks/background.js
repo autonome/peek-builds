@@ -22,6 +22,16 @@ let currentSettings = {
   items: defaults.items
 };
 
+// Resolves once init() has loaded the user's real settings from the datastore
+// into `currentSettings`. The lazy `cli:peek-open` wake handler awaits this
+// before resolving a key to a peek, so the FIRST press that spawns this tile
+// uses the user's saved peeks — NOT the bundled defaults (where only item 0 is
+// enabled). Without it, a peek on any other key silently no-op'd on the first
+// press after startup, then worked on the second. Sibling of the slides
+// cold-wake settings race; see slides-settings-race.spec.ts.
+let resolveSettingsLoaded;
+const settingsLoaded = new Promise((resolve) => { resolveSettingsLoaded = resolve; });
+
 /**
  * Load settings from datastore
  *
@@ -203,10 +213,13 @@ const init = async () => {
   // the READY FSM state, which the tile-preload signals (deferred a tick)
   // inside api.initialize() — i.e. BEFORE this init()'s awaits resolve. If
   // we subscribed AFTER `await loadSettings()`, the woken publish would land
-  // with no subscriber and be dropped (the cold-boot subscribe-race). The
-  // handler reads `currentSettings` lazily, so subscribing pre-load is safe;
-  // currentSettings is seeded with defaults (item 0 enabled) until the
-  // datastore read completes.
+  // with no subscriber and be dropped (the cold-boot subscribe-race).
+  //
+  // Registration must be synchronous (above), but the `cli:peek-open` handler
+  // BODY must NOT run against the bundled defaults: the wake publish arrives at
+  // READY, which beats the datastore-backed loadSettings() below, so a user
+  // peek on a non-default key would be missed on the first press. The handler
+  // therefore awaits `settingsLoaded` before reading `currentSettings`.
 
   // Listen for settings changes to hot-reload (GLOBAL scope for cross-process)
   api.pubsub.subscribe('peeks:settings-changed', () => {
@@ -219,7 +232,11 @@ const init = async () => {
   // globalShortcut, which doesn't grab on Wayland. Also the wake target for
   // the static-default / persisted global hotkeys (see initItems +
   // feature-shortcut-registrar.ts). See cli-router.ts.
-  api.pubsub.subscribe('cli:peek-open', (msg) => {
+  api.pubsub.subscribe('cli:peek-open', async (msg) => {
+    // Wait for the user's real settings before resolving the key, so the
+    // tile-spawning FIRST press doesn't run against the bundled defaults (where
+    // only item 0 is enabled). See settingsLoaded.
+    await settingsLoaded;
     const keyNum = String(msg?.args?.[0] ?? '');
     const item = (currentSettings.items || []).find(i => String(i.keyNum) === keyNum && i.enabled);
     if (!item) {
@@ -231,11 +248,17 @@ const init = async () => {
   });
 
   // Load settings from datastore
-  currentSettings = await loadSettings();
+  try {
+    currentSettings = await loadSettings();
 
-  // Initialize peeks if we have items
-  if (currentSettings.items && currentSettings.items.length > 0) {
-    initItems(currentSettings.prefs, currentSettings.items);
+    // Initialize peeks if we have items
+    if (currentSettings.items && currentSettings.items.length > 0) {
+      initItems(currentSettings.prefs, currentSettings.items);
+    }
+  } finally {
+    // Unblock the wake handlers — even on a load failure they fall back to the
+    // in-memory defaults rather than hanging forever.
+    resolveSettingsLoaded();
   }
 
   // Listen for settings updates from Settings UI
