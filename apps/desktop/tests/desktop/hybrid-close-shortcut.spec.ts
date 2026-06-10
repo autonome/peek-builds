@@ -86,4 +86,39 @@ test.describe('Hybrid page-host cmd+W close (R1) @desktop', () => {
     // And the hybrid BaseWindow is now gone.
     expect(result.existsAfter).toBe(false);
   });
+
+  // Overlay redirect (address bar/widgets open → Cmd+W). The shared chrome
+  // overlay is a focusable BrowserWindow; Cmd+L focuses it, so getFocusedWindow()
+  // returns the OVERLAY and the old handler closed just the chrome, leaving the
+  // page visible. The fix makes the close resolver overlay-aware. The
+  // overlay-IS-focused state needs real OS focus (unobservable headless — see the
+  // CLAUDE.md LESSON), so the redirect DECISION is unit-tested
+  // (resolveCloseTargetId); HERE we verify the WIRING that feeds it — that
+  // initHybridOverlay registered the overlay-id provider against the real
+  // singleton, so the resolver can tell the overlay apart from a page-host.
+  test('the registry recognises the live overlay window (cmd+W redirect wiring)', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const probe = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const id = b.makeFakeHybridWindow({ x: 140, y: 150, width: 600, height: 420 });
+      await b.loadFakeContent(id, 'data:text/html,<title>Overlay Wiring</title>x');
+      // Activating a host makes the overlay retarget/appear (opacity 0 headless).
+      b.setActive(id);
+      const overlay = b.overlayState();
+      return {
+        hostId: id,
+        overlayId: overlay ? overlay.id : null,
+        overlayRecognised: overlay ? b.isHybridOverlayWindowId(overlay.id) : false,
+        hostRecognisedAsOverlay: b.isHybridOverlayWindowId(id),
+      };
+    });
+
+    // The overlay singleton exists and the registry recognises its id...
+    expect(probe.overlayId).not.toBeNull();
+    expect(probe.overlayRecognised).toBe(true);
+    // ...but NOT the page-host's id — so a focused overlay redirects to the host,
+    // while a focused page-host (or any other window) is closed directly.
+    expect(probe.hostRecognisedAsOverlay).toBe(false);
+  });
 });

@@ -16,6 +16,7 @@ import {
   resolveHybridEscapeTarget,
   shouldRegisterGlobalEscFallback,
   shouldFocusHybridContentOnHostFocus,
+  resolveCloseTargetId,
   ALWAYS_CLOSEABLE_ESC_ROLES,
   TRANSIENT_ROLES,
 } from './izui-roles.js';
@@ -290,6 +291,33 @@ describe('shouldFocusHybridContentOnHostFocus (restore first responder on host r
 
   it('does NOT focus when the content WC has been destroyed', () => {
     assert.strictEqual(shouldFocusHybridContentOnHostFocus(false, true, false), false);
+  });
+});
+
+describe('resolveCloseTargetId (cmd+W overlay redirect — address bar/widgets open)', () => {
+  // THE FAILING-FIRST ASSERTION: with the shared chrome overlay focused (Cmd+L
+  // opened the address bar/widgets), getFocusedWindow() returns the OVERLAY, not
+  // the page-host. Closing the overlay alone dismissed the chrome and left the
+  // page visible. cmd+W must instead target the active hybrid host so the whole
+  // host goes away.
+  it('targets the active hybrid host when the focused window IS the overlay', () => {
+    assert.strictEqual(resolveCloseTargetId(/* overlay id */ 7, /* isOverlay */ true, /* host */ 3), 3);
+  });
+
+  it('targets the focused BrowserWindow when it is NOT the overlay (settings/modal/canvas host)', () => {
+    assert.strictEqual(resolveCloseTargetId(5, false, 3), 5);
+  });
+
+  it('targets the active hybrid host when no BrowserWindow is focused (frontmost is a BaseWindow — peek ca4ee5e6)', () => {
+    assert.strictEqual(resolveCloseTargetId(null, false, 3), 3);
+  });
+
+  it('returns null when the overlay is focused but there is no active hybrid host', () => {
+    assert.strictEqual(resolveCloseTargetId(7, true, null), null);
+  });
+
+  it('returns null when nothing resolves (no focused window, no active hybrid host)', () => {
+    assert.strictEqual(resolveCloseTargetId(null, false, null), null);
   });
 });
 

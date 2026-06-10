@@ -25,8 +25,8 @@ import {
 } from './main.js';
 import { registerGuest, getGuestsForWindow } from './webview-guest-registry.js';
 import { getTileWindowInfo } from './tile-launcher.js';
-import { getHybridWindow, getActiveHybridWindowId, getHybridContentWC } from './hybrid-page-host-registry.js';
-import { resolveHybridEscapeTarget } from './izui-roles.js';
+import { getHybridWindow, getActiveHybridWindowId, getHybridContentWC, isHybridOverlayWindowId } from './hybrid-page-host-registry.js';
+import { resolveHybridEscapeTarget, resolveCloseTargetId } from './izui-roles.js';
 
 import {
   getIzuiCoordinator,
@@ -847,24 +847,29 @@ export function closeOrHideWindow(id: number): void {
  * Resolve the window id that a "close the current window" command (cmd+W menu
  * item / Close Window) should target.
  *
- * R1 (peek ca4ee5e6): the frontmost window may be a hybrid page-host, which is
- * a `BaseWindow` — and `BrowserWindow.getFocusedWindow()` does NOT return
- * BaseWindows (it returns null). A close handler that relied on
- * `getFocusedWindow()` alone therefore got null and no-op'd cmd+W on a hybrid
- * host. We resolve the focused BrowserWindow first (covers settings, modals,
- * canvas page-hosts, etc.); when there is none, we fall back to the registry's
- * active-hybrid window id (A's `getActiveHybridWindowId`, maintained off the
- * host BaseWindow's focus/blur). Returns null only when neither resolves.
+ * Two hybrid-era cases (the decision itself is the pure `resolveCloseTargetId`
+ * in izui-roles.ts; this wrapper just feeds it live window state):
  *
- * Pure-ish (reads window state); the actual close is `closeFocusedWindow`.
+ *   1. R1 (peek ca4ee5e6): the frontmost window may be a hybrid page-host, a
+ *      `BaseWindow` that `getFocusedWindow()` never returns (null). Fall back to
+ *      the registry's active-hybrid id.
+ *   2. The shared chrome OVERLAY is a focusable BrowserWindow floating over the
+ *      active host; Cmd+L focuses it, so `getFocusedWindow()` returns the OVERLAY
+ *      and closing it alone just dismisses the address bar/widgets and leaves the
+ *      page visible. When the focused window is the overlay, target the active
+ *      hybrid host instead.
+ *
+ * A focused BrowserWindow that is NOT the overlay wins (settings, modals, canvas
+ * page-hosts); otherwise the active hybrid host. Null when neither resolves, so
+ * canvas-path / no-window behavior is unchanged.
  */
 export function resolveFocusedWindowIdForClose(): number | null {
   const focused = BrowserWindow.getFocusedWindow();
-  if (focused) return focused.id;
-  // No focused BrowserWindow — a hybrid BaseWindow may be frontmost. Null when
-  // the hybrid flag is off (registry never tracks an active id) or nothing is
-  // active, so canvas-path behavior is unchanged.
-  return getActiveHybridWindowId();
+  return resolveCloseTargetId(
+    focused ? focused.id : null,
+    focused != null && isHybridOverlayWindowId(focused.id),
+    getActiveHybridWindowId(),
+  );
 }
 
 /**

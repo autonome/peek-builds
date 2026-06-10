@@ -282,6 +282,33 @@ harness) instead.
   already-shown (restored/inactive) host has no show seam, so the `baseWin 'focus'` handler is the
   one that must restore first responder.**
 
+**Fixed since (2026-06-10, fifth pass — the OTHER half of the `getFocusedWindow()` invariant):**
+
+- **cmd+W with the address bar/widgets open closed only the chrome, leaving the page visible — DONE
+  (peek `9d50ea29`).** The INVERSE of the ca4ee5e6 cmd+W no-op. The shared chrome overlay
+  (`hybrid-overlay.ts` `overlayWin`) is a `focusable:true` BrowserWindow — Cmd+L (`page:show-navbar`
+  → `wireShowNavbarFocus`) calls `overlayWin.focus()` so the user can type a URL. So with the address
+  bar open, `BrowserWindow.getFocusedWindow()` returns the **overlay**, not null and not the content
+  BaseWindow. The cmd+W menu handler (`entry.ts`) did `closeOrHideWindow(getFocusedWindow().id)` →
+  closed/destroyed the overlay singleton only; the content host BaseWindow stayed visible. So ca4ee5e6
+  taught us "`getFocusedWindow()` is null for a hybrid host"; this is the sibling failure — it's
+  **non-null but points at the chrome floating in front of the host**. Fix: overlay-aware close
+  resolution. Pure `resolveCloseTargetId(focusedBrowserWindowId, focusedIsHybridOverlay,
+  activeHybridWindowId)` in `izui-roles.ts` (focused non-overlay BW wins; else the active hybrid host).
+  The registry gains `setOverlayWindowIdProvider`/`isHybridOverlayWindowId` (one-way provider, SAME
+  pattern as `setOverlayFocusProvider` — the overlay calls IN, the registry never imports the overlay);
+  `initHybridOverlay` registers a closure reading the live `overlayWin` id. `resolveFocusedWindowIdForClose`
+  (`windows.ts`) feeds the predicate; the `entry.ts` handler now routes through `closeFocusedWindow()`
+  after the devtools guard instead of closing the raw focused id. Closing the host nulls the active id →
+  `onActiveHybridWindowChange(null)` → overlay hides, so the whole host goes away. Tests:
+  `izui-roles.test.ts resolveCloseTargetId` (the redirect decision — the overlay-IS-focused state needs
+  real OS focus, unobservable headless per the LESSON), `hybrid-page-host-registry.test.ts` overlay-id
+  provider unit, and `hybrid-close-shortcut.spec` "registry recognises the live overlay window" (proves
+  `initHybridOverlay` wired the provider against the real singleton). **Takeaway: any "which/whether a
+  Peek window is focused" decision must account for BOTH hybrid-era surprises — a focused hybrid host
+  reads as `getFocusedWindow()===null`, AND a focused chrome overlay reads as a focused BrowserWindow
+  that ISN'T the window the user means to act on.**
+
 **LESSON (load-bearing): headless specs CANNOT observe the macOS first-responder / `globalShortcut`
 pre-emption interaction, and a green headless spec gave false confidence TWICE on the ESC bug.**
 The ESC→switcher root cause was only found by **live `fs-diag` in the user's real `yarn start`

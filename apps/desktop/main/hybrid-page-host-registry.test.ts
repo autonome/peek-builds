@@ -32,6 +32,8 @@ import {
   onActiveHybridWindowChange,
   registerHybridWindow,
   setOverlayFocusProvider,
+  setOverlayWindowIdProvider,
+  isHybridOverlayWindowId,
 } from './hybrid-page-host-registry.js';
 
 type Handler = (...args: unknown[]) => void;
@@ -469,5 +471,48 @@ describe('hybrid-page-host-registry: focus-group deferred blur', () => {
     f.baseWin.focused = false;
     f.baseWin.emit('blur');
     assert.strictEqual(_runDeferredBlurForTests(f.id), null);
+  });
+});
+
+describe('hybrid-page-host-registry: overlay window id (cmd+W overlay redirect)', () => {
+  beforeEach(() => {
+    _resetForTests();
+  });
+
+  it('false for any id when no overlay-id provider is registered (canvas path)', () => {
+    assert.strictEqual(isHybridOverlayWindowId(7), false);
+  });
+
+  it('true only for the id the registered provider reports', () => {
+    setOverlayWindowIdProvider(() => 7);
+    assert.strictEqual(isHybridOverlayWindowId(7), true);
+    assert.strictEqual(isHybridOverlayWindowId(8), false);
+  });
+
+  it('tracks the live overlay id (provider reads the singleton, which can change)', () => {
+    let current: number | null = 7;
+    setOverlayWindowIdProvider(() => current);
+    assert.strictEqual(isHybridOverlayWindowId(7), true);
+    current = 9; // overlay recreated with a new id
+    assert.strictEqual(isHybridOverlayWindowId(7), false);
+    assert.strictEqual(isHybridOverlayWindowId(9), true);
+  });
+
+  it('false after the provider is cleared (overlay torn down)', () => {
+    setOverlayWindowIdProvider(() => 7);
+    setOverlayWindowIdProvider(null);
+    assert.strictEqual(isHybridOverlayWindowId(7), false);
+  });
+
+  it('a provider that throws is treated as no match (never throws to the caller)', () => {
+    setOverlayWindowIdProvider(() => {
+      throw new Error('provider boom');
+    });
+    assert.strictEqual(isHybridOverlayWindowId(7), false);
+  });
+
+  it('provider returning null (overlay gone) matches nothing', () => {
+    setOverlayWindowIdProvider(() => null);
+    assert.strictEqual(isHybridOverlayWindowId(7), false);
   });
 });

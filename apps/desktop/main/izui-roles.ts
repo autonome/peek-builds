@@ -300,3 +300,44 @@ export function spacesPolicyForRole(
   if (platform !== 'darwin') return 'none';
   return TRANSIENT_ROLES.has(role) ? 'follow' : 'anchor';
 }
+
+/**
+ * Resolve which window id a "close the current window" command (cmd+W / Close
+ * Window) should target, given the focused BrowserWindow and the active hybrid
+ * page-host.
+ *
+ * Two hybrid-era gotchas, both rooted in what `BrowserWindow.getFocusedWindow()`
+ * reports relative to the content the user is looking at:
+ *
+ *   1. A frontmost hybrid page-host is a `BaseWindow` — `getFocusedWindow()`
+ *      returns null for it, so a close path that trusted the focused
+ *      BrowserWindow no-op'd cmd+W (peek ca4ee5e6). Fall back to the active
+ *      hybrid id.
+ *   2. The shared chrome OVERLAY is a `focusable:true` BrowserWindow that floats
+ *      over the active hybrid host. Opening the address bar/widgets (Cmd+L)
+ *      focuses it, so `getFocusedWindow()` now returns the OVERLAY — and closing
+ *      *that* only dismisses the chrome and leaves the page visible (the reported
+ *      cmd+W regression). When the focused window IS the overlay, ignore it and
+ *      target the active hybrid host instead — closing the host tears down its
+ *      content AND retires the chrome, which is what the user means.
+ *
+ * So: a focused BrowserWindow that is NOT the overlay wins (settings, modals,
+ * canvas page-hosts, etc.); otherwise (no focused BW, or the overlay is focused)
+ * the active hybrid host is the target. Null when neither resolves (cmd+W
+ * harmless with no window). Pure so both regressions are unit-testable without
+ * real OS focus (mirrors `shouldRegisterGlobalEscFallback`).
+ *
+ * @param focusedBrowserWindowId  `BrowserWindow.getFocusedWindow()?.id ?? null`
+ * @param focusedIsHybridOverlay  the focused BrowserWindow is the chrome overlay
+ * @param activeHybridWindowId    `getActiveHybridWindowId()`
+ */
+export function resolveCloseTargetId(
+  focusedBrowserWindowId: number | null,
+  focusedIsHybridOverlay: boolean,
+  activeHybridWindowId: number | null,
+): number | null {
+  if (focusedBrowserWindowId != null && !focusedIsHybridOverlay) {
+    return focusedBrowserWindowId;
+  }
+  return activeHybridWindowId;
+}

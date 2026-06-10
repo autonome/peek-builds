@@ -72,7 +72,6 @@ import {
   isTestProfile,
   isHeadless,
   // Window helpers
-  closeOrHideWindow,
   closeFocusedWindow,
   showWindowHeadlessSafe,
   setPrefsGetter,
@@ -1057,14 +1056,18 @@ const onReady = async () => {
                   wc.closeDevTools();
                   return;
                 }
-                closeOrHideWindow(win.id);
-                return;
               }
-              // R1 (peek ca4ee5e6): no focused BrowserWindow — the frontmost
-              // window may be a hybrid page-host, which is a BaseWindow that
-              // getFocusedWindow() never returns. closeFocusedWindow() resolves
-              // the registry's active-hybrid window and closes it; no-op when
-              // nothing resolves (so cmd+W is harmless with no window).
+              // Close the window the user means to close, via the overlay-aware
+              // resolver (resolveFocusedWindowIdForClose):
+              //   - focused BrowserWindow that isn't the overlay → close it
+              //     (settings, modals, canvas page-hosts);
+              //   - no focused BrowserWindow → the frontmost window may be a
+              //     hybrid page-host (a BaseWindow getFocusedWindow() never
+              //     returns) → close the active hybrid host (peek ca4ee5e6);
+              //   - focused window IS the shared chrome overlay (address
+              //     bar/widgets open via Cmd+L) → close the active hybrid host,
+              //     not just the chrome, so the whole page-host goes away.
+              // No-op when nothing resolves (cmd+W harmless with no window).
               closeFocusedWindow();
           }},
           { role: 'minimize' },

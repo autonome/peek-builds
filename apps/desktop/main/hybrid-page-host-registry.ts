@@ -117,6 +117,40 @@ export function setOverlayFocusProvider(fn: (() => boolean) | null): void {
   isOverlayFocused = fn;
 }
 
+// Reports the shared chrome overlay window's id (or null if torn down). The
+// overlay (hybrid-overlay.ts) registers this so close-resolution can recognise
+// "the focused BrowserWindow is the chrome overlay" — the overlay is focusable
+// (a Cmd+L / click focuses its URL field), so `getFocusedWindow()` can return it
+// while the page-host the user is actually looking at sits behind it. Same
+// one-way dependency as `setOverlayFocusProvider`: the overlay calls IN here,
+// this module never imports the overlay. Null until the overlay registers.
+let overlayWindowIdProvider: (() => number | null) | null = null;
+
+/**
+ * Register a getter the registry uses to learn the shared chrome overlay
+ * window's id. Pass `null` to clear (overlay torn down). One-way dependency —
+ * see `overlayWindowIdProvider`.
+ */
+export function setOverlayWindowIdProvider(fn: (() => number | null) | null): void {
+  overlayWindowIdProvider = fn;
+}
+
+/**
+ * Is `id` the shared chrome overlay window? Used by the cmd+W close resolver:
+ * when the overlay is the focused BrowserWindow (address bar/widgets open),
+ * closing it alone would just dismiss the chrome and leave the page-host
+ * visible, so the resolver redirects the close to the active hybrid host. False
+ * when no overlay is registered (canvas path / overlay torn down).
+ */
+export function isHybridOverlayWindowId(id: number): boolean {
+  if (!overlayWindowIdProvider) return false;
+  try {
+    return overlayWindowIdProvider() === id;
+  } catch {
+    return false;
+  }
+}
+
 /** Is any registered hybrid content BaseWindow currently focused? */
 function anyHybridContentFocused(): { focused: boolean; id: number | null } {
   for (const e of entries.values()) {
@@ -509,6 +543,7 @@ export function _resetForTests(): void {
   activeChangeListeners.clear();
   activeHybridWindowId = null;
   isOverlayFocused = null;
+  overlayWindowIdProvider = null;
 }
 
 /**

@@ -65,6 +65,8 @@ import {
   registerHybridWindow,
   getAllHybridWindows,
   setOverlayFocusProvider,
+  setOverlayWindowIdProvider,
+  isHybridOverlayWindowId,
   getActiveHybridWindowId as _getActiveHybridWindowIdForBridge,
   _setActiveHybridWindowForTests,
   _runDeferredBlurForTests,
@@ -748,6 +750,14 @@ export function initHybridOverlay(): void {
   // hybrid window so the URL field is typeable (gated on app-active, see above).
   wireShowNavbarFocus();
 
+  // cmd+W overlay redirect: let the registry recognise the overlay window so the
+  // close resolver targets the active hybrid host instead of the chrome when the
+  // overlay is the focused BrowserWindow (address bar/widgets open). The closure
+  // reads `overlayWin` live, so it tracks the singleton across recreation.
+  setOverlayWindowIdProvider(() =>
+    overlayWin && !overlayWin.isDestroyed() ? overlayWin.id : null,
+  );
+
   // Run extension page-script execution against the active hybrid content WC
   // (the overlay host has webview:null and cannot service it; see above).
   wireExecuteScript();
@@ -801,6 +811,9 @@ export function teardownHybridOverlay(): void {
   }
   appActive = true;
   showNavbarFocusCount = 0;
+  // Drop the overlay-id provider so close-resolution stops consulting a dead
+  // singleton (mirrors the focus-provider clear in the window 'closed' handler).
+  setOverlayWindowIdProvider(null);
   if (overlayWin && !overlayWin.isDestroyed()) {
     overlayWin.destroy();
   }
@@ -2111,6 +2124,19 @@ function installTestBridge(): void {
      */
     closeFocusedWindow(): number | null {
       return closeFocusedWindow();
+    },
+    /**
+     * cmd+W overlay redirect: whether the registry recognises `id` as the shared
+     * chrome overlay window. Proves `initHybridOverlay` registered the
+     * overlay-id provider against the REAL singleton, so when the overlay is the
+     * focused BrowserWindow (address bar/widgets open) the close resolver
+     * redirects to the active hybrid host instead of closing the chrome alone.
+     * (The overlay-IS-focused case itself needs real OS focus — unobservable
+     * headless — so the redirect decision is covered by the `resolveCloseTargetId`
+     * unit; this verifies the wiring that feeds it.)
+     */
+    isHybridOverlayWindowId(id: number): boolean {
+      return isHybridOverlayWindowId(id);
     },
     /**
      * ESC-close (peek e8081cce companion): build a wired hybrid page-host AND
