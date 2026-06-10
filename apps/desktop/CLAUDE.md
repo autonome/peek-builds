@@ -257,6 +257,31 @@ harness) instead.
   the augmented `getFocusedWindow()` invariant bullet above for the full mechanism + fix
   (`shouldRegisterGlobalEscFallback`). Test: `izui-roles.test.ts shouldRegisterGlobalEscFallback`.
 
+**Fixed since (2026-06-10, fourth pass — the cluster wasn't quite closed):**
+
+- **Focused page-host where ESC (and every other key) is dead until you click the page — DONE
+  (peek `7c61e917`).** A further sibling of the FRESH-show dead-focus bug (`1b6eaf0b`, cmd+L beep):
+  `showHybridHost` applies the `show() + contentWC.focus()` invariant only on a fresh show. A host
+  restored via `showInactive` at session start (`contentFocused:false`) and **later RAISED by its
+  chrome / Cmd+Tab / Mission Control** fires `baseWin 'focus'` — so `getActiveHybridWindowId()`
+  correctly points at it, which (correctly) suppresses the global ESC fallback — but **nothing makes
+  its content `WebContentsView` the first responder.** So the content WC's `before-input-event`
+  never sees ESC (no `handleHybridEscape`) AND the global fallback is off → ESC has NO handler at
+  all. Clicking the page fires `contentWC 'focus'` and restores first responder, which is why a click
+  "fixed" it (and why it felt nondeterministic — it's whichever backgrounded restored window you
+  raise by its chrome rather than its page). Fix: `onHybridHostFocus` (`ipc.ts`, already wired to
+  `baseWin 'focus'`) now calls `contentWC.focus()`, gated by pure
+  `shouldFocusHybridContentOnHostFocus(headless, contentDestroyed, contentAlreadyFocused)`
+  (`izui-roles.ts`) — skips headless (focus-free) and the already-focused case (raise triggered BY a
+  page click → no redundant re-focus / focus-event loop). Confirmed by the SAME live-trace method as
+  `ebb10894` (see LESSON): pre-fix the raise logged no first-responder restore and ESC produced no
+  `before-input-event`; post-fix every raise restores it and the next ESC lands with no click. Test:
+  `izui-roles.test.ts shouldFocusHybridContentOnHostFocus` (pure predicate — real first responder is
+  unobservable headless). **Takeaway for the `show() + contentWC.focus()` invariant: it must hold on
+  every path that makes a host the key window, not just the fresh `showHybridHost` — re-raise of an
+  already-shown (restored/inactive) host has no show seam, so the `baseWin 'focus'` handler is the
+  one that must restore first responder.**
+
 **LESSON (load-bearing): headless specs CANNOT observe the macOS first-responder / `globalShortcut`
 pre-emption interaction, and a green headless spec gave false confidence TWICE on the ESC bug.**
 The ESC→switcher root cause was only found by **live `fs-diag` in the user's real `yarn start`
