@@ -43,11 +43,5 @@
       "description": "Create a new item",
       "action": { "type": "execute" }
     }
-  ],
-  "shortcuts": [
-    {
-      "keys": "CommandOrControl+Shift+N",
-      "command": "compose"
-    }
   ]
 }
