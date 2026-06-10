@@ -164,7 +164,17 @@ the below was covered — every one became a user-visible regression. Invariants
   menu item, command, or close path that resolves "the current window" through those misses
   hybrid hosts (this is why cmd+W no-op'd). Fall back to the hybrid registry's
   `getActiveHybridWindowId()` — see `resolveFocusedWindowIdForClose()` / `closeFocusedWindow()`
-  in `windows.ts`, and the `closeOrHideWindow()` BaseWindow branch.
+  in `windows.ts`, and the `closeOrHideWindow()` BaseWindow branch. **This invariant also
+  governs any "is a Peek window focused?" decision, not just "which window".** The global ESC
+  fallback (`main.ts`, a focus-gated `globalShortcut('Escape')` → `cmd:execute:windows`) regressed
+  exactly this way (peek `ebb10894`): its predicate was `appActive && getFocusedWindow() === null`,
+  so a focused slide/peek (a BaseWindow → `getFocusedWindow()` null) looked like "no Peek window
+  focused", the OS-level grab registered, and — because `globalShortcut` **pre-empts**
+  `before-input-event` — it ate ESC and opened the switcher instead of letting the slide close.
+  Fix: pure `shouldRegisterGlobalEscFallback(appActive, hasFocusedBrowserWindow,
+  hasActiveHybridWindow)` in `izui-roles.ts` (a hybrid window counts as focused), re-evaluated on
+  every `onActiveHybridWindowChange` (BaseWindows don't fire `browser-window-focus`, so the
+  `app.on('browser-window-focus'/'blur')` listeners alone leave the grab stale).
 - **Show a fresh hybrid host with `show()` + `contentWC.focus()`, NEVER `showInactive()` alone**
   (non-headless). `show()` activates the app (frontmost + key window); `contentWC.focus()` makes
   the `WebContentsView` the macOS **first responder**. Miss either and you get the dead-focus
@@ -215,16 +225,53 @@ harness) instead.
   `slides-settings-race.spec` + `peeks-settings-race.spec` (failing-first: pre-fix the window
   never appears; post-fix ~300 ms).
 
-**Still open — the ONE remaining cluster item: top-border gesture overlay-reveal (peek
-`363e7cff`).** Making the content WC the first responder appears to **starve the overlay's
-top-border hover region of `mousemove`**: when the content `WebContentsView` is first responder
-AND fills the window, it captures the pointer events the reveal trigger needs (worst in the
-**maximized / no-gutter** case, where the overlay frame == content rect so the trigger strip sits
-directly over the content WC). The reveal tracking must live above/around the content view (not
-rely on the BaseWindow/overlay receiving `mouse-moved`). Candidate fix: in `wireHybridContentEvents`
-(`ipc.ts`), forward idle (no-button) `mouseMove` near the top edge — currently only button-down
-`mouseMove` is forwarded — to wake the overlay reveal; the overlay renderer (`overlay.js`) then
-takes over once it captures.
+**Fixed since (2026-06-09/10, third pass — cluster now CLOSED):**
+
+- **keepLive slides/peeks were destroyed instead of kept alive — DONE (peek `2c94c125`).** A
+  slide/peek with `keepLive:true` (e.g. the left slide playing music) died on blur/app-switch.
+  `closeOrHideWindow()` honored keepLive only on the BrowserWindow branch; the hybrid BaseWindow
+  branch always `closeHostWindow`'d. Fix: the hybrid branch reads `getWindowInfo(id).params.keepLive`
+  and `baseWin.hide()`s instead of closing; `tile-ipc.ts` routes its hybrid close through
+  `closeOrHideWindow()` so it stops bypassing the gate. Test: `hybrid-keeplive-close.spec`.
+- **ESC didn't close peeks/slides — DONE (peek `5386d44f`).** ESC→close lived only on the
+  per-`BrowserWindow` `addEscHandler`; wired it into the hybrid content WC's `before-input-event`
+  (`wireHybridContentEvents` → `handleHybridEscape` → shared `handleEscapeForWindowId` → one
+  `escPolicy`/`escUnhandledPolicy` source of truth). Test: `hybrid-escape-close.spec`.
+- **Session restore focused the wrong page — DONE (peek `4f1a974a`).** RESTORE-side: the hybrid
+  show seam ignored `show:false`, so every restored hybrid window self-activated and the last to
+  show (or the show-storm race winner) ended up frontmost. Fix: `hybridShowIntent(headless,
+  inactive)` + `showHybridHost(.., {inactive})` honor a non-activating intent; `ipc.ts` threads
+  `inactive: options.show === false`; `session.ts` restore post-loop is the SINGLE authority that
+  activates only the focused descriptor. Test: `session-restore-hybrid-focus.spec`.
+- **Top-border gesture overlay-reveal — DONE (peek `363e7cff`).** Two sub-causes: (1)
+  active-hybrid-id-never-set was already healed by the dead-focus fix; (2) the genuinely-open part
+  — when the content `WebContentsView` is first responder AND fills the overlay frame (maximized /
+  no-gutter), it STARVES the click-through overlay's forwarded-`mousemove` reveal loop. Fix:
+  `wireHybridContentEvents` (`ipc.ts`) forwards idle (no-button) top-band moves (within 44px =
+  `TRIGGER_ZONE+NAVBAR_HEIGHT` of the host top edge — main owns geometry, so it works maximized) as
+  `page-overlay:content-pointer {phase:'reveal'|'reveal-out'}`, emitted only on band enter/exit;
+  `overlay.js` drives `showNavbar()`/`scheduleHide()` idempotently with the existing gutter loop.
+  Test: `hybrid-overlay.spec` "top-border gesture reveal (363e7cff)".
+- **ESC opened the Windows switcher instead of closing — DONE (peek `ebb10894`).** The global ESC
+  fallback grabbed ESC because `getFocusedWindow()` is null for a focused hybrid slide/peek — see
+  the augmented `getFocusedWindow()` invariant bullet above for the full mechanism + fix
+  (`shouldRegisterGlobalEscFallback`). Test: `izui-roles.test.ts shouldRegisterGlobalEscFallback`.
+
+**LESSON (load-bearing): headless specs CANNOT observe the macOS first-responder / `globalShortcut`
+pre-emption interaction, and a green headless spec gave false confidence TWICE on the ESC bug.**
+The ESC→switcher root cause was only found by **live `fs-diag` in the user's real `yarn start`
+session** (see `repro-first-then-fix` + `peek-fs-diag-bridge` skills): instrument the suspected
+paths, have the user repro once, read `/tmp/peek-cmd-diag.log`. The decisive signal was an ABSENCE
+— none of the per-window ESC logs fired — which pointed at a pre-emptive OS-level grab, not the
+handler we'd been editing. When a hybrid focus/input bug resists and the unit/Playwright suite is
+green, suspect (a) anything reading `getFocusedWindow()`, and (b) an OS-level `globalShortcut` that
+pre-empts `before-input-event` — and get a live trace before touching code.
+
+**Still open (separate, NOT a focus/input bug): keepLive toggle → extension bridge error (peek
+`42fff0a5`).** Checking the keepLive option for a slide/peek logs a chrome-extension compat-bridge
+port disconnect + `[peek:runtime-external:bg] electron.ipcRenderer unavailable on all probed paths`
+RuntimeError (Proton/peek-auth-relay ext). Untouched — chrome-extension compat scope, not the
+hybrid focus cluster.
 
 ---
 
