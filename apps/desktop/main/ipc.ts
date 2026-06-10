@@ -90,6 +90,7 @@ import {
   inferIzuiRole,
   spacesPolicyForRole,
   selectTransientSiblingsToClose,
+  shouldFocusHybridContentOnHostFocus,
   type TransientSiblingCandidate,
 } from './izui-roles.js';
 
@@ -2189,6 +2190,29 @@ export function registerWindowHandlers(): void {
         // session restore then raises the last-focused BrowserWindow (e.g.
         // Settings) instead of the web page the user left in front.
         const onHybridHostFocus = () => {
+          // Restore first responder to the content WebContentsView when this host
+          // gains focus. showHybridHost applies `contentWC.focus()` only on a FRESH
+          // show; a host restored via showInactive (session restore) and later
+          // RAISED by chrome / Cmd+Tab / Mission Control fires baseWin 'focus' (so
+          // the active-hybrid id — and thus the suppressed global ESC fallback —
+          // is correct) but never made its content WC first responder, so ESC (and
+          // every other before-input key) was dead until the user clicked the page.
+          // The predicate skips headless (focus-free) and the already-focused case
+          // (host focus triggered BY a click into the page → no redundant re-focus
+          // / focus-event loop). Traced 2026-06-10.
+          try {
+            if (
+              shouldFocusHybridContentOnHostFocus(
+                isHeadless(),
+                view.webContents.isDestroyed(),
+                view.webContents.isFocused(),
+              )
+            ) {
+              view.webContents.focus();
+            }
+          } catch {
+            /* focus/isFocused can throw on a torn-down wc — ignore */
+          }
           try {
             if (view.webContents.isDestroyed()) return;
             trackHybridWindowFocus(baseWin.id, view.webContents.getURL());

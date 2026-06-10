@@ -15,6 +15,7 @@ import {
   selectTransientSiblingsToClose,
   resolveHybridEscapeTarget,
   shouldRegisterGlobalEscFallback,
+  shouldFocusHybridContentOnHostFocus,
   ALWAYS_CLOSEABLE_ESC_ROLES,
   TRANSIENT_ROLES,
 } from './izui-roles.js';
@@ -262,6 +263,33 @@ describe('shouldRegisterGlobalEscFallback (global ESC grab vs hybrid focus — p
   it('does NOT register when Peek is not the active app', () => {
     assert.strictEqual(shouldRegisterGlobalEscFallback(false, false, false), false);
     assert.strictEqual(shouldRegisterGlobalEscFallback(false, false, true), false);
+  });
+});
+
+describe('shouldFocusHybridContentOnHostFocus (restore first responder on host raise — traced 2026-06-10)', () => {
+  // The live regression: a hybrid page-host restored via showInactive (session
+  // restore) and later RAISED by chrome / Cmd+Tab / Mission Control fires
+  // baseWin 'focus' but its content WebContentsView is never made first
+  // responder. So ESC reaches neither the content WC before-input-event NOR the
+  // (correctly suppressed) global fallback — dead until the user clicks the
+  // page. THE FAILING-FIRST ASSERTION: on host focus, a live + not-already-
+  // focused content WC must be re-focused.
+  it('DOES focus when not headless, content alive, and not already first responder', () => {
+    assert.strictEqual(shouldFocusHybridContentOnHostFocus(false, false, false), true);
+  });
+
+  it('does NOT focus when the content WC is already first responder (host focus came from a page click)', () => {
+    // Avoids a redundant re-focus and a potential contentWC 'focus' event loop.
+    assert.strictEqual(shouldFocusHybridContentOnHostFocus(false, false, true), false);
+  });
+
+  it('does NOT focus when headless (focus-free — never steal the real first responder)', () => {
+    assert.strictEqual(shouldFocusHybridContentOnHostFocus(true, false, false), false);
+    assert.strictEqual(shouldFocusHybridContentOnHostFocus(true, false, true), false);
+  });
+
+  it('does NOT focus when the content WC has been destroyed', () => {
+    assert.strictEqual(shouldFocusHybridContentOnHostFocus(false, true, false), false);
   });
 });
 

@@ -187,6 +187,48 @@ export function shouldRegisterGlobalEscFallback(
 }
 
 /**
+ * Whether a hybrid page-host that just gained host-window focus must explicitly
+ * make its content `WebContentsView` the macOS first responder.
+ *
+ * The gap (focused-but-ESC-dead, traced 2026-06-10): `showHybridHost` applies
+ * the `show() + contentWC.focus()` invariant only on a FRESH show. A host that
+ * was restored via `showInactive` (session restore — `contentFocused:false`) and
+ * is LATER raised by its chrome / Cmd+Tab / Mission Control fires the BaseWindow
+ * `'focus'` event (so `getActiveHybridWindowId()` correctly points at it, which
+ * in turn suppresses the global ESC fallback) — but NOTHING makes its content WC
+ * the first responder. So the content WC's `before-input-event` never sees ESC
+ * (no `handleHybridEscape`), and the global fallback is off too: ESC has no
+ * handler at all until the user clicks the page (which fires `contentWC 'focus'`
+ * and restores first responder). Re-applying `contentWC.focus()` on host focus
+ * closes the gap.
+ *
+ * True iff ALL hold:
+ *   - NOT headless — headless/CI stays focus-free (never steal the user's real
+ *     first responder; `showHybridHost` already gates the same way).
+ *   - the content WC is alive (not destroyed).
+ *   - the content WC is NOT already the first responder — when host focus was
+ *     itself triggered by a click INTO the page (`contentWC 'focus'`), the WC is
+ *     already focused, so re-focusing is a redundant no-op AND would risk a
+ *     focus-event loop; skip it.
+ *
+ * Pure so the regression is unit-testable without real OS focus (mirrors
+ * `shouldRegisterGlobalEscFallback`).
+ *
+ * @param headless  the run is headless/CI (focus-free)
+ * @param contentDestroyed  the content WebContents has been torn down
+ * @param contentAlreadyFocused  `contentWC.isFocused()` — already first responder
+ */
+export function shouldFocusHybridContentOnHostFocus(
+  headless: boolean,
+  contentDestroyed: boolean,
+  contentAlreadyFocused: boolean,
+): boolean {
+  if (headless) return false;
+  if (contentDestroyed) return false;
+  return !contentAlreadyFocused;
+}
+
+/**
  * One window's role + visibility, as seen by the focus-driven transient
  * autoclose. `role` is `undefined` for a window with no registry entry (those
  * are never transient candidates). `visible` gates out already-hidden windows.
