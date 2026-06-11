@@ -112,7 +112,7 @@ import {
   initSessionPartition,
   registerDownloadHandler,
 } from './session-partition.js';
-import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest } from './session.js';
+import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, reassertColdStartFocusOnce } from './session.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
@@ -169,6 +169,22 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
   forceSaveSession: () => saveSessionSnapshot('manual', { _forceForTest: true }),
   /** Force-restore session snapshot (bypasses test-profile guard). */
   forceRestoreSession: () => restoreSessionSnapshot({ restoreSession: true }, undefined, true),
+  /**
+   * Force-restore as a COLD START (4th positional isColdStart=true). Lets the
+   * session-restore-focus specs drive the boot path: with the app-focus override
+   * set FALSE (simulating the startup did-resign-active dance), a cold-start
+   * restore must STILL activate the focused descriptor — the bug fix. The
+   * in-session forceRestoreSession above keeps isColdStart false. See
+   * shouldActivateFocusedOnRestore() in izui-roles.ts and
+   * tests/desktop/session-restore-focus.spec.ts.
+   */
+  forceColdStartRestoreSession: () => restoreSessionSnapshot({ restoreSession: true }, undefined, true, true),
+  /**
+   * Re-run the cold-start trailing-dance re-assert latch ONCE, the same call
+   * main.ts's did-become-active handler makes. Lets a spec drive the safety net
+   * deterministically. Returns true iff it re-raised a window.
+   */
+  reassertColdStartFocusOnce: () => reassertColdStartFocusOnce(),
   /**
    * Override the IZUI coordinator's OS-focus state for drift-detection
    * tests. The restore loop's .show()/.focus() gate reads
@@ -1352,7 +1368,12 @@ const onReady = async () => {
       // Restore session after features are loaded
       if (_sessionRestorePending) {
         try {
-          const restoreResult = await restoreSessionSnapshot(prefsMsg.prefs, _crashState);
+          // Boot restore — pass isColdStart=true so the focused descriptor is
+          // raised+activated even if the macOS startup activation dance
+          // transiently flips appFocused false mid-restore. (_forceForTest=false
+          // here; the cold-start signal is the 4th positional arg.) See
+          // shouldActivateFocusedOnRestore() in izui-roles.ts.
+          const restoreResult = await restoreSessionSnapshot(prefsMsg.prefs, _crashState, false, true);
           DEBUG && console.log(`[session] Restore result:`, restoreResult);
           if (restoreResult.restored === 0) {
             _sessionRestorePending = false;

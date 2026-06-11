@@ -117,10 +117,18 @@ test.describe('Session Restore Focus @desktop', () => {
       return (globalThis as any).__peek_test.forceRestoreSession();
     }) as any) as Promise<{ restored: number; failed: number; total: number }>;
 
+  // Drive the BOOT (cold-start) restore path: isColdStart=true. Used to prove
+  // the fix — at cold start the focused descriptor activates EVEN when the
+  // startup did-resign-active dance left appFocused false.
+  const forceColdStartRestore = () =>
+    app.evaluateMain!(((_e: unknown) => {
+      return (globalThis as any).__peek_test.forceColdStartRestoreSession();
+    }) as any) as Promise<{ restored: number; failed: number; total: number }>;
+
   const getCounters = () =>
     app.evaluateMain!(((_e: unknown) => {
       return (globalThis as any).__peek_test.getRestoreFocusCounters();
-    }) as any) as Promise<{ shows: number; showInactives: number; focuses: number; moveTops: number }>;
+    }) as any) as Promise<{ shows: number; showInactives: number; focuses: number; moveTops: number; hybridActivations: number; focusedId: number | null }>;
 
   // Tests ----------------------------------------------------------------
 
@@ -208,5 +216,88 @@ test.describe('Session Restore Focus @desktop', () => {
     expect(counters.moveTops,
       `focused descriptor must be raised with moveTop() exactly when .focus() is called`)
       .toBe(counters.focuses);
+  });
+
+  // ------------------------------------------------------------------------
+  // COLD START (boot) restore — the converged-bug fix (peek 7bb74c90 z-order +
+  // 8f7010a8 not-frontmost-at-startup).
+  //
+  // At cold start the macOS startup activation dance fires did-resign-active
+  // mid-restore, so isAppFocused() reads FALSE in the post-loop focused-
+  // descriptor block. Pre-fix that block was gated on isAppFocused() alone, so
+  // BOTH branches were skipped — the saved-focused window was never moveTop'd
+  // (z-order bug) nor activated (menubar/key-window bug). The fix gates on
+  // shouldActivateFocusedOnRestore(isColdStart, appFocused, headless).
+  //
+  // HEADLESS CAVEAT (load-bearing, per apps/desktop/CLAUDE.md): the predicate
+  // INTENTIONALLY suppresses activation under headless — `cold && !headless` —
+  // so a cold restore CANNOT raise/focus while PEEK_HEADLESS=1 (these specs run
+  // headless; the fixture sets PEEK_HEADLESS=1). That headless gate is itself
+  // part of the contract (never steal the user's focus from a CI/agent run —
+  // peek 2b55f3af / d9bb2924). So the "cold start overrides appFocused=false"
+  // proof lives in the PURE unit test (izui-roles.test.ts), where headless is an
+  // explicit arg. Here we assert the headless-observable invariants:
+  //   (1) the in-session gate still HOLDS (appFocused=false, isColdStart=false →
+  //       counters 0 — don't yank a switched-away user); the failing-first
+  //       baseline.
+  //   (2) the cold-start path THREADS through and ACTIVATES on the boot happy
+  //       path (appFocused=true → counters 1, focusedId set) — proving the new
+  //       4th param doesn't break activation and the decision log fires.
+  // ------------------------------------------------------------------------
+
+  test('in-session restore with appFocused=false does NOT activate (failing-first baseline — don\'t yank)', async () => {
+    await openPage(`http://127.0.0.1:${serverPort}/insession-a`);
+    await openPage(`http://127.0.0.1:${serverPort}/insession-b`);
+    await forceSave();
+    await resetState();
+
+    // Simulate the user having switched away (or the startup dance) → false.
+    await setAppFocused(false);
+
+    const inSession = await forceRestore();
+    expect(inSession.restored).toBeGreaterThan(0);
+    const c = await getCounters();
+    expect(c.moveTops,
+      `in-session restore (isColdStart=false) with appFocused=false must NOT moveTop — don't yank a switched-away user`)
+      .toBe(0);
+    expect(c.focuses,
+      `in-session restore must NOT .focus()/.activate the focused descriptor while appFocused=false`)
+      .toBe(0);
+    expect(c.hybridActivations,
+      `in-session restore must NOT activate any hybrid host while appFocused=false`)
+      .toBe(0);
+
+    await clearAppFocusOverride();
+  });
+
+  test('COLD START boot path threads through and activates the focused descriptor (appFocused=true)', async () => {
+    await openPage(`http://127.0.0.1:${serverPort}/cold-a`);
+    await openPage(`http://127.0.0.1:${serverPort}/cold-b`);
+    await forceSave();
+    await resetState();
+
+    // Boot happy path: Peek is the active app (the dominant term in the
+    // predicate — `appFocused || ...`). Under headless the cold-start override
+    // term is suppressed, so this term is what makes the boot restore activate.
+    await setAppFocused(true);
+
+    const cold = await forceColdStartRestore();
+    expect(cold.restored).toBeGreaterThan(0);
+
+    const c = await getCounters();
+    // Exactly the single focused descriptor is raised + activated. moveTop ===
+    // focus ties the raise to the activation (canvas + hybrid branches both do
+    // moveTop()+activate on exactly the focused descriptor).
+    expect(c.focuses,
+      `cold-start boot restore activates the focused descriptor exactly once`)
+      .toBe(1);
+    expect(c.moveTops,
+      `the focused descriptor is raised via moveTop() exactly when it is activated`)
+      .toBe(1);
+    expect(c.focusedId,
+      `cold-start restore records the restored focused window id (a real window was raised)`)
+      .not.toBeNull();
+
+    await clearAppFocusOverride();
   });
 });

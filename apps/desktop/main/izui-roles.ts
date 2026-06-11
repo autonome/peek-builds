@@ -229,6 +229,46 @@ export function shouldFocusHybridContentOnHostFocus(
 }
 
 /**
+ * Whether the post-loop focused-descriptor block of `restoreSessionSnapshot`
+ * should RAISE + ACTIVATE the window that was focused at save time.
+ *
+ * Two converged user-reported bugs share this gate (peek 7bb74c90 z-order +
+ * 8f7010a8 not-frontmost-at-startup). Both reduce to: the focused-descriptor
+ * block was gated on `isAppFocused()` alone, and at COLD START the macOS
+ * startup "activation dance" fires `did-resign-active` mid-restore
+ * (main.ts → coordinator.setAppFocused(false)). So `isAppFocused()` reads
+ * FALSE during the post-loop block, both branches are skipped, and the focused
+ * window is never moveTop'd (z-order bug) nor activated (menubar/key-window
+ * bug). The moveTop()/activate calls were already present — only the gate was
+ * wrong.
+ *
+ * The decision:
+ *   - IN-SESSION restore (`coldStart=false`, e.g. the user-triggered "Restore
+ *     Previous Session" or `forceRestoreSession`): honor `appFocused`. If the
+ *     user switched away mid-restore, do NOT yank them back — preserve the
+ *     original isAppFocused gate intent.
+ *   - COLD START (`coldStart=true`): Peek is being LAUNCHED and SHOULD own the
+ *     foreground, so activate the focused descriptor EVEN IF the startup dance
+ *     transiently flipped appFocused false — EXCEPT under headless, where Peek
+ *     must NEVER steal the user's focus (agent/CI runs stay accessory; refs the
+ *     headless-no-focus-theft regressions peek 2b55f3af / d9bb2924).
+ *
+ * Pure + deterministic so the cold-start vs in-session distinction is unit-
+ * testable without real OS focus (mirrors `shouldRegisterGlobalEscFallback`).
+ *
+ * @param coldStart   this restore is the app's boot restore (not in-session)
+ * @param appFocused  `getIzuiCoordinator().isAppFocused()` at restore time
+ * @param headless    the run is headless/CI (focus-free)
+ */
+export function shouldActivateFocusedOnRestore(
+  coldStart: boolean,
+  appFocused: boolean,
+  headless: boolean,
+): boolean {
+  return appFocused || (coldStart && !headless);
+}
+
+/**
  * One window's role + visibility, as seen by the focus-driven transient
  * autoclose. `role` is `undefined` for a window with no registry entry (those
  * are never transient candidates). `visible` gates out already-hidden windows.

@@ -41,7 +41,7 @@ import { getActiveHybridWindowId, onActiveHybridWindowChange } from './hybrid-pa
 import { clearLastFocusedVisibleWindowId, trackOnWindowFocus } from './ipc.js';
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation } from './window-presenter.js';
-import { saveSessionSnapshot } from './session.js';
+import { saveSessionSnapshot, reassertColdStartFocusOnce } from './session.js';
 
 // Track app-quit state so the close-debounced save doesn't double-fire
 // alongside the before-quit save. before-quit handler in entry.ts sets
@@ -614,6 +614,12 @@ export async function initialize(): Promise<void> {
     (app as any).on('did-become-active', () => {
       getIzuiCoordinator().setAppFocused(true);
       publish(getSystemAddress(), 'app:focus-changed', { focused: true });
+      // Cold-start trailing-dance safety net: if a boot restore activated the
+      // saved-focused window and the macOS startup dance then fired a trailing
+      // did-resign-active (re-stranding Peek), re-raise that window ONCE on the
+      // first activation after restore. Self-gating one-shot — no-op unless the
+      // latch was armed (cold start + non-headless). See session.ts.
+      reassertColdStartFocusOnce();
       // Show any alwaysOnTop overlay windows (e.g. HUD) that were hidden
       // by the did-resign-active handler below. This hide/show pair
       // avoids a pubsub round-trip through a renderer.

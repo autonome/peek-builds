@@ -21,6 +21,7 @@ import { getHybridWindow } from './hybrid-page-host-registry.js';
 import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
 import { invokeWindowOpen, getLastFocusedVisibleWindowId } from './ipc.js';
 import { getIzuiCoordinator } from './izui-state.js';
+import { shouldActivateFocusedOnRestore } from './izui-roles.js';
 import { WEB_CORE_ADDRESS } from './config.js';
 
 import { publish, getSystemAddress } from './pubsub.js';
@@ -148,6 +149,71 @@ export function resetRestoreFocusCounters(): void {
   _restoreMoveTopCount = 0;
   _restoreHybridActivationCount = 0;
   _restoreFocusedId = null;
+}
+
+// ----------------------------------------------------------------------------
+// Cold-start trailing-dance re-assert latch (one-shot).
+//
+// Bulletproofing for the cold-start activation: the post-loop focused-descriptor
+// block raises+activates the saved-focused window, but it is possible the macOS
+// startup activation dance fires a FINAL `did-resign-active` AFTER that block
+// runs, re-stranding Peek in the background (previous app keeps the menubar).
+// To cover that, a cold-start restore that wanted to activate the focused
+// descriptor (non-headless) ARMS a one-shot latch here. main.ts's existing
+// `did-become-active` handler calls `reassertColdStartFocusOnce()` on the FIRST
+// activation after restore — which re-runs moveTop + activate for the saved
+// focused window EXACTLY ONCE, then disarms.
+//
+// FSM-pilled: no timer. The latch is driven by the real `did-become-active`
+// lifecycle event, fires at most once, is gated cold-start + non-headless, and
+// no-ops if the focused window is gone (isDestroyed guard).
+let _coldStartReassertArmed = false;
+let _coldStartReassertId: number | null = null;
+
+/** Disarm the cold-start re-assert latch (called on use and on reset). */
+function disarmColdStartReassert(): void {
+  _coldStartReassertArmed = false;
+  _coldStartReassertId = null;
+}
+
+/**
+ * Re-assert the cold-start focused descriptor ONCE, if armed.
+ *
+ * Called by main.ts's `did-become-active` handler. If a cold-start restore
+ * activated the saved-focused window and the startup dance then fired a trailing
+ * `did-resign-active` (re-stranding Peek), this re-runs moveTop + activate for
+ * the saved focused window on the FIRST subsequent activation, then disarms.
+ *
+ * Self-disarming + no-op when not armed, when the window is gone (isDestroyed),
+ * or under headless. Safe to call on every `did-become-active`. Returns true iff
+ * it actually re-raised a window (for logging/tests).
+ */
+export function reassertColdStartFocusOnce(): boolean {
+  if (!_coldStartReassertArmed) return false;
+  const id = _coldStartReassertId;
+  // Disarm FIRST so this fires at most once regardless of what follows.
+  disarmColdStartReassert();
+  if (id == null) return false;
+  if (isHeadless()) return false;
+  try {
+    const focusWin = getLiveWindow(id);
+    if (focusWin && !focusWin.isDestroyed()) {
+      try { focusWin.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
+      focusWin.focus();
+      console.log(`[session] cold-start re-assert raised focused window ${id} on did-become-active`);
+      return true;
+    }
+    const hybridFocus = getHybridWindow(id);
+    if (hybridFocus && !hybridFocus.baseWin.isDestroyed()) {
+      try { hybridFocus.baseWin.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
+      showHybridHost(hybridFocus.baseWin, hybridFocus.contentWC);
+      console.log(`[session] cold-start re-assert activated focused hybrid ${id} on did-become-active`);
+      return true;
+    }
+  } catch {
+    // Best-effort re-assert.
+  }
+  return false;
 }
 
 export interface SessionMetadata {
@@ -850,6 +916,14 @@ export async function restoreSessionSnapshot(
   prefs: Record<string, unknown>,
   crashState?: { cleanShutdown: boolean; crashCount: number },
   _forceForTest?: boolean,
+  // COLD START signal — true ONLY for the app's boot restore (entry.ts). Kept
+  // SEPARATE from `_forceForTest` (which is true for BOTH in-app
+  // forceRestoreSession AND test specs, so it cannot distinguish boot from an
+  // in-session restore). At cold start the focused descriptor is activated even
+  // if the macOS startup dance transiently flipped appFocused false; in-session
+  // restore keeps honoring appFocused so a switched-away user isn't yanked back.
+  // See shouldActivateFocusedOnRestore() in izui-roles.ts.
+  isColdStart: boolean = false,
 ): Promise<{ restored: number; failed: number; total: number }> {
   const result = { restored: 0, failed: 0, total: 0 };
 
@@ -857,6 +931,9 @@ export async function restoreSessionSnapshot(
   // afterward to verify the isAppFocused() gate held — see counter
   // declaration above.
   resetRestoreFocusCounters();
+  // Clear any stale cold-start re-assert latch from a prior restore; this pass
+  // re-arms it only if it activates the focused descriptor at cold start.
+  disarmColdStartReassert();
 
   // Skip restore in test environments unless _forceForTest is set (used by
   // session-restore Playwright specs that drive save+restore directly).
@@ -1347,7 +1424,32 @@ export async function restoreSessionSnapshot(
       // BrowserWindow restored last) stays frontmost.
       const focusWin = getLiveWindow(focusedWindowId);
       const hybridFocus = focusWin ? null : getHybridWindow(focusedWindowId);
-      if (focusWin && coordinator.isAppFocused()) {
+
+      // Decide whether to RAISE+ACTIVATE the focused descriptor. At cold start
+      // Peek is launching and should own the foreground even if the macOS
+      // startup dance transiently flipped appFocused false (the two converged
+      // bugs: z-order peek 7bb74c90 + not-frontmost peek 8f7010a8). In-session
+      // restore honors appFocused so a switched-away user isn't yanked back.
+      // Headless never activates (focus-free). See izui-roles.ts.
+      const willActivate = shouldActivateFocusedOnRestore(
+        isColdStart,
+        coordinator.isAppFocused(),
+        isHeadless(),
+      );
+      // Always-on (non-DEBUG) decision log: the original diagnosis rested on an
+      // ABSENCE of logs (the gated block was silently skipped). Make the
+      // decision self-evident in prod main.log for any future occurrence.
+      console.log(`[session] restore-focus-decision coldStart=${isColdStart} appFocused=${coordinator.isAppFocused()} headless=${isHeadless()} willActivate=${willActivate} focusedId=${focusedWindowId}`);
+
+      // Arm the one-shot cold-start re-assert latch BEFORE touching windows: a
+      // trailing did-resign-active could re-strand Peek after this block runs.
+      // Gated cold-start + non-headless + a window actually present to raise.
+      if (isColdStart && !isHeadless() && (focusWin || (hybridFocus && !hybridFocus.baseWin.isDestroyed()))) {
+        _coldStartReassertArmed = true;
+        _coldStartReassertId = focusedWindowId;
+      }
+
+      if (focusWin && willActivate) {
         // moveTop() reorders the focused window above the other restored windows
         // (each was show()'d active during the loop, orderFront'd over this one).
         // focus() alone makes it the key window but does NOT reliably reorder it
@@ -1360,7 +1462,7 @@ export async function restoreSessionSnapshot(
         _restoreFocusCount++;
         _restoreFocusedId = focusedWindowId;
         DEBUG && console.log(`[session] Focused restored window: ${focusedWindowId}`);
-      } else if (hybridFocus && !hybridFocus.baseWin.isDestroyed() && coordinator.isAppFocused()) {
+      } else if (hybridFocus && !hybridFocus.baseWin.isDestroyed() && willActivate) {
         // Raise + ACTIVATE the focused hybrid host. The restore-opens were shown
         // INACTIVE (none stole frontmost), so this is the SINGLE place a restored
         // hybrid window gets activated. moveTop() puts it above the other restored
