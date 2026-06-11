@@ -1775,7 +1775,11 @@ function installTestBridge(): void {
      * after the hold fires, computes new bounds and publishes `page:set-bounds`,
      * which main routes to the host BaseWindow — so a test can assert
      * `hostBounds(id)` moved by the delta. Resolves true if the gesture dragged.
-     * Pure executeJavaScript (waits the real threshold inside the renderer).
+     * Pure executeJavaScript; instead of guessing a wall-clock margin for the
+     * hold timer, it POLLS the live FSM until `pending → ready` actually fires
+     * (the overlay is opacity:0/occluded in headless, so Chromium
+     * background-throttles its threshold setTimeout — a fixed sleep would let the
+     * first move land while still `pending`, reading as a pre-threshold cancel).
      */
     holdDragNavbar(dxScreen: number, dyScreen: number): Promise<boolean> {
       if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(false);
@@ -1789,10 +1793,19 @@ function installTestBridge(): void {
             nb.dispatchEvent(new MouseEvent('mousedown', {
               button: 0, buttons: 1, screenX: startX, screenY: startY, bubbles: true,
             }));
-            // Hold STILL past the threshold (read from the live prefs-driven FSM,
-            // default 1000ms) so the hold fires; generous margin for the timer to
-            // fire under a loaded test run before we move.
-            await new Promise((r) => setTimeout(r, 1500));
+            // Wait for the hold transition to ACTUALLY fire (pending → ready),
+            // not a fixed sleep: under a loaded/occluded renderer the threshold
+            // setTimeout is throttled and can land well past any guessed margin,
+            // and a pre-threshold move cancels candidacy. Poll the live FSM (it
+            // sends no movement, so it can't cancel). The 8s bound only backstops
+            // a stuck timer; the Playwright test timeout is the real ceiling.
+            const deadline = Date.now() + 8000;
+            let held = false;
+            while (Date.now() < deadline) {
+              if (t.holdDrag._state().ready) { held = true; break; }
+              await new Promise((r) => setTimeout(r, 25));
+            }
+            if (!held) return false;
             // First post-hold move begins the drag; a second move drives it to
             // the destination delta.
             document.dispatchEvent(new MouseEvent('mousemove', {
