@@ -197,9 +197,13 @@ the below was covered — every one became a user-visible regression. Invariants
 **Testing these:** real OS focus/first-responder is **unobservable in macOS-headless**, so assert
 the decision/state via the hybrid test bridge, not real focus. Coverage added:
 `hybrid-show-activate`, `hybrid-activation-policy`, `hybrid-close-shortcut`,
-`hybrid-shortcut-routing`. **`yarn test:desktop:electron:bg` uses `setsid` (Linux-only) and
-fails on macOS** — run `HEADLESS=1 yarn test:desktop:electron` directly (background it via the
-harness) instead.
+`hybrid-shortcut-routing`. The `:bg` test family now detaches cross-platform via
+`scripts/bg-run.sh` (macOS `nohup` / Linux `setsid -f`), so **`yarn test:desktop:electron:bg`
+works on macOS** — it backgrounds the full gate to `/tmp/test-electron.log` (tail with
+`yarn test:log`). (Pre-2026-06-12 it used a bare `setsid` and silently no-op'd on macOS; the
+old workaround "run `HEADLESS=1 yarn test:desktop:electron` directly" is no longer needed.)
+Note `test:desktop:electron` exits non-zero if **any** of the 6 runners fails (it aggregates
+per-runner status) — don't read the chained exit code as one runner's.
 
 **Fixed since (2026-06-09, second pass):**
 

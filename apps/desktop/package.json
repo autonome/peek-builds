@@ -24,7 +24,7 @@
     "test:packaged": "cd ../.. && yarn kill:packaged && HEADLESS=1 PACKAGED=1 ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=desktop",
     "test:packaged:debug": "cd ../.. && yarn kill:packaged && HEADLESS=1 PACKAGED=1 DEBUG=1 ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=desktop",
     "test:default-browser:linux": "cd ../.. && ./scripts/timed.sh sh -c 'yarn workspace @peek/desktop build && yarn workspace @peek/desktop build:electron:dist && ./scripts/smoke-default-browser.sh'",
-    "test:default-browser:linux:bg": "setsid -f nice -n 19 sh -c 'exec yarn test:default-browser:linux > /tmp/smoke-default-browser.log 2>&1 < /dev/null'",
+    "test:default-browser:linux:bg": "../../scripts/bg-run.sh /tmp/smoke-default-browser.log yarn test:default-browser:linux",
     "test:unit": "../../scripts/timed.sh sh -c 'yarn build && NODE_ENV=test ELECTRON_RUN_AS_NODE=1 npx electron --test dist/main/*.test.js && NODE_ENV=test node --test tests/unit/*.test.js'",
     "test:unit:modes": "../../scripts/timed.sh sh -c 'yarn build && ELECTRON_RUN_AS_NODE=1 npx electron --test dist/main/modes.test.js'",
     "test:unit:shortcuts": "../../scripts/timed.sh sh -c 'yarn build && ELECTRON_RUN_AS_NODE=1 npx electron --test dist/main/shortcuts.test.js'",
@@ -34,9 +34,9 @@
     "test:grep": "../../scripts/timed.sh sh -c 'yarn build && cd ../.. && HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts apps/desktop/tests/desktop/ --grep \"$0\"'",
     "test:desktop:electron:grep": "cd ../.. && HEADLESS=1 PACKAGED=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts apps/desktop/tests/desktop/ --reporter=line --grep \"$0\"",
     "test:desktop:electron:spec": "cd ../.. && HEADLESS=1 PACKAGED=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --reporter=line \"$0\"",
-    "test:desktop:electron:spec:bg": "setsid -f nice -n 19 sh -c 'read SPEC < /tmp/test-spec && exec yarn test:desktop:electron:spec \"$SPEC\" > /tmp/test-electron.log 2>&1 < /dev/null'",
-    "test:desktop:electron:bg": "setsid -f nice -n 19 sh -c 'exec yarn test:desktop:electron > /tmp/test-electron.log 2>&1 < /dev/null'",
-    "test:desktop:electron:grep:bg": "setsid -f nice -n 19 sh -c 'read PATTERN < /tmp/test-grep-pattern && exec yarn test:desktop:electron:grep \"$PATTERN\" > /tmp/test-electron.log 2>&1 < /dev/null'",
+    "test:desktop:electron:spec:bg": "../../scripts/bg-run.sh /tmp/test-electron.log sh -c 'read SPEC < /tmp/test-spec && exec yarn test:desktop:electron:spec \"$SPEC\"'",
+    "test:desktop:electron:bg": "../../scripts/bg-run.sh /tmp/test-electron.log yarn test:desktop:electron",
+    "test:desktop:electron:grep:bg": "../../scripts/bg-run.sh /tmp/test-electron.log sh -c 'read PATTERN < /tmp/test-grep-pattern && exec yarn test:desktop:electron:grep \"$PATTERN\"'",
     "test:log": "tail -f /tmp/test-electron.log",
     "//-- Manual debugging harness --//": "",
     "harness": "../../scripts/timed.sh sh -c 'yarn build && cd ../.. && BACKEND=electron HEADLESS=0 npx playwright test --config apps/desktop/playwright.config.ts --project=manual --workers=1 --headed'",
@@ -63,7 +63,7 @@
     "prod:log": "tail -f /tmp/prod-debug.log",
     "packaged:log": "tail -f /tmp/packaged-debug.log",
     "//-- Full desktop (electron) gate — all 6 runners, canonical --//": "",
-    "test:desktop:electron": "cd ../.. && ./scripts/timed.sh sh -c 'node scripts/check-native-modules.js && yarn workspace @peek/desktop build && electron-builder --dir && (NODE_ENV=test ELECTRON_RUN_AS_NODE=1 npx electron --test apps/desktop/dist/main/*.test.js; NODE_ENV=test node --test apps/desktop/tests/unit/*.test.js; HEADLESS=1 PACKAGED=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=desktop; HEADLESS=1 PACKAGED=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=desktop-serial --workers=1; HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=components; HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=editor)'"
+    "test:desktop:electron": "cd ../.. && ./scripts/timed.sh sh -c 'node scripts/check-native-modules.js && yarn workspace @peek/desktop build && electron-builder --dir && ( fail=0; NODE_ENV=test ELECTRON_RUN_AS_NODE=1 npx electron --test apps/desktop/dist/main/*.test.js || fail=1; NODE_ENV=test node --test apps/desktop/tests/unit/*.test.js || fail=1; HEADLESS=1 PACKAGED=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=desktop || fail=1; HEADLESS=1 PACKAGED=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=desktop-serial --workers=1 || fail=1; HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=components || fail=1; HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=editor || fail=1; exit $fail )'"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.1",
