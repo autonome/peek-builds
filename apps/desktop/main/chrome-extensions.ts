@@ -19,6 +19,10 @@ import { getDb } from './datastore.js';
 import { getProfileSession } from './session-partition.js';
 import { registerAll } from './chrome-api-polyfills/index.js';
 import { getBridgePreloadPath, setBridgeWindowsRegistry } from './chrome-api-polyfills/runtime-external.js';
+// Re-exported so entry.ts can flag shutdown on the runtime-external relay from
+// its before-quit handler (peek 048997b2) without reaching into the polyfill
+// module directly.
+export { markRuntimeExternalQuitting } from './chrome-api-polyfills/runtime-external.js';
 import { buildOptionsCommandName, computeUiEntries } from './chrome-extensions-helpers.js';
 import { invokeWindowOpen } from './ipc.js';
 import { DEBUG, isHeadless } from './config.js';

@@ -149,6 +149,33 @@ let _bridgeResponseListenerAttached = false;
 // Same flag for the content-script relay handlers.
 let _csRelayListenersAttached = false;
 
+// Set once the app begins shutting down. The IPC_SEND_FROM_PAGE handler stays
+// registered through quit (see cleanup() — removing it would log cosmetic
+// "No handler" errors for in-flight invokes), so a late content-script
+// LOG_EVENT can still arrive AFTER before-quit has begun tearing down the
+// session / service workers / bridge windows. Enumerating
+// session.serviceWorkers or calling swMain.send() into those half-destroyed
+// natives faults the main process — SIGSEGV on CrBrowserMain during teardown
+// (peek 048997b2). Once quitting, the handler short-circuits to an error
+// envelope and touches no native session/SW objects.
+let _quitting = false;
+
+/**
+ * Mark the runtime-external relay as shutting down. After this, the
+ * IPC_SEND_FROM_PAGE handler no-ops (returns an error envelope) instead of
+ * dispatching into session/service-worker natives that quit cleanup is
+ * concurrently destroying. Wired from entry.ts `before-quit` (and cleanup()).
+ * Idempotent.
+ */
+export function markRuntimeExternalQuitting() {
+  _quitting = true;
+}
+
+/** Test-only: reset the shutdown flag so unit tests stay independent. */
+export function _setQuittingForTests(v = false) {
+  _quitting = !!v;
+}
+
 function _webContentsById(id) {
   try {
     return _electronWebContents ? (_electronWebContents.fromId(id) || null) : null;
@@ -245,6 +272,16 @@ export function setupMainProcess(session, options = {}) {
   // Receive page-side request from the webview preload.
   ipcMain.handle(IPC_SEND_FROM_PAGE, async (_event, payload) => {
     const { extId: requestedExtId, message, origin, internal } = payload || {};
+    // Shutdown guard: once before-quit has begun, the session / service workers
+    // / bridge windows are being torn down. A late content-script LOG_EVENT
+    // hitting the (still-registered) handler must NOT enumerate
+    // session.serviceWorkers or call swMain.send() — derefing those
+    // half-destroyed natives faults the main process at teardown (peek
+    // 048997b2). Return an inert error envelope before touching anything native.
+    if (_quitting) {
+      console.log('[peek:runtime-external:main] IPC received during shutdown — no-op (quitting)');
+      return { __peekRuntimeExternalError: 'shutting down' };
+    }
     console.log('[peek:runtime-external:main] IPC received extId=', requestedExtId, 'type=', message && message.type, 'origin=', origin, 'internal=', !!internal);
     if (!requestedExtId || typeof requestedExtId !== 'string') {
       return { __peekRuntimeExternalError: 'missing extId' };
@@ -451,6 +488,12 @@ export function setupMainProcess(session, options = {}) {
 
   return {
     cleanup() {
+      // cleanup() runs from cleanupChromeExtensions() at shutdown — mark
+      // quitting so the still-registered handler short-circuits even if a
+      // late LOG_EVENT arrives after this point (peek 048997b2). before-quit
+      // also calls markRuntimeExternalQuitting() earlier; this is the
+      // belt-and-suspenders for the onQuit-driven path.
+      _quitting = true;
       // Deliberately DO NOT removeHandler(IPC_SEND_FROM_PAGE) here.
       //
       // This cleanup() is only ever called from cleanupChromeExtensions(),

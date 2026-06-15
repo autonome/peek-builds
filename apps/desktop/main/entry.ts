@@ -101,6 +101,7 @@ import {
   cleanupChromeExtensions,
   destroyChromeExtensionWindowsForShutdown,
   getChromeExtensionOptionsCommands,
+  markRuntimeExternalQuitting,
 } from './chrome-extensions.js';
 import {
   initProfilesDb,
@@ -913,6 +914,12 @@ app.on('before-quit', () => {
   if (_beforeQuitCleanupDone) return;
   _beforeQuitCleanupDone = true;
   DEBUG && console.log('[lifecycle] before-quit: running cleanup');
+  // FIRST: silence the runtime-external relay before any teardown below. The
+  // handler stays registered through quit, so a late content-script LOG_EVENT
+  // must not dispatch into the session / service workers / bridge windows that
+  // destroyChromeExtensionWindowsForShutdown() (and Electron's own quit) are
+  // about to free — that deref faults the main process (peek 048997b2).
+  try { markRuntimeExternalQuitting(); } catch (e) { DEBUG && console.error('[lifecycle] markRuntimeExternalQuitting error:', e); }
   try { stopAutosaveTimer(); } catch (e) { DEBUG && console.error('[lifecycle] stopAutosaveTimer error:', e); }
   try { cleanupDisplayWatcher(); } catch (e) { DEBUG && console.error('[lifecycle] cleanupDisplayWatcher error:', e); }
   try { saveSessionSnapshot('before-quit'); } catch (e) { DEBUG && console.error('[lifecycle] saveSessionSnapshot error:', e); }

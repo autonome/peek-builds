@@ -551,6 +551,21 @@ export async function initialize(): Promise<void> {
     publish(getSystemAddress(), 'cmd:execute:windows', {});
   };
   const updateEscGlobalRegistration = (): void => {
+    // Quit guard: once before-quit has begun, STOP reacting to the
+    // window-close / focus churn that teardown produces. The blur/active-hybrid
+    // listeners below fire as windows are destroyed during quit, and (via the
+    // deferred setImmediate path) land AFTER `before-quit: cleanup complete`.
+    // Re-registering an OS-level Escape grab at that point runs native
+    // hotkey/session work while webContents/views are being torn down — a
+    // pointless, teardown-racing side effect (observed in a shutdown-crash
+    // trace, peek 048997b2). Drop any existing grab and bail.
+    if (_appIsQuitting) {
+      if (_escGlobalRegistered) {
+        try { globalShortcut.unregister('Escape'); } catch { /* no-op: not held */ }
+        _escGlobalRegistered = false;
+      }
+      return;
+    }
     // Headless safety: globalShortcut.register is neutralized centrally for
     // headless test runs (entry.ts), so this hot path can run unguarded — no
     // OS-wide Escape grab happens regardless of how often focus/blur churn.
