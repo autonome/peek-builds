@@ -62,10 +62,5 @@
       "action": { "type": "execute" }
     }
   ],
-  "shortcuts": [
-    {
-      "keys": "CommandOrControl+Shift+P",
-      "command": "pagestream"
-    }
-  ]
+  "shortcuts": []
 }
