@@ -1570,7 +1570,12 @@ export function registerTileIpcHandlers(): void {
 
     try {
       const metadata = await source.resolve(args.atUri);
-      return { manifest: metadata.manifest, source: metadata.source };
+      return {
+        manifest: metadata.manifest,
+        source: metadata.source,
+        iconUrl: metadata.iconUrl,
+        screenshotUrls: metadata.screenshotUrls,
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { error: `Failed to resolve AT URI: ${message}` };
@@ -2434,9 +2439,21 @@ export function registerTileIpcHandlers(): void {
         cursor?: string;
       };
 
+      const { buildBlobUrl } = await import('./atproto-source.js');
+
+      // Narrow a record's `icon`/`screenshots` fields to resolvable blob URLs.
+      // Display-only: loaded by the renderer via <img src>, never installed,
+      // so we don't download or CID-verify them here.
+      type RawBlobRef = { ref?: { $link?: string } };
+      const blobUrl = (b: unknown): string | undefined => {
+        const link = (b as RawBlobRef | undefined)?.ref?.$link;
+        return link ? buildBlobUrl(args.pdsUrl, args.did, link) : undefined;
+      };
+
       const featureMap = new Map<string, {
         uri: string; featureId: string; name: string; version: string;
         description?: string; categories?: string[]; capabilities?: string[];
+        iconUrl?: string; screenshotUrls?: string[];
         createdAt: string;
       }>();
 
@@ -2447,6 +2464,10 @@ export function registerTileIpcHandlers(): void {
         const existing = featureMap.get(featureId);
         const createdAt = (val.createdAt as string) || '';
         if (!existing || createdAt > existing.createdAt) {
+          const iconUrl = blobUrl(val.icon);
+          const shots = Array.isArray(val.screenshots)
+            ? (val.screenshots as unknown[]).map(blobUrl).filter((u): u is string => !!u)
+            : [];
           featureMap.set(featureId, {
             uri: rec.uri,
             featureId,
@@ -2455,6 +2476,8 @@ export function registerTileIpcHandlers(): void {
             description: val.description as string | undefined,
             categories: val.categories as string[] | undefined,
             capabilities: val.capabilities as string[] | undefined,
+            iconUrl,
+            screenshotUrls: shots.length > 0 ? shots : undefined,
             createdAt,
           });
         }

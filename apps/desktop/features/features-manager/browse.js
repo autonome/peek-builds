@@ -35,7 +35,9 @@ const resultCount = document.getElementById('result-count');
 const contentEl = document.getElementById('content');
 const installPreview = document.getElementById('install-preview');
 const previewTitle = document.getElementById('preview-title');
+const previewIcon = document.getElementById('preview-icon');
 const previewMeta = document.getElementById('preview-meta');
+const previewScreenshots = document.getElementById('preview-screenshots');
 const previewCapabilities = document.getElementById('preview-capabilities');
 const previewCloseBtn = document.getElementById('preview-close');
 const previewCancelBtn = document.getElementById('preview-cancel');
@@ -124,6 +126,37 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+/**
+ * Build a feature-icon element. When `iconUrl` is present, render the real
+ * image (a resolvable PDS blob URL, loaded directly via <img src>); on load
+ * error, fall back to the letter avatar. With no icon, render the letter
+ * avatar directly. `name` supplies the fallback letter.
+ */
+function buildFeatureIcon(name, iconUrl) {
+  const icon = document.createElement('div');
+  icon.className = 'feature-icon';
+
+  const letter = (name || '?').charAt(0).toUpperCase();
+
+  if (iconUrl) {
+    const img = document.createElement('img');
+    img.className = 'feature-icon-img';
+    img.alt = '';
+    img.src = iconUrl;
+    // Graceful fallback: if the blob fails to load, show the letter avatar.
+    img.addEventListener('error', () => {
+      icon.classList.remove('has-image');
+      icon.textContent = letter;
+    });
+    icon.classList.add('has-image');
+    icon.appendChild(img);
+  } else {
+    icon.textContent = letter;
+  }
+
+  return icon;
+}
+
 async function showInstallPreview(atUri) {
   if (!hasPeekAPI) return;
 
@@ -137,7 +170,7 @@ async function showInstallPreview(atUri) {
       return;
     }
 
-    const { manifest, source } = result;
+    const { manifest, source, iconUrl, screenshotUrls } = result;
 
     // Get capability preview
     const capResult = await api.features.previewCapabilities(
@@ -149,6 +182,28 @@ async function showInstallPreview(atUri) {
 
     pendingInstallUri = atUri;
     previewTitle.textContent = manifest.name || manifest.id;
+
+    // Icon — real image when published, else letter avatar
+    previewIcon.innerHTML = '';
+    previewIcon.appendChild(buildFeatureIcon(manifest.name || manifest.id, iconUrl));
+
+    // Screenshots gallery — render a strip when present, else hide
+    previewScreenshots.innerHTML = '';
+    if (Array.isArray(screenshotUrls) && screenshotUrls.length > 0) {
+      previewScreenshots.style.display = '';
+      for (const url of screenshotUrls) {
+        const shot = document.createElement('img');
+        shot.className = 'preview-screenshot';
+        shot.alt = '';
+        shot.loading = 'lazy';
+        shot.src = url;
+        // Drop any screenshot that fails to load (no broken-image icon).
+        shot.addEventListener('error', () => shot.remove());
+        previewScreenshots.appendChild(shot);
+      }
+    } else {
+      previewScreenshots.style.display = 'none';
+    }
 
     // Meta info
     previewMeta.innerHTML = '';
@@ -355,11 +410,8 @@ function createFeatureCard(record) {
   card.className = 'feature-card';
   card.dataset.featureId = record.featureId;
 
-  // Icon
-  const icon = document.createElement('div');
-  icon.className = 'feature-icon';
-  icon.textContent = record.name.charAt(0).toUpperCase();
-  card.appendChild(icon);
+  // Icon — real image when published, else letter avatar
+  card.appendChild(buildFeatureIcon(record.name, record.iconUrl));
 
   // Info
   const info = document.createElement('div');

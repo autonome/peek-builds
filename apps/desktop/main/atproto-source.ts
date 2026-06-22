@@ -59,6 +59,10 @@ interface FeatureReleaseRecord {
   description?: string;
   categories?: string[];
   capabilities?: string[];
+  /** Optional feature icon blob (PNG or SVG) — display only, not installed. */
+  icon?: BlobRef;
+  /** Optional screenshot blobs (PNG or JPEG) — display only, not installed. */
+  screenshots?: BlobRef[];
   minPeekVersion?: string;
   createdAt: string;
 }
@@ -287,6 +291,20 @@ export async function getRecord(
 }
 
 /**
+ * Build the public (unauthenticated) URL for a PDS blob.
+ * Uses com.atproto.sync.getBlob XRPC endpoint.
+ *
+ * Display-only blobs (icon/screenshots) are surfaced to the renderer as these
+ * URLs so an `<img src>` can load them directly over HTTPS — the same way
+ * tiles already render external favicons (tile CSP allows `img-src https:`).
+ * No bytes cross IPC for display media.
+ */
+export function buildBlobUrl(pdsUrl: string, did: string, cid: string): string {
+  const params = new URLSearchParams({ did, cid });
+  return `${pdsUrl}/xrpc/com.atproto.sync.getBlob?${params.toString()}`;
+}
+
+/**
  * Download a blob from a PDS (unauthenticated).
  * Uses com.atproto.sync.getBlob XRPC endpoint.
  */
@@ -295,8 +313,7 @@ export async function getBlob(
   did: string,
   cid: string
 ): Promise<Buffer> {
-  const params = new URLSearchParams({ did, cid });
-  const url = `${pdsUrl}/xrpc/com.atproto.sync.getBlob?${params.toString()}`;
+  const url = buildBlobUrl(pdsUrl, did, cid);
 
   const res = await fetch(url);
   if (!res.ok) {
@@ -433,9 +450,24 @@ export class AtprotoSource implements TileSource {
       version: resolved.record.version,
     };
 
+    // Surface display media (icon + screenshots) as resolvable PDS blob URLs.
+    // These are loaded by the renderer via <img src>, so we don't download or
+    // CID-verify them here — same posture as externally-sourced favicons.
+    const { record, pdsUrl, did } = resolved;
+    const icon = record.icon?.ref?.$link
+      ? buildBlobUrl(pdsUrl, did, record.icon.ref.$link)
+      : undefined;
+    const screenshots = Array.isArray(record.screenshots)
+      ? record.screenshots
+          .filter((s): s is BlobRef => !!s?.ref?.$link)
+          .map(s => buildBlobUrl(pdsUrl, did, s.ref.$link))
+      : undefined;
+
     return {
       source,
       manifest: resolved.manifest,
+      iconUrl: icon,
+      screenshotUrls: screenshots && screenshots.length > 0 ? screenshots : undefined,
     };
   }
 

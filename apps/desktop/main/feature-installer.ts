@@ -44,6 +44,17 @@ export interface TileBundle {
 export interface FeatureSourceMetadata {
   source: FeatureSource;
   manifest: TileManifest;
+  /**
+   * Optional display-only feature icon URL (resolvable PDS blob URL).
+   * Present when the source record declares an icon. Loaded by the renderer
+   * via <img src>; not part of the installed bundle.
+   */
+  iconUrl?: string;
+  /**
+   * Optional display-only screenshot URLs (resolvable PDS blob URLs).
+   * Present when the source record declares screenshots.
+   */
+  screenshotUrls?: string[];
 }
 
 /**

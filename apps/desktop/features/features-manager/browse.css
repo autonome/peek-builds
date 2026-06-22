@@ -188,6 +188,19 @@ body {
   border-bottom: 1px solid var(--base02);
 }
 
+.install-preview-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* The preview icon reuses the .feature-icon box (built by buildFeatureIcon). */
+.install-preview-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
 .install-preview-title {
   font-size: 14px;
   font-weight: 600;
@@ -221,6 +234,24 @@ body {
 .preview-meta-value {
   color: var(--base04);
   word-break: break-all;
+}
+
+/* Screenshot gallery — horizontal scrolling strip */
+.preview-screenshots {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 12px;
+}
+
+.preview-screenshot {
+  height: 120px;
+  width: auto;
+  border-radius: 4px;
+  border: 1px solid var(--base02);
+  background: var(--base00);
+  flex-shrink: 0;
 }
 
 .preview-capabilities {
@@ -307,6 +338,19 @@ body {
   flex-shrink: 0;
   font-size: 16px;
   color: var(--base04);
+  overflow: hidden;
+}
+
+/* When a real published icon is shown, drop the placeholder background. */
+.feature-icon.has-image {
+  background: transparent;
+}
+
+.feature-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
 }
 
 .feature-info {
