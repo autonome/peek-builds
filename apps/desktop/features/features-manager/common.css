@@ -1,0 +1,510 @@
+/**
+ * features-manager shared chrome
+ *
+ * Single source of truth for the buttons / cards / inputs / modals / badges
+ * that were previously hand-rolled (and drifting) across manage.css,
+ * browse.css and publish.css.
+ *
+ * Imported by each page's stylesheet via `@import url('common.css')` (resolves
+ * to peek://ext/features-manager/common.css, sibling of the page css).
+ *
+ * Design tokens: the shared `--peek-*` scale lives in
+ * renderer/components/tokens.css, but that file is scoped to `:host` (it's
+ * consumed by Lit web components inside shadow DOM) and is NOT reachable over
+ * peek://theme/. Plain tile pages like these cannot @import it and have the
+ * tokens resolve. So — matching the pattern core pages use (see
+ * renderer/settings/settings.css, which maps theme vars into :root) — we
+ * mirror the SAME token values here under :root. Values are kept identical to
+ * tokens.css so the visual rhythm matches core surfaces. Colors use the
+ * semantic --theme-* aliases from peek://theme/variables.css.
+ */
+
+:root {
+  /* Spacing scale (mirrors renderer/components/tokens.css) */
+  --peek-space-xs: 4px;
+  --peek-space-sm: 8px;
+  --peek-space-md: 12px;
+  --peek-space-lg: 16px;
+  --peek-space-xl: 24px;
+  --peek-space-2xl: 32px;
+
+  /* Border radius */
+  --peek-radius-sm: 4px;
+  --peek-radius-md: 6px;
+  --peek-radius-lg: 8px;
+  --peek-radius-xl: 12px;
+  --peek-radius-full: 9999px;
+
+  /* Font sizes */
+  --peek-font-xs: 11px;
+  --peek-font-sm: 13px;
+  --peek-font-md: 14px;
+  --peek-font-lg: 16px;
+  --peek-font-xl: 18px;
+  --peek-font-2xl: 24px;
+
+  /* Font weights */
+  --peek-font-normal: 400;
+  --peek-font-medium: 500;
+  --peek-font-semibold: 600;
+  --peek-font-bold: 700;
+
+  /* Transitions */
+  --peek-transition-fast: 100ms ease;
+  --peek-transition-normal: 150ms ease;
+  --peek-transition-slow: 250ms ease;
+
+  /* Button heights */
+  --peek-btn-height-sm: 28px;
+  --peek-btn-height-md: 36px;
+  --peek-btn-height-lg: 44px;
+}
+
+/* ========== Reset + document ========== */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family: var(--theme-font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-size: var(--peek-font-md);
+  line-height: 1.5;
+}
+
+body {
+  background: var(--theme-bg);
+  color: var(--theme-text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ========== Header ========== */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px var(--peek-space-lg);
+  border-bottom: 1px solid var(--theme-border);
+  background: var(--theme-bg);
+  -webkit-app-region: drag;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--peek-space-sm);
+  -webkit-app-region: no-drag;
+}
+
+.header-title {
+  font-size: 15px;
+  font-weight: var(--peek-font-semibold);
+  color: var(--theme-text);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--peek-space-sm);
+  -webkit-app-region: no-drag;
+}
+
+/* Page-specific count labels share one look */
+.feature-count,
+.result-count {
+  font-size: 12px;
+  color: var(--theme-text-secondary);
+  font-weight: var(--peek-font-normal);
+}
+
+/* ========== Buttons ========== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--peek-space-xs);
+  padding: var(--peek-space-xs) 10px;
+  border: 1px solid var(--theme-text-muted);
+  border-radius: var(--peek-radius-sm);
+  background: var(--theme-bg-secondary);
+  color: var(--theme-text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--peek-transition-normal);
+}
+
+.btn:hover {
+  background: var(--theme-bg-tertiary);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn.primary {
+  background: var(--theme-accent);
+  color: var(--theme-bg);
+  border-color: var(--theme-accent);
+}
+
+.btn.primary:hover {
+  background: color-mix(in srgb, var(--theme-accent) 85%, white);
+}
+
+/* ========== Action buttons (card row) — ALWAYS visible per project rule ========== */
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--peek-space-xs) var(--peek-space-sm);
+  border: 1px solid var(--theme-text-muted);
+  border-radius: var(--peek-radius-sm);
+  background: transparent;
+  color: var(--theme-text-secondary);
+  font-size: var(--peek-font-xs);
+  cursor: pointer;
+  transition: all var(--peek-transition-normal);
+  white-space: nowrap;
+}
+
+.action-btn:hover {
+  background: var(--theme-bg-tertiary);
+  color: var(--theme-text);
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.action-btn.primary {
+  color: var(--theme-accent);
+  border-color: var(--theme-accent);
+}
+
+.action-btn.primary:hover {
+  background: color-mix(in srgb, var(--theme-accent) 20%, transparent);
+}
+
+.action-btn.danger:hover {
+  background: color-mix(in srgb, var(--theme-danger) 20%, transparent);
+  color: var(--theme-danger);
+  border-color: var(--theme-danger);
+}
+
+/* ========== Inputs ========== */
+.install-input,
+.search-input {
+  flex: 1;
+  padding: var(--peek-space-sm) 10px;
+  border: 1px solid var(--theme-text-muted);
+  border-radius: var(--peek-radius-sm);
+  background: var(--theme-bg-secondary);
+  color: var(--theme-text);
+  font-size: 12px;
+  font-family: var(--theme-font-mono, monospace);
+}
+
+/* search-input is full-width when standalone (manage filter box) */
+.search-input {
+  width: 100%;
+}
+
+.install-input:focus,
+.search-input:focus {
+  outline: none;
+  border-color: var(--theme-accent);
+}
+
+.install-input::placeholder,
+.search-input::placeholder {
+  color: var(--theme-text-muted);
+}
+
+/* ========== Status bars ========== */
+.install-status,
+.status-bar {
+  padding: var(--peek-space-sm) var(--peek-space-lg);
+  background: color-mix(in srgb, var(--theme-accent) 10%, transparent);
+  border-bottom: 1px solid var(--theme-border);
+}
+
+.install-status-text,
+.status-text {
+  font-size: 12px;
+  color: var(--theme-accent);
+}
+
+.install-status.error,
+.status-bar.error {
+  background: color-mix(in srgb, var(--theme-danger) 10%, transparent);
+}
+
+.install-status.error .install-status-text,
+.status-bar.error .status-text {
+  color: var(--theme-danger);
+}
+
+.install-status.success,
+.status-bar.success {
+  background: color-mix(in srgb, var(--theme-success) 10%, transparent);
+}
+
+.install-status.success .install-status-text,
+.status-bar.success .status-text {
+  color: var(--theme-success);
+}
+
+/* ========== Main content ========== */
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--peek-space-lg);
+}
+
+/* ========== Feature card list + card ========== */
+.feature-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--peek-space-sm);
+}
+
+.feature-card {
+  display: flex;
+  align-items: center;
+  gap: var(--peek-space-md);
+  padding: var(--peek-space-md);
+  border: 1px solid var(--theme-border);
+  border-radius: var(--peek-radius-md);
+  background: var(--theme-bg-secondary);
+  transition: border-color var(--peek-transition-normal);
+}
+
+.feature-card:hover {
+  border-color: var(--theme-text-muted);
+}
+
+.feature-card.disabled {
+  opacity: 0.6;
+}
+
+.feature-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--peek-radius-md);
+  background: var(--theme-bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: var(--peek-font-lg);
+  color: var(--theme-text-secondary);
+}
+
+.feature-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.feature-name {
+  font-size: var(--peek-font-sm);
+  font-weight: var(--peek-font-semibold);
+  color: var(--theme-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.feature-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--peek-space-sm);
+  margin-top: 2px;
+}
+
+.feature-version {
+  font-size: var(--peek-font-xs);
+  color: var(--theme-text-secondary);
+}
+
+/* ========== Source / status badges ========== */
+.feature-source-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px var(--peek-space-sm);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: var(--peek-font-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.feature-source-badge.local {
+  background: var(--theme-accent);
+  color: var(--theme-bg);
+}
+
+.feature-source-badge.atproto {
+  background: var(--theme-success);
+  color: var(--theme-bg);
+}
+
+.feature-source-badge.url,
+.feature-source-badge.dev {
+  background: var(--base0E);
+  color: var(--theme-bg);
+}
+
+.feature-source-badge.builtin {
+  background: var(--base0C);
+  color: var(--theme-bg);
+}
+
+/* ========== Action button group ========== */
+.feature-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--peek-space-xs);
+  flex-shrink: 0;
+}
+
+/* ========== Capability list (install preview) ========== */
+.preview-capabilities {
+  font-size: 12px;
+}
+
+.preview-capabilities h3 {
+  font-size: 12px;
+  font-weight: var(--peek-font-semibold);
+  color: var(--theme-text);
+  margin-bottom: var(--peek-space-sm);
+}
+
+.capability-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.capability-item {
+  padding: 3px var(--peek-space-sm);
+  border-radius: 3px;
+  font-size: var(--peek-font-xs);
+}
+
+.capability-item.granted {
+  background: color-mix(in srgb, var(--theme-success) 15%, transparent);
+  color: var(--theme-success);
+}
+
+.capability-item.denied {
+  background: color-mix(in srgb, var(--theme-danger) 15%, transparent);
+  color: var(--theme-danger);
+}
+
+/* ========== Install preview shell ========== */
+.install-preview {
+  margin: var(--peek-space-md) var(--peek-space-lg);
+  border: 1px solid var(--theme-text-muted);
+  border-radius: var(--peek-radius-md);
+  background: var(--theme-bg-secondary);
+  overflow: hidden;
+}
+
+.install-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px var(--peek-space-md);
+  border-bottom: 1px solid var(--theme-border);
+}
+
+.install-preview-title {
+  font-size: var(--peek-font-md);
+  font-weight: var(--peek-font-semibold);
+  color: var(--theme-text);
+}
+
+.install-preview-body {
+  padding: var(--peek-space-md);
+}
+
+.install-preview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--peek-space-sm);
+  padding: 10px var(--peek-space-md);
+  border-top: 1px solid var(--theme-border);
+}
+
+/* ========== Preview meta rows (install preview / publish step 2) ========== */
+.preview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: var(--peek-space-md);
+  font-size: 12px;
+  color: var(--theme-text-secondary);
+}
+
+.preview-meta-row {
+  display: flex;
+  gap: var(--peek-space-sm);
+}
+
+.preview-meta-label {
+  font-weight: var(--peek-font-semibold);
+  color: var(--theme-text);
+  min-width: 80px;
+}
+
+.preview-meta-value {
+  color: var(--theme-text-secondary);
+  word-break: break-all;
+}
+
+/* ========== Empty state ========== */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px var(--peek-space-xl);
+  text-align: center;
+}
+
+.empty-state-icon {
+  font-size: 48px;
+  color: var(--theme-text-muted);
+  margin-bottom: var(--peek-space-lg);
+  font-family: system-ui;
+}
+
+.empty-state-title {
+  font-size: 15px;
+  font-weight: var(--peek-font-semibold);
+  color: var(--theme-text);
+  margin-bottom: var(--peek-space-xs);
+}
+
+.empty-state-hint {
+  font-size: 12px;
+  color: var(--theme-text-secondary);
+  max-width: 300px;
+}
+
+/* ========== Loading ========== */
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  color: var(--theme-text-secondary);
+  font-size: var(--peek-font-sm);
+}
