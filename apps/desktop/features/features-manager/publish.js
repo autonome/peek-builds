@@ -7,8 +7,6 @@
  * Step 3: Confirm and publish (upload blobs + create record)
  */
 
-import { uploadBlob, xrpcPost } from 'peek://lex/atproto.js';
-
 const api = window.app;
 const hasPeekAPI = !!api;
 
@@ -417,6 +415,69 @@ function base64ToBytes(b64) {
 }
 
 /**
+ * Encode a Uint8Array into a base64 string for the atproto proxy IPC
+ * (binary bodies travel as base64). Chunked to avoid blowing the argument
+ * limit on String.fromCharCode for multi-MB blobs.
+ */
+function bytesToBase64(bytes) {
+  let binStr = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binStr += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binStr);
+}
+
+/**
+ * Turn a main-process atproto-proxy result into the parsed JSON body, or
+ * throw a descriptive Error. The proxy resolves to `{ error }` on a
+ * transport/refresh failure, or `{ status, statusText, headers, body }`
+ * for any completed HTTP response (a non-OK status is NOT a thrown error
+ * at the IPC layer — we surface it here, mirroring the old lex helpers'
+ * `throw new Error(err.message || ...)` behaviour so errors land in the
+ * publish-error UI and no half-built record is produced). `auth` lets the
+ * caller distinguish a missing/expired session for login-gating.
+ */
+function unwrapProxyResult(res, what) {
+  if (!res || typeof res !== 'object') {
+    throw new Error(`${what}: no response from atproto proxy`);
+  }
+  if (res.error) {
+    const err = new Error(res.error);
+    // The proxy returns this exact message when no Lex session is persisted.
+    if (/no at protocol session/i.test(res.error)) err.authMissing = true;
+    throw err;
+  }
+  const status = res.status;
+  if (typeof status !== 'number' || status < 200 || status >= 300) {
+    const body = res.body && typeof res.body === 'object' ? res.body : {};
+    if (status === 401) {
+      const err = new Error(body.message || body.error || `${what} unauthorized (401)`);
+      err.authMissing = true;
+      throw err;
+    }
+    throw new Error(body.message || body.error || `${what} failed (${status})`);
+  }
+  return res.body;
+}
+
+/** Upload bytes as a blob via the main-process DPoP proxy. Returns the blob ref. */
+async function proxyUploadBlob(bytes, mimeType) {
+  const url = `${lexSession.pdsUrl}/xrpc/com.atproto.repo.uploadBlob`;
+  const res = await api.atproto.uploadBlob(url, bytesToBase64(bytes), mimeType);
+  const body = unwrapProxyResult(res, 'Blob upload');
+  if (!body || !body.blob) throw new Error('Blob upload returned no blob ref');
+  return body.blob;
+}
+
+/** POST an XRPC JSON request via the main-process DPoP proxy. Returns the JSON body. */
+async function proxyXrpcPost(nsid, jsonBody) {
+  const url = `${lexSession.pdsUrl}/xrpc/${nsid}`;
+  const res = await api.atproto.request('POST', url, jsonBody);
+  return unwrapProxyResult(res, `XRPC POST ${nsid}`);
+}
+
+/**
  * Re-validate a media selection against the lexicon caps right before upload.
  * Selection-time validation (validateMediaFile) already enforces these, but we
  * re-check here so a half-built record is never produced if state drifts.
@@ -442,21 +503,7 @@ async function uploadMediaSelection(sel, limits) {
   if (err) throw new Error(err);
 
   const bytes = new Uint8Array(await sel.file.arrayBuffer());
-  const resp = await uploadBlob(lexSession, bytes, sel.mimeType, onLexSessionRefreshed);
-  return resp.blob;
-}
-
-/**
- * Handle a refreshed lex session so future calls within this flow pick up the
- * rotated tokens. Persistence of the refreshed session is owned by the lex
- * feature; we just update our in-memory copy and publish an event so other
- * listeners (including lex's background) can refresh their own state.
- */
-function onLexSessionRefreshed(updated) {
-  lexSession = updated;
-  try {
-    api.pubsub.publish('lex:session-changed', { session: updated });
-  } catch {}
+  return proxyUploadBlob(bytes, sel.mimeType);
 }
 
 async function doPublish() {
@@ -472,7 +519,7 @@ async function doPublish() {
   const totalFiles = files.length;
 
   try {
-    // Step 1: Upload each file as a blob (renderer-side DPoP via lex's helpers)
+    // Step 1: Upload each file as a blob (main-process DPoP via the proxy)
     progressLabel.textContent = 'Uploading files...';
     const fileEntries = [];
 
@@ -482,16 +529,16 @@ async function doPublish() {
       progressBar.style.width = `${((i) / (totalFiles + 1)) * 100}%`;
 
       const bytes = base64ToBytes(file.content);
-      let blobResp;
+      let blob;
       try {
-        blobResp = await uploadBlob(lexSession, bytes, file.mimeType, onLexSessionRefreshed);
+        blob = await proxyUploadBlob(bytes, file.mimeType);
       } catch (err) {
         throw new Error(`Failed to upload ${file.relativePath}: ${err.message}`);
       }
 
       fileEntries.push({
         path: file.relativePath,
-        blob: blobResp.blob,
+        blob,
       });
     }
 
@@ -507,13 +554,7 @@ async function doPublish() {
     let manifestBlob;
     try {
       const manifestBytes = base64ToBytes(manifestFile.content);
-      const manifestResp = await uploadBlob(
-        lexSession,
-        manifestBytes,
-        'application/json',
-        onLexSessionRefreshed
-      );
-      manifestBlob = manifestResp.blob;
+      manifestBlob = await proxyUploadBlob(manifestBytes, 'application/json');
     } catch (err) {
       throw new Error(`Failed to upload manifest: ${err.message}`);
     }
@@ -609,16 +650,11 @@ async function doPublish() {
 
     let createResp;
     try {
-      createResp = await xrpcPost(
-        lexSession,
-        'com.atproto.repo.createRecord',
-        {
-          repo: lexSession.did,
-          collection: 'space.peek.feature.release',
-          record,
-        },
-        onLexSessionRefreshed
-      );
+      createResp = await proxyXrpcPost('com.atproto.repo.createRecord', {
+        repo: lexSession.did,
+        collection: 'space.peek.feature.release',
+        record,
+      });
     } catch (err) {
       throw new Error(`Record creation failed: ${err.message}`);
     }

@@ -139,8 +139,7 @@
           "key": "features-publish",
           "width": 700,
           "height": 600,
-          "title": "Publish Feature",
-          "webPreferences": { "webSecurity": false }
+          "title": "Publish Feature"
         }
       }
     },

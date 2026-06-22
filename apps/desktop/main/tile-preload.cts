@@ -1304,6 +1304,50 @@ function buildAPI(): Record<string, unknown> {
     },
   };
 
+  // ── AT Protocol DPoP proxy (if `network` granted) ──
+  //
+  // Exposes the main-process DPoP request proxy (see atproto-proxy.ts /
+  // tile-ipc.ts handlers) so tiles can make non-CORS, DPoP-signed XRPC
+  // calls against the user's PDS WITHOUT `webSecurity:false`. The session
+  // (incl. the private DPoP key) lives in main's `feature_settings` and is
+  // read by the proxy itself — it is never passed across this bridge.
+  //
+  // Both methods resolve to the proxy result object
+  //   { status, statusText, headers, body, binary, refreshed }
+  // or { error } — they do NOT throw on a non-OK HTTP status (callers must
+  // inspect `.status` / `.error`). `request` returns parsed JSON in `body`;
+  // `uploadBlob` likewise returns the parsed JSON upload response in `body`.
+
+  api.atproto = {
+    /**
+     * JSON-body XRPC request (xrpcGet / xrpcPost). `url` must be a fully
+     * qualified PDS/atproto URL (the proxy enforces its own host allowlist).
+     */
+    request: async (method: 'GET' | 'POST', url: string, jsonBody?: unknown) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:atproto:request', {
+        token: tileToken,
+        method,
+        url,
+        jsonBody,
+      });
+    },
+
+    /**
+     * Binary blob upload (com.atproto.repo.uploadBlob). Bytes travel as
+     * base64 over IPC. `url` is the fully qualified uploadBlob endpoint.
+     */
+    uploadBlob: async (url: string, dataBase64: string, contentType: string) => {
+      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
+      return ipcRenderer.invoke('tile:atproto:upload-blob', {
+        token: tileToken,
+        url,
+        dataBase64,
+        contentType,
+      });
+    },
+  };
+
   // ── Filesystem (if granted) ──
 
   api.filesystem = {
