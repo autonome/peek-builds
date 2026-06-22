@@ -369,6 +369,11 @@ body {
   color: var(--base00);
 }
 
+.feature-source-badge.builtin {
+  background: var(--base0C);
+  color: var(--base00);
+}
+
 .feature-status-badge {
   display: inline-flex;
   align-items: center;

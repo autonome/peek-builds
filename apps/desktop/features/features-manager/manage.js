@@ -61,13 +61,32 @@ async function loadFeatures() {
   }
 
   try {
-    const result = await api.features.list();
-    if (result.error) {
-      showEmpty(result.error);
+    // tile:features:list hides builtins from the no-arg (default) response,
+    // so issue a second call with sourceType: 'builtin' and merge. The two
+    // responses are disjoint by source type (non-builtin vs builtin), but
+    // dedupe by feature id defensively in case that ever changes.
+    const [nonBuiltinResult, builtinResult] = await Promise.all([
+      api.features.list(),
+      api.features.list('builtin'),
+    ]);
+
+    if (nonBuiltinResult?.error) {
+      showEmpty(nonBuiltinResult.error);
       return;
     }
 
-    features = result.entries || [];
+    const merged = [];
+    const seen = new Set();
+    for (const entry of [
+      ...(nonBuiltinResult?.entries || []),
+      ...(builtinResult?.entries || []),
+    ]) {
+      if (seen.has(entry.id)) continue;
+      seen.add(entry.id);
+      merged.push(entry);
+    }
+
+    features = merged;
     render();
     updateLastCheckedFooter();
   } catch (err) {
@@ -123,12 +142,14 @@ function render() {
 function showEmpty(errorMsg) {
   const hint = errorMsg
     ? errorMsg
-    : 'No features installed. Install a feature from an AT URI above, browse publishers, or create a new dev feature.';
+    : 'Install a feature from an AT URI above, browse publishers, or create a new dev feature. Built-in features always appear here once loaded.';
+
+  const title = errorMsg ? 'Could not load features' : 'No features yet';
 
   contentEl.innerHTML = `
     <div class="empty-state">
       <div class="empty-state-icon">\u2699</div>
-      <div class="empty-state-title">No features installed</div>
+      <div class="empty-state-title">${title}</div>
       <div class="empty-state-hint">${hint}</div>
     </div>
   `;
@@ -136,6 +157,7 @@ function showEmpty(errorMsg) {
 
 function createFeatureCard(feature) {
   const isDev = feature.source?.type === 'dev';
+  const isBuiltin = feature.source?.type === 'builtin';
   const card = document.createElement('div');
   card.className = 'feature-card' + (feature.disabled ? ' disabled' : '') + (isDev ? ' dev' : '');
   card.dataset.featureId = feature.id;
@@ -249,29 +271,35 @@ function createFeatureCard(feature) {
     actions.appendChild(updateBtn);
   }
 
-  // Enable/Disable toggle
-  const toggleBtn = document.createElement('button');
-  toggleBtn.className = 'action-btn' + (isDisabled ? ' primary' : '');
-  toggleBtn.textContent = isDisabled ? 'Enable' : 'Disable';
-  toggleBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    toggleFeature(feature.id, isDisabled);
-  });
-  actions.appendChild(toggleBtn);
+  // Enable/Disable + Remove are suppressed for builtin features: the
+  // backend rejects both ops (tile:features:disable / :remove return
+  // "Cannot disable/remove builtin features"), and Settings treats them
+  // as non-removable too. DevTools (read-only) stays available below.
+  if (!isBuiltin) {
+    // Enable/Disable toggle
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'action-btn' + (isDisabled ? ' primary' : '');
+    toggleBtn.textContent = isDisabled ? 'Enable' : 'Disable';
+    toggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFeature(feature.id, isDisabled);
+    });
+    actions.appendChild(toggleBtn);
 
-  // Remove
-  const removeBtn = document.createElement('button');
-  removeBtn.className = 'action-btn danger';
-  removeBtn.textContent = isDev ? 'Unregister' : 'Remove';
-  removeBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (isDev) {
-      unregisterDevFeature(feature.id, feature.name);
-    } else {
-      removeFeature(feature.id, feature.name);
-    }
-  });
-  actions.appendChild(removeBtn);
+    // Remove
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'action-btn danger';
+    removeBtn.textContent = isDev ? 'Unregister' : 'Remove';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (isDev) {
+        unregisterDevFeature(feature.id, feature.name);
+      } else {
+        removeFeature(feature.id, feature.name);
+      }
+    });
+    actions.appendChild(removeBtn);
+  }
 
   // DevTools — available for ALL features (installed or dev-source).
   // Observability: lets a user crack open any running tile's devtools
