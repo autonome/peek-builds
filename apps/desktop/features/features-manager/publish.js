@@ -402,6 +402,36 @@ function base64ToBytes(b64) {
 }
 
 /**
+ * Re-validate a media selection against the lexicon caps right before upload.
+ * Selection-time validation (validateMediaFile) already enforces these, but we
+ * re-check here so a half-built record is never produced if state drifts.
+ * Returns an error string, or null if the selection is within caps.
+ */
+function validateMediaSelection(sel, { accept, maxBytes, kind }) {
+  if (!accept.includes(sel.mimeType)) {
+    return `${kind} "${sel.name}": unsupported type (${sel.mimeType || 'unknown'}). Allowed: ${accept.join(', ')}.`;
+  }
+  if (sel.size > maxBytes) {
+    return `${kind} "${sel.name}": ${formatSize(sel.size)} exceeds max ${formatSize(maxBytes)}.`;
+  }
+  return null;
+}
+
+/**
+ * Upload a single media selection (icon or screenshot) as an AT Protocol blob,
+ * after re-validating it against the lexicon caps. Returns the blob ref
+ * ({ $type: 'blob', ref: { $link }, mimeType, size }) to embed in the record.
+ */
+async function uploadMediaSelection(sel, limits) {
+  const err = validateMediaSelection(sel, limits);
+  if (err) throw new Error(err);
+
+  const bytes = new Uint8Array(await sel.file.arrayBuffer());
+  const resp = await uploadBlob(lexSession, bytes, sel.mimeType, onLexSessionRefreshed);
+  return resp.blob;
+}
+
+/**
  * Handle a refreshed lex session so future calls within this flow pick up the
  * rotated tokens. Persistence of the refreshed session is owned by the lex
  * feature; we just update our in-memory copy and publish an event so other
@@ -473,6 +503,46 @@ async function doPublish() {
       throw new Error(`Failed to upload manifest: ${err.message}`);
     }
 
+    // Step 2b: Upload icon + screenshots as blobs (lexicon: icon = blob,
+    // screenshots = blob[]). Caps are re-validated before each upload so a
+    // failure aborts the whole publish rather than producing a half-built record.
+    let iconBlob = null;
+    if (iconSelection) {
+      progressLabel.textContent = 'Uploading icon...';
+      progressDetail.textContent = iconSelection.name;
+      try {
+        iconBlob = await uploadMediaSelection(iconSelection, {
+          accept: ICON_ACCEPT,
+          maxBytes: ICON_MAX_BYTES,
+          kind: 'Icon',
+        });
+      } catch (err) {
+        throw new Error(`Failed to upload icon: ${err.message}`);
+      }
+    }
+
+    const screenshotBlobs = [];
+    if (screenshotSelections.length > 0) {
+      if (screenshotSelections.length > SCREENSHOTS_MAX_COUNT) {
+        throw new Error(`Too many screenshots (${screenshotSelections.length}); max ${SCREENSHOTS_MAX_COUNT}.`);
+      }
+      progressLabel.textContent = 'Uploading screenshots...';
+      for (let i = 0; i < screenshotSelections.length; i++) {
+        const sel = screenshotSelections[i];
+        progressDetail.textContent = `${sel.name} (${i + 1}/${screenshotSelections.length})`;
+        try {
+          const blob = await uploadMediaSelection(sel, {
+            accept: SCREENSHOT_ACCEPT,
+            maxBytes: SCREENSHOT_MAX_BYTES,
+            kind: 'Screenshot',
+          });
+          screenshotBlobs.push(blob);
+        } catch (err) {
+          throw new Error(`Failed to upload screenshot ${i + 1}: ${err.message}`);
+        }
+      }
+    }
+
     // Step 3: Build capabilities list from manifest
     let capabilities = [];
     try {
@@ -518,6 +588,9 @@ async function doPublish() {
 
     const homepage = homepageInput.value.trim();
     if (homepage) record.homepage = homepage;
+
+    if (iconBlob) record.icon = iconBlob;
+    if (screenshotBlobs.length > 0) record.screenshots = screenshotBlobs;
 
     let createResp;
     try {
