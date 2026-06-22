@@ -55,23 +55,28 @@
           <div class="form-group">
             <label class="form-label" for="pub-description">Description</label>
             <textarea class="form-textarea" id="pub-description" rows="3" maxlength="2048" placeholder="Describe what this feature does..."></textarea>
+            <div class="media-error" id="pub-description-error"></div>
           </div>
           <div class="form-group">
             <label class="form-label">Categories</label>
             <div class="category-grid" id="category-grid"></div>
+            <div class="media-error" id="pub-categories-error"></div>
           </div>
           <div class="form-group">
             <label class="form-label" for="pub-readme">Readme (Markdown)</label>
             <textarea class="form-textarea" id="pub-readme" rows="6" maxlength="32768" placeholder="# Feature Name\n\nDetailed description..."></textarea>
+            <div class="media-error" id="pub-readme-error"></div>
           </div>
           <div class="form-row">
             <div class="form-group">
               <label class="form-label" for="pub-license">License (SPDX)</label>
               <input class="form-input" id="pub-license" type="text" placeholder="MIT" maxlength="64">
+              <div class="media-error" id="pub-license-error"></div>
             </div>
             <div class="form-group">
               <label class="form-label" for="pub-homepage">Homepage URL</label>
               <input class="form-input" id="pub-homepage" type="url" placeholder="https://...">
+              <div class="media-error" id="pub-homepage-error"></div>
             </div>
           </div>
           <div class="form-group">

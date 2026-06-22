@@ -26,6 +26,16 @@ const SCREENSHOT_MAX_BYTES = 2097152;        // 2 MB
 const SCREENSHOT_ACCEPT = ['image/png', 'image/jpeg'];
 const SCREENSHOTS_MAX_COUNT = 5;
 
+// Metadata limits (must match space.peek.feature.release lexicon)
+const DESCRIPTION_MAX = 2048;                // maxLength of `description`
+const README_MAX = 32768;                    // maxLength of `readme` (32 KB)
+const LICENSE_MAX = 64;                      // maxLength of `license`
+const CATEGORIES_MAX = 10;                   // maxLength of `categories`
+// Pragmatic SPDX identifier shape: letters, digits, dots, hyphens, plus, and
+// the WITH/OR/AND operators used in compound expressions. Not a full SPDX
+// parser — just rejects obviously malformed input before the server does.
+const SPDX_ID_RE = /^[A-Za-z0-9.+-]+(?:\s+(?:WITH|OR|AND)\s+[A-Za-z0-9.+-]+)*$/;
+
 // ─── DOM refs ──────────────────────────────────────────────────────
 
 const stepIndicator = document.getElementById('step-indicator');
@@ -43,10 +53,15 @@ const previewMeta = document.getElementById('preview-meta');
 const fileList = document.getElementById('file-list');
 const totalSizeEl = document.getElementById('total-size');
 const descriptionInput = document.getElementById('pub-description');
+const descriptionError = document.getElementById('pub-description-error');
 const categoryGrid = document.getElementById('category-grid');
+const categoriesError = document.getElementById('pub-categories-error');
 const readmeInput = document.getElementById('pub-readme');
+const readmeError = document.getElementById('pub-readme-error');
 const licenseInput = document.getElementById('pub-license');
+const licenseError = document.getElementById('pub-license-error');
 const homepageInput = document.getElementById('pub-homepage');
+const homepageError = document.getElementById('pub-homepage-error');
 const iconInput = document.getElementById('pub-icon-input');
 const iconPickBtn = document.getElementById('pub-icon-pick-btn');
 const iconPreview = document.getElementById('pub-icon-preview');
@@ -817,6 +832,82 @@ function handleScreenshotsFileChange(e) {
   renderScreenshotsPreview();
 }
 
+// ─── Step 2 metadata validation ────────────────────────────────────
+
+/**
+ * Validate the Step 2 metadata fields against the space.peek.feature.release
+ * lexicon caps before advancing to Step 3. All of these fields are optional in
+ * the lexicon, so empty values are always valid; only present values are
+ * checked. Mirrors the media validators: each problem is surfaced inline in the
+ * field's `.media-error` element via showMediaError. Returns true if all fields
+ * pass (clearing any prior errors), false otherwise.
+ */
+function validateMetadata() {
+  let ok = true;
+
+  // Clear any prior errors first.
+  showMediaError(descriptionError, '');
+  showMediaError(categoriesError, '');
+  showMediaError(readmeError, '');
+  showMediaError(licenseError, '');
+  showMediaError(homepageError, '');
+
+  // Description ≤ 2048 chars (optional).
+  const desc = descriptionInput.value.trim();
+  if (desc.length > DESCRIPTION_MAX) {
+    showMediaError(descriptionError, `Description is ${desc.length} characters; max ${DESCRIPTION_MAX}.`);
+    ok = false;
+  }
+
+  // Categories ≤ 10, each from the known set (optional).
+  if (selectedCategories.size > CATEGORIES_MAX) {
+    showMediaError(categoriesError, `Too many categories (${selectedCategories.size}); max ${CATEGORIES_MAX}.`);
+    ok = false;
+  } else {
+    const unknown = Array.from(selectedCategories).filter(c => !CATEGORIES.includes(c));
+    if (unknown.length > 0) {
+      showMediaError(categoriesError, `Unknown categor${unknown.length === 1 ? 'y' : 'ies'}: ${unknown.join(', ')}.`);
+      ok = false;
+    }
+  }
+
+  // Readme markdown ≤ 32 KB (optional).
+  const readme = readmeInput.value.trim();
+  if (readme.length > README_MAX) {
+    showMediaError(readmeError, `Readme is ${readme.length} characters; max ${README_MAX}.`);
+    ok = false;
+  }
+
+  // License: valid SPDX identifier shape, ≤ 64 chars (optional).
+  const license = licenseInput.value.trim();
+  if (license) {
+    if (license.length > LICENSE_MAX) {
+      showMediaError(licenseError, `License is ${license.length} characters; max ${LICENSE_MAX}.`);
+      ok = false;
+    } else if (!SPDX_ID_RE.test(license)) {
+      showMediaError(licenseError, `"${license}" is not a valid SPDX license identifier (e.g. MIT, Apache-2.0).`);
+      ok = false;
+    }
+  }
+
+  // Homepage: valid URI (optional).
+  const homepage = homepageInput.value.trim();
+  if (homepage) {
+    let url = null;
+    try {
+      url = new URL(homepage);
+    } catch {
+      url = null;
+    }
+    if (!url) {
+      showMediaError(homepageError, `"${homepage}" is not a valid URL.`);
+      ok = false;
+    }
+  }
+
+  return ok;
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────
 
 function formatSize(bytes) {
@@ -834,7 +925,15 @@ function escapeHtml(str) {
 // ─── Event listeners ───────────────────────────────────────────────
 
 backToStep1.addEventListener('click', () => goToStep(1));
-nextToStep3.addEventListener('click', () => goToStep(3));
+nextToStep3.addEventListener('click', () => {
+  // Validate Step 2 metadata against lexicon caps before advancing. On failure,
+  // inline field errors are shown and we stay on Step 2.
+  if (!validateMetadata()) {
+    showStatus('Please fix the highlighted fields before continuing.', 'error');
+    return;
+  }
+  goToStep(3);
+});
 backToStep2.addEventListener('click', () => goToStep(2));
 
 iconPickBtn.addEventListener('click', () => iconInput.click());
