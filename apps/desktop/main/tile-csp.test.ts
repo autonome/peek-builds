@@ -5,8 +5,13 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
 
-import { buildCSPForTile, buildDefaultCSP, injectCSPHeader, isHTMLResponse } from './tile-csp.js';
-import type { TileCapabilities } from './tile-manifest.js';
+import { buildCSPForTile, buildDefaultCSP, injectCSPHeader, isHTMLResponse, resolveTileOriginCSP } from './tile-csp.js';
+import type { TileCapabilities, TileManifest } from './tile-manifest.js';
+
+/** Minimal TileManifest carrying only the capabilities the CSP path reads. */
+function manifestWith(capabilities: TileCapabilities): TileManifest {
+  return { id: 'fixture', capabilities } as unknown as TileManifest;
+}
 
 describe('buildDefaultCSP', () => {
   it('should return a valid CSP string', () => {
@@ -85,6 +90,41 @@ describe('buildCSPForTile', () => {
   it('should always block worker-src', () => {
     const csp = buildCSPForTile({});
     assert.ok(csp.includes("worker-src 'none'"));
+  });
+});
+
+describe('resolveTileOriginCSP (loaded ?? lazy ?? default precedence)', () => {
+  const networkManifest = manifestWith({ network: { domains: ['public.api.bsky.app', '*'] } });
+
+  it('uses the loaded manifest when present', () => {
+    const csp = resolveTileOriginCSP(networkManifest, null);
+    assert.ok(csp.includes('https://public.api.bsky.app'));
+  });
+
+  it("REGRESSION: a lazy tile served before its manifest loads must still get its network CSP, not connect-src 'self'", () => {
+    // The bug: protocol.ts only consulted the LOADED manifest, so a
+    // lazy-registered tile (e.g. a session-restored Lex window served before
+    // `loadedManifests.set()`) fell back to the default CSP — collapsing
+    // connect-src to 'self' and blocking every external fetch (Lex login).
+    const csp = resolveTileOriginCSP(null, networkManifest);
+    assert.ok(csp.includes('https://public.api.bsky.app'), 'lazy manifest network domains must reach connect-src');
+    assert.ok(csp.includes('https://*'), 'wildcard network domain must expand');
+    const connectSrc = csp.match(/connect-src ([^;]+)/)?.[1] || '';
+    assert.notStrictEqual(connectSrc.trim(), "'self'", "connect-src must not collapse to 'self' for a lazy network tile");
+  });
+
+  it('prefers the loaded manifest over the lazy one when both exist', () => {
+    const loaded = manifestWith({ network: { domains: ['loaded.example.com'] } });
+    const lazy = manifestWith({ network: { domains: ['lazy.example.com'] } });
+    const csp = resolveTileOriginCSP(loaded, lazy);
+    assert.ok(csp.includes('https://loaded.example.com'));
+    assert.ok(!csp.includes('https://lazy.example.com'));
+  });
+
+  it("falls back to the default 'self'-only CSP for a truly-unknown origin (no manifest at all)", () => {
+    const csp = resolveTileOriginCSP(null, null);
+    assert.ok(csp.includes("connect-src 'self'"));
+    assert.ok(!csp.includes('https://'));
   });
 });
 

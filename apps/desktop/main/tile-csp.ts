@@ -98,6 +98,31 @@ export function buildDefaultCSP(): string {
 }
 
 /**
+ * Resolve the CSP string for a tile origin from its two possible manifest
+ * sources, in precedence order:
+ *   1. the loaded manifest (eager / already-booted tile), else
+ *   2. the lazy-registered manifest (a lazy tile whose background hasn't
+ *      booted yet — e.g. a session-restored window whose HTML is served
+ *      before `loadedManifests.set()` runs), else
+ *   3. the maximally-restrictive default CSP (truly-unknown origin).
+ *
+ * Consulting the lazy manifest (step 2) is the fix for the regression where a
+ * lazy tile served before its manifest loaded got the default CSP, silently
+ * dropping its declared `network` capability (`connect-src` collapsed to
+ * `'self'`) and breaking every external fetch (this is what broke Lex login
+ * after session restore). It is security-preserving: a tile only ever receives
+ * CSP for the capabilities it declares in its own manifest, whichever source
+ * provided it.
+ */
+export function resolveTileOriginCSP(
+  loadedManifest: TileManifest | null,
+  lazyManifest: TileManifest | null,
+): string {
+  const effective = loadedManifest ?? lazyManifest;
+  return effective ? buildCSPForTile(effective.capabilities) : buildDefaultCSP();
+}
+
+/**
  * Inject CSP header into a Response
  * Creates a new Response with the CSP header added
  */

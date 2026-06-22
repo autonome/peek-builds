@@ -19,8 +19,8 @@ import { getDb } from './datastore.js';
 import { getThumbnailPath } from './thumbnails.js';
 import { DEBUG } from './config.js';
 import { getTileManifest } from './tile-launcher.js';
-import { isLazyTileRegistered } from './tile-lazy.js';
-import { buildCSPForTile, buildDefaultCSP, injectCSPHeader } from './tile-csp.js';
+import { isLazyTileRegistered, getLazyTileManifest } from './tile-lazy.js';
+import { resolveTileOriginCSP, injectCSPHeader } from './tile-csp.js';
 
 export const APP_SCHEME = 'peek';
 export const APP_PROTOCOL = `${APP_SCHEME}:`;
@@ -653,14 +653,15 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       // Apply to EVERY response regardless of status or Content-Type so
       // error responses (404/500), redirects (3xx), and sub-resources
       // (JS/CSS/fonts) cannot be used to escape the tile's declared
-      // capability sandbox. Fall back to the maximally-restrictive default
-      // CSP when the manifest isn't available (e.g. in-flight errors
-      // before `loadedManifests.set()` completes, or lazy-registered
-      // tiles whose background hasn't launched yet).
+      // capability sandbox. `resolveTileOriginCSP` derives the policy from the
+      // loaded manifest, or — for a lazy tile whose background hasn't booted
+      // yet (e.g. a session-restored window served before `loadedManifests`
+      // is populated) — from the lazy registry, falling back to the
+      // maximally-restrictive default only for a truly-unknown origin. The
+      // lazy fallback prevents silently dropping a lazy tile's `network`
+      // capability (which broke Lex login after restore).
       if (isTileOrigin) {
-        const csp = tileManifest
-          ? buildCSPForTile(tileManifest.capabilities)
-          : buildDefaultCSP();
+        const csp = resolveTileOriginCSP(tileManifest, getLazyTileManifest(host));
         DEBUG && console.log(`[protocol] Injecting CSP for tile ${host} (status ${response.status}):`, csp);
         return injectCSPHeader(response, csp);
       }
@@ -689,9 +690,9 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       const tileManifest = getTileManifest(host);
       const isTileOrigin = tileManifest !== null || isLazyTileRegistered(host);
       if (isTileOrigin) {
-        const csp = tileManifest
-          ? buildCSPForTile(tileManifest.capabilities)
-          : buildDefaultCSP();
+        // Same lazy-registry fallback as the main path — keep error responses
+        // on a lazy tile's declared CSP rather than the default 'self'-only one.
+        const csp = resolveTileOriginCSP(tileManifest, getLazyTileManifest(host));
         return injectCSPHeader(errResponse, csp);
       }
     }
