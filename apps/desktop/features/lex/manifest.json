@@ -48,7 +48,8 @@
       "close": true
     },
     "commands": true,
-    "settings": true
+    "settings": true,
+    "oauth": true
   },
   "commands": [
     {
