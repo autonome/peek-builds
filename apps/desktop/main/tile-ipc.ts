@@ -31,6 +31,8 @@ import {
   getTileManifest,
 } from './tile-launcher.js';
 import { registerTileIpc } from './tile-ipc-gate.js';
+import { performAtprotoRequest, isAtprotoHostAllowed, type AtprotoRequest } from './atproto-proxy.js';
+import { readAtprotoSession, writeAtprotoSession } from './atproto-session-store.js';
 import { parseManifestFile } from './tile-manifest.js';
 import { computePlacement, toProportional, ownDisplay } from './window-placement.js';
 import { publish, subscribe, unsubscribe, getStats as getPubSubStats } from './pubsub.js';
@@ -4148,6 +4150,113 @@ export function registerTileIpcHandlers(): void {
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  // ── AT Protocol DPoP proxy ──
+  //
+  // Performs the full AT Protocol DPoP request loop in MAIN (DPoP proof
+  // signing, DPoP-Nonce retry, 401→refresh→retry) so renderer tiles no
+  // longer need `webSecurity:false` to make non-CORS, DPoP-signed XRPC
+  // calls. The private DPoP key never crosses IPC — it's read from the
+  // persisted Lex session in `feature_settings` (see atproto-session-store.ts).
+  //
+  // Capability model: gated on the existing `network` capability (Lex
+  // already declares it) rather than a brand-new capability — keeping the
+  // manifest schema untouched. On TOP of that gate, the proxy enforces its
+  // OWN tight atproto host allowlist (user PDS host + token-endpoint host
+  // from the session, plus *.bsky.network / *.host.bsky.network /
+  // plc.directory) inside `isAtprotoHostAllowed`, so this surface is
+  // strictly narrower than the broad `network: ["*"]` the renderer holds.
+  //
+  // `tile:atproto:request`     — JSON-body XRPC (xrpcGet / xrpcPost).
+  // `tile:atproto:upload-blob` — binary-body upload (uploadBlob); base64
+  //                              over IPC since structured-clone of large
+  //                              Uint8Arrays is the only binary channel.
+
+  const runAtprotoProxy = async (
+    grant: CapabilityGrant | null,
+    token: string,
+    req: AtprotoRequest,
+  ): Promise<Record<string, unknown>> => {
+    if (!grant || !hasCapability(grant, 'network')) {
+      handleViolation(grant, 'network', 'atproto:request', 'network capability not granted', token);
+      return { error: 'Network capability not granted' };
+    }
+    const session = readAtprotoSession();
+    if (!session) {
+      return { error: 'No AT Protocol session — sign in via Lexicon Studio first' };
+    }
+    if (!isAtprotoHostAllowed(req.url, session)) {
+      let host = req.url;
+      try { host = new URL(req.url).hostname; } catch { /* keep raw */ }
+      const reason = `atproto host ${host} not allowed for ${grant.tileId}`;
+      handleViolation(grant, 'network', 'atproto:request', reason, token);
+      return { error: `Host not allowed: ${host}` };
+    }
+    try {
+      const result = await performAtprotoRequest(session, req);
+      // Persist a mid-request refresh so the renderer + proxy stay in sync.
+      if (result.refreshedSession) {
+        try { writeAtprotoSession(result.refreshedSession); }
+        catch (e) { DEBUG && console.log('[tile-ipc] atproto session persist failed:', e); }
+      }
+      // Encode binary bodies as base64 for the IPC return; JSON bodies pass through.
+      const body = result.binary
+        ? Buffer.from(result.body as Uint8Array).toString('base64')
+        : result.body;
+      return {
+        status: result.status,
+        statusText: result.statusText,
+        headers: result.headers,
+        body,
+        binary: result.binary,
+        // Signal a refresh happened (no token material — the renderer
+        // re-reads its own settings copy if it cares).
+        refreshed: !!result.refreshedSession,
+      };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  };
+
+  registerTileIpc('tile:atproto:request', { mode: 'handle' }, async (event, args: {
+    token: string;
+    method: 'GET' | 'POST';
+    url: string;
+    jsonBody?: unknown;
+  }, _grant) => {
+    if (args.method !== 'GET' && args.method !== 'POST') {
+      return { error: `Unsupported method: ${args.method}` };
+    }
+    return runAtprotoProxy(_grant, args.token, {
+      method: args.method,
+      url: args.url,
+      jsonBody: args.jsonBody,
+    });
+  });
+
+  registerTileIpc('tile:atproto:upload-blob', { mode: 'handle' }, async (event, args: {
+    token: string;
+    url: string;
+    // base64-encoded bytes + content type (binary travels as base64 over IPC).
+    dataBase64: string;
+    contentType: string;
+  }, _grant) => {
+    if (typeof args.dataBase64 !== 'string' || typeof args.contentType !== 'string') {
+      return { error: 'upload-blob requires dataBase64 + contentType strings' };
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(Buffer.from(args.dataBase64, 'base64'));
+    } catch {
+      return { error: 'Invalid base64 blob data' };
+    }
+    return runAtprotoProxy(_grant, args.token, {
+      method: 'POST',
+      url: args.url,
+      binaryBody: bytes,
+      contentType: args.contentType,
+    });
   });
 
   // ── Filesystem ──
