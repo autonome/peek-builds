@@ -344,6 +344,27 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
     return false;
   },
   /**
+   * Synchronously dispatch the BrowserWindow 'blur' event listener chain for the
+   * given window id — the mirror of `fireWindowFocus`. Drives the modal
+   * self-close-on-blur handler (ipc.ts, gated on `windowSelfClosesOnBlur`)
+   * deterministically: headless Electron / macOS NSPanels don't emit reliable
+   * native blur on an app- or window-switch, so a test that needs to prove a
+   * window does (or does NOT) close on blur fires it synthetically here.
+   */
+  fireWindowBlur: (id: number): boolean => {
+    const win = getLiveWindow(id);
+    if (win) {
+      win.emit('blur');
+      return true;
+    }
+    const hybrid = getHybridWindow(id);
+    if (hybrid && !hybrid.baseWin.isDestroyed()) {
+      hybrid.baseWin.emit('blur');
+      return true;
+    }
+    return false;
+  },
+  /**
    * Emit the app-level `did-resign-active` event — the deterministic signal
    * macOS fires when Peek stops being the frontmost app (Cmd+Tab away). Drives
    * the production app-blur handlers (overlay close, HUD hide, and the hybrid

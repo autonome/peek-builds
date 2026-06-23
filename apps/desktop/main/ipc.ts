@@ -91,6 +91,7 @@ import {
   spacesPolicyForRole,
   selectTransientSiblingsToClose,
   shouldFocusHybridContentOnHostFocus,
+  windowSelfClosesOnBlur,
   type TransientSiblingCandidate,
 } from './izui-roles.js';
 
@@ -3857,7 +3858,7 @@ export function registerWindowHandlers(): void {
       // packaged app with `PROFILE=test-sandbox` (required to bypass the
       // single-instance lock for a manual smoke) and still see real
       // close-on-blur behaviour.
-      if (options.modal === true && process.env.E2E_TEST !== 'true') {
+      if (windowSelfClosesOnBlur(options) && process.env.E2E_TEST !== 'true') {
         setTimeout(() => {
           if (!win.isDestroyed()) {
             win.on('blur', () => {

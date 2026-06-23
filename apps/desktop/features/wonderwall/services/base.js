@@ -94,11 +94,16 @@ export function createService({ id, name, icon, color, oauth }) {
         });
         const authUrl = `${oauth.authUrl}?${params.toString()}`;
 
-        // 4. Open auth window
+        // 4. Open auth window. `role:'utility'` is the persistent, focusable,
+        //    caller-managed window class — the OAuth window must survive the user
+        //    switching to a password manager / 2FA app mid-login. (Was
+        //    `role:'modal'`, which is not a real IZUI role — it happened to be
+        //    persistent only because unknown roles fall through to a non-transient
+        //    default. Matches the Lex auth-window fix; peek 5b4fefdc.)
         api.window.open(authUrl, {
           width: 600,
           height: 700,
-          role: 'modal',
+          role: 'utility',
           title: `Connect ${name}`,
         });
 

@@ -84,6 +84,27 @@ export function inferIzuiRole(
 }
 
 /**
+ * Whether a window opened with these options SELF-CLOSES when it loses focus
+ * (blur). This is what the `modal` option actually does in this codebase —
+ * despite the name. `modal:true` does NOT create an OS-style parent-blocking
+ * persistent dialog; it wires a `win.on('blur', …close)` handler (ipc.ts), i.e.
+ * *transient* close-on-blur, the same family as peeks/slides.
+ *
+ * The misread bit a real flow: the Lex atproto OAuth window was opened
+ * `modal:true` and was destroyed the instant the user switched to a password
+ * manager / 2FA app mid-login (peek 5b4fefdc). A window that must survive an
+ * app-switch — any OAuth dialog — must therefore NOT be `modal`; open it with a
+ * persistent role like `utility` and close it explicitly when done.
+ *
+ * Pure so the ipc.ts gate is unit-testable without Electron. The call site adds
+ * one more condition — it suppresses the handler under E2E_TEST — but that is a
+ * test-environment concern, not a window-semantic, so it stays at the call site.
+ */
+export function windowSelfClosesOnBlur(options: { modal?: boolean }): boolean {
+  return options.modal === true;
+}
+
+/**
  * Roles whose ESC action is `close` (or `close-and-restore`) IRRESPECTIVE of
  * session state — the always-closeable transient/quick surfaces. This is the
  * role set `escPolicy()` resolves to a close (not 'nothing') no matter what the

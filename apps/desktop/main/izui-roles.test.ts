@@ -18,6 +18,7 @@ import {
   shouldFocusHybridContentOnHostFocus,
   shouldActivateFocusedOnRestore,
   resolveCloseTargetId,
+  windowSelfClosesOnBlur,
   ALWAYS_CLOSEABLE_ESC_ROLES,
   TRANSIENT_ROLES,
 } from './izui-roles.js';
@@ -106,6 +107,31 @@ describe('TRANSIENT_ROLES', () => {
     assert.ok(!TRANSIENT_ROLES.has('content'));
     assert.ok(!TRANSIENT_ROLES.has('child-content'));
     assert.ok(!TRANSIENT_ROLES.has('utility'));
+  });
+});
+
+describe('windowSelfClosesOnBlur (the misnamed `modal` close-on-blur — peek 5b4fefdc)', () => {
+  it('modal:true self-closes on blur', () => {
+    assert.strictEqual(windowSelfClosesOnBlur({ modal: true }), true);
+  });
+
+  it('no modal flag → persistent (does NOT self-close)', () => {
+    assert.strictEqual(windowSelfClosesOnBlur({}), false);
+    assert.strictEqual(windowSelfClosesOnBlur({ modal: false }), false);
+  });
+
+  it("role:'utility' is persistent — the OAuth-window fix", () => {
+    // The Lex auth window switched modal:true → role:'utility' so it survives
+    // an app-switch (password manager / 2FA app) mid-login.
+    assert.strictEqual(windowSelfClosesOnBlur({ role: 'utility' } as { modal?: boolean }), false);
+  });
+
+  it('modal wins over role — a role does NOT rescue a modal window', () => {
+    // Documents the trap: the fix is to DROP modal, not to also pass a role.
+    assert.strictEqual(
+      windowSelfClosesOnBlur({ modal: true, role: 'utility' } as { modal?: boolean }),
+      true,
+    );
   });
 });
 
