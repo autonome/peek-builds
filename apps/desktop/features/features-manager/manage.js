@@ -5,6 +5,8 @@
  * Fetches feature list from registry via IPC.
  */
 
+import { buildHistoryRows } from './history-format.js';
+
 const api = window.app;
 const hasPeekAPI = !!api;
 
@@ -1021,61 +1023,120 @@ const historySection = document.getElementById('history-section');
 const historyToggle = document.getElementById('history-toggle');
 const historyContent = document.getElementById('history-content');
 
+function renderHistoryEmpty(message) {
+  historyContent.innerHTML = '';
+  const empty = document.createElement('div');
+  empty.className = 'history-empty';
+  empty.textContent = message || 'No install history yet';
+  historyContent.appendChild(empty);
+}
+
+function renderHistoryRows(rows) {
+  historyContent.innerHTML = '';
+
+  const list = document.createElement('div');
+  list.className = 'history-list';
+
+  for (const r of rows) {
+    const row = document.createElement('div');
+    row.className = 'history-row';
+
+    // Event badge (Installed / Updated / Uninstalled / Update failed)
+    const eventBadge = document.createElement('span');
+    eventBadge.className = `history-event-badge ${r.badgeClass}`;
+    eventBadge.textContent = r.label;
+    row.appendChild(eventBadge);
+
+    // Feature id + version + source, stacked in the flexible middle column.
+    const meta = document.createElement('div');
+    meta.className = 'history-meta';
+
+    const primary = document.createElement('div');
+    primary.className = 'history-meta-primary';
+    primary.textContent = r.version ? `${r.featureId}  v${r.version}` : r.featureId;
+    primary.title = r.featureId;
+    meta.appendChild(primary);
+
+    if (r.source) {
+      const secondary = document.createElement('div');
+      secondary.className = 'history-meta-secondary';
+      secondary.textContent = r.source;
+      secondary.title = r.source;
+      meta.appendChild(secondary);
+    }
+
+    row.appendChild(meta);
+
+    // Human-readable absolute timestamp (relative on hover via title).
+    const time = document.createElement('span');
+    time.className = 'history-time';
+    time.textContent = r.timestampLabel;
+    time.title = r.timestamp ? formatRelativeTime(r.timestamp) : '';
+    row.appendChild(time);
+
+    list.appendChild(row);
+  }
+
+  historyContent.appendChild(list);
+}
+
 async function loadHistory() {
-  if (!hasPeekAPI) return;
+  if (!hasPeekAPI) {
+    renderHistoryEmpty('Peek API not available');
+    return;
+  }
 
   try {
-    const result = await api.features.history(null, 30);
-    if (result.error || !result.entries || result.entries.length === 0) {
+    // featureId omitted -> all features; cap at 50 most-recent events.
+    const result = await api.features.history(null, 50);
+
+    if (result.error) {
+      renderHistoryEmpty(`Could not load history: ${result.error}`);
       return;
     }
 
-    historySection.style.display = '';
-    historyContent.innerHTML = '';
-
-    const list = document.createElement('div');
-    list.className = 'history-list';
-
-    for (const event of result.entries) {
-      const row = document.createElement('div');
-      row.className = 'history-row';
-
-      const eventBadge = document.createElement('span');
-      eventBadge.className = `history-event-badge ${event.event}`;
-      eventBadge.textContent = event.event;
-      row.appendChild(eventBadge);
-
-      const meta = document.createElement('span');
-      meta.className = 'history-meta';
-      const version = event.version ? ` v${event.version}` : '';
-      meta.textContent = `${event.featureId}${version}`;
-      row.appendChild(meta);
-
-      const time = document.createElement('span');
-      time.className = 'history-time';
-      time.textContent = formatRelativeTime(event.timestamp);
-      time.title = event.timestamp;
-      row.appendChild(time);
-
-      list.appendChild(row);
+    const rows = buildHistoryRows(result.entries);
+    if (rows.length === 0) {
+      renderHistoryEmpty('No install history yet');
+      return;
     }
 
-    historyContent.appendChild(list);
+    renderHistoryRows(rows);
   } catch (err) {
     console.error('[features-manager] Failed to load history:', err);
+    renderHistoryEmpty('Could not load history');
   }
 }
 
+// The history section is always visible (it carries its own empty state).
+historySection.style.display = '';
+
+let historyLoaded = false;
 historyToggle.addEventListener('click', () => {
   const expanded = historyToggle.getAttribute('aria-expanded') === 'true';
   historyToggle.setAttribute('aria-expanded', String(!expanded));
   historyContent.style.display = expanded ? 'none' : '';
   historyToggle.querySelector('.history-toggle-arrow').style.transform =
     expanded ? '' : 'rotate(90deg)';
-  if (!expanded && historyContent.innerHTML === '') {
+  if (!expanded && !historyLoaded) {
+    historyLoaded = true;
     loadHistory();
   }
 });
+
+// Refresh the history log on any feature lifecycle change, but only if the
+// section has already been opened once (avoid eager IPC on every event).
+if (hasPeekAPI) {
+  for (const topic of [
+    'feature:installed',
+    'feature:updated',
+    'feature:removed',
+  ]) {
+    api.pubsub.subscribe(topic, () => {
+      if (historyLoaded) loadHistory();
+    });
+  }
+}
 
 // ─── Init ───────────────────────────────────────────────────────────
 

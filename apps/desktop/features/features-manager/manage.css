@@ -376,6 +376,16 @@
   color: var(--base09);
 }
 
+.history-event-badge.update-failed {
+  background: color-mix(in srgb, var(--theme-danger) 15%, transparent);
+  color: var(--theme-danger);
+}
+
+.history-event-badge.default {
+  background: var(--theme-bg-secondary);
+  color: var(--theme-text-secondary);
+}
+
 .history-event-badge.approve {
   background: color-mix(in srgb, var(--theme-accent) 15%, transparent);
   color: var(--theme-accent);
@@ -388,7 +398,23 @@
 
 .history-meta {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.history-meta-primary {
   font-family: var(--theme-font-mono, monospace);
+  color: var(--theme-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-meta-secondary {
+  font-size: 10px;
+  color: var(--theme-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -396,5 +422,12 @@
 
 .history-time {
   flex-shrink: 0;
+  align-self: flex-start;
   color: var(--theme-text-muted);
+}
+
+.history-empty {
+  padding: var(--peek-space-sm) 0;
+  color: var(--theme-text-muted);
+  font-size: var(--peek-font-xs);
 }
