@@ -6,6 +6,7 @@ import snarkdown from "snarkdown";
 import "./App.css";
 import readerCss from "./reader.css?raw";
 import { autoListContinue } from "./auto-list.js";
+import { useStore, actions as storeActions } from "./store";
 
 declare const __BUILD_NUMBER__: string;
 
@@ -1720,29 +1721,24 @@ function App() {
     }
   };
 
+  // NOTE: loadSavedUrls/Texts/Tagsets/Images are retained ONLY to populate the
+  // header filter COUNTS (savedUrls.length etc.) and the totalCount empty-state
+  // distinction. They no longer feed the rendered list — that comes paged from
+  // the store via query_items. They run on mount/foreground (not per-keystroke),
+  // so they no longer cause typing lag. Offline-content status is now owned by
+  // the store-driven effect (which covers loadMore pages too), so loadSavedUrls
+  // no longer touches offlineContentIds (single source of truth).
   const loadSavedUrls = async () => {
     try {
       const urls = await invoke<SavedUrl[]>("get_saved_urls");
       setSavedUrls(urls);
-      // After loading URLs, check which ones have offline content downloaded
-      if (offlineTag) {
-        const offlineItemIds = urls
-          .filter(u => u.tags.includes(offlineTag))
-          .map(u => u.id);
-        if (offlineItemIds.length > 0) {
-          try {
-            const idsWithContent = await invoke<string[]>("check_offline_content_batch", { itemIds: offlineItemIds });
-            setOfflineContentIds(new Set(idsWithContent));
-          } catch (err) {
-            console.error("Failed to check offline content status:", err);
-          }
-        } else {
-          setOfflineContentIds(new Set());
-        }
-      }
     } catch (error) {
       console.error("Failed to load saved URLs:", error);
     }
+    // Every post-mutation refresh path calls a loadSaved* fn; piggy-back a
+    // coalesced store reload so the paged list reflects the change. Coalescing
+    // collapses the 4 calls made together (mount/foreground/sync) into 1 fetch.
+    storeActions.reloadCoalesced();
   };
 
   const loadSavedTexts = async () => {
@@ -1752,6 +1748,7 @@ function App() {
     } catch (error) {
       console.error("Failed to load saved texts:", error);
     }
+    storeActions.reloadCoalesced();
   };
 
   const loadSavedTagsets = async () => {
@@ -1761,6 +1758,7 @@ function App() {
     } catch (error) {
       console.error("Failed to load saved tagsets:", error);
     }
+    storeActions.reloadCoalesced();
   };
 
   const loadSavedImages = async () => {
@@ -1770,6 +1768,7 @@ function App() {
     } catch (error) {
       console.error("Failed to load saved images:", error);
     }
+    storeActions.reloadCoalesced();
   };
 
   const loadAllTags = async () => {
@@ -2482,108 +2481,101 @@ function App() {
   const deferredSearch = useDeferredValue(searchText);
 
   // Filter tags by search text (memoized so it isn't recomputed twice per render)
+  // NOTE: this filters the TAG CHIPS list locally — cheap, operates on allTags,
+  // not on items. The item list itself is now filtered/sorted/paginated in SQL
+  // via the store (see below). Kept intact.
   const filteredTags = useMemo(() => {
     if (!deferredSearch.trim()) return allTags;
     const search = deferredSearch.toLowerCase();
     return allTags.filter(tag => tag.name.toLowerCase().includes(search));
   }, [allTags, deferredSearch]);
 
-  // Create unified sorted list (filtered by type, search text, and selected tags) — memoized
-  const unifiedItems = useMemo<UnifiedItem[]>(() => {
-    const items: UnifiedItem[] = [];
-    const showType = (type: ItemType) => activeFilter === "all" || activeFilter === type;
+  // ---------------------------------------------------------------------------
+  // Store wiring: the unified item list now comes paged from SQL.
+  //
+  // activeFilter / searchText / sortOrder / selectedFilterTags / archiveTag /
+  // offlineTag remain local useState (they drive persistence effects, settings
+  // UI, filteredTags, header counts, etc). We MIRROR them into the store, which
+  // owns list.items + query/loadMore. Mirroring (not moving) avoids divergence
+  // risk across the ~4600-line component while keeping a single fetch path.
+  // ---------------------------------------------------------------------------
+  const unifiedItems = useStore(s => s.list.items) as unknown as UnifiedItem[];
+  const listHasMore = useStore(s => s.list.hasMore);
+  const listLoading = useStore(s => s.list.loading);
 
-    if (showType("page")) {
-      savedUrls.forEach((url) => {
-        items.push({
-          id: url.id,
-          type: "page",
-          url: url.url,
-          tags: url.tags,
-          saved_at: url.saved_at,
-          metadata: url.metadata,
+  // Mirror search → store (debounced reload lives in the store action).
+  useEffect(() => {
+    storeActions.setSearch(searchText);
+  }, [searchText]);
+
+  // Mirror itemType (activeFilter) → store (immediate reload).
+  useEffect(() => {
+    storeActions.setItemType(activeFilter);
+  }, [activeFilter]);
+
+  // Mirror sort order → store (immediate reload).
+  useEffect(() => {
+    storeActions.setSort(sortOrder);
+  }, [sortOrder]);
+
+  // Mirror selected filter tags → store (immediate reload).
+  useEffect(() => {
+    storeActions.setSelectedTags(Array.from(selectedFilterTags));
+  }, [selectedFilterTags]);
+
+  // Mirror config (archiveTag/offlineTag) → store; reloads if archiveTag changed.
+  useEffect(() => {
+    storeActions.setConfig({ archiveTag, offlineTag });
+  }, [archiveTag, offlineTag]);
+
+  // After each list change (reload or loadMore appends), refresh offline-content
+  // status for newly-present url items tagged with the offline tag. This
+  // preserves the side-effect that loadSavedUrls() used to perform.
+  useEffect(() => {
+    if (!offlineTag) return;
+    const offlineItemIds = unifiedItems
+      .filter(it => it.type === "page" && it.tags.includes(offlineTag))
+      .map(it => it.id);
+    if (offlineItemIds.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const idsWithContent = await invoke<string[]>("check_offline_content_batch", { itemIds: offlineItemIds });
+        if (cancelled) return;
+        setOfflineContentIds(prev => {
+          const next = new Set(prev);
+          for (const id of idsWithContent) next.add(id);
+          return next;
         });
-      });
-    }
-
-    if (showType("text")) {
-      savedTexts.forEach((text) => {
-        items.push({
-          id: text.id,
-          type: "text",
-          content: text.content,
-          tags: text.tags,
-          saved_at: text.saved_at,
-          metadata: text.metadata,
-        });
-      });
-    }
-
-    if (showType("tagset")) {
-      savedTagsets.forEach((tagset) => {
-        items.push({
-          id: tagset.id,
-          type: "tagset",
-          tags: tagset.tags,
-          saved_at: tagset.saved_at,
-          metadata: tagset.metadata,
-        });
-      });
-    }
-
-    if (showType("image")) {
-      savedImages.forEach((image) => {
-        items.push({
-          id: image.id,
-          type: "image",
-          tags: image.tags,
-          saved_at: image.saved_at,
-          metadata: image.metadata,
-          content: image.content,
-          thumbnail: image.thumbnail,
-          mime_type: image.mime_type,
-          width: image.width,
-          height: image.height,
-        });
-      });
-    }
-
-    // Filter by search text and selected tags
-    const searchLower = deferredSearch.toLowerCase();
-    const filtered = items.filter(item => {
-      // Match search text against tags, url, content, or title
-      const matchesSearch = !deferredSearch.trim() ||
-        item.tags.some(t => t.toLowerCase().includes(searchLower)) ||
-        item.url?.toLowerCase().includes(searchLower) ||
-        item.content?.toLowerCase().includes(searchLower) ||
-        item.metadata?.title?.toLowerCase().includes(searchLower);
-
-      // Match selected tags (AND filter - item must have all selected tags)
-      const matchesTags = selectedFilterTags.size === 0 ||
-        Array.from(selectedFilterTags).every(t => item.tags.includes(t));
-
-      // Hide archived items unless archive tag is explicitly selected
-      const isArchived = archiveTag && item.tags.includes(archiveTag);
-      const archiveSelected = archiveTag && selectedFilterTags.has(archiveTag);
-      if (isArchived && !archiveSelected) return false;
-
-      // Hide auto-hide tagged items (e.g. from:history) unless searching or tag selected
-      const AUTO_HIDE_TAGS = ['from:history'];
-      const isAutoHidden = AUTO_HIDE_TAGS.some(t => item.tags.includes(t));
-      if (isAutoHidden) {
-        const autoHideTagSelected = AUTO_HIDE_TAGS.some(t => selectedFilterTags.has(t));
-        if (!deferredSearch.trim() && !autoHideTagSelected) return false;
+      } catch (err) {
+        console.error("Failed to check offline content status:", err);
       }
+    })();
+    return () => { cancelled = true; };
+  }, [unifiedItems, offlineTag]);
 
-      return matchesSearch && matchesTags;
-    });
+  // Fetch-on-scroll: observe a sentinel at the end of the list.
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = loadMoreSentinelRef.current;
+    if (!node) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some(e => e.isIntersecting)) {
+        storeActions.loadMore();
+      }
+    }, { rootMargin: "400px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [listHasMore]);
 
-    // Sort by date, respecting sort order
-    return filtered.sort((a, b) => {
-      const diff = new Date(b.saved_at).getTime() - new Date(a.saved_at).getTime();
-      return sortOrder === 'oldest' ? -diff : diff;
-    });
-  }, [savedUrls, savedTexts, savedTagsets, savedImages, deferredSearch, selectedFilterTags, activeFilter, sortOrder, archiveTag]);
+  // Initial page load on mount.
+  useEffect(() => {
+    storeActions.reload();
+  }, []);
+
+  // (The old getUnifiedItems client-side filter/sort memo was removed — the
+  // backend `query_items` command now does filtering/sorting/pagination in SQL.
+  // `unifiedItems` is defined above from the store's paged list.)
 
   // Check if any edit mode is active
   const isEditing = editingUrlId || editingTextId || editingTagsetId || editingImageId;
@@ -4570,12 +4562,24 @@ ${content.html}
               <p>Share a URL from any app to get started!</p>
             </div>
           ) : unifiedItems.length === 0 ? (
-            <div className="empty-state">
-              <p>No matching items.</p>
-              <p>Tap Peek to clear filters.</p>
-            </div>
+            // Suppress "no matches" while the first page is still loading so we
+            // don't flash it before query_items returns.
+            listLoading ? null : (
+              <div className="empty-state">
+                <p>No matching items.</p>
+                <p>Tap Peek to clear filters.</p>
+              </div>
+            )
           ) : (
-            unifiedItems.map((item) => renderUnifiedItem(item))
+            <>
+              {unifiedItems.map((item) => renderUnifiedItem(item))}
+              {/* Fetch-on-scroll sentinel: IntersectionObserver triggers loadMore */}
+              {listHasMore && (
+                <div ref={loadMoreSentinelRef} className="load-more-sentinel" aria-hidden="true">
+                  {listLoading && <div className="webview-loading">Loading more...</div>}
+                </div>
+              )}
+            </>
           )}
         </div>
       </main>

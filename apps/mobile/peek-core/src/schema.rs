@@ -563,6 +563,12 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
         }
     }
 
+    // Ensure created_at index exists (for paginated query_items keyset/sort).
+    // Idempotent — runs for both fresh and existing installs.
+    let _ = conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_items_created_at ON items(created_at DESC)",
+    );
+
     // One-time dedup migration: remove duplicate items
     run_dedup_cleanup(conn);
 

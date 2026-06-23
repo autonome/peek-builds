@@ -1,4 +1,5 @@
-use rusqlite::{params, Connection};
+use rusqlite::{params, types::ToSql, Connection};
+use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 
 use crate::helpers::{
@@ -787,6 +788,244 @@ pub fn find_existing_url(conn: &Connection, url: &str) -> Result<Option<SavedUrl
             }))
         }
     }
+}
+
+// ============================================================================
+// Paginated SQL-side query
+// ============================================================================
+
+/// Keyset pagination cursor: the (saved_at, id) of the last row of the prior page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Cursor {
+    pub saved_at: String,
+    pub id: String,
+}
+
+/// Arguments for `query_items` — filters/sort/pagination evaluated SQL-side.
+/// Field names match what the frontend sends.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QueryItemsArgs {
+    /// Free-text search; None or empty = no search.
+    pub search: Option<String>,
+    /// AND filter: item must have ALL of these tag names. Also the "selected" set
+    /// that suppresses the archive/auto-hide rules below.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// "all" | "page" | "text" | "tagset" | "image". "page" maps to DB 'url'.
+    /// "all"/None = no type filter.
+    pub item_type: Option<String>,
+    /// Configured archive tag name (e.g. "archive").
+    #[serde(default)]
+    pub archive_tag: String,
+    /// Auto-hide tag names (e.g. ["from:history"]).
+    #[serde(default)]
+    pub auto_hide_tags: Vec<String>,
+    /// "newest" | "oldest".
+    pub sort: String,
+    /// Keyset pagination cursor; None = first page.
+    pub cursor: Option<Cursor>,
+    /// Page size.
+    pub limit: u32,
+}
+
+/// A single item row returned by `query_items`. Field names match the
+/// frontend's existing item interfaces. `type` is the raw DB value
+/// ("url"|"text"|"tagset"|"image") — the frontend maps "url" -> "page" itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemRow {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub r#type: String,
+    pub url: Option<String>,
+    /// FULL content (not a preview).
+    pub content: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub tags: Vec<String>,
+    /// = created_at.
+    pub saved_at: String,
+    /// Image rows only (base64 thumbnail); null for non-image rows.
+    pub thumbnail: Option<String>,
+    pub mime_type: Option<String>,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+}
+
+/// Paginated, SQL-side filtered/sorted query over items.
+///
+/// Mirrors the previous JS-side filter behavior exactly (see field docs on
+/// `QueryItemsArgs`). All user values are bound parameters — no string
+/// interpolation of search/tag/cursor values.
+pub fn query_items(conn: &Connection, args: QueryItemsArgs) -> Result<Vec<ItemRow>, String> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    let search = args
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let has_search = search.is_some();
+
+    // Bound params, in the exact order they appear in the SQL we build below.
+    let mut binds: Vec<Box<dyn ToSql>> = Vec::new();
+
+    let mut sql = String::from(
+        "SELECT i.id, i.type, i.url, i.content, i.created_at, i.metadata, \
+         b.mime_type, b.width, b.height, b.thumbnail \
+         FROM items i \
+         LEFT JOIN blobs b ON b.item_id = i.id \
+         WHERE i.deleted_at IS NULL",
+    );
+
+    // type filter
+    if let Some(t) = args.item_type.as_deref() {
+        if !t.is_empty() && t != "all" {
+            let db_type = if t == "page" { "url" } else { t };
+            sql.push_str(" AND i.type = ?");
+            binds.push(Box::new(db_type.to_string()));
+        }
+    }
+
+    // search filter
+    if let Some(s) = &search {
+        sql.push_str(
+            " AND ( i.url LIKE '%'||?||'%' \
+             OR i.content LIKE '%'||?||'%' \
+             OR i.metadata LIKE '%'||?||'%' \
+             OR EXISTS (SELECT 1 FROM item_tags it JOIN tags t ON it.tag_id = t.id \
+                WHERE it.item_id = i.id AND t.name LIKE '%'||?||'%') )",
+        );
+        binds.push(Box::new(s.clone()));
+        binds.push(Box::new(s.clone()));
+        binds.push(Box::new(s.clone()));
+        binds.push(Box::new(s.clone()));
+    }
+
+    // tag AND-filter
+    if !args.tags.is_empty() {
+        let placeholders = vec!["?"; args.tags.len()].join(", ");
+        sql.push_str(&format!(
+            " AND (SELECT COUNT(DISTINCT t.name) FROM item_tags it JOIN tags t ON it.tag_id = t.id \
+             WHERE it.item_id = i.id AND t.name IN ({})) = ?",
+            placeholders
+        ));
+        for tag in &args.tags {
+            binds.push(Box::new(tag.clone()));
+        }
+        binds.push(Box::new(args.tags.len() as i64));
+    }
+
+    // archive hide: exclude archive-tagged items unless archive_tag is selected
+    if !args.archive_tag.is_empty() && !args.tags.contains(&args.archive_tag) {
+        sql.push_str(
+            " AND NOT EXISTS (SELECT 1 FROM item_tags it JOIN tags t ON it.tag_id = t.id \
+             WHERE it.item_id = i.id AND t.name = ?)",
+        );
+        binds.push(Box::new(args.archive_tag.clone()));
+    }
+
+    // auto-hide: only when there's no active search
+    if !has_search {
+        for ah in &args.auto_hide_tags {
+            if !args.tags.contains(ah) {
+                sql.push_str(
+                    " AND NOT EXISTS (SELECT 1 FROM item_tags it JOIN tags t ON it.tag_id = t.id \
+                     WHERE it.item_id = i.id AND t.name = ?)",
+                );
+                binds.push(Box::new(ah.clone()));
+            }
+        }
+    }
+
+    // keyset pagination predicate + ordering
+    let oldest = args.sort == "oldest";
+    if let Some(cur) = &args.cursor {
+        if oldest {
+            sql.push_str(" AND (i.created_at, i.id) > (?, ?)");
+        } else {
+            sql.push_str(" AND (i.created_at, i.id) < (?, ?)");
+        }
+        binds.push(Box::new(cur.saved_at.clone()));
+        binds.push(Box::new(cur.id.clone()));
+    }
+
+    if oldest {
+        sql.push_str(" ORDER BY i.created_at ASC, i.id ASC");
+    } else {
+        sql.push_str(" ORDER BY i.created_at DESC, i.id DESC");
+    }
+
+    sql.push_str(" LIMIT ?");
+    binds.push(Box::new(args.limit as i64));
+
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| format!("Failed to prepare query_items: {}", e))?;
+
+    let bind_refs: Vec<&dyn ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+
+    let raw_rows: Vec<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        Option<Vec<u8>>,
+    )> = stmt
+        .query_map(bind_refs.as_slice(), |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+                row.get(8)?,
+                row.get(9)?,
+            ))
+        })
+        .map_err(|e| format!("Failed to query items: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut out: Vec<ItemRow> = Vec::with_capacity(raw_rows.len());
+    for (id, r#type, url, content, created_at, metadata_json, mime_type, width, height, thumb_bytes) in
+        raw_rows
+    {
+        let tags = get_item_tag_names_ordered(conn, &id)?;
+        let metadata = metadata_json.and_then(|s| serde_json::from_str(&s).ok());
+        let is_image = r#type == "image";
+        let thumbnail = if is_image {
+            thumb_bytes.map(|b| STANDARD.encode(&b))
+        } else {
+            None
+        };
+        let mime_type = if is_image { mime_type } else { None };
+        let width = if is_image { width } else { None };
+        let height = if is_image { height } else { None };
+
+        out.push(ItemRow {
+            id,
+            r#type,
+            url,
+            content,
+            metadata,
+            tags,
+            saved_at: created_at,
+            thumbnail,
+            mime_type,
+            width,
+            height,
+        });
+    }
+
+    Ok(out)
 }
 
 // ============================================================================

@@ -26,7 +26,7 @@ use rusqlite::Connection;
 use std::sync::Mutex;
 
 pub use helpers::*;
-pub use items::{SaveUrlResult, UpdateResult};
+pub use items::{Cursor, ItemRow, QueryItemsArgs, SaveUrlResult, UpdateResult};
 pub use profiles::{
     ProfileConfig, ProfileEntry, SyncSettings,
     append_profile_to_url, create_default_profile_config,
@@ -147,6 +147,12 @@ impl PeekStore {
     pub fn get_image_data(&self, id: &str) -> Result<Option<String>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
         items::get_image_data(&conn, id)
+    }
+
+    /// Paginated, SQL-side filtered/sorted query over items.
+    pub fn query_items(&self, args: QueryItemsArgs) -> Result<Vec<ItemRow>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        items::query_items(&conn, args)
     }
 
     /// Update a URL item's url and tags.

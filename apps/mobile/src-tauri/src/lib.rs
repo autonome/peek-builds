@@ -12,7 +12,7 @@ use reqwest;
 use regex::Regex;
 use tauri::Manager;
 
-use peek_core::{PeekStore, SavedUrl, SavedText, SavedTagset, SavedImage, TagStats, ServerItemsResponse, ServerCreateResponse, SyncStatus};
+use peek_core::{PeekStore, SavedUrl, SavedText, SavedTagset, SavedImage, TagStats, ServerItemsResponse, ServerCreateResponse, SyncStatus, QueryItemsArgs, ItemRow, Cursor};
 
 /// Global PeekStore instance. Uses RwLock to support re-init on profile switch.
 static STORE: RwLock<Option<std::sync::Arc<PeekStore>>> = RwLock::new(None);
@@ -1568,6 +1568,37 @@ async fn get_tags_by_frecency_for_url(url: String) -> Result<Vec<TagStats>, Stri
 async fn get_saved_urls() -> Result<Vec<SavedUrl>, String> {
     let store = get_store()?;
     store.get_saved_urls()
+}
+
+/// Paginated, SQL-side filtered/sorted query over items.
+///
+/// Frontend invokes with camelCase keys (Tauri converts to snake_case params):
+///   invoke('query_items', {
+///     search, tags, itemType, archiveTag, autoHideTags, sort, cursor, limit
+///   })
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn query_items(
+    search: Option<String>,
+    tags: Vec<String>,
+    item_type: Option<String>,
+    archive_tag: String,
+    auto_hide_tags: Vec<String>,
+    sort: String,
+    cursor: Option<Cursor>,
+    limit: u32,
+) -> Result<Vec<ItemRow>, String> {
+    let store = get_store()?;
+    store.query_items(QueryItemsArgs {
+        search,
+        tags,
+        item_type,
+        archive_tag,
+        auto_hide_tags,
+        sort,
+        cursor,
+        limit,
+    })
 }
 
 /// Delete any item by ID (works for pages, texts, tagsets, images)
@@ -3294,6 +3325,7 @@ pub fn run() {
             // Page (URL) commands
             save_url,
             get_saved_urls,
+            query_items,
             update_url,
             update_url_tags,
             delete_url,
