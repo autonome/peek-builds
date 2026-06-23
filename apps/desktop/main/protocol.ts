@@ -494,6 +494,35 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
       });
     }
 
+    // Handle verified feature display blobs: peek://feature-blob/{did}/{cid}
+    // Used by the features-manager browse/preview to show icons + screenshots.
+    // The bytes are fetched from the publisher's PDS and CID-verified against
+    // the (signature-verified) record CID BEFORE serving — closing the gap
+    // where a compromised PDS could substitute display media under a signed CID.
+    // A miss/mismatch returns 404 so the renderer falls back to the letter
+    // avatar; a bad cosmetic blob never blocks a feature whose code verified.
+    if (host === 'feature-blob') {
+      const parts = pathname.split('/');
+      if (parts.length < 2 || !parts[0] || !parts[1]) {
+        return new Response('Bad Request', { status: 400 });
+      }
+      const did = decodeURIComponent(parts[0]);
+      const cid = decodeURIComponent(parts[1]);
+      const { fetchVerifiedFeatureBlob } = await import('./atproto-source.js');
+      const verified = await fetchVerifiedFeatureBlob(did, cid);
+      if (!verified) {
+        return new Response('Not Found', { status: 404 });
+      }
+      // Content is addressed by CID, so it can never change — cache immutably.
+      return new Response(new Uint8Array(verified.bytes), {
+        status: 200,
+        headers: {
+          'Content-Type': verified.contentType,
+          'Cache-Control': 'max-age=86400, immutable',
+        },
+      });
+    }
+
     // Handle local file access: peek://local-file/{absolute-path}
     // Used by editor preview and other features to serve local files.
     // Only serves files with explicitly allowed MIME types for security.

@@ -24,6 +24,16 @@ import type {
 import type { FeatureSource } from './feature-registry.js';
 import { fetchAndVerifyRecord } from './atproto-verify.js';
 
+// ─── Injectable fetch (for tests) ───────────────────────────────────
+
+type FetchFn = typeof fetch;
+let fetchImpl: FetchFn = (...args: Parameters<FetchFn>) => fetch(...args);
+
+/** Override the fetch implementation (tests only). Pass nothing to reset. */
+export function __setFetchForTest(fn?: FetchFn): void {
+  fetchImpl = fn ?? ((...args: Parameters<FetchFn>) => fetch(...args));
+}
+
 // ─── Types ──────────────────────────────────────────────────────────
 
 /** Parsed AT URI components */
@@ -292,13 +302,13 @@ export async function getRecord(
 }
 
 /**
- * Build the public (unauthenticated) URL for a PDS blob.
- * Uses com.atproto.sync.getBlob XRPC endpoint.
+ * Build the public (unauthenticated) PDS XRPC URL for a blob.
+ * Uses com.atproto.sync.getBlob. This is the *upstream fetch* URL used by
+ * getBlob() below — it is NOT handed to the renderer.
  *
- * Display-only blobs (icon/screenshots) are surfaced to the renderer as these
- * URLs so an `<img src>` can load them directly over HTTPS — the same way
- * tiles already render external favicons (tile CSP allows `img-src https:`).
- * No bytes cross IPC for display media.
+ * Renderer-facing display media (icon/screenshots) instead use
+ * buildFeatureBlobUrl() → a `peek://feature-blob/...` URL whose bytes are
+ * CID-verified by the main process before display (see fetchVerifiedFeatureBlob).
  */
 export function buildBlobUrl(pdsUrl: string, did: string, cid: string): string {
   const params = new URLSearchParams({ did, cid });
@@ -316,13 +326,120 @@ export async function getBlob(
 ): Promise<Buffer> {
   const url = buildBlobUrl(pdsUrl, did, cid);
 
-  const res = await fetch(url);
+  const res = await fetchImpl(url);
   if (!res.ok) {
     throw new Error(`Failed to fetch blob ${cid}: ${res.status} ${res.statusText}`);
   }
 
   const arrayBuffer = await res.arrayBuffer();
   return Buffer.from(arrayBuffer);
+}
+
+// ─── Verified display-media (icon/screenshot) serving ───────────────
+
+/**
+ * Known publisher PDS registry: DID → PDS URL.
+ *
+ * Populated only by the paths that have already discovered (and, for the
+ * install path, signature-verified) a publisher's identity — resolveInternal()
+ * and the browse-list IPC handler. The `peek://feature-blob` protocol handler
+ * looks DIDs up here rather than resolving them itself, which (a) caches the
+ * DID→PDS discovery across the many `<img>` loads of a browse list, and
+ * (b) deliberately does NOT widen the did:web → arbitrary-host SSRF surface of
+ * resolveDid() into a handler reachable by any peek:// renderer. A DID the user
+ * hasn't browsed is simply unserveable (handler 404s → letter-avatar fallback).
+ */
+const knownPublisherPds = new Map<string, string>();
+
+/** Record a DID→PDS mapping so its display blobs can be served + verified. */
+export function registerPublisherPds(did: string, pdsUrl: string): void {
+  if (did && pdsUrl) knownPublisherPds.set(did, pdsUrl);
+}
+
+/**
+ * Build the renderer-facing URL for a verified feature display blob.
+ * `<img src>` loads this; the `peek://feature-blob` protocol handler fetches the
+ * bytes from the publisher's PDS and CID-verifies them before serving.
+ */
+export function buildFeatureBlobUrl(did: string, cid: string): string {
+  return `peek://feature-blob/${encodeURIComponent(did)}/${encodeURIComponent(cid)}`;
+}
+
+/**
+ * Sniff an image Content-Type from magic bytes. Display media is loaded via
+ * `<img src>` (Chromium sniffs regardless), but a correct type is cleaner and
+ * avoids relying on the record's publisher-declared mimeType. SVG is served as
+ * image/svg+xml — safe under `<img>`, where embedded scripts do not execute.
+ */
+function sniffImageContentType(bytes: Buffer): string {
+  if (bytes.length >= 8 &&
+      bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return 'image/png';
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+    return 'image/gif';
+  }
+  if (bytes.length >= 12 &&
+      bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+      bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+    return 'image/webp';
+  }
+  // SVG (or XML-wrapped SVG): a leading '<' after optional whitespace/BOM.
+  const head = bytes.subarray(0, 256).toString('utf-8').replace(/^﻿/, '').trimStart();
+  if (head.startsWith('<?xml') || head.startsWith('<svg')) {
+    return 'image/svg+xml';
+  }
+  return 'application/octet-stream';
+}
+
+/**
+ * Fetch a feature display blob (icon/screenshot) from its publisher's PDS and
+ * verify the bytes hash to the requested CID before returning them.
+ *
+ * This closes the display-media integrity gap: the bundle/manifest blobs are
+ * already CID-gated at install (verifyBlobCid), but icon/screenshot bytes used
+ * to be loaded straight from a public PDS URL with no byte verification — a
+ * compromised PDS could serve different image bytes under the signed CID and
+ * spoof a trusted publisher's icon. Here the SAME hash gate
+ * (computeCidV1Sha256Raw) is applied to display bytes.
+ *
+ * Unlike the install path, a bad display blob is NOT fatal: this returns null
+ * (the handler 404s → the renderer falls back to the letter avatar / drops the
+ * screenshot) rather than throwing. A cosmetic image must never block a feature
+ * whose executable bundle verified clean.
+ */
+export async function fetchVerifiedFeatureBlob(
+  did: string,
+  cid: string,
+): Promise<{ bytes: Buffer; contentType: string } | null> {
+  const pdsUrl = knownPublisherPds.get(did);
+  if (!pdsUrl) {
+    console.warn(`[atproto] feature-blob: no known PDS for ${did} — refusing to resolve (not browsed)`);
+    return null;
+  }
+
+  let bytes: Buffer;
+  try {
+    bytes = await getBlob(pdsUrl, did, cid);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[atproto] feature-blob: fetch failed for ${cid}: ${msg}`);
+    return null;
+  }
+
+  const actual = computeCidV1Sha256Raw(bytes);
+  if (actual !== cid) {
+    console.warn(
+      `[atproto] feature-blob: CID mismatch — requested ${cid} but bytes hash to ${actual}. ` +
+      `Dropping (PDS may be serving substituted display media).`
+    );
+    return null;
+  }
+
+  return { bytes, contentType: sniffImageContentType(bytes) };
 }
 
 // ─── AtprotoSource Class ────────────────────────────────────────────
@@ -369,6 +486,11 @@ export class AtprotoSource implements TileSource {
     }
 
     const { pdsUrl, handle } = identity;
+
+    // Record the DID→PDS mapping so the verified-blob protocol handler can
+    // serve this publisher's display media (icon/screenshots) without
+    // re-resolving the DID itself.
+    registerPublisherPds(did, pdsUrl);
 
     // 4. Fetch the record from PDS AND cryptographically verify it.
     //    This replaces the previous unverified getRecord() call: we now
@@ -462,17 +584,19 @@ export class AtprotoSource implements TileSource {
       version: resolved.record.version,
     };
 
-    // Surface display media (icon + screenshots) as resolvable PDS blob URLs.
-    // These are loaded by the renderer via <img src>, so we don't download or
-    // CID-verify them here — same posture as externally-sourced favicons.
-    const { record, pdsUrl, did } = resolved;
+    // Surface display media (icon + screenshots) as `peek://feature-blob/...`
+    // URLs. The renderer loads them via <img src>; the protocol handler fetches
+    // the bytes and CID-verifies them against the (signature-verified) record
+    // CIDs before display, so a compromised PDS can't substitute the bytes. On
+    // mismatch the handler 404s and the renderer falls back to the letter avatar.
+    const { record, did } = resolved;
     const icon = record.icon?.ref?.$link
-      ? buildBlobUrl(pdsUrl, did, record.icon.ref.$link)
+      ? buildFeatureBlobUrl(did, record.icon.ref.$link)
       : undefined;
     const screenshots = Array.isArray(record.screenshots)
       ? record.screenshots
           .filter((s): s is BlobRef => !!s?.ref?.$link)
-          .map(s => buildBlobUrl(pdsUrl, did, s.ref.$link))
+          .map(s => buildFeatureBlobUrl(did, s.ref.$link))
       : undefined;
 
     return {

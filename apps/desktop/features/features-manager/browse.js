@@ -128,9 +128,10 @@ function escapeHtml(str) {
 
 /**
  * Build a feature-icon element. When `iconUrl` is present, render the real
- * image (a resolvable PDS blob URL, loaded directly via <img src>); on load
- * error, fall back to the letter avatar. With no icon, render the letter
- * avatar directly. `name` supplies the fallback letter.
+ * image (a `peek://feature-blob` URL whose bytes the main process CID-verifies
+ * before serving); on load error — which includes the handler's 404 on a CID
+ * mismatch or unverifiable blob — fall back to the letter avatar. With no icon,
+ * render the letter avatar directly. `name` supplies the fallback letter.
  */
 function buildFeatureIcon(name, iconUrl) {
   const icon = document.createElement('div');
@@ -197,7 +198,8 @@ async function showInstallPreview(atUri) {
         shot.alt = '';
         shot.loading = 'lazy';
         shot.src = url;
-        // Drop any screenshot that fails to load (no broken-image icon).
+        // Drop any screenshot that fails to load — including the verified-blob
+        // handler's 404 on a CID mismatch (no broken-image icon).
         shot.addEventListener('error', () => shot.remove());
         previewScreenshots.appendChild(shot);
       }

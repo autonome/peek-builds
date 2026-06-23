@@ -2351,15 +2351,22 @@ export function registerTileIpcHandlers(): void {
         cursor?: string;
       };
 
-      const { buildBlobUrl } = await import('./atproto-source.js');
+      const { buildFeatureBlobUrl, registerPublisherPds } = await import('./atproto-source.js');
 
-      // Narrow a record's `icon`/`screenshots` fields to resolvable blob URLs.
-      // Display-only: loaded by the renderer via <img src>, never installed,
-      // so we don't download or CID-verify them here.
+      // Register this publisher's PDS so the `peek://feature-blob` handler can
+      // fetch + CID-verify its display blobs (the list itself is not
+      // signature-verified — only install is — but the handler still guarantees
+      // the displayed bytes match the advertised CID).
+      registerPublisherPds(args.did, args.pdsUrl);
+
+      // Narrow a record's `icon`/`screenshots` fields to verified-blob URLs.
+      // Display-only: loaded by the renderer via <img src> through the
+      // `peek://feature-blob` handler, which CID-verifies the bytes before
+      // serving (404 → letter-avatar fallback). Never installed.
       type RawBlobRef = { ref?: { $link?: string } };
       const blobUrl = (b: unknown): string | undefined => {
         const link = (b as RawBlobRef | undefined)?.ref?.$link;
-        return link ? buildBlobUrl(args.pdsUrl, args.did, link) : undefined;
+        return link ? buildFeatureBlobUrl(args.did, link) : undefined;
       };
 
       const featureMap = new Map<string, {

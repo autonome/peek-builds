@@ -22,13 +22,18 @@ import type { TileCapabilities, TileManifest } from './tile-manifest.js';
  * doesn't constrain what code on the page can reach. If we ever want a
  * tighter posture for community-published tiles, route favicons through a
  * `peek://favicon/<domain>` proxy so the CSP can stay 'self' + data:.
+ *
+ * `peek://feature-blob` is allowed so the features-manager can render verified
+ * feature icons/screenshots (the protocol handler CID-verifies the bytes before
+ * serving). It is a fixed host, not the whole `peek:` scheme — tiles cannot
+ * load arbitrary peek:// resources (e.g. thumbnails of the user's browsing).
  */
 const DEFAULT_CSP_DIRECTIVES: Record<string, string[]> = {
   'default-src': ["'self'"],
   'script-src': ["'self'", "'unsafe-inline'"],
   'style-src': ["'self'", "'unsafe-inline'"],
   'connect-src': ["'self'"],
-  'img-src': ["'self'", 'data:', 'https:', 'http:'],
+  'img-src': ["'self'", 'data:', 'https:', 'http:', 'peek://feature-blob'],
   'font-src': ["'self'"],
   'media-src': ["'self'"],
   'object-src': ["'none'"],
