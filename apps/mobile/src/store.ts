@@ -233,8 +233,13 @@ function setConfig(cfg: { archiveTag: string; offlineTag: string }): void {
 
 async function reload(): Promise<void> {
   const token = ++reloadToken;
+  // Keep the current page visible while the new query runs — don't blank the
+  // list. query_items is fast (single-digit ms), so the previous results stay
+  // up until the new page swaps in wholesale below, avoiding a per-keystroke
+  // flash to empty. (cursor/hasMore are preserved too; they're replaced on
+  // success and only matter for loadMore, which is gated on the reloadToken.)
   setState({
-    list: { items: [], cursor: null, hasMore: false, loading: true },
+    list: { ...state.list, loading: true },
   });
   try {
     const rows = await fetchPage(null);

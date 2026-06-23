@@ -3723,6 +3723,31 @@ ${content.html}
     );
   };
 
+  // Memoize the rendered card list so it does NOT rebuild on every keystroke.
+  // `searchText` is local state driving the controlled <input>, so each keystroke
+  // re-renders this whole (~4600-line) component; without this memo the entire
+  // card list re-renders per character, which reads as a flash on device. The
+  // list *data* already updates via the store's debounced reload, so this memo
+  // deliberately EXCLUDES searchText/deferredSearch and depends only on the
+  // paged items plus the states that change a card's rendered output. Keep these
+  // deps in sync with renderUrlItem/renderTextItem/renderTagsetItem/renderImageItem;
+  // a missing dep would leave a card visually stale until the next reload.
+  const renderedItems = useMemo(
+    () => unifiedItems.map((item) => renderUnifiedItem(item)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      unifiedItems,
+      expandedWebview,
+      webviewAnimated,
+      webviewLoaded,
+      webviewError,
+      offlineTag,
+      offlineContentIds,
+      offlineFetchingIds,
+      textReaderMode,
+    ],
+  );
+
   const closeSettings = () => {
     setShowSettings(false);
     // Reload data in case webhook was used
@@ -4572,7 +4597,7 @@ ${content.html}
             )
           ) : (
             <>
-              {unifiedItems.map((item) => renderUnifiedItem(item))}
+              {renderedItems}
               {/* Fetch-on-scroll sentinel: IntersectionObserver triggers loadMore */}
               {listHasMore && (
                 <div ref={loadMoreSentinelRef} className="load-more-sentinel" aria-hidden="true">
