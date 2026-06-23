@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, useDeferredValue, forwardRef, useImperativeHandle } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -2476,15 +2476,20 @@ function App() {
     setSelectedFilterTags(newTags);
   };
 
-  // Filter tags by search text
-  const getFilteredTags = () => {
-    if (!searchText.trim()) return allTags;
-    const search = searchText.toLowerCase();
-    return allTags.filter(tag => tag.name.toLowerCase().includes(search));
-  };
+  // Deferred search value: decouples expensive list/tag filtering from the keystroke.
+  // The controlled <input> still uses searchText so typing echoes instantly; the
+  // filter memos below read deferredSearch so they don't recompute on every keystroke.
+  const deferredSearch = useDeferredValue(searchText);
 
-  // Create unified sorted list (filtered by type, search text, and selected tags)
-  const getUnifiedItems = (): UnifiedItem[] => {
+  // Filter tags by search text (memoized so it isn't recomputed twice per render)
+  const filteredTags = useMemo(() => {
+    if (!deferredSearch.trim()) return allTags;
+    const search = deferredSearch.toLowerCase();
+    return allTags.filter(tag => tag.name.toLowerCase().includes(search));
+  }, [allTags, deferredSearch]);
+
+  // Create unified sorted list (filtered by type, search text, and selected tags) — memoized
+  const unifiedItems = useMemo<UnifiedItem[]>(() => {
     const items: UnifiedItem[] = [];
     const showType = (type: ItemType) => activeFilter === "all" || activeFilter === type;
 
@@ -2544,10 +2549,10 @@ function App() {
     }
 
     // Filter by search text and selected tags
-    const searchLower = searchText.toLowerCase();
+    const searchLower = deferredSearch.toLowerCase();
     const filtered = items.filter(item => {
       // Match search text against tags, url, content, or title
-      const matchesSearch = !searchText.trim() ||
+      const matchesSearch = !deferredSearch.trim() ||
         item.tags.some(t => t.toLowerCase().includes(searchLower)) ||
         item.url?.toLowerCase().includes(searchLower) ||
         item.content?.toLowerCase().includes(searchLower) ||
@@ -2567,7 +2572,7 @@ function App() {
       const isAutoHidden = AUTO_HIDE_TAGS.some(t => item.tags.includes(t));
       if (isAutoHidden) {
         const autoHideTagSelected = AUTO_HIDE_TAGS.some(t => selectedFilterTags.has(t));
-        if (!searchText.trim() && !autoHideTagSelected) return false;
+        if (!deferredSearch.trim() && !autoHideTagSelected) return false;
       }
 
       return matchesSearch && matchesTags;
@@ -2578,7 +2583,7 @@ function App() {
       const diff = new Date(b.saved_at).getTime() - new Date(a.saved_at).getTime();
       return sortOrder === 'oldest' ? -diff : diff;
     });
-  };
+  }, [savedUrls, savedTexts, savedTagsets, savedImages, deferredSearch, selectedFilterTags, activeFilter, sortOrder, archiveTag]);
 
   // Check if any edit mode is active
   const isEditing = editingUrlId || editingTextId || editingTagsetId || editingImageId;
@@ -4257,7 +4262,6 @@ ${content.html}
     );
   }
 
-  const unifiedItems = getUnifiedItems();
   const totalCount = savedUrls.length + savedTexts.length + savedTagsets.length + savedImages.length;
 
   const currentProfile = profileInfo?.profiles.find(p => p.id === profileInfo.currentProfileId);
@@ -4533,11 +4537,11 @@ ${content.html}
           >
             {allTags.length === 0 ? (
               <div className="filter-tags-empty">This is where your tags live - tag something!</div>
-            ) : getFilteredTags().length === 0 ? (
+            ) : filteredTags.length === 0 ? (
               <div className="filter-tags-empty">No matching tags</div>
             ) : (
               <div className="filter-tags">
-                {getFilteredTags().map((tag) => (
+                {filteredTags.map((tag) => (
                   <span
                     key={tag.name}
                     className={`tag-chip ${selectedFilterTags.has(tag.name) ? "selected" : ""}`}
