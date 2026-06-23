@@ -113,6 +113,7 @@ import type { TableName } from '../types/index.js';
 import { installFromBundle } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities, TileManifest } from './tile-manifest.js';
+import { compareSemver, evaluateUpdateGate } from './capability-compare.js';
 import { invokeWindowOpen, popupToOpener, reopenLastClosedWindow, getLastFocusedVisibleWindowId, getLastContentWindowId, clearLastContentWindowId, getDarkModeSetting, setDarkModeSetting, applyDarkModeSetting, persistAdBlockerPref } from './ipc.js';
 import {
   getWindowInfo,
@@ -313,96 +314,14 @@ function isFilesystemPathAllowed(
   return false;
 }
 
-// ─── Semver Comparison Helper ───────────────────────────────────────
-
-/**
- * Simple semver comparison. Returns -1, 0, or 1.
- */
-function compareSemverSimple(a: string, b: string): number {
-  const pa = (a || '0.0.0').split('.').map(Number);
-  const pb = (b || '0.0.0').split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    const na = pa[i] || 0;
-    const nb = pb[i] || 0;
-    if (na > nb) return 1;
-    if (na < nb) return -1;
-  }
-  return 0;
-}
-
-// ─── Capability Comparison Helper ───────────────────────────────────
-
-/**
- * Compare two TileCapabilities for expansion detection.
- * Used by feature-update:apply to guard auto-updates.
- */
-function compareCapabilitiesSimple(
-  currentCaps: TileCapabilities | undefined,
-  newCaps: TileCapabilities | undefined
-): { changed: boolean; expanded: boolean; added: string[]; removed: string[] } {
-  const result = { changed: false, expanded: false, added: [] as string[], removed: [] as string[] };
-  const cur = currentCaps || {} as TileCapabilities;
-  const nxt = newCaps || {} as TileCapabilities;
-
-  // Boolean capabilities (or boolean-or-object capabilities treated as
-  // present/absent for change detection — deeper allowlist diffs are
-  // out of scope for the auto-update expansion guard).
-  const boolCaps: Array<keyof TileCapabilities> = ['commands', 'shortcuts', 'sync', 'theme', 'settings', 'context', 'dialogs', 'features', 'oauth'];
-  for (const cap of boolCaps) {
-    const had = !!cur[cap];
-    const has = !!nxt[cap];
-    if (!had && has) { result.changed = true; result.expanded = true; result.added.push(cap); }
-    else if (had && !has) { result.changed = true; result.removed.push(cap); }
-  }
-
-  // Network domains
-  const curDomains = new Set(cur.network?.domains || []);
-  const nxtDomains = new Set(nxt.network?.domains || []);
-  for (const d of nxtDomains) {
-    if (!curDomains.has(d)) { result.changed = true; result.expanded = true; result.added.push(`network:${d}`); }
-  }
-  for (const d of curDomains) {
-    if (!nxtDomains.has(d)) { result.changed = true; result.removed.push(`network:${d}`); }
-  }
-
-  // Datastore tables
-  const curTables = new Set(cur.datastore?.tables || []);
-  const nxtTables = new Set(nxt.datastore?.tables || []);
-  for (const t of nxtTables) {
-    if (!curTables.has(t)) { result.changed = true; result.expanded = true; result.added.push(`datastore:${t}`); }
-  }
-  for (const t of curTables) {
-    if (!nxtTables.has(t)) { result.changed = true; result.removed.push(`datastore:${t}`); }
-  }
-
-  // PubSub scopes
-  const curScopes = new Set(cur.pubsub?.scopes || []);
-  const nxtScopes = new Set(nxt.pubsub?.scopes || []);
-  for (const s of nxtScopes) {
-    if (!curScopes.has(s)) { result.changed = true; result.expanded = true; result.added.push(`pubsub.scope:${s}`); }
-  }
-  for (const s of curScopes) {
-    if (!nxtScopes.has(s)) { result.changed = true; result.removed.push(`pubsub.scope:${s}`); }
-  }
-
-  // Window
-  if (nxt.window && !cur.window) { result.changed = true; result.expanded = true; result.added.push('window'); }
-  else if (cur.window && !nxt.window) { result.changed = true; result.removed.push('window'); }
-  else if (cur.window && nxt.window) {
-    for (const p of ['create', 'query', 'manage'] as const) {
-      const had = !!(cur.window as Record<string, boolean>)[p];
-      const has = !!(nxt.window as Record<string, boolean>)[p];
-      if (!had && has) { result.changed = true; result.expanded = true; result.added.push(`window.${p}`); }
-      else if (had && !has) { result.changed = true; result.removed.push(`window.${p}`); }
-    }
-  }
-
-  // Filesystem
-  if (nxt.filesystem && !cur.filesystem) { result.changed = true; result.expanded = true; result.added.push('filesystem'); }
-  else if (cur.filesystem && !nxt.filesystem) { result.changed = true; result.removed.push('filesystem'); }
-
-  return result;
-}
+// ─── Semver + Capability Comparison ─────────────────────────────────
+//
+// The auto-update capability-expansion gate (privilege-escalation
+// boundary) lives in ./capability-compare.ts as a single tested source of
+// truth — imported above as `compareSemver` / `evaluateUpdateGate`. The
+// previous in-file `compareSemverSimple` / `compareCapabilitiesSimple`
+// duplicates were untested; they were collapsed into that module (see
+// capability-compare.test.ts) so the gate's code is the code under test.
 
 // ─── Feature History Helper ─────────────────────────────────────────
 
@@ -1781,7 +1700,7 @@ export function registerTileIpcHandlers(): void {
             const latest = featureMap.get(feature.id);
             if (!latest) continue;
 
-            if (compareSemverSimple(latest.version, currentVersion) > 0) {
+            if (compareSemver(latest.version, currentVersion) > 0) {
               const entry = registry.getFeature(feature.id);
               if (entry) {
                 entry.availableVersion = latest.version;
@@ -1846,23 +1765,30 @@ export function registerTileIpcHandlers(): void {
       const newVersion = metadata.source.version || newManifest.version;
       const currentVersion = entry.source.version || '0.0.0';
 
-      if (compareSemverSimple(newVersion || '0.0.0', currentVersion) <= 0) {
-        return { error: 'No newer version available' };
-      }
+      // ── The auto-update gate (privilege-escalation boundary) ──
+      // Pure, tested decision in ./capability-compare.ts. Two gates:
+      // version monotonicity, then capability-expansion-without-approval.
+      const decision = evaluateUpdateGate({
+        currentVersion,
+        newVersion,
+        currentCapabilities: entry.grantedCapabilities,
+        newCapabilities: newManifest.capabilities,
+        userApproved: args.userApproved,
+      });
 
-      const capComparison = compareCapabilitiesSimple(
-        entry.grantedCapabilities,
-        newManifest.capabilities,
-      );
-
-      if (capComparison.expanded && !args.userApproved) {
+      if (!decision.allow) {
+        if (decision.reason === 'not-newer') {
+          return { error: 'No newer version available' };
+        }
         return {
           error: 'Capabilities expanded — user approval required',
           capabilitiesChanged: true,
-          added: capComparison.added,
-          removed: capComparison.removed,
+          added: decision.comparison.added,
+          removed: decision.comparison.removed,
         };
       }
+
+      const capComparison = decision.comparison;
 
       const bundle = await source.fetch(entry.source.uri);
       const installResult = installFromBundle(

@@ -1,10 +1,20 @@
 /**
- * Features Manager — Update checker module
+ * Features Manager — Update checker module (renderer-side)
  *
  * Provides:
- * - compareCapabilities() — compare two TileCapabilities objects for expansion
- * - shouldAutoUpdate() — determine if a feature should auto-update
- * - checkForUpdates() — check installed atproto features for newer versions
+ * - compareSemver()    — semver string comparison (used by browse.js)
+ * - checkForUpdates()  — check installed atproto features for newer versions
+ *
+ * NOTE: capability-expansion comparison and the auto-update decision used
+ * to live here too (`compareCapabilities` / `shouldAutoUpdate`), but they
+ * were DEAD renderer code — the live security gate is in the main process
+ * (`apps/desktop/main/capability-compare.ts`, consumed by the
+ * `tile:features:update-apply` handler). Keeping a second copy here meant a
+ * divergent, separately-tested impl that the gate never called. They were
+ * removed so there is ONE tested capability-comparison implementation. The
+ * renderer cannot import the main-process module across the peek:// ↔
+ * dist/main boundary, so `compareSemver` (a trivial pure helper still needed
+ * by browse.js at renderer runtime) stays here.
  */
 
 // ─── Semver Comparison ──────────────────────────────────────────────
@@ -28,259 +38,8 @@ export function compareSemver(a, b) {
   return 0;
 }
 
-// ─── Capability Comparison ──────────────────────────────────────────
-
-/**
- * Compare two TileCapabilities objects to detect changes and expansions.
- *
- * @param {object} currentCaps - Currently granted capabilities
- * @param {object} newCaps - Capabilities from the new version's manifest
- * @returns {{ changed: boolean, expanded: boolean, added: string[], removed: string[] }}
- *
- * `expanded` is true if newCaps requests anything not in currentCaps:
- * - New boolean capabilities (commands, shortcuts, sync, theme, settings)
- * - New network domains
- * - New datastore tables
- * - New pubsub scopes or topics
- * - New window permissions
- * - New filesystem paths
- */
-export function compareCapabilities(currentCaps, newCaps) {
-  const result = {
-    changed: false,
-    expanded: false,
-    added: [],
-    removed: [],
-  };
-
-  if (!currentCaps && !newCaps) return result;
-  if (!currentCaps) currentCaps = {};
-  if (!newCaps) newCaps = {};
-
-  // ── Boolean capabilities ──
-  const booleanCaps = ['commands', 'shortcuts', 'sync', 'theme', 'settings'];
-  for (const cap of booleanCaps) {
-    const hadIt = !!currentCaps[cap];
-    const hasIt = !!newCaps[cap];
-    if (hadIt && !hasIt) {
-      result.changed = true;
-      result.removed.push(cap);
-    } else if (!hadIt && hasIt) {
-      result.changed = true;
-      result.expanded = true;
-      result.added.push(cap);
-    }
-  }
-
-  // ── PubSub ──
-  comparePubSub(currentCaps.pubsub, newCaps.pubsub, result);
-
-  // ── Datastore ──
-  compareArrayField(
-    currentCaps.datastore?.tables,
-    newCaps.datastore?.tables,
-    'datastore',
-    result
-  );
-
-  // ── Network ──
-  compareArrayField(
-    currentCaps.network?.domains,
-    newCaps.network?.domains,
-    'network',
-    result
-  );
-
-  // ── Window ──
-  compareWindow(currentCaps.window, newCaps.window, result);
-
-  // ── Filesystem ──
-  compareFilesystem(currentCaps.filesystem, newCaps.filesystem, result);
-
-  return result;
-}
-
-function comparePubSub(current, next, result) {
-  const hadPubsub = !!current;
-  const hasPubsub = !!next;
-
-  if (!hadPubsub && !hasPubsub) return;
-
-  if (!hadPubsub && hasPubsub) {
-    result.changed = true;
-    result.expanded = true;
-    result.added.push('pubsub');
-    return;
-  }
-
-  if (hadPubsub && !hasPubsub) {
-    result.changed = true;
-    result.removed.push('pubsub');
-    return;
-  }
-
-  // Compare scopes
-  const currentScopes = new Set(current.scopes || []);
-  const newScopes = new Set(next.scopes || []);
-
-  for (const scope of newScopes) {
-    if (!currentScopes.has(scope)) {
-      result.changed = true;
-      result.expanded = true;
-      result.added.push(`pubsub.scope:${scope}`);
-    }
-  }
-  for (const scope of currentScopes) {
-    if (!newScopes.has(scope)) {
-      result.changed = true;
-      result.removed.push(`pubsub.scope:${scope}`);
-    }
-  }
-
-  // Compare topics
-  const currentTopics = new Set(current.topics || []);
-  const newTopics = new Set(next.topics || []);
-
-  for (const topic of newTopics) {
-    if (!currentTopics.has(topic)) {
-      result.changed = true;
-      result.expanded = true;
-      result.added.push(`pubsub.topic:${topic}`);
-    }
-  }
-  for (const topic of currentTopics) {
-    if (!newTopics.has(topic)) {
-      result.changed = true;
-      result.removed.push(`pubsub.topic:${topic}`);
-    }
-  }
-}
-
-function compareArrayField(currentArr, newArr, fieldName, result) {
-  const hadField = Array.isArray(currentArr) && currentArr.length > 0;
-  const hasField = Array.isArray(newArr) && newArr.length > 0;
-
-  if (!hadField && !hasField) return;
-
-  if (!hadField && hasField) {
-    result.changed = true;
-    result.expanded = true;
-    result.added.push(fieldName);
-    return;
-  }
-
-  if (hadField && !hasField) {
-    result.changed = true;
-    result.removed.push(fieldName);
-    return;
-  }
-
-  const currentSet = new Set(currentArr);
-  const newSet = new Set(newArr);
-
-  for (const item of newSet) {
-    if (!currentSet.has(item)) {
-      result.changed = true;
-      result.expanded = true;
-      result.added.push(`${fieldName}:${item}`);
-    }
-  }
-  for (const item of currentSet) {
-    if (!newSet.has(item)) {
-      result.changed = true;
-      result.removed.push(`${fieldName}:${item}`);
-    }
-  }
-}
-
-function compareWindow(current, next, result) {
-  const hadWindow = !!current;
-  const hasWindow = !!next;
-
-  if (!hadWindow && !hasWindow) return;
-
-  if (!hadWindow && hasWindow) {
-    result.changed = true;
-    result.expanded = true;
-    result.added.push('window');
-    return;
-  }
-
-  if (hadWindow && !hasWindow) {
-    result.changed = true;
-    result.removed.push('window');
-    return;
-  }
-
-  const windowPerms = ['create', 'query', 'manage'];
-  for (const perm of windowPerms) {
-    const had = !!current[perm];
-    const has = !!next[perm];
-    if (!had && has) {
-      result.changed = true;
-      result.expanded = true;
-      result.added.push(`window.${perm}`);
-    } else if (had && !has) {
-      result.changed = true;
-      result.removed.push(`window.${perm}`);
-    }
-  }
-}
-
-function compareFilesystem(current, next, result) {
-  const hadFs = !!current;
-  const hasFs = !!next;
-
-  if (!hadFs && !hasFs) return;
-
-  if (!hadFs && hasFs) {
-    result.changed = true;
-    result.expanded = true;
-    result.added.push('filesystem');
-    return;
-  }
-
-  if (hadFs && !hasFs) {
-    result.changed = true;
-    result.removed.push('filesystem');
-    return;
-  }
-
-  // Compare read paths
-  compareArrayField(current.read, next.read, 'filesystem.read', result);
-  // Compare write paths
-  compareArrayField(current.write, next.write, 'filesystem.write', result);
-}
-
-// ─── Auto-Update Decision ──────────────────────────────────────────
-
-/**
- * Determine if a feature should auto-update.
- *
- * Returns true ONLY if:
- * - feature.updatePolicy === 'auto' AND
- * - capabilities are unchanged or reduced (not expanded)
- *
- * @param {object} feature - FeatureRegistryEntry
- * @param {object} newManifest - The new version's manifest (needs .capabilities)
- * @returns {boolean}
- */
-export function shouldAutoUpdate(feature, newManifest) {
-  if (!feature || !newManifest) return false;
-
-  // Only auto policy can auto-update
-  const policy = feature.updatePolicy || 'auto';
-  if (policy !== 'auto') return false;
-
-  // Compare capabilities
-  const comparison = compareCapabilities(
-    feature.grantedCapabilities,
-    newManifest.capabilities
-  );
-
-  // Block auto-update if capabilities expanded
-  return !comparison.expanded;
-}
+// Capability-expansion comparison + the auto-update decision moved to the
+// main process (apps/desktop/main/capability-compare.ts) — see header note.
 
 // ─── Update Checking ────────────────────────────────────────────────
 
