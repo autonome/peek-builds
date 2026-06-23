@@ -66,6 +66,7 @@
     "test:desktop:electron": "cd ../.. && ./scripts/timed.sh sh -c 'node scripts/check-native-modules.js && yarn workspace @peek/desktop build && electron-builder --dir && ( fail=0; NODE_ENV=test ELECTRON_RUN_AS_NODE=1 npx electron --test apps/desktop/dist/main/*.test.js || fail=1; NODE_ENV=test node --test apps/desktop/tests/unit/*.test.js || fail=1; HEADLESS=1 PACKAGED=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=desktop || fail=1; HEADLESS=1 PACKAGED=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=desktop-serial --workers=1 || fail=1; HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=components || fail=1; HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=editor || fail=1; exit $fail )'"
   },
   "dependencies": {
+    "@atproto/crypto": "^0.5.1",
     "@codemirror/commands": "^6.10.1",
     "@codemirror/lang-markdown": "^6.5.0",
     "@codemirror/language": "^6.12.1",
@@ -74,6 +75,7 @@
     "@codemirror/theme-one-dark": "^6.1.3",
     "@codemirror/view": "^6.39.11",
     "@ghostery/adblocker-electron": "^2.13.4",
+    "@ipld/dag-cbor": "^10.0.1",
     "@replit/codemirror-vim": "^6.3.0",
     "archiver": "^7.0.0",
     "better-sqlite3": "^12.5.0",
