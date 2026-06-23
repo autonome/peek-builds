@@ -2087,7 +2087,7 @@ function migrateInvalidPersonEntities(): void {
   // Load the name database synchronously for the migration context
   let namesData: { firstNames: string[]; surnames: string[] };
   try {
-    const namesPath = join(__dirname, '../../../features/entities/data/names.json');
+    const namesPath = join(__dirname, '../../features/entities/data/names.json');
     namesData = JSON.parse(readFileSync(namesPath, 'utf-8'));
   } catch (error) {
     console.warn('[datastore] Could not load names.json for person entity migration, skipping:', (error as Error).message);
