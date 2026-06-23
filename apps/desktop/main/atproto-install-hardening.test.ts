@@ -15,6 +15,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import * as dagCbor from '@ipld/dag-cbor';
+import { CID } from 'multiformats';
+import { sha256 } from 'multiformats/hashes/sha2';
+import { Secp256k1Keypair } from '@atproto/crypto';
+
 import {
   AtprotoSource,
   computeCidV1Sha256Raw,
@@ -23,6 +28,100 @@ import {
 import { FeatureRegistry } from './feature-registry.js';
 import { installFromBundle, type TileBundle } from './feature-installer.js';
 import type { TileManifest } from './tile-manifest.js';
+
+// ─── Signed-proof builder ───────────────────────────────────────────
+//
+// The install path now cryptographically verifies the record: it resolves
+// the publisher's #atproto signing key, fetches a CAR proof
+// (com.atproto.sync.getRecord) holding the signed commit + MST path + record
+// block, verifies the commit signature, and confirms MST inclusion. To keep
+// these install-behavior tests realistic (and passing), we generate a REAL
+// signed proof per fixture: a fresh secp256k1 keypair, a one-leaf MST holding
+// the record, and a properly signed commit. The DID doc then advertises that
+// keypair's public key as #atproto.
+
+const COLLECTION = 'space.peek.feature.release';
+
+interface SignedProof {
+  /** publicKeyMultibase for the DID doc #atproto verificationMethod. */
+  publicKeyMultibase: string;
+  /** the record CID (dag-cbor) the proof commits to. */
+  recordCid: string;
+  /** serialized CARv1 proof bytes. */
+  car: Uint8Array;
+}
+
+async function dagCid(bytes: Uint8Array): Promise<CID> {
+  return CID.create(1, dagCbor.code, await sha256.digest(bytes));
+}
+
+function varintEnc(n: number): Uint8Array {
+  const buf: number[] = [];
+  let v = n;
+  while (v >= 0x80) {
+    buf.push((v & 0x7f) | 0x80);
+    v = Math.floor(v / 128);
+  }
+  buf.push(v);
+  return new Uint8Array(buf);
+}
+
+function concatAll(parts: Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (const p of parts) total += p.length;
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+}
+
+/**
+ * Build a real signed CAR proof for a single record under
+ * `space.peek.feature.release/<rkey>` in `did`'s repo.
+ */
+async function buildSignedProof(
+  did: string,
+  rkey: string,
+  recordValue: Record<string, unknown>
+): Promise<SignedProof> {
+  const keypair = await Secp256k1Keypair.create();
+  const publicKeyMultibase = keypair.did().slice('did:key:'.length);
+
+  // record block
+  const recordBytes = dagCbor.encode(recordValue);
+  const recordCid = await dagCid(recordBytes);
+
+  // one-leaf MST node: key = "space.peek.feature.release/<rkey>"
+  const key = new TextEncoder().encode(`${COLLECTION}/${rkey}`);
+  const mstNode = { l: null, e: [{ p: 0, k: key, v: recordCid, t: null }] };
+  const mstBytes = dagCbor.encode(mstNode);
+  const mstCid = await dagCid(mstBytes);
+
+  // commit
+  const unsigned = { did, version: 3, data: mstCid, rev: '3kaaaaaaaaaa2', prev: null };
+  const sig = await keypair.sign(dagCbor.encode(unsigned));
+  const commit = { ...unsigned, sig };
+  const commitBytes = dagCbor.encode(commit);
+  const commitCid = await dagCid(commitBytes);
+
+  // CAR: header (roots = [commitCid]) + 3 blocks
+  const header = dagCbor.encode({ version: 1, roots: [commitCid] });
+  const chunks: Uint8Array[] = [varintEnc(header.length), header];
+  for (const [cid, bytes] of [
+    [commitCid, commitBytes],
+    [mstCid, mstBytes],
+    [recordCid, recordBytes],
+  ] as Array<[CID, Uint8Array]>) {
+    const cidBytes = cid.bytes;
+    const sec = concatAll([cidBytes, bytes]);
+    chunks.push(varintEnc(sec.length), sec);
+  }
+
+  return { publicKeyMultibase, recordCid: recordCid.toString(), car: concatAll(chunks) };
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -120,24 +219,8 @@ interface BundleFixture {
   minPeekVersion?: string;
 }
 
-function registerBundleFixture(fx: BundleFixture): void {
+async function registerBundleFixture(fx: BundleFixture): Promise<void> {
   const didHost = fx.did.replace(/^did:web:/, '');
-  const didDoc = {
-    service: [
-      {
-        id: '#atproto_pds',
-        type: 'AtprotoPersonalDataServer',
-        serviceEndpoint: fx.pdsUrl,
-      },
-    ],
-    alsoKnownAs: [`at://${fx.handle}`],
-  };
-
-  // DID document resolution (did:web)
-  fetchRoutes.push({
-    match: (u) => u === `https://${didHost}/.well-known/did.json`,
-    respond: () => ({ ok: true, body: didDoc }),
-  });
 
   // Manifest blob (JSON)
   const manifestBytes = Buffer.from(JSON.stringify(fx.manifest), 'utf-8');
@@ -153,8 +236,10 @@ function registerBundleFixture(fx: BundleFixture): void {
     };
   });
 
-  // getRecord — returns the space.peek.feature.release shape
-  const record = {
+  // The space.peek.feature.release record. This is what the signed CAR proof
+  // commits to — the verified install path decodes it straight from the proof.
+  const record: Record<string, unknown> = {
+    $type: COLLECTION,
     featureId: fx.manifest.id,
     name: fx.manifest.name,
     version: fx.manifest.version,
@@ -180,16 +265,42 @@ function registerBundleFixture(fx: BundleFixture): void {
     ...(fx.minPeekVersion ? { minPeekVersion: fx.minPeekVersion } : {}),
   };
 
-  fetchRoutes.push({
-    match: (u) => u.startsWith(`${fx.pdsUrl}/xrpc/com.atproto.repo.getRecord`),
-    respond: () => ({
-      ok: true,
-      body: {
-        uri: `at://${fx.did}/space.peek.feature.release/${fx.rkey}`,
-        cid: 'bafyrecord',
-        value: record,
+  // Generate a real signed proof committing to `record`.
+  const proof = await buildSignedProof(fx.did, fx.rkey, record);
+
+  // DID document: PDS service + the #atproto signing key from the proof.
+  const didDoc = {
+    service: [
+      {
+        id: '#atproto_pds',
+        type: 'AtprotoPersonalDataServer',
+        serviceEndpoint: fx.pdsUrl,
       },
-    }),
+    ],
+    verificationMethod: [
+      {
+        id: `${fx.did}#atproto`,
+        type: 'Multikey',
+        controller: fx.did,
+        publicKeyMultibase: proof.publicKeyMultibase,
+      },
+    ],
+    alsoKnownAs: [`at://${fx.handle}`],
+  };
+
+  // DID document resolution — serves both did:web discovery (PDS) and the
+  // plc.directory/did:web signing-key lookup (same host for did:web).
+  fetchRoutes.push({
+    match: (u) =>
+      u === `https://${didHost}/.well-known/did.json` ||
+      u === `https://plc.directory/${fx.did}`,
+    respond: () => ({ ok: true, body: didDoc }),
+  });
+
+  // com.atproto.sync.getRecord — the signed CAR proof.
+  fetchRoutes.push({
+    match: (u) => u.startsWith(`${fx.pdsUrl}/xrpc/com.atproto.sync.getRecord`),
+    respond: () => ({ ok: true, body: Buffer.from(proof.car) }),
   });
 
   // getBlob for manifest
@@ -296,7 +407,7 @@ describe('AtprotoSource.fetch — CID validation', () => {
   it('rejects install if a downloaded blob fails CID verification', async () => {
     const source = new AtprotoSource();
 
-    registerBundleFixture({
+    await registerBundleFixture({
       did: 'did:web:example.com',
       handle: 'example.com',
       pdsUrl: 'https://pds.example.com',
@@ -322,7 +433,7 @@ describe('AtprotoSource.fetch — CID validation', () => {
   it('succeeds when every blob\'s CID matches the record', async () => {
     const source = new AtprotoSource();
 
-    registerBundleFixture({
+    await registerBundleFixture({
       did: 'did:web:example.com',
       handle: 'example.com',
       pdsUrl: 'https://pds.example.com',
@@ -347,7 +458,7 @@ describe('AtprotoSource + installFromBundle — partial failure leaves no residu
   it('bails cleanly when a mid-stream blob download fails', async () => {
     const source = new AtprotoSource();
 
-    registerBundleFixture({
+    await registerBundleFixture({
       did: 'did:web:example.com',
       handle: 'example.com',
       pdsUrl: 'https://pds.example.com',
@@ -455,7 +566,7 @@ describe('AtprotoSource — minPeekVersion enforcement', () => {
   it('rejects install when current Peek version is older than minPeekVersion', async () => {
     const source = new AtprotoSource({ peekVersion: '1.2.3' });
 
-    registerBundleFixture({
+    await registerBundleFixture({
       did: 'did:web:example.com',
       handle: 'example.com',
       pdsUrl: 'https://pds.example.com',
@@ -478,7 +589,7 @@ describe('AtprotoSource — minPeekVersion enforcement', () => {
   it('accepts install when current Peek version satisfies minPeekVersion', async () => {
     const source = new AtprotoSource({ peekVersion: '2.5.0' });
 
-    registerBundleFixture({
+    await registerBundleFixture({
       did: 'did:web:example.com',
       handle: 'example.com',
       pdsUrl: 'https://pds.example.com',
@@ -495,7 +606,7 @@ describe('AtprotoSource — minPeekVersion enforcement', () => {
   it('accepts install when minPeekVersion is absent from the record', async () => {
     const source = new AtprotoSource({ peekVersion: '0.0.1' });
 
-    registerBundleFixture({
+    await registerBundleFixture({
       did: 'did:web:example.com',
       handle: 'example.com',
       pdsUrl: 'https://pds.example.com',
@@ -515,7 +626,7 @@ describe('AtprotoSource — minPeekVersion enforcement', () => {
     // is the safe default for non-Electron callers and existing tests.
     const source = new AtprotoSource(); // no peekVersion
 
-    registerBundleFixture({
+    await registerBundleFixture({
       did: 'did:web:example.com',
       handle: 'example.com',
       pdsUrl: 'https://pds.example.com',

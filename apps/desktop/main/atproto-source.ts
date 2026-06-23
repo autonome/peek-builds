@@ -22,6 +22,7 @@ import type {
   FeatureSourceMetadata,
 } from './feature-installer.js';
 import type { FeatureSource } from './feature-registry.js';
+import { fetchAndVerifyRecord } from './atproto-verify.js';
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -369,8 +370,19 @@ export class AtprotoSource implements TileSource {
 
     const { pdsUrl, handle } = identity;
 
-    // 4. Fetch the record from PDS (unauthenticated)
-    const recordResult = await getRecord(pdsUrl, did, collection, rkey);
+    // 4. Fetch the record from PDS AND cryptographically verify it.
+    //    This replaces the previous unverified getRecord() call: we now
+    //    resolve the publisher's #atproto signing key, fetch a CAR proof
+    //    (signed commit + MST path + record block), verify the commit
+    //    signature, and confirm the record's CID is included in the
+    //    committed MST. Any failure throws and aborts the install — there is
+    //    no unverified fallback. The existing verifyBlobCid() (below) then
+    //    closes the chain from the verified record CIDs to the blob bytes.
+    const recordResult = await fetchAndVerifyRecord(
+      pdsUrl,
+      { did, collection, rkey },
+      atUri
+    );
     const record = recordResult.value as unknown as FeatureReleaseRecord;
 
     // 5. Validate record structure
