@@ -16,10 +16,11 @@ const hasPeekAPI = !!api;
  * When the browse page opens with no query, this publisher is auto-loaded
  * to show a default set of featured/curated features.
  *
- * TODO: Replace with the actual Peek team DID once the AT Protocol account
- * is set up and features are published. Set to null to disable auto-load.
+ * Currently burrito.space (a real, resolvable publisher) as a placeholder
+ * until the dedicated Peek team AT Protocol account is set up and publishes
+ * features. Set to null to disable auto-load.
  */
-const CURATED_PUBLISHER_DID = null; // e.g. 'did:plc:xxxxxxxxxxxxxxxxxxxxxxxx'
+const CURATED_PUBLISHER_DID = 'did:plc:7r5c5jhtphcpkg3y55xu2y64'; // burrito.space
 
 // ─── DOM refs ───────────────────────────────────────────────────────
 
