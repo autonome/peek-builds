@@ -486,11 +486,17 @@ export async function loginWithOAuth(handle) {
       authUrl = `${authEndpoint}?${params.toString()}`;
     }
 
-    // 9. Open auth window (modal so it auto-closes on blur and is excluded from session save)
+    // 9. Open auth window. It must PERSIST while the user completes login —
+    //    including switching to a password manager / authenticator app for a 2FA
+    //    code — so it must NOT be transient (close-on-blur). In this codebase
+    //    `modal:true` actually means close-on-blur, which killed the window on the
+    //    first app-switch and aborted the flow. `role:'utility'` is the persistent,
+    //    focusable, caller-managed window class (same as the datastore/diagnostic
+    //    windows); the caller explicitly closes it after awaitCallback resolves.
     const authWin = await api.window.open(authUrl, {
       width: 600,
       height: 700,
-      modal: true,
+      role: 'utility',
       title: 'AT Protocol Authorization',
     });
 
