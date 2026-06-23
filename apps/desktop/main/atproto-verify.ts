@@ -1,5 +1,5 @@
 /**
- * atproto record signature verification (Phase 1).
+ * atproto record signature verification (Phase 1 + Phase 2).
  *
  * The naive install path fetched a `space.peek.feature.release` record via
  * `com.atproto.repo.getRecord` and trusted whatever the PDS returned. A
@@ -16,10 +16,16 @@
  * The existing `verifyBlobCid()` then closes the final link (record CID →
  * blob CIDs → blob bytes).
  *
- * Phase 1 verifies against the *current* `#atproto` key in the DID document
- * (what most atproto clients do today). Phase 2 — verifying against the key
- * that was active at the commit's `rev` per the PLC audit log — is NOT
- * implemented here. See the TODO markers below.
+ * Phase 1 verified against the *current* `#atproto` key in the DID document
+ * (what most atproto clients do today). Phase 2 (this file) tightens that for
+ * `did:plc`: it verifies the commit against the key that was *active at the
+ * commit's `rev`* per the PLC audit log
+ * (`https://plc.directory/<did>/log/audit`). This closes the stolen-old-key
+ * forgery vector — a key rotated out of the repo can no longer be used to
+ * forge a current commit. `did:web` has no audit log and stays on the
+ * current-key path; if the PLC audit log is unavailable we fall back to the
+ * current key (still requiring a valid current-key signature — no downgrade
+ * past Phase 1) and log it.
  *
  * The verification proof comes from a single `com.atproto.sync.getRecord`
  * call, which returns a CAR (`application/vnd.ipld.car`) containing the
@@ -153,6 +159,193 @@ export async function resolveSigningKey(did: string): Promise<SigningKey> {
   // `did:key:<publicKeyMultibase>` works for both curves; @atproto/crypto's
   // verifySignature dispatches on the embedded multicodec prefix.
   return { didKey: `did:key:${mb}`, curve };
+}
+
+// ─── Phase 2: key-history resolution via the PLC audit log ──────────
+//
+// `did:plc` documents are mutable: the operator can rotate the `#atproto`
+// signing key. The current DID doc only shows the *latest* key. A commit
+// signed by a now-rotated-out key (e.g. one that was stolen, prompting the
+// rotation) must NOT validate a *current* commit. The PLC audit log
+// (`/log/audit`) is the authoritative, signed history of every operation,
+// each carrying the `#atproto` key that became active at its `createdAt`.
+// We pick the key whose validity window contains the commit's `rev`
+// timestamp and verify against THAT key only.
+
+/**
+ * Convert a commit's `rev` (an atproto TID) to its wall-clock timestamp.
+ *
+ * A TID is 13 chars of the sortable base32 alphabet encoding a 64-bit int:
+ * the high 53 bits are microseconds since the Unix epoch, the low 10 bits are
+ * a clock identifier we discard.
+ *
+ * @returns the Date, or null if `rev` is not a well-formed TID (caller then
+ *   falls back to the current key).
+ */
+const TID_ALPHABET = '234567abcdefghijklmnopqrstuvwxyz';
+function tidToTimestamp(rev: string): Date | null {
+  if (typeof rev !== 'string' || rev.length !== 13) return null;
+  let n = 0n;
+  for (const c of rev) {
+    const v = TID_ALPHABET.indexOf(c);
+    if (v < 0) return null;
+    n = n * 32n + BigInt(v);
+  }
+  const millis = Number((n >> 10n) / 1000n);
+  if (!Number.isFinite(millis) || millis <= 0) return null;
+  return new Date(millis);
+}
+
+/**
+ * Turn a `did:key:...` string into a {didKey, curve} SigningKey, validating
+ * the curve from the multibase prefix (same rule as resolveSigningKey).
+ *
+ * @throws SignatureVerificationError if it isn't a supported did:key.
+ */
+function didKeyToSigningKey(didKey: string, ctx: string): SigningKey {
+  const mb = didKey.startsWith('did:key:') ? didKey.slice('did:key:'.length) : '';
+  let curve: 'secp256k1' | 'p256';
+  if (mb.startsWith(SECP256K1_PREFIX)) {
+    curve = 'secp256k1';
+  } else if (mb.startsWith(P256_PREFIX)) {
+    curve = 'p256';
+  } else {
+    throw new SignatureVerificationError(
+      `Unsupported key curve: ${ctx} — PLC log #atproto key "${didKey}" has ` +
+      `multibase prefix "${mb.slice(0, 6)}" (expected secp256k1 ` +
+      `"${SECP256K1_PREFIX}" or P-256 "${P256_PREFIX}")`
+    );
+  }
+  return { didKey, curve };
+}
+
+/** One PLC audit-log entry (only the fields we read). */
+export interface PlcAuditEntry {
+  createdAt: string;
+  nullified?: boolean;
+  operation?: {
+    type?: string;
+    /** legacy `create` op carries the signing key here. */
+    signingKey?: string;
+    /** modern `plc_operation` carries it under verificationMethods.atproto. */
+    verificationMethods?: { atproto?: string } | null;
+  } | null;
+}
+
+/** A `#atproto` key and the instant it became active. */
+export interface KeyEpoch {
+  /** the `did:key:...` form of the key active from `validFrom` onward. */
+  didKey: string;
+  /** epoch-ms when this key became active (the op's `createdAt`). */
+  validFrom: number;
+}
+
+/**
+ * Build the `#atproto` signing-key history from a PLC audit log.
+ *
+ * Nullified operations (abandoned forks that plc.directory superseded) are
+ * skipped; the result is the canonical chain ordered oldest→newest. The curve
+ * is NOT validated here — only the *selected* key's curve is checked at
+ * verification time, so an exotic historical key that isn't the one we verify
+ * against can't poison the whole walk.
+ */
+export function buildKeyEpochs(audit: PlcAuditEntry[]): KeyEpoch[] {
+  const epochs: KeyEpoch[] = [];
+  const sorted = [...audit].sort(
+    (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)
+  );
+  for (const entry of sorted) {
+    if (entry.nullified) continue;
+    const op = entry.operation;
+    if (!op) continue;
+    const didKey =
+      op.type === 'create' ? op.signingKey : op.verificationMethods?.atproto;
+    if (!didKey) continue; // e.g. a tombstone / deactivation op
+    const validFrom = Date.parse(entry.createdAt);
+    if (Number.isNaN(validFrom)) continue;
+    epochs.push({ didKey, validFrom });
+  }
+  return epochs;
+}
+
+/**
+ * Select the `#atproto` key that was active at time `t` — the latest epoch
+ * whose `validFrom` is at or before `t`.
+ *
+ * If `t` predates the very first operation (clock skew; a real current commit
+ * can't be older than its repo's creation) we fall back to the first epoch.
+ *
+ * @returns the active key's `did:key:...`, or null if there is no history.
+ */
+export function selectKeyAtTime(epochs: KeyEpoch[], t: Date): string | null {
+  if (epochs.length === 0) return null;
+  const tt = t.getTime();
+  let selected: KeyEpoch | null = null;
+  for (const e of epochs) {
+    if (e.validFrom <= tt) selected = e;
+    else break;
+  }
+  return (selected ?? epochs[0]).didKey;
+}
+
+/**
+ * Internal sentinel: the PLC audit log couldn't be fetched/parsed/used for
+ * this commit. Distinct from SignatureVerificationError so the caller can
+ * fall back to the current key WITHOUT swallowing a genuine verification
+ * failure (which is always a SignatureVerificationError and must abort).
+ */
+class PlcLogUnavailableError extends Error {}
+
+/** Fetch + JSON-parse a DID's PLC audit log. */
+async function fetchPlcAuditLog(did: string): Promise<PlcAuditEntry[]> {
+  const url = `https://plc.directory/${did}/log/audit`;
+  let res: Response;
+  try {
+    res = await fetchImpl(url);
+  } catch (err) {
+    throw new PlcLogUnavailableError((err as Error).message);
+  }
+  if (!res.ok) {
+    throw new PlcLogUnavailableError(`${res.status} ${res.statusText}`);
+  }
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch (err) {
+    throw new PlcLogUnavailableError(`invalid JSON: ${(err as Error).message}`);
+  }
+  if (!Array.isArray(json)) {
+    throw new PlcLogUnavailableError('audit log response was not an array');
+  }
+  return json as PlcAuditEntry[];
+}
+
+/**
+ * Resolve the `#atproto` signing key that was active at a `did:plc` commit's
+ * `rev`, per the PLC audit log.
+ *
+ * @throws PlcLogUnavailableError if the rev isn't decodable, the log can't be
+ *   fetched/parsed, or it carries no usable key history — the caller falls
+ *   back to the current key on these.
+ * @throws SignatureVerificationError if the active key has an unsupported
+ *   curve — a genuine "cannot verify", must abort (no fallback).
+ */
+async function resolveSigningKeyAtRev(
+  did: string,
+  rev: string,
+  ctx: string
+): Promise<SigningKey> {
+  const t = tidToTimestamp(rev);
+  if (!t) {
+    throw new PlcLogUnavailableError(`commit rev "${rev}" is not a decodable TID`);
+  }
+  const audit = await fetchPlcAuditLog(did);
+  const epochs = buildKeyEpochs(audit);
+  const didKey = selectKeyAtTime(epochs, t);
+  if (!didKey) {
+    throw new PlcLogUnavailableError('PLC audit log carries no #atproto key history');
+  }
+  return didKeyToSigningKey(didKey, ctx);
 }
 
 // ─── CAR parsing ────────────────────────────────────────────────────
@@ -406,13 +599,15 @@ export interface VerifiedRecord {
  * Fetch a record AND cryptographically verify it before returning.
  *
  * Replaces the unverified `getRecord()` call. The full chain:
- *   1. Resolve the DID's #atproto signing key.
- *   2. Fetch the CAR proof (commit + MST path + record) in one
+ *   1. Fetch the CAR proof (commit + MST path + record) in one
  *      `com.atproto.sync.getRecord` call.
- *   3. Verify the commit signature. FAIL → abort.
- *   4. Walk the MST from commit.data to the leaf for `<collection>/<rkey>`,
+ *   2. Decode the commit (the CAR root).
+ *   3. Resolve the #atproto signing key active at commit.rev (PLC audit log
+ *      for did:plc; current key for did:web / fallback).
+ *   4. Verify the commit signature. FAIL → abort.
+ *   5. Walk the MST from commit.data to the leaf for `<collection>/<rkey>`,
  *      re-hashing every node against its parent's CID. FAIL → abort.
- *   5. Re-hash the record block against the leaf's value CID, decode it.
+ *   6. Re-hash the record block against the leaf's value CID, decode it.
  *
  * Any failure throws SignatureVerificationError — callers must NEVER fall
  * back to an unverified install.
@@ -429,14 +624,7 @@ export async function fetchAndVerifyRecord(
   const { did, collection, rkey } = parts;
   const ctx = `${did} ${atUri}`;
 
-  // 1. Signing key.
-  const signingKey = await resolveSigningKey(did);
-
-  // TODO(28549da2 Phase 2): verify against the key active at commit.rev per
-  // the PLC audit log (https://plc.directory/<did>/log) instead of the
-  // current #atproto key. This removes the stolen-old-key forgery vector.
-
-  // 2. Fetch the CAR proof.
+  // 1. Fetch the CAR proof.
   const url =
     `${pdsUrl}/xrpc/com.atproto.sync.getRecord` +
     `?did=${encodeURIComponent(did)}` +
@@ -463,10 +651,10 @@ export async function fetchAndVerifyRecord(
 
   const { blocks, root } = parseCar(carBytes);
 
-  // 3. Verify the commit signature. The CAR root is the commit. Its
-  //    authenticity comes from the SIGNATURE, not from a CID match — the
-  //    root CID is asserted by the same (untrusted) CAR header, so a
-  //    self-hash check would be circular. We verify the signature directly.
+  // 2. Decode the commit. The CAR root is the commit. Its authenticity comes
+  //    from the SIGNATURE (checked in step 4), not from a CID match — the root
+  //    CID is asserted by the same (untrusted) CAR header, so a self-hash
+  //    check would be circular.
   const commitKey = root.toString();
   const commitBytes = blocks.get(commitKey);
   if (!commitBytes) {
@@ -482,13 +670,37 @@ export async function fetchAndVerifyRecord(
       `not match the requested DID`
     );
   }
+
+  // 3. Resolve the signing key that was ACTIVE AT commit.rev (Phase 2). For
+  //    did:plc we walk the PLC audit log and pick the key valid at the rev's
+  //    timestamp — a rotated-out key can't forge a current commit. did:web has
+  //    no audit log → current key. If the log is unavailable we fall back to
+  //    the current key (still a real current-key signature check) and log it.
+  let signingKey: SigningKey;
+  if (did.startsWith('did:plc:')) {
+    try {
+      signingKey = await resolveSigningKeyAtRev(did, commit.rev, ctx);
+    } catch (err) {
+      if (!(err instanceof PlcLogUnavailableError)) throw err; // real verify failure → abort
+      console.warn(
+        `[atproto-verify] PLC audit log unusable for ${ctx} (${err.message}); ` +
+        `falling back to the current #atproto key`
+      );
+      signingKey = await resolveSigningKey(did);
+    }
+  } else {
+    // did:web (and any other supported method): current #atproto key.
+    signingKey = await resolveSigningKey(did);
+  }
+
+  // 4. Verify the commit signature against the resolved key.
   await verifyCommit(commit, signingKey, ctx);
 
-  // 4. Walk the MST to the record leaf.
+  // 5. Walk the MST to the record leaf.
   const targetKey = new TextEncoder().encode(`${collection}/${rkey}`);
   const recordCid = await walkMst(blocks, commit.data, targetKey, ctx);
 
-  // 5. Re-hash the record block against the leaf's value CID, then decode.
+  // 6. Re-hash the record block against the leaf's value CID, then decode.
   const recordKey = recordCid.toString();
   const recordBytes = blocks.get(recordKey);
   if (!recordBytes) {
