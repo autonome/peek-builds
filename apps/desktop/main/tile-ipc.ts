@@ -184,6 +184,8 @@ export { checkSyncAllowed, type SyncCheckResult } from './tile-sync-enforcement.
 export { checkEscapeAllowed, type EscapeCheckResult } from './tile-escape-enforcement.js';
 export { checkSessionAllowed, type SessionCheckResult, type SessionOp } from './tile-session-enforcement.js';
 export { checkIzuiAllowed, type IzuiCheckResult } from './tile-izui-enforcement.js';
+import { isNetworkDomainAllowed } from './tile-network-enforcement.js';
+export { isNetworkDomainAllowed } from './tile-network-enforcement.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -273,27 +275,9 @@ function hasCapability(grant: CapabilityGrant, capability: keyof TileCapabilitie
   return grant.capabilities[capability] !== undefined && grant.capabilities[capability] !== false;
 }
 
-/**
- * Check if a network domain is allowed
- * Supports wildcard matching (e.g., '*.example.com' matches 'api.example.com').
- * Trusted-builtin core renderers bypass the domain allowlist.
- */
-function isNetworkDomainAllowed(grant: CapabilityGrant, domain: string): boolean {
-  if (grant.trustedBuiltin) return true;
-  if (!grant.capabilities.network) return false;
-
-  for (const allowed of grant.capabilities.network.domains) {
-    if (allowed === domain) return true;
-
-    // Wildcard matching: *.example.com
-    if (allowed.startsWith('*.')) {
-      const suffix = allowed.slice(1); // .example.com
-      if (domain.endsWith(suffix)) return true;
-    }
-  }
-
-  return false;
-}
+// Network-fetch domain enforcement lives in a pure (Electron-free) module so
+// it can be unit-tested in isolation; re-exported here for in-file callers and
+// test access. See tile-network-enforcement.ts.
 
 /**
  * Check if a filesystem path is allowed

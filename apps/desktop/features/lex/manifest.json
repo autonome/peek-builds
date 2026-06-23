@@ -40,7 +40,8 @@
       ]
     },
     "network": {
-      "domains": ["*"]
+      "comment": "Lex is builtin → trustedBuiltin grant, which bypasses isNetworkDomainAllowed; this list is advisory/defense-in-depth, not enforced for builtins. Only api.network.fetch hosts (those lacking CORS) go through the allowlist; CORS-present hosts (PDS, public bsky API, plc, OAuth) use plain fetch.",
+      "domains": ["lexidex.bsky.dev"]
     },
     "window": {
       "create": true,
@@ -63,8 +64,7 @@
           "key": "lex-home",
           "width": 860,
           "height": 620,
-          "title": "Lexicon Studio",
-          "webPreferences": { "webSecurity": false }
+          "title": "Lexicon Studio"
         }
       }
     },

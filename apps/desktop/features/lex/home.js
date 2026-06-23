@@ -158,7 +158,6 @@ function openLexWindow() {
     width: 860,
     height: 620,
     title: 'Lexicon Studio',
-    webPreferences: { webSecurity: false },
   });
 }
 
@@ -422,11 +421,20 @@ let lexiconCacheLoading = false;
 const LEXICON_DIR_KEY = 'lexiconDirectory';
 const LEXICON_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+// lexidex.bsky.dev sends NO Access-Control-Allow-Origin, so a plain renderer
+// `fetch` from the peek:// origin is CORS-blocked once webSecurity is on. Route
+// these through `api.network.fetch` — a main-process `net.fetch` that bypasses
+// renderer SOP. It returns `{ status, statusText, headers, body }` where `body`
+// is already a STRING (not a Response), so callers check `status` and read
+// `body` directly. Lex is a builtin → `trustedBuiltin` grant, which bypasses
+// the host allowlist, so the manifest `network.domains` is advisory for it.
 async function fetchLexiconDirectoryFromNetwork() {
-  const homeRes = await fetch('https://lexidex.bsky.dev/');
-  if (!homeRes.ok) throw new Error(`Failed to fetch lexidex: ${homeRes.status}`);
+  const homeRes = await api.network.fetch('https://lexidex.bsky.dev/');
+  if (homeRes.error || homeRes.status < 200 || homeRes.status >= 300) {
+    throw new Error(`Failed to fetch lexidex: ${homeRes.error || homeRes.status}`);
+  }
 
-  const homeHtml = await homeRes.text();
+  const homeHtml = homeRes.body;
   const domainRegex = /href="\/domain\/([^"]+)"/g;
   const domains = [];
   let match;
@@ -439,9 +447,9 @@ async function fetchLexiconDirectoryFromNetwork() {
   const allLexicons = [];
   const domainFetches = domains.map(async (domain) => {
     try {
-      const res = await fetch(`https://lexidex.bsky.dev/domain/${domain}`);
-      if (!res.ok) return;
-      const html = await res.text();
+      const res = await api.network.fetch(`https://lexidex.bsky.dev/domain/${domain}`);
+      if (res.error || res.status < 200 || res.status >= 300) return;
+      const html = res.body;
       const lexRegex = /href="\/lexicon\/([^"]+)"/g;
       let m;
       while ((m = lexRegex.exec(html)) !== null) {

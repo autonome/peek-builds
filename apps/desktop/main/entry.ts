@@ -542,6 +542,7 @@ app.on('web-contents-created', (_event, contents) => {
           const violations: string[] = [];
           if (prefs.nodeIntegration === true) violations.push('nodeIntegration=true');
           if (prefs.contextIsolation === false) violations.push('contextIsolation=false');
+          if (prefs.webSecurity === false) violations.push('webSecurity=false');
           if (violations.length > 0) {
             const url = contents.getURL() || '<no url yet>';
             const msg = `[SECURITY] webContents ${contents.id} (type=${type}, url=${url}) violates isolation policy: ${violations.join(', ')}`;
