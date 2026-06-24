@@ -18,5 +18,14 @@ fn main() {
         println!("cargo:rustc-link-arg=-Wl,-z,max-page-size=16384");
     }
 
+    // Embed a build id so the running app can prove WHICH build it is (on-device
+    // staleness check — see scripts/ios-cache.sh and the peek-device-verify skill).
+    // The build scripts set PEEK_BUILD_ID; on a plain build it falls back to
+    // "unknown". rerun-if-env-changed forces a recompile (and thus a fresh embed)
+    // whenever the id changes, so a stale cache can't silently keep an old id.
+    println!("cargo:rerun-if-env-changed=PEEK_BUILD_ID");
+    let build_id = std::env::var("PEEK_BUILD_ID").unwrap_or_else(|_| "unknown".to_string());
+    println!("cargo:rustc-env=PEEK_BUILD_ID={}", build_id);
+
     tauri_build::build()
 }

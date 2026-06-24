@@ -10,8 +10,21 @@ get_repo_root() {
     git rev-parse --show-toplevel 2>/dev/null || echo "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 }
 
-# Compute hash of Rust source files that affect the build
-# Includes Cargo.toml, Cargo.lock, and all .rs files
+# Compute hash of ALL inputs that affect the embedded iOS app.
+#
+# CRITICAL: the iOS app embeds the built frontend into libapp.a at Rust compile
+# time and serves THAT embedded bundle at runtime (NOT the on-disk
+# gen/apple/assets copy). So the cache key must cover the frontend sources too —
+# otherwise a frontend-only change gets a cache hit, the stale embedded bundle is
+# reused, and the device silently runs old code. (That footgun cost a full
+# debugging session on 2026-06-24: every "fix" updated the gen/apple/assets
+# parity copy but never the embedded bundle the device actually ran.)
+#
+# Inputs hashed:
+#   - src-tauri: Cargo.toml/lock, tauri.conf.json, build.rs, src/**/*.rs
+#   - peek-core (path dependency, embedded too): Cargo.toml, src/**/*.rs
+#   - frontend (embedded bundle): src/**/*.{ts,tsx,js,jsx,css,html,json},
+#     index.html, package.json, tsconfig.json, vite.config.*
 get_source_hash() {
     local tauri_dir="$1"
 
@@ -20,12 +33,30 @@ get_source_hash() {
         return 1
     fi
 
-    # Hash Cargo files, Tauri config, build script, and all Rust source files
-    cat "$tauri_dir/Cargo.toml" \
-        "$tauri_dir/Cargo.lock" \
-        "$tauri_dir/tauri.conf.json" \
-        "$tauri_dir/build.rs" \
-        "$tauri_dir/src"/*.rs 2>/dev/null | shasum -a 256 | cut -d' ' -f1
+    local app_dir
+    app_dir="$(cd "$tauri_dir/.." && pwd)"
+
+    {
+        # Rust: src-tauri config + sources, plus the peek-core path dependency.
+        cat "$tauri_dir/Cargo.toml" \
+            "$tauri_dir/Cargo.lock" \
+            "$tauri_dir/tauri.conf.json" \
+            "$tauri_dir/build.rs" \
+            "$app_dir/peek-core/Cargo.toml" 2>/dev/null
+        find "$tauri_dir/src" "$app_dir/peek-core/src" -type f -name '*.rs' \
+            -print0 2>/dev/null | sort -z | xargs -0 cat 2>/dev/null
+
+        # Frontend: anything that changes the bundle embedded into libapp.a.
+        find "$app_dir/src" -type f \
+            \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \
+               -o -name '*.css' -o -name '*.html' -o -name '*.json' \) \
+            -print0 2>/dev/null | sort -z | xargs -0 cat 2>/dev/null
+        cat "$app_dir/index.html" \
+            "$app_dir/package.json" \
+            "$app_dir/tsconfig.json" \
+            "$app_dir/vite.config.ts" \
+            "$app_dir/vite.config.js" 2>/dev/null
+    } | shasum -a 256 | cut -d' ' -f1
 }
 
 # Check if cache is valid for a given build type

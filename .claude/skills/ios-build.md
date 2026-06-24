@@ -26,6 +26,12 @@ When the user invokes /ios-build:
 - Simulator builds go to `/tmp/peek-xcodebuild-sim`, device to `/tmp/peek-xcodebuild-device`
 - If user reports blank white page, may need `yarn clean:rust:full` (stale Cargo cache)
 - NEVER add `custom-protocol` to default Cargo.toml features
+- **A green build does NOT mean your code is on the device.** The frontend is
+  embedded in `libapp.a` at compile time; the runtime serves that, not
+  `gen/apple/assets/`. If a frontend change "did nothing", suspect a stale
+  embed: rebuild with `build-release.sh --force` / `build-ios.sh --force`.
+- **Always verify at runtime** with `scripts/verify-ios-build.sh device|sim`
+  (`PASS` = the running app is current source). See `/peek-device-verify`.
 
 ## Usage
 

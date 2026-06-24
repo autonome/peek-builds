@@ -3253,6 +3253,28 @@ fn pop_pending_image_shares() -> Result<Vec<PendingImageShare>, String> {
     Ok(entries)
 }
 
+/// Write the embedded build id + a launch timestamp to Documents/build-id.txt so
+/// an external verifier can confirm the running app == the build just produced.
+/// The id comes from PEEK_BUILD_ID, baked in at Rust compile time (see build.rs);
+/// on a stale-cache build the id is whatever was last compiled, which is exactly
+/// how this catches a silently-stale embedded bundle. (See peek-device-verify.)
+#[cfg(target_os = "ios")]
+fn write_build_id_marker() {
+    let docs = match get_docs_path() {
+        Some(p) => p,
+        None => return,
+    };
+    let build_id = env!("PEEK_BUILD_ID");
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let contents = format!("{}\n{}\n", build_id, ts);
+    if fs::write(docs.join("build-id.txt"), contents).is_ok() {
+        ios_log(&format!("Build id marker written: {}", build_id));
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // RESTORE: Check for *.restore files in Documents and copy to App Group (iOS only)
@@ -3262,6 +3284,13 @@ pub fn run() {
     // BACKUP: Copy App Group data to Documents for recovery via Finder File Sharing (iOS only)
     #[cfg(target_os = "ios")]
     backup_app_group_to_documents();
+
+    // BUILD MARKER: write the embedded build id so an external verifier can
+    // confirm the running app is the build that was just made (see the
+    // peek-device-verify skill). Pull with `devicectl ... copy from
+    // --source Documents/build-id.txt`.
+    #[cfg(target_os = "ios")]
+    write_build_id_marker();
 
     // Check for auto-sync environment variable (used by e2e tests)
     let auto_sync_on_launch = std::env::var("PEEK_AUTO_SYNC")

@@ -83,6 +83,11 @@ export IPHONEOS_DEPLOYMENT_TARGET=16.0
 # but cdylib triggers full linking which fails on iOS because Swift FFI symbols
 # (webview_plugin_*) are only provided by Xcode at final link time.
 # iOS only needs staticlib to produce the .a file for Xcode.
+# Bake in a build id (git rev + source hash) so the running app can prove it's
+# this build on-device — see write_build_id_marker() and the peek-device-verify
+# skill. Derived from source, so a verifier recomputes it identically.
+export PEEK_BUILD_ID="$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo nogit)-$(get_source_hash "$TAURI_DIR" | cut -c1-12)"
+echo "Build id: $PEEK_BUILD_ID"
 cargo rustc --lib --crate-type staticlib --target aarch64-apple-ios-sim --features custom-protocol
 
 # Copy to Xcode location
