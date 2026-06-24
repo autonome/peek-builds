@@ -1,20 +1,23 @@
 /**
- * Regression: per-feature Options accordion in Settings → Features.
+ * Per-feature Options affordance in the FEATURES MANAGER.
  *
- * Bug surfaced 2026-04-26: features with `settingsSchema` declared in
- * their manifest (e.g. peeks) had no expandable Options bit. Cause —
- * `app/settings/settings.js::refreshFeaturesList` constructed each
- * feature's `manifest` object without a `schemas` field, then gated the
- * accordion on `manifest.schemas && (manifest.schemas.prefs || manifest.schemas.item)`,
- * so the gate was always false. Fix: fetch each feature's schema via
- * `api.features.settingsSchema(id)` and populate `manifest.schemas`
- * (+ storageKeys + defaults) from it.
+ * History: feature management was consolidated out of Settings →
+ * #section-features into the dedicated Features Manager
+ * (peek://features-manager/manage.html) — peek task
+ * 6dd88973-b8e9-45dc-8af9-ff46f491e1c5. This spec (formerly driving the
+ * deleted Settings Features pane) now asserts the per-feature Options UI
+ * renders in its NEW home: each feature card that declares a settings
+ * schema (e.g. peeks) gets an "Options" button that, on expand, renders
+ * the schema-driven prefs/items controls.
+ *
+ * Builtins are included in the manager list, so the peeks builtin card is
+ * the fixture here.
  */
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 
-test.describe('Settings - per-feature Options @desktop', () => {
+test.describe('Features Manager - per-feature Options @desktop', () => {
   let app: DesktopApp;
   let bgWindow: Page;
 
@@ -26,86 +29,55 @@ test.describe('Settings - per-feature Options @desktop', () => {
     if (app) await app.close();
   });
 
-  test('peeks feature card shows Options accordion + expanding renders prefs', async () => {
-    // Open settings
+  test('peeks feature card shows Options + expanding renders schema-driven prefs', async () => {
+    // Open the Features Manager.
     await bgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('peek://app/settings/settings.html', {
-        width: 900, height: 700,
+      return await (window as any).app.window.open('peek://features-manager/manage.html', {
+        key: 'features-manage', width: 900, height: 650,
       });
     });
 
-    const settingsWindow = await app.getWindow('settings/settings.html', 10000);
-    await settingsWindow.waitForLoadState('domcontentloaded');
-    await settingsWindow.waitForSelector('#section-features', { state: 'attached', timeout: 10000 });
+    const manager = await app.getWindow('features-manager/manage.html', 15000);
+    await manager.waitForLoadState('domcontentloaded');
 
-    // Switch to Features section
-    await settingsWindow.evaluate(() => {
-      const link = Array.from(document.querySelectorAll('.nav-item'))
-        .find(a => (a as HTMLElement).textContent === 'Features') as HTMLElement | undefined;
-      link?.click();
-    });
-
-    // Wait for features list to populate (async after section render).
-    // We look for the peeks card title text inside the features list.
-    await settingsWindow.waitForFunction(() => {
-      const titles = Array.from(document.querySelectorAll('#section-features .item-card-title'));
-      return titles.some(t => (t.textContent || '').trim().startsWith('Peeks'));
+    // Wait for the peeks builtin card to render (builtins are merged into the
+    // list via api.features.list('builtin')).
+    await manager.waitForFunction(() => {
+      const cards = Array.from(document.querySelectorAll('.feature-card'));
+      return cards.some(c => (c as HTMLElement).dataset.featureId === 'peeks');
     }, { timeout: 15000 });
 
-    // Find the peeks card and assert it has an Options toggle.
-    const hasOptionsToggle = await settingsWindow.evaluate(() => {
-      const cards = Array.from(document.querySelectorAll('#section-features .item-card'));
-      const peeksCard = cards.find(c => {
-        const title = c.querySelector('.item-card-title');
-        return title && (title.textContent || '').trim().startsWith('Peeks');
-      });
-      if (!peeksCard) return null;
-      const toggle = peeksCard.querySelector('.ext-options-toggle');
-      return !!toggle;
+    // The peeks card must expose an Options toggle (it declares a settings schema).
+    const hasOptions = await manager.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('.feature-card'))
+        .find(c => (c as HTMLElement).dataset.featureId === 'peeks');
+      return !!card?.querySelector('.feature-options-toggle');
     });
-    expect(hasOptionsToggle).toBe(true);
+    expect(hasOptions).toBe(true);
 
-    // Click the Options toggle and confirm the content panel becomes visible
-    // and renders at least one form-section (the prefs section from the schema).
-    await settingsWindow.evaluate(() => {
-      const cards = Array.from(document.querySelectorAll('#section-features .item-card'));
-      const peeksCard = cards.find(c => {
-        const title = c.querySelector('.item-card-title');
-        return title && (title.textContent || '').trim().startsWith('Peeks');
-      });
-      const toggle = peeksCard?.querySelector('.ext-options-toggle') as HTMLElement | null;
-      toggle?.click();
+    // Click Options → panel expands and renders at least one form-section
+    // (the schema-driven prefs section).
+    await manager.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('.feature-card'))
+        .find(c => (c as HTMLElement).dataset.featureId === 'peeks');
+      (card?.querySelector('.feature-options-toggle') as HTMLElement | null)?.click();
     });
 
-    await settingsWindow.waitForFunction(() => {
-      const cards = Array.from(document.querySelectorAll('#section-features .item-card'));
-      const peeksCard = cards.find(c => {
-        const title = c.querySelector('.item-card-title');
-        return title && (title.textContent || '').trim().startsWith('Peeks');
-      });
-      const content = peeksCard?.querySelector('.ext-options-content') as HTMLElement | null;
-      if (!content || content.style.display === 'none') return false;
-      // Schema-driven content has at least one form-section (prefs or items).
-      return !!content.querySelector('.form-section');
-    }, { timeout: 5000 });
+    await manager.waitForFunction(() => {
+      const card = Array.from(document.querySelectorAll('.feature-card'))
+        .find(c => (c as HTMLElement).dataset.featureId === 'peeks');
+      const panel = card?.querySelector('.feature-options-panel') as HTMLElement | null;
+      if (!panel || panel.style.display === 'none') return false;
+      return !!panel.querySelector('.form-section');
+    }, { timeout: 10000 });
 
-    // Per-item peek cards inside the Options accordion must show an
-    // expand/collapse arrow (▶/▼) via .item-card-title::before. Regression
-    // protection: a descendant `.item-card.no-collapse .item-card-title::before
-    // { content: none }` rule used to cascade into these nested titles and
-    // strip the arrow.
-    const arrow = await settingsWindow.evaluate(() => {
-      const cards = Array.from(document.querySelectorAll('#section-features .item-card'));
-      const peeksCard = cards.find(c => {
-        const title = c.querySelector('.item-card-title');
-        return title && (title.textContent || '').trim().startsWith('Peeks');
-      });
-      const content = peeksCard?.querySelector('.ext-options-content') as HTMLElement | null;
-      const innerCard = content?.querySelector('.item-card');
-      const title = innerCard?.querySelector('.item-card-title') as HTMLElement | null;
-      return title ? getComputedStyle(title, '::before').content : null;
+    // The prefs section renders the peeks shortcutKeyPrefix control (a text input).
+    const hasPrefsInput = await manager.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('.feature-card'))
+        .find(c => (c as HTMLElement).dataset.featureId === 'peeks');
+      const panel = card?.querySelector('.feature-options-panel') as HTMLElement | null;
+      return !!panel?.querySelector('.form-group input');
     });
-    // CSS escape `\25B6 ` parses the trailing space as terminator → "▶".
-    expect(['"▶"', '"▼"']).toContain(arrow);
+    expect(hasPrefsInput).toBe(true);
   });
 });
