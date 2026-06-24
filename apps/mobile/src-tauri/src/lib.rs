@@ -1131,6 +1131,14 @@ fn get_webhook_config() -> (Option<String>, Option<String>) {
 
 // Helper function to push a single URL to webhook (fire and forget)
 async fn push_url_to_webhook(saved_url: SavedUrl) {
+    // Data-leak fix: never send a `?profile=` request before the local profile is
+    // bound to a distinct server profile. On failure, ABORT this push (don't fall
+    // back to the local UUID). Fire-and-forget, so we just log and return.
+    if let Err(e) = ensure_profiles_registered().await {
+        println!("[Rust] Skipping webhook push (profile registration failed): {}", e);
+        return;
+    }
+
     let (webhook_url, api_key) = get_webhook_config();
 
     if let Some(base_url) = webhook_url {
@@ -1177,6 +1185,12 @@ async fn push_url_to_webhook(saved_url: SavedUrl) {
 
 // Helper function to push a single text to webhook (fire and forget)
 async fn push_text_to_webhook(saved_text: SavedText) {
+    // Data-leak fix: see push_url_to_webhook. Abort on registration failure.
+    if let Err(e) = ensure_profiles_registered().await {
+        println!("[Rust] Skipping webhook push (profile registration failed): {}", e);
+        return;
+    }
+
     let (webhook_url, api_key) = get_webhook_config();
 
     if let Some(base_url) = webhook_url {
@@ -1223,6 +1237,12 @@ async fn push_text_to_webhook(saved_text: SavedText) {
 
 // Helper function to push a single tagset to webhook (fire and forget)
 async fn push_tagset_to_webhook(saved_tagset: SavedTagset) {
+    // Data-leak fix: see push_url_to_webhook. Abort on registration failure.
+    if let Err(e) = ensure_profiles_registered().await {
+        println!("[Rust] Skipping webhook push (profile registration failed): {}", e);
+        return;
+    }
+
     let (webhook_url, api_key) = get_webhook_config();
 
     if let Some(base_url) = webhook_url {
@@ -2510,6 +2530,11 @@ async fn trigger_auto_sync_if_enabled() {
 async fn sync_to_webhook() -> Result<SyncResult, String> {
     println!("[Rust] sync_to_webhook called");
 
+    // Data-leak fix: bind every local profile to a distinct server profile before
+    // sending any `?profile=` request. Aborts (returns Err) on failure rather than
+    // falling back to the local UUID. Idempotent / no-op once bound.
+    ensure_profiles_registered().await?;
+
     // Get webhook URL and API key from profiles.json
     let config = load_profile_config();
     let base_webhook_url = &config.sync.server_url;
@@ -2819,6 +2844,211 @@ async fn auto_sync_if_needed() -> Result<Option<SyncResult>, String> {
     }
 }
 
+// ==================== Server Profile Registration ====================
+//
+// HIGH-severity sync data-leak fix (client half).
+//
+// Sync config (server_url, api_key) is GLOBAL but the app has multiple LOCAL
+// profiles, each its own peek-<localUUID>.db. The per-profile discriminator
+// sent to the server is `?profile=<id>` (see append_profile_to_url). Historically
+// every local profile had server_profile_id = null, so the client sent the LOCAL
+// profile UUID — an id the server never registered. The server then (mis)routed
+// all of them into its "default" bucket, cross-contaminating profiles.
+//
+// The fix: before the first push/pull of a sync, perform a one-time, idempotent
+// registration that binds each local profile to a DISTINCT server profile and
+// records it in server_profile_id:
+//   * The FIRST local profile (production / "Default") is bound to the EXISTING
+//     server "default" bucket so its already-synced data is preserved.
+//   * Every OTHER local profile gets a freshly POSTed server profile (isolated
+//     bucket).
+// If registration cannot complete (network/HTTP failure, or no server "default"
+// bucket to bind the first profile to), we ABORT the sync rather than fall back
+// to sending the local UUID — that fallback is precisely the bug.
+//
+// NOTE (deploy ordering): the SERVER de-fallback (stop silently routing unknown
+// profile ids to "default") must ship BEFORE this client change is relied upon.
+
+/// A single profile as returned by the server's `/profiles` endpoints.
+#[derive(Debug, Deserialize)]
+struct ServerProfile {
+    id: String,
+    #[serde(default)]
+    slug: String,
+    #[serde(default)]
+    name: String,
+}
+
+/// Response shape of `GET /profiles`.
+#[derive(Debug, Deserialize)]
+struct ServerProfilesResponse {
+    #[serde(default)]
+    profiles: Vec<ServerProfile>,
+}
+
+/// Response shape of `POST /profiles`.
+#[derive(Debug, Deserialize)]
+struct ServerCreateProfileResponse {
+    profile: ServerProfile,
+}
+
+/// Pick the server profile that the FIRST (production / "Default") local profile
+/// should bind to: the pre-existing "default" bucket. Matches slug == "default"
+/// first, then falls back to name == "Default". Returns None if the server has no
+/// such bucket (caller must ABORT — never create a new one for Default, that would
+/// orphan the real server data).
+fn find_server_default<'a>(profiles: &'a [ServerProfile]) -> Option<&'a ServerProfile> {
+    profiles
+        .iter()
+        .find(|p| p.slug == "default")
+        .or_else(|| profiles.iter().find(|p| p.name == "Default"))
+}
+
+/// Ensure every local profile is bound to a DISTINCT server profile via
+/// server_profile_id. Idempotent and safe to call before every sync: if all
+/// local profiles already carry a server_profile_id, it returns immediately
+/// without any network call.
+///
+/// Binding rules (see module comment above):
+///   * profiles[0] (production / "Default") -> EXISTING server "default" bucket
+///     (slug == "default", fallback name == "Default"). Never creates a new
+///     bucket for it (that would orphan the real server data).
+///   * every other profile -> a freshly POSTed server profile.
+///
+/// On ANY failure (network, non-2xx, missing server default for the first
+/// profile) returns Err so the caller ABORTS the sync. We never fall back to the
+/// local UUID — that is the data-leak bug.
+async fn ensure_profiles_registered() -> Result<(), String> {
+    let config = load_profile_config();
+
+    // Cheap fast path: nothing to do if every profile is already bound.
+    if config.profiles.iter().all(|p| p.server_profile_id.is_some()) {
+        return Ok(());
+    }
+
+    let server_url = config.sync.server_url.trim_end_matches('/').to_string();
+    if server_url.is_empty() {
+        return Err("No server URL configured".to_string());
+    }
+    let api_key = if config.sync.api_key.is_empty() {
+        None
+    } else {
+        Some(config.sync.api_key.clone())
+    };
+
+    let client = reqwest::Client::new();
+
+    // Helper to attach the same Bearer auth the rest of sync uses.
+    let auth = |req: reqwest::RequestBuilder| -> reqwest::RequestBuilder {
+        if let Some(ref key) = api_key {
+            if !key.is_empty() {
+                return req.header("Authorization", format!("Bearer {}", key));
+            }
+        }
+        req
+    };
+
+    // 1. Fetch the server's existing profiles (needed to bind the first/Default
+    //    profile to the pre-existing "default" bucket).
+    let list_url = format!("{}/profiles", server_url);
+    let resp = auth(client.get(&list_url))
+        .send()
+        .await
+        .map_err(|e| format!("Profile registration failed (GET /profiles): {}", e))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!(
+            "Profile registration failed: GET /profiles returned {}: {}",
+            status, body
+        ));
+    }
+    let server_profiles: ServerProfilesResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Profile registration failed parsing /profiles: {}", e))?;
+
+    // Work on a mutable copy; only persist if something changed.
+    let mut updated = config.clone();
+    let mut changed = false;
+
+    for (idx, profile) in updated.profiles.iter_mut().enumerate() {
+        // Never overwrite an existing binding.
+        if profile.server_profile_id.is_some() {
+            continue;
+        }
+
+        if idx == 0 {
+            // First (production / Default) profile: bind to the EXISTING server
+            // "default" bucket so its already-synced data is preserved. Do NOT
+            // create a new bucket here.
+            let default_match = find_server_default(&server_profiles.profiles);
+
+            match default_match {
+                Some(p) => {
+                    println!(
+                        "[Rust] Profile registration: binding local '{}' ({}) -> existing server default {}",
+                        profile.name, profile.id, p.id
+                    );
+                    profile.server_profile_id = Some(p.id.clone());
+                    changed = true;
+                }
+                None => {
+                    // Abort rather than risk creating/binding wrong; the existing
+                    // server "default" bucket is where this profile's data lives.
+                    return Err(format!(
+                        "Profile registration aborted: server has no 'default' profile to bind local '{}' to",
+                        profile.name
+                    ));
+                }
+            }
+        } else {
+            // Every other profile: POST a fresh, isolated server bucket.
+            let create_url = format!("{}/profiles", server_url);
+            let body = serde_json::json!({ "name": profile.name });
+            let resp = auth(client.post(&create_url).json(&body))
+                .send()
+                .await
+                .map_err(|e| {
+                    format!(
+                        "Profile registration failed (POST /profiles for '{}'): {}",
+                        profile.name, e
+                    )
+                })?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                return Err(format!(
+                    "Profile registration failed: POST /profiles for '{}' returned {}: {}",
+                    profile.name, status, text
+                ));
+            }
+            let created: ServerCreateProfileResponse = resp.json().await.map_err(|e| {
+                format!(
+                    "Profile registration failed parsing POST /profiles for '{}': {}",
+                    profile.name, e
+                )
+            })?;
+            println!(
+                "[Rust] Profile registration: created server bucket {} for local '{}' ({})",
+                created.profile.id, profile.name, profile.id
+            );
+            profile.server_profile_id = Some(created.profile.id);
+            changed = true;
+        }
+    }
+
+    if changed {
+        // Persist + refresh the cached config so the subsequent
+        // append_profile_to_url reads the new server_profile_id values.
+        if !save_profile_config(&updated) {
+            return Err("Profile registration: failed to persist profiles.json".to_string());
+        }
+    }
+
+    Ok(())
+}
+
 // ==================== Bidirectional Sync ====================
 
 /// Check server version headers in a response.
@@ -2856,6 +3086,11 @@ fn check_response_version_headers(headers: &reqwest::header::HeaderMap) -> Resul
 #[tauri::command]
 async fn pull_from_server() -> Result<BidirectionalSyncResult, String> {
     println!("[Rust] pull_from_server called");
+
+    // Data-leak fix: bind every local profile to a distinct server profile before
+    // sending any `?profile=` request. Aborts (returns Err) on failure rather than
+    // falling back to the local UUID. Idempotent / no-op once bound.
+    ensure_profiles_registered().await?;
 
     // Get server URL and API key from profiles.json
     let config = load_profile_config();
@@ -2973,6 +3208,11 @@ async fn pull_from_server() -> Result<BidirectionalSyncResult, String> {
 #[tauri::command]
 async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
     println!("[Rust] push_to_server called");
+
+    // Data-leak fix: bind every local profile to a distinct server profile before
+    // sending any `?profile=` request. Aborts (returns Err) on failure rather than
+    // falling back to the local UUID. Idempotent / no-op once bound.
+    ensure_profiles_registered().await?;
 
     // Get server URL and API key from profiles.json
     let config = load_profile_config();
@@ -3446,7 +3686,10 @@ pub fn run() {
 mod tests {
     use rusqlite::{params, Connection};
     use chrono::Utc;
-    use super::{is_valid_uuid, ProfileConfig, ProfileEntry, SyncSettings};
+    use super::{
+        find_server_default, is_valid_uuid, ProfileConfig, ProfileEntry, ServerProfile,
+        ServerProfilesResponse, SyncSettings,
+    };
     use peek_core::generate_tag_id;
 
     /// Create the database schema for testing (unified model with sync columns)
@@ -4043,5 +4286,71 @@ mod tests {
         assert_eq!(settings.server_url, "https://sync.example.com");
         assert_eq!(settings.api_key, "secret-key-123");
         assert!(settings.auto_sync);
+    }
+
+    // ---- Server profile registration (sync data-leak fix) ----
+
+    fn sp(id: &str, slug: &str, name: &str) -> ServerProfile {
+        ServerProfile {
+            id: id.to_string(),
+            slug: slug.to_string(),
+            name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_find_server_default_by_slug() {
+        // The Default/production local profile binds to the EXISTING server
+        // "default" bucket (matched by slug) so its data is preserved.
+        let profiles = vec![
+            sp("id-work", "work", "Work"),
+            sp("id-default", "default", "Some Other Name"),
+        ];
+        let found = find_server_default(&profiles).expect("default bucket should match");
+        assert_eq!(found.id, "id-default");
+    }
+
+    #[test]
+    fn test_find_server_default_name_fallback() {
+        // Fallback to name == "Default" when no slug == "default" exists.
+        let profiles = vec![
+            sp("id-a", "personal", "Personal"),
+            sp("id-b", "renamed-slug", "Default"),
+        ];
+        let found = find_server_default(&profiles).expect("Default by name should match");
+        assert_eq!(found.id, "id-b");
+    }
+
+    #[test]
+    fn test_find_server_default_slug_wins_over_name() {
+        // slug == "default" takes precedence over name == "Default".
+        let profiles = vec![
+            sp("id-name", "renamed", "Default"),
+            sp("id-slug", "default", "Not Default Name"),
+        ];
+        let found = find_server_default(&profiles).expect("slug should win");
+        assert_eq!(found.id, "id-slug");
+    }
+
+    #[test]
+    fn test_find_server_default_none_aborts() {
+        // No server default => None => caller ABORTS (never creates a new bucket
+        // for Default, which would orphan real server data).
+        let profiles = vec![sp("id-a", "work", "Work"), sp("id-b", "personal", "Personal")];
+        assert!(find_server_default(&profiles).is_none());
+    }
+
+    #[test]
+    fn test_server_profiles_response_parses() {
+        // Mirrors the real GET /profiles body shape.
+        let json = r#"{ "profiles": [
+            { "id": "uuid-1", "user_id": "u", "slug": "default", "name": "Default" },
+            { "id": "uuid-2", "user_id": "u", "slug": "dev", "name": "Development" }
+        ] }"#;
+        let resp: ServerProfilesResponse =
+            serde_json::from_str(json).expect("should parse /profiles");
+        assert_eq!(resp.profiles.len(), 2);
+        let found = find_server_default(&resp.profiles).expect("default present");
+        assert_eq!(found.id, "uuid-1");
     }
 }
