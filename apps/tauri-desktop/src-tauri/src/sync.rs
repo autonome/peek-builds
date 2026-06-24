@@ -123,7 +123,10 @@ struct ProfileContext {
 // Legacy feature_settings storage is deprecated for apiKey/lastSyncTime
 // Only serverUrl and autoSync remain global in feature_settings
 
-const DEFAULT_SERVER_URL: &str = "https://peek-node.up.railway.app";
+// No production server URL is baked into source (security 5aa96aab). The sync
+// target must be supplied at runtime via the stored setting or the
+// SYNC_SERVER_URL env var; with neither set, server_url is empty and sync stays
+// off. This keeps prod endpoints out of shipped binaries and dev/test builds.
 
 /// Get sync configuration for the active profile
 /// Reads per-profile data from profiles_db, global settings from datastore db
@@ -197,13 +200,13 @@ pub fn set_sync_config(
     Ok(())
 }
 
-/// Get server URL from settings or environment
+/// Get server URL from settings or environment.
+/// No hardcoded prod default — falls back to the SYNC_SERVER_URL env var, or
+/// empty (sync unconfigured) when that is unset.
 fn get_server_url(conn: &Connection) -> String {
     get_setting(conn, "sync", "serverUrl")
         .and_then(|v| serde_json::from_str::<String>(&v).ok())
-        .unwrap_or_else(|| {
-            std::env::var("SYNC_SERVER_URL").unwrap_or_else(|_| DEFAULT_SERVER_URL.to_string())
-        })
+        .unwrap_or_else(|| std::env::var("SYNC_SERVER_URL").unwrap_or_default())
 }
 
 /// Save server URL to settings

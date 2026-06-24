@@ -2501,6 +2501,34 @@ fn is_auto_sync_enabled() -> bool {
     load_profile_config().sync.auto_sync
 }
 
+/// Whether `server_url` points at a local (loopback) host.
+fn is_local_server_url(server_url: &str) -> bool {
+    let u = server_url.to_ascii_lowercase();
+    u.contains("localhost")
+        || u.contains("127.0.0.1")
+        || u.contains("[::1]")
+        || u.contains("0.0.0.0")
+}
+
+/// Dev/prod separation guard (security 5bb925ff): in a DEBUG build (sim / dev /
+/// test), refuse to AUTO-sync to a non-local server unless explicitly opted in
+/// via PEEK_ALLOW_REMOTE_SYNC. This structurally stops a debug build that
+/// inherited a prod `profiles.json` from silently syncing to production — the
+/// 2026-06-24 rogue-sim incident. Release builds are unaffected, and MANUAL
+/// sync (an explicit user action) is never blocked.
+fn remote_auto_sync_blocked_in_debug(server_url: &str) -> bool {
+    if !cfg!(debug_assertions) {
+        return false;
+    }
+    if is_local_server_url(server_url) {
+        return false;
+    }
+    !matches!(
+        std::env::var("PEEK_ALLOW_REMOTE_SYNC").ok().as_deref(),
+        Some("1") | Some("true")
+    )
+}
+
 /// Trigger sync if auto-sync is enabled and webhook is configured
 async fn trigger_auto_sync_if_enabled() {
     if !is_auto_sync_enabled() {
@@ -2511,6 +2539,15 @@ async fn trigger_auto_sync_if_enabled() {
     let config = load_profile_config();
     if config.sync.server_url.is_empty() {
         println!("[Rust] Auto-sync: skipping, no webhook configured");
+        return;
+    }
+
+    if remote_auto_sync_blocked_in_debug(&config.sync.server_url) {
+        println!(
+            "[Rust] Auto-sync: BLOCKED — debug build will not auto-sync to remote server '{}'. \
+             Set PEEK_ALLOW_REMOTE_SYNC=1 to allow, or use a localhost server.",
+            config.sync.server_url
+        );
         return;
     }
 
@@ -4000,6 +4037,32 @@ mod tests {
 
         assert_eq!(sync_id, "remote-123", "sync_id should be saved");
         assert_eq!(synced_at, now, "synced_at should be saved");
+    }
+
+    #[test]
+    fn test_is_local_server_url() {
+        assert!(super::is_local_server_url("http://localhost:3000"));
+        assert!(super::is_local_server_url("http://127.0.0.1:3000"));
+        assert!(super::is_local_server_url("http://[::1]:3000"));
+        assert!(super::is_local_server_url("http://0.0.0.0:8080"));
+        assert!(!super::is_local_server_url("https://peek-node.up.railway.app"));
+        assert!(!super::is_local_server_url("https://example.com"));
+    }
+
+    #[test]
+    fn test_remote_auto_sync_blocked_in_debug() {
+        // Runs under `cargo test`, where debug_assertions is true.
+        // A local server is always allowed regardless of the env opt-in.
+        std::env::remove_var("PEEK_ALLOW_REMOTE_SYNC");
+        assert!(!super::remote_auto_sync_blocked_in_debug("http://localhost:3000"));
+
+        // A remote server is blocked unless explicitly opted in.
+        assert!(super::remote_auto_sync_blocked_in_debug("https://peek-node.up.railway.app"));
+
+        std::env::set_var("PEEK_ALLOW_REMOTE_SYNC", "1");
+        assert!(!super::remote_auto_sync_blocked_in_debug("https://peek-node.up.railway.app"));
+
+        std::env::remove_var("PEEK_ALLOW_REMOTE_SYNC");
     }
 
     #[test]
