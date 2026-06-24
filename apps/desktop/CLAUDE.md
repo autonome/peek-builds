@@ -95,6 +95,34 @@ Key facts:
 
 See `docs/architecture.md` and `docs/tiles-single-file.md` for the full tile model.
 
+### UI: the `<peek-*>` component system is the DEFAULT — don't hand-roll chrome
+
+**Every tile/feature UI ships on the shared Lit component library** in
+`renderer/components/` (`peek-button`, `peek-input`, `peek-select`, `peek-card`,
+`peek-grid`, …). That is the design system here. Do **not** hand-roll `.btn` /
+`.card` / `.input` / modal CSS that *approximates* it — those copies drift (wrong
+radius/height/weight, UA-font leaks) and are exactly why a surface reads as "a
+different app." If a control exists as a `<peek-*>` component, use the component.
+
+- **Why not just mirror tokens into `:root`?** The `--peek-*` geometry tokens
+  (`components/tokens.css`, `base.js` `sharedStyles`) are `:host`-scoped — a plain
+  `peek://` tile document can't read them at `:root`. But each component
+  re-declares the tokens inside its OWN shadow root, so **using the component gets
+  correct geometry for free**. Mirroring token *values* into a tile's `:root` (the
+  old `features-manager/common.css` approach) is a half-measure that still leaves
+  hand-rolled chrome subtly wrong; prefer the components.
+- **REQUIRED: the `lit` importmap.** Component source does `import … from 'lit'`
+  (a *bare* specifier). A plain tile document resolves it ONLY if its `<head>`
+  declares a `<script type="importmap">` mapping `lit` / `lit-html` /
+  `lit-element` / `@lit/reactive-element` → `peek://node_modules/…`. **Without it
+  every component import silently fails and the elements stay un-upgraded
+  (`HTMLElement`, no shadow root) with no thrown error** — they render as inert,
+  unstyled custom tags. Copy the block verbatim from `features/windows/windows.html`.
+- **Reference baseline:** `features/windows/` is the genuine on-system surface
+  (`<peek-card>`/`<peek-grid>`/`<peek-input>`, measures to canonical). `settings`
+  is NOT on the system — it's bespoke CSS that only *looks* close; don't cite it as
+  the standard.
+
 ### Lazy feature activation
 
 Built-in feature tiles (mcp-server, windows, websearch, peeks, slides) are **lazy** — they spawn on demand, not at boot. Production fixed boot was cut from 6 to 2 windows by this change.
