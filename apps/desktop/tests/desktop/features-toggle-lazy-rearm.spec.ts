@@ -155,3 +155,69 @@ test.describe('Lazy feature live re-enable (no restart) @desktop', () => {
     expect(overlay).toBeTruthy();
   });
 });
+
+test.describe('Features Manager self-guard: cannot disable/remove itself @desktop', () => {
+  // Separate app instance so this describe is independent of the rearm tests.
+  let selfGuardApp: DesktopApp;
+  let selfGuardManager: Page;
+
+  test.beforeAll(async () => {
+    ({ app: selfGuardApp, bgWindow } = await createPerDescribeApp('features-self-guard'));
+    await waitForExtensionsReady(bgWindow, 15000);
+    await bgWindow.evaluate(async () => {
+      await (window as any).app.window.open('peek://features-manager/manage.html', {
+        key: 'features-manage', width: 900, height: 650,
+      });
+    });
+    selfGuardManager = await selfGuardApp.getWindow('features-manager/manage.html', 15000);
+    await selfGuardManager.waitForLoadState('domcontentloaded');
+  });
+
+  test.afterAll(async () => {
+    if (selfGuardApp) await selfGuardApp.close();
+  });
+
+  test('tile:features:disable refuses features-manager with an error result', async () => {
+    // Drive through the real IPC handler — same path as the Manage UI's
+    // api.features.disable call. Expect a failure shape, not success.
+    const res = await selfGuardManager.evaluate(
+      (id) => (window as any).app.features.disable(id),
+      'features-manager',
+    );
+    expect(res.success).toBeUndefined();
+    expect(res.error).toBeTruthy();
+    expect(typeof res.error).toBe('string');
+  });
+
+  test('UI: features-manager row toggle button is disabled (no active Disable affordance)', async () => {
+    // Wait for the feature list to render.
+    await selfGuardManager.waitForFunction(() => {
+      return document.querySelectorAll('.feature-card').length > 0;
+    }, { timeout: 15000 });
+
+    const toggleState = await selfGuardManager.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('.feature-card'))
+        .find(c => (c as HTMLElement).dataset.featureId === 'features-manager');
+      if (!card) return { found: false };
+      // The toggle button shows 'Required' and is disabled.
+      const btn = Array.from(card.querySelectorAll('peek-button'))
+        .find(b => {
+          const t = (b.textContent || '').trim();
+          return t === 'Disable' || t === 'Enable' || t === 'Required';
+        }) as HTMLElement | undefined;
+      if (!btn) return { found: true, btnFound: false };
+      return {
+        found: true,
+        btnFound: true,
+        text: (btn.textContent || '').trim(),
+        disabled: (btn as any).disabled,
+      };
+    });
+
+    expect(toggleState.found).toBe(true);
+    expect(toggleState.btnFound).toBe(true);
+    // Must be 'Required' (not 'Disable') and must be disabled.
+    expect(toggleState.text).toBe('Required');
+    expect(toggleState.disabled).toBe(true);
+  });
+});

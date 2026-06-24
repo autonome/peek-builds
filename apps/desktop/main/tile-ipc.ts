@@ -366,7 +366,7 @@ function writeFeatureHistory(
  * builtin (peeks, slides, groups, windows, …) is freely disablable — the
  * registry `disabled` flag is the boot-time load gate.
  */
-const REQUIRED_BUILTIN_FEATURE_IDS = new Set<string>(['cmd']);
+const REQUIRED_BUILTIN_FEATURE_IDS = new Set<string>(['cmd', 'features-manager']);
 
 /**
  * Register all tile IPC handlers

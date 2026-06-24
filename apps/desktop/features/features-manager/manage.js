@@ -18,12 +18,12 @@ const hasPeekAPI = !!api;
 // own. The bgWindow orchestrator (renderer/index.js) subscribes to that
 // topic and routes tile-backed builtins through api.features.enable /
 // disable; the core-store write keeps the legacy `enabled` flag in sync
-// for entries that exist there. cmd is required infrastructure — never
-// disablable.
+// for entries that exist there. cmd and features-manager are required
+// infrastructure — never disablable.
 const CORE_STORE_NAMESPACE = 'core';
 const CORE_STORE_ITEMS_KEY = 'items';
 const FEATURE_TOGGLE_TOPIC = 'core:feature:toggle';
-const LOCKED_BUILTIN_IDS = new Set(['cmd']);
+const LOCKED_BUILTIN_IDS = new Set(['cmd', 'features-manager']);
 
 // ─── feature_settings store helper ──────────────────────────────────
 //
@@ -598,14 +598,20 @@ function createFeatureCard(feature) {
   }
 
   // Enable/Disable toggle — shown for ALL features, including builtins.
-  // The cmd feature is required infrastructure and can never be disabled.
+  // cmd and features-manager are required infrastructure and can never be
+  // disabled: cmd provides the command panel every feature dispatches through;
+  // features-manager is the only UI to re-enable a disabled feature.
   const isLocked = LOCKED_BUILTIN_IDS.has(feature.id);
   const toggleBtn = document.createElement('peek-button');
   toggleBtn.size = 'sm';
   if (isDisabled) toggleBtn.variant = 'primary';
   toggleBtn.textContent = isLocked ? 'Required' : (isDisabled ? 'Enable' : 'Disable');
   toggleBtn.disabled = isLocked;
-  if (isLocked) toggleBtn.title = 'Required infrastructure — cannot be disabled';
+  if (isLocked) {
+    toggleBtn.title = feature.id === 'features-manager'
+      ? 'The Features Manager can\'t disable itself'
+      : 'Required infrastructure — cannot be disabled';
+  }
   toggleBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     if (isLocked) return;
@@ -802,7 +808,7 @@ function createFeatureCard(feature) {
 
 async function toggleFeature(id, currentlyDisabled, isBuiltin = false) {
   if (!hasPeekAPI) return;
-  if (LOCKED_BUILTIN_IDS.has(id)) return; // cmd is required infrastructure.
+  if (LOCKED_BUILTIN_IDS.has(id)) return; // required infrastructure (cmd, features-manager).
 
   const newEnabled = currentlyDisabled; // enabling when currently disabled
 
