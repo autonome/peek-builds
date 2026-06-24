@@ -272,6 +272,58 @@ function collectLazyEventTopics(manifest: TileManifest): string[] {
   return Array.from(topics);
 }
 
+/**
+ * Recompute the lazyEvent predicate set from whatever tiles are still
+ * registered. Called after a tile is unregistered so a topic only that
+ * tile claimed stops matching the dispatch hook, while topics shared
+ * with a still-registered tile survive. Cheap (run only on the rare
+ * register/unregister path, never per publish).
+ */
+function rebuildDeclaredLazyEventTopics(): void {
+  declaredLazyEventTopics.clear();
+  for (const { manifest } of lazyTileRegistry.values()) {
+    for (const topic of collectLazyEventTopics(manifest)) {
+      declaredLazyEventTopics.add(topic);
+    }
+  }
+}
+
+/**
+ * Live counterpart to `registerLazyTile` — used when a lazy feature is
+ * DISABLED mid-session (Features Manager). Removes the tile from the
+ * lazy registry so the load-on-dispatch hook stops matching its
+ * commands / lazyEvents, drops its lazyEvent topics from the predicate
+ * set, and publishes `cmd:unregister` for each announced command so the
+ * cmd panel drops the now-dead palette entries. After this the only
+ * thing left to tear down is the OS accelerators (the registrar owns
+ * those — see `disarmLazyTile` in tile-compat).
+ *
+ * Idempotent: a no-op if the tile was never registered. Symmetrical
+ * with a fresh boot-with-feature-disabled, where the tile never enters
+ * the registry at all.
+ */
+export function unregisterLazyTile(tileId: string): void {
+  const config = lazyTileRegistry.get(tileId);
+  if (!config) return;
+
+  // Drop the command-palette entries this tile announced via
+  // `cmd:register-batch` at registration. Mirror the source address the
+  // registration used so any source-scoped bookkeeping lines up.
+  if (Array.isArray(config.manifest.commands)) {
+    for (const cmd of config.manifest.commands) {
+      publish(`peek://${tileId}/lazy-stub`, 'cmd:unregister', { name: cmd.name });
+    }
+  }
+
+  lazyTileRegistry.delete(tileId);
+  // Drop any in-flight load bookkeeping so a later re-enable starts clean.
+  loadingTiles.delete(tileId);
+  pendingDispatchesByTile.delete(tileId);
+  rebuildDeclaredLazyEventTopics();
+
+  DEBUG && console.log(`[tile-lazy] Unregistered lazy tile: ${tileId}`);
+}
+
 // ─── Dispatch hook ───────────────────────────────────────────────────
 
 /**

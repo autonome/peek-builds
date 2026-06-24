@@ -27,16 +27,16 @@ import {
   getTileWindow,
   isTileLoaded,
   unloadTile,
-  launchTile,
   getTileManifest,
 } from './tile-launcher.js';
 import { registerTileIpc } from './tile-ipc-gate.js';
 import { performAtprotoRequest, isAtprotoHostAllowed, type AtprotoRequest } from './atproto-proxy.js';
 import { readAtprotoSession, writeAtprotoSession } from './atproto-session-store.js';
 import { parseManifestFile } from './tile-manifest.js';
+import { loadOrArmFeatureTile, disarmLazyTile, type AnnotatedTile } from './tile-arm.js';
 import { computePlacement, toProportional, ownDisplay } from './window-placement.js';
 import { publish, subscribe, unsubscribe, getStats as getPubSubStats } from './pubsub.js';
-import { DEBUG, TILE_STRICT, isHeadless } from './config.js';
+import { DEBUG, TILE_STRICT, isHeadless, getTilePreloadPath } from './config.js';
 import {
   setDebug,
   setDevTools,
@@ -1339,24 +1339,23 @@ export function registerTileIpcHandlers(): void {
     if (result) {
       registry.saveRegistry();
 
-      if (entry.source.type === 'builtin' && args.tilePreloadPath) {
-        try {
-          const manifestPath = path.join(entry.path, 'manifest.json');
-          const parsed = parseManifestFile(manifestPath);
-          if (parsed?.version === 'tile' && parsed.manifest) {
-            const residentTile = parsed.manifest.tiles.find(t => t.resident === true);
-            if (residentTile && !isTileLoaded(args.id, residentTile.id)) {
-              launchTile({
-                tilePath: entry.path,
-                manifest: parsed.manifest,
-                preloadPath: args.tilePreloadPath,
-                entryId: residentTile.id,
-              });
-            }
-          }
-        } catch (err) {
-          console.error(`[tile-ipc] Failed to relaunch ${args.id} on enable:`, err);
+      // Re-arm the feature live so a mid-session enable reaches the same end
+      // state as a fresh boot with the feature enabled — no restart. Boot's
+      // loader SKIPS disabled features, so a re-enabled lazy tile is NOT in the
+      // lazy registry and has NO wake accelerators; flipping the `disabled` flag
+      // (above) alone left its global hotkeys + command-palette entries dead
+      // until the next launch. Route through the SAME shared path boot uses
+      // (`loadOrArmFeatureTile`: register path + arm-lazy-or-launch-resident).
+      // The preload path the renderer omits (core:feature:toggle calls
+      // api.features.enable with no path) falls back to the cached canonical one.
+      try {
+        const parsed = parseManifestFile(path.join(entry.path, 'manifest.json'));
+        if (parsed?.version === 'tile' && parsed.manifest) {
+          const annotated: AnnotatedTile = { id: args.id, path: entry.path, manifest: parsed.manifest };
+          loadOrArmFeatureTile(annotated, { tilePreloadPath: args.tilePreloadPath || getTilePreloadPath() });
         }
+      } catch (err) {
+        console.error(`[tile-ipc] Failed to re-arm ${args.id} on enable:`, err);
       }
 
       publish('feature-registry', 'feature:enabled', { id: args.id });
@@ -1409,6 +1408,13 @@ export function registerTileIpcHandlers(): void {
         }
       }
 
+      // Tear down the lazy arming live so the disable takes effect WITHOUT a
+      // restart and a disable→enable cycle stays clean: drop the OS wake
+      // accelerators (otherwise a stale hotkey keeps trying to wake a disabled
+      // tile) and remove the tile from the lazy registry + command palette.
+      // Safe/idempotent for resident-only or never-armed tiles.
+      disarmLazyTile(args.id);
+
       publish('feature-registry', 'feature:disabled', { id: args.id });
     }
     return { success: result };
@@ -1448,6 +1454,10 @@ export function registerTileIpcHandlers(): void {
         }
       }
     }
+
+    // Same live teardown as disable: a removed lazy feature must not leave a
+    // stale lazy-registry entry or registered wake accelerators behind.
+    disarmLazyTile(args.id);
 
     const result = registry.unregisterFeature(args.id);
     if (result) {
