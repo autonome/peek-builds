@@ -64,24 +64,6 @@ function isExpiredAuthError(err) {
   return false;
 }
 
-/**
- * Wrapper around refreshOAuthSession() that flips the authExpired flag
- * when the failure looks like a permanent expiry. Returns the refreshed
- * session on success; throws on failure (caller decides how to react,
- * but should consult isAuthExpired() afterward).
- */
-async function tryRefreshSession(session) {
-  try {
-    const refreshed = await refreshOAuthSession(session);
-    return refreshed;
-  } catch (err) {
-    if (isExpiredAuthError(err)) {
-      authExpired = true;
-    }
-    throw err;
-  }
-}
-
 // ============================================================================
 // Public API (unauthenticated)
 // ============================================================================
@@ -324,16 +306,6 @@ async function createDpopProof(keyPair, method, url, nonce, ath) {
   // JWT expects this format, so no conversion needed.
   const sigB64 = base64urlEncode(new Uint8Array(signature));
   return `${signingInput}.${sigB64}`;
-}
-
-/**
- * Compute access token hash for DPoP proof.
- * @param {string} accessToken
- * @returns {Promise<string>} base64url-encoded SHA-256 hash
- */
-async function computeAth(accessToken) {
-  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(accessToken));
-  return base64urlEncode(new Uint8Array(hash));
 }
 
 // ============================================================================
@@ -634,100 +606,118 @@ export async function refreshOAuthSession(session) {
 }
 
 // ============================================================================
-// Authenticated XRPC requests (DPoP)
+// Authenticated XRPC requests (via main-process DPoP proxy)
 // ============================================================================
+//
+// Authenticated calls against the user's PDS go through the main-process
+// DPoP proxy (`window.app.atproto.*` → tile-ipc `tile:atproto:request` /
+// `tile:atproto:upload-blob` → atproto-proxy.ts). The proxy does the FULL
+// DPoP loop in main (proof signing, DPoP-Nonce retry, and 401→refresh→retry),
+// reading the session — including the private DPoP key — from main's
+// `feature_settings`, and persisting any mid-request refresh itself.
+//
+// Why not plain `fetch()` here: an authenticated XRPC call hits the user's
+// PDS host, which for many PDSes (e.g. eurosky.social) sends NO
+// `Access-Control-Allow-Origin`, so a plain `fetch()` from the `peek://`
+// renderer origin is CORS-blocked → "Failed to fetch". The proxy uses
+// Electron `net.fetch` from main, which is not subject to renderer CORS.
+//
+// The `onSessionRefresh` callback is now a NO-OP path: the proxy persists
+// refreshes to `feature_settings` itself, and the renderer's session copy
+// (handle/did/pdsUrl — which don't change on refresh) stays valid. The
+// parameter is retained so call sites need no changes.
 
 /**
- * Make an authenticated GET request to the user's PDS using DPoP tokens.
- * Automatically retries once with a refreshed token on 401.
+ * Inspect a proxy `{ error }` string to decide whether it signals a
+ * permanent auth expiry (refresh token revoked / JWT exp failed / 4xx from
+ * the token endpoint during the proxy's own refresh attempt) vs a transient
+ * failure. Reuses the same markers as isExpiredAuthError, plus the proxy's
+ * "No AT Protocol session" message (the session row is gone from main).
+ *
+ * @param {string} errMsg
+ * @returns {boolean}
+ */
+function proxyErrorIsExpired(errMsg) {
+  const msg = String(errMsg || '');
+  if (/No AT Protocol session/i.test(msg)) return true;
+  return isExpiredAuthError({ message: msg });
+}
+
+/**
+ * Drive a single authenticated XRPC call through the main-process DPoP proxy
+ * and normalise the result to the throw/return contract the old in-renderer
+ * implementation had:
+ *   - success (2xx) → resolves the parsed JSON body
+ *   - proxy `{ error }` or a surviving 401 (the proxy already tried
+ *     refresh→retry, so a 401 here is a strong "permanently expired" signal)
+ *     that looks like permanent expiry → set the module `authExpired` flag and
+ *     throw AuthExpiredError (drives the auth-expired overlay in home.js)
+ *   - any other non-2xx / non-expiry error → throw a generic Error mirroring
+ *     the old `err.message || err.error || "XRPC <METHOD> <nsid> failed (NNN)"`
+ *
+ * @param {string} method - 'GET' | 'POST'
+ * @param {string} nsid - XRPC method (for error messages)
+ * @param {string} url - fully-qualified PDS XRPC URL
+ * @param {Object} [jsonBody] - JSON body for POST
+ * @returns {Promise<Object>} parsed JSON response body
+ */
+async function proxyXrpc(method, nsid, url, jsonBody) {
+  if (authExpired) throw new AuthExpiredError();
+  if (!api || !api.atproto || typeof api.atproto.request !== 'function') {
+    throw new Error('AT Protocol proxy unavailable (window.app.atproto missing)');
+  }
+
+  const result = jsonBody !== undefined
+    ? await api.atproto.request(method, url, jsonBody)
+    : await api.atproto.request(method, url);
+
+  // Transport / proxy-level failure (no HTTP status at all).
+  if (result && result.error !== undefined) {
+    if (proxyErrorIsExpired(result.error)) {
+      authExpired = true;
+      throw new AuthExpiredError();
+    }
+    throw new Error(result.error || `XRPC ${method} ${nsid} failed`);
+  }
+
+  const status = result ? result.status : 0;
+
+  // A 401 survived the proxy's own 401→refresh→retry: the refresh either
+  // could not be performed or did not restore access → permanent expiry.
+  if (status === 401) {
+    authExpired = true;
+    throw new AuthExpiredError();
+  }
+
+  if (status < 200 || status >= 300) {
+    const errBody = (result && result.body && typeof result.body === 'object') ? result.body : {};
+    throw new Error(
+      errBody.message || errBody.error || `XRPC ${method} ${nsid} failed (${status})`
+    );
+  }
+
+  return result.body;
+}
+
+/**
+ * Make an authenticated GET request to the user's PDS via the DPoP proxy.
  *
  * @param {OAuthSession} session
  * @param {string} nsid - XRPC method
  * @param {Object} [params] - Query parameters
- * @param {function} [onSessionRefresh] - Called with updated session on token refresh
+ * @param {function} [onSessionRefresh] - Retained for signature compatibility;
+ *   the proxy persists refreshes itself, so this is no longer invoked.
  * @returns {Promise<Object>} Response data
  */
 export async function xrpcGet(session, nsid, params = {}, onSessionRefresh = null) {
-  if (authExpired) throw new AuthExpiredError();
-
+  void onSessionRefresh;
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null) qs.set(k, String(v));
   }
   const qsStr = qs.toString();
   const url = `${session.pdsUrl}/xrpc/${nsid}${qsStr ? '?' + qsStr : ''}`;
-
-  const dpopKeyPair = await importKeyPair(session.dpopKeyPairJwk);
-
-  // Compute access token hash for DPoP proof
-  const ath = await computeAth(session.accessToken);
-  let dpopProof = await createDpopProof(dpopKeyPair, 'GET', url, undefined, ath);
-
-  let res = await fetch(url, {
-    headers: {
-      'Authorization': `DPoP ${session.accessToken}`,
-      'DPoP': dpopProof,
-    },
-  });
-
-  // Handle DPoP nonce requirement (can come as 400 or 401)
-  if (!res.ok) {
-    const dpopNonce = res.headers.get('DPoP-Nonce');
-    if (dpopNonce) {
-      dpopProof = await createDpopProof(dpopKeyPair, 'GET', url, dpopNonce, ath);
-      res = await fetch(url, {
-        headers: {
-          'Authorization': `DPoP ${session.accessToken}`,
-          'DPoP': dpopProof,
-        },
-      });
-    }
-  }
-
-  // Retry once on 401 (expired token)
-  if (res.status === 401 && session.refreshToken) {
-    try {
-      const refreshed = await tryRefreshSession(session);
-      Object.assign(session, refreshed);
-      if (onSessionRefresh) onSessionRefresh(refreshed);
-
-      const newAth = await computeAth(refreshed.accessToken);
-      dpopProof = await createDpopProof(dpopKeyPair, 'GET', url, undefined, newAth);
-
-      res = await fetch(url, {
-        headers: {
-          'Authorization': `DPoP ${refreshed.accessToken}`,
-          'DPoP': dpopProof,
-        },
-      });
-
-      // Handle nonce on retry
-      if (!res.ok) {
-        const retryNonce = res.headers.get('DPoP-Nonce');
-        if (retryNonce) {
-          dpopProof = await createDpopProof(dpopKeyPair, 'GET', url, retryNonce, newAth);
-          res = await fetch(url, {
-            headers: {
-              'Authorization': `DPoP ${refreshed.accessToken}`,
-              'DPoP': dpopProof,
-            },
-          });
-        }
-      }
-    } catch (refreshErr) {
-      if (authExpired) {
-        throw new AuthExpiredError();
-      }
-      console.error('[atproto] Token refresh failed:', refreshErr.message);
-    }
-  }
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || err.error || `XRPC GET ${nsid} failed (${res.status})`);
-  }
-
-  return res.json();
+  return proxyXrpc('GET', nsid, url);
 }
 
 /**
@@ -741,90 +731,9 @@ export async function xrpcGet(session, nsid, params = {}, onSessionRefresh = nul
  * @returns {Promise<Object>} Response data
  */
 export async function xrpcPost(session, nsid, body, onSessionRefresh = null) {
-  if (authExpired) throw new AuthExpiredError();
-
+  void onSessionRefresh;
   const url = `${session.pdsUrl}/xrpc/${nsid}`;
-  const dpopKeyPair = await importKeyPair(session.dpopKeyPairJwk);
-  const ath = await computeAth(session.accessToken);
-  let dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, undefined, ath);
-
-  let res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `DPoP ${session.accessToken}`,
-      'DPoP': dpopProof,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-
-  // Handle DPoP nonce requirement (can come as 400 or 401)
-  if (!res.ok) {
-    const dpopNonce = res.headers.get('DPoP-Nonce');
-    if (dpopNonce) {
-      dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, dpopNonce, ath);
-      res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `DPoP ${session.accessToken}`,
-          'DPoP': dpopProof,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-    }
-  }
-
-  // Retry once on 401 (expired token)
-  if (res.status === 401 && session.refreshToken) {
-    try {
-      const refreshed = await tryRefreshSession(session);
-      Object.assign(session, refreshed);
-      if (onSessionRefresh) onSessionRefresh(refreshed);
-
-      const newAth = await computeAth(refreshed.accessToken);
-      dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, undefined, newAth);
-
-      res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `DPoP ${refreshed.accessToken}`,
-          'DPoP': dpopProof,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-
-      // Handle nonce on retry
-      if (!res.ok) {
-        const retryNonce = res.headers.get('DPoP-Nonce');
-        if (retryNonce) {
-          dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, retryNonce, newAth);
-          res = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Authorization': `DPoP ${refreshed.accessToken}`,
-              'DPoP': dpopProof,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(body),
-          });
-        }
-      }
-    } catch (refreshErr) {
-      if (authExpired) {
-        throw new AuthExpiredError();
-      }
-      console.error('[atproto] Token refresh failed:', refreshErr.message);
-    }
-  }
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || err.error || `XRPC POST ${nsid} failed (${res.status})`);
-  }
-
-  return res.json();
+  return proxyXrpc('POST', nsid, url, body);
 }
 
 /**
@@ -836,72 +745,54 @@ export async function xrpcPost(session, nsid, body, onSessionRefresh = null) {
  * @returns {Promise<Object>} - { blob: { $type: "blob", ref: { $link }, mimeType, size } }
  */
 export async function uploadBlob(session, data, mimeType, onSessionRefresh = null) {
+  void onSessionRefresh;
   if (authExpired) throw new AuthExpiredError();
+  if (!api || !api.atproto || typeof api.atproto.uploadBlob !== 'function') {
+    throw new Error('AT Protocol proxy unavailable (window.app.atproto missing)');
+  }
 
   const url = `${session.pdsUrl}/xrpc/com.atproto.repo.uploadBlob`;
-  const dpopKeyPair = await importKeyPair(session.dpopKeyPairJwk);
-  const ath = await computeAth(session.accessToken);
-  let dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, undefined, ath);
 
-  let res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `DPoP ${session.accessToken}`,
-      'DPoP': dpopProof,
-      'Content-Type': mimeType,
-    },
-    body: data,
-  });
+  // The proxy receives bytes as standard base64 (Buffer.from(.., 'base64')).
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const base64 = bytesToBase64(bytes);
 
-  // Handle DPoP nonce (can come as 400 or 401)
-  if (!res.ok) {
-    const dpopNonce = res.headers.get('DPoP-Nonce');
-    if (dpopNonce) {
-      dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, dpopNonce, ath);
-      res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `DPoP ${session.accessToken}`,
-          'DPoP': dpopProof,
-          'Content-Type': mimeType,
-        },
-        body: data,
-      });
+  const result = await api.atproto.uploadBlob(url, base64, mimeType);
+
+  if (result && result.error !== undefined) {
+    if (proxyErrorIsExpired(result.error)) {
+      authExpired = true;
+      throw new AuthExpiredError();
     }
+    throw new Error(result.error || 'Blob upload failed');
   }
 
-  // Token refresh retry
-  if (res.status === 401 && session.refreshToken) {
-    try {
-      const refreshed = await tryRefreshSession(session);
-      Object.assign(session, refreshed);
-      if (onSessionRefresh) onSessionRefresh(refreshed);
-
-      const newAth = await computeAth(refreshed.accessToken);
-      dpopProof = await createDpopProof(dpopKeyPair, 'POST', url, undefined, newAth);
-      res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `DPoP ${refreshed.accessToken}`,
-          'DPoP': dpopProof,
-          'Content-Type': mimeType,
-        },
-        body: data,
-      });
-    } catch (refreshErr) {
-      if (authExpired) {
-        throw new AuthExpiredError();
-      }
-      console.error('[atproto] Token refresh failed:', refreshErr.message);
-    }
+  const status = result ? result.status : 0;
+  if (status === 401) {
+    authExpired = true;
+    throw new AuthExpiredError();
+  }
+  if (status < 200 || status >= 300) {
+    const errBody = (result && result.body && typeof result.body === 'object') ? result.body : {};
+    throw new Error(errBody.message || `Blob upload failed (${status})`);
   }
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || `Blob upload failed (${res.status})`);
-  }
+  return result.body;
+}
 
-  return res.json();
+/**
+ * Standard base64 (NOT base64url) encode a Uint8Array — the format the
+ * main-process proxy expects for blob bytes over IPC.
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ */
+function bytesToBase64(bytes) {
+  let binStr = '';
+  const CHUNK = 0x8000; // avoid call-stack limits on large blobs
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binStr += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binStr);
 }
 
 // ============================================================================
