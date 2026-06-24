@@ -62,29 +62,50 @@ pub fn set_last_sync(conn: &Connection, timestamp: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Count items that need to be pushed to the server.
-pub fn get_pending_sync_count(conn: &Connection) -> Result<usize, String> {
+/// Count items that need to be pushed to the given server bucket.
+///
+/// `target_profile_id` is the server bucket the current profile syncs to (its
+/// `server_profile_id`, or the local profile UUID fallback before registration).
+/// An item is pending for that bucket if it has never synced, was modified since
+/// its last sync, or was last synced to a DIFFERENT bucket (so a rebound profile
+/// re-pushes its items to the new bucket). See `PENDING_FOR_BUCKET_SQL`.
+pub fn get_pending_sync_count(conn: &Connection, target_profile_id: &str) -> Result<usize, String> {
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM items WHERE (deleted_at IS NULL AND (synced_at IS NULL OR updated_at > synced_at)) OR (deleted_at IS NOT NULL AND sync_id IS NOT NULL AND sync_id != '' AND synced_at IS NOT NULL AND updated_at > synced_at)",
-        [],
+        &format!("SELECT COUNT(*) FROM items WHERE {}", PENDING_FOR_BUCKET_SQL),
+        params![target_profile_id, target_profile_id],
         |row| row.get(0),
     )
     .unwrap_or(0);
     Ok(count as usize)
 }
 
-/// Get items that need to be pushed (never synced or locally modified after their last sync).
-pub fn get_items_to_push(conn: &Connection) -> Result<Vec<PushItem>, String> {
+/// Predicate selecting items that still need to be pushed to a target bucket.
+/// Takes the target bucket id as parameter TWICE (non-deleted branch, then the
+/// deleted branch). Kept in one place so the count and the fetch never drift.
+const PENDING_FOR_BUCKET_SQL: &str = "(deleted_at IS NULL AND (\
+        synced_at IS NULL \
+        OR updated_at > synced_at \
+        OR synced_profile_id IS NULL \
+        OR synced_profile_id != ?1)) \
+     OR (deleted_at IS NOT NULL AND sync_id IS NOT NULL AND sync_id != '' \
+        AND synced_at IS NOT NULL AND updated_at > synced_at \
+        AND (synced_profile_id IS NULL OR synced_profile_id = ?2))";
+
+/// Get items that need to be pushed to `target_profile_id` (never synced, locally
+/// modified after their last sync, or last synced to a different bucket).
+pub fn get_items_to_push(conn: &Connection, target_profile_id: &str) -> Result<Vec<PushItem>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, type, url, content, COALESCE(metadata, ''), updated_at, COALESCE(sync_id, ''), deleted_at FROM items
-             WHERE (deleted_at IS NULL AND (synced_at IS NULL OR updated_at > synced_at))
-             OR (deleted_at IS NOT NULL AND sync_id IS NOT NULL AND sync_id != '' AND synced_at IS NOT NULL AND updated_at > synced_at)"
+            &format!(
+                "SELECT id, type, url, content, COALESCE(metadata, ''), updated_at, COALESCE(sync_id, ''), deleted_at FROM items
+                 WHERE {}",
+                PENDING_FOR_BUCKET_SQL
+            )
         )
         .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
     let items: Vec<PushItem> = stmt
-        .query_map([], |row| {
+        .query_map(params![target_profile_id, target_profile_id], |row| {
             Ok(PushItem {
                 id: row.get(0)?,
                 item_type: row.get(1)?,
@@ -123,15 +144,41 @@ pub fn get_item_tags(conn: &Connection, item_id: &str) -> Result<Vec<String>, St
     Ok(tags)
 }
 
-/// Mark an item as synced after successful push.
-pub fn mark_item_synced(conn: &Connection, item_id: &str, sync_id: &str) -> Result<(), String> {
+/// Mark an item as synced after a successful push to `server_profile_id`.
+/// Records WHICH bucket the item was synced to so a later rebind re-pushes it.
+pub fn mark_item_synced(
+    conn: &Connection,
+    item_id: &str,
+    sync_id: &str,
+    server_profile_id: &str,
+) -> Result<(), String> {
     let now = Utc::now().to_rfc3339();
     conn.execute(
-        "UPDATE items SET sync_id = ?, synced_at = ? WHERE id = ?",
-        params![sync_id, &now, item_id],
+        "UPDATE items SET sync_id = ?, synced_at = ?, synced_profile_id = ? WHERE id = ?",
+        params![sync_id, &now, server_profile_id, item_id],
     )
     .map_err(|e| format!("Failed to mark item synced: {}", e))?;
     Ok(())
+}
+
+/// One-time heal for legacy rows that predate the `synced_profile_id` column.
+///
+/// Such rows have `synced_at` set but `synced_profile_id` NULL, so they would all
+/// look "synced to a different bucket" and re-push. For the PRIMARY (Default)
+/// profile we trust that history — its items really were synced to its bucket — so
+/// we stamp `server_profile_id` onto them, avoiding a full re-push. Non-primary
+/// profiles are deliberately NOT healed: their NULL rows re-push to their correct
+/// bucket, which is exactly how we recover from the cross-bucket contamination.
+///
+/// Idempotent: only touches rows that are already synced and still NULL.
+pub fn backfill_synced_profile_id(conn: &Connection, server_profile_id: &str) -> Result<usize, String> {
+    let n = conn.execute(
+        "UPDATE items SET synced_profile_id = ?1
+         WHERE synced_at IS NOT NULL AND synced_profile_id IS NULL",
+        params![server_profile_id],
+    )
+    .map_err(|e| format!("Failed to backfill synced_profile_id: {}", e))?;
+    Ok(n)
 }
 
 /// Merge a server item into the local database.
@@ -380,14 +427,14 @@ mod tests {
     fn test_get_pending_sync_count_empty() {
         let store = PeekStore::new(":memory:").unwrap();
         let conn = store.conn.lock().unwrap();
-        assert_eq!(get_pending_sync_count(&conn).unwrap(), 0);
+        assert_eq!(get_pending_sync_count(&conn, "bucket-a").unwrap(), 0);
     }
 
     #[test]
     fn test_get_items_to_push_empty() {
         let store = PeekStore::new(":memory:").unwrap();
         let conn = store.conn.lock().unwrap();
-        let items = get_items_to_push(&conn).unwrap();
+        let items = get_items_to_push(&conn, "bucket-a").unwrap();
         assert!(items.is_empty());
     }
 
@@ -480,11 +527,11 @@ mod tests {
         store.save_url("https://example.com", &["test".to_string()], None).unwrap();
 
         let conn = store.conn.lock().unwrap();
-        let items = get_items_to_push(&conn).unwrap();
+        let items = get_items_to_push(&conn, "bucket-a").unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].item_type, "url");
 
-        let count = get_pending_sync_count(&conn).unwrap();
+        let count = get_pending_sync_count(&conn, "bucket-a").unwrap();
         assert_eq!(count, 1);
     }
 
@@ -496,11 +543,63 @@ mod tests {
         let conn = store.conn.lock().unwrap();
 
         // Before marking synced, item should be pending
-        assert_eq!(get_pending_sync_count(&conn).unwrap(), 1);
+        assert_eq!(get_pending_sync_count(&conn, "bucket-a").unwrap(), 1);
 
-        mark_item_synced(&conn, &result.item_id, "server-id-1").unwrap();
+        mark_item_synced(&conn, &result.item_id, "server-id-1", "bucket-a").unwrap();
 
-        // After marking synced, item should no longer be pending
-        assert_eq!(get_pending_sync_count(&conn).unwrap(), 0);
+        // After marking synced to bucket-a, item should no longer be pending for it
+        assert_eq!(get_pending_sync_count(&conn, "bucket-a").unwrap(), 0);
+    }
+
+    /// Repro for the Dev-1-of-7 bug: an item synced to one bucket must be treated
+    /// as pending for a DIFFERENT bucket, so a rebound profile re-pushes it.
+    #[test]
+    fn test_item_synced_to_other_bucket_is_pending_for_new_bucket() {
+        let store = PeekStore::new(":memory:").unwrap();
+        let result = store.save_url("https://example.com", &[], None).unwrap();
+        let conn = store.conn.lock().unwrap();
+
+        // Simulate a successful push to bucket-a.
+        mark_item_synced(&conn, &result.item_id, "server-id-1", "bucket-a").unwrap();
+
+        // Already synced to bucket-a -> not pending for bucket-a.
+        assert_eq!(get_pending_sync_count(&conn, "bucket-a").unwrap(), 0);
+        assert!(get_items_to_push(&conn, "bucket-a").unwrap().is_empty());
+
+        // But it has never been pushed to bucket-b -> must be pending there.
+        assert_eq!(get_pending_sync_count(&conn, "bucket-b").unwrap(), 1);
+        assert_eq!(get_items_to_push(&conn, "bucket-b").unwrap().len(), 1);
+
+        // After re-pushing to bucket-b it settles there too.
+        mark_item_synced(&conn, &result.item_id, "server-id-1", "bucket-b").unwrap();
+        assert_eq!(get_pending_sync_count(&conn, "bucket-b").unwrap(), 0);
+    }
+
+    /// The heal: legacy synced rows (synced_profile_id NULL) are stamped for the
+    /// primary profile so they don't all re-push.
+    #[test]
+    fn test_backfill_synced_profile_id_heals_legacy_rows() {
+        let store = PeekStore::new(":memory:").unwrap();
+        let result = store.save_url("https://example.com", &[], None).unwrap();
+        let conn = store.conn.lock().unwrap();
+
+        // Legacy state: synced (has synced_at) but no bucket recorded.
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE items SET sync_id = 'server-id-1', synced_at = ?, synced_profile_id = NULL WHERE id = ?",
+            params![&now, &result.item_id],
+        ).unwrap();
+
+        // Without a recorded bucket it looks pending for the default bucket.
+        assert_eq!(get_pending_sync_count(&conn, "default-bucket").unwrap(), 1);
+
+        // Heal: trust the primary profile's history.
+        let healed = backfill_synced_profile_id(&conn, "default-bucket").unwrap();
+        assert_eq!(healed, 1);
+
+        // Now it is settled for the default bucket (no spurious re-push)...
+        assert_eq!(get_pending_sync_count(&conn, "default-bucket").unwrap(), 0);
+        // ...but still pending for any other bucket.
+        assert_eq!(get_pending_sync_count(&conn, "other-bucket").unwrap(), 1);
     }
 }

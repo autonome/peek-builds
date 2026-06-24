@@ -253,16 +253,24 @@ impl PeekStore {
         sync::set_last_sync(&conn, timestamp)
     }
 
-    /// Count items that need to be pushed to the server.
-    pub fn get_pending_sync_count(&self) -> Result<usize, String> {
+    /// Count items that need to be pushed to the given server bucket.
+    pub fn get_pending_sync_count(&self, target_profile_id: &str) -> Result<usize, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
-        sync::get_pending_sync_count(&conn)
+        sync::get_pending_sync_count(&conn, target_profile_id)
     }
 
-    /// Get items that need to be pushed to the server.
-    pub fn get_items_to_push(&self) -> Result<Vec<PushItem>, String> {
+    /// Get items that need to be pushed to the given server bucket.
+    pub fn get_items_to_push(&self, target_profile_id: &str) -> Result<Vec<PushItem>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
-        sync::get_items_to_push(&conn)
+        sync::get_items_to_push(&conn, target_profile_id)
+    }
+
+    /// One-time heal of legacy rows (synced_at set, synced_profile_id NULL) for the
+    /// primary profile: stamp the bucket so they don't all needlessly re-push.
+    /// Returns the number of rows healed.
+    pub fn backfill_synced_profile_id(&self, server_profile_id: &str) -> Result<usize, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::backfill_synced_profile_id(&conn, server_profile_id)
     }
 
     /// Get tags for a specific item.
@@ -271,10 +279,10 @@ impl PeekStore {
         sync::get_item_tags(&conn, item_id)
     }
 
-    /// Mark an item as synced after successful push.
-    pub fn mark_item_synced(&self, item_id: &str, sync_id: &str) -> Result<(), String> {
+    /// Mark an item as synced after a successful push to `server_profile_id`.
+    pub fn mark_item_synced(&self, item_id: &str, sync_id: &str, server_profile_id: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
-        sync::mark_item_synced(&conn, item_id, sync_id)
+        sync::mark_item_synced(&conn, item_id, sync_id, server_profile_id)
     }
 
     /// Merge a server item into the local database.

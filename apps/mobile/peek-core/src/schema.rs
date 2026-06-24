@@ -49,6 +49,7 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
                     sync_id TEXT DEFAULT '',
                     sync_source TEXT DEFAULT '',
                     synced_at TEXT,
+                    synced_profile_id TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     deleted_at TEXT
@@ -99,6 +100,7 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
                     sync_id TEXT DEFAULT '',
                     sync_source TEXT DEFAULT '',
                     synced_at TEXT,
+                    synced_profile_id TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     deleted_at TEXT
@@ -219,6 +221,26 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
         let _ = conn.execute("ALTER TABLE items ADD COLUMN sync_source TEXT DEFAULT ''", []);
         let _ = conn.execute("ALTER TABLE items ADD COLUMN synced_at TEXT", []);
         let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_items_sync_id ON items(sync_id)");
+    }
+
+    // Add synced_profile_id column if it doesn't exist (per-bucket sync state).
+    // Sync state used to be global per-item (sync_id + synced_at) with no record of
+    // WHICH server bucket an item was synced to. After a profile is rebound to a
+    // different bucket, its already-synced items must be re-pushed to the new bucket;
+    // this column lets get_items_to_push tell "synced to THIS bucket" from "synced
+    // to some other bucket". NULL means unknown (legacy rows) — see the one-time
+    // backfill/heal in the mobile sync path.
+    let has_synced_profile_id: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('items') WHERE name='synced_profile_id'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0) > 0;
+
+    if !has_synced_profile_id {
+        println!("[peek-core] Adding synced_profile_id column to items table...");
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN synced_profile_id TEXT", []);
     }
 
     // Migrate 'page' type items to 'url' (for existing installs with old type name)

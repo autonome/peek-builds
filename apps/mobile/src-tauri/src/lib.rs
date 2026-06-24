@@ -995,6 +995,52 @@ fn append_profile_to_url(url: &str) -> Result<String, String> {
     Ok(format!("{}{}profile={}", url, separator, profile_id))
 }
 
+/// The server bucket the current profile syncs to: its `server_profile_id`, or the
+/// local profile UUID as a pre-registration fallback. Mirrors the id that
+/// `append_profile_to_url` puts on the wire, so per-bucket sync state lines up with
+/// where items actually land.
+fn current_target_profile_id() -> String {
+    let config = load_profile_config();
+    config
+        .profiles
+        .iter()
+        .find(|p| p.id == config.current_profile_id)
+        .and_then(|p| p.server_profile_id.clone())
+        .unwrap_or_else(|| config.current_profile_id.clone())
+}
+
+/// Whether the current profile is the PRIMARY (first / "Default") one. That profile
+/// is bound to the pre-existing server "default" bucket (see
+/// ensure_profiles_registered), so its legacy sync history is trustworthy and gets
+/// healed in place; non-primary profiles are left to re-push to their own buckets.
+fn current_profile_is_primary() -> bool {
+    let config = load_profile_config();
+    config
+        .profiles
+        .first()
+        .map(|p| p.id == config.current_profile_id)
+        .unwrap_or(false)
+}
+
+/// One-time heal of legacy rows that predate the synced_profile_id column. Runs only
+/// for the primary profile (its items really were synced to the default bucket), so
+/// it stamps their bucket instead of forcing a full re-push. Cheap + idempotent:
+/// after the first run there are no NULL synced rows left to touch.
+fn heal_synced_profile_ids(store: &PeekStore) {
+    if !current_profile_is_primary() {
+        return;
+    }
+    let target = current_target_profile_id();
+    match store.backfill_synced_profile_id(&target) {
+        Ok(n) if n > 0 => println!(
+            "[Rust] Healed synced_profile_id for {} legacy primary-profile items -> {}",
+            n, target
+        ),
+        Ok(_) => {}
+        Err(e) => println!("[Rust] synced_profile_id heal failed (non-fatal): {}", e),
+    }
+}
+
 /// Check if a string looks like a valid UUID (basic validation)
 fn is_valid_uuid(s: &str) -> bool {
     // UUID format: 8-4-4-4-12 hex digits with hyphens
@@ -3266,9 +3312,14 @@ async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
     };
 
     let store = get_store()?;
+    let target_profile_id = current_target_profile_id();
 
-    // Get items to push (uses per-item synced_at, not global last_sync)
-    let items = store.get_items_to_push()?;
+    // Heal legacy rows for the primary profile before computing the push set, so
+    // already-synced Default items don't all look unsynced for the default bucket.
+    heal_synced_profile_ids(&store);
+
+    // Get items to push to the current bucket (per-item, per-bucket sync state).
+    let items = store.get_items_to_push(&target_profile_id)?;
     println!("[Rust] Found {} items to push", items.len());
 
     if items.is_empty() {
@@ -3347,7 +3398,7 @@ async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
                     // Parse response to get server ID
                     if let Ok(create_response) = response.json::<ServerCreateResponse>().await {
                         // Update local item with sync info
-                        let _ = store.mark_item_synced(&item.id, &create_response.id);
+                        let _ = store.mark_item_synced(&item.id, &create_response.id, &target_profile_id);
 
                         println!("[Rust] Pushed item {} -> {}", item.id, create_response.id);
                         pushed += 1;
@@ -3427,9 +3478,11 @@ fn get_sync_status() -> Result<SyncStatus, String> {
     let config = load_profile_config();
     let configured = !config.sync.server_url.is_empty() && !config.sync.api_key.is_empty();
 
-    // Get last sync time and pending count from PeekStore
+    // Get last sync time and pending count from PeekStore. Heal first so the count
+    // reflects the per-bucket sync state (not a transient "everything pending").
+    heal_synced_profile_ids(&store);
     let last_sync_time = store.get_last_sync()?;
-    let pending_count = store.get_pending_sync_count()?;
+    let pending_count = store.get_pending_sync_count(&current_target_profile_id())?;
 
     Ok(SyncStatus {
         configured,
@@ -3742,6 +3795,7 @@ mod tests {
                 sync_id TEXT DEFAULT '',
                 sync_source TEXT DEFAULT '',
                 synced_at TEXT,
+                synced_profile_id TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 deleted_at TEXT
