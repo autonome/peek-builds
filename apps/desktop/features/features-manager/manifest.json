@@ -58,11 +58,13 @@
         "feature:*",
         "ext:ready",
         "app:shutdown",
-        "lex:session-changed"
+        "lex:session-changed",
+        "core:feature:toggle",
+        "*:settings-changed"
       ]
     },
     "datastore": {
-      "tables": ["features_history"]
+      "tables": ["features_history", "feature_settings"]
     },
     "network": {
       "domains": [

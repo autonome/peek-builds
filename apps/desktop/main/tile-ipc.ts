@@ -360,6 +360,15 @@ function writeFeatureHistory(
 // ─── IPC Handler Registration ────────────────────────────────────────
 
 /**
+ * Builtin features that are required infrastructure and may NOT be disabled
+ * through the Features Manager. `cmd` owns the command panel every feature
+ * dispatches commands through; disabling it would brick the app. Every other
+ * builtin (peeks, slides, groups, windows, …) is freely disablable — the
+ * registry `disabled` flag is the boot-time load gate.
+ */
+const REQUIRED_BUILTIN_FEATURE_IDS = new Set<string>(['cmd']);
+
+/**
  * Register all tile IPC handlers
  * Call this once during app initialization
  */
@@ -448,6 +457,11 @@ export function registerTileIpcHandlers(): void {
         if (pattern === args.topic) return true;
         // Simple glob: pattern:* matches pattern:anything
         if (pattern.endsWith('*') && args.topic.startsWith(pattern.slice(0, -1))) return true;
+        // Leading glob: *:suffix matches anything:suffix. Used by the
+        // Features Manager to publish each feature's `<shortname>:settings-changed`
+        // when it edits that feature's Options (the shortname set is dynamic,
+        // so a trailing-glob can't express it). Bounded to the literal suffix.
+        if (pattern.startsWith('*') && args.topic.endsWith(pattern.slice(1))) return true;
         return false;
       });
       if (!allowed) {
@@ -1366,7 +1380,14 @@ export function registerTileIpcHandlers(): void {
 
     const entry = registry.getFeature(args.id);
     if (!entry) return { error: `Feature not found: ${args.id}` };
-    if (entry.source.type === 'builtin') return { error: 'Cannot disable builtin features' };
+    // Builtins ARE disablable from the Features Manager (the registry
+    // `disabled` flag is the boot-time load gate honoured by tile-loader),
+    // EXCEPT required infrastructure. `cmd` provides the command panel that
+    // every feature dispatches through — disabling it would brick the app,
+    // so it stays locked the same way the renderer locks its toggle.
+    if (REQUIRED_BUILTIN_FEATURE_IDS.has(args.id)) {
+      return { error: `Cannot disable required feature "${args.id}"` };
+    }
     if (!sourceTypeAllowed(grant, entry.source.type)) {
       return { error: `features source "${entry.source.type}" not in capability sources allowlist` };
     }

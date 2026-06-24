@@ -10,6 +10,324 @@ import { buildHistoryRows } from './history-format.js';
 const api = window.app;
 const hasPeekAPI = !!api;
 
+// ─── Builtin feature state ──────────────────────────────────────────
+//
+// Builtin enable/disable persistence still rides the legacy core-store
+// ITEMS list (feature_settings featureId='core', key='items') and the
+// `core:feature:toggle` publish, mirroring the contract Settings used to
+// own. The bgWindow orchestrator (renderer/index.js) subscribes to that
+// topic and routes tile-backed builtins through api.features.enable /
+// disable; the core-store write keeps the legacy `enabled` flag in sync
+// for entries that exist there. cmd is required infrastructure — never
+// disablable.
+const CORE_STORE_NAMESPACE = 'core';
+const CORE_STORE_ITEMS_KEY = 'items';
+const FEATURE_TOGGLE_TOPIC = 'core:feature:toggle';
+const LOCKED_BUILTIN_IDS = new Set(['cmd']);
+
+// ─── feature_settings store helper ──────────────────────────────────
+//
+// Minimal async datastore-backed store, ported from renderer/utils.js
+// createDatastoreStore. Each namespace maps to feature_settings rows with
+// featureId=namespace. Used for (a) the core-store ITEMS list that drives
+// builtin enable/disable persistence and (b) per-feature Options that
+// read/write a feature's own prefs/items rows.
+async function createFeatureSettingsStore(namespace, defaults = {}) {
+  const table = 'feature_settings';
+  const cache = {};
+
+  try {
+    const result = await api.datastore.getTable(table);
+    if (result?.success && result.data) {
+      for (const row of Object.values(result.data)) {
+        if (row.featureId === namespace && row.value) {
+          try {
+            cache[row.key] = JSON.parse(row.value);
+          } catch (e) {
+            console.warn(`[features-manager] Failed to parse ${namespace}:${row.key}`, e);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn(`[features-manager] Failed to load store ${namespace}`, e);
+  }
+
+  for (const key of Object.keys(defaults)) {
+    if (cache[key] === undefined) cache[key] = defaults[key];
+  }
+
+  return {
+    get(key) {
+      return cache[key] !== undefined ? cache[key] : defaults[key];
+    },
+    async set(key, value) {
+      cache[key] = value;
+      const rowId = `${namespace}:${key}`;
+      try {
+        await api.datastore.setRow(table, rowId, {
+          featureId: namespace,
+          key,
+          value: JSON.stringify(value),
+          updatedAt: Date.now(),
+        });
+      } catch (e) {
+        console.error(`[features-manager] Failed to save ${namespace}:${key}`, e);
+      }
+    },
+  };
+}
+
+// ─── Options form-control builders ──────────────────────────────────
+//
+// Ported (trimmed) from renderer/settings/settings.js so the per-feature
+// Options UI renders identically inside a Features Manager card. They use
+// the same .form-group / .form-group-inline / .form-section / .item-card
+// class names — manage.css adds matching styles.
+
+function camelToLabel(str) {
+  const result = str.replace(/([A-Z])/g, ' $1').toLowerCase();
+  return result.charAt(0).toUpperCase() + result.slice(1);
+}
+
+function optInput(label, value, onChange, options = {}) {
+  const group = document.createElement('div');
+  group.className = 'form-group';
+
+  const labelEl = document.createElement('label');
+  labelEl.textContent = label;
+
+  const input = document.createElement('input');
+  input.type = options.type || 'text';
+  const isMissing = (v) => v === null || v === undefined || (typeof v === 'number' && Number.isNaN(v));
+  const renderValue = isMissing(value) && options.default !== undefined ? options.default : value;
+  input.value = (renderValue === null || renderValue === undefined) ? '' : renderValue;
+  input.disabled = options.disabled || false;
+  if (options.placeholder) input.placeholder = options.placeholder;
+  if (options.type === 'number' && options.step) input.step = options.step;
+
+  input.addEventListener('change', (e) => {
+    let val = options.type === 'number' ? parseFloat(e.target.value) : e.target.value;
+    if (options.type === 'number' && Number.isNaN(val) && options.default !== undefined) {
+      val = options.default;
+      input.value = val;
+    }
+    onChange(val);
+  });
+
+  group.appendChild(labelEl);
+  group.appendChild(input);
+
+  if (options.helpText) {
+    const help = document.createElement('div');
+    help.className = 'help-text';
+    help.textContent = options.helpText;
+    group.appendChild(help);
+  }
+  return group;
+}
+
+function optCheckbox(label, value, onChange, options = {}) {
+  const group = document.createElement('div');
+  group.className = 'form-group-inline';
+
+  const labelEl = document.createElement('label');
+  labelEl.textContent = label;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'checkbox-wrapper';
+
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.checked = value || false;
+  input.disabled = options.disabled || false;
+  input.addEventListener('change', (e) => onChange(e.target.checked));
+  wrapper.appendChild(input);
+
+  const textDiv = document.createElement('div');
+  textDiv.className = 'form-group-inline-text';
+  textDiv.appendChild(labelEl);
+  if (options.helpText) {
+    const help = document.createElement('div');
+    help.className = 'help-text';
+    help.textContent = options.helpText;
+    textDiv.appendChild(help);
+  }
+
+  group.appendChild(textDiv);
+  group.appendChild(wrapper);
+  return group;
+}
+
+function optSelect(label, value, selectOptions, onChange, extra = {}) {
+  const group = document.createElement('div');
+  group.className = 'form-group';
+
+  const labelEl = document.createElement('label');
+  labelEl.textContent = label;
+
+  const select = document.createElement('select');
+  for (const opt of selectOptions) {
+    const optionEl = document.createElement('option');
+    optionEl.value = opt.value;
+    optionEl.textContent = opt.label;
+    if (opt.value === value) optionEl.selected = true;
+    select.appendChild(optionEl);
+  }
+  select.addEventListener('change', (e) => onChange(e.target.value));
+
+  group.appendChild(labelEl);
+  group.appendChild(select);
+  if (extra.helpText) {
+    const help = document.createElement('div');
+    help.className = 'help-text';
+    help.textContent = extra.helpText;
+    group.appendChild(help);
+  }
+  return group;
+}
+
+// ─── Per-feature Options renderer ───────────────────────────────────
+//
+// Ported from renderer/settings/settings.js::renderFeatureSettings.
+// Reads/writes the feature's own feature_settings namespace (keyed by the
+// feature's shortname == registry entry id) and publishes
+// `<shortname>:settings-changed` (GLOBAL) on every save so the live
+// feature hot-reloads. The keying + topic MUST match exactly or the
+// running feature stops picking up config changes.
+async function renderFeatureOptions(feature) {
+  const { id, labels, schemas, storageKeys, defaults } = feature;
+
+  // Shortname-keyed namespace — same derivation Settings used.
+  const featureId = feature.shortname || labels.name.toLowerCase();
+  const store = await createFeatureSettingsStore(featureId, defaults);
+
+  let prefs = store.get(storageKeys.PREFS);
+  let items = store.get(storageKeys.ITEMS);
+
+  const container = document.createElement('div');
+  const settingsChangedTopic = `${featureId}:settings-changed`;
+
+  const save = async () => {
+    await store.set(storageKeys.PREFS, prefs);
+    if (items) await store.set(storageKeys.ITEMS, items);
+    // GLOBAL/cross-process so the live feature hot-reloads.
+    api.publish(settingsChangedTopic, {});
+  };
+
+  // Preferences
+  if (schemas.prefs && schemas.prefs.properties && Object.keys(schemas.prefs.properties).length > 0) {
+    const prefsSection = document.createElement('div');
+    prefsSection.className = 'form-section';
+    const pProps = schemas.prefs.properties;
+
+    if (!prefs) prefs = {};
+
+    Object.keys(pProps).forEach(k => {
+      const s = pProps[k];
+      const v = (prefs && Object.prototype.hasOwnProperty.call(prefs, k)) ? prefs[k] : s.default;
+      const displayLabel = (labels.prefs && labels.prefs[k]) || camelToLabel(k);
+
+      if (s.type === 'boolean') {
+        prefsSection.appendChild(optCheckbox(displayLabel, v, (nv) => { prefs[k] = nv; save(); }, { helpText: s.description }));
+      } else if (s.type === 'integer' || s.type === 'number') {
+        prefsSection.appendChild(optInput(displayLabel, v, (nv) => { prefs[k] = nv; save(); }, {
+          type: 'number', step: s.type === 'integer' ? 1 : 0.1, helpText: s.description,
+        }));
+      } else if (s.enum && Array.isArray(s.enum)) {
+        const selectOptions = s.enum.map(val => ({ value: val, label: (s.enumLabels && s.enumLabels[val]) || val }));
+        prefsSection.appendChild(optSelect(displayLabel, v, selectOptions, (nv) => { prefs[k] = nv; save(); }, { helpText: s.description }));
+      } else {
+        prefsSection.appendChild(optInput(displayLabel, v, (nv) => { prefs[k] = nv; save(); }, { helpText: s.description }));
+      }
+    });
+
+    container.appendChild(prefsSection);
+  }
+
+  // Items
+  if (items && items.length > 0) {
+    const itemsSection = document.createElement('div');
+    itemsSection.className = 'form-section';
+
+    const title = document.createElement('h3');
+    title.className = 'form-section-title';
+    title.textContent = schemas.item?.title || 'Items';
+    itemsSection.appendChild(title);
+
+    items.forEach((item, i) => {
+      const card = document.createElement('div');
+      card.className = 'item-card collapsed';
+
+      const header = document.createElement('div');
+      header.className = 'item-card-header';
+
+      const cardTitle = document.createElement('div');
+      cardTitle.className = 'item-card-title';
+      cardTitle.textContent = item.title || item.name || `Item ${i + 1}`;
+      header.appendChild(cardTitle);
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'checkbox-wrapper';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = item.enabled || false;
+      checkbox.addEventListener('change', (e) => {
+        e.stopPropagation();
+        items[i].enabled = e.target.checked;
+        save();
+      });
+
+      wrapper.appendChild(checkbox);
+      header.appendChild(wrapper);
+      card.appendChild(header);
+
+      header.addEventListener('click', (e) => {
+        if (e.target === checkbox) return;
+        card.classList.toggle('collapsed');
+      });
+
+      const body = document.createElement('div');
+      body.className = 'item-card-body';
+
+      const itemProps = schemas.item?.properties || {};
+      Object.keys(itemProps).forEach(k => {
+        if (k === 'enabled' || k === 'id' || k === 'version') return;
+        const s = itemProps[k];
+        const v = item[k];
+
+        if (s.type === 'boolean') {
+          body.appendChild(optCheckbox(k, v, (nv) => { items[i][k] = nv; save(); }));
+        } else if (s.type === 'integer' || s.type === 'number') {
+          body.appendChild(optInput(k, v, (nv) => { items[i][k] = nv; save(); }, {
+            type: 'number', step: s.type === 'integer' ? 1 : 0.1, helpText: s.description, disabled: s.readOnly,
+          }));
+        } else {
+          body.appendChild(optInput(k, v, (nv) => { items[i][k] = nv; save(); }, {
+            type: k.includes('address') || k.includes('url') ? 'url' : 'text',
+            helpText: s.description, disabled: s.readOnly,
+          }));
+        }
+      });
+
+      card.appendChild(body);
+      itemsSection.appendChild(card);
+    });
+
+    container.appendChild(itemsSection);
+  }
+
+  if (!container.firstChild) {
+    const empty = document.createElement('div');
+    empty.className = 'help-text';
+    empty.textContent = 'This feature has no configurable options.';
+    container.appendChild(empty);
+  }
+
+  return container;
+}
+
 // ─── DOM refs ───────────────────────────────────────────────────────
 
 const contentEl = document.getElementById('content');
@@ -87,6 +405,19 @@ async function loadFeatures() {
       seen.add(entry.id);
       merged.push(entry);
     }
+
+    // Fetch each feature's settings-schema JSON in parallel so the
+    // per-feature Options affordance can render. The registry's flat
+    // entry shape doesn't carry the schema, so without this round-trip the
+    // Options gate is always false and config never appears.
+    const schemaResults = await Promise.all(
+      merged.map(entry =>
+        api.features.settingsSchema(entry.id)
+          .then(r => (r?.success ? r.data : null))
+          .catch(() => null)
+      )
+    );
+    merged.forEach((entry, i) => { entry.settingsSchema = schemaResults[i]; });
 
     features = merged;
     render();
@@ -273,22 +604,25 @@ function createFeatureCard(feature) {
     actions.appendChild(updateBtn);
   }
 
-  // Enable/Disable + Remove are suppressed for builtin features: the
-  // backend rejects both ops (tile:features:disable / :remove return
-  // "Cannot disable/remove builtin features"), and Settings treats them
-  // as non-removable too. DevTools (read-only) stays available below.
-  if (!isBuiltin) {
-    // Enable/Disable toggle
-    const toggleBtn = document.createElement('button');
-    toggleBtn.className = 'action-btn' + (isDisabled ? ' primary' : '');
-    toggleBtn.textContent = isDisabled ? 'Enable' : 'Disable';
-    toggleBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleFeature(feature.id, isDisabled);
-    });
-    actions.appendChild(toggleBtn);
+  // Enable/Disable toggle — shown for ALL features, including builtins.
+  // The cmd feature is required infrastructure and can never be disabled.
+  const isLocked = LOCKED_BUILTIN_IDS.has(feature.id);
+  const toggleBtn = document.createElement('button');
+  toggleBtn.className = 'action-btn' + (isDisabled ? ' primary' : '');
+  toggleBtn.textContent = isLocked ? 'Required' : (isDisabled ? 'Enable' : 'Disable');
+  toggleBtn.disabled = isLocked;
+  if (isLocked) toggleBtn.title = 'Required infrastructure — cannot be disabled';
+  toggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (isLocked) return;
+    toggleFeature(feature.id, isDisabled, isBuiltin);
+  });
+  actions.appendChild(toggleBtn);
 
-    // Remove
+  // Remove stays suppressed for builtins: builtins ship with the app and
+  // the backend rejects tile:features:remove for them. Non-builtins get a
+  // Remove (installed) / Unregister (dev) button.
+  if (!isBuiltin) {
     const removeBtn = document.createElement('button');
     removeBtn.className = 'action-btn danger';
     removeBtn.textContent = isDev ? 'Unregister' : 'Remove';
@@ -408,29 +742,107 @@ function createFeatureCard(feature) {
     card.appendChild(devActions);
   }
 
-  card.appendChild(actions);
+  // Options affordance — only for features that declare a settings schema
+  // (prefs or items). Lazy-renders the per-feature config on first expand.
+  const schema = feature.settingsSchema;
+  const hasOptions = !!(schema && (schema.prefs || schema.item));
+  if (hasOptions) {
+    const optionsPanel = document.createElement('div');
+    optionsPanel.className = 'feature-options-panel';
+    optionsPanel.style.display = 'none';
+
+    const optionsBtn = document.createElement('button');
+    optionsBtn.className = 'action-btn feature-options-toggle';
+    optionsBtn.textContent = 'Options';
+    optionsBtn.setAttribute('aria-expanded', 'false');
+    let optionsLoaded = false;
+    optionsBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const expanded = optionsPanel.style.display !== 'none';
+      if (expanded) {
+        optionsPanel.style.display = 'none';
+        optionsBtn.setAttribute('aria-expanded', 'false');
+        return;
+      }
+      optionsPanel.style.display = '';
+      optionsBtn.setAttribute('aria-expanded', 'true');
+      if (!optionsLoaded) {
+        optionsLoaded = true;
+        try {
+          const featureForOptions = {
+            id: feature.id,
+            shortname: feature.id,
+            labels: { name: feature.name },
+            schemas: { prefs: schema.prefs, item: schema.item },
+            storageKeys: schema.storageKeys || { PREFS: 'prefs', ITEMS: 'items' },
+            defaults: schema.defaults || {},
+          };
+          const content = await renderFeatureOptions(featureForOptions);
+          optionsPanel.appendChild(content);
+        } catch (err) {
+          console.error(`[features-manager] Failed to load options for ${feature.id}:`, err);
+          const errorMsg = document.createElement('div');
+          errorMsg.className = 'help-text feature-options-error';
+          errorMsg.textContent = 'Failed to load options: ' + err.message;
+          optionsPanel.appendChild(errorMsg);
+        }
+      }
+    });
+    actions.appendChild(optionsBtn);
+
+    card.appendChild(actions);
+    card.appendChild(optionsPanel);
+  } else {
+    card.appendChild(actions);
+  }
 
   return card;
 }
 
 // ─── Actions ────────────────────────────────────────────────────────
 
-async function toggleFeature(id, currentlyDisabled) {
+async function toggleFeature(id, currentlyDisabled, isBuiltin = false) {
   if (!hasPeekAPI) return;
+  if (LOCKED_BUILTIN_IDS.has(id)) return; // cmd is required infrastructure.
+
+  const newEnabled = currentlyDisabled; // enabling when currently disabled
 
   try {
-    const result = currentlyDisabled
-      ? await api.features.enable(id)
-      : await api.features.disable(id);
-    if (result.error) {
-      console.error(`[features-manager] toggle error:`, result.error);
-      return;
+    if (isBuiltin) {
+      // Builtin path — replicate the legacy Settings contract exactly:
+      //   1. Persist the `enabled` flag in the core-store ITEMS list
+      //      (feature_settings featureId='core', key='items'), matching by
+      //      name (case-insensitive). Entries that don't exist there are
+      //      left alone — the registry flag (set by the toggle handler via
+      //      api.features.enable/disable) is the boot source of truth.
+      //   2. Publish `core:feature:toggle` so the bgWindow orchestrator
+      //      (renderer/index.js) loads/unloads the tile-backed feature.
+      const coreStore = await createFeatureSettingsStore(CORE_STORE_NAMESPACE);
+      const itemsList = coreStore.get(CORE_STORE_ITEMS_KEY) || [];
+      const idx = itemsList.findIndex(f => (f.name || '').toLowerCase() === id);
+      if (idx >= 0) {
+        itemsList[idx].enabled = newEnabled;
+        await coreStore.set(CORE_STORE_ITEMS_KEY, itemsList);
+      }
+      api.publish(FEATURE_TOGGLE_TOPIC, { featureId: id, enabled: newEnabled });
+    } else {
+      // Non-builtin path — unified registry. enable / disable mark the
+      // entry in registry.json + broadcast feature:enabled / feature:disabled;
+      // the strict handler launches / unloads tiles as a side-effect.
+      const result = newEnabled
+        ? await api.features.enable(id)
+        : await api.features.disable(id);
+      if (result.error) {
+        console.error(`[features-manager] toggle error:`, result.error);
+        return;
+      }
     }
 
-    // Update local state and re-render
+    // Optimistic local update; pubsub refresh (feature:enabled/disabled or
+    // a subsequent loadFeatures) reconciles authoritative state.
     const feature = features.find(f => f.id === id);
     if (feature) {
-      feature.disabled = !currentlyDisabled;
+      feature.disabled = !newEnabled;
       render();
     }
   } catch (err) {

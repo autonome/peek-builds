@@ -431,3 +431,120 @@
   color: var(--theme-text-muted);
   font-size: var(--peek-font-xs);
 }
+
+/* ========== Per-feature Options panel ========== */
+/*
+ * A feature card with an Options affordance becomes a flex-wrap container so
+ * the expanded panel drops onto its own full-width row beneath the actions.
+ */
+.feature-card:has(.feature-options-panel) {
+  flex-wrap: wrap;
+}
+
+.feature-options-panel {
+  flex-basis: 100%;
+  width: 100%;
+  order: 99;
+  margin-top: var(--peek-space-sm);
+  padding-top: var(--peek-space-sm);
+  border-top: 1px solid var(--theme-border);
+}
+
+.feature-options-error {
+  color: var(--theme-danger);
+}
+
+/* Options form controls (mirrors the Settings form-group conventions). */
+.feature-options-panel .form-section {
+  margin-bottom: var(--peek-space-md);
+}
+
+.feature-options-panel .form-section-title {
+  font-size: var(--peek-font-sm);
+  font-weight: var(--peek-font-semibold);
+  color: var(--theme-text);
+  margin-bottom: var(--peek-space-sm);
+}
+
+.feature-options-panel .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--peek-space-xs);
+  margin-bottom: var(--peek-space-sm);
+}
+
+.feature-options-panel .form-group label {
+  font-size: var(--peek-font-xs);
+  font-weight: var(--peek-font-medium);
+  color: var(--theme-text-secondary);
+}
+
+.feature-options-panel .form-group input,
+.feature-options-panel .form-group select {
+  padding: var(--peek-space-xs) var(--peek-space-sm);
+  border: 1px solid var(--theme-text-muted);
+  border-radius: var(--peek-radius-sm);
+  background: var(--theme-bg);
+  color: var(--theme-text);
+  font-size: var(--peek-font-sm);
+  font-family: var(--theme-font-sans);
+}
+
+.feature-options-panel .form-group-inline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--peek-space-sm);
+  margin-bottom: var(--peek-space-sm);
+}
+
+.feature-options-panel .form-group-inline-text label {
+  font-size: var(--peek-font-xs);
+  font-weight: var(--peek-font-medium);
+  color: var(--theme-text-secondary);
+}
+
+.feature-options-panel .help-text {
+  font-size: var(--peek-font-xs);
+  color: var(--theme-text-muted);
+}
+
+/* Nested per-item cards (e.g. each peek / slide) inside the Options panel. */
+.feature-options-panel .item-card {
+  border: 1px solid var(--theme-border);
+  border-radius: var(--peek-radius-sm);
+  margin-bottom: var(--peek-space-xs);
+  background: var(--theme-bg);
+}
+
+.feature-options-panel .item-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--peek-space-sm);
+  padding: var(--peek-space-sm);
+  cursor: pointer;
+}
+
+.feature-options-panel .item-card-title {
+  font-size: var(--peek-font-sm);
+  color: var(--theme-text);
+}
+
+.feature-options-panel .item-card-title::before {
+  content: "\25BC ";
+  font-size: 9px;
+  color: var(--theme-text-muted);
+}
+
+.feature-options-panel .item-card.collapsed .item-card-title::before {
+  content: "\25B6 ";
+}
+
+.feature-options-panel .item-card-body {
+  padding: 0 var(--peek-space-sm) var(--peek-space-sm);
+}
+
+.feature-options-panel .item-card.collapsed .item-card-body {
+  display: none;
+}
