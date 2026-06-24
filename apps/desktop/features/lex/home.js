@@ -312,9 +312,9 @@ function renderAuthExpiredUi() {
       <div style="font-size:13px;opacity:0.8;max-width:340px">
         Your AT Protocol session has expired. Sign in again to continue.
       </div>
-      <button id="lex-reauth-btn" class="btn btn-primary" style="margin-top:8px">
+      <peek-button id="lex-reauth-btn" variant="primary" style="margin-top:8px">
         Re-authenticate
-      </button>
+      </peek-button>
       <div id="lex-reauth-status" style="font-size:12px;opacity:0.7;min-height:1em"></div>
     `;
     // Ensure parent is positioned for absolute child
@@ -1082,8 +1082,10 @@ function setupEventListeners() {
     }
   });
 
-  // Close search results on blur (delayed to allow click)
-  handleInput.addEventListener('blur', () => {
+  // Close search results on blur (delayed to allow click).
+  // Use focusout (not blur) because peek-input fires focus/blur inside its
+  // shadow root — focusout bubbles and composes through the shadow boundary.
+  handleInput.addEventListener('focusout', () => {
     setTimeout(() => {
       state.searchVisible = false;
       renderSearchResults();
@@ -1491,7 +1493,9 @@ function setupCreatePanel() {
     renderPickerResults();
   });
 
-  pickerInput.addEventListener('focus', () => {
+  // Use focusin (not focus) because peek-input fires focus inside its shadow
+  // root — focusin bubbles and composes through the shadow boundary.
+  pickerInput.addEventListener('focusin', () => {
     if (pickerInput.value.trim().length > 0 || getPickerItems().length > 0) {
       renderPickerResults();
     }
@@ -1528,8 +1532,10 @@ function setupCreatePanel() {
     }
   });
 
-  // Close picker on blur (delayed for click)
-  pickerInput.addEventListener('blur', () => {
+  // Close picker on blur (delayed for click).
+  // Use focusout (not blur) because peek-input fires blur inside its shadow
+  // root — focusout bubbles and composes through the shadow boundary.
+  pickerInput.addEventListener('focusout', () => {
     setTimeout(() => {
       state.pickerVisible = false;
       pickerResults.classList.remove('visible');

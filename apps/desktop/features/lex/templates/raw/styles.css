@@ -9,7 +9,7 @@
 /* ==================== List View ==================== */
 
 .raw-records-empty {
-  color: var(--base04);
+  color: var(--theme-text-muted);
   font-size: 13px;
   padding: 24px 0;
   text-align: center;
@@ -20,7 +20,7 @@
   align-items: flex-start;
   justify-content: space-between;
   padding: 10px 14px;
-  background: var(--base01);
+  background: var(--theme-bg-secondary);
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.1s;
@@ -28,7 +28,7 @@
 }
 
 .raw-record-item:hover {
-  background: var(--base02);
+  background: var(--theme-bg-tertiary);
 }
 
 .raw-record-item-main {
@@ -42,7 +42,7 @@
 .raw-record-item-rkey {
   font-size: 13px;
   font-weight: 500;
-  color: var(--base05);
+  color: var(--theme-text);
   font-family: var(--theme-font-mono, monospace);
   white-space: nowrap;
   overflow: hidden;
@@ -51,7 +51,7 @@
 
 .raw-record-item-preview {
   font-size: 12px;
-  color: var(--base04);
+  color: var(--theme-text-muted);
   line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -67,7 +67,7 @@
 
 .raw-record-item-date {
   font-size: 11px;
-  color: var(--base04);
+  color: var(--theme-text-muted);
   white-space: nowrap;
 }
 
@@ -82,7 +82,7 @@
 .raw-detail-section-title {
   font-size: 11px;
   font-weight: 600;
-  color: var(--base04);
+  color: var(--theme-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -92,7 +92,7 @@
   flex-direction: column;
   gap: 6px;
   padding: 10px 14px;
-  background: var(--base01);
+  background: var(--theme-bg-secondary);
   border-radius: 6px;
   font-size: 12px;
 }
@@ -103,13 +103,13 @@
 }
 
 .raw-meta-label {
-  color: var(--base04);
+  color: var(--theme-text-muted);
   flex-shrink: 0;
   min-width: 60px;
 }
 
 .raw-meta-value {
-  color: var(--base05);
+  color: var(--theme-text);
   font-family: var(--theme-font-mono, monospace);
   font-size: 11px;
   word-break: break-all;
@@ -122,26 +122,26 @@
   flex-direction: column;
   gap: 2px;
   padding: 8px 14px;
-  background: var(--base01);
+  background: var(--theme-bg-secondary);
   border-radius: 6px;
 }
 
 .raw-field-name {
   font-size: 12px;
   font-weight: 500;
-  color: var(--base04);
+  color: var(--theme-text-muted);
 }
 
 .raw-field-value {
   font-size: 13px;
-  color: var(--base05);
+  color: var(--theme-text);
   line-height: 1.5;
   word-break: break-word;
   white-space: pre-wrap;
 }
 
 .raw-field-value a {
-  color: var(--base0D);
+  color: var(--theme-accent, #007aff);
   text-decoration: none;
 }
 
@@ -159,20 +159,20 @@
 /* Nested object display */
 .raw-field-object {
   padding: 8px 12px;
-  background: var(--base00);
-  border: 1px solid var(--base02);
+  background: var(--theme-bg);
+  border: 1px solid var(--theme-border);
   border-radius: 4px;
   margin-top: 4px;
 }
 
 /* Inline value types */
 .raw-null {
-  color: var(--base04);
+  color: var(--theme-text-muted);
   font-style: italic;
 }
 
 .raw-primitive {
-  color: var(--base0E);
+  color: var(--base0E, #6f42c1);
 }
 
 .raw-mono {
@@ -187,17 +187,17 @@
 }
 
 .raw-array-item-border {
-  border-bottom: 1px solid var(--base02);
+  border-bottom: 1px solid var(--theme-border);
 }
 
 /* Raw JSON display */
 .raw-json-view {
   padding: 12px 14px;
-  background: var(--base01);
+  background: var(--theme-bg-secondary);
   border-radius: 6px;
   font-family: var(--theme-font-mono, monospace);
   font-size: 12px;
-  color: var(--base05);
+  color: var(--theme-text);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;

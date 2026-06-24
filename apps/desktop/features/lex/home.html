@@ -6,6 +6,24 @@
     <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
     <title>Lexicon Studio</title>
     <link rel="stylesheet" type="text/css" href="home.css">
+
+    <!-- Import map for resolving bare module specifiers (required for Lit components) -->
+    <script type="importmap">
+    {
+      "imports": {
+        "lit": "peek://node_modules/lit/index.js",
+        "lit/": "peek://node_modules/lit/",
+        "lit-html": "peek://node_modules/lit-html/lit-html.js",
+        "lit-html/": "peek://node_modules/lit-html/",
+        "lit-element": "peek://node_modules/lit-element/lit-element.js",
+        "lit-element/": "peek://node_modules/lit-element/",
+        "@lit/reactive-element": "peek://node_modules/@lit/reactive-element/reactive-element.js",
+        "@lit/reactive-element/": "peek://node_modules/@lit/reactive-element/"
+      }
+    }
+    </script>
+
+    <!-- Import peek-components -->
     <script type="module">
       import 'peek://app/components/peek-input.js';
       import 'peek://app/components/peek-button.js';
@@ -23,14 +41,11 @@
           </p>
 
           <div class="search-wrap">
-            <input
-              type="text"
+            <peek-input
               id="handle-input"
-              class="input"
+              type="text"
               placeholder="Search your handle..."
-              autocomplete="off"
-              spellcheck="false"
-            />
+            ></peek-input>
             <div id="search-results" class="search-results"></div>
           </div>
 
@@ -69,7 +84,7 @@
               <div id="recent-lexicons" class="recent-lexicons"></div>
             </nav>
             <div class="sidebar-footer">
-              <button id="logout-btn" class="btn btn-danger btn-sm">Disconnect</button>
+              <peek-button id="logout-btn" variant="danger" size="sm" style="width:100%">Disconnect</peek-button>
             </div>
           </div>
 
@@ -117,14 +132,11 @@
                 <h2 class="panel-title">Create Record</h2>
                 <p class="panel-subtitle">Pick a lexicon and fill in the fields</p>
                 <div class="lexicon-picker">
-                  <input
-                    type="text"
+                  <peek-input
                     id="lexicon-picker-input"
-                    class="input"
+                    type="text"
                     placeholder="Search lexicons..."
-                    autocomplete="off"
-                    spellcheck="false"
-                  />
+                  ></peek-input>
                   <div id="lexicon-picker-results" class="picker-results"></div>
                   <div id="lexicon-picker-selected" class="picker-selected" style="display:none"></div>
                 </div>
@@ -148,7 +160,7 @@
               </div>
 
               <div id="create-panel-footer" class="create-panel-footer" style="display:none">
-                <button id="create-panel-submit-btn" class="btn btn-primary">Create Record</button>
+                <peek-button id="create-panel-submit-btn" variant="primary">Create Record</peek-button>
                 <div id="create-panel-submit-status" class="submit-status" style="display:none"></div>
               </div>
             </div>
@@ -162,7 +174,7 @@
                     <h2 class="panel-title" id="records-title">Records</h2>
                     <p class="panel-subtitle" id="records-nsid"></p>
                   </div>
-                  <button id="records-create-btn" class="btn btn-sm btn-primary">+ Create</button>
+                  <peek-button id="records-create-btn" variant="primary" size="sm">+ Create</peek-button>
                 </div>
                 <div class="records-sync-bar">
                   <span id="records-sync-status" class="records-sync-status"></span>
@@ -173,7 +185,7 @@
                 <div class="loading">Loading records...</div>
               </div>
               <div id="records-pagination" class="records-pagination" style="display:none">
-                <button id="records-load-more" class="btn btn-sm">Load more</button>
+                <peek-button id="records-load-more" size="sm">Load more</peek-button>
               </div>
             </div>
 
@@ -186,7 +198,7 @@
                     <h2 class="panel-title" id="record-detail-title">Record</h2>
                     <p class="panel-subtitle" id="record-detail-uri"></p>
                   </div>
-                  <button id="record-delete-btn" class="btn btn-sm btn-danger">Delete</button>
+                  <peek-button id="record-delete-btn" variant="danger" size="sm">Delete</peek-button>
                 </div>
               </div>
               <div id="record-detail-content" class="record-detail-content"></div>
@@ -233,7 +245,7 @@
 
               <!-- Submit area -->
               <div id="create-submit-area" class="submit-area" style="display:none">
-                <button id="create-submit-btn" class="btn btn-primary">Create Record</button>
+                <peek-button id="create-submit-btn" variant="primary">Create Record</peek-button>
                 <div id="create-submit-status" class="submit-status"></div>
               </div>
             </div>

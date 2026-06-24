@@ -6,6 +6,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>New Record</title>
 
+    <!-- Import map for resolving bare module specifiers (required for Lit components) -->
+    <script type="importmap">
+    {
+      "imports": {
+        "lit": "peek://node_modules/lit/index.js",
+        "lit/": "peek://node_modules/lit/",
+        "lit-html": "peek://node_modules/lit-html/lit-html.js",
+        "lit-html/": "peek://node_modules/lit-html/",
+        "lit-element": "peek://node_modules/lit-element/lit-element.js",
+        "lit-element/": "peek://node_modules/lit-element/",
+        "@lit/reactive-element": "peek://node_modules/@lit/reactive-element/reactive-element.js",
+        "@lit/reactive-element/": "peek://node_modules/@lit/reactive-element/"
+      }
+    }
+    </script>
+
+    <!-- Import peek-components -->
+    <script type="module">
+      import 'peek://app/components/peek-button.js';
+    </script>
+
     <style>
       @import url('peek://theme/variables.css');
 
@@ -23,30 +44,30 @@
         -webkit-font-smoothing: antialiased;
         font-size: 14px;
         line-height: 1.5;
-        color: var(--base05);
+        color: var(--theme-text);
         overflow: hidden;
         display: flex;
         flex-direction: column;
-        border-radius: 8px;
+        border-radius: var(--theme-radius, 8px);
       }
 
       /* Header */
       #header {
         flex-shrink: 0;
         padding: 14px 16px 10px;
-        border-bottom: 1px solid var(--base02);
+        border-bottom: 1px solid var(--theme-border);
       }
 
       #header-title {
         font-size: 14px;
         font-weight: 600;
-        color: var(--base05);
+        color: var(--theme-text);
       }
 
       #header-nsid {
         font-size: 11px;
         font-family: var(--theme-font-mono, monospace);
-        color: var(--base04);
+        color: var(--theme-text-muted);
         margin-top: 1px;
       }
 
@@ -60,7 +81,7 @@
 
       /* Loading / status */
       #loading {
-        color: var(--base04);
+        color: var(--theme-text-muted);
         font-size: 13px;
         padding: 32px 0;
         text-align: center;
@@ -76,16 +97,16 @@
 
       #status.error {
         display: block;
-        background: color-mix(in srgb, var(--base08) 15%, transparent);
-        border: 1px solid var(--base08);
-        color: var(--base08);
+        background: color-mix(in srgb, var(--theme-danger, #ff3b30) 15%, transparent);
+        border: 1px solid var(--theme-danger, #ff3b30);
+        color: var(--theme-danger, #ff3b30);
       }
 
       #status.success {
         display: block;
-        background: color-mix(in srgb, var(--base0B) 15%, transparent);
-        border: 1px solid var(--base0B);
-        color: var(--base0B);
+        background: color-mix(in srgb, var(--theme-success, #30d158) 15%, transparent);
+        border: 1px solid var(--theme-success, #30d158);
+        color: var(--theme-success, #30d158);
       }
 
       .record-uri {
@@ -100,44 +121,10 @@
       #footer {
         flex-shrink: 0;
         padding: 10px 16px 14px;
-        border-top: 1px solid var(--base02);
+        border-top: 1px solid var(--theme-border);
         display: flex;
         justify-content: flex-end;
         gap: 8px;
-      }
-
-      .btn {
-        padding: 8px 18px;
-        font-size: 13px;
-        font-weight: 500;
-        font-family: var(--theme-font-sans);
-        border: none;
-        border-radius: 6px;
-        cursor: pointer;
-        transition: all 0.15s;
-      }
-
-      .btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-
-      .btn-primary {
-        background: var(--base0D);
-        color: var(--base00);
-      }
-
-      .btn-primary:hover:not(:disabled) {
-        filter: brightness(1.1);
-      }
-
-      .btn-cancel {
-        background: var(--base02);
-        color: var(--base04);
-      }
-
-      .btn-cancel:hover:not(:disabled) {
-        color: var(--base05);
       }
 
       /* ==================== Lexicon Form Styles ==================== */
@@ -156,29 +143,29 @@
 
       .form-field.nested {
         padding-left: 16px;
-        border-left: 2px solid var(--base02);
+        border-left: 2px solid var(--theme-border);
       }
 
       .field-label {
         font-size: 13px;
         font-weight: 500;
-        color: var(--base05);
+        color: var(--theme-text);
       }
 
       .required-mark {
-        color: var(--base08);
+        color: var(--theme-danger, #ff3b30);
         font-weight: 600;
       }
 
       .field-hint {
         font-size: 12px;
-        color: var(--base04);
+        color: var(--theme-text-muted);
         line-height: 1.4;
       }
 
       .form-message {
         font-size: 13px;
-        color: var(--base04);
+        color: var(--theme-text-muted);
         padding: 12px 0;
       }
 
@@ -187,20 +174,20 @@
         padding: 8px 12px;
         font-size: 13px;
         font-family: var(--theme-font-sans);
-        background: var(--base01);
-        border: 1px solid var(--base02);
+        background: var(--theme-bg-secondary);
+        border: 1px solid var(--theme-border);
         border-radius: 6px;
-        color: var(--base05);
+        color: var(--theme-text);
         outline: none;
         transition: border-color 0.15s;
       }
 
       .form-input:focus {
-        border-color: var(--base0D);
+        border-color: var(--theme-accent, #007aff);
       }
 
       .form-input::placeholder {
-        color: var(--base03);
+        color: var(--theme-text-muted);
       }
 
       .form-textarea {
@@ -208,10 +195,10 @@
         padding: 8px 12px;
         font-size: 13px;
         font-family: var(--theme-font-sans);
-        background: var(--base01);
-        border: 1px solid var(--base02);
+        background: var(--theme-bg-secondary);
+        border: 1px solid var(--theme-border);
         border-radius: 6px;
-        color: var(--base05);
+        color: var(--theme-text);
         outline: none;
         resize: vertical;
         transition: border-color 0.15s;
@@ -219,11 +206,11 @@
       }
 
       .form-textarea:focus {
-        border-color: var(--base0D);
+        border-color: var(--theme-accent, #007aff);
       }
 
       .form-textarea::placeholder {
-        color: var(--base03);
+        color: var(--theme-text-muted);
       }
 
       .form-textarea.json-editor {
@@ -243,10 +230,10 @@
         padding: 8px 12px;
         font-size: 13px;
         font-family: var(--theme-font-sans);
-        background: var(--base01);
-        border: 1px solid var(--base02);
+        background: var(--theme-bg-secondary);
+        border: 1px solid var(--theme-border);
         border-radius: 6px;
-        color: var(--base05);
+        color: var(--theme-text);
         outline: none;
         cursor: pointer;
         transition: border-color 0.15s;
@@ -259,18 +246,18 @@
       }
 
       .form-select:focus {
-        border-color: var(--base0D);
+        border-color: var(--theme-accent, #007aff);
       }
 
       .form-file {
         font-size: 13px;
-        color: var(--base04);
+        color: var(--theme-text-muted);
       }
 
       .form-file::file-selector-button {
-        background: var(--base02);
-        color: var(--base05);
-        border: 1px solid var(--base03);
+        background: var(--theme-bg-tertiary);
+        color: var(--theme-text);
+        border: 1px solid var(--theme-border);
         border-radius: 4px;
         padding: 4px 12px;
         font-size: 12px;
@@ -281,7 +268,7 @@
       .form-checkbox {
         width: 16px;
         height: 16px;
-        accent-color: var(--base0D);
+        accent-color: var(--theme-accent, #007aff);
       }
 
       .textarea-wrap {
@@ -292,12 +279,12 @@
 
       .char-counter {
         font-size: 11px;
-        color: var(--base04);
+        color: var(--theme-text-muted);
         text-align: right;
       }
 
       .char-counter.over-limit {
-        color: var(--base08);
+        color: var(--theme-danger, #ff3b30);
         font-weight: 600;
       }
 
@@ -309,7 +296,7 @@
 
       .checkbox-label {
         font-size: 13px;
-        color: var(--base05);
+        color: var(--theme-text);
         cursor: pointer;
       }
 
@@ -321,7 +308,7 @@
 
       .blob-info {
         font-size: 11px;
-        color: var(--base04);
+        color: var(--theme-text-muted);
       }
 
       .dropdown-wrap {
@@ -346,7 +333,7 @@
 
       .union-subform {
         padding-left: 16px;
-        border-left: 2px solid var(--base0D);
+        border-left: 2px solid var(--theme-accent, #007aff);
       }
 
       .array-field {
@@ -375,8 +362,8 @@
 
       .btn-add-item {
         background: none;
-        border: 1px dashed var(--base03);
-        color: var(--base04);
+        border: 1px dashed var(--theme-border);
+        color: var(--theme-text-muted);
         padding: 6px 12px;
         font-size: 12px;
         font-family: var(--theme-font-sans);
@@ -387,8 +374,8 @@
       }
 
       .btn-add-item:hover:not(:disabled) {
-        color: var(--base0D);
-        border-color: var(--base0D);
+        color: var(--theme-accent, #007aff);
+        border-color: var(--theme-accent, #007aff);
       }
 
       .btn-add-item:disabled {
@@ -398,8 +385,8 @@
 
       .btn-remove-item {
         background: none;
-        border: 1px solid var(--base02);
-        color: var(--base08);
+        border: 1px solid var(--theme-border);
+        color: var(--theme-danger, #ff3b30);
         padding: 4px 8px;
         font-size: 11px;
         font-family: var(--theme-font-sans);
@@ -411,12 +398,12 @@
       }
 
       .btn-remove-item:hover {
-        background: color-mix(in srgb, var(--base08) 15%, transparent);
+        background: color-mix(in srgb, var(--theme-danger, #ff3b30) 15%, transparent);
       }
 
       .array-counter {
         font-size: 11px;
-        color: var(--base04);
+        color: var(--theme-text-muted);
       }
 
       .object-field {
@@ -424,8 +411,8 @@
         flex-direction: column;
         gap: 12px;
         padding: 12px;
-        background: color-mix(in srgb, var(--base01) 50%, transparent);
-        border: 1px solid var(--base02);
+        background: color-mix(in srgb, var(--theme-bg-secondary) 50%, transparent);
+        border: 1px solid var(--theme-border);
         border-radius: 6px;
       }
 
@@ -448,8 +435,8 @@
     </div>
 
     <div id="footer">
-      <button class="btn btn-cancel" id="btn-cancel">Cancel</button>
-      <button class="btn btn-primary" id="btn-submit" disabled>Create</button>
+      <peek-button id="btn-cancel">Cancel</peek-button>
+      <peek-button variant="primary" id="btn-submit" disabled>Create</peek-button>
     </div>
 
     <script type="module" src="./chain-form.js"></script>
