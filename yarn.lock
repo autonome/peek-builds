@@ -2061,6 +2061,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "Peek@workspace:."
   dependencies:
+    "@atproto/crypto": "npm:^0.5.1"
     "@codemirror/commands": "npm:^6.10.1"
     "@codemirror/lang-markdown": "npm:^6.5.0"
     "@codemirror/language": "npm:^6.12.1"
@@ -2070,6 +2071,7 @@ __metadata:
     "@codemirror/view": "npm:^6.39.11"
     "@electron/rebuild": "npm:^4.0.2"
     "@ghostery/adblocker-electron": "npm:^2.13.4"
+    "@ipld/dag-cbor": "npm:^10.0.1"
     "@playwright/test": "npm:^1.57.0"
     "@replit/codemirror-vim": "npm:^6.3.0"
     "@types/archiver": "npm:^6.0.0"
