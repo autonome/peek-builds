@@ -11,6 +11,12 @@
  * 4. Fallback to raw JSON editor
  */
 
+// NOTE: The <peek-*> components this module instantiates (peek-input,
+// peek-button, peek-switch) are registered by the HOST PAGE's module imports
+// (home.html / chain-form.html), NOT here — a top-level `import 'peek://...'`
+// would break node-based unit tests (node's ESM loader rejects the peek:
+// scheme). The host pages run customElements.define before any form is built.
+
 // ============================================================================
 // Lexicon Schema Resolver
 // ============================================================================
@@ -301,9 +307,12 @@ export async function generateForm(nsid, schema, lexicon, options = {}) {
     form.appendChild(fieldEl);
   }
 
-  // Auto-fill createdAt
+  // Auto-fill createdAt. The createdAt field is a <peek-input> (datetime),
+  // so target the host and read/write its `.value` reactive property — the
+  // inner native <input> lives in the shadow root and isn't reachable here.
   if (options.autoFillCreatedAt !== false) {
-    const createdAtInput = form.querySelector('[data-field-name="createdAt"] input');
+    const createdAtInput = form.querySelector('[data-field-name="createdAt"] peek-input')
+      || form.querySelector('[data-field-name="createdAt"] input');
     if (createdAtInput && !createdAtInput.value) {
       createdAtInput.value = new Date().toISOString().slice(0, 16);
     }
@@ -400,10 +409,9 @@ function generateBlueskyPostForm(nsid, schema, lexicon, options = {}) {
   imageGrid.className = 'bsky-image-grid';
   imageSection.appendChild(imageGrid);
 
-  const addImageBtn = document.createElement('button');
-  addImageBtn.type = 'button';
-  addImageBtn.className = 'bsky-add-image-btn';
-  addImageBtn.textContent = '+ Add image';
+  // Direct element reference (not a [name] query), so peek-button works:
+  // `.style.display` toggles on the host; click fires natively.
+  const addImageBtn = makePeekButton('+ Add image', { variant: 'secondary', size: 'sm', className: 'bsky-add-image-btn' });
   imageSection.appendChild(addImageBtn);
 
   // Hidden file input for image selection
@@ -438,20 +446,15 @@ function generateBlueskyPostForm(nsid, schema, lexicon, options = {}) {
       const controls = document.createElement('div');
       controls.className = 'bsky-image-controls';
 
-      const altInput = document.createElement('input');
-      altInput.type = 'text';
-      altInput.className = 'form-input bsky-alt-input';
-      altInput.placeholder = 'Alt text...';
-      altInput.value = img.altText || '';
+      // peek-input fires native `input` (composed) — listener still works.
+      const altInput = makePeekInput('', { type: 'text', placeholder: 'Alt text...', className: 'bsky-alt-input', value: img.altText || '' });
+      altInput.removeAttribute('name'); // not collected via [name]; closure-managed
       altInput.addEventListener('input', () => {
         img.altText = altInput.value;
       });
       controls.appendChild(altInput);
 
-      const removeBtn = document.createElement('button');
-      removeBtn.type = 'button';
-      removeBtn.className = 'bsky-image-remove';
-      removeBtn.textContent = 'Remove';
+      const removeBtn = makePeekButton('Remove', { variant: 'danger', size: 'sm', className: 'bsky-image-remove' });
       removeBtn.addEventListener('click', () => {
         URL.revokeObjectURL(img.objectUrl);
         form._bskyImages.splice(idx, 1);
@@ -741,10 +744,13 @@ async function renderField(name, schema, isRequired, lexicon, depth) {
       errorEl.style.display = 'none';
       wrapper.appendChild(errorEl);
 
-      // Find the actual input element within the rendered input
-      const inputEl = wrapper.querySelector('input, textarea');
+      // Find the actual input element within the rendered input. peek-input
+      // hosts expose `.value`; native <textarea> stays as-is. Use `focusout`
+      // (not `blur`) so the event crosses the peek-input shadow boundary —
+      // blur has bubbles:false and never reaches the host.
+      const inputEl = wrapper.querySelector('peek-input, input, textarea');
       if (inputEl) {
-        inputEl.addEventListener('blur', () => {
+        inputEl.addEventListener('focusout', () => {
           const val = inputEl.value;
           const error = validateFieldValue(val, schema);
           if (error) {
@@ -857,12 +863,7 @@ async function renderInput(name, schema, lexicon, depth) {
 
   // Handle cid-link
   if (type === 'cid-link') {
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.name = name;
-    input.className = 'form-input';
-    input.placeholder = 'CID link...';
-    return input;
+    return makePeekInput(name, { type: 'text', placeholder: 'CID link...' });
   }
 
   // Handle unknown
@@ -872,6 +873,52 @@ async function renderInput(name, schema, lexicon, depth) {
 
   // Fallback
   return renderJsonFallback(name);
+}
+
+// ============================================================================
+// Component factories (peek-* web components)
+//
+// The dynamic form is built imperatively, but the controls are the shared
+// <peek-*> components. Because the value-collection layer queries by
+// `[name="X"]` attribute and reads `.value` / `.checked`, two rules matter:
+//   1. The `name` MUST be set as an ATTRIBUTE (setAttribute), not a JS
+//      property — peek-input/peek-switch don't reflect a `name` property.
+//   2. Reading `.value` / `.checked` works because those ARE reactive
+//      properties on the host element.
+// Native validation attributes (maxLength/min/max/step) aren't forwarded by
+// peek-input to its inner <input>; schema-level validation in validateFields()
+// already enforces those bounds in JS, so correctness is preserved.
+// ============================================================================
+
+function makePeekInput(name, { type = 'text', placeholder = '', value, className } = {}) {
+  const el = document.createElement('peek-input');
+  el.setAttribute('name', name);
+  if (type) el.setAttribute('type', type);
+  if (placeholder) el.setAttribute('placeholder', placeholder);
+  // No chrome class by default: peek-input paints its own border/padding in
+  // shadow DOM and is display:block (full width). A bespoke `.form-input`
+  // class on the host would double the border. Callers pass className only
+  // for layout hooks (e.g. bsky alt input).
+  if (className) el.className = className;
+  if (value !== undefined && value !== null) el.value = value;
+  return el;
+}
+
+function makePeekButton(text, { variant, size, type = 'button', className } = {}) {
+  const el = document.createElement('peek-button');
+  if (variant) el.setAttribute('variant', variant);
+  if (size) el.setAttribute('size', size);
+  if (type) el.setAttribute('type', type);
+  if (className) el.className = className;
+  el.textContent = text;
+  return el;
+}
+
+function makePeekSwitch(name, { checked = false } = {}) {
+  const el = document.createElement('peek-switch');
+  el.setAttribute('name', name);
+  el.checked = !!checked;
+  return el;
 }
 
 // ============================================================================
@@ -900,60 +947,32 @@ function renderStringInput(name, schema) {
 
   // format-specific inputs
   if (schema.format === 'datetime') {
-    const input = document.createElement('input');
-    input.type = 'datetime-local';
-    input.name = name;
-    input.className = 'form-input';
-    input.step = '1'; // allow seconds
-    if (name === 'createdAt' || name === 'indexedAt') {
-      input.value = new Date().toISOString().slice(0, 16);
-    }
-    return input;
+    const value = (name === 'createdAt' || name === 'indexedAt')
+      ? new Date().toISOString().slice(0, 16)
+      : undefined;
+    // datetime-local needs seconds granularity; peek-input forwards `type`
+    // to its inner <input>, which honors step via the native control.
+    return makePeekInput(name, { type: 'datetime-local', value });
   }
 
   if (schema.format === 'uri') {
-    const input = document.createElement('input');
-    input.type = 'url';
-    input.name = name;
-    input.className = 'form-input';
-    input.placeholder = 'https://...';
-    return input;
+    return makePeekInput(name, { type: 'url', placeholder: 'https://...' });
   }
 
   if (schema.format === 'at-uri') {
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.name = name;
-    input.className = 'form-input';
-    input.placeholder = 'at://did:plc:.../collection/rkey';
-    return input;
+    return makePeekInput(name, { type: 'text', placeholder: 'at://did:plc:.../collection/rkey' });
   }
 
   if (schema.format === 'did') {
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.name = name;
-    input.className = 'form-input';
-    input.placeholder = 'did:plc:...';
-    return input;
+    return makePeekInput(name, { type: 'text', placeholder: 'did:plc:...' });
   }
 
   if (schema.format === 'handle') {
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.name = name;
-    input.className = 'form-input';
-    input.placeholder = 'handle.example.com';
-    return input;
+    return makePeekInput(name, { type: 'text', placeholder: 'handle.example.com' });
   }
 
   if (schema.format === 'at-identifier') {
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.name = name;
-    input.className = 'form-input';
-    input.placeholder = 'Handle or DID...';
-    return input;
+    return makePeekInput(name, { type: 'text', placeholder: 'Handle or DID...' });
   }
 
   if (schema.format === 'language') {
@@ -961,30 +980,15 @@ function renderStringInput(name, schema) {
   }
 
   if (schema.format === 'cid') {
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.name = name;
-    input.className = 'form-input';
-    input.placeholder = 'bafkrei...';
-    return input;
+    return makePeekInput(name, { type: 'text', placeholder: 'bafkrei...' });
   }
 
   if (schema.format === 'nsid') {
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.name = name;
-    input.className = 'form-input';
-    input.placeholder = 'com.example.lexicon';
-    return input;
+    return makePeekInput(name, { type: 'text', placeholder: 'com.example.lexicon' });
   }
 
   if (schema.format === 'tid' || schema.format === 'record-key') {
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.name = name;
-    input.className = 'form-input';
-    input.placeholder = `Auto-generated ${schema.format}`;
-    return input;
+    return makePeekInput(name, { type: 'text', placeholder: `Auto-generated ${schema.format}` });
   }
 
   // Detect long text fields
@@ -1024,15 +1028,9 @@ function renderStringInput(name, schema) {
     return container;
   }
 
-  // Default: text input
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.name = name;
-  input.className = 'form-input';
-  if (schema.default !== undefined) input.value = schema.default;
-  if (schema.maxLength) input.maxLength = schema.maxLength;
-  if (schema.minLength) input.minLength = schema.minLength;
-  return input;
+  // Default: text input. maxLength/minLength are enforced by validateFields()
+  // at submit; peek-input doesn't forward them to its inner <input>.
+  return makePeekInput(name, { type: 'text', value: schema.default });
 }
 
 function renderNumberInput(name, schema) {
@@ -1040,35 +1038,21 @@ function renderNumberInput(name, schema) {
     return renderDropdown(name, schema.enum.map(String), false, schema.default?.toString());
   }
 
-  const input = document.createElement('input');
-  input.type = 'number';
-  input.name = name;
-  input.className = 'form-input';
-  if (schema.minimum !== undefined) input.min = schema.minimum;
-  if (schema.maximum !== undefined) input.max = schema.maximum;
-  if (schema.default !== undefined) input.value = schema.default;
-  if (schema.type === 'integer') input.step = '1';
-  return input;
+  // minimum/maximum are enforced by validateFields() at submit; the inner
+  // native input still parses numeric text. integer step is informational.
+  return makePeekInput(name, { type: 'number', value: schema.default });
 }
 
 function renderBooleanInput(name, schema) {
   const container = document.createElement('div');
   container.className = 'checkbox-wrap';
 
-  const input = document.createElement('input');
-  input.type = 'checkbox';
-  input.name = name;
-  input.id = `field-${name}`;
-  input.className = 'form-checkbox';
-  if (schema.default !== undefined) input.checked = schema.default;
+  // peek-switch carries its label via the default slot. Collection reads
+  // `.checked` via the `[name]` attribute query, which matches the host.
+  const sw = makePeekSwitch(name, { checked: schema.default === true });
+  sw.textContent = formatFieldName(name);
 
-  const label = document.createElement('label');
-  label.htmlFor = `field-${name}`;
-  label.className = 'checkbox-label';
-  label.textContent = formatFieldName(name);
-
-  container.appendChild(input);
-  container.appendChild(label);
+  container.appendChild(sw);
   return container;
 }
 
@@ -1511,14 +1495,13 @@ async function renderArrayInput(name, schema, lexicon, depth) {
   itemsContainer.className = 'array-items';
   container.appendChild(itemsContainer);
 
-  const addBtn = document.createElement('button');
-  addBtn.type = 'button';
-  addBtn.className = 'btn-add-item';
-
   // Better label based on item type
   const itemTypeLabel = itemSchema?.type === 'union' ? 'variant' :
     itemSchema?.type === 'object' ? 'entry' : 'item';
-  addBtn.textContent = `+ Add ${itemTypeLabel}`;
+
+  // peek-button: `disabled` is a reactive property, so updateCounter()'s
+  // `addBtn.disabled = ...` works unchanged.
+  const addBtn = makePeekButton(`+ Add ${itemTypeLabel}`, { variant: 'secondary', size: 'sm', className: 'btn-add-item' });
 
   let itemCount = 0;
   const maxLength = schema.maxLength;
@@ -1540,10 +1523,7 @@ async function renderArrayInput(name, schema, lexicon, depth) {
     indexLabel.textContent = `#${itemCount + 1}`;
     itemHeader.appendChild(indexLabel);
 
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'btn-remove-item';
-    removeBtn.textContent = 'Remove';
+    const removeBtn = makePeekButton('Remove', { variant: 'danger', size: 'sm', className: 'btn-remove-item' });
     removeBtn.addEventListener('click', () => {
       itemWrapper.remove();
       itemCount--;
@@ -1570,21 +1550,14 @@ async function renderArrayInput(name, schema, lexicon, depth) {
       const itemInput = await renderInput(`${name}[${itemCount}]`, itemSchema, lexicon, depth + 1);
       if (itemInput) itemContent.appendChild(itemInput);
     } else {
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.name = `${name}[${itemCount}]`;
-      input.className = 'form-input';
-      itemContent.appendChild(input);
+      itemContent.appendChild(makePeekInput(`${name}[${itemCount}]`, { type: 'text' }));
     }
 
     itemWrapper.appendChild(itemContent);
 
     // For simple items, put remove button inline
     if (!isComplexItem) {
-      const removeBtn2 = document.createElement('button');
-      removeBtn2.type = 'button';
-      removeBtn2.className = 'btn-remove-item';
-      removeBtn2.textContent = 'Remove';
+      const removeBtn2 = makePeekButton('Remove', { variant: 'danger', size: 'sm', className: 'btn-remove-item' });
       removeBtn2.addEventListener('click', () => {
         itemWrapper.remove();
         itemCount--;
@@ -2060,9 +2033,12 @@ async function collectArrayValue(form, name, schema, lexicon) {
       continue;
     }
 
-    // Simple types
-    const input = content.querySelector('input, textarea, select');
-    if (input && input.value) {
+    // Simple types. peek-input/peek-switch expose `.value`/`.checked` as host
+    // properties, so including their tags here keeps collection working after
+    // the component conversion (native input/textarea/select inner elements
+    // live in shadow roots and aren't reachable via light-DOM querySelector).
+    const input = content.querySelector('peek-input, peek-switch, input, textarea, select');
+    if (input && (itemSchema?.type === 'boolean' || input.value)) {
       if (itemSchema?.type === 'integer') {
         values.push(parseInt(input.value, 10));
       } else if (itemSchema?.type === 'number') {
