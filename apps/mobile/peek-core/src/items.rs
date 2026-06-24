@@ -434,7 +434,8 @@ pub fn update_url(
         .ok();
     let updated_meta = inject_sync_metadata_for_update(existing_meta, device_id);
     conn.execute(
-        "UPDATE items SET url = ?, updated_at = ?, metadata = ? WHERE id = ?",
+        // sync_error = NULL: editing the item gives a previously-rejected push another try.
+        "UPDATE items SET url = ?, updated_at = ?, metadata = ?, sync_error = NULL WHERE id = ?",
         params![url, &now, &updated_meta, id],
     )
     .map_err(|e| format!("Failed to update item: {}", e))?;
@@ -512,7 +513,7 @@ pub fn update_text(
         .ok();
     let updated_meta = inject_sync_metadata_for_update(existing_meta, device_id);
     conn.execute(
-        "UPDATE items SET content = ?, updated_at = ?, metadata = ? WHERE id = ?",
+        "UPDATE items SET content = ?, updated_at = ?, metadata = ?, sync_error = NULL WHERE id = ?",
         params![content, &now, &updated_meta, id],
     )
     .map_err(|e| format!("Failed to update text: {}", e))?;
@@ -625,7 +626,7 @@ pub fn update_item_content(
 ) -> Result<(), String> {
     let now = chrono::Utc::now().to_rfc3339();
     conn.execute(
-        "UPDATE items SET content = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+        "UPDATE items SET content = ?, updated_at = ?, sync_error = NULL WHERE id = ? AND deleted_at IS NULL",
         params![content, &now, id],
     )
     .map_err(|e| format!("Failed to update content: {}", e))?;
@@ -665,7 +666,7 @@ pub fn update_item_metadata(
     let final_meta = inject_sync_metadata_for_update(Some(merged_str), device_id);
 
     conn.execute(
-        "UPDATE items SET metadata = ?, updated_at = ? WHERE id = ?",
+        "UPDATE items SET metadata = ?, updated_at = ?, sync_error = NULL WHERE id = ?",
         params![&final_meta, &now, id],
     )
     .map_err(|e| format!("Failed to update metadata: {}", e))?;
@@ -1171,6 +1172,26 @@ mod tests {
         let final_tags = update_text(&conn, &id, "updated #newtag", &["manual".to_string()], &device_id).unwrap();
         assert!(final_tags.contains(&"newtag".to_string()));
         assert!(final_tags.contains(&"manual".to_string()));
+    }
+
+    /// Editing an item clears a parked sync_error so a fixed item retries.
+    #[test]
+    fn test_update_clears_sync_error() {
+        let (conn, device_id) = setup_db();
+        let id = save_text(&conn, "", None, None, &device_id).unwrap();
+        // Simulate the server having parked this item (e.g. rejected empty content).
+        conn.execute("UPDATE items SET sync_error = 'status 400: bad' WHERE id = ?", params![&id]).unwrap();
+        let parked: Option<String> = conn
+            .query_row("SELECT sync_error FROM items WHERE id = ?", params![&id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(parked.as_deref(), Some("status 400: bad"));
+
+        update_text(&conn, &id, "now has content", &[], &device_id).unwrap();
+
+        let after: Option<String> = conn
+            .query_row("SELECT sync_error FROM items WHERE id = ?", params![&id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(after, None, "editing should clear the parked sync_error");
     }
 
     #[test]

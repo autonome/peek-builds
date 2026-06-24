@@ -82,7 +82,7 @@ pub fn get_pending_sync_count(conn: &Connection, target_profile_id: &str) -> Res
 /// Predicate selecting items that still need to be pushed to a target bucket.
 /// Takes the target bucket id as parameter TWICE (non-deleted branch, then the
 /// deleted branch). Kept in one place so the count and the fetch never drift.
-const PENDING_FOR_BUCKET_SQL: &str = "(deleted_at IS NULL AND (\
+const PENDING_FOR_BUCKET_SQL: &str = "(deleted_at IS NULL AND sync_error IS NULL AND (\
         synced_at IS NULL \
         OR updated_at > synced_at \
         OR synced_profile_id IS NULL \
@@ -145,7 +145,8 @@ pub fn get_item_tags(conn: &Connection, item_id: &str) -> Result<Vec<String>, St
 }
 
 /// Mark an item as synced after a successful push to `server_profile_id`.
-/// Records WHICH bucket the item was synced to so a later rebind re-pushes it.
+/// Records WHICH bucket the item was synced to so a later rebind re-pushes it, and
+/// clears any prior `sync_error` (a previously-rejected item that now succeeded).
 pub fn mark_item_synced(
     conn: &Connection,
     item_id: &str,
@@ -154,11 +155,84 @@ pub fn mark_item_synced(
 ) -> Result<(), String> {
     let now = Utc::now().to_rfc3339();
     conn.execute(
-        "UPDATE items SET sync_id = ?, synced_at = ?, synced_profile_id = ? WHERE id = ?",
+        "UPDATE items SET sync_id = ?, synced_at = ?, synced_profile_id = ?, sync_error = NULL WHERE id = ?",
         params![sync_id, &now, server_profile_id, item_id],
     )
     .map_err(|e| format!("Failed to mark item synced: {}", e))?;
     Ok(())
+}
+
+/// Park an item the server PERMANENTLY rejected (a 4xx that won't change on retry,
+/// e.g. validation failure or oversized blob). Recording `error` excludes it from
+/// the pending set + count so it stops being re-pushed every sync and stops
+/// inflating the "pending" badge. Cleared on a later successful sync (mark_item_synced)
+/// or when the item is edited (update_* clear it), so a fixed item retries.
+pub fn mark_item_sync_failed(conn: &Connection, item_id: &str, error: &str) -> Result<(), String> {
+    conn.execute(
+        "UPDATE items SET sync_error = ? WHERE id = ?",
+        params![error, item_id],
+    )
+    .map_err(|e| format!("Failed to mark item sync-failed: {}", e))?;
+    Ok(())
+}
+
+/// Count items the server permanently rejected (parked with a `sync_error`). Lets
+/// the UI surface "N items couldn't sync" distinctly from the live pending count.
+pub fn get_sync_failed_count(conn: &Connection) -> Result<usize, String> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM items WHERE deleted_at IS NULL AND sync_error IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    Ok(count as usize)
+}
+
+/// What the client should do with a single item's push response. Keeping the
+/// decision in one pure, unit-tested function means the HTTP loop in lib.rs stays a
+/// thin executor and the "won't clear" classification can't silently drift.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PushOutcome {
+    /// 2xx with a parseable server id -> mark synced with this id.
+    Synced(String),
+    /// 409 -> client/app is outdated; stop the batch (do not keep hammering).
+    VersionMismatch(String),
+    /// Permanent 4xx (validation/size/etc.) -> park the item with this reason.
+    Rejected(String),
+    /// Transient (network/5xx/408/429, or a 2xx whose body we couldn't parse) ->
+    /// leave pending; it is safe to retry (server dedups by syncId).
+    Retry(String),
+}
+
+/// Classify a push response by HTTP status + body. `parsed_id` is the server item id
+/// already extracted from a 2xx body (None if the body could not be parsed).
+pub fn classify_push_response(status: u16, body: &str, parsed_id: Option<&str>) -> PushOutcome {
+    match status {
+        200..=299 => match parsed_id {
+            Some(id) if !id.is_empty() => PushOutcome::Synced(id.to_string()),
+            // Success status but unusable body (proxy page, missing id). Re-pushing is
+            // safe because the server dedups by syncId, so retry rather than guess.
+            _ => PushOutcome::Retry(format!("unparseable success body: {}", truncate(body))),
+        },
+        409 => PushOutcome::VersionMismatch(truncate(body)),
+        // Retryable client statuses: request timeout / rate limit.
+        408 | 429 => PushOutcome::Retry(format!("status {}: {}", status, truncate(body))),
+        // Other 4xx are permanent for this item as-is (won't change on blind retry).
+        400..=499 => PushOutcome::Rejected(format!("status {}: {}", status, truncate(body))),
+        // 5xx (and anything else) are server-side/transient.
+        _ => PushOutcome::Retry(format!("status {}: {}", status, truncate(body))),
+    }
+}
+
+/// Keep logged/stored server bodies short (char-boundary safe).
+fn truncate(s: &str) -> String {
+    const MAX: usize = 200;
+    if s.chars().count() <= MAX {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(MAX).collect::<String>())
+    }
 }
 
 /// One-time heal for legacy rows that predate the `synced_profile_id` column.
@@ -601,5 +675,63 @@ mod tests {
         assert_eq!(get_pending_sync_count(&conn, "default-bucket").unwrap(), 0);
         // ...but still pending for any other bucket.
         assert_eq!(get_pending_sync_count(&conn, "other-bucket").unwrap(), 1);
+    }
+
+    #[test]
+    fn test_classify_push_response() {
+        use PushOutcome::*;
+        // 2xx with a parseable id -> synced.
+        assert_eq!(
+            classify_push_response(200, "{\"id\":\"x\"}", Some("srv-1")),
+            Synced("srv-1".to_string())
+        );
+        // 2xx but no usable id -> retry (don't guess; server dedups by syncId).
+        assert!(matches!(classify_push_response(200, "<html>oops</html>", None), Retry(_)));
+        assert!(matches!(classify_push_response(201, "{}", Some("")), Retry(_)));
+        // 409 -> version mismatch (stop the batch).
+        assert!(matches!(classify_push_response(409, "outdated", None), VersionMismatch(_)));
+        // Permanent 4xx -> rejected (park it).
+        assert!(matches!(classify_push_response(400, "content required", None), Rejected(_)));
+        assert!(matches!(classify_push_response(413, "too big", None), Rejected(_)));
+        // Retryable client statuses.
+        assert!(matches!(classify_push_response(408, "", None), Retry(_)));
+        assert!(matches!(classify_push_response(429, "slow down", None), Retry(_)));
+        // 5xx -> retry.
+        assert!(matches!(classify_push_response(500, "boom", None), Retry(_)));
+        assert!(matches!(classify_push_response(503, "", None), Retry(_)));
+    }
+
+    /// A permanently-rejected item is parked: excluded from the pending set + count
+    /// (so the badge clears and we stop re-pushing it), and counted as sync-failed.
+    #[test]
+    fn test_mark_item_sync_failed_parks_item() {
+        let store = PeekStore::new(":memory:").unwrap();
+        let result = store.save_url("https://example.com", &[], None).unwrap();
+        let conn = store.conn.lock().unwrap();
+
+        assert_eq!(get_pending_sync_count(&conn, "bucket-a").unwrap(), 1);
+        assert_eq!(get_sync_failed_count(&conn).unwrap(), 0);
+
+        mark_item_sync_failed(&conn, &result.item_id, "status 400: content required").unwrap();
+
+        // Parked: no longer pending, no longer in the push set, surfaced as failed.
+        assert_eq!(get_pending_sync_count(&conn, "bucket-a").unwrap(), 0);
+        assert!(get_items_to_push(&conn, "bucket-a").unwrap().is_empty());
+        assert_eq!(get_sync_failed_count(&conn).unwrap(), 1);
+    }
+
+    /// A later successful sync clears the parked state.
+    #[test]
+    fn test_mark_item_synced_clears_sync_error() {
+        let store = PeekStore::new(":memory:").unwrap();
+        let result = store.save_url("https://example.com", &[], None).unwrap();
+        let conn = store.conn.lock().unwrap();
+
+        mark_item_sync_failed(&conn, &result.item_id, "status 400: bad").unwrap();
+        assert_eq!(get_sync_failed_count(&conn).unwrap(), 1);
+
+        mark_item_synced(&conn, &result.item_id, "server-id-1", "bucket-a").unwrap();
+        assert_eq!(get_sync_failed_count(&conn).unwrap(), 0);
+        assert_eq!(get_pending_sync_count(&conn, "bucket-a").unwrap(), 0);
     }
 }

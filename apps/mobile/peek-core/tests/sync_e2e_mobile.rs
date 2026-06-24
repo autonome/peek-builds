@@ -191,3 +191,70 @@ fn e2e_per_bucket_routing() {
     assert_eq!(server_count(&bucket_a), 3, "bucket A unchanged (isolation)");
     assert_eq!(store.get_pending_sync_count(&bucket_b).unwrap(), 0, "B settled");
 }
+
+/// Push every pending item, classifying each response exactly as src-tauri's loop
+/// does (the bug-2 path): synced / parked-on-permanent-4xx / retry. Returns
+/// (pushed, rejected, failed).
+fn push_classified(store: &PeekStore, bucket: &str) -> (usize, usize, usize) {
+    use peek_core::sync::PushOutcome;
+    let items = store.get_items_to_push(bucket).expect("get_items_to_push");
+    let (mut pushed, mut rejected, mut failed) = (0usize, 0usize, 0usize);
+    for item in &items {
+        let content = item.url.clone().or_else(|| item.content.clone()).unwrap_or_default();
+        let send_id = if item.sync_id.is_empty() { &item.id } else { &item.sync_id };
+        let payload = serde_json::json!({
+            "type": item.item_type, "content": content, "tags": [], "syncId": send_id,
+        });
+        let (code, body) = curl(
+            "POST",
+            &format!("/items?profile={}", bucket),
+            Some(&payload.to_string()),
+        );
+        let parsed_id = json(&body)["id"].as_str().map(|s| s.to_string());
+        match peek_core::sync::classify_push_response(code, &body, parsed_id.as_deref()) {
+            PushOutcome::Synced(id) => {
+                store.mark_item_synced(&item.id, &id, bucket).unwrap();
+                pushed += 1;
+            }
+            PushOutcome::Rejected(reason) => {
+                store.mark_item_sync_failed(&item.id, &reason).unwrap();
+                rejected += 1;
+            }
+            PushOutcome::Retry(_) | PushOutcome::VersionMismatch(_) => failed += 1,
+        }
+    }
+    (pushed, rejected, failed)
+}
+
+#[test]
+#[ignore = "e2e: spawns node server; run via `yarn test:sync:e2e:mobile`"]
+fn e2e_poison_item_is_parked() {
+    let data_dir = tempfile::tempdir().expect("server temp dir");
+    let _server = start_server(data_dir.path().to_str().unwrap());
+    let bucket = create_bucket("Default");
+
+    let db = tempfile::tempdir().expect("db temp dir");
+    let store = PeekStore::new(db.path().join("peek.db").to_str().unwrap()).expect("PeekStore");
+
+    // One good item + one the server permanently rejects: a text item with empty
+    // content -> POST /items returns 400. This is the "won't clear" poison case.
+    store.save_url("https://e2e.example.com/ok", &[], None).unwrap();
+    store.save_text("", None, None).unwrap();
+
+    let (pushed, rejected, failed) = push_classified(&store, &bucket);
+    assert_eq!(pushed, 1, "the good item syncs");
+    assert_eq!(rejected, 1, "the empty-content item is rejected and parked");
+    assert_eq!(failed, 0, "no transient failures");
+
+    // The good item is on the server; the poison one is not.
+    assert_eq!(server_count(&bucket), 1, "server holds only the good item");
+
+    // The fix: the parked item no longer counts as pending (badge clears) and stops
+    // being re-pushed; it is surfaced separately as a sync failure instead.
+    assert_eq!(store.get_pending_sync_count(&bucket).unwrap(), 0, "pending clears");
+    assert!(store.get_items_to_push(&bucket).unwrap().is_empty(), "not re-pushed");
+    assert_eq!(store.get_sync_failed_count().unwrap(), 1, "1 item surfaced as failed");
+
+    // A second sync attempt does nothing (no re-hammering the poison item).
+    assert_eq!(push_classified(&store, &bucket), (0, 0, 0), "nothing to retry");
+}

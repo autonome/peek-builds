@@ -285,6 +285,19 @@ impl PeekStore {
         sync::mark_item_synced(&conn, item_id, sync_id, server_profile_id)
     }
 
+    /// Park an item the server permanently rejected (4xx) so it stops re-pushing and
+    /// stops counting as pending until it is edited or later succeeds.
+    pub fn mark_item_sync_failed(&self, item_id: &str, error: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::mark_item_sync_failed(&conn, item_id, error)
+    }
+
+    /// Count items the server permanently rejected (parked with a sync_error).
+    pub fn get_sync_failed_count(&self) -> Result<usize, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        sync::get_sync_failed_count(&conn)
+    }
+
     /// Merge a server item into the local database.
     /// Returns "pulled", "conflict", or "skipped".
     pub fn merge_server_item(&self, server_item: &ServerItem) -> Result<&'static str, String> {

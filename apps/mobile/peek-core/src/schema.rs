@@ -50,6 +50,7 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
                     sync_source TEXT DEFAULT '',
                     synced_at TEXT,
                     synced_profile_id TEXT,
+                    sync_error TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     deleted_at TEXT
@@ -101,6 +102,7 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
                     sync_source TEXT DEFAULT '',
                     synced_at TEXT,
                     synced_profile_id TEXT,
+                    sync_error TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     deleted_at TEXT
@@ -241,6 +243,25 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
     if !has_synced_profile_id {
         println!("[peek-core] Adding synced_profile_id column to items table...");
         let _ = conn.execute("ALTER TABLE items ADD COLUMN synced_profile_id TEXT", []);
+    }
+
+    // Add sync_error column if it doesn't exist. When the server PERMANENTLY rejects
+    // a push (a 4xx like 400 "content required" / 413 oversized image), we record the
+    // reason here and "park" the item: it stops counting as pending and stops being
+    // re-pushed every sync (the cause of the "N items pending that never clear" bug).
+    // It is cleared on a successful sync or when the item is edited (so a fixed item
+    // retries). NULL = no error.
+    let has_sync_error: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('items') WHERE name='sync_error'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0) > 0;
+
+    if !has_sync_error {
+        println!("[peek-core] Adding sync_error column to items table...");
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN sync_error TEXT", []);
     }
 
     // Migrate 'page' type items to 'url' (for existing installs with old type name)

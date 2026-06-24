@@ -3337,6 +3337,7 @@ async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
     let post_url = append_profile_to_url(&base_post_url)?;
     let mut pushed = 0;
     let mut failed = 0;
+    let mut rejected = 0;
 
     for item in &items {
         // Get tags for this item
@@ -3390,25 +3391,34 @@ async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
 
         match request.send().await {
             Ok(response) => {
-                if response.status().as_u16() == 409 {
-                    let body_text = response.text().await.unwrap_or_default();
-                    return Err(format!("Version mismatch — please update the app. {}", body_text));
-                }
-                if response.status().is_success() {
-                    // Parse response to get server ID
-                    if let Ok(create_response) = response.json::<ServerCreateResponse>().await {
-                        // Update local item with sync info
-                        let _ = store.mark_item_synced(&item.id, &create_response.id, &target_profile_id);
-
-                        println!("[Rust] Pushed item {} -> {}", item.id, create_response.id);
+                let status = response.status().as_u16();
+                let body_text = response.text().await.unwrap_or_default();
+                // Pull the server id out of a 2xx body so the classifier can confirm a sync.
+                let parsed_id = serde_json::from_str::<ServerCreateResponse>(&body_text)
+                    .ok()
+                    .map(|r| r.id);
+                match peek_core::sync::classify_push_response(status, &body_text, parsed_id.as_deref()) {
+                    peek_core::sync::PushOutcome::Synced(server_id) => {
+                        let _ = store.mark_item_synced(&item.id, &server_id, &target_profile_id);
+                        println!("[Rust] Pushed item {} -> {}", item.id, server_id);
                         pushed += 1;
-                    } else {
+                    }
+                    peek_core::sync::PushOutcome::Rejected(reason) => {
+                        // Permanent 4xx: park the item so it stops re-pushing and stops
+                        // counting as pending (the "never clears" bug). Cleared on edit/success.
+                        println!("[Rust] Server rejected item {} (parked): {}", item.id, reason);
+                        let _ = store.mark_item_sync_failed(&item.id, &reason);
+                        rejected += 1;
+                    }
+                    peek_core::sync::PushOutcome::VersionMismatch(reason) => {
+                        // App is outdated — stop the whole sync; all items would 409.
+                        return Err(format!("Version mismatch — please update the app. {}", reason));
+                    }
+                    peek_core::sync::PushOutcome::Retry(reason) => {
+                        // Transient (network/5xx/unparseable 2xx): leave pending, try next sync.
+                        println!("[Rust] Push of item {} will retry: {}", item.id, reason);
                         failed += 1;
                     }
-                } else {
-                    let status = response.status();
-                    println!("[Rust] Failed to push item {}: {}", item.id, status);
-                    failed += 1;
                 }
             }
             Err(e) => {
@@ -3418,18 +3428,24 @@ async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
         }
     }
 
-    println!("[Rust] Push complete: {} pushed, {} failed", pushed, failed);
+    println!("[Rust] Push complete: {} pushed, {} failed, {} rejected", pushed, failed, rejected);
+
+    let mut message = format!("Pushed {} items", pushed);
+    if failed > 0 {
+        message.push_str(&format!(", {} failed", failed));
+    }
+    if rejected > 0 {
+        message.push_str(&format!(", {} rejected", rejected));
+    }
 
     Ok(BidirectionalSyncResult {
+        // Rejected items are parked + surfaced separately (get_sync_failed_count), so they
+        // don't fail the sync; only transient failures do.
         success: failed == 0,
         pulled: 0,
         pushed,
         conflicts: 0,
-        message: if failed > 0 {
-            format!("Pushed {} items, {} failed", pushed, failed)
-        } else {
-            format!("Pushed {} items", pushed)
-        },
+        message,
     })
 }
 
@@ -3796,6 +3812,7 @@ mod tests {
                 sync_source TEXT DEFAULT '',
                 synced_at TEXT,
                 synced_profile_id TEXT,
+                sync_error TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 deleted_at TEXT
