@@ -112,6 +112,36 @@ yarn mobile:ios:sim:status      # Full status (profiles.json + DB list)
 
 ---
 
+## Sync e2e test — `yarn test:sync:e2e:mobile` (mobile slot ONLY)
+
+`apps/mobile/peek-core/tests/sync_e2e_mobile.rs` is the automated end-to-end test
+for the mobile client's **per-bucket sync routing** (the fix for the Dev-1-of-7 /
+stale-`synced_at`-after-rebind bug). It:
+- boots the REAL server (`apps/server`, `node index.js`) on a temp data dir,
+- drives the REAL `peek-core` push surface (`get_items_to_push` / `mark_item_synced`
+  / `get_pending_sync_count`) over HTTP to two server buckets,
+- asserts items synced to one bucket re-push to a newly-bound bucket, buckets stay
+  isolated, and there is no re-push to the same bucket.
+
+It is the only automated coverage that exercises the real mobile Rust client against
+a live server — the JS `sync-three-way` test simulates clients with raw HTTP and
+`sync-e2e` drives the *desktop* TS client; neither covers this path.
+
+```bash
+yarn test:sync:e2e:mobile   # cargo test ... --test sync_e2e_mobile -- --ignored
+```
+
+- It is `#[ignore]`d, so the normal `cargo test` / `yarn test:mobile` runs SKIP it
+  (they still compile it). You must pass `--ignored` (the yarn script does).
+- Requires `apps/server` installed (`npm install --prefix apps/server`); the test
+  panics with that hint if it cannot spawn the server. Binds a fixed port (3461).
+- **Run it ONLY from the dedicated `mobile` clone slot** (`scripts/spawn-mobile-workspace.sh`),
+  never the main checkout or a pool clone. Mobile Rust build/test execution belongs
+  in the `mobile` slot so it doesn't disturb the main checkout's target dir / interactive
+  state, and so the fixed server port can't collide with another clone's run.
+
+---
+
 ## Key Pitfalls
 
 - Never invoke `cargo tauri ios build` or `xcodebuild` directly. Always use the yarn scripts.
