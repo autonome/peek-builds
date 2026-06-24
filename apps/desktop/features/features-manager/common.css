@@ -121,108 +121,21 @@ body {
   font-weight: var(--peek-font-normal);
 }
 
-/* ========== Buttons ========== */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--peek-space-xs);
-  padding: var(--peek-space-xs) 10px;
-  border: 1px solid var(--theme-text-muted);
-  border-radius: var(--peek-radius-sm);
-  background: var(--theme-bg-secondary);
-  color: var(--theme-text);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background var(--peek-transition-normal);
-}
+/* Buttons / inputs / selects / switches are now <peek-*> components (the
+ * shared design system). The hand-rolled `.btn` / `.action-btn` /
+ * `.install-input` / `.search-input` chrome was removed — using the
+ * components gives correct geometry (36px height, 14px system-ui, 6px radius)
+ * for free via their own shadow-scoped tokens. */
 
-.btn:hover {
-  background: var(--theme-bg-tertiary);
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn.primary {
-  background: var(--theme-accent);
-  color: var(--theme-bg);
-  border-color: var(--theme-accent);
-}
-
-.btn.primary:hover {
-  background: color-mix(in srgb, var(--theme-accent) 85%, white);
-}
-
-/* ========== Action buttons (card row) — ALWAYS visible per project rule ========== */
-.action-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--peek-space-xs) var(--peek-space-sm);
-  border: 1px solid var(--theme-text-muted);
-  border-radius: var(--peek-radius-sm);
-  background: transparent;
-  color: var(--theme-text-secondary);
-  font-size: var(--peek-font-xs);
-  cursor: pointer;
-  transition: all var(--peek-transition-normal);
-  white-space: nowrap;
-}
-
-.action-btn:hover {
-  background: var(--theme-bg-tertiary);
-  color: var(--theme-text);
-}
-
-.action-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.action-btn.primary {
-  color: var(--theme-accent);
-  border-color: var(--theme-accent);
-}
-
-.action-btn.primary:hover {
-  background: color-mix(in srgb, var(--theme-accent) 20%, transparent);
-}
-
-.action-btn.danger:hover {
-  background: color-mix(in srgb, var(--theme-danger) 20%, transparent);
-  color: var(--theme-danger);
-  border-color: var(--theme-danger);
-}
-
-/* ========== Inputs ========== */
+/* peek-input fills its flex/standalone slot (the install bar and the manage
+ * filter box both want full-width inputs). */
 .install-input,
 .search-input {
   flex: 1;
-  padding: var(--peek-space-sm) 10px;
-  border: 1px solid var(--theme-text-muted);
-  border-radius: var(--peek-radius-sm);
-  background: var(--theme-bg-secondary);
-  color: var(--theme-text);
-  font-size: 12px;
-  font-family: var(--theme-font-mono, monospace);
 }
 
-/* search-input is full-width when standalone (manage filter box) */
 .search-input {
   width: 100%;
-}
-
-.install-input:focus,
-.search-input:focus {
-  outline: none;
-  border-color: var(--theme-accent);
-}
-
-.install-input::placeholder,
-.search-input::placeholder {
-  color: var(--theme-text-muted);
 }
 
 /* ========== Status bars ========== */
@@ -266,30 +179,19 @@ body {
   padding: var(--peek-space-lg);
 }
 
-/* ========== Feature card list + card ========== */
-.feature-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--peek-space-sm);
+/* ========== Feature card list + card ==========
+ * The list is a <peek-grid view-mode="list"> (single-column responsive grid)
+ * and each card is a <peek-card> (component supplies radius/border/bg/hover).
+ * The horizontal icon | info | actions row lives in a light-DOM `.feature-row`
+ * inside the card's default slot; the per-card padding comes from peek-card. */
+.feature-card.disabled {
+  opacity: 0.6;
 }
 
-.feature-card {
+.feature-row {
   display: flex;
   align-items: center;
   gap: var(--peek-space-md);
-  padding: var(--peek-space-md);
-  border: 1px solid var(--theme-border);
-  border-radius: var(--peek-radius-md);
-  background: var(--theme-bg-secondary);
-  transition: border-color var(--peek-transition-normal);
-}
-
-.feature-card:hover {
-  border-color: var(--theme-text-muted);
-}
-
-.feature-card.disabled {
-  opacity: 0.6;
 }
 
 .feature-icon {

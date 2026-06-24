@@ -398,8 +398,10 @@ function renderResults() {
   resultCount.textContent = `(${featureRecords.length})`;
   contentEl.innerHTML = '';
 
-  const list = document.createElement('div');
+  const list = document.createElement('peek-grid');
   list.className = 'feature-list';
+  list.setAttribute('view-mode', 'list');
+  list.gap = 8;
 
   for (const record of featureRecords) {
     list.appendChild(createFeatureCard(record));
@@ -409,12 +411,16 @@ function renderResults() {
 }
 
 function createFeatureCard(record) {
-  const card = document.createElement('div');
+  const card = document.createElement('peek-card');
   card.className = 'feature-card';
   card.dataset.featureId = record.featureId;
 
+  const row = document.createElement('div');
+  row.className = 'feature-row';
+  card.appendChild(row);
+
   // Icon — real image when published, else letter avatar
-  card.appendChild(buildFeatureIcon(record.name, record.iconUrl));
+  row.appendChild(buildFeatureIcon(record.name, record.iconUrl));
 
   // Info
   const info = document.createElement('div');
@@ -487,7 +493,7 @@ function createFeatureCard(record) {
     info.appendChild(capsEl);
   }
 
-  card.appendChild(info);
+  row.appendChild(info);
 
   // Actions — ALWAYS visible
   const actions = document.createElement('div');
@@ -497,8 +503,9 @@ function createFeatureCard(record) {
     const installedVersion = installed.source?.version;
     if (installedVersion && compareSemver(record.version, installedVersion) > 0) {
       // Update button
-      const updateBtn = document.createElement('button');
-      updateBtn.className = 'action-btn primary';
+      const updateBtn = document.createElement('peek-button');
+      updateBtn.size = 'sm';
+      updateBtn.variant = 'primary';
       updateBtn.textContent = 'Update';
       updateBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -507,16 +514,17 @@ function createFeatureCard(record) {
       actions.appendChild(updateBtn);
     } else {
       // Already installed indicator
-      const badge = document.createElement('button');
-      badge.className = 'action-btn';
+      const badge = document.createElement('peek-button');
+      badge.size = 'sm';
       badge.textContent = 'Installed';
       badge.disabled = true;
       actions.appendChild(badge);
     }
   } else {
     // Install button
-    const installBtn = document.createElement('button');
-    installBtn.className = 'action-btn primary';
+    const installBtn = document.createElement('peek-button');
+    installBtn.size = 'sm';
+    installBtn.variant = 'primary';
     installBtn.textContent = 'Install';
     installBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -525,7 +533,7 @@ function createFeatureCard(record) {
     actions.appendChild(installBtn);
   }
 
-  card.appendChild(actions);
+  row.appendChild(actions);
 
   return card;
 }

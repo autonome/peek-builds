@@ -97,20 +97,20 @@ function optInput(label, value, onChange, options = {}) {
   const labelEl = document.createElement('label');
   labelEl.textContent = label;
 
-  const input = document.createElement('input');
+  const input = document.createElement('peek-input');
   input.type = options.type || 'text';
   const isMissing = (v) => v === null || v === undefined || (typeof v === 'number' && Number.isNaN(v));
   const renderValue = isMissing(value) && options.default !== undefined ? options.default : value;
-  input.value = (renderValue === null || renderValue === undefined) ? '' : renderValue;
+  input.value = (renderValue === null || renderValue === undefined) ? '' : String(renderValue);
   input.disabled = options.disabled || false;
   if (options.placeholder) input.placeholder = options.placeholder;
-  if (options.type === 'number' && options.step) input.step = options.step;
 
-  input.addEventListener('change', (e) => {
-    let val = options.type === 'number' ? parseFloat(e.target.value) : e.target.value;
+  // peek-input re-emits the native input's `change` (composed) — read .value.
+  input.addEventListener('change', () => {
+    let val = options.type === 'number' ? parseFloat(input.value) : input.value;
     if (options.type === 'number' && Number.isNaN(val) && options.default !== undefined) {
       val = options.default;
-      input.value = val;
+      input.value = String(val);
     }
     onChange(val);
   });
@@ -134,15 +134,11 @@ function optCheckbox(label, value, onChange, options = {}) {
   const labelEl = document.createElement('label');
   labelEl.textContent = label;
 
-  const wrapper = document.createElement('div');
-  wrapper.className = 'checkbox-wrapper';
-
-  const input = document.createElement('input');
-  input.type = 'checkbox';
-  input.checked = value || false;
-  input.disabled = options.disabled || false;
-  input.addEventListener('change', (e) => onChange(e.target.checked));
-  wrapper.appendChild(input);
+  const sw = document.createElement('peek-switch');
+  sw.className = 'checkbox-wrapper';
+  sw.checked = value || false;
+  sw.disabled = options.disabled || false;
+  sw.addEventListener('change', (e) => onChange(e.detail.checked));
 
   const textDiv = document.createElement('div');
   textDiv.className = 'form-group-inline-text';
@@ -155,7 +151,7 @@ function optCheckbox(label, value, onChange, options = {}) {
   }
 
   group.appendChild(textDiv);
-  group.appendChild(wrapper);
+  group.appendChild(sw);
   return group;
 }
 
@@ -166,15 +162,11 @@ function optSelect(label, value, selectOptions, onChange, extra = {}) {
   const labelEl = document.createElement('label');
   labelEl.textContent = label;
 
-  const select = document.createElement('select');
-  for (const opt of selectOptions) {
-    const optionEl = document.createElement('option');
-    optionEl.value = opt.value;
-    optionEl.textContent = opt.label;
-    if (opt.value === value) optionEl.selected = true;
-    select.appendChild(optionEl);
-  }
-  select.addEventListener('change', (e) => onChange(e.target.value));
+  const select = document.createElement('peek-select');
+  select.options = selectOptions.map(opt => ({ value: opt.value, label: opt.label }));
+  if (value !== undefined && value !== null) select.value = value;
+  // peek-select emits a custom `change` with detail { value }.
+  select.addEventListener('change', (e) => onChange(e.detail?.value ?? select.value));
 
   group.appendChild(labelEl);
   group.appendChild(select);
@@ -267,24 +259,21 @@ async function renderFeatureOptions(feature) {
       cardTitle.textContent = item.title || item.name || `Item ${i + 1}`;
       header.appendChild(cardTitle);
 
-      const wrapper = document.createElement('div');
-      wrapper.className = 'checkbox-wrapper';
-
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
+      const checkbox = document.createElement('peek-switch');
+      checkbox.className = 'checkbox-wrapper';
       checkbox.checked = item.enabled || false;
       checkbox.addEventListener('change', (e) => {
         e.stopPropagation();
-        items[i].enabled = e.target.checked;
+        items[i].enabled = e.detail.checked;
         save();
       });
 
-      wrapper.appendChild(checkbox);
-      header.appendChild(wrapper);
+      header.appendChild(checkbox);
       card.appendChild(header);
 
       header.addEventListener('click', (e) => {
-        if (e.target === checkbox) return;
+        // Clicks landing on the switch toggle it; don't also collapse.
+        if (e.target === checkbox || (e.target instanceof Node && checkbox.contains(e.target))) return;
         card.classList.toggle('collapsed');
       });
 
@@ -462,8 +451,10 @@ function render() {
   }
 
   contentEl.innerHTML = '';
-  const list = document.createElement('div');
+  const list = document.createElement('peek-grid');
   list.className = 'feature-list';
+  list.setAttribute('view-mode', 'list');
+  list.gap = 8;
 
   for (const feature of filtered) {
     list.appendChild(createFeatureCard(feature));
@@ -491,9 +482,18 @@ function showEmpty(errorMsg) {
 function createFeatureCard(feature) {
   const isDev = feature.source?.type === 'dev';
   const isBuiltin = feature.source?.type === 'builtin';
-  const card = document.createElement('div');
+  // <peek-card> is the visual container (correct radius/border/bg/hover from
+  // the component). The horizontal icon|info|actions row lives in a light-DOM
+  // `.feature-row` inside the default slot. We keep the `.feature-card` class
+  // on the host so feature-card[data-feature-id] selectors (used by tests and
+  // CSS state hooks like .disabled/.dev) still resolve.
+  const card = document.createElement('peek-card');
   card.className = 'feature-card' + (feature.disabled ? ' disabled' : '') + (isDev ? ' dev' : '');
   card.dataset.featureId = feature.id;
+
+  const row = document.createElement('div');
+  row.className = 'feature-row';
+  card.appendChild(row);
 
   const sourceType = feature.source?.type || 'unknown';
   const version = feature.source?.version || '';
@@ -503,7 +503,7 @@ function createFeatureCard(feature) {
   const icon = document.createElement('div');
   icon.className = 'feature-icon';
   icon.textContent = feature.name.charAt(0).toUpperCase();
-  card.appendChild(icon);
+  row.appendChild(icon);
 
   // Info
   const info = document.createElement('div');
@@ -554,22 +554,14 @@ function createFeatureCard(feature) {
     policyLabel.textContent = 'Updates:';
     policyRow.appendChild(policyLabel);
 
-    const policySelect = document.createElement('select');
+    const policySelect = document.createElement('peek-select');
     policySelect.className = 'feature-policy-select';
-    const policies = [
+    policySelect.options = [
       { value: 'auto', label: 'Auto' },
       { value: 'notify', label: 'Notify' },
       { value: 'pinned', label: 'Pinned' },
     ];
-    for (const p of policies) {
-      const opt = document.createElement('option');
-      opt.value = p.value;
-      opt.textContent = p.label;
-      if ((feature.updatePolicy || 'auto') === p.value) {
-        opt.selected = true;
-      }
-      policySelect.appendChild(opt);
-    }
+    policySelect.value = feature.updatePolicy || 'auto';
     policySelect.addEventListener('change', (e) => {
       e.stopPropagation();
       setUpdatePolicy(feature.id, policySelect.value);
@@ -586,7 +578,7 @@ function createFeatureCard(feature) {
     info.appendChild(policyRow);
   }
 
-  card.appendChild(info);
+  row.appendChild(info);
 
   // Actions — ALWAYS visible
   const actions = document.createElement('div');
@@ -594,8 +586,9 @@ function createFeatureCard(feature) {
 
   // Update button (if update available)
   if (feature.availableVersion) {
-    const updateBtn = document.createElement('button');
-    updateBtn.className = 'action-btn primary';
+    const updateBtn = document.createElement('peek-button');
+    updateBtn.size = 'sm';
+    updateBtn.variant = 'primary';
     updateBtn.textContent = 'Update';
     updateBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -607,8 +600,9 @@ function createFeatureCard(feature) {
   // Enable/Disable toggle — shown for ALL features, including builtins.
   // The cmd feature is required infrastructure and can never be disabled.
   const isLocked = LOCKED_BUILTIN_IDS.has(feature.id);
-  const toggleBtn = document.createElement('button');
-  toggleBtn.className = 'action-btn' + (isDisabled ? ' primary' : '');
+  const toggleBtn = document.createElement('peek-button');
+  toggleBtn.size = 'sm';
+  if (isDisabled) toggleBtn.variant = 'primary';
   toggleBtn.textContent = isLocked ? 'Required' : (isDisabled ? 'Enable' : 'Disable');
   toggleBtn.disabled = isLocked;
   if (isLocked) toggleBtn.title = 'Required infrastructure — cannot be disabled';
@@ -623,8 +617,9 @@ function createFeatureCard(feature) {
   // the backend rejects tile:features:remove for them. Non-builtins get a
   // Remove (installed) / Unregister (dev) button.
   if (!isBuiltin) {
-    const removeBtn = document.createElement('button');
-    removeBtn.className = 'action-btn danger';
+    const removeBtn = document.createElement('peek-button');
+    removeBtn.size = 'sm';
+    removeBtn.variant = 'danger';
     removeBtn.textContent = isDev ? 'Unregister' : 'Remove';
     removeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -642,8 +637,8 @@ function createFeatureCard(feature) {
   // to inspect console logs, network, DOM. Uses the new unified
   // `feature-devtools:open` IPC handler which doesn't require a
   // capability token (it's origin-gated to peek:// callers).
-  const openDevtoolsBtn = document.createElement('button');
-  openDevtoolsBtn.className = 'action-btn';
+  const openDevtoolsBtn = document.createElement('peek-button');
+  openDevtoolsBtn.size = 'sm';
   openDevtoolsBtn.textContent = 'DevTools';
   openDevtoolsBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -667,8 +662,8 @@ function createFeatureCard(feature) {
     const devActions = document.createElement('div');
     devActions.className = 'feature-dev-actions';
 
-    const reloadBtn = document.createElement('button');
-    reloadBtn.className = 'action-btn';
+    const reloadBtn = document.createElement('peek-button');
+    reloadBtn.size = 'sm';
     reloadBtn.textContent = 'Reload';
     reloadBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -688,8 +683,8 @@ function createFeatureCard(feature) {
     });
     devActions.appendChild(reloadBtn);
 
-    const validateBtn = document.createElement('button');
-    validateBtn.className = 'action-btn';
+    const validateBtn = document.createElement('peek-button');
+    validateBtn.size = 'sm';
     validateBtn.textContent = 'Validate';
     validateBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -722,8 +717,9 @@ function createFeatureCard(feature) {
     });
     devActions.appendChild(validateBtn);
 
-    const publishBtn = document.createElement('button');
-    publishBtn.className = 'action-btn primary';
+    const publishBtn = document.createElement('peek-button');
+    publishBtn.size = 'sm';
+    publishBtn.variant = 'primary';
     publishBtn.textContent = 'Publish';
     publishBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -739,7 +735,7 @@ function createFeatureCard(feature) {
     });
     devActions.appendChild(publishBtn);
 
-    card.appendChild(devActions);
+    row.appendChild(devActions);
   }
 
   // Options affordance — only for features that declare a settings schema
@@ -751,8 +747,9 @@ function createFeatureCard(feature) {
     optionsPanel.className = 'feature-options-panel';
     optionsPanel.style.display = 'none';
 
-    const optionsBtn = document.createElement('button');
-    optionsBtn.className = 'action-btn feature-options-toggle';
+    const optionsBtn = document.createElement('peek-button');
+    optionsBtn.size = 'sm';
+    optionsBtn.className = 'feature-options-toggle';
     optionsBtn.textContent = 'Options';
     optionsBtn.setAttribute('aria-expanded', 'false');
     let optionsLoaded = false;
@@ -790,10 +787,12 @@ function createFeatureCard(feature) {
     });
     actions.appendChild(optionsBtn);
 
-    card.appendChild(actions);
+    row.appendChild(actions);
+    // The options panel drops onto its own full-width row below the feature
+    // row, inside the card body.
     card.appendChild(optionsPanel);
   } else {
-    card.appendChild(actions);
+    row.appendChild(actions);
   }
 
   return card;

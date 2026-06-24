@@ -6,6 +6,32 @@
     <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
     <title>Features</title>
     <link rel="stylesheet" type="text/css" href="manage.css">
+
+    <!-- Import map for resolving bare module specifiers -->
+    <script type="importmap">
+    {
+      "imports": {
+        "lit": "peek://node_modules/lit/index.js",
+        "lit/": "peek://node_modules/lit/",
+        "lit-html": "peek://node_modules/lit-html/lit-html.js",
+        "lit-html/": "peek://node_modules/lit-html/",
+        "lit-element": "peek://node_modules/lit-element/lit-element.js",
+        "lit-element/": "peek://node_modules/lit-element/",
+        "@lit/reactive-element": "peek://node_modules/@lit/reactive-element/reactive-element.js",
+        "@lit/reactive-element/": "peek://node_modules/@lit/reactive-element/"
+      }
+    }
+    </script>
+
+    <!-- Import peek-components -->
+    <script type="module">
+      import 'peek://app/components/peek-button.js';
+      import 'peek://app/components/peek-input.js';
+      import 'peek://app/components/peek-select.js';
+      import 'peek://app/components/peek-switch.js';
+      import 'peek://app/components/peek-card.js';
+      import 'peek://app/components/peek-grid.js';
+    </script>
   </head>
   <body>
     <header class="header">
@@ -14,65 +40,65 @@
         <span class="feature-count"></span>
       </div>
       <div class="header-right">
-        <button class="btn" id="create-feature-btn" title="Create a new feature from scratch">
+        <peek-button id="create-feature-btn" title="Create a new feature from scratch">
           Create Feature
-        </button>
-        <button class="btn" id="check-updates-btn" title="Check all features for updates">
+        </peek-button>
+        <peek-button id="check-updates-btn" title="Check all features for updates">
           Check for Updates
-        </button>
+        </peek-button>
       </div>
     </header>
 
     <div class="create-feature-form" id="create-feature-form" style="display:none;">
       <div class="create-feature-header">
         <h2 class="create-feature-title">Create New Feature</h2>
-        <button class="action-btn" id="create-cancel-btn">Cancel</button>
+        <peek-button size="sm" id="create-cancel-btn">Cancel</peek-button>
       </div>
       <div class="create-feature-body">
         <div class="create-field">
           <label class="create-label">Directory</label>
           <div class="create-dir-row">
             <span class="create-dir-path" id="create-dir-path">No directory selected</span>
-            <button class="btn" id="create-pick-dir-btn">Choose...</button>
+            <peek-button id="create-pick-dir-btn">Choose...</peek-button>
           </div>
         </div>
         <div class="create-field">
           <label class="create-label" for="create-feature-id">Feature ID</label>
-          <input class="create-input" type="text" id="create-feature-id" placeholder="my-feature" pattern="[a-z0-9][a-z0-9-]*[a-z0-9]">
+          <peek-input class="create-input" type="text" id="create-feature-id" placeholder="my-feature"></peek-input>
           <span class="create-hint">Lowercase, alphanumeric + hyphens</span>
         </div>
         <div class="create-field">
           <label class="create-label" for="create-feature-name">Feature Name</label>
-          <input class="create-input" type="text" id="create-feature-name" placeholder="My Feature">
+          <peek-input class="create-input" type="text" id="create-feature-name" placeholder="My Feature"></peek-input>
         </div>
       </div>
       <div class="create-feature-footer">
-        <button class="btn primary" id="create-submit-btn" disabled>Create</button>
+        <peek-button variant="primary" id="create-submit-btn" disabled>Create</peek-button>
       </div>
     </div>
 
     <div class="install-bar">
-      <input
+      <peek-input
         class="install-input"
         placeholder="at://did:plc:.../space.peek.feature.release/..."
         type="text"
         id="install-uri-input"
-      >
-      <button class="btn primary" id="install-btn">Install</button>
+      ></peek-input>
+      <peek-button variant="primary" id="install-btn">Install</peek-button>
     </div>
 
     <div class="install-preview" id="install-preview" style="display:none;">
       <div class="install-preview-header">
         <h2 class="install-preview-title" id="preview-title">Feature Name</h2>
-        <button class="action-btn" id="preview-close">Cancel</button>
+        <peek-button size="sm" id="preview-close">Cancel</peek-button>
       </div>
       <div class="install-preview-body">
         <div class="preview-meta" id="preview-meta"></div>
         <div class="preview-capabilities" id="preview-capabilities"></div>
       </div>
       <div class="install-preview-footer">
-        <button class="btn" id="preview-cancel">Cancel</button>
-        <button class="btn primary" id="preview-install">Install</button>
+        <peek-button id="preview-cancel">Cancel</peek-button>
+        <peek-button variant="primary" id="preview-install">Install</peek-button>
       </div>
     </div>
 
@@ -81,12 +107,12 @@
     </div>
 
     <div class="search-container">
-      <input
+      <peek-input
         class="search-input"
         placeholder="Filter installed features..."
         type="search"
         id="search-input"
-      >
+      ></peek-input>
     </div>
 
     <div class="content" id="content">
@@ -117,8 +143,8 @@
           <div class="cap-review-changes" id="cap-review-changes"></div>
         </div>
         <div class="cap-review-footer">
-          <button class="btn" id="cap-review-dismiss">Dismiss</button>
-          <button class="btn primary" id="cap-review-approve">Approve &amp; Update</button>
+          <peek-button id="cap-review-dismiss">Dismiss</peek-button>
+          <peek-button variant="primary" id="cap-review-approve">Approve &amp; Update</peek-button>
         </div>
       </div>
     </div>

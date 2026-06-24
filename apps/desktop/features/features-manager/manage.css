@@ -71,19 +71,10 @@
   color: var(--theme-text-secondary);
 }
 
+/* peek-select defaults to 150px min-width; the inline policy picker is
+ * narrow, so override the host min-width. The component supplies the rest. */
 .feature-policy-select {
-  padding: 1px var(--peek-space-xs);
-  border: 1px solid var(--theme-text-muted);
-  border-radius: 3px;
-  background: var(--theme-bg-secondary);
-  color: var(--theme-text);
-  font-size: var(--peek-font-xs);
-  cursor: pointer;
-}
-
-.feature-policy-select:focus {
-  outline: none;
-  border-color: var(--theme-accent);
+  min-width: 110px;
 }
 
 .feature-pinned-version {
@@ -190,13 +181,9 @@
   border-top: 1px solid var(--theme-border);
 }
 
-/* Dev feature card styling */
+/* Dev feature card styling — tint the <peek-card> border via its cssprop. */
 .feature-card.dev {
-  border-color: color-mix(in srgb, var(--base0E) 30%, var(--theme-border));
-}
-
-.feature-card.dev:hover {
-  border-color: color-mix(in srgb, var(--base0E) 50%, var(--theme-text-muted));
+  --peek-card-border: color-mix(in srgb, var(--base0E) 30%, var(--theme-border));
 }
 
 .feature-dev-actions {
@@ -249,22 +236,9 @@
   letter-spacing: 0.5px;
 }
 
+/* .create-input is a <peek-input>; it supplies its own chrome. */
 .create-input {
-  padding: 6px 10px;
-  border: 1px solid var(--theme-text-muted);
-  border-radius: var(--peek-radius-sm);
-  background: var(--theme-bg);
-  color: var(--theme-text);
-  font-size: var(--peek-font-sm);
-}
-
-.create-input:focus {
-  outline: none;
-  border-color: var(--theme-accent);
-}
-
-.create-input::placeholder {
-  color: var(--theme-text-muted);
+  width: 100%;
 }
 
 .create-hint {
@@ -434,17 +408,12 @@
 
 /* ========== Per-feature Options panel ========== */
 /*
- * A feature card with an Options affordance becomes a flex-wrap container so
- * the expanded panel drops onto its own full-width row beneath the actions.
+ * The Options panel is appended to the <peek-card>'s default slot AFTER the
+ * `.feature-row`, so it naturally stacks on its own full-width row below the
+ * actions. A divider separates it from the row above.
  */
-.feature-card:has(.feature-options-panel) {
-  flex-wrap: wrap;
-}
-
 .feature-options-panel {
-  flex-basis: 100%;
   width: 100%;
-  order: 99;
   margin-top: var(--peek-space-sm);
   padding-top: var(--peek-space-sm);
   border-top: 1px solid var(--theme-border);
@@ -479,16 +448,7 @@
   color: var(--theme-text-secondary);
 }
 
-.feature-options-panel .form-group input,
-.feature-options-panel .form-group select {
-  padding: var(--peek-space-xs) var(--peek-space-sm);
-  border: 1px solid var(--theme-text-muted);
-  border-radius: var(--peek-radius-sm);
-  background: var(--theme-bg);
-  color: var(--theme-text);
-  font-size: var(--peek-font-sm);
-  font-family: var(--theme-font-sans);
-}
+/* Options controls (peek-input / peek-select) supply their own geometry. */
 
 .feature-options-panel .form-group-inline {
   display: flex;

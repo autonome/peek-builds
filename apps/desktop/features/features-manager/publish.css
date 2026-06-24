@@ -67,20 +67,10 @@
   gap: 6px;
 }
 
-.feature-select-card {
-  display: flex;
+/* <peek-card interactive> supplies the border/bg/radius/hover; the row inside
+ * lays out icon | info horizontally. */
+.feature-select-card .feature-row {
   align-items: center;
-  gap: var(--peek-space-md);
-  padding: var(--peek-space-md);
-  border: 1px solid var(--theme-border);
-  border-radius: var(--peek-radius-md);
-  background: var(--theme-bg-secondary);
-  cursor: pointer;
-  transition: border-color var(--peek-transition-normal);
-}
-
-.feature-select-card:hover {
-  border-color: var(--theme-accent);
 }
 
 .feature-select-card .feature-name {
@@ -182,23 +172,10 @@
   margin-bottom: var(--peek-space-xs);
 }
 
+/* .form-input is a <peek-input>; it supplies its own chrome. The textarea
+ * below has no component equivalent, so it keeps hand-rolled (theme-var) CSS. */
 .form-input {
   width: 100%;
-  padding: 6px 10px;
-  border: 1px solid var(--theme-text-muted);
-  border-radius: var(--peek-radius-sm);
-  background: var(--theme-bg-secondary);
-  color: var(--theme-text);
-  font-size: 12px;
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: var(--theme-accent);
-}
-
-.form-input::placeholder {
-  color: var(--theme-text-muted);
 }
 
 .form-textarea {
@@ -425,12 +402,6 @@
 /* Publish actions */
 .publish-actions {
   margin-bottom: var(--peek-space-lg);
-}
-
-.publish-btn {
-  padding: var(--peek-space-sm) var(--peek-space-xl);
-  font-size: var(--peek-font-sm);
-  font-weight: var(--peek-font-semibold);
 }
 
 /* Progress */

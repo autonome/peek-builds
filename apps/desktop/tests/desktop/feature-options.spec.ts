@@ -71,12 +71,13 @@ test.describe('Features Manager - per-feature Options @desktop', () => {
       return !!panel.querySelector('.form-section');
     }, { timeout: 10000 });
 
-    // The prefs section renders the peeks shortcutKeyPrefix control (a text input).
+    // The prefs section renders the peeks shortcutKeyPrefix control (now a
+    // <peek-input>; the native <input> lives in its shadow root).
     const hasPrefsInput = await manager.evaluate(() => {
       const card = Array.from(document.querySelectorAll('.feature-card'))
         .find(c => (c as HTMLElement).dataset.featureId === 'peeks');
       const panel = card?.querySelector('.feature-options-panel') as HTMLElement | null;
-      return !!panel?.querySelector('.form-group input');
+      return !!panel?.querySelector('.form-group peek-input');
     });
     expect(hasPrefsInput).toBe(true);
   });

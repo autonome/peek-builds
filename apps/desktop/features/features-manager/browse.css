@@ -68,7 +68,7 @@
 }
 
 /* browse cards align to top (multi-line content) */
-.feature-card {
+.feature-card .feature-row {
   align-items: flex-start;
 }
 

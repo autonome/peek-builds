@@ -6,6 +6,29 @@
     <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
     <title>Publish Feature</title>
     <link rel="stylesheet" type="text/css" href="publish.css">
+
+    <!-- Import map for resolving bare module specifiers -->
+    <script type="importmap">
+    {
+      "imports": {
+        "lit": "peek://node_modules/lit/index.js",
+        "lit/": "peek://node_modules/lit/",
+        "lit-html": "peek://node_modules/lit-html/lit-html.js",
+        "lit-html/": "peek://node_modules/lit-html/",
+        "lit-element": "peek://node_modules/lit-element/lit-element.js",
+        "lit-element/": "peek://node_modules/lit-element/",
+        "@lit/reactive-element": "peek://node_modules/@lit/reactive-element/reactive-element.js",
+        "@lit/reactive-element/": "peek://node_modules/@lit/reactive-element/"
+      }
+    }
+    </script>
+
+    <!-- Import peek-components -->
+    <script type="module">
+      import 'peek://app/components/peek-button.js';
+      import 'peek://app/components/peek-input.js';
+      import 'peek://app/components/peek-card.js';
+    </script>
   </head>
   <body>
     <header class="header">
@@ -70,12 +93,12 @@
           <div class="form-row">
             <div class="form-group">
               <label class="form-label" for="pub-license">License (SPDX)</label>
-              <input class="form-input" id="pub-license" type="text" placeholder="MIT" maxlength="64">
+              <peek-input class="form-input" id="pub-license" type="text" placeholder="MIT"></peek-input>
               <div class="media-error" id="pub-license-error"></div>
             </div>
             <div class="form-group">
               <label class="form-label" for="pub-homepage">Homepage URL</label>
-              <input class="form-input" id="pub-homepage" type="url" placeholder="https://...">
+              <peek-input class="form-input" id="pub-homepage" type="url" placeholder="https://..."></peek-input>
               <div class="media-error" id="pub-homepage-error"></div>
             </div>
           </div>
@@ -83,7 +106,7 @@
             <label class="form-label">Icon (optional, PNG or SVG, max 256&nbsp;KB)</label>
             <div class="media-picker">
               <input type="file" id="pub-icon-input" accept="image/png,image/svg+xml" hidden>
-              <button type="button" class="btn" id="pub-icon-pick-btn">Choose icon&hellip;</button>
+              <peek-button id="pub-icon-pick-btn">Choose icon&hellip;</peek-button>
               <div class="media-preview-list" id="pub-icon-preview"></div>
               <div class="media-error" id="pub-icon-error"></div>
             </div>
@@ -92,7 +115,7 @@
             <label class="form-label">Screenshots (optional, up to 5, PNG or JPEG, max 2&nbsp;MB each)</label>
             <div class="media-picker">
               <input type="file" id="pub-screenshots-input" accept="image/png,image/jpeg" multiple hidden>
-              <button type="button" class="btn" id="pub-screenshots-pick-btn">Add screenshots&hellip;</button>
+              <peek-button id="pub-screenshots-pick-btn">Add screenshots&hellip;</peek-button>
               <div class="media-preview-list media-preview-grid" id="pub-screenshots-preview"></div>
               <div class="media-error" id="pub-screenshots-error"></div>
             </div>
@@ -101,8 +124,8 @@
       </div>
 
       <div class="step-footer">
-        <button class="btn" id="back-to-step-1">Back</button>
-        <button class="btn primary" id="next-to-step-3">Next</button>
+        <peek-button id="back-to-step-1">Back</peek-button>
+        <peek-button variant="primary" id="next-to-step-3">Next</peek-button>
       </div>
     </div>
 
@@ -131,7 +154,7 @@
           <div class="publish-summary" id="publish-summary"></div>
 
           <div class="publish-actions">
-            <button class="btn primary publish-btn" id="publish-btn">Publish</button>
+            <peek-button variant="primary" class="publish-btn" id="publish-btn">Publish</peek-button>
           </div>
 
           <!-- Progress -->
@@ -147,8 +170,8 @@
           <div class="publish-success" id="publish-success" style="display:none;">
             <div class="success-title">Published successfully!</div>
             <div class="success-uri-row">
-              <input class="form-input uri-display" id="success-uri" type="text" readonly>
-              <button class="btn" id="copy-uri-btn">Copy URI</button>
+              <peek-input class="form-input uri-display" id="success-uri" type="text" readonly></peek-input>
+              <peek-button id="copy-uri-btn">Copy URI</peek-button>
             </div>
           </div>
 
@@ -156,13 +179,13 @@
           <div class="publish-error" id="publish-error" style="display:none;">
             <div class="error-title">Publish failed</div>
             <div class="error-message" id="error-message"></div>
-            <button class="btn" id="retry-btn">Retry</button>
+            <peek-button id="retry-btn">Retry</peek-button>
           </div>
         </div>
       </div>
 
       <div class="step-footer">
-        <button class="btn" id="back-to-step-2">Back</button>
+        <peek-button id="back-to-step-2">Back</peek-button>
       </div>
     </div>
 

@@ -70,13 +70,15 @@ test.describe('Features Manager - persistence contracts @desktop', () => {
       return cards.some(c => (c as HTMLElement).dataset.featureId === 'peeks');
     }, { timeout: 15000 });
 
-    // Click Disable on the peeks card.
+    // Click Disable on the peeks card. Action buttons are <peek-button>
+    // (the native <button> lives in shadow DOM), so match on the host's
+    // text content and call its public click().
     await manager.evaluate(() => {
       const card = Array.from(document.querySelectorAll('.feature-card'))
         .find(c => (c as HTMLElement).dataset.featureId === 'peeks');
-      const btn = Array.from(card?.querySelectorAll('button') || [])
+      const btn = Array.from(card?.querySelectorAll('peek-button') || [])
         .find(b => (b.textContent || '').trim() === 'Disable') as HTMLElement | undefined;
-      btn?.click();
+      (btn as any)?.click();
     });
 
     // (a) core-store ITEMS row now has peeks enabled=false.
@@ -126,20 +128,23 @@ test.describe('Features Manager - persistence contracts @desktop', () => {
       const card = Array.from(document.querySelectorAll('.feature-card'))
         .find(c => (c as HTMLElement).dataset.featureId === 'peeks');
       const panel = card?.querySelector('.feature-options-panel') as HTMLElement | null;
-      return !!panel && panel.style.display !== 'none' && !!panel.querySelector('.form-group input');
+      return !!panel && panel.style.display !== 'none' && !!panel.querySelector('.form-group peek-input');
     }, { timeout: 10000 });
 
     // Change the shortcutKeyPrefix prefs input and fire a change event (the
-    // save() in renderFeatureOptions runs on 'change').
+    // save() in renderFeatureOptions runs on 'change'). The control is a
+    // <peek-input>; set its .value property and dispatch a composed `change`
+    // on its inner native input the way a real edit does.
     const newPrefix = 'Option+Shift+';
     await manager.evaluate((prefix) => {
       const card = Array.from(document.querySelectorAll('.feature-card'))
         .find(c => (c as HTMLElement).dataset.featureId === 'peeks');
       const panel = card?.querySelector('.feature-options-panel') as HTMLElement | null;
-      const input = panel?.querySelector('.form-group input') as HTMLInputElement | null;
+      const input = panel?.querySelector('.form-group peek-input') as any;
       if (input) {
         input.value = prefix;
-        input.dispatchEvent(new Event('change', { bubbles: true }));
+        const native = input.shadowRoot?.querySelector('input') as HTMLInputElement | null;
+        (native ?? input).dispatchEvent(new Event('change', { bubbles: true, composed: true }));
       }
     }, newPrefix);
 

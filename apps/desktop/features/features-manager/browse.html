@@ -6,6 +6,30 @@
     <meta name="viewport" content="width=device-width,user-scalable=no,initial-scale=1">
     <title>Browse Features</title>
     <link rel="stylesheet" type="text/css" href="browse.css">
+
+    <!-- Import map for resolving bare module specifiers -->
+    <script type="importmap">
+    {
+      "imports": {
+        "lit": "peek://node_modules/lit/index.js",
+        "lit/": "peek://node_modules/lit/",
+        "lit-html": "peek://node_modules/lit-html/lit-html.js",
+        "lit-html/": "peek://node_modules/lit-html/",
+        "lit-element": "peek://node_modules/lit-element/lit-element.js",
+        "lit-element/": "peek://node_modules/lit-element/",
+        "@lit/reactive-element": "peek://node_modules/@lit/reactive-element/reactive-element.js",
+        "@lit/reactive-element/": "peek://node_modules/@lit/reactive-element/"
+      }
+    }
+    </script>
+
+    <!-- Import peek-components -->
+    <script type="module">
+      import 'peek://app/components/peek-button.js';
+      import 'peek://app/components/peek-input.js';
+      import 'peek://app/components/peek-card.js';
+      import 'peek://app/components/peek-grid.js';
+    </script>
   </head>
   <body>
     <header class="header">
@@ -14,19 +38,19 @@
         <span class="result-count" id="result-count"></span>
       </div>
       <div class="header-right">
-        <button class="btn" id="manage-btn">Manage Installed</button>
+        <peek-button id="manage-btn">Manage Installed</peek-button>
       </div>
     </header>
 
     <div class="search-bar">
-      <input
+      <peek-input
         class="search-input"
         placeholder="Enter handle or DID (e.g., alice.bsky.social)"
         type="text"
         id="publisher-input"
         autofocus
-      >
-      <button class="btn primary" id="search-btn">Search</button>
+      ></peek-input>
+      <peek-button variant="primary" id="search-btn">Search</peek-button>
     </div>
 
     <div class="status-bar" id="status-bar" style="display:none;">
@@ -44,7 +68,7 @@
           <span class="install-preview-icon" id="preview-icon"></span>
           <h2 class="install-preview-title" id="preview-title">Feature Name</h2>
         </div>
-        <button class="action-btn" id="preview-close">Cancel</button>
+        <peek-button size="sm" id="preview-close">Cancel</peek-button>
       </div>
       <div class="install-preview-body">
         <div class="preview-meta" id="preview-meta"></div>
@@ -52,8 +76,8 @@
         <div class="preview-capabilities" id="preview-capabilities"></div>
       </div>
       <div class="install-preview-footer">
-        <button class="btn" id="preview-cancel">Cancel</button>
-        <button class="btn primary" id="preview-install">Install</button>
+        <peek-button id="preview-cancel">Cancel</peek-button>
+        <peek-button variant="primary" id="preview-install">Install</peek-button>
       </div>
     </div>
 

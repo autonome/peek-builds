@@ -185,13 +185,18 @@ function renderFeatureList() {
   list.className = 'feature-select-list';
 
   for (const feature of localFeatures) {
-    const card = document.createElement('div');
+    const card = document.createElement('peek-card');
     card.className = 'feature-select-card';
+    card.interactive = true;
+
+    const row = document.createElement('div');
+    row.className = 'feature-row';
+    card.appendChild(row);
 
     const icon = document.createElement('div');
     icon.className = 'feature-icon';
     icon.textContent = feature.name.charAt(0).toUpperCase();
-    card.appendChild(icon);
+    row.appendChild(icon);
 
     const info = document.createElement('div');
     info.className = 'feature-info';
@@ -221,9 +226,9 @@ function renderFeatureList() {
     pathEl.textContent = feature.path;
     info.appendChild(pathEl);
 
-    card.appendChild(info);
+    row.appendChild(info);
 
-    card.addEventListener('click', () => selectFeature(feature));
+    card.addEventListener('card-click', () => selectFeature(feature));
 
     list.appendChild(card);
   }
