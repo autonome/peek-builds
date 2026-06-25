@@ -62,50 +62,98 @@ pub fn set_last_sync(conn: &Connection, timestamp: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Count items that need to be pushed to the given server bucket.
+/// Item types this client syncs by default. Mobile intentionally pushes only these
+/// user-curated types; locally-derived types (entity/series/feed) stay on-device and
+/// must never inflate the pending count or get pushed — thousands of unsyncable
+/// `entity` rows were the 5000+-pending bug (e9dce12a). Override per-install via the
+/// `synced_types` settings row.
+pub const DEFAULT_SYNCED_TYPES: [&str; 4] = ["url", "text", "tagset", "image"];
+
+/// The item types the current install should sync: the comma-separated `synced_types`
+/// settings row if present and non-empty, else `DEFAULT_SYNCED_TYPES`. This is the
+/// client-side "choose what to sync" control; the server stores any type it is sent.
+pub fn get_synced_types(conn: &Connection) -> Vec<String> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'synced_types'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    let types: Vec<String> = raw
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if types.is_empty() {
+        DEFAULT_SYNCED_TYPES.iter().map(|s| s.to_string()).collect()
+    } else {
+        types
+    }
+}
+
+/// Build the WHERE clause + bound params selecting items that still need to be pushed
+/// to `target_profile_id` AND whose type is in the synced set. The count and the fetch
+/// share this builder so the badge and the actual push set can never drift.
+///
+/// An item is pending for the bucket if it has never synced, was modified since its
+/// last sync, or was last synced to a DIFFERENT bucket (so a rebound profile re-pushes
+/// to the new bucket). Parked rows (`sync_error`) and non-synced types are excluded.
+///
+/// Anonymous `?` placeholders bind in this order: [synced types..., bucket, bucket].
+fn pending_for_bucket(synced_types: &[String], target_profile_id: &str) -> (String, Vec<String>) {
+    let placeholders = vec!["?"; synced_types.len()].join(", ");
+    let where_clause = format!(
+        "type IN ({}) AND (\
+            (deleted_at IS NULL AND sync_error IS NULL AND (\
+                synced_at IS NULL \
+                OR updated_at > synced_at \
+                OR synced_profile_id IS NULL \
+                OR synced_profile_id != ?)) \
+            OR (deleted_at IS NOT NULL AND sync_id IS NOT NULL AND sync_id != '' \
+                AND synced_at IS NOT NULL AND updated_at > synced_at \
+                AND (synced_profile_id IS NULL OR synced_profile_id = ?)))",
+        placeholders
+    );
+    let mut bind: Vec<String> = synced_types.to_vec();
+    bind.push(target_profile_id.to_string());
+    bind.push(target_profile_id.to_string());
+    (where_clause, bind)
+}
+
+/// Count items that need to be pushed to the given server bucket (syncable types only).
 ///
 /// `target_profile_id` is the server bucket the current profile syncs to (its
 /// `server_profile_id`, or the local profile UUID fallback before registration).
-/// An item is pending for that bucket if it has never synced, was modified since
-/// its last sync, or was last synced to a DIFFERENT bucket (so a rebound profile
-/// re-pushes its items to the new bucket). See `PENDING_FOR_BUCKET_SQL`.
 pub fn get_pending_sync_count(conn: &Connection, target_profile_id: &str) -> Result<usize, String> {
-    let count: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM items WHERE {}", PENDING_FOR_BUCKET_SQL),
-        params![target_profile_id, target_profile_id],
-        |row| row.get(0),
-    )
-    .unwrap_or(0);
+    let synced_types = get_synced_types(conn);
+    let (where_clause, bind) = pending_for_bucket(&synced_types, target_profile_id);
+    let count: i64 = conn
+        .query_row(
+            &format!("SELECT COUNT(*) FROM items WHERE {}", where_clause),
+            rusqlite::params_from_iter(bind.iter()),
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
     Ok(count as usize)
 }
 
-/// Predicate selecting items that still need to be pushed to a target bucket.
-/// Takes the target bucket id as parameter TWICE (non-deleted branch, then the
-/// deleted branch). Kept in one place so the count and the fetch never drift.
-const PENDING_FOR_BUCKET_SQL: &str = "(deleted_at IS NULL AND sync_error IS NULL AND (\
-        synced_at IS NULL \
-        OR updated_at > synced_at \
-        OR synced_profile_id IS NULL \
-        OR synced_profile_id != ?1)) \
-     OR (deleted_at IS NOT NULL AND sync_id IS NOT NULL AND sync_id != '' \
-        AND synced_at IS NOT NULL AND updated_at > synced_at \
-        AND (synced_profile_id IS NULL OR synced_profile_id = ?2))";
-
-/// Get items that need to be pushed to `target_profile_id` (never synced, locally
-/// modified after their last sync, or last synced to a different bucket).
+/// Get items that need to be pushed to `target_profile_id` (syncable types only; never
+/// synced, locally modified after their last sync, or last synced to a different bucket).
 pub fn get_items_to_push(conn: &Connection, target_profile_id: &str) -> Result<Vec<PushItem>, String> {
+    let synced_types = get_synced_types(conn);
+    let (where_clause, bind) = pending_for_bucket(&synced_types, target_profile_id);
     let mut stmt = conn
-        .prepare(
-            &format!(
-                "SELECT id, type, url, content, COALESCE(metadata, ''), updated_at, COALESCE(sync_id, ''), deleted_at FROM items
-                 WHERE {}",
-                PENDING_FOR_BUCKET_SQL
-            )
-        )
+        .prepare(&format!(
+            "SELECT id, type, url, content, COALESCE(metadata, ''), updated_at, COALESCE(sync_id, ''), deleted_at FROM items
+             WHERE {}",
+            where_clause
+        ))
         .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
     let items: Vec<PushItem> = stmt
-        .query_map(params![target_profile_id, target_profile_id], |row| {
+        .query_map(rusqlite::params_from_iter(bind.iter()), |row| {
             Ok(PushItem {
                 id: row.get(0)?,
                 item_type: row.get(1)?,
@@ -257,7 +305,12 @@ pub fn backfill_synced_profile_id(conn: &Connection, server_profile_id: &str) ->
 
 /// Merge a server item into the local database.
 /// Returns "pulled", "conflict", or "skipped".
-pub fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<&'static str, String> {
+///
+/// `synced_profile_id` is the bucket the item was pulled from; every row this writes is
+/// stamped with it (alongside `synced_at`) so a pulled item is recorded as already
+/// synced to that bucket and does not immediately re-enter the pending set / get pushed
+/// back on the next cycle.
+pub fn merge_server_item(conn: &Connection, server_item: &ServerItem, synced_profile_id: &str) -> Result<&'static str, String> {
     let now = Utc::now().to_rfc3339();
     let server_updated = unix_ms_to_datetime(server_item.updated_at)
         .ok_or("Invalid server updated_at timestamp")?;
@@ -281,16 +334,16 @@ pub fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<
         if local_deleted_at.is_some() {
             println!("[Rust] Sync: Item {} already deleted locally, updating synced_at", server_item.id);
             conn.execute(
-                "UPDATE items SET synced_at = ? WHERE id = ?",
-                params![&now, &local_id],
+                "UPDATE items SET synced_at = ?, synced_profile_id = ? WHERE id = ?",
+                params![&now, synced_profile_id, &local_id],
             ).map_err(|e| format!("Failed to update synced_at: {}", e))?;
             return Ok("pulled");
         }
         // Soft-delete the local item
         println!("[Rust] Sync: Soft-deleting local item {} from server delete", server_item.id);
         conn.execute(
-            "UPDATE items SET deleted_at = ?, updated_at = ?, synced_at = ? WHERE id = ?",
-            params![&now, &now, &now, &local_id],
+            "UPDATE items SET deleted_at = ?, updated_at = ?, synced_at = ?, synced_profile_id = ? WHERE id = ?",
+            params![&now, &now, &now, synced_profile_id, &local_id],
         ).map_err(|e| format!("Failed to soft-delete item: {}", e))?;
         return Ok("pulled");
     }
@@ -313,8 +366,8 @@ pub fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<
                     };
 
                     conn.execute(
-                        "UPDATE items SET deleted_at = NULL, type = ?, url = ?, content = ?, metadata = ?, updated_at = ?, synced_at = ? WHERE id = ?",
-                        params![item_type, url_val, content_val, &metadata_json, &unix_ms_to_iso(server_item.updated_at), &now, local_id],
+                        "UPDATE items SET deleted_at = NULL, type = ?, url = ?, content = ?, metadata = ?, updated_at = ?, synced_at = ?, synced_profile_id = ? WHERE id = ?",
+                        params![item_type, url_val, content_val, &metadata_json, &unix_ms_to_iso(server_item.updated_at), &now, synced_profile_id, local_id],
                     ).map_err(|e| format!("Failed to undelete item: {}", e))?;
 
                     update_item_tags_from_server(conn, local_id, &server_item.tags)?;
@@ -348,8 +401,8 @@ pub fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<
                 };
 
                 conn.execute(
-                    "UPDATE items SET type = ?, url = ?, content = ?, metadata = ?, updated_at = ?, synced_at = ? WHERE id = ?",
-                    params![item_type, url_val, content_val, &metadata_json, &unix_ms_to_iso(server_item.updated_at), &now, &local_id],
+                    "UPDATE items SET type = ?, url = ?, content = ?, metadata = ?, updated_at = ?, synced_at = ?, synced_profile_id = ? WHERE id = ?",
+                    params![item_type, url_val, content_val, &metadata_json, &unix_ms_to_iso(server_item.updated_at), &now, synced_profile_id, &local_id],
                 )
                 .map_err(|e| format!("Failed to update item: {}", e))?;
 
@@ -382,8 +435,8 @@ pub fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<
     };
 
     conn.execute(
-        "INSERT INTO items (id, type, url, content, metadata, sync_id, synced_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO items (id, type, url, content, metadata, sync_id, synced_at, synced_profile_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             &new_id,
             item_type,
@@ -392,6 +445,7 @@ pub fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<
             &metadata_json,
             &server_item.id,
             &now,
+            synced_profile_id,
             &unix_ms_to_iso(server_item.created_at),
             &unix_ms_to_iso(server_item.updated_at)
         ],
@@ -536,7 +590,7 @@ mod tests {
             deleted_at: 0,
         };
 
-        let result = merge_server_item(&conn, &server_item).unwrap();
+        let result = merge_server_item(&conn, &server_item, "bucket-a").unwrap();
         assert_eq!(result, "pulled");
 
         // Verify item was inserted
@@ -546,6 +600,16 @@ mod tests {
             |row| row.get(0),
         ).unwrap();
         assert_eq!(count, 1);
+
+        // Pulled item is stamped with the bucket it came from, so it is NOT pending
+        // for that bucket (it must not re-push straight back).
+        let synced_bucket: Option<String> = conn.query_row(
+            "SELECT synced_profile_id FROM items WHERE sync_id = 'server-1'",
+            [],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(synced_bucket.as_deref(), Some("bucket-a"));
+        assert_eq!(get_pending_sync_count(&conn, "bucket-a").unwrap(), 0);
 
         // Verify tags
         let local_id: String = conn.query_row(
@@ -581,7 +645,7 @@ mod tests {
             deleted_at: 1700000001000,
         };
 
-        let result = merge_server_item(&conn, &server_item).unwrap();
+        let result = merge_server_item(&conn, &server_item, "bucket-a").unwrap();
         assert_eq!(result, "pulled");
 
         // Verify item was soft-deleted
@@ -733,5 +797,59 @@ mod tests {
         mark_item_synced(&conn, &result.item_id, "server-id-1", "bucket-a").unwrap();
         assert_eq!(get_sync_failed_count(&conn).unwrap(), 0);
         assert_eq!(get_pending_sync_count(&conn, "bucket-a").unwrap(), 0);
+    }
+
+    /// Insert a never-synced item of an arbitrary type directly (bypassing the
+    /// save_* helpers, which only create syncable types).
+    fn insert_unsynced_item(conn: &Connection, id: &str, item_type: &str) {
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO items (id, type, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            params![id, item_type, &now, &now],
+        )
+        .unwrap();
+    }
+
+    /// The 5000+-pending bug (e9dce12a): non-syncable types must be excluded from both
+    /// the pending count and the push set, so locally-derived entities never inflate
+    /// the badge or get pushed to a server that rejects them.
+    #[test]
+    fn test_non_synced_types_excluded_from_pending() {
+        let store = PeekStore::new(":memory:").unwrap();
+        store.save_url("https://example.com", &[], None).unwrap();
+        let conn = store.conn.lock().unwrap();
+        insert_unsynced_item(&conn, "entity-1", "entity");
+        insert_unsynced_item(&conn, "entity-2", "entity");
+        insert_unsynced_item(&conn, "feed-1", "feed");
+
+        // Only the url counts; the two entities and the feed are excluded by default.
+        assert_eq!(get_pending_sync_count(&conn, "bucket-a").unwrap(), 1);
+        let to_push = get_items_to_push(&conn, "bucket-a").unwrap();
+        assert_eq!(to_push.len(), 1);
+        assert_eq!(to_push[0].item_type, "url");
+    }
+
+    /// The synced-types set is configurable per install via the `synced_types` setting:
+    /// opting entity in makes entities count + push.
+    #[test]
+    fn test_synced_types_override_opts_in_entities() {
+        let store = PeekStore::new(":memory:").unwrap();
+        store.save_url("https://example.com", &[], None).unwrap();
+        let conn = store.conn.lock().unwrap();
+        insert_unsynced_item(&conn, "entity-1", "entity");
+
+        // Default: entity excluded.
+        assert_eq!(get_pending_sync_count(&conn, "bucket-a").unwrap(), 1);
+
+        // Opt entity in -> now both the url and the entity are pending.
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('synced_types', ?)",
+            params!["url,text,tagset,image,entity"],
+        )
+        .unwrap();
+        assert_eq!(get_pending_sync_count(&conn, "bucket-a").unwrap(), 2);
+
+        // get_synced_types reflects the override (trimmed, comma-split).
+        assert!(get_synced_types(&conn).contains(&"entity".to_string()));
     }
 }

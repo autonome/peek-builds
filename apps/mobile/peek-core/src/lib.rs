@@ -298,11 +298,12 @@ impl PeekStore {
         sync::get_sync_failed_count(&conn)
     }
 
-    /// Merge a server item into the local database.
+    /// Merge a server item into the local database, stamping it as synced to
+    /// `synced_profile_id` (the bucket it was pulled from) so it does not re-push.
     /// Returns "pulled", "conflict", or "skipped".
-    pub fn merge_server_item(&self, server_item: &ServerItem) -> Result<&'static str, String> {
+    pub fn merge_server_item(&self, server_item: &ServerItem, synced_profile_id: &str) -> Result<&'static str, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
-        sync::merge_server_item(&conn, server_item)
+        sync::merge_server_item(&conn, server_item, synced_profile_id)
     }
 
     // ========================================================================

@@ -3192,6 +3192,9 @@ async fn pull_from_server() -> Result<BidirectionalSyncResult, String> {
     // Get last sync time from database (per-profile data)
     let store = get_store()?;
     let last_sync = store.get_last_sync()?;
+    // Bucket these items are being pulled from; merge stamps it as their synced bucket
+    // so pulled items aren't immediately treated as pending and pushed straight back.
+    let target_profile_id = current_target_profile_id();
 
     // Build request URL with profile parameter
     let base_url = if let Some(ref sync_time) = last_sync {
@@ -3253,7 +3256,7 @@ async fn pull_from_server() -> Result<BidirectionalSyncResult, String> {
     let offline_tag = config.offline_tag.clone();
 
     for server_item in &server_response.items {
-        match store.merge_server_item(server_item)? {
+        match store.merge_server_item(server_item, &target_profile_id)? {
             "pulled" => {
                 pulled += 1;
                 // Fetch offline content for pulled items that have the offline tag
