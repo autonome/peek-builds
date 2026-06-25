@@ -69,42 +69,22 @@ The bare `#peek` tag is the legacy project membership marker — leave
 it alone on existing items, but **don't add `#peek` to new items**.
 The `peek:*` namespace is implicit project membership.
 
-## Meta notes & the starred tracking item
+## Starred tracking items
 
-`peek:meta` is overloaded — it tags four distinct kinds of note, each
-with its own title-prefix convention. **Don't collapse these; the prefix
-is how an agent tells them apart at a glance:**
+A `META:`-prefixed, `peek:starred` item aggregates high-signal findings —
+a reference for deciding what to work on next. When you create such an
+aggregation, title it `META: …` and tag it `peek:starred`.
 
-| Prefix | Role |
-|--------|------|
-| `META:` | **Cross-cutting tracking aggregator** — rolls up high-signal findings across many items so they don't get lost. The kind you consult when *choosing* what to work on. |
-| `GOTCHA —` | An environment/tooling trap (e.g. "clones can't run the packaged gate"). |
-| `NEXT-AGENT HANDOFF` | A session handoff: ready-to-use prompt + git/context state for the next agent. |
-| `MEMORY —` | Carry-forward learnings from a session (facts, line numbers, idioms). |
-
-When you create a cross-cutting aggregation that future agents should
-consult while prioritizing, **title it `META: …` and tag it
-`peek:starred`**. That's the only thing the starred-tracking convention
-below keys on.
-
-### Consult the starred tracking items — ONLY when choosing work open-endedly
-
-Starred items surface high-signal aggregations:
+When the user asks open-endedly what to work on (triage, "what's next?"),
+scan them:
 
 ```js
-mcp__peek__list_items({ tags: ['peek:starred'] })   // may return several
+mcp__peek__list_items({ tags: ['peek:starred'] })
 ```
 
-Read them ONLY when the user is choosing work open-endedly ("what's
-next?", "what should I pick up?", triage/prioritization). Scan the
-`META:`-titled ones for current findings. They're a **reference, not an
-agenda**.
-
-When the user names a specific task, THAT is the priority — just do it.
-Do not fetch the tracking items, do not redirect to them, do not argue
-something on the list is higher-signal. If a starred finding is genuinely
-relevant to their task, mention it in one line and let them decide. Never
-let the backlog override stated intent.
+When the user names a specific task, just do it — don't fetch these,
+don't redirect to them. If a finding bears on their task, mention it in
+one line; otherwise leave the backlog out of it.
 
 ## Scope tags (which app does the task belong to?)
 
