@@ -79,6 +79,41 @@ export function getSyncConfig(): SyncConfig {
 }
 
 /**
+ * Item types the desktop syncs by default: the full set the server stores. Desktop
+ * is the source of derived items (entity/series/feed), and the intent is that all of
+ * a user's data lives on the server — so unlike mobile (which defaults to only
+ * url/text/tagset/image), desktop defaults to syncing everything the server accepts.
+ * Kept in sync with the server's SYNCABLE_ITEM_TYPES (apps/server/index.js); 'event'
+ * is intentionally excluded because the server does not store it.
+ */
+const DEFAULT_SYNCED_TYPES = ['url', 'text', 'tagset', 'image', 'series', 'feed', 'entity'];
+
+/**
+ * The item types this install should sync. Overridable via the `syncedTypes`
+ * feature setting (a JSON array) — the client-side "choose what to sync" control —
+ * else DEFAULT_SYNCED_TYPES. An empty/invalid override falls back to the default
+ * rather than disabling sync entirely.
+ */
+function getSyncedTypes(): string[] {
+  const db = getDb();
+  try {
+    const row = db.prepare(`
+      SELECT value FROM feature_settings
+      WHERE featureId = 'sync' AND key = 'syncedTypes'
+    `).get() as { value: string } | undefined;
+    if (row && row.value) {
+      const parsed = JSON.parse(row.value);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map((t) => String(t));
+      }
+    }
+  } catch {
+    // fall through to default
+  }
+  return DEFAULT_SYNCED_TYPES;
+}
+
+/**
  * Get server URL from settings or environment
  * Priority: 1. User-configured (feature_settings), 2. Env var, 3. Default
  */
@@ -539,6 +574,12 @@ export async function pushToServer(
   // Filter out peek:// URLs - they should never be synced to the server
   items = items.filter(item => !item.content?.startsWith('peek://'));
 
+  // Only push types this install is configured to sync. Locally-derived types the
+  // user has opted out of (or that the server rejects) must never be pushed — that
+  // was the 5000+-pending bug (e9dce12a): unsyncable entity rows re-pushed every sync.
+  const syncedTypes = getSyncedTypes();
+  items = items.filter(item => syncedTypes.includes(item.type));
+
   DEBUG && console.log(`[sync] Found ${items.length} items to push`);
 
   let pushed = 0;
@@ -794,14 +835,20 @@ export function getSyncStatus(): {
   const config = getSyncConfig();
   const db = getDb();
 
-  // Count items that need to be synced
-  // Same logic as push: never synced OR locally modified after last sync
-  // Also count deleted tombstones that need to be pushed
+  // Count items that need to be synced. Must match the PUSHABLE set exactly, or the
+  // badge never reaches 0: same pending logic as push, restricted to the configured
+  // synced types, and excluding peek:// URLs (which push also skips). Before the type
+  // filter, thousands of unsyncable entity rows kept this count permanently stuck
+  // (e9dce12a).
+  const syncedTypes = getSyncedTypes();
+  const typePlaceholders = syncedTypes.map(() => '?').join(', ');
   const pendingCount = (db.prepare(`
     SELECT COUNT(*) as count FROM items
-    WHERE (deletedAt = 0 AND (syncedAt = 0 OR (syncedAt > 0 AND updatedAt > syncedAt)))
-       OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)
-  `).get() as { count: number }).count;
+    WHERE type IN (${typePlaceholders})
+      AND (content IS NULL OR content NOT LIKE 'peek://%')
+      AND ((deletedAt = 0 AND (syncedAt = 0 OR (syncedAt > 0 AND updatedAt > syncedAt)))
+        OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt))
+  `).get(...syncedTypes) as { count: number }).count;
 
   return {
     configured: !!(config.serverUrl && config.apiKey),
