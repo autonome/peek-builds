@@ -258,3 +258,33 @@ fn e2e_poison_item_is_parked() {
     // A second sync attempt does nothing (no re-hammering the poison item).
     assert_eq!(push_classified(&store, &bucket), (0, 0, 0), "nothing to retry");
 }
+
+/// The server must STORE every syncable type, not just url/text/tagset/image — the
+/// fix for the 5000+-pending bug (e9dce12a) where entity/series/feed items 400'd
+/// forever. Drives the real server directly (no peek-core, which doesn't create
+/// entities): a metadata-only entity and a feed both round-trip with a 200 + GET.
+#[test]
+#[ignore = "e2e: spawns node server; run via `yarn test:sync:e2e:mobile`"]
+fn e2e_server_accepts_derived_types() {
+    let data_dir = tempfile::tempdir().expect("server temp dir");
+    let _server = start_server(data_dir.path().to_str().unwrap());
+    let bucket = create_bucket("Default");
+
+    // entity: payload lives in metadata, content is null. Pre-fix this returned 400.
+    let entity = r#"{"type":"entity","content":null,"tags":[],"metadata":{"entityType":"person","name":"Ada"},"syncId":"ent-1"}"#;
+    let (code, body) = curl("POST", &format!("/items?profile={}", bucket), Some(entity));
+    assert_eq!(code, 200, "server should accept an entity now: {}", body);
+
+    // feed: another previously-rejected derived type.
+    let feed = r#"{"type":"feed","content":"https://example.com/feed.xml","tags":[],"syncId":"feed-1"}"#;
+    let (code, body) = curl("POST", &format!("/items?profile={}", bucket), Some(feed));
+    assert_eq!(code, 200, "server should accept a feed now: {}", body);
+
+    // Both are stored and returned on GET.
+    assert_eq!(server_count(&bucket), 2, "server holds the entity and the feed");
+
+    // A genuinely-unknown type is still rejected (the allowlist still has teeth).
+    let bad = r#"{"type":"nonsense","content":"x","tags":[],"syncId":"bad-1"}"#;
+    let (code, _) = curl("POST", &format!("/items?profile={}", bucket), Some(bad));
+    assert_eq!(code, 400, "unknown types are still rejected");
+}
