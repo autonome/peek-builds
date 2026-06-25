@@ -259,6 +259,14 @@ impl PeekStore {
         sync::get_pending_sync_count(&conn, target_profile_id)
     }
 
+    /// The item types this install syncs (configurable `synced_types` setting, else
+    /// the default url/text/tagset/image). The pull request sends these as a server-side
+    /// `types` filter so the server never ships types this client would only discard.
+    pub fn get_synced_types(&self) -> Result<Vec<String>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;
+        Ok(sync::get_synced_types(&conn))
+    }
+
     /// Get items that need to be pushed to the given server bucket.
     pub fn get_items_to_push(&self, target_profile_id: &str) -> Result<Vec<PushItem>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {}", e))?;

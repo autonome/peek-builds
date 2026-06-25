@@ -3208,6 +3208,18 @@ async fn pull_from_server() -> Result<BidirectionalSyncResult, String> {
     // Always include deleted items so tombstones propagate during sync
     let items_url = format!("{}&includeDeleted=true", items_url);
 
+    // Ask the server for only the types this client syncs, so it never ships types
+    // we'd merge-skip anyway (e.g. the desktop's thousands of entities). merge_server_item
+    // still enforces the same set locally — this is the bandwidth optimization, not the
+    // correctness guarantee. Older servers ignore the unknown param and return everything,
+    // which the merge filter then handles, so this is safe against a not-yet-deployed server.
+    let synced_types = store.get_synced_types().unwrap_or_default();
+    let items_url = if synced_types.is_empty() {
+        items_url
+    } else {
+        format!("{}&types={}", items_url, synced_types.join(","))
+    };
+
     println!("[Rust] Pulling from: {}", items_url);
 
     // Fetch items from server
