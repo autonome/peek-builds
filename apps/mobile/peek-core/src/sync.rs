@@ -311,6 +311,16 @@ pub fn backfill_synced_profile_id(conn: &Connection, server_profile_id: &str) ->
 /// synced to that bucket and does not immediately re-enter the pending set / get pushed
 /// back on the next cycle.
 pub fn merge_server_item(conn: &Connection, server_item: &ServerItem, synced_profile_id: &str) -> Result<&'static str, String> {
+    // Only pull types this client is configured to sync. The server is a shared
+    // store that holds every type, but a client that doesn't sync a type must not
+    // pull it either — otherwise mobile (url/text/tagset/image by default) would
+    // accumulate the desktop's entity/series/feed rows from a shared bucket. Also
+    // covers tombstones for non-synced types, which are irrelevant locally.
+    let synced_types = get_synced_types(conn);
+    if !synced_types.iter().any(|t| t == &server_item.item_type) {
+        return Ok("skipped");
+    }
+
     let now = Utc::now().to_rfc3339();
     let server_updated = unix_ms_to_datetime(server_item.updated_at)
         .ok_or("Invalid server updated_at timestamp")?;
@@ -851,5 +861,44 @@ mod tests {
 
         // get_synced_types reflects the override (trimmed, comma-split).
         assert!(get_synced_types(&conn).contains(&"entity".to_string()));
+    }
+
+    /// Pull side honors the synced-types set: an entity from the server is skipped
+    /// (not merged) when the client doesn't sync entities, so mobile never
+    /// accumulates types it would never push. A url is still pulled.
+    #[test]
+    fn test_merge_skips_non_synced_types() {
+        let store = PeekStore::new(":memory:").unwrap();
+        let conn = store.conn.lock().unwrap();
+
+        let entity = ServerItem {
+            id: "srv-entity-1".to_string(),
+            item_type: "entity".to_string(),
+            content: None,
+            tags: vec![],
+            metadata: None,
+            created_at: 1700000000000,
+            updated_at: 1700000000000,
+            deleted_at: 0,
+        };
+        // Default synced types exclude 'entity' -> skipped, nothing inserted.
+        assert_eq!(merge_server_item(&conn, &entity, "bucket-a").unwrap(), "skipped");
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "entity must not be pulled into the local DB");
+
+        // A url IS synced -> pulled.
+        let url = ServerItem {
+            id: "srv-url-1".to_string(),
+            item_type: "url".to_string(),
+            content: Some("https://example.com".to_string()),
+            tags: vec![],
+            metadata: None,
+            created_at: 1700000000000,
+            updated_at: 1700000000000,
+            deleted_at: 0,
+        };
+        assert_eq!(merge_server_item(&conn, &url, "bucket-a").unwrap(), "pulled");
+        let n2: i64 = conn.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0)).unwrap();
+        assert_eq!(n2, 1);
     }
 }
