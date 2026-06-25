@@ -838,6 +838,44 @@ export function wireHybridContentEvents(
   // redirect-driven did-navigate, mirroring the canvas path (ipc.ts ~2465).
   let skipTracking = options?.skipTracking === true;
 
+  // ── Stranded-blank INITIAL-load cleanup state ────────────────────────────
+  // The host is now shown at load-START (ipc.ts hybrid branch), before the
+  // content load completes — so a failed INITIAL load happens on an
+  // already-visible window. We must clean up the genuinely-stranded case
+  // WITHOUT destroying a useful native error page.
+  //
+  // Empirical classification (2026-06-25 probe of a real WebContentsView):
+  //   - Hard network errors — ERR_NAME_NOT_RESOLVED (-105), ERR_UNSAFE_PORT
+  //     (-312), ERR_EMPTY_RESPONSE (-324), ERR_CONNECTION_REFUSED — all COMMIT
+  //     Chromium's native error page: `did-finish-load` fires and `getURL()`
+  //     returns the failed URL (document is `chrome-error://chromewebdata/`).
+  //     "This site can't be reached" is a useful display — KEEP it.
+  //   - A navigation that aborts with NOTHING committed — HTTP 204 No Content,
+  //     an ERR_ABORTED main-frame nav — fires `did-stop-loading` but NEVER
+  //     `did-finish-load`, and `getURL()` stays empty: a blank window on the
+  //     loading fill. THAT is the stranded case → close the just-opened host.
+  //   - A download (the initial nav resolves to a file) is already closed by
+  //     the `will-download` cleanup (session-partition.ts), so it never reaches
+  //     a stranded state here.
+  //
+  // So the discriminator is "did ANY document (page OR error page) ever
+  // commit?" — NOT the `did-fail-load` errorCode (which both over-targets the
+  // committed error pages and misses the no-error-event 204 abort).
+  //
+  // `did-finish-load` and `did-stop-loading` are main-frame/top-level WC events
+  // (subframes use the *-frame-* variants), so requirement "main-frame only" is
+  // intrinsic — no isMainFrame gate needed. `everCommittedDocument` is the
+  // one-shot "has the main frame ever committed" flag: once true it never
+  // closes, so later in-page navigation/redirect/abort in an
+  // already-loaded window is never touched.
+  let everCommittedDocument = false;
+  let sawLoadStart = false;
+  let strandedCleanupDone = false;
+  // Session-restore (fire-and-forget) opens keep today's behavior: the restore
+  // loop owns their lifecycle/focus, and a restored-but-stranded host should
+  // not self-close out from under it. Only user-initiated opens auto-clean.
+  const wasSkipTrackingOpen = options?.skipTracking === true;
+
   const publishNavState = () => {
     if (contentWC.isDestroyed()) return;
     const url = contentWC.getURL() || initialUrl;
@@ -851,12 +889,43 @@ export function wireHybridContentEvents(
 
   // ── Loading lifecycle → overlay (P1.4 consumes) ──────────────────────────
   contentWC.on('did-start-loading', () => {
+    sawLoadStart = true;
     if (contentWC.isDestroyed()) return;
     publish(getSystemAddress(), 'page:loading', { windowId: hostWindowId, loading: true });
   });
   contentWC.on('did-stop-loading', () => {
     if (contentWC.isDestroyed()) return;
     publish(getSystemAddress(), 'page:loading', { windowId: hostWindowId, loading: false });
+
+    // Stranded-blank initial-load cleanup (see the state declarations above for
+    // the full empirical rationale). Close the just-opened host ONLY when its
+    // very first load settled with NO committed document — neither a real page
+    // nor a native error page — so it would otherwise sit blank on the loading
+    // fill. Once any document has committed (success or chrome-error page) the
+    // flag latches and later navigations are never touched.
+    if (
+      !strandedCleanupDone &&
+      !wasSkipTrackingOpen &&
+      sawLoadStart &&
+      !everCommittedDocument
+    ) {
+      const committedUrl = contentWC.getURL();
+      // Defensive backstop against any did-finish-load/did-stop-loading ordering
+      // race: if something is actually committed, getURL() is the failed/loaded
+      // URL (non-empty), so we KEEP it; only an empty/blank URL is stranded.
+      if (!committedUrl || committedUrl === 'about:blank') {
+        strandedCleanupDone = true;
+        const entry = getHybridWindow(hostWindowId);
+        if (entry && !entry.baseWin.isDestroyed()) {
+          DEBUG && console.log(
+            `[hybrid-page-host:${hostWindowId}] initial load stranded blank (no committed document) — closing host`,
+          );
+          try { entry.baseWin.close(); } catch { /* already torn down */ }
+        }
+        return;
+      }
+    }
+
     // Thumbnail capture, matching the canvas guest's did-stop-loading (ipc.ts ~2102).
     const pageUrl = contentWC.getURL() || initialUrl;
     if (isHttp(pageUrl)) {
@@ -1216,6 +1285,12 @@ export function wireHybridContentEvents(
   // a main-side publish of page:search-engine-discovered wakes websearch the
   // same as a renderer-side one.
   contentWC.on('did-finish-load', async () => {
+    // Latch "a main-frame document committed" for the stranded-blank cleanup —
+    // BEFORE the isHttp early-return below, because Chromium's native error page
+    // (chrome-error://chromewebdata/) also fires did-finish-load and IS a
+    // document worth keeping. Only a load that never reaches did-finish-load
+    // (HTTP 204 / ERR_ABORTED) leaves this false and is treated as stranded.
+    everCommittedDocument = true;
     if (contentWC.isDestroyed()) return;
     const pageUrl = contentWC.getURL();
     if (!isHttp(pageUrl)) return;
@@ -2118,6 +2193,17 @@ export function registerWindowHandlers(): void {
           hasShadow: !isHeadless(),
           show: false,
           opacity: isHeadless() ? 0 : undefined,
+          // Loading-background fill: we show this window at load-START (below),
+          // before its content WebContentsView has painted anything, so the
+          // user gets the soonest possible confirmation of their click — the
+          // bordered/rounded native frame + shadow. Without an explicit
+          // backgroundColor that early frame would flash as an empty white box.
+          // Painting the theme background (light #ffffff / dark #1e1e1e — the
+          // same fill the canvas path's `webview.loading` rgba(255,255,255,0.95)
+          // / rgba(30,30,30,0.95) produces) makes the early frame read as a
+          // loading surface; the content view then paints over it as it loads,
+          // fading naturally to the real page.
+          backgroundColor: getSystemThemeBackgroundColor(),
         });
 
         // Content view: main owns this webContents handle. Session MUST match
@@ -2420,22 +2506,27 @@ export function registerWindowHandlers(): void {
         baseWin.once('closed', runHybridFinalize);
         view.webContents.once('destroyed', runHybridFinalize);
 
-        // Load the content. Session-restore opens (skipTracking) fire-and-forget
-        // like the canvas path; everything else awaits for "ready" semantics.
-        if (options.skipTracking) {
-          view.webContents.loadURL(url).catch((err) => {
-            DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] background loadURL failed:`, err);
-          });
-        } else {
-          await view.webContents.loadURL(url);
-        }
-
-        // Show it. Non-headless ACTIVATES (app frontmost + key window) and makes
-        // the content WebContentsView the macOS first responder, so cmd+L and
-        // other key equivalents have a target (no NSBeep) and the host's focus
-        // drives the active-hybrid id that reveals the overlay (regressions
-        // 1b6eaf0b / 363e7cff / 8f7010a8). Headless stays inactive + opacity-0,
-        // so an agent/CI run never steals the user's focus (peek task 2b55f3af).
+        // Show it AT LOAD-START — before awaiting the content — so the window's
+        // bordered/rounded native frame + shadow + loading-background fill (set
+        // on the BaseWindow ctor above) appears the INSTANT the load begins, as
+        // the soonest possible confirmation of the click. Previously the show
+        // happened only AFTER `await loadURL`, so clicking to open a page showed
+        // NOTHING (no window, no border) until the page finished loading. The
+        // content WebContentsView paints over the loading fill as it loads,
+        // fading naturally to the real page — mirroring the canvas path, where
+        // `loadingLifecycle.startLoading()` adds the bordered `.loading` frame at
+        // load-start (page.js) instead of waiting for the content.
+        //
+        // The same single `showHybridHost` seam runs here as before — only its
+        // POSITION moved earlier. Non-headless ACTIVATES (app frontmost + key
+        // window) and makes the content WebContentsView the macOS first responder,
+        // so cmd+L and other key equivalents have a target (no NSBeep) and the
+        // host's focus drives the active-hybrid id that reveals the overlay
+        // (regressions 1b6eaf0b / 363e7cff / 8f7010a8). Focusing a not-yet-loaded
+        // (blank) content view is fine — the first-responder + active-hybrid-id
+        // wiring is what matters, not what the view currently paints. Headless
+        // stays inactive + opacity-0, so an agent/CI run never steals the user's
+        // focus (peek task 2b55f3af).
         //
         // EXCEPTION — `show:false` opens (session restore): the caller wants the
         // host visible but NOT activated. Each restored hybrid window activating
@@ -2445,6 +2536,17 @@ export function registerWindowHandlers(): void {
         // descriptor afterwards. Mirrors the canvas ctor `show: options.show !==
         // false` above.
         showHybridHost(baseWin, view.webContents, { inactive: options.show === false });
+
+        // Load the content. Session-restore opens (skipTracking) fire-and-forget
+        // like the canvas path; everything else awaits for "ready" semantics
+        // (the window is already on screen with its loading frame either way).
+        if (options.skipTracking) {
+          view.webContents.loadURL(url).catch((err) => {
+            DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] background loadURL failed:`, err);
+          });
+        } else {
+          await view.webContents.loadURL(url);
+        }
 
         publish(getSystemAddress(), 'window:opened', {
           id: baseWin.id,

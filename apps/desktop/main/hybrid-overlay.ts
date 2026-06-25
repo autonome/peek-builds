@@ -1157,6 +1157,22 @@ function installTestBridge(): void {
       }
     },
     /**
+     * The host BaseWindow's current background color (hex). Used by the
+     * load-start-show spec to assert the hybrid host paints an opaque theme
+     * loading-fill (light #ffffff / dark #1e1e1e) the moment it's shown — so the
+     * early frame reads as a loading surface, not an empty white box. Returns
+     * null if the host is gone or getBackgroundColor is unsupported.
+     */
+    hostBackgroundColor(id: number): string | null {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.baseWin.isDestroyed()) return null;
+      try {
+        return entry.baseWin.getBackgroundColor();
+      } catch {
+        return null;
+      }
+    },
+    /**
      * P1.4b-3: the work area of the display the given host currently sits on.
      * Maximize snaps the host to exactly this rect, so the maximize test can
      * compare `hostBounds(id)` against it (the hybrid path maximizes via explicit
