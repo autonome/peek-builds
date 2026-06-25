@@ -891,19 +891,20 @@ export class EditorLayout {
   // ── Content & sidebar updates ──
 
   startWatching() {
-    const check = () => {
-      if (this.isDestroyed) return;
-
-      const currentContent = this.getContent();
-      if (currentContent !== this.lastContent) {
-        this.lastContent = currentContent;
-        this.updateSidebars();
-      }
-
-      this.rafId = requestAnimationFrame(check);
-    };
-
-    this.rafId = requestAnimationFrame(check);
+    // Sidebar/content updates are event-driven: CodeMirror's onChange callback
+    // (→ handleContentChange) fires on every edit and refreshes the sidebars.
+    // Render once now for the initial content, then let onChange drive updates.
+    //
+    // This used to poll getContent() every animation frame (~60×/sec) and diff
+    // it against lastContent — which re-serialized the entire document each frame
+    // for every VISIBLE editor tile, a steady idle CPU burn that scaled with doc
+    // size and number of open editors (rAF throttles when hidden, so the cost
+    // rotated across foreground editors). The onChange path already covers every
+    // real edit, so the poll was pure redundancy.
+    if (!this.isDestroyed) {
+      this.lastContent = this.getContent();
+      this.updateSidebars();
+    }
 
     // Restore highlights after editor is ready
     setTimeout(() => this._restoreHighlights(), 200);
