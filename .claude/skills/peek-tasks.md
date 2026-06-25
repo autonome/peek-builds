@@ -69,6 +69,43 @@ The bare `#peek` tag is the legacy project membership marker — leave
 it alone on existing items, but **don't add `#peek` to new items**.
 The `peek:*` namespace is implicit project membership.
 
+## Meta notes & the starred tracking item
+
+`peek:meta` is overloaded — it tags four distinct kinds of note, each
+with its own title-prefix convention. **Don't collapse these; the prefix
+is how an agent tells them apart at a glance:**
+
+| Prefix | Role |
+|--------|------|
+| `META:` | **Cross-cutting tracking aggregator** — rolls up high-signal findings across many items so they don't get lost. The kind you consult when *choosing* what to work on. |
+| `GOTCHA —` | An environment/tooling trap (e.g. "clones can't run the packaged gate"). |
+| `NEXT-AGENT HANDOFF` | A session handoff: ready-to-use prompt + git/context state for the next agent. |
+| `MEMORY —` | Carry-forward learnings from a session (facts, line numbers, idioms). |
+
+When you create a cross-cutting aggregation that future agents should
+consult while prioritizing, **title it `META: …` and tag it
+`peek:starred`**. That's the only thing the starred-tracking convention
+below keys on.
+
+### Consult the starred tracking items — ONLY when choosing work open-endedly
+
+Starred items surface high-signal aggregations:
+
+```js
+mcp__peek__list_items({ tags: ['peek:starred'] })   // may return several
+```
+
+Read them ONLY when the user is choosing work open-endedly ("what's
+next?", "what should I pick up?", triage/prioritization). Scan the
+`META:`-titled ones for current findings. They're a **reference, not an
+agenda**.
+
+When the user names a specific task, THAT is the priority — just do it.
+Do not fetch the tracking items, do not redirect to them, do not argue
+something on the list is higher-signal. If a starred finding is genuinely
+relevant to their task, mention it in one line and let them decide. Never
+let the backlog override stated intent.
+
 ## Scope tags (which app does the task belong to?)
 
 Tasks scoped to a single app carry a `peek:scope:*` tag. This makes
