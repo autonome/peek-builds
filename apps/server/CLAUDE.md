@@ -76,6 +76,38 @@ This script (`scripts/deploy-server.sh`) subtree-splits `apps/server/` and force
 
 ---
 
+## Operating the live server (logs / status / env)
+
+The `railway` CLI is installed and authenticated (`me@burrito.space`). You **do**
+have read/diagnostic access — don't tell the user you can't reach Railway. The
+peek server is Railway project **`amusing-courtesy`**, service **`peek-node`**
+(`peek-node.up.railway.app`, volume at `/app/data`). The repo root is linked to
+it; pass `--service peek-node` anyway so it works regardless of link state.
+
+Read-only — go ahead:
+
+```bash
+railway logs --service peek-node --lines 200     # runtime logs (recent, no stream)
+railway logs --service peek-node --build         # last build logs
+railway status --json                            # deploy state, domain, volume
+railway variables --service peek-node            # env vars
+```
+
+State-changing — **confirm with the user first** (production mutation):
+
+```bash
+railway redeploy --service peek-node             # re-run last deploy
+railway restart --service peek-node
+railway variables --service peek-node --set KEY=value
+```
+
+**Deploy is NOT a Railway-CLI op.** `yarn server:deploy` force-pushes a subtree
+to GitHub `deploy/server`, which Railway auto-builds. That's a push to an
+external remote → it needs explicit user authorization (never push unprompted).
+"I can't deploy" is correct; "I can't read logs" is not.
+
+---
+
 ## Environment Variables
 
 | Variable | Default | Purpose |
