@@ -925,6 +925,33 @@ Conclusion.
 `);
       });
     });
+
+    test('idle editor does not poll getContent() on a requestAnimationFrame loop', async () => {
+      // Regression guard: startWatching() used to run a per-frame rAF loop that
+      // called getContent() (full-document serialize) ~60x/sec to diff content
+      // for sidebar refreshes. That was a steady idle CPU burn per VISIBLE editor
+      // tile. Sidebar updates are now event-driven via CodeMirror onChange, so an
+      // editor with no edits must NOT touch getContent() frame-to-frame.
+      const callsWhileIdle = await page.evaluate(async () => {
+        const layout = window.editorLayout;
+        let calls = 0;
+        const orig = layout.getContent.bind(layout);
+        layout.getContent = (...args) => { calls++; return orig(...args); };
+        try {
+          // Let ~10 animation frames elapse with zero edits / cursor moves.
+          await new Promise((resolve) => {
+            let frames = 0;
+            const tick = () => { if (++frames >= 10) resolve(undefined); else requestAnimationFrame(tick); };
+            requestAnimationFrame(tick);
+          });
+        } finally {
+          layout.getContent = orig;
+        }
+        return calls;
+      });
+      // The removed poll would have called getContent() ~once per frame (~10).
+      expect(callsWhileIdle).toBe(0);
+    });
   });
 
   // ==========================================================================
