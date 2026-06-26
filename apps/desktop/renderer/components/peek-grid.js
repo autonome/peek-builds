@@ -18,9 +18,18 @@
  *   grid.getVirtualItemCount()      — total item count
  *
  * When virtual mode is active, peek-grid owns an internal scroll container
- * appended to its shadow root. The CSS class 'virtual-active' (added to the
- * host element) activates the relevant layout rules. Slotted-children
- * consumers are completely unaffected — they never call setVirtualItems.
+ * (in its shadow root) whose content div projects a named slot. The windowed
+ * cards themselves live in the consumer's LIGHT DOM as `slot="virtual"`
+ * children of the host, absolutely positioned and projected into that slot.
+ * Keeping the cards in light DOM is deliberate: the consumer's page stylesheet
+ * (e.g. tags/home.css styling `.card-title` / `--peek-card-*`) cannot cross a
+ * shadow boundary, so cards appended into peek-grid's own shadow root would
+ * lose all consumer styling. Light-DOM slotting restores it for free and keeps
+ * `document.querySelector` able to find the cards.
+ *
+ * The CSS class 'virtual-active' (added to the host element) activates the
+ * relevant layout rules. Slotted-children consumers are completely unaffected —
+ * they never call setVirtualItems.
  *
  * @element peek-grid
  *
@@ -215,10 +224,24 @@ export class PeekGrid extends PeekElement {
       }
 
       /* Full-height inner div — its height equals virtualizer.getTotalSize(),
-         giving the scrollbar an accurate track for the full virtual list. */
+         giving the scrollbar an accurate track for the full virtual list.
+         position:relative makes it the containing block for the absolutely
+         positioned cards projected through its <slot name="virtual">. */
       .virtual-scroll-content {
         position: relative;
         width: 100%;
+      }
+
+      /* Cards projected into the virtual slot are already windowed by the
+         virtualizer and absolutely positioned. The general ::slotted(*)
+         content-visibility containment above (meant for the in-flow grid
+         path) would make off-screen overscan cards report their placeholder
+         contain-intrinsic-size to the virtualizer's measureElement,
+         corrupting height measurement — so disable it for virtual-slot
+         children. Higher specificity than ::slotted(*) so it wins. */
+      ::slotted([slot="virtual"]) {
+        content-visibility: visible;
+        contain-intrinsic-size: none;
       }
     `
   ];
@@ -249,6 +272,8 @@ export class PeekGrid extends PeekElement {
     this._virtualizerCleanup  = null;   // teardown fn returned by _didMount()
     this._scrollHost          = null;   // div.virtual-scroll-host — the scroll element
     this._scrollContent       = null;   // div.virtual-scroll-content — full-height inner
+    this._virtualSlot         = null;   // slot[name=virtual] inside scrollContent
+    this._emptyEl             = null;   // empty-state light child (slot=virtual), or null
     this._vColCount           = 1;      // current column count (updated by ResizeObserver)
     this._hostColResizeObserver = null;
 
@@ -389,12 +414,9 @@ export class PeekGrid extends PeekElement {
     this._virtualItems  = null;
     this._renderItem    = null;
 
-    // Clear virtual scroll content
-    if (this._scrollContent) {
-      while (this._scrollContent.firstChild) {
-        this._scrollContent.removeChild(this._scrollContent.firstChild);
-      }
-    }
+    // Remove the projected light-DOM cards + empty-state. The slot itself
+    // stays inside _scrollContent for the next virtual session.
+    this._clearVirtualSlotChildren();
 
     this.classList.remove('virtual-active');
   }
@@ -416,8 +438,10 @@ export class PeekGrid extends PeekElement {
    * @returns {Element[]}
    */
   getRenderedCards() {
-    if (!this._scrollHost) return [];
-    return Array.from(this._scrollHost.querySelectorAll('[data-index]'));
+    // Cards are light-DOM children of the host (projected into the virtual
+    // slot), so query the host directly — this also keeps consumer code and
+    // tests using plain document.querySelector working.
+    return Array.from(this.querySelectorAll(':scope > [slot="virtual"][data-index]'));
   }
 
   /**
@@ -445,6 +469,15 @@ export class PeekGrid extends PeekElement {
 
     this._scrollContent = document.createElement('div');
     this._scrollContent.className = 'virtual-scroll-content';
+
+    // Named slot — projects the consumer's light-DOM virtual cards
+    // (slot="virtual") into this positioned content div. The cards stay in
+    // light DOM so the consumer's page stylesheet styles them; the slot's
+    // default display:contents means the projected cards take .virtual-scroll-
+    // content as their absolute-positioning containing block.
+    this._virtualSlot = document.createElement('slot');
+    this._virtualSlot.setAttribute('name', 'virtual');
+    this._scrollContent.appendChild(this._virtualSlot);
 
     this._scrollHost = document.createElement('div');
     this._scrollHost.className = 'virtual-scroll-host';
@@ -495,22 +528,23 @@ export class PeekGrid extends PeekElement {
       this._hostColResizeObserver = null;
     }
 
-    // Clear card caches and virtual scroll content.
-    for (const card of this._activeVirtualCards.values()) card.remove();
+    // Clear projected light-DOM cards + empty-state and reset caches. The
+    // <slot> inside _scrollContent is preserved across reinit.
+    this._clearVirtualSlotChildren();
     this._activeVirtualCards.clear();
     this._cardNodeCache.clear();
     this._cardGeometry.clear();
     this._lastWindowSig     = '';
     this._loggedViewportDiag = false;
-    while (this._scrollContent.firstChild) {
-      this._scrollContent.removeChild(this._scrollContent.firstChild);
-    }
 
     if (items.length === 0) {
-      const emptyEl = document.createElement('div');
-      emptyEl.className = 'empty-state';
-      emptyEl.textContent = opts.emptyMessage ?? 'No items.';
-      this._scrollContent.appendChild(emptyEl);
+      // Empty-state is a light child (slot=virtual) so the consumer's
+      // .empty-state page styling applies, same as the cards.
+      this._emptyEl = document.createElement('div');
+      this._emptyEl.className = 'empty-state';
+      this._emptyEl.setAttribute('slot', 'virtual');
+      this._emptyEl.textContent = opts.emptyMessage ?? 'No items.';
+      this.appendChild(this._emptyEl);
       this._scrollContent.style.height = '';
       return;
     }
@@ -654,7 +688,11 @@ export class PeekGrid extends PeekElement {
             card = this._renderItem(item, vi.index);
             this._cardNodeCache.set(key, card);
           }
-          this._scrollContent.appendChild(card);
+          // Project the card through the virtual slot by making it a light-DOM
+          // child of the host with slot="virtual". Absolute positioning (set
+          // below) resolves against .virtual-scroll-content in the shadow tree.
+          card.setAttribute('slot', 'virtual');
+          this.appendChild(card);
           this._activeVirtualCards.set(key, card);
         }
 
@@ -710,11 +748,22 @@ export class PeekGrid extends PeekElement {
       this._hostColResizeObserver = null;
     }
 
-    for (const card of this._activeVirtualCards.values()) card.remove();
+    this._clearVirtualSlotChildren();
     this._activeVirtualCards.clear();
     this._cardNodeCache.clear();
     this._cardGeometry.clear();
     this._lastWindowSig = '';
+  }
+
+  /**
+   * Remove every light-DOM node we projected into the virtual slot — the
+   * windowed cards plus the empty-state element. The <slot> itself lives in
+   * the shadow root's _scrollContent and is never touched here.
+   */
+  _clearVirtualSlotChildren() {
+    const projected = this.querySelectorAll(':scope > [slot="virtual"]');
+    for (const el of projected) el.remove();
+    this._emptyEl = null;
   }
 
   // ── Freeform: positioning ────────────────────────────────────────────────
