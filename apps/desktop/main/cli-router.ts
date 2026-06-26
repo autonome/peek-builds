@@ -14,6 +14,7 @@
 import { publish } from './pubsub.js';
 import { BrowserWindow, webContents as electronWebContents } from 'electron';
 import { getAllHybridWindows } from './hybrid-page-host-registry.js';
+import { collectProcessMetrics, probeVisibilityState } from './process-metrics.js';
 
 const SYSTEM_ADDRESS = 'peek://system/';
 const VERB_RE = /^[a-z][a-z0-9-]*$/;
@@ -46,6 +47,9 @@ export async function dispatch(msg: CliMessage): Promise<CliResult> {
   }
   if (msg.verb === 'debug-eval') {
     return debugEval(args);
+  }
+  if (msg.verb === 'debug-app-metrics') {
+    return debugAppMetrics(args);
   }
 
   // === Pubsub verbs (fire-and-forget) ===
@@ -159,6 +163,43 @@ async function debugEval(args: unknown[]): Promise<CliResult> {
 }
 
 /**
+ * Per-OS-process CPU + memory, each joined to the tile(s)/window(s) it hosts,
+ * sorted by CPU descending. Collapses the entire "hot pid → tile-id → window"
+ * investigation to one JSON blob (peek `c2bad3fc`).
+ *
+ * Args (all optional):
+ *   [minCpu]  number — only return processes at/above this percent-CPU (default 0)
+ *   [visible] 'visible' — also probe document.visibilityState for each returned
+ *             tile (the precise rAF-throttle signal; renderer round-trip).
+ *
+ * Note: percentCPUUsage is Electron's recent internal sample. For a transient
+ * spike, sample repeatedly (e.g. `watch -n1`) — or read main.log, where the
+ * background cpu-watch already logs hot processes continuously.
+ */
+async function debugAppMetrics(args: unknown[]): Promise<CliResult> {
+  // Socket args arrive as strings (peek-cli forwards argv), so coerce rather
+  // than typeof-check: `debug-app-metrics 5` → minCpu 5.
+  const wantVisibility = args.includes('visible');
+  const minCpuArg = args.find(a => a !== 'visible');
+  const minCpu = Number(minCpuArg);
+  const minCpuFilter = Number.isFinite(minCpu) ? minCpu : 0;
+
+  let procs = collectProcessMetrics();
+  if (minCpuFilter > 0) procs = procs.filter(p => p.percentCpu >= minCpuFilter);
+
+  if (wantVisibility) {
+    const wcIds = procs.flatMap(p => p.tiles.map(t => t.webContentsId));
+    const visState = await probeVisibilityState(wcIds).catch(() => new Map<number, string>());
+    const withVis = procs.map(p => ({
+      ...p,
+      tiles: p.tiles.map(t => ({ ...t, visibilityState: visState.get(t.webContentsId) })),
+    }));
+    return { ok: true, data: withVis };
+  }
+  return { ok: true, data: procs };
+}
+
+/**
  * The set of verbs this build advertises. Adding a verb here doesn't
  * register it — the corresponding feature background still has to
  * subscribe to `cli:<verb>` — but it's the canonical list the settings
@@ -171,4 +212,5 @@ export const KNOWN_VERBS: ReadonlyArray<{ verb: string; argHint?: string; descri
   { verb: 'open-url',   argHint: '<url>',  description: 'Open a URL in a Peek page-host window' },
   { verb: 'debug-list-windows', description: 'List BrowserWindows + their webContents id/title/url' },
   { verb: 'debug-eval', argHint: '<target> <expr>', description: 'Eval JS in a webContents (target = id|title|url substring)' },
+  { verb: 'debug-app-metrics', argHint: '[minCpu] [visible]', description: 'Per-process CPU/mem joined to tile/window (sorted by CPU)' },
 ];

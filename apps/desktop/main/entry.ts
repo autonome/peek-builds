@@ -127,6 +127,7 @@ import { ensureCliHelperShadow } from './cli-helper.js';
 import { ensureLinuxDesktopInstall, ensureLinuxCliAlias } from './desktop-installer.js';
 import { initRendererLog } from './renderer-log.js';
 import { initMainLog } from './main-log.js';
+import { startCpuWatch } from './cpu-watch.js';
 import { DEBUG } from './config.js';
 import { isDevToolsEnabled } from './debug-flag.js';
 import { isPageHostContent, destroyAllPageHostGuests } from './webview-guest-registry.js';
@@ -1329,6 +1330,12 @@ const onReady = async () => {
     // Load features after core app is ready (only once)
     if (!featuresLoaded) {
       featuresLoaded = true;
+
+      // Background CPU watchdog: auto-attributes hot OS processes to their
+      // tile/window in main.log so a hot prod Peek is self-diagnosing. Skip
+      // headless/test runs (no real windows to attribute, and noise in CI).
+      if (!isHeadless()) startCpuWatch();
+
       const featStart = Date.now();
       await loadFeatures();
 

@@ -89,6 +89,15 @@ Verbs:
   peek-open <n>       Open peek N (0..9)
   slide-open <edge>   Open slide on edge (Up|Down|Left|Right; case-insensitive)
 
+Debug verbs (return JSON on stdout):
+  debug-list-windows               List windows + webContents id/title/url
+  debug-eval <target> <expr>       Eval JS in a webContents (target = id|title|url substring)
+  debug-app-metrics [minCpu] [visible]
+                                   Per-process CPU/mem joined to tile/window,
+                                   sorted by CPU. Pass a number to filter by
+                                   percent-CPU; add 'visible' to also probe each
+                                   tile's document.visibilityState.
+
 Invocation:
   This is a plain Node script — but Peek users typically don't have
   Node installed, so the bundled invocation uses the Electron binary
