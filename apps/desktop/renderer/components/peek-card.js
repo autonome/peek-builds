@@ -68,6 +68,12 @@ export class PeekCard extends PeekElement {
       .card {
         display: flex;
         flex-direction: column;
+        /* height:100% fills the host when a parent gives it a definite height
+           (e.g. the virtual grid path sets height:<itemHeight>px on the host
+           element). Against an auto/indefinite parent this resolves to auto,
+           so it's a no-op for normal non-virtual consumers. */
+        height: 100%;
+        box-sizing: border-box;
         background: var(--peek-card-bg, var(--theme-bg-secondary, #fff));
         border-radius: var(--peek-card-radius, var(--peek-radius-lg));
         overflow: hidden;

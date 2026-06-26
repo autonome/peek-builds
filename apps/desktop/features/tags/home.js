@@ -1308,7 +1308,7 @@ const renderCards = () => {
       items,
       (item) => createItemCard(item, tagCounts),
       {
-        estimateSize: 90,
+        itemHeight: 84,
         getKey: (item) => item.id,
         emptyMessage,
       }

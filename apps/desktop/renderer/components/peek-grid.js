@@ -275,6 +275,7 @@ export class PeekGrid extends PeekElement {
     this._virtualSlot         = null;   // slot[name=virtual] inside scrollContent
     this._emptyEl             = null;   // empty-state light child (slot=virtual), or null
     this._vColCount           = 1;      // current column count (updated by ResizeObserver)
+    this._vItemHeight         = 90;     // uniform fixed card height (px) for the virtual grid path
     this._hostColResizeObserver = null;
 
     // Cache: item-key → peek-card DOM node.
@@ -371,6 +372,10 @@ export class PeekGrid extends PeekElement {
    *                                 per item when it first enters the viewport.
    * @param {Object}   [opts]
    * @param {number}   [opts.estimateSize=90]   - Estimated item height (px)
+   * @param {number}   [opts.itemHeight]        - Fixed uniform item height (px).
+   *                                              When set, every card is forced to
+   *                                              this height and rows align (true grid).
+   *                                              Takes precedence over estimateSize.
    * @param {Function} [opts.getKey]            - (item, index) => string stable key
    * @param {string}   [opts.emptyMessage]      - Message shown when items is empty
    * @returns {Promise<void>}
@@ -507,7 +512,11 @@ export class PeekGrid extends PeekElement {
     const gap    = this.gap;
     const minColW = this.minItemWidth;
     const opts   = this._virtualOpts;
-    const estimateSize = opts.estimateSize ?? 90;
+    // Uniform fixed height takes precedence: when itemHeight is set, every card is
+    // forced to it and no per-card measurement happens, so lanes advance in lockstep
+    // and rows align (a true grid). Falls back to the old estimateSize behaviour.
+    const itemHeight = opts.itemHeight ?? opts.estimateSize ?? 90;
+    this._vItemHeight = itemHeight;
 
     // Snapshot initial column count from the now-visible host element.
     const hostWidth = this._scrollHost.offsetWidth;
@@ -567,7 +576,7 @@ export class PeekGrid extends PeekElement {
 
     this._virtualizer = new Virtualizer({
       count: items.length,
-      estimateSize: () => estimateSize,
+      estimateSize: () => itemHeight,
       getScrollElement: () => this._scrollHost,
       scrollToFn: elementScroll,
       observeElementRect,
@@ -603,18 +612,19 @@ export class PeekGrid extends PeekElement {
    * Called by the virtualizer onChange callback (scroll/resize) and at init.
    *
    * Proven fixes carried from the tags prototype:
-   * - Re-entrancy guard: measureElement() can synchronously trigger onChange.
-   *   Drop the nested call; the outer pass already has current measurements.
+   * - Re-entrancy guard: a cheap safety net (no longer triggered by measureElement
+   *   since we no longer measure; kept as a harmless guard against any future path
+   *   that might synchronously trigger onChange mid-render).
    * - Convergence guard: if range + totalSize + colCount + hostWidth are
-   *   unchanged, return early. Breaks the measure→onChange→render loop.
+   *   unchanged, return early. Breaks any onChange→render feedback loop.
    * - Cache eviction: delete the card from _cardNodeCache on eviction so
    *   detached nodes are GC'd and memory stays bounded during full-list scroll.
-   * - Conditional style writes: only rewrite card.style when geometry changed
-   *   (writing cssText forces a reflow → retriggers measurement → onChange).
+   * - Uniform fixed height: every card receives `height:_vItemHeight` so all
+   *   lanes advance in lockstep and rows align (a true grid). No per-card
+   *   measureElement runs.
+   * - Conditional style writes: only rewrite card.style when geometry changed.
    * - colWidth from clientWidth (not offsetWidth): excludes the scrollbar width
    *   so column geometry doesn't oscillate as the scrollbar appears/disappears.
-   * - measureElement once-on-mount: calling it every pass re-measures reused
-   *   cards and re-feeds the loop.
    */
   _renderVirtualWindow() {
     if (!this._virtualizer || !this._scrollHost || !this._scrollContent) return;
@@ -701,12 +711,11 @@ export class PeekGrid extends PeekElement {
         const top  = vi.start;
 
         // Only rewrite card.style when geometry actually changed.
-        // Writing cssText forces a reflow → retriggers measurement → onChange.
         const prev = this._cardGeometry.get(key);
         if (!prev || prev.top !== top || prev.left !== left || prev.width !== colWidth) {
           card.style.cssText =
             `position:absolute;top:0;transform:translateY(${top}px);` +
-            `left:${left}px;width:${colWidth}px;box-sizing:border-box;`;
+            `left:${left}px;width:${colWidth}px;height:${this._vItemHeight}px;box-sizing:border-box;`;
           this._cardGeometry.set(key, { top, left, width: colWidth });
         }
 
@@ -714,14 +723,6 @@ export class PeekGrid extends PeekElement {
         const idxStr = String(vi.index);
         if (card.getAttribute('data-index') !== idxStr) {
           card.setAttribute('data-index', idxStr);
-        }
-
-        // Observe for auto-measurement ONLY on first mount.
-        // virtual-core's ResizeObserver keeps measuring the node afterward;
-        // calling measureElement every pass re-measures reused cards and
-        // re-feeds the loop.
-        if (isNew) {
-          this._virtualizer.measureElement(card);
         }
       }
     } finally {

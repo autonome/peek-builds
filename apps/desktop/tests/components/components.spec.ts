@@ -558,6 +558,67 @@ test.describe('Components @components', () => {
     });
   });
 
+  test.describe('peek-grid virtual (grid) mode', () => {
+    test('forces uniform card height and aligned rows', async () => {
+      const result = await page.evaluate(async () => {
+        const grid = document.createElement('peek-grid') as any;
+        grid.style.display = 'block';
+        grid.style.width = '520px';
+        grid.style.height = '300px';
+        grid.minItemWidth = 100;
+        grid.gap = 10;
+        document.body.appendChild(grid);
+
+        const items = Array.from({ length: 40 }, (_, i) => ({ id: 'v' + i, n: i }));
+        const renderItem = (item: any) => {
+          const card = document.createElement('peek-card');
+          card.setAttribute('data-id', item.id);
+          // Deliberately vary content height: odd items get extra lines.
+          card.innerHTML = item.n % 2
+            ? '<div>' + item.n + '<br>extra<br>extra<br>extra</div>'
+            : '<div>' + item.n + '</div>';
+          return card;
+        };
+
+        await grid.setVirtualItems(items, renderItem, {
+          itemHeight: 80,
+          getKey: (it: any) => it.id,
+        });
+
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+        const cards = grid.getRenderedCards();
+        const cols = grid.getColCount();
+        const rects = cards.map((c: Element) => {
+          const r = (c as HTMLElement).getBoundingClientRect();
+          return { idx: Number(c.getAttribute('data-index')), top: r.top, height: r.height };
+        }).sort((a: any, b: any) => a.idx - b.idx);
+
+        return { cols, rects };
+      });
+
+      const { cols, rects } = result;
+      expect(rects.length).toBeGreaterThan(cols); // at least 2 rows rendered
+
+      // (a) every rendered card shares ONE height
+      const heights = new Set(rects.map((r: any) => Math.round(r.height)));
+      expect(heights.size).toBe(1);
+
+      // (b) row 0 (idx < cols) shares one top
+      const row0Tops = new Set(rects.filter((r: any) => r.idx < cols).map((r: any) => Math.round(r.top)));
+      expect(row0Tops.size).toBe(1);
+
+      // (c) one row down = itemHeight + gap
+      const top0 = Math.round(rects.find((r: any) => r.idx === 0).top);
+      const topNextRow = Math.round(rects.find((r: any) => r.idx === cols).top);
+      expect(topNextRow - top0).toBe(80 + 10);
+
+      // (d) no lane stagger: the two cards in row 1 share a top
+      const topNextRowPlus1 = Math.round(rects.find((r: any) => r.idx === cols + 1).top);
+      expect(topNextRowPlus1).toBe(topNextRow);
+    });
+  });
+
   // ==========================================================================
   // peek-popover
   // ==========================================================================
