@@ -220,6 +220,15 @@ export interface ItemFilter {
   sortBy?: 'created' | 'updated' | 'frecency' | 'lastVisit' | 'visitCount';
   domain?: string;
   search?: string;
+  /**
+   * Controls how the `content` column is returned.
+   * - 'full' (default): return the complete content as stored.
+   * - 'snippet': for text items, truncate content to 300 chars. All other
+   *   item types (url, entity, image, …) keep their full content, since for
+   *   those types `content` holds a short URL or identifier, not a body.
+   *   Use this for card/list views that do not need full text bodies.
+   */
+  contentMode?: 'full' | 'snippet';
 }
 
 export interface ItemVisitFilter {

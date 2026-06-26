@@ -189,8 +189,11 @@ const init = async () => {
  */
 const loadData = async () => {
   __bootMark('queryItems-start');
-  // Load all items (unified: addresses, texts, tagsets, images)
-  const itemsResult = await api.datastore.queryItems({});
+  // Load all items (unified: addresses, texts, tagsets, images).
+  // Use snippet mode so text-item bodies are capped at 300 chars — cards
+  // only need the title/URL, not the full body. The detail/editor path
+  // fetches full content on demand via api.datastore.getItem().
+  const itemsResult = await api.datastore.queryItems({ contentMode: 'snippet' });
   if (itemsResult.success) {
     state.items = itemsResult.data;
   } else {
@@ -493,7 +496,11 @@ const setupEventListeners = () => {
       // if the user is actively editing (the editor manages its own content)
       const updatedItem = state.items.find(i => i.id === state.editingItem.id);
       if (updatedItem) {
-        state.editingItem = updatedItem;
+        // Preserve any full content already loaded for the editor — state.items
+        // only carries 300-char snippets (contentMode:'snippet'). The editor
+        // manages its own content after init; we must not overwrite it here.
+        const preservedContent = state.editingItem.content;
+        state.editingItem = { ...updatedItem, content: preservedContent };
         // Only refresh tags and title, not the editor content
         const tags = state.itemTags.get(updatedItem.id) || [];
         renderCurrentTags(tags);
@@ -1514,8 +1521,13 @@ const destroyEmbeddedEditor = () => {
 
 /**
  * Show the inline detail view for an item (replaces card grid)
+ *
+ * For text items the editor needs the full body, but state.items only holds
+ * snippets (loadData uses contentMode:'snippet'). We fetch the full item from
+ * the datastore before initialising the editor so autosave can round-trip the
+ * complete content rather than a truncated version.
  */
-const showDetailView = (item) => {
+const showDetailView = async (item) => {
   state.currentView = VIEW_DETAIL;
   state.editingItem = item;
 
@@ -1555,7 +1567,24 @@ const showDetailView = (item) => {
   const editorSection = detailView.querySelector('.detail-editor-section');
   if (itemType === 'text') {
     editorSection.style.display = '';
-    createEmbeddedEditor(item);
+
+    // Fetch full content on demand — state.items carries only a 300-char snippet.
+    // We need the complete body so the editor can round-trip it without truncation.
+    let itemForEditor = item;
+    try {
+      const fullResult = await api.datastore.getItem(item.id);
+      if (fullResult?.success && fullResult.data) {
+        itemForEditor = fullResult.data;
+        // Keep state.editingItem in sync with the full content so autosave and
+        // debouncedRefresh (which replaces editingItem from state.items) can
+        // always fall back to the full body.
+        state.editingItem = { ...state.editingItem, content: fullResult.data.content };
+      }
+    } catch (err) {
+      console.error('[tags] Failed to load full content for editor, falling back to snippet:', err);
+    }
+
+    createEmbeddedEditor(itemForEditor);
   } else {
     editorSection.style.display = 'none';
   }

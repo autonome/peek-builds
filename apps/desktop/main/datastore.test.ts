@@ -189,6 +189,60 @@ describe('Desktop Datastore Tests', () => {
     });
   });
 
+  describe('queryItems contentMode', () => {
+    const LONG_BODY = 'x'.repeat(400); // 400 chars > 300-char snippet threshold
+
+    beforeEach(() => {
+      const db = datastore.getDb();
+      db.exec('DELETE FROM item_tags');
+      db.exec('DELETE FROM items');
+    });
+
+    it('returns full text content by default (no contentMode)', () => {
+      datastore.addItem('text', { content: LONG_BODY });
+      const [item] = datastore.queryItems({ type: 'text' });
+      assert.strictEqual(item.content, LONG_BODY, 'default should return full content');
+    });
+
+    it('returns full text content when contentMode is full', () => {
+      datastore.addItem('text', { content: LONG_BODY });
+      const [item] = datastore.queryItems({ type: 'text', contentMode: 'full' });
+      assert.strictEqual(item.content, LONG_BODY, 'full mode should return complete body');
+    });
+
+    it('truncates text item content to 300 chars in snippet mode', () => {
+      datastore.addItem('text', { content: LONG_BODY });
+      const [item] = datastore.queryItems({ type: 'text', contentMode: 'snippet' });
+      assert.ok(item.content !== null && item.content.length <= 300,
+        'snippet mode should cap text content at 300 chars');
+      assert.strictEqual(item.content, 'x'.repeat(300));
+    });
+
+    it('preserves short text content unchanged in snippet mode', () => {
+      const SHORT = 'Short note';
+      datastore.addItem('text', { content: SHORT });
+      const [item] = datastore.queryItems({ type: 'text', contentMode: 'snippet' });
+      assert.strictEqual(item.content, SHORT, 'short content should not be modified');
+    });
+
+    it('does not truncate url item content in snippet mode', () => {
+      const URL = 'https://example.com/a-very-long-path-that-is-still-a-url';
+      datastore.addItem('url', { content: URL });
+      const [item] = datastore.queryItems({ type: 'url', contentMode: 'snippet' });
+      assert.strictEqual(item.content, URL, 'url content should be untouched in snippet mode');
+    });
+
+    it('getItem always returns full content regardless of any prior snippet query', () => {
+      const { id } = datastore.addItem('text', { content: LONG_BODY });
+      // Confirm snippet query truncates
+      const [snippet] = datastore.queryItems({ type: 'text', contentMode: 'snippet' });
+      assert.ok((snippet.content || '').length <= 300, 'precondition: snippet is truncated');
+      // getItem must return full body
+      const full = datastore.getItem(id);
+      assert.strictEqual(full!.content, LONG_BODY, 'getItem returns full content');
+    });
+  });
+
   describe('Sync options', () => {
     it('should save item with syncId', () => {
       const { id } = datastore.addItem('url', {

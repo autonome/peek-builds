@@ -3826,9 +3826,24 @@ export function queryItems(filter: ItemFilter = {}): Item[] {
 
   const limit = filter.limit ? `LIMIT ${filter.limit}` : '';
 
-  return getDb().prepare(
+  const rows = getDb().prepare(
     `SELECT * FROM items ${whereClause} ORDER BY ${orderBy} ${limit}`
   ).all(...values) as Item[];
+
+  // Snippet mode: truncate text-item bodies before sending across IPC.
+  // URL/entity/image/etc. items keep full content (it's a short URL or ID).
+  // 300 chars is enough for title extraction and embedded-URL detection on cards.
+  if (filter.contentMode === 'snippet') {
+    const SNIPPET_LEN = 300;
+    return rows.map(item => {
+      if (item.type === 'text' && item.content != null && item.content.length > SNIPPET_LEN) {
+        return { ...item, content: item.content.substring(0, SNIPPET_LEN) };
+      }
+      return item;
+    });
+  }
+
+  return rows;
 }
 
 // ==================== Item-Tag Operations ====================
