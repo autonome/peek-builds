@@ -8,9 +8,15 @@
     <link rel="stylesheet" type="text/css" href="home.css">
 
     <!-- Import map for resolving bare module specifiers -->
+    <!-- @tanstack/virtual-core is served from a build-time-patched copy at
+         peek://app/lib/virtual-core/index.js where process.env.NODE_ENV has
+         been replaced with "production" (see scripts/patch-virtual-core.js).
+         This avoids the need for a globalThis.process shim in the renderer. -->
     <script type="importmap">
     {
       "imports": {
+        "@tanstack/virtual-core": "peek://app/lib/virtual-core/index.js",
+        "uhtml": "peek://node_modules/uhtml/dist/prod/dom.js",
         "lit": "peek://node_modules/lit/index.js",
         "lit/": "peek://node_modules/lit/",
         "lit-html": "peek://node_modules/lit-html/lit-html.js",

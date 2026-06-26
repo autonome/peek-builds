@@ -712,16 +712,28 @@ const handleKeydown = (e) => {
     return;
   }
 
-  const cards = getCards();
-  if (cards.length === 0) return;
+  // In virtual mode, not all items are in the DOM — use cardsContainer's API for count
+  const isVirtualMode = viewPrefs.viewMode === 'columns';
+  const itemCount = isVirtualMode ? cardsContainer.getVirtualItemCount() : getCards().length;
+  if (itemCount === 0) return;
 
-  const cols = getGridColumns(cards);
+  // Column count: ask cardsContainer in virtual mode; compute from DOM in traditional mode
+  const cols = isVirtualMode ? cardsContainer.getColCount() : getGridColumns(getCards());
+
+  // Get the currently selected card DOM element (may be null if off-screen in virtual mode)
+  const getSelectedEl = () => {
+    if (isVirtualMode) {
+      return cardsContainer.getRenderedCards()
+        .find(c => parseInt(c.getAttribute('data-index'), 10) === state.selectedIndex) ?? null;
+    }
+    return getCards()[state.selectedIndex];
+  };
 
   switch (e.key) {
     case 'j':
     case 'ArrowDown':
       e.preventDefault();
-      if (state.selectedIndex + cols < cards.length) {
+      if (state.selectedIndex + cols < itemCount) {
         state.selectedIndex += cols;
         updateSelection();
       }
@@ -747,7 +759,7 @@ const handleKeydown = (e) => {
     case 'ArrowRight':
       if (isSearchFocused) return;
       e.preventDefault();
-      if (state.selectedIndex < cards.length - 1) {
+      if (state.selectedIndex < itemCount - 1) {
         state.selectedIndex++;
         updateSelection();
       }
@@ -760,7 +772,7 @@ const handleKeydown = (e) => {
       if (isSearchFocused) return;
       e.preventDefault();
       {
-        const selected = cards[state.selectedIndex];
+        const selected = getSelectedEl();
         if (selected) {
           const toggleBtn = selected.querySelector('.tag-action-toggle');
           if (toggleBtn) toggleBtn.click();
@@ -776,9 +788,17 @@ const handleKeydown = (e) => {
 };
 
 /**
- * Get all cards in the current view
+ * Get all cards currently in the DOM.
+ * In columns (virtual) mode returns only the rendered window subset via
+ * cardsContainer.getRenderedCards(). Use cardsContainer.getVirtualItemCount()
+ * for the total count in virtual mode.
  */
-const getCards = () => Array.from(document.querySelectorAll('.cards peek-card'));
+const getCards = () => {
+  if (viewPrefs.viewMode === 'columns') {
+    return cardsContainer.getRenderedCards();
+  }
+  return Array.from(document.querySelectorAll('.cards peek-card'));
+};
 
 /**
  * Get number of columns in the grid
@@ -795,9 +815,34 @@ const getGridColumns = (cards) => {
 };
 
 /**
- * Update visual selection on cards
+ * Update visual selection on cards.
+ * Virtual mode: look up card by data-index; if off-screen, ask cardsContainer
+ * to scroll it into view (virtualizer triggers a re-render, then the next
+ * updateSelection marks the newly-visible card selected).
+ * Traditional mode: index directly into DOM card list.
  */
 const updateSelection = () => {
+  if (viewPrefs.viewMode === 'columns') {
+    // In virtual mode, cards are identified by data-index, not array position
+    const renderedCards = cardsContainer.getRenderedCards();
+    renderedCards.forEach(card => {
+      const idx = parseInt(card.getAttribute('data-index'), 10);
+      card.selected = (idx === state.selectedIndex);
+    });
+
+    const selectedCard = renderedCards.find(
+      c => parseInt(c.getAttribute('data-index'), 10) === state.selectedIndex
+    );
+    if (selectedCard) {
+      selectedCard.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } else if (state.selectedIndex >= 0 && state.selectedIndex < cardsContainer.getVirtualItemCount()) {
+      // Card is off-screen; ask cardsContainer to scroll it into view.
+      cardsContainer.scrollToIndex(state.selectedIndex, { align: 'auto', behavior: 'auto' });
+    }
+    return;
+  }
+
+  // Traditional path
   const cards = getCards();
   cards.forEach((card, i) => {
     card.selected = (i === state.selectedIndex);
@@ -810,9 +855,16 @@ const updateSelection = () => {
 };
 
 /**
- * Activate the currently selected card
+ * Activate the currently selected card.
+ * Virtual mode: find the rendered card by data-index attribute.
  */
 const activateSelected = () => {
+  if (viewPrefs.viewMode === 'columns') {
+    const selected = cardsContainer.getRenderedCards()
+      .find(c => parseInt(c.getAttribute('data-index'), 10) === state.selectedIndex);
+    if (selected) selected.click();
+    return;
+  }
   const cards = getCards();
   const selected = cards[state.selectedIndex];
   if (selected) {
@@ -830,9 +882,8 @@ const showList = () => {
   // Clean up embedded editor before switching views
   destroyEmbeddedEditor();
 
-  cardsContainer.style.display = '';
   detailView.style.display = 'none';
-
+  // renderCards() (called via render() below) re-activates the right display path.
   render();
 };
 
@@ -1218,7 +1269,10 @@ const renderTagSidebar = () => {
 };
 
 /**
- * Render item cards
+ * Render item cards.
+ * Routes to peek-grid's virtual windowing path for the default 'columns' mode
+ * (only the visible window stays in the DOM, ~50–100 nodes for 10K+ items).
+ * Falls back to the traditional all-in-DOM path for other view modes.
  */
 const renderCards = () => {
   let items = getFilteredItems();
@@ -1231,20 +1285,56 @@ const renderCards = () => {
     });
   }
 
+  // Apply sorting
+  items = sortItems(items);
+
+  // ── Virtual path: columns view mode ────────────────────────────────────
+  // peek-grid owns the scroll container and virtual-core engine. We hand it
+  // the full item array and a renderItem callback; it manages the window.
+  if (viewPrefs.viewMode === 'columns') {
+    cardsContainer.style.display = '';
+    const tagCounts = computeTagCounts();
+    const emptyMessage = state.searchQuery
+      ? 'No items match your search.'
+      : state.activeTags.length > 0
+        ? 'No items with all selected tags.'
+        : state.activeFilter === 'entity'
+          ? 'No items with extracted entities.'
+          : 'No tagged items yet. Tag items to see them here.';
+    // setVirtualItems is async on first call (dynamic import of virtual-core +
+    // one Lit render cycle). On subsequent calls it's effectively synchronous.
+    // Schedule updateSelection after it resolves to handle both cases cleanly.
+    const result = cardsContainer.setVirtualItems(
+      items,
+      (item) => createItemCard(item, tagCounts),
+      {
+        estimateSize: 90,
+        getKey: (item) => item.id,
+        emptyMessage,
+      }
+    );
+    state.selectedIndex = Math.min(state.selectedIndex, items.length - 1);
+    Promise.resolve(result).then(() => updateSelection());
+    return;
+  }
+
+  // ── Traditional path: other view modes (list, masonry, freeform, fit) ──
+  // All items are appended to the DOM via peek-grid's slotted-children path.
+  // content-visibility:auto (peek-grid CSS) handles paint skipping off-screen.
+  cardsContainer.clearVirtualItems();
+  cardsContainer.style.display = '';
+
   if (items.length === 0) {
     const message = state.searchQuery
       ? 'No items match your search.'
       : state.activeTags.length > 0
-        ? `No items with all selected tags.`
+        ? 'No items with all selected tags.'
         : state.activeFilter === 'entity'
           ? 'No items with extracted entities.'
           : 'No tagged items yet. Tag items to see them here.';
     cardsContainer.innerHTML = `<div class="empty-state">${message}</div>`;
     return;
   }
-
-  // Apply sorting
-  items = sortItems(items);
 
   cardsContainer.innerHTML = '';
 
@@ -1538,7 +1628,8 @@ const showDetailView = async (item) => {
 
   const { tags, itemType, itemUrl, title, subtitle, faviconUrl } = getLocalItemDisplayInfo(item);
 
-  // Hide card grid, show detail view
+  // Hide card grid (peek-grid hides its virtual host when the element itself is hidden),
+  // show detail view.
   cardsContainer.style.display = 'none';
   detailView.style.display = '';
 

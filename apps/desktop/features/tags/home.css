@@ -17,7 +17,11 @@ html {
 body {
   background: var(--base00);
   color: var(--base05);
-  min-height: 100vh;
+  /* height (not min-height) + overflow:hidden bounds the flex column to the
+     viewport so descendant flex children (the virtual scroller) can be
+     height-constrained for overflow instead of growing to content height. */
+  height: 100vh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -167,6 +171,9 @@ peek-input.search-input {
   display: flex;
   flex: 1;
   overflow: hidden;
+  /* Allow this flex child to shrink below its content height so the inner
+     scroller (.virtual-cards-host) gets a bounded viewport. */
+  min-height: 0;
 }
 
 /* Tag sidebar */
@@ -251,7 +258,13 @@ peek-input.search-input {
 /* Items container */
 .items-container {
   flex: 1;
+  /* overflow-y:auto kept for NON-virtual modes (list/masonry/fit), where the
+     tall .cards grid is scrolled here. In columns/virtual mode the flex:1
+     .virtual-cards-host shrinks to fit so this never overflows and the inner
+     scroller owns scrolling. min-height:0 lets this flex child shrink below
+     content height so the inner scroller gets a bounded viewport. */
   overflow-y: auto;
+  min-height: 0;
   padding: 10px 16px;
   display: flex;
   flex-direction: column;
