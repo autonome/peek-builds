@@ -81,6 +81,21 @@ export class PeekGrid extends PeekElement {
       /* Slot styling for items */
       ::slotted(*) {
         min-width: 0; /* Prevent overflow */
+        /* Skip layout/paint for off-screen grid items. The "auto" keyword in
+           contain-intrinsic-size tells the browser to remember each item's real
+           rendered height so variable-height cards don't jumble the scrollbar
+           after the first pass. 84px is the cold-start fallback for items that
+           have never been rendered. Masonry mode overrides this below. */
+        content-visibility: auto;
+        contain-intrinsic-size: auto 84px;
+      }
+
+      /* CSS columns layout (masonry) reads ALL item heights to balance columns.
+         content-visibility:auto would make off-screen items report 84px instead
+         of their real height, causing uneven column distribution. Disable it. */
+      :host([view-mode="masonry"]) ::slotted(*) {
+        content-visibility: visible;
+        contain-intrinsic-size: none;
       }
 
       /* List view mode - single column */
