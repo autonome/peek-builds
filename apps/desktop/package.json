@@ -79,11 +79,13 @@
     "@ghostery/adblocker-electron": "^2.13.4",
     "@ipld/dag-cbor": "^10.0.1",
     "@replit/codemirror-vim": "^6.3.0",
+    "@tanstack/virtual-core": "^3.17.2",
     "archiver": "^7.0.0",
     "better-sqlite3": "^12.5.0",
     "cross-fetch": "^4.1.0",
     "electron-unhandled": "^5.0.0",
-    "lit": "^3.3.2"
+    "lit": "^3.3.2",
+    "uhtml": "^5.0.9"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.2",
