@@ -1,3 +1,5 @@
+import { createVisibilityGate } from 'peek://app/lib/visibility-gate.js';
+
 /**
  * liveQuery — keep a derived view in sync with pubsub events.
  *
@@ -22,9 +24,10 @@
  *     onUpdate: (data) => ..., // (optional) called with query result
  *     debounceMs: 150,         // coalesce bursts; default 150ms
  *     runImmediately: true,    // run once on construction; default true
+ *     doc,                     // optional: injected document for testing
  *   });
  *
- *   handle.refresh()  // manually trigger
+ *   handle.refresh()  // manually trigger (not visibility-gated)
  *   handle.destroy()  // unsubscribe and stop pending timers
  *
  * Either `query` or `onUpdate` must be supplied (or both). When only
@@ -38,6 +41,12 @@
  * Consumers must already have every topic in their manifest's
  * pubsub.topics allowlist — the `manifest-subscribe-drift` test
  * enforces this.
+ *
+ * Visibility gating: pubsub-driven refreshes (scheduleRun) are
+ * deferred when document.hidden is true. The first refresh after the
+ * tile becomes visible again drains the deferred call. The initial
+ * runImmediately load and handle.refresh() are NOT gated — they run
+ * unconditionally so newly opened tiles always populate their data.
  */
 export const liveQuery = ({
   api,
@@ -46,6 +55,7 @@ export const liveQuery = ({
   onUpdate,
   debounceMs = 150,
   runImmediately = true,
+  doc,
 } = {}) => {
   if (!api?.pubsub?.subscribe) {
     throw new Error('[liveQuery] api.pubsub.subscribe required');
@@ -72,10 +82,15 @@ export const liveQuery = ({
     }
   };
 
+  // Gate the pubsub-driven refresh path so hidden tiles don't churn.
+  // runOnce() itself (used for runImmediately and handle.refresh()) is
+  // intentionally not gated — tiles must load data on open and on demand.
+  const { gated: gatedRun, destroy: destroyGate } = createVisibilityGate(runOnce, { doc });
+
   const scheduleRun = () => {
     if (destroyed) return;
     if (timer !== null) clearTimeout(timer);
-    timer = setTimeout(() => { timer = null; runOnce(); }, debounceMs);
+    timer = setTimeout(() => { timer = null; gatedRun(); }, debounceMs);
   };
 
   for (const topic of topics) {
@@ -89,6 +104,7 @@ export const liveQuery = ({
     refresh: runOnce,
     destroy: () => {
       destroyed = true;
+      destroyGate();
       if (timer !== null) { clearTimeout(timer); timer = null; }
       for (const u of unsubs) {
         try { u(); } catch { /* swallow */ }

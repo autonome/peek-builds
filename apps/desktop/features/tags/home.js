@@ -23,6 +23,7 @@ import {
   createAffordanceElements, createActionRulesCache
 } from 'peek://app/lib/tag-action-affordances.js';
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
+import { createVisibilityGate } from 'peek://app/lib/visibility-gate.js';
 const { getCM, Vim } = CodeMirror;
 
 const api = window.app;
@@ -485,8 +486,10 @@ const sortItems = (items) => {
  * Set up all event listeners
  */
 const setupEventListeners = () => {
-  // Debounced full refresh for reactive updates (collapses rapid events like batch imports)
-  const debouncedRefresh = debounce(async () => {
+  // Debounced full refresh for reactive updates (collapses rapid events like batch imports).
+  // Visibility-gated: when the tile is hidden the refresh is deferred until it
+  // becomes visible again, so backgrounded tiles don't churn the datastore.
+  const refreshWork = async () => {
     debug && console.log('[tags] debounced refresh triggered');
     await loadData();
     if (state.currentView === VIEW_LIST) {
@@ -514,7 +517,9 @@ const setupEventListeners = () => {
         showList();
       }
     }
-  }, 150);
+  };
+  const { gated: gatedRefreshWork } = createVisibilityGate(refreshWork);
+  const debouncedRefresh = debounce(gatedRefreshWork, 150);
 
   // Subscribe to tag events for reactive updates
   api.pubsub.subscribe('tag:item-added', (msg) => {

@@ -10,6 +10,7 @@ import {
   createAffordanceElements, createActionRulesCache
 } from 'peek://app/lib/tag-action-affordances.js';
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
+import { createVisibilityGate } from 'peek://app/lib/visibility-gate.js';
 
 const api = window.app;
 
@@ -693,10 +694,15 @@ const init = async () => {
   await loadVisits();
   render(true);
 
-  const debouncedRefresh = debounce(async () => {
+  // Visibility-gated: defer the refresh when the tile is hidden so
+  // backgrounded pagestream windows don't reload visit history on every
+  // item:created / tag:item-added event. Drains once on becoming visible.
+  const pagestreamRefreshWork = async () => {
     await loadVisits();
     render();
-  }, 150);
+  };
+  const { gated: gatedPagestreamRefresh } = createVisibilityGate(pagestreamRefreshWork);
+  const debouncedRefresh = debounce(gatedPagestreamRefresh, 150);
 
   // Listen for page host window closing — trigger collapse animation
   api.pubsub.subscribe('window:closed', (msg) => {

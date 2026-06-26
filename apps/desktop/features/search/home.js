@@ -18,6 +18,7 @@ import {
 import { getItemDisplayInfo } from 'peek://app/lib/card-helpers.js';
 import { createActionRulesCache } from 'peek://app/lib/tag-action-affordances.js';
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
+import { createVisibilityGate } from 'peek://app/lib/visibility-gate.js';
 
 const api = window.app;
 
@@ -459,11 +460,15 @@ const debounce = (fn, ms) => {
 
 // ── Reactive subscriptions ──────────────────────────────────────────
 
-const debouncedRefresh = debounce(async () => {
+// Visibility-gated: pubsub-driven refreshes are deferred when the tile is
+// hidden, then drained on the first visibilitychange to visible.
+const searchRefreshWork = async () => {
   if (!state.query) return; // Nothing to refresh if no active search
   await runSearch();
   render();
-}, 150);
+};
+const { gated: gatedSearchRefresh } = createVisibilityGate(searchRefreshWork);
+const debouncedRefresh = debounce(gatedSearchRefresh, 150);
 
 api.pubsub.subscribe('sync:pull-completed', () => {
   debouncedRefresh();
