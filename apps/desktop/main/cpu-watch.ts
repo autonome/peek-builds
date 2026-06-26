@@ -16,16 +16,16 @@
  * Defaults: ON in non-headless builds. Tunable / disable via env:
  *   PEEK_CPU_WATCH=0                 disable entirely
  *   PEEK_CPU_WATCH_INTERVAL_MS=15000 sample period
- *   PEEK_CPU_WATCH_THRESHOLD=10      percent-CPU that counts as "hot"
+ *   PEEK_CPU_WATCH_THRESHOLD=5       percent-CPU that counts as "hot"
  *   PEEK_CPU_WATCH_HEARTBEAT=20      every Nth tick, log the top process even if
  *                                    cold (0 disables the heartbeat)
  *
  * Threshold calibration: app.getAppMetrics() percentCPUUsage is a real percent
  * (~100 = one full core), measured live — idle renderers sit ~0.1%, a renderer
- * at boot ~9%. The rotating editor-tile burn this whole effort chases was ~3%
- * PER (per-process) tile, so the default is set low (10%) to catch a sustained
- * single-process burn while staying ~100x above idle noise; tune down in prod
- * via PEEK_CPU_WATCH_THRESHOLD if a subtler burn needs catching.
+ * at boot ~9%. The rotating editor-tile burn was ~3% PER (per-process) tile and
+ * the first prod find (tags tile) burst at 10–15%, so the default is set low (5%)
+ * to catch a sustained single-process burn while staying ~50x above idle noise;
+ * tune via PEEK_CPU_WATCH_THRESHOLD.
  */
 
 import {
@@ -46,7 +46,7 @@ export interface CpuWatchConfig {
 const DEFAULTS: CpuWatchConfig = {
   enabled: true,
   intervalMs: 15_000,
-  thresholdPct: 10,
+  thresholdPct: 5,
   heartbeatEvery: 20,
 };
 

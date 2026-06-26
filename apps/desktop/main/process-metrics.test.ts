@@ -89,7 +89,7 @@ describe('resolveConfig', () => {
     const cfg = resolveConfig({});
     assert.equal(cfg.enabled, true);
     assert.equal(cfg.intervalMs, 15_000);
-    assert.equal(cfg.thresholdPct, 10);
+    assert.equal(cfg.thresholdPct, 5);
     assert.equal(cfg.heartbeatEvery, 20);
   });
 
@@ -110,7 +110,7 @@ describe('resolveConfig', () => {
 
     const bad = resolveConfig({ PEEK_CPU_WATCH_INTERVAL_MS: 'nope', PEEK_CPU_WATCH_THRESHOLD: '-3' });
     assert.equal(bad.intervalMs, 15_000, 'non-numeric falls back');
-    assert.equal(bad.thresholdPct, 10, 'negative falls back');
+    assert.equal(bad.thresholdPct, 5, 'negative falls back');
   });
 });
 
