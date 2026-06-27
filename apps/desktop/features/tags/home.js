@@ -141,6 +141,12 @@ const SORT_OPTIONS = [
   { value: 'type', label: 'Type' }
 ];
 
+// View modes offered in the tags toolbar. 'fit' is intentionally excluded:
+// it packs every filtered item into one no-scroll viewport, which collapses
+// to invisible sub-pixel cards once a tag set has thousands of items (the
+// "tags shows no cards" report). 'columns' is the virtualized default.
+const TAGS_VIEW_MODES = ['columns', 'list', 'masonry', 'freeform'];
+
 // DOM elements
 let searchInput;
 let cardsContainer;
@@ -403,6 +409,14 @@ const loadViewPrefs = async () => {
     const stored = localStorage.getItem('viewPrefs');
     if (stored) {
       viewPrefs = { ...viewPrefs, ...JSON.parse(stored) };
+      // Migrate a persisted view mode that tags no longer offers (e.g. 'fit',
+      // which renders invisible cards on large tag sets). Without this, a user
+      // already pinned to such a mode would stay stuck on the broken path.
+      if (!TAGS_VIEW_MODES.includes(viewPrefs.viewMode)) {
+        debug && console.log('[tags] Migrating unsupported viewMode', viewPrefs.viewMode, '-> columns');
+        viewPrefs.viewMode = 'columns';
+        saveViewPrefs();
+      }
       debug && console.log('[tags] Loaded viewPrefs:', viewPrefs);
     }
   } catch (err) {
@@ -428,6 +442,7 @@ const setupToolbar = () => {
   if (!gridToolbar) return;
 
   gridToolbar.sortOptions = SORT_OPTIONS;
+  gridToolbar.viewModes = TAGS_VIEW_MODES;
   gridToolbar.sortBy = viewPrefs.sortBy;
   gridToolbar.sortDirection = viewPrefs.sortDirection;
   gridToolbar.viewMode = viewPrefs.viewMode;

@@ -7,6 +7,7 @@
  * @element peek-grid-toolbar
  *
  * @prop {string} viewMode - 'fit' | 'columns' | 'list' | 'masonry' | 'freeform', default 'columns'
+ * @prop {Array} viewModes - Which view-mode buttons to offer; defaults to all five
  * @prop {boolean} freeformEditing - Whether freeform edit mode is active
  * @prop {string} sortBy - Current sort key
  * @prop {string} sortDirection - 'asc' | 'desc'
@@ -26,6 +27,11 @@ export class PeekGridToolbar extends PeekElement {
     sortBy: { type: String, attribute: 'sort-by' },
     sortDirection: { type: String, attribute: 'sort-direction' },
     sortOptions: { type: Array },
+    // Which view-mode buttons to offer, in render order. Defaults to all
+    // modes (backward-compatible). Consumers can narrow this — e.g. the tags
+    // feature omits 'fit' because fit packs every item into one no-scroll
+    // viewport, which collapses to invisible sub-pixel cards on large sets.
+    viewModes: { type: Array },
     freeformEditing: { type: Boolean, attribute: 'freeform-editing', reflect: true }
   };
 
@@ -182,6 +188,7 @@ export class PeekGridToolbar extends PeekElement {
     this.sortBy = '';
     this.sortDirection = 'asc';
     this.sortOptions = [];
+    this.viewModes = ['fit', 'columns', 'list', 'masonry', 'freeform'];
     this.freeformEditing = false;
   }
 
@@ -235,6 +242,7 @@ export class PeekGridToolbar extends PeekElement {
           </button>
         </div>
         <div class="toolbar-right">
+          ${this.viewModes.includes('fit') ? html`
           <button
             class="view-btn ${this.viewMode === 'fit' ? 'active' : ''}"
             title="Fit view (no scroll, all cards visible)"
@@ -249,6 +257,7 @@ export class PeekGridToolbar extends PeekElement {
               <rect x="9" y="9" width="4" height="4" rx="1" stroke="currentColor" stroke-width="1.5"/>
             </svg>
           </button>
+          ` : ''}
           <button
             class="view-btn ${this.viewMode === 'columns' ? 'active' : ''}"
             title="Grid view"

@@ -84,8 +84,7 @@
     "better-sqlite3": "^12.5.0",
     "cross-fetch": "^4.1.0",
     "electron-unhandled": "^5.0.0",
-    "lit": "^3.3.2",
-    "uhtml": "^5.0.9"
+    "lit": "^3.3.2"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.2",
