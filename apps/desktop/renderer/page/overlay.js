@@ -103,6 +103,7 @@ const MIN_HEIGHT = 150;
 // Default gutters mirror hybrid-overlay.ts; main also sends them in the handoff
 // (msg.gutters) so the two stay in sync.
 const EDGE_HIT = 6;       // thin edge resize hit-zone (page.js EDGE_HIT)
+const TRIGGER_ZONE_PX = 8; // narrow border strip that triggers reveal in maximized mode
 const PANEL_WIDTH = 280;  // page.js PANEL_WIDTH
 const PANEL_OVERLAP = PANEL_WIDTH * 0.25;          // 70
 const PANEL_OVERHANG = PANEL_WIDTH - PANEL_OVERLAP; // 210
@@ -158,7 +159,12 @@ function updateOverlayPositions() {
   triggerZone.style.left = `${left}px`;
   triggerZone.style.top = `0px`;
   triggerZone.style.width = `${w}px`;
-  triggerZone.style.height = `${navOffset}px`;
+  // In maximized mode the overlay frame == the content rect (no gutter), so the
+  // trigger zone would cover 44px of live content. Narrow it to the 8px border
+  // strip so reveal only fires when the cursor actually hits the top edge.
+  // In guttered (non-maximized) mode the trigger zone sits in the transparent
+  // gutter above the content — keep it at the full navOffset (44px) there.
+  triggerZone.style.height = `${maximized ? TRIGGER_ZONE_PX : navOffset}px`;
 
   // Drag-zone: invisible move strip in the top gutter over the content width.
   dragZone.style.left = `${left}px`;

@@ -1111,7 +1111,15 @@ export function wireHybridContentEvents(
   // works edge-to-edge including maximized; the overlay's own forwarded-move loop
   // still owns the gutter case. We only emit on band ENTER and band EXIT (not every
   // move) to avoid flooding pubsub.
-  const REVEAL_BAND = TRIGGER_ZONE_PX + NAVBAR_HEIGHT_PX; // 8 + 36 = 44 (mirrors GUTTER_TOP)
+  //
+  // Asymmetric hysteresis — enter vs. exit use different thresholds:
+  //   ENTER (reveal): cursor must be within the 8px top-border strip (dy <= TRIGGER_ZONE_PX).
+  //     The old single-band check used TRIGGER_ZONE_PX + NAVBAR_HEIGHT_PX = 44px, which popped
+  //     the chrome when the cursor merely drifted near the top of a maximized page over real content.
+  //   EXIT (reveal-out): stays revealed until the cursor leaves the full 44px band (past the
+  //     revealed navbar). This prevents a hide-flicker while the cursor hovers the visible navbar.
+  const REVEAL_ENTER_PX = TRIGGER_ZONE_PX;                    // 8 — must hit the border strip
+  const REVEAL_EXIT_PX  = TRIGGER_ZONE_PX + NAVBAR_HEIGHT_PX; // 44 — hysteresis over revealed navbar
   let leftButtonDown = false;
   let inRevealBand = false;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1140,17 +1148,20 @@ export function wireHybridContentEvents(
       }
       if (topY != null) {
         const dy = input.globalY - topY;
-        const nowInBand = dy >= 0 && dy <= REVEAL_BAND;
-        if (nowInBand && !inRevealBand) {
-          inRevealBand = true;
-          publish(getSystemAddress(), 'page-overlay:content-pointer', {
-            windowId: hostWindowId, phase: 'reveal', screenX: input.globalX, screenY: input.globalY,
-          });
-        } else if (!nowInBand && inRevealBand) {
-          inRevealBand = false;
-          publish(getSystemAddress(), 'page-overlay:content-pointer', {
-            windowId: hostWindowId, phase: 'reveal-out', screenX: input.globalX, screenY: input.globalY,
-          });
+        if (!inRevealBand) {
+          if (dy >= 0 && dy <= REVEAL_ENTER_PX) {
+            inRevealBand = true;
+            publish(getSystemAddress(), 'page-overlay:content-pointer', {
+              windowId: hostWindowId, phase: 'reveal', screenX: input.globalX, screenY: input.globalY,
+            });
+          }
+        } else {
+          if (dy < 0 || dy > REVEAL_EXIT_PX) {
+            inRevealBand = false;
+            publish(getSystemAddress(), 'page-overlay:content-pointer', {
+              windowId: hostWindowId, phase: 'reveal-out', screenX: input.globalX, screenY: input.globalY,
+            });
+          }
         }
       }
     } else if (t === 'mouseUp' && input.button === 'left') {
