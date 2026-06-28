@@ -1323,7 +1323,12 @@ const renderCards = () => {
       items,
       (item) => createItemCard(item, tagCounts),
       {
-        itemHeight: 84,
+        // Taller cards so the favicon+title / url / tag-chips rows each get a
+        // full line and don't clip — 84px jammed all three together and was
+        // the unreadable-layout complaint. 100px clears all three rows without
+        // leaving dead vertical space. Paired with the wider min-item-width
+        // (220px) + gap (16px) in home.html for fewer, roomier columns.
+        itemHeight: 100,
         getKey: (item) => item.id,
         emptyMessage,
       }
