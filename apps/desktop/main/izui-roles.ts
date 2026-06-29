@@ -402,3 +402,55 @@ export function resolveCloseTargetId(
   }
   return activeHybridWindowId;
 }
+
+/**
+ * Hybrid page-host edge/corner resize band.
+ *
+ * Round-2 resize is driven entirely from MAIN against the content WebContents'
+ * `input-event` stream (the overlay can capture a press but, never being the
+ * macOS first responder, cannot PAINT a cursor — so the cursor + the drag both
+ * live on the content/main side). This pure predicate is the shared geometry +
+ * unit-test seam: given a SCREEN point and the host window's outer bounds, return
+ * which resize direction the pointer is over, or null if it's in the interior.
+ *
+ * Geometry (mirrors the prior overlay handles): a `cornerPx` square at each
+ * corner yields the diagonal directions; a `edgePx`-thick strip along each edge
+ * (between the corner squares) yields the straight directions. `slack` widens the
+ * whole band for spatial hysteresis — pass a small enter slack when not yet in the
+ * band and a wider exit slack once engaged so boundary jitter can't oscillate the
+ * cursor. Deterministic on position, no timers.
+ */
+export const RESIZE_EDGE_PX = 8;
+export const RESIZE_CORNER_PX = 16;
+
+export type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
+export function hybridResizeDirAt(
+  gx: number,
+  gy: number,
+  bounds: { x: number; y: number; width: number; height: number },
+  edgePx: number,
+  cornerPx: number,
+  slack: number,
+): ResizeDir | null {
+  const dl = gx - bounds.x;
+  const dr = bounds.x + bounds.width - gx;
+  const dt = gy - bounds.y;
+  const db = bounds.y + bounds.height - gy;
+  // Beyond a little slack outside the frame → not a resize hover.
+  if (dl < -slack || dr < -slack || dt < -slack || db < -slack) return null;
+  const edge = edgePx + slack;
+  const corner = cornerPx + slack;
+  const cL = dl <= corner, cR = dr <= corner, cT = dt <= corner, cB = db <= corner;
+  // Corners first (a corner is within cornerPx of TWO adjacent edges → diagonal).
+  if (cT && cL) return 'nw';
+  if (cT && cR) return 'ne';
+  if (cB && cL) return 'sw';
+  if (cB && cR) return 'se';
+  // Then the straight edge strips.
+  if (dt <= edge) return 'n';
+  if (db <= edge) return 's';
+  if (dl <= edge) return 'w';
+  if (dr <= edge) return 'e';
+  return null;
+}

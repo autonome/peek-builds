@@ -91,10 +91,6 @@ const findPrevBtn = document.getElementById('find-prev');
 const findNextBtn = document.getElementById('find-next');
 const findCloseBtn = document.getElementById('find-close');
 
-// P1.4b-3 window-interaction constants — mirror page.js so resize feels identical.
-const MIN_WIDTH = 200;
-const MIN_HEIGHT = 150;
-
 // ── Canvas gutter geometry (the SPEC), mirrored from page.js + hybrid-overlay.ts.
 // The overlay window is the inner content rect EXPANDED by these gutters (main
 // does the expand via expandToOverlayFrame). The renderer lays out the chrome
@@ -102,7 +98,13 @@ const MIN_HEIGHT = 150;
 // {left: gutters.left, top: gutters.top, width: content.width, height: content.height}.
 // Default gutters mirror hybrid-overlay.ts; main also sends them in the handoff
 // (msg.gutters) so the two stay in sync.
-const EDGE_HIT = 6;       // thin edge resize hit-zone (page.js EDGE_HIT)
+//
+// NOTE (round 2): edge/corner RESIZE no longer lives in the overlay. The overlay
+// can capture a press but never paints a cursor (it is never the macOS first
+// responder), so both the resize cursor and the drag moved to main + the content
+// WC (see ipc.ts wireHybridContentEvents). The overlay keeps ONLY its chrome role
+// (navbar / reveal / panels / hold-to-drag move), and stays click-through at the
+// edges so the content stays topmost and main's injected resize cursor shows.
 const TRIGGER_ZONE_PX = 8; // narrow border strip that triggers reveal in maximized mode
 const PANEL_WIDTH = 280;  // page.js PANEL_WIDTH
 const PANEL_OVERLAP = PANEL_WIDTH * 0.25;          // 70
@@ -136,7 +138,6 @@ function contentRectInOverlay() {
 // lives in the gutter AROUND the content and the center stays transparent (the
 // content BaseWindow shows through). Ported from page.js updatePositions():
 //   - navbar / trigger-zone / drag-zone span the content width in the top gutter
-//   - resize handles ring the content rect edges (corners 24x24, edges EDGE_HIT)
 //   - left stack (page-info, extensions) in the LEFT gutter, overlapping the
 //     content edge by PANEL_OVERLAP; right stack (widgets, tags, notes, entities)
 //     in the RIGHT gutter, each with a CUMULATIVE top offset so they STACK
@@ -182,23 +183,8 @@ function updateOverlayPositions() {
     findBar.style.top = `${top + 4}px`;
   }
 
-  // Resize handles ring the content rect (page.js updatePositions geometry).
-  const setHandle = (dir, x, y, hw, hh) => {
-    const el = document.querySelector(`.resize-handle[data-dir="${dir}"]`);
-    if (!el) return;
-    el.style.left = `${x}px`;
-    el.style.top = `${y}px`;
-    if (hw != null) el.style.width = `${hw}px`;
-    if (hh != null) el.style.height = `${hh}px`;
-  };
-  setHandle('nw', left, top, 24, 24);
-  setHandle('ne', left + w - 24, top, 24, 24);
-  setHandle('sw', left, top + h - 24, 24, 24);
-  setHandle('se', left + w - 24, top + h - 24, 24, 24);
-  setHandle('n', left + 24, top, Math.max(0, w - 48), EDGE_HIT);
-  setHandle('s', left + 24, top + h - EDGE_HIT, Math.max(0, w - 48), EDGE_HIT);
-  setHandle('e', left + w - EDGE_HIT, top + 24, EDGE_HIT, Math.max(0, h - 48));
-  setHandle('w', left, top + 24, EDGE_HIT, Math.max(0, h - 48));
+  // (Round 2: no resize handles here — resize is main-driven against the content
+  // WC; see ipc.ts. The overlay no longer rings the content rect with handles.)
 
   // Panel top offset — clearance below the content top edge (page.js
   // panelTopOffset = webviewTop + 40, where webviewTop === navOffset here).
@@ -492,6 +478,13 @@ for (const sel of ['#page-info-panel', '#tags-panel', '#entities-panel', '#exten
 // navbar). main toggles overlayWin.setIgnoreMouseEvents on this signal so the
 // content window stays interactive everywhere the chrome isn't. ────────────────
 let captureOn = false;
+// Whether a MAIN-driven edge/corner resize is in progress (set by the
+// page-overlay:resize-active signal). While true the capture-loop stays fully
+// click-through so the content WC keeps receiving the move stream that drives the
+// resize AND stays topmost so main's injected resize cursor shows — the overlay
+// must not go opaque (e.g. the navbar trigger zone) mid-resize or it would starve
+// and freeze the drag.
+let resizeActive = false;
 function setCapture(want) {
   const next = !!want;
   if (next === captureOn) return;
@@ -562,35 +555,33 @@ document.addEventListener('mousemove', (e) => {
   // intentionally captured (opaque); don't let the chrome hit-test release it
   // mid-drag (would drop the pointer to the content and stall the move).
   if (typeof holdDrag !== 'undefined' && holdDrag.isDragging()) return;
-  if (pointerOverChrome(e.clientX, e.clientY)) {
+  // While a MAIN-driven resize is in progress, stay click-through no matter where
+  // the pointer roams (incl. the top trigger zone) — going opaque would starve the
+  // content WC's move stream that drives the resize. See resizeActive.
+  if (resizeActive) return;
+  const x = e.clientX, y = e.clientY;
+  if (pointerOverChrome(x, y)) {
     showNavbar();
     setCapture(true);
   } else {
     // Outside all chrome regions: release capture so clicks fall through to the
-    // content window, and schedule the navbar hide (cancelled if the pointer
-    // re-enters or is typing in the URL field — scheduleHide guards that).
+    // content window (and so the edges stay click-through → content topmost →
+    // main's injected resize cursor shows), and schedule the navbar hide.
     setCapture(false);
     scheduleHide();
   }
 });
 
-// ── P1.4b-3: window interaction (resize / move / maximize) ────────────────────
-// The overlay frames the active hybrid content window's FULL outer bounds, so it
-// owns the resize handles / drag surface / maximize affordance for that window.
-// All three drive the content BaseWindow via main: the renderer computes new
-// OUTER bounds (tracked locally in activeBounds, seeded from the handoff) and
-// publishes `page:set-bounds {windowId, bounds}`; main resolves the host baseWin
-// and applies them (ipc.ts installHybridNavbarActionRouting). Maximize/unmaximize
-// publish `page:maximize` / `page:unmaximize` and main snaps to the display work
-// area / restores the pre-maximize bounds.
+// ── P1.4b-3: window interaction (MOVE / maximize) ─────────────────────────────
+// The overlay owns the navbar-drag MOVE + the maximize affordance for the active
+// hybrid window. Both drive the content BaseWindow via main: the renderer computes
+// new OUTER bounds (tracked locally in activeBounds, seeded from the handoff +
+// kept in sync via page-overlay:bounds during a main-driven resize) and publishes
+// `page:set-bounds {windowId, bounds}` (move) / `page:maximize` / `page:unmaximize`.
 //
-// REUSED from page.js: the per-direction resize math (se/sw/ne/nw/n/s/e/w using
-// screen-coordinate deltas + MIN_WIDTH/MIN_HEIGHT clamps) and the navbar-double-
-// click maximize toggle. REIMPLEMENTED (much simpler): page.js applies a canvas
-// MARGIN via computeWindowBounds() and updates per-window-element positions; the
-// chrome-less hybrid window has no margin and no in-window chrome elements, so
-// the overlay applies the math DIRECTLY to outer bounds and lets P1.1 fillView +
-// P1.4b-1 follow handle the content/overlay reframe.
+// RESIZE is NOT here (round 2): the overlay never paints a cursor (it is never the
+// macOS first responder), so edge/corner resize — cursor AND drag — moved to main
+// against the content WC's input-event stream (ipc.ts wireHybridContentEvents).
 
 function publishBounds() {
   if (activeWindowId == null || !activeBounds) return;
@@ -605,89 +596,27 @@ function publishBounds() {
   });
 }
 
-// --- Resize handles (reuses page.js per-direction math) ---
-let resizeDir = null;
-let resizeStartX = 0;
-let resizeStartY = 0;
-let resizeStartW = 0;
-let resizeStartH = 0;
-let resizeStartBx = 0;
-let resizeStartBy = 0;
-let activeHandle = null;
-
-for (const handle of document.querySelectorAll('.resize-handle')) {
-  handle.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || activeWindowId == null || !activeBounds || maximized) return;
-    resizeDir = handle.dataset.dir;
-    resizeStartX = e.screenX;
-    resizeStartY = e.screenY;
-    resizeStartW = activeBounds.width;
-    resizeStartH = activeBounds.height;
-    resizeStartBx = activeBounds.x;
-    resizeStartBy = activeBounds.y;
-    activeHandle = handle;
-    handle.setPointerCapture(e.pointerId);
-    e.preventDefault();
-    e.stopPropagation();
-  });
-
-  handle.addEventListener('pointermove', (e) => {
-    if (activeHandle !== handle || !activeBounds) return;
-    if (e.buttons === 0) { endResize(handle, e); return; }
-    const dx = e.screenX - resizeStartX;
-    const dy = e.screenY - resizeStartY;
-    // Per-direction math copied from page.js (apps/desktop/renderer/page/page.js
-    // initResizeHandle pointermove), applied directly to OUTER bounds.
-    if (resizeDir === 'se') {
-      activeBounds.width = Math.max(MIN_WIDTH, resizeStartW + dx);
-      activeBounds.height = Math.max(MIN_HEIGHT, resizeStartH + dy);
-    } else if (resizeDir === 'sw') {
-      const nw = Math.max(MIN_WIDTH, resizeStartW - dx);
-      activeBounds.x = resizeStartBx + (resizeStartW - nw);
-      activeBounds.width = nw;
-      activeBounds.height = Math.max(MIN_HEIGHT, resizeStartH + dy);
-    } else if (resizeDir === 'ne') {
-      activeBounds.width = Math.max(MIN_WIDTH, resizeStartW + dx);
-      const nh = Math.max(MIN_HEIGHT, resizeStartH - dy);
-      activeBounds.y = resizeStartBy + (resizeStartH - nh);
-      activeBounds.height = nh;
-    } else if (resizeDir === 'nw') {
-      const nw = Math.max(MIN_WIDTH, resizeStartW - dx);
-      activeBounds.x = resizeStartBx + (resizeStartW - nw);
-      activeBounds.width = nw;
-      const nh = Math.max(MIN_HEIGHT, resizeStartH - dy);
-      activeBounds.y = resizeStartBy + (resizeStartH - nh);
-      activeBounds.height = nh;
-    } else if (resizeDir === 'e') {
-      activeBounds.width = Math.max(MIN_WIDTH, resizeStartW + dx);
-    } else if (resizeDir === 'w') {
-      const nw = Math.max(MIN_WIDTH, resizeStartW - dx);
-      activeBounds.x = resizeStartBx + (resizeStartW - nw);
-      activeBounds.width = nw;
-    } else if (resizeDir === 's') {
-      activeBounds.height = Math.max(MIN_HEIGHT, resizeStartH + dy);
-    } else if (resizeDir === 'n') {
-      const nh = Math.max(MIN_HEIGHT, resizeStartH - dy);
-      activeBounds.y = resizeStartBy + (resizeStartH - nh);
-      activeBounds.height = nh;
-    }
-    publishBounds();
-    // The content size changed → reflow the chrome around the new content rect
-    // locally (main reframes the overlay window via the content resize follow).
-    updateOverlayPositions();
-  });
-
-  const onEnd = (e) => endResize(handle, e);
-  handle.addEventListener('pointerup', onEnd);
-  handle.addEventListener('pointercancel', onEnd);
-}
-
-function endResize(handle, e) {
-  if (activeHandle !== handle) return;
-  resizeDir = null;
-  activeHandle = null;
-  try { if (e && e.pointerId != null) handle.releasePointerCapture(e.pointerId); } catch { /* not captured */ }
-}
+// --- Main-driven resize sync ---
+// Main owns edge/corner resize (it drives baseWin.setBounds off the content WC's
+// input-event stream). Two signals keep the overlay coherent with that:
+//   - page-overlay:resize-active {active} — gates the capture-loop to stay
+//     click-through for the whole drag (see resizeActive), so the overlay never
+//     goes opaque mid-resize and starves main's move stream.
+//   - page-overlay:bounds {bounds} — main pushes the host's new outer bounds each
+//     resize step so the renderer's locally-tracked activeBounds (used by the
+//     navbar-drag MOVE math + maximize stash) doesn't go stale.
+api.subscribe('page-overlay:resize-active', (msg) => {
+  if (!isActive(msg)) return;
+  resizeActive = !!msg.active;
+  // Entering a resize: make sure we're click-through so the content stays topmost
+  // (cursor shows) and keeps receiving moves.
+  if (resizeActive) setCapture(false);
+});
+api.subscribe('page-overlay:bounds', (msg) => {
+  if (!isActive(msg) || !msg.bounds) return;
+  activeBounds = { ...msg.bounds };
+  updateOverlayPositions();
+});
 
 // --- Uniform hold-to-drag window move (chrome + web content) ---
 // Peek-wide gesture (identical to the canvas <webview> page.js hold-to-drag,
@@ -876,6 +805,9 @@ api.subscribe('page-overlay:content-pointer', (msg) => {
   else if (msg.phase === 'up') holdDrag.onUp();
   else if (msg.phase === 'reveal') showNavbar();
   else if (msg.phase === 'reveal-out') scheduleHide();
+  // No 'edge' phase: edge/corner RESIZE is owned entirely by main (cursor +
+  // drag against the content WC); the overlay only learns a resize is active via
+  // page-overlay:resize-active (above) so it stays click-through during the drag.
 });
 
 // Expose the pure FSM factory + the live instance for focus-free unit coverage

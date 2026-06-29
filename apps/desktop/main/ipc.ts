@@ -7,7 +7,8 @@
 
 import { ipcMain, nativeTheme, dialog, BrowserWindow, BaseWindow, WebContentsView, app, screen, webContents, net, Menu, clipboard } from 'electron';
 import { getAllLiveWindows, getLiveWindow, windowFromWebContents } from './window-registry.js';
-import fs from 'node:fs';
+import { hybridResizeDirAt, RESIZE_EDGE_PX, RESIZE_CORNER_PX } from './izui-roles.js';
+import type { ResizeDir } from './izui-roles.js';
 import path from 'node:path';
 
 import {
@@ -824,6 +825,7 @@ function applyPlacementOnReuse(
 // below the content window's top edge reveals the overlay chrome.
 const TRIGGER_ZONE_PX = 8;
 const NAVBAR_HEIGHT_PX = 36;
+
 export function wireHybridContentEvents(
   contentWC: Electron.WebContents,
   hostWindowId: number,
@@ -1120,34 +1122,166 @@ export function wireHybridContentEvents(
   //     revealed navbar). This prevents a hide-flicker while the cursor hovers the visible navbar.
   const REVEAL_ENTER_PX = TRIGGER_ZONE_PX;                    // 8 — must hit the border strip
   const REVEAL_EXIT_PX  = TRIGGER_ZONE_PX + NAVBAR_HEIGHT_PX; // 44 — hysteresis over revealed navbar
+  // ── Round-2 main-driven edge/corner RESIZE (cursor + drag) ──────────────────
+  // The shared overlay can CAPTURE a press but never PAINTS a cursor — it is never
+  // the macOS first responder, and cursor rendering belongs to the topmost
+  // first-responder window under the pointer. So BOTH the resize cursor and the
+  // drag live HERE, on the content/main side: the content WebContents IS first
+  // responder (it renders cursors) and main owns the BaseWindow geometry.
+  //   - CURSOR: on each idle move compute the band direction (hybridResizeDirAt)
+  //     and, when it CHANGES, inject / swap / remove a whole-document
+  //     `cursor:<dir>-resize !important` rule into the content WC (insertCSS /
+  //     removeInsertedCSS). The overlay is click-through at the edge so the content
+  //     is topmost and that injected cursor shows. No persistent script (SPA
+  //     re-render / CSP can't strip it) and no preload dependency.
+  //   - DRAG: on a press inside the band START a resize FSM and drive
+  //     `baseWin.setBounds(.., false)` from the observed move stream until release.
+  //     State-change-driven, no timers.
+  // The `input-event` stream is OBSERVE-ONLY (cannot preventDefault), so the page
+  // ALSO receives the band mousedown. Accepted tradeoff: the outer ~12px is almost
+  // always page margin/scrollbar, so the duplicate down is usually harmless; we do
+  // NOT globally disable page input to suppress it.
+  const MIN_RESIZE_W = 200;
+  const MIN_RESIZE_H = 150;
+  const RESIZE_ENTER_SLACK = 0;  // engage exactly at the band
+  const RESIZE_EXIT_SLACK = 6;   // sticky once in-band (spatial hysteresis)
   let leftButtonDown = false;
   let inRevealBand = false;
+
+  // Hover-cursor reconciler. `cursorDir` is the intended direction; `appliedDir`/
+  // `appliedKey` track the CSS actually inserted. A single in-flight applier
+  // (`applyingCursor`) serializes the async insert/remove and re-checks after, so
+  // rapid direction changes can't leave a stale cursor (race-free, no key churn).
+  let cursorDir: ResizeDir | null = null;
+  let appliedDir: ResizeDir | null = null;
+  let appliedKey: string | null = null;
+  let applyingCursor = false;
+  const reconcileCursor = (): void => {
+    if (applyingCursor) return;
+    if (cursorDir === appliedDir) return;
+    applyingCursor = true;
+    void (async () => {
+      try {
+        if (appliedKey != null && !contentWC.isDestroyed()) {
+          try { await contentWC.removeInsertedCSS(appliedKey); } catch { /* gone */ }
+        }
+        appliedKey = null; appliedDir = null;
+        const want = cursorDir;
+        if (want != null && !contentWC.isDestroyed()) {
+          try {
+            appliedKey = await contentWC.insertCSS(`*{cursor:${want}-resize !important}`);
+            appliedDir = want;
+          } catch { /* gone */ }
+        }
+      } finally {
+        applyingCursor = false;
+        if (cursorDir !== appliedDir) reconcileCursor();
+      }
+    })();
+  };
+  const setHoverDir = (dir: ResizeDir | null): void => {
+    if (dir === cursorDir) return;
+    cursorDir = dir;
+    reconcileCursor();
+  };
+
+  // Active resize drag (null when not resizing): the anchor dir + press point +
+  // bounds at press, so each move recomputes from a fixed origin.
+  let activeResize:
+    | { dir: ResizeDir; sx: number; sy: number; sb: { x: number; y: number; width: number; height: number } }
+    | null = null;
+
+  const hostBounds = (): { x: number; y: number; width: number; height: number } | null => {
+    try {
+      const hw = getHybridWindow(hostWindowId);
+      if (hw && !hw.baseWin.isDestroyed()) return hw.baseWin.getBounds();
+    } catch { /* gone */ }
+    return null;
+  };
+  // A host snapped to its display work area is "maximized" — don't offer resize
+  // there (parity with the overlay maximize/restore model; pure geometry, no
+  // cross-module maximize state needed).
+  const hostMaximized = (b: { x: number; y: number; width: number; height: number }): boolean => {
+    try {
+      const wa = screen.getDisplayNearestPoint({
+        x: b.x + Math.floor(b.width / 2), y: b.y + Math.floor(b.height / 2),
+      }).workArea;
+      return b.x === wa.x && b.y === wa.y && b.width === wa.width && b.height === wa.height;
+    } catch { return false; }
+  };
+  // Resize direction at a screen point, honoring maximize + the top reveal strip:
+  // reveal keeps priority over the plain top 'n' band so the navbar gesture wins
+  // there (corners are unaffected). `engaged` selects exit vs enter slack.
+  const resizeDirAt = (
+    b: { x: number; y: number; width: number; height: number }, gx: number, gy: number, engaged: boolean,
+  ): ResizeDir | null => {
+    if (hostMaximized(b)) return null;
+    const dir = hybridResizeDirAt(
+      gx, gy, b, RESIZE_EDGE_PX, RESIZE_CORNER_PX, engaged ? RESIZE_EXIT_SLACK : RESIZE_ENTER_SLACK,
+    );
+    if (dir === 'n' && gy - b.y <= REVEAL_ENTER_PX) return null;
+    return dir;
+  };
+  const applyResize = (gx: number, gy: number): void => {
+    if (!activeResize) return;
+    const hw = getHybridWindow(hostWindowId);
+    if (!hw || hw.baseWin.isDestroyed()) { activeResize = null; return; }
+    const { dir, sx, sy, sb } = activeResize;
+    const dx = gx - sx;
+    const dy = gy - sy;
+    let { x, y, width, height } = sb;
+    if (dir.includes('e')) width = Math.max(MIN_RESIZE_W, sb.width + dx);
+    if (dir.includes('s')) height = Math.max(MIN_RESIZE_H, sb.height + dy);
+    if (dir.includes('w')) { const nw = Math.max(MIN_RESIZE_W, sb.width - dx); x = sb.x + (sb.width - nw); width = nw; }
+    if (dir.includes('n')) { const nh = Math.max(MIN_RESIZE_H, sb.height - dy); y = sb.y + (sb.height - nh); height = nh; }
+    try {
+      hw.baseWin.setBounds(
+        { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) }, false,
+      );
+    } catch { /* gone */ }
+    // Keep the overlay renderer's locally-tracked bounds in sync — it owns the
+    // navbar-drag MOVE math + maximize stash, and main (not the renderer) drives
+    // resize now, so without this its activeBounds would go stale.
+    try {
+      publish(getSystemAddress(), 'page-overlay:bounds', { windowId: hostWindowId, bounds: hw.baseWin.getBounds() });
+    } catch { /* gone */ }
+  };
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   contentWC.on('input-event', (_event: unknown, input: any) => {
     const t = input && input.type;
     if (t === 'mouseDown' && input.button === 'left') {
+      const b = hostBounds();
+      const dir = b ? resizeDirAt(b, input.globalX, input.globalY, false) : null;
+      if (b && dir) {
+        // Press inside the band → START a main-driven resize. Tell the overlay to
+        // stay click-through for the whole drag (so the content WC keeps receiving
+        // the move stream that drives the resize AND stays topmost so the cursor
+        // keeps showing). Do NOT forward this press as a hold-to-drag 'down'.
+        activeResize = { dir, sx: input.globalX, sy: input.globalY, sb: b };
+        setHoverDir(dir);
+        publish(getSystemAddress(), 'page-overlay:resize-active', { windowId: hostWindowId, active: true });
+        return;
+      }
       leftButtonDown = true;
       publish(getSystemAddress(), 'page-overlay:content-pointer', {
         windowId: hostWindowId, phase: 'down', screenX: input.globalX, screenY: input.globalY,
       });
+    } else if (t === 'mouseMove' && activeResize) {
+      applyResize(input.globalX, input.globalY);
     } else if (t === 'mouseMove' && leftButtonDown) {
       publish(getSystemAddress(), 'page-overlay:content-pointer', {
         windowId: hostWindowId, phase: 'move', screenX: input.globalX, screenY: input.globalY,
       });
     } else if (t === 'mouseMove') {
-      // Idle (no-button) move → top-border reveal. Compute the pointer's offset
-      // below the host window's top edge (screen coords) and reveal/hide on the
-      // band-cross transitions only. Guarded: a torn-down host or missing geometry
-      // simply skips the reveal (never throws inside the input stream).
-      let topY: number | null = null;
-      try {
-        const hw = getHybridWindow(hostWindowId);
-        if (hw && !hw.baseWin.isDestroyed()) topY = hw.baseWin.getBounds().y;
-      } catch {
-        /* baseWin gone — skip reveal */
-      }
-      if (topY != null) {
-        const dy = input.globalY - topY;
+      // Idle (no-button) move → top-border reveal AND edge/corner resize cursor.
+      // Both read the host's screen-space bounds; reveal emits only on band-cross,
+      // the cursor swaps only on direction-change. Guarded: a torn-down host or
+      // missing geometry simply skips (never throws inside the input stream).
+      const bounds = hostBounds();
+      if (bounds != null) {
+        // Top-border reveal (peek 363e7cff) — offset below the host top edge.
+        const dy = input.globalY - bounds.y;
         if (!inRevealBand) {
           if (dy >= 0 && dy <= REVEAL_ENTER_PX) {
             inRevealBand = true;
@@ -1163,8 +1297,29 @@ export function wireHybridContentEvents(
             });
           }
         }
+        // Edge/corner resize cursor — engage exactly at the band, hold with exit
+        // slack once shown (spatial hysteresis on the cursor itself). Gate on the
+        // content WC being the macOS FIRST RESPONDER: only the first-responder
+        // window reliably PAINTS the injected cursor, so injecting into a
+        // background/transitional host churns insertCSS/removeInsertedCSS and
+        // flashes the whole page (the original dodgy-cursor symptom — observed in a
+        // focused=false trace). Deterministic gate on existing focus state (no
+        // timer): when unfocused, clear the hover dir so the host shows no resize
+        // cursor until it's focused, rather than flickering. The drag path is
+        // unaffected — a press focuses the host and sets its cursor directly.
+        let contentFocused = false;
+        try { contentFocused = contentWC.isFocused(); } catch { contentFocused = false; }
+        setHoverDir(contentFocused ? resizeDirAt(bounds, input.globalX, input.globalY, cursorDir !== null) : null);
       }
     } else if (t === 'mouseUp' && input.button === 'left') {
+      if (activeResize) {
+        activeResize = null;
+        publish(getSystemAddress(), 'page-overlay:resize-active', { windowId: hostWindowId, active: false });
+        // Recompute the hover cursor at the release point (persist if still in band).
+        const b = hostBounds();
+        setHoverDir(b ? resizeDirAt(b, input.globalX, input.globalY, false) : null);
+        return;
+      }
       if (!leftButtonDown) return;
       leftButtonDown = false;
       publish(getSystemAddress(), 'page-overlay:content-pointer', {

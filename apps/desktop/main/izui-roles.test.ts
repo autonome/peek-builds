@@ -19,6 +19,9 @@ import {
   shouldActivateFocusedOnRestore,
   resolveCloseTargetId,
   windowSelfClosesOnBlur,
+  hybridResizeDirAt,
+  RESIZE_EDGE_PX,
+  RESIZE_CORNER_PX,
   ALWAYS_CLOSEABLE_ESC_ROLES,
   TRANSIENT_ROLES,
 } from './izui-roles.js';
@@ -426,5 +429,55 @@ describe('spacesPolicyForRole', () => {
   it("returns 'none' on win32 for any role", () => {
     assert.strictEqual(spacesPolicyForRole('palette', 'win32'), 'none');
     assert.strictEqual(spacesPolicyForRole('workspace', 'win32'), 'none');
+  });
+});
+
+describe('hybridResizeDirAt (round-2 main-driven resize band geometry)', () => {
+  // 200x200 host at screen (400,300). Edges x∈{400,600}, y∈{300,500}.
+  const b = { x: 400, y: 300, width: 200, height: 200 };
+  const E = RESIZE_EDGE_PX;   // 8
+  const C = RESIZE_CORNER_PX; // 16
+
+  it('is null dead-center', () => {
+    assert.strictEqual(hybridResizeDirAt(500, 400, b, E, C, 0), null);
+  });
+
+  it('returns the straight direction on each edge mid-span', () => {
+    assert.strictEqual(hybridResizeDirAt(405, 400, b, E, C, 0), 'w'); // dl=5
+    assert.strictEqual(hybridResizeDirAt(595, 400, b, E, C, 0), 'e'); // dr=5
+    assert.strictEqual(hybridResizeDirAt(500, 305, b, E, C, 0), 'n'); // dt=5
+    assert.strictEqual(hybridResizeDirAt(500, 495, b, E, C, 0), 's'); // db=5
+  });
+
+  it('returns the diagonal direction in each corner square', () => {
+    assert.strictEqual(hybridResizeDirAt(410, 310, b, E, C, 0), 'nw'); // dl=10,dt=10
+    assert.strictEqual(hybridResizeDirAt(590, 310, b, E, C, 0), 'ne');
+    assert.strictEqual(hybridResizeDirAt(410, 490, b, E, C, 0), 'sw');
+    assert.strictEqual(hybridResizeDirAt(590, 490, b, E, C, 0), 'se');
+  });
+
+  it('corner square (16px) wins over the edge strip near a corner', () => {
+    // 6px below the top edge (within the 'n' strip) but only 10px from the left →
+    // inside the nw corner square (both <= 16), so the diagonal wins over 'n'.
+    assert.strictEqual(hybridResizeDirAt(410, 306, b, E, C, 0), 'nw');
+  });
+
+  it('is null just past the edge strip mid-span (15px in, no corner)', () => {
+    assert.strictEqual(hybridResizeDirAt(415, 400, b, E, C, 0), null); // dl=15 > 12
+  });
+
+  it('enter vs exit slack: a 13px-in mid-left point is out at enter (0), in (w) at exit (6)', () => {
+    assert.strictEqual(hybridResizeDirAt(413, 400, b, E, C, 0), null); // dl=13 > 12+0
+    assert.strictEqual(hybridResizeDirAt(413, 400, b, E, C, 6), 'w');  // dl=13 <= 12+6
+  });
+
+  it('exit slack is sticky just outside the frame', () => {
+    assert.strictEqual(hybridResizeDirAt(396, 400, b, E, C, 6), 'w'); // 4px left of frame
+    assert.strictEqual(hybridResizeDirAt(396, 400, b, E, C, 0), null);
+  });
+
+  it('is null far outside the frame regardless of slack', () => {
+    assert.strictEqual(hybridResizeDirAt(300, 400, b, E, C, 6), null);
+    assert.strictEqual(hybridResizeDirAt(700, 400, b, E, C, 6), null);
   });
 });

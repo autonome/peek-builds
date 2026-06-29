@@ -66,29 +66,10 @@
       pointer-events: auto;
     }
 
-    /* P1.4b-3: resize handles. The overlay frames the content rect EXPANDED by
-     * the canvas gutters, so the handles sit at the INNER content rect's
-     * edges/corners (the same positions page.js's non-maximized
-     * `updatePositions` uses around the inset webview). Position is set by JS
-     * (updateOverlayPositions) relative to the content rect. They are
-     * .interactive so the click-capture IPC turns the overlay opaque to the
-     * pointer while a drag is in progress. EDGE_HIT=6 matches page.js. */
-    .resize-handle {
-      position: absolute;
-      width: 24px;
-      height: 24px;
-      z-index: 10;
-      pointer-events: auto;
-      touch-action: none;
-    }
-    .resize-handle[data-dir="se"] { cursor: se-resize; }
-    .resize-handle[data-dir="sw"] { cursor: sw-resize; }
-    .resize-handle[data-dir="ne"] { cursor: ne-resize; }
-    .resize-handle[data-dir="nw"] { cursor: nw-resize; }
-    .resize-handle[data-dir="n"]  { cursor: n-resize; }
-    .resize-handle[data-dir="s"]  { cursor: s-resize; }
-    .resize-handle[data-dir="e"]  { cursor: e-resize; }
-    .resize-handle[data-dir="w"]  { cursor: w-resize; }
+    /* Round 2: no resize handles. Edge/corner resize (cursor + drag) is driven by
+     * main against the content WebContents — the overlay can capture a press but
+     * never paints a cursor (it is never the macOS first responder). See
+     * ipc.ts wireHybridContentEvents. */
 
     /* Drag-move surface: an invisible strip behind the navbar (in the top gutter,
      * over the content width). Dragging it moves the content window (mirrors
@@ -811,7 +792,6 @@
     /* When there is no active window, hide everything (belt-and-suspenders on
      * top of main-side overlayWin.hide()). */
     body.no-active .trigger-zone,
-    body.no-active .resize-handle,
     body.no-active .drag-zone,
     body.no-active .find-bar,
     body.no-active .page-info-panel,
@@ -827,17 +807,10 @@
 </head>
 <body class="no-active" data-no-drag>
   <div class="trigger-zone interactive" id="trigger-zone"></div>
-  <!-- P1.4b-3: window-interaction chrome. Handles + drag-zone are .interactive so
-       the click-capture path turns the overlay opaque to the pointer over them. -->
+  <!-- P1.4b-3: window-move chrome. The drag-zone is .interactive so the
+       click-capture path turns the overlay opaque to the pointer over it.
+       (Resize handles are gone — edge/corner resize is main-driven; see ipc.ts.) -->
   <div class="drag-zone interactive" id="drag-zone"></div>
-  <div class="resize-handle interactive" data-dir="se"></div>
-  <div class="resize-handle interactive" data-dir="sw"></div>
-  <div class="resize-handle interactive" data-dir="ne"></div>
-  <div class="resize-handle interactive" data-dir="nw"></div>
-  <div class="resize-handle interactive" data-dir="n"></div>
-  <div class="resize-handle interactive" data-dir="s"></div>
-  <div class="resize-handle interactive" data-dir="e"></div>
-  <div class="resize-handle interactive" data-dir="w"></div>
   <!-- P1.4b-4: find-in-page bar (mirrors the canvas page.js find UI). -->
   <div class="find-bar interactive" id="find-bar">
     <input type="text" id="find-input" placeholder="Find in page" spellcheck="false" autocomplete="off">
