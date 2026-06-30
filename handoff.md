@@ -1,24 +1,30 @@
-# Handoff — `tag` command wrong-page fix: follow-ups (one left)
+# Handoff — `tag` command wrong-page fix: COMPLETE (all follow-ups closed)
 
 ## Goal
 The `tag <name>` command in the Peek desktop app (Electron, `apps/desktop/`) was
 tagging the **wrong page** under the hybrid page-host: it tagged whichever window
 sorted last by id instead of the page the user was viewing. The core fix shipped
-(`9039383e`). This session closed two cleanup/test follow-ups. **One follow-up
-remains: live end-to-end confirmation in a real GUI session.**
+(`9039383e`). All follow-ups are now closed, including the live GUI confirmation.
 
-## Current state
-- **Core fix — DONE, shipped** (`9039383e`, before this session). Root cause +
-  fix recap below under "Decisions & gotchas".
+## Current state — ALL DONE
+- **Core fix — DONE, shipped** (`9039383e`). Root cause + fix recap below under
+  "Decisions & gotchas".
 - **Follow-up 2 — DONE, committed** (`01923416`): removed the dead canvas-era
   fallback in `getActiveWindow()`.
 - **Follow-up 3 — DONE, committed** (`ef1b857d`): rewrote the stale
   `tag-command.spec.ts` into a real command-path / window-targeting test.
-- **Handoff doc commit** (`31dde5c6`).
-- All code + this handoff are committed; once this handoff commit lands the
-  working copy is clean (empty `@`) — run `jj status` to confirm. Nothing pushed
-  — pushing requires explicit user ask (`scripts/push-main.sh --yes`), do NOT
-  push unprompted.
+- **Follow-up 1 (live GUI verification) — DONE, confirmed 2026-06-30.** Ran the
+  dev app visibly (dev profile, restored session held 8 real hybrid web-page
+  hosts, ids 3–10 — exactly the multi-hybrid scenario the bug mis-targeted). The
+  exact fixed function `api.window.getFocusedVisibleWindowId()` returned a LIVE
+  focused id (not null, not the highest-id fallback) when probed via
+  `peek-cli debug-eval` against the background window. The user then visually
+  confirmed in the GUI that `tag` lands on the focused page. **No code change —
+  verification only.** Nothing left to do.
+- **Handoff doc commits** (`31dde5c6`, `456eb187`, + this closeout).
+- All code + this handoff are committed; working copy clean (`jj status`).
+  Nothing pushed — pushing requires explicit user ask
+  (`scripts/push-main.sh --yes`), do NOT push unprompted.
 - **Full gate green** except one unrelated load flake (details under "How to
   verify"). The flake is NOT from these changes.
 
@@ -30,27 +36,17 @@ ef1b857d  test(tags): rewrite tag-command spec to pin window targeting
 9039383e  fix(desktop): tag command targets the focused hybrid page, not the highest-id window
 ```
 
-## Next steps (in order)
-1. **Live, NON-headless verification of the core fix (the only open work).**
-   Run the dev app and confirm by hand: open a web page (open any http/https URL
-   — under the default config it loads in the hybrid page-host), open the command
-   palette (default hotkey is the app's main accelerator — if unsure, check the
-   peeks/slides/cmd hotkeys in `apps/desktop/CLAUDE.md` or just trigger it from
-   the app UI), type `tag foo`, run it, and verify the tag `foo` appears in that
-   page's page-host tags widget (i.e. the page you were looking at gets tagged,
-   not another window). Why this can't be automated: macOS-headless fires
-   no focus events for a hybrid page-host (a `BaseWindow`), so the real
-   focus→tag path is unobservable in tests — only the pure predicate and a
-   BrowserWindow-focus integration test cover it (see "How to verify"). Launch
-   with the peek-bg-run skill's headless+detached recipe to DRIVE it, but the
-   actual *visual* confirmation of the tags widget needs a visible window — ask
-   the user before surfacing a focus-stealing window, or have the user do the
-   click. After confirming, mark follow-up 1 done (and optionally record it on
-   the Peek task for `9039383e`).
-2. If verification fails, the suspect is the resolver chain — start at
-   `tile-ipc.ts:3531` (the IPC handler) and `izui-roles.ts:438`
-   (`resolveFocusedVisibleWindowId`), and get a live `fs-diag` trace per the
-   "LESSON" in `apps/desktop/CLAUDE.md` rather than editing blind.
+## Next steps — NONE (work complete)
+No remaining work on the `tag` wrong-page fix. The four items above (core fix +
+three follow-ups) are all done and committed; the live GUI confirmation closed
+the last one on 2026-06-30. This doc is now historical.
+
+If the wrong-page bug ever RECURS, the suspect is the resolver chain — start at
+`apps/desktop/main/tile-ipc.ts:3531` (the `tile:window:get-focused-visible-id`
+IPC handler) and `apps/desktop/main/izui-roles.ts:438`
+(`resolveFocusedVisibleWindowId`), and get a live `fs-diag` trace per the
+"LESSON" in `apps/desktop/CLAUDE.md` (headless can't observe the macOS
+first-responder interaction) rather than editing blind.
 
 ## Key files & paths
 
