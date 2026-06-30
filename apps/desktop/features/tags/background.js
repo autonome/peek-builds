@@ -48,41 +48,32 @@ async function listTags() {
 // ============================================================================
 
 /**
- * Get the most recently focused non-internal window.
+ * Get the window the user is acting on for tag/untag.
  *
- * Primary: the tracker (`getFocusedVisibleWindowId()`) — survives cmd panel
- * focus changes and matches OS-level user intent.
+ * The id comes from `getFocusedVisibleWindowId()`, whose main-side resolver
+ * (`resolveFocusedVisibleWindowId` in izui-roles.ts) already understands the
+ * hybrid era: it accepts a tracked hybrid page-host id (a BaseWindow, invisible
+ * to `getFocusedWindow()`), falls back through the active hybrid host — the same
+ * signal the page-host chrome overlay frames over — and then the first visible
+ * focusable window. So it returns the page the user is actually looking at, and
+ * the same hybrid host is enumerated by `api.window.list()` below.
  *
- * Fallback (tracker is null, common under headless where focus events may
- * not reliably fire): prefer a canvas page window
- * (`peek://app/page/index.html?url=...`) because that's the content surface
- * tagging typically targets, and take the newest by id. This keeps the
- * heuristic deterministic: if the user just opened a page, that's the one
- * we tag. Falls back to the last listed window only if no page window
- * exists at all.
+ * If it can't resolve a window, return null (the command reports "No active
+ * window") rather than guessing. The old "newest page-canvas window, else
+ * highest window id" last resort is GONE: pages report real URLs under the
+ * hybrid default so the canvas-URL filter never matched, and the highest-id
+ * guess is exactly what silently tagged the WRONG page when the resolver
+ * returned null (the bug the izui-roles fix closed). Failing loud beats
+ * masking a future resolver regression.
  */
-const isPageCanvasUrl = (url) =>
-  typeof url === 'string' && url.startsWith('peek://app/page/index.html');
-
 const getActiveWindow = async () => {
   const result = await api.window.list({ includeInternal: false });
   if (!result.success || !result.windows.length) {
     return null;
   }
-  // Use the last focused visible window (survives cmd palette focus changes)
   const focusedId = await api.window.getFocusedVisibleWindowId();
-  if (focusedId) {
-    const focused = result.windows.find(w => w.id === focusedId);
-    if (focused) return focused;
-  }
-  // Fallback: newest page-canvas window, deterministic and user-intent
-  // aligned. See smoke.spec.ts:2015 flake analysis.
-  const pageWindows = result.windows.filter(w => isPageCanvasUrl(w.url));
-  if (pageWindows.length) {
-    return pageWindows.reduce((a, b) => (a.id > b.id ? a : b));
-  }
-  // No page windows at all — fall back to the newest window by id.
-  return result.windows.reduce((a, b) => (a.id > b.id ? a : b));
+  if (!focusedId) return null;
+  return result.windows.find(w => w.id === focusedId) ?? null;
 };
 
 /**
