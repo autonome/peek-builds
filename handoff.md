@@ -1,75 +1,204 @@
-# Handoff — `tag` command fix follow-ups
+# Handoff — `tag` command wrong-page fix: follow-ups (one left)
 
-(Replaces the prior handoff for the hybrid page-host resize task, which shipped to
-`main` as `79857985` and is recorded there + in its Peek task — no open work remained.)
+## Goal
+The `tag <name>` command in the Peek desktop app (Electron, `apps/desktop/`) was
+tagging the **wrong page** under the hybrid page-host: it tagged whichever window
+sorted last by id instead of the page the user was viewing. The core fix shipped
+(`9039383e`). This session closed two cleanup/test follow-ups. **One follow-up
+remains: live end-to-end confirmation in a real GUI session.**
 
-## Status: fix shipped; follow-ups 2 & 3 done, follow-up 1 (live verify) still open
+## Current state
+- **Core fix — DONE, shipped** (`9039383e`, before this session). Root cause +
+  fix recap below under "Decisions & gotchas".
+- **Follow-up 2 — DONE, committed** (`01923416`): removed the dead canvas-era
+  fallback in `getActiveWindow()`.
+- **Follow-up 3 — DONE, committed** (`ef1b857d`): rewrote the stale
+  `tag-command.spec.ts` into a real command-path / window-targeting test.
+- **Handoff doc commit** (`31dde5c6`).
+- All code + this handoff are committed; once this handoff commit lands the
+  working copy is clean (empty `@`) — run `jj status` to confirm. Nothing pushed
+  — pushing requires explicit user ask (`scripts/push-main.sh --yes`), do NOT
+  push unprompted.
+- **Full gate green** except one unrelated load flake (details under "How to
+  verify"). The flake is NOT from these changes.
 
-Update (this session): follow-ups 2 and 3 are committed on top of the fix.
-- **Follow-up 2 DONE** — `refactor(tags): drop dead canvas-era fallback in getActiveWindow`
-  (`apps/desktop/features/tags/background.js`). Removed the `isPageCanvasUrl`
-  filter + highest-window-id last resort; `getActiveWindow()` now returns the
-  resolver's answer or `null` (command reports "No active window") so a future
-  resolver regression fails loud instead of silently tagging the wrong page.
-- **Follow-up 3 DONE** — `test(tags): rewrite tag-command spec to pin window targeting`
-  (`apps/desktop/tests/desktop/tag-command.spec.ts`). Replaced the stale
-  addAddress/tagAddress datastore-adapter tests with two real `cmd:execute:tag`
-  tests that assert the tag lands on the FOCUSED window's URL and leaves a
-  co-open window untouched (write side + no-arg read side). Headless can only
-  reliably drive/observe focus for the newest-focused BrowserWindow, so the
-  focused window is the newest-opened one; the hybrid-host + highest-id case
-  (the actual bug, unobservable headless) stays covered by the pure
-  `resolveFocusedVisibleWindowId` units in `izui-roles.test.ts`.
+Commit stack on top of `main@tangled` (newest first):
+```
+31dde5c6  docs(handoff): record tag-command follow-ups 2 & 3 done, gate green
+ef1b857d  test(tags): rewrite tag-command spec to pin window targeting
+01923416  refactor(tags): drop dead canvas-era fallback in getActiveWindow
+9039383e  fix(desktop): tag command targets the focused hybrid page, not the highest-id window
+```
 
-Both pass via `yarn test:grep "Tag Command"`. Full `yarn test:desktop:electron`
-gate re-run: main-unit 2214/0, node-unit 654/0, desktop 364 pass / 40 serial /
-57 components / 91 editor — all green EXCEPT one unrelated load flake
-(`hybrid-overlay.spec.ts:1969` "hold-to-drag: navbar background HOLD …", a
-timing-sensitive synthetic-input drag gesture), which **passes in isolation**
-(`yarn test:grep "hold-to-drag: navbar background HOLD"`). Not caused by these
-changes (they touch only the tags feature). Treat the gate as green.
+## Next steps (in order)
+1. **Live, NON-headless verification of the core fix (the only open work).**
+   Run the dev app and confirm by hand: open a web page (open any http/https URL
+   — under the default config it loads in the hybrid page-host), open the command
+   palette (default hotkey is the app's main accelerator — if unsure, check the
+   peeks/slides/cmd hotkeys in `apps/desktop/CLAUDE.md` or just trigger it from
+   the app UI), type `tag foo`, run it, and verify the tag `foo` appears in that
+   page's page-host tags widget (i.e. the page you were looking at gets tagged,
+   not another window). Why this can't be automated: macOS-headless fires
+   no focus events for a hybrid page-host (a `BaseWindow`), so the real
+   focus→tag path is unobservable in tests — only the pure predicate and a
+   BrowserWindow-focus integration test cover it (see "How to verify"). Launch
+   with the peek-bg-run skill's headless+detached recipe to DRIVE it, but the
+   actual *visual* confirmation of the tags widget needs a visible window — ask
+   the user before surfacing a focus-stealing window, or have the user do the
+   click. After confirming, mark follow-up 1 done (and optionally record it on
+   the Peek task for `9039383e`).
+2. If verification fails, the suspect is the resolver chain — start at
+   `tile-ipc.ts:3531` (the IPC handler) and `izui-roles.ts:438`
+   (`resolveFocusedVisibleWindowId`), and get a live `fs-diag` trace per the
+   "LESSON" in `apps/desktop/CLAUDE.md` rather than editing blind.
 
-**Only follow-up 1 remains (needs a real, non-headless `yarn start` session).**
+## Key files & paths
 
----
+- `apps/desktop/features/tags/background.js:69 getActiveWindow()` — resolves the
+  window the `tag`/`untag` command acts on. **Follow-up 2 simplified this:** it
+  now returns the focused-visible resolver's window or `null`; the old
+  `isPageCanvasUrl` filter + highest-window-id fallback are GONE. Invariant the
+  reader must not break: do NOT reintroduce any "pick the newest/highest-id
+  window" fallback here — that silent guess is exactly what tagged the wrong
+  page. Failing loud (`null` → command returns "No active window") is intended.
+- `apps/desktop/features/tags/background.js:184 executeTag(ctx)` — the `tag`
+  command handler. Calls `getActiveWindow()` → reads `.url` → `findItemByUrl`
+  (`:82`, normalizes via `api.datastore.findUrlItem`) → creates the item if
+  missing → links tags. Returns `{ success, added, existing }` (add mode) or
+  `{ success, removed }` (`-r` remove mode) or `{ success, tags }` (no args).
+- `apps/desktop/main/izui-roles.ts:438 resolveFocusedVisibleWindowId(...)` — PURE
+  (no Electron) resolver. This is where the actual bug fix lives. Resolution
+  order: tracked id (if live BrowserWindow OR live hybrid host) → focused
+  BrowserWindow → active hybrid host → first visible+focusable live window →
+  null. The hybrid-host branch is the fix: a tracked hybrid id (a `BaseWindow`,
+  invisible to `getLiveWindow`/`getFocusedWindow`) is now accepted instead of
+  discarded. Keep this Electron-free (unit-tested under `ELECTRON_RUN_AS_NODE`).
+- `apps/desktop/main/tile-ipc.ts:3531` — the `tile:window:get-focused-visible-id`
+  IPC handler that `api.window.getFocusedVisibleWindowId()` calls. Gathers the
+  six inputs and delegates to `resolveFocusedVisibleWindowId`. The bug was here:
+  it previously validated the tracked id only via `getLiveWindow()` (blind to
+  hybrid hosts) and returned null.
+- `apps/desktop/main/tile-ipc.ts:2868` — the `tile:window:list` handler's hybrid
+  loop. Confirms hybrid page-hosts ARE enumerated by `api.window.list()`, so once
+  `getActiveWindow()` has the focused id it can find the window object. Don't
+  assume hybrid hosts are absent from the list.
+- `apps/desktop/main/izui-roles.test.ts:396` — `describe('resolveFocusedVisibleWindowId …')`,
+  8 pure unit cases incl. the hybrid-tracked-id-wins case and the null case. This
+  is the DETERMINISTIC home for the fix logic (real hybrid focus is unobservable
+  headless). Runs in the main-process unit runner.
+- `apps/desktop/tests/desktop/tag-command.spec.ts` — REWRITTEN this session. Two
+  tests: `:114` "tags the FOCUSED window URL and leaves a co-open window
+  untouched" (write side), `:135` "no-arg `tag` reflects the FOCUSED window tags"
+  (read side). See "Decisions & gotchas" for why it focuses the *newest* window.
+- `apps/desktop/tests/desktop/command-execution.spec.ts` — pre-existing; drives
+  `cmd:execute:tag` but its assertions are deliberately TAG-CENTRIC
+  ("getActiveWindow may return a different window") — it never pins which
+  window's URL got tagged. That gap is what the rewritten spec fills.
+- `apps/desktop/tests/desktop/window-targeting.spec.ts:29` — proves the focus
+  tracker is drivable/observable headless via `api.window.focus(id)` + ~200ms
+  settle, for the newest-focused BrowserWindow. The rewritten spec models this.
+- `apps/desktop/CLAUDE.md` — the "Hybrid page-host" section + the load-bearing
+  "LESSON" about headless being unable to observe macOS first-responder /
+  `globalShortcut` interactions. Read before touching the focus path.
 
-### (Original) Status: fix committed, gate green; 3 follow-ups open
+## Load-bearing snippets (current ground truth)
 
-Fixed the `tag` command tagging the **wrong page** under the hybrid page-host (the
-page-host tags widget never updated). Committed as `9039383e`
-("fix(desktop): tag command targets the focused hybrid page, not the highest-id window").
-Full `yarn test:desktop:electron` gate green (0 failures across all 6 runners).
+`getActiveWindow()` after follow-up 2 — `apps/desktop/features/tags/background.js:69`:
+```js
+const getActiveWindow = async () => {
+  const result = await api.window.list({ includeInternal: false });
+  if (!result.success || !result.windows.length) {
+    return null;
+  }
+  const focusedId = await api.window.getFocusedVisibleWindowId();
+  if (!focusedId) return null;
+  return result.windows.find(w => w.id === focusedId) ?? null;
+};
+```
 
-### Root cause + fix (for context)
-- `tile:window:get-focused-visible-id` (`apps/desktop/main/tile-ipc.ts`) validated the
-  tracked id only via `getLiveWindow()`, which is **blind to hybrid BaseWindows**, so it
-  discarded the (correct) focused-hybrid id and returned null. `getActiveWindow()` in
-  `apps/desktop/features/tags/background.js` then fell to its canvas-era fallback and
-  tagged the **highest-id window**. The viewed page's overlay never saw a matching
-  `tag:item-added`.
-- Fix: pure `resolveFocusedVisibleWindowId()` in `apps/desktop/main/izui-roles.ts`
-  (accepts a tracked hybrid id + falls back to `getActiveHybridWindowId()` — the same
-  signal the page-host overlay frames over); handler delegates to it. 8 unit tests in
-  `izui-roles.test.ts`.
+Pure resolver (the fix) — `apps/desktop/main/izui-roles.ts:438` (verbatim):
+```ts
+export function resolveFocusedVisibleWindowId(
+  trackedId: number | null,
+  trackedIsLiveWindow: boolean,
+  trackedIsHybridWindow: boolean,
+  focusedBrowserWindowId: number | null,
+  activeHybridWindowId: number | null,
+  firstVisibleFocusableLiveId: number | null,
+): number | null {
+  if (typeof trackedId === 'number' && trackedId > 0) {
+    if (trackedIsLiveWindow || trackedIsHybridWindow) return trackedId;
+  }
+  if (focusedBrowserWindowId != null) return focusedBrowserWindowId;
+  if (activeHybridWindowId != null) return activeHybridWindowId;
+  if (firstVisibleFocusableLiveId != null) return firstVisibleFocusableLiveId;
+  return null;
+}
+```
 
-## Follow-ups
+How a test drives `cmd:execute:tag` and reads the result (pattern used by both
+`tag-command.spec.ts` and `command-execution.spec.ts`):
+```js
+const resultTopic = `cmd:execute:tag:result:${unique}`;
+api.subscribe(resultTopic, (r) => resolve(r));
+api.publish('cmd:execute:tag', { search: '#foo', params: [], expectResult: true, resultTopic });
+```
 
-1. **Confirm end-to-end in a real `yarn start` session (NOT headless).** macOS-headless
-   fires no focus events, so the focus path is unobservable there (the codebase's
-   documented "LESSON") — the fix is verified only by the pure-predicate unit test, not a
-   live end-to-end run. Repro to confirm: open a web page in the page-host, run `tag foo`
-   from the cmd palette, verify the tag appears in the page-host tags widget.
+## Decisions & gotchas
+- **Root cause of the original bug:** `tile:window:get-focused-visible-id`
+  validated the tracked id only via `getLiveWindow()` (blind to hybrid
+  `BaseWindow` page-hosts), so it discarded the correct focused-hybrid id and
+  returned null. `getActiveWindow()` then hit its now-removed highest-window-id
+  fallback and tagged the wrong window. Fixed by the pure resolver + handler
+  delegation.
+- **Why the rewritten spec focuses the NEWEST window:** headless can reliably
+  drive AND observe the focus tracker only for the most-recently-focused
+  BrowserWindow. Refocusing an OLDER window *backward* with `api.window.focus()`
+  does NOT settle the tracker headless (observed this session — the "focus a"
+  variant failed with tracked=higher-id). So the spec opens `other` first,
+  `focused` second (newest), focuses it, and asserts the tag lands on `focused`'s
+  URL and not `other`'s. It does NOT (cannot, headless) reproduce the exact
+  hybrid-host + highest-id bug — that stays covered by `izui-roles.test.ts:396`.
+- **Handoff-claim correction from the prior session:** "real focus is
+  unobservable headless" is too broad. Precisely: the TRACKER is observable
+  headless for the newest-focused BrowserWindow; only (a) backward refocus and
+  (b) hybrid-BaseWindow focus events are unobservable. The new spec relies on (a-
+  not-b) being usable.
+- **Test URL choice:** the rewritten spec opens two `peek://app/settings/settings.html?tagwin=…`
+  windows with `role:'workspace'` (distinct query strings). Reasons: `role:'workspace'`
+  avoids the hybrid page-host open path (which `await`s `loadURL` and would FAIL
+  on an unresolvable `*.example.com` host — that's why several
+  `command-execution.spec.ts` tests `test.skip` under hybrid); `peek://` loads
+  with no network; the query string makes two distinct items via `findUrlItem`
+  normalization (which preserves/reorders query, doesn't strip it).
+- **jj workflow (NOT git):** commit with `jj commit <path> -m '…'`; never
+  `git commit/push/rebase` (corrupts jj state). `main` only moves via
+  `scripts/push-main.sh`/`scripts/finalize-isolated-clone.sh` — never manually
+  `jj bookmark set main`. Don't push unless the user explicitly asks.
+- **Bash discipline:** ONE command per call, no `&&`/`;`/`|`/`` ` ``/`$()` outside
+  single quotes (a hook blocks them). `sed -i` is blocked — use the Edit tool.
 
-2. **Remove dead canvas-era fallback in `getActiveWindow()`**
-   (`apps/desktop/features/tags/background.js`, ~lines 64–86). The `isPageCanvasUrl` /
-   `peek://app/page/index.html` filter never matches under the hybrid default (pages
-   report real URLs). Harmless and still correct for `PEEK_PAGEHOST_HYBRID=0`, but it's
-   the "highest window id" last resort that masked this bug — worth simplifying.
-
-3. **`apps/desktop/tests/desktop/tag-command.spec.ts` is stale / misleading.** It tests
-   the `addAddress` / `tagAddress` / `getAddressesByTag` datastore API surface directly
-   (still works — adapts onto the item table in `tile-ipc.ts`), NOT the actual `tag`
-   command path or `getActiveWindow()` under hybrid. It would NOT have caught this bug.
-   Consider rewriting it to exercise the real command → active-window resolution →
-   tag-the-viewed-page flow (deterministic coverage lives in `izui-roles.test.ts`, since
-   real focus is unobservable headless).
+## How to verify
+- **Fast inner loop (the two new tag tests, source-only, headless):**
+  `yarn test:desktop:electron` is the full gate; for just these:
+  `yarn test:grep "Tag Command"` → expect both pass (the pre-existing
+  `command-execution.spec.ts` "creates item if none exists" shows as skipped
+  under hybrid — that's expected, not a regression).
+- **Resolver units:** `yarn test:grep "resolveFocusedVisibleWindowId"` (pure,
+  in the main-process unit runner).
+- **Full gate:** `yarn test:desktop:electron` (~10 min, 6 runners). Last run this
+  session: main-process unit **2214 pass / 0 fail**, node unit **654 / 0**,
+  desktop Playwright **364 pass / 1 fail / 75 skip**, desktop-serial **40**,
+  components **57**, editor **91**. The ONE failure was
+  `hybrid-overlay.spec.ts:1969` ("hold-to-drag: navbar background HOLD then move
+  publishes page:set-bounds and moves the host") — a timing-sensitive
+  synthetic-input drag gesture, **unrelated to the tags changes**, and it
+  **passes in isolation**: `yarn test:grep "hold-to-drag: navbar background HOLD"`.
+  Treat the gate as green for this work.
+- **Running the gate in background:** do NOT use `yarn test:desktop:electron:bg`
+  in an agent session — its `nohup` detach gets reaped when the tool call
+  returns, leaving a 0-byte `/tmp/test-electron.log` (hit this exact trap this
+  session). Instead run `yarn test:desktop:electron` via the Bash tool's
+  `run_in_background: true` so the harness tracks it and notifies on completion.
+- **Live (the open follow-up):** see Next Steps step 1 — needs a visible/dev
+  session; use the peek-bg-run skill, and respect the no-surprise-focus rule.
