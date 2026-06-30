@@ -120,7 +120,8 @@ import {
   validateThemeCSS,
 } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
-import { getAllHybridWindows, getHybridWindow } from './hybrid-page-host-registry.js';
+import { getAllHybridWindows, getHybridWindow, getActiveHybridWindowId } from './hybrid-page-host-registry.js';
+import { resolveFocusedVisibleWindowId } from './izui-roles.js';
 import {
   registerGlobalShortcut,
   unregisterGlobalShortcut,
@@ -3538,21 +3539,36 @@ export function registerTileIpcHandlers(): void {
     }
 
     try {
+      // Hybrid page-hosts are BaseWindows — invisible to getLiveWindow and
+      // reported null by BrowserWindow.getFocusedWindow() — yet
+      // `trackHybridWindowFocus` correctly records them as the last focused
+      // visible window. The pure resolver accepts a tracked hybrid id and falls
+      // back to the active hybrid host so commands acting on "the active window"
+      // (tag/untag/view devtools) target the page the user is looking at instead
+      // of a wrong/null window. See the getFocusedWindow()-null invariant in
+      // apps/desktop/CLAUDE.md.
       const tracked = getLastFocusedVisibleWindowId();
-      if (typeof tracked === 'number' && tracked > 0) {
-        const win = getLiveWindow(tracked);
-        if (win) return { success: true, data: tracked };
-      }
+      const trackedId = typeof tracked === 'number' ? tracked : null;
+      const trackedIsLive = trackedId != null && !!getLiveWindow(trackedId);
+      const trackedHybrid = trackedId != null ? getHybridWindow(trackedId) : null;
+      const trackedIsHybrid = !!trackedHybrid && !trackedHybrid.baseWin.isDestroyed();
       const focused = BrowserWindow.getFocusedWindow();
-      if (focused && !focused.isDestroyed()) {
-        return { success: true, data: focused.id };
-      }
+      const focusedBrowserWindowId = focused && !focused.isDestroyed() ? focused.id : null;
+      let firstVisibleFocusableLiveId: number | null = null;
       for (const w of getAllLiveWindows()) {
-        if (!w.isVisible()) continue;
-        if (!w.isFocusable()) continue;
-        return { success: true, data: w.id };
+        if (!w.isVisible() || !w.isFocusable()) continue;
+        firstVisibleFocusableLiveId = w.id;
+        break;
       }
-      return { success: true, data: null };
+      const resolved = resolveFocusedVisibleWindowId(
+        trackedId,
+        trackedIsLive,
+        trackedIsHybrid,
+        focusedBrowserWindowId,
+        getActiveHybridWindowId(),
+        firstVisibleFocusableLiveId,
+      );
+      return { success: true, data: resolved };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };

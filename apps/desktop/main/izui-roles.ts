@@ -404,6 +404,55 @@ export function resolveCloseTargetId(
 }
 
 /**
+ * Resolve "the focused visible window" for tile consumers (the `tag`/`untag`
+ * commands' active-window lookup, `view devtools`, etc.).
+ *
+ * The hybrid-era trap this guards against: `trackHybridWindowFocus` records a
+ * focused hybrid page-host in the last-focused-visible tracker, but a hybrid
+ * host is a `BaseWindow` and so is INVISIBLE to `getLiveWindow` (see windows.ts)
+ * and reported as null by `BrowserWindow.getFocusedWindow()`. A resolver that
+ * validates the tracked id only against live BrowserWindows therefore discards
+ * the correct hybrid answer and falls through to a wrong/null window — which is
+ * why `tag <name>` tagged whichever window happened to sort last instead of the
+ * page the user was looking at.
+ *
+ * Resolution order, most-specific user intent first:
+ *   1. tracked id, if it's a live BrowserWindow OR a live hybrid host
+ *   2. the focused BrowserWindow (settings/modals/canvas page-hosts)
+ *   3. the active hybrid host — the SAME signal the page-host chrome overlay
+ *      frames over, so a command and the overlay can't disagree about the
+ *      active page (covers a null/stale tracker when a hybrid host is up)
+ *   4. the first visible+focusable live window
+ *   5. null (no resolvable window)
+ *
+ * Pure so the hybrid-tracked-id case is unit-testable without real OS focus,
+ * which is unobservable under macOS-headless (mirrors the predicates above).
+ *
+ * @param trackedId                 `getLastFocusedVisibleWindowId()`
+ * @param trackedIsLiveWindow       tracked id resolves via `getLiveWindow`
+ * @param trackedIsHybridWindow     tracked id is a live hybrid page-host
+ * @param focusedBrowserWindowId    `BrowserWindow.getFocusedWindow()?.id ?? null`
+ * @param activeHybridWindowId      `getActiveHybridWindowId()`
+ * @param firstVisibleFocusableLiveId  first visible+focusable live window id, or null
+ */
+export function resolveFocusedVisibleWindowId(
+  trackedId: number | null,
+  trackedIsLiveWindow: boolean,
+  trackedIsHybridWindow: boolean,
+  focusedBrowserWindowId: number | null,
+  activeHybridWindowId: number | null,
+  firstVisibleFocusableLiveId: number | null,
+): number | null {
+  if (typeof trackedId === 'number' && trackedId > 0) {
+    if (trackedIsLiveWindow || trackedIsHybridWindow) return trackedId;
+  }
+  if (focusedBrowserWindowId != null) return focusedBrowserWindowId;
+  if (activeHybridWindowId != null) return activeHybridWindowId;
+  if (firstVisibleFocusableLiveId != null) return firstVisibleFocusableLiveId;
+  return null;
+}
+
+/**
  * Hybrid page-host edge/corner resize band.
  *
  * Round-2 resize is driven entirely from MAIN against the content WebContents'
