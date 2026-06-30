@@ -1,69 +1,75 @@
-# Handoff — hybrid page-host corner/edge resize ("dodgy corner drag")
+# Handoff — `tag` command fix follow-ups
 
-## Status: ✅ DONE / SHIPPED
-Peek task `item_1782157074888_5ovnbbiz5` ("corner hover to click and drag is
-really dodgy"). Fixed, full desktop gate green, user-verified ("feels great,
-ship it"), collapsed into one commit and pushed to `main`.
+(Replaces the prior handoff for the hybrid page-host resize task, which shipped to
+`main` as `79857985` and is recorded there + in its Peek task — no open work remained.)
 
-If you're picking this up: the work is **complete**. This file is kept only as a
-record of how it was solved (and which approaches are dead ends, so nobody
-re-treads them). There is no open work here unless a regression resurfaces.
+## Status: fix shipped; follow-ups 2 & 3 done, follow-up 1 (live verify) still open
 
-## What shipped (commit on `main`)
-`fix(desktop): reliable wide-band resize for hybrid page-host edges/corners`
+Update (this session): follow-ups 2 and 3 are committed on top of the fix.
+- **Follow-up 2 DONE** — `refactor(tags): drop dead canvas-era fallback in getActiveWindow`
+  (`apps/desktop/features/tags/background.js`). Removed the `isPageCanvasUrl`
+  filter + highest-window-id last resort; `getActiveWindow()` now returns the
+  resolver's answer or `null` (command reports "No active window") so a future
+  resolver regression fails loud instead of silently tagging the wrong page.
+- **Follow-up 3 DONE** — `test(tags): rewrite tag-command spec to pin window targeting`
+  (`apps/desktop/tests/desktop/tag-command.spec.ts`). Replaced the stale
+  addAddress/tagAddress datastore-adapter tests with two real `cmd:execute:tag`
+  tests that assert the tag lands on the FOCUSED window's URL and leaves a
+  co-open window untouched (write side + no-arg read side). Headless can only
+  reliably drive/observe focus for the newest-focused BrowserWindow, so the
+  focused window is the newest-opened one; the hybrid-host + highest-id case
+  (the actual bug, unobservable headless) stays covered by the pure
+  `resolveFocusedVisibleWindowId` units in `izui-roles.test.ts`.
 
-Resize was moved **entirely to main + the content WebContentsView**; the chrome
-overlay was reverted to chrome-only (its resize handles removed).
-- **Cursor** — main observes the content WC `input-event` stream (`globalX/Y`),
-  computes the edge/corner band direction via the pure predicate
-  `hybridResizeDirAt` (`apps/desktop/main/izui-roles.ts`; band = **8px edge /
-  16px corner**), and on direction-change injects a whole-document
-  `*{cursor:<dir>-resize !important}` rule via `contentWC.insertCSS` /
-  `removeInsertedCSS` (`apps/desktop/main/ipc.ts`, in `wireHybridContentEvents`).
-  Gated on `contentWC.isFocused()` (first responder) so a background/transitional
-  host doesn't churn the injection and flash the page.
-- **Drag** — a press inside the band starts a main-driven resize FSM that calls
-  `baseWin.setBounds(.., false)` from the observed move stream until release. No
-  timers.
+Both pass via `yarn test:grep "Tag Command"`. Full `yarn test:desktop:electron`
+gate re-run: main-unit 2214/0, node-unit 654/0, desktop 364 pass / 40 serial /
+57 components / 91 editor — all green EXCEPT one unrelated load flake
+(`hybrid-overlay.spec.ts:1969` "hold-to-drag: navbar background HOLD …", a
+timing-sensitive synthetic-input drag gesture), which **passes in isolation**
+(`yarn test:grep "hold-to-drag: navbar background HOLD"`). Not caused by these
+changes (they touch only the tags feature). Treat the gate as green.
 
-## Why this shape (the load-bearing constraints — don't re-litigate)
-- The chrome overlay is a separate floating BrowserWindow and is **never the macOS
-  key window / first responder**, so it **cannot paint a resize cursor** even when
-  opaque. Proven live: an overlay-driven resize could capture the press but showed
-  **no cursor anywhere**. Only the content WC (first responder) can render a cursor.
-- The OS cursor belongs to the **topmost hit-testable window**. To capture a press
-  the overlay must be opaque → topmost → its (non-rendering) cursor wins. So
-  overlay-opaque-capture and a visible content cursor are mutually exclusive →
-  the overlay had to exit resize entirely.
-- Native frameless resize alone only grabs the outermost ~2-3px and the content
-  view fills to the edge showing the page pointer → pointer↔arrow flicker.
-  **Insetting the content view does NOT widen the native zone.**
+**Only follow-up 1 remains (needs a real, non-headless `yarn start` session).**
 
-## Dead ends (confirmed — do not revisit)
-1. JS `document.mousemove` resize loop.
-2. Overlay-opaque-on-edge resize (the old `corner-drag-redo`): flickered from two
-   disagreeing capture authorities AND can't paint a cursor (above).
-3. Native-only resize: too thin, flickers.
+---
 
-## Known minor tradeoff (accepted)
-The content `input-event` stream is **observe-only** (can't preventDefault), so the
-page also receives the band mousedown. The outer ~8px is almost always page
-margin/scrollbar, so it's harmless in practice. If a real conflict shows up
-(near-edge link/scrollbar), the documented mitigation is arming the *drag* on a
-narrower outer band than the cursor band.
+### (Original) Status: fix committed, gate green; 3 follow-ups open
 
-## Tests
-- `izui-roles` unit suite **66/66** (incl. `hybridResizeDirAt` boundary cases that
-  track the 8/16 constants).
-- `hybrid-overlay` spec **39/39**.
-- Full `yarn test:desktop:electron` gate **green** (all 6 runners), run twice
-  (pre- and post- the first-responder guard).
+Fixed the `tag` command tagging the **wrong page** under the hybrid page-host (the
+page-host tags widget never updated). Committed as `9039383e`
+("fix(desktop): tag command targets the focused hybrid page, not the highest-id window").
+Full `yarn test:desktop:electron` gate green (0 failures across all 6 runners).
 
-## If a regression appears
-- Cursor flicker/flash again → check `contentWC.isFocused()` gating in
-  `wireHybridContentEvents` (the first-responder guard) and whether a host is being
-  hovered while not first responder (the original symptom's mechanism).
-- Wrong/stuck cursor → the `insertCSS`/`removeInsertedCSS` reconciler
-  (`reconcileCursor`) is the single applier; `setHoverDir` is the only entry.
-- Band feels off → tune `RESIZE_EDGE_PX` / `RESIZE_CORNER_PX` in `izui-roles.ts`
-  (and the `// 8` / `// 16` comments + boundary cases in `izui-roles.test.ts`).
+### Root cause + fix (for context)
+- `tile:window:get-focused-visible-id` (`apps/desktop/main/tile-ipc.ts`) validated the
+  tracked id only via `getLiveWindow()`, which is **blind to hybrid BaseWindows**, so it
+  discarded the (correct) focused-hybrid id and returned null. `getActiveWindow()` in
+  `apps/desktop/features/tags/background.js` then fell to its canvas-era fallback and
+  tagged the **highest-id window**. The viewed page's overlay never saw a matching
+  `tag:item-added`.
+- Fix: pure `resolveFocusedVisibleWindowId()` in `apps/desktop/main/izui-roles.ts`
+  (accepts a tracked hybrid id + falls back to `getActiveHybridWindowId()` — the same
+  signal the page-host overlay frames over); handler delegates to it. 8 unit tests in
+  `izui-roles.test.ts`.
+
+## Follow-ups
+
+1. **Confirm end-to-end in a real `yarn start` session (NOT headless).** macOS-headless
+   fires no focus events, so the focus path is unobservable there (the codebase's
+   documented "LESSON") — the fix is verified only by the pure-predicate unit test, not a
+   live end-to-end run. Repro to confirm: open a web page in the page-host, run `tag foo`
+   from the cmd palette, verify the tag appears in the page-host tags widget.
+
+2. **Remove dead canvas-era fallback in `getActiveWindow()`**
+   (`apps/desktop/features/tags/background.js`, ~lines 64–86). The `isPageCanvasUrl` /
+   `peek://app/page/index.html` filter never matches under the hybrid default (pages
+   report real URLs). Harmless and still correct for `PEEK_PAGEHOST_HYBRID=0`, but it's
+   the "highest window id" last resort that masked this bug — worth simplifying.
+
+3. **`apps/desktop/tests/desktop/tag-command.spec.ts` is stale / misleading.** It tests
+   the `addAddress` / `tagAddress` / `getAddressesByTag` datastore API surface directly
+   (still works — adapts onto the item table in `tile-ipc.ts`), NOT the actual `tag`
+   command path or `getActiveWindow()` under hybrid. It would NOT have caught this bug.
+   Consider rewriting it to exercise the real command → active-window resolution →
+   tag-the-viewed-page flow (deterministic coverage lives in `izui-roles.test.ts`, since
+   real focus is unobservable headless).
