@@ -141,6 +141,8 @@ import {
   // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
   setHybridLoadError,
   getHybridLoadingTimeoutMs,
+  setHybridPendingNavUrl,
+  takeHybridPendingNavUrl,
 } from './hybrid-page-host-registry.js';
 
 /**
@@ -878,15 +880,21 @@ export function wireHybridContentEvents(
     // the test bridge can lower it without restarting the process.
     if (loadingTimeoutHandle) clearTimeout(loadingTimeoutHandle);
     const timeoutMs = getHybridLoadingTimeoutMs();
+    // Capture the navigation target URL. The page:navigate subscriber records
+    // it in the registry BEFORE calling loadURL so it's always available here.
+    // contentWC.getURL() at did-start-loading time returns the last COMMITTED
+    // URL (not the pending target), so a hung load would report the wrong URL
+    // if we relied on getURL() alone. takeHybridPendingNavUrl consumes and
+    // clears the entry so stale values can't bleed into the next navigation.
+    const capturedUrl = takeHybridPendingNavUrl(hostWindowId) || contentWC.getURL() || initialUrl;
     loadingTimeoutHandle = setTimeout(() => {
       // Genuine Chromium-boundary timer — the only case where a timer is
       // correct (hung HTTP connection, no `did-fail-load` ever fires). Guard
       // isDestroyed() because the WC may be torn down while we wait.
       if (contentWC.isDestroyed()) return;
       loadingTimeoutHandle = null;
-      const url = contentWC.getURL() || initialUrl;
       setHybridLoadError(hostWindowId, {
-        failedUrl: url,
+        failedUrl: capturedUrl,
         errorCode: 'TIMEOUT',
         errorDescription: 'The page took too long to load.',
       });
@@ -1551,8 +1559,13 @@ export function installHybridNavbarActionRouting(): void {
     if (!r) return;
     const url = (raw as { url?: string }).url;
     if (!url) return;
+    // Stage B: record the target URL in the registry BEFORE calling loadURL so
+    // did-start-loading (which fires after) can capture it. contentWC.getURL()
+    // at did-start-loading time returns the COMMITTED URL, not the pending one.
+    setHybridPendingNavUrl(r.windowId, url);
     r.wc.loadURL(url).catch((err) => {
       DEBUG && console.log(`[hybrid-page-host:${r.windowId}] navbar navigate failed:`, err);
+      takeHybridPendingNavUrl(r.windowId); // clear on failure too
     });
   });
 

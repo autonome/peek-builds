@@ -56,6 +56,24 @@ export type HybridLoadError = {
 
 const perHostLoadError = new Map<number, HybridLoadError | null>();
 
+// Per-host pending navigation URL. Set by installHybridNavbarActionRouting's
+// page:navigate subscriber BEFORE calling loadURL(url), so wireHybridContentEvents
+// can read the target URL in did-start-loading (where contentWC.getURL() still
+// returns the last COMMITTED URL, not the pending target).
+const perHostPendingNavUrl = new Map<number, string>();
+
+/** Record the URL being navigated to for `windowId`. Called before loadURL. */
+export function setHybridPendingNavUrl(windowId: number, url: string): void {
+  perHostPendingNavUrl.set(windowId, url);
+}
+
+/** Consume and clear the pending nav URL for `windowId`. Returns null if not set. */
+export function takeHybridPendingNavUrl(windowId: number): string | null {
+  const url = perHostPendingNavUrl.get(windowId) ?? null;
+  perHostPendingNavUrl.delete(windowId);
+  return url;
+}
+
 /** Registered by hybrid-overlay.ts to publish a live `page:load-error` update. */
 let loadErrorListener: ((windowId: number, error: HybridLoadError | null) => void) | null = null;
 
@@ -459,8 +477,9 @@ export function unregisterHybridWindow(windowId: number): void {
     pendingBlurChecks.delete(windowId);
   }
   entries.delete(windowId);
-  // Stage B: clean up per-host load-error state so it doesn't accumulate.
+  // Stage B: clean up per-host load-error and pending-nav state.
   perHostLoadError.delete(windowId);
+  perHostPendingNavUrl.delete(windowId);
   if (activeHybridWindowId === windowId) {
     setActiveHybridWindowId(null);
   }
