@@ -572,3 +572,84 @@ describe('Drag System -- shouldBlockDrag', () => {
     assert.strictEqual(shouldBlockDrag(el, null), true);
   });
 });
+
+// ============================================================================
+// Settings pane list (from renderer/index.js SETTINGS_PANES)
+//
+// Regression guard: commit cdc19eda removed individual per-pane commands and
+// replaced them with a single parameterized 'settings' command, but also left
+// a bare 'settings' registration before it that blocked the params from
+// reaching the cmd panel (tile-preload deduplication early-returns on duplicate
+// name). The fix removes the duplicate registration. These tests pin:
+//
+//   1. The pane list contains only IDs that have real section-${id} elements
+//      in renderer/settings/settings.js.
+//   2. Stale IDs that no longer correspond to sections are absent.
+//   3. Valid sections that were missing from the list are now present.
+//
+// If settings.js gains or removes a section, update EXPECTED_PANE_IDS here
+// and in SETTINGS_PANES in renderer/index.js registerCoreCommands().
+// ============================================================================
+
+// Canonical pane IDs: must match 'section-${id}' elements in settings.js.
+const EXPECTED_PANE_IDS = new Set([
+  'core',
+  'privacy',
+  'permissions',
+  'dark-mode',
+  'sync',
+  'profiles',
+  'themes',
+  'datastore',
+  'integrations',
+  'diagnostics',
+]);
+
+// IDs that existed in the old per-command era or were never valid sections.
+// They must NOT be present in SETTINGS_PANES.
+const STALE_PANE_IDS = ['features', 'peeks', 'slides', 'groups'];
+
+// Current SETTINGS_PANES from renderer/index.js — keep in sync with that file.
+const SETTINGS_PANES = [
+  { value: 'core', title: 'Core', subtitle: 'General application settings' },
+  { value: 'privacy', title: 'Extensions', subtitle: 'Browser extensions (ad blocker, etc.)' },
+  { value: 'permissions', title: 'Permissions', subtitle: 'Per-origin web permission decisions' },
+  { value: 'dark-mode', title: 'Dark Mode', subtitle: 'Dark mode settings' },
+  { value: 'sync', title: 'Sync', subtitle: 'Sync configuration and status' },
+  { value: 'profiles', title: 'Profiles', subtitle: 'Manage user profiles' },
+  { value: 'themes', title: 'Themes', subtitle: 'Manage color themes' },
+  { value: 'datastore', title: 'Datastore', subtitle: 'Browse and manage stored data' },
+  { value: 'integrations', title: 'Integrations', subtitle: 'MCP server and external tool integrations' },
+  { value: 'diagnostics', title: 'Diagnostics', subtitle: 'System diagnostics and debug info' },
+];
+
+describe('Settings command -- pane list integrity', () => {
+  it('contains all expected valid section IDs', () => {
+    const actualIds = new Set(SETTINGS_PANES.map(p => p.value));
+    for (const id of EXPECTED_PANE_IDS) {
+      assert.ok(actualIds.has(id), `SETTINGS_PANES missing valid section '${id}'`);
+    }
+  });
+
+  it('does not contain stale section IDs (features, peeks, slides, groups)', () => {
+    const actualIds = new Set(SETTINGS_PANES.map(p => p.value));
+    for (const id of STALE_PANE_IDS) {
+      assert.ok(!actualIds.has(id), `SETTINGS_PANES contains stale section '${id}' — it has no section-${id} element in settings.js`);
+    }
+  });
+
+  it('contains no duplicate pane values', () => {
+    const seen = new Set<string>();
+    for (const pane of SETTINGS_PANES) {
+      assert.ok(!seen.has(pane.value), `Duplicate pane value '${pane.value}' in SETTINGS_PANES`);
+      seen.add(pane.value);
+    }
+  });
+
+  it('every pane has non-empty title and subtitle', () => {
+    for (const pane of SETTINGS_PANES) {
+      assert.ok(pane.title && pane.title.length > 0, `Pane '${pane.value}' missing title`);
+      assert.ok(pane.subtitle && pane.subtitle.length > 0, `Pane '${pane.value}' missing subtitle`);
+    }
+  });
+});

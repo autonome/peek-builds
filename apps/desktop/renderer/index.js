@@ -169,16 +169,6 @@ async function cycleTheme() {
 
 // Register the core cmd-palette commands the app ships with.
 const registerCoreCommands = () => {
-  // Settings command
-  api.commands.register({
-    name: 'settings',
-    description: 'Open settings',
-    execute: async () => {
-      const p = prefs();
-      await openSettingsWindow(p);
-    }
-  });
-
   // Reload feature command (uses main process IPC)
   api.commands.register({
     name: 'feature reload',
@@ -200,44 +190,38 @@ const registerCoreCommands = () => {
     }
   });
 
-  // List features command (uses main process IPC)
+  // Features Manager command — opens the dedicated Features Manager window
   api.commands.register({
     name: 'features',
-    description: 'List installed features',
+    description: 'Open Features Manager',
     execute: async () => {
-      const listResult = await api.features.list();
-      const entries = listResult?.entries || [];
-      if (entries.length > 0) {
-        log('core', 'Installed features:');
-        entries.forEach(entry => {
-          const version = entry.source?.version || '?';
-          log('core', `  - ${entry.name || entry.id} (${entry.id}) v${version}`);
-        });
-      } else {
-        log('core', 'No features installed');
-      }
-
-      // Open settings to Features section
-      const p = prefs();
-      await openSettingsWindow(p);
+      await api.window.open('peek://features-manager/manage.html', {
+        key: 'features-manage',
+        width: 900,
+        height: 650,
+        title: 'Features',
+      });
     }
   });
 
   // ---- Settings Command (parameterized with pane selection) ----
 
+  // Pane IDs must match the section IDs rendered in settings.js (section-${id}).
+  // Missing: 'features' is not a section (nav item opens Features Manager window),
+  // 'peeks'/'slides'/'groups' moved to feature-owned settings; those were removed
+  // when the features-manager took over. Added: 'permissions' (permission decisions),
+  // 'integrations' (MCP + external tools).
   const SETTINGS_PANES = [
     { value: 'core', title: 'Core', subtitle: 'General application settings' },
-    { value: 'features', title: 'Features', subtitle: 'Manage Peek features' },
     { value: 'privacy', title: 'Extensions', subtitle: 'Browser extensions (ad blocker, etc.)' },
+    { value: 'permissions', title: 'Permissions', subtitle: 'Per-origin web permission decisions' },
     { value: 'dark-mode', title: 'Dark Mode', subtitle: 'Dark mode settings' },
     { value: 'sync', title: 'Sync', subtitle: 'Sync configuration and status' },
     { value: 'profiles', title: 'Profiles', subtitle: 'Manage user profiles' },
     { value: 'themes', title: 'Themes', subtitle: 'Manage color themes' },
     { value: 'datastore', title: 'Datastore', subtitle: 'Browse and manage stored data' },
+    { value: 'integrations', title: 'Integrations', subtitle: 'MCP server and external tool integrations' },
     { value: 'diagnostics', title: 'Diagnostics', subtitle: 'System diagnostics and debug info' },
-    { value: 'peeks', title: 'Peeks', subtitle: 'Peeks feature settings' },
-    { value: 'slides', title: 'Slides', subtitle: 'Slides feature settings' },
-    { value: 'groups', title: 'Groups', subtitle: 'Groups feature settings' },
   ];
 
   api.commands.register({
