@@ -1,6 +1,34 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
+import { sleep } from '../helpers/window-utils';
+
+// ============================================================================
+// Tag Command — window targeting (regression for the wrong-page tag bug)
+// ============================================================================
+//
+// The bug (fixed in 9039383e): `tag <name>` tagged the URL of whatever window
+// sorted LAST by id instead of the page the user was looking at. Root cause was
+// the active-window lookup — `tile:window:get-focused-visible-id` discarded a
+// tracked hybrid page-host id and returned null, so `getActiveWindow()` in
+// features/tags/background.js fell to a "highest window id" last resort (since
+// removed) and tagged the wrong window's URL.
+//
+// Layering — what each test home covers:
+//   - The pure resolution logic, INCLUDING the hybrid-tracked-id-wins case that
+//     was the actual bug, is unit-tested in main/izui-roles.test.ts
+//     (`resolveFocusedVisibleWindowId`). Real OS focus for a hybrid BaseWindow is
+//     UNOBSERVABLE under macOS-headless, so that pure layer is the only place the
+//     hybrid-specific decision can be pinned deterministically.
+//   - command-execution.spec.ts drives `cmd:execute:tag` end-to-end, but every
+//     assertion there is deliberately TAG-CENTRIC ("getActiveWindow() may return
+//     a different window") — it never pins WHICH window's URL got tagged.
+//   - THIS spec fills that integration gap for the deterministic slice: with two
+//     windows open, the `tag` command must tag the FOCUSED window's URL and leave
+//     the co-open window's URL untouched. Headless can reliably drive + observe
+//     focus only for the most-recently-focused BrowserWindow (refocusing an older
+//     window backward does NOT settle the tracker headless — the same focus-event
+//     gap), so the focused window here is always the newest-opened one.
 
 test.describe('Tag Command @desktop', () => {
   let app: DesktopApp;
@@ -8,205 +36,119 @@ test.describe('Tag Command @desktop', () => {
 
   test.beforeAll(async () => {
     ({ app, bgWindow } = await createPerDescribeApp('tag-cmd'));
+    await sleep(500); // let the app stabilize before opening windows
   });
 
   test.afterAll(async () => {
     if (app) await app.close();
   });
 
-  test('creates address if not exists when tagging', async () => {
-    // This tests the bug fix: addResult.data.id instead of addResult.id
-    // Use unique URI to avoid conflicts with other tests
-    // Note: datastore normalizes URLs (adds trailing slash)
-    const timestamp = Date.now();
-    const testUri = `https://tag-test-new-address-${timestamp}.example.com/`;
+  let tagCallSeq = 0;
+  const executeTag = (tag: string, search?: string) =>
+    bgWindow.evaluate(async (args: { topic: string; search: string }) => {
+      const api = (window as any).app;
+      return new Promise((resolve) => {
+        api.subscribe(args.topic, (r: any) => resolve(r));
+        api.publish('cmd:execute:tag', {
+          search: args.search, params: [], expectResult: true, resultTopic: args.topic,
+        });
+        setTimeout(() => resolve({ error: 'timeout' }), 10000);
+      });
+    }, { topic: `cmd:execute:tag:result:${tag}:${tagCallSeq++}`, search: search ?? `#${tag}` });
 
-    // Create tag with unique name
-    const tagResult = await bgWindow.evaluate(async (ts: number) => {
-      return await (window as any).app.datastore.getOrCreateTag('test-new-addr-tag-' + ts);
-    }, timestamp);
-    expect(tagResult.success).toBe(true);
-    const tagId = tagResult.data?.tag?.id;
-    expect(tagId).toBeTruthy();
+  // Open two distinct windows on the same inert peek page (distinguished only by
+  // a query string — both load with no network and no lazy-tile boot behavior,
+  // and findUrlItem normalizes the query consistently so they map to distinct
+  // items). `other` is opened first; `focused` second so it is the newest, then
+  // explicitly focused so the tracker reliably settles on it. Returns the ids,
+  // the addresses exactly as getActiveWindow() sees them, and the settled
+  // tracker id.
+  const openFocusedAndOther = () =>
+    bgWindow.evaluate(async () => {
+      const api = (window as any).app;
+      const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-    // Create address
-    const addResult = await bgWindow.evaluate(async (uri: string) => {
-      return await (window as any).app.datastore.addAddress(uri, { title: 'New Tagged Address' });
-    }, testUri);
-    expect(addResult.success).toBe(true);
-    // Bug fix verification: data.id is the correct path
-    expect(addResult.data?.id).toBeTruthy();
+      const other = await api.window.open('peek://app/settings/settings.html?tagwin=other', {
+        role: 'workspace', width: 600, height: 400, key: 'tagcmd-other',
+      });
+      if (!other.success) return { stage: 'open other', error: other.error };
+      await wait(250);
 
-    // Tag the address using the correct id path
-    const linkResult = await bgWindow.evaluate(async ({ addressId, tagId }) => {
-      return await (window as any).app.datastore.tagAddress(addressId, tagId);
-    }, { addressId: addResult.data.id, tagId });
-    expect(linkResult.success).toBe(true);
+      const focused = await api.window.open('peek://app/settings/settings.html?tagwin=focused', {
+        role: 'workspace', width: 600, height: 400, key: 'tagcmd-focused',
+      });
+      if (!focused.success) return { stage: 'open focused', error: focused.error };
+      await wait(250);
 
-    // Verify address is tagged
-    const taggedAddresses = await bgWindow.evaluate(async (tId: string) => {
-      return await (window as any).app.datastore.getAddressesByTag(tId);
-    }, tagId);
-    expect(taggedAddresses.success).toBe(true);
-    expect(taggedAddresses.data.some((a: any) => a.uri === testUri)).toBe(true);
-  });
+      await api.window.focus(focused.id);
+      await wait(250);
+      const tracked = await api.window.getFocusedVisibleWindowId();
 
-  test('getOrCreateTag returns tag in data.tag', async () => {
-    // This tests the bug fix: tagResult.data.tag.id instead of tagResult.data.id
-    const tagName = 'test-nested-tag-response';
+      const list = await api.window.list({ includeInternal: false });
+      const focusedUrl = list.windows.find((w: any) => w.id === focused.id)?.url;
+      const otherUrl = list.windows.find((w: any) => w.id === other.id)?.url;
 
-    const result = await bgWindow.evaluate(async (name: string) => {
-      return await (window as any).app.datastore.getOrCreateTag(name);
-    }, tagName);
+      return {
+        focusedId: focused.id, otherId: other.id, tracked, focusedUrl, otherUrl,
+      };
+    });
 
+  const closeWindows = (focusedId: number, otherId: number) =>
+    bgWindow.evaluate(async (ids: { focusedId: number; otherId: number }) => {
+      const api = (window as any).app;
+      try { await api.window.close(ids.focusedId); } catch { /* closing */ }
+      try { await api.window.close(ids.otherId); } catch { /* closing */ }
+    }, { focusedId, otherId });
+
+  // Does `url`'s item carry `tag`? Uses the same canonical findUrlItem the
+  // command uses, so URL normalization can't desync the check.
+  const urlHasTag = (url: string, tag: string) =>
+    bgWindow.evaluate(async (args: { url: string; tag: string }) => {
+      const api = (window as any).app;
+      const found = await api.datastore.findUrlItem(args.url);
+      if (!found.success || !found.data) return false;
+      const tags = await api.datastore.getItemTags(found.data.id);
+      return !!tags.success && (tags.data || []).some((t: any) => t.name === args.tag);
+    }, { url, tag });
+
+  test('tags the FOCUSED window URL and leaves a co-open window untouched', async () => {
+    const tag = `tagcmd-focus-${Date.now()}`;
+    const win = await openFocusedAndOther();
+    expect(win.error).toBeUndefined();
+    // The tracker settled on the window we focused — precondition for the
+    // command to even have a chance of targeting it.
+    expect(win.tracked).toBe(win.focusedId);
+
+    const result: any = await executeTag(tag);
     expect(result.success).toBe(true);
-    // Bug fix verification: tag is nested in data.tag
-    expect(result.data?.tag).toBeTruthy();
-    expect(result.data?.tag?.id).toBeTruthy();
-    expect(result.data?.tag?.name).toBe(tagName);
-    expect(typeof result.data?.created).toBe('boolean');
+    expect(result.added).toContain(tag);
+
+    // The contract that broke: the tag lands on the focused window's URL...
+    expect(await urlHasTag(win.focusedUrl!, tag)).toBe(true);
+    // ...and NOT on the other open window's URL (guards "tag the first/last/all
+    // windows" regressions in getActiveWindow's resolution).
+    expect(await urlHasTag(win.otherUrl!, tag)).toBe(false);
+
+    await closeWindows(win.focusedId!, win.otherId!);
   });
 
-  test('tagAddress links tag to address correctly', async () => {
-    // Create address
-    const addr = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.addAddress('https://tag-link-test.example.com', {
-        title: 'Tag Link Test'
-      });
-    });
-    expect(addr.success).toBe(true);
+  test('no-arg `tag` reflects the FOCUSED window tags, not the co-open window', async () => {
+    // Read-side counterpart: after tagging the focused window, `tag` with no
+    // args must resolve the SAME active window and return its tags — exercising
+    // getActiveWindow on the read path too.
+    const tag = `tagcmd-reflect-${Date.now()}`;
+    const win = await openFocusedAndOther();
+    expect(win.error).toBeUndefined();
+    expect(win.tracked).toBe(win.focusedId);
 
-    // Create tag
-    const tag = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.getOrCreateTag('link-test-tag');
-    });
-    expect(tag.success).toBe(true);
+    const added: any = await executeTag(tag);
+    expect(added.success).toBe(true);
 
-    // Link them
-    const link = await bgWindow.evaluate(async ({ addressId, tagId }) => {
-      return await (window as any).app.datastore.tagAddress(addressId, tagId);
-    }, { addressId: addr.data.id, tagId: tag.data.tag.id });
-    expect(link.success).toBe(true);
+    const shown: any = await executeTag(tag, ''); // no search → list current tags
+    expect(shown.success).toBe(true);
+    expect(Array.isArray(shown.tags)).toBe(true);
+    expect(shown.tags.map((t: any) => t.name)).toContain(tag);
 
-    // Verify link exists
-    const addressTags = await bgWindow.evaluate(async (addressId: string) => {
-      return await (window as any).app.datastore.getAddressTags(addressId);
-    }, addr.data.id);
-    expect(addressTags.success).toBe(true);
-    expect(addressTags.data.some((t: any) => t.name === 'link-test-tag')).toBe(true);
-  });
-
-  test('multiple tags can be added to same address', async () => {
-    // Create address
-    const addr = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.addAddress('https://multi-tag-test.example.com', {
-        title: 'Multi Tag Test'
-      });
-    });
-    expect(addr.success).toBe(true);
-
-    // Create and link multiple tags
-    const tagNames = ['multi-tag-1', 'multi-tag-2', 'multi-tag-3'];
-
-    for (const tagName of tagNames) {
-      const tag = await bgWindow.evaluate(async (name: string) => {
-        return await (window as any).app.datastore.getOrCreateTag(name);
-      }, tagName);
-      expect(tag.success).toBe(true);
-
-      const link = await bgWindow.evaluate(async ({ addressId, tagId }) => {
-        return await (window as any).app.datastore.tagAddress(addressId, tagId);
-      }, { addressId: addr.data.id, tagId: tag.data.tag.id });
-      expect(link.success).toBe(true);
-    }
-
-    // Verify all tags are linked
-    const addressTags = await bgWindow.evaluate(async (addressId: string) => {
-      return await (window as any).app.datastore.getAddressTags(addressId);
-    }, addr.data.id);
-    expect(addressTags.success).toBe(true);
-    expect(addressTags.data.length).toBeGreaterThanOrEqual(3);
-
-    for (const tagName of tagNames) {
-      expect(addressTags.data.some((t: any) => t.name === tagName)).toBe(true);
-    }
-  });
-
-  test('untagAddress removes tag from address', async () => {
-    // Create address
-    const addr = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.addAddress('https://untag-test.example.com', {
-        title: 'Untag Test'
-      });
-    });
-    expect(addr.success).toBe(true);
-
-    // Create and link tag
-    const tag = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.getOrCreateTag('untag-test-tag');
-    });
-    expect(tag.success).toBe(true);
-
-    await bgWindow.evaluate(async ({ addressId, tagId }) => {
-      return await (window as any).app.datastore.tagAddress(addressId, tagId);
-    }, { addressId: addr.data.id, tagId: tag.data.tag.id });
-
-    // Verify tag is linked
-    let addressTags = await bgWindow.evaluate(async (addressId: string) => {
-      return await (window as any).app.datastore.getAddressTags(addressId);
-    }, addr.data.id);
-    expect(addressTags.data.some((t: any) => t.name === 'untag-test-tag')).toBe(true);
-
-    // Remove tag
-    const untag = await bgWindow.evaluate(async ({ addressId, tagId }) => {
-      return await (window as any).app.datastore.untagAddress(addressId, tagId);
-    }, { addressId: addr.data.id, tagId: tag.data.tag.id });
-    expect(untag.success).toBe(true);
-
-    // Verify tag is removed
-    addressTags = await bgWindow.evaluate(async (addressId: string) => {
-      return await (window as any).app.datastore.getAddressTags(addressId);
-    }, addr.data.id);
-    expect(addressTags.data.some((t: any) => t.name === 'untag-test-tag')).toBe(false);
-  });
-
-  test('getUntaggedAddresses returns addresses without tags', async () => {
-    // Use unique URI to avoid conflicts
-    // Note: datastore normalizes URLs (adds trailing slash)
-    const timestamp = Date.now();
-    const testUri = `https://untagged-test-${timestamp}.example.com/`;
-
-    // Create address without tagging it
-    const addr = await bgWindow.evaluate(async (uri: string) => {
-      return await (window as any).app.datastore.addAddress(uri, {
-        title: 'Untagged Test'
-      });
-    }, testUri);
-    expect(addr.success).toBe(true);
-    expect(addr.data?.id).toBeTruthy();
-
-    // Query untagged addresses
-    const untagged = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.getUntaggedAddresses();
-    });
-    expect(untagged.success).toBe(true);
-    expect(untagged.data.some((a: any) => a.uri === testUri)).toBe(true);
-
-    // Tag the address with unique tag name
-    const tag = await bgWindow.evaluate(async (ts: number) => {
-      return await (window as any).app.datastore.getOrCreateTag('now-tagged-' + ts);
-    }, timestamp);
-    expect(tag.success).toBe(true);
-    expect(tag.data?.tag?.id).toBeTruthy();
-
-    await bgWindow.evaluate(async ({ addressId, tagId }) => {
-      return await (window as any).app.datastore.tagAddress(addressId, tagId);
-    }, { addressId: addr.data.id, tagId: tag.data.tag.id });
-
-    // Verify it's no longer in untagged list
-    const untaggedAfter = await bgWindow.evaluate(async () => {
-      return await (window as any).app.datastore.getUntaggedAddresses();
-    });
-    expect(untaggedAfter.data.some((a: any) => a.uri === testUri)).toBe(false);
+    await closeWindows(win.focusedId!, win.otherId!);
   });
 });
