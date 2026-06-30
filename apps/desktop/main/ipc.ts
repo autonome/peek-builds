@@ -138,6 +138,9 @@ import {
   getHybridContentWC,
   getHybridWindow,
   getAllHybridWindows,
+  // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
+  setHybridLoadError,
+  getHybridLoadingTimeoutMs,
 } from './hybrid-page-host-registry.js';
 
 /**
@@ -840,43 +843,19 @@ export function wireHybridContentEvents(
   // redirect-driven did-navigate, mirroring the canvas path (ipc.ts ~2465).
   let skipTracking = options?.skipTracking === true;
 
-  // ── Stranded-blank INITIAL-load cleanup state ────────────────────────────
-  // The host is now shown at load-START (ipc.ts hybrid branch), before the
-  // content load completes — so a failed INITIAL load happens on an
-  // already-visible window. We must clean up the genuinely-stranded case
-  // WITHOUT destroying a useful native error page.
+  // ── Loading-timeout safety net (Stage B) ────────────────────────────────
+  // Armed on `did-start-loading`, cleared on `did-finish-load` / `did-stop-loading`.
+  // Fires for hung loads (server accepts connection but never responds — the
+  // "blank-white-page-forever / endless glow border" class of bug, e.g.
+  // metikmusic.com) that never produce a `did-fail-load` event. Mirrors the
+  // canvas path's DEFAULT_LOADING_TIMEOUT_MS = 30 000 and the same
+  // `window.__loadingTimeoutMs` override mechanism for tests.
   //
-  // Empirical classification (2026-06-25 probe of a real WebContentsView):
-  //   - Hard network errors — ERR_NAME_NOT_RESOLVED (-105), ERR_UNSAFE_PORT
-  //     (-312), ERR_EMPTY_RESPONSE (-324), ERR_CONNECTION_REFUSED — all COMMIT
-  //     Chromium's native error page: `did-finish-load` fires and `getURL()`
-  //     returns the failed URL (document is `chrome-error://chromewebdata/`).
-  //     "This site can't be reached" is a useful display — KEEP it.
-  //   - A navigation that aborts with NOTHING committed — HTTP 204 No Content,
-  //     an ERR_ABORTED main-frame nav — fires `did-stop-loading` but NEVER
-  //     `did-finish-load`, and `getURL()` stays empty: a blank window on the
-  //     loading fill. THAT is the stranded case → close the just-opened host.
-  //   - A download (the initial nav resolves to a file) is already closed by
-  //     the `will-download` cleanup (session-partition.ts), so it never reaches
-  //     a stranded state here.
-  //
-  // So the discriminator is "did ANY document (page OR error page) ever
-  // commit?" — NOT the `did-fail-load` errorCode (which both over-targets the
-  // committed error pages and misses the no-error-event 204 abort).
-  //
-  // `did-finish-load` and `did-stop-loading` are main-frame/top-level WC events
-  // (subframes use the *-frame-* variants), so requirement "main-frame only" is
-  // intrinsic — no isMainFrame gate needed. `everCommittedDocument` is the
-  // one-shot "has the main frame ever committed" flag: once true it never
-  // closes, so later in-page navigation/redirect/abort in an
-  // already-loaded window is never touched.
-  let everCommittedDocument = false;
-  let sawLoadStart = false;
-  let strandedCleanupDone = false;
-  // Session-restore (fire-and-forget) opens keep today's behavior: the restore
-  // loop owns their lifecycle/focus, and a restored-but-stranded host should
-  // not self-close out from under it. Only user-initiated opens auto-clean.
-  const wasSkipTrackingOpen = options?.skipTracking === true;
+  // This is the ONE legitimate timer: it sits at the Chromium-boundary where no
+  // deterministic event exists to signal a truly hung load. Guarded with
+  // `contentWC.isDestroyed()` in its body. fsm-pilled rule: do NOT stack any
+  // other timer on this path.
+  let loadingTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
   const publishNavState = () => {
     if (contentWC.isDestroyed()) return;
@@ -891,42 +870,37 @@ export function wireHybridContentEvents(
 
   // ── Loading lifecycle → overlay (P1.4 consumes) ──────────────────────────
   contentWC.on('did-start-loading', () => {
-    sawLoadStart = true;
     if (contentWC.isDestroyed()) return;
+    // Stage B: new navigation clears any prior error (matches canvas
+    // clearLoadErrorOverlay() call inside loadingLifecycle.startLoading()).
+    setHybridLoadError(hostWindowId, null);
+    // Stage B: arm the loading-timeout safety net. Duration is read live so
+    // the test bridge can lower it without restarting the process.
+    if (loadingTimeoutHandle) clearTimeout(loadingTimeoutHandle);
+    const timeoutMs = getHybridLoadingTimeoutMs();
+    loadingTimeoutHandle = setTimeout(() => {
+      // Genuine Chromium-boundary timer — the only case where a timer is
+      // correct (hung HTTP connection, no `did-fail-load` ever fires). Guard
+      // isDestroyed() because the WC may be torn down while we wait.
+      if (contentWC.isDestroyed()) return;
+      loadingTimeoutHandle = null;
+      const url = contentWC.getURL() || initialUrl;
+      setHybridLoadError(hostWindowId, {
+        failedUrl: url,
+        errorCode: 'TIMEOUT',
+        errorDescription: 'The page took too long to load.',
+      });
+      try { contentWC.stop(); } catch { /* already stopped */ }
+    }, timeoutMs);
     publish(getSystemAddress(), 'page:loading', { windowId: hostWindowId, loading: true });
   });
   contentWC.on('did-stop-loading', () => {
     if (contentWC.isDestroyed()) return;
+    // Stage B: stop fired — load settled (success, error page, or abort).
+    // Cancel the loading-timeout safety net so it can't fire after the WC
+    // has already stopped (prevents a stale error overlay on a clean load).
+    if (loadingTimeoutHandle) { clearTimeout(loadingTimeoutHandle); loadingTimeoutHandle = null; }
     publish(getSystemAddress(), 'page:loading', { windowId: hostWindowId, loading: false });
-
-    // Stranded-blank initial-load cleanup (see the state declarations above for
-    // the full empirical rationale). Close the just-opened host ONLY when its
-    // very first load settled with NO committed document — neither a real page
-    // nor a native error page — so it would otherwise sit blank on the loading
-    // fill. Once any document has committed (success or chrome-error page) the
-    // flag latches and later navigations are never touched.
-    if (
-      !strandedCleanupDone &&
-      !wasSkipTrackingOpen &&
-      sawLoadStart &&
-      !everCommittedDocument
-    ) {
-      const committedUrl = contentWC.getURL();
-      // Defensive backstop against any did-finish-load/did-stop-loading ordering
-      // race: if something is actually committed, getURL() is the failed/loaded
-      // URL (non-empty), so we KEEP it; only an empty/blank URL is stranded.
-      if (!committedUrl || committedUrl === 'about:blank') {
-        strandedCleanupDone = true;
-        const entry = getHybridWindow(hostWindowId);
-        if (entry && !entry.baseWin.isDestroyed()) {
-          DEBUG && console.log(
-            `[hybrid-page-host:${hostWindowId}] initial load stranded blank (no committed document) — closing host`,
-          );
-          try { entry.baseWin.close(); } catch { /* already torn down */ }
-        }
-        return;
-      }
-    }
 
     // Thumbnail capture, matching the canvas guest's did-stop-loading (ipc.ts ~2102).
     const pageUrl = contentWC.getURL() || initialUrl;
@@ -943,6 +917,41 @@ export function wireHybridContentEvents(
       }, 1500);
     }
   });
+
+  // ── did-fail-load → branded error overlay (Stage B) ─────────────────────
+  // Record the failure in per-host state so the overlay can show the branded
+  // error card. Mirrors the canvas `did-fail-load` handler in page.js (~2555):
+  //   - Skip non-main-frame failures (subframe errors don't affect the page).
+  //   - Skip ERR_ABORTED (-3): a redirect-chain abort or user-nav-away that
+  //     produces a spurious did-fail-load; canvas suppresses it too.
+  //   - For real failures: cancel the loading-timeout (it won the race), record
+  //     the error, and stop the WC to prevent further blank-page loading.
+  //
+  // The branded overlay COVERS Chromium's native error page (chrome-error://):
+  // the content WC still commits the "This site can't be reached" page beneath
+  // the overlay window, but our card is visible on top — matching canvas.
+  contentWC.on(
+    'did-fail-load',
+    (
+      _event: Electron.Event,
+      errorCode: number,
+      errorDescription: string,
+      validatedURL: string,
+      isMainFrame: boolean,
+    ) => {
+      if (!isMainFrame) return;
+      if (errorCode === -3) return; // ERR_ABORTED — redirect/user-nav-away, canvas suppresses
+      if (contentWC.isDestroyed()) return;
+      if (loadingTimeoutHandle) { clearTimeout(loadingTimeoutHandle); loadingTimeoutHandle = null; }
+      const failedUrl = validatedURL || contentWC.getURL() || initialUrl;
+      setHybridLoadError(hostWindowId, {
+        failedUrl,
+        errorCode: String(errorCode),
+        errorDescription: errorDescription || 'Load failed',
+      });
+      try { contentWC.stop(); } catch { /* already stopped */ }
+    },
+  );
 
   // ── Title → datastore + chrome state ─────────────────────────────────────
   contentWC.on('page-title-updated', (_event: Electron.Event, title: string) => {
@@ -1451,12 +1460,8 @@ export function wireHybridContentEvents(
   // a main-side publish of page:search-engine-discovered wakes websearch the
   // same as a renderer-side one.
   contentWC.on('did-finish-load', async () => {
-    // Latch "a main-frame document committed" for the stranded-blank cleanup —
-    // BEFORE the isHttp early-return below, because Chromium's native error page
-    // (chrome-error://chromewebdata/) also fires did-finish-load and IS a
-    // document worth keeping. Only a load that never reaches did-finish-load
-    // (HTTP 204 / ERR_ABORTED) leaves this false and is treated as stranded.
-    everCommittedDocument = true;
+    // Stage B: clear the loading-timeout timer — load settled successfully.
+    if (loadingTimeoutHandle) { clearTimeout(loadingTimeoutHandle); loadingTimeoutHandle = null; }
     if (contentWC.isDestroyed()) return;
     const pageUrl = contentWC.getURL();
     if (!isHttp(pageUrl)) return;
@@ -1555,6 +1560,14 @@ export function installHybridNavbarActionRouting(): void {
     const r = wcFor(raw);
     if (!r) return;
     try { r.wc.reload(); } catch { /* wc gone */ }
+  });
+
+  // Stage B: close-window action from the error overlay's "Close" button.
+  // Mirrors the canvas path's `window.close()` call in the close button handler.
+  subscribe(getSystemAddress(), 'page:close-window', (raw) => {
+    const r = baseWinFor(raw);
+    if (!r) return;
+    try { r.baseWin.close(); } catch { /* already gone */ }
   });
 
   subscribe(getSystemAddress(), 'page:go-back', (raw) => {

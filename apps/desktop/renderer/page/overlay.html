@@ -803,6 +803,85 @@
     body.no-active peek-navbar {
       display: none;
     }
+
+    /* ── Stage B: branded load-error overlay ───────────────────────────────
+     * Dynamically created/removed by overlay.js (showLoadErrorOverlay /
+     * clearLoadErrorOverlay). Positioned over the content rect by
+     * updateOverlayPositions() so it tracks the content window's geometry.
+     * z-index 25: above the webview/content but below navbar (100) and
+     * trigger zone (50), matching the canvas index.html anchor. */
+    .load-error-overlay {
+      position: fixed;
+      z-index: 25;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--theme-bg, #1e1e1e);
+      padding: 24px;
+      /* left / top / width / height are set dynamically in
+         updateOverlayPositions() to match the active content rect. */
+    }
+    body.no-active .load-error-overlay {
+      display: none;
+    }
+
+    .load-error-card {
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+      color: var(--theme-text, #e0e0e0);
+      font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
+    }
+    .load-error-icon {
+      font-size: 32px;
+      margin-bottom: 12px;
+      opacity: 0.6;
+    }
+    .load-error-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .load-error-reason {
+      font-size: 13px;
+      color: var(--theme-text-secondary, #aaa);
+      margin-bottom: 12px;
+    }
+    .load-error-url {
+      display: block;
+      font-family: var(--theme-font-mono, ui-monospace, SFMono-Regular, monospace);
+      font-size: 12px;
+      color: var(--theme-text-secondary, #aaa);
+      background: color-mix(in srgb, var(--theme-bg-tertiary, #2a2a2a) 60%, transparent);
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      word-break: break-all;
+      user-select: text;
+    }
+    .load-error-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+    }
+    .load-error-actions button {
+      background: var(--theme-accent, #007aff);
+      color: #fff;
+      border: none;
+      padding: 8px 20px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .load-error-actions button.load-error-close {
+      background: color-mix(in srgb, var(--theme-bg-tertiary, #2a2a2a) 80%, transparent);
+      color: var(--theme-text, #e0e0e0);
+      border: 1px solid color-mix(in srgb, var(--theme-border, rgba(255,255,255,0.1)) 60%, transparent);
+    }
+    .load-error-actions button:hover {
+      opacity: 0.9;
+    }
   </style>
 </head>
 <body class="no-active" data-no-drag>

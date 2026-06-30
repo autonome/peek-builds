@@ -37,6 +37,76 @@
 
 import type { BaseWindow, WebContents } from 'electron';
 
+// ── Per-host load-error state (Stage B) ─────────────────────────────────────
+// Lives here (not in hybrid-overlay.ts) so BOTH ipc.ts (which sets errors) and
+// hybrid-overlay.ts (which reads them for sendActiveHandoff) can import it
+// without creating a circular dependency (hybrid-overlay.ts → ipc.ts already).
+//
+// FSM alignment: error state per host swaps deterministically via the existing
+// `sendActiveHandoff` / `paintFromSnapshot` handoff. Live updates for the
+// currently-active window are delivered via a registered callback (installed by
+// hybrid-overlay.ts); non-active windows are covered by the next retarget.
+
+/** A load failure recorded for a hybrid page-host. */
+export type HybridLoadError = {
+  failedUrl: string;
+  errorCode: string;
+  errorDescription: string;
+};
+
+const perHostLoadError = new Map<number, HybridLoadError | null>();
+
+/** Registered by hybrid-overlay.ts to publish a live `page:load-error` update. */
+let loadErrorListener: ((windowId: number, error: HybridLoadError | null) => void) | null = null;
+
+/**
+ * Register a callback that hybrid-overlay.ts uses to forward live load-error
+ * changes to the overlay renderer for the currently-active window. Called once
+ * from `initHybridOverlay()`. Pass null to unregister (e.g. on teardown).
+ */
+export function registerLoadErrorListener(
+  fn: ((windowId: number, error: HybridLoadError | null) => void) | null,
+): void {
+  loadErrorListener = fn;
+}
+
+/**
+ * Record (or clear) the load-error state for a hybrid page-host window.
+ *
+ * Stores the state in the per-host map and calls the live-update listener
+ * (registered by hybrid-overlay.ts) so the overlay can react immediately if
+ * the window is currently active. Non-active windows receive the error in the
+ * next `sendActiveHandoff` snapshot.
+ *
+ * Pass `null` to clear: new navigation started, load succeeded, WC destroyed.
+ */
+export function setHybridLoadError(windowId: number, error: HybridLoadError | null): void {
+  perHostLoadError.set(windowId, error);
+  if (loadErrorListener) loadErrorListener(windowId, error);
+}
+
+/**
+ * Read the current load-error state for a hybrid page-host window, or null
+ * if no error has been recorded (or it was cleared). Used by `sendActiveHandoff`
+ * to include the per-host error in the overlay snapshot.
+ */
+export function getHybridLoadError(windowId: number): HybridLoadError | null {
+  return perHostLoadError.get(windowId) ?? null;
+}
+
+// ── Loading-timeout duration (Stage B) ──────────────────────────────────────
+// The duration for the per-navigation loading-timeout safety net (mirrors the
+// canvas DEFAULT_LOADING_TIMEOUT_MS = 30 000). ipc.ts reads this each time
+// `did-start-loading` arms a fresh timer. The test bridge (in hybrid-overlay.ts)
+// lowers it to 1.5 s so the hung-load spec doesn't burn the full test budget.
+let _hybridLoadingTimeoutMs = 30000;
+
+/** Current loading-timeout duration. Read by `wireHybridContentEvents` per navigation. */
+export function getHybridLoadingTimeoutMs(): number { return _hybridLoadingTimeoutMs; }
+
+/** Set a new loading-timeout duration. Test bridge only; production keeps 30 s. */
+export function setHybridLoadingTimeoutMs(ms: number): void { _hybridLoadingTimeoutMs = ms; }
+
 /**
  * One hybrid page-host window: its host `BaseWindow`, the main-owned content
  * `WebContents`, the optional dedup `key` it was opened with, and the
@@ -389,6 +459,8 @@ export function unregisterHybridWindow(windowId: number): void {
     pendingBlurChecks.delete(windowId);
   }
   entries.delete(windowId);
+  // Stage B: clean up per-host load-error state so it doesn't accumulate.
+  perHostLoadError.delete(windowId);
   if (activeHybridWindowId === windowId) {
     setActiveHybridWindowId(null);
   }

@@ -70,6 +70,11 @@ import {
   getActiveHybridWindowId as _getActiveHybridWindowIdForBridge,
   _setActiveHybridWindowForTests,
   _runDeferredBlurForTests,
+  // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
+  registerLoadErrorListener,
+  getHybridLoadError,
+  getHybridLoadingTimeoutMs,
+  setHybridLoadingTimeoutMs as _setHybridLoadingTimeoutMs,
 } from './hybrid-page-host-registry.js';
 import { createTrustedBuiltinGrant } from './tile-manifest.js';
 import { generateToken } from './tile-tokens.js';
@@ -236,6 +241,14 @@ let __probeShortcutFireCount = 0;
 // when backgrounded / for a foreign window — the R1 interaction guard).
 let showNavbarFocusCount = 0;
 
+// ── Per-host load-error live-update publisher (Stage B) ─────────────────────
+// The per-host load-error STATE lives in hybrid-page-host-registry.ts (shared
+// between ipc.ts and this file without creating a circular import — see the
+// `registerLoadErrorListener` / `setHybridLoadError` exports there). This
+// module's sole job is to publish the LIVE update to the overlay when the
+// registry calls back and the affected window is currently active. The active
+// handoff (`sendActiveHandoff`) carries the state for the non-active case.
+
 /**
  * Lazily create the singleton overlay window and mount the REAL shared chrome
  * (P1.4b-2). Transparent, frameless, alwaysOnTop, focus-free, click-through by
@@ -397,6 +410,10 @@ function sendActiveHandoff(id: number | null): void {
     title: entry.title(),
     canGoBack,
     canGoForward,
+    // Stage B: include per-host load-error so the overlay paints the error card
+    // (or clears it) instantly on active-window switch with no flash. Rides the
+    // SAME deterministic handoff path as `navbar.loading` — no extra timer.
+    loadError: getHybridLoadError(id),
     loading,
     // The INNER content rect (content BaseWindow outer bounds). The renderer
     // places the transparent content hole + chrome relative to this, insetting
@@ -770,6 +787,14 @@ export function initHybridOverlay(): void {
     }
   });
 
+  // Stage B: live-update the overlay when a load error arrives or clears FOR
+  // THE CURRENTLY-ACTIVE window. Non-active windows are handled by the next
+  // `sendActiveHandoff` snapshot; no extra mechanism needed for them.
+  registerLoadErrorListener((windowId, error) => {
+    if (windowId !== getActiveHybridWindowId()) return;
+    publish(getSystemAddress(), 'page:load-error', { windowId, error });
+  });
+
   // E2E test bridge: expose the focus-free verification surface on a global so
   // a Playwright `evaluateMain` can drive active-window changes synthetically
   // (no real OS focus) and read the overlay's resulting state. Gated on
@@ -957,6 +982,15 @@ function installTestBridge(): void {
     },
     setActive(id: number | null): boolean {
       return _setActiveHybridWindowForTests(id);
+    },
+    /**
+     * Stage B: override the loading-timeout duration for the hung-load spec so
+     * the 30 s production timer doesn't run the full test budget. The new value
+     * is read by `wireHybridContentEvents` each time `did-start-loading` arms a
+     * fresh timer — set this BEFORE navigating to the hung endpoint.
+     */
+    setHybridLoadingTimeoutMs(ms: number): void {
+      _setHybridLoadingTimeoutMs(ms);
     },
     /**
      * Make a fake hybrid host visible WITHOUT stealing OS focus (`showInactive`,

@@ -227,6 +227,17 @@ function updateOverlayPositions() {
   stackRight(tagsEl, true);
   stackRight(notesEl, true);
   stackRight(entitiesEl, true);
+
+  // Stage B: position the load-error overlay over the content rect so it fills
+  // exactly the "page area" and tracks window resizes. The overlay is fixed and
+  // dynamically created, so we set its geometry here each time positions change.
+  const errorOverlay = document.querySelector('.load-error-overlay');
+  if (errorOverlay) {
+    errorOverlay.style.left = `${left}px`;
+    errorOverlay.style.top = `${top}px`;
+    errorOverlay.style.width = `${w}px`;
+    errorOverlay.style.height = `${h}px`;
+  }
 }
 
 // Coalesced re-layout: a panel/widget gaining or losing `.has-data` (async, as
@@ -270,6 +281,105 @@ let activeBounds = null;
 let maximized = false;
 let preMaxBounds = null;
 
+// ── Stage B: branded load-error overlay ──────────────────────────────────────
+// One `.load-error-overlay` div is dynamically created / removed per error
+// event, matching the canvas page.js approach (showLoadErrorOverlay /
+// clearLoadErrorOverlay in page.js ~2485-2553). The overlay is:
+//   - Shown/cleared by paintFromSnapshot (on active-window change, reads snap.loadError)
+//   - Shown/cleared by the page:load-error subscriber (live update for the active window)
+//   - Cleared by clearChrome (active → null, or before painting a new window)
+// Position (left/top/width/height) is applied in updateOverlayPositions() so
+// the card stays over the content rect even as the user resizes the window.
+// FSM alignment: per-host state rides the EXISTING deterministic
+// sendActiveHandoff / paintFromSnapshot path; live updates are published from
+// main only for the currently-active window — exactly one code path, no timers.
+
+/** Remove any existing load-error overlay (called on new nav start or success). */
+function clearLoadErrorOverlay() {
+  const existing = document.querySelector('.load-error-overlay');
+  if (existing) existing.remove();
+}
+
+/**
+ * Show the branded load-error card over the content rect. Creates the element
+ * dynamically (matching canvas); clears any prior instance first (idempotent).
+ * Retry publishes `page:reload`; Close publishes `page:close-window`.
+ * The overlay is `.interactive` so the click-capture loop turns the overlay
+ * pointer-opaque while the user reads the error or clicks a button.
+ */
+function showLoadErrorOverlay(failedUrl, errorCode, errorDescription) {
+  // Ignore Chromium's internal error-page navigations (chrome-error://).
+  if (!failedUrl || failedUrl.startsWith('chrome-error://')) return;
+  clearLoadErrorOverlay();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'load-error-overlay interactive';
+
+  const card = document.createElement('div');
+  card.className = 'load-error-card';
+
+  const icon = document.createElement('div');
+  icon.className = 'load-error-icon';
+  icon.textContent = '⚠'; // ⚠
+
+  const title = document.createElement('div');
+  title.className = 'load-error-title';
+  title.textContent = 'This page didn’t load'; // "This page didn't load"
+
+  const reason = document.createElement('div');
+  reason.className = 'load-error-reason';
+  reason.textContent = errorDescription
+    ? `${errorDescription} (${errorCode})`
+    : `Load failed (${errorCode})`;
+
+  const urlEl = document.createElement('div');
+  urlEl.className = 'load-error-url';
+  urlEl.textContent = failedUrl;
+
+  const actions = document.createElement('div');
+  actions.className = 'load-error-actions';
+
+  const retry = document.createElement('button');
+  retry.className = 'load-error-retry';
+  retry.textContent = 'Retry';
+  retry.addEventListener('click', () => {
+    if (activeWindowId == null) return;
+    clearLoadErrorOverlay();
+    api.publish('page:reload', { windowId: activeWindowId });
+  });
+
+  const close = document.createElement('button');
+  close.className = 'load-error-close';
+  close.textContent = 'Close window';
+  close.addEventListener('click', () => {
+    if (activeWindowId == null) return;
+    api.publish('page:close-window', { windowId: activeWindowId });
+  });
+
+  actions.appendChild(retry);
+  actions.appendChild(close);
+  card.appendChild(icon);
+  card.appendChild(title);
+  card.appendChild(reason);
+  card.appendChild(urlEl);
+  card.appendChild(actions);
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  // Arm the click-capture loop for the dynamically-created .interactive element
+  // (the querySelectorAll('.interactive') at init time only covers static HTML).
+  overlay.addEventListener('mouseenter', () => setCapture(true));
+  overlay.addEventListener('mouseleave', () => {
+    requestAnimationFrame(() => {
+      const over = document.querySelector('.interactive:hover');
+      if (!over) setCapture(false);
+    });
+  });
+
+  // Position the overlay over the current content rect now that it's in the DOM.
+  updateOverlayPositions();
+}
+
 /** Reset the navbar to empty (active→null or before painting a new window). */
 function clearChrome() {
   navbar.setUrl('');
@@ -282,6 +392,7 @@ function clearChrome() {
   document.body.classList.remove('panels-visible');
   document.body.classList.add('no-active');
   hideFindBar();
+  clearLoadErrorOverlay();
   clearPanels();
   setCapture(false);
 }
@@ -297,6 +408,15 @@ function paintFromSnapshot(snap) {
   // the previous window's title/favicon never bleeds across a retarget.
   navbar.pageTitle = snap.title || '';
   navbar.favicon = snap.favicon || '';
+  // Stage B: restore the per-host error state for the newly-active window so the
+  // error card shows (or stays gone) instantly on retarget — no flash of the
+  // wrong window's state. Rides the same deterministic handoff path as
+  // navbar.loading — no extra timer or separate IPC.
+  if (snap.loadError) {
+    showLoadErrorOverlay(snap.loadError.failedUrl, snap.loadError.errorCode, snap.loadError.errorDescription);
+  } else {
+    clearLoadErrorOverlay();
+  }
 }
 
 // ── main → overlay: active-window handoff ────────────────────────────────────
@@ -361,6 +481,20 @@ api.subscribe('page:favicon', (msg) => {
 api.subscribe('page:loading', (msg) => {
   if (!isActive(msg)) return;
   navbar.loading = !!msg.loading;
+});
+
+// Stage B: live error update for the currently-active window. Main publishes
+// this only when the active window's load-error state changes (via the
+// registerLoadErrorListener callback in hybrid-overlay.ts). Non-active windows
+// receive their error in the next sendActiveHandoff / paintFromSnapshot.
+// FSM alignment: no timer, no polling — deterministic main-side publish.
+api.subscribe('page:load-error', (msg) => {
+  if (!isActive(msg)) return;
+  if (msg.error) {
+    showLoadErrorOverlay(msg.error.failedUrl, msg.error.errorCode, msg.error.errorDescription);
+  } else {
+    clearLoadErrorOverlay();
+  }
 });
 
 api.subscribe('page:nav-state', (msg) => {
