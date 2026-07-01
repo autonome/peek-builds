@@ -3,9 +3,26 @@
  *
  * Canvas-DOM pixel-math regression tests (1-5) were deleted at Stage B
  * (canvas page-host removal) — the measured DOM elements (page.js's navbar/
- * webview/panels/resize-handles) no longer exist. What remains is the
- * maximize behavior suite (6-14), still skipped pending the Stage-B hybrid
- * maximize FSM re-home.
+ * webview/panels/resize-handles) no longer exist.
+ *
+ * The Maximize suite (formerly 6-14) has been ported test-by-test to the
+ * hybrid page-host, which has REAL maximize tracking (registry-backed, driven
+ * by `page:maximize`/`page:unmaximize` intents — see
+ * `hybrid-page-host-registry.ts`'s maximize state and
+ * `tests/desktop/session-restore-page-host.spec.ts` /
+ * `tests/desktop/reopen-closed-window.spec.ts` for the established idiom:
+ * `publishOverlayTopic(app, 'page:maximize'/'page:unmaximize', {windowId})`
+ * to drive it, and `app.window.list()`'s `.maximized`/`.bounds`/
+ * `.preMaxBounds` fields to read it back).
+ *
+ * Tests that measured the canvas content page's own DOM (webview position
+ * within the page, navbar z-index vs. the webview, side-panel clamp geometry,
+ * resize-handle reachability, drag-out-of-maximize, border-radius CSS) have
+ * no hybrid equivalent — the hybrid content window IS the native window (no
+ * DOM position to measure), and the shared chrome overlay's fine-grained
+ * panel/drag geometry isn't exposed by the current test bridge. Those were
+ * deleted; see the per-test comments below and the task's final report for
+ * which are believed-obsolete vs. flagged as a possible coverage gap.
  *
  * Run with:
  *   BACKEND=electron yarn test:electron
@@ -14,11 +31,7 @@
 import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { waitForExtensionsReady } from '../helpers/window-utils';
-import { hybridFlagOn } from '../helpers/hybrid-page';
-
-// Layout constants used by the remaining Maximize tests below.
-const MARGIN = 8;
-const PANEL_WIDTH = 280;
+import { setActive, sendShowNavbar, overlayChromeState, waitOverlayReady, publishOverlayTopic } from '../helpers/hybrid-page';
 
 // Shared app instance
 let sharedApp: DesktopApp;
@@ -38,11 +51,12 @@ test.afterAll(async () => {
 // Helpers
 // ============================================================================
 
-async function openCanvasPage(
+/** Open a REAL (non-fake) hybrid content window via the production window-open path. */
+async function openHybridWindow(
   bgWindow: Page,
   url: string,
-  options: { width?: number; height?: number } = {}
-): Promise<{ pageWindow: Page; windowId: number }> {
+  options: { width?: number; height?: number } = {},
+): Promise<number> {
   const result = await bgWindow.evaluate(
     async ({ targetUrl, opts }: { targetUrl: string; opts: { width?: number; height?: number } }) => {
       return await (window as any).app.window.open(targetUrl, {
@@ -51,37 +65,19 @@ async function openCanvasPage(
         ...opts,
       });
     },
-    { targetUrl: url, opts: options }
+    { targetUrl: url, opts: options },
   );
   expect(result.success).toBe(true);
-  const windowId = result.id;
-
-  const pageWindow = await sharedApp.getWindow('page/index.html', 15000);
-  expect(pageWindow).toBeTruthy();
-
-  return { pageWindow, windowId };
+  return result.id as number;
 }
 
-async function waitForPageLoaded(pageWindow: Page, timeout = 30000): Promise<void> {
-  await pageWindow.waitForFunction(
-    () => {
-      const webview = document.getElementById('content');
-      return webview && webview.classList.contains('loaded');
-    },
-    undefined,
-    { timeout }
-  );
-}
-
-async function waitForPageReady(pageWindow: Page): Promise<void> {
-  // Wait for DOM elements to exist
-  await pageWindow.waitForFunction(
-    () => document.getElementById('navbar') !== null && document.getElementById('content') !== null,
-    undefined,
-    { timeout: 10000 }
-  );
-  // Wait for page to finish loading
-  await waitForPageLoaded(pageWindow);
+/** Read `id`'s live entry (bounds, maximized, preMaxBounds, …) from the production window list. */
+async function findEntry(bgWindow: Page, id: number): Promise<any> {
+  return bgWindow.evaluate(async (targetId: number) => {
+    const r = await (window as any).app.window.list({ includeInternal: false });
+    if (!r?.success) return null;
+    return (r.windows || []).find((w: any) => w.id === targetId) ?? null;
+  }, id);
 }
 
 async function closeWindow(bgWindow: Page, windowId: number): Promise<void> {
@@ -91,459 +87,146 @@ async function closeWindow(bgWindow: Page, windowId: number): Promise<void> {
 }
 
 /**
- * Get the computed style properties of an element by ID
+ * Dispatch a real DOM dblclick on the shared overlay's navbar element (direct
+ * BrowserWindow lookup + executeJavaScript, the same technique
+ * `overlayChromeState()` uses internally — the overlay IS a real, focusable
+ * BrowserWindow). The overlay's navbar wires this to `toggleMaximize()`
+ * (`renderer/page/overlay.js`), which publishes `page:maximize` for the
+ * active window — this proves the double-click gesture itself, not just the
+ * underlying pubsub intent.
  */
-async function getElementPosition(pageWindow: Page, elementId: string): Promise<{
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}> {
-  return pageWindow.evaluate((id: string) => {
-    const el = document.getElementById(id) as HTMLElement;
-    if (!el) throw new Error(`Element #${id} not found`);
-    return {
-      left: parseFloat(el.style.left) || 0,
-      top: parseFloat(el.style.top) || 0,
-      width: parseFloat(el.style.width) || 0,
-      height: parseFloat(el.style.height) || 0,
-    };
-  }, elementId);
-}
-
-/**
- * Get the window bounds via the Electron API
- */
-async function getWindowBounds(pageWindow: Page): Promise<{
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}> {
-  return pageWindow.evaluate(async () => {
-    return await (window as any).app.window.getBounds();
+async function dblClickOverlayNavbar(app: DesktopApp): Promise<void> {
+  await app.evaluateMain!(({ BrowserWindow }) => {
+    const overlay = BrowserWindow.getAllWindows().find((w: Electron.BrowserWindow) => {
+      try { return w.webContents.getURL().includes('page/overlay.html'); } catch { return false; }
+    });
+    if (!overlay) throw new Error('overlay window not found');
+    return overlay.webContents.executeJavaScript(
+      "(function(){ var nb = document.getElementById('navbar'); if (!nb) return false; nb.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return true; })()",
+    );
   });
 }
 
 // ============================================================================
-// Maximize Tests (6-14): Verify maximize/restore functionality
+// Maximize Tests: verify maximize/restore functionality on the hybrid
+// page-host (ported from the canvas-DOM suite; see file header).
 // ============================================================================
 
 test.describe('Page Layout Maximize @desktop', () => {
 
-  // Test 6: Maximize command fills work area
   test('maximize command fills work area', async () => {
-    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
-    const { pageWindow, windowId } = await openCanvasPage(
-      sharedBgWindow,
-      'https://example.com'
-    );
+    const windowId = await openHybridWindow(sharedBgWindow, 'https://example.com');
 
-    await waitForPageReady(pageWindow);
+    const before = await findEntry(sharedBgWindow, windowId);
+    expect(before?.maximized).toBe(false);
 
-    // Publish maximize command
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      await (window as any).app.window.maximize(wid);
-    }, windowId);
+    await publishOverlayTopic(sharedApp, 'page:maximize', { windowId });
 
-    // Window bounds should match the display work area
-    const result = await pageWindow.evaluate(async () => {
-      const bounds = await (window as any).app.window.getBounds();
-      const displayInfo = await (window as any).app.window.getDisplayInfo();
-      return { bounds, workArea: displayInfo.workArea };
-    });
+    const after = await findEntry(sharedBgWindow, windowId);
+    expect(after?.maximized).toBe(true);
 
-    expect(result.bounds.x).toBe(result.workArea.x);
-    expect(result.bounds.y).toBe(result.workArea.y);
-    expect(result.bounds.width).toBe(result.workArea.width);
-    expect(result.bounds.height).toBe(result.workArea.height);
+    const workArea = await sharedApp.evaluateMain!(({ screen }) => screen.getPrimaryDisplay().workArea);
+    expect(after?.bounds).toEqual(workArea);
 
     await closeWindow(sharedBgWindow, windowId);
   });
 
-  // Test 7: Maximize toggle restores original size
   test('maximize toggle restores original size', async () => {
-    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
-    const { pageWindow, windowId } = await openCanvasPage(
-      sharedBgWindow,
-      'https://example.com'
-    );
+    const windowId = await openHybridWindow(sharedBgWindow, 'https://example.com');
 
-    await waitForPageReady(pageWindow);
+    const before = await findEntry(sharedBgWindow, windowId);
+    const originalBounds = before.bounds;
 
-    // Record original bounds
-    const originalBounds = await getWindowBounds(pageWindow);
+    await publishOverlayTopic(sharedApp, 'page:maximize', { windowId });
+    const maximized = await findEntry(sharedBgWindow, windowId);
+    expect(maximized?.maximized).toBe(true);
+    expect(maximized?.bounds).not.toEqual(originalBounds);
 
-    // Maximize
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      await (window as any).app.window.maximize(wid);
-    }, windowId);
-
-    // Wait for maximize state
-    await pageWindow.waitForFunction(
-      () => document.body.classList.contains('maximized'),
-      undefined,
-      { timeout: 5000 }
-    );
-
-    // Restore from maximize
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      await (window as any).app.window.unmaximize(wid);
-    }, windowId);
-
-    // Wait for maximized class to be removed
-    await pageWindow.waitForFunction(
-      () => !document.body.classList.contains('maximized'),
-      undefined,
-      { timeout: 5000 }
-    );
-
-    // Bounds should match original
-    const restoredBounds = await getWindowBounds(pageWindow);
-    expect(restoredBounds.width).toBe(originalBounds.width);
-    expect(restoredBounds.height).toBe(originalBounds.height);
+    await publishOverlayTopic(sharedApp, 'page:unmaximize', { windowId });
+    const restored = await findEntry(sharedBgWindow, windowId);
+    expect(restored?.maximized).toBe(false);
+    expect(restored?.bounds).toEqual(originalBounds);
 
     await closeWindow(sharedBgWindow, windowId);
   });
 
-  // Test 8: Webview edge-to-edge when maximized (left=0, top=0)
-  test('webview fills window when maximized', async () => {
-    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
-    const { pageWindow, windowId } = await openCanvasPage(
-      sharedBgWindow,
-      'https://example.com'
-    );
+  // Formerly "webview fills window when maximized" (left=0, top=0 of the
+  // canvas page's #content DOM element) — DELETED. The hybrid content window
+  // IS the native window; there's no DOM child position to measure, so the
+  // assertion is architecturally tautological on hybrid.
 
-    await waitForPageReady(pageWindow);
+  test('navbar can be revealed while the host is maximized', async () => {
+    // Ported reduced form of the former "navbar floats over webview when
+    // maximized" test. The z-index-vs-webview and webview-top=0 assertions
+    // don't translate — chrome and content are now separate native windows,
+    // not DOM-stacked layers within one page — but the core behavior (the
+    // overlay chrome stays revealable/usable while its host is maximized)
+    // is still meaningful and is asserted here via the existing hybrid
+    // overlay test idioms.
+    const windowId = await openHybridWindow(sharedBgWindow, 'https://example.com');
 
-    // Maximize
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      await (window as any).app.window.maximize(wid);
-    }, windowId);
+    const activated = await setActive(sharedApp, { id: windowId, contentWcId: null });
+    expect(activated).toBe(true);
+    await waitOverlayReady(sharedApp);
 
-    await pageWindow.waitForFunction(
-      () => document.body.classList.contains('maximized'),
-      undefined,
-      { timeout: 5000 }
-    );
+    await publishOverlayTopic(sharedApp, 'page:maximize', { windowId });
+    const maximized = await findEntry(sharedBgWindow, windowId);
+    expect(maximized?.maximized).toBe(true);
 
-    // Webview should be at (0, 0) filling the window
-    const webviewPos = await getElementPosition(pageWindow, 'content');
-    expect(webviewPos.left).toBe(0);
-    expect(webviewPos.top).toBe(0);
-
-    await closeWindow(sharedBgWindow, windowId);
-  });
-
-  // Test 9: Navbar floats over webview when maximized
-  test('navbar floats over webview when maximized', async () => {
-    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
-    const { pageWindow, windowId } = await openCanvasPage(
-      sharedBgWindow,
-      'https://example.com'
-    );
-
-    await waitForPageReady(pageWindow);
-
-    // Maximize
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      await (window as any).app.window.maximize(wid);
-    }, windowId);
-
-    await pageWindow.waitForFunction(
-      () => document.body.classList.contains('maximized'),
-      undefined,
-      { timeout: 5000 }
-    );
-
-    // Show navbar
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:show-navbar',
-        { windowId: wid }
-      );
-    }, windowId);
-
-    await pageWindow.waitForFunction(
-      () => {
-        const navbar = document.getElementById('navbar');
-        return navbar && navbar.classList.contains('visible');
-      },
-      undefined,
-      { timeout: 5000 }
-    );
-
-    // Navbar should be floating above the webview (z-index check)
-    // and webview should still be at top=0 (not pushed down)
-    const webviewPos = await getElementPosition(pageWindow, 'content');
-    expect(webviewPos.top).toBe(0);
-
-    // Navbar should have z-index >= 100 (already does from CSS)
-    const navbarZIndex = await pageWindow.evaluate(() => {
-      const navbar = document.getElementById('navbar') as HTMLElement;
-      return parseInt(window.getComputedStyle(navbar).zIndex) || 0;
-    });
-    expect(navbarZIndex).toBeGreaterThanOrEqual(100);
+    await sendShowNavbar(sharedApp, { id: windowId, contentWcId: null });
+    await expect
+      .poll(async () => (await overlayChromeState(sharedApp))?.navbarVisible, { timeout: 5000 })
+      .toBe(true);
 
     await closeWindow(sharedBgWindow, windowId);
   });
 
-  // Test 10: Panels clamped to screen edge when maximized
-  test('panels clamped to screen edges when maximized', async () => {
-    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
-    const { pageWindow, windowId } = await openCanvasPage(
-      sharedBgWindow,
-      'https://example.com'
-    );
+  // Formerly "panels clamped to screen edges when maximized" — DELETED. The
+  // side panels (tags/notes/entities/page-info) do exist in the hybrid
+  // shared overlay (`overlay.js`'s `stackRight()`), but the test-only
+  // `overlayPanelState()` bridge only exposes `{hasData, text}` per panel,
+  // not bounding-rect geometry — extending it would mean editing a
+  // main-process file (`hybrid-overlay.ts`), which is out of scope for this
+  // pass. FLAGGED AS A POSSIBLE COVERAGE GAP, not confirmed broken: whether
+  // hybrid panels stay clamped to the screen edge in a maximized host is
+  // untested.
 
-    await waitForPageReady(pageWindow);
+  // Formerly "resize handles stay reachable when maximized" — DELETED. No
+  // resize-handle DOM concept exists in the hybrid overlay chrome (native
+  // window edges/corners are the resize affordance instead); no hybrid
+  // equivalent to port.
 
-    // Maximize
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      await (window as any).app.window.maximize(wid);
-    }, windowId);
+  // Formerly "drag out of maximized state restores original size" —
+  // DELETED. Hybrid host windows ARE draggable (see the hold-to-drag
+  // machinery referenced in recent hybrid commits), but no existing test
+  // bridge affordance simulates a window-chrome drag gesture deterministically
+  // headless, and building one is out of scope here (would mean either new
+  // main-process test-bridge surface or relying on unobservable real OS drag
+  // — see the hybrid focus/input LESSON in apps/desktop/CLAUDE.md). FLAGGED AS
+  // A POSSIBLE COVERAGE GAP: whether dragging a maximized hybrid host restores
+  // its original (pre-maximize) size is untested here.
 
-    await pageWindow.waitForFunction(
-      () => document.body.classList.contains('maximized'),
-      undefined,
-      { timeout: 5000 }
-    );
+  // Formerly "webview border-radius removed when maximized" — DELETED. Pure
+  // canvas CSS on the content page's own DOM element; no hybrid equivalent
+  // (the content window is a native BaseWindow, not a styled DOM node).
 
-    // The body.maximized class flips via the FSM as soon as the IPC
-    // returns, but setBounds(workArea) is an async X11 configure-request
-    // — actual window.innerWidth doesn't reflect the new size until the
-    // server processes it. Without this wait, panel positions get laid
-    // out against the now-wide window while we then sample
-    // window.innerWidth against the not-yet-wide window, and the
-    // clamp assertion sees a 1632px panel.left against an 816px window.
-    await pageWindow.waitForFunction(
-      () => window.innerWidth > 1000,
-      undefined,
-      { timeout: 5000 }
-    );
-
-    // Show navbar to reveal panels
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:show-navbar',
-        { windowId: wid }
-      );
-    }, windowId);
-
-    await pageWindow.waitForFunction(
-      () => {
-        const navbar = document.getElementById('navbar');
-        return navbar && navbar.classList.contains('visible');
-      },
-      undefined,
-      { timeout: 5000 }
-    );
-
-    // Left panels should be clamped: left >= MARGIN
-    const pageInfoPos = await getElementPosition(pageWindow, 'page-info-panel');
-    expect(pageInfoPos.left).toBeGreaterThanOrEqual(MARGIN);
-
-    // Right panels should be clamped: left + width <= window width - MARGIN
-    const windowWidth = await pageWindow.evaluate(() => window.innerWidth);
-    const tagsPanelPos = await getElementPosition(pageWindow, 'tags-panel');
-    expect(tagsPanelPos.left + PANEL_WIDTH).toBeLessThanOrEqual(windowWidth - MARGIN);
-
-    await closeWindow(sharedBgWindow, windowId);
-  });
-
-  // Test 11: Resize handles stay reachable when maximized
-  test('resize handles stay reachable when maximized so a corner-grab can exit-and-resize', async () => {
-    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
-    const { pageWindow, windowId } = await openCanvasPage(
-      sharedBgWindow,
-      'https://example.com'
-    );
-
-    await waitForPageReady(pageWindow);
-
-    // Maximize
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      await (window as any).app.window.maximize(wid);
-    }, windowId);
-
-    await pageWindow.waitForFunction(
-      () => document.body.classList.contains('maximized'),
-      undefined,
-      { timeout: 5000 }
-    );
-
-    // After the page-host edge-resize work, corner handles must remain
-    // visible and pointer-event-receptive in maximized so the user can
-    // drag a corner inward to exit-and-resize in a single gesture
-    // (page-fsm RESIZE_START transition from MAXIMIZED).
-    const seReachable = await pageWindow.evaluate(() => {
-      const el = document.getElementById('resize-se');
-      if (!el) return false;
-      const style = window.getComputedStyle(el);
-      if (style.display === 'none') return false;
-      if (style.visibility === 'hidden') return false;
-      if (style.pointerEvents === 'none') return false;
-      return true;
-    });
-    expect(seReachable, 'SE corner handle must stay reachable in maximized').toBe(true);
-
-    await closeWindow(sharedBgWindow, windowId);
-  });
-
-  // Test 12: Drag out of maximized state restores
-  test('drag out of maximized state restores original size', async () => {
-    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
-    const { pageWindow, windowId } = await openCanvasPage(
-      sharedBgWindow,
-      'https://example.com'
-    );
-
-    await waitForPageReady(pageWindow);
-
-    // Record original bounds
-    const originalBounds = await getWindowBounds(pageWindow);
-
-    // Maximize
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      await (window as any).app.window.maximize(wid);
-    }, windowId);
-
-    await pageWindow.waitForFunction(
-      () => document.body.classList.contains('maximized'),
-      undefined,
-      { timeout: 5000 }
-    );
-
-    // Show navbar, then drag it to exit maximized state
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:show-navbar',
-        { windowId: wid }
-      );
-    }, windowId);
-
-    await pageWindow.waitForFunction(
-      () => {
-        const navbar = document.getElementById('navbar');
-        return navbar && navbar.classList.contains('visible');
-      },
-      undefined,
-      { timeout: 5000 }
-    );
-
-    // Simulate drag on navbar
-    await pageWindow.evaluate(() => {
-      const navbar = document.getElementById('navbar') as HTMLElement;
-      navbar.dispatchEvent(new MouseEvent('mousedown', {
-        bubbles: true,
-        screenX: 400,
-        screenY: 20,
-        button: 0,
-      }));
-      document.dispatchEvent(new MouseEvent('mousemove', {
-        bubbles: true,
-        screenX: 450,
-        screenY: 50,
-      }));
-      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-    });
-
-    // Should exit maximized state
-    await pageWindow.waitForFunction(
-      () => !document.body.classList.contains('maximized'),
-      undefined,
-      { timeout: 5000 }
-    );
-
-    // Restored window should have the original dimensions (not work area dimensions)
-    const restoredBounds = await getWindowBounds(pageWindow);
-    expect(restoredBounds.width).toBe(originalBounds.width);
-    expect(restoredBounds.height).toBe(originalBounds.height);
-
-    await closeWindow(sharedBgWindow, windowId);
-  });
-
-  // Test 13: Webview border-radius removed when maximized
-  test('webview border-radius removed when maximized', async () => {
-    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
-    const { pageWindow, windowId } = await openCanvasPage(
-      sharedBgWindow,
-      'https://example.com'
-    );
-
-    await waitForPageReady(pageWindow);
-
-    // Verify non-maximized has border-radius
-    const normalRadius = await pageWindow.evaluate(() => {
-      const webview = document.getElementById('content') as HTMLElement;
-      return window.getComputedStyle(webview).borderRadius;
-    });
-    expect(normalRadius).not.toBe('0px');
-
-    // Maximize
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      await (window as any).app.window.maximize(wid);
-    }, windowId);
-
-    await pageWindow.waitForFunction(
-      () => document.body.classList.contains('maximized'),
-      undefined,
-      { timeout: 5000 }
-    );
-
-    // Border-radius should be removed
-    const maximizedRadius = await pageWindow.evaluate(() => {
-      const webview = document.getElementById('content') as HTMLElement;
-      return window.getComputedStyle(webview).borderRadius;
-    });
-    expect(maximizedRadius).toBe('0px');
-
-    await closeWindow(sharedBgWindow, windowId);
-  });
-
-  // Test 14: Double-click navbar maximizes
   test('double-click navbar triggers maximize', async () => {
-    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: maximize/geometry is the Stage-B FSM re-home');
-    const { pageWindow, windowId } = await openCanvasPage(
-      sharedBgWindow,
-      'https://example.com'
-    );
+    const windowId = await openHybridWindow(sharedBgWindow, 'https://example.com');
 
-    await waitForPageReady(pageWindow);
+    const activated = await setActive(sharedApp, { id: windowId, contentWcId: null });
+    expect(activated).toBe(true);
+    await waitOverlayReady(sharedApp);
 
-    // Show navbar
-    await sharedBgWindow.evaluate(async (wid: number) => {
-      (window as any).app.publish(
-        'page:show-navbar',
-        { windowId: wid }
-      );
-    }, windowId);
+    await sendShowNavbar(sharedApp, { id: windowId, contentWcId: null });
+    await expect
+      .poll(async () => (await overlayChromeState(sharedApp))?.navbarVisible, { timeout: 5000 })
+      .toBe(true);
 
-    await pageWindow.waitForFunction(
-      () => {
-        const navbar = document.getElementById('navbar');
-        return navbar && navbar.classList.contains('visible');
-      },
-      undefined,
-      { timeout: 5000 }
-    );
+    await dblClickOverlayNavbar(sharedApp);
 
-    // Double-click on navbar
-    await pageWindow.evaluate(() => {
-      const navbar = document.getElementById('navbar') as HTMLElement;
-      navbar.dispatchEvent(new MouseEvent('dblclick', {
-        bubbles: true,
-        screenX: 400,
-        screenY: 20,
-      }));
-    });
-
-    // Should enter maximized state
-    await pageWindow.waitForFunction(
-      () => document.body.classList.contains('maximized'),
-      undefined,
-      { timeout: 5000 }
-    );
+    await expect
+      .poll(async () => (await findEntry(sharedBgWindow, windowId))?.maximized, { timeout: 5000 })
+      .toBe(true);
 
     await closeWindow(sharedBgWindow, windowId);
   });

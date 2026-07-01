@@ -18,7 +18,7 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
-import { hybridFlagOn, publishOverlayTopic } from '../helpers/hybrid-page';
+import { getHybridContentWcId, publishOverlayTopic } from '../helpers/hybrid-page';
 import { sleep } from '../helpers/window-utils';
 import http from 'http';
 
@@ -221,8 +221,6 @@ test.describe('Reopen Last Closed Window @desktop', () => {
   });
 
   test('reopen a maximized hybrid page-host restores it maximized, with pre-max bounds for unmaximize', async () => {
-    test.skip(!(await hybridFlagOn(app)), 'hybrid-only: exercises the hybrid registry maximize tracking added alongside this test');
-
     const url = `http://127.0.0.1:${serverPort}/maximize-reopen`;
     const id = await openWindow(url);
     await findWindowWithUrl('/maximize-reopen');
@@ -353,14 +351,15 @@ test.describe('Reopen Last Closed Window @desktop', () => {
     expect(failures).toEqual([]);
   });
 
-  test('cmd+shift+T from inside webview content triggers reopen (regression: guest webContents must delegate to handleLocalShortcut)', async () => {
-    test.skip(await hybridFlagOn(app), 'deferred to Stage B: cmd+shift+T reopen-from-page on hybrid, Batch D fix pending');
-    // The user-reported "doesn't work a lot of the time" symptom: when
-    // focus is inside the page content (the webview guest), pressing
-    // cmd+shift+T silently does nothing. The webview guest's
-    // `before-input-event` handler in `ipc.ts` only handles
-    // page-specific shortcuts (cmd+L, R, F, …) and never delegates
-    // unmatched keys to the global `handleLocalShortcut`.
+  test('cmd+shift+T from inside page content triggers reopen (regression: content webContents must delegate to handleLocalShortcut)', async () => {
+    // The user-reported "doesn't work a lot of the time" symptom: when focus
+    // is inside the page content, pressing cmd+shift+T silently does
+    // nothing. Ported to hybrid: the content is a main-owned WebContentsView
+    // (not a `<webview>` guest), and leftover local shortcuts are routed via
+    // the content WC's before-input-event (`wireHybridContentEvents` in
+    // ipc.ts) — see apps/desktop/CLAUDE.md's "Local keyboard shortcuts" note.
+    // This drives that real handler by sending the keystroke straight to the
+    // real content WebContents (found via the registry, not the bridge).
 
     // Stack a closeable URL so the reopen has something to bring back.
     const reopenableUrl = `http://127.0.0.1:${serverPort}/from-webview-shortcut`;
@@ -370,36 +369,35 @@ test.describe('Reopen Last Closed Window @desktop', () => {
     await sleep(200);
     expect(await getStackCount()).toBeGreaterThan(0);
 
-    // Open a SECOND page with its own webview guest. Focus will start
-    // inside this guest content (Peek's page tile auto-focuses the
-    // webview after dom-ready).
+    // Open a SECOND page — focus should be considered "inside" its content
+    // for the purposes of the content WC's before-input-event handler.
     const activeUrl = `http://127.0.0.1:${serverPort}/active-page`;
     const id2 = await openWindow(activeUrl);
     await findWindowWithUrl('/active-page');
-    // Give the page tile time to attach the webview + auto-focus it.
+    // Give the hybrid content window time to finish attaching.
     await sleep(500);
 
-    // Synthesize cmd+shift+T into the GUEST webContents — i.e. simulate
-    // pressing the shortcut while focus is inside the webpage the user
-    // is reading. This is what triggers the page-host's webview
+    const contentWcId = await getHybridContentWcId(app, id2);
+    expect(contentWcId, 'the active-page hybrid content WC must be resolvable').not.toBeNull();
+
+    // Synthesize cmd+shift+T into the CONTENT WebContents — i.e. simulate
+    // pressing the shortcut while focus is inside the webpage the user is
+    // reading. This is what triggers the hybrid content WC's
     // before-input-event listener.
-    const result = (await app.evaluateMain!(({ webContents }) => {
-      const all = webContents.getAllWebContents();
-      const guests = all.filter((wc: any) => typeof wc.hostWebContents !== 'undefined' && wc.hostWebContents);
-      if (guests.length === 0) return { error: 'no guest webContents found', total: all.length };
-      // Pick the most recently created guest — the active-page webview.
-      const guest = guests[guests.length - 1];
+    const result = (await app.evaluateMain!(({ webContents }, wcId: number) => {
+      const wc = webContents.fromId(wcId);
+      if (!wc) return { error: 'content webContents not found' };
       try {
-        guest.sendInputEvent({
+        wc.sendInputEvent({
           type: 'keyDown',
           keyCode: 'T',
           modifiers: process.platform === 'darwin' ? ['meta', 'shift'] : ['control', 'shift'],
         } as any);
-        return { ok: true, url: guest.getURL() };
+        return { ok: true, url: wc.getURL() };
       } catch (e: any) {
         return { error: e.message };
       }
-    })) as any;
+    }, contentWcId!)) as any;
 
     expect(result.error, JSON.stringify(result)).toBeUndefined();
 

@@ -3,14 +3,27 @@
  *
  * User-reported bug:
  *   1. Open https://openstreetmaps.org (typo — domain doesn't resolve)
- *   2. Page-host loads, webview shows DNS error → load-error-overlay renders
+ *   2. Page-host loads, the load-error overlay renders
  *   3. Press Cmd+L
  *   Expected: address bar (navbar) opens, window stays the same size
  *   Actual:   address bar does NOT open, window MAXIMIZES
  *
- * This test pins the symptom: open page-host on an unresolvable URL, wait
- * for error overlay, capture initial bounds, press Cmd+L on the page-host,
- * assert (a) bounds unchanged, (b) navbar visible.
+ * Ported to the hybrid page-host (Stage B load-error overlay port, commit
+ * 49b29723): the load-error card now renders in the SHARED overlay renderer
+ * (`renderer/page/overlay.js`, `.load-error-overlay`), not inside the
+ * content page's own DOM — the content window is a bare, main-owned
+ * WebContentsView with no chrome of its own. This test opens a REAL hybrid
+ * content window on an unresolvable URL, activates it (focus-free, via the
+ * same `setActive` idiom every hybrid spec uses), waits for the overlay to
+ * paint the load-error card, sends Cmd+L straight to the content
+ * WebContents (the real before-input-event path), and asserts (a) bounds
+ * unchanged, (b) navbar visible.
+ *
+ * The original canvas-era assertions about navbar/overlay z-index stacking
+ * and the overlay not stretching to the full window no longer apply: navbar
+ * and load-error card are painted in the SAME shared overlay document now
+ * (not layered across the content page's own DOM and a floating chrome
+ * window), so that particular stacking bug class can't recur the same way.
  *
  * Run with:
  *   yarn test:grep "Cmd\+L on error page"
@@ -19,7 +32,7 @@
 import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { waitForExtensionsReady } from '../helpers/window-utils';
-import { hybridFlagOn } from '../helpers/hybrid-page';
+import { setActive, overlayChromeState, waitOverlayReady, getHybridContentWcId } from '../helpers/hybrid-page';
 
 let sharedApp: DesktopApp;
 let sharedBgWindow: Page;
@@ -34,154 +47,96 @@ test.afterAll(async () => {
   await closeSharedApp();
 });
 
-async function openCanvasPage(
-  bgWindow: Page,
-  url: string,
-): Promise<{ pageWindow: Page; windowId: number }> {
+/** Open a REAL (non-fake) hybrid content window on `url` via the production window-open path. */
+async function openHybridWindow(bgWindow: Page, url: string): Promise<number> {
   const result = await bgWindow.evaluate(async (targetUrl: string) => {
-    return await (window as any).app.window.open(targetUrl, {
-      width: 800,
-      height: 600,
-    });
+    return await (window as any).app.window.open(targetUrl, { width: 800, height: 600 });
   }, url);
   expect(result.success).toBe(true);
-  const pageWindow = await sharedApp.getWindow('page/index.html', 15000);
-  expect(pageWindow).toBeTruthy();
-  return { pageWindow, windowId: result.id };
+  return result.id as number;
+}
+
+/** Read `windowId`'s live entry (bounds, maximized, …) from the production window list. */
+async function findEntry(bgWindow: Page, id: number): Promise<any> {
+  return bgWindow.evaluate(async (targetId: number) => {
+    const r = await (window as any).app.window.list({ includeInternal: false });
+    if (!r?.success) return null;
+    return (r.windows || []).find((w: any) => w.id === targetId) ?? null;
+  }, id);
+}
+
+/**
+ * Whether the shared overlay renderer currently has a `.load-error-overlay`
+ * card painted. Direct BrowserWindow lookup + executeJavaScript — the same
+ * technique `overlayChromeState()` itself uses internally — since the
+ * load-error card isn't (yet) one of the fields the existing test-bridge
+ * `overlayChromeState()` accessor exposes.
+ */
+async function overlayHasLoadErrorCard(app: DesktopApp): Promise<boolean> {
+  return app.evaluateMain!(({ BrowserWindow }) => {
+    const overlay = BrowserWindow.getAllWindows().find((w: Electron.BrowserWindow) => {
+      try { return w.webContents.getURL().includes('page/overlay.html'); } catch { return false; }
+    });
+    if (!overlay) return false;
+    return overlay.webContents.executeJavaScript("!!document.querySelector('.load-error-overlay')");
+  });
 }
 
 test.describe('Cmd+L on error page @desktop', () => {
   test('Cmd+L on a page-host with a load-error overlay shows navbar without maximizing', async () => {
-    test.skip(await hybridFlagOn(sharedApp), 'deferred to Stage B: depends on the load-error-overlay chrome the overlay lacks yet');
     const badUrl = 'http://nonexistent-cmdl-bug-xyz.invalid/';
-    const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, badUrl);
+    const windowId = await openHybridWindow(sharedBgWindow, badUrl);
 
     try {
-      // Wait for the error overlay — same state the user reports.
-      await pageWindow.waitForFunction(
-        () => !!document.querySelector('.load-error-overlay'),
-        undefined,
-        { timeout: 15000 },
-      );
+      // Make this the active hybrid window so the shared overlay frames it
+      // (focus-free synthetic activation — every hybrid spec drives windows
+      // this way instead of real OS focus).
+      const activated = await setActive(sharedApp, { id: windowId, contentWcId: null });
+      expect(activated).toBe(true);
+      await waitOverlayReady(sharedApp);
 
-      // Confirm navbar exists and is currently NOT visible (post-loading auto-hide).
-      await pageWindow.waitForFunction(
-        () => {
-          const navbar = document.getElementById('navbar');
-          return navbar && !navbar.classList.contains('visible');
-        },
-        undefined,
-        { timeout: 10000 },
-      );
+      // Wait for the load-error card to render (main records the
+      // did-fail-load as per-host load-error state and live-publishes it to
+      // the overlay for the active window — Stage B, commit 49b29723).
+      await expect.poll(() => overlayHasLoadErrorCard(sharedApp), { timeout: 15000 }).toBe(true);
 
-      const beforeMaximized = await pageWindow.evaluate(
-        () => document.body.classList.contains('maximized'),
-      );
-      expect(beforeMaximized).toBe(false);
+      // Confirm navbar is not visible yet (post-loading auto-hide).
+      const beforeState = await overlayChromeState(sharedApp);
+      expect(beforeState?.navbarVisible).toBe(false);
 
-      // Bring the page-host to front so Cmd+L is delivered to its webContents.
-      await pageWindow.bringToFront();
+      const before = await findEntry(sharedBgWindow, windowId);
+      expect(before?.maximized).toBe(false);
+      const boundsBefore = before.bounds;
 
-      // Synthesize Cmd+L into the page-host webContents via Electron's
-      // sendInputEvent — this exercises the full before-input-event chain
-      // (host + guest handlers in ipc.ts → publish page:show-navbar →
-      // page.js subscriber → show()), and the main.ts before-input-event
-      // fallback. Playwright's keyboard.press dispatches DOM events which
-      // do NOT trigger Electron's input pipeline.
-      // The before-input-event handler watches input.meta on darwin but
-      // input.control on every other platform (see ipc.ts where the modifier
-      // is selected per-platform). Sending 'meta' on Linux maps to Super/
-      // Windows key, which is NOT what the handler is listening for, so the
-      // page:show-navbar publish never fires and the assertions below all
-      // fail. Match the modifier to what the production code expects.
+      // Synthesize Cmd+L (Ctrl+L on non-darwin) into the CONTENT
+      // WebContents — this exercises the real before-input-event chain
+      // (`wireHybridContentEvents` in ipc.ts → publish page:show-navbar →
+      // overlay.js subscriber → show()). Playwright's keyboard.press
+      // dispatches DOM events which do NOT trigger Electron's input
+      // pipeline; sendInputEvent on the real content WC does.
+      const contentWcId = await getHybridContentWcId(sharedApp, windowId);
+      expect(contentWcId, 'content webContents must be resolvable for a live hybrid window').not.toBeNull();
+
       const modKey = process.platform === 'darwin' ? 'meta' : 'control';
-      const sendResult = await sharedApp.evaluateMain!(({ BrowserWindow, webContents }, mod: string) => {
-        const wins = BrowserWindow.getAllWindows();
-        const host = wins.find((w: Electron.BrowserWindow) =>
-          w.webContents.getURL().includes('app/page/index.html'),
-        );
-        if (!host) return { error: 'no page-host window found' };
-        const targets: Electron.WebContents[] = [host.webContents];
-        const all = webContents.getAllWebContents();
-        for (const wc of all) {
-          if ((wc as any).hostWebContents?.id === host.webContents.id) {
-            targets.push(wc);
-          }
-        }
-        for (const wc of targets) {
-          wc.sendInputEvent({ type: 'keyDown', keyCode: 'l', modifiers: [mod] } as any);
-          wc.sendInputEvent({ type: 'char', keyCode: 'l', modifiers: [mod] } as any);
-          wc.sendInputEvent({ type: 'keyUp', keyCode: 'l', modifiers: [mod] } as any);
-        }
-        return { ok: true, targetCount: targets.length, hostId: host.id };
-      }, modKey) as any;
+      const sendResult = (await sharedApp.evaluateMain!(({ webContents }, args: { wcId: number; mod: string }) => {
+        const wc = webContents.fromId(args.wcId);
+        if (!wc) return { error: 'content webContents not found' };
+        wc.sendInputEvent({ type: 'keyDown', keyCode: 'l', modifiers: [args.mod] } as any);
+        wc.sendInputEvent({ type: 'char', keyCode: 'l', modifiers: [args.mod] } as any);
+        wc.sendInputEvent({ type: 'keyUp', keyCode: 'l', modifiers: [args.mod] } as any);
+        return { ok: true };
+      }, { wcId: contentWcId as number, mod: modKey })) as any;
       expect(sendResult.error, JSON.stringify(sendResult)).toBeUndefined();
 
-      // Give the renderer time to react. We wait for *either* navbar visible
-      // OR maximized class — both are observable state changes — then assert.
-      await pageWindow.waitForFunction(
-        () => {
-          const navbar = document.getElementById('navbar');
-          const maxed = document.body.classList.contains('maximized');
-          return (navbar && navbar.classList.contains('visible')) || maxed;
-        },
-        undefined,
-        { timeout: 5000 },
-      ).catch(() => { /* swallow — assertions below report the actual state */ });
+      // Navbar reveals...
+      await expect
+        .poll(async () => (await overlayChromeState(sharedApp))?.navbarVisible, { timeout: 5000 })
+        .toBe(true);
 
-      const afterMaximized = await pageWindow.evaluate(
-        () => document.body.classList.contains('maximized'),
-      );
-      const navbarVisible = await pageWindow.evaluate(() => {
-        const navbar = document.getElementById('navbar');
-        return !!(navbar && navbar.classList.contains('visible'));
-      });
-      // Stacking check — the navbar must sit ABOVE the load-error overlay so
-      // the user can see and click the URL field. Pre-fix the overlay was at
-      // z-index:9998 vs navbar:100 — the navbar got `.visible` in the DOM but
-      // was hidden behind the overlay, so the user reported "address bar
-      // didn't open". The dark overlay also stretched to fit show()'s
-      // panel-overhang window expansion, which the user perceived as
-      // "window maximizes".
-      const stacking = await pageWindow.evaluate(() => {
-        const navbar = document.getElementById('navbar');
-        const overlay = document.querySelector('.load-error-overlay');
-        const z = (el: Element | null) => el ? parseInt(getComputedStyle(el).zIndex || '0', 10) : NaN;
-        return { navbarZ: z(navbar), overlayZ: z(overlay) };
-      });
-
-      // The user-perceived "content area" must stay anchored to the
-      // webview/center-column even when show() expands the window for
-      // side-panel overhang. Specifically: the load-error overlay must NOT
-      // stretch to fill the wider window — it must stay sized to the
-      // center-column it lives inside. Pre-fix, the overlay was
-      // `position: fixed` anchored to the viewport and grew with the window
-      // (1236px), making the user perceive their "content area" as having
-      // ballooned to the screen edges on a mere Cmd+L.
-      const sizes = await pageWindow.evaluate(() => {
-        const wv = document.getElementById('content') as HTMLElement;
-        const ov = document.querySelector('.load-error-overlay') as HTMLElement;
-        const cc = document.getElementById('center-column') as HTMLElement | null;
-        const r = (el: HTMLElement | null) => el ? {
-          rectWidth: Math.round(el.getBoundingClientRect().width),
-          rectLeft: Math.round(el.getBoundingClientRect().left),
-        } : null;
-        return {
-          webview: r(wv),
-          overlay: r(ov),
-          centerColumn: r(cc),
-          documentWidth: document.documentElement.clientWidth,
-        };
-      });
-      // Webview width unchanged.
-      expect(sizes.webview!.rectWidth).toBe(800);
-      // Overlay sized to its container (center-column), NOT to the window.
-      expect(sizes.overlay!.rectWidth).toBe(sizes.centerColumn!.rectWidth);
-      expect(sizes.overlay!.rectWidth).toBeLessThan(sizes.documentWidth);
-
-      expect(afterMaximized).toBe(false);
-      expect(navbarVisible).toBe(true);
-      expect(stacking.navbarZ).toBeGreaterThan(stacking.overlayZ);
+      // ...and the host must NOT resize/maximize.
+      const after = await findEntry(sharedBgWindow, windowId);
+      expect(after?.maximized, 'Cmd+L on an error page must not maximize the window').toBe(false);
+      expect(after?.bounds, 'Cmd+L on an error page must not change window bounds').toEqual(boundsBefore);
     } finally {
       await sharedBgWindow.evaluate(async (id: number) => {
         return await (window as any).app.window.close(id);

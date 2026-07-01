@@ -1,7 +1,6 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
-import { hybridFlagOn } from '../helpers/hybrid-page';
 
 // Regression (peek item 8e5c3174), found dogfooding 2026-06-09 right after the
 // hybrid page-host menu/shortcut fix (b1dd4e7c) restored the peek/slide hotkeys.
@@ -138,8 +137,6 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
   }
 
   test('a focused workspace window closes a hybrid quick-view sibling', async () => {
-    test.skip(!(await hybridFlagOn(app)), 'hybrid page-host flag off — peek/slide are BrowserWindows');
-
     const qv = await openHybridQuickView('qv-vs-workspace');
     // Precondition: the hybrid quick-view BaseWindow is alive in the registry.
     expect(await hybridAlive(qv)).toBe(true);
@@ -154,8 +151,6 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
   });
 
   test('opening (focusing) a second hybrid quick-view closes the first', async () => {
-    test.skip(!(await hybridFlagOn(app)), 'hybrid page-host flag off — peek/slide are BrowserWindows');
-
     // Two hybrid quick-views (the peek/slide "open B over A" scenario). This
     // drives the autoclose through the HYBRID focus path (onHybridHostFocus),
     // not the BrowserWindow one — the second half of the regression: a hybrid
@@ -203,8 +198,6 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
   }
 
   test('switching to another app dismisses an open hybrid quick-view', async () => {
-    test.skip(!(await hybridFlagOn(app)), 'hybrid page-host flag off — peek/slide are BrowserWindows');
-
     const qv = await openHybridQuickView('qv-app-switch');
     expect(await hybridAlive(qv)).toBe(true);
 
@@ -215,8 +208,6 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
   });
 
   test('switching apps does NOT close a non-transient hybrid web page', async () => {
-    test.skip(!(await hybridFlagOn(app)), 'hybrid page-host flag off');
-
     const page = await openHybridPage('page-survives-app-switch');
     expect(await hybridAlive(page)).toBe(true);
 
@@ -232,8 +223,6 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
   });
 
   test('the startup resign→become activation dance does NOT dismiss a fresh slide', async () => {
-    test.skip(!(await hybridFlagOn(app)), 'hybrid page-host flag off');
-
     // Reproduces the user-reported "slide hotkey does nothing the first time
     // after startup" bug: macOS fires a brief did-resign-active → did-become-
     // active dance during boot window restoration. A slide opened right then

@@ -1,11 +1,16 @@
 /**
- * Regression: opening a peek-style web-page window and closing it within
- * 1.5s of did-stop-loading used to crash the main process with
+ * Regression: opening a web-page window and closing it within 1.5s of
+ * did-stop-loading used to crash the main process with
  * `TypeError: Object has been destroyed at Timeout._onTimeout` because
  * the deferred `captureThumbnail` body dereferenced `win.webContents` on
  * an already-destroyed BrowserWindow.
  *
  * Fix: `setTimeout` body now bails out via `isDestroyed()` first.
+ *
+ * Repointed for the hybrid page-host (the modal/quick-view open this
+ * originally used targeted a main-process construction path that no longer
+ * exists post canvas-removal). A normal hybrid content window still exercises
+ * the same main-process thumbnail-capture-vs-close race.
  */
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
@@ -23,16 +28,13 @@ test.describe('window thumbnail close race @desktop', () => {
     if (app) await app.close();
   });
 
-  test('closing a non-canvas web window before 1.5s thumbnail timer does not crash main', async () => {
-    // Open as a modal/quick-view (peek-style) so isModalOrQuickView is true
-    // — this is the non-canvas path that hit the 1797 setTimeout.
+  test('closing a hybrid content window before 1.5s thumbnail timer does not crash main', async () => {
+    // Open a normal (non-modal) hybrid content window — this exercises the
+    // hybrid thumbnail-capture path that hit the 1797 setTimeout.
     const open = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('https://example.com/', {
-        modal: true,
         width: 600,
         height: 400,
-        role: 'quick-view',
-        key: 'thumb-race-test',
       });
     });
     expect(open.success).toBe(true);

@@ -11,8 +11,19 @@
  *
  * The drift-detection counters in apps/desktop/main/session.ts increment
  * at each gated call site. These tests assert the counters reflect the
- * gate's behavior: shows=0 + focuses=0 when appFocused is false at
- * restore time; shows>0 + focuses=1 in the happy-path positive case.
+ * gate's behavior.
+ *
+ * Note on hybrid: the legacy `shows`/`showInactives` counters only
+ * instrument the per-window BrowserWindow `.show()`/`.showInactive()` call
+ * site in the restore loop — dead code now that every restored page-host is
+ * a hybrid BaseWindow (`getLiveWindow()` returns null for them, so that
+ * branch never runs). Hybrid's restore design is intentionally different:
+ * every restored window opens INACTIVE (no per-window active-show step at
+ * all — see the `hybridActivations` comment in session.ts), and a single
+ * post-loop authority activates ONLY the focused descriptor. That is a
+ * structural difference, not an instrumentation gap, so the tests below use
+ * the `hybridActivations`/`focuses`/`moveTops` counters (already
+ * instrumented) instead of `shows`/`showInactives`.
  *
  * Per feedback_no_sleep_in_tests_or_code: no wall-clock waits.
  * Deterministic save→setAppFocusedForTest→forceRestoreSession→assert.
@@ -24,7 +35,6 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
-import { hybridFlagOn } from '../helpers/hybrid-page';
 import http from 'http';
 
 let app: DesktopApp;
@@ -132,55 +142,22 @@ test.describe('Session Restore Focus @desktop', () => {
 
   // Tests ----------------------------------------------------------------
 
-  test('appFocused=false at restore: no .show() and no .focus() called on restored windows', async () => {
-    test.skip(await hybridFlagOn(app), 'deferred to Stage B: drift counters instrument only the BrowserWindow show path; hybrid show is via ipc.ts, Batch D test-instrumentation port');
-    // Open 3 windows so the snapshot has multiple descriptors. The
-    // focused-descriptor handling is what matters most; the others
-    // exercise the per-window show gate.
-    await openPage(`http://127.0.0.1:${serverPort}/focus-away-a`);
-    await openPage(`http://127.0.0.1:${serverPort}/focus-away-b`);
-    await openPage(`http://127.0.0.1:${serverPort}/focus-away-c`);
+  // The former "appFocused=false: no .show()/.focus()" test is not ported —
+  // it is an exact scenario duplicate of "in-session restore with
+  // appFocused=false does NOT activate" below (same setup: open windows,
+  // save, reset, setAppFocused(false), forceRestore, assert
+  // moveTops/focuses/hybridActivations are 0). That test already covers this
+  // regression class for hybrid.
 
-    // Save baseline.
-    await forceSave();
-
-    // Close all so restore has work to do.
-    await resetState();
-
-    // Simulate user having switched away to another app.
-    await setAppFocused(false);
-
-    // Restore.
-    const result = await forceRestore();
-    expect(result.restored).toBeGreaterThan(0);
-
-    // Drift-detection assertions:
-    // - shows must be 0 (gate took the showInactive branch every time)
-    // - showInactives must equal restored count (every gated path went here)
-    // - focuses must be 0 (post-loop .focus() on focused descriptor skipped)
-    const counters = await getCounters();
-    expect(counters.shows,
-      `restore must NOT call .show() while user is away — would steal focus from their current app`)
-      .toBe(0);
-    expect(counters.focuses,
-      `restore must NOT call .focus() on focused descriptor while user is away`)
-      .toBe(0);
-    expect(counters.moveTops,
-      `restore must NOT moveTop() the focused descriptor while user is away`)
-      .toBe(0);
-    expect(counters.showInactives,
-      `every restored window must go through .showInactive() when appFocused=false`)
-      .toBe(result.restored);
-
-    // Release the override so subsequent tests see real OS focus state.
-    await clearAppFocusOverride();
-  });
-
-  test('appFocused=true at restore: positive case — .show() per restored window + .focus() on focused descriptor', async () => {
-    test.skip(await hybridFlagOn(app), 'deferred to Stage B: drift counters instrument only the BrowserWindow show path; hybrid show is via ipc.ts, Batch D test-instrumentation port');
-    // Open and save with a focused descriptor (last-focused tracker
-    // marks the most-recent window). saveSessionSnapshot encodes that
-    // as `descriptor.focused = true`.
+  test('appFocused=true at restore (in-session, non-cold): activates the focused descriptor exactly once', async () => {
+    // Hybrid restore has no per-window active-show step to instrument (every
+    // restored window opens INACTIVE by design; see the file header and the
+    // `hybridActivations` comment in session.ts) — only the post-loop
+    // authority activates the ONE focused descriptor. This is the in-session
+    // (non-cold-start) counterpart to the "COLD START boot path" test below:
+    // it proves appFocused=true alone (not just the cold-start override) is
+    // enough to drive activation on a regular in-session restore — a case the
+    // cold-start-specific tests below don't cover.
     await openPage(`http://127.0.0.1:${serverPort}/focus-happy-a`);
     await openPage(`http://127.0.0.1:${serverPort}/focus-happy-b`);
 
@@ -194,27 +171,16 @@ test.describe('Session Restore Focus @desktop', () => {
     expect(result.restored).toBeGreaterThan(0);
 
     const counters = await getCounters();
-    expect(counters.shows,
-      `appFocused=true happy path: every restored window goes through .show()`)
-      .toBe(result.restored);
-    expect(counters.showInactives,
-      `appFocused=true happy path: no .showInactive() calls`)
-      .toBe(0);
-    // The post-loop .focus() is called at most once, only when the
-    // snapshot carries a focused descriptor. The session-save path
-    // records `focused: true` on the last-focused-visible window, so
-    // for a baseline with >=1 window this should be 1. Allowing 0 in
-    // case the test harness's window-tracking didn't observe a focus
-    // event yet — but if shows>0 and focuses=0 with a multi-window
-    // restore, suspect the post-loop gate.
     expect(counters.focuses,
-      `appFocused=true happy path: .focus() called 0 or 1 times (only on focused descriptor)`)
-      .toBeLessThanOrEqual(1);
-    // Regression guard: the focused descriptor must be raised via moveTop(), not
-    // just .focus(). focus() alone does not reliably reorder above the other
-    // restored windows on macOS (canvas-branch parity with the hybrid branch).
+      `appFocused=true happy path: the focused descriptor is activated exactly once`)
+      .toBe(1);
+    expect(counters.hybridActivations,
+      `the activation must go through the hybrid activation path`)
+      .toBe(counters.focuses);
+    // Regression guard: the focused descriptor must be raised via moveTop(),
+    // exactly when it is activated.
     expect(counters.moveTops,
-      `focused descriptor must be raised with moveTop() exactly when .focus() is called`)
+      `focused descriptor must be raised with moveTop() exactly when it is activated`)
       .toBe(counters.focuses);
   });
 

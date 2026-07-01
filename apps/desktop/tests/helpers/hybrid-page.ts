@@ -1,18 +1,18 @@
 /**
  * Shared hybrid page-host test helper.
  *
- * The hybrid page-host (PEEK_PAGEHOST_HYBRID=1) replaces the canvas `<webview>`
- * page host with an OPAQUE content `BaseWindow` plus a separate transparent
- * OVERLAY window that paints the chrome (navbar + side panels + widgets). Specs
- * that used to assert against the canvas page's in-window DOM (`#navbar` etc.)
- * cannot do that anymore — the chrome lives in a different window owned by the
- * main process.
+ * The hybrid page-host is the only page-host implementation (the legacy
+ * canvas `<webview>` page host was removed). It's an OPAQUE content
+ * `BaseWindow` plus a separate transparent OVERLAY window that paints the
+ * chrome (navbar + side panels + widgets). Specs that used to assert against
+ * the canvas page's in-window DOM (`#navbar` etc.) cannot do that anymore —
+ * the chrome lives in a different window owned by the main process.
  *
  * This module packages the existing E2E test bridge
  * (`globalThis.__peekHybridOverlayTest`, installed by `main/hybrid-overlay.ts`
- * under E2E_TEST + PEEK_PAGEHOST_HYBRID) so spec authors drive the
- * content/overlay pair through one small, typed surface instead of re-deriving
- * the bridge in every `app.evaluateMain` call.
+ * under E2E_TEST) so spec authors drive the content/overlay pair through one
+ * small, typed surface instead of re-deriving the bridge in every
+ * `app.evaluateMain` call.
  *
  * Everything here is FOCUS-FREE: hybrid hosts are real (headless, opacity-0,
  * never-shown) BaseWindows; active-window changes are synthetic (`setActive`),
@@ -61,26 +61,15 @@ export interface Rect {
 }
 
 /**
- * Is the hybrid overlay E2E bridge present? False on the canvas path
- * (PEEK_PAGEHOST_HYBRID off), so specs guard with
- * `test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off')`.
+ * Is the hybrid overlay E2E bridge present? The hybrid page-host is now the
+ * only page-host implementation, so this is only false before any hybrid page
+ * has actually been opened (the bridge installs lazily on first use). Specs
+ * guard with `test.skip(!(await hybridBridgePresent(app)), '...')`.
  */
 export async function hybridBridgePresent(app: DesktopApp): Promise<boolean> {
   return app.evaluateMain!(() =>
     Boolean((globalThis as Record<string, unknown>).__peekHybridOverlayTest),
   );
-}
-
-/**
- * Is the hybrid page-host flag on? Mirrors `isHybridPageHost()` in the MAIN
- * process: hybrid is the DEFAULT as of 2026-06-08, so this is true unless
- * `PEEK_PAGEHOST_HYBRID=0` opts back into the legacy canvas path. Deterministic,
- * unlike {@link hybridBridgePresent} which only becomes true once a hybrid page
- * has actually been opened. Use this for skip guards on canvas-only /
- * Stage-B-deferred specs.
- */
-export async function hybridFlagOn(app: DesktopApp): Promise<boolean> {
-  return app.evaluateMain!(() => process.env.PEEK_PAGEHOST_HYBRID !== '0');
 }
 
 /**
@@ -167,6 +156,29 @@ export async function setActive(
     };
     return b.setActive(arg.id);
   }, { id } as { id: number | null });
+}
+
+/**
+ * The content `WebContents` id for ANY live hybrid page-host window id (not
+ * just fake bridge windows — the accessor is keyed by id in the registry, so
+ * it works equally for a real window opened via the production
+ * `app.window.open` path). Null if `id` isn't a live hybrid window, or the
+ * accessor isn't available. Useful for specs that open a REAL hybrid content
+ * window and then need to send synthetic input events straight to its content
+ * WC (e.g. `webContents.fromId(id).sendInputEvent(...)`).
+ */
+export async function getHybridContentWcId(
+  app: DesktopApp,
+  id: number,
+): Promise<number | null> {
+  return app.evaluateMain!((_e, arg) => {
+    const pt = (globalThis as Record<string, unknown>).__peek_test as
+      | { getHybridContentWcIdForTest?: (id: number) => number | null }
+      | undefined;
+    return pt && typeof pt.getHybridContentWcIdForTest === 'function'
+      ? pt.getHybridContentWcIdForTest(arg.id)
+      : null;
+  }, { id } as { id: number });
 }
 
 /** The live content URL of a hybrid page-host's content WebContents. */

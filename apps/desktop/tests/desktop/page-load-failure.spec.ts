@@ -13,8 +13,17 @@
 import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { waitForExtensionsReady } from '../helpers/window-utils';
-import { hybridFlagOn } from '../helpers/hybrid-page';
 import http from 'http';
+
+// This file is out of scope for the canvas-removal test-reconciliation pass
+// (see the enumerated file list in that task) and still branches on whether
+// hybrid is active. Hybrid is now the ONLY page-host implementation, so the
+// `hybridFlagOn` helper export was removed from tests/helpers/hybrid-page.ts;
+// this local always-true shim keeps this file's existing if/else branches
+// compiling without deciding (out of scope) whether the dead canvas `else`
+// branches below should be deleted — flagged as a follow-up cleanup
+// candidate.
+const hybridFlagOn = async (_app: unknown): Promise<boolean> => true;
 
 let sharedApp: DesktopApp;
 let sharedBgWindow: Page;
