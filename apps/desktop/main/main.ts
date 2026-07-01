@@ -111,7 +111,6 @@ export function flushPendingCloseSave(): void {
  */
 export interface CapturedClosePresentation {
   bounds: { x: number; y: number; width: number; height: number } | null;
-  hostUrl: string | null;
   presentation: import('./window-presenter.js').WindowPresentation | null;
 }
 
@@ -709,13 +708,11 @@ export async function initialize(): Promise<void> {
     // state for reopen-last-closed. The presenter encapsulates the canvas /
     // generic split — main.ts no longer parses the page-host shell URL.
     let lastBounds: { x: number; y: number; width: number; height: number } | null = null;
-    let lastHostUrl: string | null = null;
     let lastPresentation: import('./window-presenter.js').WindowPresentation | null = null;
     window.on('close', () => {
       try {
         if (!window.isDestroyed()) {
           lastBounds = window.getBounds();
-          lastHostUrl = window.webContents.getURL();
           lastPresentation = getWindowPresentation(windowId);
         }
       } catch {
@@ -858,7 +855,6 @@ export async function initialize(): Promise<void> {
         // listener above.
         finalizeWindowClose(windowId, {
           bounds: lastBounds,
-          hostUrl: lastHostUrl,
           presentation: lastPresentation,
         });
       } catch (err) {

@@ -2673,10 +2673,6 @@ export function registerWindowHandlers(): void {
           hybridFinalized = true;
           finalizeWindowClose(baseWin.id, {
             bounds: hybridLastBounds,
-            // Hybrid windows never use the `peek://app/page/` shell URL, so the
-            // canvas-margin fallback inside finalizeWindowClose (gated on that
-            // prefix) can't fire; null is correct here.
-            hostUrl: null,
             presentation: hybridLastPresentation,
           });
 

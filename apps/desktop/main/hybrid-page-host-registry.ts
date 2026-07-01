@@ -17,12 +17,11 @@
  * is frontmost, and target their content webContents — WITHOUT pretending a
  * BaseWindow is a BrowserWindow.
  *
- * **No-op when the flag is off.** Only the hybrid branch in `ipc.ts` calls
- * `registerHybridWindow`, and that branch is gated on `isHybridPageHost()`.
- * So on the old `<webview>` canvas path this registry stays empty and every
- * getter returns nothing / every finder returns null. Callers that consult
- * it (window-open dedup, `debug-list-windows`, `debug-eval`) are therefore
- * byte-identical on the old path.
+ * **Always populated.** The hybrid branch in `ipc.ts` calls
+ * `registerHybridWindow` for every page-host window it opens — hybrid is the
+ * only page-host implementation, so this registry always reflects the live
+ * set of open page hosts. Callers that consult it (window-open dedup,
+ * `debug-list-windows`, `debug-eval`) can rely on it unconditionally.
  *
  * **Active-window tracking.** `getActiveHybridWindowId()` reports which
  * hybrid window is frontmost, fed by the BaseWindow's `'focus'`/`'blur'`

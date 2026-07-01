@@ -15,16 +15,6 @@ import { Page } from '@playwright/test';
 import { waitForExtensionsReady } from '../helpers/window-utils';
 import http from 'http';
 
-// This file is out of scope for the canvas-removal test-reconciliation pass
-// (see the enumerated file list in that task) and still branches on whether
-// hybrid is active. Hybrid is now the ONLY page-host implementation, so the
-// `hybridFlagOn` helper export was removed from tests/helpers/hybrid-page.ts;
-// this local always-true shim keeps this file's existing if/else branches
-// compiling without deciding (out of scope) whether the dead canvas `else`
-// branches below should be deleted — flagged as a follow-up cleanup
-// candidate.
-const hybridFlagOn = async (_app: unknown): Promise<boolean> => true;
-
 let sharedApp: DesktopApp;
 let sharedBgWindow: Page;
 let server: http.Server;
@@ -62,36 +52,6 @@ test.afterAll(async () => {
   if (server) server.close();
   await closeSharedApp();
 });
-
-async function openCanvasPage(
-  bgWindow: Page,
-  url: string,
-): Promise<{ pageWindow: Page; windowId: number }> {
-  const result = await bgWindow.evaluate(async (targetUrl: string) => {
-    return await (window as any).app.window.open(targetUrl, {
-      width: 800,
-      height: 600,
-    });
-  }, url);
-  expect(result.success).toBe(true);
-  const pageWindow = await sharedApp.getWindow('page/index.html', 15000);
-  expect(pageWindow).toBeTruthy();
-  return { pageWindow, windowId: result.id };
-}
-
-async function closeWindow(bgWindow: Page, windowId: number) {
-  await bgWindow.evaluate(async (id: number) => {
-    return await (window as any).app.window.close(id);
-  }, windowId);
-}
-
-async function waitForErrorOverlay(pageWindow: Page, timeout = 15000) {
-  await pageWindow.waitForFunction(
-    () => !!document.querySelector('.load-error-overlay'),
-    undefined,
-    { timeout },
-  );
-}
 
 // ── Hybrid path helpers ──────────────────────────────────────────────────────
 // On the hybrid path there is no per-page canvas window (`page/index.html`).
@@ -167,56 +127,29 @@ test.describe('Page Host Load Failure @desktop', () => {
     // .invalid is reserved by RFC 2606 — guaranteed to never resolve.
     const badUrl = 'http://nonexistent-host-xyz123.invalid/';
 
-    if (await hybridFlagOn(sharedApp)) {
-      // Hybrid path: error card lives in the shared overlay window.
-      const { id, overlayWindow } = await openHybridHost();
-      try {
-        await navigateHybridHost(id, badUrl);
-        await waitForHybridErrorOverlay(overlayWindow);
+    const { id, overlayWindow } = await openHybridHost();
+    try {
+      await navigateHybridHost(id, badUrl);
+      await waitForHybridErrorOverlay(overlayWindow);
 
-        const overlay = await overlayWindow.evaluate(() => {
-          const el = document.querySelector('.load-error-overlay');
-          if (!el) return null;
-          return {
-            urlText: el.querySelector('.load-error-url')?.textContent || '',
-            reasonText: el.querySelector('.load-error-reason')?.textContent || '',
-            hasRetry: !!el.querySelector('.load-error-retry'),
-            hasClose: !!el.querySelector('.load-error-close'),
-          };
-        });
-        expect(overlay).toBeTruthy();
-        expect(overlay!.urlText).toContain('nonexistent-host-xyz123.invalid');
-        expect(overlay!.reasonText.toLowerCase()).toMatch(/name|resolve|dns|not.found|failed/);
-        expect(overlay!.hasRetry).toBe(true);
-        expect(overlay!.hasClose).toBe(true);
-      } finally {
-        await destroyHybridHost(id);
-      }
-    } else {
-      // Canvas path: error card lives in the per-page chrome window.
-      const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, badUrl);
-      try {
-        await waitForErrorOverlay(pageWindow);
-
-        const overlay = await pageWindow.evaluate(() => {
-          const el = document.querySelector('.load-error-overlay');
-          if (!el) return null;
-          return {
-            urlText: el.querySelector('.load-error-url')?.textContent || '',
-            reasonText: el.querySelector('.load-error-reason')?.textContent || '',
-            hasRetry: !!el.querySelector('.load-error-retry'),
-            hasClose: !!el.querySelector('.load-error-close'),
-          };
-        });
-        expect(overlay).toBeTruthy();
-        expect(overlay!.urlText).toContain('nonexistent-host-xyz123.invalid');
-        // Some Chromium build of the error mentions DNS / NAME_NOT_RESOLVED
-        expect(overlay!.reasonText.toLowerCase()).toMatch(/name|resolve|dns|not.found|failed/);
-        expect(overlay!.hasRetry).toBe(true);
-        expect(overlay!.hasClose).toBe(true);
-      } finally {
-        await closeWindow(sharedBgWindow, windowId);
-      }
+      const overlay = await overlayWindow.evaluate(() => {
+        const el = document.querySelector('.load-error-overlay');
+        if (!el) return null;
+        return {
+          urlText: el.querySelector('.load-error-url')?.textContent || '',
+          reasonText: el.querySelector('.load-error-reason')?.textContent || '',
+          hasRetry: !!el.querySelector('.load-error-retry'),
+          hasClose: !!el.querySelector('.load-error-close'),
+        };
+      });
+      expect(overlay).toBeTruthy();
+      expect(overlay!.urlText).toContain('nonexistent-host-xyz123.invalid');
+      // Some Chromium build of the error mentions DNS / NAME_NOT_RESOLVED
+      expect(overlay!.reasonText.toLowerCase()).toMatch(/name|resolve|dns|not.found|failed/);
+      expect(overlay!.hasRetry).toBe(true);
+      expect(overlay!.hasClose).toBe(true);
+    } finally {
+      await destroyHybridHost(id);
     }
   });
 
@@ -224,29 +157,16 @@ test.describe('Page Host Load Failure @desktop', () => {
     // Port 1 is reserved and nothing listens — connection refused.
     const badUrl = 'http://127.0.0.1:1/';
 
-    if (await hybridFlagOn(sharedApp)) {
-      const { id, overlayWindow } = await openHybridHost();
-      try {
-        await navigateHybridHost(id, badUrl);
-        await waitForHybridErrorOverlay(overlayWindow);
-        const urlText = await overlayWindow.evaluate(
-          () => document.querySelector('.load-error-url')?.textContent || '',
-        );
-        expect(urlText).toContain('127.0.0.1:1');
-      } finally {
-        await destroyHybridHost(id);
-      }
-    } else {
-      const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, badUrl);
-      try {
-        await waitForErrorOverlay(pageWindow);
-        const urlText = await pageWindow.evaluate(() => {
-          return document.querySelector('.load-error-url')?.textContent || '';
-        });
-        expect(urlText).toContain('127.0.0.1:1');
-      } finally {
-        await closeWindow(sharedBgWindow, windowId);
-      }
+    const { id, overlayWindow } = await openHybridHost();
+    try {
+      await navigateHybridHost(id, badUrl);
+      await waitForHybridErrorOverlay(overlayWindow);
+      const urlText = await overlayWindow.evaluate(
+        () => document.querySelector('.load-error-url')?.textContent || '',
+      );
+      expect(urlText).toContain('127.0.0.1:1');
+    } finally {
+      await destroyHybridHost(id);
     }
   });
 
@@ -255,87 +175,47 @@ test.describe('Page Host Load Failure @desktop', () => {
     const badUrl = 'http://nonexistent-host-xyz456.invalid/';
     const goodUrl = `http://127.0.0.1:${serverPort}/ok`;
 
-    if (await hybridFlagOn(sharedApp)) {
-      const { id, overlayWindow } = await openHybridHost();
-      try {
-        await navigateHybridHost(id, badUrl);
-        await waitForHybridErrorOverlay(overlayWindow);
-        // Navigate to working URL via pubsub — triggers did-start-loading which
-        // clears the error (setHybridLoadError null → page:load-error null → clearLoadErrorOverlay).
-        await navigateHybridHost(id, goodUrl);
-        await overlayWindow.waitForFunction(
-          () => !document.querySelector('.load-error-overlay'),
-          undefined,
-          { timeout: 15000 },
-        );
-      } finally {
-        await destroyHybridHost(id);
-      }
-    } else {
-      const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, badUrl);
-      try {
-        await waitForErrorOverlay(pageWindow);
-        // Programmatic navigation to a working URL — the overlay should clear
-        // once load succeeds.
-        await pageWindow.evaluate((url: string) => {
-          const webview = document.getElementById('content') as any;
-          webview.loadURL(url);
-        }, goodUrl);
-        await pageWindow.waitForFunction(
-          () => !document.querySelector('.load-error-overlay'),
-          undefined,
-          { timeout: 15000 },
-        );
-      } finally {
-        await closeWindow(sharedBgWindow, windowId);
-      }
+    const { id, overlayWindow } = await openHybridHost();
+    try {
+      await navigateHybridHost(id, badUrl);
+      await waitForHybridErrorOverlay(overlayWindow);
+      // Navigate to working URL via pubsub — triggers did-start-loading which
+      // clears the error (setHybridLoadError null → page:load-error null → clearLoadErrorOverlay).
+      await navigateHybridHost(id, goodUrl);
+      await overlayWindow.waitForFunction(
+        () => !document.querySelector('.load-error-overlay'),
+        undefined,
+        { timeout: 15000 },
+      );
+    } finally {
+      await destroyHybridHost(id);
     }
   });
 
   test('Successful initial load: no error overlay appears', async () => {
     const goodUrl = `http://127.0.0.1:${serverPort}/ok`;
 
-    if (await hybridFlagOn(sharedApp)) {
-      const { id, overlayWindow } = await openHybridHost();
-      try {
-        await navigateHybridHost(id, goodUrl);
-        // Wait for the load to settle: the overlay's loading spinner clears.
-        // Poll the bridge's chrome state — loading:false means did-stop-loading fired.
-        await expect
-          .poll(async () =>
-            sharedApp.evaluateMain!(async () => {
-              const b = (globalThis as any).__peekHybridOverlayTest;
-              const s = await b.overlayChromeState();
-              return s ? s.loading : true;
-            }),
-            { timeout: 15000 },
-          )
-          .toBe(false);
-        const hasOverlay = await overlayWindow.evaluate(
-          () => !!document.querySelector('.load-error-overlay'),
-        );
-        expect(hasOverlay).toBe(false);
-      } finally {
-        await destroyHybridHost(id);
-      }
-    } else {
-      const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, goodUrl);
-      try {
-        await pageWindow.waitForFunction(
-          () => {
-            const webview = document.getElementById('content');
-            return webview && webview.classList.contains('loaded');
-          },
-          undefined,
+    const { id, overlayWindow } = await openHybridHost();
+    try {
+      await navigateHybridHost(id, goodUrl);
+      // Wait for the load to settle: the overlay's loading spinner clears.
+      // Poll the bridge's chrome state — loading:false means did-stop-loading fired.
+      await expect
+        .poll(async () =>
+          sharedApp.evaluateMain!(async () => {
+            const b = (globalThis as any).__peekHybridOverlayTest;
+            const s = await b.overlayChromeState();
+            return s ? s.loading : true;
+          }),
           { timeout: 15000 },
-        );
-        const hasOverlay = await pageWindow.evaluate(
-          () => !!document.querySelector('.load-error-overlay'),
-        );
-        expect(hasOverlay).toBe(false);
-      } finally {
-        await closeWindow(sharedBgWindow, windowId);
-      }
+        )
+        .toBe(false);
+      const hasOverlay = await overlayWindow.evaluate(
+        () => !!document.querySelector('.load-error-overlay'),
+      );
+      expect(hasOverlay).toBe(false);
+    } finally {
+      await destroyHybridHost(id);
     }
   });
 
@@ -346,72 +226,35 @@ test.describe('Page Host Load Failure @desktop', () => {
     // page-host on a known-failed URL after closing the previous one.
     const badUrl = 'http://nonexistent-host-restoresim.invalid/';
 
-    if (await hybridFlagOn(sharedApp)) {
-      // First hybrid host — confirm the overlay shows.
-      const { id: firstId, overlayWindow } = await openHybridHost();
-      await navigateHybridHost(firstId, badUrl);
-      await waitForHybridErrorOverlay(overlayWindow, 20000);
-      // Destroy the first host synchronously (registry entry removed immediately).
-      await destroyHybridHost(firstId);
+    // First hybrid host — confirm the overlay shows.
+    const { id: firstId, overlayWindow } = await openHybridHost();
+    await navigateHybridHost(firstId, badUrl);
+    await waitForHybridErrorOverlay(overlayWindow, 20000);
+    // Destroy the first host synchronously (registry entry removed immediately).
+    await destroyHybridHost(firstId);
 
-      // Second hybrid host — same bad URL, fresh wired host. The overlay must
-      // show again and loading must NOT be stuck on.
-      const secondId = await sharedApp.evaluateMain!(() => {
+    // Second hybrid host — same bad URL, fresh wired host. The overlay must
+    // show again and loading must NOT be stuck on.
+    const secondId = await sharedApp.evaluateMain!(() => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.makeWiredHybridHost({ x: 100, y: 100, width: 800, height: 600 }) as number;
+    });
+    try {
+      await sharedApp.evaluateMain!(((_e: unknown, arg: { id: number }) => {
         const b = (globalThis as any).__peekHybridOverlayTest;
-        return b.makeWiredHybridHost({ x: 100, y: 100, width: 800, height: 600 }) as number;
+        b.setActive(arg.id);
+      }) as any, { id: secondId });
+      await navigateHybridHost(secondId, badUrl);
+      await waitForHybridErrorOverlay(overlayWindow, 20000);
+      // After the overlay shows, the overlay's loading spinner must be off.
+      const stuckOnLoading = await sharedApp.evaluateMain!(async () => {
+        const b = (globalThis as any).__peekHybridOverlayTest;
+        const s = await b.overlayChromeState();
+        return s ? !!s.loading : false;
       });
-      try {
-        await sharedApp.evaluateMain!(((_e: unknown, arg: { id: number }) => {
-          const b = (globalThis as any).__peekHybridOverlayTest;
-          b.setActive(arg.id);
-        }) as any, { id: secondId });
-        await navigateHybridHost(secondId, badUrl);
-        await waitForHybridErrorOverlay(overlayWindow, 20000);
-        // After the overlay shows, the overlay's loading spinner must be off.
-        const stuckOnLoading = await sharedApp.evaluateMain!(async () => {
-          const b = (globalThis as any).__peekHybridOverlayTest;
-          const s = await b.overlayChromeState();
-          return s ? !!s.loading : false;
-        });
-        expect(stuckOnLoading).toBe(false);
-      } finally {
-        await destroyHybridHost(secondId);
-      }
-    } else {
-      // Canvas path.
-      const first = await openCanvasPage(sharedBgWindow, badUrl);
-      await waitForErrorOverlay(first.pageWindow);
-
-      // Arm a `window:removed` subscription BEFORE closing — this event is
-      // published in main.ts AFTER `windowRegistry.delete`, so it's the
-      // authoritative signal that the window is fully gone (and openWindow's
-      // dedup-by-URL can no longer match the previous instance).
-      await sharedBgWindow.evaluate((id: number) => {
-        (window as any).__windowRemoved = new Promise<void>((resolve) => {
-          const handler = (msg: { id?: number }) => {
-            if (msg?.id === id) {
-              try { (window as any).app.pubsub.unsubscribe('window:removed', handler); } catch {}
-              resolve();
-            }
-          };
-          (window as any).app.pubsub.subscribe('window:removed', handler);
-        });
-      }, first.windowId);
-
-      await closeWindow(sharedBgWindow, first.windowId);
-      await sharedBgWindow.evaluate(() => (window as any).__windowRemoved);
-
-      const second = await openCanvasPage(sharedBgWindow, badUrl);
-      try {
-        await waitForErrorOverlay(second.pageWindow, 20000);
-        const stuckOnLoading = await second.pageWindow.evaluate(() => {
-          const webview = document.getElementById('content');
-          return !!(webview && webview.classList.contains('loading'));
-        });
-        expect(stuckOnLoading).toBe(false);
-      } finally {
-        await closeWindow(sharedBgWindow, second.windowId);
-      }
+      expect(stuckOnLoading).toBe(false);
+    } finally {
+      await destroyHybridHost(secondId);
     }
   });
 
@@ -422,112 +265,61 @@ test.describe('Page Host Load Failure @desktop', () => {
     const goodUrl = `http://127.0.0.1:${serverPort}/ok`;
     const hangUrl = `http://127.0.0.1:${serverPort}/hang`;
 
-    if (await hybridFlagOn(sharedApp)) {
-      const { id, overlayWindow } = await openHybridHost();
-      try {
-        // Load a working page first so `did-start-loading` arms the timer on a
-        // clean slate before we lower the timeout.
-        await navigateHybridHost(id, goodUrl);
-        // Wait for did-stop-loading (loading:false) so the first navigation's
-        // timer is cleared before we set the short test timeout.
-        await expect
-          .poll(async () =>
-            sharedApp.evaluateMain!(async () => {
-              const b = (globalThis as any).__peekHybridOverlayTest;
-              const s = await b.overlayChromeState();
-              return s ? s.loading : true;
-            }),
-            { timeout: 15000 },
-          )
-          .toBe(false);
-
-        // Lower the loading-timeout so the hung-load fires quickly in the test.
-        // setHybridLoadingTimeoutMs is read by wireHybridContentEvents on each
-        // did-start-loading — set BEFORE navigating to the hung endpoint.
-        await setHybridTimeoutMs(1500);
-
-        // Navigate to the hung endpoint via pubsub (fire-and-forget: the server
-        // accepts the connection but never sends a response).
-        await navigateHybridHost(id, hangUrl);
-
-        // Overlay must appear within ~3s (1.5s timeout + headroom).
-        await waitForHybridErrorOverlay(overlayWindow, 5000);
-
-        const overlay = await overlayWindow.evaluate(() => {
-          const el = document.querySelector('.load-error-overlay');
-          if (!el) return null;
-          return {
-            urlText: el.querySelector('.load-error-url')?.textContent || '',
-            reasonText: el.querySelector('.load-error-reason')?.textContent || '',
-            hasRetry: !!el.querySelector('.load-error-retry'),
-          };
-        });
-        expect(overlay).toBeTruthy();
-        expect(overlay!.urlText).toContain('/hang');
-        expect(overlay!.reasonText.toLowerCase()).toContain('took too long');
-        expect(overlay!.hasRetry).toBe(true);
-
-        // The overlay's loading spinner must be off — not the "endless glow border".
-        const stuckOnLoading = await sharedApp.evaluateMain!(async () => {
-          const b = (globalThis as any).__peekHybridOverlayTest;
-          const s = await b.overlayChromeState();
-          return s ? !!s.loading : false;
-        });
-        expect(stuckOnLoading).toBe(false);
-      } finally {
-        // Restore the production timeout so other tests aren't affected.
-        await setHybridTimeoutMs(30000);
-        await destroyHybridHost(id);
-      }
-    } else {
-      const { pageWindow, windowId } = await openCanvasPage(sharedBgWindow, goodUrl);
-      try {
-        // Wait for the initial load to complete so we don't race the
-        // loading-timeout override with the first navigation's setTimeout.
-        await pageWindow.waitForFunction(
-          () => {
-            const webview = document.getElementById('content');
-            return webview && webview.classList.contains('loaded');
-          },
-          undefined,
+    const { id, overlayWindow } = await openHybridHost();
+    try {
+      // Load a working page first so `did-start-loading` arms the timer on a
+      // clean slate before we lower the timeout.
+      await navigateHybridHost(id, goodUrl);
+      // Wait for did-stop-loading (loading:false) so the first navigation's
+      // timer is cleared before we set the short test timeout.
+      await expect
+        .poll(async () =>
+          sharedApp.evaluateMain!(async () => {
+            const b = (globalThis as any).__peekHybridOverlayTest;
+            const s = await b.overlayChromeState();
+            return s ? s.loading : true;
+          }),
           { timeout: 15000 },
-        );
-        // Override the loading timeout to 1.5s so the hung-load path fires
-        // before the test wall-clock budget. Production stays at 30s.
-        await pageWindow.evaluate(() => {
-          (window as any).__loadingTimeoutMs = 1500;
-        });
-        // Navigate the webview to the hung endpoint.
-        await pageWindow.evaluate((u: string) => {
-          const webview = document.getElementById('content') as any;
-          webview.loadURL(u);
-        }, hangUrl);
+        )
+        .toBe(false);
 
-        // Overlay must appear within ~3s (1.5s timeout + headroom).
-        await waitForErrorOverlay(pageWindow, 5000);
+      // Lower the loading-timeout so the hung-load fires quickly in the test.
+      // setHybridLoadingTimeoutMs is read by wireHybridContentEvents on each
+      // did-start-loading — set BEFORE navigating to the hung endpoint.
+      await setHybridTimeoutMs(1500);
 
-        const overlay = await pageWindow.evaluate(() => {
-          const el = document.querySelector('.load-error-overlay');
-          if (!el) return null;
-          return {
-            urlText: el.querySelector('.load-error-url')?.textContent || '',
-            reasonText: el.querySelector('.load-error-reason')?.textContent || '',
-            hasRetry: !!el.querySelector('.load-error-retry'),
-          };
-        });
-        expect(overlay).toBeTruthy();
-        expect(overlay!.urlText).toContain('/hang');
-        expect(overlay!.reasonText.toLowerCase()).toContain('took too long');
-        expect(overlay!.hasRetry).toBe(true);
+      // Navigate to the hung endpoint via pubsub (fire-and-forget: the server
+      // accepts the connection but never sends a response).
+      await navigateHybridHost(id, hangUrl);
 
-        const stuckOnLoading = await pageWindow.evaluate(() => {
-          const webview = document.getElementById('content');
-          return !!(webview && webview.classList.contains('loading'));
-        });
-        expect(stuckOnLoading).toBe(false);
-      } finally {
-        await closeWindow(sharedBgWindow, windowId);
-      }
+      // Overlay must appear within ~3s (1.5s timeout + headroom).
+      await waitForHybridErrorOverlay(overlayWindow, 5000);
+
+      const overlay = await overlayWindow.evaluate(() => {
+        const el = document.querySelector('.load-error-overlay');
+        if (!el) return null;
+        return {
+          urlText: el.querySelector('.load-error-url')?.textContent || '',
+          reasonText: el.querySelector('.load-error-reason')?.textContent || '',
+          hasRetry: !!el.querySelector('.load-error-retry'),
+        };
+      });
+      expect(overlay).toBeTruthy();
+      expect(overlay!.urlText).toContain('/hang');
+      expect(overlay!.reasonText.toLowerCase()).toContain('took too long');
+      expect(overlay!.hasRetry).toBe(true);
+
+      // The overlay's loading spinner must be off — not the "endless glow border".
+      const stuckOnLoading = await sharedApp.evaluateMain!(async () => {
+        const b = (globalThis as any).__peekHybridOverlayTest;
+        const s = await b.overlayChromeState();
+        return s ? !!s.loading : false;
+      });
+      expect(stuckOnLoading).toBe(false);
+    } finally {
+      // Restore the production timeout so other tests aren't affected.
+      await setHybridTimeoutMs(30000);
+      await destroyHybridHost(id);
     }
   });
 });

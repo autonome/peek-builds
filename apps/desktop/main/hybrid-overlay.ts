@@ -96,32 +96,24 @@ const OVERLAY_ENTRY_ID = 'chrome';
 /** The peek:// address that resolves to renderer/page/overlay.html. */
 const OVERLAY_URL = 'peek://app/page/overlay.html';
 
-// ── Canvas gutter geometry (the SPEC) ────────────────────────────────────────
-// The old canvas era framed ONE transparent window whose outer bounds were the
-// content rect EXPANDED by a margin: the `<webview>` was inset, and the chrome
-// (navbar at top, trigger zone, resize handles at the edges, side panels +
-// widgets in the left/right gutters) lived in that surrounding margin. See
-// `ipc.ts` (CANVAS_MARGIN / CANVAS_TRIGGER_ZONE / CANVAS_NAVBAR_HEIGHT, the
-// window-expansion the canvas branch applied) and `renderer/page/page.js`
-// (`computeWindowBounds`/`updatePositions`, where `extraWidth` widens the window
-// so the overhanging side panels have gutter space).
+// ── Chrome gutter geometry ────────────────────────────────────────────────────
+// The overlay's outer bounds are the content `BaseWindow`'s bounds EXPANDED by
+// a margin on each side: the content window is the opaque "hole" in the
+// middle, and the chrome (navbar at top, trigger zone, resize handles at the
+// edges, side panels + widgets in the left/right gutters) renders in the
+// transparent margin around it, so the content shows through the center.
 //
-// The hybrid path splits that into TWO windows: an OPAQUE content `BaseWindow`
-// sized to the INNER content rect, and this transparent overlay framed over it.
-// To reproduce the canvas look the overlay must be the content rect expanded by
-// the SAME margins so the chrome renders in the gutter AROUND the content (and
-// the center stays transparent so the content window shows through).
+//   MARGIN          = 8px   resize-handle margin on every edge
+//   TRIGGER_ZONE     = 8px   hover strip above the navbar
+//   NAVBAR_HEIGHT    = 36px  reserved navbar band
+//   PANEL_WIDTH      = 280px side-panel width
+//   PANEL_OVERLAP    = 70px  (25% of PANEL_WIDTH) the panel overlaps the content
+//   PANEL_OVERHANG   = 210px (75% of PANEL_WIDTH) the panel extends into the gutter
 //
-// These mirror the canvas constants 1:1 (do NOT invent new values):
-//   MARGIN          = CANVAS_MARGIN            (8px resize-handle margin)
-//   TRIGGER_ZONE    = CANVAS_TRIGGER_ZONE      (8px hover strip above the navbar)
-//   NAVBAR_HEIGHT   = CANVAS_NAVBAR_HEIGHT     (36px reserved navbar band)
-//   PANEL_WIDTH     = page.js PANEL_WIDTH      (280px side-panel width)
-//   PANEL_OVERLAP   = page.js PANEL_OVERLAP    (70px = 25% overlaps the content)
-//   PANEL_OVERHANG  = page.js PANEL_OVERHANG   (210px extends into the gutter)
-// The left/right gutter is `MARGIN + PANEL_OVERHANG` wide — exactly the canvas's
-// `extraWidth/2 + MARGIN` per side when both side stacks are shown — so a 280px
-// panel that overlaps the content edge by 70px fits the gutter without clipping.
+// The left/right gutter is `MARGIN + PANEL_OVERHANG` (218px) wide, so a 280px
+// panel that overlaps the content edge by 70px fits the gutter without
+// clipping. These values match the retired canvas page-host's values (see git
+// history) — do NOT invent new ones.
 const MARGIN = 8;
 const TRIGGER_ZONE = 8;
 const NAVBAR_HEIGHT = 36;
