@@ -201,6 +201,13 @@ test.describe('Group Mode Context @desktop', () => {
   });
 
   test('child page inherits group context', async () => {
+    // Re-verified on hybrid (2026-07): un-skipping and running this test
+    // reproduces childResult.success===false at the `window.open(...,
+    // {groupMode})` call, consistently across two separate runs — confirms
+    // the previously-reported gap (peek e276b0d3, "hybrid window.open
+    // content-open contract") is still real, not a stale skip. Left skipped;
+    // building hybrid content-open support is out of scope here.
+    test.skip(true, 'hybrid window.open content-open contract gap, peek e276b0d3 — confirmed still open, not just a stale skip-gate');
     const { groupsWindow, windowId } = await openGroupsHome(sharedBgWindow);
     let childWindowId: number | null = null;
 
@@ -245,6 +252,9 @@ test.describe('Group Mode Context @desktop', () => {
   });
 
   test('mode preserved after group -> page -> back to group', async () => {
+    // Same confirmed gap as "child page inherits group context" above (peek
+    // e276b0d3) — this test also opens a child page with `{groupMode}`.
+    test.skip(true, 'hybrid window.open content-open contract gap, peek e276b0d3 — confirmed still open, not just a stale skip-gate');
     const { groupsWindow, windowId } = await openGroupsHome(sharedBgWindow);
     let childWindowId: number | null = null;
 

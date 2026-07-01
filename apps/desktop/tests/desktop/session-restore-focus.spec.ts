@@ -159,7 +159,18 @@ test.describe('Session Restore Focus @desktop', () => {
     // enough to drive activation on a regular in-session restore — a case the
     // cold-start-specific tests below don't cover.
     await openPage(`http://127.0.0.1:${serverPort}/focus-happy-a`);
-    await openPage(`http://127.0.0.1:${serverPort}/focus-happy-b`);
+    const bId = await openPage(`http://127.0.0.1:${serverPort}/focus-happy-b`);
+
+    // Unlike the legacy BrowserWindow path, opening a hybrid window last does
+    // NOT by itself mark it as the "last focused" descriptor for save
+    // purposes — hybrid hosts open INACTIVE, so nothing updates
+    // lastFocusedVisibleWindowId until a REAL focus event fires. Drive that
+    // event explicitly (same idiom as the "focus-order" test in
+    // session-restore-page-host.spec.ts) so the snapshot's focused descriptor
+    // is actually one of OUR hybrid windows, not a stray BrowserWindow.
+    const focused = await app.evaluateMain!(((_e: unknown, id: number) =>
+      (globalThis as any).__peek_test.focusHybridWindowForTest(id)) as any, bId) as boolean;
+    expect(focused, 'focusHybridWindowForTest should find the live hybrid window').toBe(true);
 
     await forceSave();
     await resetState();
