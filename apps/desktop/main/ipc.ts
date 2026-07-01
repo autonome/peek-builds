@@ -136,6 +136,7 @@ import {
   getHybridWindow,
   getAllHybridWindows,
   setHybridMaximizeState,
+  claimHybridDeferredLoad,
   // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
   setHybridLoadError,
   getHybridLoadingTimeoutMs,
@@ -2416,11 +2417,25 @@ export function registerWindowHandlers(): void {
         // cannot hold it; this separate registry is the indirection layer.
         // Self-cleans on baseWin 'closed' / content wc 'destroyed' and
         // maintains getActiveHybridWindowId() off baseWin focus/blur.
+        // Deferred session restore (perf): windows beyond the eager count
+        // restore with `restoreBlank` (set per-window by the restore loop in
+        // session.ts). The BaseWindow + WebContentsView + registration +
+        // frame state (bounds/maximize) are all built as normal, but the
+        // content loadURL is DEFERRED to the window's first genuine
+        // activation — the host BaseWindow's 'focus' event (see
+        // onHybridHostFocus below). Mirrors the deleted canvas path's
+        // blank-placeholder + navigate-on-focus restore, which measured a
+        // ~10-20x sustained-GPU win on large sessions.
+        const deferContentLoad = options.restoreBlank === true;
+
         registerHybridWindow(baseWin.id, {
           baseWin,
           contentWC: view.webContents,
           key: options.key,
           url,
+          deferredLoad: deferContentLoad
+            ? { url, title: typeof options.title === 'string' ? options.title : '' }
+            : undefined,
         });
 
         // Reopen-last-closed (main.ts reopenLastClosedWindow) and session
@@ -2455,6 +2470,26 @@ export function registerWindowHandlers(): void {
         // session restore then raises the last-focused BrowserWindow (e.g.
         // Settings) instead of the web page the user left in front.
         const onHybridHostFocus = () => {
+          // Deferred session restore: the first genuine activation of a
+          // restoreBlank window releases its deferred content load.
+          // `claimHybridDeferredLoad` is the once-guard (returns the URL
+          // exactly once, null forever after and for non-deferred windows),
+          // so repeat focus events can never double-load. Driven by the
+          // deterministic BaseWindow 'focus' event only — no timers, no
+          // polling. The pending-nav record mirrors the navbar-navigate
+          // path so did-start-loading can resolve the target URL for the
+          // loading-timeout overlay.
+          try {
+            const deferredUrl = claimHybridDeferredLoad(baseWin.id);
+            if (deferredUrl && !view.webContents.isDestroyed()) {
+              setHybridPendingNavUrl(baseWin.id, deferredUrl);
+              view.webContents.loadURL(deferredUrl).catch((err) => {
+                DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] deferred loadURL failed:`, err);
+              });
+            }
+          } catch {
+            /* a torn-down wc mid-focus must not wedge the focus handler */
+          }
           // Restore first responder to the content WebContentsView when this host
           // gains focus. showHybridHost applies `contentWC.focus()` only on a FRESH
           // show; a host restored via showInactive (session restore) and later
@@ -2575,6 +2610,14 @@ export function registerWindowHandlers(): void {
           // downstream code) can distinguish it from a BrowserWindow page-host.
           hybridPageHost: true,
         };
+        // restoreBlank is a per-restore open-time directive (re-derived from
+        // the eager/deferred split on every restore), not persistent window
+        // state — the `...options` spread above would otherwise bake it into
+        // the registry params and from there into the NEXT session snapshot,
+        // making the window restore deferred forever regardless of its eager
+        // slot. (Belt-and-suspenders with the restore-side stripKeys entry in
+        // session.ts, which drops it from old snapshots.)
+        delete windowParams.restoreBlank;
         registerWindow(baseWin.id, msg.source, windowParams);
         trackWindow(baseWin as unknown as BrowserWindow);
         getIzuiCoordinator().pushWindow(baseWin.id);
@@ -2752,7 +2795,13 @@ export function registerWindowHandlers(): void {
         // Load the content. Session-restore opens (skipTracking) fire-and-forget
         // like the canvas path; everything else awaits for "ready" semantics
         // (the window is already on screen with its loading frame either way).
-        if (options.skipTracking) {
+        // Deferred-restore windows (restoreBlank) skip the load entirely: the
+        // content webContents stays un-navigated (the window shows its theme
+        // background fill) until the first activation releases the load via
+        // claimHybridDeferredLoad in onHybridHostFocus above.
+        if (deferContentLoad) {
+          // no-op — deferred to first activation
+        } else if (options.skipTracking) {
           view.webContents.loadURL(url).catch((err) => {
             DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] background loadURL failed:`, err);
           });

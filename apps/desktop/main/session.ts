@@ -1193,7 +1193,11 @@ export async function restoreSessionSnapshot(
       // restore. Devtools is a transient diagnostic surface, not part of the
       // window's persistent state. Also strips them from snapshots saved
       // before this filter was added on the save side.
-      const stripKeys = new Set(['x', 'y', 'width', 'height', 'address', 'transient', 'parentWindowId', 'skipTracking', 'openDevTools', 'detachedDevTools']);
+      // restoreBlank: the eager/deferred split is re-derived per restore from
+      // the window's position in the recency order (`i >= eagerCount` below).
+      // A stale restoreBlank baked into an older snapshot's params must not
+      // override that — it would pin the window to deferred restore forever.
+      const stripKeys = new Set(['x', 'y', 'width', 'height', 'address', 'transient', 'parentWindowId', 'skipTracking', 'openDevTools', 'detachedDevTools', 'restoreBlank']);
       for (const [key, value] of Object.entries(descriptor.params)) {
         if (!stripKeys.has(key)) {
           cleanParams[key] = value;
@@ -1222,12 +1226,14 @@ export async function restoreSessionSnapshot(
       };
 
       // Staged restore: windows beyond the eager set restore DEFERRED. The
-      // page-host creates the canvas + window but leaves the <webview>
-      // un-navigated, showing a static placeholder (title + URL + favicon) with
-      // zero content compositing until first focus. ipc.ts reads `restoreBlank`
-      // to emit `blank=1` into the page params and to arm navigate-on-focus.
-      // `title` rides along so the placeholder renders the saved title
-      // immediately. Eager windows (i < eagerCount) load content as before.
+      // hybrid branch in ipc.ts reads `restoreBlank`, builds the BaseWindow +
+      // WebContentsView + registration + frame state (bounds/maximize) as
+      // normal, but leaves the content webContents un-navigated (zero content
+      // compositing) until the window's first genuine activation — the host
+      // BaseWindow 'focus' event releases the load via the hybrid registry's
+      // claimHybridDeferredLoad once-guard. `title` rides along so window
+      // listings present the saved title until the content loads. Eager
+      // windows (i < eagerCount) load content as before.
       if (i >= eagerCount) {
         options.restoreBlank = true;
         options.title = descriptor.title;

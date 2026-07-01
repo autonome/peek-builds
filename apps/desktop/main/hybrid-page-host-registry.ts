@@ -139,9 +139,17 @@ export interface HybridWindowEntry {
   key?: string;
   /** The static open address this window was created for (dedup key). */
   requestedUrl?: string;
-  /** Current live URL of the content webContents (empty if unavailable). */
+  /**
+   * Current live URL of the content webContents. For a deferred-load window
+   * (session restore beyond the eager count) whose content hasn't committed
+   * yet, falls back to the saved URL it will load — so window listings and
+   * session save present/persist the real address, never an empty string.
+   */
   url(): string;
-  /** Current live title of the content webContents (empty if unavailable). */
+  /**
+   * Current live title of the content webContents. Falls back to the saved
+   * title for a deferred-load window whose content hasn't loaded yet.
+   */
   title(): string;
   /**
    * True while this hybrid window is maximized (snapped to its display's
@@ -159,6 +167,22 @@ export interface HybridWindowEntry {
   preMaxBounds: Rectangle | null;
 }
 
+/**
+ * Deferred content load for a session-restored hybrid window beyond the
+ * eager count (session.ts `restoreBlank`): the URL to load on first
+ * activation plus the saved title to present until then. `started` flips
+ * true exactly once, in `claimHybridDeferredLoad` — the once-guard for the
+ * deferred load. The object is kept (not cleared) after the claim so
+ * `url()`/`title()` can keep falling back to the saved values until the
+ * content webContents actually commits a real URL (and so a failed deferred
+ * load doesn't erase the window's user-facing address).
+ */
+interface DeferredLoad {
+  url: string;
+  title: string;
+  started: boolean;
+}
+
 interface InternalEntry {
   windowId: number;
   baseWin: BaseWindow;
@@ -167,6 +191,7 @@ interface InternalEntry {
   requestedUrl?: string;
   maximized: boolean;
   preMaxBounds: Rectangle | null;
+  deferredLoad: DeferredLoad | null;
 }
 
 const entries = new Map<number, InternalEntry>();
@@ -357,8 +382,8 @@ function toPublic(e: InternalEntry): HybridWindowEntry {
     contentWC: e.contentWC,
     key: e.key,
     requestedUrl: e.requestedUrl,
-    url: () => safeUrl(e.contentWC),
-    title: () => safeTitle(e.contentWC),
+    url: () => safeUrl(e.contentWC) || e.deferredLoad?.url || '',
+    title: () => safeTitle(e.contentWC) || e.deferredLoad?.title || '',
     maximized: e.maximized,
     preMaxBounds: e.preMaxBounds,
   };
@@ -397,13 +422,29 @@ function normalizeForDedup(url: string): string {
  */
 export function registerHybridWindow(
   windowId: number,
-  opts: { baseWin: BaseWindow; contentWC: WebContents; key?: string; url?: string },
+  opts: {
+    baseWin: BaseWindow;
+    contentWC: WebContents;
+    key?: string;
+    url?: string;
+    /**
+     * Session-restore deferred content load (`restoreBlank`): the window is
+     * built and shown but its content webContents is NOT navigated until the
+     * first genuine activation (host BaseWindow 'focus'), when
+     * `claimHybridDeferredLoad` releases this URL exactly once. `title` is
+     * the saved title to present until then.
+     */
+    deferredLoad?: { url: string; title?: string };
+  },
 ): void {
   const { baseWin, contentWC, key, url } = opts;
   const entry: InternalEntry = {
     windowId, baseWin, contentWC, key, requestedUrl: url,
     maximized: false,
     preMaxBounds: null,
+    deferredLoad: opts.deferredLoad
+      ? { url: opts.deferredLoad.url, title: opts.deferredLoad.title || '', started: false }
+      : null,
   };
   entries.set(windowId, entry);
 
@@ -507,6 +548,23 @@ export function setHybridMaximizeState(
   if (!e) return;
   e.maximized = maximized;
   e.preMaxBounds = maximized ? preMaxBounds : null;
+}
+
+/**
+ * Claim the deferred content load for `windowId`: returns the URL to load
+ * the FIRST time it is called for a window registered with `deferredLoad`,
+ * and null on every subsequent call (and for windows with no deferred load,
+ * or unregistered ids). This is the once-guard — the single mutation point
+ * for the deferred-load state, driven by the host BaseWindow's 'focus'
+ * handler in ipc.ts (first genuine activation). The saved url/title stay on
+ * the entry after the claim so `url()`/`title()` keep falling back to them
+ * until the content webContents commits a real URL.
+ */
+export function claimHybridDeferredLoad(windowId: number): string | null {
+  const e = entries.get(windowId);
+  if (!e || !e.deferredLoad || e.deferredLoad.started) return null;
+  e.deferredLoad.started = true;
+  return e.deferredLoad.url;
 }
 
 /**
