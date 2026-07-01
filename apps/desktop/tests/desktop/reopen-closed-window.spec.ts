@@ -18,7 +18,7 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
-import { hybridFlagOn } from '../helpers/hybrid-page';
+import { hybridFlagOn, publishOverlayTopic } from '../helpers/hybrid-page';
 import { sleep } from '../helpers/window-utils';
 import http from 'http';
 
@@ -218,6 +218,82 @@ test.describe('Reopen Last Closed Window @desktop', () => {
 
     const reopened = await findWindowWithUrl('/single', 8000);
     expect(reopened).toBeTruthy();
+  });
+
+  test('reopen a maximized hybrid page-host restores it maximized, with pre-max bounds for unmaximize', async () => {
+    test.skip(!(await hybridFlagOn(app)), 'hybrid-only: exercises the hybrid registry maximize tracking added alongside this test');
+
+    const url = `http://127.0.0.1:${serverPort}/maximize-reopen`;
+    const id = await openWindow(url);
+    await findWindowWithUrl('/maximize-reopen');
+
+    async function findEntry(idToFind: number): Promise<{
+      id: number; url: string; maximized: boolean;
+      preMaxBounds: { x: number; y: number; width: number; height: number } | null;
+      bounds: { x: number; y: number; width: number; height: number };
+    } | null> {
+      return bgWindow.evaluate(async (targetId: number) => {
+        const r = await (window as any).app.window.list({ includeInternal: false });
+        if (!r?.success) return null;
+        return (r.windows || []).find((w: any) => w.id === targetId) ?? null;
+      }, idToFind);
+    }
+
+    // Sanity: freshly opened, not maximized.
+    const before = await findEntry(id);
+    expect(before?.maximized).toBe(false);
+    const originalBounds = before!.bounds;
+
+    // Maximize it via the same page:maximize pubsub intent the overlay's
+    // navbar maximize button publishes (main/ipc.ts subscribe(getSystemAddress(),
+    // 'page:maximize', ...)).
+    await publishOverlayTopic(app, 'page:maximize', { windowId: id });
+
+    const maximizedEntry = await findEntry(id);
+    expect(maximizedEntry?.maximized, 'window must report maximized after page:maximize').toBe(true);
+    expect(maximizedEntry?.preMaxBounds, 'pre-maximize bounds must be captured').toEqual(originalBounds);
+    // The reported bounds while maximized are the live (work-area) BaseWindow
+    // bounds, not the pre-maximize size.
+    expect(maximizedEntry?.bounds).not.toEqual(originalBounds);
+    const maximizedBounds = maximizedEntry!.bounds;
+
+    // Close while maximized, then reopen via the closed-window stack.
+    const stackBefore = await getStackCount();
+    await closeWindowById(id);
+    const stackAfter = await waitForStackCount(stackBefore + 1);
+    expect(stackAfter).toBe(stackBefore + 1);
+
+    const result = await reopenViaShortcut();
+    expect(result.success).toBe(true);
+    expect(result.url).toContain('/maximize-reopen');
+
+    const reopenedWindow = await findWindowWithUrl('/maximize-reopen', 8000);
+    expect(reopenedWindow).toBeTruthy();
+    const reopenedId = await bgWindow.evaluate(async (u: string) => {
+      const r = await (window as any).app.window.list({ includeInternal: false });
+      if (!r.success) return null;
+      const w = r.windows.find((win: any) => win.url?.includes(u));
+      return w?.id ?? null;
+    }, '/maximize-reopen');
+    expect(reopenedId).not.toBeNull();
+
+    // OUTCOME: reopened directly into MAXIMIZED, at the maximized bounds, with
+    // the ORIGINAL pre-maximize bounds preserved (so a later unmaximize lands
+    // back at the pre-maximize size, not the maximized work-area rect).
+    const reopenedEntry = await findEntry(reopenedId!);
+    expect(reopenedEntry?.maximized, 'reopened window must come back maximized').toBe(true);
+    expect(reopenedEntry?.bounds, 'reopened window must be sized to the saved maximized bounds').toEqual(maximizedBounds);
+    expect(reopenedEntry?.preMaxBounds, 'reopened window must carry the ORIGINAL pre-maximize bounds').toEqual(originalBounds);
+
+    // Unmaximize the reopened window — must land back at the original
+    // pre-maximize size, not the maximized work-area rect.
+    await publishOverlayTopic(app, 'page:unmaximize', { windowId: reopenedId });
+    const unmaximizedEntry = await findEntry(reopenedId!);
+    expect(unmaximizedEntry?.maximized).toBe(false);
+    expect(unmaximizedEntry?.bounds).toEqual(originalBounds);
+
+    // Cleanup.
+    await closeWindowById(reopenedId!);
   });
 
   test('rapid open/close/reopen — 5 iterations, each must come back', async () => {

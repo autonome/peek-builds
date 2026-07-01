@@ -2617,6 +2617,22 @@ export function registerWindowHandlers(): void {
         // content-wc `'destroyed'` bindings stay as once-guarded fallbacks for
         // any teardown path that DOES emit them (e.g. app-quit, or the content
         // wc being destroyed directly).
+        // Capture bounds/presentation from whichever live state is still
+        // available. Called from all three terminal signals below — safe to
+        // call more than once (it just overwrites hybridLastBounds/
+        // hybridLastPresentation), unlike runHybridFinalize which is
+        // idempotent-guarded.
+        const captureHybridClose = () => {
+          try {
+            if (!baseWin.isDestroyed()) {
+              hybridLastBounds = baseWin.getBounds();
+              hybridLastPresentation = getWindowPresentation(baseWin.id);
+            }
+          } catch {
+            // Ignore errors during shutdown
+          }
+        };
+
         let hybridFinalized = false;
         const runHybridFinalize = () => {
           if (hybridFinalized) return;
@@ -2671,18 +2687,36 @@ export function registerWindowHandlers(): void {
         };
 
         baseWin.on('close', () => {
-          try {
-            if (!baseWin.isDestroyed()) {
-              hybridLastBounds = baseWin.getBounds();
-              hybridLastPresentation = getWindowPresentation(baseWin.id);
-            }
-          } catch {
-            // Ignore errors during shutdown
-          }
+          captureHybridClose();
           runHybridFinalize();
         });
-        baseWin.once('closed', runHybridFinalize);
-        view.webContents.once('destroyed', runHybridFinalize);
+        baseWin.once('closed', () => {
+          captureHybridClose();
+          runHybridFinalize();
+        });
+        // IMPORTANT: prepend, not append. The page-host close-UAF guard
+        // (windows.ts closeHostWindow → destroyGuestsThenClose) destroys this
+        // content webContents (registered as baseWin's "guest") BEFORE calling
+        // baseWin.close() — so on the NORMAL close path this 'destroyed' event
+        // fires FIRST, before baseWin's own 'close' event ever does. The hybrid
+        // registry's own self-clean (registerHybridWindow's `contentWC.once
+        // ('destroyed', cleanup)`) is ALSO bound to this same event, registered
+        // earlier (at registerHybridWindow(...) above) — cleanup deletes the
+        // registry entry, which getWindowPresentation depends on. Left as a
+        // plain `.once`, our capture would run AFTER cleanup and always see a
+        // vanished entry (bounds/maximized permanently lost on every close —
+        // confirmed by instrumentation: captured came back {bounds:null,
+        // presentation:null} on every reopen). `prependOnceListener` runs our
+        // capture BEFORE cleanup regardless of registration order, so the
+        // registry entry (and baseWin, not yet destroyed at this point) are
+        // still readable. (entry.url()/title() will read empty — the content
+        // wc IS gone by 'destroyed' — but finalizeWindowClose never reads
+        // presentation.address, only bounds/maximized/preMaxBounds, so that's
+        // harmless here.)
+        view.webContents.prependOnceListener('destroyed', () => {
+          captureHybridClose();
+          runHybridFinalize();
+        });
 
         // Show it AT LOAD-START — before awaiting the content — so the window's
         // bordered/rounded native frame + shadow + loading-background fill (set

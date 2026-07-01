@@ -22,6 +22,7 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
+import { publishOverlayTopic } from '../helpers/hybrid-page';
 import http from 'http';
 
 let app: DesktopApp;
@@ -692,5 +693,83 @@ test.describe('Session Restore Page Host @desktop', () => {
         }
       }
     });
+  });
+
+  // Hybrid counterpart of the canvas-only maximize round-trip tests above
+  // (all skipped under hybrid — they assert on the canvas page-host's own
+  // body.classList/URL-params, which don't exist on the hybrid path's bare
+  // content window). This one drives the REAL hybrid maximize state (the
+  // registry added alongside this test — see hybrid-page-host-registry.ts's
+  // setHybridMaximizeState) through the same page:maximize pubsub intent the
+  // overlay navbar button publishes, and asserts on `tile:window:list`'s
+  // presentation-derived maximized/bounds/preMaxBounds fields — the hybrid-
+  // appropriate equivalent of the canvas assertions above.
+  test('maximized hybrid page host: maximize state survives save+restore', async () => {
+    const slug = 'hybrid-maximize-roundtrip';
+    const url = `http://127.0.0.1:${serverPort}/${slug}`;
+
+    const { pageWindow, windowId } = await openPageHost(url);
+    await pageWindow.waitForLoadState('domcontentloaded');
+
+    const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
+      (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, windowId) as boolean;
+    test.skip(!isHybrid, 'hybrid flag off — this test exercises the hybrid maximize registry');
+
+    async function findEntry(id: number) {
+      return bgWindow.evaluate(async (targetId: number) => {
+        const r = await (window as any).app.window.list({ includeInternal: false });
+        if (!r?.success) return null;
+        return (r.windows || []).find((w: any) => w.id === targetId) ?? null;
+      }, id);
+    }
+
+    const before = await findEntry(windowId);
+    expect(before?.maximized).toBe(false);
+    const originalBounds = before!.bounds;
+
+    await publishOverlayTopic(app, 'page:maximize', { windowId });
+    const maximized = await findEntry(windowId);
+    expect(maximized?.maximized).toBe(true);
+    expect(maximized?.preMaxBounds).toEqual(originalBounds);
+    const maximizedBounds = maximized!.bounds;
+
+    await app.evaluateMain!((() =>
+      (globalThis as any).__peek_test.forceSaveSession()) as any);
+
+    await bgWindow.evaluate(async (id: number) => {
+      await (window as any).app.window.close(id);
+    }, windowId);
+    await bgWindow.waitForFunction(async (id: number) => {
+      const list = await (window as any).app.window.list({ includeInternal: false });
+      if (!list?.success) return false;
+      return !(list.windows || []).some((w: any) => w.id === id);
+    }, windowId);
+
+    const restoreResult = await app.evaluateMain!((() =>
+      (globalThis as any).__peek_test.forceRestoreSession()) as any) as
+      { restored: number; failed: number; total: number };
+    expect(restoreResult.restored).toBeGreaterThanOrEqual(1);
+
+    const restoredPageWindow = await app.getWindow(slug, 15000);
+    await restoredPageWindow.waitForLoadState('domcontentloaded');
+    const restoredId = await bgWindow.evaluate(async (s: string) => {
+      const list = await (window as any).app.window.list({ includeInternal: false });
+      if (!list?.success) return null;
+      const match = (list.windows || []).find(
+        (w: any) => typeof w.url === 'string' && w.url.includes(s),
+      );
+      return match ? match.id : null;
+    }, slug) as number | null;
+    expect(restoredId).not.toBeNull();
+
+    const restoredEntry = await findEntry(restoredId!);
+    expect(restoredEntry?.maximized, 'restored window must come back maximized').toBe(true);
+    expect(restoredEntry?.bounds, 'restored window must be sized to the saved maximized bounds').toEqual(maximizedBounds);
+    expect(restoredEntry?.preMaxBounds, 'restored window must carry the original pre-maximize bounds').toEqual(originalBounds);
+
+    // Cleanup.
+    await bgWindow.evaluate(async (id: number) => {
+      await (window as any).app.window.close(id);
+    }, restoredId);
   });
 });
