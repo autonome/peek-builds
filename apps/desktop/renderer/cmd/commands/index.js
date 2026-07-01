@@ -10,7 +10,6 @@ import noteModule from './note.js';
 import editModule from './edit.js';
 import urlModule from './url.js';
 import historyModule from './history.js';
-import pageModule from './page.js';
 
 // Type-specific noun modules (registered as sources, not static commands)
 import urlsNounModule from './urls.js';
@@ -45,7 +44,6 @@ const activeCommands = [
   ...editModule.commands,
   ...urlModule.commands,
   ...historyModule.commands,
-  ...pageModule.commands,
   // csv and save commands moved to files extension
 ];
 
