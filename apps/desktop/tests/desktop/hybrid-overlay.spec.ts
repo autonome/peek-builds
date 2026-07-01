@@ -2009,6 +2009,49 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
       .toEqual({ x: before.x + 120, y: before.y + 80, width: start.width, height: start.height });
   });
 
+  test('hold-to-drag: a stray buttons=0 mousemove during the hold does NOT cancel the press (flake regression 73681521/7064b15c)', async () => {
+    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+
+    const start = { x: 240, y: 240, width: 520, height: 400 };
+    const id = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow((arg as any).start);
+      await b.loadFakeContent(w, 'data:text/html,<body>jitter target</body>');
+      b.setActive(w);
+      return w;
+    }, { start });
+    await waitOverlayReady();
+
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.revealOverlayChrome();
+    });
+
+    const before = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.hostBounds((arg as any).id);
+    }, { id });
+
+    // Press-and-HOLD, but a stray zero-button mousemove (OS jitter from the
+    // overlay retargeting) lands DURING the hold window. The held-still press
+    // must survive it and still drag +120,+80. Pre-fix the stray move reset the
+    // FSM mid-hold → the hold never fired → dragged=false (the flake).
+    const dragged = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.holdDragNavbarStrayZeroButton(120, 80);
+    });
+    expect(dragged).toBe(true);
+
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async (_e, arg) => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          return b.hostBounds((arg as any).id);
+        }, { id }),
+      )
+      .toEqual({ x: before.x + 120, y: before.y + 80, width: start.width, height: start.height });
+  });
+
   test('hold-to-drag: pre-threshold movement CANCELS candidacy (dnd / selection / click preserved) and does NOT move the host', async () => {
     test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
 

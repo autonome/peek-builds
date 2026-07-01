@@ -851,8 +851,29 @@ function createHoldDrag(deps) {
     if (wasDragging) onDragEnd();
   }
 
+  function onButtonsCleared() {
+    // A document mousemove arrived with NO buttons pressed while we still think
+    // a button is down. This is our fallback for a mouseup we didn't natively
+    // see (the overlay is click-through over the content WC, so a real
+    // button-up can be missed). Only honor it once the gesture has LATCHED —
+    // `ready` (hold fired, grab cursor shown) or `dragging` (actively moving the
+    // host) — the states where a missed release would strand a grab/drag that
+    // follows the cursor forever.
+    //
+    // During `pending` (the hold window, before the threshold timer fires) a
+    // zero-button move is almost always OS jitter: focus/blur churn retargets
+    // the overlay window, its frame moves, and macOS synthesizes a buttons=0
+    // mousemove at the new cursor-relative position. Treating THAT as a release
+    // cancels a legitimate held-still press — the confirmed cause of the
+    // hold-to-drag test flake AND a real "press cancelled by pointer jitter"
+    // fragility. So ignore it while pending; a genuine release still arrives as
+    // a native `mouseup`, and if it somehow didn't, the worst case is the timer
+    // briefly shows the grab cursor and self-corrects on the next event.
+    if (dragging || ready) onUp();
+  }
+
   return {
-    onDown, onMove, onUp,
+    onDown, onMove, onUp, onButtonsCleared,
     isDragging: () => dragging,
     // test-only inspectors
     _state: () => ({ buttonDown, pending, ready, dragging }),
@@ -910,10 +931,9 @@ navbar.addEventListener('mousedown', (e) => {
 // (mirrors page.js). The reveal-loop mousemove handler above is guarded to not
 // fight capture while dragging (see that handler).
 document.addEventListener('mousemove', (e) => {
-  if (e.buttons === 0 && (holdDrag.isDragging() || holdDrag._state().buttonDown)) {
-    holdDrag.onUp();
-    return;
-  }
+  // A no-button move means "the mouse button is up" — but the FSM decides what
+  // that implies per state (release only once latched; ignore mid-hold jitter).
+  if (e.buttons === 0) { holdDrag.onButtonsCleared(); return; }
   holdDrag.onMove(e.screenX, e.screenY);
 });
 document.addEventListener('mouseup', () => holdDrag.onUp());

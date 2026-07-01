@@ -1877,6 +1877,65 @@ function installTestBridge(): void {
         .catch(() => false);
     },
     /**
+     * Regression repro for the hold-to-drag flake (peek 73681521 / 7064b15c):
+     * a stray `buttons:0` mousemove landing DURING the hold window must NOT
+     * cancel a legitimate held-still press. Identical to `holdDragNavbar`, but
+     * immediately after the mousedown (guaranteed `pending`, before the threshold
+     * timer fires) it dispatches a zero-button document mousemove — the exact OS
+     * jitter event (overlay retarget → synthesized buttons=0 move) that used to
+     * reset the FSM mid-hold. Pre-fix that stray move calls `onUp()` → `reset()`
+     * so the hold never fires and this resolves false; post-fix the FSM ignores
+     * a buttons-cleared signal while pending, the hold fires, and the drag runs.
+     * Determinism: we inject the stray move ourselves (not waiting for real
+     * jitter) and still POLL the live FSM for `ready` exactly like holdDragNavbar.
+     */
+    holdDragNavbarStrayZeroButton(dxScreen: number, dyScreen: number): Promise<boolean> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(false);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(async () => {
+            const nb = document.getElementById('navbar');
+            const t = globalThis.__peekHoldDragTest;
+            if (!nb || !t) return false;
+            const startX = 500, startY = 30;
+            nb.dispatchEvent(new MouseEvent('mousedown', {
+              button: 0, buttons: 1, screenX: startX, screenY: startY, bubbles: true,
+            }));
+            // STRAY zero-button move DURING pending (before the hold timer fires).
+            // Same position (pure jitter, no travel). This is the regressor: a
+            // synthesized buttons=0 move from the overlay window retargeting.
+            document.dispatchEvent(new MouseEvent('mousemove', {
+              buttons: 0, screenX: startX, screenY: startY, bubbles: true,
+            }));
+            // Now wait for the hold to fire, exactly like holdDragNavbar. If the
+            // stray move reset the FSM (pre-fix), buttonDown is cleared and the
+            // timer body no-ops, so 'ready' never arrives and we time out false.
+            const deadline = Date.now() + 8000;
+            let held = false;
+            while (Date.now() < deadline) {
+              if (t.holdDrag._state().ready) { held = true; break; }
+              await new Promise((r) => setTimeout(r, 25));
+            }
+            if (!held) return false;
+            document.dispatchEvent(new MouseEvent('mousemove', {
+              buttons: 1, screenX: startX + 1, screenY: startY + 1, bubbles: true,
+            }));
+            document.dispatchEvent(new MouseEvent('mousemove', {
+              buttons: 1,
+              screenX: startX + ${Math.round(dxScreen)},
+              screenY: startY + ${Math.round(dyScreen)},
+              bubbles: true,
+            }));
+            const wasDragging = t.holdDrag.isDragging();
+            document.dispatchEvent(new MouseEvent('mouseup', {
+              button: 0, buttons: 0, bubbles: true,
+            }));
+            return wasDragging;
+          })()`,
+        )
+        .catch(() => false);
+    },
+    /**
      * Pure hold-to-drag FSM coverage (no real timers / pointer): drive the
      * exported `createHoldDrag` factory with an INJECTED manual clock + recording
      * effects, and assert both transitions deterministically:
