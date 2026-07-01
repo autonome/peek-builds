@@ -455,15 +455,6 @@ export function trackHybridWindowFocus(windowId: number, url: string): void {
   console.log(`[focus-tracker] updated lastFocusedVisibleWindowId=${lastFocusedVisibleWindowId} (hybrid) url=${url.slice(0, 80)}`);
 }
 
-// ============================================================================
-// Popup-to-Opener Bridge (OAuth / window.opener shim)
-// ============================================================================
-// Maps popup window IDs to their opener window IDs. Used to route
-// window.opener.postMessage() calls from popup webviews back to the opener.
-// Populated in setWindowOpenHandler, cleaned up on popup window close.
-
-export const popupToOpener = new Map<number, number>();
-
 /**
  * Convert an Item to an Address-like shape for backward compatibility.
  * Callers that expect Address objects (with uri, protocol, etc.) will

@@ -1020,48 +1020,6 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
-     * Send a postMessage from this popup tile to its opener window.
-     *
-     * Strict path routes through `tile:window:opener-postmessage` which
-     * requires `window.manage`. Intended for popup tiles that communicate
-     * results back to the window that opened them.
-     */
-    openerPostMessage: async (message: unknown, origin?: string) => {
-      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:window:opener-postmessage', {
-        token: tileToken,
-        message,
-        origin,
-      });
-    },
-
-    /**
-     * Close the opener window from this popup tile.
-     *
-     * Strict path routes through `tile:window:opener-close` which
-     * requires `window.manage`.
-     */
-    openerClose: async () => {
-      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:window:opener-close', {
-        token: tileToken,
-      });
-    },
-
-    /**
-     * Focus the opener window from this popup tile.
-     *
-     * Strict path routes through `tile:window:opener-focus` which
-     * requires `window.manage`.
-     */
-    openerFocus: async () => {
-      const _valid = await validationPromise; if (!_valid) return Promise.reject(new Error('Not initialized'));
-      return ipcRenderer.invoke('tile:window:opener-focus', {
-        token: tileToken,
-      });
-    },
-
-    /**
      * Get the Electron BrowserWindow id for the calling renderer.
      *
      * Routes strictly through `tile:window:get-id`. No `window`

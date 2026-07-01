@@ -114,7 +114,7 @@ import { installFromBundle } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities, TileManifest } from './tile-manifest.js';
 import { compareSemver, evaluateUpdateGate } from './capability-compare.js';
-import { invokeWindowOpen, popupToOpener, reopenLastClosedWindow, getLastFocusedVisibleWindowId, getLastContentWindowId, clearLastContentWindowId, getDarkModeSetting, setDarkModeSetting, applyDarkModeSetting, persistAdBlockerPref } from './ipc.js';
+import { invokeWindowOpen, reopenLastClosedWindow, getLastFocusedVisibleWindowId, getLastContentWindowId, clearLastContentWindowId, getDarkModeSetting, setDarkModeSetting, applyDarkModeSetting, persistAdBlockerPref } from './ipc.js';
 import {
   getWindowInfo,
   validateThemeCSS,
@@ -3691,120 +3691,6 @@ export function registerTileIpcHandlers(): void {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
     }
-  });
-
-  // ── tile:window:opener-postmessage ───────────────────────────────
-  //
-  // Strict counterpart of the legacy `opener-postmessage` channel.
-  // Routes a postMessage from a popup tile to its opener window.
-  // Gated by `window.manage`.
-  registerTileIpc('tile:window:opener-postmessage', { mode: 'handle' }, async (event, args: {
-    token: string;
-    message: unknown;
-    origin?: string;
-  }, _grant) => {
-    const grant = _grant;
-    const check = checkWindowAllowed(grant, 'opener-postmessage');
-    if (!check.ok) {
-      handleViolation(grant, 'window', 'window:opener-postmessage', check.error, args.token);
-      return { success: false, error: check.error };
-    }
-
-    const senderWin = windowFromWebContents(event.sender);
-    if (!senderWin) return { success: false, error: 'No sender window' };
-
-    const openerWindowId = popupToOpener.get(senderWin.id);
-    if (!openerWindowId) {
-      DEBUG && console.log('[tile:window:opener-postmessage] No opener mapping for window', senderWin.id);
-      return { success: false, error: 'No opener window mapped' };
-    }
-
-    const openerWin = getLiveWindow(openerWindowId);
-    if (!openerWin) {
-      DEBUG && console.log('[tile:window:opener-postmessage] Opener window', openerWindowId, 'not found or destroyed');
-      popupToOpener.delete(senderWin.id);
-      return { success: false, error: 'Opener window not found' };
-    }
-
-    openerWin.webContents.send('opener-message-received', {
-      message: args.message,
-      origin: args.origin || '*',
-      popupWindowId: senderWin.id,
-    });
-
-    DEBUG && console.log(`[tile:window:opener-postmessage] Routed postMessage from popup ${senderWin.id} to opener ${openerWindowId}`);
-    return { success: true };
-  });
-
-  // ── tile:window:opener-close ──────────────────────────────────────
-  //
-  // Strict counterpart of the legacy `opener-close` channel.
-  // Closes the opener window from a popup tile.
-  // Gated by `window.manage`.
-  registerTileIpc('tile:window:opener-close', { mode: 'handle' }, async (event, args: {
-    token: string;
-  }, _grant) => {
-    const grant = _grant;
-    const check = checkWindowAllowed(grant, 'opener-close');
-    if (!check.ok) {
-      handleViolation(grant, 'window', 'window:opener-close', check.error, args.token);
-      return { success: false, error: check.error };
-    }
-
-    const senderWin = windowFromWebContents(event.sender);
-    if (!senderWin) return { success: false, error: 'No sender window' };
-
-    const openerWindowId = popupToOpener.get(senderWin.id);
-    if (!openerWindowId) return { success: false, error: 'No opener mapped' };
-
-    const openerWin = getLiveWindow(openerWindowId);
-    if (!openerWin) {
-      popupToOpener.delete(senderWin.id);
-      return { success: false, error: 'Opener window not found' };
-    }
-
-    try {
-      const { closeOrHideWindow } = await import('./windows.js');
-      DEBUG && console.log(`[tile:window:opener-close] Popup ${senderWin.id} closing opener ${openerWindowId}`);
-      closeOrHideWindow(openerWin.id);
-      return { success: true };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { success: false, error: message };
-    }
-  });
-
-  // ── tile:window:opener-focus ──────────────────────────────────────
-  //
-  // Strict counterpart of the legacy `opener-focus` channel.
-  // Focuses the opener window from a popup tile.
-  // Gated by `window.manage`.
-  registerTileIpc('tile:window:opener-focus', { mode: 'handle' }, async (event, args: {
-    token: string;
-  }, _grant) => {
-    const grant = _grant;
-    const check = checkWindowAllowed(grant, 'opener-focus');
-    if (!check.ok) {
-      handleViolation(grant, 'window', 'window:opener-focus', check.error, args.token);
-      return { success: false, error: check.error };
-    }
-
-    const senderWin = windowFromWebContents(event.sender);
-    if (!senderWin) return { success: false, error: 'No sender window' };
-
-    const openerWindowId = popupToOpener.get(senderWin.id);
-    if (!openerWindowId) return { success: false, error: 'No opener mapped' };
-
-    const openerWin = getLiveWindow(openerWindowId);
-    if (!openerWin) {
-      popupToOpener.delete(senderWin.id);
-      return { success: false, error: 'Opener window not found' };
-    }
-
-    DEBUG && console.log(`[tile:window:opener-focus] Popup ${senderWin.id} focusing opener ${openerWindowId}`);
-    openerWin.show();
-    openerWin.focus();
-    return { success: true };
   });
 
   // ── tile:window:get-id ────────────────────────────────────────────
