@@ -46,7 +46,7 @@ export interface WindowPresentation {
    * the rect a consumer would want to display or persist.
    */
   bounds: Electron.Rectangle;
-  /** True when the page-host is in MAXIMIZED state (canvas-internal). */
+  /** True when the page-host is in MAXIMIZED state. */
   maximized: boolean;
   /** Pre-maximize bounds for unmaximize, or null if not maximized. */
   preMaxBounds: Electron.Rectangle | null;
@@ -84,8 +84,16 @@ export function getWindowPresentation(windowId: number): WindowPresentation | nu
  * mirrors the Live and Pending paths byte-for-byte so a hybrid window is
  * indistinguishable from a canvas page in the windows feature.
  *
- * Maximize/preMaxBounds are canvas-internal concepts that don't apply to a
- * hybrid window's native BaseWindow, so they're reported as not-maximized.
+ * Maximize/preMaxBounds are read live off the hybrid registry entry (see
+ * hybrid-page-host-registry.ts's setHybridMaximizeState), kept in sync by
+ * the page:maximize/page:unmaximize handlers in ipc.ts and by reopen/
+ * session-restore seeding a window that was maximized when it was closed
+ * or saved. Unlike the old canvas path — where bounds had to be
+ * reconstructed from FSM-published webview-rect params because the
+ * visible content area was smaller than the outer window — a hybrid
+ * window's outer BaseWindow bounds ARE the visible content rect (no
+ * surrounding chrome lives in this window), so `bounds` below is always
+ * just the live baseWin.getBounds(), maximized or not.
  */
 function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
   const address = entry.url();
@@ -140,8 +148,8 @@ function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
     favicon,
     thumbnail,
     bounds,
-    maximized: false,
-    preMaxBounds: null,
+    maximized: entry.maximized,
+    preMaxBounds: entry.maximized ? entry.preMaxBounds : null,
     visible,
     focused,
   };
@@ -161,8 +169,11 @@ function getLivePresentation(ref: WindowRef & { kind: 'live' }): WindowPresentat
 
   // Maximize state was a canvas-page-host concept (page-host FSM tracked
   // MAXIMIZED in info.params). The canvas path is gone, so this is always
-  // false/null app-wide until the hybrid path grows its own maximize
-  // tracking.
+  // false/null here. The hybrid path DOES have real maximize tracking now
+  // (see getHybridPresentation below) — but hybrid windows are BaseWindows
+  // that never reach this function (getWindowPresentation resolves them via
+  // the hybrid registry first). A plain BrowserWindow (settings, palette,
+  // etc.) has no maximize concept in this app.
   const maximized = false;
   const preMaxBounds: Electron.Rectangle | null = null;
 

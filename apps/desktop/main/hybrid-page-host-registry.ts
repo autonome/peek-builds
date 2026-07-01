@@ -35,7 +35,7 @@
  * to frame.
  */
 
-import type { BaseWindow, WebContents } from 'electron';
+import type { BaseWindow, Rectangle, WebContents } from 'electron';
 
 // ── Per-host load-error state (Stage B) ─────────────────────────────────────
 // Lives here (not in hybrid-overlay.ts) so BOTH ipc.ts (which sets errors) and
@@ -143,6 +143,20 @@ export interface HybridWindowEntry {
   url(): string;
   /** Current live title of the content webContents (empty if unavailable). */
   title(): string;
+  /**
+   * True while this hybrid window is maximized (snapped to its display's
+   * work area via the `page:maximize` intent, or restored into that state
+   * on reopen/session-restore). Set/cleared exclusively through
+   * `setHybridMaximizeState` — see that function for why this, rather than
+   * the BaseWindow's native `'maximize'`/`'unmaximize'` events, is the
+   * source of truth.
+   */
+  maximized: boolean;
+  /**
+   * The outer bounds this window had immediately before it was maximized,
+   * so unmaximize can restore to that exact rect. Null when not maximized.
+   */
+  preMaxBounds: Rectangle | null;
 }
 
 interface InternalEntry {
@@ -151,6 +165,8 @@ interface InternalEntry {
   contentWC: WebContents;
   key?: string;
   requestedUrl?: string;
+  maximized: boolean;
+  preMaxBounds: Rectangle | null;
 }
 
 const entries = new Map<number, InternalEntry>();
@@ -343,6 +359,8 @@ function toPublic(e: InternalEntry): HybridWindowEntry {
     requestedUrl: e.requestedUrl,
     url: () => safeUrl(e.contentWC),
     title: () => safeTitle(e.contentWC),
+    maximized: e.maximized,
+    preMaxBounds: e.preMaxBounds,
   };
 }
 
@@ -382,7 +400,11 @@ export function registerHybridWindow(
   opts: { baseWin: BaseWindow; contentWC: WebContents; key?: string; url?: string },
 ): void {
   const { baseWin, contentWC, key, url } = opts;
-  const entry: InternalEntry = { windowId, baseWin, contentWC, key, requestedUrl: url };
+  const entry: InternalEntry = {
+    windowId, baseWin, contentWC, key, requestedUrl: url,
+    maximized: false,
+    preMaxBounds: null,
+  };
   entries.set(windowId, entry);
 
   const cleanup = () => {
@@ -450,6 +472,41 @@ export function registerHybridWindow(
 export function getHybridWindow(windowId: number): HybridWindowEntry | null {
   const e = entries.get(windowId);
   return e ? toPublic(e) : null;
+}
+
+/**
+ * Record a hybrid window's maximize state: `maximized` plus (when maximized)
+ * the outer bounds it had immediately before — the rect a later unmaximize
+ * restores to. No-op if `windowId` isn't registered (window closed mid-flight).
+ *
+ * This is the SINGLE place hybrid maximize state changes. It is driven by
+ * the `page:maximize`/`page:unmaximize` pubsub handlers in `ipc.ts` (the
+ * user toggling maximize via the overlay navbar) and by the hybrid window
+ * construction branch when reopening/restoring a window that was maximized
+ * at close/save time.
+ *
+ * Deliberately NOT driven by the BaseWindow's native `'maximize'`/
+ * `'unmaximize'` events: hybrid page-hosts are `frame: false` (see the
+ * `BaseWindow` construction in `ipc.ts`) with no OS-drawn title bar, so
+ * there is no native affordance (double-click title bar, green button) that
+ * could ever set the OS-level maximized style — the ONLY way a hybrid
+ * window becomes "maximized" is the app's own `page:maximize` intent, which
+ * snaps bounds to the display's work area via `setBounds()` rather than
+ * calling `baseWin.maximize()` (frameless/panel-style windows don't reliably
+ * flip Electron's native maximize flag on macOS — same rationale as
+ * tile-ipc.ts's generic BrowserWindow maximize handler). So the native
+ * events would simply never fire; the pubsub intent IS the deterministic
+ * signal here, not a substitute for one.
+ */
+export function setHybridMaximizeState(
+  windowId: number,
+  maximized: boolean,
+  preMaxBounds: Rectangle | null,
+): void {
+  const e = entries.get(windowId);
+  if (!e) return;
+  e.maximized = maximized;
+  e.preMaxBounds = maximized ? preMaxBounds : null;
 }
 
 /**

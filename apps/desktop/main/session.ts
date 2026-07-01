@@ -577,8 +577,33 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     }
 
     const sanitized = sanitizeParams(mirrorPlacementIntent(winData.params));
+    // The pass-through above can carry a STALE `winData.params.maximized`
+    // for a hybrid window: it's set once at open time (true only when opened
+    // via reopen/session-restore of a maximized window) and never updated by
+    // page:maximize/page:unmaximize afterward (those update the hybrid
+    // registry, not the general window-registry params). `presentation.
+    // maximized` is always live, so it — not the pass-through — is
+    // authoritative here; explicitly set both branches rather than only
+    // adding the true case.
     if (canvasMaximized) {
       sanitized.maximized = true;
+      // Pre-maximize bounds ride along as flat primitives (mirroring the old
+      // canvas info.params.preMaxX/Y/Width/Height convention) so they survive
+      // sanitizeParams and are available on restore to seed the hybrid
+      // registry — letting an unmaximize after restore land back at the
+      // original pre-maximize size instead of the maximized work-area rect.
+      if (presentation.preMaxBounds) {
+        sanitized.preMaxX = presentation.preMaxBounds.x;
+        sanitized.preMaxY = presentation.preMaxBounds.y;
+        sanitized.preMaxWidth = presentation.preMaxBounds.width;
+        sanitized.preMaxHeight = presentation.preMaxBounds.height;
+      }
+    } else {
+      delete sanitized.maximized;
+      delete sanitized.preMaxX;
+      delete sanitized.preMaxY;
+      delete sanitized.preMaxWidth;
+      delete sanitized.preMaxHeight;
     }
 
     windowDescriptors.push({

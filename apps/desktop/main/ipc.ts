@@ -135,6 +135,7 @@ import {
   getHybridContentWC,
   getHybridWindow,
   getAllHybridWindows,
+  setHybridMaximizeState,
   // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
   setHybridLoadError,
   getHybridLoadingTimeoutMs,
@@ -1613,12 +1614,6 @@ export function installHybridNavbarActionRouting(): void {
     return { baseWin: entry.baseWin, windowId: msg.windowId };
   };
 
-  // Restore-bounds map: the outer bounds a window had before it was maximized,
-  // keyed by windowId, so an unmaximize restores the exact pre-maximize size/pos.
-  // (Mirrors page.js's renderer-side `preMaximizeBounds`, kept main-side here
-  // because the content window's geometry is main-owned in the hybrid path.)
-  const preMaximizeBounds = new Map<number, Electron.Rectangle>();
-
   // page:set-bounds — used for BOTH resize (overlay resize-handle drag) and move
   // (overlay navbar drag). The renderer computes the new outer bounds; main just
   // applies them. The content WebContentsView already refills on the host's
@@ -1652,17 +1647,25 @@ export function installHybridNavbarActionRouting(): void {
   // baseWin.maximize() because frameless/panel-style windows on macOS don't
   // respond to native maximize() reliably (same rationale as page.js's
   // doMaximize, which sets workArea bounds directly).
+  //
+  // The pre-maximize bounds + maximized flag are stashed on the hybrid
+  // registry entry (setHybridMaximizeState), not a local map — that makes
+  // them visible to getHybridPresentation (window-presenter.ts), which is
+  // what session save / reopen-last-closed / tile:window:list read. This IS
+  // the single deterministic signal a hybrid window's maximize state ever
+  // changes on; see setHybridMaximizeState's doc comment for why the
+  // BaseWindow's native 'maximize' event is not used instead.
   subscribe(getSystemAddress(), 'page:maximize', (raw) => {
     const r = baseWinFor(raw);
     if (!r) return;
     try {
       const cur = r.baseWin.getBounds();
-      preMaximizeBounds.set(r.windowId, cur);
       const display = screen.getDisplayNearestPoint({
         x: cur.x + Math.floor(cur.width / 2),
         y: cur.y + Math.floor(cur.height / 2),
       });
       const wa = display.workArea;
+      setHybridMaximizeState(r.windowId, true, cur);
       r.baseWin.setBounds({ x: wa.x, y: wa.y, width: wa.width, height: wa.height });
     } catch { /* window gone */ }
   });
@@ -1672,9 +1675,9 @@ export function installHybridNavbarActionRouting(): void {
   subscribe(getSystemAddress(), 'page:unmaximize', (raw) => {
     const r = baseWinFor(raw);
     if (!r) return;
-    const prev = preMaximizeBounds.get(r.windowId);
+    const prev = getHybridWindow(r.windowId)?.preMaxBounds;
     if (!prev) return;
-    preMaximizeBounds.delete(r.windowId);
+    setHybridMaximizeState(r.windowId, false, null);
     try {
       r.baseWin.setBounds(prev);
     } catch { /* window gone */ }
@@ -2419,6 +2422,28 @@ export function registerWindowHandlers(): void {
           key: options.key,
           url,
         });
+
+        // Reopen-last-closed (main.ts reopenLastClosedWindow) and session
+        // restore (session.ts restoreSessionSnapshot) both thread a
+        // maximized window's saved state through as open-time options:
+        // `maximized: true` plus `preMaxX/Y/Width/Height` (the pre-maximize
+        // rect to unmaximize back to). Mirrors the canvas path's contract —
+        // the FSM used to boot straight into MAXIMIZED via a `maximized=1`
+        // URL param without calling doMaximize(), because the window's
+        // bounds are ALREADY the maximized rect (computeInitialBounds above
+        // used `winOptions.x/y/width/height`, which reopen/restore set from
+        // the saved presentation.bounds — the live maximized size). So there
+        // is nothing to resize here: just record the state so a later
+        // page:unmaximize (and getHybridPresentation / session save) see it.
+        if (options.maximized === true) {
+          const pmx = options.preMaxX, pmy = options.preMaxY;
+          const pmw = options.preMaxWidth, pmh = options.preMaxHeight;
+          const preMax = (typeof pmx === 'number' && typeof pmy === 'number'
+            && typeof pmw === 'number' && typeof pmh === 'number')
+            ? { x: pmx, y: pmy, width: pmw, height: pmh }
+            : null;
+          setHybridMaximizeState(baseWin.id, true, preMax);
+        }
 
         // Feed the per-app focus trackers (lastFocusedVisibleWindowId /
         // lastContentWindowId) from the host BaseWindow's focus event. The

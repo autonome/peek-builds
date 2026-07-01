@@ -17,15 +17,19 @@ import * as assert from 'node:assert';
 // Types (mirrored from main.ts)
 // ============================================================================
 
+interface Rect { x: number; y: number; width: number; height: number }
+
 interface ClosedWindowEntry {
   url: string;
   originalUrl?: string;
   source: string;
-  bounds: { x: number; y: number; width: number; height: number } | null;
+  bounds: Rect | null;
   spaceMode: { spaceId: string; spaceName: string; color?: string } | null;
   role?: string;
   scrollX?: number;
   scrollY?: number;
+  maximized?: boolean;
+  preMaximizeBounds?: Rect;
   timestamp: number;
 }
 
@@ -42,6 +46,18 @@ interface WindowParams {
 interface ContextEntry {
   value: string;
   metadata?: Record<string, unknown>;
+}
+
+/**
+ * Mirrors `CapturedClosePresentation` (main.ts): the bounds/presentation
+ * captured pre-destroy in the window's `'close'` listener. `presentation` is
+ * the `WindowPresentation` shape as it matters here — bounds/maximized/
+ * preMaxBounds — null when the presenter couldn't resolve one (e.g. the
+ * window was already gone), in which case `bounds` is the raw fallback.
+ */
+interface Captured {
+  bounds: Rect | null;
+  presentation: { bounds: Rect; maximized: boolean; preMaxBounds: Rect | null } | null;
 }
 
 // ============================================================================
@@ -71,12 +87,18 @@ function getClosedWindowCount(): number {
  * Determine whether a closed window should be saved to the stack,
  * and if so, build the ClosedWindowEntry.
  *
- * Extracted from the window 'closed' handler in main.ts (~line 294-341).
+ * Extracted from `finalizeWindowClose` in main.ts. Canvas pages used to get
+ * a bounds adjustment here (subtracting the fixed canvas chrome margin from
+ * window bounds) — that fallback was gated on the canvas shell URL and was
+ * deleted along with the canvas page-host: `saveBounds` is now always
+ * `captured.presentation?.bounds ?? captured.bounds`, a straight
+ * passthrough. The presenter (hybrid or otherwise) is the only place bounds
+ * get computed; this function no longer does any geometry math of its own.
  */
 function createClosedWindowEntry(
   params: WindowParams,
   modeEntry: ContextEntry | null,
-  lastBounds: { x: number; y: number; width: number; height: number } | null,
+  captured: Captured,
   source: string,
 ): ClosedWindowEntry | null {
   const address = params.address;
@@ -103,19 +125,13 @@ function createClosedWindowEntry(
     };
   }
 
-  // For canvas pages, convert window bounds back to webview bounds
-  let saveBounds = lastBounds;
-  if (lastBounds && isWebUrl) {
-    const CANVAS_MARGIN = 8;
-    const CANVAS_TRIGGER_ZONE = 8;
-    const CANVAS_NAVBAR_HEIGHT = 36;
-    saveBounds = {
-      x: lastBounds.x + CANVAS_MARGIN,
-      y: lastBounds.y + CANVAS_TRIGGER_ZONE + CANVAS_NAVBAR_HEIGHT,
-      width: lastBounds.width - CANVAS_MARGIN * 2,
-      height: lastBounds.height - CANVAS_TRIGGER_ZONE - CANVAS_MARGIN - CANVAS_NAVBAR_HEIGHT,
-    };
-  }
+  // Pull bounds + maximize state from the presentation captured
+  // pre-destruction, falling back to the raw captured bounds when no
+  // presentation resolved (e.g. the window was already gone).
+  const saveBounds = captured.presentation?.bounds ?? captured.bounds;
+  const saveMaximized = captured.presentation?.maximized ?? false;
+  const savePreMaxBounds: ClosedWindowEntry['preMaximizeBounds'] =
+    captured.presentation?.preMaxBounds ?? undefined;
 
   // Use the current navigated URL if available (tracks where user actually was)
   const currentUrl = params.currentUrl;
@@ -131,8 +147,24 @@ function createClosedWindowEntry(
     role: params.role || undefined,
     scrollX: scrollX || undefined,
     scrollY: scrollY || undefined,
+    maximized: saveMaximized || undefined,
+    preMaximizeBounds: savePreMaxBounds,
     timestamp: Date.now(),
   };
+}
+
+/** Build a `Captured` with only raw bounds (no presentation) — the common test shape. */
+function capturedBounds(bounds: Rect | null): Captured {
+  return { bounds, presentation: null };
+}
+
+/** Build a `Captured` with a presentation (bounds/maximized/preMaxBounds). */
+function capturedPresentation(
+  bounds: Rect,
+  maximized = false,
+  preMaxBounds: Rect | null = null,
+): Captured {
+  return { bounds, presentation: { bounds, maximized, preMaxBounds } };
 }
 
 // ============================================================================
@@ -219,7 +251,7 @@ describe('Space mode capture', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
       modeEntry,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
@@ -238,7 +270,7 @@ describe('Space mode capture', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
       modeEntry,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.deepStrictEqual(entry!.spaceMode, {
@@ -253,7 +285,7 @@ describe('Space mode capture', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
       modeEntry,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.strictEqual(entry!.spaceMode, null);
@@ -263,7 +295,7 @@ describe('Space mode capture', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.strictEqual(entry!.spaceMode, null);
@@ -275,7 +307,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'http://example.com' },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
@@ -286,7 +318,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
@@ -296,7 +328,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'peek://groups/home.html' },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
@@ -307,7 +339,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'peek://app/settings/settings.html' },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
@@ -318,7 +350,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'peek://app/page/index.html' },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
@@ -328,7 +360,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'peek://app/background.html' },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.strictEqual(entry, null);
@@ -338,7 +370,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'file:///tmp/test.html' },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.strictEqual(entry, null);
@@ -348,7 +380,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       {},
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.strictEqual(entry, null);
@@ -358,7 +390,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com', role: 'content' },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
@@ -368,7 +400,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com', role: 'child-content' },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
@@ -378,7 +410,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com', role: 'workspace' },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
@@ -388,7 +420,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
@@ -398,7 +430,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com', modal: true },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.strictEqual(entry, null);
@@ -408,7 +440,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com', keepLive: true },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.strictEqual(entry, null);
@@ -418,27 +450,37 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com', role: 'palette' },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.strictEqual(entry, null);
   });
 
-  it('captures bounds from the window', () => {
+  it('captures bounds from the presentation unchanged (no canvas-margin adjustment)', () => {
     const bounds = { x: 100, y: 200, width: 800, height: 600 };
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
       null,
-      bounds,
+      capturedPresentation(bounds),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
-    // Bounds are adjusted for canvas margins
-    assert.notStrictEqual(entry!.bounds, null);
-    assert.strictEqual(entry!.bounds!.x, 108); // 100 + CANVAS_MARGIN(8)
-    assert.strictEqual(entry!.bounds!.y, 244); // 200 + TRIGGER_ZONE(8) + NAVBAR(36)
-    assert.strictEqual(entry!.bounds!.width, 784); // 800 - MARGIN*2(16)
-    assert.strictEqual(entry!.bounds!.height, 548); // 600 - TRIGGER(8) - MARGIN(8) - NAVBAR(36)
+    // The canvas-margin fallback (subtracting a fixed chrome margin from
+    // window bounds) was deleted with the canvas page-host; bounds now pass
+    // through exactly as the presenter reported them.
+    assert.deepStrictEqual(entry!.bounds, bounds);
+  });
+
+  it('falls back to raw captured bounds when no presentation resolved', () => {
+    const bounds = { x: 50, y: 60, width: 700, height: 500 };
+    const entry = createClosedWindowEntry(
+      { address: 'https://example.com' },
+      null,
+      capturedBounds(bounds),
+      'test-ext',
+    );
+    assert.notStrictEqual(entry, null);
+    assert.deepStrictEqual(entry!.bounds, bounds);
   });
 
   it('entry uses spaceMode field (not groupMode)', () => {
@@ -449,7 +491,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
       modeEntry,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
@@ -467,22 +509,21 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
       null,
-      null,
+      capturedBounds(null),
       'test-ext',
     );
     assert.strictEqual(entry!.bounds, null);
   });
 
-  it('peek:// URLs do NOT get canvas bounds adjustment', () => {
+  it('peek:// URLs get the same unadjusted bounds passthrough as web URLs', () => {
     const bounds = { x: 100, y: 200, width: 800, height: 600 };
     const entry = createClosedWindowEntry(
       { address: 'peek://groups/home.html' },
       null,
-      bounds,
+      capturedPresentation(bounds),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
-    // peek:// URLs use raw window bounds (no canvas wrapper)
     assert.deepStrictEqual(entry!.bounds, bounds);
   });
 
@@ -490,7 +531,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com', currentUrl: 'https://example.com/deep/page' },
       null,
-      { x: 100, y: 200, width: 800, height: 600 },
+      capturedBounds({ x: 100, y: 200, width: 800, height: 600 }),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
@@ -502,7 +543,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
       null,
-      { x: 100, y: 200, width: 800, height: 600 },
+      capturedBounds({ x: 100, y: 200, width: 800, height: 600 }),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
@@ -514,7 +555,7 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com', scrollX: 0, scrollY: 1500 },
       null,
-      { x: 100, y: 200, width: 800, height: 600 },
+      capturedBounds({ x: 100, y: 200, width: 800, height: 600 }),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
@@ -525,11 +566,66 @@ describe('Entry creation logic', () => {
     const entry = createClosedWindowEntry(
       { address: 'https://example.com' },
       null,
-      { x: 100, y: 200, width: 800, height: 600 },
+      capturedBounds({ x: 100, y: 200, width: 800, height: 600 }),
       'test-ext',
     );
     assert.notStrictEqual(entry, null);
     assert.strictEqual(entry!.scrollX, undefined);
     assert.strictEqual(entry!.scrollY, undefined);
+  });
+});
+
+describe('Maximize state capture', () => {
+  it('omits maximized and preMaximizeBounds when the presentation is not maximized', () => {
+    const bounds = { x: 0, y: 0, width: 1280, height: 800 };
+    const entry = createClosedWindowEntry(
+      { address: 'https://example.com' },
+      null,
+      capturedPresentation(bounds, false, null),
+      'test-ext',
+    );
+    assert.notStrictEqual(entry, null);
+    assert.strictEqual(entry!.maximized, undefined);
+    assert.strictEqual(entry!.preMaximizeBounds, undefined);
+  });
+
+  it('captures maximized=true and the pre-maximize bounds when the presentation is maximized', () => {
+    const workAreaBounds = { x: 0, y: 0, width: 1920, height: 1080 };
+    const preMax = { x: 100, y: 100, width: 800, height: 600 };
+    const entry = createClosedWindowEntry(
+      { address: 'https://example.com' },
+      null,
+      capturedPresentation(workAreaBounds, true, preMax),
+      'test-ext',
+    );
+    assert.notStrictEqual(entry, null);
+    assert.strictEqual(entry!.maximized, true);
+    assert.deepStrictEqual(entry!.bounds, workAreaBounds);
+    assert.deepStrictEqual(entry!.preMaximizeBounds, preMax);
+  });
+
+  it('maximized=true with no pre-maximize bounds omits preMaximizeBounds', () => {
+    const workAreaBounds = { x: 0, y: 0, width: 1920, height: 1080 };
+    const entry = createClosedWindowEntry(
+      { address: 'https://example.com' },
+      null,
+      capturedPresentation(workAreaBounds, true, null),
+      'test-ext',
+    );
+    assert.notStrictEqual(entry, null);
+    assert.strictEqual(entry!.maximized, true);
+    assert.strictEqual(entry!.preMaximizeBounds, undefined);
+  });
+
+  it('falls back to maximized=false when captured has no presentation at all', () => {
+    const entry = createClosedWindowEntry(
+      { address: 'https://example.com' },
+      null,
+      capturedBounds({ x: 10, y: 10, width: 400, height: 300 }),
+      'test-ext',
+    );
+    assert.notStrictEqual(entry, null);
+    assert.strictEqual(entry!.maximized, undefined);
+    assert.strictEqual(entry!.preMaximizeBounds, undefined);
   });
 });
