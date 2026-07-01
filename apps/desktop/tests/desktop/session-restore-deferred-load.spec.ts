@@ -97,6 +97,24 @@ test.describe('Session Restore Deferred Load @desktop', () => {
   test('restore beyond the eager count defers content loads until first activation', async () => {
     const slugs = Array.from({ length: WINDOW_COUNT }, (_, i) => `deferred-load-${i}`);
 
+    // The eager/deferred split applies to the WHOLE snapshot in recency
+    // order, so any other restorable window (e.g. a first-run window a
+    // fresh profile boots with) would consume an eager slot and skew the
+    // expected 5/2 split. Close every listed window first so the snapshot
+    // contains exactly our WINDOW_COUNT windows.
+    await bgWindow.evaluate(async () => {
+      const r = await (window as any).app.window.list({ includeInternal: false });
+      if (!r?.success) return;
+      for (const w of r.windows || []) {
+        await (window as any).app.window.close(w.id);
+      }
+    });
+    await bgWindow.waitForFunction(async () => {
+      const r = await (window as any).app.window.list({ includeInternal: false });
+      if (!r?.success) return false;
+      return (r.windows || []).length === 0;
+    });
+
     // Open all windows and wait for each to be fully loaded (so the saved
     // snapshot carries real URLs + titles).
     const openedIds: number[] = [];
@@ -119,6 +137,19 @@ test.describe('Session Restore Deferred Load @desktop', () => {
     await app.evaluateMain!((() =>
       (globalThis as any).__peek_test.forceSaveSession()) as never);
 
+    // Guard: the snapshot must contain exactly our windows — an extra
+    // restorable window would silently shift the eager/deferred boundary
+    // and make the count assertions below fail at the symptom instead of
+    // the cause.
+    const snapshot = await app.evaluateMain!((() =>
+      (globalThis as any).__peek_test.getLastSnapshot()) as never) as
+      { windows: Array<{ url: string }> } | null;
+    expect(snapshot, 'snapshot must exist after forceSaveSession').not.toBeNull();
+    expect(
+      snapshot!.windows.length,
+      `snapshot must contain exactly the ${WINDOW_COUNT} test windows, got: ${snapshot!.windows.map((w) => w.url).join(', ')}`,
+    ).toBe(WINDOW_COUNT);
+
     await bgWindow.evaluate(async (ids: number[]) => {
       for (const id of ids) {
         await (window as any).app.window.close(id);
@@ -138,9 +169,15 @@ test.describe('Session Restore Deferred Load @desktop', () => {
 
     // Every restored window — including the deferred ones whose content has
     // never navigated — must present its SAVED url in window.list (the
-    // presentation falls back to the deferred URL; no empty-url overwrite).
+    // presentation falls back to the deferred URL for deferred windows; the
+    // EAGER windows' fire-and-forget loads commit asynchronously after the
+    // restore loop resolves, so poll until all WINDOW_COUNT present a URL).
+    await expect
+      .poll(async () => (await listOurWindows()).length, {
+        message: 'all restored windows must be listed with their saved URLs',
+      })
+      .toBe(WINDOW_COUNT);
     const restored = await listOurWindows();
-    expect(restored.length, 'all restored windows must be listed with their saved URLs').toBe(WINDOW_COUNT);
 
     // Wait for the eager fire-and-forget loads to settle: exactly EAGER_COUNT
     // committed content URLs; the remaining windows must stay un-navigated.
