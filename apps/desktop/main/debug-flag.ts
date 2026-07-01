@@ -36,23 +36,6 @@ export let DEBUG: boolean = !!process.env.DEBUG;
 /** Whether the devtools keyboard shortcut is armed. */
 let _devTools: boolean = false;
 
-/**
- * Whether the page-host hybrid path is enabled. When true, a web page opens
- * as an opaque content-sized `BaseWindow` hosting a single `WebContentsView`
- * (main-owned content webContents, no `<webview>`, no per-page chrome) instead
- * of the transparent fullscreen canvas `BrowserWindow` + `<webview>` model.
- *
- * Default ON as of 2026-06-08. The hybrid measured ~41% fewer processes, ~⅓ less
- * RAM, and near-zero idle CPU/compositor tax vs the canvas path on a real 46-page
- * session (see docs/perf/page-host-cost-baseline.md). Opt back into the legacy
- * canvas path with `PEEK_PAGEHOST_HYBRID=0`. A datastore-backed toggle can replace
- * the env read later without changing call sites. Read fresh on every call so a
- * future setter can flip it at runtime without re-reading the env.
- */
-export function isHybridPageHost(): boolean {
-  return process.env.PEEK_PAGEHOST_HYBRID !== '0';
-}
-
 /** Change listeners — wired by ipc.ts to broadcast + persist on flip. */
 export interface DebugFlagsState {
   verbose: boolean;

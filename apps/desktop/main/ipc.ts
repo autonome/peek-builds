@@ -128,7 +128,6 @@ import {
   registerDownloadHandler,
 } from './session-partition.js';
 
-import { isHybridPageHost } from './debug-flag.js';
 import { markPageHostContent, registerGuest } from './webview-guest-registry.js';
 import {
   registerHybridWindow,
@@ -809,8 +808,8 @@ function applyPlacementOnReuse(
  * there is no double-emit: page.js never runs for a hybrid window.
  *
  * Gating: only ever called from the hybrid branch, which already gates on
- * `isHybridPageHost() && useCanvas`. The content wc is the only main-owned
- * content webContents, so attaching here is the hybrid-only path.
+ * `useCanvas`. The content wc is the only main-owned content webContents,
+ * so attaching here is the hybrid-only path.
  *
  * Topics (see docs/perf/page-host-hybrid-design.md §4):
  *   REUSED (existing subscribers — payloads identical to page.js / canvas main):
@@ -1538,11 +1537,10 @@ export function wireHybridContentEvents(
  * for any non-hybrid windowId, so this handler is a no-op for canvas windows and
  * page.js is a no-op (windowId mismatch) for hybrid windows.
  *
- * Idempotent + gated: only installed once, only when `isHybridPageHost()`.
+ * Idempotent: only installed once.
  */
 let hybridNavbarRoutingInstalled = false;
 export function installHybridNavbarActionRouting(): void {
-  if (!isHybridPageHost()) return;
   if (hybridNavbarRoutingInstalled) return;
   hybridNavbarRoutingInstalled = true;
 
@@ -1873,9 +1871,8 @@ export function registerWindowHandlers(): void {
       // resolve. When the flag is on, consult the hybrid registry first so a
       // repeat open of the same key REUSES the existing hybrid window (focus
       // its baseWin, return its id) instead of spawning a duplicate — matching
-      // the canvas key-reuse semantics below. Gated on isHybridPageHost() so
-      // non-hybrid opens are byte-identical (registry is empty when off).
-      if (isHybridPageHost()) {
+      // the canvas key-reuse semantics below.
+      {
         const existingHybrid = findHybridWindowByKey(options.key);
         if (existingHybrid) {
           DEBUG && console.log('[hybrid-page-host] Reusing existing hybrid window with key:', options.key);
@@ -1996,12 +1993,11 @@ export function registerWindowHandlers(): void {
     // attached to whatever unrelated http window happens to share its URL.
     if ((url.startsWith('http://') || url.startsWith('https://')) && options.trackingSource !== 'reopen' && !options.key) {
       // P1.4a hybrid dedup (by url): same rationale as the key path above —
-      // BaseWindow page-hosts are invisible to findWindowByUrl. When the flag
-      // is on, reuse an existing hybrid window loading the same url (focus its
-      // baseWin, reload it fresh like the canvas path, return its id) instead
-      // of spawning a duplicate. Gated on isHybridPageHost(); registry empty
-      // when off so non-hybrid opens are byte-identical.
-      if (isHybridPageHost()) {
+      // BaseWindow page-hosts are invisible to findWindowByUrl. Reuse an
+      // existing hybrid window loading the same url (focus its baseWin,
+      // reload it fresh like the canvas path, return its id) instead of
+      // spawning a duplicate.
+      {
         const existingHybridByUrl = findHybridWindowByUrl(url);
         if (existingHybridByUrl) {
           DEBUG && console.log('[hybrid-page-host] Reusing existing hybrid window with same URL:', url);
@@ -2355,11 +2351,11 @@ export function registerWindowHandlers(): void {
     // earlier in this handler (findWindowByUrl / findWindowByKey) resolve via
     // getLiveWindow == BrowserWindow.fromId, which cannot find a BaseWindow. So
     // P1.4a added a PARALLEL dedup against the hybrid registry at the top of
-    // this handler (findHybridWindowByKey / findHybridWindowByUrl), gated on
-    // isHybridPageHost(), which reuses+focuses the existing hybrid window
-    // (with placement-on-reuse + transient-refresh parity) before we ever reach
-    // this construction branch. We only get here on a genuine first open.
-    if (isHybridPageHost() && useCanvas) {
+    // this handler (findHybridWindowByKey / findHybridWindowByUrl), which
+    // reuses+focuses the existing hybrid window (with placement-on-reuse +
+    // transient-refresh parity) before we ever reach this construction
+    // branch. We only get here on a genuine first open.
+    if (useCanvas) {
       try {
         // winOptions.x/y/width/height were filled in above by
         // `computeInitialBounds` (or the caller's explicit x/y) and hold the

@@ -46,16 +46,12 @@
  * **Headless-safe.** Under `isHeadless()` the overlay is created with
  * `opacity: 0` and only ever `showInactive()`-n, never `.show()`/`.focus()`,
  * so an agent/CI run never paints a real surface on the physical desktop.
- *
- * **No-op when the flag is off.** `initHybridOverlay()` is gated on
- * `isHybridPageHost()`. With the flag off it returns immediately, subscribes
- * to nothing, and never creates a window — the canvas path is byte-identical.
  */
 
 import { app, BrowserWindow, BaseWindow as BaseWindowCtor, WebContentsView, screen } from 'electron';
 import type { BaseWindow, WebContents } from 'electron';
 import { isHeadless, getTilePreloadPath } from './config.js';
-import { isHybridPageHost, DEBUG } from './debug-flag.js';
+import { DEBUG } from './debug-flag.js';
 import {
   onActiveHybridWindowChange,
   getHybridWindow,
@@ -221,9 +217,8 @@ let onFollowedMove: (() => void) | null = null;
 // float over other apps; on become-active we restore the floating + default
 // click-through and re-frame onto the current active hybrid window. We seed it
 // true (the app is normally active at init); `app.isActive?.()` is consulted
-// where available as a belt-and-suspenders read. Listeners are installed only
-// behind `isHybridPageHost()` (see initHybridOverlay), so this is dead state on
-// the canvas path.
+// where available as a belt-and-suspenders read. Listeners are installed by
+// `initHybridOverlay`.
 let appActive = true;
 // The bound resign/become handlers, kept so teardown can detach them.
 let onAppResignActive: (() => void) | null = null;
@@ -734,15 +729,12 @@ function retarget(id: number | null): void {
 /**
  * Start the shared-overlay manager: subscribe to the registry's active-window
  * push signal so the overlay retargets/follows as the frontmost hybrid window
- * changes. Gated on `isHybridPageHost()` — a no-op (no window, no subscription)
- * when the flag is off. Idempotent: a second call while already initialized is
- * ignored.
+ * changes. Idempotent: a second call while already initialized is ignored.
  *
  * Wire this from the main-process setup path that runs once the hybrid feature
  * is active (see `ipc.ts` `registerAllHandlers` / `entry.ts onReady`).
  */
 export function initHybridOverlay(): void {
-  if (!isHybridPageHost()) return;
   if (unsubscribeActive) return; // already initialized
 
   // Subscribe to the overlay renderer's click-capture toggle before any window

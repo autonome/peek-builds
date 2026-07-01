@@ -1193,17 +1193,16 @@ const onReady = async () => {
   // Register all IPC handlers from backend
   registerAllHandlers(onQuit);
 
-  // P1.4b-1 — start the hybrid shared chrome overlay manager. No-op (no window,
-  // no subscription) unless PEEK_PAGEHOST_HYBRID=1. When on, this subscribes to
+  // P1.4b-1 — start the hybrid shared chrome overlay manager. Subscribes to
   // the hybrid registry's active-window push signal and lazily creates the ONE
   // shared overlay window that retargets over the frontmost hybrid content
-  // window. (The canvas path is untouched — the gate returns immediately.)
+  // window.
   initHybridOverlay();
 
   // P1.4b-2 — install the chrome→content navbar action routing for hybrid
   // windows (navigate/back/forward/reload published by the overlay renderer are
-  // resolved to the active hybrid window's content webContents here). No-op
-  // unless PEEK_PAGEHOST_HYBRID=1; idempotent.
+  // resolved to the active hybrid window's content webContents here).
+  // Idempotent.
   installHybridNavbarActionRouting();
 
   // Always-on renderer log: writes every console.{log,info,warn,error,debug}
