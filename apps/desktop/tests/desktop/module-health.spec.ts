@@ -21,7 +21,6 @@
 import { test, expect, DesktopApp, getSharedApp, closeSharedApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { waitForExtensionsReady } from '../helpers/window-utils';
-import { hybridFlagOn } from '../helpers/hybrid-page';
 
 let sharedApp: DesktopApp;
 let sharedBgWindow: Page;
@@ -37,37 +36,6 @@ test.afterAll(async () => {
 });
 
 test.describe('Module Health @desktop', () => {
-  test('page.js module evaluates to completion (no silent halt from api drift)', async () => {
-    test.skip(await hybridFlagOn(sharedApp), 'canvas-only, delete at Stage B: canvas page.js module sentinel; page.js is removed at Stage B');
-    const openResult = await sharedBgWindow.evaluate(async () => {
-      return await (window as any).app.window.open('https://example.com', {
-        width: 800,
-        height: 600,
-        key: 'module-health-page',
-      });
-    });
-    expect(openResult.success).toBe(true);
-    const windowId = openResult.id;
-
-    const pageWindow = await sharedApp.getWindow('page/index.html', 15000);
-    expect(pageWindow).toBeTruthy();
-
-    // Sentinel is the last top-level statement in page.js. If any earlier
-    // top-level `api.*.x` call throws (e.g. renamed method like getWindowId
-    // → getId, or removed namespace like api.ipc), the module halts silently
-    // and this flag never flips.
-    await pageWindow.waitForFunction(
-      () => (window as any).__pageModuleReady === true,
-      undefined,
-      { timeout: 5000 }
-    );
-
-    await sharedBgWindow.evaluate(
-      async (id: number) => (window as any).app.window.close(id),
-      windowId
-    );
-  });
-
   test('cmd panel.js module evaluates to completion', async () => {
     const openResult = await sharedBgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
