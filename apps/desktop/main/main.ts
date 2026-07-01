@@ -180,30 +180,10 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
       // bounds for page-hosts (info.params x/y/width/height), the
       // hybrid content rect for hybrid page-hosts (baseWin.getBounds()),
       // and BrowserWindow bounds for everything else.
-      let saveBounds = captured.presentation?.bounds ?? captured.bounds;
+      const saveBounds = captured.presentation?.bounds ?? captured.bounds;
       const saveMaximized = captured.presentation?.maximized ?? false;
       const savePreMaxBounds: ClosedWindowEntry['preMaximizeBounds'] =
         captured.presentation?.preMaxBounds ?? undefined;
-
-      // Fallback for canvas pages whose presentation didn't capture
-      // (presenter returned null because the window was already
-      // destroyed before our close listener fired): subtract the
-      // fixed canvas chrome from window bounds. Slightly inflated
-      // when panels were open in non-maximized mode, but only
-      // reached on the unhappy path. (Gated on the canvas shell URL,
-      // so it never fires for a hybrid page-host's content URL.)
-      if (saveBounds === captured.bounds && captured.bounds && isWebUrl
-        && captured.hostUrl && captured.hostUrl.startsWith('peek://app/page/')) {
-        const CANVAS_MARGIN = 8;
-        const CANVAS_TRIGGER_ZONE = 8;
-        const CANVAS_NAVBAR_HEIGHT = 36;
-        saveBounds = {
-          x: captured.bounds.x + CANVAS_MARGIN,
-          y: captured.bounds.y + CANVAS_TRIGGER_ZONE + CANVAS_NAVBAR_HEIGHT,
-          width: captured.bounds.width - CANVAS_MARGIN * 2,
-          height: captured.bounds.height - CANVAS_TRIGGER_ZONE - CANVAS_MARGIN - CANVAS_NAVBAR_HEIGHT,
-        };
-      }
 
       // Use the current navigated URL if available (tracks where user actually was)
       const currentUrl = windowData.params.currentUrl as string | undefined;
@@ -896,26 +876,17 @@ export async function initialize(): Promise<void> {
 
     // Handle local shortcuts (with window ID for mode-conditional shortcuts)
     window.webContents.on('before-input-event', (event, input) => {
-      // Page host windows (canvas) have their own Cmd+L handler for the floating navbar
-      // (registered in openWindow). Skip local shortcut handling for Cmd+L on those windows
-      // so the page host's before-input-event handler can handle it instead.
       if (input.type === 'keyDown' && input.key === 'l') {
         const mod = process.platform === 'darwin' ? input.meta : input.control;
         if (mod && !input.alt && !input.shift) {
-          const winInfo = getWindowInfo(windowId);
-          const addr = winInfo?.params?.address as string | undefined;
-          if (addr && (addr.startsWith('http://') || addr.startsWith('https://') || addr.startsWith('file:///'))) {
-            return; // Let the page host's own handler deal with Cmd+L
-          }
           // Hybrid page-host shared-chrome overlay: a real BrowserWindow
           // loading peek://app/page/overlay.html. When R1/R2/R3 focuses it
-          // (overlayWin.focus on page:show-navbar), Cmd+L lands here. Its
-          // params.address is the peek:// overlay URL (not http/https/file),
-          // so the check above doesn't skip it. Skip the local-shortcut
-          // dispatch so the overlay's <peek-navbar> (shortcuts=true) handles
-          // Cmd+L → focusUrl instead of opening the cmd panel. Detected via
-          // the focused window's own webContents URL to avoid importing
-          // hybrid-overlay.ts (which imports from main.js → cycle).
+          // (overlayWin.focus on page:show-navbar), Cmd+L lands here. Skip
+          // the local-shortcut dispatch so the overlay's <peek-navbar>
+          // (shortcuts=true) handles Cmd+L → focusUrl instead of opening the
+          // cmd panel. Detected via the focused window's own webContents URL
+          // to avoid importing hybrid-overlay.ts (which imports from
+          // main.js → cycle).
           let focusedUrl = '';
           try {
             focusedUrl = window.webContents.getURL();

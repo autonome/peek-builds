@@ -154,38 +154,17 @@ function getLivePresentation(ref: WindowRef & { kind: 'live' }): WindowPresentat
   // info lookup but expose ref.id in the response.
   const info = getWindowInfo(win.id);
   const hostUrl = win.webContents.getURL();
-  const isCanvasPage = hostUrl.startsWith('peek://app/page');
 
   const address = resolveWindowAddress(hostUrl, info?.params);
 
-  // Bounds: canvas pages publish their visible-webview rect into
-  // info.params via tile:window:update-canvas-state; everyone else uses
-  // the BrowserWindow rect.
-  let bounds = win.getBounds();
-  if (isCanvasPage && info) {
-    const px = info.params.x;
-    const py = info.params.y;
-    const pw = info.params.width;
-    const ph = info.params.height;
-    if (typeof px === 'number' && typeof py === 'number'
-      && typeof pw === 'number' && typeof ph === 'number') {
-      bounds = { x: px, y: py, width: pw, height: ph };
-    }
-  }
+  const bounds = win.getBounds();
 
-  // Maximize state — only meaningful for canvas pages.
-  const maximized = isCanvasPage && info?.params?.maximized === true;
-  let preMaxBounds: Electron.Rectangle | null = null;
-  if (maximized && info) {
-    const ppx = info.params.preMaxX;
-    const ppy = info.params.preMaxY;
-    const ppw = info.params.preMaxWidth;
-    const pph = info.params.preMaxHeight;
-    if (typeof ppx === 'number' && typeof ppy === 'number'
-      && typeof ppw === 'number' && typeof pph === 'number') {
-      preMaxBounds = { x: ppx, y: ppy, width: ppw, height: pph };
-    }
-  }
+  // Maximize state was a canvas-page-host concept (page-host FSM tracked
+  // MAXIMIZED in info.params). The canvas path is gone, so this is always
+  // false/null app-wide until the hybrid path grows its own maximize
+  // tracking.
+  const maximized = false;
+  const preMaxBounds: Electron.Rectangle | null = null;
 
   // Favicon + thumbnail. The presenter is the one place that knows the
   // resolution policy — renderers receive a URL string they can drop into
