@@ -42,6 +42,9 @@ playwright-report/
 .agent-task.md
 /CLAUDE.md
 
+# Session handoff notes (per-user session scratch — not source-controlled)
+handoff.md
+
 # Isolated agent workspaces (created by scripts/spawn-isolated-agent.sh)
 ../mpeek-agent-*
 # Isolated agent clones (created by scripts/spawn-isolated-clone.sh)
