@@ -37,6 +37,7 @@ playwright-report/
 !.claude/skills/
 !.claude/settings.json
 !.claude/hooks/
+!.claude/retiring.txt
 
 # Agent task scratch files
 .agent-task.md
