@@ -24,9 +24,78 @@
 
 import { BrowserWindow, screen } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
+import { getAllHybridWindows, getHybridWindow } from './hybrid-page-host-registry.js';
 import { getWindowInfo } from './main.js';
 import { DEBUG, WEB_CORE_ADDRESS } from './config.js';
 import { computePlacement, type Placement } from './window-placement.js';
+
+/**
+ * Minimal shape `projectWindow` needs. `BrowserWindow` and the hybrid
+ * page-host's `BaseWindow` both satisfy this structurally (`BrowserWindow
+ * extends BaseWindow`), so one projection path drives both without either
+ * type having to pretend to be the other.
+ */
+type PositionableWindow = Pick<Electron.BaseWindow, 'getBounds' | 'setBounds' | 'isVisible'>;
+
+/**
+ * Resolve the bounds of a placement's `parentId` for `parent-centered`
+ * mode. The parent may be a plain window (`window-registry`) or a hybrid
+ * page-host (`hybrid-page-host-registry`) — checked in that order since the
+ * two registries cover disjoint id spaces.
+ */
+function resolveParentBounds(placement: Placement): Electron.Rectangle | undefined {
+  if (placement.mode !== 'parent-centered') return undefined;
+  const parent = getLiveWindow(placement.parentId);
+  if (parent) return parent.getBounds();
+  const hybridParent = getHybridWindow(placement.parentId);
+  return hybridParent ? hybridParent.baseWin.getBounds() : undefined;
+}
+
+/**
+ * Project one window's (or hybrid page-host's) placement intent onto the
+ * live display layout and apply the result. Shared by both the plain-window
+ * and hybrid-window passes in `projectAllWindows` — same lookup
+ * (`getWindowInfo`), same filters (background window, no placement), same
+ * `computePlacement` call. Returns true if the window was repositioned.
+ */
+function projectWindow(
+  id: number,
+  win: PositionableWindow,
+  displays: Electron.Display[],
+  primaryDisplayId: number,
+  label: string,
+): boolean {
+  if (!win.isVisible()) return false;
+
+  const entry = getWindowInfo(id);
+  // Skip the background window — never positioned, never visible.
+  if (!entry || entry.params.address === WEB_CORE_ADDRESS) return false;
+  const placement = entry.params.placement as Placement | undefined;
+  if (!placement) return false;
+
+  const bounds = win.getBounds();
+  const parentBounds = resolveParentBounds(placement);
+
+  const result = computePlacement({
+    placement,
+    currentBounds: bounds,
+    windowSize: { width: bounds.width, height: bounds.height },
+    displays,
+    primaryDisplayId,
+    parentBounds,
+  });
+
+  if (result.kind === 'reposition') {
+    console.log(
+      `[display-watcher] Repositioning ${label} ${id} (${placement.mode}): ` +
+      `(${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}) -> ` +
+      `(${result.bounds.x},${result.bounds.y} ${result.bounds.width}x${result.bounds.height})`
+    );
+    win.setBounds(result.bounds);
+    return true;
+  }
+  return false;
+}
 
 /** Coalesce metrics-changed events. Add/remove are synchronous. */
 let _metricsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -47,45 +116,19 @@ function projectAllWindows(reason: string): void {
     `primary=${primaryDisplayId}`
   );
 
-  const allWindows = getAllLiveWindows();
   let placedCount = 0;
 
-  for (const win of allWindows) {
-    if (!win.isVisible()) continue;
+  for (const win of getAllLiveWindows()) {
+    if (projectWindow(win.id, win, displays, primaryDisplayId, 'window')) placedCount++;
+  }
 
-    const entry = getWindowInfo(win.id);
-    // Skip the background window — never positioned, never visible.
-    if (!entry || entry.params.address === WEB_CORE_ADDRESS) continue;
-    const placement = entry.params.placement as Placement | undefined;
-    if (!placement) continue;
-
-    const bounds = win.getBounds();
-    let parentBounds: Electron.Rectangle | undefined;
-    if (placement.mode === 'parent-centered') {
-      const parent = getLiveWindow(placement.parentId);
-      if (parent) {
-        parentBounds = parent.getBounds();
-      }
-    }
-
-    const result = computePlacement({
-      placement,
-      currentBounds: bounds,
-      windowSize: { width: bounds.width, height: bounds.height },
-      displays,
-      primaryDisplayId,
-      parentBounds,
-    });
-
-    if (result.kind === 'reposition') {
-      console.log(
-        `[display-watcher] Repositioning window ${win.id} (${placement.mode}): ` +
-        `(${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}) -> ` +
-        `(${result.bounds.x},${result.bounds.y} ${result.bounds.width}x${result.bounds.height})`
-      );
-      win.setBounds(result.bounds);
-      placedCount++;
-    }
+  // Hybrid page-host windows (BaseWindow + WebContentsView, tracked in
+  // hybrid-page-host-registry.ts) are invisible to getAllLiveWindows() — it
+  // only knows BrowserWindows (see that registry's module doc). Project them
+  // through the same placement math so display add/remove/rescale repositions
+  // them too.
+  for (const hybrid of getAllHybridWindows()) {
+    if (projectWindow(hybrid.windowId, hybrid.baseWin, displays, primaryDisplayId, 'hybrid window')) placedCount++;
   }
 
   if (placedCount > 0) {
