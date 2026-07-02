@@ -15,7 +15,6 @@ import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
 import { waitForPanelCommandsLoaded } from '../helpers/window-utils';
-import { hybridBridgePresent } from '../helpers/hybrid-page';
 
 /**
  * keepLive panel reuse: the reopen dispatches VISIBILITY_SHOWN (reset → IDLE)
@@ -323,29 +322,19 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
   // (a known keepLive-reuse race). Keeping this test last means no later test
   // reopens the panel from CLOSING.
   test('pressing Enter on ghost suggestion opens the seeded URL', async () => {
-    // BLOCKED on the hybrid page-host by a real product-behavior
-    // difference in the hybrid page-host OPEN path, not a canvas assertion.
     // This test asserts a `window:opened` event fires for the SEED_URL
-    // (https://www.ziggurat-test.example.com/...). The hybrid open path
-    // (apps/desktop/main/ipc.ts, the `useCanvas` branch)
-    // does `await view.webContents.loadURL(url)` BEFORE publishing
-    // `window:opened`. The seeded host is an unresolvable *.example.com
-    // subdomain (verified: no A record), so loadURL rejects with
-    // ERR_NAME_NOT_RESOLVED, the await throws into the catch, and the open
-    // returns { success:false } having published NO `window:opened` and created
-    // NO window. The canvas path loads the URL async inside a <webview> and
-    // fires `window:opened` immediately, so a failed initial navigation still
-    // yields a window showing the browser error page. So the hybrid cutover
-    // REGRESSES the "open a window even when the initial navigation fails"
-    // behavior: a slow/unreachable/offline URL yields nothing instead of an
-    // error page. (The sibling "substring → app.fastmail.com" test passes under
-    // the flag precisely because that host resolves.) TODO(pagehost-hybrid):
-    // make the hybrid open fire window:opened / create the window before/independent
-    // of the initial loadURL outcome, then drop this skip. Tracked for Batch D.
-    test.skip(
-      await hybridBridgePresent(app),
-      'hybrid open awaits loadURL before window:opened; unresolvable seed host (*.example.com) ⇒ no window (real product regression, TODO Batch D)',
-    );
+    // (https://www.ziggurat-test.example.com/...), which is an unresolvable
+    // *.example.com subdomain (verified: no A record). Formerly skipped: the
+    // hybrid open path in apps/desktop/main/ipc.ts did
+    // `await view.webContents.loadURL(url)` BEFORE publishing `window:opened`,
+    // so the ERR_NAME_NOT_RESOLVED rejection threw into the outer catch and the
+    // open returned { success:false } having published NO `window:opened` and
+    // created NO window. Fixed by commit 5d8453cd: the initial loadURL await
+    // (ipc.ts, around line 2805) is now wrapped in its own `.catch()`, so a
+    // rejected first navigation no longer fails the open — the window is still
+    // constructed, registered, and `window:opened` still publishes;
+    // wireHybridContentEvents turns the resulting did-fail-load into the
+    // load-error overlay.
     // Open cmd panel
     const openResult = await bgWindow.evaluate(async () => {
       return await (window as any).app.window.open('peek://cmd/panel.html', {
@@ -583,22 +572,14 @@ test.describe('cmd URL history Visited lane @desktop', () => {
   // Runs LAST: pressing Enter closes the panel into CLOSING (keepLive reuse race),
   // matching the ordering discipline of the ghost describe block above.
   test('ArrowDown to a Visited row then Enter opens that row url', async () => {
-    // BLOCKED on the hybrid page-host for the same reason as the ghost
-    // "pressing Enter … opens the seeded URL" test above: it waits for a
-    // `window:opened` event for an unresolvable *.example.com host
-    // (quxfoo/quxbar.example.com). The hybrid open path awaits
-    // `view.webContents.loadURL(url)` before publishing `window:opened`
-    // (apps/desktop/main/ipc.ts), so a DNS failure (ERR_NAME_NOT_RESOLVED)
-    // throws into the catch and no window / no event is produced — whereas the
-    // canvas path fires `window:opened` independent of the async <webview> load.
-    // Real product regression (failed initial navigation ⇒ no window at all),
-    // not a canvas-DOM assertion. TODO(pagehost-hybrid): fire window:opened /
-    // create the window before/independent of the initial loadURL outcome.
-    // Tracked for Batch D.
-    test.skip(
-      await hybridBridgePresent(app),
-      'hybrid open awaits loadURL before window:opened; unresolvable lane host (*.example.com) ⇒ no window (real product regression, TODO Batch D)',
-    );
+    // Same reason as the ghost "pressing Enter … opens the seeded URL" test
+    // above: this waits for a `window:opened` event for an unresolvable
+    // *.example.com host (quxfoo/quxbar.example.com). Formerly skipped because
+    // the hybrid open path awaited `view.webContents.loadURL(url)` before
+    // publishing `window:opened` (apps/desktop/main/ipc.ts), so the DNS
+    // failure (ERR_NAME_NOT_RESOLVED) threw into the catch and no window / no
+    // event was produced. Fixed by commit 5d8453cd — see the comment on the
+    // sibling test above for the current ipc.ts behavior.
     const { cmdWindow, panelId } = await openPanel();
 
     await cmdWindow.fill('input', LANE_PREFIX);

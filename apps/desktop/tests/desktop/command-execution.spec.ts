@@ -126,24 +126,18 @@ test.describe('Command Execution @desktop', () => {
   });
 
   test('tag command creates item if none exists', async () => {
-    // BLOCKED on the hybrid page-host by a real product-behavior
-    // difference in the hybrid page-host OPEN path, not a canvas assertion.
     // This test opens a fresh page window on an unresolvable *.example.com host
-    // and asserts `openResult.success === true`. The hybrid open path
-    // (apps/desktop/main/ipc.ts, the `useCanvas` branch)
-    // does `await view.webContents.loadURL(url)` BEFORE returning success, so a
-    // DNS failure (ERR_NAME_NOT_RESOLVED — *.example.com subdomains have no A
-    // record) throws into the catch and the open returns { success:false } with
-    // NO window created. The canvas path opens the window first and loads the
-    // <webview> async, so it succeeds even when the navigation later errors.
-    // The hybrid cutover therefore REGRESSES "open a window even when the
-    // initial navigation fails". TODO(pagehost-hybrid): create the window /
-    // return success before (or independent of) the initial loadURL outcome,
-    // then drop this skip. Tracked for Batch D.
-    test.skip(
-      await hybridBridgePresent(app),
-      'hybrid open awaits loadURL before returning success; unresolvable *.example.com host ⇒ open fails, no window (real product regression, TODO Batch D)',
-    );
+    // and asserts `openResult.success === true`. Formerly skipped: the hybrid
+    // open path in apps/desktop/main/ipc.ts did
+    // `await view.webContents.loadURL(url)` BEFORE returning success, so the
+    // ERR_NAME_NOT_RESOLVED rejection (*.example.com subdomains have no A
+    // record) threw into the catch and the open returned { success:false } with
+    // NO window created. Fixed by commit 5d8453cd: the initial loadURL await
+    // (ipc.ts, around line 2805) is now wrapped in its own `.catch()`, so a
+    // rejected first navigation no longer fails the open — the window is still
+    // constructed, registered, and success is still returned;
+    // wireHybridContentEvents turns the resulting did-fail-load into the
+    // load-error overlay.
     const timestamp = Date.now();
     // Open a new page window with a URL that has no item yet
     const newUrl = `https://cmd-exec-new-item-${timestamp}.example.com/`;
