@@ -22,41 +22,6 @@ const maybeTrackNavigation = (address, params = {}) => {
 };
 
 /**
- * Opens a modal window with the provided address and parameters
- * @param {string} address - URL to open in the window
- * @param {Object} params - Window parameters
- * @param {boolean} [params.openDevTools=false] - Whether to open DevTools for this window
- * @param {boolean} [params.detachedDevTools=true] - Whether DevTools should be detached
- * @param {string} [params.trackingSource] - Source for navigation tracking
- * @param {string} [params.trackingSourceId] - Source ID for navigation tracking
- * @returns {Promise<Object>} - Promise resolving to the window API result
- */
-const openModalWindow = async (address, params = {}) => {
-  // Modal closes on escape/blur but app keeps focus (see below)
-  params.modal = true;
-
-  // Panel returns focus to previously active app
-  params.type = 'panel';
-
-  //console.log('Opening modal window with params:', params);
-
-  // Always use the IPC API
-  if (api.window && api.window.open) {
-    const result = await api.window.open(address, params);
-
-    // Track navigation on success
-    if (result.success) {
-      maybeTrackNavigation(address, params);
-    }
-
-    return result;
-  } else {
-    console.error('API window.open not available');
-    throw new Error('API window.open not available. Cannot open window.');
-  }
-};
-
-/**
  * Creates a window and handles its lifecycle
  * @param {string} address - URL to open in the window
  * @param {Object} params - Window parameters
@@ -99,6 +64,5 @@ const createWindow = async (address, params = {}) => {
 };
 
 export default {
-  openModalWindow,
   createWindow
 };

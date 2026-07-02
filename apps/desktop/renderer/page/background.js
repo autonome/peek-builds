@@ -90,34 +90,6 @@ const commandDefinitions = [
       }
     },
   },
-  {
-    name: 'modal',
-    description: 'Open a URL in a modal window that hides on blur or escape',
-    execute: async (ctx) => {
-      const parts = ctx.typed.split(' ');
-      parts.shift();
-      const address = parts.shift();
-
-      if (!address) {
-        return { error: 'No address provided' };
-      }
-
-      try {
-        await api.window.openModal(address, {
-          width: 700,
-          height: 500,
-        });
-      } catch (error) {
-        console.error('[page] Failed to open modal window:', error);
-        return { error: 'Failed to open modal window: ' + error.message };
-      }
-
-      return {
-        command: 'modal',
-        address,
-      };
-    },
-  },
 ];
 
 const registeredCommands = [];
