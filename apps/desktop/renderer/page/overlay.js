@@ -238,6 +238,15 @@ function updateOverlayPositions() {
     errorOverlay.style.width = `${w}px`;
     errorOverlay.style.height = `${h}px`;
   }
+
+  // Permission prompt: pinned top-center of the content rect (the canvas chrome
+  // used window-relative top:16px/left:50%; the overlay frames content + gutters,
+  // so anchor to the content instead). CSS translateX(-50%) centers on `left`.
+  const permissionPromptEl = document.querySelector('.permission-prompt');
+  if (permissionPromptEl) {
+    permissionPromptEl.style.left = `${left + w / 2}px`;
+    permissionPromptEl.style.top = `${top + 16}px`;
+  }
 }
 
 // Coalesced re-layout: a panel/widget gaining or losing `.has-data` (async, as
@@ -431,6 +440,10 @@ api.subscribe('page-overlay:active', (msg) => {
     maximized = false;
     preMaxBounds = null;
     clearChrome();
+    // Re-evaluate the permission queue: no active window → no visible prompt.
+    // Queued requests are NOT dropped (never auto-deny) — they surface again
+    // when their window becomes active.
+    syncPermissionPrompt();
     DEBUG && console.log('[overlay] active → null (cleared)');
     return;
   }
@@ -456,6 +469,11 @@ api.subscribe('page-overlay:active', (msg) => {
   navbar.loading = false;
   hideFindBar();
   paintFromSnapshot(msg);
+  // Re-evaluate the permission queue for the newly-active window: a request
+  // that arrived while this window was in the background surfaces now; a
+  // prompt belonging to the previously-active window is taken down (but stays
+  // queued — never auto-deny from the renderer).
+  syncPermissionPrompt();
   DEBUG && console.log('[overlay] active →', activeWindowId, msg.url);
 });
 
@@ -696,6 +714,12 @@ document.addEventListener('mousemove', (e) => {
   const x = e.clientX, y = e.clientY;
   if (pointerOverChrome(x, y)) {
     showNavbar();
+    setCapture(true);
+  } else if (pointerOverPermissionPrompt(x, y)) {
+    // Over the permission prompt: capture so its buttons/checkbox are clickable,
+    // but don't reveal the navbar — the prompt is its own transient surface
+    // (same capture mechanism, no chrome reveal). The move-out branch below
+    // restores click-through when the pointer leaves it.
     setCapture(true);
   } else {
     // Outside all chrome regions: release capture so clicks fall through to the
@@ -1120,6 +1144,298 @@ api.subscribe('page:show-navbar', (msg) => {
   if (!isActive(msg)) return;
   openNavbarFocused();
 });
+
+// ── Web permission prompts ────────────────────────────────────────────────────
+// Backend's permission-handler.ts publishes `page:permission-request` when a
+// hybrid content WebContents requests a risky permission (geolocation,
+// camera/mic, etc.) and defers the Chromium callback until the user responds.
+// Ported from the retired canvas page.js prompt UI (git 2b14032d^, page.js
+// ~2843-3039) with overlay adaptations: the overlay is ONE renderer serving N
+// windows, so it keeps ONE FIFO queue of requests across ALL hybrid windows
+// and renders a visible prompt only for the head request belonging to the
+// ACTIVE window. Requests for background windows stay queued silently and
+// surface when their window becomes active (the queue is re-evaluated on every
+// `page-overlay:active` handoff). The "+N more pending" badge counts the
+// ADDITIONAL queued requests for the active window (canvas semantics).
+//
+// The renderer NEVER auto-denies. A queued request leaves the queue only when
+// (a) the user responds here (`page:permission-response`), or (b) main
+// announces it resolved by another path — window close / hybrid teardown —
+// via `page:permission-resolved {requestId}` (permission-handler.ts). Both
+// are deterministic pubsub signals; no timers.
+
+const permissionQueue = [];
+let activePermissionPrompt = null; // { req, wrap, badgeEl, resolved }
+
+function originForFavicon(origin) {
+  // Strip scheme + path so we can hand bare hostname to the favicon service.
+  if (!origin) return null;
+  try {
+    const u = new URL(origin);
+    return u.hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+// Visual scan helper — emoji glyph by permission type, shown next to the
+// label so the user can recognize at-a-glance which sense the page is
+// asking for. Falls back to a generic lock for unknown permissions.
+const PERMISSION_GLYPHS = {
+  geolocation: '\u{1F4CD}',          // 📍
+  media: '\u{1F3A4}',                // 🎤
+  midi: '\u{1F3B9}',                 // 🎹
+  midiSysex: '\u{1F3B9}',
+  'display-capture': '\u{1F4FA}',    // 📺
+  notifications: '\u{1F514}',        // 🔔
+  'clipboard-read': '\u{1F4CB}',     // 📋
+  'clipboard-sanitized-write': '\u{1F4CB}',
+  pointerLock: '\u{1F5B1}',          // 🖱️
+  fullscreen: '\u{2922}',            // ⤢
+  openExternal: '\u{1F517}',         // 🔗
+};
+function glyphFor(permission) {
+  return PERMISSION_GLYPHS[permission] || '\u{1F512}'; // 🔒 fallback
+}
+
+/** The queued request the visible prompt should show: the FIRST queued request
+ *  belonging to the ACTIVE window (FIFO per window), or null. */
+function activePermissionHead() {
+  if (activeWindowId == null) return null;
+  return permissionQueue.find((r) => r.windowId === activeWindowId) || null;
+}
+
+function pendingCountForActiveWindow() {
+  if (activeWindowId == null) return 0;
+  return permissionQueue.filter((r) => r.windowId === activeWindowId).length;
+}
+
+function removeFromPermissionQueue(requestId) {
+  const idx = permissionQueue.findIndex((r) => r.requestId === requestId);
+  if (idx === -1) return false;
+  permissionQueue.splice(idx, 1);
+  return true;
+}
+
+/** Is the pointer over the visible permission prompt? Feeds the reliable-reveal
+ *  mousemove hit-test so the overlay captures clicks over the prompt (the same
+ *  mechanism the navbar/panels use) without also revealing the navbar. */
+function pointerOverPermissionPrompt(x, y) {
+  const p = document.querySelector('.permission-prompt');
+  return !!p && pointInRect(x, y, p.getBoundingClientRect());
+}
+
+/**
+ * Reconcile the visible prompt with the queue + active window: if the correct
+ * request is already showing, just refresh the badge; otherwise re-render
+ * (which also removes the prompt when nothing should show).
+ */
+function syncPermissionPrompt() {
+  const head = activePermissionHead();
+  if (
+    activePermissionPrompt &&
+    !activePermissionPrompt.resolved &&
+    head &&
+    activePermissionPrompt.req.requestId === head.requestId
+  ) {
+    updatePendingBadge();
+    return;
+  }
+  renderActivePermissionPrompt();
+}
+
+function renderActivePermissionPrompt() {
+  // Removes any prior DOM and renders the active window's queue head (if any).
+  if (activePermissionPrompt) {
+    activePermissionPrompt.wrap.remove();
+    activePermissionPrompt = null;
+  }
+  const req = activePermissionHead();
+  if (!req) {
+    // Nothing to show. If the pointer was parked over the just-removed prompt
+    // the overlay is still capturing — release unless it's over other chrome
+    // (same deferred `.interactive:hover` check the load-error overlay uses).
+    requestAnimationFrame(() => {
+      const over = document.querySelector('.interactive:hover');
+      if (!over) setCapture(false);
+    });
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'permission-prompt';
+  wrap.dataset.requestId = req.requestId;
+
+  const message = document.createElement('div');
+  message.className = 'permission-prompt-message';
+
+  // Favicon — uses the same Google s2 favicon service the search-result
+  // cards use (see app/lib/card-helpers.js). onerror falls back to the
+  // globe-emoji SVG so unreachable origins don't show a broken-image icon.
+  const favicon = document.createElement('img');
+  favicon.className = 'permission-prompt-favicon';
+  favicon.alt = '';
+  const host = originForFavicon(req.origin);
+  const fallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">\u{1F310}</text></svg>';
+  favicon.src = host ? `https://www.google.com/s2/favicons?domain=${host}&sz=32` : fallback;
+  favicon.onerror = () => { favicon.src = fallback; favicon.onerror = null; };
+  message.appendChild(favicon);
+
+  const text = document.createElement('div');
+  text.className = 'permission-prompt-text';
+  const originSpan = document.createElement('span');
+  originSpan.className = 'permission-prompt-origin';
+  originSpan.textContent = req.origin || '(unknown origin)';
+  text.appendChild(originSpan);
+
+  // "+N more pending" badge — visible only when more than one request is
+  // queued FOR THE ACTIVE WINDOW. Updated in place via badgeEl.textContent
+  // on enqueue/dequeue (updatePendingBadge).
+  const badge = document.createElement('span');
+  badge.className = 'permission-prompt-pending-badge';
+  const queuedExtras = pendingCountForActiveWindow() - 1;
+  if (queuedExtras > 0) {
+    badge.textContent = `+${queuedExtras} more pending`;
+  } else {
+    badge.style.display = 'none';
+  }
+  text.appendChild(badge);
+
+  text.appendChild(document.createElement('br'));
+  // Emoji glyph for the requested permission type — visual scan helper
+  // so the user can tell "this is geolocation" vs "this is camera/mic"
+  // at a glance.
+  text.appendChild(document.createTextNode(`wants to ${glyphFor(req.permission)} ${req.label || req.permission}.`));
+  message.appendChild(text);
+
+  // "Remember this decision" checkbox — when checked, the response includes
+  // remember:true and permission-handler.ts persists the {origin, permission,
+  // allowed} tuple to feature_settings.
+  const rememberLabel = document.createElement('label');
+  rememberLabel.className = 'permission-prompt-remember';
+  const rememberCheckbox = document.createElement('input');
+  rememberCheckbox.type = 'checkbox';
+  rememberCheckbox.checked = false;
+  const rememberText = document.createElement('span');
+  rememberText.textContent = 'Remember this decision';
+  rememberLabel.appendChild(rememberCheckbox);
+  rememberLabel.appendChild(rememberText);
+
+  const actions = document.createElement('div');
+  actions.className = 'permission-prompt-actions';
+
+  const denyBtn = document.createElement('button');
+  denyBtn.className = 'permission-prompt-deny';
+  denyBtn.textContent = 'Deny';
+
+  const allowBtn = document.createElement('button');
+  allowBtn.className = 'permission-prompt-allow';
+  allowBtn.textContent = 'Allow';
+
+  function respond(allowed) {
+    if (!activePermissionPrompt || activePermissionPrompt.resolved) return;
+    if (activePermissionPrompt.wrap !== wrap) return; // stale prompt closure
+    activePermissionPrompt.resolved = true;
+    api.publish('page:permission-response', {
+      requestId: req.requestId,
+      allowed,
+      remember: rememberCheckbox.checked,
+    });
+    // Dequeue locally right away (snappy advance to the next prompt); main's
+    // `page:permission-resolved` for this id then finds nothing — a no-op.
+    removeFromPermissionQueue(req.requestId);
+    renderActivePermissionPrompt();
+  }
+  denyBtn.addEventListener('click', () => respond(false));
+  allowBtn.addEventListener('click', () => respond(true));
+
+  actions.appendChild(denyBtn);
+  actions.appendChild(allowBtn);
+  wrap.appendChild(message);
+  wrap.appendChild(rememberLabel);
+  wrap.appendChild(actions);
+
+  // Join the click-capture set: the prompt is a transient interactive surface,
+  // so pointer enter must flip the overlay pointer-opaque (and leave must
+  // release unless another interactive region is hovered) — the same manual
+  // binding the dynamically-created load-error overlay uses.
+  wrap.classList.add('interactive');
+  wrap.addEventListener('mouseenter', () => setCapture(true));
+  wrap.addEventListener('mouseleave', () => {
+    requestAnimationFrame(() => {
+      const over = document.querySelector('.interactive:hover');
+      if (!over) setCapture(false);
+    });
+  });
+
+  // Defer the DOM append to the next paint frame. Without this, the synchronous
+  // appendChild during the renderer's event tick can briefly leak the prompt's
+  // pixels onto the user's display via the macOS compositor — even though the
+  // headless overlay window has opacity:0 (set at ctor in hybrid-overlay.ts),
+  // the initial paint cycle of a transparent window doesn't fully respect
+  // alpha. By the next rAF tick, the window's alpha-0 state has settled in
+  // NSWindow and the appendChild's paint can no longer escape.
+  //
+  // Diagnostic origin (canvas page.js): a 2-second setTimeout reproducibly
+  // suppressed the visible "permission prompts flashing center of screen"
+  // symptom. rAF is the same fix at minimum delay — production gets ~16ms,
+  // imperceptible.
+  requestAnimationFrame(() => {
+    // A re-render may have superseded this prompt before the frame fired —
+    // only append if it is still the active one (prevents a ghost prompt).
+    if (activePermissionPrompt && activePermissionPrompt.wrap === wrap) {
+      document.body.appendChild(wrap);
+      // Position it over the active content rect now that it's in the DOM.
+      updateOverlayPositions();
+    }
+  });
+  activePermissionPrompt = { req, wrap, badgeEl: badge, resolved: false };
+}
+
+function updatePendingBadge() {
+  // Refreshes the badge on the active prompt without re-rendering it.
+  if (!activePermissionPrompt) return;
+  const queuedExtras = pendingCountForActiveWindow() - 1;
+  const badge = activePermissionPrompt.badgeEl;
+  if (queuedExtras > 0) {
+    badge.textContent = `+${queuedExtras} more pending`;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+api.subscribe('page:permission-request', (msg) => {
+  if (!msg || !msg.requestId) return;
+  // A request with no windowId can never surface (no window to become active)
+  // — and main denies those before publishing, so just guard.
+  if (msg.windowId == null) return;
+  // Dedup: if the same requestId is already queued (duplicate publish from a
+  // re-entrant transition), ignore it.
+  if (permissionQueue.some((r) => r.requestId === msg.requestId)) return;
+  permissionQueue.push(msg);
+  syncPermissionPrompt();
+});
+
+// Main announces a request resolved by ANY path (user response relayed back,
+// window close, hybrid teardown) — prune it so the singleton UI can't show a
+// stale prompt for a request whose Chromium callback is already settled.
+api.subscribe('page:permission-resolved', (msg) => {
+  if (!msg || !msg.requestId) return;
+  if (removeFromPermissionQueue(msg.requestId)) {
+    syncPermissionPrompt();
+  }
+});
+
+// Test-only hooks (same pattern as __overlayTestAddWidget above): let the E2E
+// bridge read the queue and reset prompt state between tests. No-ops in prod.
+if (typeof window !== 'undefined') {
+  window.__permissionPromptQueueForTests = () => permissionQueue.map((r) => ({ ...r }));
+  window.__resetPermissionPromptsForTests = () => {
+    permissionQueue.length = 0;
+    renderActivePermissionPrompt();
+  };
+}
 
 // ── P1.4b-5: side panels (page-info / tags / entities / extensions) ───────────
 // All four key on `activeUrl` (the active window's current page URL). They fully

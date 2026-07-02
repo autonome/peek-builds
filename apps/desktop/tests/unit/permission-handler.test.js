@@ -14,6 +14,10 @@ import {
   resolveDecision as resolve,
   resolveWithStored,
 } from '../../dist/main/permission-policy.js';
+import {
+  takePendingRequest,
+  denyPendingForWindow,
+} from '../../dist/main/permission-pending.js';
 
 describe('permission-handler: chrome-extension origins', () => {
   it('always allows geolocation for chrome-extension URLs', () => {
@@ -187,5 +191,100 @@ describe('permission-handler: resolveWithStored — policy + stored-decision int
     resolveWithStored('https://example.com/some/deep/path?query=1', 'geolocation', capturer);
     assert.equal(receivedOrigin, 'https://example.com');
     assert.equal(receivedPermission, 'geolocation');
+  });
+});
+
+// ── permission-pending: the pending-request bookkeeping the handler drives ────
+// permission-handler.ts routes EVERY resolution path (user response, window
+// close, hybrid teardown) through these helpers so removal + the
+// `page:permission-resolved` publish share one chokepoint. The publish is
+// injected, so the contract is unit-testable under plain node.
+
+function makePending(entries) {
+  // entries: [requestId, windowId][] → Map with recording callbacks.
+  const calls = [];
+  const map = new Map();
+  for (const [requestId, windowId] of entries) {
+    map.set(requestId, {
+      callback: (granted) => calls.push({ requestId, granted }),
+      windowId,
+      permission: 'geolocation',
+      origin: 'https://example.com',
+    });
+  }
+  return { map, calls };
+}
+
+describe('permission-pending: takePendingRequest', () => {
+  it('removes the entry, publishes resolved exactly once, and returns the request', () => {
+    const { map } = makePending([['r1', 10], ['r2', 11]]);
+    const resolved = [];
+    const req = takePendingRequest(map, 'r1', (id) => resolved.push(id));
+    assert.ok(req, 'returns the pending request');
+    assert.equal(req.windowId, 10);
+    assert.equal(map.has('r1'), false, 'entry removed');
+    assert.equal(map.size, 1, 'other entries untouched');
+    assert.deepEqual(resolved, ['r1'], 'published resolved once, for that id');
+  });
+
+  it('does NOT invoke the deferred callback itself — the caller owns allow/deny', () => {
+    const { map, calls } = makePending([['r1', 10]]);
+    takePendingRequest(map, 'r1', () => {});
+    assert.equal(calls.length, 0, 'callback untouched (caller decides allow/deny)');
+  });
+
+  it('unknown / already-resolved id: returns null and publishes nothing', () => {
+    const { map } = makePending([['r1', 10]]);
+    const resolved = [];
+    assert.equal(takePendingRequest(map, 'nope', (id) => resolved.push(id)), null);
+    // Second take of the same id after a successful first take is a no-op too.
+    takePendingRequest(map, 'r1', (id) => resolved.push(id));
+    assert.equal(takePendingRequest(map, 'r1', (id) => resolved.push(id)), null);
+    assert.deepEqual(resolved, ['r1'], 'no publish for misses/duplicates');
+  });
+});
+
+describe('permission-pending: denyPendingForWindow', () => {
+  it('denies + removes + publishes resolved for every request of that window only', () => {
+    const { map, calls } = makePending([['r1', 10], ['r2', 20], ['r3', 10]]);
+    const resolved = [];
+    const denied = denyPendingForWindow(map, 10, (id) => resolved.push(id));
+    assert.deepEqual(denied.sort(), ['r1', 'r3'], 'returns the denied ids');
+    assert.deepEqual(
+      calls.map((c) => `${c.requestId}:${c.granted}`).sort(),
+      ['r1:false', 'r3:false'],
+      'each deferred callback denied exactly once',
+    );
+    assert.deepEqual(resolved.sort(), ['r1', 'r3'], 'resolved published per denied request');
+    assert.equal(map.size, 1, 'foreign-window request untouched');
+    assert.ok(map.has('r2'));
+  });
+
+  it('is idempotent: a second call for the same window is a no-op', () => {
+    const { map, calls } = makePending([['r1', 10]]);
+    denyPendingForWindow(map, 10, () => {});
+    const resolved = [];
+    const denied = denyPendingForWindow(map, 10, (id) => resolved.push(id));
+    assert.deepEqual(denied, []);
+    assert.equal(calls.length, 1, 'callback not double-fired');
+    assert.deepEqual(resolved, []);
+  });
+
+  it('a throwing Chromium callback does not break teardown or skip siblings', () => {
+    const map = new Map([
+      ['boom', {
+        callback: () => { throw new Error('chromium callback exploded'); },
+        windowId: 10, permission: 'geolocation', origin: 'https://example.com',
+      }],
+      ['ok', {
+        callback: () => {},
+        windowId: 10, permission: 'media', origin: 'https://example.com',
+      }],
+    ]);
+    const resolved = [];
+    const denied = denyPendingForWindow(map, 10, (id) => resolved.push(id));
+    assert.deepEqual(denied.sort(), ['boom', 'ok'], 'both requests still resolved');
+    assert.deepEqual(resolved.sort(), ['boom', 'ok']);
+    assert.equal(map.size, 0);
   });
 });

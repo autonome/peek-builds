@@ -15,6 +15,7 @@
 
 import { type WebContents, webContents } from 'electron';
 import { getLiveWindow, windowFromWebContents } from './window-registry.js';
+import { getHybridWindow } from './hybrid-page-host-registry.js';
 
 const guestToHost = new Map<number, number>();
 
@@ -56,6 +57,14 @@ export function findHostWindowId(wc: WebContents): number | null {
   if (hostId != null) {
     const bw = getLiveWindow(hostId);
     if (bw) return hostId;
+    // Hybrid page-host: the host is a BaseWindow + WebContentsView, invisible
+    // to BrowserWindow.fromId (so getLiveWindow misses it). The hybrid branch
+    // in ipc.ts registers the content WC against the BaseWindow id
+    // (registerGuest + markPageHostContent); validate liveness through the
+    // hybrid registry instead. Without this, a hybrid page's permission
+    // request resolved to "no host window" and was auto-denied.
+    const hybrid = getHybridWindow(hostId);
+    if (hybrid && !hybrid.baseWin.isDestroyed()) return hostId;
     // Stale entry — fall through to live scan
     guestToHost.delete(wc.id);
   }

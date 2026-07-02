@@ -882,6 +882,130 @@
     .load-error-actions button:hover {
       opacity: 0.9;
     }
+
+    /* ── Permission prompt (web permission requests — geolocation, etc.) ────
+     * Ported from the retired canvas page-host chrome (renderer/page/index.html,
+     * see git history 2b14032d^) with overlay adaptations: the element is
+     * dynamically created by overlay.js, positioned (left/top) by
+     * updateOverlayPositions() at the top-center of the ACTIVE content rect
+     * (the canvas used window-relative top:16px/left:50% — one window per page;
+     * the overlay frames content + gutters, so JS anchors it to the content).
+     * pointer-events:auto because the overlay body is pointer-events:none; the
+     * element is .interactive and joins the click-capture loop so the overlay
+     * window goes pointer-opaque while the user is over it. */
+    .permission-prompt {
+      position: fixed;
+      transform: translateX(-50%);
+      z-index: 200;
+      width: max-content;
+      max-width: 480px;
+      background: color-mix(in srgb, var(--theme-bg-secondary, #2a2a2a) 95%, transparent);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid color-mix(in srgb, var(--theme-border, rgba(255,255,255,0.1)) 80%, transparent);
+      border-radius: 10px;
+      padding: 14px 16px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+      color: var(--theme-text, #e0e0e0);
+      font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
+      font-size: 13px;
+      pointer-events: auto;
+      animation: permission-prompt-in 180ms ease-out;
+    }
+
+    @keyframes permission-prompt-in {
+      from { opacity: 0; transform: translate(-50%, -8px); }
+      to   { opacity: 1; transform: translate(-50%, 0); }
+    }
+
+    body.no-active .permission-prompt {
+      display: none;
+    }
+
+    .permission-prompt-message {
+      margin-bottom: 10px;
+      line-height: 1.4;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .permission-prompt-favicon {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      margin-top: 1px;
+      object-fit: contain;
+    }
+
+    .permission-prompt-text {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .permission-prompt-origin {
+      font-family: var(--theme-font-mono, ui-monospace, SFMono-Regular, monospace);
+      font-weight: 600;
+      color: var(--theme-text, #e0e0e0);
+    }
+
+    .permission-prompt-pending-badge {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--theme-bg-tertiary, #2a2a2a) 80%, transparent);
+      color: var(--theme-text-secondary, #aaa);
+      font-size: 11px;
+      font-weight: 500;
+      vertical-align: middle;
+    }
+
+    .permission-prompt-remember {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 10px;
+      font-size: 12px;
+      color: var(--theme-text-secondary, #aaa);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .permission-prompt-remember input[type="checkbox"] {
+      cursor: pointer;
+      margin: 0;
+    }
+
+    .permission-prompt-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .permission-prompt-actions button {
+      border: none;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .permission-prompt-allow {
+      background: var(--theme-accent, #007aff);
+      color: #fff;
+    }
+
+    .permission-prompt-deny {
+      background: color-mix(in srgb, var(--theme-bg-tertiary, #2a2a2a) 80%, transparent);
+      color: var(--theme-text, #e0e0e0);
+      border: 1px solid color-mix(in srgb, var(--theme-border, rgba(255,255,255,0.1)) 60%, transparent) !important;
+    }
+
+    .permission-prompt-actions button:hover {
+      opacity: 0.9;
+    }
   </style>
 </head>
 <body class="no-active" data-no-drag>

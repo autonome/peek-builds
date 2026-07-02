@@ -71,7 +71,14 @@ import {
   getHybridLoadError,
   getHybridLoadingTimeoutMs,
   setHybridLoadingTimeoutMs as _setHybridLoadingTimeoutMs,
+  // Hybrid teardown → deny pending web-permission prompts (see initHybridOverlay)
+  registerHybridWindowClosedListener,
 } from './hybrid-page-host-registry.js';
+import {
+  denyPendingRequestsForWindow,
+  _pendingRequestCountForTests,
+  _resetForTests as _resetPermissionHandlerForTests,
+} from './permission-handler.js';
 import { createTrustedBuiltinGrant } from './tile-manifest.js';
 import { generateToken } from './tile-tokens.js';
 import { registerTrustedBuiltinWindow } from './tile-launcher.js';
@@ -779,6 +786,16 @@ export function initHybridOverlay(): void {
     publish(getSystemAddress(), 'page:load-error', { windowId, error });
   });
 
+  // Hybrid window teardown → deny any pending web-permission requests for that
+  // window. permission-handler's own close-cleanup only knows BrowserWindow
+  // hosts (getLiveWindow); hybrid hosts are BaseWindows, so a hybrid close
+  // would otherwise leak the deferred Chromium callbacks forever and strand
+  // the overlay's queued prompt. Registered through the registry's
+  // closed-listener seam so the registry stays free of runtime electron deps
+  // and permission-handler stays decoupled from the hybrid registry — this
+  // module (already the registry↔chrome bridge) is the one wiring site.
+  registerHybridWindowClosedListener((windowId) => denyPendingRequestsForWindow(windowId));
+
   // E2E test bridge: expose the focus-free verification surface on a global so
   // a Playwright `evaluateMain` can drive active-window changes synthetically
   // (no real OS focus) and read the overlay's resulting state. Gated on
@@ -823,6 +840,8 @@ export function teardownHybridOverlay(): void {
   // Drop the overlay-id provider so close-resolution stops consulting a dead
   // singleton (mirrors the focus-provider clear in the window 'closed' handler).
   setOverlayWindowIdProvider(null);
+  // Drop the hybrid-teardown permission-deny listener (re-registered on init).
+  registerHybridWindowClosedListener(null);
   if (overlayWin && !overlayWin.isDestroyed()) {
     overlayWin.destroy();
   }
@@ -1542,6 +1561,96 @@ function installTestBridge(): void {
           })()`,
         )
         .catch(() => null);
+    },
+    /**
+     * Permission-prompt verification: read the overlay's `.permission-prompt`
+     * DOM state (visible prompt, origin/label text, pending badge, favicon) plus
+     * the renderer's full request queue (via the overlay.js test hook), so a
+     * spec can assert "exactly one visible prompt + N queued" focus-free.
+     * Resolves null if no overlay / renderer not ready. Pure executeJavaScript.
+     */
+    overlayPermissionPromptState(): Promise<unknown> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(null);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const prompts = Array.from(document.querySelectorAll('.permission-prompt'));
+            const p = prompts[0] || null;
+            const badge = p ? p.querySelector('.permission-prompt-pending-badge') : null;
+            const favicon = p ? p.querySelector('.permission-prompt-favicon') : null;
+            const origin = p ? p.querySelector('.permission-prompt-origin') : null;
+            const q = typeof window.__permissionPromptQueueForTests === 'function'
+              ? window.__permissionPromptQueueForTests()
+              : null;
+            return {
+              ready: window.__overlayReady === true,
+              present: prompts.length > 0,
+              promptCount: prompts.length,
+              requestId: p ? (p.dataset.requestId || null) : null,
+              origin: origin ? origin.textContent : null,
+              text: p ? p.textContent : '',
+              badgeVisible: !!(badge && badge.style.display !== 'none'),
+              badgeText: badge ? badge.textContent : null,
+              faviconSrc: favicon ? favicon.getAttribute('src') : null,
+              queuedCount: q ? q.length : null,
+              queuedIds: q ? q.map((r) => r.requestId) : null,
+            };
+          })()`,
+        )
+        .catch(() => null);
+    },
+    /**
+     * Permission-prompt verification: drive the visible prompt's Allow/Deny
+     * button via a DOM click in the overlay renderer (the sanctioned focus-free
+     * stand-in for a real pointer click — real clicks need OS focus/capture a
+     * headless run can't grant). Optionally checks the "Remember this decision"
+     * checkbox first (also via click, the same event path a user takes).
+     * Resolves true if a prompt existed and the button was clicked.
+     */
+    clickPermissionPrompt(allow: boolean, remember?: boolean): Promise<boolean> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(false);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const p = document.querySelector('.permission-prompt');
+            if (!p) return false;
+            if (${remember === true}) {
+              const cb = p.querySelector('.permission-prompt-remember input[type="checkbox"]');
+              if (cb && !cb.checked) cb.click();
+            }
+            const btn = p.querySelector(${allow ? "'.permission-prompt-allow'" : "'.permission-prompt-deny'"});
+            if (!btn) return false;
+            btn.click();
+            return true;
+          })()`,
+        )
+        .catch(() => false);
+    },
+    /**
+     * Permission-prompt test hygiene: clear the overlay renderer's request
+     * queue + prompt DOM (overlay.js test hook), so per-test state can't bleed
+     * across specs sharing the singleton overlay. Resolves false when there is
+     * no overlay renderer yet (nothing to reset).
+     */
+    resetPermissionPromptsForTests(): Promise<boolean> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(false);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            if (typeof window.__resetPermissionPromptsForTests !== 'function') return false;
+            window.__resetPermissionPromptsForTests();
+            return true;
+          })()`,
+        )
+        .catch(() => false);
+    },
+    /** Backend assertion hook: permission-handler's pending-request count. */
+    pendingPermissionRequestCount(): number {
+      return _pendingRequestCountForTests();
+    },
+    /** Backend test hygiene: clear permission-handler's pending-request map. */
+    resetPermissionHandlerForTests(): void {
+      _resetPermissionHandlerForTests();
     },
     /**
      * Gutter-placement verification (the gutter fix). Reveals the chrome and reads

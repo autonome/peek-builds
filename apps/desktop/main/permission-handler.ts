@@ -40,15 +40,25 @@ import {
 import { getDb } from './datastore.js';
 import { getDecision, setDecision } from './permission-store.js';
 import { DEBUG } from './config.js';
+import {
+  takePendingRequest,
+  denyPendingForWindow,
+  type PendingPermissionRequest,
+} from './permission-pending.js';
 
-interface PendingRequest {
-  callback: (granted: boolean) => void;
-  windowId: number | null;
-  permission: PermissionName;
-  origin: string;
+const pendingRequests = new Map<string, PendingPermissionRequest>();
+
+/**
+ * Every path that resolves a pending request announces it here so the
+ * singleton overlay prompt UI (renderer/page/overlay.js) can prune the
+ * request from its queue — the overlay serves N windows from one queue, so
+ * a request resolved by ANY path (user response, window close, hybrid
+ * teardown) must not linger as a stale prompt. Publishing rides the same
+ * topic-only broadcast as `page:permission-request`.
+ */
+function publishResolved(requestId: string): void {
+  publish('permission-handler', 'page:permission-resolved', { requestId });
 }
-
-const pendingRequests = new Map<string, PendingRequest>();
 
 let permissionHandlerInstalled = false;
 let nextRequestSeq = 0;
@@ -125,15 +135,18 @@ export function installPermissionHandler(ses: Session): void {
       origin,
     });
 
-    // Clean up if the host window closes before the user responds.
+    // Clean up if the host window closes before the user responds. This path
+    // only covers BrowserWindow hosts — a hybrid page-host is a BaseWindow,
+    // invisible to getLiveWindow, so its teardown instead calls
+    // `denyPendingRequestsForWindow` (wired via the hybrid registry's
+    // closed-listener seam in hybrid-overlay.ts).
     const bw = getLiveWindow(windowId);
     if (bw) {
       const onClosed = () => {
-        const pending = pendingRequests.get(requestId);
+        const pending = takePendingRequest(pendingRequests, requestId, publishResolved);
         if (pending) {
           DEBUG && console.log(`[permission] window ${windowId} closed, denying ${requestId}`);
           pending.callback(false);
-          pendingRequests.delete(requestId);
         }
       };
       bw.once('closed', onClosed);
@@ -160,13 +173,12 @@ export function installPermissionHandler(ses: Session): void {
       console.warn('[permission] page:permission-response missing requestId:', msg);
       return;
     }
-    const pending = pendingRequests.get(requestId);
+    const pending = takePendingRequest(pendingRequests, requestId, publishResolved);
     if (!pending) {
       // Late response after window close cleanup, or duplicate — safe to ignore.
       console.log(`[permission] no pending request for ${requestId} (already resolved?)`);
       return;
     }
-    pendingRequests.delete(requestId);
     console.log(
       `[permission] ${pending.permission} for ${pending.origin} → ${allowed ? 'allowed' : 'denied'} by user${remember ? ' (remembered)' : ''}`,
     );
@@ -218,6 +230,25 @@ function persistStoredDecision(origin: string, permission: PermissionName, allow
     setDecision(db as unknown as Parameters<typeof setDecision>[0], origin, permission, allowed);
   } catch (err) {
     console.error('[permission] persist failed:', err);
+  }
+}
+
+/**
+ * Deny (and resolve) every pending permission request attributed to
+ * `windowId`. Called from the hybrid page-host teardown path: hybrid hosts
+ * are BaseWindows, so the BrowserWindow-based close-cleanup above never fires
+ * for them and their deferred Chromium callbacks would leak on window close.
+ * The hybrid registry exposes a closed-listener seam and hybrid-overlay.ts
+ * registers this function into it — permission-handler stays decoupled from
+ * the hybrid registry. Idempotent; each denied request also publishes
+ * `page:permission-resolved` so the overlay prunes its queued prompt.
+ */
+export function denyPendingRequestsForWindow(windowId: number): void {
+  const denied = denyPendingForWindow(pendingRequests, windowId, publishResolved);
+  if (denied.length > 0) {
+    console.log(
+      `[permission] window ${windowId} closed, denied ${denied.length} pending request(s)`,
+    );
   }
 }
 

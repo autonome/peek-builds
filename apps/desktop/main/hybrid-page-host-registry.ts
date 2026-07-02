@@ -73,6 +73,38 @@ export function takeHybridPendingNavUrl(windowId: number): string | null {
   return url;
 }
 
+// ── Hybrid window closed-listener seam ──────────────────────────────────────
+// Fires with the windowId whenever a hybrid window leaves the registry — via
+// the self-clean 'closed'/'destroyed' hooks OR the explicit
+// `unregisterHybridWindow` close-finalize path. Registered by
+// hybrid-overlay.ts (initHybridOverlay), which routes it into
+// permission-handler's `denyPendingRequestsForWindow` so a hybrid host
+// closing with a permission prompt open denies (and resolves) its deferred
+// Chromium callbacks. Same one-way-dependency shape as the load-error
+// listener below: this pure module never imports the consumer.
+let windowClosedListener: ((windowId: number) => void) | null = null;
+
+/**
+ * Register a callback invoked when a hybrid window is closed/unregistered.
+ * Pass null to unregister (e.g. on teardown). May fire more than once for the
+ * same windowId (the 'closed' event and an explicit unregister can both run) —
+ * consumers must be idempotent.
+ */
+export function registerHybridWindowClosedListener(
+  fn: ((windowId: number) => void) | null,
+): void {
+  windowClosedListener = fn;
+}
+
+function notifyWindowClosed(windowId: number): void {
+  if (!windowClosedListener) return;
+  try {
+    windowClosedListener(windowId);
+  } catch {
+    /* listener must never break teardown */
+  }
+}
+
 /** Registered by hybrid-overlay.ts to publish a live `page:load-error` update. */
 let loadErrorListener: ((windowId: number, error: HybridLoadError | null) => void) | null = null;
 
@@ -458,6 +490,10 @@ export function registerHybridWindow(
     // against a re-register having replaced us).
     if (entries.get(windowId) === entry) {
       entries.delete(windowId);
+      // Announce the teardown (e.g. deny pending permission prompts). Inside
+      // the guard so an entry already dropped by unregisterHybridWindow (which
+      // notifies itself) doesn't double-fire; the listener is idempotent anyway.
+      notifyWindowClosed(windowId);
     }
     if (activeHybridWindowId === windowId) {
       setActiveHybridWindowId(null);
@@ -594,6 +630,8 @@ export function unregisterHybridWindow(windowId: number): void {
   // Stage B: clean up per-host load-error and pending-nav state.
   perHostLoadError.delete(windowId);
   perHostPendingNavUrl.delete(windowId);
+  // Announce the teardown (e.g. deny pending permission prompts).
+  notifyWindowClosed(windowId);
   if (activeHybridWindowId === windowId) {
     setActiveHybridWindowId(null);
   }
