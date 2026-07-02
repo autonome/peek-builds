@@ -63,7 +63,7 @@ test.describe('runtime-external polyfill @desktop', () => {
   });
 
   test('preload + page polyfill are NOT injected when URL does not match externally_connectable', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     // Deliberately a NON-matching URL (127.0.0.1) to confirm the negative case:
     // no runtime-external preload should be selected, so chrome.runtime should

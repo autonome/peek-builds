@@ -52,7 +52,7 @@ test.describe('Hybrid page-host show/activate (R4/R5/R7) @desktop', () => {
   // (peek task 2b55f3af). We assert BOTH branches deterministically via the pure
   // decision — focus-free, independent of the run's actual headless mode.
   test('show DECISION: non-headless activates+focuses content; headless stays inactive', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const { real, headless } = await app.evaluateMain!(() => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -79,7 +79,7 @@ test.describe('Hybrid page-host show/activate (R4/R5/R7) @desktop', () => {
   // The applied show path matches the decision for THIS run (headless here): it
   // must take the inactive, focus-free branch — never activate, never focus.
   test('applied show path is focus-free under headless', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const probe = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -101,7 +101,7 @@ test.describe('Hybrid page-host show/activate (R4/R5/R7) @desktop', () => {
   // overlay retarget + reveal over the content. If the content WC focus is never
   // delivered to the registry, active stays null and the overlay never reveals.
   test('content-WC focus drives active-hybrid id → overlay can reveal (R5)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -132,7 +132,7 @@ test.describe('Hybrid page-host show/activate (R4/R5/R7) @desktop', () => {
   // it left the overlay VISIBLE. On resign it must hide; on become-active (with an
   // active hybrid window) it re-frames + shows.
   test('overlay hides when the app resigns active, re-shows on become-active (R6)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const visibleWhileActive = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;

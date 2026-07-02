@@ -30,7 +30,7 @@ test.describe('Hybrid Chrome Overlay (P1.4b-1) @desktop', () => {
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
   test('retarget is focus-free: overlay frames A, then B, then hides on null', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const boundsA = { x: 100, y: 120, width: 640, height: 480 };
     const boundsB = { x: 800, y: 200, width: 500, height: 700 };
@@ -93,7 +93,7 @@ test.describe('Hybrid Chrome Overlay (P1.4b-1) @desktop', () => {
   });
 
   test('follows the active host window move/resize (focus-free)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const start = { x: 50, y: 60, width: 400, height: 300 };
     const moved = { x: 333, y: 222, width: 555, height: 666 };
@@ -118,7 +118,7 @@ test.describe('Hybrid Chrome Overlay (P1.4b-1) @desktop', () => {
   });
 
   test('singleton: exactly one overlay window across many active-changes', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(() => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -186,7 +186,7 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
   };
 
   test('active handoff paints navbar for A, swaps to B, clears on null', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     // Two real (headless) hybrid windows; load distinct content so url() differs.
     const ids = await app.evaluateMain!(async () => {
@@ -249,7 +249,7 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
   });
 
   test('navbar intents drive the active content WebContents (navigate/back/reload)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -327,7 +327,7 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
   });
 
   test('content events repaint the active window navbar (nav-state, title)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -380,7 +380,7 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
   });
 
   test('overlay is focusable but not focused after a retarget (P1.4b-3)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     // Make + activate a hybrid window → overlay retargets onto it.
     await app.evaluateMain!(async () => {
@@ -403,7 +403,7 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
   });
 
   test('resize intent resizes the content window + overlay reframes (P1.4b-3)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const start = { x: 100, y: 120, width: 500, height: 400 };
     const resized = { x: 100, y: 120, width: 760, height: 560 };
@@ -429,7 +429,7 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
   });
 
   test('move intent moves the content window + overlay follows (P1.4b-3)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const start = { x: 200, y: 200, width: 480, height: 360 };
     const moved = { x: 640, y: 330, width: 480, height: 360 };
@@ -451,7 +451,7 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
   });
 
   test('maximize snaps to work area; restore returns to prior bounds (P1.4b-3)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const start = { x: 150, y: 160, width: 520, height: 380 };
 
@@ -477,7 +477,7 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
   });
 
   test('geometry intents for a non-hybrid windowId are a no-op (P1.4b-3)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     // A windowId that is not a registered hybrid window must not throw and must
     // leave any real hybrid window untouched.
@@ -497,7 +497,7 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
   });
 
   test('click-capture toggles overlay window between capture and click-through', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     // Ensure an overlay exists.
     await app.evaluateMain!(async () => {
@@ -558,7 +558,7 @@ test.describe('Hybrid Chrome Overlay find + title/favicon (P1.4b-4) @desktop', (
   };
 
   test('page:find-exec routes to the active content WC and finds a match; next advances; stop clears', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     // A page with the term "needle" appearing 3 times.
     const id = await app.evaluateMain!(async () => {
@@ -601,7 +601,7 @@ test.describe('Hybrid Chrome Overlay find + title/favicon (P1.4b-4) @desktop', (
   });
 
   test('Cmd+F forward (page:find) opens the overlay find bar for the active window', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -642,7 +642,7 @@ test.describe('Hybrid Chrome Overlay find + title/favicon (P1.4b-4) @desktop', (
   });
 
   test('page:title-updated + page:favicon surface in the navbar (foreign windowId ignored)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -757,7 +757,7 @@ test.describe('Hybrid Chrome Overlay side panels (P1.4b-5) @desktop', () => {
   };
 
   test('page-info renders the active window data, swaps on retarget, clears on null', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await makeActiveWithUrl('https://alpha.example.com/page');
     await waitOverlayReady();
@@ -860,7 +860,7 @@ test.describe('Hybrid Chrome Overlay side panels (P1.4b-5) @desktop', () => {
   });
 
   test('entities panel renders active-URL entities and swaps on retarget', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await makeActiveWithUrl('https://ent-a.example.com/x');
     await waitOverlayReady();
@@ -914,7 +914,7 @@ test.describe('Hybrid Chrome Overlay side panels (P1.4b-5) @desktop', () => {
   });
 
   test('tags + extensions panels gain has-data for an active http window, clear on null', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     await makeActiveWithUrl('https://tagsite.example.com/p');
     await waitOverlayReady();
@@ -949,7 +949,7 @@ test.describe('Hybrid Chrome Overlay side panels (P1.4b-5) @desktop', () => {
   });
 
   test('panels become visible with the chrome and are in the click-capture set', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await makeActiveWithUrl('https://vis.example.com/p');
     await waitOverlayReady();
@@ -1037,7 +1037,7 @@ test.describe('Hybrid Chrome Overlay notes + widgets (P1.4b-6) @desktop', () => 
   };
 
   test('notes pane loads for the active URL, swaps on retarget, clears on null', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     // Seed a note in the datastore anchored to alpha, via the overlay's own
     // api.datastore (the same path PageNotesPane reads). The note is a 'text' item
@@ -1118,7 +1118,7 @@ test.describe('Hybrid Chrome Overlay notes + widgets (P1.4b-6) @desktop', () => 
   });
 
   test('OpenSearch widget appears for active windowId, foreign ignored, clears on retarget', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await makeActiveWithUrl('https://search.example.com/home');
     await waitOverlayReady();
@@ -1188,7 +1188,7 @@ test.describe('Hybrid Chrome Overlay notes + widgets (P1.4b-6) @desktop', () => 
   });
 
   test('gutter fix: widgets render in the right gutter (outside content) and STACK', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await makeActiveWithUrl('https://gutter.example.com/p');
     await waitOverlayReady();
@@ -1273,7 +1273,7 @@ test.describe('Hybrid Chrome Overlay focus-group @desktop', () => {
   };
 
   test('clicking the chrome (overlay focus on content blur) does NOT deactivate', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     // Content A focused → active = A, overlay shown over A.
     const setup = await app.evaluateMain!(async () => {
@@ -1326,7 +1326,7 @@ test.describe('Hybrid Chrome Overlay focus-group @desktop', () => {
   });
 
   test('real switch between two hybrid windows still retargets (A → B)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -1361,7 +1361,7 @@ test.describe('Hybrid Chrome Overlay focus-group @desktop', () => {
   });
 
   test('back/forward unblocked: nav drives the active content WC held through an overlay interaction', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -1507,7 +1507,7 @@ test.describe('Hybrid Chrome Overlay navbar reveal @desktop', () => {
   };
 
   test('Cmd+L (page:show-navbar) reveals the navbar AND focuses the URL field; foreign windowId ignored', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await makeActive('data:text/html,<body>cmd-l target</body>');
 
@@ -1544,7 +1544,7 @@ test.describe('Hybrid Chrome Overlay navbar reveal @desktop', () => {
   });
 
   test('trigger-zone hover reliably reveals the navbar via the forwarded mousemove path', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     await makeActive('data:text/html,<body>hover target</body>');
 
@@ -1566,7 +1566,7 @@ test.describe('Hybrid Chrome Overlay navbar reveal @desktop', () => {
   });
 
   test('trigger-zone → navbar move keeps the chrome open (no flicker); move off schedules hide', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     await makeActive('data:text/html,<body>flicker target</body>');
 
@@ -1691,7 +1691,7 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
   };
 
   test('idle top-border hover over the content WC reveals the navbar (no-gutter/maximized)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await makeActiveMaximized();
     await resetHidden();
@@ -1710,7 +1710,7 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
   });
 
   test('idle move BELOW the reveal band does not reveal; entering it does', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await makeActiveMaximized();
     await resetHidden();
@@ -1733,7 +1733,7 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
   });
 
   test('top-border reveal also works in the GUTTERED (non-maximized) case', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -1753,7 +1753,7 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
   });
 
   test('idle move within the navbar band but past the 8px trigger strip does NOT reveal', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await makeActiveMaximized();
     await resetHidden();
@@ -1768,7 +1768,7 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
   });
 
   test('boundary: a move at the trigger strip edge (<=8px) reveals', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await makeActiveMaximized();
     await resetHidden();
@@ -1782,7 +1782,7 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
   });
 
   test('hysteresis: once revealed, moving within the navbar band keeps it revealed, then clears past 44px', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await makeActiveMaximized();
     await resetHidden();
@@ -1871,7 +1871,7 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
   };
 
   test('R1: app resign-active forces click-through + drops floating; become-active restores', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     await makeActive('data:text/html,<body>r1 target</body>');
 
@@ -1931,7 +1931,7 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
   });
 
   test('hold-to-drag FSM: hold-then-move drags; pre-threshold move cancels (pure, manual clock)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     // Ensure the overlay renderer exists + is ready (the FSM factory lives there).
     await app.evaluateMain!(async () => {
@@ -1966,7 +1966,7 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
   });
 
   test('hold-to-drag: navbar background HOLD then move publishes page:set-bounds and moves the host', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const start = { x: 200, y: 220, width: 520, height: 400 };
     const id = await app.evaluateMain!(async (_e, arg) => {
@@ -2009,7 +2009,7 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
   });
 
   test('hold-to-drag: a stray buttons=0 mousemove during the hold does NOT cancel the press (flake regression 73681521/7064b15c)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const start = { x: 240, y: 240, width: 520, height: 400 };
     const id = await app.evaluateMain!(async (_e, arg) => {
@@ -2052,7 +2052,7 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
   });
 
   test('hold-to-drag: pre-threshold movement CANCELS candidacy (dnd / selection / click preserved) and does NOT move the host', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const start = { x: 260, y: 280, width: 500, height: 380 };
     const id = await app.evaluateMain!(async (_e, arg) => {
@@ -2090,7 +2090,7 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
   });
 
   test('R3: Cmd+L focuses the overlay window for the active window only, never when backgrounded', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const id = await makeActive('data:text/html,<body>cmd-l focus target</body>');
 

@@ -107,7 +107,7 @@ test.describe('Hybrid Load-Start Show @desktop', () => {
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
   test('the host window is visible (loading frame) while content is still loading', async () => {
-    test.skip(!(await hybridBridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent()), 'no overlay bridge in this configuration');
 
     const slowUrl = `http://127.0.0.1:${serverPort}/slow/load-start`;
 

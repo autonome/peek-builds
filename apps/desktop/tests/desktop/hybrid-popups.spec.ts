@@ -10,8 +10,8 @@ import { createPerDescribeApp } from '../helpers/test-app';
  * installs an explicit `setWindowOpenHandler` on it that mirrors the canvas
  * <webview> guest policy: http(s) `window.open` / `target=_blank` are DENIED
  * the default raw popup and re-routed through the canonical window-open IPC
- * handler (`invokeWindowOpen`). With the hybrid flag on, that re-entry takes the
- * hybrid EARLY BRANCH → a NEW opaque BaseWindow + WebContentsView page-host.
+ * handler (`invokeWindowOpen`). That re-entry takes the hybrid EARLY BRANCH →
+ * a NEW opaque BaseWindow + WebContentsView page-host.
  *
  * The test bridge's `makeWiredHybrid(dataUrl)` builds a hybrid window and calls
  * the SAME `wireHybridContentEvents` the real branch calls, so the handler under
@@ -19,7 +19,7 @@ import { createPerDescribeApp } from '../helpers/test-app';
  * window-registry `address` of any NEW hybrid host (network-free).
  *
  * Everything is focus-free: hybrid windows are headless (opacity 0, never
- * shown). Skips itself if the hybrid bridge isn't present (flag off).
+ * shown). Skips itself if the hybrid bridge isn't present.
  */
 test.describe('Hybrid page-host popups (P1.5) @desktop', () => {
   let app: DesktopApp;
@@ -36,7 +36,7 @@ test.describe('Hybrid page-host popups (P1.5) @desktop', () => {
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
   test('window.open(https) routes to a NEW hybrid page-host (not a raw popup)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no hybrid bridge');
+    test.skip(!(await bridgePresent()), 'no hybrid bridge in this configuration');
 
     // A hybrid page-host whose content WC has the real popup handler installed.
     const opener = await app.evaluateMain!(async () => {
@@ -74,7 +74,7 @@ test.describe('Hybrid page-host popups (P1.5) @desktop', () => {
   });
 
   test('target=_blank click (https) also routes to a NEW hybrid page-host', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no hybrid bridge');
+    test.skip(!(await bridgePresent()), 'no hybrid bridge in this configuration');
 
     const opener = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -101,7 +101,7 @@ test.describe('Hybrid page-host popups (P1.5) @desktop', () => {
   });
 
   test('non-http(s) window.open (about:blank) is NOT routed to a hybrid host (canvas policy)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no hybrid bridge');
+    test.skip(!(await bridgePresent()), 'no hybrid bridge in this configuration');
 
     const opener = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;

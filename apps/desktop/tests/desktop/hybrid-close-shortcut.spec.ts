@@ -41,7 +41,7 @@ test.describe('Hybrid page-host cmd+W close (R1) @desktop', () => {
   // getFocusedWindow() reports null (it can't see BaseWindows). This is what
   // broke the old getFocusedWindow()-based close handler.
   test('getFocusedWindow() is null while a hybrid host is the active window', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const probe = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -64,7 +64,7 @@ test.describe('Hybrid page-host cmd+W close (R1) @desktop', () => {
   // cmd+W's resolve-and-close path closes the focused hybrid host even though
   // getFocusedWindow() returns null for it.
   test('closeFocusedWindow() closes the active hybrid host (cmd+W path)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -97,7 +97,7 @@ test.describe('Hybrid page-host cmd+W close (R1) @desktop', () => {
   // initHybridOverlay registered the overlay-id provider against the real
   // singleton, so the resolver can tell the overlay apart from a page-host.
   test('the registry recognises the live overlay window (cmd+W redirect wiring)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const probe = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;

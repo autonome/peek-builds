@@ -55,7 +55,7 @@ const PAGE_HTML = 'data:text/html,<title>Example</title><body>hello page-widgets
 
 test.describe('Page Widgets @desktop', () => {
   test('widget host is initialized for the active hybrid page', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const h = await openHybridPage(app, PAGE_HTML);
 
@@ -67,7 +67,7 @@ test.describe('Page Widgets @desktop', () => {
   });
 
   test('widget:register creates a widget registration', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const h = await openHybridPage(app, PAGE_HTML);
 
@@ -86,7 +86,7 @@ test.describe('Page Widgets @desktop', () => {
   });
 
   test('widget:render displays a widget in the overlay container', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const h = await openHybridPage(app, PAGE_HTML);
 
@@ -115,7 +115,7 @@ test.describe('Page Widgets @desktop', () => {
   });
 
   test('widget:update modifies existing widget content', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const h = await openHybridPage(app, PAGE_HTML);
 
@@ -151,7 +151,7 @@ test.describe('Page Widgets @desktop', () => {
   });
 
   test('widget:close removes widget from the overlay container', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const h = await openHybridPage(app, PAGE_HTML);
 
@@ -185,7 +185,7 @@ test.describe('Page Widgets @desktop', () => {
 
   // ── page:execute-script — runs in MAIN against the hybrid content WC ───────
   test('page:execute-script runs code in webview and returns result', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const h = await openHybridPage(app, PAGE_HTML);
     const res = await app.evaluateMain!((_e, arg) => {
@@ -200,7 +200,7 @@ test.describe('Page Widgets @desktop', () => {
   });
 
   test('page:execute-script returns error for invalid script', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const h = await openHybridPage(app, PAGE_HTML);
     const res = await app.evaluateMain!((_e, arg) => {

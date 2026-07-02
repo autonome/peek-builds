@@ -21,9 +21,6 @@ allow PEEK_PAGEHOST_HYBRID_PROBE  # distinct, still-live debug env var (main/pag
 # main/hybrid-page-host-registry.ts, main/entry.ts, main/hybrid-overlay.ts,
 # renderer/page/overlay.js); the remaining 22 test-comment refs across 15
 # tests/desktop/*.spec.ts files were fixed in the follow-up scrub pass.
-# Note: flag SHORTHAND without the literal string ("hybrid flag off" skip
-# reasons, "under the hybrid flag" comments, ~90+ lines across ~20 spec files)
-# still exists — it doesn't match this symbol and is a separate cleanup.
 
 isCanvasPage
 # clean — zero refs

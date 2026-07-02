@@ -581,9 +581,9 @@ test.describe('Session Restore Page Host @desktop', () => {
     const settingsWindow = await app.getWindow('settings/settings.html', 15000);
     await settingsWindow.waitForLoadState('domcontentloaded');
 
-    // Open the web page. Under the hybrid flag this is a BaseWindow page-host;
-    // its content webContents loads the bare http URL (no canvas ?width/height
-    // wrapper), so we just wait for the page to load.
+    // Open the web page. This is a BaseWindow page-host; its content
+    // webContents loads the bare http URL (no canvas ?width/height wrapper),
+    // so we just wait for the page to load.
     const { pageWindow, windowId: webWindowId } = await openPageHost(url);
     await pageWindow.waitForLoadState('domcontentloaded');
 
@@ -591,7 +591,7 @@ test.describe('Session Restore Page Host @desktop', () => {
     // page-host, the same way the hybrid-overlay suite does.
     const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
       (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, webWindowId) as boolean;
-    test.skip(!isHybrid, 'hybrid flag off — focus-order bug is hybrid-only');
+    test.skip(!isHybrid, 'not a hybrid page-host — focus-order bug is hybrid-only');
 
     // The user clicks into the web page → it becomes frontmost/focused. Drive
     // the REAL host-BaseWindow 'focus' event (Electron's own event on OS focus).
@@ -713,7 +713,7 @@ test.describe('Session Restore Page Host @desktop', () => {
 
     const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
       (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, windowId) as boolean;
-    test.skip(!isHybrid, 'hybrid flag off — this test exercises the hybrid maximize registry');
+    test.skip(!isHybrid, 'not a hybrid page-host — this test exercises the hybrid maximize registry');
 
     async function findEntry(id: number) {
       return bgWindow.evaluate(async (targetId: number) => {

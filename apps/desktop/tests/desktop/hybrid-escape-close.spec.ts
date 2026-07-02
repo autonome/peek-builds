@@ -51,7 +51,7 @@ test.describe('Hybrid page-host ESC close @desktop', () => {
   // dispatchContentKey (proving ESC is intercepted + preventDefault'd there) and
   // awaits the async close deterministically (waitHybridGone).
   test('ESC on a focused hybrid quick-view host closes it (real before-input path)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -85,7 +85,7 @@ test.describe('Hybrid page-host ESC close @desktop', () => {
   // isolation: handleHybridEscape → escPolicy('…','quick-view')==='close' →
   // closeOrHideWindow closes the hybrid BaseWindow.
   test('handleHybridEscape closes a quick-view hybrid host (policy path)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -109,7 +109,7 @@ test.describe('Hybrid page-host ESC close @desktop', () => {
   // hybrid host (preserved identically to the canvas path). This proves the
   // hybrid path reuses the policy gate, not a "hybrid always closes" shortcut.
   test('escapeMode:"ignore" hybrid host is NOT closed by ESC', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -143,7 +143,7 @@ test.describe('Hybrid page-host ESC close @desktop', () => {
   // against, driven by the active-hybrid id), not just escPolicy(state, role) —
   // so it covers the live path a green headless escPolicy spec missed.
   test('ESC on the wrong (content) host closes the ACTIVE quick-view, not the switcher', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -184,7 +184,7 @@ test.describe('Hybrid page-host ESC close @desktop', () => {
   // toward it — it resolves against the host it landed on, preserving the
   // deferred ESC→switcher routing for real content pages (peek e8081cce).
   test('ESC does NOT redirect toward a content active window (no force-close)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;

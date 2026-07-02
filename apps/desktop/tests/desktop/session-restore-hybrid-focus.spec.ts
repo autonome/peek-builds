@@ -121,7 +121,7 @@ test.describe('Session Restore Hybrid Focus @desktop', () => {
   // focused is not the one raised. Pre-fix `hybridShowIntent(false)` is
   // unconditionally activating (no inactive concept), so this assertion fails.
   test('restore (show:false) hybrid show DECISION is non-activating in non-headless', async () => {
-    test.skip(!(await hybridBridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent()), 'no overlay bridge in this configuration');
 
     const { freshNonHeadless, restoreNonHeadless, restoreHeadless } =
       await app.evaluateMain!(() => {
@@ -157,7 +157,7 @@ test.describe('Session Restore Hybrid Focus @desktop', () => {
   // EXACTLY ONE hybrid window (not both). The drift counters expose the
   // restore loop's decision focus-free.
   test('two hybrid pages: the page focused at save is the one restore raises (not the other)', async () => {
-    test.skip(!(await hybridBridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent()), 'no overlay bridge in this configuration');
 
     const slugA = 'hybrid-focus-A';
     const slugB = 'hybrid-focus-B';
@@ -172,7 +172,7 @@ test.describe('Session Restore Hybrid Focus @desktop', () => {
 
     const aIsHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
       (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, a.windowId) as boolean;
-    test.skip(!aIsHybrid, 'hybrid flag off — identity bug is hybrid-only');
+    test.skip(!aIsHybrid, 'not a hybrid page-host — identity bug is hybrid-only');
 
     // The user clicks BACK into page A → A is the page focused at quit. Drive
     // the REAL host BaseWindow 'focus' event (the exact event Electron fires).

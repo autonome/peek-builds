@@ -49,7 +49,7 @@ test.describe('Hybrid page-host shortcut routing (R2/R3) @desktop', () => {
   // carries the real cmd+N → openNewPageWindow binding). The event is also
   // preventDefault()-ed (consumed), matching the canvas/core dispatch contract.
   test('cmd+N over a hybrid host reaches the local-shortcut dispatcher (R3)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -78,7 +78,7 @@ test.describe('Hybrid page-host shortcut routing (R2/R3) @desktop', () => {
   // Before the fix, only the page-specific accelerators reached the handler, so
   // these were dead with a hybrid host focused.
   test('a generic local shortcut fires through the hybrid content WC path (R2)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -99,7 +99,7 @@ test.describe('Hybrid page-host shortcut routing (R2/R3) @desktop', () => {
   // INLINE by the hybrid handler and must NOT also be routed to a same-key local
   // shortcut — i.e. the inline page set takes precedence (no double-dispatch).
   test('page-specific accelerators stay inline, not double-dispatched (guard)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;

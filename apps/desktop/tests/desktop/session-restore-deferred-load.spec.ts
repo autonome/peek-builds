@@ -131,7 +131,7 @@ test.describe('Session Restore Deferred Load @desktop', () => {
     // Hybrid-only: the deferred-load mechanism lives in the hybrid registry.
     const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
       (globalThis as any).__peek_test.isHybridWindowForTest(id)) as never, openedIds[0]) as boolean;
-    test.skip(!isHybrid, 'hybrid flag off — deferred restore is hybrid-only');
+    test.skip(!isHybrid, 'not a hybrid page-host — deferred restore is hybrid-only');
 
     // Save, close everything, restore.
     await app.evaluateMain!((() =>

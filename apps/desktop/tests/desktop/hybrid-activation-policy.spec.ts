@@ -33,7 +33,7 @@ test.describe('Activation policy guard (R7) @desktop', () => {
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
   test('non-headless leaves default (regular); never accessory/prohibited', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const { real, headless } = await app.evaluateMain!(() => {
       const b = (globalThis as any).__peekHybridOverlayTest;

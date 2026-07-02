@@ -19,7 +19,7 @@ import { createPerDescribeApp } from '../helpers/test-app';
  * Network-free: dedup (and `waitHybridForUrl`) match the REQUESTED address the
  * registry stores at open time, independent of whether the content load
  * resolves. Focus-free: hybrid windows are headless (opacity 0, never shown).
- * Skips itself if the hybrid bridge isn't present (flag off).
+ * Skips itself if the hybrid bridge isn't present.
  */
 test.describe('Hybrid page-host window-reuse dedup (P1.4a) @desktop', () => {
   let app: DesktopApp;
@@ -36,7 +36,7 @@ test.describe('Hybrid page-host window-reuse dedup (P1.4a) @desktop', () => {
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
   test('a repeat open of the same URL reuses the existing hybrid window (no duplicate)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no hybrid bridge');
+    test.skip(!(await bridgePresent()), 'no hybrid bridge in this configuration');
     const url = 'https://reuse.example/';
 
     const opener = await app.evaluateMain!(async () => {

@@ -120,9 +120,9 @@ async function getWebviewUrl(pageWindow: Page): Promise<string | null> {
 test.describe('Download Navigation @desktop', () => {
   // ── Hybrid page-host caveat ───────────────────────────────────────────────
   // These tests assert against the canvas `<webview>` page host (`#content`
-  // webview, `.loaded` class, `webview.getURL()/executeJavaScript`). Under the
-  // hybrid flag the page content is an OPAQUE WebContentsView in a BaseWindow,
-  // so there is no in-window webview to drive.
+  // webview, `.loaded` class, `webview.getURL()/executeJavaScript`). In the
+  // current (hybrid-only) architecture the page content is an OPAQUE
+  // WebContentsView in a BaseWindow, so there is no in-window webview to drive.
   //
   // The product cleanup gap is now FIXED: the will-download handler in
   // main/session-partition.ts no longer dead-ends on a hybrid content WC. After
@@ -134,15 +134,14 @@ test.describe('Download Navigation @desktop', () => {
   // that host orphaned. That reverse lookup is covered by a focused unit test in
   // main/hybrid-page-host-registry.test.ts.
   //
-  // The describe nonetheless stays SKIPPED under the hybrid flag for a NARROWER,
-  // harness-only reason: the shared hybrid test bridge (`makeFakeHybridWindow` /
-  // `makeWiredHybrid`) builds its content WebContentsView on the DEFAULT session
-  // (no `session: profileSession`), so `will-download` — which is registered on
-  // profileSession at init — never fires for bridge-driven windows. Driving a
-  // real hybrid download e2e (and asserting the host actually closes) needs a
-  // partitioned-session test bridge; that's tracked as a separate follow-up.
-  //
-  // The tests remain fully valid on the canvas path (flag off).
+  // The describe nonetheless stays SKIPPED for a NARROWER, harness-only reason:
+  // the shared hybrid test bridge (`makeFakeHybridWindow` / `makeWiredHybrid`)
+  // builds its content WebContentsView on the DEFAULT session (no `session:
+  // profileSession`), so `will-download` — which is registered on profileSession
+  // at init — never fires for bridge-driven windows. Driving a real hybrid
+  // download e2e (and asserting the host actually closes) needs a
+  // partitioned-session test bridge; that's tracked as a separate follow-up
+  // (peek item 5d14237a).
   test.beforeEach(async () => {
     test.skip(
       await hybridBridgePresent(sharedApp),

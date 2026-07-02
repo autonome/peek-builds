@@ -68,9 +68,9 @@ test.describe('IZUI Behavior @desktop', () => {
 
     // Step 2: Open a child window FROM the groups content window.
     // Since groups/home.html is a real content window (not the background renderer),
-    // the child should get parentWindowId set to the groups window's ID. Under the
-    // hybrid flag the child is an opaque BaseWindow page-host, but parent
-    // propagation flows through the same window-registry params either way.
+    // the child should get parentWindowId set to the groups window's ID. The
+    // child is an opaque BaseWindow page-host, but parent propagation flows
+    // through the same window-registry params either way.
     const childUrl = `http://127.0.0.1:${serverPort}/`;
     const childResult = await groupsWindow.evaluate(async (u: string) => {
       return await (window as any).app.window.open(u, {

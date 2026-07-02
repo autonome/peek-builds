@@ -34,7 +34,7 @@ test.describe('Windows feature: hybrid page-host enumeration @desktop', () => {
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
   test('both hybrid windows appear in the windows-feature list with correct url/title', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     // Two real (headless) hybrid windows with distinct content, so url()/title()
     // differ between them.
@@ -77,7 +77,7 @@ test.describe('Windows feature: hybrid page-host enumeration @desktop', () => {
   });
 
   test('focusing a hybrid entry routes to its host BaseWindow (focus action)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     // The windows feature focuses a selected window by id (setOverlayFocusTarget
     // → main routes getLiveWindow OR, for a hybrid, getHybridWindow().baseWin).
@@ -107,7 +107,7 @@ test.describe('Windows feature: hybrid page-host enumeration @desktop', () => {
   });
 
   test('additive: list is empty of hybrids until any are registered (flag-off shape)', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     // Close every hybrid window registered by the prior tests, then assert the
     // windows-feature hybrid loop yields ZERO entries — i.e. the addition is

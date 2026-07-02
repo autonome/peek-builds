@@ -111,7 +111,7 @@ async function contentElementText(
 
 test.describe('Page Host Redirect Navigation @desktop', () => {
   test('HTTP 301 redirect: content loads the redirect target, not blank', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const redirectUrl = `http://127.0.0.1:${serverPort}/redirect-301`;
     // openHybridPage runs contentWC.loadURL to completion, following redirects.
@@ -127,7 +127,7 @@ test.describe('Page Host Redirect Navigation @desktop', () => {
   });
 
   test('HTTP 302 redirect: content loads the redirect target', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const redirectUrl = `http://127.0.0.1:${serverPort}/redirect-302`;
     const h = await openHybridPage(app, redirectUrl);
@@ -138,7 +138,7 @@ test.describe('Page Host Redirect Navigation @desktop', () => {
   });
 
   test('Redirect chain (301→302): content loads the final target', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const redirectUrl = `http://127.0.0.1:${serverPort}/redirect-chain`;
     const h = await openHybridPage(app, redirectUrl);
@@ -150,7 +150,7 @@ test.describe('Page Host Redirect Navigation @desktop', () => {
   });
 
   test('Redirect: content reaches the target without stalling blank', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     // The canvas version polled webview CSS classes to detect a blank
     // (opacity-0, no loading/loaded class) frame. In the hybrid model the

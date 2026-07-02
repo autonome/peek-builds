@@ -43,7 +43,7 @@ test.describe('Hybrid page-host keepLive on close path @desktop', () => {
   // BaseWindow stays alive, just not visible) when run through closeOrHideWindow,
   // so its content WebContentsView keeps running in the background.
   test('keepLive:true hybrid host is HIDDEN (not destroyed) on the close path', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
@@ -82,7 +82,7 @@ test.describe('Hybrid page-host keepLive on close path @desktop', () => {
   // The non-keepLive case must be UNCHANGED: a transient quick-view (no
   // keepLive) is destroyed on the close path so it gets cleanly recreated.
   test('keepLive:false hybrid host is CLOSED (destroyed) on the close path', async () => {
-    test.skip(!(await bridgePresent()), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     const result = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;

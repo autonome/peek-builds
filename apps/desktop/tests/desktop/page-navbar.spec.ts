@@ -53,7 +53,7 @@ const PAGE_HTML = 'data:text/html,<title>Example</title><body>hello page-navbar<
 
 test.describe('Page Navbar @desktop', () => {
   test('navbar reflects the content loading lifecycle and stays hidden by default', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const h = await openHybridPage(app, PAGE_HTML);
 
@@ -81,7 +81,7 @@ test.describe('Page Navbar @desktop', () => {
   });
 
   test('Cmd+L reveals the navbar and focuses its URL field', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const h = await openHybridPage(app, PAGE_HTML);
 
@@ -108,7 +108,7 @@ test.describe('Page Navbar @desktop', () => {
   });
 
   test('revealed navbar schedules auto-hide when the pointer moves off the chrome', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const h = await openHybridPage(app, PAGE_HTML);
 
@@ -128,7 +128,7 @@ test.describe('Page Navbar @desktop', () => {
   });
 
   test('trigger-zone hover reveals the navbar', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'hybrid flag off — no overlay bridge');
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const h = await openHybridPage(app, PAGE_HTML);
 

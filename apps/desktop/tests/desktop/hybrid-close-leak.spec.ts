@@ -80,7 +80,7 @@ test.describe('Hybrid Close Leak @desktop', () => {
     const slug = 'leak-roundtrip';
     const url = `http://127.0.0.1:${serverPort}/${slug}`;
 
-    // Open the page. Under the hybrid flag this is a BaseWindow page-host.
+    // Open the page. This is a BaseWindow page-host.
     const result = await bgWindow.evaluate(async (u: string) => {
       return await (window as any).app.window.open(u, { width: 800, height: 600 });
     }, url);
@@ -93,7 +93,7 @@ test.describe('Hybrid Close Leak @desktop', () => {
     // Hybrid-only outcome — skip on the canvas path.
     const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
       (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, windowId) as boolean;
-    test.skip(!isHybrid, 'hybrid flag off — leak is hybrid-path only');
+    test.skip(!isHybrid, 'not a hybrid page-host — leak is hybrid-path only');
 
     // Capture the content wc id while the window is still open and registered.
     const contentWcId = await app.evaluateMain!(((_e: unknown, id: number) =>
@@ -144,7 +144,7 @@ test.describe('Hybrid Close Leak @desktop', () => {
       if (i === 0) {
         const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
           (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, windowId) as boolean;
-        test.skip(!isHybrid, 'hybrid flag off — leak is hybrid-path only');
+        test.skip(!isHybrid, 'not a hybrid page-host — leak is hybrid-path only');
       }
 
       const contentWcId = await app.evaluateMain!(((_e: unknown, id: number) =>
