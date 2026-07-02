@@ -2333,6 +2333,16 @@ function installTestBridge(): void {
         .catch(() => false);
     },
     /**
+     * OAuth bridge: evaluate arbitrary `code` inside a hybrid window's content
+     * webContents and resolve with its result. Resolves `undefined` if the
+     * window is gone/destroyed or the script throws.
+     */
+    evalInHybridContent(id: number, code: string): Promise<unknown> {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.contentWC.isDestroyed()) return Promise.resolve(undefined);
+      return entry.contentWC.executeJavaScript(code, true).catch(() => undefined);
+    },
+    /**
      * P1.5: trigger a `target="_blank"` link click inside a hybrid window's
      * content webContents (the other path into setWindowOpenHandler). Returns
      * true if the script ran.

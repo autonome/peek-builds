@@ -831,6 +831,482 @@ const NAVBAR_HEIGHT_PX = 36;
 // on content-WC teardown so a closed host leaves no stale setter.
 const hybridContentCursorSetters = new Map<number, (cursor: string | null) => void>();
 
+/**
+ * Construct the opaque, content-sized BaseWindow host shell for a hybrid
+ * page-host. Extracted from the windowOpenHandler hybrid branch so the
+ * fresh-open path and the window.open popup (createWindow) path build an
+ * IDENTICAL host shell. x/y omitted → Electron centers the window on screen
+ * (used for popups whose window.open features string carried no position).
+ */
+function createHybridHostBaseWindow(rect: { x?: number; y?: number; width: number; height: number }): Electron.BaseWindow {
+  return new BaseWindow({
+    ...(typeof rect.x === 'number' ? { x: rect.x } : {}),
+    ...(typeof rect.y === 'number' ? { y: rect.y } : {}),
+    width: rect.width,
+    height: rect.height,
+    frame: false,
+    transparent: false,
+    roundedCorners: true,
+    hasShadow: !isHeadless(),
+    show: false,
+    opacity: isHeadless() ? 0 : undefined,
+    backgroundColor: getSystemThemeBackgroundColor(),
+  });
+}
+
+/**
+ * Derive the content rect for a window.open popup host from the ctor options
+ * Chromium parsed out of the window.open(url, name, features) features string.
+ * Falls back to the app default size; omits x/y when Chromium supplied none so
+ * createHybridHostBaseWindow lets Electron center it.
+ */
+function resolvePopupContentRect(ctorOptions: Electron.BrowserWindowConstructorOptions): { x?: number; y?: number; width: number; height: number } {
+  const width = typeof ctorOptions.width === 'number' && ctorOptions.width > 0 ? ctorOptions.width : APP_DEF_WIDTH;
+  const height = typeof ctorOptions.height === 'number' && ctorOptions.height > 0 ? ctorOptions.height : APP_DEF_HEIGHT;
+  const x = typeof ctorOptions.x === 'number' ? ctorOptions.x : undefined;
+  const y = typeof ctorOptions.y === 'number' ? ctorOptions.y : undefined;
+  return { x, y, width, height };
+}
+
+interface HybridHostAssembleCtx {
+  url: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  options: any;
+  source: string;
+  placement: Parameters<typeof computeInitialBounds>[0];
+  contentX: number;
+  contentY: number;
+  contentW: number;
+  contentH: number;
+  isWebPage: boolean;
+  isTransient: boolean;
+  openerWindow: Electron.BrowserWindow | null;
+  isRealParent: boolean;
+  deferContentLoad: boolean;
+  rtPreloadApplied: boolean;
+}
+
+/**
+ * Wire up a hybrid page-host given an already-constructed BaseWindow + content
+ * WebContentsView (freshly minted for a normal open, or adopted from Chromium's
+ * opener-wired guest WC for a window.open popup). Does everything from
+ * addChildView through showHybridHost. Does NOT loadURL (caller owns: the fresh
+ * path awaits loadURL; the popup path lets Chromium navigate the returned WC).
+ */
+function assembleHybridPageHost(
+  baseWin: Electron.BaseWindow,
+  view: Electron.WebContentsView,
+  ctx: HybridHostAssembleCtx,
+): void {
+  const {
+    url, options, source, placement,
+    contentX, contentY, contentW, contentH,
+    isWebPage, isTransient, openerWindow, isRealParent,
+    deferContentLoad, rtPreloadApplied,
+  } = ctx;
+
+  baseWin.contentView.addChildView(view);
+
+  // Fill the window; keep it filled on resize.
+  const fillView = () => {
+    const [w, h] = baseWin.getContentSize();
+    view.setBounds({ x: 0, y: 0, width: w, height: h });
+  };
+  fillView();
+  baseWin.on('resize', fillView);
+
+  // P0 seam: mark the content webContents so the permission lookup
+  // (registerGuest → findHostWindowId) treats it as page-host content.
+  markPageHostContent(view.webContents);
+  registerGuest(view.webContents, baseWin.id);
+
+  // P1.4a — register this hybrid window so it is enumerable, dedup-able
+  // by url/key, focus-trackable, and targetable. A BaseWindow is not a
+  // BrowserWindow, so window-registry's BrowserWindow-backed lookups
+  // cannot hold it; this separate registry is the indirection layer.
+  // Self-cleans on baseWin 'closed' / content wc 'destroyed' and
+  // maintains getActiveHybridWindowId() off baseWin focus/blur.
+  // Deferred session restore (perf): windows beyond the eager count
+  // restore with `restoreBlank` (set per-window by the restore loop in
+  // session.ts). The BaseWindow + WebContentsView + registration +
+  // frame state (bounds/maximize) are all built as normal, but the
+  // content loadURL is DEFERRED to the window's first genuine
+  // activation — the host BaseWindow's 'focus' event (see
+  // onHybridHostFocus below). Mirrors the deleted canvas path's
+  // blank-placeholder + navigate-on-focus restore, which measured a
+  // ~10-20x sustained-GPU win on large sessions.
+
+  registerHybridWindow(baseWin.id, {
+    baseWin,
+    contentWC: view.webContents,
+    key: options.key,
+    url,
+    deferredLoad: deferContentLoad
+      ? { url, title: typeof options.title === 'string' ? options.title : '' }
+      : undefined,
+  });
+
+  // Reopen-last-closed (main.ts reopenLastClosedWindow) and session
+  // restore (session.ts restoreSessionSnapshot) both thread a
+  // maximized window's saved state through as open-time options:
+  // `maximized: true` plus `preMaxX/Y/Width/Height` (the pre-maximize
+  // rect to unmaximize back to). Mirrors the canvas path's contract —
+  // the FSM used to boot straight into MAXIMIZED via a `maximized=1`
+  // URL param without calling doMaximize(), because the window's
+  // bounds are ALREADY the maximized rect (computeInitialBounds above
+  // used `winOptions.x/y/width/height`, which reopen/restore set from
+  // the saved presentation.bounds — the live maximized size). So there
+  // is nothing to resize here: just record the state so a later
+  // page:unmaximize (and getHybridPresentation / session save) see it.
+  if (options.maximized === true) {
+    const pmx = options.preMaxX, pmy = options.preMaxY;
+    const pmw = options.preMaxWidth, pmh = options.preMaxHeight;
+    const preMax = (typeof pmx === 'number' && typeof pmy === 'number'
+      && typeof pmw === 'number' && typeof pmh === 'number')
+      ? { x: pmx, y: pmy, width: pmw, height: pmh }
+      : null;
+    setHybridMaximizeState(baseWin.id, true, preMax);
+  }
+
+  // Feed the per-app focus trackers (lastFocusedVisibleWindowId /
+  // lastContentWindowId) from the host BaseWindow's focus event. The
+  // hybrid registry tracks its OWN active-window id off this same event,
+  // but those ipc.ts trackers are what session-save reads to mark the
+  // focused descriptor (and what per-window commands target). A BaseWindow
+  // never flows through trackOnWindowFocus (it has no root webContents),
+  // so without this a focused web page is never recorded as focused —
+  // session restore then raises the last-focused BrowserWindow (e.g.
+  // Settings) instead of the web page the user left in front.
+  const onHybridHostFocus = () => {
+    // Deferred session restore: the first genuine activation of a
+    // restoreBlank window releases its deferred content load.
+    // `claimHybridDeferredLoad` is the once-guard (returns the URL
+    // exactly once, null forever after and for non-deferred windows),
+    // so repeat focus events can never double-load. Driven by the
+    // deterministic BaseWindow 'focus' event only — no timers, no
+    // polling. The pending-nav record mirrors the navbar-navigate
+    // path so did-start-loading can resolve the target URL for the
+    // loading-timeout overlay.
+    try {
+      const deferredUrl = claimHybridDeferredLoad(baseWin.id);
+      if (deferredUrl && !view.webContents.isDestroyed()) {
+        setHybridPendingNavUrl(baseWin.id, deferredUrl);
+        view.webContents.loadURL(deferredUrl).catch((err) => {
+          DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] deferred loadURL failed:`, err);
+        });
+      }
+    } catch {
+      /* a torn-down wc mid-focus must not wedge the focus handler */
+    }
+    // Restore first responder to the content WebContentsView when this host
+    // gains focus. showHybridHost applies `contentWC.focus()` only on a FRESH
+    // show; a host restored via showInactive (session restore) and later
+    // RAISED by chrome / Cmd+Tab / Mission Control fires baseWin 'focus' (so
+    // the active-hybrid id — and thus the suppressed global ESC fallback —
+    // is correct) but never made its content WC first responder, so ESC (and
+    // every other before-input key) was dead until the user clicked the page.
+    // The predicate skips headless (focus-free) and the already-focused case
+    // (host focus triggered BY a click into the page → no redundant re-focus
+    // / focus-event loop). Traced 2026-06-10.
+    try {
+      if (
+        shouldFocusHybridContentOnHostFocus(
+          isHeadless(),
+          view.webContents.isDestroyed(),
+          view.webContents.isFocused(),
+        )
+      ) {
+        view.webContents.focus();
+      }
+    } catch {
+      /* focus/isFocused can throw on a torn-down wc — ignore */
+    }
+    try {
+      if (view.webContents.isDestroyed()) return;
+      trackHybridWindowFocus(baseWin.id, view.webContents.getURL());
+    } catch {
+      /* getURL can throw on a torn-down wc — ignore */
+    }
+    // A hybrid host gaining focus must run the SAME transient-sibling
+    // autoclose the BrowserWindow focus handler does — otherwise focusing
+    // a web page (or opening peek/slide B) never dismisses an open
+    // peek/slide A (both are now BaseWindows). The wrapper resolves this
+    // host's own role; a transient focuser still closes OTHER transients.
+    // Regression: peek 8e5c3174. Guarded so a focus-bookkeeping throw can
+    // never wedge the close (and vice-versa).
+    try {
+      closeTransientSiblingsOnFocus(baseWin.id);
+    } catch (err) {
+      DEBUG && console.log('[izui] hybrid-focus autoclose failed:', err);
+    }
+  };
+  baseWin.on('focus', onHybridHostFocus);
+  // Belt-and-suspenders: clicking directly into the page focuses the
+  // content webContents even when the host-window focus event is missed.
+  view.webContents.on('focus', onHybridHostFocus);
+
+  // P1.2 — re-attach the chrome-ext compat hooks to THIS content
+  // webContents EXPLICITLY. We cannot rely on entry.ts's
+  // `web-contents-created` handler: that event fires SYNCHRONOUSLY inside
+  // `new WebContentsView(...)` above, which is BEFORE `markPageHostContent`
+  // ran — so `isPageHostContent` was still false when entry.ts evaluated
+  // its gate, and entry.ts skipped the dom-ready/did-navigate installs for
+  // this wc. Calling the same shared installers here makes attachment
+  // timing-independent for the hybrid path. (preload was already applied
+  // at construction above — it is construction-fixed.)
+  installMainWorldContentScriptInjection(view.webContents);
+  installRuntimeExternalCdpPolyfill(view.webContents);
+  console.log(`[hybrid-page-host] compat hooks attached to content wc ${view.webContents.id} (rtPreload=${rtPreloadApplied ? 'yes' : 'no'})`);
+
+  // P1.3 — forward the content webContents's lifecycle events as the
+  // `page:*` pubsub topics + datastore side-effects the canvas path's
+  // page.js / guest-webContents handlers produce today. Attach BEFORE
+  // loadURL so did-start-loading / did-navigate / did-finish-load are
+  // not missed. (Action mediation — navbar→content — is DEFERRED to
+  // P1.4, where the shared overlay is the consumer.)
+  wireHybridContentEvents(view.webContents, baseWin.id, url, options);
+
+  // P1.3 — initial history insert, matching the canvas path's
+  // trackWindowLoad (ipc.ts ~2422). Skip internal peek:// URLs and
+  // session restores (skipTracking), exactly like the canvas path.
+  if (!url.startsWith('peek://') && !options.skipTracking) {
+    try {
+      const trackResult = trackWindowLoad(url, {
+        source: options.trackingSource || options.feature || 'window',
+        sourceId: options.trackingSourceId || '',
+        windowType: options.modal ? 'modal' : 'main',
+        title: options.title || '',
+      });
+      if (trackResult.created) {
+        publish('system', 'item:created', {
+          itemId: trackResult.itemId,
+          itemType: 'url',
+          content: url,
+          windowId: baseWin.id,
+        });
+      }
+    } catch (e) {
+      DEBUG && console.log('[hybrid-page-host] initial trackWindowLoad failed:', e);
+    }
+  }
+
+  // Minimal window registration: enough for the window to be placed,
+  // tracked for the display-watcher, and known to the window manager /
+  // izui coordinator. We SKIP the tile-broadcaster + page-host token
+  // registration (there is no chrome tile in P1.1) and the root-webContents
+  // event wiring (there is no root webContents).
+  const role = inferIzuiRole(options as Parameters<typeof inferIzuiRole>[0], {
+    isWebPage,
+    parentWindowId: isRealParent ? openerWindow!.id : null,
+  });
+  const windowParams: Record<string, unknown> = {
+    ...options,
+    address: url,
+    transient: isTransient,
+    parentWindowId: isRealParent ? openerWindow!.id : null,
+    role,
+    placement,
+    // Seed canvas state from the content rect so session save / reuse
+    // logic that reads these has sane values (matches the canvas path's
+    // intent; x/y/w/h are the content rect, which IS the window here).
+    x: contentX,
+    y: contentY,
+    width: contentW,
+    height: contentH,
+    maximized: options.maximized === true,
+    // Mark this as a hybrid page-host so later phases (and any
+    // downstream code) can distinguish it from a BrowserWindow page-host.
+    hybridPageHost: true,
+  };
+  // restoreBlank is a per-restore open-time directive (re-derived from
+  // the eager/deferred split on every restore), not persistent window
+  // state — the `...options` spread above would otherwise bake it into
+  // the registry params and from there into the NEXT session snapshot,
+  // making the window restore deferred forever regardless of its eager
+  // slot. (Belt-and-suspenders with the restore-side stripKeys entry in
+  // session.ts, which drops it from old snapshots.)
+  delete windowParams.restoreBlank;
+  registerWindow(baseWin.id, source, windowParams);
+  trackWindow(baseWin as unknown as BrowserWindow);
+  getIzuiCoordinator().pushWindow(baseWin.id);
+
+  // Close-finalize tail. A hybrid page-host is a BaseWindow, so it never
+  // flows through main.ts's `app.on('browser-window-created') → win 'closed'`
+  // handler — meaning without this wiring a closed hybrid would never push
+  // onto the reopen stack (Cmd+Shift+T), never publish `window:removed`
+  // (close-awaits would hang), and never schedule the close-snapshot (an
+  // explicitly-closed window could reappear after a force-kill). Run the
+  // SAME shared `finalizeWindowClose` the BrowserWindow path runs.
+  //
+  // Capture the content-rect bounds/presentation in the pre-destroy
+  // 'close' event (BaseWindow emits 'close' before destruction); the hybrid
+  // registry entry — and the BaseWindow itself — are still alive then, so
+  // `getWindowPresentation` resolves the hybrid content rect. Reading
+  // bounds after destruction would be too late (the native handle is gone).
+  let hybridLastBounds: { x: number; y: number; width: number; height: number } | null = null;
+  let hybridLastPresentation: import('./window-presenter.js').WindowPresentation | null = null;
+
+  // Run the finalize tail exactly once, driven by the FIRST signal to fire.
+  //
+  // Electron 40 reality for a `BaseWindow` whose only child is a
+  // `WebContentsView`, closed via `baseWin.close()` (verified by runtime
+  // instrumentation): the host emits `'close'` and then tears down
+  // SYNCHRONOUSLY (`isDestroyed()` is already true when `close()` returns),
+  // but it never emits `'closed'`, AND the main-owned content
+  // `WebContents` is left ALIVE (orphaned) — so its `'destroyed'` never
+  // fires either. Gating the tail on `'closed'`/`'destroyed'` therefore
+  // left it dead: a closed hybrid never pushed to the reopen stack
+  // (Cmd+Shift+T did nothing) and never published `window:removed`
+  // (`closeWindowById` / window:removed awaits hung ~60s).
+  //
+  // The only reliable terminal signal is `'close'`, which fires
+  // pre-destruction while the registry entry and bounds are still readable
+  // — so we finalize from the `'close'` handler below (right after
+  // capturing bounds). The host `'close'` is never `preventDefault()`-ed
+  // for a hybrid (no beforeunload veto on the BaseWindow host), so it
+  // always means the window is really going away. The `'closed'` /
+  // content-wc `'destroyed'` bindings stay as once-guarded fallbacks for
+  // any teardown path that DOES emit them (e.g. app-quit, or the content
+  // wc being destroyed directly).
+  // Capture bounds/presentation from whichever live state is still
+  // available. Called from all three terminal signals below — safe to
+  // call more than once (it just overwrites hybridLastBounds/
+  // hybridLastPresentation), unlike runHybridFinalize which is
+  // idempotent-guarded.
+  const captureHybridClose = () => {
+    try {
+      if (!baseWin.isDestroyed()) {
+        hybridLastBounds = baseWin.getBounds();
+        hybridLastPresentation = getWindowPresentation(baseWin.id);
+      }
+    } catch {
+      // Ignore errors during shutdown
+    }
+  };
+
+  let hybridFinalized = false;
+  const runHybridFinalize = () => {
+    if (hybridFinalized) return;
+    hybridFinalized = true;
+    finalizeWindowClose(baseWin.id, {
+      bounds: hybridLastBounds,
+      presentation: hybridLastPresentation,
+    });
+
+    // P0 LEAK FIX (A1d). In Electron 40 a hybrid page-host closed via
+    // `baseWin.close()` tears the BaseWindow down SYNCHRONOUSLY but never
+    // emits `'closed'`, AND leaves the main-owned content `WebContents`
+    // (this WebContentsView's wc — a live renderer process) ORPHANED:
+    // `view.webContents.isDestroyed()` stays false and its `'destroyed'`
+    // never fires. A1c finalized only the lifecycle SIGNALS (reopen-stack
+    // / window:removed / snapshot) off the `'close'` event; it did NOT
+    // free those resources. Without this, every hybrid page close leaks a
+    // renderer process AND the registry entry (whose self-clean is wired
+    // to the `'closed'`/`'destroyed'` events that never fire) — a long
+    // session accumulates orphaned renderers, undercutting the cutover's
+    // perf justification.
+    //
+    // This runs ONLY on a REAL close: it's inside the once-guarded
+    // `runHybridFinalize`, which is driven by the host BaseWindow's
+    // `'close'` event. A keepLive HIDE never reaches here — hybrids have
+    // no keepLive path (tile-ipc.ts routes BrowserWindows through
+    // closeOrHideWindow, and only takes the `hybrid.baseWin.close()`
+    // branch for a BaseWindow, which `getLiveWindow` cannot resolve), and
+    // `baseWin.hide()` does not emit `'close'`. So hide keeps the wc alive
+    // for reuse, exactly as required; only a genuine close frees it.
+    try {
+      // `webContents.close()` is the documented teardown: with
+      // `waitForBeforeUnload` unspecified it does NOT honor a beforeunload
+      // veto and destroys the wc (firing `'destroyed'`). The host window
+      // is already gone, so a beforeunload prompt would be meaningless.
+      if (!view.webContents.isDestroyed()) {
+        view.webContents.close();
+      }
+    } catch (e) {
+      DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] content wc close on finalize failed:`, e);
+    }
+    // Drop the registry entry deterministically. Its self-clean hooks
+    // (`baseWin 'closed'` / content-wc `'destroyed'`) are unreliable on
+    // this path — `'closed'` never fires, and `'destroyed'` (if the
+    // `close()` above triggers it) would race the close handler. This is
+    // idempotent, so a later `'destroyed'` self-clean is a harmless no-op.
+    unregisterHybridWindow(baseWin.id);
+  };
+
+  baseWin.on('close', () => {
+    captureHybridClose();
+    runHybridFinalize();
+  });
+  baseWin.once('closed', () => {
+    captureHybridClose();
+    runHybridFinalize();
+  });
+  // IMPORTANT: prepend, not append. The page-host close-UAF guard
+  // (windows.ts closeHostWindow → destroyGuestsThenClose) destroys this
+  // content webContents (registered as baseWin's "guest") BEFORE calling
+  // baseWin.close() — so on the NORMAL close path this 'destroyed' event
+  // fires FIRST, before baseWin's own 'close' event ever does. The hybrid
+  // registry's own self-clean (registerHybridWindow's `contentWC.once
+  // ('destroyed', cleanup)`) is ALSO bound to this same event, registered
+  // earlier (at registerHybridWindow(...) above) — cleanup deletes the
+  // registry entry, which getWindowPresentation depends on. Left as a
+  // plain `.once`, our capture would run AFTER cleanup and always see a
+  // vanished entry (bounds/maximized permanently lost on every close —
+  // confirmed by instrumentation: captured came back {bounds:null,
+  // presentation:null} on every reopen). `prependOnceListener` runs our
+  // capture BEFORE cleanup regardless of registration order, so the
+  // registry entry (and baseWin, not yet destroyed at this point) are
+  // still readable. (entry.url()/title() will read empty — the content
+  // wc IS gone by 'destroyed' — but finalizeWindowClose never reads
+  // presentation.address, only bounds/maximized/preMaxBounds, so that's
+  // harmless here.)
+  view.webContents.prependOnceListener('destroyed', () => {
+    captureHybridClose();
+    runHybridFinalize();
+    // Opener-initiated close: when the opener page calls the popup's
+    // window.opener-proxy .close() (or the popup calls window.close()),
+    // Chromium destroys the content WebContents directly, leaving this
+    // host BaseWindow alive but empty. Close it so the host doesn't
+    // linger. Deterministic on the WC 'destroyed' signal — no timer. On
+    // the normal close path the guard makes this a no-op (the host is
+    // already closing / destroyGuestsThenClose's own baseWin.close() ran
+    // or is about to); runHybridFinalize already consumed the captured
+    // bounds, so any re-entrant 'close' is harmless.
+    try { if (!baseWin.isDestroyed()) baseWin.close(); } catch { /* closing a torn-down host is a no-op */ }
+  });
+
+  // Show it AT LOAD-START — before awaiting the content — so the window's
+  // bordered/rounded native frame + shadow + loading-background fill (set
+  // on the BaseWindow ctor above) appears the INSTANT the load begins, as
+  // the soonest possible confirmation of the click. Previously the show
+  // happened only AFTER `await loadURL`, so clicking to open a page showed
+  // NOTHING (no window, no border) until the page finished loading. The
+  // content WebContentsView paints over the loading fill as it loads,
+  // fading naturally to the real page — mirroring the canvas path, where
+  // `loadingLifecycle.startLoading()` adds the bordered `.loading` frame at
+  // load-start (page.js) instead of waiting for the content.
+  //
+  // The same single `showHybridHost` seam runs here as before — only its
+  // POSITION moved earlier. Non-headless ACTIVATES (app frontmost + key
+  // window) and makes the content WebContentsView the macOS first responder,
+  // so cmd+L and other key equivalents have a target (no NSBeep) and the
+  // host's focus drives the active-hybrid id that reveals the overlay
+  // (regressions 1b6eaf0b / 363e7cff / 8f7010a8). Focusing a not-yet-loaded
+  // (blank) content view is fine — the first-responder + active-hybrid-id
+  // wiring is what matters, not what the view currently paints. Headless
+  // stays inactive + opacity-0, so an agent/CI run never steals the user's
+  // focus (peek task 2b55f3af).
+  //
+  // EXCEPTION — `show:false` opens (session restore): the caller wants the
+  // host visible but NOT activated. Each restored hybrid window activating
+  // itself is the wrong-focus-on-restart regression — the last to show (or
+  // the race winner) ends up frontmost instead of the page the user left
+  // focused at quit. The restore loop re-activates ONLY the focused
+  // descriptor afterwards. Mirrors the canvas ctor `show: options.show !==
+  // false` above.
+  showHybridHost(baseWin, view.webContents, { inactive: options.show === false });
+}
+
 export function wireHybridContentEvents(
   contentWC: Electron.WebContents,
   hostWindowId: number,
@@ -1378,45 +1854,95 @@ export function wireHybridContentEvents(
   // to Electron's default and spawn a raw, un-gated Chromium popup window.
   // This handler IS the gate for the hybrid path.
   //
-  // Policy mirrors the canvas <webview> guest's setWindowOpenHandler
-  // (ipc.ts ~2702): http(s) popups are DENIED the default BrowserWindow and
-  // re-routed through the SAME window-open IPC pipeline (`invokeWindowOpen`,
-  // the exported reference to windowOpenHandler — the identical mechanism the
-  // chrome-extensions popup handler uses, ipc.ts/chrome-extensions.ts ~1090).
-  // That re-entry takes the HYBRID EARLY BRANCH
-  // above and produces ANOTHER opaque BaseWindow + WebContentsView page-host
-  // rather than a raw popup. Non-http(s) URLs (about:blank,
-  // data:, etc.) are ALLOWED to open normally — byte-identical to the canvas
-  // guest policy; we do NOT invent new policy here.
-  contentWC.setWindowOpenHandler(({ url: popupUrl }) => {
+  // http(s) popups take Option A — NATIVE ADOPTION: return
+  // {action:'allow', createWindow} and adopt Chromium's opener-wired guest
+  // WebContents into a Peek hybrid BaseWindow host (see the createWindow body).
+  // This preserves a REAL window.opener / postMessage / close / focus
+  // relationship for the popup — the OAuth popup→opener handshake — with no
+  // window.opener shim and no postMessage relay. This RETIRED the old
+  // deny + `invokeWindowOpen` re-route, which recreated the popup as an
+  // opener-less BaseWindow (window.open() returned null, window.opener was
+  // null). NOTE: the chrome-extensions popup handler
+  // (chrome-extensions.ts ~1090) still uses the deny + `invokeWindowOpen`
+  // re-route — that's a separate path, out of scope here. Non-http(s) URLs
+  // (about:blank, data:, etc.) are ALLOWED to open normally.
+  contentWC.setWindowOpenHandler((details) => {
+    const popupUrl = details.url;
     if (popupUrl.startsWith('http://') || popupUrl.startsWith('https://')) {
-      console.log(`[hybrid-page-host] Intercepted popup from window ${hostWindowId}: ${popupUrl}`);
-
-      // Resolve the opener source the same way the canvas guest does
-      // (getWindowInfo(win.id).source), falling back to 'system'.
-      const parentInfo = getWindowInfo(hostWindowId);
-      const source = parentInfo ? parentInfo.source : 'system';
-
-      // Route asynchronously through the canonical window-open handler. We pass
-      // the content WC as ev.sender so placement/parent-tracking resolves the
-      // same as any other open (windowFromWebContents returns null for this
-      // BaseWindow-hosted WC, which the handler tolerates → default placement).
-      // The hybrid flag steers it into the hybrid branch → a new hybrid host.
-      if (invokeWindowOpen) {
-        invokeWindowOpen(
-          { sender: contentWC },
-          { source, url: popupUrl, options: {} },
-        ).catch((e) => {
-          console.error('[hybrid-page-host] window-open re-route failed:', e);
-        });
-      } else {
-        console.error('[hybrid-page-host] invokeWindowOpen not initialized — dropping popup', popupUrl);
-      }
-
-      // Deny the default BrowserWindow creation (canvas-guest parity).
-      return { action: 'deny' };
+      console.log(`[hybrid-page-host] Popup (allow+createWindow) from window ${hostWindowId}: ${popupUrl}`);
+      // Option A — native adoption. Return allow+createWindow so Chromium wires a
+      // REAL opener relationship: it creates the guest WebContents (window.opener/
+      // postMessage/close/focus already wired) and hands it to us as
+      // options.webContents. We adopt THAT WC into a Peek hybrid BaseWindow host
+      // and return it — no window.opener shim, no postMessage relay. (Retired the
+      // old deny + invokeWindowOpen re-route, which produced an opener-less popup.)
+      return {
+        action: 'allow',
+        createWindow: (ctorOptions) => {
+          try {
+            // options.webContents is present for window.open / foreground popups
+            // (the OAuth case) and UNDEFINED for background-tab (cmd/ctrl-click,
+            // creation deferred) — mint a fresh no-opener host in that case.
+            const adoptWC = (ctorOptions as { webContents?: Electron.WebContents }).webContents;
+            const rect = resolvePopupContentRect(ctorOptions);
+            const baseWin = createHybridHostBaseWindow(rect);
+            let view: Electron.WebContentsView;
+            let rtApplied = false;
+            if (adoptWC) {
+              // Adopt Chromium's opener-wired guest WC. preload/webPreferences are
+              // construction-fixed on the WC Chromium already created (inherited
+              // from the opener) — we cannot re-select them here, which is fine for
+              // the OAuth popup case (contextIsolation stays as the opener's).
+              view = new WebContentsView({ webContents: adoptWC });
+            } else {
+              const rtPrefs = getRuntimeExternalWebPrefsForUrl(popupUrl, 'hybrid');
+              rtApplied = !!rtPrefs;
+              view = new WebContentsView({
+                webPreferences: {
+                  session: getProfileSession(),
+                  contextIsolation: true,
+                  devTools: true,
+                  ...(rtPrefs
+                    ? {
+                        preload: rtPrefs.preload,
+                        additionalArguments: rtPrefs.additionalArguments,
+                        sandbox: rtPrefs.sandbox,
+                      }
+                    : {}),
+                },
+              });
+            }
+            const placedBounds = baseWin.getBounds();
+            const parentInfo = getWindowInfo(hostWindowId);
+            const source = parentInfo ? parentInfo.source : 'system';
+            assembleHybridPageHost(baseWin, view, {
+              url: popupUrl,
+              options: {},
+              source,
+              placement: { mode: 'proportional', relX: 0.5, relY: 0.5 },
+              contentX: placedBounds.x,
+              contentY: placedBounds.y,
+              contentW: placedBounds.width,
+              contentH: placedBounds.height,
+              isWebPage: true,
+              isTransient: false,
+              openerWindow: null,
+              isRealParent: false,
+              deferContentLoad: false,
+              rtPreloadApplied: rtApplied,
+            });
+            // NO loadURL: Chromium navigates the returned/adopted guest WC itself.
+            publish(getSystemAddress(), 'window:opened', { id: baseWin.id, url: popupUrl, source });
+            return view.webContents;
+          } catch (e) {
+            console.error('[hybrid-page-host] popup createWindow host build failed:', e);
+            // Best effort: still hand Chromium the guest WC (if any) so the opener
+            // isn't left with a broken/null handle; it just won't be Peek-hosted.
+            return (ctorOptions as { webContents?: Electron.WebContents }).webContents as Electron.WebContents;
+          }
+        },
+      };
     }
-
     // Non-http(s) (about:blank, data:, etc.) — allow normally, like canvas.
     return { action: 'allow' };
   });
@@ -2377,33 +2903,7 @@ export function registerWindowHandlers(): void {
         const contentW = winOptions.width as number;
         const contentH = winOptions.height as number;
 
-        const baseWin = new BaseWindow({
-          x: contentX,
-          y: contentY,
-          width: contentW,
-          height: contentH,
-          frame: false,
-          // Opaque, native floating look (R1). Headless: keep it invisible
-          // via opacity:0 + show:false, mirroring the canvas path's headless
-          // guard at the top of this handler so an agent/CI run never paints
-          // a real surface on the physical desktop.
-          transparent: false,
-          roundedCorners: true,
-          hasShadow: !isHeadless(),
-          show: false,
-          opacity: isHeadless() ? 0 : undefined,
-          // Loading-background fill: we show this window at load-START (below),
-          // before its content WebContentsView has painted anything, so the
-          // user gets the soonest possible confirmation of their click — the
-          // bordered/rounded native frame + shadow. Without an explicit
-          // backgroundColor that early frame would flash as an empty white box.
-          // Painting the theme background (light #ffffff / dark #1e1e1e — the
-          // same fill the canvas path's `webview.loading` rgba(255,255,255,0.95)
-          // / rgba(30,30,30,0.95) produces) makes the early frame read as a
-          // loading surface; the content view then paints over it as it loads,
-          // fading naturally to the real page.
-          backgroundColor: getSystemThemeBackgroundColor(),
-        });
+        const baseWin = createHybridHostBaseWindow({ x: contentX, y: contentY, width: contentW, height: contentH });
 
         // Content view: main owns this webContents handle. Session MUST match
         // today's `<webview>`, which uses partition `persist:${profileId}`
@@ -2438,397 +2938,23 @@ export function registerWindowHandlers(): void {
           },
         });
 
-        baseWin.contentView.addChildView(view);
-
-        // Fill the window; keep it filled on resize.
-        const fillView = () => {
-          const [w, h] = baseWin.getContentSize();
-          view.setBounds({ x: 0, y: 0, width: w, height: h });
-        };
-        fillView();
-        baseWin.on('resize', fillView);
-
-        // P0 seam: mark the content webContents so the permission lookup
-        // (registerGuest → findHostWindowId) treats it as page-host content.
-        markPageHostContent(view.webContents);
-        registerGuest(view.webContents, baseWin.id);
-
-        // P1.4a — register this hybrid window so it is enumerable, dedup-able
-        // by url/key, focus-trackable, and targetable. A BaseWindow is not a
-        // BrowserWindow, so window-registry's BrowserWindow-backed lookups
-        // cannot hold it; this separate registry is the indirection layer.
-        // Self-cleans on baseWin 'closed' / content wc 'destroyed' and
-        // maintains getActiveHybridWindowId() off baseWin focus/blur.
-        // Deferred session restore (perf): windows beyond the eager count
-        // restore with `restoreBlank` (set per-window by the restore loop in
-        // session.ts). The BaseWindow + WebContentsView + registration +
-        // frame state (bounds/maximize) are all built as normal, but the
-        // content loadURL is DEFERRED to the window's first genuine
-        // activation — the host BaseWindow's 'focus' event (see
-        // onHybridHostFocus below). Mirrors the deleted canvas path's
-        // blank-placeholder + navigate-on-focus restore, which measured a
-        // ~10-20x sustained-GPU win on large sessions.
         const deferContentLoad = options.restoreBlank === true;
-
-        registerHybridWindow(baseWin.id, {
-          baseWin,
-          contentWC: view.webContents,
-          key: options.key,
+        assembleHybridPageHost(baseWin, view, {
           url,
-          deferredLoad: deferContentLoad
-            ? { url, title: typeof options.title === 'string' ? options.title : '' }
-            : undefined,
-        });
-
-        // Reopen-last-closed (main.ts reopenLastClosedWindow) and session
-        // restore (session.ts restoreSessionSnapshot) both thread a
-        // maximized window's saved state through as open-time options:
-        // `maximized: true` plus `preMaxX/Y/Width/Height` (the pre-maximize
-        // rect to unmaximize back to). Mirrors the canvas path's contract —
-        // the FSM used to boot straight into MAXIMIZED via a `maximized=1`
-        // URL param without calling doMaximize(), because the window's
-        // bounds are ALREADY the maximized rect (computeInitialBounds above
-        // used `winOptions.x/y/width/height`, which reopen/restore set from
-        // the saved presentation.bounds — the live maximized size). So there
-        // is nothing to resize here: just record the state so a later
-        // page:unmaximize (and getHybridPresentation / session save) see it.
-        if (options.maximized === true) {
-          const pmx = options.preMaxX, pmy = options.preMaxY;
-          const pmw = options.preMaxWidth, pmh = options.preMaxHeight;
-          const preMax = (typeof pmx === 'number' && typeof pmy === 'number'
-            && typeof pmw === 'number' && typeof pmh === 'number')
-            ? { x: pmx, y: pmy, width: pmw, height: pmh }
-            : null;
-          setHybridMaximizeState(baseWin.id, true, preMax);
-        }
-
-        // Feed the per-app focus trackers (lastFocusedVisibleWindowId /
-        // lastContentWindowId) from the host BaseWindow's focus event. The
-        // hybrid registry tracks its OWN active-window id off this same event,
-        // but those ipc.ts trackers are what session-save reads to mark the
-        // focused descriptor (and what per-window commands target). A BaseWindow
-        // never flows through trackOnWindowFocus (it has no root webContents),
-        // so without this a focused web page is never recorded as focused —
-        // session restore then raises the last-focused BrowserWindow (e.g.
-        // Settings) instead of the web page the user left in front.
-        const onHybridHostFocus = () => {
-          // Deferred session restore: the first genuine activation of a
-          // restoreBlank window releases its deferred content load.
-          // `claimHybridDeferredLoad` is the once-guard (returns the URL
-          // exactly once, null forever after and for non-deferred windows),
-          // so repeat focus events can never double-load. Driven by the
-          // deterministic BaseWindow 'focus' event only — no timers, no
-          // polling. The pending-nav record mirrors the navbar-navigate
-          // path so did-start-loading can resolve the target URL for the
-          // loading-timeout overlay.
-          try {
-            const deferredUrl = claimHybridDeferredLoad(baseWin.id);
-            if (deferredUrl && !view.webContents.isDestroyed()) {
-              setHybridPendingNavUrl(baseWin.id, deferredUrl);
-              view.webContents.loadURL(deferredUrl).catch((err) => {
-                DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] deferred loadURL failed:`, err);
-              });
-            }
-          } catch {
-            /* a torn-down wc mid-focus must not wedge the focus handler */
-          }
-          // Restore first responder to the content WebContentsView when this host
-          // gains focus. showHybridHost applies `contentWC.focus()` only on a FRESH
-          // show; a host restored via showInactive (session restore) and later
-          // RAISED by chrome / Cmd+Tab / Mission Control fires baseWin 'focus' (so
-          // the active-hybrid id — and thus the suppressed global ESC fallback —
-          // is correct) but never made its content WC first responder, so ESC (and
-          // every other before-input key) was dead until the user clicked the page.
-          // The predicate skips headless (focus-free) and the already-focused case
-          // (host focus triggered BY a click into the page → no redundant re-focus
-          // / focus-event loop). Traced 2026-06-10.
-          try {
-            if (
-              shouldFocusHybridContentOnHostFocus(
-                isHeadless(),
-                view.webContents.isDestroyed(),
-                view.webContents.isFocused(),
-              )
-            ) {
-              view.webContents.focus();
-            }
-          } catch {
-            /* focus/isFocused can throw on a torn-down wc — ignore */
-          }
-          try {
-            if (view.webContents.isDestroyed()) return;
-            trackHybridWindowFocus(baseWin.id, view.webContents.getURL());
-          } catch {
-            /* getURL can throw on a torn-down wc — ignore */
-          }
-          // A hybrid host gaining focus must run the SAME transient-sibling
-          // autoclose the BrowserWindow focus handler does — otherwise focusing
-          // a web page (or opening peek/slide B) never dismisses an open
-          // peek/slide A (both are now BaseWindows). The wrapper resolves this
-          // host's own role; a transient focuser still closes OTHER transients.
-          // Regression: peek 8e5c3174. Guarded so a focus-bookkeeping throw can
-          // never wedge the close (and vice-versa).
-          try {
-            closeTransientSiblingsOnFocus(baseWin.id);
-          } catch (err) {
-            DEBUG && console.log('[izui] hybrid-focus autoclose failed:', err);
-          }
-        };
-        baseWin.on('focus', onHybridHostFocus);
-        // Belt-and-suspenders: clicking directly into the page focuses the
-        // content webContents even when the host-window focus event is missed.
-        view.webContents.on('focus', onHybridHostFocus);
-
-        // P1.2 — re-attach the chrome-ext compat hooks to THIS content
-        // webContents EXPLICITLY. We cannot rely on entry.ts's
-        // `web-contents-created` handler: that event fires SYNCHRONOUSLY inside
-        // `new WebContentsView(...)` above, which is BEFORE `markPageHostContent`
-        // ran — so `isPageHostContent` was still false when entry.ts evaluated
-        // its gate, and entry.ts skipped the dom-ready/did-navigate installs for
-        // this wc. Calling the same shared installers here makes attachment
-        // timing-independent for the hybrid path. (preload was already applied
-        // at construction above — it is construction-fixed.)
-        installMainWorldContentScriptInjection(view.webContents);
-        installRuntimeExternalCdpPolyfill(view.webContents);
-        console.log(`[hybrid-page-host] compat hooks attached to content wc ${view.webContents.id} (rtPreload=${rtPrefs ? 'yes' : 'no'})`);
-
-        // P1.3 — forward the content webContents's lifecycle events as the
-        // `page:*` pubsub topics + datastore side-effects the canvas path's
-        // page.js / guest-webContents handlers produce today. Attach BEFORE
-        // loadURL so did-start-loading / did-navigate / did-finish-load are
-        // not missed. (Action mediation — navbar→content — is DEFERRED to
-        // P1.4, where the shared overlay is the consumer.)
-        wireHybridContentEvents(view.webContents, baseWin.id, url, options);
-
-        // P1.3 — initial history insert, matching the canvas path's
-        // trackWindowLoad (ipc.ts ~2422). Skip internal peek:// URLs and
-        // session restores (skipTracking), exactly like the canvas path.
-        if (!url.startsWith('peek://') && !options.skipTracking) {
-          try {
-            const trackResult = trackWindowLoad(url, {
-              source: options.trackingSource || options.feature || 'window',
-              sourceId: options.trackingSourceId || '',
-              windowType: options.modal ? 'modal' : 'main',
-              title: options.title || '',
-            });
-            if (trackResult.created) {
-              publish('system', 'item:created', {
-                itemId: trackResult.itemId,
-                itemType: 'url',
-                content: url,
-                windowId: baseWin.id,
-              });
-            }
-          } catch (e) {
-            DEBUG && console.log('[hybrid-page-host] initial trackWindowLoad failed:', e);
-          }
-        }
-
-        // Minimal window registration: enough for the window to be placed,
-        // tracked for the display-watcher, and known to the window manager /
-        // izui coordinator. We SKIP the tile-broadcaster + page-host token
-        // registration (there is no chrome tile in P1.1) and the root-webContents
-        // event wiring (there is no root webContents).
-        const role = inferIzuiRole(options as Parameters<typeof inferIzuiRole>[0], {
-          isWebPage,
-          parentWindowId: isRealParent ? openerWindow!.id : null,
-        });
-        const windowParams: Record<string, unknown> = {
-          ...options,
-          address: url,
-          transient: isTransient,
-          parentWindowId: isRealParent ? openerWindow!.id : null,
-          role,
+          options,
+          source: msg.source,
           placement,
-          // Seed canvas state from the content rect so session save / reuse
-          // logic that reads these has sane values (matches the canvas path's
-          // intent; x/y/w/h are the content rect, which IS the window here).
-          x: contentX,
-          y: contentY,
-          width: contentW,
-          height: contentH,
-          maximized: options.maximized === true,
-          // Mark this as a hybrid page-host so later phases (and any
-          // downstream code) can distinguish it from a BrowserWindow page-host.
-          hybridPageHost: true,
-        };
-        // restoreBlank is a per-restore open-time directive (re-derived from
-        // the eager/deferred split on every restore), not persistent window
-        // state — the `...options` spread above would otherwise bake it into
-        // the registry params and from there into the NEXT session snapshot,
-        // making the window restore deferred forever regardless of its eager
-        // slot. (Belt-and-suspenders with the restore-side stripKeys entry in
-        // session.ts, which drops it from old snapshots.)
-        delete windowParams.restoreBlank;
-        registerWindow(baseWin.id, msg.source, windowParams);
-        trackWindow(baseWin as unknown as BrowserWindow);
-        getIzuiCoordinator().pushWindow(baseWin.id);
-
-        // Close-finalize tail. A hybrid page-host is a BaseWindow, so it never
-        // flows through main.ts's `app.on('browser-window-created') → win 'closed'`
-        // handler — meaning without this wiring a closed hybrid would never push
-        // onto the reopen stack (Cmd+Shift+T), never publish `window:removed`
-        // (close-awaits would hang), and never schedule the close-snapshot (an
-        // explicitly-closed window could reappear after a force-kill). Run the
-        // SAME shared `finalizeWindowClose` the BrowserWindow path runs.
-        //
-        // Capture the content-rect bounds/presentation in the pre-destroy
-        // 'close' event (BaseWindow emits 'close' before destruction); the hybrid
-        // registry entry — and the BaseWindow itself — are still alive then, so
-        // `getWindowPresentation` resolves the hybrid content rect. Reading
-        // bounds after destruction would be too late (the native handle is gone).
-        let hybridLastBounds: { x: number; y: number; width: number; height: number } | null = null;
-        let hybridLastPresentation: import('./window-presenter.js').WindowPresentation | null = null;
-
-        // Run the finalize tail exactly once, driven by the FIRST signal to fire.
-        //
-        // Electron 40 reality for a `BaseWindow` whose only child is a
-        // `WebContentsView`, closed via `baseWin.close()` (verified by runtime
-        // instrumentation): the host emits `'close'` and then tears down
-        // SYNCHRONOUSLY (`isDestroyed()` is already true when `close()` returns),
-        // but it never emits `'closed'`, AND the main-owned content
-        // `WebContents` is left ALIVE (orphaned) — so its `'destroyed'` never
-        // fires either. Gating the tail on `'closed'`/`'destroyed'` therefore
-        // left it dead: a closed hybrid never pushed to the reopen stack
-        // (Cmd+Shift+T did nothing) and never published `window:removed`
-        // (`closeWindowById` / window:removed awaits hung ~60s).
-        //
-        // The only reliable terminal signal is `'close'`, which fires
-        // pre-destruction while the registry entry and bounds are still readable
-        // — so we finalize from the `'close'` handler below (right after
-        // capturing bounds). The host `'close'` is never `preventDefault()`-ed
-        // for a hybrid (no beforeunload veto on the BaseWindow host), so it
-        // always means the window is really going away. The `'closed'` /
-        // content-wc `'destroyed'` bindings stay as once-guarded fallbacks for
-        // any teardown path that DOES emit them (e.g. app-quit, or the content
-        // wc being destroyed directly).
-        // Capture bounds/presentation from whichever live state is still
-        // available. Called from all three terminal signals below — safe to
-        // call more than once (it just overwrites hybridLastBounds/
-        // hybridLastPresentation), unlike runHybridFinalize which is
-        // idempotent-guarded.
-        const captureHybridClose = () => {
-          try {
-            if (!baseWin.isDestroyed()) {
-              hybridLastBounds = baseWin.getBounds();
-              hybridLastPresentation = getWindowPresentation(baseWin.id);
-            }
-          } catch {
-            // Ignore errors during shutdown
-          }
-        };
-
-        let hybridFinalized = false;
-        const runHybridFinalize = () => {
-          if (hybridFinalized) return;
-          hybridFinalized = true;
-          finalizeWindowClose(baseWin.id, {
-            bounds: hybridLastBounds,
-            presentation: hybridLastPresentation,
-          });
-
-          // P0 LEAK FIX (A1d). In Electron 40 a hybrid page-host closed via
-          // `baseWin.close()` tears the BaseWindow down SYNCHRONOUSLY but never
-          // emits `'closed'`, AND leaves the main-owned content `WebContents`
-          // (this WebContentsView's wc — a live renderer process) ORPHANED:
-          // `view.webContents.isDestroyed()` stays false and its `'destroyed'`
-          // never fires. A1c finalized only the lifecycle SIGNALS (reopen-stack
-          // / window:removed / snapshot) off the `'close'` event; it did NOT
-          // free those resources. Without this, every hybrid page close leaks a
-          // renderer process AND the registry entry (whose self-clean is wired
-          // to the `'closed'`/`'destroyed'` events that never fire) — a long
-          // session accumulates orphaned renderers, undercutting the cutover's
-          // perf justification.
-          //
-          // This runs ONLY on a REAL close: it's inside the once-guarded
-          // `runHybridFinalize`, which is driven by the host BaseWindow's
-          // `'close'` event. A keepLive HIDE never reaches here — hybrids have
-          // no keepLive path (tile-ipc.ts routes BrowserWindows through
-          // closeOrHideWindow, and only takes the `hybrid.baseWin.close()`
-          // branch for a BaseWindow, which `getLiveWindow` cannot resolve), and
-          // `baseWin.hide()` does not emit `'close'`. So hide keeps the wc alive
-          // for reuse, exactly as required; only a genuine close frees it.
-          try {
-            // `webContents.close()` is the documented teardown: with
-            // `waitForBeforeUnload` unspecified it does NOT honor a beforeunload
-            // veto and destroys the wc (firing `'destroyed'`). The host window
-            // is already gone, so a beforeunload prompt would be meaningless.
-            if (!view.webContents.isDestroyed()) {
-              view.webContents.close();
-            }
-          } catch (e) {
-            DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] content wc close on finalize failed:`, e);
-          }
-          // Drop the registry entry deterministically. Its self-clean hooks
-          // (`baseWin 'closed'` / content-wc `'destroyed'`) are unreliable on
-          // this path — `'closed'` never fires, and `'destroyed'` (if the
-          // `close()` above triggers it) would race the close handler. This is
-          // idempotent, so a later `'destroyed'` self-clean is a harmless no-op.
-          unregisterHybridWindow(baseWin.id);
-        };
-
-        baseWin.on('close', () => {
-          captureHybridClose();
-          runHybridFinalize();
+          contentX,
+          contentY,
+          contentW,
+          contentH,
+          isWebPage,
+          isTransient,
+          openerWindow,
+          isRealParent: !!isRealParent,
+          deferContentLoad,
+          rtPreloadApplied: !!rtPrefs,
         });
-        baseWin.once('closed', () => {
-          captureHybridClose();
-          runHybridFinalize();
-        });
-        // IMPORTANT: prepend, not append. The page-host close-UAF guard
-        // (windows.ts closeHostWindow → destroyGuestsThenClose) destroys this
-        // content webContents (registered as baseWin's "guest") BEFORE calling
-        // baseWin.close() — so on the NORMAL close path this 'destroyed' event
-        // fires FIRST, before baseWin's own 'close' event ever does. The hybrid
-        // registry's own self-clean (registerHybridWindow's `contentWC.once
-        // ('destroyed', cleanup)`) is ALSO bound to this same event, registered
-        // earlier (at registerHybridWindow(...) above) — cleanup deletes the
-        // registry entry, which getWindowPresentation depends on. Left as a
-        // plain `.once`, our capture would run AFTER cleanup and always see a
-        // vanished entry (bounds/maximized permanently lost on every close —
-        // confirmed by instrumentation: captured came back {bounds:null,
-        // presentation:null} on every reopen). `prependOnceListener` runs our
-        // capture BEFORE cleanup regardless of registration order, so the
-        // registry entry (and baseWin, not yet destroyed at this point) are
-        // still readable. (entry.url()/title() will read empty — the content
-        // wc IS gone by 'destroyed' — but finalizeWindowClose never reads
-        // presentation.address, only bounds/maximized/preMaxBounds, so that's
-        // harmless here.)
-        view.webContents.prependOnceListener('destroyed', () => {
-          captureHybridClose();
-          runHybridFinalize();
-        });
-
-        // Show it AT LOAD-START — before awaiting the content — so the window's
-        // bordered/rounded native frame + shadow + loading-background fill (set
-        // on the BaseWindow ctor above) appears the INSTANT the load begins, as
-        // the soonest possible confirmation of the click. Previously the show
-        // happened only AFTER `await loadURL`, so clicking to open a page showed
-        // NOTHING (no window, no border) until the page finished loading. The
-        // content WebContentsView paints over the loading fill as it loads,
-        // fading naturally to the real page — mirroring the canvas path, where
-        // `loadingLifecycle.startLoading()` adds the bordered `.loading` frame at
-        // load-start (page.js) instead of waiting for the content.
-        //
-        // The same single `showHybridHost` seam runs here as before — only its
-        // POSITION moved earlier. Non-headless ACTIVATES (app frontmost + key
-        // window) and makes the content WebContentsView the macOS first responder,
-        // so cmd+L and other key equivalents have a target (no NSBeep) and the
-        // host's focus drives the active-hybrid id that reveals the overlay
-        // (regressions 1b6eaf0b / 363e7cff / 8f7010a8). Focusing a not-yet-loaded
-        // (blank) content view is fine — the first-responder + active-hybrid-id
-        // wiring is what matters, not what the view currently paints. Headless
-        // stays inactive + opacity-0, so an agent/CI run never steals the user's
-        // focus (peek task 2b55f3af).
-        //
-        // EXCEPTION — `show:false` opens (session restore): the caller wants the
-        // host visible but NOT activated. Each restored hybrid window activating
-        // itself is the wrong-focus-on-restart regression — the last to show (or
-        // the race winner) ends up frontmost instead of the page the user left
-        // focused at quit. The restore loop re-activates ONLY the focused
-        // descriptor afterwards. Mirrors the canvas ctor `show: options.show !==
-        // false` above.
-        showHybridHost(baseWin, view.webContents, { inactive: options.show === false });
 
         // Load the content. Session-restore opens (skipTracking) fire-and-forget
         // like the canvas path; everything else awaits for "ready" semantics
