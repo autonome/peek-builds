@@ -98,10 +98,10 @@ test.describe('Session Restore Page Host @desktop', () => {
         bodyMaximized: document.body.classList.contains('maximized'),
         urlParams: Object.fromEntries(new URL(window.location.href).searchParams.entries()),
         // Resize handles stay reachable in maximized so the user can grab
-        // a corner/edge to exit-and-resize in one gesture (page-fsm
-        // RESIZE_START transition from MAXIMIZED). The pre-2026-05-05
-        // behavior set them display:none in maximized; this test now just
-        // confirms the handle exists in the DOM.
+        // a corner/edge to exit-and-resize in one gesture (RESIZE_START
+        // transition from MAXIMIZED). The pre-2026-05-05 behavior set them
+        // display:none in maximized; this test now just confirms the handle
+        // exists in the DOM.
         seHandleExists: !!document.getElementById('resize-se'),
       };
     });

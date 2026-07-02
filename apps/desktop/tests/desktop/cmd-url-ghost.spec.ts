@@ -327,7 +327,7 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
     // difference in the hybrid page-host OPEN path, not a canvas assertion.
     // This test asserts a `window:opened` event fires for the SEED_URL
     // (https://www.ziggurat-test.example.com/...). The hybrid open path
-    // (apps/desktop/main/ipc.ts, the `isHybridPageHost() && useCanvas` branch)
+    // (apps/desktop/main/ipc.ts, the `useCanvas` branch)
     // does `await view.webContents.loadURL(url)` BEFORE publishing
     // `window:opened`. The seeded host is an unresolvable *.example.com
     // subdomain (verified: no A record), so loadURL rejects with

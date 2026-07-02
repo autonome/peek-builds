@@ -1,7 +1,7 @@
 /**
  * Hybrid page-host registry (P1.4a).
  *
- * The hybrid page-host path (behind `PEEK_PAGEHOST_HYBRID=1`) builds a web
+ * The hybrid page-host path builds a web
  * page as an opaque, content-sized `BaseWindow` hosting a single
  * `WebContentsView` whose `webContents` is the site (see the HYBRID PAGE-HOST
  * EARLY BRANCH in `ipc.ts` and `docs/perf/page-host-hybrid-design.md` §2a).

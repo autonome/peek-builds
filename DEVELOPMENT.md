@@ -91,9 +91,9 @@ The summary below is just enough to orient you.
      any feature tile, but capability checks short-circuit.
    - **cmd panel** (`app/cmd/`) — interactive command bar; pure state
      machine in `app/cmd/state-machine.js`
-   - **page canvas** (`app/page/`) — fullscreen transparent canvas for
-     content windows (FROZEN architecture — see "Page View Canvas
-     Architecture" below)
+   - **page canvas** (`app/page/`) — shared chrome overlay for hybrid
+     page-host content windows (canvas removed 2026-07 — see "Page View
+     Canvas Architecture" below)
    - **HUD** (`app/hud/`) — always-on-top overlay
    - Settings UI at `peek://app/settings/settings.html`
    - The legacy `app/extensions/loader.js` and the consolidated

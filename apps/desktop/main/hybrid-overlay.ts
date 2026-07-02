@@ -1,7 +1,7 @@
 /**
  * Hybrid page-host shared chrome overlay (P1.4b-1).
  *
- * The hybrid page-host path (behind `PEEK_PAGEHOST_HYBRID=1`) opens each web
+ * The hybrid page-host path opens each web
  * page as an opaque, content-sized `BaseWindow` + single `WebContentsView`
  * (see the HYBRID PAGE-HOST EARLY BRANCH in `ipc.ts` and
  * `docs/perf/page-host-hybrid-design.md` §2b). In the canvas era, EACH page

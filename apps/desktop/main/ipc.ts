@@ -2288,7 +2288,7 @@ export function registerWindowHandlers(): void {
     }
 
     // ────────────────────────────────────────────────────────────────────
-    // HYBRID PAGE-HOST EARLY BRANCH (P1.1, behind PEEK_PAGEHOST_HYBRID=1)
+    // HYBRID PAGE-HOST EARLY BRANCH (P1.1)
     //
     // When the hybrid flag is on AND this is a canvas web page, build the
     // page as an *opaque, content-sized* `BaseWindow` hosting a single

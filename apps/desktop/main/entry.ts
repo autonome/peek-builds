@@ -250,8 +250,8 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
   },
   /**
    * Test-only: is `windowId` a live hybrid page-host (BaseWindow) window?
-   * Lets the session-restore-page-host spec skip its hybrid-focus assertions
-   * when run on the canvas path (PEEK_PAGEHOST_HYBRID off), the same way the
+   * Lets the session-restore-page-host spec skip its canvas-only chrome-param
+   * assertions now that hybrid is the only page-host, the same way the
    * hybrid-overlay suite skips on a missing bridge.
    */
   isHybridWindowForTest: (windowId: number): boolean => {
@@ -613,7 +613,7 @@ app.on('web-contents-created', (_event, contents) => {
 
   // Default-deny window-open chokepoint. Every top-level webContents and
   // every webview guest gets this fallback handler installed at creation
-  // time. Per-window code (ipc.ts:openPopupInPageHost wiring, chrome-
+  // time. Per-window code (ipc.ts:wireHybridContentEvents wiring, chrome-
   // extensions popup handler) calls setWindowOpenHandler AFTER this
   // listener runs and REPLACES the default — that's the intended
   // precedence. Anything that doesn't install its own handler fails

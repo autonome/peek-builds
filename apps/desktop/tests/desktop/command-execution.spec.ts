@@ -130,7 +130,7 @@ test.describe('Command Execution @desktop', () => {
     // difference in the hybrid page-host OPEN path, not a canvas assertion.
     // This test opens a fresh page window on an unresolvable *.example.com host
     // and asserts `openResult.success === true`. The hybrid open path
-    // (apps/desktop/main/ipc.ts, the `isHybridPageHost() && useCanvas` branch)
+    // (apps/desktop/main/ipc.ts, the `useCanvas` branch)
     // does `await view.webContents.loadURL(url)` BEFORE returning success, so a
     // DNS failure (ERR_NAME_NOT_RESOLVED — *.example.com subdomains have no A
     // record) throws into the catch and the open returns { success:false } with

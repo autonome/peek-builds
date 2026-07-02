@@ -2858,12 +2858,11 @@ export function registerTileIpcHandlers(): void {
 
       // Hybrid page-host windows are BaseWindows, so `getAllWindowRefs()`
       // (BrowserWindow.getAllWindows-backed) never enumerates them — without
-      // this the windows feature can't see them. ADDITIVE: the registry is
-      // empty when `PEEK_PAGEHOST_HYBRID` is off, so this loop runs zero times
-      // and the canvas-only list is byte-identical. Each hybrid is presented
-      // through the SAME `getWindowPresentation` path as a canvas page, so its
-      // entry shape (id/url/title/favicon/…) is indistinguishable from one. The
-      // `seen` guard is belt-and-suspenders against a future id overlap.
+      // this the windows feature can't see them. Each hybrid is presented
+      // through the SAME `getWindowPresentation` path as any other window, so
+      // its entry shape (id/url/title/favicon/…) is indistinguishable from
+      // one. The `seen` guard is belt-and-suspenders against a future id
+      // overlap.
       const seen = new Set(windows.map((w) => w.id));
       for (const h of getAllHybridWindows()) {
         if (seen.has(h.windowId)) continue;

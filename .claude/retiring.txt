@@ -12,16 +12,20 @@
 # time; a fresh build regenerates it from the now-clean source.
 
 isHybridPageHost
-# 3 stray comment refs NOT allow-listed — stale, not contract docs, real
-# follow-up cleanup: tests/desktop/hybrid-reuse.spec.ts:10,
-# tests/desktop/cmd-url-ghost.spec.ts:330, tests/desktop/command-execution.spec.ts:133
+# clean — zero refs (3 stray comment refs fixed in this pass, items 1-3)
 
 PEEK_PAGEHOST_HYBRID
 allow PEEK_PAGEHOST_HYBRID_PROBE  # distinct, still-live debug env var (main/page-host-compat.ts dom-ready/did-navigate attach-timing proof logging) — shares the text prefix, not the retired rollout flag
-# 6 stray comment refs NOT allow-listed — stale phase/rollout notes, real
-# follow-up cleanup: main/tile-ipc.ts:2862, main/ipc.ts:2291,
+# main/ and renderer/ clean — the 6 stray rollout-note refs fixed in this pass
+# (items 4-9: main/tile-ipc.ts:2862, main/ipc.ts:2291,
 # main/hybrid-page-host-registry.ts:4, main/entry.ts:254,
-# main/hybrid-overlay.ts:4, renderer/page/overlay.js:4
+# main/hybrid-overlay.ts:4, renderer/page/overlay.js:4).
+# NOT fixed this pass, NOT allow-listed: ~22 stray comment refs across 15
+# tests/desktop/*.spec.ts files (e.g. hybrid-overlay.spec.ts,
+# page-redirect.spec.ts, hybrid-close-leak.spec.ts, page-navbar.spec.ts,
+# cmd-url-ghost.spec.ts, command-execution.spec.ts,
+# session-restore-page-host.spec.ts) describing now-removed flag-gated test
+# conditions — out of scope for this pass, real follow-up cleanup.
 
 isCanvasPage
 # clean — zero refs
@@ -30,8 +34,7 @@ CANVAS_MARGIN
 # clean — zero refs (removed from main/hybrid-overlay.ts header comment in this pass, item 5)
 
 page-fsm
-# 1 stray comment ref NOT allow-listed — tests/desktop/session-restore-page-host.spec.ts:101,
-# real follow-up cleanup
+# clean — zero refs (1 stray comment ref fixed in this pass, item 10)
 
 hybridFlagOn
 # clean — zero refs (last shim removed from tests/desktop/page-load-failure.spec.ts in this pass, item 1)
@@ -49,10 +52,8 @@ openerFocus
 # clean — zero refs
 
 openPopupInPageHost
-# 1 stray comment ref NOT allow-listed — main/entry.ts:616 describes it as still
-# wiring setWindowOpenHandler in ipc.ts, but the function no longer exists under
-# this name (superseded by wireHybridContentEvents). Actively misleading, not a
-# historical mention worth keeping — real follow-up fix needed.
+# clean — zero refs (1 stray comment ref fixed in this pass, item 11 — main/entry.ts:616
+# now names wireHybridContentEvents, the function that actually wires setWindowOpenHandler)
 
 peek://app/page
 allow peek://app/page/overlay.html  # the LIVE hybrid overlay URL (main/hybrid-overlay.ts OVERLAY_URL const) — same namespace prefix, NOT retired; only the /index.html canvas shell under this prefix is gone

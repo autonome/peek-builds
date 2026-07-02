@@ -1,7 +1,7 @@
 /**
  * peek://app/page/overlay.js — the SHARED chrome overlay renderer (P1.4b-2).
  *
- * The hybrid page-host path (PEEK_PAGEHOST_HYBRID=1) renders each web page as a
+ * The hybrid page-host path renders each web page as a
  * chrome-less opaque BaseWindow + WebContentsView (main-owned content
  * webContents). There is exactly ONE chrome surface for the whole app — this
  * overlay — which retargets/follows over whichever hybrid content window is

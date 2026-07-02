@@ -7,7 +7,7 @@ import { createPerDescribeApp } from '../helpers/test-app';
  * A hybrid page-host is an opaque `BaseWindow`, which the canvas dedup checks
  * (`findWindowByUrl` / `findWindowByKey`, backed by `BrowserWindow.fromId`)
  * cannot resolve. So the window-open handler runs a PARALLEL dedup against the
- * hybrid registry (`findHybridWindowByUrl`) gated on `isHybridPageHost()`:
+ * hybrid registry (`findHybridWindowByUrl`):
  * a repeat open of the same URL must REUSE the existing hybrid window, not
  * spawn a duplicate — matching the canvas reuse semantics.
  *
