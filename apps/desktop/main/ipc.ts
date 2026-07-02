@@ -2793,7 +2793,18 @@ export function registerWindowHandlers(): void {
             DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] background loadURL failed:`, err);
           });
         } else {
-          await view.webContents.loadURL(url);
+          // A rejected loadURL (DNS failure, connection refused, etc.) must
+          // NOT fail the open() call — the window is already constructed and
+          // on screen, and wireHybridContentEvents (wired above) already
+          // turns the resulting did-fail-load into the load-error overlay.
+          // Letting the rejection propagate to the outer catch below would
+          // report success:false and drop the caller's only handle on an
+          // otherwise-live window (regression: window.app.window.open() on
+          // an unreachable URL — the exact case the load-error overlay
+          // exists to handle gracefully).
+          await view.webContents.loadURL(url).catch((err) => {
+            DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] initial loadURL failed (window still opens; load-error overlay handles it):`, err);
+          });
         }
 
         publish(getSystemAddress(), 'window:opened', {
