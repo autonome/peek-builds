@@ -1543,6 +1543,66 @@ test.describe('Hybrid Chrome Overlay navbar reveal @desktop', () => {
     expect(afterForeign).toEqual({ vis: true, focused: true });
   });
 
+  test('repeat Cmd+L (press 2) re-reveals + refocuses the navbar in the overlay renderer; idempotent, no toggle-close (regression peek a500e36f)', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    // Press 1 focuses the overlay window; after that the content WC is no longer
+    // first-responder, so subsequent Cmd+L keydowns are delivered to the overlay
+    // renderer's document instead of forwarding page:show-navbar. Model that press-2
+    // precondition directly: an active window with the navbar auto-hidden.
+    await makeActive('data:text/html,<body>repeat cmd-l target</body>');
+
+    // Deterministically reset to hidden (immediate, no 400ms grace) — a prior test
+    // in this shared-app describe leaves the navbar visible.
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.hideOverlayChrome();
+    });
+    const beforeState = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const s = await b.overlayChromeState();
+      return s ? s.navbarVisible : null;
+    });
+    expect(beforeState).toBe(false);
+
+    // Press 2: a Cmd+L keydown arriving at the overlay renderer's document (what
+    // really happens once the overlay holds focus). <peek-navbar>'s own bubble-phase
+    // handler only re-selects the URL and won't re-reveal a hidden navbar; the
+    // overlay's capture-phase handler must drive the full re-reveal.
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.dispatchOverlayCmdL();
+    });
+
+    // The navbar RE-reveals AND the URL input takes shadow-DOM focus (focusUrl is
+    // rAF-deferred → poll).
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? { vis: s.navbarVisible, focused: s.navbarInputFocused } : null;
+        }),
+      )
+      .toEqual({ vis: true, focused: true });
+
+    // Chosen behavior is reveal+focus ONLY — always open, never toggle-close. A
+    // further Cmd+L while already open+focused must STAY open+focused (idempotent).
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.dispatchOverlayCmdL();
+    });
+    await expect
+      .poll(async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as any).__peekHybridOverlayTest;
+          const s = await b.overlayChromeState();
+          return s ? { vis: s.navbarVisible, focused: s.navbarInputFocused } : null;
+        }),
+      )
+      .toEqual({ vis: true, focused: true });
+  });
+
   test('trigger-zone hover reliably reveals the navbar via the forwarded mousemove path', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 

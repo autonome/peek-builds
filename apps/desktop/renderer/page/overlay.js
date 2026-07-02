@@ -268,6 +268,26 @@ function relayoutChrome() {
 // renderer, so letting the component own its shortcuts is simplest here.)
 navbar.shortcuts = true;
 
+// Cmd+L while the OVERLAY window itself holds focus (the repeat-press case, peek
+// a500e36f). Press 1's Cmd+L is caught on the content WC's before-input-event and
+// forwarded as page:show-navbar, which focuses the overlay window — after that the
+// content WC is no longer first-responder, so subsequent Cmd+L keydowns land HERE
+// in the overlay renderer instead. <peek-navbar>'s own bubble-phase handler only
+// re-selects the URL input (focusUrl) and will NOT re-reveal a navbar that has
+// auto-hidden, so repeat Cmd+L looked dead. Drive the SAME full reveal path press 1
+// uses (showNavbar + capture + focusUrl) — browser convention: Cmd+L always
+// opens+focuses the address field, never closes it. Capture phase so we run before
+// <peek-navbar>'s bubble-phase keydown listener (registered without capture in
+// peek-navbar.js connectedCallback) and can suppress its now-redundant focusUrl.
+// Deterministic ordering — no timer / blur listener / polling.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'l' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    openNavbarFocused();
+  }
+}, true);
+
 // ── Active-window state ──────────────────────────────────────────────────────
 // The single windowId the overlay currently reflects/drives. null = no active
 // hybrid window (overlay cleared + hidden by main).

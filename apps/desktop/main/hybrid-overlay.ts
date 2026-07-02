@@ -1868,6 +1868,28 @@ function installTestBridge(): void {
         )
         .catch(() => false);
     },
+    /**
+     * Cmd+L repeat-press regression (peek a500e36f): dispatch a real Cmd+L keydown
+     * INTO the overlay renderer's document — the exact event that lands there on the
+     * SECOND+ Cmd+L press (once press 1 has focused the overlay window, the content
+     * WC is no longer first-responder, so its before-input stops firing and the
+     * keydown is delivered to the overlay renderer instead). Exercises the overlay's
+     * own capture-phase keydown handler → openNavbarFocused re-reveal path. Focus-free:
+     * pure executeJavaScript, no OS key event. Resolves true if dispatched.
+     */
+    dispatchOverlayCmdL(): Promise<boolean> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(false);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            document.dispatchEvent(new KeyboardEvent('keydown', {
+              key: 'l', metaKey: true, bubbles: true, cancelable: true, composed: true,
+            }));
+            return true;
+          })()`,
+        )
+        .catch(() => false);
+    },
     emitContentTopEdgeHover(id: number, dyBelowTop: number): boolean {
       const entry = getHybridWindow(id);
       if (!entry || entry.contentWC.isDestroyed() || entry.baseWin.isDestroyed()) return false;
