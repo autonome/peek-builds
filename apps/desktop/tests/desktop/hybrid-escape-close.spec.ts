@@ -21,9 +21,9 @@ import { createPerDescribeApp } from '../helpers/test-app';
  * the renderer asked first. ONE source of truth — no forked policy.
  *
  * Scope: this fixes the CLOSE behaviour that regressed (quick-view peeks/slides).
- * ESC→switcher routing for hybrid content/child-content pages is a separate,
- * still-deferred item (peek e8081cce / page-host-escape-switcher.spec is skipped
- * on hybrid) — NOT touched here.
+ * ESC→switcher routing for hybrid content/child-content pages is a separate
+ * concern, now covered by hybrid-page-escape-switcher.spec.ts (peek 9cc8b57e) —
+ * NOT touched here.
  *
  * Focus-free: a macOS-headless run never grants real OS focus, so we drive the
  * content WC's `before-input-event` (and the policy path) via the test bridge
@@ -182,7 +182,8 @@ test.describe('Hybrid page-host ESC close @desktop', () => {
   // Guard the redirect's boundary: when the ACTIVE hybrid window is itself a
   // content/workspace page (not a closeable transient), ESC must NOT be hijacked
   // toward it — it resolves against the host it landed on, preserving the
-  // deferred ESC→switcher routing for real content pages (peek e8081cce).
+  // ESC→switcher routing for real content pages (peek 9cc8b57e /
+  // hybrid-page-escape-switcher.spec.ts).
   test('ESC does NOT redirect toward a content active window (no force-close)', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
