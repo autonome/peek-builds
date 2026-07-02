@@ -22,7 +22,10 @@ scripts/spawn-isolated-clone.sh
 # Inside the clone (you're cd'd into ../mpeek-clone-<name>):
 PROFILE=clone-<name> yarn <script>
 
-# After work is done — rebase commits into main checkout's bookmark:
+# After work is done — rebase commits into main checkout's bookmark.
+# Run the MAIN CHECKOUT's copy (cd back to it first): the script derives
+# the main-checkout path from its own $0, so invoking the clone's copy
+# makes it look for the pool-* remote in the clone and fail.
 scripts/finalize-isolated-clone.sh
 
 # Only when fully done with the slot:
