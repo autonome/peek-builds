@@ -265,7 +265,16 @@
   } catch(_) {}
   console.log('[peek:runtime-external:bg] ipcRenderer source=', _ipcSource, 'available=', !!_ipc, 'electronGlobal=', typeof electron, 'globalThisElectron=', typeof (globalThis||{}).electron, 'require=', typeof require);
   if (!_ipc) {
-    console.error('[peek:runtime-external:bg] electron.ipcRenderer unavailable on all probed paths — cross-origin sendMessage will fail');
+    // NOT an error. At SW cold-wake Electron 40 may not have wired the native
+    // electron global into this fresh SW realm yet. ipcRenderer is used ONLY by
+    // the legacy direct-SW fallback dispatch (extensions with NO bridge window;
+    // see the direct-SW-path branch on the registration side of this file).
+    // Bridge-backed extensions (peek-auth-relay etc.) relay via the
+    // chrome.runtime bridge port and never touch ipcRenderer, so their
+    // cross-origin sendMessage is unaffected. Warn (not error) so this benign
+    // init-race stops surfacing as an Electron RuntimeError on a routine no-op.
+    // See peek 42fff0a5.
+    console.warn('[peek:runtime-external:bg] electron.ipcRenderer not resolved at SW init — legacy direct-SW fallback path unavailable (bridge-port relay unaffected)');
   }
 
   var _externalListeners = [];
