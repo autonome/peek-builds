@@ -754,6 +754,18 @@ function publishBounds() {
   });
 }
 
+// Signal main to paint the closed-hand cursor over WEB CONTENT during the
+// hold-to-drag gesture. The overlay is never the macOS first responder, so its
+// own `document.body.style.cursor` (set alongside these calls) renders only over
+// the chrome region, NOT over the content WebContentsView. Main owns the content
+// WC and paints the cursor there via its insertCSS reconciler (ipc.ts
+// wireHybridContentEvents), resolving the target host from `windowId`. `state` is
+// 'grab' (hold fired) / 'grabbing' (dragging) / null (released).
+function publishDragCursor(state) {
+  if (activeWindowId == null) return;
+  api.publish('page:drag-cursor', { windowId: activeWindowId, state });
+}
+
 // --- Main-driven resize sync ---
 // Main owns edge/corner resize (it drives baseWin.setBounds off the content WC's
 // input-event stream). Two signals keep the overlay coherent with that:
@@ -923,6 +935,7 @@ const holdDrag = createHoldDrag({
     // (and the page below stops text-selecting). Restored on drag end.
     setCapture(true);
     document.body.style.cursor = 'grabbing';
+    publishDragCursor('grabbing'); // paint 'grabbing' over web content too
   },
   onDragMove: (screenX, screenY) => {
     if (!activeBounds) return;
@@ -932,25 +945,82 @@ const holdDrag = createHoldDrag({
   },
   onDragEnd: () => {
     document.body.style.cursor = '';
+    // A real drag just ended: swallow the click that this button-up would
+    // otherwise synthesize, so a drag that STARTED on an interactive surface
+    // (URL bar, widget, nav button) doesn't fire an unwanted click on release.
+    // (onDragEnd only runs when a drag actually happened — see the FSM's onUp.)
+    suppressNextClick = true;
     // Release capture; the reveal-loop mousemove re-captures if the pointer is
     // still over chrome, else the content window stays interactive.
     setCapture(false);
   },
-  setGrabCursor: () => { document.body.style.cursor = 'grab'; },
-  clearCursor: () => { document.body.style.cursor = ''; },
+  setGrabCursor: () => { document.body.style.cursor = 'grab'; publishDragCursor('grab'); },
+  clearCursor: () => { document.body.style.cursor = ''; publishDragCursor(null); },
   setSchedule: (fn, ms) => setTimeout(fn, ms),
   clearSchedule: (t) => clearTimeout(t),
 });
 
-// CHROME region: the overlay renderer natively receives these. mousedown on the
-// navbar BACKGROUND reaches us (the peek-navbar component stopPropagations its
-// own button / URL-field mousedowns), and resize handles call stopPropagation,
-// so a press here is on draggable chrome. Panel card drags move > tolerance
-// before the threshold → candidacy cancels → the card drag proceeds.
-navbar.addEventListener('mousedown', (e) => {
+// CHROME region: the overlay renderer natively receives these. The hold-to-drag
+// gesture is Peek-wide — it starts on ALL overlay chrome surfaces (navbar
+// background, address bar, nav buttons, widgets, panels), not just the navbar
+// background. So the START binding is a DOCUMENT capture-phase mousedown rather
+// than a navbar-scoped one.
+//
+// Capture phase is REQUIRED: peek-navbar is a shadow-DOM Lit component whose URL
+// input `@mousedown` handler calls stopPropagation (to protect caret placement),
+// and #widget-container is a SIBLING of <peek-navbar>. A navbar-scoped bubble
+// listener would never see either. A document capture-phase listener runs before
+// any shadow-internal stopPropagation can block it, so the press is always seen.
+function shouldBlockOverlayDrag(e) {
+  // Walk composedPath (innermost → outermost). At the document level e.target is
+  // retargeted to the <peek-navbar> host, so composedPath is the only way to see
+  // the REAL innermost element INTO the shadow DOM (URL input, buttons, widgets).
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+  for (const node of path) {
+    if (!node || node.nodeType !== 1) continue; // elements only (skip document/window)
+    const el = node;
+    // Explicit opt-out marker (mirrors tile-preload shouldBlockDrag) — but NOT the
+    // <body>'s own data-no-drag: the overlay body carries it to opt OUT of
+    // tile-preload's whole-body window drag (tile-preload initDrag bails when
+    // body has data-no-drag), NOT to disable the overlay's own hold-drag. Honor
+    // the marker only on a specific control/widget BELOW body/html.
+    if (typeof el.closest === 'function') {
+      const nd = el.closest('[data-no-drag]');
+      if (nd && nd !== document.body && nd !== document.documentElement) return true;
+    }
+    const tag = (el.tagName || '').toLowerCase();
+    // Shadow-aware "active element": check within the element's OWN root, since a
+    // focused element inside a shadow tree is `shadowRoot.activeElement`, not
+    // `document.activeElement`. Only block an ACTIVELY-focused text field: this
+    // lets the FIRST press on the (unfocused) URL bar start hold-drag candidacy
+    // (gap 2) while a press WHILE editing the URL doesn't hijack caret placement.
+    // At capture-phase mousedown native focus hasn't moved yet, so an unfocused
+    // URL bar reads as not-active → candidacy starts; a quick release still
+    // focuses+edits it (no drag fired), only a still-hold-then-move drags.
+    const root = typeof el.getRootNode === 'function' ? el.getRootNode() : null;
+    const activeInRoot = !!root && root.activeElement === el;
+    if ((tag === 'input' || tag === 'textarea') && activeInRoot) return true;
+    if (el.isContentEditable && activeInRoot) return true;
+  }
+  return false;
+}
+document.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
+  if (shouldBlockOverlayDrag(e)) return;
   holdDrag.onDown(e.screenX, e.screenY);
-});
+}, true);
+// A real drag can now start on interactive chrome (URL bar, widgets, nav
+// buttons). If it ends over one of those, swallow the click the button-up
+// synthesizes so the drag doesn't also trigger the element's action. Set only
+// on a genuine drag end (onDragEnd), mirrored on tile-preload's onClickCapture.
+let suppressNextClick = false;
+document.addEventListener('click', (e) => {
+  if (suppressNextClick) {
+    suppressNextClick = false;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  }
+}, true);
 // Document-level move/up drive the drag once started, regardless of origin
 // (mirrors page.js). The reveal-loop mousemove handler above is guarded to not
 // fight capture while dragging (see that handler).
@@ -993,7 +1063,9 @@ api.subscribe('page-overlay:content-pointer', (msg) => {
 // path: the bridge builds an FSM with injected fake schedule/effects and asserts
 // transitions, and reads the live instance's state after synthetic events.
 if (typeof globalThis !== 'undefined') {
-  globalThis.__peekHoldDragTest = { createHoldDrag, holdDrag };
+  globalThis.__peekHoldDragTest = {
+    createHoldDrag, holdDrag, shouldBlockOverlayDrag, publishDragCursor,
+  };
 }
 
 // --- Maximize / restore (navbar double-click, mirrors page.js toggleMaximize) ---

@@ -2089,6 +2089,66 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
     expect(after).toEqual(before);
   });
 
+  test('hold-to-drag START guard: starts on unfocused URL bar + widgets, blocked on active inputs + [data-no-drag] (shadow-aware, pure)', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    // Ensure the overlay renderer exists + is ready (shouldBlockOverlayDrag lives there).
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 100, y: 100, width: 600, height: 400 });
+      b.setActive(w);
+    });
+    await waitOverlayReady();
+
+    const r = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.overlayDragBlockCases();
+    });
+    expect(r).not.toBeNull();
+    // false ⇒ hold-drag candidacy STARTS; true ⇒ BLOCKED. Gap 2: the FIRST press
+    // on the (unfocused) URL bar and on a widget must START; a press while an
+    // input is actively focused, or on a [data-no-drag] control, must be BLOCKED.
+    expect(r).toEqual({
+      urlInputUnfocused: false,
+      urlInputFocused: true,
+      widget: false,
+      dataNoDrag: true,
+      focusedTextarea: true,
+      focusedEditable: true,
+    });
+  });
+
+  test('hold-to-drag cursor signal: hold publishes grab, drag publishes grabbing, release publishes null (gap 1)', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    const start = { x: 220, y: 240, width: 520, height: 400 };
+    const id = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow((arg as any).start);
+      await b.loadFakeContent(w, 'data:text/html,<body>cursor signal target</body>');
+      b.setActive(w);
+      return w;
+    }, { start });
+    await waitOverlayReady();
+    await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.revealOverlayChrome();
+    });
+
+    // Press-and-HOLD past the threshold, then move → the LIVE gesture must publish
+    // grab (hold fired) → grabbing (drag started) → null (released), each tagged
+    // with the active host id. This is the signal main paints over web content.
+    const r = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.holdDragCursorSignals(120, 80);
+    });
+    expect(r).not.toBeNull();
+    const res = r as { ran: boolean; signals: Array<{ windowId: number; state: string | null }> };
+    expect(res.ran).toBe(true);
+    expect(res.signals.map((s) => s.state)).toEqual(['grab', 'grabbing', null]);
+    for (const s of res.signals) expect(s.windowId).toBe(id);
+  });
+
   test('R3: Cmd+L focuses the overlay window for the active window only, never when backgrounded', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 

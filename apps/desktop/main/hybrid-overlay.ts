@@ -2134,6 +2134,115 @@ function installTestBridge(): void {
         .catch(() => null);
     },
     /**
+     * Start-surface guard coverage (gap 2), PURE + focus-free. Exercises the
+     * overlay's exported `shouldBlockOverlayDrag` — which walks `composedPath`
+     * (shadow-aware) and blocks only actively-focused inputs / [data-no-drag]
+     * sub-elements — with synthetic element descriptors carrying a fake
+     * composedPath. No dependency on real DOM focus (unreliable in an occluded
+     * headless overlay); the composedPath SHADOW-piercing itself is provided by
+     * the browser at the real call site, so it needs no runtime test. Resolves a
+     * map of {case → wouldBlock}: false means hold-drag STARTS, true means BLOCKED.
+     */
+    overlayDragBlockCases(): Promise<unknown> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(null);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(() => {
+            const t = globalThis.__peekHoldDragTest;
+            if (!t || typeof t.shouldBlockOverlayDrag !== 'function') return null;
+            const block = t.shouldBlockOverlayDrag;
+            const mkEl = (o) => {
+              const el = {
+                nodeType: 1,
+                tagName: (o.tag || 'div').toUpperCase(),
+                isContentEditable: !!o.contentEditable,
+                closest: (sel) => (o.noDrag && sel === '[data-no-drag]') ? el : null,
+                getRootNode: () => ({ activeElement: o.active ? el : null }),
+              };
+              return el;
+            };
+            const evt = (el) => ({ composedPath: () => [el] });
+            const run = (o) => block(evt(mkEl(o)));
+            return {
+              urlInputUnfocused: run({ tag: 'input', active: false }),
+              urlInputFocused: run({ tag: 'input', active: true }),
+              widget: run({ tag: 'div' }),
+              dataNoDrag: run({ tag: 'div', noDrag: true }),
+              focusedTextarea: run({ tag: 'textarea', active: true }),
+              focusedEditable: run({ tag: 'div', active: true, contentEditable: true }),
+            };
+          })()`,
+        )
+        .catch(() => null);
+    },
+    /**
+     * Cursor-signal coverage (gap 1). Drives the LIVE hold-to-drag gesture (real
+     * FSM + real effects) through the SAME poll-for-`ready` path holdDragNavbar
+     * uses, while a main-side subscription (unique source, so it coexists with the
+     * production page:drag-cursor handler) records every published
+     * `page:drag-cursor {windowId, state}`. A genuine hold→drag→release must emit
+     * exactly ['grab' (hold fired), 'grabbing' (drag started), null (released)],
+     * each tagged with the active host id. Resolves { ran, signals }. Determinism:
+     * polls the live FSM for `ready` (not a fixed sleep), then polls the recorded
+     * array until the terminal null arrives over the async renderer→main pubsub.
+     */
+    holdDragCursorSignals(dxScreen: number, dyScreen: number): Promise<unknown> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(null);
+      const src = 'test-dragcursor-' + Date.now();
+      const rec: Array<{ windowId: number; state: string | null }> = [];
+      subscribe(src, 'page:drag-cursor', (raw) => {
+        const m = raw as { windowId?: number; state?: string | null };
+        if (typeof m.windowId === 'number') {
+          rec.push({ windowId: m.windowId, state: m.state ?? null });
+        }
+      });
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(async () => {
+            const nb = document.getElementById('navbar');
+            const t = globalThis.__peekHoldDragTest;
+            if (!nb || !t) return false;
+            const startX = 500, startY = 30;
+            nb.dispatchEvent(new MouseEvent('mousedown', {
+              button: 0, buttons: 1, screenX: startX, screenY: startY, bubbles: true,
+            }));
+            const deadline = Date.now() + 8000;
+            let held = false;
+            while (Date.now() < deadline) {
+              if (t.holdDrag._state().ready) { held = true; break; }
+              await new Promise((r) => setTimeout(r, 25));
+            }
+            if (!held) return false;
+            document.dispatchEvent(new MouseEvent('mousemove', {
+              buttons: 1, screenX: startX + 1, screenY: startY + 1, bubbles: true,
+            }));
+            document.dispatchEvent(new MouseEvent('mousemove', {
+              buttons: 1,
+              screenX: startX + ${Math.round(dxScreen)},
+              screenY: startY + ${Math.round(dyScreen)},
+              bubbles: true,
+            }));
+            document.dispatchEvent(new MouseEvent('mouseup', {
+              button: 0, buttons: 0, bubbles: true,
+            }));
+            return true;
+          })()`,
+        )
+        .then(async (ran) => {
+          const deadline = Date.now() + 3000;
+          while (Date.now() < deadline) {
+            if (rec.some((r) => r.state === null)) break;
+            await new Promise((r) => setTimeout(r, 25));
+          }
+          unsubscribe(src, 'page:drag-cursor');
+          return { ran, signals: rec };
+        })
+        .catch(() => {
+          unsubscribe(src, 'page:drag-cursor');
+          return null;
+        });
+    },
+    /**
      * Publish an arbitrary `page:*` topic on the system address (the same path
      * the overlay renderer / HUD use). Lets the navbar→content + content→chrome
      * mediation be exercised from a test without resolving the pubsub module by
