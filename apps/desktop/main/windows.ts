@@ -30,6 +30,8 @@ import { resolveHybridEscapeTarget, resolveCloseTargetId } from './izui-roles.js
 
 import {
   getIzuiCoordinator,
+  escPolicy,
+  escUnhandledPolicy,
 } from './izui-state.js';
 
 import { publish } from './pubsub.js';
@@ -242,50 +244,6 @@ export function askWebContentsToHandleEscape(
       // renderer to answer, so let the timeout fire { handled: false }.
     }
   });
-}
-
-/**
- * ESC policy: given session state and window role, determine what to do.
- * Pure function — no side effects.
- */
-export function escPolicy(sessionState: string, role: string): 'close' | 'close-and-restore' | 'nothing' {
-  // These roles always close regardless of session state
-  if (['quick-view', 'palette', 'utility'].includes(role)) return 'close';
-  if (role === 'overlay') return 'close-and-restore';
-  // Workspace windows are root/persistent extension windows (groups, search, etc.).
-  // They must NEVER close on ESC regardless of session state — the renderer handles
-  // internal navigation and the window persists.
-  if (role === 'workspace') return 'nothing';
-  // content AND child-content both follow the same rule: ESC closes the window
-  // ONLY when the session is `transient` (app woken without OS focus — ESC
-  // returns the user to the previous app). When the app is OS-focused
-  // (session active/idle), ESC must NEVER close a real content window;
-  // escUnhandledPolicy then opens the Windows switcher. Feature-internal
-  // closes (groups → group → page → esc, space mode, etc.) are renderer-driven
-  // — the renderer returns { handled: true } before policy is ever consulted.
-  if (sessionState === 'transient') return 'close';
-  return 'nothing';
-}
-
-/**
- * ESC unhandled policy: second-phase policy consulted ONLY after the renderer
- * returns { handled: false } AND escPolicy() returns 'nothing'.
- *
- * Determines what to do when ESC has nowhere left to navigate.
- * Pure function — no side effects.
- */
-export function escUnhandledPolicy(sessionState: string, role: string): 'open-switcher' | 'nothing' {
-  // Transient sessions should NOT trigger switcher — user expects ESC to
-  // return to previous app, not open more UI.
-  // Overlay sessions handle their own ESC (close-and-restore).
-  if (sessionState === 'transient' || sessionState === 'overlay') return 'nothing';
-  // In active or idle sessions, workspace, content, and child-content windows
-  // open the switcher when ESC has nowhere left to navigate.
-  // Note: content/child-content only reach here when the renderer's onEscape
-  // returned { handled: false } AND escPolicy returned 'nothing', so page-level
-  // ESC handling (spaces navigation, panel closing, etc.) takes priority.
-  if (['workspace', 'content', 'child-content'].includes(role)) return 'open-switcher';
-  return 'nothing';
 }
 
 /**

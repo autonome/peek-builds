@@ -62,8 +62,7 @@ function createMockWindowProvider(windows: MockWindow[]): WindowProvider {
 // Import will be done after build
 let izuiState: typeof import('./izui-state.js');
 
-// Import escPolicy and escUnhandledPolicy from the shared module (pure functions, no Electron deps)
-// At runtime (from apps/desktop/dist/main/) the path is ../../renderer/lib/izui-state.js
+// escPolicy and escUnhandledPolicy are pure functions exported by izui-state.ts
 let escPolicy: (sessionState: string, role: string) => 'close' | 'close-and-restore' | 'nothing';
 let escUnhandledPolicy: (sessionState: string, role: string) => 'open-switcher' | 'nothing';
 
@@ -73,11 +72,8 @@ describe('IZUI State Coordinator Tests', () => {
   before(async () => {
     // Dynamic import of the compiled module
     izuiState = await import('./izui-state.js');
-    // Import escPolicy from shared module (pure function, no Electron deps)
-    // @ts-expect-error — shared JS module in apps/desktop/renderer/lib, no .d.ts in tsconfig rootDir
-    const shared = await import('../../renderer/lib/izui-state.js');
-    escPolicy = shared.escPolicy;
-    escUnhandledPolicy = shared.escUnhandledPolicy;
+    escPolicy = izuiState.escPolicy;
+    escUnhandledPolicy = izuiState.escUnhandledPolicy;
   });
 
   beforeEach(() => {

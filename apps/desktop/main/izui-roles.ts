@@ -110,10 +110,10 @@ export function windowSelfClosesOnBlur(options: { modal?: boolean }): boolean {
  * role set `escPolicy()` resolves to a close (not 'nothing') no matter what the
  * IZUI session state is. Kept here, next to the role taxonomy, so the
  * ESC-target resolver below can reason about "is the active hybrid window one
- * that ESC should close?" without importing the Electron-bound `escPolicy`.
+ * that ESC should close?" without importing `escPolicy`.
  *
- * MUST stay in sync with `escPolicy()` in windows.ts (the single policy source
- * of truth): quick-view / palette / utility → 'close'; overlay →
+ * MUST stay in sync with `escPolicy()` in izui-state.ts (the single policy
+ * source of truth): quick-view / palette / utility → 'close'; overlay →
  * 'close-and-restore'. content / child-content / workspace are session-
  * dependent or never-close, so they are deliberately EXCLUDED.
  */
