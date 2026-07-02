@@ -118,7 +118,7 @@ async function getWebviewUrl(pageWindow: Page): Promise<string | null> {
 // ============================================================================
 
 test.describe('Download Navigation @desktop', () => {
-  // ── Hybrid page-host caveat (PEEK_PAGEHOST_HYBRID=1) ──────────────────────
+  // ── Hybrid page-host caveat ───────────────────────────────────────────────
   // These tests assert against the canvas `<webview>` page host (`#content`
   // webview, `.loaded` class, `webview.getURL()/executeJavaScript`). Under the
   // hybrid flag the page content is an OPAQUE WebContentsView in a BaseWindow,

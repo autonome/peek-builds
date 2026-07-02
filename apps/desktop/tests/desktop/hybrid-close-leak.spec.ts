@@ -17,11 +17,11 @@
  * pins the OUTCOME: after a hybrid page closes, the content wc is destroyed and
  * the registry no longer holds the window.
  *
- * Hybrid-only — skips cleanly on the canvas path (PEEK_PAGEHOST_HYBRID off),
+ * Hybrid-only — skips cleanly if the window is not a live hybrid page-host,
  * the same way the hybrid-overlay / focus-order specs do.
  *
- * Run with (flag ON):
- *   PEEK_PAGEHOST_HYBRID=1 yarn test:grep "Hybrid Close Leak"
+ * Run with:
+ *   yarn test:grep "Hybrid Close Leak"
  */
 
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';

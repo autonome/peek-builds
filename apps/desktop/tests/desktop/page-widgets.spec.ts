@@ -7,7 +7,7 @@
  * Migrated off the canvas `<webview>` page host. On the canvas path the widget
  * host (`window.__pageWidgetHost`) and its `#widget-container` lived inside each
  * page's CHROME renderer (page.js), and the spec published widget topics from
- * that same page window. Under PEEK_PAGEHOST_HYBRID=1 there is NO per-page
+ * that same page window. On the hybrid page-host there is NO per-page
  * chrome: the widget host lives in the SHARED overlay renderer (overlay.js
  * creates `__pageWidgetHost` via createPageWidgetHost), and the page content is
  * an opaque WebContentsView with no peek `api`. So these tests now drive the

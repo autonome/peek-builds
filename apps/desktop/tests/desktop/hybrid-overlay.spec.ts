@@ -7,13 +7,12 @@ import { createPerDescribeApp } from '../helpers/test-app';
  *
  * All active-window changes are driven SYNTHETICALLY through the E2E test
  * bridge (`globalThis.__peekHybridOverlayTest`, installed by hybrid-overlay.ts
- * under E2E_TEST + PEEK_PAGEHOST_HYBRID) — never via real OS focus, so this
+ * under E2E_TEST) — never via real OS focus, so this
  * suite cannot steal the user's window focus. We create real (but headless,
  * opacity-0, never-shown) BaseWindow hosts, register them as hybrid windows,
  * then drive the overlay's retarget/follow logic and read the overlay's bounds.
  *
- * Requires the launch env to carry PEEK_PAGEHOST_HYBRID=1; this describe block
- * skips itself if the bridge isn't present (flag off).
+ * This describe block skips itself if the bridge isn't present.
  */
 test.describe('Hybrid Chrome Overlay (P1.4b-1) @desktop', () => {
   let app: DesktopApp;

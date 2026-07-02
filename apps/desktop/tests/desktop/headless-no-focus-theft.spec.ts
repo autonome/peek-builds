@@ -103,7 +103,7 @@ test.describe('headless no focus theft @desktop', () => {
 
     // Assert: the new page-host window itself must report isFocused() === false.
     // On the canvas path it's a BrowserWindow (`fromId`); on the hybrid path
-    // (PEEK_PAGEHOST_HYBRID=1) it's a BaseWindow invisible to `fromId` — its
+    // it's a BaseWindow invisible to `fromId` — its
     // focus state lives in the hybrid registry, read via the `hostVisibility`
     // bridge. Without this branch the hybrid assertion would pass vacuously
     // (fromId(null).isFocused() defaults to false), never exercising the host.

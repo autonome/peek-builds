@@ -139,7 +139,7 @@ test.describe('Boot Window Inventory @desktop', () => {
   }
 
   test('fixed background inventory vs per-page-host cost', async () => {
-    // CANVAS-ONLY structural measurement — skipped under PEEK_PAGEHOST_HYBRID=1.
+    // CANVAS-ONLY structural measurement — skipped now that hybrid is the only page-host.
     // The PER-PAGE-HOST half of this test asserts the canvas page-host SHAPE:
     // each opened page-host is a window whose URL contains `peek://app/page/`
     // (the canvas shell) PLUS exactly one embedded `<webview>` webContents

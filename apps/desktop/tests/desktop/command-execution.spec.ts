@@ -126,7 +126,7 @@ test.describe('Command Execution @desktop', () => {
   });
 
   test('tag command creates item if none exists', async () => {
-    // BLOCKED under PEEK_PAGEHOST_HYBRID=1 by a real product-behavior
+    // BLOCKED on the hybrid page-host by a real product-behavior
     // difference in the hybrid page-host OPEN path, not a canvas assertion.
     // This test opens a fresh page window on an unresolvable *.example.com host
     // and asserts `openResult.success === true`. The hybrid open path
@@ -301,7 +301,7 @@ test.describe('Command Execution @desktop', () => {
   });
 
   test('tags page widget updates dynamically when tag is added via command', async () => {
-    // BLOCKED under PEEK_PAGEHOST_HYBRID=1 by TWO distinct hybrid product
+    // BLOCKED on the hybrid page-host by TWO distinct hybrid product
     // differences, neither a canvas-DOM re-point:
     //   (1) The OPEN regression — this test opens a fresh page window on an
     //       unresolvable *.example.com host and asserts openResult.success; the

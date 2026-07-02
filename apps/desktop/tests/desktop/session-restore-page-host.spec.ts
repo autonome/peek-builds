@@ -553,7 +553,7 @@ test.describe('Session Restore Page Host @desktop', () => {
 
   // ── Focus-order regression (hybrid page-host) ──────────────────────────
   //
-  // User-observed bug (PEEK_PAGEHOST_HYBRID=1): open a Settings window, then
+  // User-observed bug (hybrid page-host): open a Settings window, then
   // open a web page (a hybrid page-host) so the WEB PAGE is the frontmost /
   // focused window. Quit. Relaunch. EXPECTED: the web page is restored as the
   // frontmost/focused window. ACTUAL (bug): Settings is in front; the web page
@@ -587,8 +587,8 @@ test.describe('Session Restore Page Host @desktop', () => {
     const { pageWindow, windowId: webWindowId } = await openPageHost(url);
     await pageWindow.waitForLoadState('domcontentloaded');
 
-    // Only meaningful on the hybrid path — skip cleanly on the canvas path
-    // (PEEK_PAGEHOST_HYBRID off) the same way the hybrid-overlay suite does.
+    // Defensive: skip cleanly if the opened window is not a live hybrid
+    // page-host, the same way the hybrid-overlay suite does.
     const isHybrid = await app.evaluateMain!(((_e: unknown, id: number) =>
       (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any, webWindowId) as boolean;
     test.skip(!isHybrid, 'hybrid flag off — focus-order bug is hybrid-only');

@@ -215,7 +215,7 @@ test.describe('Hybrid page-host ESC close @desktop', () => {
   // handleEscapeForWindow) and the new hybrid path (handleHybridEscape) consult
   // via the same handleEscapeForWindowId core. So the quick-view → close
   // behaviour proven above for hybrid is byte-for-byte the canvas behaviour; the
-  // canvas runtime ESC-close itself is exercised by slides.spec / peeks.spec
-  // under PEEK_PAGEHOST_HYBRID=0. (No forked policy means there is nothing for a
+  // BrowserWindow runtime ESC-close itself is exercised by slides.spec /
+  // peeks.spec. (No forked policy means there is nothing for a
   // canvas-specific assertion here to diverge from.)
 });

@@ -9,7 +9,7 @@
  * This confirms the URL-matcher in entry.ts / getRuntimeExternalWebPrefsForUrl
  * does not false-positive on an unrelated origin.
  *
- * Migrated off the canvas `<webview>` page host. Under PEEK_PAGEHOST_HYBRID=1
+ * Migrated off the canvas `<webview>` page host. On the hybrid page-host
  * the page content is an OPAQUE WebContentsView whose runtime-external preload
  * is selected at CONSTRUCTION via `getRuntimeExternalWebPrefsForUrl(url,
  * 'hybrid')` — there is no in-window `#content` webview to read. We still drive

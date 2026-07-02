@@ -9,7 +9,7 @@
  *
  * Bug: post.nl (301→postnl.nl) shows blank page instead of following redirect.
  *
- * Migrated off the canvas `<webview>` page host. Under PEEK_PAGEHOST_HYBRID=1
+ * Migrated off the canvas `<webview>` page host. On the hybrid page-host
  * the page content lives in an OPAQUE content `BaseWindow` (no in-window
  * `#content` webview, no `.loading`/`.loaded` CSS classes). The redirect intent
  * is a CONTENT-WC behavior, so these assertions drive the hybrid content WC via
@@ -18,7 +18,7 @@
  * URL. The describe block skips itself when the hybrid bridge is absent.
  *
  * Run with:
- *   PEEK_PAGEHOST_HYBRID=1 BACKEND=electron yarn test:electron -- --grep "redirect"
+ *   BACKEND=electron yarn test:electron -- --grep "redirect"
  */
 
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';

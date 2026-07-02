@@ -66,7 +66,7 @@ test.describe('headless no permission flash @desktop', () => {
 
     // Resolve the page-host window's visibility + opacity through the right path.
     // On the canvas path the page-host is a BrowserWindow (`fromId`). On the
-    // hybrid path (PEEK_PAGEHOST_HYBRID=1) it's a BaseWindow + WebContentsView,
+    // hybrid path it's a BaseWindow + WebContentsView,
     // invisible to `BrowserWindow.fromId` — its visible/opacity state lives in
     // the hybrid registry, read via the `hostVisibility` bridge. Either way the
     // assertion is identical: the page-host (the permission-prompt vector) must

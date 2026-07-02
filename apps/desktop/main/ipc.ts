@@ -1349,9 +1349,9 @@ export function wireHybridContentEvents(
   // re-routed through the SAME window-open IPC pipeline (`invokeWindowOpen`,
   // the exported reference to windowOpenHandler — the identical mechanism the
   // chrome-extensions popup handler uses, ipc.ts/chrome-extensions.ts ~1090).
-  // Because the hybrid flag is on, that re-entry takes the HYBRID EARLY BRANCH
+  // That re-entry takes the HYBRID EARLY BRANCH
   // above and produces ANOTHER opaque BaseWindow + WebContentsView page-host
-  // rather than a canvas page or a raw popup. Non-http(s) URLs (about:blank,
+  // rather than a raw popup. Non-http(s) URLs (about:blank,
   // data:, etc.) are ALLOWED to open normally — byte-identical to the canvas
   // guest policy; we do NOT invent new policy here.
   contentWC.setWindowOpenHandler(({ url: popupUrl }) => {
@@ -2290,7 +2290,7 @@ export function registerWindowHandlers(): void {
     // ────────────────────────────────────────────────────────────────────
     // HYBRID PAGE-HOST EARLY BRANCH (P1.1)
     //
-    // When the hybrid flag is on AND this is a canvas web page, build the
+    // When this is a web page open (`useCanvas`), build the
     // page as an *opaque, content-sized* `BaseWindow` hosting a single
     // `WebContentsView` whose webContents loads the target URL directly —
     // NO `<webview>`, NO page.js chrome, NO per-page chrome renderer (R6:

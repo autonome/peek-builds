@@ -17,8 +17,7 @@ import { createPerDescribeApp } from '../helpers/test-app';
  * visible, focused, favicon, … }` entries the windows-feature renderer receives.
  *
  * Focus-free: real (headless, never-shown) BaseWindow hosts, registered as
- * hybrid windows; the suite skips itself when the hybrid bridge is absent
- * (PEEK_PAGEHOST_HYBRID off).
+ * hybrid windows; the suite skips itself when the hybrid bridge is absent.
  */
 test.describe('Windows feature: hybrid page-host enumeration @desktop', () => {
   let app: DesktopApp;

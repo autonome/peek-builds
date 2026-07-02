@@ -1,7 +1,7 @@
 /**
  * Page Host Navbar Tests (hybrid page-host).
  *
- * Migrated off the canvas `<webview>` page host. Under PEEK_PAGEHOST_HYBRID=1
+ * Migrated off the canvas `<webview>` page host. On the hybrid page-host
  * the navbar/chrome lives in a SEPARATE overlay window (not the page window's
  * own DOM), so these assertions drive the content/overlay pair through the
  * shared `openHybridPage` helper instead of poking `#navbar` inside the page.
@@ -22,7 +22,7 @@
  * block skips itself when the hybrid bridge is absent (flag off).
  *
  * Run with:
- *   PEEK_PAGEHOST_HYBRID=1 BACKEND=electron yarn test:electron
+ *   BACKEND=electron yarn test:electron
  */
 
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';

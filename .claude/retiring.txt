@@ -16,16 +16,14 @@ isHybridPageHost
 
 PEEK_PAGEHOST_HYBRID
 allow PEEK_PAGEHOST_HYBRID_PROBE  # distinct, still-live debug env var (main/page-host-compat.ts dom-ready/did-navigate attach-timing proof logging) — shares the text prefix, not the retired rollout flag
-# main/ and renderer/ clean — the 6 stray rollout-note refs fixed in this pass
-# (items 4-9: main/tile-ipc.ts:2862, main/ipc.ts:2291,
-# main/hybrid-page-host-registry.ts:4, main/entry.ts:254,
-# main/hybrid-overlay.ts:4, renderer/page/overlay.js:4).
-# NOT fixed this pass, NOT allow-listed: ~22 stray comment refs across 15
-# tests/desktop/*.spec.ts files (e.g. hybrid-overlay.spec.ts,
-# page-redirect.spec.ts, hybrid-close-leak.spec.ts, page-navbar.spec.ts,
-# cmd-url-ghost.spec.ts, command-execution.spec.ts,
-# session-restore-page-host.spec.ts) describing now-removed flag-gated test
-# conditions — out of scope for this pass, real follow-up cleanup.
+# clean — zero non-_PROBE refs. The 6 main/renderer rollout notes were fixed
+# in the first scrub pass (main/tile-ipc.ts, main/ipc.ts,
+# main/hybrid-page-host-registry.ts, main/entry.ts, main/hybrid-overlay.ts,
+# renderer/page/overlay.js); the remaining 22 test-comment refs across 15
+# tests/desktop/*.spec.ts files were fixed in the follow-up scrub pass.
+# Note: flag SHORTHAND without the literal string ("hybrid flag off" skip
+# reasons, "under the hybrid flag" comments, ~90+ lines across ~20 spec files)
+# still exists — it doesn't match this symbol and is a separate cleanup.
 
 isCanvasPage
 # clean — zero refs

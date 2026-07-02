@@ -323,7 +323,7 @@ test.describe('cmd URL ghost-text completion @desktop', () => {
   // (a known keepLive-reuse race). Keeping this test last means no later test
   // reopens the panel from CLOSING.
   test('pressing Enter on ghost suggestion opens the seeded URL', async () => {
-    // BLOCKED under PEEK_PAGEHOST_HYBRID=1 by a real product-behavior
+    // BLOCKED on the hybrid page-host by a real product-behavior
     // difference in the hybrid page-host OPEN path, not a canvas assertion.
     // This test asserts a `window:opened` event fires for the SEED_URL
     // (https://www.ziggurat-test.example.com/...). The hybrid open path
@@ -583,7 +583,7 @@ test.describe('cmd URL history Visited lane @desktop', () => {
   // Runs LAST: pressing Enter closes the panel into CLOSING (keepLive reuse race),
   // matching the ordering discipline of the ghost describe block above.
   test('ArrowDown to a Visited row then Enter opens that row url', async () => {
-    // BLOCKED under PEEK_PAGEHOST_HYBRID=1 for the same reason as the ghost
+    // BLOCKED on the hybrid page-host for the same reason as the ghost
     // "pressing Enter … opens the seeded URL" test above: it waits for a
     // `window:opened` event for an unresolvable *.example.com host
     // (quxfoo/quxbar.example.com). The hybrid open path awaits
