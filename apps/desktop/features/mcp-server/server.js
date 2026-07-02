@@ -144,6 +144,51 @@ function withScopeTag(tags) {
   return list;
 }
 
+// --- Item response shaping: content windowing + favicon strip ---
+//
+// `content` is one opaque nullable string and can be huge (page captures,
+// long notes). get_item / get_task_context window it so a default call can't
+// blow out the caller's context: the response carries the slice
+// [contentOffset, contentOffset + maxContentLength), plus `contentLength`
+// (full original length, whenever content is a string) and
+// `contentTruncated: true` whenever any of it was cut. `favicon` (possibly a
+// base64 data: URI) is stripped here at the MCP layer — db.js keeps selecting
+// it for its other callers.
+
+const DEFAULT_MAX_CONTENT_LENGTH = 4000;
+
+function normalizeContentWindow(args) {
+  let max = DEFAULT_MAX_CONTENT_LENGTH;
+  const rawMax = args?.maxContentLength;
+  if (typeof rawMax === 'number' && Number.isFinite(rawMax)) {
+    if (rawMax === -1) max = Infinity; // -1 = unlimited
+    else if (rawMax >= 0) max = Math.floor(rawMax);
+    // other negatives fall back to the default
+  }
+  let offset = 0;
+  const rawOffset = args?.contentOffset;
+  if (typeof rawOffset === 'number' && Number.isFinite(rawOffset) && rawOffset > 0) {
+    offset = Math.floor(rawOffset);
+  }
+  return { max, offset };
+}
+
+function shapeItemForResponse(item, args) {
+  const out = { ...item };
+  delete out.favicon;
+  if (typeof out.content !== 'string') return out; // null content: nothing to window
+  const { max, offset } = normalizeContentWindow(args);
+  const fullLength = out.content.length;
+  out.contentLength = fullLength;
+  const end = max === Infinity ? fullLength : Math.min(fullLength, offset + max);
+  if (offset > 0 || end < fullLength) {
+    // Offset past the end yields '' (slice clamps), still flagged truncated.
+    out.content = out.content.slice(offset, Math.max(offset, end));
+    out.contentTruncated = true;
+  }
+  return out;
+}
+
 // --- Tool definitions ---
 
 const TOOLS = [
@@ -178,11 +223,13 @@ const TOOLS = [
   },
   {
     name: 'get_item',
-    description: 'Get a single Peek item by ID, with all metadata, tags, and details. Accepts a unique ID PREFIX (git-short-hash style): a leading segment that uniquely identifies one item resolves to it. An ambiguous prefix errors with the candidate ids.',
+    description: 'Get a single Peek item by ID, with all metadata, tags, and details. Accepts a unique ID PREFIX (git-short-hash style): a leading segment that uniquely identifies one item resolves to it. An ambiguous prefix errors with the candidate ids. Long content is windowed: by default only the first 4000 characters of `content` are returned — the response carries `contentLength` (full length) and, when anything was cut, `contentTruncated: true`. Page through the rest with contentOffset, or pass maxContentLength: -1 for the whole thing.',
     inputSchema: {
       type: 'object',
       properties: {
         itemId: { type: 'string', description: 'Item ID, or a unique leading prefix of one (e.g. "14efdd97").' },
+        maxContentLength: { type: 'number', description: 'Max characters of content to return (default 4000). -1 for unlimited.' },
+        contentOffset: { type: 'number', description: 'Character offset into content (default 0). Combine with maxContentLength to page through long items.' },
       },
       required: ['itemId'],
     },
@@ -302,11 +349,13 @@ const TOOLS = [
   },
   {
     name: 'get_task_context',
-    description: 'Get a task item with full context: metadata, tags, and recent events/history.',
+    description: 'Get a task item with full context: metadata, tags, and recent events/history. Long content is windowed like get_item: by default only the first 4000 characters of `content` are returned, with `contentLength` (full length) and `contentTruncated: true` when anything was cut. Page with contentOffset, or pass maxContentLength: -1 for the whole thing.',
     inputSchema: {
       type: 'object',
       properties: {
         itemId: { type: 'string', description: 'Item ID' },
+        maxContentLength: { type: 'number', description: 'Max characters of content to return (default 4000). -1 for unlimited.' },
+        contentOffset: { type: 'number', description: 'Character offset into content (default 0). Combine with maxContentLength to page through long items.' },
       },
       required: ['itemId'],
     },
@@ -357,7 +406,7 @@ function handleToolCall(name, args) {
       const item = getItem(itemId);
       if (!item) return null;
       if (SCOPE && !inScope(item.tags)) return null;
-      return item;
+      return shapeItemForResponse(item, args);
     }
     case 'create_item': {
       validateWriteTags(args.tags);
@@ -425,7 +474,7 @@ function handleToolCall(name, args) {
       const ctx = getTaskContext(itemId);
       if (!ctx) return null;
       if (SCOPE && !inScope(ctx.tags)) return null;
-      return ctx;
+      return shapeItemForResponse(ctx, args);
     }
     default:
       throw new Error(`Unknown tool: ${name}`);
@@ -508,7 +557,9 @@ function handleMessage(msg) {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(result, null, 2),
+              // Compact on purpose — tool results are machine-read; pretty-
+              // printing only inflates the caller's context.
+              text: JSON.stringify(result),
             },
           ],
         });

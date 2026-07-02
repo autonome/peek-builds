@@ -98,6 +98,11 @@ function createTestDb() {
       ('item_1780235197219_0biqk0wf9', 'text', 'ts item', 'Timestamp Item', '', '{}', ${now - 4500}, ${now - 4500}, 0),
       ('item_1780235197219_zzzzzzzz9', 'text', 'ts twin', 'Timestamp Twin', '', '{}', ${now - 4600}, ${now - 4600}, 0);
 
+    -- Windowing fixtures: NULL content (createItem defaults content to '',
+    -- so this must be seeded), carrying a data: URI favicon for strip tests.
+    INSERT INTO items (id, type, content, title, domain, metadata, favicon, createdAt, updatedAt, deletedAt)
+    VALUES ('item-null-content', 'text', NULL, 'Fixture With Null Body', '', '{}', 'data:image/png;base64,iVBORw0KGgo=', ${now - 4700}, ${now - 4700}, 0);
+
     INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
     VALUES
       ('tag-1', 'todo', 1, ${now}, 10.0, ${now}, ${now}),
@@ -267,8 +272,9 @@ describe('MCP Server', () => {
     it('should return non-deleted items', async () => {
       const items = await client.callTool('list_items', { limit: 100 });
       assert.ok(Array.isArray(items));
-      // 3 original (item-1/2/3) + 3 prefix-resolution fixtures (uuid, ts, ts-twin).
-      assert.equal(items.length, 6);
+      // 3 original (item-1/2/3) + 3 prefix-resolution fixtures (uuid, ts,
+      // ts-twin) + 1 null-content windowing fixture.
+      assert.equal(items.length, 7);
       // Should not include deleted item
       const ids = items.map(i => i.id);
       assert.ok(!ids.includes('item-deleted'));
@@ -706,6 +712,135 @@ describe('MCP Server', () => {
       assert.equal(ctx.id, 'item-2');
       assert.ok(Array.isArray(ctx.events));
       assert.ok(ctx.events.length >= 1);
+    });
+  });
+
+  describe('content windowing + favicon stripping', () => {
+    // 9000 chars with position-distinct segments so offset slices are verifiable.
+    const LONG_CONTENT = 'a'.repeat(4000) + 'b'.repeat(4000) + 'c'.repeat(1000);
+    let longId;
+
+    before(async () => {
+      const created = await client.callTool('create_item', {
+        type: 'text', title: 'Long Body Fixture', content: LONG_CONTENT,
+      });
+      longId = created.id;
+    });
+
+    it('truncates content to 4000 chars by default, with contentLength + contentTruncated', async () => {
+      const item = await client.callTool('get_item', { itemId: longId });
+      assert.equal(item.content, 'a'.repeat(4000));
+      assert.equal(item.contentLength, 9000);
+      assert.equal(item.contentTruncated, true);
+    });
+
+    it('maxContentLength: -1 returns the whole content with no truncated flag', async () => {
+      const item = await client.callTool('get_item', { itemId: longId, maxContentLength: -1 });
+      assert.equal(item.content, LONG_CONTENT);
+      assert.equal(item.contentLength, 9000);
+      assert.ok(!('contentTruncated' in item));
+    });
+
+    it('pages through long content with contentOffset', async () => {
+      const page2 = await client.callTool('get_item', { itemId: longId, contentOffset: 4000 });
+      assert.equal(page2.content, 'b'.repeat(4000));
+      assert.equal(page2.contentTruncated, true);
+      assert.equal(page2.contentLength, 9000);
+      // Final page: shorter than the window, but still flagged truncated
+      // (offset > 0 means the caller did not receive the whole string).
+      const page3 = await client.callTool('get_item', { itemId: longId, contentOffset: 8000 });
+      assert.equal(page3.content, 'c'.repeat(1000));
+      assert.equal(page3.contentTruncated, true);
+      assert.equal(page3.contentLength, 9000);
+    });
+
+    it('honors an explicit maxContentLength window at an offset', async () => {
+      const item = await client.callTool('get_item', {
+        itemId: longId, contentOffset: 3998, maxContentLength: 4,
+      });
+      assert.equal(item.content, 'aabb');
+      assert.equal(item.contentTruncated, true);
+    });
+
+    it('offset past the end returns empty content, flagged truncated', async () => {
+      const item = await client.callTool('get_item', { itemId: longId, contentOffset: 20000 });
+      assert.equal(item.content, '');
+      assert.equal(item.contentTruncated, true);
+      assert.equal(item.contentLength, 9000);
+    });
+
+    it('negative (non--1) or non-numeric params fall back to defaults', async () => {
+      const item = await client.callTool('get_item', {
+        itemId: longId, maxContentLength: -5, contentOffset: -10,
+      });
+      assert.equal(item.content, 'a'.repeat(4000));
+      assert.equal(item.contentTruncated, true);
+      const item2 = await client.callTool('get_item', {
+        itemId: longId, maxContentLength: 'nope', contentOffset: 'nah',
+      });
+      assert.equal(item2.content, 'a'.repeat(4000));
+      assert.equal(item2.contentTruncated, true);
+    });
+
+    it('short content comes back whole: contentLength set, no truncated flag', async () => {
+      const item = await client.callTool('get_item', { itemId: 'item-2' });
+      assert.equal(item.content, 'Buy groceries');
+      assert.equal(item.contentLength, 'Buy groceries'.length);
+      assert.ok(!('contentTruncated' in item));
+    });
+
+    it('content exactly at the 4000 boundary is not flagged truncated', async () => {
+      const created = await client.callTool('create_item', {
+        type: 'text', title: 'Exactly At Boundary', content: 'x'.repeat(4000),
+      });
+      const item = await client.callTool('get_item', { itemId: created.id });
+      assert.equal(item.content.length, 4000);
+      assert.equal(item.contentLength, 4000);
+      assert.ok(!('contentTruncated' in item));
+    });
+
+    it('null content passes through untouched (no contentLength, no flag)', async () => {
+      const item = await client.callTool('get_item', { itemId: 'item-null-content' });
+      assert.equal(item.content, null);
+      assert.ok(!('contentLength' in item));
+      assert.ok(!('contentTruncated' in item));
+    });
+
+    it('favicon is stripped from get_item responses', async () => {
+      // item-null-content is seeded WITH a data: URI favicon; item-2 carries
+      // the '' column default — both must come back without the property.
+      const withFavicon = await client.callTool('get_item', { itemId: 'item-null-content' });
+      assert.ok(!('favicon' in withFavicon));
+      const plain = await client.callTool('get_item', { itemId: 'item-2' });
+      assert.ok(!('favicon' in plain));
+    });
+
+    it('get_task_context windows content and strips favicon the same way', async () => {
+      const dflt = await client.callTool('get_task_context', { itemId: longId });
+      assert.equal(dflt.content, 'a'.repeat(4000));
+      assert.equal(dflt.contentLength, 9000);
+      assert.equal(dflt.contentTruncated, true);
+      assert.ok(!('favicon' in dflt));
+      assert.ok(Array.isArray(dflt.events));
+
+      const page = await client.callTool('get_task_context', {
+        itemId: longId, contentOffset: 4000, maxContentLength: 1000,
+      });
+      assert.equal(page.content, 'b'.repeat(1000));
+      assert.equal(page.contentTruncated, true);
+
+      const full = await client.callTool('get_task_context', { itemId: longId, maxContentLength: -1 });
+      assert.equal(full.content, LONG_CONTENT);
+      assert.ok(!('contentTruncated' in full));
+    });
+  });
+
+  describe('tool result serialization', () => {
+    it('is compact JSON (no pretty-print indentation)', async () => {
+      const r = await client.callToolRaw('get_item', { itemId: 'item-2' });
+      const text = r.content[0].text;
+      assert.ok(!text.includes('\n'), 'expected compact single-line JSON');
+      assert.equal(text, JSON.stringify(JSON.parse(text)));
     });
   });
 
