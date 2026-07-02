@@ -1,4 +1,7 @@
-# /review — Review current changes
+---
+name: review
+description: Review the current uncommitted jj diff via a background agent — correctness, tests, CLAUDE.md-rule compliance, pubsub checks. Use when reviewing local uncommitted changes before commit.
+---
 
 When the user invokes /review:
 
@@ -21,7 +24,7 @@ When the user invokes /review:
    - **CLAUDE.md rules**: jj not git, yarn scripts, no compound bash, etc.
    - **Incomplete renames**: Stale references to old names
    - **Security**: Exposed secrets, unsafe operations
-   - **PubSub**: Missing event publications for data mutations (see MEMORY.md)
+   - **PubSub**: Missing event publications for data mutations
 
 4. Report issues grouped by severity:
    - **Blockers**: Must fix before shipping

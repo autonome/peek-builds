@@ -1,3 +1,8 @@
+---
+name: fix
+description: Spawn a background coding agent with mpeek repo rules baked in (jj not git, yarn scripts, one command per Bash call). Use when delegating a well-scoped fix or implementation to a background agent.
+---
+
 # /fix — Spawn background coding agent
 
 When the user invokes /fix with a description:
@@ -21,17 +26,8 @@ When the user invokes /fix with a description:
 
 4. When the agent completes, relay its findings to the user.
 
-## Worktree mode
-
-If the user passes `--worktree`, create an isolated jj worktree first:
-```
-jj workspace add ../.claude/worktrees/fix-<short-description>
-```
-Then run the agent in that worktree directory.
-
 ## Usage
 
 ```
 /fix "description of what to fix or implement"
-/fix "description" --worktree
 ```

@@ -1,3 +1,8 @@
+---
+name: agent-review
+description: Review-and-land loop for a pool-clone agent's committed diff — reviewer decision table, finalize + test gate, retry-in-clone on failure, peek:needs-review handoff. Use when a background/clone agent reports its task done and the work needs review, landing, or rejection.
+---
+
 # /agent-review — Pass/fail an agent-produced diff in a clone
 
 Use when a pool-clone agent has finished a task and you need to decide whether
@@ -106,7 +111,7 @@ is per-request, never standing.
 When tests are green but user approval is pending, the orchestrator must:
 
 1. Tag the peek task `peek:needs-review` and untag `peek:todo` /
-   `peek:wip` (see `peek-tasks.md` controlled vocab).
+   `peek:wip` (see the peek-tasks skill's controlled vocab).
 2. Surface to the user, in one short message:
    - The commit IDs landed on main
    - The diff stat (`jj diff --stat -r 'main..@'` or per-commit)

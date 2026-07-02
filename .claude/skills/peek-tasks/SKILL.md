@@ -1,7 +1,6 @@
 ---
 name: peek-tasks
-description: Manage the Peek-codebase todo queue via the Peek MCP server (mcp__peek__*). All tasks live under the peek:* tag namespace — add, list, status changes, complete, and "open in Peek" handoff for collaborative editing.
-user_invocable: true
+description: Manage the Peek codebase todo queue via mcp__peek__* tools (the peek:* tag namespace) — controlled tag vocabulary, scope/quality tags, add/list/edit, manual status transitions, needs-review handoff. Use when adding, completing, or triaging a peek:* task, changing a task's status, asking "what's next", or opening a task in Peek.
 ---
 
 # Peek Task Queue (peek:* namespace only)

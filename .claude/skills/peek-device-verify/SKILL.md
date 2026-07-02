@@ -1,3 +1,8 @@
+---
+name: peek-device-verify
+description: Prove the iOS app on device/simulator is actually running YOUR build (PEEK_BUILD_ID + scripts/verify-ios-build.sh), plus file-based diagnostics and simulator self-driving. Use after changing apps/mobile, before manual iOS testing, and BEFORE concluding an iOS fix didn't work.
+---
+
 # /peek-device-verify — Prove the iOS app on device is YOUR build
 
 Use this whenever you change `apps/mobile` and need to confirm the code is

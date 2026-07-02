@@ -1,7 +1,7 @@
 #!/bin/bash
 # Verify the app actually RUNNING on an iOS device/simulator is the current
 # source build — defeats the stale-embedded-frontend footgun documented in
-# .claude/skills/peek-device-verify.md.
+# .claude/skills/peek-device-verify/SKILL.md.
 #
 # The app writes its embedded build id (PEEK_BUILD_ID, baked into libapp.a at
 # Rust compile time) to Documents/build-id.txt on every launch. This script

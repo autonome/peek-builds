@@ -1,4 +1,7 @@
-# /ios-build — Build for iOS
+---
+name: ios-build
+description: Build the iOS app (simulator/device/full) via yarn scripts in a background agent. Use when building for iOS, or when a frontend change seems to do nothing on device — a green build does not mean your code is on the device; see peek-device-verify.
+---
 
 When the user invokes /ios-build:
 

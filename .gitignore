@@ -80,6 +80,7 @@ webpack.config.js
 package.js
 protocol-imports.diff
 test/
+!.claude/skills/test/
 tmp/
 
 # Per-developer MCP server configs (machine-local absolute paths)

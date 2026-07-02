@@ -1,3 +1,8 @@
+---
+name: release
+description: Cut a release note — update CHANGELOG.md, regenerate the RSS feed (yarn rss; feed URLs use tangled.org, never github), commit. Use when the user asks for a changelog or RSS update.
+---
+
 # /release — Update changelog and RSS feed
 
 When the user invokes /release:

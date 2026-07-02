@@ -1,4 +1,7 @@
-# Debug Electron Pages
+---
+name: debug-electron
+description: Drive scripts/debug-electron-page.mjs to debug chrome-extension pages and service workers under Electron — capture console output/errors from a BrowserWindow URL, evaluate JS from the CLI. Use when debugging extension pages or iterating on extension-API shims.
+---
 
 Programmatically debug Electron BrowserWindow content (extension pages, app pages, any URL) by capturing console output, errors, DOM state, and evaluating arbitrary JS -- all from stdout.
 

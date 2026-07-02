@@ -1,4 +1,7 @@
-# /test — Run tests
+---
+name: test
+description: How to run mpeek tests — the test:{env}:{impl} matrix, the canonical gate yarn test:desktop:electron (6 runners), unit/grep/tauri variants. Read before running any test suite; never invoke npx playwright directly.
+---
 
 When the user invokes /test:
 
