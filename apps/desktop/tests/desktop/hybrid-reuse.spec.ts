@@ -2,26 +2,33 @@ import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { createPerDescribeApp } from '../helpers/test-app';
 
 /**
- * P1.4a — hybrid page-host window-reuse dedup.
+ * P1.4a — hybrid page-host popup (window.open) semantics.
  *
- * A hybrid page-host is an opaque `BaseWindow`, which the canvas dedup checks
- * (`findWindowByUrl` / `findWindowByKey`, backed by `BrowserWindow.fromId`)
- * cannot resolve. So the window-open handler runs a PARALLEL dedup against the
- * hybrid registry (`findHybridWindowByUrl`):
- * a repeat open of the same URL must REUSE the existing hybrid window, not
- * spawn a duplicate — matching the canvas reuse semantics.
+ * As of the OAuth popup→opener bridge (peek ef30747b), a `window.open()` from
+ * hybrid page content takes the NATIVE-ADOPTION path: the content WC's
+ * `setWindowOpenHandler` (in `ipc.ts`) returns `{action:'allow', createWindow}`
+ * and adopts Chromium's opener-wired guest WebContents into a fresh Peek hybrid
+ * host. That gives the popup a REAL `window.opener`, which is fundamentally
+ * incompatible with URL-based dedup — you cannot reuse an existing (non-opener)
+ * host AND hand the caller back a live opener. So each `window.open` of the
+ * same URL opens a NEW hybrid host, matching real-browser behavior (reuse is
+ * name-based re-targeting, Chromium's job — and this path opens `_blank`, which
+ * never reuses) and matching what OAuth needs: re-opening the same auth URL
+ * must be a fresh popup, not a silently reused window.
  *
- * This drives the REAL window-open path: a wired hybrid opener fires
- * `window.open(url)`, whose `setWindowOpenHandler` re-routes through the
- * canonical window-open IPC handler → the hybrid EARLY BRANCH. The first open
- * creates a host; the second open of the SAME url hits the dedup branch.
+ * URL dedup is NOT gone: the APP-initiated open path (the canonical window-open
+ * IPC handler, `findHybridWindowByUrl` at `ipc.ts` ~2571) still reuses a
+ * same-URL hybrid host. This spec covers ONLY the page-content `window.open`
+ * popup path, which intentionally does not dedup. (Before ef30747b the popup
+ * path deny+re-routed through that same IPC handler and so DID URL-dedup — the
+ * canvas-parity behavior this spec used to assert.)
  *
- * Network-free: dedup (and `waitHybridForUrl`) match the REQUESTED address the
- * registry stores at open time, independent of whether the content load
- * resolves. Focus-free: hybrid windows are headless (opacity 0, never shown).
- * Skips itself if the hybrid bridge isn't present.
+ * Network-free: `waitHybridForUrl` matches the REQUESTED address the registry
+ * stores at open time, independent of whether the content load resolves.
+ * Focus-free: hybrid windows are headless (opacity 0, never shown). Skips
+ * itself if the hybrid bridge isn't present.
  */
-test.describe('Hybrid page-host window-reuse dedup (P1.4a) @desktop', () => {
+test.describe('Hybrid page-host popup window.open semantics (P1.4a) @desktop', () => {
   let app: DesktopApp;
 
   test.beforeAll(async () => {
@@ -35,7 +42,7 @@ test.describe('Hybrid page-host window-reuse dedup (P1.4a) @desktop', () => {
   const bridgePresent = async () =>
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
-  test('a repeat open of the same URL reuses the existing hybrid window (no duplicate)', async () => {
+  test('a repeat window.open of the same URL opens a NEW hybrid host (real-browser popup semantics)', async () => {
     test.skip(!(await bridgePresent()), 'no hybrid bridge in this configuration');
     const url = 'https://reuse.example/';
 
@@ -49,7 +56,7 @@ test.describe('Hybrid page-host window-reuse dedup (P1.4a) @desktop', () => {
       (globalThis as any).__peekHybridOverlayTest.hybridIds(),
     );
 
-    // First open → a NEW hybrid page-host for the URL.
+    // First window.open → a NEW hybrid page-host for the URL.
     const ran1 = await app.evaluateMain!(async (_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       return b.triggerWindowOpen((arg as any).id, (arg as any).url);
@@ -70,8 +77,10 @@ test.describe('Hybrid page-host window-reuse dedup (P1.4a) @desktop', () => {
       (globalThis as any).__peekHybridOverlayTest.hybridIds(),
     );
 
-    // Second open of the SAME url → dedup REUSES firstId. No NEW hybrid host
-    // (excluding every id that already exists, including firstId) appears...
+    // Second window.open of the SAME url → real-browser semantics: a SECOND,
+    // DISTINCT hybrid host appears — a new id NOT among those already open
+    // (firstId included). The popup path does NOT URL-dedup; doing so would
+    // sever the live window.opener the createWindow adoption exists to provide.
     const ran2 = await app.evaluateMain!(async (_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       return b.triggerWindowOpen((arg as any).id, (arg as any).url);
@@ -80,14 +89,15 @@ test.describe('Hybrid page-host window-reuse dedup (P1.4a) @desktop', () => {
 
     const newId = await app.evaluateMain!(async (_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
-      return b.waitHybridForUrl((arg as any).url, (arg as any).excl, 1500);
+      return b.waitHybridForUrl((arg as any).url, (arg as any).excl, 15000);
     }, { url, excl: idsInclFirst });
-    expect(newId).toBeNull();
+    expect(newId).not.toBeNull();
+    expect(idsInclFirst).not.toContain(newId);
 
-    // ...and the total hybrid-window count is unchanged.
+    // ...and the total hybrid-window count increased by exactly one.
     const countAfterSecond = await app.evaluateMain!(() =>
       (globalThis as any).__peekHybridOverlayTest.hybridCount(),
     );
-    expect(countAfterSecond).toBe(countAfterFirst);
+    expect(countAfterSecond).toBe(countAfterFirst + 1);
   });
 });
