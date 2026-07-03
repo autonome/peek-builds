@@ -213,6 +213,27 @@ test.describe('hybrid OAuth popup→opener bridge @desktop', () => {
   // first-responder/close timing — see apps/desktop/CLAUDE.md LESSON), and/or
   // an upstream Electron report. Un-skip to work the fix.
   test.fixme('opener close() after the popup self-closed is a silent no-op', async () => {
+    // Warm-up cycle — reproduces the "prior popup activity in the app"
+    // precondition that this repro depends on, so it fails standalone
+    // instead of only when it happens to run 3rd in this file.
+    const warmOpenerId = await openOpener('doubleclose-warm');
+    const warmPopupId = await openPopup(warmOpenerId, 'doubleclose-warm');
+    await expect
+      .poll(async () => await evalHybrid(warmPopupId, 'window.__hasOpener'), { timeout: 15000 })
+      .toBe(true);
+    await evalHybrid(warmOpenerId, 'window.__peekOauthHandle && window.__peekOauthHandle.close(); true');
+    await expect
+      .poll(
+        async () => {
+          const ids = (await app.evaluateMain!(() =>
+            (globalThis as any).__peekHybridOverlayTest.hybridIds(),
+          )) as number[];
+          return ids.includes(warmPopupId);
+        },
+        { timeout: 15000 },
+      )
+      .toBe(false);
+
     const openerId = await openOpener('doubleclose');
     const popupId = await openPopup(openerId, 'doubleclose');
 
