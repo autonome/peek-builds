@@ -188,4 +188,67 @@ test.describe('hybrid OAuth popup→opener bridge @desktop', () => {
       )
       .toBe(false);
   });
+
+  // peek 06d363fc — KNOWN-FAILING repro (test.fixme; no fix landed yet).
+  //
+  // Many OAuth client libraries defensively call `popup.close()` after they
+  // receive the result. Browser semantics: `.close()` on an already-closed
+  // window is a silent no-op. Here it instead throws
+  // `IPC method called after context was released` (native `WindowProxy.close()`,
+  // synchronous in the opener), which can turn a SUCCESSFUL login into a
+  // spurious failure in the OAuth library's cleanup.
+  //
+  // Reproduces ONLY when the popup self-closes BEFORE its opener link has
+  // finished establishing (no settle below) AND there has been prior popup
+  // activity in the app — e.g. run as the 3rd test in this file. Investigation
+  // (2026-07-03) found `.closed` is `true` yet `close()` still throws; the
+  // failure is at the Chromium boundary for a window.open-adopted
+  // WebContentsView popup. Our-side fixes that were tried and RULED OUT:
+  // deferring the host `baseWin.close()` (setImmediate) and detaching the dead
+  // WebContentsView before close — both only mask it in a pristine isolated
+  // run and fail with any prior popup activity, so neither is a real fix (and a
+  // fixed-tick defer is the fsm-pilled timing-hack anti-pattern). A settle
+  // (waiting for `window.opener` before self-close) always avoids the throw.
+  // Next step: a live headed trace (headless can't observe the real
+  // first-responder/close timing — see apps/desktop/CLAUDE.md LESSON), and/or
+  // an upstream Electron report. Un-skip to work the fix.
+  test.fixme('opener close() after the popup self-closed is a silent no-op', async () => {
+    const openerId = await openOpener('doubleclose');
+    const popupId = await openPopup(openerId, 'doubleclose');
+
+    // DELIBERATELY do NOT wait for the popup to settle (no __hasOpener poll)
+    // before closing it — that is the regression condition (a settle masks it).
+    await evalHybrid(popupId, 'window.close(); true');
+
+    // Wait until the popup host is genuinely gone from the registry.
+    await expect
+      .poll(
+        async () => {
+          const ids = (await app.evaluateMain!(() =>
+            (globalThis as any).__peekHybridOverlayTest.hybridIds(),
+          )) as number[];
+          return ids.includes(popupId);
+        },
+        { timeout: 15000 },
+      )
+      .toBe(false);
+
+    // The opener defensively calls close() on the now-dead handle (as OAuth
+    // libraries do). Browser semantics: a silent no-op. Catch INSIDE the opener
+    // JS so any synchronous throw surfaces as a marker string rather than being
+    // swallowed by evalInHybridContent's `.catch(() => undefined)`. Pre-fix this
+    // returned 'threw:IPC method called after context was released'.
+    const closeResult = await evalHybrid(
+      openerId,
+      `(() => {
+        try {
+          if (window.__peekOauthHandle) window.__peekOauthHandle.close();
+          return 'ok';
+        } catch (e) {
+          return 'threw:' + ((e && e.message) || String(e));
+        }
+      })()`,
+    );
+    expect(closeResult).toBe('ok');
+  });
 });
