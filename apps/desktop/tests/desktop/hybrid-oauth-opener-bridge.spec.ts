@@ -300,9 +300,9 @@ test.describe('hybrid OAuth popup→opener bridge @desktop', () => {
   // (fixme above) and the fully-settled (this test) defensive closes throw. Real
   // popup-based OAuth is therefore affected once any popup was opened earlier.
   // (A weaker popup-side settle — waiting only for the popup's own window.opener —
-  // throws too.) One cell not yet run: a PRISTINE first popup (no prior activity)
-  // with a full settle; that only decides "every popup" vs "2nd-onward", not
-  // whether the bug is real. Un-skip to work the fix.
+  // throws too.) CONFIRMED (isolated run): a PRISTINE first popup with a full
+  // settle and no prior activity does NOT throw — so the bug is 2nd-popup-onward
+  // in a session, not the very first popup. Un-skip to work the fix.
   test.fixme('opener close() after a SETTLED popup self-closed is a silent no-op', async () => {
     // Warm-up cycle — same "prior popup activity" precondition as the fixme above.
     const warmOpenerId = await openOpener('settled-warm');
