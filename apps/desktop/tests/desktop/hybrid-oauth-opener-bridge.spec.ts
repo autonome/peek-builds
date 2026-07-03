@@ -195,23 +195,33 @@ test.describe('hybrid OAuth popup→opener bridge @desktop', () => {
   // receive the result. Browser semantics: `.close()` on an already-closed
   // window is a silent no-op. Here it instead throws
   // `IPC method called after context was released` (native `WindowProxy.close()`,
-  // synchronous in the opener), which can turn a SUCCESSFUL login into a
-  // spurious failure in the OAuth library's cleanup.
+  // synchronous in the opener — the stack shows only `.close()`, no Electron JS
+  // frames, so Chromium/Electron services the close NATIVELY; there is NO
+  // Peek-side JS close site to guard, and `.closed` reads `true` yet `close()`
+  // still throws). This can turn a SUCCESSFUL login into a spurious failure in
+  // the OAuth library's cleanup. The failure is at the Chromium/Electron boundary
+  // for a window.open-adopted WebContentsView popup (ipc.ts setWindowOpenHandler
+  // `{action:'allow', createWindow}`).
   //
-  // Reproduces ONLY when the popup self-closes BEFORE its opener link has
-  // finished establishing (no settle below) AND there has been prior popup
-  // activity in the app — e.g. run as the 3rd test in this file. Investigation
-  // (2026-07-03) found `.closed` is `true` yet `close()` still throws; the
-  // failure is at the Chromium boundary for a window.open-adopted
-  // WebContentsView popup. Our-side fixes that were tried and RULED OUT:
-  // deferring the host `baseWin.close()` (setImmediate) and detaching the dead
-  // WebContentsView before close — both only mask it in a pristine isolated
-  // run and fail with any prior popup activity, so neither is a real fix (and a
-  // fixed-tick defer is the fsm-pilled timing-hack anti-pattern). A settle
-  // (waiting for `window.opener` before self-close) always avoids the throw.
-  // Next step: a live headed trace (headless can't observe the real
-  // first-responder/close timing — see apps/desktop/CLAUDE.md LESSON), and/or
-  // an upstream Electron report. Un-skip to work the fix.
+  // Governing precondition: PRIOR POPUP ACTIVITY in the session — NOT the settle
+  // state. Reproduces whenever a popup self-closes and the opener then defensively
+  // closes the dead handle, as long as any popup was opened earlier (this test's
+  // warm-up cycle, or running 3rd in this file). A fully round-trip-settled popup
+  // throws too — see the SETTLED variant below. This CORRECTS an earlier belief
+  // that "a settle avoids the throw, so normal OAuth is unaffected": it does not,
+  // and real popup-based OAuth IS affected once any popup was opened earlier.
+  //
+  // Our-side fixes tried and RULED OUT (2026-07-03): deferring the host
+  // `baseWin.close()` (setImmediate) and detaching the dead WebContentsView before
+  // close — both only mask it in a pristine isolated run and fail with any prior
+  // popup activity (and a fixed-tick defer is the fsm-pilled timing-hack
+  // anti-pattern). This reproduces RELIABLY HEADLESS — the "headless can't observe
+  // the real timing" LESSON in apps/desktop/CLAUDE.md is about the ESC/
+  // first-responder bug (focus-dependent); this one is not. Likely fix path: an
+  // upstream Electron report (an adopted-WebContentsView popup leaves a stale
+  // guest-frame reference, so a later opener close() routes to a released context)
+  // and/or a deterministic main-side precondition — NOT a `!isDestroyed()` guard
+  // on our routing (there is none) and NOT a timer. Un-skip to work the fix.
   test.fixme('opener close() after the popup self-closed is a silent no-op', async () => {
     // Warm-up cycle — reproduces the "prior popup activity in the app"
     // precondition that this repro depends on, so it fails standalone
@@ -259,6 +269,99 @@ test.describe('hybrid OAuth popup→opener bridge @desktop', () => {
     // JS so any synchronous throw surfaces as a marker string rather than being
     // swallowed by evalInHybridContent's `.catch(() => undefined)`. Pre-fix this
     // returned 'threw:IPC method called after context was released'.
+    const closeResult = await evalHybrid(
+      openerId,
+      `(() => {
+        try {
+          if (window.__peekOauthHandle) window.__peekOauthHandle.close();
+          return 'ok';
+        } catch (e) {
+          return 'threw:' + ((e && e.message) || String(e));
+        }
+      })()`,
+    );
+    expect(closeResult).toBe('ok');
+  });
+
+  // peek 06d363fc — SETTLED-path variant, KNOWN-FAILING (test.fixme; no fix yet).
+  //
+  // Same as the fixme above (same warm-up prior-activity precondition, same
+  // self-close → opener defensive close()) EXCEPT the popup fully SETTLES before
+  // self-closing: it waits until the OPENER has RECEIVED the popup's postMessage —
+  // the real OAuth completion point, when the opener holds the result and the
+  // WindowProxy → guest link is fully wired. This is exactly the sequence a real
+  // OAuth popup runs (deliver result, self-close, opener library defensively
+  // closes the dead handle).
+  //
+  // FINDING (2026-07-03): it STILL throws `IPC method called after context was
+  // released`. So a settle does NOT avoid the throw — correcting the earlier
+  // belief that it did. The governing precondition is PRIOR POPUP ACTIVITY, not
+  // the settle state: with a prior popup in the session, BOTH the unsettled
+  // (fixme above) and the fully-settled (this test) defensive closes throw. Real
+  // popup-based OAuth is therefore affected once any popup was opened earlier.
+  // (A weaker popup-side settle — waiting only for the popup's own window.opener —
+  // throws too.) One cell not yet run: a PRISTINE first popup (no prior activity)
+  // with a full settle; that only decides "every popup" vs "2nd-onward", not
+  // whether the bug is real. Un-skip to work the fix.
+  test.fixme('opener close() after a SETTLED popup self-closed is a silent no-op', async () => {
+    // Warm-up cycle — same "prior popup activity" precondition as the fixme above.
+    const warmOpenerId = await openOpener('settled-warm');
+    const warmPopupId = await openPopup(warmOpenerId, 'settled-warm');
+    await expect
+      .poll(async () => await evalHybrid(warmPopupId, 'window.__hasOpener'), { timeout: 15000 })
+      .toBe(true);
+    await evalHybrid(warmOpenerId, 'window.__peekOauthHandle && window.__peekOauthHandle.close(); true');
+    await expect
+      .poll(
+        async () => {
+          const ids = (await app.evaluateMain!(() =>
+            (globalThis as any).__peekHybridOverlayTest.hybridIds(),
+          )) as number[];
+          return ids.includes(warmPopupId);
+        },
+        { timeout: 15000 },
+      )
+      .toBe(false);
+
+    const openerId = await openOpener('settled');
+    const popupId = await openPopup(openerId, 'settled');
+
+    // SETTLE (full round-trip): wait until the OPENER has RECEIVED the popup's
+    // postMessage — proving the opener's WindowProxy → guest link is fully wired,
+    // not merely that the popup can see window.opener (which is true almost
+    // instantly under native adoption and is a weaker signal). This is the real
+    // OAuth completion point: the opener has the result. Self-close happens only
+    // after this. This is the one difference from the fixme above.
+    await expect
+      .poll(
+        async () =>
+          await evalHybrid(
+            openerId,
+            'window.__peekOauth && window.__peekOauth.received ? window.__peekOauth.received.data && window.__peekOauth.received.data.peekOauth : null',
+          ),
+        { timeout: 15000 },
+      )
+      .toBe('hello');
+
+    // Popup self-closes AFTER settling (a real provider popup closing itself).
+    await evalHybrid(popupId, 'window.close(); true');
+
+    // Wait until the popup host is genuinely gone from the registry.
+    await expect
+      .poll(
+        async () => {
+          const ids = (await app.evaluateMain!(() =>
+            (globalThis as any).__peekHybridOverlayTest.hybridIds(),
+          )) as number[];
+          return ids.includes(popupId);
+        },
+        { timeout: 15000 },
+      )
+      .toBe(false);
+
+    // The opener defensively calls close() on the now-dead handle — same as the
+    // fixme. If the settled link makes browser semantics hold, this is a silent
+    // no-op ('ok'); if it still throws, real OAuth cleanup is affected too.
     const closeResult = await evalHybrid(
       openerId,
       `(() => {
