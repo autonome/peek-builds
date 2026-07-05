@@ -105,6 +105,33 @@ const ALLOWED_LOCAL_FILE_EXTS = new Map<string, string>([
   ['.wav', 'audio/wav'],
 ]);
 
+// Deterministic Content-Type by file extension for peek:// responses served
+// via net.fetch(file://…). Electron 43's net.fetch no longer labels `.js` (and
+// friends) with a JavaScript MIME type — it returns application/octet-stream,
+// which Chromium's strict ES-module MIME check refuses to execute, silently
+// killing every module-driven surface (the bgWindow orchestrator never runs).
+// So we override the header by extension rather than trusting net.fetch. See
+// peek item 06d363fc (Electron 40→43 migration).
+const EXT_TO_MIME = new Map<string, string>([
+  ['.js', 'text/javascript'],
+  ['.mjs', 'text/javascript'],
+  ['.cjs', 'text/javascript'],
+  ['.css', 'text/css'],
+  ['.html', 'text/html'],
+  ['.htm', 'text/html'],
+  ['.json', 'application/json'],
+  ['.svg', 'image/svg+xml'],
+  ['.wasm', 'application/wasm'],
+  ['.map', 'application/json'],
+]);
+
+// Resolve a Content-Type for a served file: prefer the deterministic
+// extension→MIME map, fall back to whatever net.fetch reported, then octet-stream.
+function extToMime(absolutePath: string, fetchedContentType: string | null): string {
+  const ext = path.extname(absolutePath).toLowerCase();
+  return EXT_TO_MIME.get(ext) || fetchedContentType || 'application/octet-stream';
+}
+
 // Explicitly blocked executable/script extensions (for clear error messages)
 const BLOCKED_EXTS = new Set([
   '.js', '.mjs', '.cjs', '.ts', '.mts', '.cts',
@@ -131,7 +158,7 @@ async function fetchFile(absolutePath: string, requestUrl: string): Promise<Resp
   return new Response(body, {
     status: response.status,
     headers: {
-      'Content-Type': response.headers.get('Content-Type') || 'application/octet-stream',
+      'Content-Type': extToMime(absolutePath, response.headers.get('Content-Type')),
       'Cache-Control': 'no-store, no-cache, must-revalidate',
       'Pragma': 'no-cache',
       'Expires': '0'
@@ -461,7 +488,7 @@ async function handleProtocolRequest(req: Request): Promise<Response> {
         return new Response(body, {
           status: response.status,
           headers: {
-            'Content-Type': response.headers.get('Content-Type') || 'application/octet-stream',
+            'Content-Type': extToMime(absolutePath, response.headers.get('Content-Type')),
             'Cache-Control': 'no-store, no-cache, must-revalidate',
             'Pragma': 'no-cache',
             'Expires': '0'
