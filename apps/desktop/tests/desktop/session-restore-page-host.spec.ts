@@ -71,24 +71,31 @@ test.describe('Session Restore Page Host @desktop', () => {
     return { pageWindow, windowId: result.id };
   }
 
-  /** Close every page-host window and clear the saved session snapshot. */
+  /**
+   * Reset window state to a clean slate before each test. Closes EVERY
+   * non-internal window — not just page-hosts. A prior test can leak a
+   * non-page-host window (e.g. the focus-order test opens a Settings window and
+   * closes it fire-and-forget); if that survives into the next test it gets
+   * captured in that test's forceSaveSession snapshot, which pushes the intended
+   * target past the eager-restore cutoff into the deferred path (whose content
+   * only loads on a host-window focus event that never fires headless) — so the
+   * restored target never appears and the test times out. Closing all
+   * non-internal windows here makes each test independent of what a sibling left
+   * behind, regardless of close ordering.
+   */
   async function resetState() {
     await bgWindow.evaluate(async () => {
       const list = await (window as any).app.window.list({ includeInternal: false });
       if (!list?.success) return;
       for (const w of list.windows || []) {
-        if (typeof w.url === 'string' && w.url.startsWith('peek://app/page/')) {
-          await (window as any).app.window.close(w.id);
-        }
+        await (window as any).app.window.close(w.id);
       }
     });
-    // Wait for close to complete (window:removed for the last close).
-    // Lightweight: poll the list until empty of page-host windows.
+    // Wait for close to complete: poll the list until no non-internal windows remain.
     await bgWindow.waitForFunction(async () => {
       const list = await (window as any).app.window.list({ includeInternal: false });
       if (!list?.success) return false;
-      return !(list.windows || []).some((w: any) =>
-        typeof w.url === 'string' && w.url.startsWith('peek://app/page/'));
+      return (list.windows || []).length === 0;
     });
   }
 
