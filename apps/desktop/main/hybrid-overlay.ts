@@ -748,7 +748,17 @@ export function initHybridOverlay(): void {
   // through a guarded cast (it stays `true` when the method is unavailable).
   try {
     const maybeIsActive = (app as unknown as { isActive?: () => boolean }).isActive;
-    appActive = typeof maybeIsActive === 'function' ? maybeIsActive.call(app) : true;
+    // Headless has no real activation (accessory policy, never frontmost) and
+    // Electron 43's `app.isActive()` reports false there — which would wrongly
+    // disarm the app-active gate at init, before any test drives a resign/become
+    // transition (capture never arms, Cmd+L never focuses). Keep the "normally
+    // active at init" seed in headless; consult `isActive()` only for a real
+    // (non-headless) app, where a freshly-launched window IS frontmost.
+    appActive = isHeadless()
+      ? true
+      : typeof maybeIsActive === 'function'
+        ? maybeIsActive.call(app)
+        : true;
   } catch {
     appActive = true;
   }
