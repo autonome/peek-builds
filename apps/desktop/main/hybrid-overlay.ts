@@ -148,33 +148,49 @@ function expandToOverlayFrame(content: {
   width: number;
   height: number;
 }): { x: number; y: number; width: number; height: number } {
-  // Maximized parity (mirrors the canvas): a window snapped to its display work
-  // area gets NO gutter — the chrome renders edge-to-edge over the content, and
-  // expanding by gutters would push the overlay off-screen. Detect it by
-  // comparing the content rect to the nearest display's work area.
+  let workArea: { x: number; y: number; width: number; height: number } | null = null;
   try {
-    const display = screen.getDisplayNearestPoint({
+    workArea = screen.getDisplayNearestPoint({
       x: content.x + Math.floor(content.width / 2),
       y: content.y + Math.floor(content.height / 2),
-    });
-    const wa = display.workArea;
-    if (
-      content.x === wa.x &&
-      content.y === wa.y &&
-      content.width === wa.width &&
-      content.height === wa.height
-    ) {
-      return { x: wa.x, y: wa.y, width: wa.width, height: wa.height };
-    }
+    }).workArea;
   } catch {
-    /* screen unavailable in some test envs — fall through to gutter expand */
+    /* screen unavailable in some test envs — skip maximized parity + clamp */
   }
-  return {
+
+  // Maximized parity (mirrors the canvas): a window snapped to its display work
+  // area gets NO gutter — the chrome renders edge-to-edge over the content, and
+  // expanding by gutters would push the overlay off-screen.
+  if (
+    workArea &&
+    content.x === workArea.x &&
+    content.y === workArea.y &&
+    content.width === workArea.width &&
+    content.height === workArea.height
+  ) {
+    return { x: workArea.x, y: workArea.y, width: workArea.width, height: workArea.height };
+  }
+
+  const frame = {
     x: Math.round(content.x - GUTTER_LEFT),
     y: Math.round(content.y - GUTTER_TOP),
     width: Math.round(content.width + GUTTER_LEFT + GUTTER_RIGHT),
     height: Math.round(content.height + GUTTER_TOP + GUTTER_BOTTOM),
   };
+
+  // Electron 43 / macOS keeps a SHOWN window fully on-screen: an origin that
+  // would push the window past the work-area edge is clamped inward, preserving
+  // width/height (verified: x/y = clamp(origin, waMin, waMax − size)). Mirror
+  // that exact clamp here so the overlay's computed frame equals its post-show
+  // getBounds() — otherwise, for a content window near a screen edge, the frame
+  // math (off-screen) would diverge from the OS-clamped reality. peek 06d363fc.
+  if (workArea) {
+    const maxX = workArea.x + workArea.width - frame.width;
+    const maxY = workArea.y + workArea.height - frame.height;
+    frame.x = Math.min(Math.max(frame.x, workArea.x), Math.max(workArea.x, maxX));
+    frame.y = Math.min(Math.max(frame.y, workArea.y), Math.max(workArea.y, maxY));
+  }
+  return frame;
 }
 
 /** The gutter insets — published to the overlay renderer so it can place the
