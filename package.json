@@ -219,7 +219,7 @@
     "@ipld/dag-cbor": "^10.0.1",
     "@replit/codemirror-vim": "^6.3.0",
     "archiver": "^7.0.0",
-    "better-sqlite3": "^12.5.0",
+    "better-sqlite3": "^12.11.1",
     "cross-fetch": "^4.1.0",
     "electron-unhandled": "^5.0.0",
     "lit": "^3.3.2"
@@ -242,6 +242,7 @@
   },
   "resolutions": {
     "tmp": "^0.2.5",
+    "node-abi": "^4.33.0",
     "glob@^11.0.0": "^11.1.0",
     "@tauri-apps/api": "2.10.1",
     "@tauri-apps/plugin-opener": "2.5.3",
