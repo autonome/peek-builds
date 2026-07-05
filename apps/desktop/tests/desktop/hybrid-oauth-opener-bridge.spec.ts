@@ -222,7 +222,7 @@ test.describe('hybrid OAuth popup→opener bridge @desktop', () => {
   // guest-frame reference, so a later opener close() routes to a released context)
   // and/or a deterministic main-side precondition — NOT a `!isDestroyed()` guard
   // on our routing (there is none) and NOT a timer. Un-skip to work the fix.
-  test.fixme('opener close() after the popup self-closed is a silent no-op', async () => {
+  test('opener close() after the popup self-closed is a silent no-op', async () => {
     // Warm-up cycle — reproduces the "prior popup activity in the app"
     // precondition that this repro depends on, so it fails standalone
     // instead of only when it happens to run 3rd in this file.
@@ -303,7 +303,7 @@ test.describe('hybrid OAuth popup→opener bridge @desktop', () => {
   // throws too.) CONFIRMED (isolated run): a PRISTINE first popup with a full
   // settle and no prior activity does NOT throw — so the bug is 2nd-popup-onward
   // in a session, not the very first popup. Un-skip to work the fix.
-  test.fixme('opener close() after a SETTLED popup self-closed is a silent no-op', async () => {
+  test('opener close() after a SETTLED popup self-closed is a silent no-op', async () => {
     // Warm-up cycle — same "prior popup activity" precondition as the fixme above.
     const warmOpenerId = await openOpener('settled-warm');
     const warmPopupId = await openPopup(warmOpenerId, 'settled-warm');

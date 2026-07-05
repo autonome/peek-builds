@@ -54,7 +54,16 @@ import { DEBUG } from './config.js';
 export interface RuntimeExternalWebPrefs {
   preload: string;
   additionalArguments: string[];
-  sandbox: false;
+  // GLOBAL sandbox:true (peek 06d363fc). This preload matches Proton Pass's
+  // <all_urls> content scripts, so it applies to EVERY http(s) page — meaning
+  // ALL web content now renders SANDBOXED. Previously sandbox:false, which
+  // routed a hybrid window.open popup's defensive handle.close() through
+  // guest-window-manager IPC and threw "IPC method called after context was
+  // released" once the popup self-closed (breaking real popup OAuth). A
+  // sandboxed renderer uses Chromium's native close → the double-close is a
+  // silent no-op. Enabled only after the Electron 40→43 upgrade, which resolves
+  // the sandbox_bundle renderer-init crash that originally forced sandbox:false.
+  sandbox: true;
   contextIsolation: true;
 }
 
@@ -99,11 +108,11 @@ export function getRuntimeExternalWebPrefsForUrl(
     if (getMatchingIsolatedContentScripts(url).length > 0) {
       extraArgs.push('--peek-cs-relay-enabled');
     }
-    console.log(`[peek:runtime-external:${logChannel}] Injecting runtime-external preload for ${url} (ext=${matchedExtId}, sandbox=false)`);
+    console.log(`[peek:runtime-external:${logChannel}] Injecting runtime-external preload for ${url} (ext=${matchedExtId}, sandbox=true)`);
     return {
       preload: getRuntimeExternalPreloadPath(),
       additionalArguments: extraArgs,
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true,
     };
   }
@@ -120,7 +129,7 @@ export function getRuntimeExternalWebPrefsForUrl(
     return {
       preload: getRuntimeExternalPreloadPath(),
       additionalArguments: [`--peek-runtime-external-ext-id=${csExtId}`],
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true,
     };
   }
