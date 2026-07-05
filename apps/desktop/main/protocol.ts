@@ -200,7 +200,14 @@ export function registerScheme(): void {
       secure: true,
       supportFetchAPI: true,
       bypassCSP: true, // Required for peek:// pages to load inline scripts/styles. Tile security enforced via per-response CSP headers instead.
-      corsEnabled: false,
+      // peek:// is split into per-host origins (peek://app, peek://cmd, per-tile,
+      // peek://node_modules) for CSP/iframe isolation, but they are all our own
+      // trusted code and load each other's ES modules cross-origin (every Lit tile
+      // imports `lit` → peek://node_modules/…). Electron 43/Chromium enforces CORS
+      // on custom standard schemes, so those cross-origin module fetches now need
+      // an Access-Control-Allow-Origin header to be honored — hence corsEnabled +
+      // the peek-scoped ACAO in applyCrossOriginHeaders(). peek 06d363fc.
+      corsEnabled: true,
       allowServiceWorkers: false
     }
   }]);
@@ -278,9 +285,34 @@ export function getTilePath(id: string): string | null {
 }
 
 /**
- * The protocol request handler - extracted so it can be registered on multiple sessions
+ * Add a cross-origin grant to a peek:// response, but ONLY for other peek://
+ * origins. Our per-host origins (peek://app, peek://cmd, per-tile,
+ * peek://node_modules) load each other's ES modules cross-origin, which
+ * Electron 43/Chromium now gates behind CORS. We echo the requester's Origin
+ * when it is a peek:// origin so peek→peek module imports resolve; an http(s)
+ * page rendered in the page-host has a non-peek Origin, gets no grant, and so
+ * still cannot read peek:// resources. peek 06d363fc.
+ */
+function applyCrossOriginHeaders(response: Response, req: Request): void {
+  const origin = req.headers.get('origin');
+  if (origin && origin.startsWith(`${APP_SCHEME}://`)) {
+    response.headers.set('Access-Control-Allow-Origin', origin);
+    response.headers.set('Vary', 'Origin');
+  }
+}
+
+/**
+ * The protocol request handler - registered on multiple sessions. Delegates to
+ * the router, then applies the peek→peek cross-origin grant to every response
+ * (success, tile-CSP-wrapped, and error alike).
  */
 async function handleProtocolRequest(req: Request): Promise<Response> {
+  const response = await routeProtocolRequest(req);
+  applyCrossOriginHeaders(response, req);
+  return response;
+}
+
+async function routeProtocolRequest(req: Request): Promise<Response> {
   // Capture host up-front so an unexpected error below still lets us apply
   // CSP to the fallback 404 when the request targets a tile origin.
   let host: string | null = null;
