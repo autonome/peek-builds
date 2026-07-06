@@ -652,10 +652,9 @@ app.on('web-contents-created', (_event, contents) => {
       // Shared selection: matches a loaded extension's externally_connectable
       // OR its ISOLATED-world content scripts → runtime-external compat preload
       // (+ flags). Identical logic now drives the hybrid WebContentsView path
-      // in ipc.ts. sandbox is disabled for these origins because Electron 40's
-      // sandbox-bundle init crashes on subsequent navigations within Proton's
-      // auth flow (/authorize → /reauth → /auth-ext), leaving the renderer in
-      // a broken state where our preload's dom-ready listener never fires.
+      // in ipc.ts. These prefs run sandboxed (sandbox:true globally, peek
+      // 06d363fc) — Electron 43 fixed the sandbox_bundle init crash that
+      // originally forced sandbox:false on Proton's auth flow.
       const rtPrefs = getRuntimeExternalWebPrefsForUrl(params.src, 'webview');
       if (rtPrefs) {
         webPreferences.preload = rtPrefs.preload;
@@ -1549,18 +1548,6 @@ if (_darkModeSetting === 'force') {
   );
   DEBUG && console.log('[darkMode] Tier 2: WebContentsForceDark enabled via command-line switch');
 }
-
-// Disable Chromium Site Isolation so cross-origin iframes share the parent
-// frame's renderer process. Required for `webPreferences.sandbox = false` set
-// on a webview to actually take effect for child iframes — otherwise each
-// cross-origin iframe spins up its own out-of-process renderer that ignores
-// the parent's sandbox preference and re-enters Electron 40's broken
-// sandbox_bundle init ("TypeError: object null is not iterable" inside
-// ___electron_webpack_init__). Concretely this manifests on Proton's reauth
-// page: the embedded account-api.proton.me captcha iframe crashes during
-// init, the captcha never produces a token, the server rejects the unlock
-// request with HTTP 422, and the page renders "Oops, something went wrong".
-app.commandLine.appendSwitch('disable-features', 'IsolateOrigins,site-per-process');
 
 // Configure app before ready (registers protocol scheme, sets theme)
 configure({

@@ -395,7 +395,6 @@ Never `pkill -f electron` or `pkill -f Peek` — those will kill the production 
 ## Key Pitfalls
 
 - Top-level `await api.initialize()` followed by a later synchronous throw causes a silent halt — no error surfaced.
-- `sandbox: false` does **not** propagate to cross-origin iframes. Disable Site Isolation app-wide if cross-origin frame access is required.
 - `peek://groups/` and `peek://ext/groups/` are URL substrings of each other. Always pair tile moves with a URL migration to avoid Playwright selector collisions.
 - "Works in `yarn start`, broken in packaged" usually means profile-scoped `localStorage` or an asar path issue, not a code bug.
 - Never disable `webSecurity` or `nodeIntegration` to fix a bug. Wire a narrow capability instead.
