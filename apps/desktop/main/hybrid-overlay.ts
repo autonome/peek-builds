@@ -2473,7 +2473,8 @@ function installTestBridge(): void {
      * → the windows-feature entry shape). Returns the same `{ id, url, title,
      * visible, focused, favicon, ... }` entries the feature's renderer receives,
      * so a test can assert a hybrid window is indistinguishable from a canvas
-     * page in the list. Empty when the hybrid flag is off (registry empty).
+     * page in the list. Empty only when no hybrid windows are registered
+     * (hybrid is the only page-host path now, not a flag-gated one).
      */
     windowsFeatureHybridEntries(): Array<{
       id: number;

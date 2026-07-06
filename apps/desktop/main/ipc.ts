@@ -161,7 +161,8 @@ import {
  * as transient-autoclose candidates, tagged with its registry role and current
  * visibility. Hybrid windows are NOT BrowserWindows, so `getAllLiveWindows()`
  * (BrowserWindow.getAllWindows-backed) can't see them; we union the hybrid
- * registry in. Empty hybrid contribution when the flag is off (registry empty).
+ * registry in. Empty hybrid contribution only if no hybrid windows exist
+ * (hybrid is the only page-host path now, not a flag-gated one).
  */
 function gatherTransientSiblingCandidates(): TransientSiblingCandidate[] {
   const out: TransientSiblingCandidate[] = [];
@@ -811,7 +812,7 @@ function applyPlacementOnReuse(
  * there is no double-emit: page.js never runs for a hybrid window.
  *
  * Gating: only ever called from the hybrid branch, which already gates on
- * `useCanvas`. The content wc is the only main-owned content webContents,
+ * `usePageHost`. The content wc is the only main-owned content webContents,
  * so attaching here is the hybrid-only path.
  *
  * Topics (see docs/perf/page-host-hybrid-design.md §4):
@@ -2503,8 +2504,8 @@ export function registerWindowHandlers(): void {
 
       // P1.4a hybrid dedup (by key): hybrid page-hosts are BaseWindows, which
       // findWindowByKey (via getLiveWindow == BrowserWindow.fromId) cannot
-      // resolve. When the flag is on, consult the hybrid registry first so a
-      // repeat open of the same key REUSES the existing hybrid window (focus
+      // resolve. Consult the hybrid registry first so a repeat open of the
+      // same key REUSES the existing hybrid window (focus
       // its baseWin, return its id) instead of spawning a duplicate — matching
       // the canvas key-reuse semantics below.
       {
@@ -2713,7 +2714,7 @@ export function registerWindowHandlers(): void {
     // (webview, navbar, resize handle) are positioned via JS on an invisible surface.
     // Non-canvas web pages (modals, quick-views, overlays) load their URL directly.
     const isModalOrQuickView = options.modal === true || options.overlay === true;
-    const useCanvas = options.canvas === true || (isWebPage && !isModalOrQuickView);
+    const usePageHost = options.canvas === true || (isWebPage && !isModalOrQuickView);
 
     // Use profile-specific session for isolation
     const profileSession = getProfileSession();
@@ -2932,7 +2933,7 @@ export function registerWindowHandlers(): void {
     // ────────────────────────────────────────────────────────────────────
     // HYBRID PAGE-HOST EARLY BRANCH (P1.1)
     //
-    // When this is a web page open (`useCanvas`), build the
+    // When this is a web page open (`usePageHost`), build the
     // page as an *opaque, content-sized* `BaseWindow` hosting a single
     // `WebContentsView` whose webContents loads the target URL directly —
     // NO `<webview>`, NO page.js chrome, NO per-page chrome renderer (R6:
@@ -2957,7 +2958,7 @@ export function registerWindowHandlers(): void {
     // reuses+focuses the existing hybrid window (with placement-on-reuse +
     // transient-refresh parity) before we ever reach this construction
     // branch. We only get here on a genuine first open.
-    if (useCanvas) {
+    if (usePageHost) {
       try {
         // winOptions.x/y/width/height were filled in above by
         // `computeInitialBounds` (or the caller's explicit x/y) and hold the
@@ -3088,7 +3089,7 @@ export function registerWindowHandlers(): void {
     }
 
     DEBUG && console.log('Creating window with options:', winOptions);
-    console.log(`[window-open:bounds] url=${url.substring(0, 80)} final position: (${winOptions.x},${winOptions.y}) ${winOptions.width}x${winOptions.height}${useCanvas ? " [canvas]" : ""}`);
+    console.log(`[window-open:bounds] url=${url.substring(0, 80)} final position: (${winOptions.x},${winOptions.y}) ${winOptions.width}x${winOptions.height}${usePageHost ? " [page-host]" : ""}`);
 
     // Pass through optional BrowserWindow properties from caller
     // Headless never floats a window above the user's real desktop (mirrors the
@@ -3096,7 +3097,7 @@ export function registerWindowHandlers(): void {
     if (options.alwaysOnTop !== undefined) winOptions.alwaysOnTop = !isHeadless() && !!options.alwaysOnTop;
     if (options.focusable !== undefined) winOptions.focusable = !!options.focusable;
     if (options.skipTaskbar !== undefined) winOptions.skipTaskbar = !!options.skipTaskbar;
-    if (options.hasShadow !== undefined && !useCanvas) winOptions.hasShadow = !!options.hasShadow;
+    if (options.hasShadow !== undefined && !usePageHost) winOptions.hasShadow = !!options.hasShadow;
 
     // Create new window.
     //
@@ -3118,7 +3119,7 @@ export function registerWindowHandlers(): void {
     const isRealTileLaunch =
       tileWebPrefs !== null &&
       !specialCaseToken &&
-      !useCanvas &&
+      !usePageHost &&
       tileWebPrefs.token !== undefined;
     perfMark('before-create');
     let win: BrowserWindow;
@@ -3229,7 +3230,7 @@ export function registerWindowHandlers(): void {
     // DevTools attach state. console-message does NOT fire when DevTools
     // is attached, so the IPC path is the source of truth.
     if (DEBUG) {
-      const consoleLabel = useCanvas ? `page-host:${url.substring(0, 60)}` : url.replace('peek://', '');
+      const consoleLabel = usePageHost ? `page-host:${url.substring(0, 60)}` : url.replace('peek://', '');
       win.webContents.on('console-message', (event) => {
         // Electron 40: `level` is a string literal, not an integer.
         try {

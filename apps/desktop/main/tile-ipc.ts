@@ -2922,7 +2922,7 @@ export function registerTileIpcHandlers(): void {
       const win = getLiveWindow(args.id);
       if (!win) {
         // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. A live
-        // hybrid window still "exists". No-op (null) when the flag is off.
+        // hybrid window still "exists"; consult the hybrid registry directly.
         const hybrid = getHybridWindow(args.id);
         if (hybrid && !hybrid.baseWin.isDestroyed()) {
           return { exists: true, success: true, data: true };

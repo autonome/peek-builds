@@ -715,8 +715,9 @@ export function closeOrHideWindow(id: number): void {
     if (!win) {
       // Hybrid page-host (BaseWindow) — invisible to getLiveWindow /
       // BrowserWindow.fromId. cmd+W (R1, peek ca4ee5e6) and any other
-      // close-by-id path must still close it. No-op (null) when the hybrid flag
-      // is off (registry empty), preserving canvas-path behavior byte-for-byte.
+      // close-by-id path must still close it. No-op (null) only if the
+      // registry has no entry for this id — hybrid is the only page-host path
+      // now, not a flag-gated one.
       const hybrid = getHybridWindow(id);
       if (hybrid && !hybrid.baseWin.isDestroyed()) {
         // keepLive parity with the BrowserWindow branch below: a hybrid

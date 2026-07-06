@@ -83,9 +83,10 @@ function debugListWindows(): CliResult {
 
   // P1.4a: hybrid page-hosts are BaseWindows (not BrowserWindows) and their
   // content lives in a WebContentsView, so BrowserWindow.getAllWindows() above
-  // misses them entirely. Additive — empty when the hybrid flag is off, so
-  // non-hybrid output is unchanged. We report the CONTENT webContents id (the
-  // useful target for debug-eval) and its live url/title.
+  // misses them entirely. Additive — empty only if no hybrid windows are open
+  // (hybrid is the only page-host path now, not a flag-gated add-on). We
+  // report the CONTENT webContents id (the useful target for debug-eval) and
+  // its live url/title.
   for (const h of getAllHybridWindows()) {
     out.push({
       windowId: h.windowId,
@@ -134,8 +135,9 @@ async function debugEval(args: unknown[]): Promise<CliResult> {
     }
     // P1.4a: also consider hybrid page-host content webContents by url/title
     // substring (NUMBER targeting by wc id already works via fromId). Additive
-    // — the loop is over an empty set when the hybrid flag is off. Only scanned
-    // if a BrowserWindow above didn't already match.
+    // — the loop is simply empty if no hybrid windows are open (hybrid is the
+    // only page-host path now, not a flag-gated one). Only scanned if a
+    // BrowserWindow above didn't already match.
     if (!wc) {
       for (const h of getAllHybridWindows()) {
         if (h.contentWC.isDestroyed()) continue;

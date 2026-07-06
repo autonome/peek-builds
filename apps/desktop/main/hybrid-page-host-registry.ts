@@ -712,7 +712,7 @@ export function unregisterHybridWindow(windowId: number): void {
   }
 }
 
-/** Every registered hybrid window. Empty when the hybrid flag is off. */
+/** Every registered hybrid window. Empty when no hybrid windows exist (hybrid is the only page-host path now, not a flag-gated one). */
 export function getAllHybridWindows(): HybridWindowEntry[] {
   return Array.from(entries.values(), toPublic);
 }
@@ -808,8 +808,7 @@ export function getActiveHybridWindowId(): number | null {
  *
  * This is the push signal the P1.4b shared chrome overlay consumes so it can
  * retarget over the active content window WITHOUT polling
- * `getActiveHybridWindowId()`. No-op-ish when the flag is off: nothing ever
- * mutates the active id on the canvas path, so a subscriber simply never fires.
+ * `getActiveHybridWindowId()`.
  */
 export function onActiveHybridWindowChange(cb: ActiveChangeListener): () => void {
   activeChangeListeners.add(cb);
