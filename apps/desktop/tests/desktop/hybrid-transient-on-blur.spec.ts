@@ -5,8 +5,8 @@ import { createPerDescribeApp } from '../helpers/test-app';
 // Regression (peek item 8e5c3174), found dogfooding 2026-06-09 right after the
 // hybrid page-host menu/shortcut fix (b1dd4e7c) restored the peek/slide hotkeys.
 //
-// Peeks and slides open with `{ role: 'quick-view', modal: true, canvas: true }`.
-// Under the hybrid page-host default (2026-06-08) `canvas: true` routes them to
+// Peeks and slides open with `{ role: 'quick-view', modal: true, pageHost: true }`.
+// Under the hybrid page-host default (2026-06-08) `pageHost: true` routes them to
 // the hybrid BaseWindow branch — so they are now BaseWindows, NOT BrowserWindows.
 //
 // The IZUI transient-on-blur autoclose (a window gaining focus closes its
@@ -86,8 +86,8 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
 
   /**
    * Open a real hybrid quick-view (peek/slide shape: role quick-view + modal +
-   * canvas). `canvas: true` forces the hybrid BaseWindow branch under the hybrid
-   * default. Returns the hybrid window id. Uses a data: URL for network-free,
+   * pageHost). `pageHost: true` forces the hybrid BaseWindow branch under the
+   * hybrid default. Returns the hybrid window id. Uses a data: URL for network-free,
    * deterministic content (the hybrid branch awaits the content load).
    */
   async function openHybridQuickView(key: string): Promise<number> {
@@ -97,7 +97,7 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
         {
           role: 'quick-view',
           modal: true,
-          canvas: true,
+          pageHost: true,
           type: 'panel',
           width: 400,
           height: 300,
@@ -179,7 +179,7 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
   }
 
   /**
-   * Open a hybrid web page (NON-transient: role 'workspace'). `canvas: true`
+   * Open a hybrid web page (NON-transient: role 'workspace'). `pageHost: true`
    * with no modal routes to the hybrid branch; inferIzuiRole yields 'workspace'
    * for a non-modal non-webpage URL. Used to prove app-blur dismissal is scoped
    * to transient surfaces only.
@@ -188,7 +188,7 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
     const result = await bgWindow.evaluate(async (key: string) => {
       return await (window as any).app.window.open(
         'data:text/html,<title>Page</title>page',
-        { canvas: true, width: 800, height: 600, key: `hybrid-transient-on-blur-${key}` },
+        { pageHost: true, width: 800, height: 600, key: `hybrid-transient-on-blur-${key}` },
       );
     }, key);
     if (!result.success) {

@@ -59,7 +59,7 @@ test.describe('headless no focus theft @desktop', () => {
       return await (window as any).app.window.open('https://example.com', {
         role: 'quick-view',
         modal: true,
-        canvas: true,
+        pageHost: true,
         type: 'panel',
         width: 800,
         height: 600,
@@ -150,7 +150,7 @@ test.describe('headless no focus theft @desktop', () => {
       return await (window as any).app.window.open('https://example.com', {
         role: 'quick-view',
         modal: true,
-        canvas: true,
+        pageHost: true,
         type: 'panel',
         width: 800,
         height: 600,
@@ -219,7 +219,7 @@ test.describe('headless no focus theft @desktop', () => {
       return await (window as any).app.window.open('https://example.com', {
         role: 'quick-view',
         modal: true,
-        canvas: true,
+        pageHost: true,
         type: 'panel',
         width: 800,
         height: 600,

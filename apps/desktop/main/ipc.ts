@@ -2705,16 +2705,17 @@ export function registerWindowHandlers(): void {
       frameDefault = prefs.hideTitleBar === false;
     }
 
-    // Check if this is a web page that will use the transparent canvas
+    // Check if this is a real web page (vs a peek:// tile / modal / quick-view).
     const isNewTab = url === 'peek://app/new-tab/index.html';
     const isWebPage = url.startsWith('http://') || url.startsWith('https://') || url.startsWith('file:///') || isNewTab;
 
-    // Determine if this web page should use the fullscreen transparent canvas model.
-    // Canvas pages get a fullscreen transparent BrowserWindow where all UI elements
-    // (webview, navbar, resize handle) are positioned via JS on an invisible surface.
-    // Non-canvas web pages (modals, quick-views, overlays) load their URL directly.
+    // Determine whether this window uses the page-host architecture (a hybrid
+    // BaseWindow + WebContentsView content + the shared chrome overlay). Real
+    // web pages do by default; a caller can force it with `pageHost: true`
+    // (peeks/slides open that way to get the page-host shell + address bar).
+    // Modals/quick-views/overlays load their URL directly instead.
     const isModalOrQuickView = options.modal === true || options.overlay === true;
-    const usePageHost = options.canvas === true || (isWebPage && !isModalOrQuickView);
+    const usePageHost = options.pageHost === true || (isWebPage && !isModalOrQuickView);
 
     // Use profile-specific session for isolation
     const profileSession = getProfileSession();
