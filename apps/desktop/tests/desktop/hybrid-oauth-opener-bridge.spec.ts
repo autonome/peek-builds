@@ -189,7 +189,11 @@ test.describe('hybrid OAuth popup→opener bridge @desktop', () => {
       .toBe(false);
   });
 
-  // peek 06d363fc — KNOWN-FAILING repro (test.fixme; no fix landed yet).
+  // peek 06d363fc — regression test. FIXED by global sandbox:true (commit
+  // 4e3fbf4d): a sandboxed opener routes the dead-handle close() through
+  // Chromium's NATIVE path → a browser-correct silent no-op. This test is live
+  // and PASSING; it guards against a regression. The pre-fix behaviour it
+  // reproduces is described below for context.
   //
   // Many OAuth client libraries defensively call `popup.close()` after they
   // receive the result. Browser semantics: `.close()` on an already-closed
@@ -220,8 +224,9 @@ test.describe('hybrid OAuth popup→opener bridge @desktop', () => {
   // first-responder bug (focus-dependent); this one is not. Likely fix path: an
   // upstream Electron report (an adopted-WebContentsView popup leaves a stale
   // guest-frame reference, so a later opener close() routes to a released context)
-  // and/or a deterministic main-side precondition — NOT a `!isDestroyed()` guard
-  // on our routing (there is none) and NOT a timer. Un-skip to work the fix.
+  // and/or a deterministic main-side precondition. The ACTUAL fix turned out to
+  // be global sandbox:true (4e3fbf4d) — a sandboxed opener never routes close()
+  // through the guest-window-manager IPC that threw — not any main-side route.
   test('opener close() after the popup self-closed is a silent no-op', async () => {
     // Warm-up cycle — reproduces the "prior popup activity in the app"
     // precondition that this repro depends on, so it fails standalone
@@ -283,7 +288,8 @@ test.describe('hybrid OAuth popup→opener bridge @desktop', () => {
     expect(closeResult).toBe('ok');
   });
 
-  // peek 06d363fc — SETTLED-path variant, KNOWN-FAILING (test.fixme; no fix yet).
+  // peek 06d363fc — SETTLED-path variant. Live and PASSING (fixed by global
+  // sandbox:true, 4e3fbf4d — same as the sibling regression test above).
   //
   // Same as the fixme above (same warm-up prior-activity precondition, same
   // self-close → opener defensive close()) EXCEPT the popup fully SETTLES before
@@ -301,8 +307,8 @@ test.describe('hybrid OAuth popup→opener bridge @desktop', () => {
   // popup-based OAuth is therefore affected once any popup was opened earlier.
   // (A weaker popup-side settle — waiting only for the popup's own window.opener —
   // throws too.) CONFIRMED (isolated run): a PRISTINE first popup with a full
-  // settle and no prior activity does NOT throw — so the bug is 2nd-popup-onward
-  // in a session, not the very first popup. Un-skip to work the fix.
+  // settle and no prior activity does NOT throw — so the bug was 2nd-popup-onward
+  // in a session, not the very first popup. Fixed by global sandbox:true.
   test('opener close() after a SETTLED popup self-closed is a silent no-op', async () => {
     // Warm-up cycle — same "prior popup activity" precondition as the fixme above.
     const warmOpenerId = await openOpener('settled-warm');
