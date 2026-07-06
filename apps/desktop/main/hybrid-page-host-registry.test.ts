@@ -34,6 +34,15 @@ import {
   setOverlayFocusProvider,
   setOverlayWindowIdProvider,
   isHybridOverlayWindowId,
+  markHybridPainted,
+  hasHybridPainted,
+  HYBRID_SAME_URL_RETRY_CAP,
+  noteHybridLoadFailure,
+  hasHybridOutstandingFailure,
+  noteHybridRetryAttempt,
+  getHybridRetryAttempts,
+  clearHybridRetry,
+  unregisterHybridWindow,
 } from './hybrid-page-host-registry.js';
 
 type Handler = (...args: unknown[]) => void;
@@ -514,5 +523,98 @@ describe('hybrid-page-host-registry: overlay window id (cmd+W overlay redirect)'
   it('provider returning null (overlay gone) matches nothing', () => {
     setOverlayWindowIdProvider(() => null);
     assert.strictEqual(isHybridOverlayWindowId(7), false);
+  });
+});
+
+// ── Loading-card first-paint tracking ────────────────────────────────────────
+describe('hybrid-page-host-registry: first-paint (loading card gate)', () => {
+  beforeEach(() => {
+    _resetForTests();
+    nextId = 1;
+  });
+
+  it('a fresh window has not painted (firstLoad = true)', () => {
+    assert.strictEqual(hasHybridPainted(1), false);
+  });
+
+  it('markHybridPainted flips it — a subsequent load is no longer firstLoad', () => {
+    markHybridPainted(1);
+    assert.strictEqual(hasHybridPainted(1), true);
+    assert.strictEqual(hasHybridPainted(2), false); // per-window
+  });
+
+  it('teardown clears the painted flag (a reused id starts unpainted)', () => {
+    const f = mk({ url: 'https://a.test/' });
+    markHybridPainted(f.id);
+    assert.strictEqual(hasHybridPainted(f.id), true);
+    unregisterHybridWindow(f.id);
+    assert.strictEqual(hasHybridPainted(f.id), false);
+  });
+});
+
+// ── Same-URL Retry cap ───────────────────────────────────────────────────────
+describe('hybrid-page-host-registry: same-URL retry cap', () => {
+  beforeEach(() => {
+    _resetForTests();
+    nextId = 1;
+  });
+
+  it('no outstanding failure by default; a normal reload is never throttled', () => {
+    assert.strictEqual(hasHybridOutstandingFailure(1), false);
+    assert.strictEqual(getHybridRetryAttempts(1), 0);
+    // noteHybridRetryAttempt is a no-op without an outstanding failure.
+    assert.strictEqual(noteHybridRetryAttempt(1), 0);
+  });
+
+  it('records a failure and accumulates same-URL retries up to the cap', () => {
+    noteHybridLoadFailure(1, 'https://bad.test/');
+    assert.strictEqual(hasHybridOutstandingFailure(1), true);
+    assert.strictEqual(getHybridRetryAttempts(1), 0);
+
+    // Simulate the page:reload gate: allowed while attempts < cap.
+    const reloads: number[] = [];
+    for (let i = 0; i < HYBRID_SAME_URL_RETRY_CAP + 3; i++) {
+      if (getHybridRetryAttempts(1) >= HYBRID_SAME_URL_RETRY_CAP) continue; // capped: blocked
+      noteHybridRetryAttempt(1);
+      reloads.push(i);
+    }
+    // Exactly CAP reloads are allowed; the rest are blocked.
+    assert.strictEqual(reloads.length, HYBRID_SAME_URL_RETRY_CAP);
+    assert.strictEqual(getHybridRetryAttempts(1), HYBRID_SAME_URL_RETRY_CAP);
+  });
+
+  it('a re-failure of the SAME url keeps the accumulated attempts', () => {
+    noteHybridLoadFailure(1, 'https://bad.test/');
+    noteHybridRetryAttempt(1);
+    noteHybridRetryAttempt(1);
+    assert.strictEqual(getHybridRetryAttempts(1), 2);
+    // did-fail-load fires again for the same url after a retry reload.
+    noteHybridLoadFailure(1, 'https://bad.test/');
+    assert.strictEqual(getHybridRetryAttempts(1), 2); // NOT reset
+  });
+
+  it('a failure of a DIFFERENT url resets the attempt counter', () => {
+    noteHybridLoadFailure(1, 'https://bad.test/');
+    noteHybridRetryAttempt(1);
+    noteHybridRetryAttempt(1);
+    assert.strictEqual(getHybridRetryAttempts(1), 2);
+    noteHybridLoadFailure(1, 'https://other-bad.test/');
+    assert.strictEqual(getHybridRetryAttempts(1), 0); // fresh url, fresh budget
+  });
+
+  it('clearHybridRetry (genuine success) drops the outstanding failure + budget', () => {
+    noteHybridLoadFailure(1, 'https://bad.test/');
+    noteHybridRetryAttempt(1);
+    clearHybridRetry(1);
+    assert.strictEqual(hasHybridOutstandingFailure(1), false);
+    assert.strictEqual(getHybridRetryAttempts(1), 0);
+  });
+
+  it('teardown clears the retry record', () => {
+    const f = mk({ url: 'https://bad.test/' });
+    noteHybridLoadFailure(f.id, 'https://bad.test/');
+    noteHybridRetryAttempt(f.id);
+    unregisterHybridWindow(f.id);
+    assert.strictEqual(hasHybridOutstandingFailure(f.id), false);
   });
 });

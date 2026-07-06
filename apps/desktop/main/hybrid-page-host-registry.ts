@@ -55,6 +55,78 @@ export type HybridLoadError = {
 
 const perHostLoadError = new Map<number, HybridLoadError | null>();
 
+// ── First-paint tracking (loading card) ──────────────────────────────────────
+// A hybrid window's content view shows nothing but its theme background fill
+// until its FIRST load settles (fresh open, session restore, deferred-restore
+// on focus) — the "black/blank screen while restoring" the user hit. The overlay
+// paints a favicon+spinner loading card ONLY for that first-load window; once a
+// window has painted a page, an in-page navigation keeps the old page visible,
+// so covering it with a card would be a regression. `did-stop-loading` marks the
+// window painted (first settle). Cleared on teardown.
+const perHostPainted = new Set<number>();
+
+/** Mark that `windowId` has settled at least one load (its view has painted). */
+export function markHybridPainted(windowId: number): void {
+  perHostPainted.add(windowId);
+}
+
+/** True once `windowId` has settled a load — i.e. it has a page to show, so a
+ *  subsequent navigation should NOT get the opaque loading card. */
+export function hasHybridPainted(windowId: number): boolean {
+  return perHostPainted.has(windowId);
+}
+
+// ── Same-URL retry cap (load-error "Retry" hammering) ─────────────────────────
+// Mashing Retry on a permanently-failing URL used to reload it with zero backoff
+// (read as an "infinite loop"). We cap the number of consecutive Retry reloads
+// of the SAME failing URL. The record is intentionally SEPARATE from the
+// load-error state above, which flickers (cleared on did-start-loading, re-set
+// on did-fail-load) — so a fast Retry mash that lands mid-reload can't reset the
+// counter. It is cleared only by a genuine load SUCCESS (did-finish-load) or a
+// DIFFERENT failing URL, and by teardown. fsm-pilled: attempt-count driven off
+// the load lifecycle, no wall-clock timer.
+export const HYBRID_SAME_URL_RETRY_CAP = 3;
+
+type HybridRetryRecord = { failedUrl: string; attempts: number };
+const perHostRetry = new Map<number, HybridRetryRecord>();
+
+/**
+ * Record that `failedUrl` failed to load for `windowId` (did-fail-load /
+ * loading-timeout). Resets the attempt counter when the failing URL CHANGES;
+ * leaves it intact when the SAME url fails again so retries keep accumulating.
+ */
+export function noteHybridLoadFailure(windowId: number, failedUrl: string): void {
+  const rec = perHostRetry.get(windowId);
+  if (!rec || rec.failedUrl !== failedUrl) {
+    perHostRetry.set(windowId, { failedUrl, attempts: 0 });
+  }
+}
+
+/** True when `windowId` currently has an outstanding (unresolved) load failure —
+ *  i.e. a `page:reload` is a Retry of a failed URL, subject to the cap. */
+export function hasHybridOutstandingFailure(windowId: number): boolean {
+  return perHostRetry.has(windowId);
+}
+
+/** Increment and return the same-URL Retry attempt count for `windowId`. Callers
+ *  guard with `hasHybridOutstandingFailure` first (returns 0 if none). */
+export function noteHybridRetryAttempt(windowId: number): number {
+  const rec = perHostRetry.get(windowId);
+  if (!rec) return 0;
+  rec.attempts += 1;
+  return rec.attempts;
+}
+
+/** Current same-URL Retry attempt count (0 if no outstanding failure). */
+export function getHybridRetryAttempts(windowId: number): number {
+  return perHostRetry.get(windowId)?.attempts ?? 0;
+}
+
+/** Clear the retry record — genuine load success, or navigation elsewhere. */
+export function clearHybridRetry(windowId: number): void {
+  perHostRetry.delete(windowId);
+}
+
 // Per-host pending navigation URL. Set by installHybridNavbarActionRouting's
 // page:navigate subscriber BEFORE calling loadURL(url), so wireHybridContentEvents
 // can read the target URL in did-start-loading (where contentWC.getURL() still
@@ -630,6 +702,9 @@ export function unregisterHybridWindow(windowId: number): void {
   // Stage B: clean up per-host load-error and pending-nav state.
   perHostLoadError.delete(windowId);
   perHostPendingNavUrl.delete(windowId);
+  // Loading-card first-paint + retry-cap per-host state.
+  perHostPainted.delete(windowId);
+  perHostRetry.delete(windowId);
   // Announce the teardown (e.g. deny pending permission prompts).
   notifyWindowClosed(windowId);
   if (activeHybridWindowId === windowId) {
@@ -787,6 +862,8 @@ export function _resetForTests(): void {
   activeHybridWindowId = null;
   isOverlayFocused = null;
   overlayWindowIdProvider = null;
+  perHostPainted.clear();
+  perHostRetry.clear();
 }
 
 /**

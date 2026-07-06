@@ -883,6 +883,49 @@
       opacity: 0.9;
     }
 
+    /* ── Loading card (favicon + spinner) ──────────────────────────────────
+     * Dynamically created/removed by overlay.js (showLoadingOverlay /
+     * clearLoadingOverlay), positioned over the content rect by
+     * updateOverlayPositions() (same geometry as .load-error-overlay). Covers
+     * the content view's un-painted fill on restore/open so the user never sees
+     * a black flash. Same z-index (25) as the error card — the two are mutually
+     * exclusive (error supersedes loading), so they never stack. */
+    .loading-overlay {
+      position: fixed;
+      z-index: 25;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--theme-bg, #1e1e1e);
+      /* left / top / width / height set dynamically in updateOverlayPositions(). */
+    }
+    body.no-active .loading-overlay {
+      display: none;
+    }
+    .loading-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    .loading-favicon {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      object-fit: contain;
+    }
+    .loading-spinner {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 3px solid color-mix(in srgb, var(--theme-text, #e0e0e0) 20%, transparent);
+      border-top-color: var(--theme-accent, #007aff);
+      animation: loading-spin 800ms linear infinite;
+    }
+    @keyframes loading-spin {
+      to { transform: rotate(360deg); }
+    }
+
     /* ── Permission prompt (web permission requests — geolocation, etc.) ────
      * Ported from the retired canvas page-host chrome (renderer/page/index.html,
      * see git history 2b14032d^) with overlay adaptations: the element is

@@ -3670,6 +3670,43 @@ export function updateItemFavicon(url: string, faviconUrl: string): boolean {
 }
 
 /**
+ * Read the stored favicon for a URL item, or '' if none is known. The READ
+ * counterpart of `updateItemFavicon` — mirrors its lookup order (exact
+ * normalized match → raw match → most-recent same-domain item) so a favicon
+ * written under any of those keys is found again. Used by the hybrid page-host
+ * loading card to paint the last-known favicon the instant a load starts
+ * (before the live `page-favicon-updated` arrives). Returns '' — not null — so
+ * callers can pass it straight into a payload field.
+ */
+export function getFaviconForUrl(url: string): string {
+  const normalizedUri = normalizeUrl(url);
+  const d = getDb();
+
+  let existing = d.prepare(
+    'SELECT favicon FROM items WHERE type = ? AND content = ? AND deletedAt = 0'
+  ).get('url', normalizedUri) as { favicon: string | null } | undefined;
+
+  if ((!existing || !existing.favicon) && url !== normalizedUri) {
+    existing = d.prepare(
+      'SELECT favicon FROM items WHERE type = ? AND content = ? AND deletedAt = 0'
+    ).get('url', url) as { favicon: string | null } | undefined;
+  }
+
+  if (!existing || !existing.favicon) {
+    try {
+      const domain = new URL(url).hostname;
+      existing = d.prepare(
+        `SELECT favicon FROM items WHERE type = ? AND domain = ? AND deletedAt = 0
+         AND favicon != '' AND favicon IS NOT NULL
+         ORDER BY updatedAt DESC LIMIT 1`
+      ).get('url', domain) as { favicon: string | null } | undefined;
+    } catch { /* invalid URL, skip domain phase */ }
+  }
+
+  return existing?.favicon || '';
+}
+
+/**
  * Soft delete an item (sets deletedAt timestamp)
  */
 export function deleteItem(itemId: string): boolean {

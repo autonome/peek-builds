@@ -338,6 +338,46 @@ describe('Desktop Datastore Tests', () => {
     });
   });
 
+  describe('getFaviconForUrl (loading-card icon lookup)', () => {
+    it('returns the stored favicon for an exact URL', () => {
+      datastore.addItem('url', { content: 'https://fav-exact.example/page' });
+      datastore.updateItemFavicon('https://fav-exact.example/page', 'https://fav-exact.example/icon.png');
+      assert.strictEqual(
+        datastore.getFaviconForUrl('https://fav-exact.example/page'),
+        'https://fav-exact.example/icon.png',
+      );
+    });
+
+    it('finds the favicon via normalized match (trailing slash)', () => {
+      datastore.addItem('url', { content: 'https://fav-norm.example/page' });
+      datastore.updateItemFavicon('https://fav-norm.example/page', 'https://fav-norm.example/icon.png');
+      // Active URL has a trailing slash; stored content does not.
+      assert.strictEqual(
+        datastore.getFaviconForUrl('https://fav-norm.example/page/'),
+        'https://fav-norm.example/icon.png',
+      );
+    });
+
+    it('falls back to a same-domain favicon when the exact URL has none', () => {
+      datastore.addItem('url', { content: 'https://fav-domain.example/home' });
+      datastore.updateItemFavicon('https://fav-domain.example/home', 'https://fav-domain.example/icon.png');
+      // A different path on the same domain, never stored itself.
+      assert.strictEqual(
+        datastore.getFaviconForUrl('https://fav-domain.example/some/other/path'),
+        'https://fav-domain.example/icon.png',
+      );
+    });
+
+    it("returns '' (not null) when no favicon is known", () => {
+      assert.strictEqual(datastore.getFaviconForUrl('https://no-fav-anywhere.example/'), '');
+    });
+
+    it("returns '' for an item that exists but has an empty favicon", () => {
+      datastore.addItem('url', { content: 'https://fav-empty.example/page' });
+      assert.strictEqual(datastore.getFaviconForUrl('https://fav-empty.example/page'), '');
+    });
+  });
+
   describe('Item deletion', () => {
     it('should soft delete an item', () => {
       const { id } = datastore.addItem('url', { content: 'https://delete-me.com' });

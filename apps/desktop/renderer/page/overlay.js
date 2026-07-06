@@ -239,6 +239,16 @@ function updateOverlayPositions() {
     errorOverlay.style.height = `${h}px`;
   }
 
+  // Loading card: same content-rect geometry as the error card (dynamically
+  // created, so its bounds are set here each time positions change).
+  const loadingOverlay = document.querySelector('.loading-overlay');
+  if (loadingOverlay) {
+    loadingOverlay.style.left = `${left}px`;
+    loadingOverlay.style.top = `${top}px`;
+    loadingOverlay.style.width = `${w}px`;
+    loadingOverlay.style.height = `${h}px`;
+  }
+
   // Permission prompt: pinned top-center of the content rect (the canvas chrome
   // used window-relative top:16px/left:50%; the overlay frames content + gutters,
   // so anchor to the content instead). CSS translateX(-50%) centers on `left`.
@@ -298,6 +308,12 @@ let activeWindowId = null;
 // window navigates (page:nav-state / page:navigated). null when no active window
 // or the active URL is not http(s).
 let activeUrl = null;
+
+// The active window's last-known favicon (seeded from the handoff snapshot,
+// updated by page:favicon / page:loading). Painted on the loading card so a
+// restore/open shows the site's icon the instant the load starts — before the
+// live favicon arrives. '' → spinner-only card.
+let activeFavicon = '';
 
 // P1.4b-3: the active host window's current OUTER bounds, seeded from the active
 // handoff and kept in sync as the user resizes/moves through the overlay chrome.
@@ -373,7 +389,11 @@ function showLoadErrorOverlay(failedUrl, errorCode, errorDescription) {
   retry.textContent = 'Retry';
   retry.addEventListener('click', () => {
     if (activeWindowId == null) return;
-    clearLoadErrorOverlay();
+    // Don't optimistically clear the card: main is the single source of truth.
+    // A reload that actually happens clears it via did-start-loading →
+    // page:load-error(null); a Retry that hits the same-URL cap does NOT reload,
+    // and main answers with page:retry-capped so the card stays (and Retry
+    // disables) instead of vanishing into a blank page.
     api.publish('page:reload', { windowId: activeWindowId });
   });
 
@@ -409,6 +429,87 @@ function showLoadErrorOverlay(failedUrl, errorCode, errorDescription) {
   updateOverlayPositions();
 }
 
+// ── Loading card (favicon + spinner over the content rect) ───────────────────
+// Kills the "black screen while restoring" the user saw: a deferred-restore or
+// fresh open shows nothing but the content view's un-painted fill until the
+// first frame commits. This card covers the content rect with a theme fill, the
+// site's last-known favicon, and a spinner the instant the load STARTS, and is
+// removed the instant it SETTLES. FSM alignment: driven purely by the existing
+// deterministic `loading` signal (did-start-loading → page:loading:true /
+// did-stop-loading → page:loading:false; snap.loading on retarget) — no timer,
+// no polling. The branded error card SUPERSEDES it (error > loading).
+
+/** Remove any existing loading card. */
+function clearLoadingOverlay() {
+  const existing = document.querySelector('.loading-overlay');
+  if (existing) existing.remove();
+}
+
+/** Update the favicon on a currently-shown loading card (live favicon arrived
+ *  while still loading). No-op if no card is shown. */
+function updateLoadingOverlayFavicon(favicon) {
+  const card = document.querySelector('.loading-overlay .loading-card');
+  if (!card) return;
+  let img = card.querySelector('.loading-favicon');
+  if (favicon) {
+    if (!img) {
+      img = document.createElement('img');
+      img.className = 'loading-favicon';
+      img.alt = '';
+      img.onerror = () => { img.remove(); };
+      card.insertBefore(img, card.firstChild);
+    }
+    img.src = favicon;
+  } else if (img) {
+    img.remove();
+  }
+}
+
+/**
+ * Show the loading card over the content rect. Idempotent: if a card is already
+ * up, just refreshes its favicon (so the spinner animation isn't restarted on a
+ * favicon update). The error card wins — never show a loading card over an
+ * active error.
+ */
+function showLoadingOverlay(favicon) {
+  if (document.querySelector('.load-error-overlay')) return; // error supersedes
+  const existing = document.querySelector('.loading-overlay');
+  if (existing) {
+    updateLoadingOverlayFavicon(favicon);
+    return;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'loading-overlay';
+
+  const card = document.createElement('div');
+  card.className = 'loading-card';
+
+  if (favicon) {
+    const img = document.createElement('img');
+    img.className = 'loading-favicon';
+    img.alt = '';
+    img.src = favicon;
+    img.onerror = () => { img.remove(); };
+    card.appendChild(img);
+  }
+
+  const spinner = document.createElement('div');
+  spinner.className = 'loading-spinner';
+  card.appendChild(spinner);
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  // Position over the current content rect now that it's in the DOM.
+  updateOverlayPositions();
+}
+
+/** Hide the loading card (load settled or window went inactive). */
+function hideLoadingOverlay() {
+  clearLoadingOverlay();
+}
+
 /** Reset the navbar to empty (active→null or before painting a new window). */
 function clearChrome() {
   navbar.setUrl('');
@@ -422,6 +523,8 @@ function clearChrome() {
   document.body.classList.add('no-active');
   hideFindBar();
   clearLoadErrorOverlay();
+  clearLoadingOverlay();
+  activeFavicon = '';
   clearPanels();
   setCapture(false);
 }
@@ -437,14 +540,23 @@ function paintFromSnapshot(snap) {
   // the previous window's title/favicon never bleeds across a retarget.
   navbar.pageTitle = snap.title || '';
   navbar.favicon = snap.favicon || '';
+  activeFavicon = snap.favicon || '';
   // Stage B: restore the per-host error state for the newly-active window so the
   // error card shows (or stays gone) instantly on retarget — no flash of the
   // wrong window's state. Rides the same deterministic handoff path as
   // navbar.loading — no extra timer or separate IPC.
   if (snap.loadError) {
     showLoadErrorOverlay(snap.loadError.failedUrl, snap.loadError.errorCode, snap.loadError.errorDescription);
+    hideLoadingOverlay();
   } else {
     clearLoadErrorOverlay();
+    // Show the favicon+spinner loading card if the newly-active window is mid
+    // FIRST load (deferred restore loading on focus, or a fresh open still in
+    // flight) — a never-painted view would otherwise show a blank theme fill.
+    // firstLoad gates out in-page navigations of already-painted windows (they
+    // keep the old page visible). Same deterministic `loading` signal, no timer.
+    if (snap.loading && snap.firstLoad) showLoadingOverlay(activeFavicon);
+    else hideLoadingOverlay();
   }
 }
 
@@ -514,11 +626,22 @@ api.subscribe('page:favicon', (msg) => {
   if (!isActive(msg)) return;
   // P1.4b-4: surface the favicon in the navbar title chip.
   navbar.favicon = msg.favicon || '';
+  // Keep the loading-card icon fresh if a card is currently up.
+  if (msg.favicon) activeFavicon = msg.favicon;
+  updateLoadingOverlayFavicon(activeFavicon);
 });
 
 api.subscribe('page:loading', (msg) => {
   if (!isActive(msg)) return;
   navbar.loading = !!msg.loading;
+  // A favicon may ride the loading payload (window that started loading while
+  // already active — no re-handoff). Seed it for the card.
+  if (msg.favicon) activeFavicon = msg.favicon;
+  // Show the favicon+spinner card on FIRST load-start (never-painted window),
+  // remove it on settle. firstLoad gates out in-page navigations. The error card
+  // supersedes (showLoadingOverlay early-returns while an error is shown).
+  if (msg.loading && msg.firstLoad) showLoadingOverlay(activeFavicon);
+  else hideLoadingOverlay();
 });
 
 // Stage B: live error update for the currently-active window. Main publishes
@@ -529,9 +652,32 @@ api.subscribe('page:loading', (msg) => {
 api.subscribe('page:load-error', (msg) => {
   if (!isActive(msg)) return;
   if (msg.error) {
+    // Error supersedes the loading card — take it down and show the error card.
+    hideLoadingOverlay();
     showLoadErrorOverlay(msg.error.failedUrl, msg.error.errorCode, msg.error.errorDescription);
   } else {
     clearLoadErrorOverlay();
+  }
+});
+
+// Same-URL Retry cap reached: main refused another reload of the permanently-
+// failing URL. Reflect it on the current error card — disable Retry and tell the
+// user to edit the address or close — instead of leaving a dead button. The card
+// is still up (main didn't reload), so mutate it in place.
+api.subscribe('page:retry-capped', (msg) => {
+  if (!isActive(msg)) return;
+  const card = document.querySelector('.load-error-overlay .load-error-card');
+  if (!card) return;
+  const retry = card.querySelector('.load-error-retry');
+  if (retry) {
+    retry.textContent = 'Too many attempts';
+    retry.disabled = true;
+    retry.style.opacity = '0.5';
+    retry.style.cursor = 'default';
+  }
+  const reason = card.querySelector('.load-error-reason');
+  if (reason) {
+    reason.textContent = 'This page keeps failing. Edit the address or close the window.';
   }
 });
 

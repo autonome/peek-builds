@@ -18,6 +18,7 @@ import {
   updateItem,
   updateItemTitle,
   updateItemFavicon,
+  getFaviconForUrl,
   updateItemThumbnail,
   hardDeleteItem,
   trackWindowLoad,
@@ -139,9 +140,20 @@ import {
   claimHybridDeferredLoad,
   // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
   setHybridLoadError,
+  getHybridLoadError,
   getHybridLoadingTimeoutMs,
   setHybridPendingNavUrl,
   takeHybridPendingNavUrl,
+  // Loading-card first-paint tracking
+  markHybridPainted,
+  hasHybridPainted,
+  // Same-URL Retry cap
+  HYBRID_SAME_URL_RETRY_CAP,
+  noteHybridLoadFailure,
+  hasHybridOutstandingFailure,
+  noteHybridRetryAttempt,
+  getHybridRetryAttempts,
+  clearHybridRetry,
 } from './hybrid-page-host-registry.js';
 
 /**
@@ -907,6 +919,18 @@ function assembleHybridPageHost(
 
   baseWin.contentView.addChildView(view);
 
+  // Give the content WebContentsView the same theme fill as the host BaseWindow
+  // (ipc.ts window-open BaseWindow ctor). Without this, the GPU-backed content
+  // view paints opaque macOS black over the host's theme background until its
+  // first frame commits — the "black screen while restoring" the user saw. The
+  // BaseWindow backgroundColor is the outer belt; this is the inner one for the
+  // view that actually overlaps the content rect.
+  try {
+    view.setBackgroundColor(getSystemThemeBackgroundColor());
+  } catch {
+    /* setBackgroundColor unsupported in some envs */
+  }
+
   // Fill the window; keep it filled on resize.
   const fillView = () => {
     const [w, h] = baseWin.getContentSize();
@@ -1374,9 +1398,22 @@ export function wireHybridContentEvents(
         errorCode: 'TIMEOUT',
         errorDescription: 'The page took too long to load.',
       });
+      noteHybridLoadFailure(hostWindowId, capturedUrl);
       try { contentWC.stop(); } catch { /* already stopped */ }
     }, timeoutMs);
-    publish(getSystemAddress(), 'page:loading', { windowId: hostWindowId, loading: true });
+    // Include the last-known favicon so a window that starts loading while
+    // ALREADY active (no re-handoff) still paints its icon on the loading card.
+    // '' when unknown → spinner-only. Rides the existing page:loading path — no
+    // extra timer or IPC.
+    let favicon = '';
+    try { if (isHttp(capturedUrl)) favicon = getFaviconForUrl(capturedUrl); } catch { /* ds unavailable */ }
+    publish(getSystemAddress(), 'page:loading', {
+      windowId: hostWindowId,
+      loading: true,
+      favicon,
+      // Card shows only for a never-painted window (fresh/restore/deferred).
+      firstLoad: !hasHybridPainted(hostWindowId),
+    });
   });
   contentWC.on('did-stop-loading', () => {
     if (contentWC.isDestroyed()) return;
@@ -1384,6 +1421,10 @@ export function wireHybridContentEvents(
     // Cancel the loading-timeout safety net so it can't fire after the WC
     // has already stopped (prevents a stale error overlay on a clean load).
     if (loadingTimeoutHandle) { clearTimeout(loadingTimeoutHandle); loadingTimeoutHandle = null; }
+    // The view has now painted a frame (page, error page, or abort) — so any
+    // FUTURE load is an in-page navigation that must NOT get the opaque loading
+    // card. Marks this window painted for the firstLoad gate.
+    markHybridPainted(hostWindowId);
     publish(getSystemAddress(), 'page:loading', { windowId: hostWindowId, loading: false });
 
     // Thumbnail capture, matching the canvas guest's did-stop-loading (ipc.ts ~2102).
@@ -1433,6 +1474,7 @@ export function wireHybridContentEvents(
         errorCode: String(errorCode),
         errorDescription: errorDescription || 'Load failed',
       });
+      noteHybridLoadFailure(hostWindowId, failedUrl);
       try { contentWC.stop(); } catch { /* already stopped */ }
     },
   );
@@ -2024,6 +2066,14 @@ export function wireHybridContentEvents(
     const pageUrl = contentWC.getURL();
     if (!isHttp(pageUrl)) return;
 
+    // Genuine load success — reset the same-URL Retry budget so a URL that later
+    // fails starts fresh (and a recovered URL isn't stuck at the cap). Gate on
+    // there being NO active load-error: a FAILED main-frame load also fires
+    // did-finish-load for the committed error page, and getURL() still returns
+    // the (http) failed URL, so an unguarded clear would wipe the record
+    // did-fail-load just set (which fires first, so the error is already stored).
+    if (!getHybridLoadError(hostWindowId)) clearHybridRetry(hostWindowId);
+
     let opensearchUrl: string | null = null;
     try {
       const detectedUrl = await contentWC.executeJavaScript(`
@@ -2121,6 +2171,21 @@ export function installHybridNavbarActionRouting(): void {
   subscribe(getSystemAddress(), 'page:reload', (raw) => {
     const r = wcFor(raw);
     if (!r) return;
+    // page:reload is multi-purpose — Cmd+R, the error card's Retry button, and
+    // the same-URL-window-reuse auto-reload all publish it. Only Retry-of-a-
+    // failed-URL is capped: gate on there being an OUTSTANDING load failure for
+    // this window (survives the reload's own error-flicker, unlike the load-
+    // error state). A normal reload (no outstanding failure) is never throttled.
+    if (hasHybridOutstandingFailure(r.windowId)) {
+      if (getHybridRetryAttempts(r.windowId) >= HYBRID_SAME_URL_RETRY_CAP) {
+        // Cap reached — refuse to hammer the failing URL. Tell the overlay so it
+        // can disable Retry instead of silently swallowing the click. The error
+        // card stays up (no reload → no did-start-loading to clear it).
+        publish(getSystemAddress(), 'page:retry-capped', { windowId: r.windowId });
+        return;
+      }
+      noteHybridRetryAttempt(r.windowId);
+    }
     try { r.wc.reload(); } catch { /* wc gone */ }
   });
 

@@ -69,6 +69,9 @@ import {
   // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
   registerLoadErrorListener,
   getHybridLoadError,
+  hasHybridPainted,
+  hasHybridOutstandingFailure,
+  getHybridRetryAttempts,
   getHybridLoadingTimeoutMs,
   setHybridLoadingTimeoutMs as _setHybridLoadingTimeoutMs,
   // Hybrid teardown → deny pending web-permission prompts (see initHybridOverlay)
@@ -90,6 +93,7 @@ import { publish, subscribe, unsubscribe, getSystemAddress } from './pubsub.js';
 // became a NEW hybrid host. ipc.ts/main.ts do NOT import hybrid-overlay, so
 // this is a one-way (acyclic) dependency.
 import { wireHybridContentEvents } from './ipc.js';
+import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, registerWindow } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { hybridShowIntent, showHybridHost, closeFocusedWindow, closeOrHideWindow, handleHybridEscape } from './windows.js';
@@ -414,10 +418,24 @@ function sendActiveHandoff(id: number | null): void {
   } catch {
     /* baseWin gone */
   }
+  // Last-known favicon for this URL (from the datastore), so the loading card
+  // can paint the site's icon the instant it's active — before the live
+  // `page-favicon-updated` arrives. '' when unknown (spinner-only card).
+  let favicon = '';
+  try {
+    const u = entry.url();
+    if (u) favicon = getFaviconForUrl(u);
+  } catch {
+    /* datastore unavailable / bad url — spinner-only */
+  }
   publish(getSystemAddress(), 'page-overlay:active', {
     windowId: id,
     url: entry.url(),
     title: entry.title(),
+    favicon,
+    // The overlay shows the favicon+spinner loading card only for a window that
+    // has never painted (fresh/restore/deferred) — see registry perHostPainted.
+    firstLoad: !hasHybridPainted(id),
     canGoBack,
     canGoForward,
     // Stage B: include per-host load-error so the overlay paints the error card
@@ -1234,6 +1252,18 @@ function installTestBridge(): void {
       } catch {
         return null;
       }
+    },
+    /** Test: has this window painted a frame yet (firstLoad gate for the loading card). */
+    hybridHasPainted(id: number): boolean {
+      return hasHybridPainted(id);
+    },
+    /** Test: current same-URL Retry attempt count for the window (retry-cap spec). */
+    hybridRetryAttempts(id: number): number {
+      return getHybridRetryAttempts(id);
+    },
+    /** Test: does the window currently have an outstanding load failure (retry-cap spec). */
+    hybridHasOutstandingFailure(id: number): boolean {
+      return hasHybridOutstandingFailure(id);
     },
     /**
      * P1.4b-3: the work area of the display the given host currently sits on.
