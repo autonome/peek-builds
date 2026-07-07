@@ -4,16 +4,26 @@
  *
  * A double-click over "dead" page content toggles the host window's MAXIMIZE.
  * The gesture is SUPPRESSED when the multi-click lands on an editable/interactive
- * control OR when it selects text. The detection lives CONTENT-SIDE in the
- * universal preload (runtime-external-preload.cjs), which is applied to every
- * http(s) page-host content WC (getRuntimeExternalWebPrefsForUrl). So — unlike
- * the `data:`-URL hybrid specs, which get no preload — this spec loads content
- * from a local http server so the REAL capture-phase click listener runs.
+ * control OR when it lands ON text it selected. The detection lives CONTENT-SIDE
+ * in the universal preload (runtime-external-preload.cjs), which is applied to
+ * every http(s) page-host content WC (getRuntimeExternalWebPrefsForUrl). So —
+ * unlike the `data:`-URL hybrid specs, which get no preload — this spec loads
+ * content from a local http server so the REAL capture-phase click listener runs.
  *
- * We drive the content WC's MAIN world with a synthetic
- * `new MouseEvent('click', { detail: 2 })`. contextIsolation gives the preload a
- * separate JS realm but the SAME DOM, so the preload's document-level capture
- * listener sees the dispatched event exactly as it sees a native one.
+ * COORDINATE FIDELITY (why every dispatch carries clientX/clientY): Chromium
+ * snaps a double-click in DEAD SPACE to the nearest word and SELECTS it, so
+ * "a selection exists" is true after almost every dead-space double-click. The
+ * suppression guard therefore does NOT test "is there a selection" — it tests
+ * whether the CLICK POINT falls within the selected text's own rects. A faithful
+ * test must dispatch a `MouseEvent` whose `clientX/clientY` match the geometry
+ * being exercised (inside the selected word vs. out in empty space). The prior
+ * version dispatched `new MouseEvent('click',{detail:2})` with the default (0,0)
+ * coordinate, which no longer exercises the guard at all — it masked the bug
+ * where dead-space clicks were wrongly suppressed by an incidental selection.
+ *
+ * contextIsolation gives the preload a separate JS realm but the SAME DOM, so the
+ * preload's document-level capture listener sees the dispatched event exactly as
+ * it sees a native one — including its `clientX/clientY` and `composedPath`.
  *
  * Observable assertion: maximize snaps the host BaseWindow to its display's work
  * area (hostBounds(id) === hostWorkArea(id)) — the SAME assertion the overlay
@@ -41,17 +51,61 @@ import {
 } from '../helpers/hybrid-page';
 import http from 'http';
 
-// A single synthetic native-style double-click (detail:2) on `sel`. `sel` null =
-// document.body (the "dead space" case). Optionally clear the live text selection
-// first (so a fresh empty-area click carries no lingering selection).
-function dispatchDoubleClickSrc(sel: string | null, clearSelection: boolean): string {
-  const target = sel ? `document.querySelector(${JSON.stringify(sel)})` : 'document.body';
+// A native-style double-click (detail:2) dispatched at the CENTER of `sel`, with
+// real clientX/clientY so the content-side guard's click-point ↔ selection-rect
+// hit-test is exercised. `clearSelection` wipes any live selection first (the
+// "clean empty click" case); when false the caller has set up a selection to
+// exercise. Returns `{ fired, selected }` — `selected` reports whether a
+// non-collapsed selection was present at dispatch time (for assertions).
+function dispatchDoubleClickAtCenterSrc(sel: string, clearSelection: boolean): string {
   return `(function () {
     ${clearSelection ? 'try { window.getSelection().removeAllRanges(); } catch (_) {}' : ''}
-    var el = ${target};
-    if (!el) return false;
-    el.dispatchEvent(new MouseEvent('click', { detail: 2, bubbles: true, composed: true, cancelable: true }));
-    return true;
+    var el = document.querySelector(${JSON.stringify(sel)});
+    if (!el) return { fired: false };
+    var r = el.getBoundingClientRect();
+    var x = r.left + r.width / 2, y = r.top + r.height / 2;
+    var s = window.getSelection();
+    var selected = !!(s && !s.isCollapsed && String(s).length > 0);
+    el.dispatchEvent(new MouseEvent('click', {
+      detail: 2, bubbles: true, composed: true, cancelable: true, clientX: x, clientY: y,
+    }));
+    return { fired: true, selected: selected };
+  })()`;
+}
+
+// Select `selSel`'s text, then double-click. Two shapes, chosen by `where`:
+//  - 'on-selection'  → click AT the center of the SELECTION's own rect, i.e. ON
+//    the selected text (word/line double-click) → guard SUPPRESSES. (Note: we
+//    must aim at the selection rect, NOT the container element's box — a block
+//    <p> is full-width but its text only fills part of the first line, so the
+//    element's center can miss the text entirely.)
+//  - a selector string → click at THAT element's center; used to click far away
+//    in dead space while an incidental selection exists elsewhere → guard must
+//    NOT suppress (the core bug: a dead-space double-click leaves Chromium's
+//    nearest-word selection behind, which used to suppress the gesture always).
+function selectThenDoubleClickSrc(selSel: string, where: 'on-selection' | string): string {
+  // Resolve BOTH the dispatch target and the click point. On-selection: target =
+  // the selected element, point = the selection's own rect. Dead-space: target =
+  // that element, point = its box center.
+  const resolve =
+    where === 'on-selection'
+      ? `var cTarget = sTarget; var r = s.getRangeAt(0).getClientRects()[0];`
+      : `var cTarget = document.querySelector(${JSON.stringify(where)});
+         var r = cTarget && cTarget.getBoundingClientRect();`;
+  return `(function () {
+    var sTarget = document.querySelector(${JSON.stringify(selSel)});
+    if (!sTarget) return { fired: false };
+    var s = window.getSelection();
+    s.removeAllRanges();
+    s.selectAllChildren(sTarget);
+    var selected = String(s).length > 0;
+    ${resolve}
+    if (!cTarget || !r) return { fired: false, selected: selected };
+    var x = r.left + r.width / 2, y = r.top + r.height / 2;
+    cTarget.dispatchEvent(new MouseEvent('click', {
+      detail: 2, bubbles: true, composed: true, cancelable: true, clientX: x, clientY: y,
+    }));
+    return { fired: true, selected: selected };
   })()`;
 }
 
@@ -65,7 +119,9 @@ test.describe('Hybrid content window gesture @desktop', () => {
     ({ app, bgWindow } = await createPerDescribeApp('hybrid-content-window-gesture'));
 
     // Local http server so the content WC gets the REAL universal preload (the
-    // gesture listener only loads on http(s) — data: URLs get no preload).
+    // gesture listener only loads on http(s) — data: URLs get no preload). The
+    // tall empty #dead div gives a genuine dead-space region well ABOVE the
+    // paragraph, so a click in it falls OUTSIDE a selection made over #para.
     await new Promise<void>((resolve) => {
       server = http.createServer((_req, res) => {
         res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -73,7 +129,7 @@ test.describe('Hybrid content window gesture @desktop', () => {
           `<!DOCTYPE html><html><head><title>Gesture</title></head>` +
             `<body style="margin:0;height:100vh">` +
             `<div id="dead" style="width:100%;height:240px"></div>` +
-            `<p id="para">hello selectable words here</p>` +
+            `<p id="para" style="margin:0">hello selectable words here</p>` +
             `<input id="inp" value="x">` +
             `<button id="btn">Press</button>` +
             `</body></html>`,
@@ -159,10 +215,32 @@ test.describe('Hybrid content window gesture @desktop', () => {
     // work area" is a meaningful signal (not vacuously true).
     expect(before).not.toEqual(workArea);
 
-    // Dead-space double-click over the empty body → gesture fires → maximize.
-    const fired = await runInContent(wcId, dispatchDoubleClickSrc(null, true));
-    expect(fired).toBe(true);
+    // Dead-space double-click over the empty #dead div → gesture fires → maximize.
+    const res = await runInContent(wcId, dispatchDoubleClickAtCenterSrc('#dead', true));
+    expect(res.fired).toBe(true);
 
+    await expect.poll(() => hostBoundsOf(id)).toEqual(workArea);
+  });
+
+  test('dead-space double-click with an incidental selection elsewhere STILL maximizes', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
+
+    // THE core regression for the suppression fix. Chromium leaves a nearest-word
+    // selection behind on a dead-space double-click; the old guard suppressed the
+    // gesture whenever ANY selection existed, so the feature barely fired in real
+    // use. Here we set up a selection over #para, then click far away in #dead —
+    // the click point is OUTSIDE the selection rects, so the gesture MUST fire.
+    const { id, wcId } = await openGestureWindow();
+    const workArea = await workAreaOf(id);
+    const before = await hostBoundsOf(id);
+    expect(before).not.toEqual(workArea);
+
+    const res = await runInContent(wcId, selectThenDoubleClickSrc('#para', '#dead'));
+    expect(res.fired).toBe(true);
+    expect(res.selected).toBe(true); // a real selection WAS present at click time
+
+    // One effective gesture → maximized. If the incidental selection had
+    // (wrongly) suppressed it, the window never leaves `before` and this fails.
     await expect.poll(() => hostBoundsOf(id)).toEqual(workArea);
   });
 
@@ -178,10 +256,8 @@ test.describe('Hybrid content window gesture @desktop', () => {
     // dead-space click. Maximize is a strict toggle — if the input click were
     // (wrongly) NOT suppressed, two effective gestures fire and the window ends
     // back at `before`; the poll for the work area then times out and FAILS.
-    await runInContent(
-      wcId,
-      dispatchDoubleClickSrc('#inp', false) + ';' + dispatchDoubleClickSrc(null, true),
-    );
+    await runInContent(wcId, dispatchDoubleClickAtCenterSrc('#inp', false));
+    await runInContent(wcId, dispatchDoubleClickAtCenterSrc('#dead', true));
 
     await expect.poll(() => hostBoundsOf(id)).toEqual(workArea);
   });
@@ -194,15 +270,13 @@ test.describe('Hybrid content window gesture @desktop', () => {
     const before = await hostBoundsOf(id);
     expect(before).not.toEqual(workArea);
 
-    await runInContent(
-      wcId,
-      dispatchDoubleClickSrc('#btn', false) + ';' + dispatchDoubleClickSrc(null, true),
-    );
+    await runInContent(wcId, dispatchDoubleClickAtCenterSrc('#btn', false));
+    await runInContent(wcId, dispatchDoubleClickAtCenterSrc('#dead', true));
 
     await expect.poll(() => hostBoundsOf(id)).toEqual(workArea);
   });
 
-  test('double-click that selected text does NOT maximize (selection suppressed)', async () => {
+  test('double-click ON selected text does NOT maximize (selection-hit suppressed)', async () => {
     test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
     const { id, wcId } = await openGestureWindow();
@@ -210,22 +284,14 @@ test.describe('Hybrid content window gesture @desktop', () => {
     const before = await hostBoundsOf(id);
     expect(before).not.toEqual(workArea);
 
-    // Select the paragraph's text, THEN double-click on it: a non-collapsed
-    // selection means "the user is selecting, not gesturing" → suppressed. Then
-    // clear the selection and fire a known-good dead-space click. Same toggle
+    // Select the paragraph's text, then double-click AT the paragraph (the click
+    // point falls INSIDE the selection rects) → "the user is selecting, not
+    // gesturing" → suppressed. Then a known-good dead-space click. Same toggle
     // parity: a leak would toggle back to `before` and fail the maximize poll.
-    const selectAndClick = `(function () {
-      var p = document.getElementById('para');
-      var s = window.getSelection();
-      s.removeAllRanges();
-      s.selectAllChildren(p);
-      p.dispatchEvent(new MouseEvent('click', { detail: 2, bubbles: true, composed: true, cancelable: true }));
-      return { selected: String(s).length > 0 };
-    })()`;
-    const sel = (await runInContent(wcId, selectAndClick)) as { selected: boolean } | null;
-    expect(sel && sel.selected).toBe(true);
+    const res = await runInContent(wcId, selectThenDoubleClickSrc('#para', 'on-selection'));
+    expect(res.selected).toBe(true);
 
-    await runInContent(wcId, dispatchDoubleClickSrc(null, true));
+    await runInContent(wcId, dispatchDoubleClickAtCenterSrc('#dead', true));
 
     await expect.poll(() => hostBoundsOf(id)).toEqual(workArea);
   });

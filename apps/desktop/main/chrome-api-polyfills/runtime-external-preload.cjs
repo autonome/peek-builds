@@ -118,12 +118,25 @@ function _peekGestureSuppressed(e) {
     if (!node || node.nodeType !== 1) continue;
     if (_peekIsInteractiveTarget(node)) return true;
   }
-  // 2) The multi-click selected text (double-click a word / triple-click a line).
-  //    By click time Chromium has already applied the selection, so a
-  //    non-collapsed selection means "the user is selecting, not gesturing."
+  // 2) The multi-click landed ON text and selected it (double-click a word /
+  //    triple-click a line). A bare "some selection exists" test is too coarse:
+  //    Chromium snaps a double-click in DEAD SPACE to the nearest word and
+  //    selects THAT, so nearly every dead-space double-click leaves a
+  //    non-collapsed selection — which used to suppress the gesture almost
+  //    always. The precise signal is whether the click point actually falls
+  //    within the selected text's own rects. A genuine dead-space click selects
+  //    a word elsewhere whose rects don't cover the cursor → gesture fires; a
+  //    word/line click sits inside its selection → suppressed.
   try {
     const sel = window.getSelection && window.getSelection();
-    if (sel && !sel.isCollapsed && String(sel).length > 0) return true;
+    if (sel && !sel.isCollapsed && sel.rangeCount > 0 && String(sel).length > 0) {
+      const rects = sel.getRangeAt(0).getClientRects();
+      for (let i = 0; i < rects.length; i++) {
+        const r = rects[i];
+        if (e.clientX >= r.left && e.clientX <= r.right
+          && e.clientY >= r.top && e.clientY <= r.bottom) return true;
+      }
+    }
   } catch (_) { /* getSelection unavailable */ }
   return false;
 }
@@ -132,6 +145,13 @@ document.addEventListener('click', function (e) {
   const detent = e.detail; // native multi-click count: 2 = double, 3 = triple
   if (detent !== 2 && detent !== 3) return;
   if (_peekGestureSuppressed(e)) return;
+  // A dead-space multi-click that reaches here may still have left Chromium's
+  // incidental nearest-word selection behind; clear it so the maximize /
+  // fullscreen gesture doesn't leave a stray highlight on the page.
+  try {
+    const sel = window.getSelection && window.getSelection();
+    if (sel && !sel.isCollapsed) sel.removeAllRanges();
+  } catch (_) { /* getSelection unavailable */ }
   try { ipcRenderer.send(IPC_CONTENT_WINDOW_GESTURE, { detent }); } catch (_) { /* no main */ }
 }, true);
 
