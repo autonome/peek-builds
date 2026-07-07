@@ -77,6 +77,7 @@ import {
   // Hybrid teardown → deny pending web-permission prompts (see initHybridOverlay)
   registerHybridWindowClosedListener,
 } from './hybrid-page-host-registry.js';
+import { __setEditableFocusForWcForTest } from './hybrid-editable-focus.js';
 import {
   denyPendingRequestsForWindow,
   _pendingRequestCountForTests,
@@ -2662,6 +2663,20 @@ function installTestBridge(): void {
         /* handler threw — treat as not prevented */
       }
       return prevented;
+    },
+    /**
+     * peek 51798bae: simulate the universal content preload reporting whether an
+     * editable element is focused. The data: URLs these tests use get no preload
+     * (non-http(s)), so the real focusin/focusout → page:editable-focus signal
+     * never fires; this seeds the SAME cache that IPC feeds, keyed by the content
+     * WC id the hybrid ESC gate reads (isEditableFocusedForWc(contentWC.id)).
+     * Returns false if the id is not a live hybrid host.
+     */
+    setContentEditableFocus(id: number, editable: boolean): boolean {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.contentWC.isDestroyed()) return false;
+      __setEditableFocusForWcForTest(entry.contentWC.id, editable);
+      return true;
     },
     /**
      * R3: register a probe LOCAL shortcut and return a token a test can use to
