@@ -1,0 +1,17 @@
+docs(test): record proton-pass-autofill as a deliberate permanent skip
+
+The spec header framed un-skipping as a future "build a seeded-vault
+fixture" TODO. That undersells it: the only way to satisfy the
+`data-protonpass-*` assertion is a real UNLOCKED Proton vault, i.e. live
+credentials, which are not committable to a CI-safe fixture. So the skip
+is deliberate and indefinite — a manual / dev-profile-only check, not a
+pending automation task.
+
+Also record why keeping it skipped loses no automated coverage: the
+compat-layer fixes behind causes 1-3 each have credential-free coverage
+(sendMessage polyfill in runtime-external-polyfill.spec.ts; the bridge
+window's mandatory sandboxing enforced by main/sandbox-enforcement.test.ts).
+Only the aggregate live-vault end-to-end DOM assertion is unique here, and
+it was verified by hand on the dev profile when cause 3 was fixed (d9acbf6d).
+
+Comment-only; the spec stays test.describe.skip. peek 976a7700.

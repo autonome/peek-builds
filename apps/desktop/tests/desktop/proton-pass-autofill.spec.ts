@@ -41,18 +41,32 @@
  * `wc.executeJavaScript` (there is no in-window `#content` webview anymore).
  * Mirrors runtime-external-polyfill.spec.ts.
  *
- * ── STILL SKIPPED — needs a seeded/unlocked Proton vault, not CI-safe. ────────
- * The injection mechanism is fixed (cause 3 above), but `createPerDescribeApp`
- * uses a FRESH temp profile in which Proton Pass has no logged-in / unlocked
- * vault. A password manager with no credentials has nothing to autofill, so the
- * `data-protonpass-*` markers this spec asserts on won't appear without a real
- * unlocked vault. The end-to-end path was verified by hand on the dev profile
- * (live-logged-in vault); automating it needs a seeded-vault fixture. The
- * genuinely live-creds-only OAuth gap is separate and lives in
+ * ── DELIBERATELY SKIPPED, INDEFINITELY — this cannot be a CI test (decision 2026-07-07). ──
+ * The injection mechanism is fixed (cause 3 above), but this spec's assertion —
+ * that `data-protonpass-*` markers appear in the form — only holds when Proton
+ * Pass has a real, UNLOCKED vault. `createPerDescribeApp` gives every run a FRESH
+ * temp profile with no logged-in vault, and a password manager with no
+ * credentials has nothing to autofill. The ONLY way to satisfy the assert is a
+ * live/seeded unlocked vault — i.e. real Proton credentials — which are NOT
+ * committable to a CI-safe fixture. So this is NOT a "waiting for someone to
+ * build a seeded-vault fixture" TODO; seeding a vault means committing live
+ * secrets, which we will not do. It is kept skipped ON PURPOSE, as a permanent
+ * manual / dev-profile-only check.
+ *
+ * Why keeping it skipped loses no AUTOMATED coverage: the compat-layer fixes
+ * behind causes 1–3 each have their own credential-free coverage — the
+ * `chrome.runtime.sendMessage` cross-origin polyfill in
+ * runtime-external-polyfill.spec.ts, and the bridge window's now-MANDATORY
+ * sandboxing (cause 3) enforced by main/sandbox-enforcement.test.ts (runtime
+ * guard + static source-scan). What is UNIQUE to this spec — and un-automatable
+ * CI-side — is the aggregate, live-vault, end-to-end autofill DOM assertion.
+ * That was verified BY HAND on the dev profile (live-logged-in vault) when cause
+ * 3 was fixed (commit d9acbf6d). The separate live-creds-only OAuth gap lives in
  * tests/manual/proton-auth.harness.ts.
  *
- * TO UN-SKIP: run against a profile with a real, unlocked Proton Pass vault
- * (seeded fixture or live login) and confirm the `data-protonpass-*` markers
+ * TO RUN IT MANUALLY (never in CI): point it at a profile with a real, unlocked
+ * Proton Pass vault (dev profile with a live login, or a locally-seeded vault),
+ * flip `describe.skip` → `describe`, and confirm the `data-protonpass-*` markers
  * appear.
  *
  * Peek follow-up: 976a7700.
