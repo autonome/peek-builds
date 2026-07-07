@@ -130,6 +130,23 @@
         text-decoration: underline;
       }
 
+      /* Inline URL-completion suffix: highlighted (selected-style), NOT dimmed —
+         mirrors the native selection on the transparent input beneath it. */
+      #command-text .cmd-inline-selection {
+        color: var(--theme-text, #333);
+        font-weight: 500;
+        background-color: var(--cmd-inline-selection-bg, rgba(102, 153, 204, 0.35));
+        border-radius: 2px;
+      }
+
+      /* The real <input> text is transparent, but its ::selection would still
+         paint an opaque OS highlight box on top of #command-text (input sits at
+         a higher z-index). Suppress it so only the #command-text highlight shows;
+         Backspace / type-over still delete the real selected suffix. */
+      #command-input::selection {
+        background: transparent;
+      }
+
       /* Results list */
       #results {
         display: none;

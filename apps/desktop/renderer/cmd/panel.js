@@ -12,6 +12,7 @@ import './commands.js'; // Load commands module to dispatch cmd-update-commands 
 import { log } from 'peek://app/log.js';
 import { getSuggestions, invalidateCache as invalidateCompleterCache } from './completers.js';
 import { createStateMachine, States, Events } from './state-machine.js';
+import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER } from './url-completion.js';
 
 log('cmd:panel', 'loaded');
 
@@ -165,6 +166,9 @@ let chainPopupWindowId = null;
 // URL ghost-text state — inline ghost completion in command input
 let urlGhostGeneration = 0;
 let urlGhostSuggestion = null; // { url, matchable } | null
+// Current inline-completion stop-point (host -> path1 -> path -> full). The ghost
+// first shows at the smallest stop that extends the typed text; Tab expands it.
+let urlGhostGranularity = 'host';
 let urlGhostTimer = null;
 const URL_GHOST_DEBOUNCE_MS = 150;
 const URL_RESULT_LANE_LIMIT = 6;
@@ -1261,20 +1265,8 @@ function getValidURL(str) {
 }
 
 // ===== Inline URL Ghost-Text for Normal Cmd Mode =====
-
-/**
- * Strip https://, http://, and leading www. so we can do prefix matching
- * against the user's typed text (which won't include the scheme).
- * E.g. https://www.marktplaats.nl/foo -> marktplaats.nl/foo
- */
-function urlMatchable(url) {
-  if (!url) return '';
-  let s = url;
-  if (s.startsWith('https://')) s = s.slice('https://'.length);
-  else if (s.startsWith('http://')) s = s.slice('http://'.length);
-  if (s.startsWith('www.')) s = s.slice('www.'.length);
-  return s;
-}
+// urlMatchable / urlCompletionAtGranularity / URL_GRANULARITY_ORDER are imported
+// from ./url-completion.js (a pure, unit-tested leaf module).
 
 /**
  * Clear the URL ghost suggestion and cancel any pending debounce timer.
@@ -1282,6 +1274,7 @@ function urlMatchable(url) {
 function clearUrlGhost() {
   state.urlMatches = [];
   urlGhostSuggestion = null;
+  urlGhostGranularity = 'host';
   urlGhostGeneration++;
   if (urlGhostTimer) {
     clearTimeout(urlGhostTimer);
@@ -1335,33 +1328,91 @@ function triggerUrlGhost(text) {
 }
 
 /**
- * Returns true when the URL ghost can be accepted: no command matches,
- * there is a ghost suggestion, and the ghost's matchable starts with the
- * current input value and is strictly longer.
+ * The current-granularity completion string when it is a forward prefix-
+ * completion of `anchor` (the user's real typed text), else null. This ONE
+ * predicate is the source of truth for "is an inline completion currently
+ * shown, and what is it?" — render, fill+select, Tab-gate and Enter-gate all
+ * key off it, so the substring (non-prefix) case never shows and never opens.
+ *
+ * `anchor` is always state.typed (the user's actual keystrokes) — NOT the
+ * native input.value, which we overwrite with the completion when we fill.
  */
-function urlGhostAcceptable(value) {
-  // Ghost is acceptable only when there are no command matches.
-  if (state.matches.length > 0) return false;
-  if (!urlGhostSuggestion) return false;
-  const trimmed = (value || '').trim();
-  const m = urlGhostSuggestion.matchable.toLowerCase();
-  return m.startsWith(trimmed.toLowerCase()) && m.length > trimmed.length;
+function currentGhostCompletion(anchor) {
+  if (!urlGhostSuggestion) return null;
+  const c = urlCompletionAtGranularity(urlGhostSuggestion.url, urlGhostGranularity);
+  const t = (anchor || '').trim();
+  if (c.toLowerCase().startsWith(t.toLowerCase()) && c.length > t.length) return c;
+  return null;
+}
+
+/** First granularity whose completion forward-extends `anchor`; 'full' if none. */
+function initialGhostGranularity(anchor) {
+  if (!urlGhostSuggestion) return 'host';
+  const t = (anchor || '').trim();
+  for (const g of URL_GRANULARITY_ORDER) {
+    const c = urlCompletionAtGranularity(urlGhostSuggestion.url, g);
+    if (c.toLowerCase().startsWith(t.toLowerCase()) && c.length > t.length) return g;
+  }
+  return 'full';
+}
+
+/** Next stop-point whose completion is strictly longer; stays put at the last. */
+function nextGranularityBeyond(current, currentCompletion) {
+  if (!urlGhostSuggestion) return current;
+  const idx = URL_GRANULARITY_ORDER.indexOf(current);
+  for (let i = idx + 1; i < URL_GRANULARITY_ORDER.length; i++) {
+    const g = URL_GRANULARITY_ORDER[i];
+    const c = urlCompletionAtGranularity(urlGhostSuggestion.url, g);
+    if (c.length > currentCompletion.length) return g;
+  }
+  return current;
 }
 
 /**
- * Accept the URL ghost: fill the input with the full matchable, update
- * state.typed, and re-render the ghost (remainder now empty).
- * Keeps urlGhostSuggestion set so a subsequent Enter opens the exact url.
+ * Camp-1 selected-text mechanic: fill the native input with the current-
+ * granularity completion and NATIVELY SELECT the suffix beyond `anchor` (a real
+ * DOM selection anchored at the typed length). Backspace / type-over then delete
+ * the selected suffix for free, rejecting the completion down to the bare typed
+ * text. No-op when a command match owns the input, or when the completion isn't
+ * a forward prefix-completion (the substring case shows nothing inline).
+ */
+function applyGhostSelection(anchor) {
+  if (state.matches.length > 0) return; // a command match owns the input
+  const commandInput = document.getElementById('command-input');
+  if (!commandInput) return;
+  const completion = currentGhostCompletion(anchor);
+  if (!completion) return;
+  const t = (anchor || '').trim();
+  commandInput.value = completion;
+  commandInput.setSelectionRange(t.length, completion.length, 'backward');
+  updateCommandUI();
+  syncCommandTextScroll();
+}
+
+/**
+ * Returns true when the URL ghost can be accepted (Tab / ArrowRight): no command
+ * matches and there is a shown forward completion at the current granularity.
+ * Keyed off state.typed (not input.value) so it stays true after a fill has
+ * overwritten input.value with the completion.
+ */
+function urlGhostAcceptable() {
+  if (state.matches.length > 0) return false;
+  return currentGhostCompletion(state.typed) !== null;
+}
+
+/**
+ * Accept/expand the URL ghost: advance to the next granularity stop-point
+ * (host -> path1 -> path -> full) and re-fill + re-select the longer completion.
+ * At the last distinct stop it stays put and just re-selects. state.typed is
+ * left untouched — it remains the user's real typed text (the selection anchor),
+ * so Backspace at any stop still rejects to the bare typed text.
  * Invoked via the FSM's `acceptUrlGhost` action (ACCEPT_GHOST event).
  */
 function doAcceptUrlGhost() {
   if (!urlGhostSuggestion) return;
-  const commandInput = document.getElementById('command-input');
-  if (!commandInput) return;
-  commandInput.value = urlGhostSuggestion.matchable;
-  state.typed = urlGhostSuggestion.matchable;
-  updateCommandUI();
-  syncCommandTextScroll();
+  const currentCompletion = urlCompletionAtGranularity(urlGhostSuggestion.url, urlGhostGranularity);
+  urlGhostGranularity = nextGranularityBeyond(urlGhostGranularity, currentCompletion);
+  applyGhostSelection(state.typed);
 }
 
 // ===== URL Mode Functions =====
@@ -1583,20 +1634,20 @@ function syncCommandTextScroll() {
 }
 
 /**
- * If there is an active URL ghost suggestion whose matchable starts with
- * the typed text and is strictly longer, append the remainder as a dimmed
- * (no-class) span to #command-text.
+ * If the current-granularity completion forward-extends the typed text, append
+ * its suffix to #command-text as a HIGHLIGHTED (selected-style) span — mirroring
+ * the native selection that applyGhostSelection puts on the transparent input.
+ * The substring (non-prefix) case renders nothing (currentGhostCompletion null).
  */
 function appendUrlGhost(typed) {
-  if (!urlGhostSuggestion) return;
-  const m = urlGhostSuggestion.matchable;
+  const completion = currentGhostCompletion(typed);
+  if (!completion) return;
   const t = (typed || '').trim();
-  if (m.toLowerCase().startsWith(t.toLowerCase()) && m.length > t.length) {
-    const commandText = document.getElementById('command-text');
-    const ghostSpan = document.createElement('span');
-    ghostSpan.textContent = m.substring(t.length);
-    commandText.appendChild(ghostSpan);
-  }
+  const commandText = document.getElementById('command-text');
+  const ghostSpan = document.createElement('span');
+  ghostSpan.className = 'cmd-inline-selection';
+  ghostSpan.textContent = completion.substring(t.length);
+  commandText.appendChild(ghostSpan);
 }
 
 function updateCommandUI() {
@@ -1922,6 +1973,12 @@ function actionHandlers() {
     applyGhostResolution(payload) {
       urlGhostSuggestion = payload.suggestion || null;
       state.urlMatches = payload.urlMatches || [];
+      if (urlGhostSuggestion) {
+        // Show at the smallest stop-point that extends the typed text (default
+        // host), then fill + natively select the suffix (Camp-1 mechanic).
+        urlGhostGranularity = initialGhostGranularity(state.typed);
+        applyGhostSelection(state.typed);
+      }
       updateCommandUI();
       updateResultsUI();
       updateWindowSize();
@@ -1961,7 +2018,12 @@ function actionHandlers() {
           clearUrlGhost();
         } else {
           state.matches = findMatchingCommands(typed);
-          if (showUrlsInResults) {
+          if (payload?.isDeleting) {
+            // Reject-on-delete (deterministic per-event signal, no timer): after
+            // a Backspace/delete the native input has already removed the
+            // selected suffix, so don't re-arm or re-select the ghost.
+            clearUrlGhost();
+          } else if (showUrlsInResults) {
             triggerUrlGhost(typed.trim());
           } else {
             clearUrlGhost();
@@ -2365,7 +2427,13 @@ function actionHandlers() {
 
     openUrlGhost() {
       if (!urlGhostSuggestion) return;
-      const url = urlGhostSuggestion.url;
+      // Open the CURRENT completion, not the full stored URL: at 'full' (or if
+      // somehow unshown) open the exact stored URL; otherwise synthesize a clean
+      // https origin/path from the granularity completion (kills tracking query).
+      const completion = currentGhostCompletion(state.typed);
+      const url = (urlGhostGranularity === 'full' || !completion)
+        ? urlGhostSuggestion.url
+        : 'https://' + completion;
       log('cmd:panel', 'Opening URL ghost suggestion:', url);
       state.lastExecuted = url;
       updateMatchCount(url);
@@ -2597,9 +2665,13 @@ async function render() {
   commandInput.addEventListener('scroll', syncCommandTextScroll);
 
   // Input event -> dispatch to state machine (or filter URL mode)
-  commandInput.addEventListener('input', () => {
+  commandInput.addEventListener('input', (e) => {
     const value = commandInput.value;
     const trimmedText = value.trim();
+    // A deletion (Backspace/Delete/cut) — used to reject the selected ghost
+    // suffix without re-arming it. inputType is absent on programmatic .value
+    // sets (which don't fire this event anyway), so treat missing as non-delete.
+    const isDeleting = typeof e.inputType === 'string' && e.inputType.startsWith('delete');
 
     // URL mode: filter URLs instead of dispatching normal command matching
     if (urlModeActive) {
@@ -2650,6 +2722,7 @@ async function render() {
       enterParamMode,
       paramCommandName,
       paramStillMatches,
+      isDeleting,
     });
   });
 
@@ -2773,9 +2846,12 @@ async function render() {
       // A typed VALID URL (e.g. "example.com") opens via the isURL path below,
       // not the history ghost — otherwise a substring history match would hijack
       // a literal address the user explicitly typed.
-      const hasUrlGhost = !!urlGhostSuggestion &&
-        state.matches.length === 0 &&
-        !urlResult.valid;
+      // neverOpenUnshown: only when a completion was actually SHOWN inline
+      // (currentGhostCompletion non-null) may Enter open it — a substring match
+      // that never rendered must NOT be silently opened.
+      const hasUrlGhost = state.matches.length === 0 &&
+        !urlResult.valid &&
+        currentGhostCompletion(state.typed) !== null;
 
       machine.dispatch(Events.ENTER, {
         value: commandInput.value,
@@ -2804,7 +2880,7 @@ async function render() {
 
     if (e.key === 'ArrowRight') {
       // Accept URL ghost when caret is at end of input and ghost is present
-      if (commandInput.selectionStart === commandInput.value.length && urlGhostAcceptable(commandInput.value)) {
+      if (commandInput.selectionStart === commandInput.value.length && urlGhostAcceptable()) {
         e.preventDefault();
         machine.dispatch(Events.ACCEPT_GHOST, { urlGhostAcceptable: true });
         return;
@@ -2822,7 +2898,7 @@ async function render() {
         machine.dispatch(Events.SHIFT_TAB);
       } else {
         // Accept URL ghost with Tab when no command matches
-        if (urlGhostAcceptable(commandInput.value)) {
+        if (urlGhostAcceptable()) {
           machine.dispatch(Events.ACCEPT_GHOST, { urlGhostAcceptable: true });
           return;
         }
