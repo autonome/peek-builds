@@ -1214,6 +1214,36 @@ function installTestBridge(): void {
       }
     },
     /**
+     * The host BaseWindow's native fullscreen state + the registry's maximize
+     * bookkeeping (`maximized` / `preMaxBounds`). The content triple-click
+     * fullscreen-desync spec (peek d8ce0ddf) uses `isFullScreen` to sequence
+     * around the ASYNC native enter/leave-full-screen transitions (confirmed to
+     * fire in macOS-headless) and `maximized`/`preMaxBounds` to assert the state
+     * machine stays consistent with the window's actual bounds across a
+     * fullscreen round-trip. Returns null if the id is not a live hybrid window.
+     */
+    hostFullscreenState(
+      id: number,
+    ): {
+      isFullScreen: boolean;
+      nativeFullScreen: boolean;
+      maximized: boolean;
+      preMaxBounds: { x: number; y: number; width: number; height: number } | null;
+    } | null {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.baseWin.isDestroyed()) return null;
+      try {
+        return {
+          isFullScreen: entry.baseWin.isFullScreen(),
+          nativeFullScreen: entry.nativeFullScreen,
+          maximized: entry.maximized,
+          preMaxBounds: entry.preMaxBounds ?? null,
+        };
+      } catch {
+        return null;
+      }
+    },
+    /**
      * Batch C (headless-flash / focus-theft gates): read a hybrid host
      * BaseWindow's current visibility, opacity, and focus. The hybrid content
      * window is a BaseWindow, invisible to `BrowserWindow.fromId`, so the

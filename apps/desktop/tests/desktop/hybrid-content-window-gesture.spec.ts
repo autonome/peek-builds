@@ -34,9 +34,12 @@
  * and the window ends back at its ORIGINAL bounds — so the maximize assertion
  * fails, catching the regression with no timer.
  *
- * Fullscreen (detent 3) is deliberately NOT asserted here — real fullscreen is
- * unobservable in macOS-headless; the detent→'toggle-fullscreen' mapping is
- * covered by the pure unit (main/hybrid-window-gesture.test.ts).
+ * Fullscreen (detent 3) IS exercised in the last test: native fullscreen enter/
+ * leave DO fire in macOS-headless (empirically confirmed via live trace, peek
+ * d8ce0ddf — earlier specs assumed otherwise), so the triple-click fullscreen
+ * round-trip and its maximize-state desync are assertable here. The pure
+ * detent→'toggle-fullscreen' mapping is still covered by the unit
+ * (main/hybrid-window-gesture.test.ts).
  *
  *   yarn test:grep "Hybrid content window gesture"
  */
@@ -70,6 +73,28 @@ function dispatchDoubleClickAtCenterSrc(sel: string, clearSelection: boolean): s
       detail: 2, bubbles: true, composed: true, cancelable: true, clientX: x, clientY: y,
     }));
     return { fired: true, selected: selected };
+  })()`;
+}
+
+// Dispatch ONE click at the center of `sel` with an explicit native multi-click
+// `detail` (2 = double → maximize, 3 = triple → fullscreen), real clientX/clientY.
+// The fullscreen-desync spec drives detent-2 and detent-3 as SEPARATE sequenced
+// clicks (not one JS task) so the maximize round-trip lands between them — the same
+// ~150ms inter-click gap a real triple-click has (live trace, peek d8ce0ddf). Firing
+// both in one task is unrealistically fast: the overlay round-trip wouldn't finish
+// before detent-3's setFullScreen, corrupting preMaxBounds in a way real hardware
+// never produces.
+function dispatchClickAtCenterSrc(sel: string, detail: number, clearSelection: boolean): string {
+  return `(function () {
+    ${clearSelection ? 'try { window.getSelection().removeAllRanges(); } catch (_) {}' : ''}
+    var el = document.querySelector(${JSON.stringify(sel)});
+    if (!el) return { fired: false };
+    var r = el.getBoundingClientRect();
+    var x = r.left + r.width / 2, y = r.top + r.height / 2;
+    el.dispatchEvent(new MouseEvent('click', {
+      detail: ${detail}, bubbles: true, composed: true, cancelable: true, clientX: x, clientY: y,
+    }));
+    return { fired: true };
   })()`;
 }
 
@@ -202,6 +227,18 @@ test.describe('Hybrid content window gesture @desktop', () => {
       return b.hostWorkArea(wid) as Rect | null;
     }, id) as Promise<Rect | null>;
 
+  type FsState = {
+    isFullScreen: boolean;
+    nativeFullScreen: boolean;
+    maximized: boolean;
+    preMaxBounds: Rect | null;
+  };
+  const fullscreenStateOf = (id: number) =>
+    app.evaluateMain!((_e, wid) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.hostFullscreenState(wid);
+    }, id) as Promise<FsState | null>;
+
   test('double-click on dead content maximizes the host window', async () => {
     test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
@@ -294,5 +331,83 @@ test.describe('Hybrid content window gesture @desktop', () => {
     await runInContent(wcId, dispatchDoubleClickAtCenterSrc('#dead', true));
 
     await expect.poll(() => hostBoundsOf(id)).toEqual(workArea);
+  });
+
+  test('triple-click fullscreen exit leaves a consistent maximize state (no stuck-maximize desync)', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
+
+    // The secondary d8ce0ddf bug. A triple-click does detent-2 (maximize) THEN
+    // detent-3 (fullscreen), so it always enters fullscreen FROM maximized — macOS
+    // then remembers the maximized work-area as the pre-fullscreen bounds. On the
+    // way OUT, the exit triple-click's detent-2 fires while the host is STILL
+    // fullscreen. Pre-fix it flipped maximized→false and nulled preMaxBounds while
+    // its setBounds() was silently dropped (macOS won't resize a fullscreen
+    // window); the window then left fullscreen at the maximized bounds — LOOKING
+    // maximized but with the state machine saying not-maximized, and preMaxBounds
+    // gone, so it could never be un-maximized ("drag snaps back to maximized").
+    // The fix gates the maximize-toggle on !isFullScreen(), so the exit detent-2 is
+    // suppressed and the state stays consistent.
+    const { id, wcId } = await openGestureWindow();
+    const workArea = await workAreaOf(id);
+    const normal = await hostBoundsOf(id);
+    expect(workArea).not.toBeNull();
+    expect(normal).not.toBeNull();
+    // The fresh window is a normal, non-maximized size — so "back to normal" below
+    // is a meaningful signal, not vacuously true.
+    expect(normal).not.toEqual(workArea);
+
+    // ENTER, as a real triple-click does it: detent-2 maximizes; the maximize round-
+    // trip lands (the real inter-click gap); THEN detent-3 goes fullscreen.
+    await runInContent(wcId, dispatchClickAtCenterSrc('#dead', 2, true)); // detent-2 → maximize
+    await expect.poll(() => hostBoundsOf(id)).toEqual(workArea);
+    // preMaxBounds captured the REAL normal bounds (round-trip finished pre-fullscreen).
+    {
+      const s = await fullscreenStateOf(id);
+      expect(s!.maximized).toBe(true);
+      expect(s!.preMaxBounds).toEqual(normal);
+    }
+    await runInContent(wcId, dispatchClickAtCenterSrc('#dead', 3, true)); // detent-3 → fullscreen
+    // Wait for the native macOS fullscreen animation to SETTLE. We poll
+    // `nativeFullScreen` (flips on the enter-full-screen event, ~600ms later), NOT
+    // `isFullScreen()` (flips synchronously the instant setFullScreen is called) —
+    // acting mid-animation, as an isFullScreen()-poll would, corrupts the OS
+    // transition and is nothing a real user (seconds between clicks) ever does.
+    await expect.poll(() => fullscreenStateOf(id).then((s) => s?.nativeFullScreen ?? null)).toBe(true);
+
+    // EXIT, triple-click again: detent-2 arrives while STILL fullscreen (the fix
+    // suppresses the maximize-toggle here), then detent-3 leaves fullscreen. The
+    // window stays continuously active throughout (single-session repro), so we do
+    // NOT re-activate — re-firing page-overlay:active would clobber the overlay's
+    // own maximized flag (a separate divergence bug) and mask this one.
+    await runInContent(wcId, dispatchClickAtCenterSrc('#dead', 2, true)); // detent-2 → suppressed (fullscreen)
+    await runInContent(wcId, dispatchClickAtCenterSrc('#dead', 3, true)); // detent-3 → leave fullscreen
+    await expect.poll(() => fullscreenStateOf(id).then((s) => s?.nativeFullScreen ?? null)).toBe(false);
+
+    // THE regression assertion. The window left fullscreen at the maximized work
+    // area, and the state machine AGREES: maximized=true with preMaxBounds STILL the
+    // real normal bounds — a fully consistent maximized state that a plain
+    // double-click can cleanly un-maximize. Pre-fix, the exit detent-2 flipped
+    // maximized→false and nulled preMaxBounds while the window stayed at the work
+    // area: maximized=false + bounds==workArea is the "stuck maximized / drag snaps
+    // back" desync (and preMaxBounds=null meant it could never restore). This block
+    // fails on every one of those pre-fix.
+    {
+      const s = await fullscreenStateOf(id);
+      expect(s!.isFullScreen).toBe(false);
+      expect(s!.maximized).toBe(true);
+      expect(s!.preMaxBounds).toEqual(normal);
+    }
+    await expect.poll(() => hostBoundsOf(id)).toEqual(workArea);
+
+    // NOTE: we intentionally do NOT go on to double-click-and-expect-normal here.
+    // That downstream un-maximize routes through the overlay, and real setFullScreen
+    // fires focus/blur on the real host whose isFocused() is false in macOS-headless
+    // — so the deferred-blur logic can deactivate it and the overlay drops the
+    // toggle (a headless focus artifact), OR a re-activation clobbers the overlay's
+    // own maximized flag via page-overlay:active (a SEPARATE divergence bug: there is
+    // no main→overlay maximize-state sync topic). In a real focused session neither
+    // happens. Asserting the consistent registry state above is the robust, direct
+    // regression signal for THIS fix; the overlay-sync divergence is tracked
+    // separately (peek d8ce0ddf follow-up).
   });
 });

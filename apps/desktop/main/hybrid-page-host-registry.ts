@@ -268,6 +268,13 @@ export interface HybridWindowEntry {
    * so unmaximize can restore to that exact rect. Null when not maximized.
    */
   preMaxBounds: Rectangle | null;
+  /**
+   * True while the host is in SETTLED native macOS fullscreen. Driven by the
+   * BaseWindow's `enter-full-screen`/`leave-full-screen` events (via
+   * `setHybridNativeFullScreen`) — so it reflects the completed transition,
+   * unlike `baseWin.isFullScreen()` which flips synchronously mid-animation.
+   */
+  nativeFullScreen: boolean;
 }
 
 /**
@@ -294,6 +301,15 @@ interface InternalEntry {
   requestedUrl?: string;
   maximized: boolean;
   preMaxBounds: Rectangle | null;
+  // Whether the host is CURRENTLY in native macOS fullscreen, tracked from the
+  // BaseWindow's `enter-full-screen` / `leave-full-screen` events (wired in
+  // ipc.ts's assembleHybridPageHost). Unlike `baseWin.isFullScreen()` — which
+  // flips SYNCHRONOUSLY the instant `setFullScreen()` is called, before the
+  // ~600ms macOS animation runs — this reflects the SETTLED transition. It makes
+  // fullscreen a first-class, observable state for the maximize state machine
+  // (the d8ce0ddf desync stemmed from fullscreen being invisible to it) and is
+  // the deterministic "transition complete" signal specs sequence on.
+  nativeFullScreen: boolean;
   deferredLoad: DeferredLoad | null;
 }
 
@@ -489,6 +505,7 @@ function toPublic(e: InternalEntry): HybridWindowEntry {
     title: () => safeTitle(e.contentWC) || e.deferredLoad?.title || '',
     maximized: e.maximized,
     preMaxBounds: e.preMaxBounds,
+    nativeFullScreen: e.nativeFullScreen,
   };
 }
 
@@ -545,6 +562,7 @@ export function registerHybridWindow(
     windowId, baseWin, contentWC, key, requestedUrl: url,
     maximized: false,
     preMaxBounds: null,
+    nativeFullScreen: false,
     deferredLoad: opts.deferredLoad
       ? { url: opts.deferredLoad.url, title: opts.deferredLoad.title || '', started: false }
       : null,
@@ -655,6 +673,19 @@ export function setHybridMaximizeState(
   if (!e) return;
   e.maximized = maximized;
   e.preMaxBounds = maximized ? preMaxBounds : null;
+}
+
+/**
+ * Record the host's SETTLED native fullscreen state. Driven by the BaseWindow's
+ * `enter-full-screen` / `leave-full-screen` events (wired in assembleHybridPageHost)
+ * — the only signal that the macOS fullscreen animation has actually completed
+ * (`baseWin.isFullScreen()` returns the target synchronously, mid-animation). A
+ * no-op for an unregistered id.
+ */
+export function setHybridNativeFullScreen(windowId: number, value: boolean): void {
+  const e = entries.get(windowId);
+  if (!e) return;
+  e.nativeFullScreen = value;
 }
 
 /**

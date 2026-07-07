@@ -137,6 +137,7 @@ import {
   getHybridWindow,
   getAllHybridWindows,
   setHybridMaximizeState,
+  setHybridNativeFullScreen,
   claimHybridDeferredLoad,
   // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
   setHybridLoadError,
@@ -1072,6 +1073,13 @@ function assembleHybridPageHost(
     }
   };
   baseWin.on('focus', onHybridHostFocus);
+  // Track SETTLED native fullscreen state (peek d8ce0ddf). The macOS fullscreen
+  // animation runs ~600ms after setFullScreen(); baseWin.isFullScreen() flips
+  // synchronously at the start, so it can't tell "entering" from "settled". These
+  // events fire on completion, so the registry flag they drive is the
+  // deterministic signal for anything that must not act mid-transition.
+  baseWin.on('enter-full-screen', () => setHybridNativeFullScreen(baseWin.id, true));
+  baseWin.on('leave-full-screen', () => setHybridNativeFullScreen(baseWin.id, false));
   // Belt-and-suspenders: clicking directly into the page focuses the
   // content webContents even when the host-window focus event is missed.
   view.webContents.on('focus', onHybridHostFocus);

@@ -76,6 +76,21 @@ export function handleContentWindowGesture(sender: WebContents, detent: unknown)
   const entry = getHybridWindowByContentWC(sender);
   if (!entry || entry.baseWin.isDestroyed()) return;
   if (action === 'toggle-maximize') {
+    // A triple-click fires detent-2 (maximize) THEN detent-3 (fullscreen). On the
+    // way OUT of fullscreen the SAME triple-click fires detent-2 again while the
+    // host is STILL fullscreen; routing that to the overlay's toggleMaximize flips
+    // maximized→false and (via page:unmaximize) nulls preMaxBounds, while its
+    // setBounds() is silently dropped because macOS can't resize a fullscreen
+    // window. The window then leaves fullscreen at its macOS-remembered
+    // pre-fullscreen bounds — the maximized workArea, since a triple-click always
+    // enters fullscreen FROM maximized — so it looks maximized but the state
+    // machine says not-maximized: the "stuck maximized / drag snaps back" desync
+    // (confirmed by live trace, peek d8ce0ddf). Gate the maximize-toggle on the
+    // host NOT being fullscreen: on entry detent-2 arrives before detent-3's
+    // setFullScreen (not-yet-fullscreen) so maximize still runs; on exit it is
+    // suppressed, leaving maximized=true + preMaxBounds intact so a later
+    // double-click un-maximizes to the real normal bounds. Deterministic, no timer.
+    if (entry.baseWin.isFullScreen()) return;
     // Route through the overlay (it owns maximize state + chrome reflow); see header.
     publish(getSystemAddress(), 'page:request-toggle-maximize', { windowId: entry.windowId });
   } else {
