@@ -1427,6 +1427,29 @@ function installTestBridge(): void {
       return entry ? entry.url() : '';
     },
     /**
+     * Regression repro (peek bebfd212): drive a REAL modified left-click on a
+     * hybrid host's content WC at (x,y). A synthetic JS `.click()` with `metaKey`
+     * set does NOT carry modifier state into Chromium's navigation-disposition
+     * computation — only a real `sendInputEvent` does — so this is the only way
+     * to reproduce the cmd/ctrl+click "background-tab" open path, where the
+     * content `setWindowOpenHandler`'s `createWindow` callback receives NO opener
+     * `webContents` to adopt (Chromium defers the guest) and must load the target
+     * URL itself. Returns true if the events dispatched. Focus-free.
+     */
+    sendContentModifiedClick(id: number, x: number, y: number, modifier: string): boolean {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.contentWC.isDestroyed()) return false;
+      const wc = entry.contentWC;
+      try {
+        const mods = [modifier] as unknown as Electron.MouseInputEvent['modifiers'];
+        wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1, modifiers: mods });
+        wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1, modifiers: mods });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    /**
      * P1.4b-4: drive find-in-page end-to-end via the SAME pubsub path the
      * overlay find bar uses — publish `page:find-exec {windowId, text}` (which
      * installHybridNavbarActionRouting routes to contentWC.findInPage) and

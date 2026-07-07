@@ -912,7 +912,8 @@ interface HybridHostAssembleCtx {
  * WebContentsView (freshly minted for a normal open, or adopted from Chromium's
  * opener-wired guest WC for a window.open popup). Does everything from
  * addChildView through showHybridHost. Does NOT loadURL (caller owns: the fresh
- * path awaits loadURL; the popup path lets Chromium navigate the returned WC).
+ * path awaits loadURL; the popup path lets Chromium navigate an ADOPTED guest WC,
+ * but loads a FRESH-MINTED WC itself — see the createWindow branch).
  */
 function assembleHybridPageHost(
   baseWin: Electron.BaseWindow,
@@ -2030,7 +2031,24 @@ export function wireHybridContentEvents(
               deferContentLoad: false,
               rtPreloadApplied: rtApplied,
             });
-            // NO loadURL: Chromium navigates the returned/adopted guest WC itself.
+            // Navigation ownership splits by case:
+            //  - ADOPTED guest WC (window.open / target=_blank / OAuth popup):
+            //    Chromium created the guest and already wired its navigation to
+            //    details.url, so we must NOT loadURL (that would double-navigate the
+            //    opener-wired WC).
+            //  - FRESH-MINTED WC (background-tab — cmd/ctrl+click — where Chromium
+            //    defers guest creation and hands us NO webContents to adopt):
+            //    Chromium does NOT navigate a WC it did not create, so WE own the
+            //    load. Without this the popup opened but its content stayed
+            //    un-navigated — the blank/black window on cmd+click (peek bebfd212).
+            //    Mirrors the fresh-open branch below; a rejected load is swallowed
+            //    (the window is already on screen and wireHybridContentEvents'
+            //    did-fail-load drives the load-error overlay).
+            if (!adoptWC) {
+              view.webContents.loadURL(popupUrl).catch((err) => {
+                DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] background-tab loadURL failed:`, err);
+              });
+            }
             publish(getSystemAddress(), 'window:opened', { id: baseWin.id, url: popupUrl, source });
             return view.webContents;
           } catch (e) {
