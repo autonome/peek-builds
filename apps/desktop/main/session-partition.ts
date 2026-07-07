@@ -24,6 +24,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { registerProtocolOnSession } from './protocol.js';
 import { installPermissionHandler } from './permission-handler.js';
+import { toChromeUserAgent } from './user-agent.js';
 import { DEBUG, isTestProfile } from './config.js';
 
 // Module state
@@ -81,6 +82,18 @@ export function initSessionPartition(profileId: string, dataPath: string): void 
   userDataPath = dataPath;
 
   DEBUG && console.log('[session] Initializing partition for profile:', profileId);
+
+  // Present a clean stock-Chrome User-Agent to every web surface. Electron's
+  // default fallback carries a leading `Peek/<ver>` app token (and a trailing
+  // `Electron/<ver>`); UA-sniffing sites read the leading product as the browser
+  // and gate Peek out with an "unsupported browser" page (WhatsApp Web — peek
+  // 080fd433). Setting the app-global fallback (rather than
+  // per-session/per-webContents) means the profile session, the default session,
+  // and every tile/hybrid-host webContents inherit the cleaned UA automatically.
+  // Must run before any webContents is created; this is the early boot seam. See
+  // toChromeUserAgent().
+  app.userAgentFallback = toChromeUserAgent(app.userAgentFallback);
+  DEBUG && console.log('[session] User-Agent override:', app.userAgentFallback);
 
   // Run migration check
   runMigrationIfNeeded();
