@@ -131,6 +131,7 @@ import { startCpuWatch } from './cpu-watch.js';
 import { DEBUG } from './config.js';
 import { isDevToolsEnabled } from './debug-flag.js';
 import { isPageHostContent, destroyAllPageHostGuests } from './webview-guest-registry.js';
+import { enforceSandboxOnWebContents } from './sandbox-enforcement.js';
 import {
   getRuntimeExternalWebPrefsForUrl,
   installMainWorldContentScriptInjection,
@@ -513,6 +514,15 @@ const systemAddress = getSystemAddress();
 // Also auto-inject MAIN-world content_scripts (e.g. webauthn.js) from loaded
 // chrome extensions whose manifest match-patterns accept the webview URL.
 app.on('web-contents-created', (_event, contents) => {
+  // ── SANDBOX chokepoint (HARD) ──────────────────────────────────────
+  // Renderer sandboxing is MANDATORY. A window created with sandbox:false
+  // is a fatal, app-killing violation in EVERY environment (prod included)
+  // unless a human has added a SANDBOX_CARVEOUTS entry. This is stricter
+  // than the isolation checks below on purpose — sandbox:false is the
+  // highest-blast-radius footgun and must never run. See
+  // main/sandbox-enforcement.ts + its gate test.
+  enforceSandboxOnWebContents(contents);
+
   // ── SECURITY chokepoint ────────────────────────────────────────────
   // Validate every new webContents matches Peek's isolation policy.
   // nodeIntegration MUST be false; contextIsolation MUST be true. A raw
@@ -521,8 +531,7 @@ app.on('web-contents-created', (_event, contents) => {
   // full Electron privileges to whatever URL it loads.
   //
   // Skips: extension background pages (Electron's built-in extension
-  // support owns these), offscreen pages (chrome.offscreen polyfill,
-  // sandbox: false by design and not reachable from the renderer).
+  // support owns these).
   //
   // Behavior: log loudly always; throw in dev/test so violations cannot
   // be missed. Production stays up — crashing real users is worse than

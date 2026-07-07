@@ -97,8 +97,13 @@ async function createDocument(extensionId, params) {
       session: _session,
       nodeIntegration: false,
       contextIsolation: true,
-      // Offscreen documents need access to extension APIs
-      sandbox: false,
+      // sandbox:true — an offscreen document is a chrome-extension page; its
+      // extension APIs (chrome.*) are provided by Electron's extension system,
+      // not by the sandbox setting, and it has no custom preload needing Node.
+      // sandbox:false here would also hit the Electron 43 `sandbox_bundle` init
+      // crash (see chrome-extensions.ts bridge window) and is now forbidden by
+      // main/sandbox-enforcement.ts.
+      sandbox: true,
     },
   });
 
