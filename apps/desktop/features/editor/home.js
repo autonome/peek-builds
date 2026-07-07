@@ -388,6 +388,24 @@ const init = async () => {
     debug && console.log('[editor:vim] :e — opening file');
   });
 
+  // Shadow-aware "is a plain editable element focused?" check (peek 51798bae).
+  // Mirrors renderer/page/overlay.js `shouldBlockOverlayDrag` and the universal
+  // content preload's predicate: input(text-ish)/textarea/select/contenteditable/
+  // role=textbox, piercing shadow roots via each root's activeElement.
+  const isPlainEditableFocused = () => {
+    let el = document.activeElement;
+    while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+    if (!el || el.nodeType !== 1) return false;
+    if (el.isContentEditable) return true;
+    const tag = (el.tagName || '').toLowerCase();
+    if (tag === 'textarea' || tag === 'select') return true;
+    if (tag === 'input') {
+      const type = (el.getAttribute('type') || 'text').toLowerCase();
+      return !['button', 'checkbox', 'radio', 'submit', 'reset', 'image', 'file', 'range', 'color', 'hidden'].includes(type);
+    }
+    return (el.getAttribute('role') || '').toLowerCase() === 'textbox';
+  };
+
   // Set up escape handler
   //
   // ESC cascade (preload intercepts ESC via before-input-event, DOM keydown never fires):
@@ -431,6 +449,17 @@ const init = async () => {
 
       if (editorLayout?.isInFocusMode()) {
         editorLayout.exitFocusMode();
+        return { handled: true };
+      }
+
+      // Peek editor requirement (51798bae): ESC while a plain editable is focused
+      // (the CodeMirror text area / any input/textarea/contenteditable) must NOT
+      // fall through to the backend switcher route. Consume it so ESC stays in
+      // the editing context. Vim insert/visual and focus-mode are handled above;
+      // this catches ordinary editing (incl. vim normal mode with the editor
+      // focused), which previously fell through and blasted open the switcher.
+      if (isPlainEditableFocused()) {
+        debug && console.log('[editor:esc] Editable focused — consuming ESC (no switcher)');
         return { handled: true };
       }
       return { handled: false };

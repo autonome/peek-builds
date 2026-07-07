@@ -92,49 +92,54 @@ export function getRuntimeExternalWebPrefsForUrl(
   logChannel: 'webview' | 'hybrid' = 'webview'
 ): RuntimeExternalWebPrefs | null {
   if (!url || !(url.startsWith('http://') || url.startsWith('https://'))) {
+    // Non-http(s) (peek:// tiles, about:blank, etc.) get no preload — they run
+    // their own tile-preload and never need the editable-focus signal.
     return null;
   }
+
+  // UNIVERSAL preload (peek 51798bae): every http(s) page-host content WC loads
+  // runtime-external-preload.cjs so the main process gets a deterministic
+  // "editable focused?" signal (focusin/focusout → page:editable-focus), used
+  // by the hybrid ESC handler to blur/dismiss the field instead of stealing ESC
+  // to open the Windows switcher. The chrome-extension messaging polyfill inside
+  // that preload is GATED on the --peek-runtime-external-ext-id arg, so a page
+  // with no matching extension (or with the compat polyfill disabled via env)
+  // loads ONLY the focus-tracking half — the messaging bridge stays dormant.
+  const additionalArguments: string[] = [];
+
   if (process.env.PEEK_DISABLE_RUNTIME_EXTERNAL_POLYFILL === '1') {
-    // Diagnostic parity with the old inline path (Proton no-match note).
+    // Env disables only the chrome-compat half (no ext-id arg → dormant bridge);
+    // the focus-tracking preload is still applied so ESC-in-editable stays fixed.
     if (DEBUG && (url.includes('proton.me') || url.includes('proton.dev'))) {
-      console.log(`[peek:runtime-external:${logChannel}] runtime-external polyfill disabled via env for ${url}`);
+      console.log(`[peek:runtime-external:${logChannel}] compat polyfill disabled via env for ${url} (focus-tracking preload still applied)`);
     }
-    return null;
-  }
-
-  const matchedExtId = findExtensionByExternallyConnectableUrl(url);
-  if (matchedExtId) {
-    const extraArgs = [`--peek-runtime-external-ext-id=${matchedExtId}`];
-    if (getMatchingIsolatedContentScripts(url).length > 0) {
-      extraArgs.push('--peek-cs-relay-enabled');
+  } else {
+    const matchedExtId = findExtensionByExternallyConnectableUrl(url);
+    if (matchedExtId) {
+      additionalArguments.push(`--peek-runtime-external-ext-id=${matchedExtId}`);
+      if (getMatchingIsolatedContentScripts(url).length > 0) {
+        additionalArguments.push('--peek-cs-relay-enabled');
+      }
+      console.log(`[peek:runtime-external:${logChannel}] Injecting runtime-external preload for ${url} (ext=${matchedExtId}, sandbox=true)`);
+    } else {
+      // Fallback: ISOLATED-world content-script match (no externally_connectable).
+      const csMatches = getMatchingIsolatedContentScripts(url);
+      if (csMatches.length > 0) {
+        const csExtId = csMatches[0].runtimeExtId;
+        additionalArguments.push(`--peek-runtime-external-ext-id=${csExtId}`);
+        console.log(`[peek:runtime-external:${logChannel}] Injecting runtime-external preload for content-script URL ${url} (ext=${csExtId})`);
+      } else if (DEBUG && (url.includes('proton.me') || url.includes('proton.dev'))) {
+        console.log(`[peek:runtime-external:${logChannel}] No extension matched ${url} — focus-tracking preload only`);
+      }
     }
-    console.log(`[peek:runtime-external:${logChannel}] Injecting runtime-external preload for ${url} (ext=${matchedExtId}, sandbox=true)`);
-    return {
-      preload: getRuntimeExternalPreloadPath(),
-      additionalArguments: extraArgs,
-      sandbox: true,
-      contextIsolation: true,
-    };
   }
 
-  if (DEBUG && (url.includes('proton.me') || url.includes('proton.dev'))) {
-    console.log(`[peek:runtime-external:${logChannel}] No extension matched ${url} — extension probably not loaded yet, or pattern mismatch`);
-  }
-
-  // Fallback: ISOLATED-world content-script match (no externally_connectable).
-  const csMatches = getMatchingIsolatedContentScripts(url);
-  if (csMatches.length > 0) {
-    const csExtId = csMatches[0].runtimeExtId;
-    console.log(`[peek:runtime-external:${logChannel}] Injecting runtime-external preload for content-script URL ${url} (ext=${csExtId})`);
-    return {
-      preload: getRuntimeExternalPreloadPath(),
-      additionalArguments: [`--peek-runtime-external-ext-id=${csExtId}`],
-      sandbox: true,
-      contextIsolation: true,
-    };
-  }
-
-  return null;
+  return {
+    preload: getRuntimeExternalPreloadPath(),
+    additionalArguments,
+    sandbox: true,
+    contextIsolation: true,
+  };
 }
 
 /**

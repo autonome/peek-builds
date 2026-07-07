@@ -29,6 +29,60 @@ const IPC_CS_RELAY_TO_PAGE = 'peek:cs-relay:to-page';
 
 console.log('[peek:runtime-external:preload] loaded for', location.href);
 
+// === Universal editable-focus reporting (peek 51798bae) =====================
+// This preload is now applied to EVERY http(s) page-host content WC (not just
+// extension-matched URLs — see getRuntimeExternalWebPrefsForUrl). Its universal
+// job is to give the main process a deterministic "is an editable element
+// focused?" signal so ESC can blur/dismiss the field instead of being stolen to
+// open the Windows switcher. FSM-clean: the boolean is recomputed on focus
+// TRANSITIONS (focusin/focusout) and pushed only on change — no timers, no
+// polling. The predicate mirrors renderer/page/overlay.js `shouldBlockOverlayDrag`
+// (shadow-DOM-aware via the active element of each shadow root).
+const IPC_EDITABLE_FOCUS = 'page:editable-focus';
+
+function _peekDeepActiveElement() {
+  let el = document.activeElement;
+  // Pierce shadow roots: a focused element inside a shadow tree is that root's
+  // activeElement, chained from the host down.
+  while (el && el.shadowRoot && el.shadowRoot.activeElement) {
+    el = el.shadowRoot.activeElement;
+  }
+  return el;
+}
+
+function _peekIsEditableElement(el) {
+  if (!el || el.nodeType !== 1) return false;
+  if (el.isContentEditable) return true;
+  const tag = (el.tagName || '').toLowerCase();
+  if (tag === 'textarea' || tag === 'select') return true;
+  if (tag === 'input') {
+    // Non-text input types (button/checkbox/radio/etc.) don't own ESC.
+    const type = (el.getAttribute('type') || 'text').toLowerCase();
+    const nonEditable = ['button', 'checkbox', 'radio', 'submit', 'reset', 'image', 'file', 'range', 'color', 'hidden'];
+    return !nonEditable.includes(type);
+  }
+  if ((el.getAttribute('role') || '').toLowerCase() === 'textbox') return true;
+  return false;
+}
+
+let _peekLastEditable = null;
+function _peekReportEditableFocus() {
+  const editable = _peekIsEditableElement(_peekDeepActiveElement());
+  if (editable === _peekLastEditable) return;
+  _peekLastEditable = editable;
+  try { ipcRenderer.send(IPC_EDITABLE_FOCUS, editable); } catch (_) {}
+}
+// focusin/focusout bubble (unlike focus/blur) so ONE document-level capture
+// listener sees focus moving anywhere in the page, incl. across shadow
+// boundaries. Chromium/DOM boundary: on focusout, document.activeElement has
+// not yet settled to the post-transition target, so read it on a MICROTASK —
+// a deterministic ordering primitive (runs after the synchronous blur→focus
+// sequence completes), NOT a timing race. Dedup makes the double-fire (focusout
+// then focusin on a field-to-field move) a no-op.
+function _peekScheduleReport() { Promise.resolve().then(_peekReportEditableFocus); }
+document.addEventListener('focusin', _peekScheduleReport, true);
+document.addEventListener('focusout', _peekScheduleReport, true);
+
 /**
  * MAIN-world polyfill source. Installed via webFrame.executeJavaScript so
  * page scripts (in the page's main JS world) can call chrome.runtime.sendMessage.
@@ -199,38 +253,44 @@ const _extIdArg = (process.argv || []).find(a => typeof a === 'string' && a.star
 const _extId = _extIdArg ? _extIdArg.slice('--peek-runtime-external-ext-id='.length) : '';
 const PAGE_POLYFILL_SRC_RESOLVED = PAGE_POLYFILL_SRC.replace(/__PEEK_EXT_ID__/g, JSON.stringify(_extId));
 
-try {
-  // Inject the polyfill into the page's MAIN world. webFrame.executeJavaScript
-  // runs synchronously in MAIN world during preload, before page scripts run,
-  // so chrome.runtime.sendMessage is defined when the page boots.
-  webFrame.executeJavaScript(PAGE_POLYFILL_SRC_RESOLVED, false);
-  console.log('[peek:runtime-external:preload] MAIN-world polyfill injected, extId=', _extId || '(missing)');
-} catch (err) {
-  console.error('[peek:runtime-external:preload] failed to inject MAIN-world polyfill:', err && err.message);
-}
+// Chrome-extension messaging polyfill — GATED on a matched extension id. When
+// this preload is applied universally for focus tracking (no --peek-runtime-
+// external-ext-id arg), _extId is '' and the whole chrome.runtime.sendMessage
+// bridge stays dormant; only the focus reporter above runs.
+if (_extId) {
+  try {
+    // Inject the polyfill into the page's MAIN world. webFrame.executeJavaScript
+    // runs synchronously in MAIN world during preload, before page scripts run,
+    // so chrome.runtime.sendMessage is defined when the page boots.
+    webFrame.executeJavaScript(PAGE_POLYFILL_SRC_RESOLVED, false);
+    console.log('[peek:runtime-external:preload] MAIN-world polyfill injected, extId=', _extId || '(missing)');
+  } catch (err) {
+    console.error('[peek:runtime-external:preload] failed to inject MAIN-world polyfill:', err && err.message);
+  }
 
-// Bridge MAIN-world postMessage requests → main-process IPC → response back.
-window.addEventListener('message', function (ev) {
-  if (ev.source !== window) return;
-  const d = ev.data;
-  if (!d || d.__peekRuntimeExternal !== 'request') return;
-  const { reqId, extId, message, origin, internal } = d;
-  console.log('[peek:runtime-external:preload] req reqId=', reqId, 'extId=', extId, 'type=', message && message.type, 'internal=', !!internal);
-  ipcRenderer.invoke(IPC_SEND_FROM_PAGE, { extId, message, origin, internal: !!internal })
-    .then(function (response) {
-      if (response && response.__peekRuntimeExternalError) {
-        console.error('[peek:runtime-external:preload] resp ERROR reqId=', reqId, 'err=', response.__peekRuntimeExternalError);
-        window.postMessage({ __peekRuntimeExternal: 'response', reqId, error: response.__peekRuntimeExternalError }, location.origin);
-      } else {
-        console.log('[peek:runtime-external:preload] resp ok reqId=', reqId, 'response=', JSON.stringify(response).slice(0, 120));
-        window.postMessage({ __peekRuntimeExternal: 'response', reqId, response }, location.origin);
-      }
-    })
-    .catch(function (err) {
-      console.error('[peek:runtime-external:preload] ipc THREW reqId=', reqId, 'err=', err && err.message);
-      window.postMessage({ __peekRuntimeExternal: 'response', reqId, error: (err && err.message) || String(err) }, location.origin);
-    });
-}, true);
+  // Bridge MAIN-world postMessage requests → main-process IPC → response back.
+  window.addEventListener('message', function (ev) {
+    if (ev.source !== window) return;
+    const d = ev.data;
+    if (!d || d.__peekRuntimeExternal !== 'request') return;
+    const { reqId, extId, message, origin, internal } = d;
+    console.log('[peek:runtime-external:preload] req reqId=', reqId, 'extId=', extId, 'type=', message && message.type, 'internal=', !!internal);
+    ipcRenderer.invoke(IPC_SEND_FROM_PAGE, { extId, message, origin, internal: !!internal })
+      .then(function (response) {
+        if (response && response.__peekRuntimeExternalError) {
+          console.error('[peek:runtime-external:preload] resp ERROR reqId=', reqId, 'err=', response.__peekRuntimeExternalError);
+          window.postMessage({ __peekRuntimeExternal: 'response', reqId, error: response.__peekRuntimeExternalError }, location.origin);
+        } else {
+          console.log('[peek:runtime-external:preload] resp ok reqId=', reqId, 'response=', JSON.stringify(response).slice(0, 120));
+          window.postMessage({ __peekRuntimeExternal: 'response', reqId, response }, location.origin);
+        }
+      })
+      .catch(function (err) {
+        console.error('[peek:runtime-external:preload] ipc THREW reqId=', reqId, 'err=', err && err.message);
+        window.postMessage({ __peekRuntimeExternal: 'response', reqId, error: (err && err.message) || String(err) }, location.origin);
+      });
+  }, true);
+}
 
 // === Content-script relay: page postMessage ⇄ extension bridge window ===
 //

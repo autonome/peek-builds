@@ -316,6 +316,11 @@ import {
   installMainWorldContentScriptInjection,
   installRuntimeExternalCdpPolyfill,
 } from './page-host-compat.js';
+import {
+  initHybridEditableFocusTracking,
+  isEditableFocusedForWc,
+  clearEditableFocusForWc,
+} from './hybrid-editable-focus.js';
 
 import {
   getIzuiCoordinator,
@@ -1346,6 +1351,12 @@ export function wireHybridContentEvents(
   // redirect-driven did-navigate, mirroring the canvas path (ipc.ts ~2465).
   let skipTracking = options?.skipTracking === true;
 
+  // Editable-focus tracking (peek 51798bae): register the `page:editable-focus`
+  // receiver once (idempotent), and drop this content WC's cached focus state on
+  // teardown so a recycled webContents id never inherits a stale editable flag.
+  initHybridEditableFocusTracking();
+  contentWC.once('destroyed', () => clearEditableFocusForWc(contentWC.id));
+
   // ── Loading-timeout safety net (Stage B) ────────────────────────────────
   // Armed on `did-start-loading`, cleared on `did-finish-load` / `did-stop-loading`.
   // Fires for hung loads (server accepts connection but never responds — the
@@ -1565,6 +1576,18 @@ export function wireHybridContentEvents(
     // source of truth). The early `!modifier` return below would otherwise drop
     // ESC entirely, so this MUST sit above it.
     if (input.type === 'keyDown' && input.key === 'Escape') {
+      // Editable-target guard (peek 51798bae): while a text field / textarea /
+      // contenteditable inside the page is focused, ESC belongs to the editing
+      // context (blur/dismiss the field), NOT the global switcher. The universal
+      // content preload reports focus transitions via page:editable-focus. When
+      // editable is focused, let ESC fall through to the page UNSTOLEN — do NOT
+      // preventDefault and do NOT route to policy — so the page blurs the field
+      // natively. A second ESC (nothing focused now) reaches the switcher route.
+      // Deterministic: a cached focus boolean read synchronously, no timer.
+      if (isEditableFocusedForWc(contentWC.id)) {
+        DEBUG && console.log(`[esc] hybrid ESC deferred to page — editable focused in content wc ${contentWC.id}`);
+        return;
+      }
       const now = Date.now();
       if (now - lastHybridEscTime < 200) return;
       lastHybridEscTime = now;
