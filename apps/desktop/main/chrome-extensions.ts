@@ -445,7 +445,15 @@ function _spawnBridgeWindow(loaded: LoadedChromeExtension): void {
       preload: preloadPath,
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false, // needed so contextBridge + ipcRenderer work in the preload
+      // sandbox:true — a sandboxed preload still has contextBridge + electron's
+      // ipcRenderer (the only thing peek-bridge-preload.cjs requires), and it
+      // avoids the Electron 43 `sandbox_bundle` init crash ("Cannot destructure
+      // property 'preloadScripts' of 'binding.startupData' as it is null") that a
+      // sandbox:false chrome-extension renderer hits — which silently aborts the
+      // preload, leaving window.peekBridge undefined and the whole Proton relay
+      // (autofill LOAD_CONTENT_SCRIPT → SW → scripting) dead. This was the last
+      // remaining sandbox:false path 802aaa37 assumed was gone.
+      sandbox: true,
     },
   });
 
