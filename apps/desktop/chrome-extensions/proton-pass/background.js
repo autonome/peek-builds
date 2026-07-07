@@ -151,6 +151,47 @@
     } catch(e) { _log('browser.permissions install failed:', e.message); }
   } catch(e) { _log('chrome wrap failed:', e.message); }
 })();
+/* Peek: chrome.webRequest noop shim for Electron SW compatibility. */
+(function(){
+  var DEBUG_WEBREQUEST = false;
+  function _log() { if (DEBUG_WEBREQUEST) console.log.apply(console, ['[peek:webRequest]'].concat(Array.prototype.slice.call(arguments))); }
+  function NoopEvent(){ this._l = []; }
+  NoopEvent.prototype.addListener = function(fn){ if (typeof fn === 'function') this._l.push(fn); };
+  NoopEvent.prototype.removeListener = function(fn){ var i = this._l.indexOf(fn); if (i >= 0) this._l.splice(i, 1); };
+  NoopEvent.prototype.hasListener = function(fn){ return this._l.indexOf(fn) >= 0; };
+  function makeWebRequest(){
+    return {
+      onBeforeRequest: new NoopEvent(),
+      onBeforeSendHeaders: new NoopEvent(),
+      onSendHeaders: new NoopEvent(),
+      onHeadersReceived: new NoopEvent(),
+      onAuthRequired: new NoopEvent(),
+      onBeforeRedirect: new NoopEvent(),
+      onResponseStarted: new NoopEvent(),
+      onCompleted: new NoopEvent(),
+      onErrorOccurred: new NoopEvent(),
+      onActionIgnored: new NoopEvent(),
+      handlerBehaviorChanged: function(cb){ if (typeof cb === 'function') cb(); return Promise.resolve(); },
+      MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES: 20,
+    };
+  }
+  /* Backup — accessible from tests to verify the shim is loaded. */
+  globalThis.__peekWebRequest = makeWebRequest();
+  try {
+    if (globalThis.chrome) {
+      globalThis.chrome.webRequest = makeWebRequest();
+      _log('chrome.webRequest installed');
+    }
+  } catch(e) { _log('chrome.webRequest install failed:', e && e.message); }
+  try {
+    if (typeof globalThis.browser === 'object' && globalThis.browser && !globalThis.browser.webRequest) {
+      Object.defineProperty(globalThis.browser, 'webRequest', {
+        value: makeWebRequest(), writable: false, configurable: true, enumerable: true,
+      });
+      _log('browser.webRequest installed');
+    }
+  } catch(e) { _log('browser.webRequest install failed:', e && e.message); }
+})();
 // --- chrome.storage.session in-memory shim ---
 (function() {
   if (typeof chrome !== 'undefined' && chrome.storage) {

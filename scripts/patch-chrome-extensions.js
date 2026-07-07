@@ -202,6 +202,73 @@ const PERMISSIONS_SHIM = `/* Peek: chrome.permissions shim for Electron compatib
 `;
 
 /**
+ * chrome.webRequest noop shim for the background service worker.
+ *
+ * Electron 43 does not register the `webRequest` module resource in a
+ * service-worker (BLESSED_EXTENSION) context — the SW load logs
+ * "NOTREACHED ... Module resource registered as \"webRequest\" not found" and
+ * "No source for require(webRequest)" — so chrome.webRequest is `undefined`.
+ * Proton's background.js declares the `webRequest` permission and, at sync
+ * startup, calls chrome.webRequest.{onAuthRequired,onBeforeRequest,onCompleted,
+ * onErrorOccurred}.addListener(). The first read of `.addListener` on the
+ * undefined namespace throws `TypeError: Cannot read properties of undefined`,
+ * the SW registration fails ("Service worker registration failed. Status
+ * code: 15"), and the SW never runs — the popup can't read vault/auth state
+ * (renders blank) and autofill never injects.
+ *
+ * Electron does not deliver chrome.webRequest events to extensions regardless,
+ * so a noop event shim matches real behaviour AND unblocks SW startup. Same
+ * philosophy as the permissions / storage.session shims above. Generalises to
+ * any extension that declares webRequest and touches it at SW init.
+ *
+ * Runs AFTER PERMISSIONS_SHIM so globalThis.chrome is the permissions Proxy;
+ * assigning chrome.webRequest routes through the Proxy set trap into its
+ * override table and is served back by the get trap.
+ */
+const WEBREQUEST_SHIM = `/* Peek: chrome.webRequest noop shim for Electron SW compatibility. */
+(function(){
+  var DEBUG_WEBREQUEST = false;
+  function _log() { if (DEBUG_WEBREQUEST) console.log.apply(console, ['[peek:webRequest]'].concat(Array.prototype.slice.call(arguments))); }
+  function NoopEvent(){ this._l = []; }
+  NoopEvent.prototype.addListener = function(fn){ if (typeof fn === 'function') this._l.push(fn); };
+  NoopEvent.prototype.removeListener = function(fn){ var i = this._l.indexOf(fn); if (i >= 0) this._l.splice(i, 1); };
+  NoopEvent.prototype.hasListener = function(fn){ return this._l.indexOf(fn) >= 0; };
+  function makeWebRequest(){
+    return {
+      onBeforeRequest: new NoopEvent(),
+      onBeforeSendHeaders: new NoopEvent(),
+      onSendHeaders: new NoopEvent(),
+      onHeadersReceived: new NoopEvent(),
+      onAuthRequired: new NoopEvent(),
+      onBeforeRedirect: new NoopEvent(),
+      onResponseStarted: new NoopEvent(),
+      onCompleted: new NoopEvent(),
+      onErrorOccurred: new NoopEvent(),
+      onActionIgnored: new NoopEvent(),
+      handlerBehaviorChanged: function(cb){ if (typeof cb === 'function') cb(); return Promise.resolve(); },
+      MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES: 20,
+    };
+  }
+  /* Backup — accessible from tests to verify the shim is loaded. */
+  globalThis.__peekWebRequest = makeWebRequest();
+  try {
+    if (globalThis.chrome) {
+      globalThis.chrome.webRequest = makeWebRequest();
+      _log('chrome.webRequest installed');
+    }
+  } catch(e) { _log('chrome.webRequest install failed:', e && e.message); }
+  try {
+    if (typeof globalThis.browser === 'object' && globalThis.browser && !globalThis.browser.webRequest) {
+      Object.defineProperty(globalThis.browser, 'webRequest', {
+        value: makeWebRequest(), writable: false, configurable: true, enumerable: true,
+      });
+      _log('browser.webRequest installed');
+    }
+  } catch(e) { _log('browser.webRequest install failed:', e && e.message); }
+})();
+`;
+
+/**
  * Polyfills-only permissions shim. Same method-mutation strategy as the
  * background shim. Method mutation does not interact with browser.permissions
  * (which webextension-polyfill builds during popup.js execution) so the old
@@ -623,6 +690,7 @@ function patchProtonPass() {
   const block =
     SHIM_BLOCK_BEGIN +
     PERMISSIONS_SHIM +
+    WEBREQUEST_SHIM +
     STORAGE_SESSION_SHIM +
     GET_BACKGROUND_PAGE_SHIM +
     diag +
