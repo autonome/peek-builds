@@ -333,20 +333,19 @@ test.describe('Hybrid content window gesture @desktop', () => {
     await expect.poll(() => hostBoundsOf(id)).toEqual(workArea);
   });
 
-  test('triple-click fullscreen exit leaves a consistent maximize state (no stuck-maximize desync)', async () => {
+  test('triple-click fullscreen round-trip restores the pre-gesture bounds (not stuck maximized)', async () => {
     test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
 
-    // The secondary d8ce0ddf bug. A triple-click does detent-2 (maximize) THEN
-    // detent-3 (fullscreen), so it always enters fullscreen FROM maximized — macOS
-    // then remembers the maximized work-area as the pre-fullscreen bounds. On the
-    // way OUT, the exit triple-click's detent-2 fires while the host is STILL
-    // fullscreen. Pre-fix it flipped maximized→false and nulled preMaxBounds while
-    // its setBounds() was silently dropped (macOS won't resize a fullscreen
-    // window); the window then left fullscreen at the maximized bounds — LOOKING
-    // maximized but with the state machine saying not-maximized, and preMaxBounds
-    // gone, so it could never be un-maximized ("drag snaps back to maximized").
-    // The fix gates the maximize-toggle on !isFullScreen(), so the exit detent-2 is
-    // suppressed and the state stays consistent.
+    // The d8ce0ddf follow-up. Reported steps: from a normal-sized window, a
+    // triple-click maximizes (detent-2) then goes fullscreen (detent-3); a SECOND
+    // triple-click must return the window to where it was — its normal bounds — NOT
+    // leave it maximized ("triple-click there should go back to where i was, not to
+    // maximized"). A triple-click is a TOGGLE, so the incidental detent-2 maximize
+    // is undone on the way out: the exit detent-2 is suppressed while fullscreen
+    // (the !isFullScreen() gate keeps maximized+preMaxBounds intact), then the host's
+    // leave-full-screen handler un-maximizes back to preMaxBounds once macOS has
+    // SETTLED the exit — so the restore setBounds isn't dropped (macOS won't resize a
+    // fullscreen window). Deterministic, event-driven, no timer.
     const { id, wcId } = await openGestureWindow();
     const workArea = await workAreaOf(id);
     const normal = await hostBoundsOf(id);
@@ -374,7 +373,7 @@ test.describe('Hybrid content window gesture @desktop', () => {
     // transition and is nothing a real user (seconds between clicks) ever does.
     await expect.poll(() => fullscreenStateOf(id).then((s) => s?.nativeFullScreen ?? null)).toBe(true);
 
-    // EXIT, triple-click again: detent-2 arrives while STILL fullscreen (the fix
+    // EXIT, triple-click again: detent-2 arrives while STILL fullscreen (the gate
     // suppresses the maximize-toggle here), then detent-3 leaves fullscreen. The
     // window stays continuously active throughout (single-session repro), so we do
     // NOT re-activate — re-firing page-overlay:active would clobber the overlay's
@@ -383,31 +382,21 @@ test.describe('Hybrid content window gesture @desktop', () => {
     await runInContent(wcId, dispatchClickAtCenterSrc('#dead', 3, true)); // detent-3 → leave fullscreen
     await expect.poll(() => fullscreenStateOf(id).then((s) => s?.nativeFullScreen ?? null)).toBe(false);
 
-    // THE regression assertion. The window left fullscreen at the maximized work
-    // area, and the state machine AGREES: maximized=true with preMaxBounds STILL the
-    // real normal bounds — a fully consistent maximized state that a plain
-    // double-click can cleanly un-maximize. Pre-fix, the exit detent-2 flipped
-    // maximized→false and nulled preMaxBounds while the window stayed at the work
-    // area: maximized=false + bounds==workArea is the "stuck maximized / drag snaps
-    // back" desync (and preMaxBounds=null meant it could never restore). This block
-    // fails on every one of those pre-fix.
+    // THE regression assertion. Leaving fullscreen fires the host's leave-full-screen
+    // handler, which un-maximizes back to the pre-gesture bounds (page:unmaximize,
+    // main-side — it doesn't depend on the overlay being active/focused, so it's
+    // observable even under the macOS-headless focus artifact). That reconcile is
+    // async (a pubsub round-trip after the settled exit), so we POLL: the window ends
+    // at its NORMAL bounds, not maximized, with preMaxBounds cleared. Pre-fix the exit
+    // left it stuck at the work area (maximized=true, bounds==workArea) — exactly the
+    // reported "goes to maximized, not back to where I was" — so this block fails
+    // pre-fix.
+    await expect.poll(() => hostBoundsOf(id)).toEqual(normal);
     {
       const s = await fullscreenStateOf(id);
       expect(s!.isFullScreen).toBe(false);
-      expect(s!.maximized).toBe(true);
-      expect(s!.preMaxBounds).toEqual(normal);
+      expect(s!.maximized).toBe(false);
+      expect(s!.preMaxBounds).toBeNull();
     }
-    await expect.poll(() => hostBoundsOf(id)).toEqual(workArea);
-
-    // NOTE: we intentionally do NOT go on to double-click-and-expect-normal here.
-    // That downstream un-maximize routes through the overlay, and real setFullScreen
-    // fires focus/blur on the real host whose isFocused() is false in macOS-headless
-    // — so the deferred-blur logic can deactivate it and the overlay drops the
-    // toggle (a headless focus artifact), OR a re-activation clobbers the overlay's
-    // own maximized flag via page-overlay:active (a SEPARATE divergence bug: there is
-    // no main→overlay maximize-state sync topic). In a real focused session neither
-    // happens. Asserting the consistent registry state above is the robust, direct
-    // regression signal for THIS fix; the overlay-sync divergence is tracked
-    // separately (peek d8ce0ddf follow-up).
   });
 });

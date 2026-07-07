@@ -138,6 +138,7 @@ import {
   getAllHybridWindows,
   setHybridMaximizeState,
   setHybridNativeFullScreen,
+  setHybridUnmaximizeOnFullScreenExit,
   claimHybridDeferredLoad,
   // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
   setHybridLoadError,
@@ -1079,7 +1080,25 @@ function assembleHybridPageHost(
   // events fire on completion, so the registry flag they drive is the
   // deterministic signal for anything that must not act mid-transition.
   baseWin.on('enter-full-screen', () => setHybridNativeFullScreen(baseWin.id, true));
-  baseWin.on('leave-full-screen', () => setHybridNativeFullScreen(baseWin.id, false));
+  baseWin.on('leave-full-screen', () => {
+    setHybridNativeFullScreen(baseWin.id, false);
+    // A content triple-click enters fullscreen from a (usually incidental)
+    // maximize; make the round-trip a clean toggle by restoring the pre-gesture
+    // bounds on the way out instead of leaving the window stuck maximized (peek
+    // d8ce0ddf). The enter-side gesture set `unmaximizeOnFullScreenExit`, and the
+    // exit detent-2 was suppressed by the !isFullScreen() gate, so preMaxBounds is
+    // still the real normal rect. We reconcile HERE — on the settled exit event,
+    // no longer fullscreen — so the un-maximize setBounds actually applies (macOS
+    // silently drops a resize on a fullscreen window). Main-side via page:unmaximize
+    // (not the overlay toggle) so it doesn't depend on the overlay being active/
+    // focused. Consume the flag exactly once.
+    const e = getHybridWindow(baseWin.id);
+    const restore = !!e?.unmaximizeOnFullScreenExit;
+    setHybridUnmaximizeOnFullScreenExit(baseWin.id, false);
+    if (restore && e?.maximized) {
+      publish(getSystemAddress(), 'page:unmaximize', { windowId: baseWin.id });
+    }
+  });
   // Belt-and-suspenders: clicking directly into the page focuses the
   // content webContents even when the host-window focus event is missed.
   view.webContents.on('focus', onHybridHostFocus);

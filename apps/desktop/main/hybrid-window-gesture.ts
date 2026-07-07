@@ -21,14 +21,23 @@
  *
  * Deterministic, no timers: it rides Chromium's native multi-click counter rather
  * than debouncing double-vs-triple itself (fsm-pilled). A triple-click therefore
- * fires detent 2 THEN detent 3 within the same native sequence — by design the
- * window grows monotonically (normal → maximized → fullscreen); exiting fullscreen
- * leaves it maximized.
+ * fires detent 2 THEN detent 3 within the same native sequence: on the way IN it
+ * maximizes (detent 2) then goes fullscreen (detent 3). A triple-click is a clean
+ * TOGGLE, though — on the way OUT it restores the pre-gesture bounds rather than
+ * leaving the window stuck maximized. The incidental detent-2 maximize is undone
+ * when leaving fullscreen: entering fullscreen from maximized sets the entry's
+ * `unmaximizeOnFullScreenExit` flag, and the host's `leave-full-screen` handler
+ * (ipc.ts `assembleHybridPageHost`) un-maximizes back to `preMaxBounds` once macOS
+ * has settled the exit — deterministic, no timer, and after the transition so the
+ * restore setBounds isn't dropped.
  */
 import { createRequire } from 'node:module';
 import type { WebContents } from 'electron';
 import { publish, getSystemAddress } from './pubsub.js';
-import { getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
+import {
+  getHybridWindowByContentWC,
+  setHybridUnmaximizeOnFullScreenExit,
+} from './hybrid-page-host-registry.js';
 
 // `ipcMain` is fetched lazily (only when the receiver is actually registered at
 // runtime) rather than via a top-level `import { ipcMain } from 'electron'`.
@@ -88,14 +97,25 @@ export function handleContentWindowGesture(sender: WebContents, detent: unknown)
     // (confirmed by live trace, peek d8ce0ddf). Gate the maximize-toggle on the
     // host NOT being fullscreen: on entry detent-2 arrives before detent-3's
     // setFullScreen (not-yet-fullscreen) so maximize still runs; on exit it is
-    // suppressed, leaving maximized=true + preMaxBounds intact so a later
-    // double-click un-maximizes to the real normal bounds. Deterministic, no timer.
+    // suppressed, keeping maximized=true + preMaxBounds intact through the exit. The
+    // restore back to the pre-gesture bounds then happens in the host's
+    // `leave-full-screen` handler (see the fullscreen branch below). Deterministic,
+    // no timer.
     if (entry.baseWin.isFullScreen()) return;
     // Route through the overlay (it owns maximize state + chrome reflow); see header.
     publish(getSystemAddress(), 'page:request-toggle-maximize', { windowId: entry.windowId });
   } else {
+    // detent-3 → toggle fullscreen (main owns the host). When ENTERING fullscreen,
+    // remember whether we're doing so from a maximized state (the triple-click's
+    // detent-2 just ran ~one inter-click gap ago, so entry.maximized is current):
+    // if so, the host's `leave-full-screen` handler will un-maximize back to
+    // preMaxBounds on the way out, making the triple-click a clean toggle instead of
+    // leaving the window stuck maximized. Reconciling on the exit EVENT (not here)
+    // avoids the dropped-setBounds trap — macOS won't resize a fullscreen window.
+    const entering = !entry.baseWin.isFullScreen();
+    if (entering) setHybridUnmaximizeOnFullScreenExit(entry.windowId, entry.maximized);
     try {
-      entry.baseWin.setFullScreen(!entry.baseWin.isFullScreen());
+      entry.baseWin.setFullScreen(entering);
     } catch { /* window gone mid-toggle */ }
   }
 }

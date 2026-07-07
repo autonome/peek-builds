@@ -275,6 +275,16 @@ export interface HybridWindowEntry {
    * unlike `baseWin.isFullScreen()` which flips synchronously mid-animation.
    */
   nativeFullScreen: boolean;
+  /**
+   * Set true when a content triple-click gesture ENTERS fullscreen from a
+   * maximized state (the gesture's detent-2 maximizes, then detent-3 goes
+   * fullscreen). It tells the `leave-full-screen` handler to un-maximize back
+   * to `preMaxBounds` on the way out, so a triple-click round-trip returns the
+   * window to its pre-gesture bounds instead of leaving it stuck maximized.
+   * Consumed (read then cleared) on the next fullscreen exit. See
+   * `setHybridUnmaximizeOnFullScreenExit`.
+   */
+  unmaximizeOnFullScreenExit: boolean;
 }
 
 /**
@@ -310,6 +320,10 @@ interface InternalEntry {
   // (the d8ce0ddf desync stemmed from fullscreen being invisible to it) and is
   // the deterministic "transition complete" signal specs sequence on.
   nativeFullScreen: boolean;
+  // See HybridWindowEntry.unmaximizeOnFullScreenExit — a triple-click that enters
+  // fullscreen from maximized sets this so the leave-full-screen handler restores
+  // the pre-gesture (un-maximized) bounds instead of leaving the window maximized.
+  unmaximizeOnFullScreenExit: boolean;
   deferredLoad: DeferredLoad | null;
 }
 
@@ -506,6 +520,7 @@ function toPublic(e: InternalEntry): HybridWindowEntry {
     maximized: e.maximized,
     preMaxBounds: e.preMaxBounds,
     nativeFullScreen: e.nativeFullScreen,
+    unmaximizeOnFullScreenExit: e.unmaximizeOnFullScreenExit,
   };
 }
 
@@ -563,6 +578,7 @@ export function registerHybridWindow(
     maximized: false,
     preMaxBounds: null,
     nativeFullScreen: false,
+    unmaximizeOnFullScreenExit: false,
     deferredLoad: opts.deferredLoad
       ? { url: opts.deferredLoad.url, title: opts.deferredLoad.title || '', started: false }
       : null,
@@ -686,6 +702,18 @@ export function setHybridNativeFullScreen(windowId: number, value: boolean): voi
   const e = entries.get(windowId);
   if (!e) return;
   e.nativeFullScreen = value;
+}
+
+/**
+ * Mark (or clear) that the host entered native fullscreen via a content
+ * triple-click gesture while maximized, so the `leave-full-screen` handler
+ * un-maximizes back to `preMaxBounds` on the way out. See
+ * `HybridWindowEntry.unmaximizeOnFullScreenExit`. A no-op for an unregistered id.
+ */
+export function setHybridUnmaximizeOnFullScreenExit(windowId: number, value: boolean): void {
+  const e = entries.get(windowId);
+  if (!e) return;
+  e.unmaximizeOnFullScreenExit = value;
 }
 
 /**
