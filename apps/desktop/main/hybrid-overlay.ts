@@ -444,6 +444,16 @@ function sendActiveHandoff(id: number | null): void {
     // SAME deterministic handoff path as `navbar.loading` — no extra timer.
     loadError: getHybridLoadError(id),
     loading,
+    // Maximize-state hand-off: the registry is the single source of truth for a
+    // hybrid window's maximized flag + pre-maximize bounds (set exclusively via
+    // setHybridMaximizeState). Ship BOTH on every active-window handoff so the
+    // overlay RECONCILES its own maximize state to the newly-active window's
+    // instead of blindly resetting it — otherwise a maximized window that loses
+    // and regains active (window switching) has its overlay `maximized` clobbered
+    // to false and forgets it was maximized. Deterministic state hand-off, no
+    // timer/visibilitychange (see fsm-pilled).
+    maximized: entry.maximized,
+    preMaxBounds: entry.preMaxBounds,
     // The INNER content rect (content BaseWindow outer bounds). The renderer
     // places the transparent content hole + chrome relative to this, insetting
     // it by the gutters below — so the overlay center sits exactly over the
@@ -1032,6 +1042,20 @@ function installTestBridge(): void {
       return _setActiveHybridWindowForTests(id);
     },
     /**
+     * Drive the overlay's maximize TOGGLE for a window through the REAL content
+     * gesture topic (`page:request-toggle-maximize`) — the exact signal the
+     * content double-click publishes. The overlay's subscriber runs
+     * `toggleMaximize()` (flips its `maximized` flag, publishes
+     * `page:maximize`/`page:unmaximize`, which main resizes the host on). Used by
+     * the maximize-state-sync spec to maximize a fake host and later toggle it,
+     * so the overlay's own state is exercised end-to-end. `id` must be the active
+     * hybrid window (the subscriber ignores non-active ids). Async (pubsub hop) —
+     * callers poll the host bounds for the effect.
+     */
+    requestToggleMaximize(id: number): void {
+      publish(getSystemAddress(), 'page:request-toggle-maximize', { windowId: id });
+    },
+    /**
      * Stage B: override the loading-timeout duration for the hung-load spec so
      * the 30 s production timer doesn't run the full test budget. The new value
      * is read by `wireHybridContentEvents` each time `did-start-loading` arms a
@@ -1468,6 +1492,20 @@ function installTestBridge(): void {
     /** P1.4b-4: stop find-in-page via the routed `page:find-stop` topic. */
     stopFindInContent(id: number): void {
       publish(getSystemAddress(), 'page:find-stop', { windowId: id });
+    },
+    /**
+     * Read the overlay renderer's live maximize state ({maximized, preMaxBounds})
+     * for the active window — the state the page-overlay:active handoff must
+     * RECONCILE (not clobber) when a maximized window loses+regains active.
+     * Resolves null if no overlay window / renderer not ready.
+     */
+    overlayMaximizeState(): Promise<{ maximized: boolean; preMaxBounds: unknown } | null> {
+      if (!overlayWin || overlayWin.isDestroyed()) return Promise.resolve(null);
+      return overlayWin.webContents
+        .executeJavaScript(
+          `(window.__overlayMaximizeStateForTests ? window.__overlayMaximizeStateForTests() : null)`,
+        )
+        .catch(() => null);
     },
     /** Whether a fake hybrid window's content can go back (post-navigation). */
     contentCanGoBack(id: number): boolean {

@@ -586,12 +586,15 @@ api.subscribe('page-overlay:active', (msg) => {
   // P1.4b-3: seed the locally-tracked CONTENT-RECT bounds for resize/move math
   // (these are the content BaseWindow's outer bounds, NOT the overlay's — the
   // overlay frame is this rect expanded by the gutters, applied by main).
-  // Reset maximize state for the newly-active window (each window owns its own).
   activeBounds = msg.bounds ? { ...msg.bounds } : null;
   // Gutter geometry from main (defaults already set; keep them in sync if sent).
   if (msg.gutters) gutters = { ...msg.gutters };
-  maximized = false;
-  preMaxBounds = null;
+  // Reconcile maximize state to the newly-active window (each window owns its
+  // own). Main ships the registry's maximized/preMaxBounds — the single source
+  // of truth — on every handoff, so re-activating a maximized window (window
+  // switch) keeps the overlay's flag in sync instead of clobbering it to false.
+  maximized = !!msg.maximized;
+  preMaxBounds = msg.preMaxBounds ? { ...msg.preMaxBounds } : null;
   // Reposition the chrome into the gutter around the (possibly new-sized) content
   // rect so widgets/handles/panels never land over the content.
   updateOverlayPositions();
@@ -1685,6 +1688,12 @@ if (typeof window !== 'undefined') {
     permissionQueue.length = 0;
     renderActivePermissionPrompt();
   };
+  // Read the overlay's live maximize state for the active window — the flag the
+  // page-overlay:active handoff must RECONCILE (not clobber) on a window switch.
+  window.__overlayMaximizeStateForTests = () => ({
+    maximized,
+    preMaxBounds: preMaxBounds ? { ...preMaxBounds } : null,
+  });
 }
 
 // ── P1.4b-5: side panels (page-info / tags / entities / extensions) ───────────
