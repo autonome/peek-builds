@@ -2,10 +2,23 @@
  * Regression spec for Proton Pass autofill in the hybrid page-host.
  *
  * Bug (historical): Proton Pass autofill UI never appeared in form fields.
- * Root cause was Electron's native `browser` polyfill in service-worker
- * contexts omitting `permissions`, aborting Proton's BG SW before it
- * registered its onMessage handler. Fixed by scripts/patch-chrome-extensions.js
- * installing `globalThis.browser.permissions` on the SW.
+ * Two distinct compat-layer causes have been found and fixed in the BG SW:
+ *   1. Electron's native `browser` polyfill in service-worker contexts omitted
+ *      `permissions`, aborting Proton's BG SW before it registered its onMessage
+ *      handler. Fixed by scripts/patch-chrome-extensions.js installing
+ *      `globalThis.browser.permissions` on the SW.
+ *   2. (Electron 43, fixed 2026-07-07, commit 3ee805a5) Electron 43 does not
+ *      register the `webRequest` module resource in a BLESSED_EXTENSION SW
+ *      context, so `chrome.webRequest` is `undefined`. Proton's background.js
+ *      declares the `webRequest` permission and calls
+ *      `chrome.webRequest.{onAuthRequired,…}.addListener()` at sync init → first
+ *      `.addListener` on undefined throws → "Service worker registration failed.
+ *      Status code: 15" → the SW never runs → the popup is a hollow theme-only
+ *      shell (no buttons/inputs), no vault, no autofill. Fixed by the
+ *      `WEBREQUEST_SHIM` in patch-chrome-extensions.js (noop `chrome.webRequest`
+ *      + `browser.webRequest`; Electron delivers no webRequest events anyway).
+ *      Verified live: clean boot logs "SW running for Proton Pass", popup
+ *      renders the real unlocked vault.
  *
  * PORTED off the canvas `<webview>` page host (removed 2026-07, peek e8081cce)
  * to the hybrid `WebContentsView` model — drive the REAL page-host pipeline
@@ -14,29 +27,25 @@
  * `wc.executeJavaScript` (there is no in-window `#content` webview anymore).
  * Mirrors runtime-external-polyfill.spec.ts.
  *
- * ── STILL SKIPPED — and the original "CI-safe, no live creds" premise was
- *    wrong (verified 2026-07-06). ────────────────────────────────────────────
- * Investigating the port revealed that content-script injection is NOT the
- * problem on the hybrid page-host: instrumenting the content WC's console
- * showed Proton's ISOLATED-world content scripts DO run there —
+ * ── STILL SKIPPED — downstream autofill-injection break, NOT vault state. ─────
+ * The session-2 "fresh temp profile has no unlocked vault → nothing to autofill"
+ * theory was REFUTED (2026-07-07): with the SW alive (vault unlocked, popup
+ * renders items), Proton Pass autofill STILL does not decorate form fields on
+ * the hybrid page-host. Probed both the spec's local form and real
+ * https://github.com/login → `protonNodes: 0`, no `iframe[src*=chrome-extension]`,
+ * no `data-protonpass-*` attrs, before AND after focusing the field. NOT a
+ * localhost/http exclusion (real https failed identically). The ISOLATED-world
+ * content script DOES run (confirmed session 2 —
  *   [peek:cs-compat] ISOLATED-world sendMessage shim installed, extId=…
- *   [peek:cs-compat] sendMessage … type=UNLOAD_CONTENT_SCRIPT
- * i.e. Electron 43 natively injects ISOLATED content_scripts into the
- * `WebContentsView`, and peek's relay forwards their messages. So there is NO
- * autofill content-script-injection regression on the hybrid page-host.
+ * i.e. Electron 43 natively injects ISOLATED content_scripts and peek's relay
+ * forwards their messages) — but the autofill decoration / dropdown iframe never
+ * reaches the page DOM. So there is NO content-script-injection regression; the
+ * break is downstream: content-script field detection → message to SW → SW
+ * `chrome.scripting.executeScript('client.js')` → dropdown-iframe injection.
  *
- * What's missing is the downstream autofill UI: the content script runs, then
- * sends `UNLOAD_CONTENT_SCRIPT` and injects no dropdown. The overwhelmingly
- * likely cause is that `createPerDescribeApp` uses a FRESH temp profile in
- * which Proton Pass has NO logged-in / unlocked vault — a password manager with
- * no account offers nothing to autofill and unloads, so no `data-protonpass-*`
- * markers ever appear. That makes the DOM-marker assertion depend on a seeded /
- * live Proton Pass login; it is NOT CI-safe as originally assumed.
- *
- * TO UN-SKIP: run against a profile with a real, unlocked Proton Pass vault
- * (a live-login session, or a seeded-vault fixture) and confirm the markers
- * appear. Until then this stays skipped. The genuinely live-creds-only OAuth
- * gap is separate and lives in tests/manual/proton-auth.harness.ts.
+ * TO UN-SKIP: fix that downstream chain (peek 976a7700) and confirm the
+ * `data-protonpass-*` markers appear. The genuinely live-creds-only OAuth gap is
+ * separate and lives in tests/manual/proton-auth.harness.ts.
  *
  * Peek follow-up: 976a7700.
  */
