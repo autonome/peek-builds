@@ -1257,6 +1257,18 @@ navbar.addEventListener('dblclick', (e) => {
   toggleMaximize();
 });
 
+// Content-area double-click → maximize toggle (peek d8ce0ddf). The content
+// preload detects a "dead space" double-click over the page (no editable/
+// interactive target, no text selected); main republishes it here so the overlay
+// — the single source of truth for maximize state + chrome reflow — runs the
+// SAME toggleMaximize the navbar double-click uses, keeping both in sync. (A
+// content triple-click drives fullscreen in main directly; that path is
+// OS-driven and needs no overlay state, so it isn't routed here.)
+api.subscribe('page:request-toggle-maximize', (msg) => {
+  if (!isActive(msg)) return;
+  toggleMaximize();
+});
+
 // ── P1.4b-4: find-in-page ─────────────────────────────────────────────────────
 // The overlay owns the find-bar UI (mirrors page.js's in-renderer find bar). The
 // hybrid content webContents is MAIN-owned, so instead of calling findInPage

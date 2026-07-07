@@ -321,6 +321,7 @@ import {
   isEditableFocusedForWc,
   clearEditableFocusForWc,
 } from './hybrid-editable-focus.js';
+import { initHybridWindowGestureHandling } from './hybrid-window-gesture.js';
 
 import {
   getIzuiCoordinator,
@@ -1356,6 +1357,11 @@ export function wireHybridContentEvents(
   // teardown so a recycled webContents id never inherits a stale editable flag.
   initHybridEditableFocusTracking();
   contentWC.once('destroyed', () => clearEditableFocusForWc(contentWC.id));
+
+  // Content-area double/triple-click window gesture (peek d8ce0ddf): register the
+  // `page:content-window-gesture` receiver once (idempotent). detent 2 → toggle
+  // maximize (via the overlay), detent 3 → toggle fullscreen. See hybrid-window-gesture.ts.
+  initHybridWindowGestureHandling();
 
   // ── Loading-timeout safety net (Stage B) ────────────────────────────────
   // Armed on `did-start-loading`, cleared on `did-finish-load` / `did-stop-loading`.

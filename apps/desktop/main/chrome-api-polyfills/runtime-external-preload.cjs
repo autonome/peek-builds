@@ -83,6 +83,58 @@ function _peekScheduleReport() { Promise.resolve().then(_peekReportEditableFocus
 document.addEventListener('focusin', _peekScheduleReport, true);
 document.addEventListener('focusout', _peekScheduleReport, true);
 
+// === Content-area double/triple-click window gesture (peek d8ce0ddf) =========
+// A double-click over "dead" page content toggles the host window's maximize; a
+// triple-click toggles fullscreen. Detected HERE in the page realm because only
+// it has the DOM target (composedPath, shadow-DOM-aware) and the live text
+// selection needed to SUPPRESS the gesture — over an editable/interactive control
+// (input/button/link/etc.) OR when the multi-click is selecting text
+// (double-click-a-word / triple-click-a-line must never resize the window). Rides
+// Chromium's native multi-click counter (MouseEvent.detail) — no timers, no
+// debounce (fsm-pilled). We report only the clean case; main (hybrid-window-
+// gesture.ts) maps detent 2 → maximize, detent 3 → fullscreen. A triple-click
+// fires detent 2 then detent 3 in the same native sequence — by design the window
+// grows monotonically (normal → maximized → fullscreen).
+const IPC_CONTENT_WINDOW_GESTURE = 'page:content-window-gesture';
+
+// Broader than _peekIsEditableElement: the gesture must also skip discrete
+// interactive controls a click is meant to activate (buttons, links, media,
+// widget roles), not just editable fields.
+function _peekIsInteractiveTarget(el) {
+  if (_peekIsEditableElement(el)) return true;
+  const tag = (el.tagName || '').toLowerCase();
+  if (tag === 'button' || tag === 'a' || tag === 'summary' || tag === 'option'
+    || tag === 'label' || tag === 'video' || tag === 'audio') return true;
+  const role = (el.getAttribute ? (el.getAttribute('role') || '') : '').toLowerCase();
+  const interactiveRoles = ['button', 'link', 'checkbox', 'radio', 'menuitem',
+    'menuitemcheckbox', 'menuitemradio', 'tab', 'switch', 'slider', 'option', 'textbox'];
+  return interactiveRoles.includes(role);
+}
+
+function _peekGestureSuppressed(e) {
+  // 1) Interactive/editable target anywhere along the (shadow-aware) event path.
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+  for (const node of path) {
+    if (!node || node.nodeType !== 1) continue;
+    if (_peekIsInteractiveTarget(node)) return true;
+  }
+  // 2) The multi-click selected text (double-click a word / triple-click a line).
+  //    By click time Chromium has already applied the selection, so a
+  //    non-collapsed selection means "the user is selecting, not gesturing."
+  try {
+    const sel = window.getSelection && window.getSelection();
+    if (sel && !sel.isCollapsed && String(sel).length > 0) return true;
+  } catch (_) { /* getSelection unavailable */ }
+  return false;
+}
+
+document.addEventListener('click', function (e) {
+  const detent = e.detail; // native multi-click count: 2 = double, 3 = triple
+  if (detent !== 2 && detent !== 3) return;
+  if (_peekGestureSuppressed(e)) return;
+  try { ipcRenderer.send(IPC_CONTENT_WINDOW_GESTURE, { detent }); } catch (_) { /* no main */ }
+}, true);
+
 /**
  * MAIN-world polyfill source. Installed via webFrame.executeJavaScript so
  * page scripts (in the page's main JS world) can call chrome.runtime.sendMessage.
