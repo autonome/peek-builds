@@ -744,6 +744,30 @@ export function getHybridWindowByContentWC(wc: WebContents): HybridWindowEntry |
 }
 
 /**
+ * For a download that fired from hybrid content `wc`, return the host page-host
+ * to close, or null to keep it open.
+ *
+ * Only a host opened FRESH for the download is a throwaway: a `target=_blank`
+ * download link opens a NEW page-host whose first-and-only navigation is the
+ * download URL, which Chromium aborts — so the host never settles a load and is
+ * NOT painted. A host already showing a real page (the user clicked a download
+ * link while browsing — e.g. a Fastmail attachment) HAS painted, and closing it
+ * is exactly the bug this guards against (peek a060a75f).
+ *
+ * fsm-pilled: the paint flag is read synchronously at will-download time, which
+ * is BEFORE the aborted download navigation fires did-stop-loading (the event
+ * that would otherwise mark even a fresh popup painted). No timer, no URL-diff
+ * race — the load-lifecycle FSM already separates the two cases. Returns null
+ * when the flag is off (registry empty) or no live entry owns `wc`.
+ */
+export function resolveHybridDownloadHostToClose(wc: WebContents): HybridWindowEntry | null {
+  const hybrid = getHybridWindowByContentWC(wc);
+  if (!hybrid || hybrid.baseWin.isDestroyed()) return null;
+  if (hasHybridPainted(hybrid.windowId)) return null; // real page in view — keep it open
+  return hybrid;
+}
+
+/**
  * Find a hybrid window opened FOR `url` (for dedup/reuse on a repeat open).
  * Matches on the normalized REQUESTED address (the static open url the window
  * was created with), trailing-slash tolerant — exactly mirroring the canvas

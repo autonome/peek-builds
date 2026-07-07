@@ -18,7 +18,7 @@
 
 import { app, session, Session, BrowserWindow, Notification, shell } from 'electron';
 import { getAllLiveWindows, windowFromWebContents } from './window-registry.js';
-import { getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
+import { resolveHybridDownloadHostToClose } from './hybrid-page-host-registry.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -344,11 +344,14 @@ function _registerDownloadHandlerImpl(ses: Session): void {
         win.close();
       } else {
         // Hybrid page-host: the content WC is a BaseWindow-hosted WebContentsView,
-        // invisible to windowFromWebContents (BrowserWindow-only). Resolve it via
-        // the hybrid registry and close the host so a target=_blank download into
-        // a fresh page-host doesn't leave it orphaned. No-op when the flag is off.
-        const hybrid = getHybridWindowByContentWC(webContents);
-        if (hybrid && !hybrid.baseWin.isDestroyed()) {
+        // invisible to windowFromWebContents (BrowserWindow-only). Close the host
+        // ONLY if it was a fresh page-host opened for this download (a target=_blank
+        // download popup that never painted a page) — NEVER a host already showing a
+        // real page (a download link clicked while browsing, e.g. a Fastmail
+        // attachment; peek a060a75f). The registry makes that call off the load-paint
+        // FSM. No-op when the flag is off / no live host owns the WC.
+        const hybrid = resolveHybridDownloadHostToClose(webContents);
+        if (hybrid) {
           DEBUG && console.log('[download] Closing hybrid download-trigger host:', hybrid.windowId);
           hybrid.baseWin.close();
         }

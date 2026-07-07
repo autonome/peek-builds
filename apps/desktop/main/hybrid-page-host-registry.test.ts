@@ -29,6 +29,7 @@ import {
   getAllHybridWindows,
   getHybridContentWC,
   getHybridWindow,
+  resolveHybridDownloadHostToClose,
   onActiveHybridWindowChange,
   registerHybridWindow,
   setOverlayFocusProvider,
@@ -549,6 +550,51 @@ describe('hybrid-page-host-registry: first-paint (loading card gate)', () => {
     assert.strictEqual(hasHybridPainted(f.id), true);
     unregisterHybridWindow(f.id);
     assert.strictEqual(hasHybridPainted(f.id), false);
+  });
+});
+
+// ── Download-trigger host cleanup (peek a060a75f) ────────────────────────────
+// A download that fires from a hybrid content WC must close the host ONLY when
+// that host was a throwaway popup opened for the download itself — never when
+// the user triggered the download from a real page they were browsing. The
+// discriminator is the load-paint FSM flag, read at will-download time.
+describe('hybrid-page-host-registry: download-trigger host cleanup', () => {
+  beforeEach(() => {
+    _resetForTests();
+    nextId = 1;
+  });
+
+  it('returns the host for a FRESH (never-painted) download-only popup → close it', () => {
+    const f = mk({ url: 'https://dl.example/file.bin' });
+    const host = resolveHybridDownloadHostToClose(f.wc as unknown as WebContents);
+    assert.ok(host, 'a never-painted download popup should be resolved for closing');
+    assert.strictEqual(host!.windowId, f.id);
+  });
+
+  it('returns null for a host already showing a real page (painted) → keep it open', () => {
+    // The Fastmail repro: the user is browsing a real page and clicks a download
+    // link. The host has painted, so it must NOT be closed.
+    const f = mk({ url: 'https://www.fastmail.com/mail/' });
+    markHybridPainted(f.id);
+    const host = resolveHybridDownloadHostToClose(f.wc as unknown as WebContents);
+    assert.strictEqual(host, null);
+  });
+
+  it('returns null when no hybrid window owns the content WC', () => {
+    const orphan = new FakeWebContents('https://x.test/');
+    assert.strictEqual(
+      resolveHybridDownloadHostToClose(orphan as unknown as WebContents),
+      null,
+    );
+  });
+
+  it('returns null when the resolved host base window is already destroyed', () => {
+    const f = mk({ url: 'https://dl.example/file.bin' });
+    f.baseWin.destroyed = true;
+    assert.strictEqual(
+      resolveHybridDownloadHostToClose(f.wc as unknown as WebContents),
+      null,
+    );
   });
 });
 
