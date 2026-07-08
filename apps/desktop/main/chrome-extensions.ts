@@ -397,14 +397,22 @@ async function loadExtension(extInfo: ChromeExtensionInfo): Promise<LoadedChrome
     // and holds a long-lived chrome.runtime.Port to the BG SW, acting as the
     // relay for messages that cannot be delivered cross-origin from Electron 40.
     //
-    // The bridge's chrome.runtime.connect() needs the BG SW to be running.
-    // Electron's SW startup takes ~3s after loadExtension — spawning the bridge
-    // immediately causes a reconnect loop until the SW is ready. Wait for
-    // running-status-changed → "running" before spawning.
+    // The bridge's chrome.runtime.connect() needs the BG SW to be running, so
+    // we wait for running-status-changed → "running" before spawning it —
+    // otherwise the connect() reconnect-loops until the SW is ready.
     if (Array.isArray(extInfo.manifest?.externally_connectable?.matches) &&
         extInfo.manifest.externally_connectable.matches.length > 0) {
-      await _waitForServiceWorker(profileSession, ext.id, extInfo.name);
-      _spawnBridgeWindow(loaded);
+      // Do NOT block extension load — and therefore app boot / session restore,
+      // which awaits loadEnabledChromeExtensions() in entry.ts — on the BG
+      // service worker reaching "running". If the SW is slow or fails to start,
+      // awaiting here stalls the whole boot for the full SW_TIMEOUT_MS (~10s).
+      // The bridge window only needs the SW for its chrome.runtime.connect(),
+      // and that isn't needed until a cross-origin runtime message actually
+      // flows. Spawn the bridge off the critical path once the SW is ready (or
+      // the wait times out), so a stuck SW can never delay startup.
+      void _waitForServiceWorker(profileSession, ext.id, extInfo.name).then(() => {
+        _spawnBridgeWindow(loaded);
+      });
     }
 
     return loaded;
