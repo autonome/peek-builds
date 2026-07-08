@@ -618,13 +618,19 @@ function handleMessage(msg) {
 // incoming message and exit(0) so the client respawns with fresh env.
 //
 // We CANNOT know which registration Claude Code actually used to spawn us —
-// a read-only user-scope entry (~/.claude/settings.json) and a scoped
-// project entry (<cwd>/.mcp.json) legitimately coexist and differ. So we
-// compare our env against EVERY candidate entry and only respawn when NONE
-// of them matches — i.e. our env is genuinely stale. Matching against just
-// the first-resolved file was a false-positive machine: whenever the nearest
-// file happened to be the OTHER registration, a perfectly good server exited
-// on connect and the client reported "can't connect".
+// a read-only user-scope entry (~/.claude.json) and a scoped project entry
+// (<cwd>/.mcp.json) legitimately coexist and differ. So we compare our env
+// against EVERY candidate entry and only respawn when NONE of them matches —
+// i.e. our env is genuinely stale. Matching against just the first-resolved
+// file was a false-positive machine: whenever the nearest file happened to
+// be the OTHER registration, a perfectly good server exited on connect and
+// the client reported "can't connect".
+//
+// Candidates are exactly the files Claude Code actually reads:
+//   <cwd>/.mcp.json      — project scope
+//   ~/.claude.json       — user scope (top-level `mcpServers`)
+// Local scope (~/.claude.json `projects[<cwd>].mcpServers.peek`) is
+// intentionally NOT handled — Peek never writes local scope.
 
 function readPeekEntry(filePath) {
   try {
@@ -638,8 +644,7 @@ function readPeekEntry(filePath) {
 function collectOnDiskPeekEntries() {
   const candidates = [
     path.join(process.cwd(), '.mcp.json'),
-    path.join(process.cwd(), '.claude', 'settings.json'),
-    path.join(os.homedir(), '.claude', 'settings.json'),
+    path.join(os.homedir(), '.claude.json'),
   ];
   const entries = [];
   let sawAnyFile = false;

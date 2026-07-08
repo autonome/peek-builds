@@ -252,13 +252,24 @@ Claude Code  ⇄  stdio  ⇄  peek-mcp launcher  ⇄  server.js  ⇄  SQLite (Pe
 - `peek-skill-template.js` — generic skill body bundled in the app, copied into each project by `setup.js`.
 - `background.html` + `manifest.json` — the Peek-side tile that owns Settings → Integrations → MCP UI.
 
+### Claude Code config locations (2.1.204)
+
+- **User scope** = `~/.claude.json`, top-level `mcpServers`. This is what
+  Peek's global toggle writes.
+- **Project scope** = `<project>/.mcp.json`, top-level `mcpServers`.
+- `settings.json` `mcpServers` is **NOT read** by Claude Code — neither
+  `~/.claude/settings.json` nor `<cwd>/.claude/settings.json`. Writing there
+  is a dead location; Peek used to and no longer does.
+
 ### Dev/prod settings isolation
 
-`setup.js` writes to `~/.claude/settings.json` **only** when the
-running Peek is *packaged* AND on the `default` profile. Dev builds
-and non-default profiles write to `<userData>/mcp-sandbox/claude-settings.json`
-instead, so iterating on Peek can't trample your real Claude Code
-config.
+`mcp-config.ts` (the Settings UI toggle) writes to `~/.claude.json`
+**only** when the running Peek is *packaged* AND on the `default`
+profile. Dev builds and non-default profiles write to
+`<userData>/mcp-sandbox/claude.json` instead, so iterating on Peek can't
+trample your real Claude Code config. `migrateMcpConfigLocation()` runs
+once at boot to move any legacy `~/.claude/settings.json` `mcpServers.peek`
+entry to `~/.claude.json`.
 
 ---
 
@@ -270,9 +281,8 @@ node --test apps/desktop/features/mcp-server/schema-drift.test.js
 ```
 
 Tests spawn the server in a `mkdtempSync` isolated HOME so the drift
-self-exit can't see your real `~/.claude/settings.json`. The
-`McpClient` helper in `server.test.js` bakes that in — copy it for any
-new test files.
+self-exit can't see your real `~/.claude.json`. The `McpClient` helper
+in `server.test.js` bakes that in — copy it for any new test files.
 
 Manual server smoke test:
 

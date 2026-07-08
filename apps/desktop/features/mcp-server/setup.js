@@ -15,15 +15,15 @@
  * --writes to enable mutating tools.
  *
  * Usage:
- *   node setup.js --scope <tag>                       # global (~/.claude/settings.json)
- *   node setup.js --scope <tag> --project             # <cwd>/.claude/settings.json
- *   node setup.js --scope <tag> --mcp-json            # <cwd>/.mcp.json
+ *   node setup.js --scope <tag>                       # user scope (~/.claude.json)
+ *   node setup.js --scope <tag> --project             # <cwd>/.claude/settings.json (dead — Claude Code ignores it; prefer --mcp-json)
+ *   node setup.js --scope <tag> --mcp-json            # <cwd>/.mcp.json (project scope)
  *   node setup.js --scope <tag> --writes              # opt into mutating tools
  *   node setup.js --scope <tag> --profile <name>      # non-default Peek profile
  *   node setup.js --scope <tag> --print               # print snippet, don't write
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -114,16 +114,22 @@ function readJsonFile(path) {
   }
 }
 
+// Atomic write via temp + rename. The default destination is ~/.claude.json,
+// Claude Code's live state file (auth/projects/history) — a torn write would
+// corrupt it. Callers always read-merge before writing, so other keys survive.
 function writeJsonFile(path, data) {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  const tmp = path + '.peek-tmp';
+  writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  renameSync(tmp, path);
 }
 
 // settings.local.json sibling of the chosen main settings file.
 function allowSettingsPath(mainPath, isMcpJson) {
   // .mcp.json sits at <cwd>/.mcp.json — local settings goes in <cwd>/.claude/.
   if (isMcpJson) return join(dirname(mainPath), '.claude', 'settings.local.json');
-  // <cwd>/.claude/settings.json or ~/.claude/settings.json — sibling in the same dir.
+  // <cwd>/.claude/settings.json (--project) or ~/.claude.json (default) —
+  // sibling settings.local.json in the same dir.
   return join(dirname(mainPath), 'settings.local.json');
 }
 
@@ -215,14 +221,16 @@ function writeGitignoreBlock(cwd) {
 }
 
 // Recover scope, writes, profile, and destination from an existing Peek MCP
-// install in `cwd`, so a no-scope re-run just "refreshes" it without the
-// caller re-specifying params. Checks .mcp.json first (the recommended
-// layout), then .claude/settings.json. Returns { found, scope, writes,
-// profile, dest } where dest is 'mcp-json' | 'project'.
+// install, so a no-scope re-run just "refreshes" it without the caller
+// re-specifying params. Checks project .mcp.json first (the recommended
+// layout), then project .claude/settings.json, then the user-scope
+// ~/.claude.json (the default/global refresh case). Returns { found, scope,
+// writes, profile, dest } where dest is 'mcp-json' | 'project' | 'global'.
 function detectExistingInstall(cwd) {
   const candidates = [
     { path: join(cwd, '.mcp.json'), dest: 'mcp-json' },
     { path: join(cwd, '.claude', 'settings.json'), dest: 'project' },
+    { path: join(homedir(), '.claude.json'), dest: 'global' },
   ];
   for (const { path, dest } of candidates) {
     if (!existsSync(path)) continue;
@@ -297,12 +305,12 @@ Usage:
   peek-mcp --install                            # refresh existing install in cwd
 
 Options:
-  --scope <tag>     Confine the session to items tagged <tag> or <tag>:* (required). Omit --scope to refresh an existing install in the current directory (recovers scope, writes, and profile from .mcp.json or .claude/settings.json).
+  --scope <tag>     Confine the session to items tagged <tag> or <tag>:* (required). Omit --scope to refresh an existing install (recovers scope, writes, and profile from .mcp.json, .claude/settings.json, or ~/.claude.json).
   --writes          Enable mutating tools (default: read-only)
   --profile <name>  Peek profile to expose (default: "default")
   --mcp-json        Write to <cwd>/.mcp.json (per-project, recommended)
-  --project         Write to <cwd>/.claude/settings.json
-  (no dest flag)    Write to ~/.claude/settings.json
+  --project         Write to <cwd>/.claude/settings.json (NOTE: Claude Code does not read mcpServers here — use --mcp-json for project scope)
+  (no dest flag)    Write to ~/.claude.json (user scope)
   --no-allow        Skip adding mcp__peek__* entries to permissions.allow
   --no-skill        Skip scaffolding the per-project peek skill
   --no-gitignore    Skip adding the scaffolded files to .gitignore
@@ -384,9 +392,16 @@ function main() {
     settingsPath = join(process.cwd(), '.mcp.json');
     isMcpJson = true;
   } else if (opts.project) {
+    // NOTE: <cwd>/.claude/settings.json is NOT read by Claude Code — it
+    // ignores `mcpServers` there (dead location). Use --mcp-json for project
+    // scope. Kept for now as a separate decision; do not rely on it working.
     settingsPath = join(process.cwd(), '.claude', 'settings.json');
   } else {
-    settingsPath = join(homedir(), '.claude', 'settings.json');
+    // Default (no dest flag): user scope. Claude Code reads user-scope
+    // `mcpServers` from ~/.claude.json (top-level), NOT from
+    // ~/.claude/settings.json. readJsonFile above read-merges so other keys
+    // in this live state file (auth/projects/history) are preserved.
+    settingsPath = join(homedir(), '.claude.json');
   }
 
   if (refreshing) {

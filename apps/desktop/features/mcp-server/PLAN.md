@@ -17,15 +17,18 @@ A Peek feature (tile) that exposes Peek's data and capabilities via Model Contex
 > ### Read-only mode (`PEEK_MCP_READONLY=1`)
 > Hides mutating tools from `tools/list` and rejects them on `tools/call`. Off by default — users must opt in via Settings → Allow writes.
 >
+> ### Claude Code config locations (2.1.204)
+> User scope = `~/.claude.json` top-level `mcpServers`; project scope = `<project>/.mcp.json` top-level `mcpServers`. `settings.json` `mcpServers` is **NOT read** by Claude Code (neither `~/.claude/settings.json` nor `<cwd>/.claude/settings.json`). Peek writes user scope to `~/.claude.json`; `migrateMcpConfigLocation()` moves any legacy `~/.claude/settings.json` entry there once at boot.
+>
 > ### Dev/prod settings isolation
-> `mcp-config.ts` writes to `~/.claude/settings.json` **only** when packaged AND running the `default` profile. Dev builds and non-default profiles write to `<userData>/mcp-sandbox/claude-settings.json` instead, so a dev session can't trample the real Claude Code config. The Settings UI status line shows the active path.
+> `mcp-config.ts` writes to `~/.claude.json` **only** when packaged AND running the `default` profile. Dev builds and non-default profiles write to `<userData>/mcp-sandbox/claude.json` instead, so a dev session can't trample the real Claude Code config. The Settings UI status line shows the active path.
 >
 > ### Drift self-exit
-> `server.js` runs `checkConfigDrift()` before each incoming JSON-RPC message. It walks `<cwd>/.mcp.json` → `<cwd>/.claude/settings.json` → `~/.claude/settings.json`, finds the first file with an `mcpServers.peek` entry, and compares its `env` to `process.env` for `PEEK_MCP_SCOPE_TAG`, `PEEK_MCP_READONLY`, `PEEK_DB_PATH`. On mismatch — or if the peek entry was removed from all known config paths — it logs to stderr and `process.exit(0)` so the client respawns with fresh env.
+> `server.js` runs `checkConfigDrift()` before each incoming JSON-RPC message. It walks the files Claude Code actually reads — `<cwd>/.mcp.json` → `~/.claude.json` — collects every `mcpServers.peek` entry, and compares each `env` to `process.env` for `PEEK_MCP_SCOPE_TAG`, `PEEK_MCP_READONLY`, `PEEK_DB_PATH`. It exits only when NO on-disk entry matches — or if the peek entry was removed from all known config paths — logging to stderr and `process.exit(0)` so the client respawns with fresh env.
 >
 > Why: env is frozen at spawn. Without this check, settings changes mid-session silently went wrong. The check also masks the gap that Claude Code (the harness) doesn't restart MCP children on config-file change.
 >
-> **Tests using `McpClient` must isolate `HOME` and `cwd`** (`mkdtempSync` is the pattern in `server.test.js`) — otherwise the drift check finds the real user's `~/.claude/settings.json` and exits the process. The `McpClient` helper bakes this in.
+> **Tests using `McpClient` must isolate `HOME` and `cwd`** (`mkdtempSync` is the pattern in `server.test.js`) — otherwise the drift check finds the real user's `~/.claude.json` and exits the process. The `McpClient` helper bakes this in.
 >
 > ### Restart-required UX
 > Two surfaces communicate that a settings change does NOT propagate to a running MCP client:
@@ -211,7 +214,7 @@ INSERT INTO item_events (itemId, type, value, timestamp)
 The setup script adds the MCP server to Claude Code's config:
 
 ```json
-// ~/.claude/settings.json (or project settings)
+// ~/.claude.json (user scope) — or <project>/.mcp.json for project scope
 {
   "mcpServers": {
     "peek": {

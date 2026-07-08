@@ -15,6 +15,7 @@ import { pathToFileURL } from 'node:url';
 import { initDatabase, closeDatabase, getDb, getContextEntry, normalizeUrl } from './datastore.js';
 import { seedOnboardingIfNeeded } from './onboarding-seed.js';
 import { installDebugFlagsPersistence } from './debug-flag-store.js';
+import { migrateMcpConfigLocation } from './mcp-config.js';
 import { registerScheme, initProtocol, registerTilePath, getTilePath, getRegisteredTileIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
 import { initCore, getCoreBackgroundWindow } from './core-glue.js';
 import { initTestFixture } from './test-fixture-glue.js';
@@ -429,6 +430,12 @@ export async function initialize(): Promise<void> {
   // initDatabase so feature_settings is readable; before any feature loads
   // so the flags are correct from the first DEBUG && console.log call.
   installDebugFlagsPersistence();
+
+  // One-time migration: move any stale user-scope MCP registration from the
+  // dead ~/.claude/settings.json (Claude Code never read `mcpServers` there)
+  // to ~/.claude.json where it's actually honored. Self-guards on
+  // packaged+default profile; no DB dependency; idempotent after first run.
+  migrateMcpConfigLocation();
 
   // Set up pubsub broadcaster.
   // Forwards GLOBAL publishes to every renderer that needs to see them:

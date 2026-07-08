@@ -1,6 +1,14 @@
 /**
  * MCP config writer — manages the `mcpServers.peek` entry in
- * ~/.claude/settings.json from the Settings UI toggle.
+ * ~/.claude.json (Claude Code's user-scope config) from the Settings UI
+ * toggle.
+ *
+ * Config-location facts (Claude Code 2.1.204): user scope lives in
+ * ~/.claude.json as top-level `mcpServers`; project scope lives in
+ * <project>/.mcp.json. Claude Code does NOT read `mcpServers` from
+ * ~/.claude/settings.json — that location is silently ignored, which is
+ * why Peek writes ~/.claude.json instead. `migrateMcpConfigLocation()`
+ * moves any pre-existing entry off the dead settings.json path.
  *
  * Off by default: the entry is only present after the user opts in via
  * Settings → Core → "Expose Peek to Claude Code (MCP)".
@@ -11,21 +19,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { planMcpConfigMigration } from './mcp-config-migration.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Profile directory base. macOS-only for now; mirrors entry.ts profile layout.
 const PROFILES_BASE = path.join(os.homedir(), 'Library', 'Application Support', 'Peek');
 
-// Only packaged + default profile writes to the real Claude config. Dev
-// builds and non-default profiles get a sandbox path inside their own
-// userData dir so they can't trample a user's real ~/.claude/settings.json.
+// Only packaged + default profile writes to the real Claude config
+// (~/.claude.json, Claude Code's user-scope file). Dev builds and
+// non-default profiles get a sandbox path inside their own userData dir so
+// they can't trample a user's real ~/.claude.json.
 function settingsPath(): string {
   const activeProfile = path.basename(app.getPath('userData'));
   if (app.isPackaged && activeProfile === 'default') {
-    return path.join(os.homedir(), '.claude', 'settings.json');
+    return path.join(os.homedir(), '.claude.json');
   }
-  return path.join(app.getPath('userData'), 'mcp-sandbox', 'claude-settings.json');
+  return path.join(app.getPath('userData'), 'mcp-sandbox', 'claude.json');
 }
 
 interface McpSnippet {
@@ -134,13 +144,18 @@ function readSettings(): Record<string, unknown> {
   }
 }
 
+// Atomic write: ~/.claude.json is Claude Code's live state file (auth,
+// projects, history), so a torn write would corrupt it. Write to a temp
+// sibling then rename onto the target — rename is atomic on the same fs.
+function atomicWriteJson(target: string, data: Record<string, unknown>): void {
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const tmp = target + '.peek-tmp';
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  fs.renameSync(tmp, target);
+}
+
 function writeSettings(data: Record<string, unknown>): void {
-  fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
-  fs.writeFileSync(
-    settingsPath(),
-    JSON.stringify(data, null, 2) + '\n',
-    'utf-8',
-  );
+  atomicWriteJson(settingsPath(), data);
 }
 
 export interface McpStatus extends McpConfig {
@@ -333,4 +348,52 @@ export function setMcpConfig(opts: Partial<McpConfig>): McpStatus {
   }
   writeSettings(settings);
   return getMcpStatus();
+}
+
+// ── One-time config-location migration ───────────────────────────────
+//
+// Peek historically wrote its user-scope registration to
+// ~/.claude/settings.json — a location Claude Code silently ignores (it
+// reads user-scope `mcpServers` only from ~/.claude.json). This moves any
+// stale entry to ~/.claude.json and prunes the dead one so agents in other
+// projects can finally see peek. The pure move/prune logic lives in
+// ./mcp-config-migration.ts (electron-free, so tests can import it).
+
+function readJsonOrNull(filePath: string): Record<string, unknown> | null {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+export function migrateMcpConfigLocation(): void {
+  // Only the real packaged default profile manages the real ~/.claude.json.
+  if (!app.isPackaged) return;
+  if (path.basename(app.getPath('userData')) !== 'default') return;
+
+  // Never let a config migration crash app boot: a bad ~/.claude.json, an
+  // EACCES/ENOSPC on write, etc. must degrade to "peek not auto-registered",
+  // not a failed launch.
+  try {
+    const legacyPath = path.join(os.homedir(), '.claude', 'settings.json');
+    const currentPath = settingsPath(); // ~/.claude.json
+
+    // The abort-on-unparseable-current safety decision lives in the pure,
+    // unit-tested planner; here we only do the filesystem IO around it.
+    const plan = planMcpConfigMigration({
+      legacyObj: readJsonOrNull(legacyPath),
+      currentObj: readJsonOrNull(currentPath),
+      currentExists: fs.existsSync(currentPath),
+    });
+    if (plan.action !== 'write') return;
+
+    // Write current first (so we never drop the entry from both files if the
+    // second write fails), then prune legacy. Both writes are atomic.
+    atomicWriteJson(currentPath, plan.currentOut);
+    atomicWriteJson(legacyPath, plan.legacyOut);
+  } catch (err) {
+    console.error('[mcp-config] migrateMcpConfigLocation failed:', err);
+  }
 }

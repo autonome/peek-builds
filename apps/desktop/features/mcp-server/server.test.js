@@ -10,7 +10,7 @@
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -134,7 +134,7 @@ class McpClient {
   start() {
     return new Promise((resolve, reject) => {
       // Isolate HOME + cwd so the server's drift check can't see the real
-      // user's .mcp.json or ~/.claude/settings.json.
+      // user's .mcp.json or ~/.claude.json.
       this.tmpCwd = mkdtempSync(join(tmpdir(), 'peek-mcp-test-cwd-'));
       this.proc = spawn('node', [SERVER_PATH], {
         env: { ...process.env, HOME: this.tmpCwd, PEEK_DB_PATH: this.dbPath, ...this.extraEnv },
@@ -1259,7 +1259,7 @@ describe('MCP Server scope enforcement (PEEK_MCP_SCOPE_TAG=peek)', () => {
 
 function spawnServerWithCwd(env, cwd) {
   // Isolate HOME to cwd so the drift check can't see the real user's
-  // ~/.claude/settings.json — keeps the test deterministic per machine.
+  // ~/.claude.json — keeps the test deterministic per machine.
   const proc = spawn('node', [SERVER_PATH], {
     env: { ...process.env, HOME: cwd, ...env },
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -1377,7 +1377,7 @@ describe('MCP Server config drift detection', () => {
 
   it('does not exit when a mismatching entry resolves first but another entry matches', async () => {
     // Regression: two legitimate registrations coexist — a scoped project
-    // .mcp.json (resolved FIRST) and a read-only user-scope settings.json.
+    // .mcp.json (resolved FIRST) and a read-only user-scope ~/.claude.json.
     // We were spawned from the read-only one. The old "compare against the
     // first-resolved file" logic saw the scoped .mcp.json, declared drift,
     // and exit(0)'d on connect → client "can't connect". Match-any must keep
@@ -1389,9 +1389,9 @@ describe('MCP Server config drift detection', () => {
       mcpServers: { peek: { command: 'node', args: [SERVER_PATH],
         env: { PEEK_DB_PATH: dbPath, PEEK_MCP_SCOPE_TAG: 'peek' } } },
     }));
-    // HOME is isolated to tmpProject, so this IS the user-scope candidate.
-    mkdirSync(join(tmpProject, '.claude'), { recursive: true });
-    writeFileSync(join(tmpProject, '.claude', 'settings.json'), JSON.stringify({
+    // HOME is isolated to tmpProject, so ~/.claude.json IS the user-scope
+    // candidate (top-level mcpServers, exactly how Claude Code stores it).
+    writeFileSync(join(tmpProject, '.claude.json'), JSON.stringify({
       mcpServers: { peek: { command: 'node', args: [SERVER_PATH],
         env: { PEEK_DB_PATH: dbPath, PEEK_MCP_READONLY: '1' } } },
     }));
@@ -1399,6 +1399,39 @@ describe('MCP Server config drift detection', () => {
     // Spawned from the read-only registration.
     const { proc, started, exited } = spawnServerWithCwd(
       { PEEK_DB_PATH: dbPath, PEEK_MCP_READONLY: '1' }, tmpProject,
+    );
+    await started;
+
+    proc.stdin.write(JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'tools/list', params: {},
+    }) + '\n');
+
+    const outcome = await Promise.race([
+      exited.then(() => 'exited'),
+      new Promise((resolve) => setTimeout(() => resolve('still-running'), 500)),
+    ]);
+    assert.equal(outcome, 'still-running');
+    proc.kill();
+  });
+
+  it('does not exit for a user-scope entry matched only in ~/.claude.json', async () => {
+    // The exact bug this change fixes: a global/user-scope registration
+    // (default DB, no readonly, no scope) lives in ~/.claude.json — the
+    // location Claude Code actually reads. The drift check must walk
+    // ~/.claude.json (top-level mcpServers) and see the match, NOT exit.
+    // Before the fix it walked ~/.claude/settings.json (which Peek never
+    // wrote and Claude Code never read), found no matching entry, and killed
+    // a perfectly good server → agents in other projects "can't connect".
+    const dbPath = createTestDb();
+    const tmpProject = mkdtempSync(join(tmpdir(), 'peek-mcp-drift-'));
+    // HOME is isolated to tmpProject → this is ~/.claude.json.
+    writeFileSync(join(tmpProject, '.claude.json'), JSON.stringify({
+      mcpServers: { peek: { command: 'node', args: [SERVER_PATH],
+        env: { PEEK_DB_PATH: dbPath } } },
+    }));
+
+    const { proc, started, exited } = spawnServerWithCwd(
+      { PEEK_DB_PATH: dbPath }, tmpProject,
     );
     await started;
 

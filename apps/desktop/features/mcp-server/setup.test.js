@@ -122,6 +122,70 @@ describe('setup.js refresh mode', () => {
   });
 });
 
+describe('setup.js default destination (user scope)', () => {
+  let tmpDirs = [];
+
+  after(() => {
+    for (const dir of tmpDirs) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Run setup.js with NO dest flag in an isolated HOME so it writes to
+  // <HOME>/.claude.json (Claude Code's user-scope file) instead of the real
+  // one. Returns the parsed ~/.claude.json.
+  function runGlobal(homeDir, dbPath, extraArgs = []) {
+    const args = [SETUP_JS, '--scope', 'globaltag', ...extraArgs];
+    execFileSync(process.execPath, args, {
+      cwd: homeDir,
+      env: { ...process.env, HOME: homeDir, PEEK_DB_PATH: dbPath },
+    });
+  }
+
+  it('writes mcpServers.peek to ~/.claude.json (not ~/.claude/settings.json)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'peek-setup-home-'));
+    tmpDirs.push(home);
+    const dbPath = join(home, 'db.sqlite');
+    writeFileSync(dbPath, '');
+
+    runGlobal(home, dbPath);
+
+    const claudeJson = join(home, '.claude.json');
+    assert.ok(existsSync(claudeJson), '~/.claude.json should be written');
+    const parsed = JSON.parse(readFileSync(claudeJson, 'utf-8'));
+    assert.ok(parsed.mcpServers && parsed.mcpServers.peek, 'top-level mcpServers.peek should exist');
+    assert.strictEqual(parsed.mcpServers.peek.env.PEEK_MCP_SCOPE_TAG, 'globaltag');
+
+    // The dead location must NOT be written.
+    assert.ok(!existsSync(join(home, '.claude', 'settings.json')),
+      '~/.claude/settings.json must not be created');
+  });
+
+  it('read-merges — preserves existing ~/.claude.json keys (Claude Code state)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'peek-setup-home-'));
+    tmpDirs.push(home);
+    const dbPath = join(home, 'db.sqlite');
+    writeFileSync(dbPath, '');
+
+    // Simulate Claude Code's live state file with auth/projects + an existing
+    // non-peek server. A naive overwrite would destroy these.
+    const claudeJson = join(home, '.claude.json');
+    writeFileSync(claudeJson, JSON.stringify({
+      oauthAccount: { id: 'keep-me' },
+      projects: { '/some/proj': { mcpServers: {} } },
+      mcpServers: { other: { command: 'x' } },
+    }, null, 2) + '\n');
+
+    runGlobal(home, dbPath, ['--no-allow']);
+
+    const parsed = JSON.parse(readFileSync(claudeJson, 'utf-8'));
+    assert.deepStrictEqual(parsed.oauthAccount, { id: 'keep-me' }, 'auth key preserved');
+    assert.ok(parsed.projects && parsed.projects['/some/proj'], 'projects preserved');
+    assert.ok(parsed.mcpServers.other, 'existing non-peek server preserved');
+    assert.ok(parsed.mcpServers.peek, 'peek entry added');
+  });
+});
+
 describe('scaffolded skill — tag model', () => {
   let tmpDirs = [];
 
