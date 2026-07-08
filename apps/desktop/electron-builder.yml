@@ -35,6 +35,12 @@ files:
   # Exclude non-desktop app directories
   - "!apps/mobile"
   - "!apps/mobile/**"
+  # yarn workspaces symlink apps/mobile into node_modules/@peek/mobile.
+  # electron-builder follows the symlink and packs the WHOLE mobile tree —
+  # incl. src-tauri/target Rust artifacts (~5GB) — under that path, which the
+  # apps/mobile exclusion above can't match. Desktop never imports @peek/mobile.
+  - "!node_modules/@peek/mobile"
+  - "!node_modules/@peek/mobile/**"
   - "!apps/server"
   - "!apps/server/**"
   - "!apps/extension"
@@ -65,6 +71,13 @@ files:
   # Exclude dev artifacts and docs
   - "!settings-screenshot.png"
   - "!*.md"
+  # The `electron` dev package ships a ~295MB prebuilt runtime in its dist/.
+  # Our `files: **/*` glob overrides electron-builder's default pruning (which
+  # normally strips this package), so it gets packed — a full second copy of
+  # the runtime already present in Contents/Frameworks. require('electron')
+  # resolves to the built-in module at runtime, never this dir.
+  - "!**/node_modules/electron"
+  - "!**/node_modules/electron/**"
   # Standard node_modules exclusions
   - "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}"
   - "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}"
