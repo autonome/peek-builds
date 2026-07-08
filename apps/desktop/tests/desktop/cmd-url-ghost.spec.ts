@@ -604,6 +604,88 @@ test.describe('cmd URL history Visited lane @desktop', () => {
     await closePanel(panelId);
   });
 
+  // The keyboard-selected row must scroll into view when the selection moves
+  // below the #results fold — i.e. arrowing out of the command rows down into
+  // the Visited url lane. Pre-fix (peek dbaa172d) updateResultsUI never scrolled
+  // the selection, so a Visited row selected below the 300px fold stayed
+  // off-screen ("ArrowDown won't go into Visited"). We spy on scrollIntoView
+  // (deterministic; independent of exact overflow geometry) and assert the
+  // selected url row was scrolled into view.
+  test('selecting a Visited row scrolls it into view', async () => {
+    const { cmdWindow, panelId } = await openPanel();
+
+    await cmdWindow.waitForFunction(
+      () => {
+        const s = (window as any)._cmdState;
+        return s && s.commands && s.commands['datastore'];
+      },
+      undefined,
+      { timeout: 10000 }
+    );
+
+    await cmdWindow.fill('input', COMBINED_PREFIX);
+
+    await cmdWindow.waitForFunction(
+      () => {
+        const s = (window as any)._cmdState;
+        return !!s && (s.matches?.length || 0) >= 1 && (s.urlMatches?.length || 0) >= 1;
+      },
+      undefined,
+      { timeout: 8000 }
+    );
+
+    // Patch scrollIntoView to record the className of each scrolled element,
+    // then clear the log so we only observe the arrowing below.
+    await cmdWindow.evaluate(() => {
+      const w = window as any;
+      if (!w.__origScrollIntoView) {
+        w.__origScrollIntoView = Element.prototype.scrollIntoView;
+        Element.prototype.scrollIntoView = function (arg) {
+          (window as any).__scrolledClasses.push(this.className);
+          return (window as any).__origScrollIntoView.call(this, arg);
+        };
+      }
+      w.__scrolledClasses = [];
+    });
+
+    const cmdCount = await cmdWindow.evaluate(() => {
+      const s = (window as any)._cmdState;
+      return s.matches?.length || 0;
+    });
+
+    // First ArrowDown opens the results (selecting row 0); overshoot well past
+    // the command rows so the selection lands on (and clamps within) the url lane.
+    for (let i = 0; i < cmdCount + 8; i++) {
+      await cmdWindow.keyboard.press('ArrowDown');
+    }
+
+    // Selection has crossed into the url lane.
+    await cmdWindow.waitForFunction(
+      () => {
+        const s = (window as any)._cmdState;
+        return !!s && s.matchIndex >= (s.matches?.length || 0);
+      },
+      undefined,
+      { timeout: 5000 }
+    );
+
+    const scrolledUrlRow = await cmdWindow.evaluate(() =>
+      ((window as any).__scrolledClasses as string[]).some((c) => c.includes('url-result-item'))
+    );
+    expect(scrolledUrlRow).toBe(true);
+
+    // Restore the original so the patch doesn't leak into later tests.
+    await cmdWindow.evaluate(() => {
+      const w = window as any;
+      if (w.__origScrollIntoView) {
+        Element.prototype.scrollIntoView = w.__origScrollIntoView;
+        w.__origScrollIntoView = null;
+      }
+    });
+
+    await closePanel(panelId);
+  });
+
   // Runs LAST: pressing Enter closes the panel into CLOSING (keepLive reuse race),
   // matching the ordering discipline of the ghost describe block above.
   test('ArrowDown to a Visited row then Enter opens that row url', async () => {

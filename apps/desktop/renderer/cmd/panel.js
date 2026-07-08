@@ -1938,6 +1938,16 @@ function updateResultsUI() {
     });
   }
 
+  // Keep the keyboard-selected row visible. #results is a fixed max-height
+  // overflow-y:auto container, so a selection that moves below the fold — e.g.
+  // arrowing down out of the command rows and into the Visited url lane when
+  // enough commands match to push it off-screen — would otherwise land on an
+  // invisible row with no visual feedback ("ArrowDown won't go into Visited",
+  // peek dbaa172d). Deterministic post-render DOM sync, not a timer. Both
+  // command and url rows carry the .command-item class, so this covers both.
+  const selectedRow = resultsContainer.querySelector('.command-item.selected');
+  if (selectedRow) selectedRow.scrollIntoView({ block: 'nearest' });
+
   updateWindowSize();
 }
 

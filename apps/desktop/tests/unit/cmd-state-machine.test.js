@@ -366,6 +366,22 @@ describe('RESULTS_OPEN transitions', () => {
     machine.dispatch(Events.ESCAPE);
     assert.equal(machine.getState(), States.TYPING);
   });
+
+  // ArrowDown must cross from the last command row into the url-history
+  // (Visited) lane — the combined command+url selection is one contiguous
+  // index space (peek dbaa172d). The visual half of that bug (scrolling the
+  // selected row into view) is covered by the cmd-url-ghost Playwright spec.
+  it('ArrowDown crosses the last command row into the Visited url lane', () => {
+    machine.getMutableData().matches = ['data', 'datastore'];
+    machine.getMutableData().urlMatches = [{ content: 'https://data.example.com/a' }, { content: 'https://data.example.com/b' }];
+    machine.getMutableData().matchIndex = 1; // last command selected
+    const r = machine.dispatch(Events.ARROW_DOWN);
+    assert.equal(r.handled, true, 'ArrowDown at last command should be handled (cross into url lane)');
+    assert.equal(machine.getData().matchIndex, 2, 'matchIndex should advance into the first url row');
+    // one more into the second url row
+    machine.dispatch(Events.ARROW_DOWN);
+    assert.equal(machine.getData().matchIndex, 3, 'matchIndex should advance to the second url row');
+  });
 });
 
 // ===== PARAM_MODE Transitions =====
