@@ -146,6 +146,11 @@ function writeSettings(data: Record<string, unknown>): void {
 export interface McpStatus extends McpConfig {
   expectedCommand: string;
   configuredCommand: string | null;
+  // True when a peek entry is present but its command/env no longer matches
+  // what this build generates (e.g. left over from a prior install). The
+  // entry is still "enabled" — this just flags that it should be re-saved to
+  // point at the current launcher.
+  stale: boolean;
   settingsPath: string;
   profiles: string[];
   configuredAt: number | null;
@@ -161,7 +166,15 @@ export function getMcpStatus(): McpStatus {
     try { configuredAt = fs.statSync(settingsPath()).mtimeMs; } catch {}
   }
   return {
-    enabled: !!configured && snippetsMatch(configured, expected),
+    // A present peek entry means enabled — do NOT gate this on a byte-exact
+    // snippet match. A reinstall that changes the generated command path or
+    // env shape would otherwise flip a working, present config to "not
+    // configured" (blank Settings), tricking the user into re-enabling with
+    // defaults and silently dropping their scope tag. Staleness is surfaced
+    // separately via `stale` so the UI can nudge a re-save without hiding the
+    // config.
+    enabled: !!configured,
+    stale: !!configured && !snippetsMatch(configured, expected),
     profile: inferred.profile,
     readonly: inferred.readonly,
     scopeTag: inferred.scopeTag,

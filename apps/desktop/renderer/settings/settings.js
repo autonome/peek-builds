@@ -613,7 +613,7 @@ const renderIntegrationsSettings = async () => {
 
   let mcpState = {
     enabled: false, profile: 'default', readonly: true, scopeTag: '',
-    expectedCommand: '', configuredCommand: null,
+    expectedCommand: '', configuredCommand: null, stale: false,
     settingsPath: '~/.claude/settings.json', profiles: [], configuredAt: null,
   };
   try {
@@ -647,7 +647,11 @@ const renderIntegrationsSettings = async () => {
       return;
     }
     const when = mcpState.configuredAt ? new Date(mcpState.configuredAt).toLocaleString() : 'unknown';
-    statusLine.textContent = `Configured at ${mcpState.settingsPath} (last updated ${when}).`;
+    let text = `Configured at ${mcpState.settingsPath} (last updated ${when}).`;
+    if (mcpState.stale) {
+      text += ' ⚠ The saved command is from a previous install — toggle off and on to update it.';
+    }
+    statusLine.textContent = text;
   };
 
   const syncUI = () => {

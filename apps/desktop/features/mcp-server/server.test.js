@@ -10,7 +10,7 @@
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -1367,6 +1367,45 @@ describe('MCP Server config drift detection', () => {
     }) + '\n');
 
     // Should NOT exit within 500ms. Race exit against a timeout — timeout wins.
+    const outcome = await Promise.race([
+      exited.then(() => 'exited'),
+      new Promise((resolve) => setTimeout(() => resolve('still-running'), 500)),
+    ]);
+    assert.equal(outcome, 'still-running');
+    proc.kill();
+  });
+
+  it('does not exit when a mismatching entry resolves first but another entry matches', async () => {
+    // Regression: two legitimate registrations coexist — a scoped project
+    // .mcp.json (resolved FIRST) and a read-only user-scope settings.json.
+    // We were spawned from the read-only one. The old "compare against the
+    // first-resolved file" logic saw the scoped .mcp.json, declared drift,
+    // and exit(0)'d on connect → client "can't connect". Match-any must keep
+    // us alive because SOME on-disk entry agrees with our spawn env.
+    const dbPath = createTestDb();
+    const tmpProject = mkdtempSync(join(tmpdir(), 'peek-mcp-drift-'));
+    // Resolved first: scoped, writable — does NOT match our spawn env.
+    writeFileSync(join(tmpProject, '.mcp.json'), JSON.stringify({
+      mcpServers: { peek: { command: 'node', args: [SERVER_PATH],
+        env: { PEEK_DB_PATH: dbPath, PEEK_MCP_SCOPE_TAG: 'peek' } } },
+    }));
+    // HOME is isolated to tmpProject, so this IS the user-scope candidate.
+    mkdirSync(join(tmpProject, '.claude'), { recursive: true });
+    writeFileSync(join(tmpProject, '.claude', 'settings.json'), JSON.stringify({
+      mcpServers: { peek: { command: 'node', args: [SERVER_PATH],
+        env: { PEEK_DB_PATH: dbPath, PEEK_MCP_READONLY: '1' } } },
+    }));
+
+    // Spawned from the read-only registration.
+    const { proc, started, exited } = spawnServerWithCwd(
+      { PEEK_DB_PATH: dbPath, PEEK_MCP_READONLY: '1' }, tmpProject,
+    );
+    await started;
+
+    proc.stdin.write(JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'tools/list', params: {},
+    }) + '\n');
+
     const outcome = await Promise.race([
       exited.then(() => 'exited'),
       new Promise((resolve) => setTimeout(() => resolve('still-running'), 500)),

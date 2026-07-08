@@ -616,6 +616,15 @@ function handleMessage(msg) {
 // re-running peek-mcp-init), the on-disk config drifts from our process
 // env and behaviour silently goes wrong. Detect drift before each
 // incoming message and exit(0) so the client respawns with fresh env.
+//
+// We CANNOT know which registration Claude Code actually used to spawn us —
+// a read-only user-scope entry (~/.claude/settings.json) and a scoped
+// project entry (<cwd>/.mcp.json) legitimately coexist and differ. So we
+// compare our env against EVERY candidate entry and only respawn when NONE
+// of them matches — i.e. our env is genuinely stale. Matching against just
+// the first-resolved file was a false-positive machine: whenever the nearest
+// file happened to be the OTHER registration, a perfectly good server exited
+// on connect and the client reported "can't connect".
 
 function readPeekEntry(filePath) {
   try {
@@ -626,52 +635,66 @@ function readPeekEntry(filePath) {
   }
 }
 
-function resolveOnDiskPeekEntry() {
+function collectOnDiskPeekEntries() {
   const candidates = [
     path.join(process.cwd(), '.mcp.json'),
     path.join(process.cwd(), '.claude', 'settings.json'),
     path.join(os.homedir(), '.claude', 'settings.json'),
   ];
+  const entries = [];
   let sawAnyFile = false;
   for (const p of candidates) {
     if (!fs.existsSync(p)) continue;
     sawAnyFile = true;
     const entry = readPeekEntry(p);
-    if (entry) return { path: p, entry, sawAnyFile };
+    if (entry) entries.push({ path: p, entry });
   }
-  return { path: null, entry: null, sawAnyFile };
+  return { entries, sawAnyFile };
 }
 
-let exiting = false;
-function checkConfigDrift() {
-  if (exiting) return;
-  const found = resolveOnDiskPeekEntry();
-  if (!found.entry) {
-    // No config files at all → can't say; tolerate (might be transient).
-    if (!found.sawAnyFile) return;
-    // Files exist but peek entry was removed — toggled off.
-    exiting = true;
-    process.stderr.write('Peek MCP entry removed from settings; exiting so client can clean up.\n');
-    process.exit(0);
-  }
-  const env = found.entry.env || {};
+function entryEnvMatchesCurrent(entry) {
+  const env = entry.env || {};
   const onScope = (env.PEEK_MCP_SCOPE_TAG || '').trim();
   const onReadonly = env.PEEK_MCP_READONLY === '1';
   const onDb = env.PEEK_DB_PATH || '';
   const curScope = (process.env.PEEK_MCP_SCOPE_TAG || '').trim();
   const curReadonly = process.env.PEEK_MCP_READONLY === '1';
   const curDb = process.env.PEEK_DB_PATH || '';
-  if (onScope !== curScope || onReadonly !== curReadonly || onDb !== curDb) {
+  return onScope === curScope && onReadonly === curReadonly && onDb === curDb;
+}
+
+let exiting = false;
+function checkConfigDrift() {
+  if (exiting) return;
+  const { entries, sawAnyFile } = collectOnDiskPeekEntries();
+  if (entries.length === 0) {
+    // No config files at all → can't say; tolerate (might be transient).
+    if (!sawAnyFile) return;
+    // Files exist but the peek entry was removed everywhere — toggled off.
     exiting = true;
-    process.stderr.write(
-      `Peek MCP config drift detected at ${found.path}:\n` +
-      `  PEEK_MCP_SCOPE_TAG:  current="${curScope}" on-disk="${onScope}"\n` +
-      `  PEEK_MCP_READONLY:   current=${curReadonly ? '"1"' : '(unset)'} on-disk=${onReadonly ? '"1"' : '(unset)'}\n` +
-      `  PEEK_DB_PATH:        current="${curDb}" on-disk="${onDb}"\n` +
-      `Exiting so client respawns with fresh env.\n`,
-    );
+    process.stderr.write('Peek MCP entry removed from settings; exiting so client can clean up.\n');
     process.exit(0);
   }
+  // Correctly configured as long as SOME on-disk entry agrees with how we
+  // were spawned.
+  if (entries.some(({ entry }) => entryEnvMatchesCurrent(entry))) return;
+  // No entry matches our env → a real value change; respawn with fresh env.
+  exiting = true;
+  const curScope = (process.env.PEEK_MCP_SCOPE_TAG || '').trim();
+  const curReadonly = process.env.PEEK_MCP_READONLY === '1';
+  const curDb = process.env.PEEK_DB_PATH || '';
+  let msg = 'Peek MCP config drift detected — no on-disk entry matches our spawn env:\n';
+  msg += `  current: PEEK_MCP_SCOPE_TAG="${curScope}" ` +
+    `PEEK_MCP_READONLY=${curReadonly ? '"1"' : '(unset)'} PEEK_DB_PATH="${curDb}"\n`;
+  for (const { path: p, entry } of entries) {
+    const env = entry.env || {};
+    msg += `  on-disk ${p}: PEEK_MCP_SCOPE_TAG="${(env.PEEK_MCP_SCOPE_TAG || '').trim()}" ` +
+      `PEEK_MCP_READONLY=${env.PEEK_MCP_READONLY === '1' ? '"1"' : '(unset)'} ` +
+      `PEEK_DB_PATH="${env.PEEK_DB_PATH || ''}"\n`;
+  }
+  msg += 'Exiting so client respawns with fresh env.\n';
+  process.stderr.write(msg);
+  process.exit(0);
 }
 
 // --- Main ---
