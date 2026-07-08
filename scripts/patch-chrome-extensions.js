@@ -258,11 +258,37 @@ const WEBREQUEST_SHIM = `/* Peek: chrome.webRequest noop shim for Electron SW co
     }
   } catch(e) { _log('chrome.webRequest install failed:', e && e.message); }
   try {
-    if (typeof globalThis.browser === 'object' && globalThis.browser && !globalThis.browser.webRequest) {
-      Object.defineProperty(globalThis.browser, 'webRequest', {
-        value: makeWebRequest(), writable: false, configurable: true, enumerable: true,
-      });
-      _log('browser.webRequest installed');
+    var _b = globalThis.browser;
+    if (typeof _b === 'object' && _b) {
+      var _wr = makeWebRequest();
+      var _cur = _b.webRequest;
+      if (!_cur) {
+        // Pre-Electron-43: browser.webRequest absent entirely — install whole.
+        try { _b.webRequest = _wr; } catch(e) {}
+        if (!_b.webRequest) {
+          try {
+            Object.defineProperty(_b, 'webRequest', { value: _wr, writable: true, configurable: true, enumerable: true });
+          } catch(e) {}
+        }
+        _log('browser.webRequest installed (was absent)');
+      } else {
+        // Electron 43 registers the webRequest namespace SHAPE on browser (all
+        // the event property NAMES are own props) but leaves each event object
+        // === undefined. The old "install only if webRequest absent" guard
+        // therefore skipped, and Proton's browser.webRequest.onBeforeRequest
+        // .addListener() dereferenced undefined and threw, killing the SW.
+        // Fill only the empty slots so we don't clobber any real enums the
+        // native stub carries.
+        for (var k in _wr) {
+          try {
+            if (_cur[k] === undefined || _cur[k] === null) {
+              try { _cur[k] = _wr[k]; }
+              catch(e) { try { Object.defineProperty(_cur, k, { value: _wr[k], writable: true, configurable: true, enumerable: true }); } catch(_){} }
+            }
+          } catch(e) {}
+        }
+        _log('browser.webRequest event slots filled (Electron 43 stub)');
+      }
     }
   } catch(e) { _log('browser.webRequest install failed:', e && e.message); }
 })();
