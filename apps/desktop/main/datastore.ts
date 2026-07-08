@@ -3409,6 +3409,64 @@ export function addItem(type: ItemType, options: ItemOptions = {}): { id: string
 }
 
 /**
+ * Insert a LOCAL-ONLY onboarding/demo seed item and link its tags.
+ *
+ * Distinct from addItem because a seed needs two things a normal create
+ * can't express:
+ *  - an explicit createdAt, so the seeded set keeps its authored order in the
+ *    recent-sorted view (addItem always stamps now());
+ *  - a metadata.seedSource marker, which keeps the item out of sync push
+ *    (packages/sync excludes seedSource items, same as browser-imports) so
+ *    demo content stays on this device and never reaches the server.
+ *
+ * Does NOT record a visit, so seed items start at frecency 0 and the user's
+ * own activity naturally sorts above them. Unlike addItem it does not add
+ * device metadata (a seed is not a user authoring action).
+ */
+export function insertSeedItem(
+  type: ItemType,
+  opts: { content: string; metadata?: Record<string, unknown>; tags?: string[]; createdAt: number }
+): { id: string } {
+  const itemId = generateId('item');
+  const metadata: Record<string, unknown> = { ...(opts.metadata ?? {}), seedSource: 'onboarding' };
+
+  // Mirror addItem's url handling: derive domain + title column for url items.
+  let title = '';
+  let domain = '';
+  if (type === 'url' && opts.content) {
+    try {
+      domain = new URL(opts.content).hostname;
+    } catch { /* not a valid URL */ }
+    if (metadata.title) title = String(metadata.title);
+  }
+
+  getDb().prepare(`
+    INSERT INTO items (id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, title, domain)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+  `).run(
+    itemId,
+    type,
+    opts.content ?? null,
+    '',
+    JSON.stringify(metadata),
+    '',
+    opts.createdAt,
+    opts.createdAt,
+    0,
+    0,
+    title,
+    domain
+  );
+
+  for (const name of opts.tags ?? []) {
+    const { tag } = getOrCreateTag(name);
+    tagItem(itemId, tag.id);
+  }
+
+  return { id: itemId };
+}
+
+/**
  * Get an item by ID
  */
 export function getItem(itemId: string): Item | null {

@@ -119,12 +119,13 @@ export class SyncEngine {
     );
     itemsToPush = itemsToPush.concat(deletedToPush);
 
-    // Exclude browser-imported items (history, bookmarks, tabs) — they stay local
+    // Exclude local-only items — browser-imports (history, bookmarks, tabs)
+    // and onboarding/demo seed content — they stay on this device.
     itemsToPush = itemsToPush.filter(i => {
       if (!i.metadata || i.metadata === '{}') return true;
       try {
         const meta = JSON.parse(i.metadata);
-        return !meta.importSource;
+        return !meta.importSource && !meta.seedSource;
       } catch {
         return true;
       }

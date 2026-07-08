@@ -839,6 +839,28 @@ describe('SyncEngine: Push', () => {
     assert.strictEqual(result.pushed, 0);
   });
 
+  it('should not push local-only onboarding seed items', async () => {
+    const { adapter, sync } = createSyncTestEngine();
+    await adapter.open();
+
+    // Unsynced (syncedAt: 0) so it IS a push candidate — the seedSource
+    // marker, not the sync state, is what must keep it local.
+    await adapter.insertItem({
+      id: 'seed-1',
+      type: 'text',
+      content: 'Welcome to Peek',
+      metadata: JSON.stringify({ seedSource: 'onboarding' }),
+      syncId: '',
+      syncedAt: 0,
+      createdAt: 1000,
+      updatedAt: 1000,
+      deletedAt: 0,
+    });
+
+    const result = await sync.pushToServer();
+    assert.strictEqual(result.pushed, 0, 'onboarding seed items stay local');
+  });
+
   it('should return zeros when not configured', async () => {
     const { adapter, sync } = createSyncTestEngine();
     await adapter.open();

@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 import { initDatabase, closeDatabase, getDb, getContextEntry, normalizeUrl } from './datastore.js';
+import { seedOnboardingIfNeeded } from './onboarding-seed.js';
 import { installDebugFlagsPersistence } from './debug-flag-store.js';
 import { registerScheme, initProtocol, registerTilePath, getTilePath, getRegisteredTileIds, registerThemePath, getRegisteredThemeIds } from './protocol.js';
 import { initCore, getCoreBackgroundWindow } from './core-glue.js';
@@ -417,6 +418,12 @@ export async function initialize(): Promise<void> {
   // Initialize database
   const dbPath = path.join(config.userDataPath, config.profile, 'datastore.sqlite');
   initDatabase(dbPath);
+
+  // First-launch onboarding: seed demo content into a brand-new profile so the
+  // empty-state teaches the surface. No-op after the first run and for existing
+  // profiles. Runs before any window/pubsub — the fresh UI reads the seeded DB
+  // when it first renders, so nothing needs to be broadcast.
+  seedOnboardingIfNeeded();
 
   // Hydrate runtime debug flags from persisted state. Must run after
   // initDatabase so feature_settings is readable; before any feature loads
