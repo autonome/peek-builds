@@ -16,7 +16,6 @@
  *
  * Usage:
  *   node setup.js --scope <tag>                       # user scope (~/.claude.json)
- *   node setup.js --scope <tag> --project             # <cwd>/.claude/settings.json (dead — Claude Code ignores it; prefer --mcp-json)
  *   node setup.js --scope <tag> --mcp-json            # <cwd>/.mcp.json (project scope)
  *   node setup.js --scope <tag> --writes              # opt into mutating tools
  *   node setup.js --scope <tag> --profile <name>      # non-default Peek profile
@@ -128,8 +127,7 @@ function writeJsonFile(path, data) {
 function allowSettingsPath(mainPath, isMcpJson) {
   // .mcp.json sits at <cwd>/.mcp.json — local settings goes in <cwd>/.claude/.
   if (isMcpJson) return join(dirname(mainPath), '.claude', 'settings.local.json');
-  // <cwd>/.claude/settings.json (--project) or ~/.claude.json (default) —
-  // sibling settings.local.json in the same dir.
+  // Default dest is ~/.claude.json (user scope) — sibling settings.local.json.
   return join(dirname(mainPath), 'settings.local.json');
 }
 
@@ -223,13 +221,12 @@ function writeGitignoreBlock(cwd) {
 // Recover scope, writes, profile, and destination from an existing Peek MCP
 // install, so a no-scope re-run just "refreshes" it without the caller
 // re-specifying params. Checks project .mcp.json first (the recommended
-// layout), then project .claude/settings.json, then the user-scope
-// ~/.claude.json (the default/global refresh case). Returns { found, scope,
-// writes, profile, dest } where dest is 'mcp-json' | 'project' | 'global'.
+// layout), then the user-scope ~/.claude.json (the default/global refresh
+// case). Returns { found, scope, writes, profile, dest } where dest is
+// 'mcp-json' | 'global'.
 function detectExistingInstall(cwd) {
   const candidates = [
     { path: join(cwd, '.mcp.json'), dest: 'mcp-json' },
-    { path: join(cwd, '.claude', 'settings.json'), dest: 'project' },
     { path: join(homedir(), '.claude.json'), dest: 'global' },
   ];
   for (const { path, dest } of candidates) {
@@ -274,7 +271,7 @@ function mergeAllowEntries(path, entries) {
 
 function parseArgs(argv) {
   const opts = { scope: '', profile: 'default', writes: false,
-                 print: false, project: false, mcpJson: false, allow: true,
+                 print: false, mcpJson: false, allow: true,
                  skill: true, gitignore: true, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -283,7 +280,6 @@ function parseArgs(argv) {
       case '--profile': opts.profile = argv[++i] || 'default'; break;
       case '--writes':  opts.writes = true; break;
       case '--print':   opts.print = true; break;
-      case '--project': opts.project = true; break;
       case '--mcp-json': opts.mcpJson = true; break;
       case '--no-allow': opts.allow = false; break;
       case '--no-skill': opts.skill = false; break;
@@ -309,7 +305,6 @@ Options:
   --writes          Enable mutating tools (default: read-only)
   --profile <name>  Peek profile to expose (default: "default")
   --mcp-json        Write to <cwd>/.mcp.json (per-project, recommended)
-  --project         Write to <cwd>/.claude/settings.json (NOTE: Claude Code does not read mcpServers here — use --mcp-json for project scope)
   (no dest flag)    Write to ~/.claude.json (user scope)
   --no-allow        Skip adding mcp__peek__* entries to permissions.allow
   --no-skill        Skip scaffolding the per-project peek skill
@@ -325,11 +320,11 @@ By default also:
     Peek conventions (status vocabulary, bare-tag trap, hashtag opt-in,
     untag orphan rule, restart UX). Re-running refreshes the auto-managed
     section while preserving the trailing "Project-specific" section.
-    Only runs when --mcp-json or --project is set. --no-skill opts out.
+    Only runs when --mcp-json is set. --no-skill opts out.
   - adds .mcp.json, .claude/settings.local.json, and .claude/skills/peek.md
     to <cwd>/.gitignore in a managed block (these are per-developer wiring
     files that are machine/scope-specific and should not be committed).
-    Only runs when --mcp-json or --project is set. --no-gitignore opts out.
+    Only runs when --mcp-json is set. --no-gitignore opts out.
 `;
 
 function main() {
@@ -351,7 +346,6 @@ function main() {
       opts.writes = existing.writes;
       opts.profile = existing.profile;
       if (existing.dest === 'mcp-json') opts.mcpJson = true;
-      else if (existing.dest === 'project') opts.project = true;
       refreshing = true;
     }
   }
@@ -391,11 +385,6 @@ function main() {
   if (opts.mcpJson) {
     settingsPath = join(process.cwd(), '.mcp.json');
     isMcpJson = true;
-  } else if (opts.project) {
-    // NOTE: <cwd>/.claude/settings.json is NOT read by Claude Code — it
-    // ignores `mcpServers` there (dead location). Use --mcp-json for project
-    // scope. Kept for now as a separate decision; do not rely on it working.
-    settingsPath = join(process.cwd(), '.claude', 'settings.json');
   } else {
     // Default (no dest flag): user scope. Claude Code reads user-scope
     // `mcpServers` from ~/.claude.json (top-level), NOT from
@@ -442,9 +431,9 @@ function main() {
     }
   }
 
-  // Skill scaffolding only applies to per-project setups (mcp-json or project).
-  // Global mode has no project context to scaffold into.
-  const projectMode = opts.mcpJson || opts.project;
+  // Skill scaffolding only applies to per-project setups (--mcp-json).
+  // Global (user-scope) mode has no project context to scaffold into.
+  const projectMode = opts.mcpJson;
   if (opts.skill && projectMode) {
     const result = writeSkillFile(process.cwd(), opts.scope);
     if (result.action === 'created') {
