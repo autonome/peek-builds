@@ -57,6 +57,7 @@ The magic is engineered: frecency everywhere, all the time. Your actions are tra
 # No crazy stuff here
 
 - No CRDTs.
+- No weird datastores or data structures.
 - No spatial canvas.
 - No AI.
 - No editing-the-app-while-it-runs.
@@ -167,9 +168,25 @@ All three speak a shared sync schema (`packages/schema`) through a shared sync e
 
 ## How it syncs
 
-Hub-and-spoke, **server is source of truth**, last-write-wins on `updatedAt`. Not peer-to-peer, not CRDT.
+Hub-and-spoke, **server is source of truth**, last-write-wins on `updatedAt`. Local-first, not peer-to-peer, not CRDT. Desktop and mobile each hold local SQLite; all push/pull via the server REST API.
 
-Per-item sync metadata (`_sync: {createdBy, modifiedBy, …}`) lives *inside* the item's metadata JSON so it survives the trip. Two version gates — `DATASTORE_VERSION` (schema shape) and `PROTOCOL_VERSION` (wire format) — return HTTP 409 on mismatch. Device IDs are raw UUIDs.
+**Transport (live in prod):** Hono + better-sqlite3 on Railway. Multi-user or single-user self-host; Bearer tokens, SHA-256-hashed. Two version gates — `DATASTORE_VERSION` (schema shape) + `PROTOCOL_VERSION` (wire format) — return HTTP 409 on mismatch (lenient about missing headers, strict about mismatched).
+
+Per-item sync metadata (`_sync: {createdBy, modifiedBy, …}`) lives *inside* the item's metadata JSON so it survives the trip. Device IDs are raw UUIDs.
+
+## Sync: conflict handling
+
+**Conflict handling:** pull matches local by `syncId`, inserts/updates/skips by recency, soft-deletes on tombstone. Push: items where `syncedAt=0 OR updatedAt>syncedAt`. Tombstones propagate deletes (never hard-deleted by sync).
+
+**Local-only (not synced):** frecencyScore, title, domain, favicon, visitCount, color, tag hierarchy.
+
+## Sync: the wrinkles
+
+**The same protocol is re-implemented in FOUR places:** unified JS `SyncEngine` (mobile-web/extension), `apps/desktop/main/sync.ts` (Electron), plus Rust in Tauri-desktop and mobile. A recurring risk.
+
+**Known limitations:** push failures are logged but **not retried** — high severity (`lastSyncTime` advances, so failed items are skipped next time). Mobile runs an older schema shape, deferred because migrating means synchronized ~4,000-line Rust + ~2,000-line Swift changes — but sync works anyway because the wire format (JSON) is independent of the local schema.
+
+**Testing:** a clean-room three-way E2E (server + desktop + iOS-simulator) covering tombstone propagation. Node sync tests must run under Electron's Node for the better-sqlite3 ABI.
 
 ## Profiles
 
@@ -214,9 +231,11 @@ It turns passive browsing into a typed, self-classifying knowledge base with no 
 
 **Research/design only (confirmed absent from code):** the entity **correlation graph** — co-occurrence scored with PMI/NPMI, temporal decay, clustering into groups like {Elon Musk, Tesla, SpaceX, SEC}, a force-directed view. And **Wikidata validation** — async P31 instance-of checks. Entities-as-live is real; the knowledge-graph is the next chapter.
 
-## The sync risk
+## Entities on desktop
 
-Local-first + central server + last-write-wins. The *same protocol is re-implemented in four places* (JS ×2 + Rust ×2) — a real risk. Push failures are logged but **not retried** (a known high-severity limitation). Mobile still runs an older schema shape, but sync works anyway because the wire format (JSON) is independent of the local schema.
+Feature "Entity Recognition" v3.0.0, `builtin`, a **lazy background tile** woken by the rules engine (`page:content-ready` / `item:created`-URL). Debounced (2s), cooldowned (1h). Three extractors in parallel — structured-data (conf 0.85–0.9), microformats (0.9–0.95), regex (0.6–0.9).
+
+Dedup by normalized name + aliases; thumbs-down suppresses. UX: an entities browser window + per-page display.
 
 # Mobile: "Peek Save"
 
@@ -374,6 +393,7 @@ A feature must declare everything it touches:
 
 ## Reference features
 
+- **`hello-world/`** — the minimal working tile: the smallest feature that stands on its own, showing the tile → `manifest.json` → `window.app` model end to end. The first thing to read to understand how features work.
 - **`example/`** — the reference template. Feature-detects the Peek API, also runs standalone as a plain website, mime-typed command registration, storage fallback, cleanup.
 - **`todo/`** — shipped-but-disabled by design: its manifest is `manifest.json.disabled` so discovery walks past it. Re-enabling is a one-line `mv` — shipped-but-off with zero runtime cost, gated by the file's *name*.
 
@@ -588,32 +608,6 @@ The migration broke almost every focus/ESC/menu assumption. The invariants now l
 
 The nav chrome (address bar, navbar) is no longer per-page DOM — it's a single shared floating overlay, revealed via a top-edge hover band and hidden otherwise, so pages read as full-bleed content most of the time.
 
-## Entities on desktop
-
-Feature "Entity Recognition" v3.0.0, `builtin`, a **lazy background tile** woken by the rules engine (`page:content-ready` / `item:created`-URL). Debounced (2s), cooldowned (1h). Three extractors in parallel — structured-data (conf 0.85–0.9), microformats (0.9–0.95), regex (0.6–0.9).
-
-Entities *are* items (`type='entity'`); each sighting is an `item_events` row, so "which pages mention X" and "which entities on page Y" are derivable. Dedup by normalized name + aliases; thumbs-down suppresses. UX: an entities browser window + per-page display.
-
-**Not shipped:** the correlation graph and Wikidata validation. Don't present the graph as live.
-
-## Sync
-
-Hub-and-spoke, server is source of truth, LWW on `updatedAt`. Local-first, not P2P, not CRDT. Mobile and desktop each hold local SQLite; all push/pull via the server REST API.
-
-**Transport (live in prod):** Hono + better-sqlite3 on Railway. Multi-user or self-host; Bearer tokens, SHA-256-hashed. Version headers gate with HTTP 409 — lenient about missing headers, strict about mismatched.
-
-**Conflict handling:** pull matches local by `syncId`, inserts/updates/skips by recency, soft-deletes on tombstone. Push: items where `syncedAt=0 OR updatedAt>syncedAt`. Tombstones propagate deletes (never hard-deleted by sync).
-
-**Local-only (not synced):** frecencyScore, title, domain, favicon, visitCount, color, tag hierarchy.
-
-## Sync: the wrinkles
-
-**The same protocol is re-implemented in FOUR places:** unified JS `SyncEngine` (mobile-web/extension), `apps/desktop/main/sync.ts` (Electron), plus Rust in Tauri-desktop and mobile. A recurring risk.
-
-**Known limitations:** push failures are logged but **not retried** — high severity (`lastSyncTime` advances, so failed items are skipped next time). Mobile runs an older schema shape than the canonical one, deferred because migrating means synchronized ~4,000-line Rust + ~2,000-line Swift changes — but sync works anyway because the wire format is independent of the local schema.
-
-**Testing:** a clean-room three-way E2E (server + desktop + iOS-simulator) covering tombstone propagation. Node sync tests must run under Electron's Node for the better-sqlite3 ABI.
-
 ## MCP: Peek as an agent-writable backend
 
 Peek exposes a **Model Context Protocol server** so Claude Code can read/write the *same* SQLite datastore the desktop app uses.
@@ -636,7 +630,7 @@ Peek becomes an agent-writable personal knowledge + task backend, over the *same
 
 > Demo: run `mcp server setup`, then show Claude Code reading and tagging items in the same store the Peek UI is displaying — human and agent on one live datastore.
 
-## Plus hundreds of micro-tweaks you only notice when they're gone
+## Plus hundreds of micro-tweaks
 
 - Peeks always open on your primary display
 - ESC returns focus to the previous app you were using
