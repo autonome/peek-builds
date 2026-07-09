@@ -1,3 +1,9 @@
+<!--
+  SLIDESHOW: open peek-talk-slides.html (same folder) — it renders THIS file as slides.
+  Slide breaks are headings: every #, ##, or ### begins a new slide; `---` rules are ignored.
+  This markdown stays the single source of truth — edit here, reload the page. Arrow keys navigate.
+-->
+
 # Peek — Talk Overview
 
 *Speaker's reference for the Peek talk: an overview + live demo of a web user agent that isn't a browser. Author's background threads through everything — Firefox/Mozilla, 2006–2019. Repo: `mpeek`.*

@@ -1,0 +1,331 @@
+<!--
+  peek-talk-slides.html — minimal, self-contained markdown slideshow renderer.
+  Renders the sibling peek-talk-overview.md as slides (that file is the single source of truth).
+  Slide breaks = headings: every #, ## or ### begins a new slide. `---` rules are dropped.
+  Nav: left / right (or PageUp/Down, Space) between slides; up/down scroll a tall slide; Home/End jump; f = fullscreen.
+  No external CSS/JS. Colors/typography are Peek's default `peek` theme (light :root + dark media query).
+  Opening over file:// blocks fetch — if so, drag peek-talk-overview.md onto the window (or pick it).
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Peek — Talk Slides</title>
+<style>
+  :root {
+    --bg: #f6f6f6; --surface: #ffffff; --surface-2: #e0e0e0;
+    --text: #333333; --text-2: #666666; --muted: #999999; --border: #e0e0e0;
+    --accent: #007aff; --success: #34c759; --danger: #ff3b30;
+    --code-bg: rgba(0,0,0,0.06); --quote-bg: rgba(0,122,255,0.06);
+    --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1e; --surface: #2c2c2e; --surface-2: #3a3a3c;
+      --text: #f6f6f6; --text-2: #98989d; --muted: #636366; --border: #3a3a3c;
+      --accent: #0a84ff; --success: #30d158; --danger: #ff453a;
+      --code-bg: rgba(255,255,255,0.10); --quote-bg: rgba(10,132,255,0.12);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text); font-family: var(--sans);
+    font-size: 17px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+  }
+  #progress {
+    position: fixed; top: 0; left: 0; height: 3px; width: 0;
+    background: var(--accent); transition: width 150ms ease; z-index: 10;
+  }
+  #deck { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .slide {
+    width: 100%; max-width: 60rem; max-height: 100vh; overflow-y: auto;
+    padding: 4.5vh 5vw 7vh; scrollbar-width: thin;
+  }
+  .slide > :first-child { margin-top: 0; }
+  h1, h2, h3, h4 { line-height: 1.2; font-weight: 600; }
+  h1 { font-size: 2.7rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 0.6em; }
+  h2 {
+    font-size: 2rem; color: var(--accent); margin: 0 0 0.7em;
+    padding-bottom: 0.25em; border-bottom: 2px solid var(--border);
+  }
+  h3 { font-size: 1.4rem; margin: 0 0 0.7em; }
+  h3::before { content: "\25B8  "; color: var(--accent); }
+  h4 { font-size: 1.1rem; margin: 1.2em 0 0.4em; color: var(--text-2); }
+  p { margin: 0.65em 0; }
+  ul, ol { margin: 0.55em 0; padding-left: 1.5em; }
+  li { margin: 0.3em 0; }
+  li > ul, li > ol { margin: 0.2em 0; }
+  strong { font-weight: 650; color: var(--text); }
+  em { font-style: italic; color: var(--text-2); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--code-bg); padding: 0.12em 0.38em; border-radius: 4px;
+  }
+  pre {
+    font-family: var(--mono); background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1em 1.2em; overflow-x: auto; font-size: 0.86em; line-height: 1.45;
+  }
+  pre code { background: none; padding: 0; font-size: 1em; }
+  blockquote {
+    margin: 1em 0; padding: 0.7em 1.1em; border-left: 4px solid var(--accent);
+    background: var(--quote-bg); border-radius: 0 8px 8px 0;
+  }
+  blockquote > :first-child { margin-top: 0; }
+  blockquote > :last-child { margin-bottom: 0; }
+  blockquote strong { color: var(--accent); }
+  .tablewrap { overflow-x: auto; margin: 1em 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92em; }
+  th, td { border: 1px solid var(--border); padding: 0.42em 0.7em; text-align: left; vertical-align: top; }
+  th { background: var(--surface); font-weight: 600; }
+  tbody tr:nth-child(even) { background: color-mix(in srgb, var(--surface) 55%, transparent); }
+  hr { border: none; border-top: 1px solid var(--border); margin: 1.2em 0; }
+  #hud {
+    position: fixed; bottom: 12px; right: 16px; font-family: var(--mono); font-size: 12px;
+    color: var(--muted); z-index: 10; user-select: none;
+  }
+  #hint {
+    position: fixed; bottom: 12px; left: 16px; font-family: var(--mono); font-size: 12px;
+    color: var(--muted); z-index: 10; user-select: none; transition: opacity 400ms ease;
+  }
+  #drop {
+    max-width: 40rem; margin: 15vh auto; padding: 2em; text-align: center;
+    border: 2px dashed var(--border); border-radius: 12px; color: var(--text-2);
+  }
+  #drop code { font-size: 0.95em; }
+  #drop.over { border-color: var(--accent); background: var(--quote-bg); }
+</style>
+
+<div id="progress"></div>
+<div id="deck"><div class="slide" id="slide"></div></div>
+<div id="hud"></div>
+<div id="hint">left / right to navigate &middot; f fullscreen</div>
+
+<script>
+(function () {
+  "use strict";
+  var MD_FILE = "peek-talk-overview.md";
+  var SENT = String.fromCharCode(0);                         // inline-code placeholder sentinel (never in prose)
+  var slides = [];
+  var idx = 0;
+  var slideEl = document.getElementById("slide");
+  var hudEl = document.getElementById("hud");
+  var hintEl = document.getElementById("hint");
+  var progressEl = document.getElementById("progress");
+
+  // ---- tiny markdown -> HTML ----------------------------------------------
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function inline(s) {
+    s = esc(s);
+    var codes = [];
+    s = s.replace(/`([^`]+)`/g, function (_, c) {
+      codes.push(c); return SENT + (codes.length - 1) + SENT;
+    });
+    s = s.replace(/\*\*(.+?)\*\*/g, function (_, inner) {   // bold (may contain nested *italic*)
+      return "<strong>" + inner.replace(/\*([^*\n]+)\*/g, "<em>$1</em>") + "</strong>";
+    });
+    s = s.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");         // remaining standalone italics
+    s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    s = s.replace(new RegExp(SENT + "(\\d+)" + SENT, "g"), function (_, n) {
+      return "<code>" + codes[+n] + "</code>";
+    });
+    return s;
+  }
+  function isHr(l) { return /^\s*([-*_])\1{2,}\s*$/.test(l); }
+  function isTableSep(l) { return /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(l) && l.indexOf("-") > -1; }
+  function cells(l) {
+    var t = l.trim().replace(/^\|/, "").replace(/\|$/, "");
+    return t.split("|").map(function (c) { return c.trim(); });
+  }
+
+  // Build nested lists from list lines (2 spaces of indent = one level).
+  function renderList(lines) {
+    var html = "";
+    var stack = []; // {type, indent}
+    function closeTo(indent) {                 // pop only DEEPER levels; keep same-level list open
+      while (stack.length && stack[stack.length - 1].indent > indent) {
+        html += "</li></" + stack.pop().type + ">";
+      }
+    }
+    lines.forEach(function (raw) {
+      var m = raw.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/);
+      if (!m) { html += " " + inline(raw.trim()); return; } // continuation -> into open <li>
+      var indent = m[1].length;
+      var type = /\d/.test(m[2]) ? "ol" : "ul";
+      if (!stack.length || indent > stack[stack.length - 1].indent) {
+        stack.push({ type: type, indent: indent });
+        html += "<" + type + "><li>";
+      } else {
+        closeTo(indent);
+        if (stack.length && stack[stack.length - 1].indent === indent) {
+          html += "</li><li>";
+        } else {
+          stack.push({ type: type, indent: indent });
+          html += "<" + type + "><li>";
+        }
+      }
+      html += inline(m[3]);
+    });
+    while (stack.length) html += "</li></" + stack.pop().type + ">";
+    return html;
+  }
+
+  function renderBlocks(lines) {
+    var out = "", i = 0;
+    while (i < lines.length) {
+      var l = lines[i];
+      if (!l.trim()) { i++; continue; }
+      if (isHr(l)) { i++; continue; }            // drop thematic breaks (they are slide boundaries)
+
+      var h = l.match(/^(#{1,6})\s+(.*)$/);
+      if (h) { var lv = h[1].length; out += "<h" + lv + ">" + inline(h[2]) + "</h" + lv + ">"; i++; continue; }
+
+      if (/^```/.test(l)) {
+        var buf = []; i++;
+        while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
+        i++;                                     // closing fence
+        out += "<pre><code>" + esc(buf.join("\n")) + "</code></pre>";
+        continue;
+      }
+
+      if (l.indexOf("|") > -1 && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+        var head = cells(l); i += 2;
+        var body = [];
+        while (i < lines.length && lines[i].indexOf("|") > -1 && lines[i].trim()) {
+          body.push(cells(lines[i])); i++;
+        }
+        var t = "<div class='tablewrap'><table><thead><tr>";
+        head.forEach(function (c) { t += "<th>" + inline(c) + "</th>"; });
+        t += "</tr></thead><tbody>";
+        body.forEach(function (r) {
+          t += "<tr>";
+          for (var k = 0; k < head.length; k++) t += "<td>" + inline(r[k] || "") + "</td>";
+          t += "</tr>";
+        });
+        out += t + "</tbody></table></div>";
+        continue;
+      }
+
+      if (/^>\s?/.test(l)) {
+        var q = [];
+        while (i < lines.length && /^>\s?/.test(lines[i])) { q.push(lines[i].replace(/^>\s?/, "")); i++; }
+        out += "<blockquote>" + renderBlocks(q) + "</blockquote>";
+        continue;
+      }
+
+      if (/^\s*([-*+]|\d+\.)\s+/.test(l)) {
+        var list = [];
+        while (i < lines.length &&
+               (/^\s*([-*+]|\d+\.)\s+/.test(lines[i]) || /^\s{2,}\S/.test(lines[i])) &&
+               lines[i].trim() && !isHr(lines[i])) {
+          list.push(lines[i]); i++;
+        }
+        out += renderList(list);
+        continue;
+      }
+
+      // paragraph: gather until blank / next block starter
+      var para = [];
+      while (i < lines.length && lines[i].trim() && !isHr(lines[i]) &&
+             !/^(#{1,6}\s|>\s?|```|\s*([-*+]|\d+\.)\s+)/.test(lines[i]) &&
+             !(lines[i].indexOf("|") > -1 && i + 1 < lines.length && isTableSep(lines[i + 1]))) {
+        para.push(lines[i]); i++;
+      }
+      out += "<p>" + inline(para.join(" ")) + "</p>";
+    }
+    return out;
+  }
+
+  // Split the doc into slides at every #, ## or ### heading (fence-aware).
+  function splitSlides(md) {
+    md = md.replace(/<!--[\s\S]*?-->/g, "");     // strip HTML comments
+    var lines = md.split(/\r?\n/);
+    var chunks = [], cur = [], fence = false;
+    lines.forEach(function (l) {
+      if (/^```/.test(l)) fence = !fence;
+      if (!fence && /^#{1,3}\s/.test(l)) {
+        if (cur.length) chunks.push(cur);
+        cur = [l];
+      } else {
+        cur.push(l);
+      }
+    });
+    if (cur.length) chunks.push(cur);
+    return chunks
+      .map(function (c) { return renderBlocks(c); })
+      .filter(function (html) { return html.trim(); });
+  }
+
+  // ---- navigation ----------------------------------------------------------
+  function show(n) {
+    idx = Math.max(0, Math.min(slides.length - 1, n));
+    slideEl.innerHTML = slides[idx];
+    slideEl.scrollTop = 0;
+    hudEl.textContent = (idx + 1) + " / " + slides.length;
+    progressEl.style.width = ((idx + 1) / slides.length * 100) + "%";
+    if (location.hash !== "#" + (idx + 1)) history.replaceState(null, "", "#" + (idx + 1));
+  }
+  function render(md) {
+    slides = splitSlides(md);
+    if (!slides.length) { slideEl.innerHTML = "<p>No slides found.</p>"; return; }
+    var start = parseInt((location.hash || "").slice(1), 10);
+    show(isNaN(start) ? 0 : start - 1);
+    setTimeout(function () { hintEl.style.opacity = "0"; }, 4000);
+  }
+
+  document.addEventListener("keydown", function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    switch (e.key) {
+      case "ArrowRight": case "PageDown": case " ":
+        e.preventDefault(); show(idx + 1); break;
+      case "ArrowLeft": case "PageUp":
+        e.preventDefault(); show(idx - 1); break;
+      case "Home": e.preventDefault(); show(0); break;
+      case "End": e.preventDefault(); show(slides.length - 1); break;
+      case "f": case "F":
+        if (document.fullscreenElement) document.exitFullscreen();
+        else document.documentElement.requestFullscreen();
+        break;
+      // ArrowUp / ArrowDown fall through -> native scroll of a tall slide
+    }
+  });
+  window.addEventListener("click", function (e) {
+    if (e.target.closest("a") || e.target.closest("label") || e.target.tagName === "INPUT") return;
+    show(e.clientX > window.innerWidth / 2 ? idx + 1 : idx - 1);   // tap right/left half
+  });
+
+  // ---- load the markdown (fetch; drag-drop fallback for file://) ------------
+  function showDrop(reason) {
+    slideEl.innerHTML =
+      "<div id='drop'><p><strong>Couldn't load <code>" + MD_FILE + "</code></strong></p>" +
+      "<p>" + reason + "</p>" +
+      "<p>Serve this folder (<code>python3 -m http.server</code>) and reload,<br>" +
+      "or <strong>drag <code>" + MD_FILE + "</code> onto this window</strong>, or " +
+      "<label style='color:var(--accent);cursor:pointer;text-decoration:underline'>choose it" +
+      "<input type='file' accept='.md,text/markdown' style='display:none'></label>.</p></div>";
+    var drop = document.getElementById("drop");
+    var input = drop.querySelector("input");
+    input.addEventListener("change", function () {
+      if (input.files[0]) input.files[0].text().then(render);
+    });
+    ["dragover", "dragenter"].forEach(function (ev) {
+      document.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("over"); });
+    });
+    document.addEventListener("dragleave", function () { drop.classList.remove("over"); });
+    document.addEventListener("drop", function (e) {
+      e.preventDefault(); drop.classList.remove("over");
+      var f = e.dataTransfer.files[0];
+      if (f) f.text().then(render);
+    });
+  }
+
+  fetch(MD_FILE)
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+    .then(render)
+    .catch(function (err) { showDrop("Opened over <code>file://</code>? Browsers block that fetch. (" + err.message + ")"); });
+})();
+</script>
