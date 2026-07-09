@@ -4,6 +4,8 @@
   This markdown stays the single source of truth — edit here, reload the page. Arrow keys navigate.
 -->
 
+<img src="peek-desktop-screenshot.jpg" alt="The Peek desktop" style="position:fixed;top:0;left:0;width:calc(100vw - 12rem);height:100vh;object-fit:contain;padding:2.5vh 2vw">
+
 # Peek is a web user agent for using the web where, when, and how you want.
 
 A workbench for the web. A window manager for the web. What you want it to be.
@@ -27,7 +29,10 @@ No tabs, no windows in the tabbed-browser sense. It drops a lot of browser detai
 
 ## Peek is a concept preview — NOT safe for daily use yet.
 
-A proof of concept. No security audit. The security model and its UI are still undetermined. This is a research vehicle, not your daily browser.
+- A proof of concept.
+- No security audit.
+- The security model and its UI are still undetermined.
+- A research vehicle, not your daily browser.
 
 ## Where it comes from
 
@@ -51,7 +56,10 @@ The magic is engineered: frecency everywhere, all the time. Your actions are tra
 
 # No crazy stuff here
 
-No CRDTs. No spatial canvas. No AI. No editing-the-app-while-it-runs. None of that.
+- No CRDTs.
+- No spatial canvas.
+- No AI.
+- No editing-the-app-while-it-runs.
 
 It's a spectrum of building blocks for browser-like mini-apps — a *meta* web user agent. The plain foundation you build your own crazy stuff on top of.
 
@@ -60,12 +68,6 @@ It's a spectrum of building blocks for browser-like mini-apps — a *meta* web u
 Browsers are a big monolithic core with a bolted-on extension API. Peek inverts it: a **minimal core**, and features that *are* the functionality — not extending it.
 
 I say "features" deliberately, not "extensions" — *extend* implies a large core you can't change. The implementation term is **tiles**. Features don't extend core functionality; they are it.
-
-## A tile is a feature.
-
-A tile = one HTML file in its own Electron `BrowserWindow`, on its own `peek://{tileId}/` origin, with a capability-gated preload and a strict `tile:*` IPC surface.
-
-No tile "type," no tile "role." Only two axes: **Residency** (resident-at-startup vs lazy) and **Visibility** (shown vs hidden).
 
 ## It took five iterations to get here
 
@@ -120,7 +122,7 @@ Dev mode adds two bypass detectors that monkeypatch `WebContents.send` and `Brow
 
 ## State machines instead of timing hacks
 
-Three explicit FSMs replaced ad-hoc sleeps, polling, visibilitychange listeners, and retry hacks. Each makes a bug class *impossible* and is unit-testable as a pure function:
+Three explicit FSMs replaced ad-hoc sleeps, polling, visibilitychange listeners, and retry hacks. Each rules out a whole class of bugs and is unit-testable as a pure function:
 
 1. **Tile lifecycle** — *when* a tile is alive.
 2. **PubSub** — *what* messages flow in each state.
@@ -154,12 +156,6 @@ Small and portable — features built on it could run in other environments with
 
 All three speak a shared sync schema (`packages/schema`) through a shared sync engine (`packages/sync`) to a passive Hono/SQLite store on Railway (`apps/server`). `packages/integration-tests` proves the whole mesh converges.
 
-## Monorepo layout
-
-`apps/{desktop, mobile, server, extension, tauri-desktop}` + `packages/{schema, sync, integration-tests}`.
-
-*(README/DEVELOPMENT.md still describe an older `app/` + `backend/` layout — stale. `docs/architecture.md` uses the current paths.)*
-
 ## The apps
 
 - **desktop — Electron, the flagship.** The whole tile model, capabilities, IZUI, the FSMs, cmd bar, editor, entities, MCP. Data in SQLite via better-sqlite3.
@@ -177,9 +173,15 @@ Per-item sync metadata (`_sync: {createdBy, modifiedBy, …}`) lives *inside* th
 
 ## Profiles
 
-Each is an isolated workspace: its own SQLite DB, its own Chromium session, its own sync config. Production uses `default`; dev builds (`yarn start`) always use `dev`, isolated from prod data. Switching requires a restart.
+Each is an isolated workspace:
 
-# Classification is the centerpiece
+- its own SQLite DB
+- its own Chromium session
+- its own sync config
+
+Production uses `default`; dev builds (`yarn start`) always use `dev`, isolated from prod data. Switching requires a restart.
+
+# Classification at the center
 
 It's how "create, save, classify at the speed of thought" and "magical mind-reading" become real — turning the unstructured web into a personal, queryable knowledge store. Peek classifies at three layers.
 
@@ -197,14 +199,14 @@ The **rules engine** is declarative classify-on-event: an event `topic` + a JSON
 
 Extracted names get classified into a typed taxonomy: `person, organization, place, event, product, creative_work, email, phone, date, tracking_number, price`.
 
-Crucially this is **rules + heuristics + a shipped local name database — no ML, no remote service.** It runs client-side on the desktop in a lazy background tile:
+This is **rules + heuristics + a shipped local name database — no ML, no remote service.** It runs client-side on the desktop in a lazy background tile:
 
 - **Schema.org type map** — ~70 JSON-LD `@type` strings folded into the 11 entity types.
 - **Name-pattern heuristics** (pure JS): org suffixes, honorifics → person, CamelCase → org/brand, ALL_CAPS → org, `The X` → org. Each returns `{likelyType, confidence, reason}`.
 - **Local name DB** — ~2,000 first names + ~1,000 surnames, O(1) Set lookups.
 - **`validateEntityType`** is the gate — it can reject or re-type a misclassification (a JSON-LD "Person" named "IndieWeb" → organization, confidence ×0.8), plus a ~60-name blocklist, a min-length filter, and a 0.7 threshold.
 
-It turns passive browsing into a typed, self-classifying knowledge base with no user effort — the mind-reading pitch, made real.
+It turns passive browsing into a typed, self-classifying knowledge base with no user effort.
 
 ## Entities: shipped vs. researched
 
@@ -212,9 +214,9 @@ It turns passive browsing into a typed, self-classifying knowledge base with no 
 
 **Research/design only (confirmed absent from code):** the entity **correlation graph** — co-occurrence scored with PMI/NPMI, temporal decay, clustering into groups like {Elon Musk, Tesla, SpaceX, SEC}, a force-directed view. And **Wikidata validation** — async P31 instance-of checks. Entities-as-live is real; the knowledge-graph is the next chapter.
 
-## The sync risk worth naming
+## The sync risk
 
-Local-first + central server + last-write-wins. The *same protocol is re-implemented in four places* (JS ×2 + Rust ×2) — a genuine risk. Push failures are logged but **not retried** (a known high-severity limitation). Mobile still carries schema drift, but sync works anyway because the wire format (JSON) is independent of local schema.
+Local-first + central server + last-write-wins. The *same protocol is re-implemented in four places* (JS ×2 + Rust ×2) — a real risk. Push failures are logged but **not retried** (a known high-severity limitation). Mobile still runs an older schema shape, but sync works anyway because the wire format (JSON) is independent of the local schema.
 
 # Mobile: "Peek Save"
 
@@ -255,6 +257,10 @@ Bidirectional, per-bucket routed by `synced_profile_id`, LWW on `updated_at`, of
 # Desktop deep dive
 
 The desktop app is where the tile model, capabilities, IZUI, the FSMs, the cmd bar, the editor, entities, and MCP all live.
+
+<div style="text-align:center;margin-top:1em">
+<img src="peek-desktop-screenshot.jpg" alt="The Peek desktop" style="max-width:100%;max-height:64vh;border-radius:8px;box-shadow:0 6px 30px rgba(0,0,0,0.4)">
+</div>
 
 ## Minimal core, not a browser
 
@@ -313,10 +319,16 @@ Gotcha: a direct `tagItem()` doesn't publish — use `tagItemAndPublish()` for r
 ## The three FSMs
 
 - **Tile lifecycle** (`tile-lifecycle.ts` + pure `tile-fsm.ts`): *when* a tile is alive. Manifest cached on `registered` so a tile's commands appear in the palette before it ever runs; token minted on `ready`, revoked on unload/crash; one code path for window creation.
-- **PubSub** (`pubsub.ts` + `tile-ipc-gate.ts`): *what* flows in each state. The trick — **the token IS the capability handle.** The pubsub path never reads lifecycle state; it runs `validateToken(t) → grant | null`. Because lifecycle mints/revokes the token exactly on ready/unload, the "checked before or after the state change?" race becomes *unaskable*. One hub, subscriber-indexed delivery. Every rejection emits telemetry — never silent.
+- **PubSub** (`pubsub.ts` + `tile-ipc-gate.ts`): *what* flows in each state. **The token IS the capability handle.** The pubsub path never reads lifecycle state; it runs `validateToken(t) → grant | null`. Because lifecycle mints/revokes the token exactly on ready/unload, the "checked before or after the state change?" race can't happen. One hub, subscriber-indexed delivery. Every rejection emits telemetry — never silent.
 - **Cmd panel** (`app/cmd/state-machine.js`, pure): 10 states. Replaces the old "every bug fix adds another boolean flag" model.
 
 A fourth FSM was written for the *canvas* page-host, which is gone.
+
+## A tile is a feature.
+
+A tile = one HTML file in its own Electron `BrowserWindow`, on its own `peek://{tileId}/` origin, with a capability-gated preload and a strict `tile:*` IPC surface.
+
+No tile "type," no tile "role." Only two axes: **Residency** (resident-at-startup vs lazy) and **Visibility** (shown vs hidden).
 
 ## Everything is a feature
 
@@ -329,11 +341,11 @@ How radical, concretely:
 - Per-feature settings panels are generated at runtime from each feature's own `settings-schema.json`.
 - Even dev/diagnostic surfaces (`hello-world`, `debug`, `widget-demo`) ship as real features.
 
-## The honest tension
+## The tension
 
 This uniformity buys crash containment, origin isolation, one contract for built-ins and third parties alike, hot-reload, and a memory dial (lazy activation).
 
-But it's young. The lifecycle-FSM doc opens by cataloguing real bugs that came from *drift* off the policy. "Everything is a feature" only pays off once the loader/FSM/capability layers are airtight. The interesting part isn't the idea — it's making the idea safe.
+But it's young. The lifecycle-FSM doc opens by listing real bugs that came from features breaking the policy. "Everything is a feature" only works once the loader, FSM, and capability layers are solid. The hard part isn't the idea; it's making it safe.
 
 ## The feature manifest (schema v3)
 
@@ -377,7 +389,7 @@ A feature must declare everything it touches:
 | `unloading` | grace window → token revoke → close → cleanup |
 | `crashed` | render process died; manual-only relaunch |
 
-Key invariant: **command dispatch guarantees state ≥ ready** — dispatching to a not-yet-loaded tile forces `registered→loading→ready` first, and failure surfaces as an explicit error, never a silent spinner hang. That's the bug class that motivated the FSM.
+Key invariant: **command dispatch guarantees state ≥ ready** — dispatching to a not-yet-loaded tile forces `registered→loading→ready` first, and failure surfaces as an explicit error, never a silent spinner hang. That's the bug that motivated the FSM.
 
 ## Lazy activation
 
@@ -424,7 +436,7 @@ The core bet: a global hotkey summons the palette or a peek **without** switchin
 Three cooperating mechanisms:
 1. Modal windows are macOS **`type: 'panel'`** — `show()`/`focus()` skip `activateIgnoringOtherApps`.
 2. **`setVisibleOnAllWorkspaces`** on modal/alwaysOnTop windows — visible on any Space.
-3. **Headless-safe show discipline** — real show does `show()` + `contentWC.focus()`; headless does `showInactive()` + `opacity:0`. Getting this wrong is the "dead focus" bug class (NSBeep, no first responder).
+3. **Headless-safe show discipline** — real show does `show()` + `contentWC.focus()`; headless does `showInactive()` + `opacity:0`. Getting this wrong is the "dead focus" bug (NSBeep, no first responder).
 
 ## The upstream walls
 
@@ -542,6 +554,13 @@ Still open — discoverability: nothing signals "this output is chainable" beyon
 
 > Demo: `list urls` → arrow to a row → Enter → `csv` → `save` — it works live. Just don't claim discoverability is solved.
 
+## 50+ live pages, fast and lean
+
+I routinely keep **40–50+ web pages open at once** — the regime where a normal browser starts to thrash. Peek opens them instantly and holds them on modest memory.
+
+- **Fast to open** — features load lazily (boot dropped 6 windows → 2); a page is one positioned view, not a whole browser shell spun up per tab.
+- **Far less memory** — one opaque `WebContentsView` per page: no per-page double-renderer, no always-painting transparent compositor. Idle pages repaint *nothing*, so CPU sits near zero.
+
 ## The page host
 
 As of 2026-07, the hybrid page-host is the ONLY one. The legacy transparent-canvas `<webview>` architecture was deleted outright — no flag, no fallback.
@@ -558,7 +577,7 @@ Real 46-page prod session, same session before/after:
 
 Old (canvas): a fullscreen *transparent* window hosting chrome beside a `<webview>` = 2 renderer processes per page + always-alpha-composited, ×N pages. New (hybrid): one **opaque, positioned `WebContentsView`** attached directly to its window (keeps its own session+preload so extension compat re-attaches) + a single shared chrome overlay repositioned over the active window.
 
-The idle-CPU collapse is the standout: transparent canvases ran a continuous compositor paint loop even idle; opaque static content has nothing to repaint. All three CPU metrics collapsed in lockstep — a real architectural win, not sampling noise.
+The idle-CPU collapse is the biggest win: transparent canvases ran a continuous compositor paint loop even when idle; opaque static content has nothing to repaint. All three CPU metrics dropped together.
 
 ## Page host: the invariants that replaced the old model
 
@@ -589,9 +608,9 @@ Hub-and-spoke, server is source of truth, LWW on `updatedAt`. Local-first, not P
 
 ## Sync: the wrinkles
 
-**The same protocol is re-implemented in FOUR places:** unified JS `SyncEngine` (mobile-web/extension), `apps/desktop/main/sync.ts` (Electron), plus Rust in Tauri-desktop and mobile. A recurring risk worth naming.
+**The same protocol is re-implemented in FOUR places:** unified JS `SyncEngine` (mobile-web/extension), `apps/desktop/main/sync.ts` (Electron), plus Rust in Tauri-desktop and mobile. A recurring risk.
 
-**Known limitations:** push failures are logged but **not retried** — high severity (`lastSyncTime` advances, so failed items are skipped next time). Mobile carries schema drift vs the canonical shape, deferred because migrating means synchronized ~4,000-line Rust + ~2,000-line Swift changes — but sync works anyway because the wire format is independent of local schema.
+**Known limitations:** push failures are logged but **not retried** — high severity (`lastSyncTime` advances, so failed items are skipped next time). Mobile runs an older schema shape than the canonical one, deferred because migrating means synchronized ~4,000-line Rust + ~2,000-line Swift changes — but sync works anyway because the wire format is independent of the local schema.
 
 **Testing:** a clean-room three-way E2E (server + desktop + iOS-simulator) covering tombstone propagation. Node sync tests must run under Electron's Node for the better-sqlite3 ABI.
 
@@ -611,7 +630,7 @@ Architecture: `Claude Code ⇄ stdio (JSON-RPC) ⇄ peek-mcp launcher ⇄ server
 
 **Scoping** — `PEEK_MCP_SCOPE_TAG=<scope>` confines a session to items tagged `<scope>` or `<scope>:*`. Reads filter to in-scope; writes force-add the scope; foreign-namespace tags are rejected so an agent can't poison a sibling project; out-of-scope prefix matches read as not-found (no existence leak). Installed per-project via `peek-mcp-init`.
 
-Env is frozen at spawn — changes need a Claude Code restart. The server self-exits on config drift so the client respawns with fresh env.
+Env is frozen at spawn — changes need a Claude Code restart. The server self-exits when its config changes so the client respawns with fresh env.
 
 Peek becomes an agent-writable personal knowledge + task backend, over the *same* SQLite the human UI reads live. This repo dogfoods it — its own `peek:*` tasks run through these tools.
 
@@ -720,3 +739,13 @@ Peek becomes an agent-writable personal knowledge + task backend, over the *same
 - Space color dot marks each window's group
 - Editor gains tighter padding and edge-to-edge card space
 - Card grid gains sorting and view-mode toggles
+
+# Parking lot
+
+Extra detail, kept back for Q&A.
+
+## Monorepo layout
+
+`apps/{desktop, mobile, server, extension, tauri-desktop}` + `packages/{schema, sync, integration-tests}`.
+
+*(README/DEVELOPMENT.md still describe an older `app/` + `backend/` layout — stale. `docs/architecture.md` uses the current paths.)*
