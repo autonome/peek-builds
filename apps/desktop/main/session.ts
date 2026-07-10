@@ -1475,35 +1475,61 @@ export async function restoreSessionSnapshot(
         _coldStartReassertId = focusedWindowId;
       }
 
-      if (focusWin && willActivate) {
-        // moveTop() reorders the focused window above the other restored windows
-        // (each was show()'d active during the loop, orderFront'd over this one).
-        // focus() alone makes it the key window but does NOT reliably reorder it
-        // above many windows on macOS — a lone focus() loses the z-order race
-        // against a large rapid show() storm (prod sessions with >5 windows; dev's
-        // <=5 masked it). Mirrors the hybrid branch below.
-        try { focusWin.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
-        _restoreMoveTopCount++;
-        focusWin.focus();
-        _restoreFocusCount++;
-        _restoreFocusedId = focusedWindowId;
-        DEBUG && console.log(`[session] Focused restored window: ${focusedWindowId}`);
-      } else if (hybridFocus && !hybridFocus.baseWin.isDestroyed() && willActivate) {
-        // Raise + ACTIVATE the focused hybrid host. The restore-opens were shown
-        // INACTIVE (none stole frontmost), so this is the SINGLE place a restored
-        // hybrid window gets activated. moveTop() puts it above the other restored
-        // windows in z-order; an activating showHybridHost() (non-inactive) then
-        // raises it + makes its content WebContentsView the macOS first responder
-        // (cmd+L works, overlay reveals) — the same full activation a fresh open
-        // does, NOT a host-only .focus() that leaves a non-focused window's
-        // content as first responder. Headless stays focus-free inside the seam.
-        try { hybridFocus.baseWin.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
-        _restoreMoveTopCount++;
-        showHybridHost(hybridFocus.baseWin, hybridFocus.contentWC);
-        _restoreFocusCount++;
-        _restoreHybridActivationCount++;
-        _restoreFocusedId = focusedWindowId;
-        DEBUG && console.log(`[session] Activated restored hybrid window: ${focusedWindowId}`);
+      if (willActivate) {
+        // Reproduce the FULL saved stacking order — not just the focused window.
+        // During the loop, internal-tile BrowserWindows were show()'d active (each
+        // orderFront'd over the previous) and hybrid page-hosts were shown INACTIVE,
+        // so the post-loop on-screen stack bears no relation to how the user left
+        // it: internal tiles float above the web pages the user had in front. This
+        // regressed with the hybrid page-host migration — pre-hybrid, web pages
+        // were BrowserWindows shown active in order, so stacking came back for free.
+        //
+        // Walk every restored window from the BOTTOM of the saved stack to the TOP,
+        // moveTop()'ing each, so the last raise wins and the final z-order matches
+        // the saved order exactly. `restoredWindowIds` is in restore order
+        // (= [focused, then zOrder desc], i.e. front→back), so raising in REVERSE
+        // goes back→front. The saved zOrder is the focus-recency rank, which on
+        // macOS IS the user's visual stacking order (raising a window focuses it).
+        // moveTop() reorders z-order WITHOUT activating — no focus steal — so only
+        // the focused window (activated LAST, below) becomes key/first-responder.
+        // Deterministic ordered pass, no timer. Subsumes the old single-window
+        // raise. Gated by willActivate: skips headless AND the switched-away case,
+        // so we never yank the user back to Peek.
+        for (const id of [...restoredWindowIds].reverse()) {
+          if (id === focusedWindowId) continue; // focused window raised + activated last, on top
+          const bw = getLiveWindow(id);
+          if (bw && !bw.isDestroyed()) {
+            try { bw.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
+            _restoreMoveTopCount++;
+            continue;
+          }
+          const hy = getHybridWindow(id);
+          if (hy && !hy.baseWin.isDestroyed()) {
+            try { hy.baseWin.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
+            _restoreMoveTopCount++;
+          }
+        }
+        // Raise + ACTIVATE the focused descriptor LAST so it lands on top of the
+        // rebuilt stack and becomes the key window / macOS first responder. The
+        // hybrid path activates via showHybridHost() (not a bare focus()) so its
+        // content WebContentsView becomes first responder (cmd+L works, overlay
+        // reveals) — the same full activation a fresh open does.
+        if (focusWin) {
+          try { focusWin.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
+          _restoreMoveTopCount++;
+          focusWin.focus();
+          _restoreFocusCount++;
+          _restoreFocusedId = focusedWindowId;
+          DEBUG && console.log(`[session] Focused restored window: ${focusedWindowId}`);
+        } else if (hybridFocus && !hybridFocus.baseWin.isDestroyed()) {
+          try { hybridFocus.baseWin.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
+          _restoreMoveTopCount++;
+          showHybridHost(hybridFocus.baseWin, hybridFocus.contentWC);
+          _restoreFocusCount++;
+          _restoreHybridActivationCount++;
+          _restoreFocusedId = focusedWindowId;
+          DEBUG && console.log(`[session] Activated restored hybrid window: ${focusedWindowId}`);
+        }
       } else if (focusWin || hybridFocus) {
         DEBUG && console.log(`[session] Skipped focus on ${focusedWindowId} — user switched away`);
       }

@@ -64,22 +64,27 @@ test.describe('Session Restore Focus @desktop', () => {
     if (app) await app.close();
   });
 
-  /** Close every page-host window so each test starts from a clean slate. */
+  // Close EVERY non-internal window so each test starts from a clean slate, then
+  // wait until none remain (same proven pattern as session-restore-page-host.spec).
+  // A URL filter is wrong here: window.list reports `url` as the RESOLVED address,
+  // which differs between a freshly-opened page-host (inner http URL) and a
+  // RESTORED one (may resolve to the `peek://app/page/…` shell or a deferred
+  // blank), so any prefix match leaks restored windows into the next test —
+  // which, post full-stacking-order restore, pollutes the restored count and the
+  // moveTops assertions. The background test fixture is internal, so
+  // includeInternal:false already excludes it.
   async function resetState() {
     await bgWindow.evaluate(async () => {
       const list = await (window as any).app.window.list({ includeInternal: false });
       if (!list?.success) return;
       for (const w of list.windows || []) {
-        if (typeof w.url === 'string' && w.url.startsWith('peek://app/page/')) {
-          await (window as any).app.window.close(w.id);
-        }
+        await (window as any).app.window.close(w.id);
       }
     });
     await bgWindow.waitForFunction(async () => {
       const list = await (window as any).app.window.list({ includeInternal: false });
       if (!list?.success) return false;
-      return !(list.windows || []).some((w: any) =>
-        typeof w.url === 'string' && w.url.startsWith('peek://app/page/'));
+      return (list.windows || []).length === 0;
     });
   }
 
@@ -188,11 +193,16 @@ test.describe('Session Restore Focus @desktop', () => {
     expect(counters.hybridActivations,
       `the activation must go through the hybrid activation path`)
       .toBe(counters.focuses);
-    // Regression guard: the focused descriptor must be raised via moveTop(),
-    // exactly when it is activated.
+    // Regression guard: full-stacking restore (session.ts "reproduces full
+    // window stacking order") raises EVERY restored window via moveTop() — the
+    // whole saved stack, not just the focused one — so moveTops equals the
+    // restored-window count (each restored window raised exactly once; the
+    // focused descriptor is the one raised + activated LAST). This still proves
+    // the focused descriptor is raised when activated (activation is never a bare
+    // focus() without a moveTop()), it just no longer expects a lone raise.
     expect(counters.moveTops,
-      `focused descriptor must be raised with moveTop() exactly when it is activated`)
-      .toBe(counters.focuses);
+      `every restored window is raised via moveTop() (full saved stacking order)`)
+      .toBe(result.restored);
   });
 
   // ------------------------------------------------------------------------
@@ -249,7 +259,16 @@ test.describe('Session Restore Focus @desktop', () => {
 
   test('COLD START boot path threads through and activates the focused descriptor (appFocused=true)', async () => {
     await openPage(`http://127.0.0.1:${serverPort}/cold-a`);
-    await openPage(`http://127.0.0.1:${serverPort}/cold-b`);
+    const bId = await openPage(`http://127.0.0.1:${serverPort}/cold-b`);
+
+    // Hybrid hosts open INACTIVE, so nothing marks a "last focused" descriptor
+    // until a REAL focus event fires (same as the in-session test above). Drive
+    // it explicitly so the saved snapshot has a focused descriptor of OUR making —
+    // otherwise the cold restore has nothing to activate and focuses stays 0.
+    const focused = await app.evaluateMain!(((_e: unknown, id: number) =>
+      (globalThis as any).__peek_test.focusHybridWindowForTest(id)) as any, bId) as boolean;
+    expect(focused, 'focusHybridWindowForTest should find the live hybrid window').toBe(true);
+
     await forceSave();
     await resetState();
 
@@ -262,15 +281,16 @@ test.describe('Session Restore Focus @desktop', () => {
     expect(cold.restored).toBeGreaterThan(0);
 
     const c = await getCounters();
-    // Exactly the single focused descriptor is raised + activated. moveTop ===
-    // focus ties the raise to the activation (canvas + hybrid branches both do
-    // moveTop()+activate on exactly the focused descriptor).
+    // The single focused descriptor is activated exactly once (focuses===1),
+    // while full-stacking restore raises EVERY restored window via moveTop()
+    // (moveTops === restored count) — the focused descriptor being the one
+    // raised + activated last.
     expect(c.focuses,
       `cold-start boot restore activates the focused descriptor exactly once`)
       .toBe(1);
     expect(c.moveTops,
-      `the focused descriptor is raised via moveTop() exactly when it is activated`)
-      .toBe(1);
+      `every restored window is raised via moveTop() (full saved stacking order)`)
+      .toBe(cold.restored);
     expect(c.focusedId,
       `cold-start restore records the restored focused window id (a real window was raised)`)
       .not.toBeNull();
