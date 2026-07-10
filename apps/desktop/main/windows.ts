@@ -114,11 +114,15 @@ export function showWindowHeadlessSafe(
  * Pure + deterministic so the regression is testable focus-free for BOTH modes
  * (real OS focus is unobservable in a macOS-headless test).
  */
-export function hybridShowIntent(headless: boolean, inactive: boolean = false): {
+export function hybridShowIntent(
+  headless: boolean,
+  opts: { inactive?: boolean; nonActivating?: boolean } = {},
+): {
   activated: boolean;
   contentFocused: boolean;
   showInactive: boolean;
 } {
+  const { inactive = false, nonActivating = false } = opts;
   // `inactive` is the session-restore (and any `show:false` caller) intent: make
   // the host VISIBLE but never activate the app or steal first-responder. Each
   // restored hybrid window must NOT activate itself — otherwise the last one
@@ -128,11 +132,26 @@ export function hybridShowIntent(headless: boolean, inactive: boolean = false): 
   // ctor `show: options.show !== false`); the hybrid path must match. The
   // restore loop's focus block is then the SINGLE authority that activates +
   // focuses the one focused descriptor (via an activating showHybridHost call).
+  // `inactive` wins over `nonActivating` (a restored peek/slide must stay
+  // focus-free until the restore loop picks the one to re-raise).
   if (inactive) {
     return { activated: false, contentFocused: false, showInactive: true };
   }
   if (headless) {
     return { activated: false, contentFocused: false, showInactive: true };
+  }
+  // `nonActivating` is the quick-view (peek/slide) intent: the host is a
+  // `type:'panel'` NSPanel (see createHybridHostBaseWindow), so it can hold the
+  // macOS FIRST RESPONDER — take key input (ESC, address-bar typing) — WITHOUT
+  // activating the app. This restores the pre-`4a543d7f` behavior: peeks/slides
+  // were `type:'panel'` BrowserWindows (non-activating NSPanels) until the
+  // page-host cutover routed them through the activating web-tab show seam and
+  // they began stealing the frontmost app's OS focus (regression 524f7aba). So:
+  // showInactive (never activate the app) BUT still focus the content WC (a
+  // non-activating panel can be key while its app is inactive; a regular window
+  // cannot — hence this branch is ONLY valid for the panel host).
+  if (nonActivating) {
+    return { activated: false, contentFocused: true, showInactive: true };
   }
   return { activated: true, contentFocused: true, showInactive: false };
 }
@@ -151,13 +170,22 @@ export function hybridShowIntent(headless: boolean, inactive: boolean = false): 
  * race winner) would end up frontmost instead of the page the user left focused.
  * The restore loop re-activates ONLY the focused descriptor afterwards via an
  * ordinary (non-inactive) `showHybridHost` call — the single activation seam.
+ *
+ * `opts.nonActivating` (quick-view peeks/slides) shows the host WITHOUT
+ * activating the app but STILL makes its content the first responder — valid
+ * only because a quick-view host is a `type:'panel'` NSPanel (see
+ * createHybridHostBaseWindow). This is what stops a hotkey-opened peek/slide
+ * from stealing the frontmost app's OS focus (regression 524f7aba).
  */
 export function showHybridHost(
   baseWin: import('electron').BaseWindow,
   contentWC: import('electron').WebContents,
-  opts?: { inactive?: boolean },
+  opts?: { inactive?: boolean; nonActivating?: boolean },
 ): { activated: boolean; contentFocused: boolean; showInactive: boolean } {
-  const intent = hybridShowIntent(isHeadless(), opts?.inactive === true);
+  const intent = hybridShowIntent(isHeadless(), {
+    inactive: opts?.inactive === true,
+    nonActivating: opts?.nonActivating === true,
+  });
   if (isHeadless()) {
     // Keep it invisible (opacity 0) — never paints on the physical desktop.
     try { baseWin.setOpacity(0); } catch { /* setOpacity unsupported on some platforms */ }

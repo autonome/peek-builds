@@ -1148,12 +1148,18 @@ function installTestBridge(): void {
      * (real OS focus is unobservable in a macOS-headless test): non-headless must
      * activate + focus the content WC; headless must stay inactive.
      */
-    hybridShowIntent(headless: boolean, inactive?: boolean): {
+    hybridShowIntent(
+      headless: boolean,
+      opts?: { inactive?: boolean; nonActivating?: boolean },
+    ): {
       activated: boolean;
       contentFocused: boolean;
       showInactive: boolean;
     } {
-      return hybridShowIntent(headless, inactive === true);
+      return hybridShowIntent(headless, {
+        inactive: opts?.inactive === true,
+        nonActivating: opts?.nonActivating === true,
+      });
     },
     /**
      * R4/R7: drive the REAL ipc.ts show seam (`showHybridHost`) against a fake
@@ -1163,7 +1169,7 @@ function installTestBridge(): void {
      * each restored hybrid window activating itself is the wrong-focus-on-restart
      * regression.
      */
-    showHybridHost(id: number, opts?: { inactive?: boolean }): {
+    showHybridHost(id: number, opts?: { inactive?: boolean; nonActivating?: boolean }): {
       activated: boolean;
       contentFocused: boolean;
       showInactive: boolean;

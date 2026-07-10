@@ -76,6 +76,48 @@ test.describe('Hybrid page-host show/activate (R4/R5/R7) @desktop', () => {
     expect(headless.showInactive).toBe(true);
   });
 
+  // 524f7aba: quick-view surfaces (peeks/slides) opened via global hotkey must
+  // NOT steal the frontmost app's OS focus. They open on a `type:'panel'` NSPanel
+  // host (createHybridHostBaseWindow threads the caller's `type:'panel'`), which
+  // can be key — take input — WITHOUT activating the app. So the quick-view show
+  // DECISION is: do NOT activate (frontmost app keeps OS focus) but STILL focus
+  // the content WC (the peek takes ESC / address-bar keystrokes). Distinct from a
+  // real web tab (activates) and from a session-restore open (inactive AND
+  // focus-free). Pure decision → assertable focus-free in either run mode.
+  test('quick-view (non-activating) DECISION: no app activation but content still focused', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    const { quickView, quickViewHeadless, restoreWins } = await app.evaluateMain!(() => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return {
+        // Non-headless quick-view peek/slide: non-activating, content focused.
+        quickView: b.hybridShowIntent(false, { nonActivating: true }),
+        // Headless still fully focus-free (never focus/activate from a test run).
+        quickViewHeadless: b.hybridShowIntent(true, { nonActivating: true }),
+        // `inactive` (restore) must WIN over `nonActivating`: a restored peek is
+        // focus-free until the restore loop picks the one to re-raise.
+        restoreWins: b.hybridShowIntent(false, { inactive: true, nonActivating: true }),
+      };
+    });
+
+    // Quick-view: app NOT activated (no OS focus theft) but content IS the first
+    // responder (peek takes key input).
+    expect(quickView).toBeTruthy();
+    expect(quickView.activated, 'quick-view must not activate the app').toBe(false);
+    expect(quickView.contentFocused, 'quick-view content must be first responder').toBe(true);
+    expect(quickView.showInactive).toBe(true);
+
+    // Headless quick-view: focus-free (never focus).
+    expect(quickViewHeadless.activated).toBe(false);
+    expect(quickViewHeadless.contentFocused).toBe(false);
+    expect(quickViewHeadless.showInactive).toBe(true);
+
+    // inactive wins over nonActivating.
+    expect(restoreWins.activated).toBe(false);
+    expect(restoreWins.contentFocused, 'restore stays focus-free even for a panel host').toBe(false);
+    expect(restoreWins.showInactive).toBe(true);
+  });
+
   // The applied show path matches the decision for THIS run (headless here): it
   // must take the inactive, focus-free branch — never activate, never focus.
   test('applied show path is focus-free under headless', async () => {

@@ -128,11 +128,11 @@ test.describe('Session Restore Hybrid Focus @desktop', () => {
         const b = (globalThis as any).__peekHybridOverlayTest;
         return {
           // A FRESH (non-restore) open in the real app still activates (R4/R7).
-          freshNonHeadless: b.hybridShowIntent(false, false),
+          freshNonHeadless: b.hybridShowIntent(false),
           // A RESTORE open (show:false) must NOT activate, even non-headless.
-          restoreNonHeadless: b.hybridShowIntent(false, true),
+          restoreNonHeadless: b.hybridShowIntent(false, { inactive: true }),
           // Headless restore stays focus-free too (unchanged).
-          restoreHeadless: b.hybridShowIntent(true, true),
+          restoreHeadless: b.hybridShowIntent(true, { inactive: true }),
         };
       });
 

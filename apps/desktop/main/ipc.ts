@@ -859,7 +859,10 @@ const hybridContentCursorSetters = new Map<number, (cursor: string | null) => vo
  * IDENTICAL host shell. x/y omitted → Electron centers the window on screen
  * (used for popups whose window.open features string carried no position).
  */
-function createHybridHostBaseWindow(rect: { x?: number; y?: number; width: number; height: number }): Electron.BaseWindow {
+function createHybridHostBaseWindow(
+  rect: { x?: number; y?: number; width: number; height: number },
+  opts?: { type?: Electron.BaseWindowConstructorOptions['type'] },
+): Electron.BaseWindow {
   return new BaseWindow({
     ...(typeof rect.x === 'number' ? { x: rect.x } : {}),
     ...(typeof rect.y === 'number' ? { y: rect.y } : {}),
@@ -872,6 +875,12 @@ function createHybridHostBaseWindow(rect: { x?: number; y?: number; width: numbe
     show: false,
     opacity: isHeadless() ? 0 : undefined,
     backgroundColor: getSystemThemeBackgroundColor(),
+    // Quick-view surfaces (peeks/slides) request `type:'panel'` → a macOS
+    // NSNonactivatingPanel: it can be key (take input) WITHOUT activating the
+    // app, so a hotkey-opened peek/slide doesn't steal the frontmost app's OS
+    // focus (regression 524f7aba). Regular web tabs pass no `type` and stay
+    // ordinary activating windows (the dead-focus invariant — CLAUDE.md).
+    ...(opts?.type ? { type: opts.type } : {}),
   });
 }
 
@@ -1363,7 +1372,17 @@ function assembleHybridPageHost(
   // focused at quit. The restore loop re-activates ONLY the focused
   // descriptor afterwards. Mirrors the canvas ctor `show: options.show !==
   // false` above.
-  showHybridHost(baseWin, view.webContents, { inactive: options.show === false });
+  //
+  // EXCEPTION — quick-view surfaces (peeks/slides, `role:'quick-view'`): show
+  // WITHOUT activating the app but still make the content the first responder.
+  // The host is a `type:'panel'` NSPanel (threaded into the ctor above), so it
+  // takes key input while the frontmost app keeps OS focus — the non-activating
+  // overlay the user expects (regression 524f7aba). Popups (createWindow path)
+  // pass `options:{}` → no role → they activate like a normal web window.
+  showHybridHost(baseWin, view.webContents, {
+    inactive: options.show === false,
+    nonActivating: options.role === 'quick-view',
+  });
 }
 
 export function wireHybridContentEvents(
@@ -3044,7 +3063,13 @@ export function registerWindowHandlers(): void {
         const contentW = winOptions.width as number;
         const contentH = winOptions.height as number;
 
-        const baseWin = createHybridHostBaseWindow({ x: contentX, y: contentY, width: contentW, height: contentH });
+        // Thread the caller's window `type` (peeks/slides pass `type:'panel'`
+        // for the non-activating quick-view host — regression 524f7aba). Regular
+        // web tabs pass no `type` → ordinary activating window.
+        const baseWin = createHybridHostBaseWindow(
+          { x: contentX, y: contentY, width: contentW, height: contentH },
+          { type: options.type },
+        );
 
         // Content view: main owns this webContents handle. Session MUST match
         // today's `<webview>`, which uses partition `persist:${profileId}`
