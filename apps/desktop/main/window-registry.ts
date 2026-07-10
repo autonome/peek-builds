@@ -81,6 +81,7 @@ export interface WindowDescriptor {
   bounds: Electron.Rectangle;
   source: string;
   params: Record<string, unknown>;
+  /** Focus-recency rank (higher = more recently focused), not a window stacking order. See focus-order.ts. */
   zOrder: number;
   focused: boolean;
   context?: WindowContext;

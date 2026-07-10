@@ -7,6 +7,7 @@
 
 import { ipcMain, nativeTheme, dialog, BrowserWindow, BaseWindow, WebContentsView, app, screen, webContents, net } from 'electron';
 import { getAllLiveWindows, getLiveWindow, windowFromWebContents } from './window-registry.js';
+import { noteWindowFocus, clearFocusOrder } from './focus-order.js';
 import { hybridResizeDirAt, RESIZE_EDGE_PX, RESIZE_CORNER_PX } from './izui-roles.js';
 import type { ResizeDir } from './izui-roles.js';
 import path from 'node:path';
@@ -425,6 +426,7 @@ export function trackVisibleWindowFocus(win: BrowserWindow, knownRole?: string):
   }
   // Track extension windows (peek://{id}/...) and web pages
   lastFocusedVisibleWindowId = win.id;
+  noteWindowFocus(win.id);
   // Unconditional — wrong-window targeting bugs (e.g. maximize hitting
   // the window behind a focused tile) are reported by symptom; seeing
   // the tracker transitions in stderr makes them diagnosable without
@@ -445,6 +447,7 @@ export function trackOnWindowFocus(win: BrowserWindow, knownRole: string | undef
  * target a closed window and fall back to the wrong window.
  */
 export function clearLastFocusedVisibleWindowId(windowId: number): void {
+  clearFocusOrder(windowId);
   if (lastFocusedVisibleWindowId === windowId) {
     DEBUG && console.log('Cleared lastFocusedVisibleWindowId (window closed):', windowId);
     lastFocusedVisibleWindowId = null;
@@ -473,6 +476,7 @@ export function trackHybridWindowFocus(windowId: number, url: string): void {
   // non-background, non-overlay visible content window, so it is unconditionally
   // the last-focused visible window when it gains focus.
   lastFocusedVisibleWindowId = windowId;
+  noteWindowFocus(windowId);
   console.log(`[focus-tracker] updated lastFocusedVisibleWindowId=${lastFocusedVisibleWindowId} (hybrid) url=${url.slice(0, 80)}`);
 }
 

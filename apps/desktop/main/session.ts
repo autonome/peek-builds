@@ -12,6 +12,7 @@
 import { BrowserWindow, dialog, screen } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
+import { getFocusOrder } from './focus-order.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
 import type { ClosedWindowEntry } from './main.js';
@@ -30,8 +31,8 @@ import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
 
 export type { WindowContext, WindowDescriptor };
 
-// Staged session restore: the first N windows (by recency = zOrder desc, with
-// the saved-focused window hoisted to the front) restore EAGERLY — their
+// Staged session restore: the first N windows (by focus-recency = zOrder desc,
+// with the saved-focused window hoisted to the front) restore EAGERLY — their
 // <webview> navigates and loads content immediately, as before. Every window
 // beyond N restores DEFERRED: the canvas page-host + window are created (so the
 // window is present and save-safe), but the <webview> is NOT navigated. The
@@ -45,8 +46,9 @@ export type { WindowContext, WindowDescriptor };
 // keeping every window in place. Measured on the cpu-perf harness.
 //
 // Tuneable at the code layer only (no UI/pref): bump this constant to keep more
-// windows hot at boot. Recency signal is the existing zOrder sort — no
-// lastFocusedAt bookkeeping.
+// windows hot at boot. Recency signal is the existing zOrder sort, which now
+// holds a focus-recency rank (see focus-order.ts) rather than creation/stacking
+// order.
 const SESSION_EAGER_RESTORE_COUNT = 5;
 
 // ============================================================================
@@ -430,13 +432,6 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   const registeredWindows = getAllWindows();
   const windowDescriptors: WindowDescriptor[] = [];
 
-  // Use getAllLiveWindows() order for z-order approximation
-  const allBrowserWindows = getAllLiveWindows();
-  const zOrderMap = new Map<number, number>();
-  allBrowserWindows.forEach((win, index) => {
-    zOrderMap.set(win.id, index);
-  });
-
   // Collect all "hidden by overlay" window IDs across the registry. When
   // an overlay (Windows switcher, etc.) is open at quit time, the IZUI
   // coordinator has hidden every other window via win.hide() — so they
@@ -613,7 +608,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       bounds: windowBounds,
       source: winData.source,
       params: sanitized,
-      zOrder: zOrderMap.get(id) ?? 0,
+      zOrder: getFocusOrder(id),
       focused: lastFocusedId != null && id === lastFocusedId,
       context: windowContext,
     });
@@ -1095,11 +1090,11 @@ export async function restoreSessionSnapshot(
     return result;
   }
 
-  // Sort windows by zOrder (higher zOrder = later in stack = opened later).
-  // Then hoist the focused window (if any) to position 0 so it dispatches
-  // first and gets to spawn in low contention — the rest follow after a
-  // short head-start window so the user-visible focused window reaches
-  // interactive significantly faster than the rest. See
+  // Sort windows by zOrder (higher zOrder = more recently focused; see
+  // focus-order.ts). Then hoist the focused window (if any) to position 0 so
+  // it dispatches first and gets to spawn in low contention — the rest follow
+  // after a short head-start window so the user-visible focused window
+  // reaches interactive significantly faster than the rest. See
   // FOCUSED_HEAD_START_MS handling further down.
   const zOrderSorted = [...validWindows].sort((a, b) => b.zOrder - a.zOrder);
   const focusedDescriptor = zOrderSorted.find((w) => w.focused) ?? null;
