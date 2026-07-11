@@ -155,6 +155,33 @@ document.addEventListener('click', function (e) {
   try { ipcRenderer.send(IPC_CONTENT_WINDOW_GESTURE, { detent }); } catch (_) { /* no main */ }
 }, true);
 
+// === First composited-frame signal (session-restore z-order fidelity) =========
+// Cold-start session restore re-asserts the saved window z-order, but a page-host
+// is a BaseWindow + WebContentsView whose NSWindow is NOT orderable in the macOS
+// window server (main's moveTop() is a no-op) until its content compositor has
+// produced a settled frame — later than did-finish-load / did-stop-loading /
+// dom-ready, all of which are load-lifecycle, not compositor-frame. So we report
+// the real "on screen / orderable" moment to main: two nested requestAnimationFrame
+// callbacks resolve one frame AFTER the first content paint is scheduled, i.e.
+// once a real frame has been composited. Main (session.ts) keys the ordered
+// restack on this per-window signal. Fired ONCE per preload lifetime — a
+// deterministic lifecycle transition, not a settle timer (fsm-pilled). Sender
+// identifies the host window in main (getHybridWindowByContentWC).
+const IPC_FIRST_FRAME = 'hybrid:first-frame';
+let _peekFirstFrameSent = false;
+function _peekSignalFirstFrame() {
+  if (_peekFirstFrameSent) return;
+  _peekFirstFrameSent = true;
+  try { ipcRenderer.send(IPC_FIRST_FRAME); } catch (_) { /* no main */ }
+}
+try {
+  requestAnimationFrame(function () { requestAnimationFrame(_peekSignalFirstFrame); });
+} catch (_) {
+  // requestAnimationFrame unavailable (non-visual context) — send immediately so
+  // main never waits on a frame that will never come.
+  _peekSignalFirstFrame();
+}
+
 /**
  * MAIN-world polyfill source. Installed via webFrame.executeJavaScript so
  * page scripts (in the page's main JS world) can call chrome.runtime.sendMessage.

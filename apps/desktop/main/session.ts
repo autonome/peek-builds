@@ -9,7 +9,8 @@
  * NOTE: Pure logic shared copy lives in app/lib/session.js for frontend/Tauri use.
  */
 
-import { BrowserWindow, dialog, screen } from 'electron';
+import { BrowserWindow, dialog, screen, ipcMain } from 'electron';
+import type { IpcMainEvent } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
 import { getFocusOrder } from './focus-order.js';
@@ -18,7 +19,7 @@ import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWin
 import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
-import { getHybridWindow } from './hybrid-page-host-registry.js';
+import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
 import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
 import { invokeWindowOpen, getLastFocusedVisibleWindowId } from './ipc.js';
 import { getIzuiCoordinator } from './izui-state.js';
@@ -127,6 +128,18 @@ let _restoreMoveTopCount = 0;
 // the focused descriptor's restored window — not just that *a* focus happened.
 let _restoreHybridActivationCount = 0;
 let _restoreFocusedId: number | null = null;
+// Cold-start z-order fix wiring (see reassertStackingOrder below). `pageHosts`:
+// restored hybrid page-hosts armed for the first-frame ordered re-assert.
+// `firstFrameReasserts`: how many of those reported their first composited frame
+// (the private `hybrid:first-frame` IPC) and drove a re-assert of the saved
+// order. firstFrameReasserts === pageHosts means every page-host composited and
+// re-ran the ordered pass — the deterministic signal the cold-start spec asserts.
+// NOTE: whether each moveTop then STICKS is gated by macOS window-server
+// orderability (a frontmost app only), which Playwright cannot make true, so the
+// actual on-screen stack is proven manually
+// (apps/desktop/tests/helpers/restore-proof/run-real-coldstart.sh), not here.
+let _restorePageHostCount = 0;
+let _restoreFirstFrameReassertCount = 0;
 export function getRestoreFocusCounters(): {
   shows: number;
   showInactives: number;
@@ -134,6 +147,8 @@ export function getRestoreFocusCounters(): {
   moveTops: number;
   hybridActivations: number;
   focusedId: number | null;
+  pageHosts: number;
+  firstFrameReasserts: number;
 } {
   return {
     shows: _restoreShowCount,
@@ -142,6 +157,8 @@ export function getRestoreFocusCounters(): {
     moveTops: _restoreMoveTopCount,
     hybridActivations: _restoreHybridActivationCount,
     focusedId: _restoreFocusedId,
+    pageHosts: _restorePageHostCount,
+    firstFrameReasserts: _restoreFirstFrameReassertCount,
   };
 }
 export function resetRestoreFocusCounters(): void {
@@ -151,6 +168,8 @@ export function resetRestoreFocusCounters(): void {
   _restoreMoveTopCount = 0;
   _restoreHybridActivationCount = 0;
   _restoreFocusedId = null;
+  _restorePageHostCount = 0;
+  _restoreFirstFrameReassertCount = 0;
 }
 
 // ----------------------------------------------------------------------------
@@ -1115,6 +1134,53 @@ export async function restoreSessionSnapshot(
   // restore focus guard: the trailing 'focus' events from the NON-focused
   // members of this set must not clobber the focused window we seed below.
   const restoredWindowIds: number[] = [];
+  // Subset of restoredWindowIds that are hybrid page-hosts (BaseWindow +
+  // WebContentsView). Only these hit the compositing race described below, and
+  // only they emit the `hybrid:first-frame` signal we key the re-assertion on.
+  const restoredPageHostIds = new Set<number>();
+
+  // Re-assert the saved z-order via moveTop only (no activation), walking the
+  // saved stack back→front so the frontmost saved window ends on top. Idempotent
+  // — safe to call repeatedly as windows come on-screen.
+  //
+  // WHY THIS EXISTS: a hybrid page-host is a BaseWindow whose content
+  // WebContentsView's NSWindow is not orderable in the macOS window server —
+  // `moveTop()` is a window-server no-op — until its content compositor has
+  // produced a SETTLED FRAME. This is later than `isVisible()` (true right after
+  // `showInactive()`), and later than `dom-ready`/`did-finish-load`/
+  // `did-stop-loading` (all load-lifecycle, not compositor-frame). So the
+  // instantly-orderable internal-tile BrowserWindows stay in front of the
+  // not-yet-composited web pages after the synchronous post-loop restack, and the
+  // saved order is lost. We therefore re-run this ordered pass each time a
+  // page-host reports its FIRST COMPOSITED FRAME via the private `hybrid:first-
+  // frame` IPC (double-rAF in runtime-external-preload.cjs; wired below). Each
+  // page-host becomes orderable exactly at its own first frame, so the pass fired
+  // by the LAST page-host to composite places the whole stack correctly — after
+  // which it is stable (a single late `moveTop` sticks; verified). Deterministic:
+  // keyed on a real per-window lifecycle transition, never a settle timer.
+  let stackingReassertArmed = false;
+  const reassertStackingOrder = (): void => {
+    if (!stackingReassertArmed) return;
+    const moveTopById = (id: number): void => {
+      const bw = getLiveWindow(id);
+      if (bw && !bw.isDestroyed()) {
+        try { bw.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
+        return;
+      }
+      const hy = getHybridWindow(id);
+      if (hy && !hy.baseWin.isDestroyed()) {
+        try { hy.baseWin.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
+      }
+    };
+    // Non-focused windows back→front, then the focused window last so it stays on
+    // top. moveTop reorders z WITHOUT activating, so this never steals focus from
+    // the focused window activated by the initial restack.
+    for (const id of [...restoredWindowIds].reverse()) {
+      if (id === focusedWindowId) continue;
+      moveTopById(id);
+    }
+    if (focusedWindowId != null) moveTopById(focusedWindowId);
+  };
 
   // Single-display restore policy: every window goes to the current primary
   // display. Avoids the case where reconnecting/swapping displays between
@@ -1306,6 +1372,10 @@ export async function restoreSessionSnapshot(
             win.webContents.once('did-finish-load', () => handle('window-loaded', () => { finishedLoads++; }));
             win.webContents.once('did-fail-load', (_e, code, desc) => handle('window-load-failed', () => { failedLoads++; }, ` code=${code} desc=${String(desc).substring(0, 80)}`));
             setTimeout(() => handle('window-load-timeout', () => { timedOutLoads++; }), LOAD_TIMEOUT_MS);
+            // NOTE: internal-tile BrowserWindows are orderable the instant they
+            // exist, so the synchronous post-loop restack places them correctly —
+            // they need no re-assertion. Only page-hosts hit the compositing race
+            // (see reassertStackingOrder, keyed on `hybrid:first-frame`).
 
             // Earlier-phase markers in main's own timeline. These don't gate
             // all-loaded — they're diagnostic to decompose what's happening
@@ -1343,6 +1413,11 @@ export async function restoreSessionSnapshot(
             const hybrid = getHybridWindow(restoredId);
             if (hybrid && !hybrid.baseWin.isDestroyed()) {
               const wasFocused = descriptor.focused === true;
+              // This page-host is subject to the compositing race: its NSWindow is
+              // not orderable until first paint, so the post-loop restack's moveTop
+              // was a no-op for it. Record it so the `hybrid:first-frame` listener
+              // (armed below) re-asserts the saved z-order when it composites.
+              restoredPageHostIds.add(restoredId);
               if (wasFocused && !hybrid.contentWC.isDestroyed()) {
                 hybrid.contentWC.once('dom-ready', () => {
                   if (resolveFocusedDomReady) {
@@ -1508,6 +1583,43 @@ export async function restoreSessionSnapshot(
             try { hy.baseWin.moveTop(); } catch { /* moveTop unsupported on some platforms */ }
             _restoreMoveTopCount++;
           }
+        }
+        // This pass just moveTop'd every non-focused window, but on the cold-start
+        // path the hybrid page-hosts have not composited yet, so those moveTops
+        // were window-server no-ops and the internal tiles are still in front. Arm
+        // the idempotent re-assertion and key it on each page-host's first
+        // composited frame (`hybrid:first-frame` IPC), re-running the ordered pass
+        // as each becomes orderable and converging on the saved order once the last
+        // one composites. See reassertStackingOrder.
+        stackingReassertArmed = true;
+        _restorePageHostCount = restoredPageHostIds.size;
+        if (restoredPageHostIds.size > 0) {
+          // Restore-scoped listener: each page-host reports its first composited
+          // frame exactly once via the private `hybrid:first-frame` IPC (double-rAF
+          // in runtime-external-preload.cjs). event.sender is that page-host's
+          // content WebContentsView, resolved back to its window id here.
+          const pending = new Set(restoredPageHostIds);
+          let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+          const cleanup = (): void => {
+            if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
+            ipcMain.removeListener('hybrid:first-frame', onFirstFrame);
+            // Disarm so a stray late frame (e.g. a surviving page-host navigating
+            // again after restore, which re-runs its preload) can't restack.
+            stackingReassertArmed = false;
+          };
+          const onFirstFrame = (event: IpcMainEvent): void => {
+            const entry = getHybridWindowByContentWC(event.sender);
+            if (!entry || !pending.has(entry.windowId)) return;
+            pending.delete(entry.windowId);
+            _restoreFirstFrameReassertCount++;
+            reassertStackingOrder();
+            if (pending.size === 0) cleanup();
+          };
+          ipcMain.on('hybrid:first-frame', onFirstFrame);
+          // Bounded cleanup only — NOT the fix trigger. A page-host that crashes
+          // before it composites never sends first-frame; without this the listener
+          // (and arm) would leak. Reuses the same per-window load horizon.
+          fallbackTimer = setTimeout(cleanup, LOAD_TIMEOUT_MS);
         }
         // Raise + ACTIVATE the focused descriptor LAST so it lands on top of the
         // rebuilt stack and becomes the key window / macOS first responder. The
