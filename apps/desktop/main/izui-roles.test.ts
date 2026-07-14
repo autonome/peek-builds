@@ -16,6 +16,7 @@ import {
   resolveHybridEscapeTarget,
   shouldRegisterGlobalEscFallback,
   shouldFocusHybridContentOnHostFocus,
+  shouldCloseContentWCOnFinalize,
   shouldActivateFocusedOnRestore,
   resolveCloseTargetId,
   resolveFocusedVisibleWindowId,
@@ -322,6 +323,30 @@ describe('shouldFocusHybridContentOnHostFocus (restore first responder on host r
 
   it('does NOT focus when the content WC has been destroyed', () => {
     assert.strictEqual(shouldFocusHybridContentOnHostFocus(false, true, false), false);
+  });
+});
+
+describe('shouldCloseContentWCOnFinalize (quit-teardown null-deref → SIGSEGV — peek 9a591551)', () => {
+  // The live crash: on quit, runHybridFinalize read `view.webContents
+  // .isDestroyed()`, but at teardown `view.webContents` can be `undefined`
+  // (the content wc is gone natively). The straight deref threw a TypeError
+  // the finalize catch merely logged, so the teardown tail bailed with
+  // native state half-torn → SIGSEGV. THE FAILING-FIRST ASSERTION: an
+  // undefined content wc must NOT throw and must decide "don't close".
+  it('does NOT throw and returns false when the content wc is undefined (the quit-teardown case)', () => {
+    assert.strictEqual(shouldCloseContentWCOnFinalize(undefined), false);
+  });
+
+  it('returns false when the content wc is null', () => {
+    assert.strictEqual(shouldCloseContentWCOnFinalize(null), false);
+  });
+
+  it('returns false when the content wc is already destroyed (no double-close)', () => {
+    assert.strictEqual(shouldCloseContentWCOnFinalize({ isDestroyed: () => true }), false);
+  });
+
+  it('returns true for a live content wc — the only case that gets close()-d', () => {
+    assert.strictEqual(shouldCloseContentWCOnFinalize({ isDestroyed: () => false }), true);
   });
 });
 

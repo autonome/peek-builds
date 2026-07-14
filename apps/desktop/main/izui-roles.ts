@@ -467,6 +467,26 @@ export function resolveFocusedVisibleWindowId(
 }
 
 /**
+ * Decide whether a hybrid page-host's content `WebContents` should be
+ * `close()`-d during finalize (`runHybridFinalize` in `ipc.ts`).
+ *
+ * At app-quit teardown the content `WebContentsView`'s `.webContents`
+ * getter can already return `undefined` — the wc is gone NATIVELY, not a
+ * live-but-destroyed wc. The old inline gate read `.isDestroyed()` straight
+ * off it, which threw a `TypeError` on that `undefined` mid-finalize; the
+ * finalize catch only logged it, so the teardown tail bailed with native
+ * state half-torn → SIGSEGV on quit (peek 9a591551). Gate on BOTH the wc's
+ * existence AND its destroyed lifecycle signal, so an absent or already-
+ * torn-down content wc is a clean no-op rather than a throw. Pure so the
+ * quit-teardown decision is unit-testable without Electron.
+ */
+export function shouldCloseContentWCOnFinalize(
+  contentWC: { isDestroyed(): boolean } | null | undefined,
+): boolean {
+  return !!contentWC && !contentWC.isDestroyed();
+}
+
+/**
  * Hybrid page-host edge/corner resize band.
  *
  * Round-2 resize is driven entirely from MAIN against the content WebContents'

@@ -92,6 +92,7 @@ import {
   spacesPolicyForRole,
   selectTransientSiblingsToClose,
   shouldFocusHybridContentOnHostFocus,
+  shouldCloseContentWCOnFinalize,
   windowSelfClosesOnBlur,
   type TransientSiblingCandidate,
 } from './izui-roles.js';
@@ -1286,13 +1287,23 @@ function assembleHybridPageHost(
     // branch for a BaseWindow, which `getLiveWindow` cannot resolve), and
     // `baseWin.hide()` does not emit `'close'`. So hide keeps the wc alive
     // for reuse, exactly as required; only a genuine close frees it.
+    // On app-quit teardown the WebContentsView's own content wc can already
+    // be gone natively — its `.webContents` getter then returns `undefined`
+    // (NOT a live-but-destroyed wc). Reading `.isDestroyed()` straight off
+    // that undefined threw a TypeError mid-finalize; the catch below only
+    // logged it, so `runHybridFinalize` bailed out of its teardown tail with
+    // native state half-torn → SIGSEGV on quit (peek 9a591551). Resolve the
+    // wc ONCE and gate on both its existence AND its destroyed signal (the
+    // existing lifecycle signal — fsm-pilled: gate, don't rely on the
+    // swallow), so an already-torn-down content wc is a clean no-op.
+    const contentWC = view.webContents;
     try {
       // `webContents.close()` is the documented teardown: with
       // `waitForBeforeUnload` unspecified it does NOT honor a beforeunload
       // veto and destroys the wc (firing `'destroyed'`). The host window
       // is already gone, so a beforeunload prompt would be meaningless.
-      if (!view.webContents.isDestroyed()) {
-        view.webContents.close();
+      if (shouldCloseContentWCOnFinalize(contentWC)) {
+        contentWC.close();
       }
     } catch (e) {
       DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] content wc close on finalize failed:`, e);
