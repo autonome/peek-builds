@@ -418,12 +418,21 @@ export function resolveCloseTargetId(
  *
  * Resolution order, most-specific user intent first:
  *   1. tracked id, if it's a live BrowserWindow OR a live hybrid host
- *   2. the focused BrowserWindow (settings/modals/canvas page-hosts)
+ *   2. the focused BrowserWindow (settings/canvas page-hosts). The CALL SITE
+ *      passes null here when the focused window is a MODAL surface (the command
+ *      palette or a dialog): a modal is the command ISSUER, never its target, so
+ *      it must not be resolved as "the active window" (that was the regression —
+ *      `tag` from the palette resolved the palette's own id and found nothing).
  *   3. the active hybrid host — the SAME signal the page-host chrome overlay
  *      frames over, so a command and the overlay can't disagree about the
  *      active page (covers a null/stale tracker when a hybrid host is up)
- *   4. the first visible+focusable live window
- *   5. null (no resolvable window)
+ *   4. the current visible hybrid page host — the page the user is viewing even
+ *      if it opened NON-ACTIVATING (session restore / `show:false`) and so never
+ *      fired a focus event to populate the tracker (step 1) or the active-hybrid
+ *      id (step 3). Without this, running `tag` on a restored/unfocused page host
+ *      with the palette focused resolves nothing.
+ *   5. the first visible+focusable live window (call site excludes modals here too)
+ *   6. null (no resolvable window)
  *
  * Pure so the hybrid-tracked-id case is unit-testable without real OS focus,
  * which is unobservable under macOS-headless (mirrors the predicates above).
@@ -431,9 +440,12 @@ export function resolveCloseTargetId(
  * @param trackedId                 `getLastFocusedVisibleWindowId()`
  * @param trackedIsLiveWindow       tracked id resolves via `getLiveWindow`
  * @param trackedIsHybridWindow     tracked id is a live hybrid page-host
- * @param focusedBrowserWindowId    `BrowserWindow.getFocusedWindow()?.id ?? null`
+ * @param focusedBrowserWindowId    focused BrowserWindow id, or null — the call
+ *                                  site nulls a focused MODAL surface (palette/dialog)
  * @param activeHybridWindowId      `getActiveHybridWindowId()`
- * @param firstVisibleFocusableLiveId  first visible+focusable live window id, or null
+ * @param currentVisibleHybridHostId  the last visible hybrid page host (open order),
+ *                                  or null — the page the user is viewing regardless of focus
+ * @param firstVisibleFocusableLiveId  first visible+focusable non-modal live window id, or null
  */
 export function resolveFocusedVisibleWindowId(
   trackedId: number | null,
@@ -441,6 +453,7 @@ export function resolveFocusedVisibleWindowId(
   trackedIsHybridWindow: boolean,
   focusedBrowserWindowId: number | null,
   activeHybridWindowId: number | null,
+  currentVisibleHybridHostId: number | null,
   firstVisibleFocusableLiveId: number | null,
 ): number | null {
   if (typeof trackedId === 'number' && trackedId > 0) {
@@ -448,6 +461,7 @@ export function resolveFocusedVisibleWindowId(
   }
   if (focusedBrowserWindowId != null) return focusedBrowserWindowId;
   if (activeHybridWindowId != null) return activeHybridWindowId;
+  if (currentVisibleHybridHostId != null) return currentVisibleHybridHostId;
   if (firstVisibleFocusableLiveId != null) return firstVisibleFocusableLiveId;
   return null;
 }

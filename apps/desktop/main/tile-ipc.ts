@@ -3552,19 +3552,45 @@ export function registerTileIpcHandlers(): void {
       const trackedHybrid = trackedId != null ? getHybridWindow(trackedId) : null;
       const trackedIsHybrid = !!trackedHybrid && !trackedHybrid.baseWin.isDestroyed();
       const focused = BrowserWindow.getFocusedWindow();
-      const focusedBrowserWindowId = focused && !focused.isDestroyed() ? focused.id : null;
+      // A focused MODAL surface (the command palette, a dialog) is the command
+      // ISSUER, never its target. Excluding it lets `tag`/`untag`/devtools resolve
+      // the page BEHIND the palette instead of the palette's own id — the tag-on-
+      // page-host regression (item 8430bd05): running `tag` from the palette while
+      // a page host was open resolved the palette id and getActiveWindow found
+      // nothing. Mirrors the modal exclusion already applied to the tracker
+      // (`trackVisibleWindowFocus`, ipc.ts win.on('focus')).
+      const focusedIsModal = focused && !focused.isDestroyed()
+        ? !!getWindowInfo(focused.id)?.params?.modal
+        : false;
+      const focusedBrowserWindowId =
+        focused && !focused.isDestroyed() && !focusedIsModal ? focused.id : null;
       let firstVisibleFocusableLiveId: number | null = null;
       for (const w of getAllLiveWindows()) {
         if (!w.isVisible() || !w.isFocusable()) continue;
+        if (getWindowInfo(w.id)?.params?.modal) continue; // never fall back to a modal surface
         firstVisibleFocusableLiveId = w.id;
         break;
+      }
+      const activeHybridId = getActiveHybridWindowId();
+      // The page host the user is viewing, even if it opened NON-ACTIVATING
+      // (session restore / `show:false` → showInactive) and so never fired a
+      // focus event to populate the tracker or the active-hybrid id. Last visible
+      // hybrid host by open order (the top page). Focus-independent, so it still
+      // answers when the palette holds focus and steps 1–3 are empty.
+      let currentVisibleHybridHostId: number | null = null;
+      for (const h of getAllHybridWindows()) {
+        try {
+          if (h.baseWin.isDestroyed() || !h.baseWin.isVisible()) continue;
+          currentVisibleHybridHostId = h.windowId;
+        } catch { /* isVisible unsupported in some envs */ }
       }
       const resolved = resolveFocusedVisibleWindowId(
         trackedId,
         trackedIsLive,
         trackedIsHybrid,
         focusedBrowserWindowId,
-        getActiveHybridWindowId(),
+        activeHybridId,
+        currentVisibleHybridHostId,
         firstVisibleFocusableLiveId,
       );
       return { success: true, data: resolved };

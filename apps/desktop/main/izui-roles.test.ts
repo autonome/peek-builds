@@ -403,14 +403,14 @@ describe('resolveFocusedVisibleWindowId (tag/untag/devtools active-window lookup
   // updated. The tracked hybrid id must win.
   it('returns the tracked id when it is a live hybrid page-host (the tag-the-wrong-page bug)', () => {
     assert.strictEqual(
-      resolveFocusedVisibleWindowId(9, /* live */ false, /* hybrid */ true, null, null, 11),
+      resolveFocusedVisibleWindowId(9, /* live */ false, /* hybrid */ true, null, null, /* currentVisibleHybridHost */ null, 11),
       9,
     );
   });
 
   it('returns the tracked id when it is a live BrowserWindow', () => {
     assert.strictEqual(
-      resolveFocusedVisibleWindowId(5, true, false, null, null, 11),
+      resolveFocusedVisibleWindowId(5, true, false, null, null, null, 11),
       5,
     );
   });
@@ -418,14 +418,14 @@ describe('resolveFocusedVisibleWindowId (tag/untag/devtools active-window lookup
   it('ignores a tracked id that is neither live nor hybrid (stale/destroyed)', () => {
     // Tracked window is gone; fall through to the focused BrowserWindow.
     assert.strictEqual(
-      resolveFocusedVisibleWindowId(99, false, false, 5, null, 11),
+      resolveFocusedVisibleWindowId(99, false, false, 5, null, null, 11),
       5,
     );
   });
 
   it('prefers a focused BrowserWindow over the active hybrid host when the tracker is empty', () => {
     assert.strictEqual(
-      resolveFocusedVisibleWindowId(null, false, false, 5, 3, 11),
+      resolveFocusedVisibleWindowId(null, false, false, 5, 3, null, 11),
       5,
     );
   });
@@ -434,28 +434,50 @@ describe('resolveFocusedVisibleWindowId (tag/untag/devtools active-window lookup
     // The same signal the page-host chrome overlay frames over — command and
     // overlay can't disagree about the active page.
     assert.strictEqual(
-      resolveFocusedVisibleWindowId(null, false, false, null, 3, 11),
+      resolveFocusedVisibleWindowId(null, false, false, null, 3, null, 11),
+      3,
+    );
+  });
+
+  it('falls back to the current visible hybrid page host before the first visible live window (tag-on-restored-host bug)', () => {
+    // The regression: a page host opened NON-ACTIVATING (session restore /
+    // show:false) never fires a focus event, so the tracker (step 1) and the
+    // active-hybrid id (step 3) are both empty. With the command palette focused,
+    // the CALL SITE nulls the focused BrowserWindow (a modal is never a target),
+    // so resolution must reach the current visible hybrid host — the page the
+    // user is looking at — NOT the first visible live window (which would be the
+    // palette itself). Pre-fix there was no such step and `tag` found nothing.
+    assert.strictEqual(
+      resolveFocusedVisibleWindowId(null, false, false, null, null, /* currentVisibleHybridHost */ 7, 11),
+      7,
+    );
+  });
+
+  it('prefers the active hybrid host over the current visible hybrid host', () => {
+    // A truly-active (focused) host beats the mere last-visible one.
+    assert.strictEqual(
+      resolveFocusedVisibleWindowId(null, false, false, null, 3, 7, 11),
       3,
     );
   });
 
   it('falls back to the first visible+focusable live window when nothing else resolves', () => {
     assert.strictEqual(
-      resolveFocusedVisibleWindowId(null, false, false, null, null, 11),
+      resolveFocusedVisibleWindowId(null, false, false, null, null, null, 11),
       11,
     );
   });
 
   it('returns null when no window resolves at all', () => {
     assert.strictEqual(
-      resolveFocusedVisibleWindowId(null, false, false, null, null, null),
+      resolveFocusedVisibleWindowId(null, false, false, null, null, null, null),
       null,
     );
   });
 
   it('ignores a non-positive tracked id', () => {
     assert.strictEqual(
-      resolveFocusedVisibleWindowId(0, true, true, null, 3, null),
+      resolveFocusedVisibleWindowId(0, true, true, null, 3, null, null),
       3,
     );
   });
