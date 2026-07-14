@@ -525,20 +525,48 @@ function toPublic(e: InternalEntry): HybridWindowEntry {
 }
 
 /**
- * Best-effort URL normalization for dedup matching. Mirrors the SHAPE of the
- * canvas path's `findWindowByUrl` (which uses datastore `normalizeUrl`): we
- * keep it dependency-free here (lowercased origin+path, trailing slash and a
- * trailing `?`/`#` stripped) so the module stays trivially unit-testable and
- * import-safe under `ELECTRON_RUN_AS_NODE=1`. Exact-string opens always match;
- * the normalization just also catches the common trailing-slash variant.
+ * Canonical URL key for dedup matching. Mirrors the SEMANTICS of the canvas
+ * path's datastore `normalizeUrl` so two opens that differ only in default
+ * port, query-param order, or a trailing slash produce the same key and reuse
+ * the same window: parse with `new URL()`, lowercase host, strip default ports
+ * (80/443), sort query params, drop a trailing `/` on a non-root path, and drop
+ * an empty query/hash. Falls back to the old string-only behavior for inputs
+ * that fail to parse (e.g. non-http), so exact-string opens still always match.
+ * Kept dependency-free (no datastore import) so the module stays trivially
+ * unit-testable and import-safe under `ELECTRON_RUN_AS_NODE=1`.
  */
 function normalizeForDedup(url: string): string {
-  let u = url.trim();
-  // Strip a lone trailing fragment/query marker.
-  u = u.replace(/[?#]$/, '');
-  // Strip a single trailing slash on the path (but not the scheme's `//`).
-  u = u.replace(/(?<!:)\/+$/, '');
-  return u.toLowerCase();
+  const raw = url.trim();
+  try {
+    const u = new URL(raw);
+    // Lowercase host (URL already lowercases the protocol).
+    u.hostname = u.hostname.toLowerCase();
+    // Strip default ports.
+    if ((u.protocol === 'http:' && u.port === '80') || (u.protocol === 'https:' && u.port === '443')) {
+      u.port = '';
+    }
+    // Strip a trailing slash on a non-root path.
+    if (u.pathname !== '/' && u.pathname.endsWith('/')) {
+      u.pathname = u.pathname.slice(0, -1);
+    }
+    // Sort query params so order doesn't matter; drop a lone trailing `?`.
+    if (u.search) {
+      const params = new URLSearchParams(u.search);
+      const sorted = new URLSearchParams([...params.entries()].sort());
+      u.search = sorted.toString();
+    } else {
+      u.search = ''; // strips a bare `?` delimiter
+    }
+    // Drop an empty fragment (strips a bare `#` delimiter).
+    if (!u.hash) u.hash = '';
+    return u.toString();
+  } catch {
+    // Fallback (non-parseable, e.g. non-http): old string-only behavior.
+    let s = raw;
+    s = s.replace(/[?#]$/, '');
+    s = s.replace(/(?<!:)\/+$/, '');
+    return s.toLowerCase();
+  }
 }
 
 /**
@@ -828,14 +856,14 @@ export function resolveHybridDownloadHostToClose(wc: WebContents): HybridWindowE
 
 /**
  * Find a hybrid window opened FOR `url` (for dedup/reuse on a repeat open).
- * Matches on the normalized REQUESTED address (the static open url the window
- * was created with), trailing-slash tolerant — exactly mirroring the canvas
- * path's `findWindowByUrl`, which dedups on the stored `params.address` rather
- * than the live webview URL. Matching the requested address (not the live
- * content URL) is what makes dedup survive in-page navigation / redirects: a
- * window opened for `https://x/` that then redirects to `https://x/login`
- * still dedups a repeat open of `https://x/`. Only http(s) urls participate,
- * matching the canvas path. Returns null if none.
+ * Matches the canonical (`normalizeForDedup`) target against BOTH keys of each
+ * live entry: its static REQUESTED address AND its LIVE content URL. A match on
+ * EITHER reuses the window. Matching both is what makes dedup survive in-page
+ * navigation / redirects in both directions: re-opening the ORIGINAL address of
+ * a window that has since redirected hits `requestedUrl`, while re-opening the
+ * address the window has NAVIGATED to (SPA / server redirect) hits the live
+ * content URL. Only http(s) urls participate, matching the canvas path. Returns
+ * null if none.
  */
 export function findHybridWindowByUrl(url: string): HybridWindowEntry | null {
   if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) return null;
@@ -843,6 +871,10 @@ export function findHybridWindowByUrl(url: string): HybridWindowEntry | null {
   for (const e of entries.values()) {
     if (e.baseWin.isDestroyed()) continue;
     if (e.requestedUrl && normalizeForDedup(e.requestedUrl) === target) {
+      return toPublic(e);
+    }
+    const live = safeUrl(e.contentWC);
+    if (live && normalizeForDedup(live) === target) {
       return toPublic(e);
     }
   }

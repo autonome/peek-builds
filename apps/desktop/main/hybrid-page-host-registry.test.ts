@@ -267,19 +267,46 @@ describe('hybrid-page-host-registry: dedup by url', () => {
     assert.strictEqual(findHybridWindowByUrl('https://example.com/p#')!.windowId, f.id);
   });
 
-  it('matches case-insensitively', () => {
+  it('matches host case-insensitively (path case is significant — canvas/datastore parity)', () => {
+    // Host is case-insensitive per URL spec; path is NOT (servers may serve
+    // different resources for /Path vs /path), matching datastore.normalizeUrl.
     const f = mk({ url: 'https://Example.COM/Path' });
-    assert.strictEqual(findHybridWindowByUrl('https://example.com/path')!.windowId, f.id);
+    assert.strictEqual(findHybridWindowByUrl('https://EXAMPLE.com/Path')!.windowId, f.id);
+    assert.strictEqual(findHybridWindowByUrl('https://example.com/path'), null);
   });
 
   it('dedups on the requested open address, surviving in-page navigation', () => {
-    // The whole point of requested-address (not live-url) matching: a window
-    // opened for X that then navigates/redirects to Y still dedups a repeat
-    // open of X — and does NOT spuriously dedup an open of Y.
+    // A window opened for X that then navigates/redirects to Y still dedups a
+    // repeat open of X (match on the stored requested address).
     const f = mk({ url: 'https://example.com/' });
     f.wc.navigate('https://example.com/deep/link');
     assert.strictEqual(findHybridWindowByUrl('https://example.com/')!.windowId, f.id);
-    assert.strictEqual(findHybridWindowByUrl('https://example.com/deep/link'), null);
+  });
+
+  it('dedups on the LIVE content url too — reopening the redirected-to address reuses the window (Mechanism 1)', () => {
+    // Regression (ab104fc5): a window opened for X that redirects/SPA-navigates
+    // to Y must ALSO dedup a repeat open of Y (what the user is now looking at),
+    // matching on the live content URL — not just the static requested address.
+    const f = mk({ url: 'https://example.com/' });
+    f.wc.navigate('https://example.com/deep/link');
+    assert.strictEqual(findHybridWindowByUrl('https://example.com/deep/link')!.windowId, f.id);
+  });
+
+  it('canonicalizes query-param ORDER — opens differing only in param order dedup (Mechanism 2)', () => {
+    const f = mk({ url: 'https://example.com/p?b=2&a=1' });
+    assert.strictEqual(findHybridWindowByUrl('https://example.com/p?a=1&b=2')!.windowId, f.id);
+  });
+
+  it('canonicalizes DEFAULT PORTS — :443/:80 dedup against the portless form (Mechanism 2)', () => {
+    const https = mk({ url: 'https://example.com/p' });
+    assert.strictEqual(findHybridWindowByUrl('https://example.com:443/p')!.windowId, https.id);
+    const http = mk({ url: 'http://plain.test/q' });
+    assert.strictEqual(findHybridWindowByUrl('http://plain.test:80/q')!.windowId, http.id);
+  });
+
+  it('does NOT dedup a non-default port (real distinction preserved)', () => {
+    mk({ url: 'https://example.com/p' });
+    assert.strictEqual(findHybridWindowByUrl('https://example.com:8443/p'), null);
   });
 
   it('returns null for a non-matching url', () => {
