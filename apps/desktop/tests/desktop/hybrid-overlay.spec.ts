@@ -1990,6 +1990,56 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
     expect(capAfterBecome).toBe(true);
   });
 
+  test('R6 (peek 71cfde09 item 7): a hybrid window becoming active while the app is INACTIVE must not reveal the chrome; become-active reveals it', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    // App frontmost with a first hybrid window active: the overlay is revealed.
+    await makeActive('data:text/html,<body>r6 first</body>');
+    const baseline = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return { appActive: b.appActiveState(), visible: b.overlayState()?.visible };
+    });
+    expect(baseline.appActive).toBe(true);
+    expect(baseline.visible).toBe(true);
+
+    // User switches to another app → resign-active hides the chrome.
+    const afterResign = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const ok = b.simAppResignActive();
+      return { ok, appActive: b.appActiveState(), visible: b.overlayState()?.visible };
+    });
+    expect(afterResign.ok).toBe(true);
+    expect(afterResign.appActive).toBe(false);
+    expect(afterResign.visible).toBe(false);
+
+    // The regression: a non-activating (type:'panel') peek is hotkey-opened WHILE
+    // the app is still inactive. It becomes the active hybrid window WITHOUT any
+    // did-become-active event, so retarget()→frameBounds() runs with appActive
+    // still false. frameBounds must position/size the chrome but MUST NOT reveal
+    // it — the bug floated the address bar/widgets over the foreground app here.
+    const whileInactive = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const w = b.makeFakeHybridWindow({ x: 300, y: 300, width: 640, height: 420 });
+      await b.loadFakeContent(w, 'data:text/html,<body>r6 peek while inactive</body>');
+      b.setActive(w);
+      return { appActive: b.appActiveState(), visible: b.overlayState()?.visible };
+    });
+    expect(whileInactive.appActive).toBe(false);
+    expect(whileInactive.visible).toBe(false);
+
+    // App becomes active again → the existing lifecycle transition
+    // (onAppBecomeActive → retarget → frameBounds with appActive=true) re-frames
+    // and reveals the chrome deterministically, no timer/poll involved.
+    const afterBecome = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const ok = b.simAppBecomeActive();
+      return { ok, appActive: b.appActiveState(), visible: b.overlayState()?.visible };
+    });
+    expect(afterBecome.ok).toBe(true);
+    expect(afterBecome.appActive).toBe(true);
+    expect(afterBecome.visible).toBe(true);
+  });
+
   test('hold-to-drag FSM: hold-then-move drags; pre-threshold move cancels (pure, manual clock)', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 

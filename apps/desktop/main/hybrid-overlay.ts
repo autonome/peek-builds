@@ -685,6 +685,19 @@ function frameBounds(content: { x: number; y: number; width: number; height: num
   // flicker on retarget).
   win.setBounds(bounds);
 
+  // R6 (peek 71cfde09 item 7): while the app is INACTIVE, position/size only —
+  // never reveal the chrome or float it over the foreground app. A non-activating
+  // (type:'panel') peek can become the active hybrid window without Electron ever
+  // firing did-become-active, so retarget()→frameBounds() runs with appActive
+  // still false. The resign handler (onAppResignActive) already dropped the
+  // floating level and hid the overlay; re-asserting always-on-top or calling
+  // showInactive() here would re-introduce the exact asymmetry that leaked the
+  // overlay over other apps. When the app later becomes active, onAppBecomeActive
+  // → retarget() → frameBounds() runs with appActive=true and reveals it via the
+  // existing lifecycle transition (no timer/poll needed). appActive is seeded
+  // true (incl. headless), so headless reveal tests are unaffected.
+  if (!appActive) return;
+
   // Raise above the content window WITHOUT taking focus. Toggling alwaysOnTop
   // re-asserts the floating level above any window that may have come forward.
   try {
