@@ -74,6 +74,15 @@
       "name": "extract entities",
       "description": "Extract entities from current page",
       "action": { "type": "execute" }
+    },
+    {
+      "name": "open entities",
+      "description": "Open the entity browser",
+      "action": {
+        "type": "window",
+        "url": "peek://entities/home.html",
+        "options": { "role": "workspace", "key": "entities-browser", "width": 900, "height": 700 }
+      }
     }
   ],
   "rules": [
