@@ -362,6 +362,54 @@ describe('RESULTS_OPEN transitions', () => {
     assert.equal(machine.getState(), States.EXECUTING);
   });
 
+  // Regression (peek item 5): after arrowing to a non-first command suggestion,
+  // Enter must act on the HIGHLIGHTED match (state.matchIndex), not on the first
+  // row or the raw typed text. The Enter target and the visual highlight share a
+  // single source of truth (state.matchIndex), so this locks that they agree.
+  it('RESULTS_OPEN + Enter after arrowing executes the highlighted match', () => {
+    machine.getMutableData().commands = {
+      tags: { name: 'tags' }, tag: { name: 'tag' }, settings: { name: 'settings' },
+    };
+    // Arrow down twice: matchIndex 0 -> 1 -> 2 ("settings"). The Enter target is
+    // state.matches[state.matchIndex], so this is the row Enter must act on.
+    machine.dispatch(Events.ARROW_DOWN);
+    machine.dispatch(Events.ARROW_DOWN);
+    assert.equal(machine.getData().matchIndex, 2);
+
+    machine._actionLog.length = 0;
+    machine.dispatch(Events.ENTER, { value: 'set', isURL: false, committed: true });
+
+    assert.equal(machine.getState(), States.EXECUTING);
+    assert.ok(machine._actionLog.includes('executeCommand'),
+      'executeCommand must run for the highlighted match');
+    // executeCommand (reading state.matches[state.matchIndex]) runs BEFORE
+    // clearInput in the ENTER action list, so it targets the arrowed row.
+    assert.ok(machine._actionLog.indexOf('executeCommand') < machine._actionLog.indexOf('clearInput'),
+      'executeCommand must run before clearInput resets matchIndex');
+  });
+
+  // Regression (peek item 5, guard-ordering): when the user has arrowed to an
+  // explicit command selection, a URL-ish typed string (payload.isURL === true,
+  // derived from the raw input rather than from matchIndex) must NOT preempt the
+  // selection. Before the fix the RESULTS_OPEN isURL guard fired ahead of the
+  // command-execute transition, opening the URL and IGNORING the highlighted row.
+  it('RESULTS_OPEN + Enter honors arrowed command over a URL-ish typed string', () => {
+    machine.getMutableData().commands = { tags: { name: 'tags' }, settings: { name: 'settings' } };
+    machine.getMutableData().matches = ['tags', 'settings'];
+    machine.getMutableData().matchIndex = 1; // arrowed to "settings"
+
+    machine._actionLog.length = 0;
+    // Typed text looks like a URL, so the panel would pass isURL: true.
+    machine.dispatch(Events.ENTER, { value: 'settings.io', isURL: true, committed: true });
+
+    assert.equal(machine.getState(), States.EXECUTING,
+      'arrowed command selection must execute, not open the typed URL');
+    assert.ok(machine._actionLog.includes('executeCommand'),
+      'executeCommand must run for the highlighted command');
+    assert.ok(!machine._actionLog.includes('openURL'),
+      'the typed-text isURL guard must NOT preempt an arrowed command selection');
+  });
+
   it('RESULTS_OPEN + Escape -> TYPING', () => {
     machine.dispatch(Events.ESCAPE);
     assert.equal(machine.getState(), States.TYPING);

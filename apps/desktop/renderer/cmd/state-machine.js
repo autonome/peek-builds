@@ -417,6 +417,18 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       [Events.ENTER]: [
         { guard: 'selectedIsUrlResult', target: States.CLOSING, actions: ['openSelectedUrlResult', 'clearInput', 'shutdown'] },
         {
+          // Explicit selected command match wins. Reaching RESULTS_OPEN means the
+          // user navigated the results list (ArrowDown), so the highlighted row
+          // (state.matchIndex) is an intentional selection — execute it. The
+          // typed-text URL heuristics below (hasUrlGhost / isURL) are derived from
+          // the raw input, NOT from matchIndex, so they must NOT preempt an arrowed
+          // command selection. (Regression: a URL-ish typed string opened the URL
+          // instead of the command the user had arrowed to and highlighted.)
+          guard: 'hasMatches',
+          target: States.EXECUTING,
+          actions: ['recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'hideResults', 'updateGhostText', 'updateResults'],
+        },
+        {
           guard: 'hasUrlGhost',
           target: States.CLOSING,
           actions: ['openUrlGhost', 'clearInput', 'shutdown'],
@@ -425,11 +437,6 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
           guard: 'isURL',
           target: States.CLOSING,
           actions: ['openURL', 'recordFrecency', 'clearInput', 'shutdown'],
-        },
-        {
-          // User committed — execute selected command
-          target: States.EXECUTING,
-          actions: ['recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'hideResults', 'updateGhostText', 'updateResults'],
         },
       ],
       [Events.CLICK_RESULT]: [
