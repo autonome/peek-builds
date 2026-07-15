@@ -2074,6 +2074,37 @@ function installTestBridge(): void {
       return true;
     },
     /**
+     * Emit ONE raw mouse `input-event` on a wired host's content WC in SCREEN
+     * coords — the same payload shape the native stream delivers (see
+     * `emitContentTopEdgeHover`, same technique). Sequence mouseDown →
+     * mouseMove… → mouseUp to drive a real edge/corner resize drag through
+     * `wireHybridContentEvents`' production handler (resizeDirAt → applyResize,
+     * and the resize-start maximize exit).
+     *
+     * Deliberately NOT `sendInputEvent`: the resize path reads globalX/globalY,
+     * and whether sendInputEvent echoes those back onto `input-event` is
+     * unestablished here (Electron's `InputEvent` payload type doesn't even
+     * declare them). The emit path is what the top-edge-hover bridge already
+     * proves out, so it's the known-good way to exercise this code.
+     *
+     * Only meaningful on a host built by `makeWiredHybridHost` — an unwired
+     * `makeFakeHybridWindow` host has no `input-event` listener to receive it.
+     */
+    emitContentMouse(id: number, type: string, globalX: number, globalY: number): boolean {
+      const entry = getHybridWindow(id);
+      if (!entry || entry.contentWC.isDestroyed() || entry.baseWin.isDestroyed()) return false;
+      try {
+        (entry.contentWC as unknown as { emit: (...a: unknown[]) => void }).emit(
+          'input-event',
+          {},
+          { type, button: 'left', globalX, globalY },
+        );
+      } catch {
+        return false;
+      }
+      return true;
+    },
+    /**
      * P1.4b-5: publish an entities response on the SAME topic the entities
      * feature would, so the overlay's Entities panel can be verified without the
      * real entities tile present. `url` MUST equal the active window's URL for
