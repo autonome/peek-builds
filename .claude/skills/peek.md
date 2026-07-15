@@ -168,8 +168,9 @@ intersection, so inventing one silently drops items out of the queue everyone
 reads.
 
 Topic tags are the opposite. **The server enforces no allowlist** — it checks
-namespace only (`server.js:131` `validateWriteTags` rejects foreign prefixes like
-`other:thing`; any `peek:*` string passes). Pick the tag that fits. But:
+namespace only (`apps/desktop/features/mcp-server/server.js` `validateWriteTags`
+rejects foreign prefixes like `other:thing`; any `peek:*` string passes). Pick
+the tag that fits. But:
 
 **Check `list_tags` before inventing one.**
 
