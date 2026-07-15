@@ -111,7 +111,8 @@ is per-request, never standing.
 When tests are green but user approval is pending, the orchestrator must:
 
 1. Tag the peek task `peek:needs-review` and untag `peek:todo` /
-   `peek:wip` (see the peek-tasks skill's controlled vocab).
+   `peek:wip`, clearing any `peek:ready` / `peek:triage` quality marker
+   (see the `peek` skill's tag model).
 2. Surface to the user, in one short message:
    - The commit IDs landed on main
    - The diff stat (`jj diff --stat -r 'main..@'` or per-commit)

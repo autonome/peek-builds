@@ -116,3 +116,120 @@ The MCP server is a child process spawned by Claude Code; env vars are frozen at
      auto-managed by peek-mcp-init and refreshed on every re-run.
      Anything below this line survives. Add tag vocabulary, scope-narrowing
      patterns, or any other project-only conventions here. -->
+
+Everything above is the generic Peek model, shared by every project that runs
+peek-mcp-init. Below is this repo's own convention layer. This is the only file
+that teaches Peek task handling for mpeek — if you're about to write a second
+one, don't.
+
+### One more status: `peek:blocked`
+
+Extends the status table above. Can't proceed — waiting on something external.
+Blocked is not a parking lot; use `peek:future` for "not now, not no".
+
+### Quality markers — additive to `peek:todo`
+
+Every item in the active queue carries exactly one:
+
+| Tag | Meaning |
+|---|---|
+| `peek:ready` | Scoped and pick-up-able. A concrete bug with a repro or symptom, or a small feature with known target behavior. |
+| `peek:triage` | Needs a scoping conversation before work can start. Vague ideas, big features without scope, exploratory questions. |
+
+The intersection is the actionable queue — this is the query you usually want:
+
+```js
+mcp__peek__list_items({ tags: ['peek:todo', 'peek:ready'] })
+```
+
+Rule of thumb: if you can write a clear "done looks like…" in the content, it's
+`peek:ready`. If the body is "explore X" or a one-phrase musing, it's
+`peek:triage`.
+
+When a task leaves `peek:todo`, clear its quality marker in the same breath —
+don't strand `peek:ready` on a done item.
+
+### Scope tags — which app does this touch?
+
+| Tag | When |
+|---|---|
+| `peek:scope:desktop` | Only `apps/desktop` |
+| `peek:scope:mobile` | Only `apps/mobile` |
+| `peek:scope:server` | Only `apps/server` |
+| `peek:scope:extension` | Only `apps/extension` |
+| `peek:scope:cross` | Explicitly touches multiple apps or `packages/` |
+
+Omit when you don't know — an unscoped item is a triage-pass job. Don't guess.
+
+### Topic tags are OPEN — statuses are not
+
+Statuses and quality markers are a closed set: queries depend on the exact
+intersection, so inventing one silently drops items out of the queue everyone
+reads.
+
+Topic tags are the opposite. **The server enforces no allowlist** — it checks
+namespace only (`server.js:131` `validateWriteTags` rejects foreign prefixes like
+`other:thing`; any `peek:*` string passes). Pick the tag that fits. But:
+
+**Check `list_tags` before inventing one.**
+
+```js
+mcp__peek__list_tags({ search: 'peek:' })
+```
+
+Reuse beats coining. This repo already carries `peek:test`, `peek:test-coverage`,
+and `peek:test-failure` — three tags for one idea, each created by an agent who
+didn't look first.
+
+In use today, as a starting point rather than a fence: `peek:bug`,
+`peek:regression`, `peek:feature`, `peek:perf`, `peek:security`, `peek:design`,
+`peek:docs`, `peek:meta`, `peek:tooling`, `peek:daily-use`, `peek:foundation`,
+`peek:test-coverage`, `peek:tile-arch`, `peek:cmd`, `peek:editor`,
+`peek:chrome-extensions`, `peek:extensions`, `peek:atproto`, `peek:desktop`,
+`peek:mobile`, `peek:tauri`.
+
+`peek:deferred` is retired. If you'd reach for it, the honest move is
+`peek:wontfix` (we're not doing this) or `peek:triage` (the path needs deciding).
+
+### `peek:needs-review` — agent done, user approval pending
+
+Work shipped (commits landed on `main` via the chokepoint scripts, suite green)
+but NOT yet `peek:done`. Tests and LLM review are necessary, not sufficient — the
+user is the final gate. Move the item to `peek:needs-review`, surface the diff and
+the test result, and let their approval flip it to `peek:done`. See the
+`/agent-review` skill.
+
+### Starred tracking items
+
+A `META:`-prefixed, `peek:starred` item aggregates high-signal findings — a
+reference for deciding what to work on next.
+
+```js
+mcp__peek__list_items({ tags: ['peek:starred'] })
+```
+
+Scan these when the user asks open-endedly what to work on. When they name a
+specific task, just do it — don't fetch these, don't redirect. If a finding bears
+on their task, one line, then move on.
+
+### Open a task in Peek for collaborative editing
+
+The MCP server is a standalone Node subprocess talking to `datastore.sqlite`
+directly — it cannot publish pubsub events to a running Peek desktop app, so it
+can't open anything. Hand off through the cmd panel instead:
+
+1. Resolve the item and get its id.
+2. Tell the user to hit cmd (default `Option+Space`) and type
+   `edit <title-fragment>` — that routes through `edit` in
+   `app/cmd/commands/edit.js`, which publishes `editor:open { itemId }`.
+3. They type in Peek; you read with `get_item` and write with `update_item`. The
+   editor reloads on `editor:changed`.
+
+### Don'ts
+
+- **Don't read or write `docs/tasks.md`** — it's a one-line legacy pointer at this
+  queue. Treat it as read-only.
+- **Don't create duplicates.** Search before `create_item`:
+  `search_items({ query: '<keywords>', tags: ['peek:todo'] })`.
+- **Don't echo created or updated content** back in chat unless asked. Acknowledge
+  with the title.
