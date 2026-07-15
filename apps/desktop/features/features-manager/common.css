@@ -221,6 +221,17 @@ body {
   text-overflow: ellipsis;
 }
 
+/* Manifest description — one line under the name, clipped rather than
+ * wrapped so cards stay a uniform height in the list. */
+.feature-description {
+  font-size: var(--peek-font-xs);
+  color: var(--theme-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
 .feature-meta {
   display: flex;
   align-items: center;
@@ -231,6 +242,31 @@ body {
 .feature-version {
   font-size: var(--peek-font-xs);
   color: var(--theme-text-secondary);
+}
+
+.feature-author {
+  font-size: var(--peek-font-xs);
+  color: var(--theme-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 22ch;
+}
+
+/* Install path — non-builtins only. Monospace so a long path stays
+ * scannable; clipped from the left so the leaf directory (the feature's
+ * own dir, the useful part) stays visible. */
+.feature-path {
+  font-size: 10px;
+  font-family: var(--peek-font-mono, ui-monospace, monospace);
+  color: var(--theme-text-tertiary, var(--theme-text-secondary));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  margin-top: 2px;
+  opacity: 0.8;
 }
 
 /* ========== Source / status badges ========== */

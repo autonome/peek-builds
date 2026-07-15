@@ -135,6 +135,8 @@ import { checkContextAllowed } from './tile-context-enforcement.js';
 import { checkDialogAllowed } from './tile-dialogs-enforcement.js';
 import { checkWindowAllowed } from './tile-window-enforcement.js';
 import { checkFeaturesAllowed, sourceTypeAllowed } from './tile-features-enforcement.js';
+import * as manifestCache from './manifest-cache.js';
+import { enrichFeatureEntries } from './feature-list-entries.js';
 import { checkSettingsForeignAllowed } from './tile-settings-foreign-enforcement.js';
 import { checkOAuthAllowed } from './tile-oauth-enforcement.js';
 import { checkSyncAllowed } from './tile-sync-enforcement.js';
@@ -1237,7 +1239,32 @@ export function registerTileIpcHandlers(): void {
 
     // Apply per-entry source allowlist filtering. No-op when the
     // capability omits `sources` (allowed = true for all).
-    const entries = base.filter(e => sourceTypeAllowed(grant, e.source.type));
+    const visible = base.filter(e => sourceTypeAllowed(grant, e.source.type));
+
+    // Join the manifest cache on top. The registry alone carries no
+    // description and no command declarations, which used to force the
+    // Features Manager into a settings-schema round-trip PER FEATURE —
+    // each one a sync readFileSync + full manifest validation on the
+    // main thread, ~34 of them, to return null for the ~24 features
+    // that declare no schema. `manifestCache.list()` is one SQLite
+    // query for the same facts, already kept in step with every
+    // install / uninstall / disable by feature-startup's registry
+    // listener.
+    //
+    // includeDisabled: the manager lists disabled features too, and a
+    // disabled feature still needs its description to render.
+    //
+    // Cache failure degrades to the un-enriched registry entries rather
+    // than failing the list — this handler is the manager's only data
+    // source, and a feature with an unreadable manifest must stay
+    // listable (and therefore removable).
+    let rows: manifestCache.ManifestCacheRow[] = [];
+    try {
+      rows = manifestCache.list({ includeDisabled: true });
+    } catch (err) {
+      DEBUG && console.warn('[tile:features:list] manifest-cache unavailable:', err);
+    }
+    const entries = enrichFeatureEntries(visible, rows);
     return { entries };
   });
 

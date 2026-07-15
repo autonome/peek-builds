@@ -10,10 +10,15 @@
  * Reads: consumed by cmd panel (static command surface), shortcut
  * registry, lazyEvents interceptor, Features pane listing.
  *
- * Not yet wired — this module ships as Phase A scaffolding. Phase B
- * routes the installer + boot-discovery through here. Phase C switches
- * the cmd panel / shortcut registrar / lazyEvents to read from here
- * instead of listening for tile publishes.
+ * Wired at boot. `feature-startup.ts` `initializeFeatures()` seeds the
+ * table by walking the loaded registry, and registers a
+ * `FeatureRegistryListener` so every subsequent install / uninstall /
+ * disable keeps it in step (see the closing note at the bottom of this
+ * file). Consumers today: `feature-startup` itself (FSM tile
+ * enumeration + rules reconcile) and the `tile:features:list` handler
+ * in `tile-ipc.ts`, which joins these rows onto the registry entries so
+ * the Features Manager gets each feature's description and declared
+ * commands without a per-feature manifest re-parse.
  *
  * Desktop-only (better-sqlite3 is main-process). Authoritative state
  * lives here; renderer-side consumers get snapshots via strict

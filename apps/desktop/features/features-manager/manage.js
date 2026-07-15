@@ -395,19 +395,11 @@ async function loadFeatures() {
       merged.push(entry);
     }
 
-    // Fetch each feature's settings-schema JSON in parallel so the
-    // per-feature Options affordance can render. The registry's flat
-    // entry shape doesn't carry the schema, so without this round-trip the
-    // Options gate is always false and config never appears.
-    const schemaResults = await Promise.all(
-      merged.map(entry =>
-        api.features.settingsSchema(entry.id)
-          .then(r => (r?.success ? r.data : null))
-          .catch(() => null)
-      )
-    );
-    merged.forEach((entry, i) => { entry.settingsSchema = schemaResults[i]; });
-
+    // No per-feature enrichment pass here: tile:features:list already
+    // returns each entry joined against the manifest cache (description,
+    // commands, openCommand, and the declared settingsSchema PATH). The
+    // schema CONTENTS are still a disk read, so they stay lazy — fetched
+    // once, on Options expand, for the one feature the user opened.
     features = merged;
     render();
     updateLastCheckedFooter();
@@ -514,6 +506,16 @@ function createFeatureCard(feature) {
   name.textContent = feature.name;
   info.appendChild(name);
 
+  // Description — comes free with the manifest-cache join on
+  // tile:features:list. Features whose manifest failed to parse have no
+  // cached row and simply render without one.
+  if (feature.description) {
+    const description = document.createElement('div');
+    description.className = 'feature-description';
+    description.textContent = feature.description;
+    info.appendChild(description);
+  }
+
   const meta = document.createElement('div');
   meta.className = 'feature-meta';
 
@@ -534,6 +536,17 @@ function createFeatureCard(feature) {
   statusBadge.textContent = isDisabled ? 'Disabled' : 'Active';
   meta.appendChild(statusBadge);
 
+  // Author / publisher — registry `source` metadata, live on every
+  // entry today. atproto features carry a resolved handle in
+  // publisherName and fall back to the raw DID.
+  const author = feature.source?.publisherName || feature.source?.publisher;
+  if (author) {
+    const authorEl = document.createElement('span');
+    authorEl.className = 'feature-author';
+    authorEl.textContent = author;
+    meta.appendChild(authorEl);
+  }
+
   // Update available badge
   if (feature.availableVersion) {
     const updateBadge = document.createElement('span');
@@ -543,6 +556,17 @@ function createFeatureCard(feature) {
   }
 
   info.appendChild(meta);
+
+  // Install path — only meaningful for features that live outside the
+  // app bundle. Builtins all sit under the app's own features/ dir, so
+  // showing it there is noise.
+  if (!isBuiltin && feature.path) {
+    const pathEl = document.createElement('div');
+    pathEl.className = 'feature-path';
+    pathEl.textContent = feature.path;
+    pathEl.title = feature.path;
+    info.appendChild(pathEl);
+  }
 
   // Update policy selector (only for atproto-sourced features)
   if (sourceType === 'atproto') {
@@ -583,6 +607,48 @@ function createFeatureCard(feature) {
   // Actions — ALWAYS visible
   const actions = document.createElement('div');
   actions.className = 'feature-actions';
+
+  // Open — for features whose manifest declares a window to open.
+  // `openCommand` is resolved in the main process (feature-list-entries.ts
+  // pickOpenCommand) from the manifest cache, so exactly one Open button
+  // renders per feature even when several window commands are declared,
+  // and the rule lives in one place instead of being re-derived here.
+  //
+  // Opens via api.window.open rather than publishing `cmd:execute:<name>`:
+  // the cmd path only reaches a feature that tile-lazy has in its lazy
+  // registry (findTileByCommand walks lazyTileRegistry alone), so for a
+  // non-lazy feature the publish is fire-and-forget into nothing. The
+  // manifest's own action.options carry the key/size/title, so the window
+  // matches what the command palette would have produced.
+  //
+  // Suppressed while disabled — a disabled feature shouldn't be launchable
+  // (api.window.open would happily open it anyway).
+  if (feature.openCommand && !isDisabled) {
+    const openBtn = document.createElement('peek-button');
+    openBtn.size = 'sm';
+    openBtn.variant = 'primary';
+    openBtn.className = 'feature-open-btn';
+    openBtn.textContent = 'Open';
+    openBtn.title = `Open ${feature.name}`;
+    openBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        const result = await api.window.open(
+          feature.openCommand.url,
+          feature.openCommand.options || {},
+        );
+        if (result && result.error) {
+          showStatus(result.error, 'error');
+          setTimeout(hideStatus, 3000);
+        }
+      } catch (err) {
+        console.error('[features-manager] open error:', err);
+        showStatus(`Open failed: ${err.message}`, 'error');
+        setTimeout(hideStatus, 3000);
+      }
+    });
+    actions.appendChild(openBtn);
+  }
 
   // Update button (if update available)
   if (feature.availableVersion) {
@@ -663,31 +729,42 @@ function createFeatureCard(feature) {
   });
   actions.appendChild(openDevtoolsBtn);
 
-  // Dev-specific actions
+  // Reload — every feature, not just dev-source ones. Reloading a
+  // running tile is a general observability/recovery affordance, and
+  // api.features.devReload already degrades gracefully ("no active
+  // tiles") when nothing is running.
+  //
+  // History: c0276cc0's message claimed Reload "is shown unconditionally
+  // now rather than running-only", but the code kept an `if (ext.isRunning)`
+  // gate over a hardcoded `isRunning: false` — so it rendered for exactly
+  // zero features. It later moved under the isDev block, which rendered it
+  // for dev features only. It is now genuinely unconditional.
+  const reloadBtn = document.createElement('peek-button');
+  reloadBtn.size = 'sm';
+  reloadBtn.className = 'feature-reload-btn';
+  reloadBtn.textContent = 'Reload';
+  reloadBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    reloadBtn.textContent = 'Reloading...';
+    reloadBtn.disabled = true;
+    try {
+      // Strict path — gated on `features.dev` capability.
+      const result = await api.features.devReload(feature.id);
+      reloadBtn.textContent = result.error ? 'Error' : 'Reloaded';
+      if (result.error) console.error('[features-manager] reload error:', result.error);
+      setTimeout(() => { reloadBtn.textContent = 'Reload'; reloadBtn.disabled = false; }, 1500);
+    } catch (err) {
+      console.error('[features-manager] reload error:', err);
+      reloadBtn.textContent = 'Reload';
+      reloadBtn.disabled = false;
+    }
+  });
+  actions.appendChild(reloadBtn);
+
+  // Dev-specific actions — Validate / Publish stay dev-gated.
   if (isDev) {
     const devActions = document.createElement('div');
     devActions.className = 'feature-dev-actions';
-
-    const reloadBtn = document.createElement('peek-button');
-    reloadBtn.size = 'sm';
-    reloadBtn.textContent = 'Reload';
-    reloadBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      reloadBtn.textContent = 'Reloading...';
-      reloadBtn.disabled = true;
-      try {
-        // Strict path — gated on `features.dev` capability.
-        const result = await api.features.devReload(feature.id);
-        reloadBtn.textContent = result.error ? 'Error' : 'Reloaded';
-        if (result.error) console.error('[features-manager] reload error:', result.error);
-        setTimeout(() => { reloadBtn.textContent = 'Reload'; reloadBtn.disabled = false; }, 1500);
-      } catch (err) {
-        console.error('[features-manager] reload error:', err);
-        reloadBtn.textContent = 'Reload';
-        reloadBtn.disabled = false;
-      }
-    });
-    devActions.appendChild(reloadBtn);
 
     const validateBtn = document.createElement('peek-button');
     validateBtn.size = 'sm';
@@ -744,11 +821,14 @@ function createFeatureCard(feature) {
     row.appendChild(devActions);
   }
 
-  // Options affordance — only for features that declare a settings schema
-  // (prefs or items). Lazy-renders the per-feature config on first expand.
-  const schema = feature.settingsSchema;
-  const hasOptions = !!(schema && (schema.prefs || schema.item));
-  if (hasOptions) {
+  // Options affordance — rendered for features whose MANIFEST declares a
+  // settingsSchema. `feature.settingsSchema` is the declared relative PATH,
+  // carried by the manifest-cache join on tile:features:list, so gating the
+  // toggle costs no disk read. The schema CONTENTS are fetched on first
+  // expand — one call, only for the feature the user actually opened
+  // (this used to be a readFileSync + full manifest validation per feature
+  // on every list render).
+  if (feature.settingsSchema) {
     const optionsPanel = document.createElement('div');
     optionsPanel.className = 'feature-options-panel';
     optionsPanel.style.display = 'none';
@@ -772,6 +852,22 @@ function createFeatureCard(feature) {
       if (!optionsLoaded) {
         optionsLoaded = true;
         try {
+          // Lazy schema fetch — the manifest cache holds the schema's path,
+          // not its contents, so this is the one disk read left and it only
+          // happens on expand.
+          const schemaResult = await api.features.settingsSchema(feature.id);
+          const schema = schemaResult?.success ? schemaResult.data : null;
+          if (!schema || !(schema.prefs || schema.item)) {
+            // The manifest declared a schema path but it yielded nothing
+            // usable (missing file, or no prefs/item sections).
+            const noneMsg = document.createElement('div');
+            noneMsg.className = 'help-text feature-options-error';
+            noneMsg.textContent = schemaResult?.error
+              ? 'Failed to load options: ' + schemaResult.error
+              : 'This feature declares no options.';
+            optionsPanel.appendChild(noneMsg);
+            return;
+          }
           const featureForOptions = {
             id: feature.id,
             shortname: feature.id,
