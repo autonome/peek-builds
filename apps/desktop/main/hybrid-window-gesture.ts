@@ -19,8 +19,15 @@
  *              directly would desync it.
  *   detent 3 → toggle fullscreen — `BaseWindow.setFullScreen` (main owns the host).
  *
- * Deterministic, no timers: it rides Chromium's native multi-click counter rather
- * than debouncing double-vs-triple itself (fsm-pilled). A triple-click therefore
+ * Detent detection rides Chromium's native multi-click counter (`MouseEvent.detail`)
+ * rather than debouncing double-vs-triple itself (fsm-pilled) — that IS the OS's
+ * own double-click-interval timer, inherited rather than hand-rolled here, and it
+ * discriminates double-vs-triple cleanly. What it does NOT discriminate is
+ * click-vs-drag: a click-drag's terminating click can inherit detail===2 from a
+ * prior click within the OS interval even though the pointer moved. That second
+ * axis is covered separately and deterministically — see GESTURE_DRAG_SLOP_PX
+ * below, which suppresses the gesture on measured pointer travel instead of
+ * adding a second timer. A triple-click therefore
  * fires detent 2 THEN detent 3 within the same native sequence: on the way IN it
  * maximizes (detent 2) then goes fullscreen (detent 3). A triple-click is a clean
  * TOGGLE, though — on the way OUT it restores the pre-gesture bounds rather than
@@ -51,8 +58,28 @@ const requireElectron = createRequire(import.meta.url);
 
 export type WindowGestureAction = 'toggle-maximize' | 'toggle-fullscreen' | null;
 
-/** Pure: map a native click detent to the window action it triggers. */
-export function windowGestureAction(detent: unknown): WindowGestureAction {
+// Pointer-jitter tolerance in CSS px between the mousedown that produced a click
+// and the click itself, matching the JITTER_TOLERANCE convention in
+// renderer/page/overlay.js. Travel beyond this means the click's press-to-release
+// was a drag, not a stationary multi-click — see module header.
+export const GESTURE_DRAG_SLOP_PX = 5;
+
+/** Coerce a possibly-malformed travel value to a finite number, defaulting to 0. */
+function coerceTravel(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * Pure: map a native click detent to the window action it triggers, suppressing
+ * BOTH detents when the click's press-to-release pointer travel exceeds
+ * GESTURE_DRAG_SLOP_PX (a click-drag, not a stationary multi-click).
+ */
+export function windowGestureAction(
+  detent: unknown,
+  dragDx: unknown = 0,
+  dragDy: unknown = 0,
+): WindowGestureAction {
+  if (Math.hypot(coerceTravel(dragDx), coerceTravel(dragDy)) > GESTURE_DRAG_SLOP_PX) return null;
   if (detent === 2) return 'toggle-maximize';
   if (detent === 3) return 'toggle-fullscreen';
   return null;
@@ -69,8 +96,8 @@ export function initHybridWindowGestureHandling(): void {
   registered = true;
   const { ipcMain } = requireElectron('electron') as typeof import('electron');
   ipcMain.on('page:content-window-gesture', (event, payload: unknown) => {
-    const detent = (payload as { detent?: unknown } | null)?.detent;
-    handleContentWindowGesture(event.sender, detent);
+    const p = payload as { detent?: unknown; dragDx?: unknown; dragDy?: unknown } | null;
+    handleContentWindowGesture(event.sender, p?.detent, p?.dragDx, p?.dragDy);
   });
 }
 
@@ -79,8 +106,13 @@ export function initHybridWindowGestureHandling(): void {
  * host BaseWindow. Exported for the unit test (a real content WC is unavailable to
  * node-side tests, so the test seeds the registry and drives this directly).
  */
-export function handleContentWindowGesture(sender: WebContents, detent: unknown): void {
-  const action = windowGestureAction(detent);
+export function handleContentWindowGesture(
+  sender: WebContents,
+  detent: unknown,
+  dragDx: unknown = 0,
+  dragDy: unknown = 0,
+): void {
+  const action = windowGestureAction(detent, dragDx, dragDy);
   if (!action) return;
   const entry = getHybridWindowByContentWC(sender);
   if (!entry || entry.baseWin.isDestroyed()) return;

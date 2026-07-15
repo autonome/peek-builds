@@ -141,10 +141,41 @@ function _peekGestureSuppressed(e) {
   return false;
 }
 
+// Track the press point of the most recent mousedown so the terminating click can
+// measure how far the pointer travelled. `detail===2/3` alone can't tell a
+// stationary double/triple-click from a click-drag: a click-drag's terminating
+// click still inherits detail===2 if its press landed within Chromium's native
+// double-click interval of a prior click, even though the pointer moved between
+// press and release. Travel is the deterministic discriminator (main-side
+// windowGestureAction, hybrid-window-gesture.ts). Captured on EVERY mousedown so
+// the click's own press is always the last value recorded, and consumed by the
+// click that follows it (see below).
+let _peekDownX = null;
+let _peekDownY = null;
+document.addEventListener('mousedown', function (e) {
+  _peekDownX = e.clientX;
+  _peekDownY = e.clientY;
+}, true);
+
 document.addEventListener('click', function (e) {
+  // Read AND clear: a press point belongs to exactly one click. A click that
+  // arrives without a mousedown of its own — a page calling .click(), any
+  // synthesized MouseEvent — must not inherit the PREVIOUS click's press and get
+  // misread as a drag. With no press to compare against it counts as stationary,
+  // which is what this handler did before travel was measured at all. Consumed
+  // before the detent/suppression returns below so every click clears it, not
+  // just the ones that reach the send.
+  const downX = _peekDownX;
+  const downY = _peekDownY;
+  _peekDownX = null;
+  _peekDownY = null;
+
   const detent = e.detail; // native multi-click count: 2 = double, 3 = triple
   if (detent !== 2 && detent !== 3) return;
   if (_peekGestureSuppressed(e)) return;
+  // Press-to-release travel; no press seen means treat as no movement.
+  const dragDx = downX === null ? 0 : e.clientX - downX;
+  const dragDy = downY === null ? 0 : e.clientY - downY;
   // A dead-space multi-click that reaches here may still have left Chromium's
   // incidental nearest-word selection behind; clear it so the maximize /
   // fullscreen gesture doesn't leave a stray highlight on the page.
@@ -152,7 +183,7 @@ document.addEventListener('click', function (e) {
     const sel = window.getSelection && window.getSelection();
     if (sel && !sel.isCollapsed) sel.removeAllRanges();
   } catch (_) { /* getSelection unavailable */ }
-  try { ipcRenderer.send(IPC_CONTENT_WINDOW_GESTURE, { detent }); } catch (_) { /* no main */ }
+  try { ipcRenderer.send(IPC_CONTENT_WINDOW_GESTURE, { detent, dragDx, dragDy }); } catch (_) { /* no main */ }
 }, true);
 
 // === First composited-frame signal (session-restore z-order fidelity) =========

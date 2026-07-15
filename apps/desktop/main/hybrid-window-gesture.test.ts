@@ -51,3 +51,53 @@ describe('windowGestureAction (native click detent → window action)', () => {
     assert.strictEqual(windowGestureAction('3'), null);
   });
 });
+
+describe('windowGestureAction drag suppression (press-to-release travel vs GESTURE_DRAG_SLOP_PX)', () => {
+  it('stationary detent 2 (no travel) → toggle-maximize', () => {
+    assert.strictEqual(windowGestureAction(2, 0, 0), 'toggle-maximize');
+  });
+
+  it('stationary detent 3 (no travel) → toggle-fullscreen', () => {
+    assert.strictEqual(windowGestureAction(3, 0, 0), 'toggle-fullscreen');
+  });
+
+  it('detent 2 dragged well past slop on X → null (click-drag, not a gesture)', () => {
+    assert.strictEqual(windowGestureAction(2, 40, 0), null);
+  });
+
+  it('detent 2 dragged well past slop on Y → null (click-drag, not a gesture)', () => {
+    assert.strictEqual(windowGestureAction(2, 0, 40), null);
+  });
+
+  it('detent 3 dragged well past slop → null (click-drag, not a gesture)', () => {
+    assert.strictEqual(windowGestureAction(3, 0, 30), null);
+  });
+
+  it('travel within slop (hypot ~4.24 < 5) → toggle-maximize', () => {
+    assert.strictEqual(windowGestureAction(2, 3, 3), 'toggle-maximize');
+  });
+
+  it('travel just past slop (hypot ~5.66 > 5) → null', () => {
+    assert.strictEqual(windowGestureAction(2, 4, 4), null);
+  });
+
+  it('negative travel counts as travel → null', () => {
+    assert.strictEqual(windowGestureAction(2, -40, 0), null);
+  });
+
+  it('missing travel args treated as stationary → toggle-maximize', () => {
+    assert.strictEqual(windowGestureAction(2), 'toggle-maximize');
+  });
+
+  it('undefined travel treated as stationary → toggle-maximize', () => {
+    assert.strictEqual(windowGestureAction(2, undefined, undefined), 'toggle-maximize');
+  });
+
+  it('NaN travel treated as stationary → toggle-maximize', () => {
+    assert.strictEqual(windowGestureAction(2, NaN, NaN), 'toggle-maximize');
+  });
+
+  it('non-number travel (string/null) treated as stationary → toggle-maximize', () => {
+    assert.strictEqual(windowGestureAction(2, 'x', null), 'toggle-maximize');
+  });
+});

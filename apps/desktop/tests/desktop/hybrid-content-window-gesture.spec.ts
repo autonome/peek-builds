@@ -134,6 +134,32 @@ function selectThenDoubleClickSrc(selSel: string, where: 'on-selection' | string
   })()`;
 }
 
+// A double-click whose SECOND press lands `dx`/`dy` away from where the
+// preceding click's release fires — i.e. the terminating click is really a
+// click-drag, not a stationary double-click, even though it still carries
+// `detail:2` (Chromium's native multi-click counter doesn't reset on pointer
+// travel, only on time/distance from the PREVIOUS click). Dispatches a real
+// `mousedown` at the offset point (so the content-side listener records it as
+// `_peekDownX/_peekDownY`), then the terminating `click` at the ORIGINAL center
+// — mirroring a real click-drag's press-far/release-near shape. Used to prove
+// the drag-slop guard suppresses the gesture (peek 63cb6ba6).
+function dispatchDraggedDoubleClickAtCenterSrc(sel: string, dx: number, dy: number): string {
+  return `(function () {
+    try { window.getSelection().removeAllRanges(); } catch (_) {}
+    var el = document.querySelector(${JSON.stringify(sel)});
+    if (!el) return { fired: false };
+    var r = el.getBoundingClientRect();
+    var x = r.left + r.width / 2, y = r.top + r.height / 2;
+    el.dispatchEvent(new MouseEvent('mousedown', {
+      bubbles: true, composed: true, cancelable: true, clientX: x + ${dx}, clientY: y + ${dy},
+    }));
+    el.dispatchEvent(new MouseEvent('click', {
+      detail: 2, bubbles: true, composed: true, cancelable: true, clientX: x, clientY: y,
+    }));
+    return { fired: true };
+  })()`;
+}
+
 test.describe('Hybrid content window gesture @desktop', () => {
   let app: DesktopApp;
   let bgWindow: Page;
@@ -328,6 +354,33 @@ test.describe('Hybrid content window gesture @desktop', () => {
     const res = await runInContent(wcId, selectThenDoubleClickSrc('#para', 'on-selection'));
     expect(res.selected).toBe(true);
 
+    await runInContent(wcId, dispatchDoubleClickAtCenterSrc('#dead', true));
+
+    await expect.poll(() => hostBoundsOf(id)).toEqual(workArea);
+  });
+
+  test('a double-click whose second press drags past slop does NOT maximize (click-drag suppressed)', async () => {
+    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
+
+    // The reported regression (peek 63cb6ba6): a click-drag that lands within
+    // Chromium's native double-click interval of a prior click still carries
+    // `detail:2` on its terminating click, even though the pointer moved between
+    // press and release — the old detail-only gate wrongly toggled maximize.
+    // Drag well past GESTURE_DRAG_SLOP_PX (5px) on both axes.
+    const { id, wcId } = await openGestureWindow();
+    const workArea = await workAreaOf(id);
+    const before = await hostBoundsOf(id);
+    expect(before).not.toEqual(workArea);
+
+    // Parity proof (sleep-free), same shape as the interactive-target cases: the
+    // dragged double-click MUST be suppressed, then a known-good dead-space click
+    // fires the one effective gesture. If the drag had (wrongly) fired too, two
+    // toggles land and the window ends back at `before`, failing the poll below.
+    // The second dispatch is a BARE click (no mousedown, like every other helper
+    // here), so it reads no press point and counts as stationary — the preload
+    // consumes the press on each click precisely so it can't inherit the dragged
+    // press above and get suppressed too.
+    await runInContent(wcId, dispatchDraggedDoubleClickAtCenterSrc('#dead', 40, 40));
     await runInContent(wcId, dispatchDoubleClickAtCenterSrc('#dead', true));
 
     await expect.poll(() => hostBoundsOf(id)).toEqual(workArea);
