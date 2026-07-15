@@ -125,14 +125,19 @@ test.describe('Download Navigation @desktop', () => {
   // WebContentsView in a BaseWindow, so there is no in-window webview to drive.
   //
   // The product cleanup gap is now FIXED: the will-download handler in
-  // main/session-partition.ts no longer dead-ends on a hybrid content WC. After
-  // `windowFromWebContents(wc)` returns null (it only knows BrowserWindows, not
-  // a BaseWindow-hosted WebContentsView whose getType() is 'browserView'), it
-  // falls back to the hybrid registry's `getHybridWindowByContentWC(wc)` and
-  // closes the resolved host. So a `target=_blank` download that routes (via the
-  // hybrid setWindowOpenHandler) into a NEW hybrid page-host no longer leaves
-  // that host orphaned. That reverse lookup is covered by a focused unit test in
+  // main/session-partition.ts asks the hybrid registry FIRST
+  // (`getHybridWindowByContentWC(wc)`) and only falls through to the
+  // BrowserWindow branch for a non-hybrid WC. A never-painted host (a
+  // `target=_blank` download popup routed into a NEW hybrid page-host) is closed;
+  // a painted one (a real page being browsed) is left alone. Precedence + the
+  // paint guard are covered by `downloadCloseTarget` unit tests in
+  // main/izui-roles.test.ts, the reverse lookup by
   // main/hybrid-page-host-registry.test.ts.
+  //
+  // NB: an earlier version of this comment claimed `windowFromWebContents(wc)`
+  // returns null for hybrid content "because it only knows BrowserWindows". That
+  // is FALSE — it returns the owning BaseWindow — and believing it produced the
+  // alt+click bug (peek 02e0a4fa).
   //
   // The describe nonetheless stays SKIPPED for a NARROWER, harness-only reason:
   // the shared hybrid test bridge (`makeFakeHybridWindow` / `makeWiredHybrid`)

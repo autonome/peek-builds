@@ -29,7 +29,7 @@ import {
   getAllHybridWindows,
   getHybridContentWC,
   getHybridWindow,
-  resolveHybridDownloadHostToClose,
+  getHybridWindowByContentWC,
   onActiveHybridWindowChange,
   registerHybridWindow,
   setOverlayFocusProvider,
@@ -580,37 +580,28 @@ describe('hybrid-page-host-registry: first-paint (loading card gate)', () => {
   });
 });
 
-// ── Download-trigger host cleanup (peek a060a75f) ────────────────────────────
-// A download that fires from a hybrid content WC must close the host ONLY when
-// that host was a throwaway popup opened for the download itself — never when
-// the user triggered the download from a real page they were browsing. The
-// discriminator is the load-paint FSM flag, read at will-download time.
-describe('hybrid-page-host-registry: download-trigger host cleanup', () => {
+// ── Content-WC reverse lookup (the will-download "is this hybrid?" test) ─────
+// The will-download cleanup asks this registry whether a download's WC is hybrid
+// content, then feeds that + the paint flag to `downloadCloseTarget` (pure; see
+// izui-roles.test.ts) to decide what closes. This registry only has to answer the
+// lookup honestly — including saying "no live host" for orphan/destroyed cases.
+describe('hybrid-page-host-registry: content-WC reverse lookup', () => {
   beforeEach(() => {
     _resetForTests();
     nextId = 1;
   });
 
-  it('returns the host for a FRESH (never-painted) download-only popup → close it', () => {
+  it('resolves the owning hybrid entry for a registered content WC', () => {
     const f = mk({ url: 'https://dl.example/file.bin' });
-    const host = resolveHybridDownloadHostToClose(f.wc as unknown as WebContents);
-    assert.ok(host, 'a never-painted download popup should be resolved for closing');
+    const host = getHybridWindowByContentWC(f.wc as unknown as WebContents);
+    assert.ok(host, 'a live hybrid content WC should resolve to its host');
     assert.strictEqual(host!.windowId, f.id);
-  });
-
-  it('returns null for a host already showing a real page (painted) → keep it open', () => {
-    // The Fastmail repro: the user is browsing a real page and clicks a download
-    // link. The host has painted, so it must NOT be closed.
-    const f = mk({ url: 'https://www.fastmail.com/mail/' });
-    markHybridPainted(f.id);
-    const host = resolveHybridDownloadHostToClose(f.wc as unknown as WebContents);
-    assert.strictEqual(host, null);
   });
 
   it('returns null when no hybrid window owns the content WC', () => {
     const orphan = new FakeWebContents('https://x.test/');
     assert.strictEqual(
-      resolveHybridDownloadHostToClose(orphan as unknown as WebContents),
+      getHybridWindowByContentWC(orphan as unknown as WebContents),
       null,
     );
   });
@@ -619,9 +610,20 @@ describe('hybrid-page-host-registry: download-trigger host cleanup', () => {
     const f = mk({ url: 'https://dl.example/file.bin' });
     f.baseWin.destroyed = true;
     assert.strictEqual(
-      resolveHybridDownloadHostToClose(f.wc as unknown as WebContents),
+      getHybridWindowByContentWC(f.wc as unknown as WebContents),
       null,
     );
+  });
+
+  it('paint flag discriminates a fresh download popup from a real page being browsed', () => {
+    // The two download shapes, as the will-download call site reads them:
+    // a fresh target=_blank download popup never paints; the Fastmail repro
+    // (download link clicked while browsing) has painted → must survive.
+    const fresh = mk({ url: 'https://dl.example/file.bin' });
+    assert.strictEqual(hasHybridPainted(fresh.id), false);
+    const browsing = mk({ url: 'https://www.fastmail.com/mail/' });
+    markHybridPainted(browsing.id);
+    assert.strictEqual(hasHybridPainted(browsing.id), true);
   });
 });
 

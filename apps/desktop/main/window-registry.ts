@@ -118,6 +118,19 @@ export function getAllLiveWindows(): BrowserWindowType[] {
  * Returns the live BrowserWindow that owns `wc`, or null. Use this in
  * place of `BrowserWindow.fromWebContents(wc)` for callers that need
  * the destroyed-window filter.
+ *
+ * TRAP — the return type lies. `BrowserWindow.fromWebContents` resolves a
+ * BaseWindow-hosted WebContentsView's WC (i.e. hybrid page-host content) to its
+ * owning **BaseWindow**, which is NOT a BrowserWindow and is absent from
+ * `BrowserWindow.getAllWindows()`. The `BrowserWindowType` annotation is
+ * Electron's, and it is wrong at runtime; this returns a truthy non-BrowserWindow
+ * for hybrid content. Most callers want exactly that (the window hosting the
+ * page), which is why the contract is left alone. But a caller asking "is this
+ * REALLY a BrowserWindow?" cannot use a truthiness check here — it must test
+ * explicitly (e.g. against the hybrid registry, or `getAllLiveWindows()`
+ * membership). Assuming null-for-hybrid caused the alt+click bug (peek 02e0a4fa):
+ * a BrowserWindow-first branch swallowed every hybrid download and closed the
+ * user's page, leaving the hybrid fallback behind it permanently dead.
  */
 export function windowFromWebContents(wc: WebContents): BrowserWindowType | null {
   const BW = getBrowserWindowClass();

@@ -537,3 +537,54 @@ export function hybridResizeDirAt(
   if (dr <= edge) return 'e';
   return null;
 }
+
+/**
+ * Which window (if any) a NON-webview download should close.
+ *
+ *   - 'hybrid-host'    close the hybrid page-host (a BaseWindow) that owns the
+ *                      content WC the download fired from.
+ *   - 'browser-window' close the BrowserWindow that owns the WC — the historical
+ *                      "top-level window opened just for this download" case.
+ *   - 'none'           close nothing; the user is looking at a real page.
+ *
+ * PRECEDENCE IS THE WHOLE POINT: hybrid wins over BrowserWindow, even when
+ * `hasBrowserWindow` is true. That combination is not hypothetical — it is the
+ * normal shape of a hybrid download, and mis-ordering it was the alt+click bug
+ * (peek 02e0a4fa). `BrowserWindow.fromWebContents(contentWC)` on a hybrid page
+ * host does NOT return null: at runtime it resolves to the owning *BaseWindow*
+ * (see the warning on `windowFromWebContents` in window-registry.ts). So a
+ * BrowserWindow-first cascade matches EVERY hybrid download and closes the page
+ * the user is browsing, and the hybrid branch behind it never runs at all.
+ *
+ * The hybrid rule itself is the paint guard (peek a060a75f): only a host opened
+ * FRESH for the download is a throwaway. A `target=_blank` download link opens a
+ * NEW page-host whose first-and-only navigation is the download URL, which
+ * Chromium aborts — so the host never settles a load and is NOT painted. A host
+ * already showing a real page (a download link clicked while browsing — e.g. a
+ * Fastmail attachment, or an alt+click, which Chromium turns into a download in
+ * the SOURCE page's WC without ever opening a window) HAS painted, and closing it
+ * is exactly the bug this guards against.
+ *
+ * fsm-pilled: `hybridPainted` is read synchronously at will-download time, which
+ * is BEFORE the aborted download navigation fires did-stop-loading (the event
+ * that would otherwise mark even a fresh popup painted). No timer, no URL-diff
+ * race — the load-lifecycle FSM already separates the two cases.
+ *
+ * Pure so the precedence is unit-testable without Electron: the live bug is
+ * invisible to code reading (the runtime type of `fromWebContents` contradicts
+ * its TypeScript signature) and unreachable from the webview-based download
+ * specs, so a truth table is the only cheap regression net.
+ */
+export type DownloadCloseTarget = 'hybrid-host' | 'browser-window' | 'none';
+
+export function downloadCloseTarget(o: {
+  isHybridContent: boolean;
+  hybridPainted: boolean;
+  hasBrowserWindow: boolean;
+}): DownloadCloseTarget {
+  if (o.isHybridContent) {
+    // Painted → a real page the user is browsing. Never close it.
+    return o.hybridPainted ? 'none' : 'hybrid-host';
+  }
+  return o.hasBrowserWindow ? 'browser-window' : 'none';
+}

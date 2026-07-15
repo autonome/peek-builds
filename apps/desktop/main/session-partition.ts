@@ -18,7 +18,8 @@
 
 import { app, session, Session, BrowserWindow, Notification, shell } from 'electron';
 import { getAllLiveWindows, windowFromWebContents } from './window-registry.js';
-import { resolveHybridDownloadHostToClose } from './hybrid-page-host-registry.js';
+import { getHybridWindowByContentWC, hasHybridPainted } from './hybrid-page-host-registry.js';
+import { downloadCloseTarget } from './izui-roles.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -350,24 +351,28 @@ function _registerDownloadHandlerImpl(ses: Session): void {
     const isWebviewGuest = webContents.getType() === 'webview';
 
     if (!isWebviewGuest) {
-      // Top-level window opened just for this download — close it.
+      // Which window (if any) to close. HYBRID IS CHECKED FIRST, and that order is
+      // load-bearing: `windowFromWebContents` does NOT return null for a hybrid
+      // page-host's content WC — at runtime it hands back the owning BaseWindow
+      // (see the warning on that function in window-registry.ts). So a
+      // BrowserWindow-first cascade matched every hybrid download and closed the
+      // page the user was reading (alt+click, peek 02e0a4fa), while the hybrid
+      // branch behind it never ran. Precedence + the paint guard are a pure,
+      // unit-tested truth table; this call site only gathers the signals and acts.
+      const hybrid = getHybridWindowByContentWC(webContents);
       const win = windowFromWebContents(webContents);
-      if (win) {
+      const target = downloadCloseTarget({
+        isHybridContent: hybrid !== null,
+        hybridPainted: hybrid !== null && hasHybridPainted(hybrid.windowId),
+        hasBrowserWindow: win !== null,
+      });
+      if (target === 'hybrid-host' && hybrid) {
+        DEBUG && console.log('[download] Closing hybrid download-trigger host:', hybrid.windowId);
+        hybrid.baseWin.close();
+      } else if (target === 'browser-window' && win) {
+        // Top-level window opened just for this download — close it.
         DEBUG && console.log('[download] Closing download-trigger window:', win.id);
         win.close();
-      } else {
-        // Hybrid page-host: the content WC is a BaseWindow-hosted WebContentsView,
-        // invisible to windowFromWebContents (BrowserWindow-only). Close the host
-        // ONLY if it was a fresh page-host opened for this download (a target=_blank
-        // download popup that never painted a page) — NEVER a host already showing a
-        // real page (a download link clicked while browsing, e.g. a Fastmail
-        // attachment; peek a060a75f). The registry makes that call off the load-paint
-        // FSM. No-op when the flag is off / no live host owns the WC.
-        const hybrid = resolveHybridDownloadHostToClose(webContents);
-        if (hybrid) {
-          DEBUG && console.log('[download] Closing hybrid download-trigger host:', hybrid.windowId);
-          hybrid.baseWin.close();
-        }
       }
     } else {
       // Download from a webview guest. Two cases:

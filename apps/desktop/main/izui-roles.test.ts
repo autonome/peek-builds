@@ -22,6 +22,7 @@ import {
   resolveFocusedVisibleWindowId,
   windowSelfClosesOnBlur,
   hybridResizeDirAt,
+  downloadCloseTarget,
   RESIZE_EDGE_PX,
   RESIZE_CORNER_PX,
   ALWAYS_CLOSEABLE_ESC_ROLES,
@@ -595,5 +596,64 @@ describe('hybridResizeDirAt (round-2 main-driven resize band geometry)', () => {
   it('is null far outside the frame regardless of slack', () => {
     assert.strictEqual(hybridResizeDirAt(300, 400, b, E, C, 6), null);
     assert.strictEqual(hybridResizeDirAt(700, 400, b, E, C, 6), null);
+  });
+});
+
+// ── Download close-target precedence (peek 02e0a4fa / a060a75f) ──────────────
+describe('downloadCloseTarget', () => {
+  it('THE REGRESSION CASE (peek 02e0a4fa): hybrid + painted + a BrowserWindow → none', () => {
+    // Alt+click on a link in a real page. Chromium never opens a window — it
+    // turns the click straight into a download in the SOURCE page's content WC.
+    // hasBrowserWindow is TRUE here (that is NOT a mistake): at runtime
+    // BrowserWindow.fromWebContents resolves a hybrid content WC to its owning
+    // BaseWindow, so the BrowserWindow signal is truthy for every hybrid
+    // download. A BrowserWindow-first cascade therefore closed the window the
+    // user was reading. Hybrid must win, and painted means KEEP IT OPEN.
+    assert.strictEqual(
+      downloadCloseTarget({ isHybridContent: true, hybridPainted: true, hasBrowserWindow: true }),
+      'none',
+    );
+  });
+
+  it('hybrid + painted, no BrowserWindow → none (the Fastmail attachment case)', () => {
+    assert.strictEqual(
+      downloadCloseTarget({ isHybridContent: true, hybridPainted: true, hasBrowserWindow: false }),
+      'none',
+    );
+  });
+
+  it('hybrid + never painted → hybrid-host (a fresh popup minted just for the download)', () => {
+    assert.strictEqual(
+      downloadCloseTarget({ isHybridContent: true, hybridPainted: false, hasBrowserWindow: false }),
+      'hybrid-host',
+    );
+  });
+
+  it('hybrid + never painted still beats a truthy BrowserWindow signal', () => {
+    assert.strictEqual(
+      downloadCloseTarget({ isHybridContent: true, hybridPainted: false, hasBrowserWindow: true }),
+      'hybrid-host',
+    );
+  });
+
+  it('not hybrid + a real BrowserWindow → browser-window (top-level window opened for the download)', () => {
+    assert.strictEqual(
+      downloadCloseTarget({ isHybridContent: false, hybridPainted: false, hasBrowserWindow: true }),
+      'browser-window',
+    );
+  });
+
+  it('not hybrid, nothing owns the WC → none', () => {
+    assert.strictEqual(
+      downloadCloseTarget({ isHybridContent: false, hybridPainted: false, hasBrowserWindow: false }),
+      'none',
+    );
+  });
+
+  it('hybridPainted is ignored when the WC is not hybrid content', () => {
+    assert.strictEqual(
+      downloadCloseTarget({ isHybridContent: false, hybridPainted: true, hasBrowserWindow: true }),
+      'browser-window',
+    );
   });
 });

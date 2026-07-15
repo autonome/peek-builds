@@ -816,10 +816,15 @@ export function getHybridContentWC(windowId: number): WebContents | null {
 
 /**
  * Reverse lookup: find the hybrid window whose content WebContents IS `wc`.
- * Used by the will-download cleanup to resolve a BaseWindow-hosted content WC
- * (windowFromWebContents can't — it only knows BrowserWindows) back to its host
- * so a download-trigger page-host can be closed. Returns null when no live entry
- * matches (and always null when the flag is off — the registry is empty).
+ * Returns null when no live entry matches.
+ *
+ * This is also the authoritative "is this WC hybrid content?" test, and the
+ * will-download cleanup depends on it being authoritative.
+ * `windowFromWebContents` is NOT a substitute: despite its BrowserWindow return
+ * type it resolves a BaseWindow-hosted content WC to its owning BaseWindow, so it
+ * answers truthy for hybrid content and cannot distinguish the two window kinds
+ * (peek 02e0a4fa; see the warning on it in window-registry.ts). Only the registry
+ * knows.
  */
 export function getHybridWindowByContentWC(wc: WebContents): HybridWindowEntry | null {
   for (const e of entries.values()) {
@@ -828,30 +833,6 @@ export function getHybridWindowByContentWC(wc: WebContents): HybridWindowEntry |
     }
   }
   return null;
-}
-
-/**
- * For a download that fired from hybrid content `wc`, return the host page-host
- * to close, or null to keep it open.
- *
- * Only a host opened FRESH for the download is a throwaway: a `target=_blank`
- * download link opens a NEW page-host whose first-and-only navigation is the
- * download URL, which Chromium aborts — so the host never settles a load and is
- * NOT painted. A host already showing a real page (the user clicked a download
- * link while browsing — e.g. a Fastmail attachment) HAS painted, and closing it
- * is exactly the bug this guards against (peek a060a75f).
- *
- * fsm-pilled: the paint flag is read synchronously at will-download time, which
- * is BEFORE the aborted download navigation fires did-stop-loading (the event
- * that would otherwise mark even a fresh popup painted). No timer, no URL-diff
- * race — the load-lifecycle FSM already separates the two cases. Returns null
- * when the flag is off (registry empty) or no live entry owns `wc`.
- */
-export function resolveHybridDownloadHostToClose(wc: WebContents): HybridWindowEntry | null {
-  const hybrid = getHybridWindowByContentWC(wc);
-  if (!hybrid || hybrid.baseWin.isDestroyed()) return null;
-  if (hasHybridPainted(hybrid.windowId)) return null; // real page in view — keep it open
-  return hybrid;
 }
 
 /**
