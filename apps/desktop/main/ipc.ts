@@ -1849,24 +1849,42 @@ export function wireHybridContentEvents(
     } catch { /* gone */ }
     return null;
   };
-  // A host snapped to its display work area is "maximized" — don't offer resize
-  // there (parity with the overlay maximize/restore model; pure geometry, no
-  // cross-module maximize state needed).
-  const hostMaximized = (b: { x: number; y: number; width: number; height: number }): boolean => {
+  // A resize gesture ENDS maximize: the host is about to stop filling the work
+  // area, so the registry flag and its stashed preMaxBounds must go now, at the
+  // press. Leaving them set IS the stale-preMaxBounds de-sync — a later maximize
+  // toggle would "restore" to a rect the user has since resized away from.
+  // Clearing at press rather than release means an abandoned drag still leaves
+  // coherent state. Mirrors the cleared state into the overlay, which keeps a
+  // local copy for its chrome reflow + navbar-drag math and would otherwise still
+  // believe the host is maximized.
+  const exitMaximizeForResize = (): void => {
+    const hw = getHybridWindow(hostWindowId);
+    if (!hw || !hw.maximized) return;
+    setHybridMaximizeState(hostWindowId, false, null);
     try {
-      const wa = screen.getDisplayNearestPoint({
-        x: b.x + Math.floor(b.width / 2), y: b.y + Math.floor(b.height / 2),
-      }).workArea;
-      return b.x === wa.x && b.y === wa.y && b.width === wa.width && b.height === wa.height;
-    } catch { return false; }
+      publish(getSystemAddress(), 'page-overlay:maximize-state', {
+        windowId: hostWindowId, maximized: false, preMaxBounds: null,
+      });
+    } catch { /* gone */ }
   };
-  // Resize direction at a screen point, honoring maximize + the top reveal strip:
-  // reveal keeps priority over the plain top 'n' band so the navbar gesture wins
-  // there (corners are unaffected). `engaged` selects exit vs enter slack.
+  // Resize direction at a screen point, honoring the top reveal strip: reveal
+  // keeps priority over the plain top 'n' band so the navbar gesture wins there
+  // (corners are unaffected). `engaged` selects exit vs enter slack.
+  //
+  // Maximize does NOT gate this. A maximized host is resizable, and grabbing an
+  // edge exits maximize in the same gesture (see the mouseDown resize-start
+  // below) — OS parity, and the user no longer has to drag the window out of
+  // maximize before they can shrink it. This used to short-circuit on a
+  // `hostMaximized(b)` geometry check (bounds === workArea, exact equality),
+  // which was a SECOND definition of "maximized" competing with the registry's
+  // `entry.maximized` flag: the two silently disagreed whenever the work area
+  // moved under a maximized window (display swap, dock/menubar toggle, scale
+  // change), and it also stole resize from any window a user had merely sized to
+  // exactly fill the work area. The registry flag is the single source of truth
+  // (see setHybridMaximizeState); geometry no longer votes.
   const resizeDirAt = (
     b: { x: number; y: number; width: number; height: number }, gx: number, gy: number, engaged: boolean,
   ): ResizeDir | null => {
-    if (hostMaximized(b)) return null;
     const dir = hybridResizeDirAt(
       gx, gy, b, RESIZE_EDGE_PX, RESIZE_CORNER_PX, engaged ? RESIZE_EXIT_SLACK : RESIZE_ENTER_SLACK,
     );
@@ -1909,6 +1927,9 @@ export function wireHybridContentEvents(
         // stay click-through for the whole drag (so the content WC keeps receiving
         // the move stream that drives the resize AND stays topmost so the cursor
         // keeps showing). Do NOT forward this press as a hold-to-drag 'down'.
+        // `sb` is the bounds AT PRESS — for a maximized host that's the work-area
+        // rect, so the drag shrinks from what the user sees, in one gesture.
+        exitMaximizeForResize();
         activeResize = { dir, sx: input.globalX, sy: input.globalY, sb: b };
         setHoverDir(dir);
         publish(getSystemAddress(), 'page-overlay:resize-active', { windowId: hostWindowId, active: true });

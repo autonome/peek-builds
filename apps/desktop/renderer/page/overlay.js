@@ -937,13 +937,19 @@ function publishDragCursor(state) {
 
 // --- Main-driven resize sync ---
 // Main owns edge/corner resize (it drives baseWin.setBounds off the content WC's
-// input-event stream). Two signals keep the overlay coherent with that:
+// input-event stream). Three signals keep the overlay coherent with that:
 //   - page-overlay:resize-active {active} — gates the capture-loop to stay
 //     click-through for the whole drag (see resizeActive), so the overlay never
 //     goes opaque mid-resize and starves main's move stream.
 //   - page-overlay:bounds {bounds} — main pushes the host's new outer bounds each
 //     resize step so the renderer's locally-tracked activeBounds (used by the
 //     navbar-drag MOVE math + maximize stash) doesn't go stale.
+//   - page-overlay:maximize-state {maximized, preMaxBounds} — main pushes the
+//     registry's maximize state when IT changes that state without going through
+//     this overlay's toggleMaximize. Today that's the resize-start exit: grabbing
+//     an edge of a maximized host exits maximize in the same gesture, and main
+//     owns that press. Same payload + same reconcile as the page-overlay:active
+//     handoff, so there's one shape for "here is the registry's maximize state".
 api.subscribe('page-overlay:resize-active', (msg) => {
   if (!isActive(msg)) return;
   resizeActive = !!msg.active;
@@ -954,6 +960,15 @@ api.subscribe('page-overlay:resize-active', (msg) => {
 api.subscribe('page-overlay:bounds', (msg) => {
   if (!isActive(msg) || !msg.bounds) return;
   activeBounds = { ...msg.bounds };
+  updateOverlayPositions();
+});
+// Assign directly rather than calling toggleMaximize() — the toggle would publish
+// page:unmaximize and snap bounds back to preMaxBounds, fighting the in-flight
+// resize.
+api.subscribe('page-overlay:maximize-state', (msg) => {
+  if (!isActive(msg)) return;
+  maximized = !!msg.maximized;
+  preMaxBounds = msg.preMaxBounds ? { ...msg.preMaxBounds } : null;
   updateOverlayPositions();
 });
 
