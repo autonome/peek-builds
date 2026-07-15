@@ -47,6 +47,7 @@ import { getMcpStatus, setMcpConfig, listScopedProjects, scaffoldProject, remove
 import { publishCapabilityViolation } from './tile-violations.js';
 import { getFeatureRegistry } from './feature-startup.js';
 import { getAtprotoSource } from './feature-startup.js';
+import { getFeatureLoadErrors } from './feature-startup.js';
 import {
   getDb,
   getTable as dsGetTable,
@@ -1264,7 +1265,7 @@ export function registerTileIpcHandlers(): void {
     } catch (err) {
       DEBUG && console.warn('[tile:features:list] manifest-cache unavailable:', err);
     }
-    const entries = enrichFeatureEntries(visible, rows);
+    const entries = enrichFeatureEntries(visible, rows, getFeatureLoadErrors());
     return { entries };
   });
 

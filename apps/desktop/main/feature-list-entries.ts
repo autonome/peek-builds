@@ -77,6 +77,13 @@ export interface FeatureListEntry extends FeatureRegistryEntry {
   settingsSchema?: string;
   /** Resolved primary window command, when the feature declares one. */
   openCommand?: FeatureOpenCommand;
+  /**
+   * Per-session load failure from `tile-loader.ts`, joined in from
+   * `feature-startup.ts`'s in-memory map — NEVER persisted to
+   * registry.json (see module header). Absent when the feature loaded
+   * cleanly, or hasn't been attempted yet.
+   */
+  loadError?: string;
 }
 
 /**
@@ -93,6 +100,18 @@ export interface ManifestCacheRowLike {
     settingsSchema?: string;
   } | null;
   commands?: Array<{ name: string; description?: string; action?: unknown }>;
+}
+
+/**
+ * Structural minimum of `tile-loader.ts`'s `FeatureLoadResult`. Declared
+ * structurally (rather than imported) to keep this module Electron-free
+ * and free of tile-loader/feature-startup — see module header.
+ */
+export interface FeatureLoadOutcome {
+  id: string;
+  loaded: boolean;
+  error?: string;
+  skipped?: boolean;
 }
 
 // ─── Open-command rule ──────────────────────────────────────────────
@@ -164,6 +183,25 @@ export function pickOpenCommand(
   };
 }
 
+/**
+ * Extract per-feature load failures from a `loadFeaturesFromRegistry()`
+ * result set, keyed by feature id.
+ *
+ * `skipped` results are dropped: a feature that is disabled or awaiting
+ * approval reports `loaded: false` with a message, but it is a state, not
+ * a fault, and flagging it would mark every disabled feature as broken.
+ *
+ * If two results share an id, the last one wins.
+ */
+export function collectLoadErrors(results: FeatureLoadOutcome[]): Map<string, string> {
+  const errors = new Map<string, string>();
+  for (const result of results) {
+    if (result.loaded || result.skipped || !result.error) continue;
+    errors.set(result.id, result.error);
+  }
+  return errors;
+}
+
 // ─── Join ───────────────────────────────────────────────────────────
 
 /**
@@ -173,17 +211,25 @@ export function pickOpenCommand(
  * manifest failed to parse still lists (with its registry metadata),
  * it just gets no description / commands / Open button. Cache rows with
  * no registry entry are ignored: the registry decides what exists.
+ *
+ * `loadErrors`, when given, joins per-session load failures onto the
+ * result — including entries with no cache row, since a manifest-parse
+ * failure (the most common load error) is exactly what leaves a feature
+ * without one.
  */
 export function enrichFeatureEntries(
   entries: FeatureRegistryEntry[],
   rows: ManifestCacheRowLike[],
+  loadErrors?: Map<string, string>,
 ): FeatureListEntry[] {
   const byId = new Map<string, ManifestCacheRowLike>();
   for (const row of rows) byId.set(row.featureId, row);
 
   return entries.map(entry => {
+    const loadError = loadErrors?.get(entry.id);
+
     const row = byId.get(entry.id);
-    if (!row) return { ...entry };
+    if (!row) return loadError ? { ...entry, loadError } : { ...entry };
 
     const commands: FeatureCommandSummary[] = (row.commands ?? []).map(cmd => ({
       name: cmd.name,
@@ -200,6 +246,7 @@ export function enrichFeatureEntries(
 
     const openCommand = pickOpenCommand(entry.id, row.manifest?.shortname, commands);
     if (openCommand) enriched.openCommand = openCommand;
+    if (loadError) enriched.loadError = loadError;
 
     return enriched;
   });

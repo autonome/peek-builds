@@ -516,6 +516,16 @@ function createFeatureCard(feature) {
     info.appendChild(description);
   }
 
+  // Load error — surfaces tile-loader failures (e.g. a manifest that
+  // failed to parse) that were previously silent to anyone but the log.
+  // Excludes disabled / not-yet-approved, which are their own states.
+  if (feature.loadError) {
+    const error = document.createElement('div');
+    error.className = 'feature-error';
+    error.textContent = feature.loadError;
+    info.appendChild(error);
+  }
+
   const meta = document.createElement('div');
   meta.className = 'feature-meta';
 

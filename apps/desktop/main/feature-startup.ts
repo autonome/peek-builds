@@ -15,6 +15,7 @@ import path from 'node:path';
 import { FeatureRegistry, type FeatureRegistryEntry } from './feature-registry.js';
 import { syncBuiltinFeatures } from './feature-installer.js';
 import { loadFeaturesFromRegistry, type TileLoaderConfig, type FeatureLoadResult } from './tile-loader.js';
+import { collectLoadErrors } from './feature-list-entries.js';
 import { AtprotoSource } from './atproto-source.js';
 import * as manifestCache from './manifest-cache.js';
 import * as tileLifecycle from './tile-lifecycle.js';
@@ -58,11 +59,28 @@ let _registry: FeatureRegistry | null = null;
 let _atprotoSource: AtprotoSource | null = null;
 
 /**
+ * Per-session feature load errors (id -> message), repopulated on every
+ * initializeFeatures() call. Deliberately NOT persisted — see
+ * feature-list-entries.ts's module header on why load errors stay off
+ * FeatureRegistryEntry.
+ */
+const _loadErrors = new Map<string, string>();
+
+/**
  * Get the feature registry instance (available after initializeFeatures() is called).
  * Returns null if the feature system hasn't been initialized yet.
  */
 export function getFeatureRegistry(): FeatureRegistry | null {
   return _registry;
+}
+
+/**
+ * Get the per-session feature load errors captured by the last
+ * initializeFeatures() call. Excludes the disabled / not-yet-approved
+ * pseudo-errors (see collectLoadErrors) — only real faults.
+ */
+export function getFeatureLoadErrors(): Map<string, string> {
+  return _loadErrors;
 }
 
 /**
@@ -258,6 +276,12 @@ export function initializeFeatures(config: FeatureStartupConfig): FeatureStartup
   };
 
   const loadResults = loadFeaturesFromRegistry(registry, loaderConfig);
+
+  // Re-init must not accumulate stale entries from a prior load.
+  _loadErrors.clear();
+  for (const [id, error] of collectLoadErrors(loadResults)) {
+    _loadErrors.set(id, error);
+  }
 
   const loaded = loadResults.filter(r => r.loaded).length;
   const failed = loadResults.filter(r => !r.loaded).length;

@@ -26,8 +26,10 @@ import {
   pickOpenCommand,
   enrichFeatureEntries,
   normalizeCommandAction,
+  collectLoadErrors,
   type FeatureCommandSummary,
   type ManifestCacheRowLike,
+  type FeatureLoadOutcome,
 } from './feature-list-entries.js';
 import type { FeatureRegistryEntry } from './feature-registry.js';
 
@@ -351,6 +353,39 @@ describe('enrichFeatureEntries — the join', () => {
     assert.strictEqual(out.path, src.path, 'a feature with an unparseable manifest must still list');
   });
 
+  it('attaches loadError when present (normal, with-cache-row path)', () => {
+    const loadErrors = new Map([['tags', 'Manifest not available for tags (cache miss + disk parse failed)']]);
+    const [out] = enrichFeatureEntries([entry('tags')], [TAGS_ROW], loadErrors);
+    assert.strictEqual(out.loadError, 'Manifest not available for tags (cache miss + disk parse failed)');
+    // ...and the rest of the enrichment still happens.
+    assert.strictEqual(out.description, 'Tag things');
+  });
+
+  it('attaches loadError even with NO cache row — the manifest-parse-failure case', () => {
+    // REGRESSION: the early `if (!row) return { ...entry };` path must
+    // also carry the load error, or the most common failure (an
+    // unparseable manifest, which is also why there's no cache row)
+    // never surfaces on the card.
+    const loadErrors = new Map([['broken-manifest', 'Feature broken-manifest has a legacy manifest (manifestVersion < 3); reinstall or update the manifest.']]);
+    const [out] = enrichFeatureEntries([entry('broken-manifest')], [], loadErrors);
+    assert.strictEqual(
+      out.loadError,
+      'Feature broken-manifest has a legacy manifest (manifestVersion < 3); reinstall or update the manifest.',
+    );
+    assert.strictEqual(out.path, entry('broken-manifest').path, 'still lists with its registry metadata');
+  });
+
+  it('leaves loadError undefined when no error is joined in', () => {
+    const [out] = enrichFeatureEntries([entry('tags')], [TAGS_ROW]);
+    assert.strictEqual(out.loadError, undefined);
+  });
+
+  it('leaves loadError undefined when the map has no entry for this feature id', () => {
+    const loadErrors = new Map([['some-other-feature', 'boom']]);
+    const [out] = enrichFeatureEntries([entry('tags')], [TAGS_ROW], loadErrors);
+    assert.strictEqual(out.loadError, undefined);
+  });
+
   it('ignores cache rows that have no registry entry — the registry decides what exists', () => {
     const out = enrichFeatureEntries([entry('tags')], [TAGS_ROW, { featureId: 'ghost', commands: [] }]);
     assert.strictEqual(out.length, 1);
@@ -434,5 +469,60 @@ describe('enrichFeatureEntries — openable count across a realistic builtin set
     assert.strictEqual(w.description, 'Window switcher');
     assert.strictEqual(w.commands?.length, 2);
     assert.strictEqual(w.openCommand, undefined);
+  });
+});
+
+// ── collectLoadErrors ───────────────────────────────────────────────────────
+
+describe('collectLoadErrors — per-session tile-loader failures, not persisted', () => {
+  function outcome(id: string, over: Partial<FeatureLoadOutcome> = {}): FeatureLoadOutcome {
+    return { id, loaded: false, ...over };
+  }
+
+  it('excludes a skipped disabled feature — the card already shows a Disabled badge', () => {
+    const errors = collectLoadErrors([
+      outcome('tags', { skipped: true, error: 'Feature is disabled' }),
+    ]);
+    assert.strictEqual(errors.has('tags'), false);
+  });
+
+  it('excludes a skipped not-yet-approved feature — pending, not a fault', () => {
+    const errors = collectLoadErrors([
+      outcome('tags', { skipped: true, error: 'Feature not yet approved by user' }),
+    ]);
+    assert.strictEqual(errors.has('tags'), false);
+  });
+
+  it('includes a real failure (e.g. manifest-parse error)', () => {
+    const errors = collectLoadErrors([
+      outcome('broken', { error: 'Manifest not available for broken (cache miss + disk parse failed)' }),
+    ]);
+    assert.strictEqual(errors.get('broken'), 'Manifest not available for broken (cache miss + disk parse failed)');
+  });
+
+  it('excludes loaded features, even if error happens to be set', () => {
+    const errors = collectLoadErrors([outcome('tags', { loaded: true, error: 'Feature is disabled' })]);
+    assert.strictEqual(errors.has('tags'), false);
+  });
+
+  it('excludes results with no error message', () => {
+    const errors = collectLoadErrors([outcome('tags')]);
+    assert.strictEqual(errors.has('tags'), false);
+  });
+
+  it('last one wins when two results share an id', () => {
+    const errors = collectLoadErrors([
+      outcome('tags', { error: 'first failure' }),
+      outcome('tags', { error: 'second failure' }),
+    ]);
+    assert.strictEqual(errors.get('tags'), 'second failure');
+  });
+
+  it('returns an empty map for an all-clean load', () => {
+    const errors = collectLoadErrors([
+      outcome('tags', { loaded: true }),
+      outcome('feeds', { loaded: true }),
+    ]);
+    assert.strictEqual(errors.size, 0);
   });
 });

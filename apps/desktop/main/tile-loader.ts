@@ -34,6 +34,13 @@ export interface FeatureLoadResult {
   id: string;
   loaded: boolean;
   error?: string;
+  /**
+   * True when `loaded: false` means "deliberately not loaded" (disabled,
+   * awaiting approval) rather than "tried and failed". Both carry an
+   * `error` message for the log, but only a real fault should be shown
+   * to the user as one — see collectLoadErrors in feature-list-entries.
+   */
+  skipped?: boolean;
 }
 
 /**
@@ -117,6 +124,7 @@ function loadSingleFeature(
     return {
       id: entry.id,
       loaded: false,
+      skipped: true,
       error: 'Feature is disabled',
     };
   }
@@ -162,6 +170,7 @@ function loadTileFromEntry(
     return {
       id: entry.id,
       loaded: false,
+      skipped: true,
       error: 'Feature not yet approved by user',
     };
   }
