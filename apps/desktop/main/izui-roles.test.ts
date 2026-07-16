@@ -17,6 +17,8 @@ import {
   shouldRegisterGlobalEscFallback,
   shouldFocusHybridContentOnHostFocus,
   shouldCloseContentWCOnFinalize,
+  planBeforeQuit,
+  type QuitCleanupPhase,
   shouldActivateFocusedOnRestore,
   resolveCloseTargetId,
   resolveFocusedVisibleWindowId,
@@ -348,6 +350,121 @@ describe('shouldCloseContentWCOnFinalize (quit-teardown null-deref → SIGSEGV �
 
   it('returns true for a live content wc — the only case that gets close()-d', () => {
     assert.strictEqual(shouldCloseContentWCOnFinalize({ isDestroyed: () => false }), true);
+  });
+});
+
+describe('planBeforeQuit (Cmd+Q SIGSEGV on a focused hybrid page-host)', () => {
+  // The live crash: macOS dispatches Cmd+Q from inside AppKit's
+  // `-[NSView performKeyEquivalent:]` walk, which calls app.quit() ->
+  // before-quit SYNCHRONOUSLY. The cleanup body frees the focused hybrid
+  // host's content WebContentsView (destroyAllPageHostGuests -> wc.destroy())
+  // while AppKit still holds pointers into that view hierarchy, so AppKit
+  // derefs Chromium's freed-memory poison (0xefefefefefefefef) on return.
+  // The fix defers the cleanup off that native stack. These tests pin the
+  // ordering/decision; real AppKit re-entrancy is NOT observable here.
+
+  it('vetoes the first quit and schedules the cleanup off the native stack', () => {
+    assert.deepStrictEqual(planBeforeQuit('idle'), {
+      preventDefault: true,
+      scheduleCleanup: true,
+      nextPhase: 'deferred',
+    });
+  });
+
+  it('keeps vetoing a re-entrant quit that lands before the cleanup ran', () => {
+    // Safe: the already-queued macrotask still owns the re-quit.
+    assert.deepStrictEqual(planBeforeQuit('deferred'), {
+      preventDefault: true,
+      scheduleCleanup: false,
+      nextPhase: 'deferred',
+    });
+  });
+
+  it('NEVER vetoes once cleanup is done — the re-quit must reach the real quit', () => {
+    // This is the anti-hang invariant. If this ever returns preventDefault:true
+    // the app can never exit, which is worse than the crash being fixed.
+    assert.deepStrictEqual(planBeforeQuit('done'), {
+      preventDefault: false,
+      scheduleCleanup: false,
+      nextPhase: 'done',
+    });
+  });
+
+  it('schedules the cleanup exactly once across repeated quits', () => {
+    let phase: QuitCleanupPhase = 'idle';
+    let scheduled = 0;
+    for (let i = 0; i < 5; i++) {
+      const d = planBeforeQuit(phase);
+      phase = d.nextPhase;
+      if (d.scheduleCleanup) scheduled++;
+    }
+    assert.strictEqual(scheduled, 1);
+  });
+
+  // ---- Full-loop harness: models entry.ts's handler against a fake app. ----
+  // Proves the two things that actually matter: the app ALWAYS quits, and the
+  // cleanup never runs on the (simulated) native dispatch stack.
+  function driveQuitLoop(opts: { cleanupThrows?: boolean } = {}) {
+    let phase: QuitCleanupPhase = 'idle';
+    const events: string[] = [];
+    // Initializer carries the union so TS's control-flow analysis doesn't narrow
+    // this to `null` (it can't see the assignment inside appQuit's closure).
+    let queued = null as (() => void) | null;
+    let reallyQuit = false;
+    let onNativeStack = false;
+
+    const appQuit = (): void => {
+      const d = planBeforeQuit(phase);
+      phase = d.nextPhase;
+      const cleanup = () => {
+        try {
+          // `onNativeStack` is still true if this ran inside the synchronous
+          // before-quit — i.e. inside AppKit's performKeyEquivalent: walk.
+          events.push(onNativeStack ? 'cleanup-ON-NATIVE-STACK' : 'cleanup-off-stack');
+          if (opts.cleanupThrows) throw new Error('cleanup blew up');
+        } finally {
+          phase = 'done';
+          appQuit();
+        }
+      };
+      if (d.scheduleCleanup) {
+        // Deferred (fixed) shape: the veto buys us the macrotask hop.
+        // Un-vetoed (pre-fix) shape: the cleanup runs inline, right here on
+        // the native dispatch stack — which is the crash.
+        if (d.preventDefault) queued = cleanup;
+        else cleanup();
+      }
+      if (!d.preventDefault) { reallyQuit = true; events.push('quit'); }
+    };
+
+    // Simulate AppKit's performKeyEquivalent: walk calling quit synchronously.
+    onNativeStack = true;
+    appQuit();
+    onNativeStack = false;
+    // Drain the macrotask queue (the setImmediate in entry.ts). A throwing
+    // cleanup escapes here exactly as it would to uncaughtException in
+    // production — catch it so we can still assert the re-quit happened.
+    let threw: unknown = null;
+    try {
+      while (queued) { const fn = queued; queued = null; fn(); }
+    } catch (e) {
+      threw = e;
+    }
+    return { events, reallyQuit, threw };
+  }
+
+  it('runs cleanup off the native key-event stack, then quits for real', () => {
+    const { events, reallyQuit, threw } = driveQuitLoop();
+    assert.strictEqual(threw, null);
+    assert.deepStrictEqual(events, ['cleanup-off-stack', 'quit']);
+    assert.strictEqual(reallyQuit, true);
+  });
+
+  it('still quits when the cleanup body throws (a hang is worse than the crash)', () => {
+    const { reallyQuit, threw } = driveQuitLoop({ cleanupThrows: true });
+    assert.match(String(threw), /cleanup blew up/, 'sanity: the cleanup really threw');
+    // The `finally` must have re-quit BEFORE the throw propagated.
+    assert.strictEqual(reallyQuit, true, 'a throwing cleanup must not strand the app unquit');
   });
 });
 

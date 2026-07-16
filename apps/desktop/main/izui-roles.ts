@@ -487,6 +487,62 @@ export function shouldCloseContentWCOnFinalize(
 }
 
 /**
+ * Phase of the deferred `before-quit` cleanup state machine (`entry.ts`).
+ *
+ *   idle     — no quit seen yet
+ *   deferred — quit vetoed, cleanup scheduled on the next macrotask
+ *   done     — cleanup ran (or threw); the re-quit must be allowed through
+ */
+export type QuitCleanupPhase = 'idle' | 'deferred' | 'done';
+
+export interface BeforeQuitDecision {
+  /** Veto this quit — the native stack must unwind before we free anything. */
+  preventDefault: boolean;
+  /** Queue the cleanup body + re-quit on the next macrotask. */
+  scheduleCleanup: boolean;
+  nextPhase: QuitCleanupPhase;
+}
+
+/**
+ * Decide what a `before-quit` event should do, given the cleanup phase so far.
+ *
+ * WHY THIS DEFERS (do not "simplify" it away — peek `9a591551` sibling):
+ * On macOS, Cmd+Q is dispatched by AppKit's `performKeyEquivalent:` walk over
+ * the key window's NSView hierarchy. That walk calls `app.quit()` SYNCHRONOUSLY,
+ * so `before-quit` — and every `wc.destroy()` in it (`destroyAllPageHostGuests`)
+ * — runs while AppKit is still *inside* that walk, holding raw pointers to the
+ * very NSViews backing the hybrid page-host's content `WebContentsView`. Freeing
+ * them mid-dispatch makes AppKit deref Chromium's freed-memory poison
+ * (`0xefefefefefefefef`) on return → EXC_BAD_ACCESS on `CrBrowserMain`.
+ * Deterministic with a hybrid host focused; never with a plain tile BrowserWindow.
+ *
+ * So: veto the first quit, let the native stack unwind (`setImmediate`), run the
+ * cleanup on a clean stack, then quit for real. `destroyAllPageHostGuests` itself
+ * must STAY — it prevents the inverse UAF (a guest derefed inside
+ * `-[NSWindow __close]`, peek `d1cf0b9a`); only its *timing* is the bug.
+ *
+ * HANG SAFETY: vetoing quit means a missed re-quit = an app that never quits,
+ * which is worse than the crash. Hence: `deferred` keeps vetoing (the macrotask
+ * is already queued and will re-quit), and `done` NEVER vetoes, so the re-quit
+ * always falls through to the real thing. The caller must move to `done` in a
+ * `finally` so a throwing cleanup body cannot swallow the re-quit.
+ */
+export function planBeforeQuit(phase: QuitCleanupPhase): BeforeQuitDecision {
+  switch (phase) {
+    case 'idle':
+      // First quit: veto it and get the teardown off the AppKit key-event stack.
+      return { preventDefault: true, scheduleCleanup: true, nextPhase: 'deferred' };
+    case 'deferred':
+      // Another quit arrived before the scheduled cleanup ran. Keep vetoing —
+      // the queued macrotask still owns the re-quit, so this cannot strand us.
+      return { preventDefault: true, scheduleCleanup: false, nextPhase: 'deferred' };
+    case 'done':
+      // Our own re-quit (or any later one). Let it through, or we never exit.
+      return { preventDefault: false, scheduleCleanup: false, nextPhase: 'done' };
+  }
+}
+
+/**
  * Hybrid page-host edge/corner resize band.
  *
  * Round-2 resize is driven entirely from MAIN against the content WebContents'

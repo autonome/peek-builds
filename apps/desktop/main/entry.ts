@@ -131,6 +131,7 @@ import { startCpuWatch } from './cpu-watch.js';
 import { DEBUG } from './config.js';
 import { isDevToolsEnabled } from './debug-flag.js';
 import { isPageHostContent, destroyAllPageHostGuests } from './webview-guest-registry.js';
+import { planBeforeQuit, type QuitCleanupPhase } from './izui-roles.js';
 import { enforceSandboxOnWebContents } from './sandbox-enforcement.js';
 import {
   getRuntimeExternalWebPrefsForUrl,
@@ -940,10 +941,7 @@ const onQuit = async () => {
 // When tests call app.quit() directly (via electronApp.evaluate), the onQuit
 // function above is bypassed. This before-quit handler ensures hot reload watchers,
 // database connections, and other resources are cleaned up so the process can exit.
-let _beforeQuitCleanupDone = false;
-app.on('before-quit', () => {
-  if (_beforeQuitCleanupDone) return;
-  _beforeQuitCleanupDone = true;
+function runBeforeQuitCleanup(): void {
   DEBUG && console.log('[lifecycle] before-quit: running cleanup');
   // FIRST: silence the runtime-external relay before any teardown below. The
   // handler stays registered through quit, so a late content-script LOG_EVENT
@@ -973,6 +971,34 @@ app.on('before-quit', () => {
   // which a direct app.quit() bypasses — so do the window teardown here too.
   try { destroyChromeExtensionWindowsForShutdown(); } catch (e) { DEBUG && console.error('[lifecycle] destroyChromeExtensionWindowsForShutdown error:', e); }
   DEBUG && console.log('[lifecycle] before-quit: cleanup complete');
+}
+
+// The cleanup above frees native views (destroyAllPageHostGuests → wc.destroy()),
+// and on macOS Cmd+Q reaches us SYNCHRONOUSLY from inside AppKit's
+// `-[NSView performKeyEquivalent:]` walk — which is still holding pointers to the
+// focused hybrid page-host's content WebContentsView. Freeing them mid-dispatch
+// crashes CrBrowserMain on freed-memory poison. So: veto the first quit, let the
+// native stack unwind via setImmediate, run cleanup on a clean stack, re-quit.
+// See `planBeforeQuit` in izui-roles.ts for the full mechanism + hang-safety
+// argument. This defer is load-bearing — it is NOT a redundant tick.
+let _quitCleanupPhase: QuitCleanupPhase = 'idle';
+app.on('before-quit', (event) => {
+  const decision = planBeforeQuit(_quitCleanupPhase);
+  _quitCleanupPhase = decision.nextPhase;
+  if (decision.preventDefault) event.preventDefault();
+  if (!decision.scheduleCleanup) return;
+  DEBUG && console.log('[lifecycle] before-quit: deferring cleanup off the native key-event stack');
+  setImmediate(() => {
+    try {
+      runBeforeQuitCleanup();
+    } finally {
+      // `finally`, NOT the try body: a throwing cleanup must never swallow the
+      // re-quit. We vetoed the user's quit — failing to re-issue it hangs the
+      // app forever, which is strictly worse than the crash this fix removes.
+      _quitCleanupPhase = 'done';
+      app.quit();
+    }
+  });
 });
 
 // Handle SIGINT/SIGTERM (e.g. Ctrl+C in terminal).
