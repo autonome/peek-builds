@@ -1772,6 +1772,11 @@ export function wireHybridContentEvents(
   const MIN_RESIZE_H = 150;
   const RESIZE_ENTER_SLACK = 0;  // engage exactly at the band
   const RESIZE_EXIT_SLACK = 6;   // sticky once in-band (spatial hysteresis)
+  // Slop for "does the host still fill the work area" (native-resize reconciler
+  // below). Tolerance, never exact equality: on fractional-scale displays the
+  // work area and the window's own bounds round independently, so an `===`
+  // compare reports a mismatch for a window that is visually flush.
+  const WORK_AREA_MATCH_PX = 2;
   let inRevealBand = false;
 
   // Content-cursor reconciler. `wantCursor` is the intended FULL css cursor value
@@ -1900,6 +1905,56 @@ export function wireHybridContentEvents(
       });
     } catch { /* gone */ }
   };
+
+  // ── Native OS resize reconciler (peek 1a47dc23) ────────────────────────────
+  // The host is `frame:false` but still `resizable`, so macOS performs a
+  // border/corner resize NATIVELY. That gesture never reaches this WC's
+  // `input-event` stream, so the press-time `exitMaximizeForResize()` above never
+  // runs: the registry keeps `maximized:true` plus a `preMaxBounds` rect the
+  // window has since been resized away from (for a never-manually-resized host,
+  // the 1024x768 APP_DEF_* creation default). The next navbar double-click reads
+  // that stale flag, publishes `page:unmaximize`, and the window JUMPS to the
+  // default rect instead of filling the work area. `baseWin.on('resize')` was the
+  // only native hook and it only refilled the content view — nothing invalidated
+  // the maximize bookkeeping.
+  //   This CLEARS state on a resize we observe; it is emphatically NOT the
+  // deleted `hostMaximized(b)` geometry check returning. That was an AUTHORITY
+  // (geometry deciding whether the host counts as maximized) and a GUARD (it
+  // REFUSED a resize at the work area). This refuses nothing — a maximized host
+  // stays resizable — and decides nothing: `entry.maximized`, written only by
+  // `setHybridMaximizeState`, remains the single source of truth. Geometry here
+  // is only evidence that a flag set by intent has since been invalidated by the
+  // OS, and the reconciler retires it.
+  //   The app's own paths cannot trip it: `page:maximize` sets the flag true
+  // BEFORE its `setBounds(workArea)`, so the resulting resize sees bounds ==
+  // workArea → no clear; `page:unmaximize` clears the flag before its
+  // `setBounds(prev)` → early-return; and the band drag (`applyResize`) already
+  // ran `exitMaximizeForResize()` at press → early-return.
+  const fillsWorkArea = (b: { x: number; y: number; width: number; height: number }): boolean => {
+    const wa = screen.getDisplayNearestPoint({
+      x: b.x + Math.floor(b.width / 2),
+      y: b.y + Math.floor(b.height / 2),
+    }).workArea;
+    return Math.abs(b.x - wa.x) <= WORK_AREA_MATCH_PX
+      && Math.abs(b.y - wa.y) <= WORK_AREA_MATCH_PX
+      && Math.abs(b.width - wa.width) <= WORK_AREA_MATCH_PX
+      && Math.abs(b.height - wa.height) <= WORK_AREA_MATCH_PX;
+  };
+  const reconcileMaximizeAfterResize = (): void => {
+    try {
+      const hw = getHybridWindow(hostWindowId);
+      if (!hw || !hw.maximized) return;
+      const b = hostBounds();
+      if (!b || fillsWorkArea(b)) return;
+      exitMaximizeForResize();
+    } catch { /* gone */ }
+  };
+  try {
+    // The host is already registered by the time this runs — both the ipc.ts
+    // host-assembly call site and makeWiredHybridHost register before wiring.
+    getHybridWindow(hostWindowId)?.baseWin.on('resize', reconcileMaximizeAfterResize);
+  } catch { /* gone */ }
+
   // Resize direction at a screen point, honoring the top reveal strip: reveal
   // keeps priority over the plain top 'n' band so the navbar gesture wins there
   // (corners are unaffected). `engaged` selects exit vs enter slack.

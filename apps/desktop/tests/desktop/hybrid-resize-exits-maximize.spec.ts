@@ -191,6 +191,55 @@ test.describe('Main-driven resize vs maximize @desktop', () => {
   });
 
   /**
+   * The NATIVE resize path (peek 1a47dc23). The host is `frame:false` but still
+   * `resizable`, so macOS resizes it from the border/corner ITSELF — that gesture
+   * never reaches the content WC's `input-event` stream, so the press-time
+   * `exitMaximizeForResize()` never runs and the registry keeps `maximized:true`
+   * with a `preMaxBounds` the window has been resized away from. The next
+   * maximize toggle then reads the stale flag, publishes `page:unmaximize`, and
+   * the window jumps to that old rect instead of filling the work area.
+   *
+   * Every OTHER resize spec here drives `emitContentMouse`, i.e. the app's own
+   * band FSM — which is exactly why a green suite hid this. So this one bypasses
+   * ALL app input and drives `baseWin.setBounds` directly, the way the OS does.
+   * The reconciler on the host's `resize` event is what must notice.
+   */
+  test('a native OS resize out of maximize clears the stale maximize state', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    const id = await makeWiredHost({ x: 150, y: 170, width: 660, height: 490 });
+    await setActive(id);
+    await waitOverlayReady(app);
+
+    const wa = await workArea(id);
+    expect(wa).not.toBeNull();
+
+    // Maximize through the real path, so the state is set by intent.
+    await toggleMaximize(id);
+    await expect.poll(() => hostBounds(id)).toEqual(wa);
+    expect((await registryMaximized(id))?.maximized).toBe(true);
+
+    // The NATIVE resize: bounds change with no app input whatsoever.
+    const shrunk = { x: wa!.x, y: wa!.y, width: wa!.width - 240, height: wa!.height - 180 };
+    await app.evaluateMain!((_e, a) => {
+      const br = (globalThis as any).__peekHybridOverlayTest;
+      const arg = a as { wid: number; b: Rect };
+      br.setHostBounds(arg.wid, arg.b);
+    }, { wid: id, b: shrunk });
+    await expect.poll(async () => (await hostBounds(id))?.width).toBe(shrunk.width);
+
+    // Pre-fix: still maximized:true with the 660x490 preMaxBounds stashed.
+    await expect.poll(async () => (await registryMaximized(id))?.maximized).toBe(false);
+    expect((await registryMaximized(id))?.preMaxBounds).toBeNull();
+
+    // And the overlay mirror followed, so the next toggle MAXIMIZES rather than
+    // "restoring" to the stale rect — the user-visible symptom.
+    await expect.poll(() => overlayMaximized()).toBe(false);
+    await toggleMaximize(id);
+    await expect.poll(() => hostBounds(id)).toEqual(wa);
+  });
+
+  /**
    * The inverse disagreement. A window merely SIZED to exactly fill the work area
    * was never maximized by intent (`entry.maximized` false), but the old geometry
    * check called it maximized and silently refused to resize it. Nothing about
