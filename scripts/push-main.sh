@@ -5,6 +5,7 @@
 # Usage:
 #   scripts/push-main.sh           # preview what would be pushed; refuse to push
 #   scripts/push-main.sh --yes     # push for real (still runs all checks)
+#   scripts/push-main.sh --yes --no-disruptive   # skip the disruptive suite
 #
 # ## What it enforces
 #
@@ -16,6 +17,31 @@
 #    that has an alternate version on the remote already.)
 # 3. Optional fetch-first: `--fetch` runs `jj git fetch --remote tangled` to
 #    refresh the local view of `main@tangled` before checks.
+# 4. The `desktop-disruptive` Playwright suite, when the push touches
+#    apps/desktop/. See "The disruptive suite" below.
+#
+# ## The disruptive suite
+#
+# Some specs drive REAL native macOS fullscreen. Native fullscreen allocates its
+# own Space and animates the display into it, and the app's headless mode works
+# by `setOpacity(0)` — which hides painting but cannot suppress a
+# window-manager-level transition. So those specs take over the display of
+# whoever is at the machine, headless or not, and are excluded from the normal
+# agent-facing runs (`yarn test:desktop:electron`, `yarn test:grep`) by living in
+# their own Playwright project. This script is where they run instead: a push is
+# deliberate, human-initiated, and rare.
+#
+# It runs only with --yes (the default preview stays instant) and only when the
+# push range touches apps/desktop/. `--no-disruptive` skips it — for pushing from
+# a machine someone is actively using, or when the display is mid-presentation.
+#
+# It lives HERE rather than in a git pre-push hook because pushes go out through
+# `jj git push` below, which a git hook does not reliably gate. CLAUDE.md and peek
+# `5f0824de` both describe a `.githooks/pre-push` per-app gate; that file has never
+# existed on any ref, so there was nothing to hook into. If peek `d2d561aa`
+# (evaluate moving off jj to plain git) ever lands, a real pre-push hook becomes
+# the natural home and this block should move there — d2d561aa's migration
+# checklist already lists .githooks/pre-push as a file to rewrite.
 #
 # ## Post-push cleanup
 #
@@ -29,10 +55,12 @@ set -euo pipefail
 
 YES=0
 FETCH=0
+DISRUPTIVE=1
 for arg in "$@"; do
   case "$arg" in
     --yes) YES=1 ;;
     --fetch) FETCH=1 ;;
+    --no-disruptive) DISRUPTIVE=0 ;;
     *) echo "unknown arg: $arg" >&2; exit 2 ;;
   esac
 done
@@ -128,6 +156,32 @@ if [ "$YES" != 1 ]; then
   echo "" >&2
   echo "(preview only — re-run with --yes to actually push)" >&2
   exit 0
+fi
+
+# The disruptive suite (see header). Gated on the push actually touching the
+# desktop app: these specs only cover apps/desktop, and a docs- or server-only
+# push has no reason to hijack the display for a couple of minutes.
+if [ "$DISRUPTIVE" = 1 ]; then
+  TOUCHES_DESKTOP=$(jj diff --from "$TANGLED_REV" --to "$MAIN_REV" --name-only 2>/dev/null | grep -c '^apps/desktop/' || true)
+  if [ "$TOUCHES_DESKTOP" -gt 0 ]; then
+    echo "" >&2
+    echo "Running the desktop-disruptive suite (${TOUCHES_DESKTOP} apps/desktop/ file(s) in this push)." >&2
+    echo "HEADS UP: this drives REAL native macOS fullscreen — the display WILL flip" >&2
+    echo "in and out of a fullscreen Space. Headless cannot hide that; that is exactly" >&2
+    echo "why these specs are excluded from every other run. Re-run with" >&2
+    echo "--no-disruptive to skip." >&2
+    echo "" >&2
+    if ! yarn test:desktop:disruptive >&2; then
+      echo "" >&2
+      echo "ERROR: the desktop-disruptive suite FAILED. Push REFUSED." >&2
+      exit 6
+    fi
+    echo "" >&2
+    echo "desktop-disruptive suite passed." >&2
+  else
+    echo "" >&2
+    echo "Skipping the desktop-disruptive suite (this push touches no apps/desktop/ files)." >&2
+  fi
 fi
 
 # Push for real.
