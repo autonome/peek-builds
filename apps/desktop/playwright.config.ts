@@ -47,6 +47,24 @@ export default defineConfig({
       fullyParallel: false,
     },
     {
+      // Specs that drive REAL native macOS fullscreen (setFullScreen()),
+      // which allocates its own Space and animates the display — the
+      // headless mechanism (setOpacity(0)) cannot suppress that, so these
+      // specs visibly disrupt whoever is at the machine even "headless".
+      // Deliberately NOT included in `yarn test:desktop:electron`, and not
+      // reachable from `yarn test:grep` (whose path filter is
+      // apps/desktop/tests/desktop/). Run it by hand before a push:
+      // `yarn test:desktop:disruptive`. Same serial shape as desktop-serial.
+      name: 'desktop-disruptive',
+      // Anchor to /tests/desktop-disruptive/ with a trailing $ — a bare
+      // /desktop-disruptive\// would still be fine here, but a bare
+      // /desktop\// (as used by the `desktop` project) would greedily
+      // prefix-match this directory too, so keep both testMatch patterns
+      // anchored the same way.
+      testMatch: /\/tests\/desktop-disruptive\/.*\.spec\.ts$/,
+      fullyParallel: false,
+    },
+    {
       name: 'components',
       testMatch: /\/tests\/components\/.*\.spec\.ts$/,
       use: {

@@ -34,25 +34,17 @@
  * and the window ends back at its ORIGINAL bounds — so the maximize assertion
  * fails, catching the regression with no timer.
  *
- * Fullscreen (detent 3) IS exercised in the last test: native fullscreen enter/
- * leave DO fire in macOS-headless (empirically confirmed via live trace, peek
- * d8ce0ddf — earlier specs assumed otherwise), so the triple-click fullscreen
- * round-trip and its maximize-state desync are assertable here. The pure
- * detent→'toggle-fullscreen' mapping is still covered by the unit
- * (main/hybrid-window-gesture.test.ts).
+ * Fullscreen (detent 3) is NOT exercised here — it moved to
+ * tests/desktop-disruptive/hybrid-content-window-gesture-fullscreen.spec.ts,
+ * which drives native macOS fullscreen and so is excluded from the normal
+ * runs (see that file's header for why). The pure detent→'toggle-fullscreen'
+ * mapping is still covered by the unit (main/hybrid-window-gesture.test.ts).
  *
  *   yarn test:grep "Hybrid content window gesture"
  */
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
-import { Page } from '@playwright/test';
-import { createPerDescribeApp } from '../helpers/test-app';
-import {
-  hybridBridgePresent,
-  getHybridContentWcId,
-  waitOverlayReady,
-  type Rect,
-} from '../helpers/hybrid-page';
-import http from 'http';
+import { hybridBridgePresent } from '../helpers/hybrid-page';
+import { setupGestureHost, type GestureHost } from '../helpers/gesture-host';
 
 // A native-style double-click (detail:2) dispatched at the CENTER of `sel`, with
 // real clientX/clientY so the content-side guard's click-point ↔ selection-rect
@@ -73,28 +65,6 @@ function dispatchDoubleClickAtCenterSrc(sel: string, clearSelection: boolean): s
       detail: 2, bubbles: true, composed: true, cancelable: true, clientX: x, clientY: y,
     }));
     return { fired: true, selected: selected };
-  })()`;
-}
-
-// Dispatch ONE click at the center of `sel` with an explicit native multi-click
-// `detail` (2 = double → maximize, 3 = triple → fullscreen), real clientX/clientY.
-// The fullscreen-desync spec drives detent-2 and detent-3 as SEPARATE sequenced
-// clicks (not one JS task) so the maximize round-trip lands between them — the same
-// ~150ms inter-click gap a real triple-click has (live trace, peek d8ce0ddf). Firing
-// both in one task is unrealistically fast: the overlay round-trip wouldn't finish
-// before detent-3's setFullScreen, corrupting preMaxBounds in a way real hardware
-// never produces.
-function dispatchClickAtCenterSrc(sel: string, detail: number, clearSelection: boolean): string {
-  return `(function () {
-    ${clearSelection ? 'try { window.getSelection().removeAllRanges(); } catch (_) {}' : ''}
-    var el = document.querySelector(${JSON.stringify(sel)});
-    if (!el) return { fired: false };
-    var r = el.getBoundingClientRect();
-    var x = r.left + r.width / 2, y = r.top + r.height / 2;
-    el.dispatchEvent(new MouseEvent('click', {
-      detail: ${detail}, bubbles: true, composed: true, cancelable: true, clientX: x, clientY: y,
-    }));
-    return { fired: true };
   })()`;
 }
 
@@ -162,108 +132,21 @@ function dispatchDraggedDoubleClickAtCenterSrc(sel: string, dx: number, dy: numb
 
 test.describe('Hybrid content window gesture @desktop', () => {
   let app: DesktopApp;
-  let bgWindow: Page;
-  let server: http.Server;
-  let port: number;
+  let openGestureWindow: GestureHost['openGestureWindow'];
+  let runInContent: GestureHost['runInContent'];
+  let hostBoundsOf: GestureHost['hostBoundsOf'];
+  let workAreaOf: GestureHost['workAreaOf'];
+  let teardown: GestureHost['teardown'];
 
   test.beforeAll(async () => {
-    ({ app, bgWindow } = await createPerDescribeApp('hybrid-content-window-gesture'));
-
-    // Local http server so the content WC gets the REAL universal preload (the
-    // gesture listener only loads on http(s) — data: URLs get no preload). The
-    // tall empty #dead div gives a genuine dead-space region well ABOVE the
-    // paragraph, so a click in it falls OUTSIDE a selection made over #para.
-    await new Promise<void>((resolve) => {
-      server = http.createServer((_req, res) => {
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(
-          `<!DOCTYPE html><html><head><title>Gesture</title></head>` +
-            `<body style="margin:0;height:100vh">` +
-            `<div id="dead" style="width:100%;height:240px"></div>` +
-            `<p id="para" style="margin:0">hello selectable words here</p>` +
-            `<input id="inp" value="x">` +
-            `<button id="btn">Press</button>` +
-            `</body></html>`,
-        );
-      });
-      server.listen(0, '127.0.0.1', () => {
-        const addr = server.address();
-        port = typeof addr === 'object' && addr ? addr.port : 0;
-        resolve();
-      });
-    });
+    ({ app, openGestureWindow, runInContent, hostBoundsOf, workAreaOf, teardown } = await setupGestureHost(
+      'hybrid-content-window-gesture',
+    ));
   });
 
   test.afterAll(async () => {
-    if (server) await new Promise<void>((r) => server.close(() => r()));
-    if (app) await app.close();
+    await teardown();
   });
-
-  // Open a REAL hybrid page-host on the local server, make it the active window
-  // (so the singleton chrome overlay — the single source of truth for maximize —
-  // frames it), and resolve its content WC id for MAIN-world dispatch. Each call
-  // uses a UNIQUE path so the hybrid find-by-url dedup never collapses a later
-  // open onto an earlier (already-maximized) window.
-  let seq = 0;
-  async function openGestureWindow(): Promise<{ id: number; wcId: number }> {
-    const token = `g-${++seq}`;
-    const openResult = await bgWindow.evaluate(async (targetUrl: string) => {
-      return await (window as any).app.window.open(targetUrl, { width: 720, height: 520 });
-    }, `http://127.0.0.1:${port}/${token}`);
-    expect(openResult.success).toBe(true);
-    const id = openResult.id as number;
-
-    const pageWindow = await app.getWindow(token, 15000);
-    expect(pageWindow).toBeTruthy();
-    await pageWindow.waitForLoadState('domcontentloaded');
-
-    const wcId = await getHybridContentWcId(app, id);
-    expect(wcId, 'a live hybrid must expose its content wc id').not.toBeNull();
-
-    // Frame the overlay over this window (focus-free) and wait for its renderer,
-    // which owns the maximize toggle the gesture routes through.
-    await app.evaluateMain!((_e, wid) => {
-      const b = (globalThis as any).__peekHybridOverlayTest;
-      return b.setActive(wid);
-    }, id);
-    await waitOverlayReady(app);
-
-    return { id, wcId: wcId as number };
-  }
-
-  const runInContent = (wcId: number, src: string) =>
-    app.evaluateMain!(
-      (async ({ webContents }: any, arg: { wcId: number; src: string }) => {
-        const wc = webContents.fromId(arg.wcId);
-        if (!wc || wc.isDestroyed()) return null;
-        return wc.executeJavaScript(arg.src);
-      }) as any,
-      { wcId, src },
-    );
-
-  const hostBoundsOf = (id: number) =>
-    app.evaluateMain!((_e, wid) => {
-      const b = (globalThis as any).__peekHybridOverlayTest;
-      return b.hostBounds(wid) as Rect | null;
-    }, id) as Promise<Rect | null>;
-
-  const workAreaOf = (id: number) =>
-    app.evaluateMain!((_e, wid) => {
-      const b = (globalThis as any).__peekHybridOverlayTest;
-      return b.hostWorkArea(wid) as Rect | null;
-    }, id) as Promise<Rect | null>;
-
-  type FsState = {
-    isFullScreen: boolean;
-    nativeFullScreen: boolean;
-    maximized: boolean;
-    preMaxBounds: Rect | null;
-  };
-  const fullscreenStateOf = (id: number) =>
-    app.evaluateMain!((_e, wid) => {
-      const b = (globalThis as any).__peekHybridOverlayTest;
-      return b.hostFullscreenState(wid);
-    }, id) as Promise<FsState | null>;
 
   test('double-click on dead content maximizes the host window', async () => {
     test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
@@ -384,72 +267,5 @@ test.describe('Hybrid content window gesture @desktop', () => {
     await runInContent(wcId, dispatchDoubleClickAtCenterSrc('#dead', true));
 
     await expect.poll(() => hostBoundsOf(id)).toEqual(workArea);
-  });
-
-  test('triple-click fullscreen round-trip restores the pre-gesture bounds (not stuck maximized)', async () => {
-    test.skip(!(await hybridBridgePresent(app)), 'no overlay bridge in this configuration');
-
-    // The d8ce0ddf follow-up. Reported steps: from a normal-sized window, a
-    // triple-click maximizes (detent-2) then goes fullscreen (detent-3); a SECOND
-    // triple-click must return the window to where it was — its normal bounds — NOT
-    // leave it maximized ("triple-click there should go back to where i was, not to
-    // maximized"). A triple-click is a TOGGLE, so the incidental detent-2 maximize
-    // is undone on the way out: the exit detent-2 is suppressed while fullscreen
-    // (the !isFullScreen() gate keeps maximized+preMaxBounds intact), then the host's
-    // leave-full-screen handler un-maximizes back to preMaxBounds once macOS has
-    // SETTLED the exit — so the restore setBounds isn't dropped (macOS won't resize a
-    // fullscreen window). Deterministic, event-driven, no timer.
-    const { id, wcId } = await openGestureWindow();
-    const workArea = await workAreaOf(id);
-    const normal = await hostBoundsOf(id);
-    expect(workArea).not.toBeNull();
-    expect(normal).not.toBeNull();
-    // The fresh window is a normal, non-maximized size — so "back to normal" below
-    // is a meaningful signal, not vacuously true.
-    expect(normal).not.toEqual(workArea);
-
-    // ENTER, as a real triple-click does it: detent-2 maximizes; the maximize round-
-    // trip lands (the real inter-click gap); THEN detent-3 goes fullscreen.
-    await runInContent(wcId, dispatchClickAtCenterSrc('#dead', 2, true)); // detent-2 → maximize
-    await expect.poll(() => hostBoundsOf(id)).toEqual(workArea);
-    // preMaxBounds captured the REAL normal bounds (round-trip finished pre-fullscreen).
-    {
-      const s = await fullscreenStateOf(id);
-      expect(s!.maximized).toBe(true);
-      expect(s!.preMaxBounds).toEqual(normal);
-    }
-    await runInContent(wcId, dispatchClickAtCenterSrc('#dead', 3, true)); // detent-3 → fullscreen
-    // Wait for the native macOS fullscreen animation to SETTLE. We poll
-    // `nativeFullScreen` (flips on the enter-full-screen event, ~600ms later), NOT
-    // `isFullScreen()` (flips synchronously the instant setFullScreen is called) —
-    // acting mid-animation, as an isFullScreen()-poll would, corrupts the OS
-    // transition and is nothing a real user (seconds between clicks) ever does.
-    await expect.poll(() => fullscreenStateOf(id).then((s) => s?.nativeFullScreen ?? null)).toBe(true);
-
-    // EXIT, triple-click again: detent-2 arrives while STILL fullscreen (the gate
-    // suppresses the maximize-toggle here), then detent-3 leaves fullscreen. The
-    // window stays continuously active throughout (single-session repro), so we do
-    // NOT re-activate — re-firing page-overlay:active would clobber the overlay's
-    // own maximized flag (a separate divergence bug) and mask this one.
-    await runInContent(wcId, dispatchClickAtCenterSrc('#dead', 2, true)); // detent-2 → suppressed (fullscreen)
-    await runInContent(wcId, dispatchClickAtCenterSrc('#dead', 3, true)); // detent-3 → leave fullscreen
-    await expect.poll(() => fullscreenStateOf(id).then((s) => s?.nativeFullScreen ?? null)).toBe(false);
-
-    // THE regression assertion. Leaving fullscreen fires the host's leave-full-screen
-    // handler, which un-maximizes back to the pre-gesture bounds (page:unmaximize,
-    // main-side — it doesn't depend on the overlay being active/focused, so it's
-    // observable even under the macOS-headless focus artifact). That reconcile is
-    // async (a pubsub round-trip after the settled exit), so we POLL: the window ends
-    // at its NORMAL bounds, not maximized, with preMaxBounds cleared. Pre-fix the exit
-    // left it stuck at the work area (maximized=true, bounds==workArea) — exactly the
-    // reported "goes to maximized, not back to where I was" — so this block fails
-    // pre-fix.
-    await expect.poll(() => hostBoundsOf(id)).toEqual(normal);
-    {
-      const s = await fullscreenStateOf(id);
-      expect(s!.isFullScreen).toBe(false);
-      expect(s!.maximized).toBe(false);
-      expect(s!.preMaxBounds).toBeNull();
-    }
   });
 });

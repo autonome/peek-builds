@@ -23,6 +23,7 @@
     "test:desktop:electron:x": "cd ../.. && ./scripts/timed.sh sh -c 'yarn workspace @peek/desktop build && electron-builder --dir && HEADLESS=1 PACKAGED=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts apps/desktop/tests/desktop/ -x'",
     "test:packaged": "cd ../.. && yarn kill:packaged && HEADLESS=1 PACKAGED=1 ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=desktop",
     "test:packaged:debug": "cd ../.. && yarn kill:packaged && HEADLESS=1 PACKAGED=1 DEBUG=1 ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=desktop",
+    "test:desktop:disruptive": "cd ../.. && ./scripts/timed.sh sh -c 'yarn workspace @peek/desktop build && HEADLESS=1 BACKEND=electron ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts --project=desktop-disruptive --workers=1'",
     "test:default-browser:linux": "cd ../.. && ./scripts/timed.sh sh -c 'yarn workspace @peek/desktop build && yarn workspace @peek/desktop build:electron:dist && ./scripts/smoke-default-browser.sh'",
     "test:default-browser:linux:bg": "../../scripts/bg-run.sh /tmp/smoke-default-browser.log yarn test:default-browser:linux",
     "test:unit": "../../scripts/timed.sh sh -c 'yarn build && NODE_ENV=test ELECTRON_RUN_AS_NODE=1 npx electron --test dist/main/*.test.js && NODE_ENV=test node --test tests/unit/*.test.js'",

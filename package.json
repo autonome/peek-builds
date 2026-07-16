@@ -153,6 +153,7 @@
     "test:unit:datastore": "yarn workspace @peek/desktop run test:unit:datastore",
     "test:desktop:electron:source": "yarn workspace @peek/desktop run test:desktop:electron:source",
     "test:desktop:electron:x": "yarn workspace @peek/desktop run test:desktop:electron:x",
+    "test:desktop:disruptive": "yarn workspace @peek/desktop run test:desktop:disruptive",
     "test:desktop:tauri": "./scripts/timed.sh sh -c 'yarn test:desktop:tauri:frontend; yarn test:desktop:tauri:rust'",
     "test:desktop:tauri:frontend": "./scripts/timed.sh sh -c 'HEADLESS=1 BACKEND=tauri ./scripts/playwright-with-display.sh test --config apps/desktop/playwright.config.ts apps/desktop/tests/desktop/'",
     "test:desktop:tauri:rust": "./scripts/timed.sh sh -c 'cd apps/tauri-desktop/src-tauri && cargo test --test smoke -- --nocapture'",
