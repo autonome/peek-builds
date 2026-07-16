@@ -1772,7 +1772,6 @@ export function wireHybridContentEvents(
   const MIN_RESIZE_H = 150;
   const RESIZE_ENTER_SLACK = 0;  // engage exactly at the band
   const RESIZE_EXIT_SLACK = 6;   // sticky once in-band (spatial hysteresis)
-  let leftButtonDown = false;
   let inRevealBand = false;
 
   // Content-cursor reconciler. `wantCursor` is the intended FULL css cursor value
@@ -1836,11 +1835,45 @@ export function wireHybridContentEvents(
   hybridContentCursorSetters.set(hostWindowId, setContentCursor);
   contentWC.once('destroyed', () => { hybridContentCursorSetters.delete(hostWindowId); });
 
-  // Active resize drag (null when not resizing): the anchor dir + press point +
-  // bounds at press, so each move recomputes from a fixed origin.
-  let activeResize:
-    | { dir: ResizeDir; sx: number; sy: number; sb: { x: number; y: number; width: number; height: number } }
-    | null = null;
+  // ── Pointer-gesture state for this host's content WC ─────────────────────
+  // ONE value, three named states — a left press over content is EITHER a resize
+  // OR a hold-to-drag OR nothing, never two at once.
+  //
+  // This used to be two independent variables (`activeResize` object +
+  // `leftButtonDown` boolean), which made illegal combinations representable —
+  // and one of them shipped. `activeResize` was only ever cleared on `mouseUp`,
+  // but a resize that CLAMPS at MIN_RESIZE_W/MIN_RESIZE_H stops following the
+  // cursor, so the terminating release lands OUTSIDE the host and the content WC
+  // never sees that `mouseUp`. The resize stayed armed forever. The next plain
+  // press in the page interior correctly hit-tested to no direction and set
+  // `leftButtonDown`, but the first move matched the still-armed resize branch
+  // (tested first) and applied the PREVIOUS gesture's anchor — the window jumped
+  // at the start of an unrelated drag. With one state value that's unrepresentable:
+  // a press ends whatever came before (endGesture) before it decides what it is.
+  //   `resizing` carries the anchor: dir + press point + bounds AT PRESS, so each
+  // move recomputes from a fixed origin.
+  type PointerGesture =
+    | { kind: 'idle' }
+    | {
+        kind: 'resizing';
+        dir: ResizeDir; sx: number; sy: number;
+        sb: { x: number; y: number; width: number; height: number };
+      }
+    | { kind: 'dragging' };
+  let gesture: PointerGesture = { kind: 'idle' };
+
+  // The ONE transition back to idle, from any state, with the exit action that
+  // state owes the overlay. Leaving `resizing` ALWAYS clears the overlay's
+  // resize-active latch — otherwise an abandoned resize pins the overlay
+  // click-through for the rest of the host's life.
+  const endGesture = (): void => {
+    if (gesture.kind === 'resizing') {
+      try {
+        publish(getSystemAddress(), 'page-overlay:resize-active', { windowId: hostWindowId, active: false });
+      } catch { /* gone */ }
+    }
+    gesture = { kind: 'idle' };
+  };
 
   const hostBounds = (): { x: number; y: number; width: number; height: number } | null => {
     try {
@@ -1892,10 +1925,11 @@ export function wireHybridContentEvents(
     return dir;
   };
   const applyResize = (gx: number, gy: number): void => {
-    if (!activeResize) return;
+    const g = gesture;
+    if (g.kind !== 'resizing') return;
     const hw = getHybridWindow(hostWindowId);
-    if (!hw || hw.baseWin.isDestroyed()) { activeResize = null; return; }
-    const { dir, sx, sy, sb } = activeResize;
+    if (!hw || hw.baseWin.isDestroyed()) { endGesture(); return; }
+    const { dir, sx, sy, sb } = g;
     const dx = gx - sx;
     const dy = gy - sy;
     let { x, y, width, height } = sb;
@@ -1920,6 +1954,11 @@ export function wireHybridContentEvents(
   contentWC.on('input-event', (_event: unknown, input: any) => {
     const t = input && input.type;
     if (t === 'mouseDown' && input.button === 'left') {
+      // A left press is unambiguously the START of a gesture, so nothing we
+      // believe is live can still be live — end it here rather than trusting a
+      // `mouseUp` the OS is free to deliver somewhere else (see the
+      // PointerGesture note: a clamped resize's release lands off-host).
+      endGesture();
       const b = hostBounds();
       const dir = b ? resizeDirAt(b, input.globalX, input.globalY, false) : null;
       if (b && dir) {
@@ -1930,18 +1969,18 @@ export function wireHybridContentEvents(
         // `sb` is the bounds AT PRESS — for a maximized host that's the work-area
         // rect, so the drag shrinks from what the user sees, in one gesture.
         exitMaximizeForResize();
-        activeResize = { dir, sx: input.globalX, sy: input.globalY, sb: b };
+        gesture = { kind: 'resizing', dir, sx: input.globalX, sy: input.globalY, sb: b };
         setHoverDir(dir);
         publish(getSystemAddress(), 'page-overlay:resize-active', { windowId: hostWindowId, active: true });
         return;
       }
-      leftButtonDown = true;
+      gesture = { kind: 'dragging' };
       publish(getSystemAddress(), 'page-overlay:content-pointer', {
         windowId: hostWindowId, phase: 'down', screenX: input.globalX, screenY: input.globalY,
       });
-    } else if (t === 'mouseMove' && activeResize) {
+    } else if (t === 'mouseMove' && gesture.kind === 'resizing') {
       applyResize(input.globalX, input.globalY);
-    } else if (t === 'mouseMove' && leftButtonDown) {
+    } else if (t === 'mouseMove' && gesture.kind === 'dragging') {
       publish(getSystemAddress(), 'page-overlay:content-pointer', {
         windowId: hostWindowId, phase: 'move', screenX: input.globalX, screenY: input.globalY,
       });
@@ -1984,20 +2023,32 @@ export function wireHybridContentEvents(
         setHoverDir(contentFocused ? resizeDirAt(bounds, input.globalX, input.globalY, wantCursor !== null) : null);
       }
     } else if (t === 'mouseUp' && input.button === 'left') {
-      if (activeResize) {
-        activeResize = null;
-        publish(getSystemAddress(), 'page-overlay:resize-active', { windowId: hostWindowId, active: false });
+      const g = gesture;
+      if (g.kind === 'resizing') {
+        endGesture();
         // Recompute the hover cursor at the release point (persist if still in band).
         const b = hostBounds();
         setHoverDir(b ? resizeDirAt(b, input.globalX, input.globalY, false) : null);
         return;
       }
-      if (!leftButtonDown) return;
-      leftButtonDown = false;
+      if (g.kind !== 'dragging') return;
+      endGesture();
       publish(getSystemAddress(), 'page-overlay:content-pointer', {
         windowId: hostWindowId, phase: 'up', screenX: input.globalX, screenY: input.globalY,
       });
     }
+  });
+
+  // Focus leaving the content WC ends a live RESIZE. The resize is main-driven off
+  // this WC's move stream, so once focus is elsewhere no `mouseUp` can arrive here
+  // to end it — that is exactly the abandoned-resize leak the press-time
+  // `endGesture()` catches late. This closes it at the moment it happens, off an
+  // existing lifecycle event (no timer, no poll).
+  //   `dragging` deliberately does NOT end on blur: that gesture is owned by the
+  // overlay's own pointer stream, which moves the window under the cursor and can
+  // legitimately take focus mid-drag.
+  contentWC.on('blur', () => {
+    if (gesture.kind === 'resizing') endGesture();
   });
 
   // ── Popups / window.open / target=_blank → new hybrid page-host (P1.5) ────
