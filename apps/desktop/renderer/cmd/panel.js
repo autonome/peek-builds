@@ -2460,7 +2460,12 @@ function actionHandlers() {
     },
 
     openSelectedUrlResult() {
-      const urlIndex = state.matchIndex - state.matches.length;
+      // Resolve through the SAME owner the selectedRowIsUrl / selectedIsUrlResult
+      // guards use, rather than reading state.matchIndex directly — those two
+      // readers disagreeing (matchIndex stale after RESULTS_OPEN --Escape-->
+      // TYPING) is exactly the bug this replaces (see state-machine.js selectedRow).
+      const row = selectedRow(machine.getState(), state);
+      const urlIndex = row - state.matches.length;
       const item = state.urlMatches[urlIndex];
       if (!item || !item.content) return;
       const url = item.content;

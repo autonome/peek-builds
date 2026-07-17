@@ -233,6 +233,53 @@ describe('selectedRow / autoSelectableRow', () => {
   });
 });
 
+// ===== Regression: openSelectedUrlResult must agree with selectedRow =====
+// Peek bug (introduced by 8b602148): the TYPING + ENTER guard (selectedRowIsUrl)
+// derives the row via selectedRow(), but panel.js's openSelectedUrlResult resolved
+// its row from raw `state.matchIndex - state.matches.length` instead — the two
+// readers only agreed while matchIndex happened to be 0. RESULTS_OPEN --Escape-->
+// TYPING does not reset matchIndex (that transition's actions are just
+// ['updateResults']; computeMatches only resets matchIndex on INPUT), so a stale
+// non-zero matchIndex disagreed with the row TYPING re-highlights (always row 0
+// for a pure url lane — see autoSelectableRow). This test mirrors panel.js's
+// openSelectedUrlResult action to pin that both readers resolve the SAME row.
+describe('Regression: openSelectedUrlResult resolves through selectedRow, not raw matchIndex', () => {
+  it('after Escape leaves matchIndex stale, Enter opens the row selectedRow highlights', () => {
+    let resolvedRow = null;
+    const machine = makeMachine({
+      openSelectedUrlResult(payload, data) {
+        // Mirrors apps/desktop/renderer/cmd/panel.js openSelectedUrlResult(): resolve
+        // through the SAME owner the selectedRowIsUrl guard uses.
+        resolvedRow = selectedRow(machine.getState(), data);
+      },
+    });
+
+    machine.setState(States.RESULTS_OPEN);
+    const data = machine.getMutableData();
+    data.matches = []; // pure url lane, 2 matches, 0 command matches
+    data.urlMatches = [{ content: 'https://a.example' }, { content: 'https://b.example' }];
+
+    // ArrowDown twice (bounded at the last row) -> matchIndex settles at 1.
+    machine.dispatch(Events.ARROW_DOWN);
+    machine.dispatch(Events.ARROW_DOWN);
+    assert.equal(data.matchIndex, 1);
+
+    // Escape back to TYPING. matchIndex is NOT reset by this transition.
+    machine.dispatch(Events.ESCAPE);
+    assert.equal(machine.getState(), States.TYPING);
+    assert.equal(data.matchIndex, 1, 'matchIndex is stale at 1 -- this is the bug setup');
+
+    // The list stays open (total 2 > 1) and re-highlights row 0 in TYPING.
+    const highlighted = selectedRow(machine.getState(), data);
+    assert.equal(highlighted, 0, 'row 0 is what actually renders as selected after Escape');
+
+    machine.dispatch(Events.ENTER, { value: 'x', isURL: false });
+
+    assert.equal(resolvedRow, highlighted,
+      'the row Enter opens must be the SAME row selectedRow reports as highlighted');
+  });
+});
+
 // ===== IDLE Transitions =====
 
 describe('IDLE transitions', () => {
