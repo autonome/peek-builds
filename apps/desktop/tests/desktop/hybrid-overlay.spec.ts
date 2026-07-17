@@ -149,6 +149,56 @@ test.describe('Hybrid Chrome Overlay (P1.4b-1) @desktop', () => {
     // assert the delta is 0 or 1, never 2+.)
     expect(result.after - result.before).toBeLessThanOrEqual(1);
   });
+
+  // Host-visibility gate: the chrome (address bar / widgets) must be visible ONLY
+  // while a host is actually visible. Today overlay visibility derives entirely
+  // from the FOCUS-derived active id — no show path checks the host's isVisible()
+  // — so hiding a host through the real production route leaves the chrome
+  // revealed over nothing. We SHOW a real (headless) host, activate it (chrome
+  // frames it), then hide it via the SAME `closeOrHideWindow` keepLive branch that
+  // app-switch dismissal / focus-autoclose funnel a hybrid slide through (it hides
+  // the BaseWindow and never clears the active id), and assert the chrome hides
+  // with it. Focus-free: the host is shown via showInactive (opacity 0), never
+  // focused. App-active is OUT OF SCOPE — the invariant here is host-visible only.
+  test('a hidden host must not leave the chrome revealed (host-visibility gate)', async () => {
+    test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
+
+    const result = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const id = b.makeFakeHybridWindow({ x: 140, y: 150, width: 600, height: 440 });
+      await b.loadFakeContent(id, 'data:text/html,<title>Host</title>x');
+      // Seed window-manager params so the close path can read keepLive. keepLive:
+      // true → the production route HIDES (not destroys) the host, which is the
+      // condition under test: a live-but-hidden host whose active id stays set.
+      b.registerHybridWindowParams(id, {
+        address: 'https://host.example/p',
+        role: 'quick-view',
+        modal: true,
+        keepLive: true,
+        hybridPageHost: true,
+      });
+      // Actually SHOW the host (focus-free), then make it active → chrome frames it.
+      b.showFakeHybridWindowInactive(id);
+      b.setActive(id);
+      const hostVisibleWhileShown = b.hostVisibility(id)?.visible;
+      const overlayWhileShown = b.overlayState()?.visible;
+      // Hide the host through the REAL production route (closeOrHideWindow keepLive
+      // branch → baseWin.hide()). This path does NOT clear the active id.
+      b.closeOrHideHybrid(id);
+      const hostVisibleAfterHide = b.hostVisibility(id)?.visible;
+      const overlayAfterHide = b.overlayState()?.visible;
+      return { hostVisibleWhileShown, overlayWhileShown, hostVisibleAfterHide, overlayAfterHide };
+    });
+
+    // Precondition: the host is shown and the chrome is correctly revealed over it.
+    expect(result.hostVisibleWhileShown).toBe(true);
+    expect(result.overlayWhileShown).toBe(true);
+    // The host is now hidden via the production close path...
+    expect(result.hostVisibleAfterHide).toBe(false);
+    // ...so the chrome MUST hide too. FAILS TODAY: no show path gates overlay
+    // visibility on host visibility, so the chrome stays revealed over a hidden host.
+    expect(result.overlayAfterHide).toBe(false);
+  });
 });
 
 /**
