@@ -478,7 +478,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
         { target: States.EXECUTING, actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'updateGhostText', 'updateResults'] },
       ],
       [Events.CLICK_URL_RESULT]: [
-        { target: States.CLOSING, actions: ['setMatchIndexFromClick', 'openSelectedUrlResult', 'clearInput', 'shutdown'] },
+        { target: States.CLOSING, actions: ['openClickedUrlResult', 'clearInput', 'shutdown'] },
       ],
     },
 
@@ -561,7 +561,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
         },
       ],
       [Events.CLICK_URL_RESULT]: [
-        { target: States.CLOSING, actions: ['setMatchIndexFromClick', 'openSelectedUrlResult', 'clearInput', 'shutdown'] },
+        { target: States.CLOSING, actions: ['openClickedUrlResult', 'clearInput', 'shutdown'] },
       ],
       [Events.ESCAPE]: [
         { target: States.TYPING, actions: ['updateResults'] },

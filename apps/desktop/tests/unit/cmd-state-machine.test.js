@@ -280,6 +280,45 @@ describe('Regression: openSelectedUrlResult resolves through selectedRow, not ra
   });
 });
 
+// ===== Regression: a url-row CLICK opens the clicked row, not the selected one =====
+// Peek bug (introduced by 1b6a62be): 1b6a62be routed the click path through the
+// same openSelectedUrlResult -> selectedRow() as ENTER. But in TYPING, selectedRow
+// goes through autoSelectableRow, which IGNORES matchIndex and returns the
+// auto-selected row 0 for a pure url lane. So clicking the 2nd url row (payload
+// index 1) opened the 1st (row 0). Enter and click legitimately choose different
+// rows — the highlighted one vs. the clicked one — so the click path now has its
+// own action (openClickedUrlResult) that reads the row from its OWN payload and
+// never consults selectedRow. This test mirrors panel.js's openClickedUrlResult.
+describe('Regression: url-row click opens the clicked row, not selectedRow', () => {
+  it('clicking the 2nd url row in TYPING opens the 2nd, though selectedRow reports the 1st', () => {
+    let clickedRow = null;
+    const machine = makeMachine({
+      openClickedUrlResult(payload, data) {
+        // Mirrors apps/desktop/renderer/cmd/panel.js openClickedUrlResult(): resolve
+        // the row from the payload index, NOT through selectedRow.
+        if (payload?.index !== undefined) clickedRow = payload.index;
+      },
+    });
+
+    machine.setState(States.TYPING);
+    const data = machine.getMutableData();
+    data.matches = []; // pure url lane, 2 matches, 0 command matches
+    data.urlMatches = [{ content: 'https://a.example' }, { content: 'https://b.example' }];
+
+    // selectedRow reports the auto-selected row 0 here (autoSelectableRow ignores
+    // matchIndex) -- the WRONG answer for a click on the 2nd row. This is what the
+    // old (openSelectedUrlResult-based) click path resolved.
+    assert.equal(selectedRow(machine.getState(), data), 0,
+      'selectedRow reports row 0 -- the row the buggy click path would have opened');
+
+    // Click the 2nd url row. globalIndex = matches.length + 1 = 1.
+    machine.dispatch(Events.CLICK_URL_RESULT, { index: 1 });
+
+    assert.equal(clickedRow, 1,
+      'the click must open the clicked row (1), not the selected row (0)');
+  });
+});
+
 // ===== IDLE Transitions =====
 
 describe('IDLE transitions', () => {

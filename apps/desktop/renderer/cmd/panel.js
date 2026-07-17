@@ -1983,6 +1983,31 @@ async function shutdown() {
 function actionHandlers() {
   const commandInput = () => document.getElementById('command-input');
 
+  // Open a url-history row. `row` is a GLOBAL results-list index
+  // (state.matches.length + urlIndex). Both the Enter path
+  // (openSelectedUrlResult) and the click path (openClickedUrlResult) end here,
+  // but they resolve WHICH row separately and must not consult each other's
+  // rule — Enter takes the visibly-selected row, a click takes its own payload
+  // row.
+  const openUrlResultByRow = (row) => {
+    const urlIndex = row - state.matches.length;
+    const item = state.urlMatches[urlIndex];
+    if (!item || !item.content) return;
+    const url = item.content;
+    log('cmd:panel', 'Opening URL history result:', url);
+    state.lastExecuted = url;
+    updateMatchCount(url);
+    api.window.open(url, {
+      role: 'content',
+      width: 1024,
+      height: 768,
+      trackingSource: 'cmd',
+      trackingSourceId: 'history-result'
+    }).catch(error => {
+      log.error('cmd:panel', 'Failed to open URL history result:', error);
+    });
+  };
+
   return {
     setTyped(payload) {
       state.typed = payload.value;
@@ -2460,27 +2485,21 @@ function actionHandlers() {
     },
 
     openSelectedUrlResult() {
-      // Resolve through the SAME owner the selectedRowIsUrl / selectedIsUrlResult
-      // guards use, rather than reading state.matchIndex directly — those two
-      // readers disagreeing (matchIndex stale after RESULTS_OPEN --Escape-->
-      // TYPING) is exactly the bug this replaces (see state-machine.js selectedRow).
-      const row = selectedRow(machine.getState(), state);
-      const urlIndex = row - state.matches.length;
-      const item = state.urlMatches[urlIndex];
-      if (!item || !item.content) return;
-      const url = item.content;
-      log('cmd:panel', 'Opening URL history result:', url);
-      state.lastExecuted = url;
-      updateMatchCount(url);
-      api.window.open(url, {
-        role: 'content',
-        width: 1024,
-        height: 768,
-        trackingSource: 'cmd',
-        trackingSourceId: 'history-result'
-      }).catch(error => {
-        log.error('cmd:panel', 'Failed to open URL history result:', error);
-      });
+      // ENTER opens the VISIBLY-selected row. Resolve through selectedRow — the
+      // SAME owner the selectedRowIsUrl / selectedIsUrlResult guards use — so the
+      // guard and the action can never disagree (matchIndex went stale after
+      // RESULTS_OPEN --Escape--> TYPING; see state-machine.js selectedRow).
+      openUrlResultByRow(selectedRow(machine.getState(), state));
+    },
+
+    openClickedUrlResult(payload) {
+      // A CLICK names its own row via the payload index and must NOT go through
+      // selectedRow: its TYPING branch (autoSelectableRow) ignores matchIndex and
+      // returns the auto-selected row 0, so clicking the 2nd url row would open
+      // the 1st. Enter and click legitimately pick different rows, so each names
+      // its own and neither reads the other's rule.
+      if (payload?.index === undefined) return;
+      openUrlResultByRow(payload.index);
     },
 
     shutdown() {
