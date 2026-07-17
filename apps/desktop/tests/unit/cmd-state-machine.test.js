@@ -319,6 +319,35 @@ describe('Regression: url-row click opens the clicked row, not selectedRow', () 
   });
 });
 
+// ===== Regression: actions observe the state they transition INTO =====
+// Peek bug (introduced by 8b602148's FSM-derived visibility): dispatch() ran the
+// transition's actions BEFORE flipping currentState, so a render action reading
+// machine.getState() saw the state being LEFT. renderResults derives #results
+// visibility from resultsListOpen(getState(), ...); on a single-match ArrowDown
+// (TYPING -> RESULTS_OPEN, total === 1) it evaluated the TYPING auto-open rule
+// (total > 1 -> false) and hid the list it was opening (desktop-serial
+// cmd-state-machine.spec.ts "TYPING -> RESULTS_OPEN on ArrowDown"). The state now
+// flips before the actions run, so getState() inside an action is the target.
+describe('Regression: an action observes the post-transition (target) state', () => {
+  it('renderResults on a single-match TYPING->RESULTS_OPEN ArrowDown sees RESULTS_OPEN', () => {
+    let stateSeenByAction = null;
+    const machine = makeMachine({
+      renderResults(payload, data) {
+        stateSeenByAction = machine.getState();
+      },
+    });
+
+    machine.setState(States.TYPING);
+    machine.getMutableData().matches = ['settings']; // a SINGLE match (total === 1)
+
+    machine.dispatch(Events.ARROW_DOWN);
+
+    assert.equal(machine.getState(), States.RESULTS_OPEN);
+    assert.equal(stateSeenByAction, States.RESULTS_OPEN,
+      'the render action must run AFTER the state flips, or single-match visibility is computed against the stale TYPING rule');
+  });
+});
+
 // ===== IDLE Transitions =====
 
 describe('IDLE transitions', () => {

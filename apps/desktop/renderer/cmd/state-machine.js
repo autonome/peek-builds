@@ -918,16 +918,25 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       // Transition matched — execute
       const target = transition.target;
 
+      // Flip state BEFORE running actions so every action observes the state it
+      // is transitioning INTO, not the one being left. The renderers derive from
+      // machine.getState() (panel.js updateResultsUI -> resultsListOpen /
+      // selectedRow); if they ran while currentState still held the old value, a
+      // single-match ArrowDown-to-open (TYPING -> RESULTS_OPEN, total === 1)
+      // would evaluate the TYPING auto-open rule (total > 1 -> false) and hide
+      // the list it was in the act of opening. `prevState` (captured above) is
+      // the only thing that still needs the old value, and it is kept separately.
+      // target === null means the action decides the state itself (e.g.
+      // GHOST_RESOLVED via machine.setState) — leave currentState untouched.
+      if (target !== null && target !== undefined) {
+        currentState = target;
+      }
+
       // Run actions
       if (transition.actions) {
         for (const actionName of transition.actions) {
           runAction(actionName, payload);
         }
-      }
-
-      // Update state (target can be null for actions that determine state themselves)
-      if (target !== null && target !== undefined) {
-        currentState = target;
       }
 
       // Enforce invariants
