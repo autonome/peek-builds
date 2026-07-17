@@ -60,6 +60,7 @@ anchoring each project to its own `tests/<dir>/`.
 ```bash
 yarn test:desktop:electron          # CANONICAL: full build + all 6 runners (~3190)
 yarn test:desktop:electron:bg       # same, backgrounded → tail /tmp/test-electron.log
+                                    #   pass/fail = /tmp/test-electron.exit, NOT the :bg exit code
 yarn test:grep "<pattern>"          # Fast inner-loop: source-only, single test
 yarn test:desktop:electron:source   # Escape hatch: source-only, no packaging (runners 3+4 only)
 yarn test:desktop:electron:x        # Packaged desktop project, stop on first failure
@@ -200,11 +201,32 @@ the below was covered — every one became a user-visible regression. Invariants
 **Testing these:** real OS focus/first-responder is **unobservable in macOS-headless**, so assert
 the decision/state via the hybrid test bridge, not real focus. Coverage added:
 `hybrid-show-activate`, `hybrid-activation-policy`, `hybrid-close-shortcut`,
-`hybrid-shortcut-routing`. The `:bg` test family now detaches cross-platform via
-`scripts/bg-run.sh` (macOS `nohup` / Linux `setsid -f`), so **`yarn test:desktop:electron:bg`
-works on macOS** — it backgrounds the full gate to `/tmp/test-electron.log` (tail with
-`yarn test:log`). (Pre-2026-06-12 it used a bare `setsid` and silently no-op'd on macOS; the
-old workaround "run `HEADLESS=1 yarn test:desktop:electron` directly" is no longer needed.)
+`hybrid-shortcut-routing`. The `:bg` test family detaches cross-platform via
+`scripts/bg-run.sh` (macOS `nohup` / Linux `setsid -f`), backgrounding the gate to
+`/tmp/test-electron.log` (tail with `yarn test:log`).
+
+**A `:bg` launch returning 0 means the run STARTED, not that it passed.** The script's
+own status can only report the launch; the run outlives it. To judge a `:bg` run:
+
+- **`/tmp/test-electron.exit`** — the sentinel: the gate's real exit code, written by the
+  child on completion. Absent = still running. This is the machine-readable pass/fail;
+  don't grep the log for "passed".
+- The log always opens with `bg-run: STARTED <cmd> @<ts>` and closes with `bg-run: EXIT <code>`.
+  A log with STARTED but no EXIT is still in flight; an empty log means the launcher itself
+  never ran. (Before those banners an empty-looking log was indistinguishable from a quiet
+  startup — for humans and agents alike.)
+- `bg-run.sh` now exits **non-zero and dumps the log** if the child dies within ~1s, so the
+  common instant-death case is loud at launch rather than silent.
+
+History, because the failure mode was invisible and cost real debugging time: `bg-run.sh`
+(2026-06-12) detached the child while it still inherited yarn's *temporary* PATH shim dir
+(basename `xfs-<hex>`), which the launching yarn `rm -rf`s on exit. The child resolved `yarn`
+after the fork, lost that race, and died in milliseconds — while the launcher still printed
+"detached" and exited 0. **The gate reported success for testing nothing.** `bg-run.sh` now
+strips those PATH entries before detaching. Note this makes the child resolve `yarn` the same
+way your interactive shell does (a permanent install), which is the point — the `:bg` gate and
+the foreground gate should run the same yarn.
+
 Note `test:desktop:electron` exits non-zero if **any** of the 6 runners fails (it aggregates
 per-runner status) — don't read the chained exit code as one runner's.
 
