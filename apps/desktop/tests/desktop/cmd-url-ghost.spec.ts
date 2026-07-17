@@ -866,6 +866,17 @@ test.describe('cmd URL history substring match @desktop', () => {
     expect(shownState.value).toBe(SUBSTRING_QUERY);
     expect(shownState.hasInlineSpan).toBe(false);
 
+    // Pin this test's premise, which was previously implicit: exactly ONE url
+    // matches "%fast%" in this describe's fresh profile, so the combined total is
+    // 1 — below the >1 auto-open threshold — and the list is CLOSED. Enter being a
+    // no-op depends on that: no row is visible, so no row is selected. If a future
+    // change auto-opened the list here, row 0 WOULD be selected and Enter would
+    // (correctly, by that new rule) open it — silently invalidating this test
+    // rather than failing it. Assert the closed list so that change breaks loudly.
+    const listOpen = await cmdWindow.$eval('#results', (el: HTMLElement) =>
+      el.classList.contains('visible'));
+    expect(listOpen).toBe(false);
+
     // Subscribe to window:opened for the substring url before pressing Enter.
     await bgWindow.evaluate((url: string) => {
       (window as any).__substringUrlWindowOpened = null;
@@ -891,6 +902,169 @@ test.describe('cmd URL history substring match @desktop', () => {
       w.url && (w.url.includes(SUBSTRING_URL) || w.url.includes(encodeURIComponent(SUBSTRING_URL)))
     );
     expect(openedWindow).toBeFalsy();
+
+    if (panelId) {
+      try {
+        await bgWindow.evaluate(async (id: number) => {
+          await (window as any).app.window.close(id);
+        }, panelId);
+      } catch { /* may already be closed */ }
+    }
+  });
+});
+
+// Standalone describe (its own app/panel): the auto-open half of the substring
+// case. Sibling of "cmd URL history substring match" above — same non-prefix
+// query shape, but TWO seeded urls instead of one, which pushes the combined
+// total over the >1 auto-open threshold and flips the expected outcome.
+test.describe('cmd URL history substring match, auto-opened lane @desktop', () => {
+  let app: DesktopApp;
+  let bgWindow: Page;
+
+  // The reported bug: two visited urls contain "grib" as a SUBSTRING (not a
+  // prefix), so the Visited lane auto-opens with 2 rows and row 0 renders
+  // highlighted — yet Enter was a silent no-op. Cause: the list's visibility was
+  // decided by a rule inside updateResultsUI, while Enter was decided by the FSM,
+  // which was still in TYPING with no guard matching. The user saw a selected row
+  // and pressing Enter did nothing. Both now derive from the FSM (resultsListOpen
+  // / selectedRow), so the highlight and Enter cannot disagree.
+  //
+  // Non-prefix matters: a prefix query would render the inline ghost and Enter
+  // would take the hasUrlGhost branch instead, never reaching the selected-row
+  // branch this test covers.
+  const AUTO_URL_A = 'https://app.gribmail.example.com/mail/Inbox';
+  const AUTO_URL_B = 'https://mail.gribly.example.com/inbox';
+  const AUTO_QUERY = 'grib';
+
+  async function openPanel(): Promise<{ cmdWindow: Page; panelId: number }> {
+    const openResult = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.open('peek://cmd/panel.html', {
+        modal: true,
+        width: 600,
+        height: 400,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        center: true,
+        keepLive: true,
+        role: 'palette',
+      });
+    });
+    expect(openResult.success).toBe(true);
+
+    const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
+    await cmdWindow.waitForSelector('input', { timeout: 5000 });
+    await waitForPanelCommandsLoaded(cmdWindow);
+    await waitForPanelReady(cmdWindow);
+    return { cmdWindow, panelId: openResult.id };
+  }
+
+  test.beforeAll(async () => {
+    ({ app, bgWindow } = await createPerDescribeApp('cmd-url-substring-autoopen'));
+
+    for (const url of [AUTO_URL_A, AUTO_URL_B]) {
+      const navResult = await bgWindow.evaluate(async (u: string) => {
+        return await (window as any).app.datastore.trackNavigation(u, {
+          source: 'window',
+          windowType: 'main',
+        });
+      }, url);
+      expect(navResult.success).toBe(true);
+    }
+  });
+
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
+
+  test('an auto-opened, visibly-selected Visited row opens on a bare Enter', async () => {
+    const { cmdWindow, panelId } = await openPanel();
+
+    await cmdWindow.fill('input', AUTO_QUERY);
+
+    // No command matches "grib"; both seeded urls arrive as url matches.
+    await cmdWindow.waitForFunction(
+      () => {
+        const s = (window as any)._cmdState;
+        return !!s && (s.matches?.length || 0) === 0 && (s.urlMatches?.length || 0) >= 2;
+      },
+      undefined,
+      { timeout: 8000 }
+    );
+
+    // The query is a substring of both matchables, never a prefix — so no
+    // completion is shown inline and the hasUrlGhost Enter branch cannot fire.
+    const inlineShown = await cmdWindow.evaluate(() => {
+      const input = document.getElementById('command-input') as HTMLInputElement | null;
+      const commandText = document.getElementById('command-text');
+      return {
+        value: input?.value,
+        hasInlineSpan: !!commandText?.querySelector('.cmd-inline-selection'),
+      };
+    });
+    expect(inlineShown.value).toBe(AUTO_QUERY);
+    expect(inlineShown.hasInlineSpan).toBe(false);
+
+    // 2 combined results > 1 ⇒ the list auto-opens while still in TYPING.
+    await cmdWindow.waitForFunction(
+      () => document.querySelectorAll('.url-result-item').length >= 2,
+      undefined,
+      { timeout: 5000 }
+    );
+    const listOpen = await cmdWindow.$eval('#results', (el: HTMLElement) =>
+      el.classList.contains('visible'));
+    expect(listOpen).toBe(true);
+
+    // Row 0 is visibly selected with no ArrowDown — the FSM auto-selects the
+    // lone url lane's first row.
+    const rowZeroSelected = await cmdWindow.evaluate(() => {
+      const rows = document.querySelectorAll('.url-result-item');
+      return rows.length > 0 && rows[0].classList.contains('selected');
+    });
+    expect(rowZeroSelected).toBe(true);
+
+    // The url of the selected row (row 0), resolved from state rather than
+    // hardcoded, so frecency ordering can't make this flaky.
+    const expectedUrl = await cmdWindow.evaluate(() => {
+      const s = (window as any)._cmdState;
+      const item = s.urlMatches?.[0];
+      return item ? item.content : null;
+    });
+    expect(expectedUrl).toBeTruthy();
+
+    await bgWindow.evaluate((url: string) => {
+      (window as any).__autoOpenUrlWindowOpened = null;
+      (window as any).app.subscribe('window:opened', (msg: any) => {
+        if (msg?.url && (msg.url.includes(url) || msg.url.includes(encodeURIComponent(url)))) {
+          (window as any).__autoOpenUrlWindowOpened = msg;
+        }
+      });
+    }, expectedUrl);
+
+    // The regression: Enter with NO ArrowDown. Was a silent no-op.
+    await cmdWindow.keyboard.press('Enter');
+
+    await bgWindow.waitForFunction(
+      () => (window as any).__autoOpenUrlWindowOpened !== null,
+      undefined,
+      { timeout: 10000 }
+    );
+
+    const afterList = await bgWindow.evaluate(async () => {
+      return await (window as any).app.window.list();
+    });
+    const openedWindow = afterList.windows?.find((w: { url?: string }) =>
+      w.url && (w.url.includes(expectedUrl as string) || w.url.includes(encodeURIComponent(expectedUrl as string)))
+    );
+    expect(openedWindow).toBeTruthy();
+
+    if (openedWindow?.id) {
+      try {
+        await bgWindow.evaluate(async (id: number) => {
+          await (window as any).app.window.close(id);
+        }, openedWindow.id);
+      } catch { /* may already be closed */ }
+    }
 
     if (panelId) {
       try {

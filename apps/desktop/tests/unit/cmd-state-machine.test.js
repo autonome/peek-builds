@@ -12,7 +12,21 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const modulePath = join(__dirname, '..', '..', 'renderer', 'cmd', 'state-machine.js');
 
-const { createStateMachine, States, Events } = await import(modulePath);
+const { createStateMachine, States, Events, resultsListOpen, selectedRow, autoSelectableRow } = await import(modulePath);
+
+// Minimal `data` shape for the pure derivation functions.
+function makeData(overrides = {}) {
+  return {
+    commands: {},
+    matches: [],
+    matchIndex: 0,
+    typed: '',
+    urlMatches: [],
+    paramSuggestions: [],
+    enterRunsInlineSuggestion: true,
+    ...overrides,
+  };
+}
 
 // Helper: create a machine with minimal functional actions and default guards.
 // Most actions are no-ops (just logging), but navigation actions need to
@@ -48,12 +62,6 @@ function makeMachine(overrideActions = {}, overrideGuards = {}) {
     clearMatches(payload, data) {
       data.matches = [];
       data.matchIndex = 0;
-    },
-    showResults(payload, data) {
-      data.showResults = true;
-    },
-    hideResults(payload, data) {
-      data.showResults = false;
     },
     exitParamMode(payload, data) {
       data.paramCommand = null;
@@ -121,6 +129,107 @@ describe('Initial state', () => {
     assert.equal(data.typed, '');
     assert.equal(data.matches.length, 0);
     assert.equal(data.matchIndex, 0);
+  });
+});
+
+// ===== Derived list visibility / row selection =====
+// One owner for "is the list open" and "which row is selected". These replace the
+// old `showResults` boolean, which meant three different things to three readers
+// and let Enter disagree with what the user could see.
+
+describe('resultsListOpen', () => {
+  it('closed with zero results', () => {
+    assert.equal(resultsListOpen(States.TYPING, makeData()), false);
+  });
+
+  it('closed with a single result while TYPING (below the auto-open threshold)', () => {
+    assert.equal(resultsListOpen(States.TYPING, makeData({ matches: ['tags'] })), false);
+  });
+
+  it('open with a single result in RESULTS_OPEN (the user arrowed into it)', () => {
+    assert.equal(resultsListOpen(States.RESULTS_OPEN, makeData({ matches: ['tags'] })), true);
+  });
+
+  it('auto-opens at 2+ combined results while TYPING', () => {
+    assert.equal(resultsListOpen(States.TYPING, makeData({ matches: ['tags', 'tag'] })), true);
+  });
+
+  it('counts the url lane toward the auto-open threshold', () => {
+    const data = makeData({ matches: ['tags'], urlMatches: [{ content: 'https://x.example' }] });
+    assert.equal(resultsListOpen(States.TYPING, data), true);
+  });
+
+  it('open in PARAM_MODE only when there are suggestions', () => {
+    assert.equal(resultsListOpen(States.PARAM_MODE, makeData({ paramSuggestions: [{ title: 'a' }] })), true);
+    assert.equal(resultsListOpen(States.PARAM_MODE, makeData({ paramSuggestions: [] })), false);
+  });
+
+  it('open in CHAIN_MODE with a single match, and ignores the url lane', () => {
+    const data = makeData({ matches: ['format'], urlMatches: [{ content: 'https://x.example' }] });
+    assert.equal(resultsListOpen(States.CHAIN_MODE, data), true);
+    assert.equal(resultsListOpen(States.CHAIN_MODE, makeData()), false);
+  });
+
+  it('closed in OUTPUT_SELECTION (rendered by its own path)', () => {
+    const data = makeData({ matches: ['a', 'b'] });
+    assert.equal(resultsListOpen(States.OUTPUT_SELECTION, data), false);
+  });
+});
+
+describe('selectedRow / autoSelectableRow', () => {
+  it('nothing selected when the list is closed', () => {
+    assert.equal(selectedRow(States.TYPING, makeData({ matches: ['tags'] })), null);
+  });
+
+  it('auto-selects url row 0 when only url results matched', () => {
+    const data = makeData({
+      typed: 'fast',
+      urlMatches: [{ content: 'https://fast.example' }, { content: 'https://example/fast' }],
+    });
+    assert.equal(selectedRow(States.TYPING, data), 0);
+    assert.equal(autoSelectableRow(data), 0);
+  });
+
+  it('does NOT select a substring-only command match', () => {
+    const data = makeData({ typed: 'ags', matches: ['tags', 'stags'] });
+    assert.equal(selectedRow(States.TYPING, data), null);
+    assert.equal(autoSelectableRow(data), null);
+  });
+
+  it('selects a strict-prefix command match', () => {
+    const data = makeData({ typed: 'ta', matches: ['tags', 'tag'] });
+    assert.equal(selectedRow(States.TYPING, data), 0);
+  });
+
+  it('does NOT select a strict-prefix match when the pref is off', () => {
+    const data = makeData({ typed: 'ta', matches: ['tags', 'tag'], enterRunsInlineSuggestion: false });
+    assert.equal(selectedRow(States.TYPING, data), null);
+  });
+
+  it('selects a fully-typed command regardless of the pref', () => {
+    const data = makeData({ typed: 'tags', matches: ['tags', 'tag'], enterRunsInlineSuggestion: false });
+    assert.equal(selectedRow(States.TYPING, data), 0);
+  });
+
+  it('selects a fully-typed command carrying params', () => {
+    const data = makeData({ typed: 'open http://x', matches: ['open', 'opener'] });
+    assert.equal(selectedRow(States.TYPING, data), 0);
+  });
+
+  it('follows matchIndex in RESULTS_OPEN (the arrowed row)', () => {
+    const data = makeData({ typed: 'ags', matches: ['tags', 'stags'], matchIndex: 1 });
+    assert.equal(selectedRow(States.RESULTS_OPEN, data), 1);
+  });
+
+  it('follows matchIndex in CHAIN_MODE', () => {
+    const data = makeData({ typed: '', matches: ['format', 'save'], matchIndex: 1 });
+    assert.equal(selectedRow(States.CHAIN_MODE, data), 1);
+  });
+
+  it('follows a Tab-cycled matchIndex in TYPING', () => {
+    // tabCompleteCommand moves matchIndex off 0 and sets typed to that row's name.
+    const data = makeData({ typed: 'stags ', matches: ['tags', 'stags'], matchIndex: 1 });
+    assert.equal(selectedRow(States.TYPING, data), 1);
   });
 });
 
@@ -269,28 +378,84 @@ describe('TYPING transitions', () => {
     const result = machine.dispatch(Events.ENTER, {
       value: 'https://example.com',
       isURL: true,
-      committed: false
     });
     assert.equal(machine.getState(), States.CLOSING);
   });
 
-  it('TYPING + Enter committed to command -> EXECUTING', () => {
+  // The typed text fully names the command ⇒ the FSM selects that row itself.
+  // No `committed` payload flag: the machine decides, the panel just reports text.
+  it('TYPING + Enter on a fully-typed command -> EXECUTING', () => {
+    machine.getMutableData().typed = 'tags';
     machine.getMutableData().matches = ['tags'];
     machine.getMutableData().commands = { tags: { name: 'tags' } };
     const result = machine.dispatch(Events.ENTER, {
       value: 'tags',
       isURL: false,
-      committed: true,
       commandName: 'tags'
     });
     assert.equal(machine.getState(), States.EXECUTING);
+  });
+
+  // Strict-prefix inline suggestion, pref on, no params → Enter runs it.
+  it('TYPING + Enter on a strict-prefix suggestion -> EXECUTING', () => {
+    machine.getMutableData().typed = 'tag';
+    machine.getMutableData().matches = ['tags'];
+    machine.getMutableData().commands = { tags: { name: 'tags' } };
+    machine.dispatch(Events.ENTER, { value: 'tag', isURL: false });
+    assert.equal(machine.getState(), States.EXECUTING);
+  });
+
+  // Substring-only (fuzzy) match is NOT selected → Enter must not run it.
+  it('TYPING + Enter on a substring-only match -> TYPING (no-op)', () => {
+    machine.getMutableData().typed = 'ags';
+    machine.getMutableData().matches = ['tags'];
+    machine.getMutableData().commands = { tags: { name: 'tags' } };
+    const result = machine.dispatch(Events.ENTER, { value: 'ags', isURL: false });
+    assert.equal(result.handled, false);
+    assert.equal(machine.getState(), States.TYPING);
+  });
+
+  // Pref off ⇒ a strict-prefix suggestion is not auto-run.
+  it('TYPING + Enter on a strict-prefix suggestion with pref off -> TYPING (no-op)', () => {
+    machine.getMutableData().typed = 'tag';
+    machine.getMutableData().matches = ['tags'];
+    machine.getMutableData().commands = { tags: { name: 'tags' } };
+    machine.getMutableData().enterRunsInlineSuggestion = false;
+    const result = machine.dispatch(Events.ENTER, { value: 'tag', isURL: false });
+    assert.equal(result.handled, false);
+    assert.equal(machine.getState(), States.TYPING);
+  });
+
+  // Suggested command that takes params → complete + param mode, not execute-with-empty-params.
+  // Previously the panel faked this by dispatching a TAB; it is now an FSM branch.
+  it('TYPING + Enter on a suggested command with params -> PARAM_MODE', () => {
+    machine.getMutableData().typed = 'ope';
+    machine.getMutableData().matches = ['open'];
+    machine.getMutableData().commands = { open: { name: 'open', params: [{ name: 'url' }] } };
+    machine.dispatch(Events.ENTER, { value: 'ope', isURL: false });
+    assert.equal(machine.getState(), States.PARAM_MODE);
+  });
+
+  // The reported bug's URL half: the list auto-opened on 2 url rows, row 0 is
+  // visibly selected, and Enter with no ArrowDown must open it (was a silent no-op).
+  it('TYPING + Enter with an auto-selected url row -> CLOSING (opens the url)', () => {
+    machine.getMutableData().typed = 'fast';
+    machine.getMutableData().matches = [];
+    machine.getMutableData().urlMatches = [
+      { content: 'https://fast.example.com' },
+      { content: 'https://example.com/fast' },
+    ];
+    machine._actionLog.length = 0;
+    machine.dispatch(Events.ENTER, { value: 'fast', isURL: false });
+    assert.equal(machine.getState(), States.CLOSING);
+    assert.ok(machine._actionLog.includes('openSelectedUrlResult'),
+      'the visibly-selected url row must be opened');
   });
 
   it('TYPING + Enter no match -> TYPING (no-op, search is explicit)', () => {
     const result = machine.dispatch(Events.ENTER, {
       value: 'xyzzy',
       isURL: false,
-      committed: false
     });
     assert.equal(machine.getState(), States.TYPING);
   });
@@ -318,7 +483,6 @@ describe('RESULTS_OPEN transitions', () => {
     machine.setState(States.RESULTS_OPEN);
     machine.getMutableData().matches = ['tags', 'tag', 'settings'];
     machine.getMutableData().matchIndex = 0;
-    machine.getMutableData().showResults = true;
   });
 
   it('RESULTS_OPEN + input -> TYPING', () => {
@@ -350,7 +514,6 @@ describe('RESULTS_OPEN transitions', () => {
     machine.dispatch(Events.ENTER, {
       value: 'tags',
       isURL: false,
-      committed: true,
       commandName: 'tags'
     });
     assert.equal(machine.getState(), States.EXECUTING);
@@ -377,7 +540,7 @@ describe('RESULTS_OPEN transitions', () => {
     assert.equal(machine.getData().matchIndex, 2);
 
     machine._actionLog.length = 0;
-    machine.dispatch(Events.ENTER, { value: 'set', isURL: false, committed: true });
+    machine.dispatch(Events.ENTER, { value: 'set', isURL: false });
 
     assert.equal(machine.getState(), States.EXECUTING);
     assert.ok(machine._actionLog.includes('executeCommand'),
@@ -400,7 +563,7 @@ describe('RESULTS_OPEN transitions', () => {
 
     machine._actionLog.length = 0;
     // Typed text looks like a URL, so the panel would pass isURL: true.
-    machine.dispatch(Events.ENTER, { value: 'settings.io', isURL: true, committed: true });
+    machine.dispatch(Events.ENTER, { value: 'settings.io', isURL: true });
 
     assert.equal(machine.getState(), States.EXECUTING,
       'arrowed command selection must execute, not open the typed URL');
@@ -529,7 +692,7 @@ describe('EXECUTING transitions', () => {
   });
 
   it('EXECUTING blocks Enter (double-Enter guard)', () => {
-    const result = machine.dispatch(Events.ENTER, { value: 'test', committed: true });
+    const result = machine.dispatch(Events.ENTER, { value: 'test' });
     assert.equal(result.handled, false);
     assert.equal(machine.getState(), States.EXECUTING);
   });
@@ -676,7 +839,7 @@ describe('CHAIN_MODE transitions', () => {
   });
 
   it('CHAIN_MODE + Enter with matches -> EXECUTING', () => {
-    machine.dispatch(Events.ENTER, { value: 'format', committed: true });
+    machine.dispatch(Events.ENTER, { value: 'format' });
     assert.equal(machine.getState(), States.EXECUTING);
   });
 

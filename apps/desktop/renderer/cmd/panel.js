@@ -11,7 +11,7 @@ import { id, labels, schemas, storageKeys, defaults } from './config.js';
 import './commands.js'; // Load commands module to dispatch cmd-update-commands event
 import { log } from 'peek://app/log.js';
 import { getSuggestions, invalidateCache as invalidateCompleterCache } from './completers.js';
-import { createStateMachine, States, Events } from './state-machine.js';
+import { createStateMachine, States, Events, resultsListOpen, selectedRow } from './state-machine.js';
 import { urlMatchable, urlCompletionAtGranularity, URL_GRANULARITY_ORDER } from './url-completion.js';
 
 log('cmd:panel', 'loaded');
@@ -100,14 +100,15 @@ loadAdaptiveData().then(data => {
 
 // Cached prefs for URL search behavior
 let showUrlsInResults = defaults.prefs.showUrlsInResults;
-let enterRunsInlineSuggestion = defaults.prefs.enterRunsInlineSuggestion;
+// enterRunsInlineSuggestion lives in machine data — the FSM's selection rule reads it.
+state.enterRunsInlineSuggestion = defaults.prefs.enterRunsInlineSuggestion;
 
 // Load prefs on startup. api.settings.get(key) requires the per-row key;
 // the legacy no-arg whole-object form was removed.
 api.settings.get('prefs').then(result => {
   if (result.success && result.data) {
     showUrlsInResults = result.data.showUrlsInResults ?? defaults.prefs.showUrlsInResults;
-    enterRunsInlineSuggestion = result.data.enterRunsInlineSuggestion ?? defaults.prefs.enterRunsInlineSuggestion;
+    state.enterRunsInlineSuggestion = result.data.enterRunsInlineSuggestion ?? defaults.prefs.enterRunsInlineSuggestion;
   }
   log('cmd:panel', 'showUrlsInResults:', showUrlsInResults);
 });
@@ -119,8 +120,8 @@ api.subscribe('settings:changed', (payload) => {
     log('cmd:panel', 'showUrlsInResults updated:', showUrlsInResults);
   }
   if (payload?.prefs?.enterRunsInlineSuggestion !== undefined) {
-    enterRunsInlineSuggestion = payload.prefs.enterRunsInlineSuggestion;
-    log('cmd:panel', 'enterRunsInlineSuggestion updated:', enterRunsInlineSuggestion);
+    state.enterRunsInlineSuggestion = payload.prefs.enterRunsInlineSuggestion;
+    log('cmd:panel', 'enterRunsInlineSuggestion updated:', state.enterRunsInlineSuggestion);
   }
 });
 
@@ -186,6 +187,11 @@ let modeWasSet = false;
 
 // URL mode state — activated by Cmd+L shortcut
 let pendingUrlMode = false;
+// KNOWN FSM EXCEPTION: Cmd+L url mode is a parallel palette that short-circuits
+// the keydown handler BEFORE machine.dispatch(), so it never enters the state
+// machine and its visibility/selection are NOT covered by resultsListOpen() /
+// selectedRow(). Everything else in this panel derives from the FSM. Folding url
+// mode in (its own States entry + transitions) is a separate change.
 let urlModeActive = false;
 let urlModeItems = [];  // frecency-sorted URL items for display
 
@@ -852,7 +858,6 @@ function doEnterOutputSelectionMode(items, mimeType, sourceCommand) {
 
   state.typed = '';
   state.matches = [];
-  state.showResults = false;
 
   updateOutputSelectionUI();
 }
@@ -1823,19 +1828,23 @@ function updateResultsUI() {
 
   const isChainState = machine.getState() === States.CHAIN_MODE;
   const urlMatches = isChainState ? [] : (state.urlMatches || []);
-  const totalResults = state.matches.length + urlMatches.length;
-  // Auto-open when >1 combined result; otherwise require explicit showResults (ArrowDown) or chain mode.
-  if (totalResults === 0 || (totalResults <= 1 && !state.showResults && !isChainState)) {
+
+  // Visibility and selection both DERIVE from the FSM — see state-machine.js
+  // resultsListOpen() / selectedRow(). The highlight is honest about what Enter
+  // will do: a substring-only match at row 0 renders UNselected until arrowed to.
+  if (!resultsListOpen(machine.getState(), state)) {
     resultsContainer.classList.remove('visible');
     updateWindowSize();
     return;
   }
   resultsContainer.classList.add('visible');
 
+  const selected = selectedRow(machine.getState(), state);
+
   state.matches.forEach((match, index) => {
     const item = document.createElement('div');
     item.className = 'command-item';
-    if (index === state.matchIndex) item.classList.add('selected');
+    if (selected !== null && index === selected) item.classList.add('selected');
 
     const cmd = state.commands[match];
 
@@ -1900,7 +1909,7 @@ function updateResultsUI() {
       const globalIndex = state.matches.length + i;
       const el = document.createElement('div');
       el.className = 'command-item url-result-item';
-      if (globalIndex === state.matchIndex) el.classList.add('selected');
+      if (selected !== null && globalIndex === selected) el.classList.add('selected');
 
       const faviconUrl = item.favicon || '';
       if (faviconUrl) {
@@ -1945,8 +1954,8 @@ function updateResultsUI() {
   // invisible row with no visual feedback ("ArrowDown won't go into Visited",
   // peek dbaa172d). Deterministic post-render DOM sync, not a timer. Both
   // command and url rows carry the .command-item class, so this covers both.
-  const selectedRow = resultsContainer.querySelector('.command-item.selected');
-  if (selectedRow) selectedRow.scrollIntoView({ block: 'nearest' });
+  const selectedRowEl = resultsContainer.querySelector('.command-item.selected');
+  if (selectedRowEl) selectedRowEl.scrollIntoView({ block: 'nearest' });
 
   updateWindowSize();
 }
@@ -2091,14 +2100,6 @@ function actionHandlers() {
           payload.paramCommandName = paramCandidate;
         }
       }
-    },
-
-    showResults() {
-      state.showResults = true;
-    },
-
-    hideResults() {
-      state.showResults = false;
     },
 
     renderResults() {
@@ -2579,7 +2580,6 @@ function actionHandlers() {
       }
 
       state.typed = '';
-      state.showResults = true;
 
       updateChainUI();
       updateChainStepsUI();
@@ -2621,7 +2621,6 @@ function actionHandlers() {
       invalidateCompleterCache();
 
       state.chainPopupActive = false;
-      state.showResults = false;
 
       // Clear inline URL ghost suggestion
       clearUrlGhost();
@@ -2815,32 +2814,13 @@ async function render() {
       const trimmedText = commandInput.value.trim();
       const urlResult = getValidURL(trimmedText);
       const name = state.matches[state.matchIndex];
-      const nameLower = name ? name.toLowerCase() : '';
-      const typedLower = trimmedText.toLowerCase();
 
-      let committed = name && (
-        typedLower === nameLower ||
-        typedLower.startsWith(nameLower + ' ') ||
-        state.showResults ||
-        machine.getState() === States.CHAIN_MODE
-      );
-
-      // Pref: Enter runs the inline-suggested command for a genuine PREFIX completion
-      // (the ghost-completion case). NEVER for substring/fuzzy matches —
-      // findMatchingCommands does substring matching, and auto-running a fuzzy match
-      // would execute a command the user didn't intend (why this was disabled before).
-      if (!committed && enterRunsInlineSuggestion && name && !typedLower.includes(' ')
-          && typedLower.length > 0 && nameLower.startsWith(typedLower) && nameLower !== typedLower) {
-        const suggestedCmd = state.commands[name];
-        const suggestedHasParams = suggestedCmd && suggestedCmd.params && suggestedCmd.params.length > 0;
-        if (suggestedHasParams) {
-          // Param command: complete the name + enter param mode (like Tab), don't execute with empty params.
-          e.preventDefault();
-          machine.dispatch(Events.TAB, { commandName: name, hasParams: true });
-          return;
-        }
-        committed = true; // no-param command → execute via the userCommittedToCommand guard
-      }
+      // Whether a row counts as selected — and whether a suggested param command
+      // should route to param mode instead of executing — is the FSM's call, not
+      // the panel's. The panel only reports raw facts about the typed text.
+      // (Previously the panel computed a `committed` boolean and even dispatched a
+      // fake TAB for the param case, so Enter's behavior disagreed with what the
+      // list rendered.)
 
       // All tokens are `#name` (no inner whitespace, no `#`-only): treat as
       // a tag-search shortcut. Routes to the `search` view filtered by tags.
@@ -2868,7 +2848,6 @@ async function render() {
         isURL: urlResult.valid,
         url: urlResult.url,
         allHashtags,
-        committed,
         commandName: name,
         typed: commandInput.value,
         hasUrlGhost,

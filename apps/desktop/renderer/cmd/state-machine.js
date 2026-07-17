@@ -13,6 +13,80 @@
  *   machine.dispatch(Events.INPUT, { value: 'tags' });
  */
 
+// ===== Derived UI State =====
+// One owner for "is the results list open" and "which row is selected".
+// Both DERIVE from (currentState, data) — there is no boolean flag to go stale.
+// Pure: no DOM, no config reads. The `enterRunsInlineSuggestion` pref is carried
+// in `data`, synced by the panel from prefs.
+
+/**
+ * Is the results list visible?
+ * @param {string} currentState - a States value
+ * @param {Object} data - machine data
+ */
+export function resultsListOpen(currentState, data) {
+  if (currentState === States.OUTPUT_SELECTION) return false; // rendered by its own path
+  if (currentState === States.PARAM_MODE) return data.paramSuggestions.length > 0;
+  const isChain = currentState === States.CHAIN_MODE;
+  const total = data.matches.length + (isChain ? 0 : (data.urlMatches?.length || 0));
+  if (total === 0) return false;
+  if (isChain) return true;
+  if (currentState === States.RESULTS_OPEN) return true;
+  return total > 1; // auto-open in TYPING/IDLE
+}
+
+/**
+ * The command row (if any) that TYPING/IDLE auto-selects, plus WHY.
+ * `reason` is 'committed' (the typed text already names the command) or
+ * 'suggestion' (a genuine strict-prefix single-token completion, pref-gated).
+ * A substring-only fuzzy match is NOT auto-selected — the user must ArrowDown.
+ * @returns {{row: number, reason: string}|null}
+ */
+function commandRowAutoSelect(data) {
+  if (data.matches.length === 0) return null;
+  // Normally 0 (computeMatches resets matchIndex on every INPUT), but Tab-cycling
+  // in TYPING moves it — the selected row must follow, or Enter would run a
+  // different command than the one the typed text completed to.
+  const row = (data.matchIndex >= 0 && data.matchIndex < data.matches.length) ? data.matchIndex : 0;
+  const name = data.matches[row];
+  if (!name) return null;
+  const typed = (data.typed || '').trim().toLowerCase();
+  const lower = name.toLowerCase();
+  if (typed === lower || typed.startsWith(lower + ' ')) return { row, reason: 'committed' };
+  if (data.enterRunsInlineSuggestion && typed.length > 0 && !typed.includes(' ')
+      && lower.startsWith(typed) && lower !== typed) {
+    return { row, reason: 'suggestion' };
+  }
+  return null;
+}
+
+/**
+ * The row auto-selected in TYPING/IDLE: 0 for a lone url lane, a command row, or null.
+ */
+export function autoSelectableRow(data) {
+  if (data.matches.length === 0) {
+    // urlMatches[0] is the same item the inline ghost is drawn from — no ambiguity.
+    return (data.urlMatches?.length || 0) > 0 ? 0 : null;
+  }
+  const hit = commandRowAutoSelect(data);
+  return hit ? hit.row : null;
+}
+
+/**
+ * The globally-indexed HIGHLIGHTED row, or null when nothing is selected.
+ * Nothing visible ⇒ nothing highlighted.
+ *
+ * This is the RENDERING contract (and the url lane's Enter rule). It is NOT the
+ * whole of Enter: a fully-typed command executes with the list closed, so the
+ * command lane reads commandRowAutoSelect() directly — see the commandRowSelected
+ * guard for why.
+ */
+export function selectedRow(currentState, data) {
+  if (!resultsListOpen(currentState, data)) return null;
+  if (currentState === States.RESULTS_OPEN || currentState === States.CHAIN_MODE) return data.matchIndex;
+  return autoSelectableRow(data);
+}
+
 // ===== State Enum =====
 export const States = Object.freeze({
   IDLE: 'IDLE',
@@ -96,8 +170,12 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
     lastExecuted: '',       // last executed command name
 
     // UI flags
-    showResults: false,
     urlMatches: [],   // url-history items matching typed text (parallel lane)
+
+    // Pref mirror, synced by the panel from prefs (see config.js prefs.enterRunsInlineSuggestion).
+    // Lives in `data` so the derivation functions stay pure — they never read config.
+    // Survives reset(): it's a user preference, not per-invocation session state.
+    enterRunsInlineSuggestion: true,
 
     // Output selection
     outputItems: [],
@@ -160,8 +238,32 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
     isAllHashtags: (payload) => {
       return payload?.allHashtags === true;
     },
-    userCommittedToCommand: (payload) => {
-      return payload?.committed === true;
+    // "The row the user can SEE selected is a url-history row / a command row."
+    // Derived from the FSM — no payload backdoor, so what Enter does always
+    // matches what the list renders.
+    selectedRowIsUrl: () => {
+      const row = selectedRow(currentState, data);
+      return row !== null && row >= data.matches.length;
+    },
+    // NOTE the deliberate asymmetry with selectedRowIsUrl above, which gates on
+    // the list being open. A fully-typed command executes with the list CLOSED —
+    // "tags" + Enter, one match, nothing rendered (total 1 is below the >1
+    // auto-open threshold). That is the palette's most common interaction, so the
+    // command lane derives from the typed text alone. The url lane must NOT: a
+    // lone un-rendered url row must never be opened by a bare Enter.
+    commandRowSelected: () => {
+      if (currentState !== States.TYPING && currentState !== States.IDLE) return false;
+      return commandRowAutoSelect(data) !== null;
+    },
+    // The auto-selected command came from a strict-prefix suggestion AND takes
+    // params → complete the name and enter param mode rather than executing with
+    // empty params (previously the panel faked this by dispatching a TAB).
+    suggestedCommandNeedsParams: () => {
+      if (currentState !== States.TYPING && currentState !== States.IDLE) return false;
+      const hit = commandRowAutoSelect(data);
+      if (!hit || hit.reason !== 'suggestion') return false;
+      const cmd = data.commands[data.matches[hit.row]];
+      return !!(cmd && cmd.params && cmd.params.length > 0);
     },
     hasChainableOutput: (payload) => {
       const result = payload?.result;
@@ -183,7 +285,6 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
     inputNonEmpty: (payload) => payload?.value && payload.value.trim().length > 0,
     textNonEmpty: () => data.typed && data.typed.trim().length > 0,
     textEmpty: () => !data.typed || data.typed.trim().length === 0,
-    resultsVisible: () => data.showResults,
     inParamMode: () => currentState === States.PARAM_MODE,
     inChainMode: () => currentState === States.CHAIN_MODE,
     inOutputSelection: () => currentState === States.OUTPUT_SELECTION,
@@ -249,7 +350,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
         // Empty input stays IDLE (no-op)
       ],
       [Events.ARROW_DOWN]: [
-        { guard: 'hasAnyResults', target: States.RESULTS_OPEN, actions: ['showResults', 'renderResults'] },
+        { guard: 'hasAnyResults', target: States.RESULTS_OPEN, actions: ['renderResults'] },
       ],
       [Events.ESCAPE]: [
         { target: States.CLOSING, actions: ['shutdown'] },
@@ -289,7 +390,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
         },
       ],
       [Events.ARROW_DOWN]: [
-        { guard: 'hasAnyResults', target: States.RESULTS_OPEN, actions: ['showResults', 'renderResults'] },
+        { guard: 'hasAnyResults', target: States.RESULTS_OPEN, actions: ['renderResults'] },
       ],
       [Events.TAB]: [
         {
@@ -334,11 +435,25 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
           actions: ['openSearch', 'clearInput', 'shutdown'],
         },
         {
-          guard: 'userCommittedToCommand',
+          // A url-history row is visibly selected (the list auto-opened and the
+          // user never arrowed) → open it. Enter must do what the highlight says.
+          guard: 'selectedRowIsUrl',
+          target: States.CLOSING,
+          actions: ['openSelectedUrlResult', 'clearInput', 'shutdown'],
+        },
+        {
+          // Strict-prefix suggestion that takes params → complete + param mode,
+          // don't execute with empty params.
+          guard: 'suggestedCommandNeedsParams',
+          target: States.PARAM_MODE,
+          actions: ['tabCompleteCommand', 'enterParamMode', 'updateGhostText', 'updateResults'],
+        },
+        {
+          guard: 'commandRowSelected',
           target: States.EXECUTING,
           actions: ['recordFrecency', 'exitParamMode', 'executeCommand', 'clearInput', 'updateGhostText', 'updateResults'],
         },
-        // No URL, no all-hashtag query, no committed command → no-op
+        // No URL, no all-hashtag query, no selected row → no-op
         // (do NOT fall back to web search; typing random text and pressing
         // Enter should not silently route to a web search — the user invokes
         // `search` explicitly if they want one).
@@ -360,7 +475,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
         { guard: 'urlGhostAcceptable', target: null, actions: ['acceptUrlGhost'] },
       ],
       [Events.CLICK_RESULT]: [
-        { target: States.EXECUTING, actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'hideResults', 'updateGhostText', 'updateResults'] },
+        { target: States.EXECUTING, actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'updateGhostText', 'updateResults'] },
       ],
       [Events.CLICK_URL_RESULT]: [
         { target: States.CLOSING, actions: ['setMatchIndexFromClick', 'openSelectedUrlResult', 'clearInput', 'shutdown'] },
@@ -373,16 +488,16 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
         {
           guard: 'inputEmpty',
           target: States.IDLE,
-          actions: ['clearInput', 'hideResults', 'updateGhostText', 'updateResults'],
+          actions: ['clearInput', 'updateGhostText', 'updateResults'],
         },
         {
           guard: (p) => p?.enterParamMode === true,
           target: States.PARAM_MODE,
-          actions: ['setTyped', 'hideResults', 'computeMatches', 'enterParamMode', 'updateGhostText', 'updateResults'],
+          actions: ['setTyped', 'computeMatches', 'enterParamMode', 'updateGhostText', 'updateResults'],
         },
         {
           target: States.TYPING,
-          actions: ['setTyped', 'hideResults', 'computeMatches', 'updateGhostText', 'updateResults'],
+          actions: ['setTyped', 'computeMatches', 'updateGhostText', 'updateResults'],
         },
       ],
       [Events.ARROW_DOWN]: [
@@ -426,7 +541,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
           // instead of the command the user had arrowed to and highlighted.)
           guard: 'hasMatches',
           target: States.EXECUTING,
-          actions: ['recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'hideResults', 'updateGhostText', 'updateResults'],
+          actions: ['recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'updateGhostText', 'updateResults'],
         },
         {
           guard: 'hasUrlGhost',
@@ -442,14 +557,14 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       [Events.CLICK_RESULT]: [
         {
           target: States.EXECUTING,
-          actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'hideResults', 'updateGhostText', 'updateResults'],
+          actions: ['setMatchIndexFromClick', 'recordFrecencyFromResults', 'exitParamMode', 'executeCommand', 'clearInput', 'updateGhostText', 'updateResults'],
         },
       ],
       [Events.CLICK_URL_RESULT]: [
         { target: States.CLOSING, actions: ['setMatchIndexFromClick', 'openSelectedUrlResult', 'clearInput', 'shutdown'] },
       ],
       [Events.ESCAPE]: [
-        { target: States.TYPING, actions: ['hideResults', 'updateResults'] },
+        { target: States.TYPING, actions: ['updateResults'] },
       ],
       [Events.VISIBILITY_HIDDEN]: [
         { target: States.CLOSING, actions: ['shutdown'] },
@@ -695,7 +810,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       ],
       [Events.POPUP_RESULT]: [
         { guard: 'popupDone', target: States.CLOSING, actions: ['shutdown'] },
-        { target: States.CHAIN_MODE, actions: ['updateChainFromPopup', 'computeChainMatches', 'showResults', 'updateGhostText', 'updateResults', 'refocusPanel'] },
+        { target: States.CHAIN_MODE, actions: ['updateChainFromPopup', 'computeChainMatches', 'updateGhostText', 'updateResults', 'refocusPanel'] },
       ],
       [Events.VISIBILITY_HIDDEN]: [
         { target: States.CLOSING, actions: ['exitChainMode', 'shutdown'] },
@@ -706,7 +821,7 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
     [States.CHAIN_POPUP]: {
       [Events.POPUP_RESULT]: [
         { guard: 'popupDone', target: States.CLOSING, actions: ['shutdown'] },
-        { target: States.CHAIN_MODE, actions: ['updateChainFromPopup', 'computeChainMatches', 'showResults', 'updateGhostText', 'updateResults', 'refocusPanel'] },
+        { target: States.CHAIN_MODE, actions: ['updateChainFromPopup', 'computeChainMatches', 'updateGhostText', 'updateResults', 'refocusPanel'] },
       ],
       [Events.ESCAPE]: [
         { target: States.CHAIN_MODE, actions: ['closeChainPopup'] },
@@ -922,7 +1037,6 @@ export function createStateMachine(actions = {}, guards = {}, logger = null) {
       data.matches = [];
       data.urlMatches = [];
       data.matchIndex = 0;
-      data.showResults = false;
       data.outputItems = [];
       data.outputItemIndex = 0;
       data.outputMimeType = null;
