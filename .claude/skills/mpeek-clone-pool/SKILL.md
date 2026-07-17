@@ -17,6 +17,7 @@ checkout; no `yarn install` needed.
 echo <name> > /tmp/mpeek-agent-name
 echo apps-migration > /tmp/mpeek-clone-base     # or main
 echo apps/desktop > /tmp/mpeek-clone-scope      # optional: only that app's node_modules symlinked
+echo <task-uuid> > /tmp/mpeek-clone-task        # optional but recommended: Peek task id
 scripts/spawn-isolated-clone.sh
 
 # Inside the clone (you're cd'd into ../mpeek-clone-<name>):
@@ -31,6 +32,12 @@ scripts/finalize-isolated-clone.sh
 # Only when fully done with the slot:
 scripts/clean-isolated-clone.sh                 # forgets agent bookmark, removes clone dir + profile dir + git remote
 ```
+
+Task association (optional, recommended): when `/tmp/mpeek-clone-task` is set,
+spawn records it as `<clonedir>/.clone-task` (gitignored, never tracked), and
+clean echoes it on teardown so you can see which task is being reclaimed.
+Recommended naming: `/tmp/mpeek-agent-name` = `<task-id-prefix>-<short-label>`
+(e.g. `71cfde09-chrome-host-gate`) so `ls ../mpeek-clone-*` is self-documenting.
 
 Why true clones (not jj workspaces): physically separate `.jj` dirs eliminate
 the concurrent-edit hazard. Integration happens via a registered `pool-<name>`

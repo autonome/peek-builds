@@ -56,6 +56,13 @@ if [ -n "$BOOKMARKS" ]; then
   done
 fi
 
+# Report the task association, if one was recorded at spawn time, before it's
+# deleted along with the rest of the clone dir. Informational only.
+if [ -r "${CLONE_DIR}/.clone-task" ]; then
+  TASK_ID=$(grep '^task=' "${CLONE_DIR}/.clone-task" | cut -d= -f2-)
+  echo "reclaiming clone ${NAME} — task ${TASK_ID}" >&2
+fi
+
 # Remove clone directory.
 if [ -d "$CLONE_DIR" ]; then
   rm -rf "$CLONE_DIR"

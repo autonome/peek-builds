@@ -22,6 +22,11 @@
 # text convention as /tmp/mpeek-clone-base and /tmp/mpeek-agent-name).
 # Unset = symlink all packages (current default behavior).
 #
+# Optional task association: write a Peek task id to /tmp/mpeek-clone-task
+# before calling to record it as local metadata (${CLONE_DIR}/.clone-task,
+# gitignored, never tracked). Recommended so clones stay traceable — see
+# the mpeek-clone-pool skill. Unset = no association recorded.
+#
 # Pool cap: 5. Policy, not enforced. Check `ls ../mpeek-clone-*` before
 # adding a new slot.
 #
@@ -72,6 +77,18 @@ if [ -r /tmp/mpeek-clone-scope ]; then
   fi
 fi
 
+# Task id is read from /tmp/mpeek-clone-task, defaulting to empty (= no
+# association recorded). Same invariant-text convention as the base and
+# scope files. Optional but recommended so clones stay traceable to a Peek
+# task — see the mpeek-clone-pool skill.
+TASK=""
+if [ -r /tmp/mpeek-clone-task ]; then
+  candidate=$(cat /tmp/mpeek-clone-task)
+  if [ -n "$candidate" ]; then
+    TASK="$candidate"
+  fi
+fi
+
 MAIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CLONE_DIR="${MAIN_DIR}/../mpeek-clone-${NAME}"
 PROFILE="clone-${NAME}"
@@ -101,6 +118,20 @@ jj git fetch >&2
 jj new "${BASE}@origin" >&2
 jj bookmark create "$AGENT_BOOKMARK" -r @ >&2
 echo "Working copy set to ${BASE}; bookmark ${AGENT_BOOKMARK} created at @" >&2
+
+# Record the optional task association as local metadata. Never tracked —
+# see the root .gitignore entry for .clone-task.
+if [ -n "$TASK" ]; then
+  cat > "${CLONE_DIR}/.clone-task" <<EOF
+task=${TASK}
+name=${NAME}
+bookmark=${AGENT_BOOKMARK}
+created=${TIMESTAMP}
+EOF
+  echo "Recorded task association: ${TASK} -> ${CLONE_DIR}/.clone-task" >&2
+else
+  echo "note: no task id set (/tmp/mpeek-clone-task) — recommended so clones stay traceable. Also name the clone <task-prefix>-<label>." >&2
+fi
 
 # Symlink node_modules per package. Hash-check yarn.lock; refuse on drift.
 # We do NOT symlink .yarn/releases — the clone gets the yarn binary from the
