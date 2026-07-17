@@ -667,6 +667,58 @@ export function registerHybridWindow(
   // lands directly in the WebContentsView).
   contentWC.on('focus', onContentFocus);
 
+  // ── Host-visibility gate (peek 71cfde09) ──────────────────────────────────
+  // The shared chrome overlay (address bar / widgets) must be revealed ONLY
+  // while a host is actually VISIBLE. A host can be live-but-hidden while still
+  // the active id: the keepLive close path (windows.ts closeOrHideWindow) and
+  // tile-ipc.ts both call `baseWin.hide()` to background a host WITHOUT
+  // destroying it, and neither touches the active id. Left alone, the overlay
+  // lingers revealed over nothing. "active" and "visible" are therefore NOT two
+  // independent axes — active implies visible. We keep that true by driving the
+  // active id to null when the host hides / restoring it when a focused host
+  // shows, both through the SAME `setActiveHybridWindowId` chokepoint the focus
+  // path uses, so the overlay's existing `retarget` transition hides/reveals it:
+  //   hide the active host  → clear active status → retarget(null) hides chrome
+  //   show a focused host   → restore active status → retarget reveals chrome
+  // The SYNCHRONOUS signal is `noteHybridWindowHidden`, called at the hide call
+  // sites (so the chrome hides in the same tick — macOS emits BaseWindow 'hide'
+  // a tick late). These BaseWindow `'hide'`/`'show'` listeners are the OS-boundary
+  // safety net for any hide/show that doesn't route through those call sites (no
+  // timer/poll); the 'hide' one re-checks live visibility to ignore a stale late
+  // fire after a hide→reshow.
+  const onHostHide = () => {
+    if (entries.get(windowId) !== entry) return;
+    // macOS fires 'hide' a tick LATE (after the synchronous hide() returns), so
+    // this is a belt-and-suspenders signal — the synchronous guarantee comes
+    // from `noteHybridWindowHidden` called at the hide CALL SITES (windows.ts
+    // closeOrHideWindow keepLive branch, tile-ipc.ts). Because it is late, a
+    // hide→reshow→reactivate can already have happened by the time this fires;
+    // re-check live visibility so a STALE hide event can't clear a window that is
+    // visible+active again.
+    try {
+      if (!baseWin.isDestroyed() && baseWin.isVisible()) return;
+    } catch {
+      /* isVisible unsupported — fall through and clear */
+    }
+    noteHybridWindowHidden(windowId);
+  };
+  const onHostShow = () => {
+    if (entries.get(windowId) !== entry) return;
+    // Restore active status when a host is re-shown AS the focused window (a
+    // keepLive re-display calls baseWin.show(), which focuses it). A background
+    // showInactive() of a non-focused host must NOT grab active, so gate on live
+    // focus. If the focus arrives as a separate event, onContentFocus covers it.
+    try {
+      if (!baseWin.isDestroyed() && baseWin.isFocused()) {
+        setActiveHybridWindowId(windowId);
+      }
+    } catch {
+      /* isFocused unsupported in some environments */
+    }
+  };
+  baseWin.on('hide', onHostHide);
+  baseWin.on('show', onHostShow);
+
   // If the window is already focused at registration time (it was just
   // shown/focused), seed the active id so the first reader doesn't see null.
   try {
@@ -794,6 +846,36 @@ export function unregisterHybridWindow(windowId: number): void {
   perHostRetry.delete(windowId);
   // Announce the teardown (e.g. deny pending permission prompts).
   notifyWindowClosed(windowId);
+  if (activeHybridWindowId === windowId) {
+    setActiveHybridWindowId(null);
+  }
+}
+
+/**
+ * Host-visibility gate (peek 71cfde09): a hybrid host was just HIDDEN (not
+ * destroyed) — the keepLive close route (`closeOrHideWindow` in windows.ts) and
+ * the windows-feature hide affordance (tile-ipc.ts) both `baseWin.hide()` a live
+ * host to background it, WITHOUT touching the active id. The shared chrome
+ * overlay is chrome FOR a visible host, so a hidden host must not leave it
+ * revealed. Clearing the active id here drives the overlay's existing
+ * `retarget(null)` transition (via `onActiveHybridWindowChange`) to hide the
+ * chrome — the SAME chokepoint the focus path uses, no new show/hide backdoor.
+ *
+ * Callers invoke this synchronously right after `baseWin.hide()` so the chrome
+ * hides in the same tick (macOS emits the BaseWindow `'hide'` event a tick late,
+ * so the event alone can't satisfy a synchronous observer). Idempotent with the
+ * `'hide'` event wired in `registerHybridWindow`, and a no-op unless `windowId`
+ * is the current active window.
+ */
+export function noteHybridWindowHidden(windowId: number): void {
+  // Cancel any in-flight deferred blur decision so it can't later re-keep this
+  // window active (decideAfterBlur early-returns to keep it active while the
+  // overlay holds focus — hiding must win over that).
+  const pending = pendingBlurChecks.get(windowId);
+  if (pending) {
+    clearImmediate(pending);
+    pendingBlurChecks.delete(windowId);
+  }
   if (activeHybridWindowId === windowId) {
     setActiveHybridWindowId(null);
   }

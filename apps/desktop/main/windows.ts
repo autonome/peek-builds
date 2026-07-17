@@ -25,7 +25,7 @@ import {
 } from './main.js';
 import { registerGuest, getGuestsForWindow } from './webview-guest-registry.js';
 import { getTileWindowInfo } from './tile-launcher.js';
-import { getHybridWindow, getActiveHybridWindowId, getHybridContentWC, isHybridOverlayWindowId } from './hybrid-page-host-registry.js';
+import { getHybridWindow, getActiveHybridWindowId, getHybridContentWC, isHybridOverlayWindowId, noteHybridWindowHidden } from './hybrid-page-host-registry.js';
 import { resolveHybridEscapeTarget, resolveCloseTargetId } from './izui-roles.js';
 
 import {
@@ -764,6 +764,13 @@ export function closeOrHideWindow(id: number): void {
         if (hybridEntry?.params.keepLive === true) {
           DEBUG && console.log(`HIDING keepLive hybrid page-host BaseWindow ${id}`);
           hybrid.baseWin.hide();
+          // Host-visibility gate (peek 71cfde09): the host is now hidden but the
+          // active id still points at it, so the shared chrome overlay would
+          // linger revealed over nothing. Clear its active status synchronously
+          // through the registry chokepoint so the overlay's retarget(null)
+          // transition hides the chrome in the same tick (the BaseWindow 'hide'
+          // event fires a tick late on macOS).
+          noteHybridWindowHidden(id);
           maybeHideApp(id);
           return;
         }

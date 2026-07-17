@@ -121,7 +121,7 @@ import {
   validateThemeCSS,
 } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
-import { getAllHybridWindows, getHybridWindow, getActiveHybridWindowId } from './hybrid-page-host-registry.js';
+import { getAllHybridWindows, getHybridWindow, getActiveHybridWindowId, noteHybridWindowHidden } from './hybrid-page-host-registry.js';
 import { resolveFocusedVisibleWindowId } from './izui-roles.js';
 import {
   registerGlobalShortcut,
@@ -3027,6 +3027,11 @@ export function registerTileIpcHandlers(): void {
         const hybrid = getHybridWindow(args.id);
         if (hybrid && !hybrid.baseWin.isDestroyed()) {
           hybrid.baseWin.hide();
+          // Host-visibility gate (peek 71cfde09): drop the active id if it was
+          // this host, so the shared chrome overlay hides with it (same tick;
+          // the BaseWindow 'hide' event lags on macOS). Routed through the
+          // registry chokepoint → overlay retarget(null).
+          noteHybridWindowHidden(args.id);
           return { success: true };
         }
         return { success: false, error: 'Window not found' };
