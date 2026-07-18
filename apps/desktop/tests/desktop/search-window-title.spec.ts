@@ -24,7 +24,9 @@ test.describe('search window title @desktop', () => {
 
   /**
    * Open a search window for the given query and return its Page.
-   * Waits until the window appears in the windows list with a matching URL.
+   * Waits deterministically via bgWindow.waitForFunction (renderer-side
+   * rAF polling, no node-side setTimeout) until main reports the window
+   * exists, then resolves the Playwright Page handle synchronously.
    */
   const openSearchWindow = async (q: string): Promise<Page> => {
     const { id } = await bgWindow.evaluate(async (query: string) => {
@@ -36,17 +38,21 @@ test.describe('search window title @desktop', () => {
     }, q);
     expect(id).toBeTruthy();
 
-    const deadline = Date.now() + 10000;
-    let page: Page | undefined;
-    while (Date.now() < deadline) {
-      page = app.windows().find(p =>
-        p.url().match(/peek:\/\/search\/home\.html/) !== null &&
-        decodeURIComponent(p.url()).includes(`q=${q}`),
+    await bgWindow.waitForFunction(async (query: string) => {
+      const r = await (window as any).app.window.list();
+      if (!r?.success || !Array.isArray(r.windows)) return false;
+      return r.windows.some((w: { url?: string }) =>
+        typeof w.url === 'string' &&
+        /peek:\/\/search\/home\.html/.test(w.url) &&
+        decodeURIComponent(w.url).includes(`q=${query}`),
       );
-      if (page) break;
-      await new Promise(r => setTimeout(r, 100));
-    }
-    expect(page, `search window for q=${q} not found`).toBeTruthy();
+    }, q, { timeout: 10000 });
+
+    const page = app.windows().find(p =>
+      p.url().match(/peek:\/\/search\/home\.html/) !== null &&
+      decodeURIComponent(p.url()).includes(`q=${q}`),
+    );
+    expect(page, `search window for q=${q} not attached to Playwright`).toBeTruthy();
     await page!.waitForLoadState('domcontentloaded');
     return page!;
   };
@@ -127,20 +133,29 @@ test.describe('search window title @desktop', () => {
     });
     expect(id).toBeTruthy();
 
-    const deadline = Date.now() + 10000;
-    let emptyPage: Page | undefined;
-    while (Date.now() < deadline) {
-      // Match peek://search/home.html (not websearch/home.html) with NO q= param
-      emptyPage = app.windows().find(p => {
-        const url = p.url();
-        if (!url.match(/peek:\/\/search\/home\.html/)) return false;
-        const params = new URLSearchParams(new URL(url).search);
-        return !params.get('q');
+    // Wait deterministically (renderer-side) for the no-q search window to
+    // appear in api.window.list(). Previous tests' q= search windows are
+    // still open, so the predicate must also exclude them.
+    await bgWindow.waitForFunction(async () => {
+      const r = await (window as any).app.window.list();
+      if (!r?.success || !Array.isArray(r.windows)) return false;
+      return r.windows.some((w: { url?: string }) => {
+        if (typeof w.url !== 'string') return false;
+        if (!/peek:\/\/search\/home\.html/.test(w.url)) return false;
+        try {
+          const params = new URLSearchParams(new URL(w.url).search);
+          return !params.get('q');
+        } catch { return false; }
       });
-      if (emptyPage) break;
-      await new Promise(r => setTimeout(r, 100));
-    }
-    expect(emptyPage, 'empty-query search window not found').toBeTruthy();
+    }, { timeout: 10000 });
+
+    const emptyPage = app.windows().find(p => {
+      const url = p.url();
+      if (!url.match(/peek:\/\/search\/home\.html/)) return false;
+      const params = new URLSearchParams(new URL(url).search);
+      return !params.get('q');
+    });
+    expect(emptyPage, 'empty-query search window not attached to Playwright').toBeTruthy();
     await emptyPage!.waitForLoadState('domcontentloaded');
 
     // After init, document.title should remain "Search"
@@ -165,9 +180,9 @@ test.describe('search window title @desktop', () => {
 
     const title = await page.evaluate(() => document.title);
     expect(title.startsWith('Search: ')).toBe(true);
-    // 60-char limit: "Search: " prefix + 59 chars + "…" = 9 + 59 + 1 = 69 total,
-    // but "Search: " is 8 chars, so title length = 8 + MAX chars total body length
-    // The implementation: truncated = q.slice(0, 59) + "…" when q.length > 60
+    // Implementation in home.js: when q.length > MAX (60), body = q.slice(0, MAX - 1) + "…".
+    // So for a 65-char input, body = 59 chars + "…" = 60 chars, plus the
+    // 8-char "Search: " prefix → 68 chars total, always shorter than raw.
     expect(title.length).toBeLessThan('Search: '.length + longQuery.length);
     expect(title.endsWith('…')).toBe(true);
   });

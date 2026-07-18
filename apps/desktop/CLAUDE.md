@@ -13,6 +13,14 @@ For cross-cutting rules (jj workflow, subagent dispatch, Bash discipline), see t
 
 ## Testing
 
+> **ALWAYS ASK BEFORE RUNNING THE FULL GATE.** Never launch `yarn test:desktop:electron`
+> (or its `:bg`/`:x`/`:source` variants, or an equivalent all-runner Playwright run) on
+> your own initiative — not to "confirm green" before landing, not because a handoff says
+> to, not for any reason. It is expensive: it pins the CPU, makes the laptop run hot, and
+> pops up crash/app windows that intrude on whatever the user is doing. So: state that the
+> change needs the gate, ask, and wait for an explicit yes before running it. Fast
+> single-test iteration (`yarn test:grep`) does not need to ask. (User directive, 2026-07-08.)
+
 Test commands follow a `test:{environment}:{implementation}` system. The canonical
 gate for this app is **`yarn test:desktop:electron`** — and it is the *whole* suite, not a
 subset. It runs `electron-builder --dir`, then **all six runners** with `PACKAGED=1` where

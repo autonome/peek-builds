@@ -17,8 +17,9 @@
  *      ipcRenderer.send which is unaffected by DevTools attachment, so
  *      messages must still appear in the file.
  *
- * Determinism: file reads are polled via waitForFunction so there are no
- * wall-clock sleeps (per feedback_no_sleep_in_tests_or_code.md).
+ * Determinism: file appearance is detected via fs.watch on the log
+ * directory, and DevTools attach via the `devtools-opened` webContents event.
+ * No setTimeout-as-wait anywhere (per feedback_no_sleep_in_tests_or_code.md).
  *
  * Run with:
  *   yarn test:grep "renderer log file"
@@ -56,27 +57,62 @@ test.describe('renderer log file @desktop', () => {
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   /**
-   * Poll the log file until `marker` appears in it, timing out after
-   * `timeoutMs` ms. Uses async fs.readFile + polling so the test process
-   * never blocks. Throws if the timeout is exceeded.
+   * Wait for `marker` to appear in the log file. Uses fs.watch on the parent
+   * directory so the check runs only when the file actually changes — no
+   * wall-clock setTimeout polling. The watcher is attached BEFORE the initial
+   * read to close the race where the write lands between read and watch.
+   * Throws if the timeout is exceeded.
    */
-  async function waitForMarkerInLog(marker: string, timeoutMs = 10000): Promise<void> {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
+  function waitForMarkerInLog(marker: string, timeoutMs = 10000): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let watcher: fs.FSWatcher | undefined;
+      let settled = false;
+
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        watcher?.close();
+        clearTimeout(timer);
+      };
+
+      const check = (): void => {
+        if (settled) return;
+        try {
+          const content = fs.readFileSync(logFilePath, 'utf8');
+          if (content.includes(marker)) {
+            cleanup();
+            resolve();
+          }
+        } catch {
+          // File may not exist yet — wait for the next watcher event.
+        }
+      };
+
+      // Watch the directory (file itself may not exist yet).
       try {
-        const content = fs.readFileSync(logFilePath, 'utf8');
-        if (content.includes(marker)) return;
+        const dir = path.dirname(logFilePath);
+        const fileName = path.basename(logFilePath);
+        watcher = fs.watch(dir, (_eventType, name) => {
+          if (name === fileName) check();
+        });
       } catch {
-        // File may not exist yet — keep polling.
+        // If watch attach fails the timeout still fires below.
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, 100));
-    }
-    let snippet = '';
-    try { snippet = fs.readFileSync(logFilePath, 'utf8').slice(-500); } catch { /* ok */ }
-    throw new Error(
-      `Timed out waiting for marker "${marker}" in renderer.log after ${timeoutMs}ms.\n` +
-      `Last 500 bytes of log:\n${snippet}`
-    );
+
+      const timer = setTimeout(() => {
+        if (settled) return;
+        cleanup();
+        let snippet = '';
+        try { snippet = fs.readFileSync(logFilePath, 'utf8').slice(-500); } catch { /* ok */ }
+        reject(new Error(
+          `Timed out waiting for marker "${marker}" in renderer.log after ${timeoutMs}ms.\n` +
+          `Last 500 bytes of log:\n${snippet}`
+        ));
+      }, timeoutMs);
+
+      // Check once after the watcher is in place (in case marker is already present).
+      check();
+    });
   }
 
   // ── Tests ─────────────────────────────────────────────────────────────────
@@ -167,40 +203,33 @@ test.describe('renderer log file @desktop', () => {
     //
     // Note: entry.ts guards openDevTools behind !isTestProfile(), but we can
     // call it directly from main-process evaluate without that guard.
-    await app.evaluateMain!(((_el: any) => {
-      const { BrowserWindow } = _el;
-      const wins = BrowserWindow.getAllWindows();
-      for (const w of wins) {
-        const url = w.webContents.getURL();
-        if (url.includes('peek://test/')) {
-          if (!w.webContents.isDevToolsOpened()) {
-            w.webContents.openDevTools({ mode: 'detach', activate: false });
-          }
-        }
-      }
-    }) as any);
-
-    // Poll until DevTools is confirmed attached. openDevTools is async under
-    // the hood — isDevToolsOpened() may return false for a brief moment.
-    // Use the same polling helper pattern as waitForMarkerInLog.
-    const timeoutMs = 5000;
-    const start = Date.now();
-    let devtoolsAttached = false;
-    while (Date.now() - start < timeoutMs) {
-      devtoolsAttached = await app.evaluateMain!(((_el: any) => {
+    //
+    // Wait for the `devtools-opened` webContents event so the attach is
+    // confirmed event-driven rather than via setTimeout polling.
+    const devtoolsAttached = await app.evaluateMain!(((_el: any) =>
+      new Promise<boolean>((resolve, reject) => {
         const { BrowserWindow } = _el;
         const wins = BrowserWindow.getAllWindows();
         for (const w of wins) {
           const url = w.webContents.getURL();
-          if (url.includes('peek://test/') && w.webContents.isDevToolsOpened()) {
-            return true;
+          if (!url.includes('peek://test/')) continue;
+          if (w.webContents.isDevToolsOpened()) {
+            resolve(true);
+            return;
           }
+          const timer = setTimeout(
+            () => reject(new Error('devtools-opened did not fire within 5000ms')),
+            5000,
+          );
+          w.webContents.once('devtools-opened', () => {
+            clearTimeout(timer);
+            resolve(true);
+          });
+          w.webContents.openDevTools({ mode: 'detach', activate: false });
+          return;
         }
-        return false;
-      }) as any);
-      if (devtoolsAttached) break;
-      await new Promise<void>((resolve) => setTimeout(resolve, 200));
-    }
+        resolve(false);
+      })) as any);
     expect(devtoolsAttached).toBe(true);
 
     const marker = `test-devtools-${Date.now()}`;
