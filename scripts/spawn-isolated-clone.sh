@@ -27,7 +27,7 @@
 # gitignored, never tracked). Recommended so clones stay traceable — see
 # the mpeek-clone-pool skill. Unset = no association recorded.
 #
-# Pool cap: 5. Policy, not enforced. Check `ls ../mpeek-clone-*` before
+# Pool cap: 5. Policy, not enforced. Check `ls .worktrees/*` before
 # adding a new slot.
 #
 # Prints two lines on stdout (other output to stderr):
@@ -90,7 +90,15 @@ if [ -r /tmp/mpeek-clone-task ]; then
 fi
 
 MAIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-CLONE_DIR="${MAIN_DIR}/../mpeek-clone-${NAME}"
+# Pool clones live in-repo at .worktrees/<name>. The `mobile` slot is the one
+# exception: it stays at the legacy sibling path to preserve its warm iOS build
+# cache (~12GB). This is a deliberate bridge — when mobile is next rebuilt from
+# scratch it should move in-repo too and this special case can go.
+if [ "$NAME" = "mobile" ]; then
+  CLONE_DIR="${MAIN_DIR}/../mpeek-clone-${NAME}"
+else
+  CLONE_DIR="${MAIN_DIR}/.worktrees/${NAME}"
+fi
 PROFILE="clone-${NAME}"
 PROFILE_DIR="${HOME}/Library/Application Support/Peek/${PROFILE}"
 TIMESTAMP=$(date +%s)
@@ -196,6 +204,7 @@ done < <(find . -name package.json \
   -not -path '*/.claude/*' \
   -not -path '*/out/*' \
   -not -path '*/dist/*' \
+  -not -path './.worktrees/*' \
   -maxdepth 4)
 
 if [ -d "$PROFILE_DIR" ]; then

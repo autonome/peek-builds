@@ -49,7 +49,7 @@ handoff.md
 # Isolated agent workspaces (created by scripts/spawn-isolated-agent.sh)
 ../mpeek-agent-*
 # Isolated agent clones (created by scripts/spawn-isolated-clone.sh)
-../mpeek-clone-*
+.worktrees/
 # Local clone-task metadata (created by spawn-isolated-clone.sh inside a
 # clone's own root when /tmp/mpeek-clone-task is set — never tracked)
 .clone-task

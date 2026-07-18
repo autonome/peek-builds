@@ -29,8 +29,8 @@ failure mode (see [Failure modes](#failure-modes-name-them-in-the-brief)). The
 real gate is `yarn test:desktop:electron` in the main checkout — not a second LLM read.
 
 Orchestrator review:
-1. `jj -R ../mpeek-clone-<name> diff --stat -r 'main..@'` — scope check.
-2. `jj -R ../mpeek-clone-<name> diff -r 'main..@'` or `Read` each changed file.
+1. `jj -R .worktrees/<name> diff --stat -r 'main..@'` — scope check.
+2. `jj -R .worktrees/<name> diff -r 'main..@'` or `Read` each changed file.
 3. Look for: cross-app touches, missing tests, scope creep, secrets,
    `webSecurity:false` / `sandbox:false` regressions, lazy `require('electron')`,
    `setTimeout` in main without `isDestroyed()` guard, top-level
@@ -41,11 +41,11 @@ Orchestrator review:
 ## Reviewer subagent brief template
 
 ```
-You are reviewing agent-produced work in clone /Users/dietrich/misc/mpeek-clone-<name>/.
+You are reviewing agent-produced work in clone .worktrees/<name>/.
 The agent claims it implemented <task>. Verify the claim — do NOT trust it.
 
 ACCEPTANCE (all runtime, all must pass — no grep shortcuts):
-1. `jj -R ../mpeek-clone-<name> diff --stat -r 'main..@'` — list files; flag any
+1. `jj -R .worktrees/<name> diff --stat -r 'main..@'` — list files; flag any
    touch outside the declared scope.
 2. `yarn workspace @peek/desktop test:unit` from the clone — must pass; report
    numeric count.
@@ -89,8 +89,8 @@ Reviewer subagents drift toward these. Naming them in the brief reduces it.
      a. echo <name> > /tmp/mpeek-agent-name
      b. scripts/finalize-isolated-clone.sh
      c. If FF rejected: rebase IN THE CLONE
-          (jj -R ../mpeek-clone-<name> git fetch --remote origin
-           jj -R ../mpeek-clone-<name> rebase -s 'roots(::@ ~ ::main)' -d main)
+          (jj -R .worktrees/<name> git fetch --remote origin
+           jj -R .worktrees/<name> rebase -s 'roots(::@ ~ ::main)' -d main)
         Then retry finalize.
 3. After ALL targeted clones finalized:
      yarn test:desktop:electron   # run_in_background, FULL suite (all 6 runners, ~3300+, ~10 min), canonical gate
@@ -141,7 +141,7 @@ When `test:desktop:electron` fails after landing:
    ```
    Your <task> landed but yarn test:desktop:electron failed: <paste failing test +
    relevant log lines>. The commit was abandoned from main. The clone at
-   ../mpeek-clone-<name>/ still has your work. Diagnose, fix in the clone,
+   .worktrees/<name>/ still has your work. Diagnose, fix in the clone,
    commit, and report back. Same brief as before re: do-not-finalize,
    do-not-push.
    ```
@@ -161,4 +161,4 @@ its node_modules + jj state; no respawn overhead.
 /agent-review adblocker-resilience
 ```
 
-If no name passed, list clones in the pool (`ls -d ../mpeek-clone-*`) and ask.
+If no name passed, list clones in the pool (`ls -d .worktrees/*`) and ask.

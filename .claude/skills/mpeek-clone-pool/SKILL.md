@@ -11,7 +11,7 @@ dedicated Electron profile dir so tests don't race on shared DB / ports / window
 state. The `node_modules` for the app(s) in scope are symlinked from the main
 checkout; no `yarn install` needed.
 
-**Pool cap: 5.** Check `ls ../mpeek-clone-*` before spawning a new slot.
+**Pool cap: 5.** Check `ls .worktrees/*` before spawning a new slot.
 
 ```bash
 echo <name> > /tmp/mpeek-agent-name
@@ -20,7 +20,7 @@ echo apps/desktop > /tmp/mpeek-clone-scope      # optional: only that app's node
 echo <task-uuid> > /tmp/mpeek-clone-task        # optional but recommended: Peek task id
 scripts/spawn-isolated-clone.sh
 
-# Inside the clone (you're cd'd into ../mpeek-clone-<name>):
+# Inside the clone (you're cd'd into .worktrees/<name>):
 PROFILE=clone-<name> yarn <script>
 
 # After work is done — rebase commits into main checkout's bookmark.
@@ -37,7 +37,7 @@ Task association (optional, recommended): when `/tmp/mpeek-clone-task` is set,
 spawn records it as `<clonedir>/.clone-task` (gitignored, never tracked), and
 clean echoes it on teardown so you can see which task is being reclaimed.
 Recommended naming: `/tmp/mpeek-agent-name` = `<task-id-prefix>-<short-label>`
-(e.g. `71cfde09-chrome-host-gate`) so `ls ../mpeek-clone-*` is self-documenting.
+(e.g. `71cfde09-chrome-host-gate`) so `ls .worktrees/*` is self-documenting.
 
 Why true clones (not jj workspaces): physically separate `.jj` dirs eliminate
 the concurrent-edit hazard. Integration happens via a registered `pool-<name>`
@@ -70,6 +70,11 @@ cap. It's purpose-built for iOS/Android builds, which produce hundreds of MB of
 Rust `target/` output per ABI plus Xcode derived data + `libapp.a` /
 `PeekCore.xcframework` outputs. Cold rebuild is ~2 min Rust + Xcode time;
 cached is ~15 s.
+
+Unlike pool clones (which now live in-repo at `.worktrees/<name>`), the
+`mobile` slot deliberately stays at the legacy sibling path
+`../mpeek-clone-mobile` — moving it in-repo would orphan its warm ~12GB iOS
+build cache.
 
 ```bash
 scripts/spawn-mobile-workspace.sh    # hard-codes name=mobile, base=main, scope=apps/mobile

@@ -34,7 +34,15 @@ if [ "$NAME" = "mobile" ] && [ "${MOBILE_FORCE_CLEAN:-}" != "1" ]; then
 fi
 
 MAIN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-CLONE_DIR="${MAIN_DIR}/../mpeek-clone-${NAME}"
+# Pool clones live in-repo at .worktrees/<name>. The `mobile` slot is the one
+# exception: it stays at the legacy sibling path to preserve its warm iOS build
+# cache (~12GB). This is a deliberate bridge — when mobile is next rebuilt from
+# scratch it should move in-repo too and this special case can go.
+if [ "$NAME" = "mobile" ]; then
+  CLONE_DIR="${MAIN_DIR}/../mpeek-clone-${NAME}"
+else
+  CLONE_DIR="${MAIN_DIR}/.worktrees/${NAME}"
+fi
 REMOTE_NAME="pool-${NAME}"
 PROFILE="clone-${NAME}"
 PROFILE_DIR="${HOME}/Library/Application Support/Peek/${PROFILE}"
