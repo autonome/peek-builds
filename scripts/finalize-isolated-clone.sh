@@ -160,6 +160,40 @@ if ! echo "$ANCESTORS_OF_REMOTE" | grep -cFx "$MAIN_REV" >/dev/null; then
   exit 5
 fi
 
+# ── Step 3.5: strand guard (peek 0b908fef) ────────────────────────────────
+# Step 4 below does `jj bookmark set main` + `jj new` onto the clone's line.
+# Any non-empty, described work the MAIN CHECKOUT is currently sitting on that
+# is NOT on that incoming line would be left referenced by nothing — the silent
+# orphan trap. Detect it and refuse, rather than evaporate it.
+#
+# Revset `::@ ~ ::REMOTE_REV ~ empty()`: everything on the main checkout's
+# current @ line (`::@`), minus the incoming/shared history (`::REMOTE_REV` —
+# removes old main and every clone commit), minus empty placeholders (the @
+# left by a trailing `jj new`). What remains is exactly the main-checkout-only
+# stack this finalize would strand. Scoped to `::@` (not `descendants(main)`)
+# so unrelated abandoned breadcrumbs elsewhere in the DAG don't trip it.
+STRANDED=$(jj log -r "::@ ~ ::${REMOTE_REV} ~ empty()" --no-graph \
+  -T 'commit_id.short() ++ "  " ++ description.first_line() ++ "\n"' 2>/dev/null || true)
+if [ -n "$STRANDED" ]; then
+  echo "" >&2
+  echo "ERROR: finalizing clone ${NAME} would STRAND main-checkout work:" >&2
+  echo "" >&2
+  echo "$STRANDED" >&2
+  echo "These commits sit on the main checkout's @ line but not on the clone's" >&2
+  echo "line. Moving main onto the clone would orphan them silently (0b908fef)." >&2
+  echo "Land them first, then rebase THIS clone onto the new main and re-run:" >&2
+  echo "" >&2
+  echo "  scripts/finalize-main-checkout-stack.sh --yes   # FF main to that stack" >&2
+  echo "  cd ${CLONE_DIR}" >&2
+  echo "  jj git fetch" >&2
+  echo "  jj rebase -s ${BOOKMARK} -d main@origin --skip-emptied" >&2
+  echo "  cd ${MAIN_DIR}" >&2
+  echo "  echo ${NAME} > /tmp/mpeek-agent-name" >&2
+  echo "  scripts/finalize-isolated-clone.sh" >&2
+  echo "" >&2
+  exit 6
+fi
+
 # ── Step 4: fast-forward main and @ ───────────────────────────────────────
 jj bookmark set main -r "$REMOTE_REV"
 echo "Fast-forwarded main: ${MAIN_REV:0:12} → ${REMOTE_REV:0:12}" >&2

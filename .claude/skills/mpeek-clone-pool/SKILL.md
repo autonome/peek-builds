@@ -90,23 +90,32 @@ Finalize works the same as any other slot (`scripts/finalize-isolated-clone.sh`)
 
 ## Chaos-defense background (why the chokepoints exist)
 
-After the 2026-05-21 cleanup, two structural defenses replaced the previous
+After the 2026-05-21 cleanup, structural defenses replaced the previous
 ad-hoc bookmark management:
 
 1. **`scripts/finalize-isolated-clone.sh` is fast-forward-or-bust.** It refuses
    to rebase. If the agent's work isn't a strict descendant of current `main`,
    the script tells the agent to rebase IN THE CLONE before retrying. This
    eliminates the divergent-commit-id pattern caused by rebasing remote-tracked
-   refs.
+   refs. It also refuses to finalize if doing so would STRAND non-empty work the
+   main checkout is currently sitting on (peek `0b908fef` — the silent-orphan
+   trap); it points you at `finalize-main-checkout-stack.sh` to land that work
+   first.
 
-2. **`scripts/push-main.sh` is the only sanctioned path to publish `main`.** It
+2. **`scripts/finalize-main-checkout-stack.sh` is the main-checkout analogue.**
+   Work committed directly in the main checkout with `jj commit` advances `@`
+   but NOT the `main` bookmark, so it strands `main` below it. This script
+   fast-forwards `main` to that stack (fast-forward-or-bust, same as above) so
+   nobody hand-moves `main`. It does not push.
+
+3. **`scripts/push-main.sh` is the only sanctioned path to publish `main`.** It
    verifies local `main` is a strict descendant of `main@tangled`, warns on
    divergent siblings on the push path, prints the exact commit list, requires
    `--yes` to proceed, and post-push prunes stale `pool-*` remote-tracking refs
    so future fetches can't resurrect cleaned-up divergence.
 
 The binding rules live in the root `CLAUDE.md` (never manually
-`jj bookmark set main`; `main` moves only via these two scripts).
+`jj bookmark set main`; `main` moves only via these chokepoint scripts).
 
 Edit-in-clone discipline: when changing `scripts/*` or any tracked file that's
 part of this machinery, work in a clone instead of the main checkout —
