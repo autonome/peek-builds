@@ -63,6 +63,7 @@ import {
   setOverlayFocusProvider,
   setOverlayWindowIdProvider,
   isHybridOverlayWindowId,
+  setHybridHostFullScreen,
   getActiveHybridWindowId as _getActiveHybridWindowIdForBridge,
   _setActiveHybridWindowForTests,
   _runDeferredBlurForTests,
@@ -2865,8 +2866,21 @@ function installTestBridge(): void {
      * must be CLOSED (BaseWindow destroyed, dropped from the registry). The test
      * reads the outcome via `hybridWindowExists(id)` / `hostVisibility(id)`.
      */
-    closeOrHideHybrid(id: number): void {
-      closeOrHideWindow(id);
+    closeOrHideHybrid(id: number): Promise<void> {
+      // Async now (hybrid branch awaits a fullscreen exit before the terminal
+      // hide/close). Return the promise so a test can await the full close.
+      return closeOrHideWindow(id);
+    },
+    /**
+     * Drive a hybrid host's native fullscreen through the SINGLE production owner
+     * (`setHybridHostFullScreen`) — the exact code the `fullscreen` command runs
+     * via tile:window:fullscreen. Lets the disruptive fullscreen spec exercise the
+     * command's transition (enter/leave settle on the native events) without
+     * fabricating a token/grant. Resolves when the transition settles (or the
+     * bounded timeout fires). Read the outcome via `hostFullscreenState(id)`.
+     */
+    driveHostFullscreen(id: number, desired: boolean): Promise<void> {
+      return setHybridHostFullScreen(id, desired);
     },
   };
 }

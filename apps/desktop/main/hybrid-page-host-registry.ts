@@ -275,16 +275,6 @@ export interface HybridWindowEntry {
    * unlike `baseWin.isFullScreen()` which flips synchronously mid-animation.
    */
   nativeFullScreen: boolean;
-  /**
-   * Set true when a content triple-click gesture ENTERS fullscreen from a
-   * maximized state (the gesture's detent-2 maximizes, then detent-3 goes
-   * fullscreen). It tells the `leave-full-screen` handler to un-maximize back
-   * to `preMaxBounds` on the way out, so a triple-click round-trip returns the
-   * window to its pre-gesture bounds instead of leaving it stuck maximized.
-   * Consumed (read then cleared) on the next fullscreen exit. See
-   * `setHybridUnmaximizeOnFullScreenExit`.
-   */
-  unmaximizeOnFullScreenExit: boolean;
 }
 
 /**
@@ -320,10 +310,6 @@ interface InternalEntry {
   // (the d8ce0ddf desync stemmed from fullscreen being invisible to it) and is
   // the deterministic "transition complete" signal specs sequence on.
   nativeFullScreen: boolean;
-  // See HybridWindowEntry.unmaximizeOnFullScreenExit — a triple-click that enters
-  // fullscreen from maximized sets this so the leave-full-screen handler restores
-  // the pre-gesture (un-maximized) bounds instead of leaving the window maximized.
-  unmaximizeOnFullScreenExit: boolean;
   deferredLoad: DeferredLoad | null;
 }
 
@@ -520,7 +506,6 @@ function toPublic(e: InternalEntry): HybridWindowEntry {
     maximized: e.maximized,
     preMaxBounds: e.preMaxBounds,
     nativeFullScreen: e.nativeFullScreen,
-    unmaximizeOnFullScreenExit: e.unmaximizeOnFullScreenExit,
   };
 }
 
@@ -606,7 +591,6 @@ export function registerHybridWindow(
     maximized: false,
     preMaxBounds: null,
     nativeFullScreen: false,
-    unmaximizeOnFullScreenExit: false,
     deferredLoad: opts.deferredLoad
       ? { url: opts.deferredLoad.url, title: opts.deferredLoad.title || '', started: false }
       : null,
@@ -784,16 +768,66 @@ export function setHybridNativeFullScreen(windowId: number, value: boolean): voi
   e.nativeFullScreen = value;
 }
 
+// Bounded wait for the native fullscreen transition to settle. The AppKit
+// enter/leave-fullscreen animation runs ~600ms; this leaves margin so a
+// destroyed / no-op window (which never emits the settled event) can't hang the
+// await forever.
+const HYBRID_FULLSCREEN_SETTLE_TIMEOUT_MS = 1500;
+
 /**
- * Mark (or clear) that the host entered native fullscreen via a content
- * triple-click gesture while maximized, so the `leave-full-screen` handler
- * un-maximizes back to `preMaxBounds` on the way out. See
- * `HybridWindowEntry.unmaximizeOnFullScreenExit`. A no-op for an unregistered id.
+ * The SINGLE owner of a hybrid page-host's native fullscreen transition — the
+ * ONLY code that calls `baseWin.setFullScreen(...)` for a page host. Every route
+ * that enters/leaves fullscreen (the `fullscreen` command via tile:window:fullscreen,
+ * the green button, Esc, and the teardown/hide/app-hide fullscreen-exit) funnels
+ * through here so fullscreen has one owner and one transition path (fsm-pilled).
+ *
+ * Resolves immediately when there's nothing to do: no live entry / destroyed host,
+ * or the SETTLED `nativeFullScreen` state already equals `desired`. `nativeFullScreen`
+ * is maintained by the already-wired `enter-full-screen`/`leave-full-screen`
+ * handlers (assembleHybridPageHost) — the completed-transition signal. We gate on
+ * IT, never on `baseWin.isFullScreen()`, which flips synchronously the instant
+ * `setFullScreen()` is called (mid-animation), not on completion.
+ *
+ * Otherwise it registers a ONE-SHOT resolver on the matching settled event
+ * (`enter-full-screen` for true, `leave-full-screen` for false) — layered on the
+ * existing persistent handler, not a new persistent listener — calls
+ * `setFullScreen(desired)`, and resolves when that event fires. A bounded timeout
+ * (see above) resolves anyway if the event never arrives.
  */
-export function setHybridUnmaximizeOnFullScreenExit(windowId: number, value: boolean): void {
+export function setHybridHostFullScreen(windowId: number, desired: boolean): Promise<void> {
   const e = entries.get(windowId);
-  if (!e) return;
-  e.unmaximizeOnFullScreenExit = value;
+  if (!e || e.baseWin.isDestroyed()) return Promise.resolve();
+  if (e.nativeFullScreen === desired) return Promise.resolve();
+  const baseWin = e.baseWin;
+  // Both settled events take a no-arg listener; the cast picks the matching
+  // per-event `once`/`removeListener` overload (the string value is the real one).
+  const settledEvent = (desired ? 'enter-full-screen' : 'leave-full-screen') as 'enter-full-screen';
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    // One-shot resolver on the already-wired settled event (the persistent
+    // handler drives nativeFullScreen; this just resolves our await).
+    baseWin.once(settledEvent, finish);
+    const timer = setTimeout(() => {
+      // House rule: guard isDestroyed() before touching the window in a timer.
+      // Drop the stale one-shot so it can't leak past the window's life.
+      try {
+        if (!baseWin.isDestroyed()) baseWin.removeListener(settledEvent, finish);
+      } catch { /* removeListener on a torn-down emitter — ignore */ }
+      finish();
+    }, HYBRID_FULLSCREEN_SETTLE_TIMEOUT_MS);
+    try {
+      baseWin.setFullScreen(desired);
+    } catch {
+      // Host gone mid-toggle — resolve rather than hang.
+      finish();
+    }
+  });
 }
 
 /**

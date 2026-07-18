@@ -25,7 +25,7 @@ import {
 } from './main.js';
 import { registerGuest, getGuestsForWindow } from './webview-guest-registry.js';
 import { getTileWindowInfo } from './tile-launcher.js';
-import { getHybridWindow, getActiveHybridWindowId, getHybridContentWC, isHybridOverlayWindowId, noteHybridWindowHidden } from './hybrid-page-host-registry.js';
+import { getHybridWindow, getAllHybridWindows, getActiveHybridWindowId, getHybridContentWC, isHybridOverlayWindowId, noteHybridWindowHidden, setHybridHostFullScreen } from './hybrid-page-host-registry.js';
 import { resolveHybridEscapeTarget, resolveCloseTargetId } from './izui-roles.js';
 
 import {
@@ -410,7 +410,7 @@ async function handleEscapeForWindowId(
   DEBUG && console.log(`[esc] escPolicy(${sessionState}, ${role}) -> ${action}`);
 
   if (action === 'close' || action === 'close-and-restore') {
-    closeOrHideWindow(winId);
+    await closeOrHideWindow(winId);
   } else {
     // escPolicy returned 'nothing' — renderer is at root and window won't close.
     // Consult second-phase policy for unhandled ESC.
@@ -669,7 +669,7 @@ import { TRANSIENT_ROLES } from './izui-roles.js';
  * Used by maybeHideApp to decide whether to hide the app when a window closes.
  */
 export function getVisibleWindowCount(excludeId: number | null = null): number {
-  return getAllLiveWindows().filter(win => {
+  const liveCount = getAllLiveWindows().filter(win => {
     if (excludeId && win.id === excludeId) return false;
     if (!win.isVisible()) return false;
 
@@ -686,6 +686,26 @@ export function getVisibleWindowCount(excludeId: number | null = null): number {
 
     return true;
   }).length;
+
+  // Hybrid page-hosts are BaseWindows — invisible to getAllLiveWindows (which is
+  // BrowserWindow.getAllWindows-backed). A lone visible page host (e.g. one left
+  // in native fullscreen) would otherwise count as 0 and let maybeHideApp fire
+  // app.hide() out from under it. Count visible, non-transient hybrid hosts too,
+  // mirroring the live-window predicates: real + visible (isVisible, not
+  // destroyed), not a transient peek/slide.
+  const hybridCount = getAllHybridWindows().filter(h => {
+    if (excludeId && h.windowId === excludeId) return false;
+    try {
+      if (h.baseWin.isDestroyed() || !h.baseWin.isVisible()) return false;
+    } catch {
+      return false;
+    }
+    const entry = getWindowInfo(h.windowId);
+    if (entry && TRANSIENT_ROLES.has(entry.params.role as string)) return false;
+    return true;
+  }).length;
+
+  return liveCount + hybridCount;
 }
 
 /**
@@ -735,7 +755,7 @@ export function maybeHideApp(excludeId: number): void {
 /**
  * Close or hide a window based on its parameters
  */
-export function closeOrHideWindow(id: number): void {
+export async function closeOrHideWindow(id: number): Promise<void> {
   DEBUG && console.log('closeOrHideWindow called for ID:', id);
 
   try {
@@ -748,6 +768,14 @@ export function closeOrHideWindow(id: number): void {
       // now, not a flag-gated one.
       const hybrid = getHybridWindow(id);
       if (hybrid && !hybrid.baseWin.isDestroyed()) {
+        // Black-window fix: exit native fullscreen FIRST, awaited through the
+        // single owner (setHybridHostFullScreen), before the terminal hide/close.
+        // A fullscreen host closed or hidden mid-state strands a black macOS
+        // Space; dropping fullscreen first (and awaiting the settled exit) avoids
+        // it. No-op when the host isn't fullscreen. The host may be torn down
+        // while we await — re-check before touching it below.
+        if (hybrid.nativeFullScreen) await setHybridHostFullScreen(id, false);
+        if (hybrid.baseWin.isDestroyed()) return;
         // keepLive parity with the BrowserWindow branch below: a hybrid
         // peek/slide opened with keepLive:true (e.g. the left slide playing
         // music) must be HIDDEN, not destroyed, so its WebContentsView keeps
@@ -877,7 +905,10 @@ export function resolveFocusedWindowIdForClose(): number | null {
 export function closeFocusedWindow(): number | null {
   const id = resolveFocusedWindowIdForClose();
   if (id == null) return null;
-  closeOrHideWindow(id);
+  // Fire-and-forget: closeOrHideWindow is async (its hybrid branch awaits a
+  // fullscreen exit), but this stays sync so menu/shortcut callers and tests keep
+  // reading the id it acted on. The exit-then-close still runs in order inside.
+  void closeOrHideWindow(id);
   return id;
 }
 

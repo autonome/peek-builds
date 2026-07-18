@@ -121,7 +121,7 @@ import {
   validateThemeCSS,
 } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
-import { getAllHybridWindows, getHybridWindow, getActiveHybridWindowId, noteHybridWindowHidden } from './hybrid-page-host-registry.js';
+import { getAllHybridWindows, getHybridWindow, getActiveHybridWindowId, noteHybridWindowHidden, setHybridHostFullScreen } from './hybrid-page-host-registry.js';
 import { resolveFocusedVisibleWindowId } from './izui-roles.js';
 import {
   registerGlobalShortcut,
@@ -2597,7 +2597,7 @@ export function registerTileIpcHandlers(): void {
     try {
       // Import dynamically to avoid loading windows.js at test time.
       const { closeOrHideWindow } = await import('./windows.js');
-      closeOrHideWindow(win.id);
+      await closeOrHideWindow(win.id);
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2780,7 +2780,9 @@ export function registerTileIpcHandlers(): void {
       // raw target.close() destroys the window regardless of keepLive,
       // defeating the reuse path and causing cmd panel-like "rapid
       // invocation stalls" that the repeat-invocation spec catches.
-      closeOrHideWindow(target.id);
+      // Fire-and-forget: closeOrHideWindow is async (hybrid branch awaits a
+      // fullscreen exit) but never rejects; this handler is mode:'on' (no result).
+      void closeOrHideWindow(target.id);
       return;
     }
     // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Route through
@@ -2794,7 +2796,8 @@ export function registerTileIpcHandlers(): void {
     if (args.id != null) {
       const hybrid = getHybridWindow(args.id);
       if (hybrid && !hybrid.baseWin.isDestroyed()) {
-        closeOrHideWindow(args.id);
+        // Fire-and-forget (async, never rejects) — mode:'on' handler.
+        void closeOrHideWindow(args.id);
       }
     }
   });
@@ -3026,6 +3029,11 @@ export function registerTileIpcHandlers(): void {
         // works for a web-page window. No-op (null) when the flag is off.
         const hybrid = getHybridWindow(args.id);
         if (hybrid && !hybrid.baseWin.isDestroyed()) {
+          // Black-window fix: exit native fullscreen FIRST (awaited, single owner)
+          // so a fullscreen host hidden mid-state doesn't strand a black macOS
+          // Space. No-op when not fullscreen. Re-check destroyed after the await.
+          if (hybrid.nativeFullScreen) await setHybridHostFullScreen(args.id, false);
+          if (hybrid.baseWin.isDestroyed()) return { success: true };
           hybrid.baseWin.hide();
           // Host-visibility gate (peek 71cfde09): drop the active id if it was
           // this host, so the shared chrome overlay hides with it (same tick;
@@ -3540,6 +3548,19 @@ export function registerTileIpcHandlers(): void {
         ? getLiveWindow(args.id)
         : windowFromWebContents(event.sender);
       if (!win) {
+        // Hybrid page-host (BaseWindow) — invisible to getLiveWindow, so the
+        // `fullscreen` command silently no-op'd here. Route the toggle through the
+        // single fullscreen owner (setHybridHostFullScreen), which gates on the
+        // SETTLED nativeFullScreen state (not isFullScreen(), which flips mid-
+        // animation). getFocusedVisibleWindowId already resolves hybrid host ids,
+        // so args.id is the host id.
+        if (typeof args.id === 'number') {
+          const hybrid = getHybridWindow(args.id);
+          if (hybrid && !hybrid.baseWin.isDestroyed()) {
+            await setHybridHostFullScreen(args.id, !hybrid.nativeFullScreen);
+            return { success: true };
+          }
+        }
         return { success: false, error: 'Window not found' };
       }
       win.setFullScreen(!win.isFullScreen());

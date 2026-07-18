@@ -140,7 +140,6 @@ import {
   getAllHybridWindows,
   setHybridMaximizeState,
   setHybridNativeFullScreen,
-  setHybridUnmaximizeOnFullScreenExit,
   claimHybridDeferredLoad,
   // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
   setHybridLoadError,
@@ -222,7 +221,10 @@ function closeTransientSiblingsOnFocus(focusedId: number): void {
       'focused:', focusedId, 'role:', focusedRole,
     );
     try {
-      closeOrHideWindow(id);
+      // Fire-and-forget: closeOrHideWindow is async (awaits a fullscreen exit on
+      // its hybrid branch) but never rejects (internal try/catch). Transient
+      // autoclose doesn't need to block on the dismissal.
+      void closeOrHideWindow(id);
     } catch (err) {
       DEBUG && console.log('[izui] autoclose transient failed:', err);
     }
@@ -263,7 +265,8 @@ function doCloseTransientHybridWindows(): void {
   for (const id of selectTransientSiblingsToClose(-1, undefined, candidates)) {
     DEBUG && console.log('[izui] app-resign autoclose transient hybrid:', id);
     try {
-      closeOrHideWindow(id);
+      // Fire-and-forget (async, never rejects) — see closeTransientSiblingsOnFocus.
+      void closeOrHideWindow(id);
     } catch (err) {
       DEBUG && console.log('[izui] app-resign hybrid close failed:', err);
     }
@@ -1095,25 +1098,7 @@ function assembleHybridPageHost(
   // events fire on completion, so the registry flag they drive is the
   // deterministic signal for anything that must not act mid-transition.
   baseWin.on('enter-full-screen', () => setHybridNativeFullScreen(baseWin.id, true));
-  baseWin.on('leave-full-screen', () => {
-    setHybridNativeFullScreen(baseWin.id, false);
-    // A content triple-click enters fullscreen from a (usually incidental)
-    // maximize; make the round-trip a clean toggle by restoring the pre-gesture
-    // bounds on the way out instead of leaving the window stuck maximized (peek
-    // d8ce0ddf). The enter-side gesture set `unmaximizeOnFullScreenExit`, and the
-    // exit detent-2 was suppressed by the !isFullScreen() gate, so preMaxBounds is
-    // still the real normal rect. We reconcile HERE — on the settled exit event,
-    // no longer fullscreen — so the un-maximize setBounds actually applies (macOS
-    // silently drops a resize on a fullscreen window). Main-side via page:unmaximize
-    // (not the overlay toggle) so it doesn't depend on the overlay being active/
-    // focused. Consume the flag exactly once.
-    const e = getHybridWindow(baseWin.id);
-    const restore = !!e?.unmaximizeOnFullScreenExit;
-    setHybridUnmaximizeOnFullScreenExit(baseWin.id, false);
-    if (restore && e?.maximized) {
-      publish(getSystemAddress(), 'page:unmaximize', { windowId: baseWin.id });
-    }
-  });
+  baseWin.on('leave-full-screen', () => setHybridNativeFullScreen(baseWin.id, false));
   // Belt-and-suspenders: clicking directly into the page focuses the
   // content webContents even when the host-window focus event is missed.
   view.webContents.on('focus', onHybridHostFocus);
@@ -1261,6 +1246,18 @@ function assembleHybridPageHost(
   const runHybridFinalize = () => {
     if (hybridFinalized) return;
     hybridFinalized = true;
+    // Black-window fix, quit path (best-effort). The interactive close/hide paths
+    // (windows.ts closeOrHideWindow, tile:window:hide) AWAIT setHybridHostFullScreen(id,
+    // false) before the terminal op, so by the time they reach here the host has
+    // already left fullscreen. App-quit can't block on the ~600ms AppKit exit
+    // animation, so here we only DROP fullscreen synchronously if the host is still
+    // in it — enough to keep macOS from stranding a black Space — and never await.
+    try {
+      const fsEntry = getHybridWindow(baseWin.id);
+      if (fsEntry?.nativeFullScreen && !baseWin.isDestroyed()) {
+        baseWin.setFullScreen(false);
+      }
+    } catch { /* host gone mid-quit — nothing to exit */ }
     finalizeWindowClose(baseWin.id, {
       bounds: hybridLastBounds,
       presentation: hybridLastPresentation,
@@ -3852,7 +3849,8 @@ export function registerWindowHandlers(): void {
                 return;
               }
               DEBUG && console.log('window-open: blur for modal window', url);
-              closeOrHideWindow(win.id);
+              // Fire-and-forget (async, never rejects) — blur dismissal.
+              void closeOrHideWindow(win.id);
             });
           }
         }, 100);

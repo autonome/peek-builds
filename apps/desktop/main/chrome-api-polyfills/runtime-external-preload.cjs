@@ -83,18 +83,17 @@ function _peekScheduleReport() { Promise.resolve().then(_peekReportEditableFocus
 document.addEventListener('focusin', _peekScheduleReport, true);
 document.addEventListener('focusout', _peekScheduleReport, true);
 
-// === Content-area double/triple-click window gesture (peek d8ce0ddf) =========
-// A double-click over "dead" page content toggles the host window's maximize; a
-// triple-click toggles fullscreen. Detected HERE in the page realm because only
-// it has the DOM target (composedPath, shadow-DOM-aware) and the live text
-// selection needed to SUPPRESS the gesture — over an editable/interactive control
-// (input/button/link/etc.) OR when the multi-click is selecting text
-// (double-click-a-word / triple-click-a-line must never resize the window). Rides
-// Chromium's native multi-click counter (MouseEvent.detail) — no timers, no
-// debounce (fsm-pilled). We report only the clean case; main (hybrid-window-
-// gesture.ts) maps detent 2 → maximize, detent 3 → fullscreen. A triple-click
-// fires detent 2 then detent 3 in the same native sequence — by design the window
-// grows monotonically (normal → maximized → fullscreen).
+// === Content-area double-click window gesture (peek d8ce0ddf) ================
+// A double-click over "dead" page content toggles the host window's maximize.
+// Detected HERE in the page realm because only it has the DOM target
+// (composedPath, shadow-DOM-aware) and the live text selection needed to
+// SUPPRESS the gesture — over an editable/interactive control (input/button/
+// link/etc.) OR when the multi-click is selecting text (double-click-a-word must
+// never resize the window). Rides Chromium's native multi-click counter
+// (MouseEvent.detail) — no timers, no debounce (fsm-pilled). We report only the
+// clean detent-2 case; main (hybrid-window-gesture.ts) maps detent 2 → maximize.
+// Fullscreen is no longer a content gesture — it is command-driven and single-
+// owned by main (tile:window:fullscreen → setHybridHostFullScreen).
 const IPC_CONTENT_WINDOW_GESTURE = 'page:content-window-gesture';
 
 // Broader than _peekIsEditableElement: the gesture must also skip discrete
@@ -170,15 +169,15 @@ document.addEventListener('click', function (e) {
   _peekDownX = null;
   _peekDownY = null;
 
-  const detent = e.detail; // native multi-click count: 2 = double, 3 = triple
-  if (detent !== 2 && detent !== 3) return;
+  const detent = e.detail; // native multi-click count: 2 = double-click
+  if (detent !== 2) return;
   if (_peekGestureSuppressed(e)) return;
   // Press-to-release travel; no press seen means treat as no movement.
   const dragDx = downX === null ? 0 : e.clientX - downX;
   const dragDy = downY === null ? 0 : e.clientY - downY;
   // A dead-space multi-click that reaches here may still have left Chromium's
-  // incidental nearest-word selection behind; clear it so the maximize /
-  // fullscreen gesture doesn't leave a stray highlight on the page.
+  // incidental nearest-word selection behind; clear it so the maximize gesture
+  // doesn't leave a stray highlight on the page.
   try {
     const sel = window.getSelection && window.getSelection();
     if (sel && !sel.isCollapsed) sel.removeAllRanges();

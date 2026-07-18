@@ -34,11 +34,13 @@
  * and the window ends back at its ORIGINAL bounds — so the maximize assertion
  * fails, catching the regression with no timer.
  *
- * Fullscreen (detent 3) is NOT exercised here — it moved to
- * tests/desktop-disruptive/hybrid-content-window-gesture-fullscreen.spec.ts,
- * which drives native macOS fullscreen and so is excluded from the normal
- * runs (see that file's header for why). The pure detent→'toggle-fullscreen'
- * mapping is still covered by the unit (main/hybrid-window-gesture.test.ts).
+ * Fullscreen is NOT a content gesture — triple-click (detent 3) no longer enters
+ * fullscreen. Fullscreen is command-driven and single-owned by main
+ * (tile:window:fullscreen → setHybridHostFullScreen); its native-macOS transition
+ * is exercised in tests/desktop-disruptive/hybrid-content-window-gesture-fullscreen.spec.ts
+ * (excluded from the normal runs — see that file's header for why). The pure
+ * detent map (detent 3 → null) is covered by the unit
+ * (main/hybrid-window-gesture.test.ts).
  *
  *   yarn test:grep "Hybrid content window gesture"
  */
