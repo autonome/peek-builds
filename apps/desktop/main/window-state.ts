@@ -282,6 +282,34 @@ export function escUnhandledPolicy(sessionState: string, role: string): 'open-sw
 // Front arbitration helpers (§2.4)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * isSatelliteRegistration — the SINGLE owner of the front-ineligibility rule
+ * applied when a window is registered. A "satellite" can never become `front`
+ * (see WindowRecord.satellite / isEligibleFront). Every registration site
+ * (ipc.ts window-open, main.ts tile-launcher hook) computes `satellite` through
+ * THIS predicate so the two can't drift.
+ *
+ * A window is a satellite when it is structurally front-ineligible:
+ *   - role 'overlay' / 'palette' — chrome/focus-group surfaces, never a target;
+ *   - a close-on-blur modal dialog (judgment call 1);
+ *   - `focusable === false` — one that can never be the OS key window, so it
+ *     must never be `front`. Otherwise the derived Esc grab is suppressed
+ *     (front != null) while the window can't receive `before-input-event`
+ *     either → dead ESC (cf ebb10894 / 7c61e917).
+ *
+ * `focusable` is the RESOLVED focusability (or undefined = Electron's default
+ * true); callers normalize before passing.
+ */
+export function isSatelliteRegistration(
+  role: string,
+  opts: { modal?: boolean; focusable?: boolean } = {},
+): boolean {
+  if (role === 'overlay' || role === 'palette') return true;
+  if (opts.modal === true) return true;
+  if (opts.focusable === false) return true;
+  return false;
+}
+
 /** A record is a legal `front` iff it is live, visible, and non-satellite. */
 export function isEligibleFront(rec: WindowRecord | undefined): rec is WindowRecord {
   return !!rec && rec.visible && !rec.satellite;

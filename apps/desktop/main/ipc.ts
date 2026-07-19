@@ -92,6 +92,7 @@ import {
   getWindowModeName,
   type MachineWindowSpec,
 } from './window-state-singleton.js';
+import { isSatelliteRegistration } from './window-state.js';
 import {
   TRANSIENT_ROLES,
   inferIzuiRole,
@@ -3408,15 +3409,18 @@ export function registerWindowHandlers(): void {
       };
       console.log('Adding window to manager:', win.id, 'escapeMode:', windowParams.escapeMode, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'transient:', isTransient, 'placement:', placement);
       registerWindow(win.id, msg.source, windowParams);
-      // Register the BrowserWindow with the window-state machine. Satellite =
-      // the overlay/palette focus-group surfaces OR a close-on-blur modal
-      // dialog (judgment call 1) — front-ineligible; everything else is a real
-      // target.
+      // Register the BrowserWindow with the window-state machine. Front-
+      // ineligibility (satellite) is decided by the shared
+      // `isSatelliteRegistration` predicate — see its doc for why a modal /
+      // non-focusable window must never become `front`.
       registerWindowWithMachine({
         id: win.id,
         kind: 'browser',
         role,
-        satellite: role === 'overlay' || role === 'palette' || options.modal === true,
+        satellite: isSatelliteRegistration(role, {
+          modal: options.modal === true,
+          focusable: options.focusable === undefined ? undefined : !!options.focusable,
+        }),
         escapeMode: options.escapeMode as MachineWindowSpec['escapeMode'],
         lastHttpUrl: url.startsWith('http://') || url.startsWith('https://') ? url : undefined,
         win,

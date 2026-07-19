@@ -39,6 +39,7 @@ import { getSystemThemeBackgroundColor, showWindowHeadlessSafe, addEscHandler } 
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { initWindowStateMachine, registerWindowWithMachine } from './window-state-singleton.js';
+import { isSatelliteRegistration } from './window-state.js';
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { saveSessionSnapshot, reassertColdStartFocusOnce } from './session.js';
@@ -400,13 +401,14 @@ export async function initialize(): Promise<void> {
     getSystemThemeBackgroundColor,
     // Register each tile window with the window-state machine so a focused tile
     // becomes the command target (the OS adapter attaches its focus listeners).
-    // Satellite = the overlay/palette focus-group surfaces; a tile defaults to
+    // Front-ineligibility (satellite) uses the shared `isSatelliteRegistration`
+    // predicate — same rule as the ipc.ts window-open site. A tile defaults to
     // the front-eligible 'workspace' role.
     registerWindow: (win, role) => registerWindowWithMachine({
       id: win.id,
       kind: 'browser',
       role: role ?? 'workspace',
-      satellite: role === 'overlay' || role === 'palette',
+      satellite: isSatelliteRegistration(role ?? 'workspace', { focusable: win.isFocusable() }),
       win,
       contentWC: win.webContents,
     }),

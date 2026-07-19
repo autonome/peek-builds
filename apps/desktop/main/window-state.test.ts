@@ -41,6 +41,7 @@ import {
   snapshot,
   frontInvariantHolds,
   isEligibleFront,
+  isSatelliteRegistration,
   WindowStateOwner,
   type AppWindowState,
   type WindowRecord,
@@ -899,6 +900,50 @@ describe('reduce purity', () => {
     assert.strictEqual(isEligibleFront({ id: 1, kind: 'browser', role: 'content', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
     assert.strictEqual(isEligibleFront({ id: 1, kind: 'browser', role: 'content', satellite: false, visible: false, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
     assert.strictEqual(isEligibleFront({ id: 1, kind: 'browser', role: 'content', satellite: false, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), true);
+  });
+});
+
+// ── isSatelliteRegistration — single owner of front-ineligibility ───────────
+
+describe('isSatelliteRegistration — single owner of front-ineligibility', () => {
+  it('role overlay is a satellite', () => {
+    assert.strictEqual(isSatelliteRegistration('overlay'), true);
+  });
+
+  it('role palette is a satellite', () => {
+    assert.strictEqual(isSatelliteRegistration('palette'), true);
+  });
+
+  it('role workspace is not a satellite by default', () => {
+    assert.strictEqual(isSatelliteRegistration('workspace'), false);
+  });
+
+  it('role content is not a satellite by default', () => {
+    assert.strictEqual(isSatelliteRegistration('content'), false);
+  });
+
+  it('role quick-view is not a satellite (peeks/slides stay front-eligible)', () => {
+    assert.strictEqual(isSatelliteRegistration('quick-view'), false);
+  });
+
+  it('a close-on-blur modal is a satellite', () => {
+    assert.strictEqual(isSatelliteRegistration('content', { modal: true }), true);
+  });
+
+  it('a non-modal is not a satellite', () => {
+    assert.strictEqual(isSatelliteRegistration('content', { modal: false }), false);
+  });
+
+  it('focusable:false is a satellite (the HUD case — the regression this fix closes)', () => {
+    assert.strictEqual(isSatelliteRegistration('workspace', { focusable: false }), true);
+  });
+
+  it('focusable:true is not a satellite', () => {
+    assert.strictEqual(isSatelliteRegistration('workspace', { focusable: true }), false);
+  });
+
+  it('focusable:undefined is not a satellite (Electron default focusable:true)', () => {
+    assert.strictEqual(isSatelliteRegistration('workspace', { focusable: undefined }), false);
   });
 });
 
