@@ -70,6 +70,10 @@ function debugListWindows(): CliResult {
     url: string;
     destroyed: boolean;
     hybrid?: boolean;
+    /** Hybrid hosts only: the registry's SETTLED native-fullscreen state. */
+    nativeFullScreen?: boolean;
+    /** Hybrid hosts only: live outer bounds of the host BaseWindow. */
+    bounds?: { x: number; y: number; width: number; height: number };
   }> = BrowserWindow.getAllWindows().map(win => {
     const wc = win.webContents;
     return {
@@ -95,6 +99,12 @@ function debugListWindows(): CliResult {
       url: h.url(),
       destroyed: h.contentWC.isDestroyed(),
       hybrid: true,
+      // Fullscreen ground truth for hybrid hosts. On a notched display a
+      // maximized host and a native-fullscreen host report IDENTICAL content
+      // dimensions, so renderer-side probes can't tell them apart — this is
+      // the registry's settled state (enter/leave-full-screen driven).
+      nativeFullScreen: h.nativeFullScreen,
+      bounds: (() => { try { return h.baseWin.getBounds(); } catch { return undefined; } })(),
     });
   }
   return { ok: true, data: out };
