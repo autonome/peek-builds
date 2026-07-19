@@ -275,6 +275,19 @@ export interface HybridWindowEntry {
    * unlike `baseWin.isFullScreen()` which flips synchronously mid-animation.
    */
   nativeFullScreen: boolean;
+  /**
+   * The outer bounds the host had immediately before it entered native
+   * fullscreen, or null when it is not in (or entering) fullscreen. Stashed by
+   * the single fullscreen owner (`setHybridHostFullScreen`) at enter-initiation
+   * and cleared when the SETTLED leave lands (`setHybridNativeFullScreen`
+   * false). While set, this — not the live `getBounds()` — is the window's
+   * persistable geometry: a fullscreen host reports work-area-sized bounds,
+   * and saving THOSE made the next session restore a fullscreen-LOOKALIKE
+   * (a plain window covering the work area with `nativeFullScreen` false),
+   * which is visually indistinguishable from real fullscreen and poisons
+   * every fullscreen/Esc interaction after restart.
+   */
+  preFullScreenBounds: Rectangle | null;
 }
 
 /**
@@ -310,6 +323,10 @@ interface InternalEntry {
   // (the d8ce0ddf desync stemmed from fullscreen being invisible to it) and is
   // the deterministic "transition complete" signal specs sequence on.
   nativeFullScreen: boolean;
+  // Pre-fullscreen outer bounds — see the public HybridWindowEntry doc. Set by
+  // setHybridHostFullScreen on enter-initiation, cleared by
+  // setHybridNativeFullScreen(false) on the settled leave.
+  preFullScreenBounds: Rectangle | null;
   deferredLoad: DeferredLoad | null;
 }
 
@@ -506,6 +523,7 @@ function toPublic(e: InternalEntry): HybridWindowEntry {
     maximized: e.maximized,
     preMaxBounds: e.preMaxBounds,
     nativeFullScreen: e.nativeFullScreen,
+    preFullScreenBounds: e.preFullScreenBounds,
   };
 }
 
@@ -591,6 +609,7 @@ export function registerHybridWindow(
     maximized: false,
     preMaxBounds: null,
     nativeFullScreen: false,
+    preFullScreenBounds: null,
     deferredLoad: opts.deferredLoad
       ? { url: opts.deferredLoad.url, title: opts.deferredLoad.title || '', started: false }
       : null,
@@ -766,6 +785,12 @@ export function setHybridNativeFullScreen(windowId: number, value: boolean): voi
   const e = entries.get(windowId);
   if (!e) return;
   e.nativeFullScreen = value;
+  // The settled LEAVE ends the fullscreen episode: macOS has restored the
+  // pre-fullscreen frame, so the stash is no longer the persistable geometry —
+  // the live bounds are. (The stash is SET by setHybridHostFullScreen at
+  // enter-initiation, covering the whole initiated→left episode including the
+  // mid-animation window where nativeFullScreen is still false.)
+  if (!value) e.preFullScreenBounds = null;
 }
 
 // Bounded wait for the native fullscreen transition to settle. The AppKit
@@ -799,6 +824,18 @@ export function setHybridHostFullScreen(windowId: number, desired: boolean): Pro
   if (!e || e.baseWin.isDestroyed()) return Promise.resolve();
   if (e.nativeFullScreen === desired) return Promise.resolve();
   const baseWin = e.baseWin;
+  // Entering: stash the pre-fullscreen outer bounds BEFORE the transition
+  // mutates them, so window listings / session-save persist the real window
+  // geometry instead of the transient work-area-sized fullscreen rect (the
+  // fullscreen-LOOKALIKE restore trap — see HybridWindowEntry.preFullScreenBounds).
+  // Cleared by setHybridNativeFullScreen(false) when the settled leave lands.
+  if (desired) {
+    try {
+      e.preFullScreenBounds = baseWin.getBounds();
+    } catch {
+      e.preFullScreenBounds = null;
+    }
+  }
   // Both settled events take a no-arg listener; the cast picks the matching
   // per-event `once`/`removeListener` overload (the string value is the real one).
   const settledEvent = (desired ? 'enter-full-screen' : 'leave-full-screen') as 'enter-full-screen';

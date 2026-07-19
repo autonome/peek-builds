@@ -110,6 +110,18 @@ function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
     // best-effort — a destroyed/odd BaseWindow still presents with defaults
   }
 
+  // Native fullscreen: present the PRE-fullscreen bounds, not the transient
+  // work-area-sized fullscreen rect. Session-save persists `bounds`, and
+  // persisting the fullscreen rect made the next boot restore a plain window
+  // at work-area size — a fullscreen LOOKALIKE (nativeFullScreen false) that
+  // is visually indistinguishable from real fullscreen and breaks the Esc /
+  // fullscreen-toggle interactions after restart. The stash covers the whole
+  // fullscreen episode (set at enter-initiation by setHybridHostFullScreen,
+  // cleared on the settled leave), so mid-animation saves are covered too.
+  if (entry.preFullScreenBounds) {
+    bounds = entry.preFullScreenBounds;
+  }
+
   let favicon = '';
   let thumbnail = '';
   if (address.startsWith('http://') || address.startsWith('https://')) {

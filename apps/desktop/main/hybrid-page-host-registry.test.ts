@@ -44,6 +44,8 @@ import {
   getHybridRetryAttempts,
   clearHybridRetry,
   setHybridMaximizeState,
+  setHybridNativeFullScreen,
+  setHybridHostFullScreen,
   unregisterHybridWindow,
 } from './hybrid-page-host-registry.js';
 
@@ -704,6 +706,67 @@ describe('hybrid-page-host-registry: same-URL retry cap', () => {
  * coverage at all while it was merely one of two opinions, which is exactly why
  * the divergence went unnoticed — so pin the contract now that it's load-bearing.
  */
+describe('hybrid registry — pre-fullscreen bounds stash (fullscreen-lookalike restore trap)', () => {
+  // A fullscreen host reports work-area-sized getBounds(); persisting those in
+  // session-save made the next boot restore a plain window at work-area size —
+  // a fullscreen LOOKALIKE (nativeFullScreen false) visually indistinguishable
+  // from real fullscreen. The stash (set at enter-initiation by the single
+  // fullscreen owner, cleared on the settled leave) is the persistable
+  // geometry for the whole fullscreen episode.
+
+  /** FakeBaseWindow whose setFullScreen synchronously emits the settled event. */
+  function mkFullscreenable(): Fake {
+    const f = mk({ url: 'https://fs.example/' });
+    const win = f.baseWin as FakeBaseWindow & {
+      setFullScreen?: (v: boolean) => void;
+      removeListener?: (ev: string, cb: (...a: unknown[]) => void) => void;
+    };
+    win.setFullScreen = (v: boolean) => {
+      // Mirror macOS: mutate bounds to the fullscreen rect, then settle.
+      if (v) {
+        win.bounds = { x: 0, y: 33, width: 1470, height: 923 };
+        win.emit('enter-full-screen');
+      } else {
+        win.bounds = { x: 10, y: 20, width: 800, height: 600 };
+        win.emit('leave-full-screen');
+      }
+    };
+    win.removeListener = () => { /* timeout-path cleanup only */ };
+    return f;
+  }
+
+  it('registers with no stash', () => {
+    const f = mk();
+    assert.strictEqual(getHybridWindow(f.id)!.preFullScreenBounds, null);
+  });
+
+  it('enter-initiation stashes the PRE-fullscreen bounds (before the rect mutates)', async () => {
+    const f = mkFullscreenable();
+    await setHybridHostFullScreen(f.id, true);
+    assert.deepStrictEqual(getHybridWindow(f.id)!.preFullScreenBounds, {
+      x: 10, y: 20, width: 800, height: 600,
+    });
+  });
+
+  it('the stash survives the settled ENTER (nativeFullScreen true)', async () => {
+    const f = mkFullscreenable();
+    await setHybridHostFullScreen(f.id, true);
+    setHybridNativeFullScreen(f.id, true);
+    assert.deepStrictEqual(getHybridWindow(f.id)!.preFullScreenBounds, {
+      x: 10, y: 20, width: 800, height: 600,
+    });
+  });
+
+  it('the settled LEAVE clears the stash — live bounds become authoritative again', async () => {
+    const f = mkFullscreenable();
+    await setHybridHostFullScreen(f.id, true);
+    setHybridNativeFullScreen(f.id, true);
+    await setHybridHostFullScreen(f.id, false);
+    setHybridNativeFullScreen(f.id, false);
+    assert.strictEqual(getHybridWindow(f.id)!.preFullScreenBounds, null);
+  });
+});
+
 describe('hybrid registry — maximize state', () => {
   beforeEach(() => {
     _resetForTests();
