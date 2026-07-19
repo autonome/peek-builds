@@ -26,7 +26,7 @@ import {
 import { registerGuest, getGuestsForWindow } from './webview-guest-registry.js';
 import { getTileWindowInfo } from './tile-launcher.js';
 import { getHybridWindow, getAllHybridWindows, getActiveHybridWindowId, getHybridContentWC, isHybridOverlayWindowId, noteHybridWindowHidden, setHybridHostFullScreen } from './hybrid-page-host-registry.js';
-import { resolveHybridEscapeTarget, resolveCloseTargetId } from './izui-roles.js';
+import { resolveHybridEscapeTarget, resolveCloseTargetId, escExitsHybridFullscreen } from './izui-roles.js';
 
 import {
   getIzuiCoordinator,
@@ -345,6 +345,10 @@ export async function handleHybridEscape(
     : undefined;
   const targetId = resolveHybridEscapeTarget(hostWindowId, activeId, activeRole);
 
+  // Route the ESC to its final host + content WC first, so every step below
+  // (fullscreen precedence, policy core) acts on ONE resolved target.
+  let routedId = hostWindowId;
+  let routedWC = contentWC;
   if (targetId !== hostWindowId) {
     // Redirecting to the active host — ask ITS content WC (the renderer that
     // owns the quick-view) and use ITS liveness probe. Fall back to the landed
@@ -352,12 +356,29 @@ export async function handleHybridEscape(
     const activeWC = getHybridContentWC(targetId);
     if (activeWC && !activeWC.isDestroyed()) {
       DEBUG && console.log(`[esc] hybrid ESC redirected from host ${hostWindowId} to active host ${targetId} (role ${activeRole})`);
-      await handleEscapeForWindowId(targetId, activeWC, 'host', () => activeWC.isDestroyed());
-      return;
+      routedId = targetId;
+      routedWC = activeWC;
     }
   }
 
-  await handleEscapeForWindowId(hostWindowId, contentWC, 'host', () => contentWC.isDestroyed());
+  // Native-fullscreen precedence (peek 7fffa286 follow-up): while the routed
+  // host is in SETTLED native fullscreen, ESC exits fullscreen and is consumed —
+  // it never reaches escPolicy/escUnhandledPolicy (which would resolve
+  // 'content' → 'nothing' → open the windows SWITCHER over the fullscreen page).
+  // Only a later ESC, pressed when the host is no longer fullscreen, runs the
+  // policy. The decision is the pure `escExitsHybridFullscreen` (izui-roles.ts);
+  // the exit runs through the single fullscreen owner `setHybridHostFullScreen`,
+  // gated on the owner's `nativeFullScreen` state — no parallel flag, no direct
+  // `setFullScreen` call.
+  const routedHybrid = getHybridWindow(routedId);
+  const routedEscapeMode = getWindowInfo(routedId)?.params?.escapeMode as string | undefined;
+  if (escExitsHybridFullscreen(routedHybrid?.nativeFullScreen ?? false, routedEscapeMode)) {
+    DEBUG && console.log(`[esc] hybrid host ${routedId} is native fullscreen — ESC exits fullscreen`);
+    await setHybridHostFullScreen(routedId, false);
+    return;
+  }
+
+  await handleEscapeForWindowId(routedId, routedWC, 'host', () => routedWC.isDestroyed());
 }
 
 /**

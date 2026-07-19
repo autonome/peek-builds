@@ -14,6 +14,7 @@ import {
   spacesPolicyForRole,
   selectTransientSiblingsToClose,
   resolveHybridEscapeTarget,
+  escExitsHybridFullscreen,
   shouldRegisterGlobalEscFallback,
   shouldFocusHybridContentOnHostFocus,
   shouldCloseContentWCOnFinalize,
@@ -263,6 +264,30 @@ describe('resolveHybridEscapeTarget (wrong-window / first-responder redirect —
     assert.ok(!ALWAYS_CLOSEABLE_ESC_ROLES.has('content'));
     assert.ok(!ALWAYS_CLOSEABLE_ESC_ROLES.has('child-content'));
     assert.ok(!ALWAYS_CLOSEABLE_ESC_ROLES.has('workspace'));
+  });
+});
+
+describe('escExitsHybridFullscreen (ESC exits fullscreen before switcher/policy — peek 7fffa286 follow-up)', () => {
+  // The live trace (clone main.log 2026-07-19T09:40:08): ESC on a native-
+  // fullscreen hybrid host resolved escPolicy(active, content) -> 'nothing' →
+  // escUnhandledPolicy -> 'open-switcher', so the switcher opened OVER the
+  // fullscreen page. Expected: ESC while fullscreen exits fullscreen first;
+  // only a later ESC (host no longer fullscreen) reaches the policy.
+
+  it('consumes ESC to exit fullscreen while the host is native fullscreen', () => {
+    assert.strictEqual(escExitsHybridFullscreen(true, undefined), true);
+    assert.strictEqual(escExitsHybridFullscreen(true, 'auto'), true);
+    assert.strictEqual(escExitsHybridFullscreen(true, 'close'), true);
+  });
+
+  it('runs the normal escape policy when the host is not fullscreen', () => {
+    assert.strictEqual(escExitsHybridFullscreen(false, undefined), false);
+    assert.strictEqual(escExitsHybridFullscreen(false, 'auto'), false);
+  });
+
+  it("escapeMode 'ignore' keeps winning — ESC passes to the page even in fullscreen", () => {
+    assert.strictEqual(escExitsHybridFullscreen(true, 'ignore'), false);
+    assert.strictEqual(escExitsHybridFullscreen(false, 'ignore'), false);
   });
 });
 

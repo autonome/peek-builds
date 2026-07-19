@@ -170,6 +170,39 @@ export function resolveHybridEscapeTarget(
 }
 
 /**
+ * Whether an ESC on a hybrid page-host is consumed by exiting native macOS
+ * fullscreen INSTEAD of running the escape policy (escPolicy /
+ * escUnhandledPolicy).
+ *
+ * Precedence bug (peek 7fffa286 follow-up): with a host in native fullscreen,
+ * ESC resolved role 'content' → escPolicy 'nothing' → escUnhandledPolicy
+ * 'open-switcher', so the user got the windows SWITCHER on top of a fullscreen
+ * page instead of leaving fullscreen. Expected ordering: while the host is
+ * fullscreen, ESC means "exit fullscreen"; only an ESC pressed when NOT
+ * fullscreen reaches the policy (close / switcher / etc.).
+ *
+ * Inputs are the two named states that decide it:
+ *  - `nativeFullScreen` — the registry's SETTLED fullscreen state for the host
+ *    (`HybridWindowEntry.nativeFullScreen`, driven by enter/leave-full-screen;
+ *    never `isFullScreen()`, which flips mid-animation).
+ *  - `escapeMode` — the window's escape override. 'ignore' is the existing hard
+ *    override meaning "ESC passes through to the page entirely"; it must keep
+ *    winning over the fullscreen exit too.
+ *
+ * Pure + deterministic: the fullscreen/ESC interaction needs a real display, so
+ * the decision is unit-tested here and the caller (windows.ts
+ * `handleHybridEscape`) just routes it through the single fullscreen owner
+ * (`setHybridHostFullScreen`).
+ */
+export function escExitsHybridFullscreen(
+  nativeFullScreen: boolean,
+  escapeMode: string | undefined,
+): boolean {
+  if (escapeMode === 'ignore') return false;
+  return nativeFullScreen;
+}
+
+/**
  * Whether to register the OS-level global ESC fallback (`globalShortcut`
  * 'Escape' → open the windows switcher).
  *
