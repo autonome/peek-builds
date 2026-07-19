@@ -194,6 +194,39 @@ export { isNetworkDomainAllowed } from './tile-network-enforcement.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
+// TEMP fullscreen-targeting diagnostics (PEEK_FS_DIAG-gated, file-based). Traces
+// why the `fullscreen` command targets the wrong window. Gated on its own env var
+// (NOT DEBUG) so the diag can run without DEBUG's auto-opened detached devtools,
+// which block native fullscreen exit and would poison the repro. Remove once resolved.
+function fsDiag(line: string): void {
+  if (!process.env.PEEK_FS_DIAG) return;
+  try { fs.appendFileSync('/tmp/peek-fullscreen-diag.log', `[${new Date().toISOString()}] ${line}\n`); }
+  catch { /* best-effort */ }
+}
+
+// Describe a window id as `role/title` for diag lines. Tries the tracked window
+// info (role), the hybrid registry, and the live BrowserWindow (title) — using
+// only APIs already imported by this file.
+function fsDiagDescribeWindow(id: number | null): string {
+  if (id == null) return 'null';
+  try {
+    const role = getWindowInfo(id)?.params?.role;
+    let title: string | undefined;
+    const live = getLiveWindow(id);
+    if (live && !live.isDestroyed()) {
+      try { title = live.getTitle(); } catch { /* noop */ }
+    } else {
+      const hybrid = getHybridWindow(id);
+      if (hybrid && !hybrid.baseWin.isDestroyed()) {
+        try { title = hybrid.baseWin.getTitle(); } catch { /* noop */ }
+      }
+    }
+    return `${id}(role=${role ?? '?'} title=${JSON.stringify(title ?? '?')})`;
+  } catch {
+    return `${id}(role=? title=?)`;
+  }
+}
+
 /**
  * Handle a capability check failure.
  *
@@ -3557,12 +3590,15 @@ export function registerTileIpcHandlers(): void {
         if (typeof args.id === 'number') {
           const hybrid = getHybridWindow(args.id);
           if (hybrid && !hybrid.baseWin.isDestroyed()) {
+            fsDiag(`[fs-toggle] args.id=${args.id} branch=hybrid target=${fsDiagDescribeWindow(args.id)}`);
             await setHybridHostFullScreen(args.id, !hybrid.nativeFullScreen);
             return { success: true };
           }
         }
+        fsDiag(`[fs-toggle] args.id=${args.id ?? 'undefined'} branch=not-found target=${fsDiagDescribeWindow(typeof args.id === 'number' ? args.id : null)}`);
         return { success: false, error: 'Window not found' };
       }
+      fsDiag(`[fs-toggle] args.id=${args.id ?? 'undefined'} branch=getLiveWindow target=${fsDiagDescribeWindow(win.id)}`);
       win.setFullScreen(!win.isFullScreen());
       return { success: true };
     } catch (err) {
@@ -3646,6 +3682,14 @@ export function registerTileIpcHandlers(): void {
         activeHybridId,
         currentVisibleHybridHostId,
         firstVisibleFocusableLiveId,
+      );
+      fsDiag(
+        `[fs-target] lastFocusedVisibleWindowId=${fsDiagDescribeWindow(trackedId)}`
+        + ` activeHybridWindowId=${fsDiagDescribeWindow(activeHybridId)}`
+        + ` currentVisibleHybridHostId=${fsDiagDescribeWindow(currentVisibleHybridHostId)}`
+        + ` focusedBrowserWindowId=${fsDiagDescribeWindow(focusedBrowserWindowId)}`
+        + ` firstVisibleFocusableLiveId=${fsDiagDescribeWindow(firstVisibleFocusableLiveId)}`
+        + ` resolved=${fsDiagDescribeWindow(typeof resolved === 'number' ? resolved : null)}`,
       );
       return { success: true, data: resolved };
     } catch (err) {
