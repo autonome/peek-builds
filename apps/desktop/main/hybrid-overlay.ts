@@ -307,6 +307,20 @@ function ensureOverlay(): BrowserWindow {
     focusable: true,
     skipTaskbar: true,
     alwaysOnTop: true,
+    // Page-host fullscreen black-screen fix (7fffa286): the overlay must NEVER
+    // be eligible for macOS native fullscreen. When a host entered its
+    // fullscreen Space, the follow() → frameBounds() resize handler re-bounded
+    // the overlay to cover the (now display-sized) host and re-showed/raised it
+    // mid-transition — and AppKit promoted the overlay into its OWN fullscreen
+    // tile (observed live: overlayWin.isFullScreen() === true). A transparent
+    // window that AppKit fullscreens gets an opaque BLACK backing store, so the
+    // frontmost Space was the overlay's all-black tile — the "fullscreen =
+    // black screen" bug. The content host's own Space composited fine the whole
+    // time (verified by pixel capture in a minimal harness and by
+    // contentWC.capturePage() live). fullscreenable:false makes the promotion
+    // impossible at the AppKit level; frameBounds() additionally hides the
+    // overlay while the followed host is in native fullscreen.
+    fullscreenable: false,
     opacity: isHeadless() ? 0 : 1,
     webPreferences: {
       // Same mechanics as the other core renderers: tile-preload + token in
@@ -663,6 +677,8 @@ function unfollow(): void {
     try {
       followedBaseWin.removeListener('move', onFollowedMove);
       followedBaseWin.removeListener('resize', onFollowedMove);
+      followedBaseWin.removeListener('enter-full-screen', onFollowedMove);
+      followedBaseWin.removeListener('leave-full-screen', onFollowedMove);
     } catch {
       /* listener already gone */
     }
@@ -677,10 +693,31 @@ function unfollow(): void {
  * (`expandToOverlayFrame`), so the chrome renders in the margin AROUND the
  * content and the transparent center sits exactly over the content window. Then
  * raise the overlay above the content window. Focus-free.
+ *
+ * `hostFullScreen` is the followed host's `isFullScreen()` — it flips
+ * synchronously the instant `setFullScreen(true)` is called, so it is true for
+ * every mid-transition 'resize' the fullscreen animation emits. While the host
+ * is in (or entering) native fullscreen the overlay must NOT be re-bounded /
+ * shown / raised over it: a normal-level window pushed over a fullscreen Space
+ * is what AppKit used to promote into an all-black fullscreen tile (see the
+ * `fullscreenable: false` note in ensureOverlay — that flag is the hard AppKit
+ * guarantee; this gate keeps the overlay's own show/hide state honest). The
+ * chrome is simply unavailable in native fullscreen — Esc / the fullscreen
+ * command exit it via the content WC's before-input-event, which never needed
+ * the overlay. On leave-full-screen the host emits 'resize' again with
+ * `isFullScreen()` already false, so the SAME follow path re-frames and
+ * re-shows the overlay — no extra listener.
  */
-function frameBounds(content: { x: number; y: number; width: number; height: number }): void {
+function frameBounds(
+  content: { x: number; y: number; width: number; height: number },
+  hostFullScreen: boolean,
+): void {
   const win = ensureOverlay();
   if (win.isDestroyed()) return;
+  if (hostFullScreen) {
+    if (win.isVisible()) win.hide();
+    return;
+  }
   const bounds = expandToOverlayFrame(content);
   // setBounds in one shot avoids an intermediate paint (R2: no double-paint /
   // flicker on retarget).
@@ -754,7 +791,7 @@ function retarget(id: number | null): void {
 
   // Initial frame.
   const initial = getActiveHybridWindowBounds();
-  if (initial) frameBounds(initial);
+  if (initial) frameBounds(initial, baseWin.isFullScreen());
 
   // Follow the active window's move/resize. We re-read getBounds() each time
   // (rather than the event payload) so the overlay matches the window's true
@@ -762,13 +799,23 @@ function retarget(id: number | null): void {
   const follow = () => {
     if (baseWin.isDestroyed()) return;
     try {
-      frameBounds(baseWin.getBounds());
+      frameBounds(baseWin.getBounds(), baseWin.isFullScreen());
     } catch {
       /* window torn down mid-move */
     }
   };
   baseWin.on('move', follow);
   baseWin.on('resize', follow);
+  // Fullscreen edges route through the SAME follow path (frameBounds reads
+  // isFullScreen() and hides/re-shows the overlay accordingly). A host whose
+  // bounds already fill the work area can enter/leave native fullscreen with
+  // NO bounds change, so 'resize' alone cannot be trusted to fire — these
+  // events are the deterministic edge signals. isFullScreen() flips
+  // synchronously at setFullScreen() time, so any mid-animation 'resize' that
+  // does fire is gated identically; there is no window state where the overlay
+  // is shown over a fullscreen host.
+  baseWin.on('enter-full-screen', follow);
+  baseWin.on('leave-full-screen', follow);
   followedBaseWin = baseWin;
   onFollowedMove = follow;
 
