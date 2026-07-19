@@ -131,7 +131,19 @@ const commandDefinitions = [
     execute: async (ctx) => {
       const windowId = await api.window.getFocusedVisibleWindowId();
       if (!windowId) return { success: false, error: 'No active window' };
-      return api.window.fullscreen(windowId);
+      // Initiate the toggle but do NOT await it. `tile:window:fullscreen`
+      // resolves only when the ~600ms macOS fullscreen transition has SETTLED
+      // (main's single fullscreen owner awaits enter/leave-full-screen), and
+      // holding the command result for that long held the cmd palette OPEN
+      // across the Space switch: the palette is a follow-Spaces
+      // (visibleOnFullScreen) panel, so it rode onto the new fullscreen Space
+      // still showing its "Running fullscreen..." spinner, then self-closed —
+      // the reported "palette reopens by itself with a spinner, then closes"
+      // (peek 7fffa286 follow-up). The transition is owned end-to-end by main
+      // (setHybridHostFullScreen); this command's job ends once the request is
+      // dispatched, so the palette's own FSM closes it immediately.
+      api.window.fullscreen(windowId).catch(() => {});
+      return { success: true };
     }
   }
 ];
