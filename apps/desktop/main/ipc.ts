@@ -890,6 +890,15 @@ function createHybridHostBaseWindow(
     // focus (regression 524f7aba). Regular web tabs pass no `type` and stay
     // ordinary activating windows (the dead-focus invariant — CLAUDE.md).
     ...(opts?.type ? { type: opts.type } : {}),
+    // Quick-view panels (peeks/slides) are transient by design and must never
+    // enter native fullscreen — there is no per-peek fullscreen affordance, but
+    // the generic `fullscreen` command would otherwise drive a focused peek/slide
+    // into fullscreen (nothing else refused it). `fullscreenable:false` makes the
+    // OS itself no-op `setFullScreen(true)`, so the illegal state is unrepresentable
+    // at the boundary rather than a rule the window-state reducer has to remember.
+    // Keyed on the panel type so real web page-hosts stay fullscreen-capable; does
+    // not affect maximize (that path uses explicit work-area setBounds, not setFullScreen).
+    ...(opts?.type === 'panel' ? { fullscreenable: false } : {}),
   });
 }
 
