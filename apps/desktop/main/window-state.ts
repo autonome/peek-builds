@@ -128,6 +128,15 @@ export type WindowEvent =
   | { type: 'OS_FOCUS_SETTLED_NULL' }
   | { type: 'APP_ACTIVATED' }
   | { type: 'APP_RESIGNED' }
+  /**
+   * Session tri-state mirror. `izui-state.ts`'s coordinator is the SINGLE owner
+   * of `idle/transient/active` (design §2.1/§3: "coordinator keeps only session
+   * idle/transient/active + setAppFocused mirroring appActive"). The adapter
+   * subscribes to the coordinator's session transitions and feeds them in here;
+   * the reducer NEVER derives session on its own (that would be a second, rival
+   * authority — a split-brain). `decideEscape` step 6 reads this mirrored value.
+   */
+  | { type: 'SESSION_CHANGED'; session: IzuiSession }
   | { type: 'FULLSCREEN_REQUESTED'; id?: number; desired?: boolean; bounds?: Rectangle | null }
   | { type: 'OS_FULLSCREEN_ENTERED'; id: number }
   | { type: 'OS_FULLSCREEN_LEFT'; id: number }
@@ -509,9 +518,8 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       const rec = state.windows.get(event.id);
       if (!rec) break;
       patchRecord(state, event.id, { visible: true });
-      if (state.session === 'idle') {
-        state.session = state.appActive ? 'active' : 'transient';
-      }
+      // Session is NOT derived here — `izui-state.ts` owns it and feeds it in via
+      // SESSION_CHANGED. Deriving it here would be a rival authority (§3).
       if (event.focused) {
         applyFocusGained(state, event.id);
       } else if (state.front == null && !rec.satellite) {
@@ -533,7 +541,6 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
     }
 
     case 'WINDOW_CLOSED': {
-      const existed = state.windows.has(event.id);
       state.windows.delete(event.id);
       if (state.front === event.id) {
         state.front = successorFront(state);
@@ -541,9 +548,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       if (state.switcher.open && state.switcher.windowId === event.id) {
         state.switcher = { open: false };
       }
-      if (existed && state.windows.size === 0) {
-        state.session = 'idle';
-      }
+      // Session end (last window closed -> idle) is owned by `izui-state.ts`
+      // (its `popWindow`/`endSession`), mirrored in via SESSION_CHANGED. Not
+      // derived here (§3).
       break;
     }
 
@@ -560,13 +567,21 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
 
     case 'APP_ACTIVATED': {
       state.appActive = true;
-      if (state.session === 'transient') state.session = 'active';
+      // The transient->active promotion is owned by `izui-state.ts setAppFocused`
+      // and mirrored in via SESSION_CHANGED — not derived here (§3).
       // Reconcile any in-flight fullscreen transition against reality (§2.5).
       for (const rec of state.windows.values()) {
         if (rec.fsMode.name === 'entering-fullscreen' || rec.fsMode.name === 'leaving-fullscreen') {
           effects.push({ type: 'RECONCILE_FULLSCREEN', id: rec.id });
         }
       }
+      break;
+    }
+
+    case 'SESSION_CHANGED': {
+      // Mirror the coordinator's session tri-state. Single authority is
+      // `izui-state.ts`; the reducer only records what it is told (§3).
+      state.session = event.session;
       break;
     }
 

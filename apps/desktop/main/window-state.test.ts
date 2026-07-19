@@ -151,6 +151,7 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     { type: 'OS_FOCUS_SETTLED_NULL' },
     { type: 'APP_ACTIVATED' },
     { type: 'APP_RESIGNED' },
+    { type: 'SESSION_CHANGED', session: 'active' },
     { type: 'FULLSCREEN_REQUESTED', id: 1 },
     { type: 'FULLSCREEN_REQUESTED', id: 1, desired: true, bounds: BOUNDS },
     { type: 'FULLSCREEN_REQUESTED', id: 1, desired: false },
@@ -741,7 +742,10 @@ describe('ESC renderer round-trip', () => {
 
   it('handled:false on an active-session content window opens the switcher (step 6)', () => {
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    // session becomes 'active' (app focused at open); content + active -> nothing -> open-switcher.
+    // Session is owned by izui-state.ts and mirrored in via SESSION_CHANGED — the
+    // reducer no longer derives it from WINDOW_SHOWN (design §3). Feed 'active'
+    // explicitly; content + active -> nothing -> open-switcher.
+    s = reduce(s, { type: 'SESSION_CHANGED', session: 'active' }).state;
     assert.strictEqual(snapshot(s).session, 'active');
     const { effects } = reduce(s, { type: 'ESC_RENDERER_ANSWER', id: 1, handled: false });
     assert.ok(effects.some((e) => e.type === 'OPEN_SWITCHER_WINDOW'));
