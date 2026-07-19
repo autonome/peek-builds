@@ -23,15 +23,10 @@
  * set of open page hosts. Callers that consult it (window-open dedup,
  * `debug-list-windows`, `debug-eval`) can rely on it unconditionally.
  *
- * **Active-window tracking.** `getActiveHybridWindowId()` reports which
- * hybrid window is frontmost, fed by the BaseWindow's `'focus'`/`'blur'`
- * events (confirmed emitted by `BaseWindow` in Electron 40 — see
- * `electron.d.ts` `class BaseWindow` `'focus'`/`'blur'` declarations). The
- * content `WebContentsView`'s own `webContents` `'focus'` event is wired as a
- * belt-and-suspenders fallback (clicking into the page focuses the content wc
- * even in edge cases where the host BaseWindow focus event is missed). This
- * is the signal the P1.4b shared overlay uses to decide which content window
- * to frame.
+ * **Active-window / fullscreen tracking has moved.** Front-window, active-hybrid,
+ * and native-fullscreen tracking are now owned by the window-state machine
+ * (`window-state.ts` + `window-os-adapter.ts` + `window-state-singleton.ts`), not
+ * this registry. This module owns object lifecycle/lookup/dedup only.
  */
 
 import type { BaseWindow, Rectangle, WebContents } from 'electron';
@@ -268,26 +263,6 @@ export interface HybridWindowEntry {
    * so unmaximize can restore to that exact rect. Null when not maximized.
    */
   preMaxBounds: Rectangle | null;
-  /**
-   * True while the host is in SETTLED native macOS fullscreen. Driven by the
-   * BaseWindow's `enter-full-screen`/`leave-full-screen` events (via
-   * `setHybridNativeFullScreen`) — so it reflects the completed transition,
-   * unlike `baseWin.isFullScreen()` which flips synchronously mid-animation.
-   */
-  nativeFullScreen: boolean;
-  /**
-   * The outer bounds the host had immediately before it entered native
-   * fullscreen, or null when it is not in (or entering) fullscreen. Stashed by
-   * the single fullscreen owner (`setHybridHostFullScreen`) at enter-initiation
-   * and cleared when the SETTLED leave lands (`setHybridNativeFullScreen`
-   * false). While set, this — not the live `getBounds()` — is the window's
-   * persistable geometry: a fullscreen host reports work-area-sized bounds,
-   * and saving THOSE made the next session restore a fullscreen-LOOKALIKE
-   * (a plain window covering the work area with `nativeFullScreen` false),
-   * which is visually indistinguishable from real fullscreen and poisons
-   * every fullscreen/Esc interaction after restart.
-   */
-  preFullScreenBounds: Rectangle | null;
 }
 
 /**
@@ -314,186 +289,15 @@ interface InternalEntry {
   requestedUrl?: string;
   maximized: boolean;
   preMaxBounds: Rectangle | null;
-  // Whether the host is CURRENTLY in native macOS fullscreen, tracked from the
-  // BaseWindow's `enter-full-screen` / `leave-full-screen` events (wired in
-  // ipc.ts's assembleHybridPageHost). Unlike `baseWin.isFullScreen()` — which
-  // flips SYNCHRONOUSLY the instant `setFullScreen()` is called, before the
-  // ~600ms macOS animation runs — this reflects the SETTLED transition. It makes
-  // fullscreen a first-class, observable state for the maximize state machine
-  // (the d8ce0ddf desync stemmed from fullscreen being invisible to it) and is
-  // the deterministic "transition complete" signal specs sequence on.
-  nativeFullScreen: boolean;
-  // Pre-fullscreen outer bounds — see the public HybridWindowEntry doc. Set by
-  // setHybridHostFullScreen on enter-initiation, cleared by
-  // setHybridNativeFullScreen(false) on the settled leave.
-  preFullScreenBounds: Rectangle | null;
   deferredLoad: DeferredLoad | null;
 }
 
 const entries = new Map<number, InternalEntry>();
 
-// The id of the hybrid window that most recently gained focus, or null if no
-// hybrid window is currently frontmost (or none exists). Cleared on blur of
-// the active window and on close/destroy of the active window.
-let activeHybridWindowId: number | null = null;
-
-// ── Focus-group model ──────────────────────────────────────────────────────
-//
-// The P1.4b shared chrome overlay is a SEPARATE focusable window that floats
-// over whichever content window is active. Clicking the overlay (e.g. the
-// navbar URL field) makes the overlay key and BLURS the content BaseWindow. A
-// naive `baseWin 'blur' → active = null` therefore destroys the overlay the
-// instant the user touches it (and nulls `activeWindowId`, breaking
-// back/forward). The OLD canvas chrome never had this because the chrome lived
-// in the SAME window as the content — one focus surface.
-//
-// We reproduce that "one logical surface" by treating the overlay window and
-// its active content window as ONE focus group. Focus moving from the content
-// window to the overlay (or vice-versa) is INTRA-group and must NOT deactivate.
-// We only deactivate when focus leaves the WHOLE group — to a non-hybrid window
-// or another app.
-//
-// Mechanics: Electron fires the OLD window's 'blur' BEFORE the NEW window's
-// 'focus'. So on a content 'blur' we cannot yet tell where focus landed. We
-// DEFER the decision one tick (`setImmediate`) and then look at the live focus
-// state: if the overlay is focused, or another hybrid content window is
-// focused, focus stayed in-group → keep/retarget; only if focus landed on
-// neither do we null.
-
-// Reports whether the shared chrome overlay window is currently focused. The
-// overlay (hybrid-overlay.ts) registers this so the deferred blur decision can
-// ask "did focus land on the overlay?" without this module importing the
-// overlay (which would create a cycle). Null until the overlay registers.
-let isOverlayFocused: (() => boolean) | null = null;
-
-// Per-window pending deferred-blur handles, so a re-focus before the deferred
-// check fires can cancel the stale decision (and so cleanup can cancel it).
-const pendingBlurChecks = new Map<number, ReturnType<typeof setImmediate>>();
-
-/**
- * Register a predicate the registry calls (inside the deferred blur decision)
- * to learn whether the shared chrome overlay window is currently focused. The
- * overlay window is part of the active window's focus group: while it is
- * focused, the active content window must stay active. Pass `null` to clear
- * (e.g. overlay torn down). One-way dependency: the overlay calls IN here, this
- * module never imports the overlay.
- */
-export function setOverlayFocusProvider(fn: (() => boolean) | null): void {
-  isOverlayFocused = fn;
-}
-
-// Reports the shared chrome overlay window's id (or null if torn down). The
-// overlay (hybrid-overlay.ts) registers this so close-resolution can recognise
-// "the focused BrowserWindow is the chrome overlay" — the overlay is focusable
-// (a Cmd+L / click focuses its URL field), so `getFocusedWindow()` can return it
-// while the page-host the user is actually looking at sits behind it. Same
-// one-way dependency as `setOverlayFocusProvider`: the overlay calls IN here,
-// this module never imports the overlay. Null until the overlay registers.
-let overlayWindowIdProvider: (() => number | null) | null = null;
-
-/**
- * Register a getter the registry uses to learn the shared chrome overlay
- * window's id. Pass `null` to clear (overlay torn down). One-way dependency —
- * see `overlayWindowIdProvider`.
- */
-export function setOverlayWindowIdProvider(fn: (() => number | null) | null): void {
-  overlayWindowIdProvider = fn;
-}
-
-/**
- * Is `id` the shared chrome overlay window? Used by the cmd+W close resolver:
- * when the overlay is the focused BrowserWindow (address bar/widgets open),
- * closing it alone would just dismiss the chrome and leave the page-host
- * visible, so the resolver redirects the close to the active hybrid host. False
- * when no overlay is registered (canvas path / overlay torn down).
- */
-export function isHybridOverlayWindowId(id: number): boolean {
-  if (!overlayWindowIdProvider) return false;
-  try {
-    return overlayWindowIdProvider() === id;
-  } catch {
-    return false;
-  }
-}
-
-/** Is any registered hybrid content BaseWindow currently focused? */
-function anyHybridContentFocused(): { focused: boolean; id: number | null } {
-  for (const e of entries.values()) {
-    try {
-      if (!e.baseWin.isDestroyed() && e.baseWin.isFocused()) {
-        return { focused: true, id: e.windowId };
-      }
-    } catch {
-      /* isFocused unsupported in some environments */
-    }
-  }
-  return { focused: false, id: null };
-}
-
-/**
- * The deferred decision run one tick after a content window's 'blur'. By now
- * Electron has delivered the new window's 'focus', so live `isFocused()` state
- * tells us where focus actually went:
- *   - overlay focused           → stay in-group; keep `blurredId` active.
- *   - another hybrid focused    → real switch; that hybrid's own 'focus' handler
- *                                 already set active to it — do nothing.
- *   - neither                   → focus left the group → null.
- */
-function decideAfterBlur(blurredId: number): void {
-  pendingBlurChecks.delete(blurredId);
-
-  // If active already moved off the window that blurred (a real switch already
-  // set active to the newly-focused hybrid), there is nothing to decide.
-  if (activeHybridWindowId !== blurredId) return;
-
-  // Focus landed on the shared chrome overlay → intra-group, keep active.
-  if (isOverlayFocused) {
-    try {
-      if (isOverlayFocused()) return;
-    } catch {
-      /* provider threw — fall through to the other checks */
-    }
-  }
-
-  // Focus landed on another hybrid content window → retarget to it (its own
-  // 'focus' handler may not have run yet on every platform, so be explicit).
-  const other = anyHybridContentFocused();
-  if (other.focused && other.id != null) {
-    setActiveHybridWindowId(other.id);
-    return;
-  }
-
-  // Focus left the whole group (non-hybrid window or another app) → deactivate.
-  setActiveHybridWindowId(null);
-}
-
-// Push-on-change subscribers for the active-window signal. Fired ONLY when
-// `activeHybridWindowId` actually transitions to a different value (see
-// `setActiveHybridWindowId`). The P1.4b shared overlay subscribes here so it
-// can retarget without polling. Empty (and never fired) when the flag is off,
-// because nothing ever calls `registerHybridWindow` / the test hook.
-type ActiveChangeListener = (id: number | null) => void;
-const activeChangeListeners = new Set<ActiveChangeListener>();
-
-/**
- * Set the active hybrid window id and, IF the value actually changed, notify
- * every `onActiveHybridWindowChange` subscriber. This is the single mutation
- * chokepoint for `activeHybridWindowId` so the push signal can never miss a
- * transition or fire spuriously on a no-op set. Listeners run in a try/catch
- * so one throwing subscriber can't wedge the rest (or the focus handler that
- * triggered the change).
- */
-function setActiveHybridWindowId(id: number | null): void {
-  if (id === activeHybridWindowId) return;
-  activeHybridWindowId = id;
-  for (const cb of activeChangeListeners) {
-    try {
-      cb(id);
-    } catch {
-      /* a subscriber throwing must not break focus/blur bookkeeping */
-    }
-  }
-}
+// Active-window tracking, the focus-group model, and native-fullscreen
+// tracking now live in the window-state machine (window-state.ts +
+// window-os-adapter.ts + window-state-singleton.ts). This module owns object
+// lifecycle/lookup/dedup only.
 
 function safeUrl(wc: WebContents): string {
   try {
@@ -522,8 +326,6 @@ function toPublic(e: InternalEntry): HybridWindowEntry {
     title: () => safeTitle(e.contentWC) || e.deferredLoad?.title || '',
     maximized: e.maximized,
     preMaxBounds: e.preMaxBounds,
-    nativeFullScreen: e.nativeFullScreen,
-    preFullScreenBounds: e.preFullScreenBounds,
   };
 }
 
@@ -578,8 +380,7 @@ function normalizeForDedup(url: string): string {
  *
  * Wires self-cleanup: the entry is dropped on the `baseWin` `'closed'` event
  * AND on the content `contentWC` `'destroyed'` event (whichever fires first),
- * so a closed hybrid window never lingers in the registry. Focus/blur
- * listeners maintain `getActiveHybridWindowId()`.
+ * so a closed hybrid window never lingers in the registry.
  *
  * `opts.url` is the static open address this window was created for; it is what
  * `findHybridWindowByUrl` dedups against (canvas-parity — see that function).
@@ -608,21 +409,15 @@ export function registerHybridWindow(
     windowId, baseWin, contentWC, key, requestedUrl: url,
     maximized: false,
     preMaxBounds: null,
-    nativeFullScreen: false,
-    preFullScreenBounds: null,
     deferredLoad: opts.deferredLoad
       ? { url: opts.deferredLoad.url, title: opts.deferredLoad.title || '', started: false }
       : null,
   };
   entries.set(windowId, entry);
 
+  // Object lifecycle only — active-window/focus/fullscreen tracking now lives
+  // in the window-state machine (see the module doc comment above).
   const cleanup = () => {
-    // Cancel any in-flight deferred blur decision for this window.
-    const pending = pendingBlurChecks.get(windowId);
-    if (pending) {
-      clearImmediate(pending);
-      pendingBlurChecks.delete(windowId);
-    }
     // Only delete if this exact entry is still the one registered (guards
     // against a re-register having replaced us).
     if (entries.get(windowId) === entry) {
@@ -632,105 +427,10 @@ export function registerHybridWindow(
       // notifies itself) doesn't double-fire; the listener is idempotent anyway.
       notifyWindowClosed(windowId);
     }
-    if (activeHybridWindowId === windowId) {
-      setActiveHybridWindowId(null);
-    }
   };
 
   baseWin.once('closed', cleanup);
   contentWC.once('destroyed', cleanup);
-
-  // Active-window tracking. BaseWindow emits 'focus'/'blur' in Electron 40.
-  // Focusing a content window makes it active AND cancels any pending deferred
-  // blur (e.g. focus bounced content→overlay→content within a tick).
-  const onContentFocus = () => {
-    if (entries.get(windowId) !== entry) return;
-    const pending = pendingBlurChecks.get(windowId);
-    if (pending) {
-      clearImmediate(pending);
-      pendingBlurChecks.delete(windowId);
-    }
-    setActiveHybridWindowId(windowId);
-  };
-  baseWin.on('focus', onContentFocus);
-  // DO NOT null immediately on blur — the overlay (a separate focusable window)
-  // and other hybrid windows are part of the focus group. Defer the decision one
-  // tick so Electron has delivered the NEW window's 'focus' and we can read live
-  // focus state (see decideAfterBlur / the focus-group note above).
-  baseWin.on('blur', () => {
-    if (activeHybridWindowId !== windowId) return;
-    if (pendingBlurChecks.has(windowId)) return;
-    pendingBlurChecks.set(
-      windowId,
-      setImmediate(() => decideAfterBlur(windowId)),
-    );
-  });
-  // Belt-and-suspenders: focusing INTO the page focuses the content wc. Covers
-  // edge cases where the host-window focus event is missed (e.g. a click that
-  // lands directly in the WebContentsView).
-  contentWC.on('focus', onContentFocus);
-
-  // ── Host-visibility gate (peek 71cfde09) ──────────────────────────────────
-  // The shared chrome overlay (address bar / widgets) must be revealed ONLY
-  // while a host is actually VISIBLE. A host can be live-but-hidden while still
-  // the active id: the keepLive close path (windows.ts closeOrHideWindow) and
-  // tile-ipc.ts both call `baseWin.hide()` to background a host WITHOUT
-  // destroying it, and neither touches the active id. Left alone, the overlay
-  // lingers revealed over nothing. "active" and "visible" are therefore NOT two
-  // independent axes — active implies visible. We keep that true by driving the
-  // active id to null when the host hides / restoring it when a focused host
-  // shows, both through the SAME `setActiveHybridWindowId` chokepoint the focus
-  // path uses, so the overlay's existing `retarget` transition hides/reveals it:
-  //   hide the active host  → clear active status → retarget(null) hides chrome
-  //   show a focused host   → restore active status → retarget reveals chrome
-  // The SYNCHRONOUS signal is `noteHybridWindowHidden`, called at the hide call
-  // sites (so the chrome hides in the same tick — macOS emits BaseWindow 'hide'
-  // a tick late). These BaseWindow `'hide'`/`'show'` listeners are the OS-boundary
-  // safety net for any hide/show that doesn't route through those call sites (no
-  // timer/poll); the 'hide' one re-checks live visibility to ignore a stale late
-  // fire after a hide→reshow.
-  const onHostHide = () => {
-    if (entries.get(windowId) !== entry) return;
-    // macOS fires 'hide' a tick LATE (after the synchronous hide() returns), so
-    // this is a belt-and-suspenders signal — the synchronous guarantee comes
-    // from `noteHybridWindowHidden` called at the hide CALL SITES (windows.ts
-    // closeOrHideWindow keepLive branch, tile-ipc.ts). Because it is late, a
-    // hide→reshow→reactivate can already have happened by the time this fires;
-    // re-check live visibility so a STALE hide event can't clear a window that is
-    // visible+active again.
-    try {
-      if (!baseWin.isDestroyed() && baseWin.isVisible()) return;
-    } catch {
-      /* isVisible unsupported — fall through and clear */
-    }
-    noteHybridWindowHidden(windowId);
-  };
-  const onHostShow = () => {
-    if (entries.get(windowId) !== entry) return;
-    // Restore active status when a host is re-shown AS the focused window (a
-    // keepLive re-display calls baseWin.show(), which focuses it). A background
-    // showInactive() of a non-focused host must NOT grab active, so gate on live
-    // focus. If the focus arrives as a separate event, onContentFocus covers it.
-    try {
-      if (!baseWin.isDestroyed() && baseWin.isFocused()) {
-        setActiveHybridWindowId(windowId);
-      }
-    } catch {
-      /* isFocused unsupported in some environments */
-    }
-  };
-  baseWin.on('hide', onHostHide);
-  baseWin.on('show', onHostShow);
-
-  // If the window is already focused at registration time (it was just
-  // shown/focused), seed the active id so the first reader doesn't see null.
-  try {
-    if (!baseWin.isDestroyed() && baseWin.isFocused()) {
-      setActiveHybridWindowId(windowId);
-    }
-  } catch {
-    /* isFocused unsupported in some environments */
-  }
 }
 
 /** Look up a hybrid window by host window id. Null if not a hybrid window. */
@@ -774,98 +474,8 @@ export function setHybridMaximizeState(
   e.preMaxBounds = maximized ? preMaxBounds : null;
 }
 
-/**
- * Record the host's SETTLED native fullscreen state. Driven by the BaseWindow's
- * `enter-full-screen` / `leave-full-screen` events (wired in assembleHybridPageHost)
- * — the only signal that the macOS fullscreen animation has actually completed
- * (`baseWin.isFullScreen()` returns the target synchronously, mid-animation). A
- * no-op for an unregistered id.
- */
-export function setHybridNativeFullScreen(windowId: number, value: boolean): void {
-  const e = entries.get(windowId);
-  if (!e) return;
-  e.nativeFullScreen = value;
-  // The settled LEAVE ends the fullscreen episode: macOS has restored the
-  // pre-fullscreen frame, so the stash is no longer the persistable geometry —
-  // the live bounds are. (The stash is SET by setHybridHostFullScreen at
-  // enter-initiation, covering the whole initiated→left episode including the
-  // mid-animation window where nativeFullScreen is still false.)
-  if (!value) e.preFullScreenBounds = null;
-}
-
-// Bounded wait for the native fullscreen transition to settle. The AppKit
-// enter/leave-fullscreen animation runs ~600ms; this leaves margin so a
-// destroyed / no-op window (which never emits the settled event) can't hang the
-// await forever.
-const HYBRID_FULLSCREEN_SETTLE_TIMEOUT_MS = 1500;
-
-/**
- * The SINGLE owner of a hybrid page-host's native fullscreen transition — the
- * ONLY code that calls `baseWin.setFullScreen(...)` for a page host. Every route
- * that enters/leaves fullscreen (the `fullscreen` command via tile:window:fullscreen,
- * the green button, Esc, and the teardown/hide/app-hide fullscreen-exit) funnels
- * through here so fullscreen has one owner and one transition path (fsm-pilled).
- *
- * Resolves immediately when there's nothing to do: no live entry / destroyed host,
- * or the SETTLED `nativeFullScreen` state already equals `desired`. `nativeFullScreen`
- * is maintained by the already-wired `enter-full-screen`/`leave-full-screen`
- * handlers (assembleHybridPageHost) — the completed-transition signal. We gate on
- * IT, never on `baseWin.isFullScreen()`, which flips synchronously the instant
- * `setFullScreen()` is called (mid-animation), not on completion.
- *
- * Otherwise it registers a ONE-SHOT resolver on the matching settled event
- * (`enter-full-screen` for true, `leave-full-screen` for false) — layered on the
- * existing persistent handler, not a new persistent listener — calls
- * `setFullScreen(desired)`, and resolves when that event fires. A bounded timeout
- * (see above) resolves anyway if the event never arrives.
- */
-export function setHybridHostFullScreen(windowId: number, desired: boolean): Promise<void> {
-  const e = entries.get(windowId);
-  if (!e || e.baseWin.isDestroyed()) return Promise.resolve();
-  if (e.nativeFullScreen === desired) return Promise.resolve();
-  const baseWin = e.baseWin;
-  // Entering: stash the pre-fullscreen outer bounds BEFORE the transition
-  // mutates them, so window listings / session-save persist the real window
-  // geometry instead of the transient work-area-sized fullscreen rect (the
-  // fullscreen-LOOKALIKE restore trap — see HybridWindowEntry.preFullScreenBounds).
-  // Cleared by setHybridNativeFullScreen(false) when the settled leave lands.
-  if (desired) {
-    try {
-      e.preFullScreenBounds = baseWin.getBounds();
-    } catch {
-      e.preFullScreenBounds = null;
-    }
-  }
-  // Both settled events take a no-arg listener; the cast picks the matching
-  // per-event `once`/`removeListener` overload (the string value is the real one).
-  const settledEvent = (desired ? 'enter-full-screen' : 'leave-full-screen') as 'enter-full-screen';
-  return new Promise<void>((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve();
-    };
-    // One-shot resolver on the already-wired settled event (the persistent
-    // handler drives nativeFullScreen; this just resolves our await).
-    baseWin.once(settledEvent, finish);
-    const timer = setTimeout(() => {
-      // House rule: guard isDestroyed() before touching the window in a timer.
-      // Drop the stale one-shot so it can't leak past the window's life.
-      try {
-        if (!baseWin.isDestroyed()) baseWin.removeListener(settledEvent, finish);
-      } catch { /* removeListener on a torn-down emitter — ignore */ }
-      finish();
-    }, HYBRID_FULLSCREEN_SETTLE_TIMEOUT_MS);
-    try {
-      baseWin.setFullScreen(desired);
-    } catch {
-      // Host gone mid-toggle — resolve rather than hang.
-      finish();
-    }
-  });
-}
+// Native-fullscreen tracking/ownership now lives in the window-state machine
+// (see the module doc comment above).
 
 /**
  * Claim the deferred content load for `windowId`: returns the URL to load
@@ -897,17 +507,10 @@ export function claimHybridDeferredLoad(windowId: number): string | null {
  * `'close'` handler to drop the entry deterministically (and separately
  * destroys the orphaned content wc).
  *
- * Idempotent: a no-op if `windowId` is not (or no longer) registered. Performs
- * the same teardown the self-clean closure does — cancels any pending deferred
- * blur decision and clears the active-window id if it pointed at this window.
- * It does NOT touch the content webContents; the caller owns that lifecycle.
+ * Idempotent: a no-op if `windowId` is not (or no longer) registered. It does
+ * NOT touch the content webContents; the caller owns that lifecycle.
  */
 export function unregisterHybridWindow(windowId: number): void {
-  const pending = pendingBlurChecks.get(windowId);
-  if (pending) {
-    clearImmediate(pending);
-    pendingBlurChecks.delete(windowId);
-  }
   entries.delete(windowId);
   // Stage B: clean up per-host load-error and pending-nav state.
   perHostLoadError.delete(windowId);
@@ -917,39 +520,6 @@ export function unregisterHybridWindow(windowId: number): void {
   perHostRetry.delete(windowId);
   // Announce the teardown (e.g. deny pending permission prompts).
   notifyWindowClosed(windowId);
-  if (activeHybridWindowId === windowId) {
-    setActiveHybridWindowId(null);
-  }
-}
-
-/**
- * Host-visibility gate (peek 71cfde09): a hybrid host was just HIDDEN (not
- * destroyed) — the keepLive close route (`closeOrHideWindow` in windows.ts) and
- * the windows-feature hide affordance (tile-ipc.ts) both `baseWin.hide()` a live
- * host to background it, WITHOUT touching the active id. The shared chrome
- * overlay is chrome FOR a visible host, so a hidden host must not leave it
- * revealed. Clearing the active id here drives the overlay's existing
- * `retarget(null)` transition (via `onActiveHybridWindowChange`) to hide the
- * chrome — the SAME chokepoint the focus path uses, no new show/hide backdoor.
- *
- * Callers invoke this synchronously right after `baseWin.hide()` so the chrome
- * hides in the same tick (macOS emits the BaseWindow `'hide'` event a tick late,
- * so the event alone can't satisfy a synchronous observer). Idempotent with the
- * `'hide'` event wired in `registerHybridWindow`, and a no-op unless `windowId`
- * is the current active window.
- */
-export function noteHybridWindowHidden(windowId: number): void {
-  // Cancel any in-flight deferred blur decision so it can't later re-keep this
-  // window active (decideAfterBlur early-returns to keep it active while the
-  // overlay holds focus — hiding must win over that).
-  const pending = pendingBlurChecks.get(windowId);
-  if (pending) {
-    clearImmediate(pending);
-    pendingBlurChecks.delete(windowId);
-  }
-  if (activeHybridWindowId === windowId) {
-    setActiveHybridWindowId(null);
-  }
 }
 
 /** Every registered hybrid window. Empty when no hybrid windows exist (hybrid is the only page-host path now, not a flag-gated one). */
@@ -1030,102 +600,9 @@ export function findHybridWindowByKey(key: string): HybridWindowEntry | null {
   return null;
 }
 
-/**
- * The id of the frontmost hybrid window, or null if no hybrid window is
- * currently focused. Fed by BaseWindow `'focus'`/`'blur'` (+ content-wc
- * `'focus'` fallback). This is the signal the P1.4b shared overlay consumes
- * to decide which content window to frame/retarget over.
- */
-export function getActiveHybridWindowId(): number | null {
-  // Defensive: if the recorded active window has since been destroyed, report
-  // null rather than a stale id.
-  if (activeHybridWindowId != null) {
-    const e = entries.get(activeHybridWindowId);
-    if (!e || e.baseWin.isDestroyed()) {
-      setActiveHybridWindowId(null);
-    }
-  }
-  return activeHybridWindowId;
-}
-
-/**
- * Subscribe to active-hybrid-window changes. The callback fires with the new
- * active window id (or null) every time `getActiveHybridWindowId()` would
- * report a DIFFERENT value than before — driven by the BaseWindow
- * `'focus'`/`'blur'` events, content-wc `'focus'` fallback, and close/destroy
- * cleanup. Returns an unsubscribe function.
- *
- * This is the push signal the P1.4b shared chrome overlay consumes so it can
- * retarget over the active content window WITHOUT polling
- * `getActiveHybridWindowId()`.
- */
-export function onActiveHybridWindowChange(cb: ActiveChangeListener): () => void {
-  activeChangeListeners.add(cb);
-  return () => {
-    activeChangeListeners.delete(cb);
-  };
-}
-
-/**
- * The active hybrid window's host-window OUTER bounds (screen coordinates), or
- * null if there is no active hybrid window / it has no live host. This is the
- * geometry source the overlay frames itself over. Uses `baseWin.getBounds()`
- * (outer frame) rather than the content rect so the overlay can cover the whole
- * window including any future native chrome/shadow region.
- */
-export function getActiveHybridWindowBounds():
-  | { x: number; y: number; width: number; height: number }
-  | null {
-  const id = getActiveHybridWindowId();
-  if (id == null) return null;
-  const e = entries.get(id);
-  if (!e || e.baseWin.isDestroyed()) return null;
-  try {
-    return e.baseWin.getBounds();
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Test-only: synthetically set the active hybrid window id and fire the change
- * signal — WITHOUT any real OS focus change. Lets the overlay's retarget logic
- * be exercised deterministically (and without stealing the user's focus) in
- * headless/CI runs. `id` must be a registered hybrid window id (or null); a
- * non-registered id is rejected (returns false) so a test typo can't drive the
- * overlay to a phantom window.
- */
-export function _setActiveHybridWindowForTests(id: number | null): boolean {
-  if (id != null && !entries.has(id)) return false;
-  setActiveHybridWindowId(id);
-  return true;
-}
-
 /** Test-only: clear all registry state. */
 export function _resetForTests(): void {
-  for (const t of pendingBlurChecks.values()) clearImmediate(t);
-  pendingBlurChecks.clear();
   entries.clear();
-  activeChangeListeners.clear();
-  activeHybridWindowId = null;
-  isOverlayFocused = null;
-  overlayWindowIdProvider = null;
   perHostPainted.clear();
   perHostRetry.clear();
-}
-
-/**
- * Test-only: synchronously run the deferred blur decision for a window WITHOUT
- * waiting for the real `setImmediate` tick. Lets a focus-free test drive the
- * exact blur→(overlay-focus?|other-hybrid?|none) sequence deterministically.
- * Returns the active id after the decision. No-op (returns current active) if
- * there is no pending blur for `windowId`.
- */
-export function _runDeferredBlurForTests(windowId: number): number | null {
-  const pending = pendingBlurChecks.get(windowId);
-  if (pending) {
-    clearImmediate(pending);
-    decideAfterBlur(windowId);
-  }
-  return activeHybridWindowId;
 }

@@ -115,14 +115,20 @@ import { installFromBundle } from './feature-installer.js';
 import { resolveCapabilities, validateTileManifest, detectManifestVersion } from './tile-manifest.js';
 import type { CapabilityGrant, TileCapabilities, TileManifest } from './tile-manifest.js';
 import { compareSemver, evaluateUpdateGate } from './capability-compare.js';
-import { invokeWindowOpen, reopenLastClosedWindow, getLastFocusedVisibleWindowId, getLastContentWindowId, clearLastContentWindowId, getDarkModeSetting, setDarkModeSetting, applyDarkModeSetting, persistAdBlockerPref } from './ipc.js';
+import { invokeWindowOpen, reopenLastClosedWindow, getDarkModeSetting, setDarkModeSetting, applyDarkModeSetting, persistAdBlockerPref } from './ipc.js';
 import {
   getWindowInfo,
   validateThemeCSS,
 } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
-import { getAllHybridWindows, getHybridWindow, getActiveHybridWindowId, noteHybridWindowHidden, setHybridHostFullScreen } from './hybrid-page-host-registry.js';
-import { resolveFocusedVisibleWindowId } from './izui-roles.js';
+import { getAllHybridWindows, getHybridWindow } from './hybrid-page-host-registry.js';
+import {
+  getFrontWindowId,
+  getDevtoolsTargetId,
+  getWindowModeName,
+  waitForMode,
+  dispatchWindowEvent,
+} from './window-state-singleton.js';
 import {
   registerGlobalShortcut,
   unregisterGlobalShortcut,
@@ -194,38 +200,10 @@ export { isNetworkDomainAllowed } from './tile-network-enforcement.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-// TEMP fullscreen-targeting diagnostics (PEEK_FS_DIAG-gated, file-based). Traces
-// why the `fullscreen` command targets the wrong window. Gated on its own env var
-// (NOT DEBUG) so the diag can run without DEBUG's auto-opened detached devtools,
-// which block native fullscreen exit and would poison the repro. Remove once resolved.
-function fsDiag(line: string): void {
-  if (!process.env.PEEK_FS_DIAG) return;
-  try { fs.appendFileSync('/tmp/peek-fullscreen-diag.log', `[${new Date().toISOString()}] ${line}\n`); }
-  catch { /* best-effort */ }
-}
-
-// Describe a window id as `role/title` for diag lines. Tries the tracked window
-// info (role), the hybrid registry, and the live BrowserWindow (title) — using
-// only APIs already imported by this file.
-function fsDiagDescribeWindow(id: number | null): string {
-  if (id == null) return 'null';
-  try {
-    const role = getWindowInfo(id)?.params?.role;
-    let title: string | undefined;
-    const live = getLiveWindow(id);
-    if (live && !live.isDestroyed()) {
-      try { title = live.getTitle(); } catch { /* noop */ }
-    } else {
-      const hybrid = getHybridWindow(id);
-      if (hybrid && !hybrid.baseWin.isDestroyed()) {
-        try { title = hybrid.baseWin.getTitle(); } catch { /* noop */ }
-      }
-    }
-    return `${id}(role=${role ?? '?'} title=${JSON.stringify(title ?? '?')})`;
-  } catch {
-    return `${id}(role=? title=?)`;
-  }
-}
+// The `fsDiag` / `[fs-toggle]` / `[fs-target]` file-based traces are DELETED —
+// the window-state machine's DEBUG-gated transition log (window-os-adapter.ts
+// `logTransition`) is the permanent replacement, so the next live repro needs
+// zero instrumentation.
 
 /**
  * Handle a capability check failure.
@@ -3062,17 +3040,22 @@ export function registerTileIpcHandlers(): void {
         // works for a web-page window. No-op (null) when the flag is off.
         const hybrid = getHybridWindow(args.id);
         if (hybrid && !hybrid.baseWin.isDestroyed()) {
-          // Black-window fix: exit native fullscreen FIRST (awaited, single owner)
-          // so a fullscreen host hidden mid-state doesn't strand a black macOS
-          // Space. No-op when not fullscreen. Re-check destroyed after the await.
-          if (hybrid.nativeFullScreen) await setHybridHostFullScreen(args.id, false);
+          // Black-window fix: exit native fullscreen FIRST (awaited via the
+          // machine, the single setFullScreen owner) so a fullscreen host hidden
+          // mid-state doesn't strand a black macOS Space. No-op when not
+          // fullscreen. Re-check destroyed after the await.
+          const fsMode = getWindowModeName(args.id);
+          if (fsMode != null && fsMode !== 'normal') {
+            dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: args.id, desired: false });
+            await waitForMode(args.id, 'normal');
+          }
           if (hybrid.baseWin.isDestroyed()) return { success: true };
           hybrid.baseWin.hide();
-          // Host-visibility gate (peek 71cfde09): drop the active id if it was
-          // this host, so the shared chrome overlay hides with it (same tick;
-          // the BaseWindow 'hide' event lags on macOS). Routed through the
-          // registry chokepoint → overlay retarget(null).
-          noteHybridWindowHidden(args.id);
+          // Host-visibility gate (peek 71cfde09): dispatch WINDOW_HIDDEN so the
+          // machine moves `front` off this host synchronously and the shared
+          // chrome overlay hides with it (same tick; the BaseWindow 'hide' event
+          // the adapter also handles lags on macOS).
+          dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: args.id });
           return { success: true };
         }
         return { success: false, error: 'Window not found' };
@@ -3577,29 +3560,24 @@ export function registerTileIpcHandlers(): void {
       if (args.id !== undefined && typeof args.id !== 'number') {
         return { success: false, error: `Invalid window id: ${typeof args.id}` };
       }
-      const win = typeof args.id === 'number'
-        ? getLiveWindow(args.id)
-        : windowFromWebContents(event.sender);
-      if (!win) {
-        // Hybrid page-host (BaseWindow) — invisible to getLiveWindow, so the
-        // `fullscreen` command silently no-op'd here. Route the toggle through the
-        // single fullscreen owner (setHybridHostFullScreen), which gates on the
-        // SETTLED nativeFullScreen state (not isFullScreen(), which flips mid-
-        // animation). getFocusedVisibleWindowId already resolves hybrid host ids,
-        // so args.id is the host id.
-        if (typeof args.id === 'number') {
-          const hybrid = getHybridWindow(args.id);
-          if (hybrid && !hybrid.baseWin.isDestroyed()) {
-            fsDiag(`[fs-toggle] args.id=${args.id} branch=hybrid target=${fsDiagDescribeWindow(args.id)}`);
-            await setHybridHostFullScreen(args.id, !hybrid.nativeFullScreen);
-            return { success: true };
-          }
-        }
-        fsDiag(`[fs-toggle] args.id=${args.id ?? 'undefined'} branch=not-found target=${fsDiagDescribeWindow(typeof args.id === 'number' ? args.id : null)}`);
+      // Both window kinds now route through ONE path: dispatch
+      // FULLSCREEN_REQUESTED into the window-state machine (the single
+      // `setFullScreen` owner + settle-aware transition table). `id` defaults to
+      // the front window. We pass the target's CURRENT outer bounds so the
+      // reducer stashes them as `preBounds` on the normal→entering edge (the
+      // fullscreen-lookalike session-save fix); the reducer ignores `bounds` on
+      // every other edge. An unregistered id is a reducer no-op (both browser
+      // and hybrid windows register at creation).
+      const targetId = typeof args.id === 'number' ? args.id : getFrontWindowId();
+      if (targetId == null) {
         return { success: false, error: 'Window not found' };
       }
-      fsDiag(`[fs-toggle] args.id=${args.id ?? 'undefined'} branch=getLiveWindow target=${fsDiagDescribeWindow(win.id)}`);
-      win.setFullScreen(!win.isFullScreen());
+      const boundsWin = getLiveWindow(targetId) ?? getHybridWindow(targetId)?.baseWin ?? null;
+      let bounds: { x: number; y: number; width: number; height: number } | null = null;
+      try {
+        if (boundsWin && !boundsWin.isDestroyed()) bounds = boundsWin.getBounds();
+      } catch { /* window gone mid-request */ }
+      dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: targetId, bounds });
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -3628,70 +3606,14 @@ export function registerTileIpcHandlers(): void {
     }
 
     try {
-      // Hybrid page-hosts are BaseWindows — invisible to getLiveWindow and
-      // reported null by BrowserWindow.getFocusedWindow() — yet
-      // `trackHybridWindowFocus` correctly records them as the last focused
-      // visible window. The pure resolver accepts a tracked hybrid id and falls
-      // back to the active hybrid host so commands acting on "the active window"
-      // (tag/untag/view devtools) target the page the user is looking at instead
-      // of a wrong/null window. See the getFocusedWindow()-null invariant in
-      // apps/desktop/CLAUDE.md.
-      const tracked = getLastFocusedVisibleWindowId();
-      const trackedId = typeof tracked === 'number' ? tracked : null;
-      const trackedIsLive = trackedId != null && !!getLiveWindow(trackedId);
-      const trackedHybrid = trackedId != null ? getHybridWindow(trackedId) : null;
-      const trackedIsHybrid = !!trackedHybrid && !trackedHybrid.baseWin.isDestroyed();
-      const focused = BrowserWindow.getFocusedWindow();
-      // A focused MODAL surface (the command palette, a dialog) is the command
-      // ISSUER, never its target. Excluding it lets `tag`/`untag`/devtools resolve
-      // the page BEHIND the palette instead of the palette's own id — the tag-on-
-      // page-host regression (item 8430bd05): running `tag` from the palette while
-      // a page host was open resolved the palette id and getActiveWindow found
-      // nothing. Mirrors the modal exclusion already applied to the tracker
-      // (`trackVisibleWindowFocus`, ipc.ts win.on('focus')).
-      const focusedIsModal = focused && !focused.isDestroyed()
-        ? !!getWindowInfo(focused.id)?.params?.modal
-        : false;
-      const focusedBrowserWindowId =
-        focused && !focused.isDestroyed() && !focusedIsModal ? focused.id : null;
-      let firstVisibleFocusableLiveId: number | null = null;
-      for (const w of getAllLiveWindows()) {
-        if (!w.isVisible() || !w.isFocusable()) continue;
-        if (getWindowInfo(w.id)?.params?.modal) continue; // never fall back to a modal surface
-        firstVisibleFocusableLiveId = w.id;
-        break;
-      }
-      const activeHybridId = getActiveHybridWindowId();
-      // The page host the user is viewing, even if it opened NON-ACTIVATING
-      // (session restore / `show:false` → showInactive) and so never fired a
-      // focus event to populate the tracker or the active-hybrid id. Last visible
-      // hybrid host by open order (the top page). Focus-independent, so it still
-      // answers when the palette holds focus and steps 1–3 are empty.
-      let currentVisibleHybridHostId: number | null = null;
-      for (const h of getAllHybridWindows()) {
-        try {
-          if (h.baseWin.isDestroyed() || !h.baseWin.isVisible()) continue;
-          currentVisibleHybridHostId = h.windowId;
-        } catch { /* isVisible unsupported in some envs */ }
-      }
-      const resolved = resolveFocusedVisibleWindowId(
-        trackedId,
-        trackedIsLive,
-        trackedIsHybrid,
-        focusedBrowserWindowId,
-        activeHybridId,
-        currentVisibleHybridHostId,
-        firstVisibleFocusableLiveId,
-      );
-      fsDiag(
-        `[fs-target] lastFocusedVisibleWindowId=${fsDiagDescribeWindow(trackedId)}`
-        + ` activeHybridWindowId=${fsDiagDescribeWindow(activeHybridId)}`
-        + ` currentVisibleHybridHostId=${fsDiagDescribeWindow(currentVisibleHybridHostId)}`
-        + ` focusedBrowserWindowId=${fsDiagDescribeWindow(focusedBrowserWindowId)}`
-        + ` firstVisibleFocusableLiveId=${fsDiagDescribeWindow(firstVisibleFocusableLiveId)}`
-        + ` resolved=${fsDiagDescribeWindow(typeof resolved === 'number' ? resolved : null)}`,
-      );
-      return { success: true, data: resolved };
+      // The window-state machine's `front` IS "the focused visible window":
+      // it collapses the old S1 tracked-id + S2 active-hybrid + the 7-input
+      // `resolveFocusedVisibleWindowId` cascade into one arbitrated authority.
+      // Satellites (the command palette / modal issuers, the chrome + switcher
+      // overlays) can never be `front`, so the modal-exclusion and overlay
+      // redirects that resolver did are now structural. A focused hybrid host
+      // (a BaseWindow `getFocusedWindow()` returns null for) is `front` too.
+      return { success: true, data: getFrontWindowId() };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
@@ -3723,13 +3645,12 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'trustedBuiltin required for tile:window:devtools' };
     }
     try {
-      const targetId = args.id ?? getLastContentWindowId() ?? getLastFocusedVisibleWindowId();
+      const targetId = args.id ?? getDevtoolsTargetId() ?? getFrontWindowId();
       if (!targetId) {
         return { success: false, error: 'No focused window available' };
       }
       const win = getLiveWindow(targetId);
       if (!win) {
-        if (targetId === getLastContentWindowId()) clearLastContentWindowId();
         return { success: false, error: 'Window not found or destroyed' };
       }
       win.webContents.openDevTools({ mode: 'detach' });
@@ -4405,7 +4326,7 @@ export function registerTileIpcHandlers(): void {
     }
 
     if (resolvedId === null) {
-      const tracked = getLastFocusedVisibleWindowId();
+      const tracked = getFrontWindowId();
       if (tracked != null) {
         const trackedWin = getLiveWindow(tracked);
         if (trackedWin) {
@@ -6940,7 +6861,7 @@ export function registerTileIpcHandlers(): void {
   // All require trustedBuiltin — only the core background renderer uses these.
 
   const tileResolveWebWindow = (windowId?: number): BrowserWindow | null => {
-    const id = windowId ?? getLastFocusedVisibleWindowId();
+    const id = windowId ?? getFrontWindowId();
     if (!id) return null;
     const win = getLiveWindow(id);
     if (!win) return null;

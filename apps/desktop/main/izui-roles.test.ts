@@ -13,22 +13,15 @@ import {
   inferIzuiRole,
   spacesPolicyForRole,
   selectTransientSiblingsToClose,
-  resolveHybridEscapeTarget,
-  escExitsHybridFullscreen,
-  shouldRegisterGlobalEscFallback,
-  shouldFocusHybridContentOnHostFocus,
   shouldCloseContentWCOnFinalize,
   planBeforeQuit,
   type QuitCleanupPhase,
   shouldActivateFocusedOnRestore,
-  resolveCloseTargetId,
-  resolveFocusedVisibleWindowId,
   windowSelfClosesOnBlur,
   hybridResizeDirAt,
   downloadCloseTarget,
   RESIZE_EDGE_PX,
   RESIZE_CORNER_PX,
-  ALWAYS_CLOSEABLE_ESC_ROLES,
   TRANSIENT_ROLES,
 } from './izui-roles.js';
 
@@ -214,146 +207,6 @@ describe('selectTransientSiblingsToClose', () => {
   });
 });
 
-describe('resolveHybridEscapeTarget (wrong-window / first-responder redirect — peek ebb10894)', () => {
-  // The live regression: ESC on a freshly opened peek/slide opens the Windows
-  // switcher MOST of the time, but closes correctly if the user first clicks the
-  // content. Root cause = first-responder lag: ESC lands on the PREVIOUS hybrid
-  // content host's before-input-event (role 'content' → escPolicy 'nothing' →
-  // escUnhandledPolicy → switcher) while the just-opened quick-view IS the active
-  // hybrid window (the registry's focus source of truth, set on open). The
-  // resolver redirects ESC to the active host when that one is always-closeable.
-
-  it('redirects ESC to the active quick-view when it landed on a DIFFERENT content host', () => {
-    // ESC landed on host 11 (the previous page, role 'content'); the active
-    // hybrid window is 22, a quick-view peek/slide. Must resolve against 22.
-    assert.strictEqual(resolveHybridEscapeTarget(11, 22, 'quick-view'), 22);
-  });
-
-  it('redirects for any always-closeable active role (palette / utility / overlay)', () => {
-    assert.strictEqual(resolveHybridEscapeTarget(11, 22, 'palette'), 22);
-    assert.strictEqual(resolveHybridEscapeTarget(11, 22, 'utility'), 22);
-    assert.strictEqual(resolveHybridEscapeTarget(11, 22, 'overlay'), 22);
-  });
-
-  it('does NOT redirect when ESC already landed on the active hybrid window', () => {
-    // Common case once the content WC is first responder: landed === active.
-    assert.strictEqual(resolveHybridEscapeTarget(22, 22, 'quick-view'), 22);
-  });
-
-  it('does NOT redirect when there is no active hybrid window', () => {
-    assert.strictEqual(resolveHybridEscapeTarget(11, null, undefined), 11);
-  });
-
-  it("does NOT redirect toward a content/workspace active window (never force-close a page)", () => {
-    // A 'content' or 'workspace' active window has its own ESC semantics — ESC
-    // must resolve against the host it actually landed on, not be hijacked.
-    assert.strictEqual(resolveHybridEscapeTarget(11, 22, 'content'), 11);
-    assert.strictEqual(resolveHybridEscapeTarget(11, 22, 'workspace'), 11);
-    assert.strictEqual(resolveHybridEscapeTarget(11, 22, 'child-content'), 11);
-  });
-
-  it('does NOT redirect when the active role is unknown/unregistered', () => {
-    assert.strictEqual(resolveHybridEscapeTarget(11, 22, undefined), 11);
-  });
-
-  it('ALWAYS_CLOSEABLE_ESC_ROLES matches escPolicy close roles, excludes session-dependent', () => {
-    assert.ok(ALWAYS_CLOSEABLE_ESC_ROLES.has('quick-view'));
-    assert.ok(ALWAYS_CLOSEABLE_ESC_ROLES.has('palette'));
-    assert.ok(ALWAYS_CLOSEABLE_ESC_ROLES.has('utility'));
-    assert.ok(ALWAYS_CLOSEABLE_ESC_ROLES.has('overlay'));
-    assert.ok(!ALWAYS_CLOSEABLE_ESC_ROLES.has('content'));
-    assert.ok(!ALWAYS_CLOSEABLE_ESC_ROLES.has('child-content'));
-    assert.ok(!ALWAYS_CLOSEABLE_ESC_ROLES.has('workspace'));
-  });
-});
-
-describe('escExitsHybridFullscreen (ESC exits fullscreen before switcher/policy — peek 7fffa286 follow-up)', () => {
-  // The live trace (clone main.log 2026-07-19T09:40:08): ESC on a native-
-  // fullscreen hybrid host resolved escPolicy(active, content) -> 'nothing' →
-  // escUnhandledPolicy -> 'open-switcher', so the switcher opened OVER the
-  // fullscreen page. Expected: ESC while fullscreen exits fullscreen first;
-  // only a later ESC (host no longer fullscreen) reaches the policy.
-
-  it('consumes ESC to exit fullscreen while the host is native fullscreen', () => {
-    assert.strictEqual(escExitsHybridFullscreen(true, undefined), true);
-    assert.strictEqual(escExitsHybridFullscreen(true, 'auto'), true);
-    assert.strictEqual(escExitsHybridFullscreen(true, 'close'), true);
-  });
-
-  it('runs the normal escape policy when the host is not fullscreen', () => {
-    assert.strictEqual(escExitsHybridFullscreen(false, undefined), false);
-    assert.strictEqual(escExitsHybridFullscreen(false, 'auto'), false);
-  });
-
-  it("escapeMode 'ignore' keeps winning — ESC passes to the page even in fullscreen", () => {
-    assert.strictEqual(escExitsHybridFullscreen(true, 'ignore'), false);
-    assert.strictEqual(escExitsHybridFullscreen(false, 'ignore'), false);
-  });
-});
-
-describe('shouldRegisterGlobalEscFallback (global ESC grab vs hybrid focus — peek ebb10894)', () => {
-  // The live regression: open a slide/peek → ESC opens the Windows switcher and
-  // the slide stays open. Root cause = the OS-level global ESC fallback grabs
-  // ESC (pre-empting the slide's own before-input close handler) because its
-  // predicate was `appActive && getFocusedWindow() === null`, and
-  // getFocusedWindow() returns null for a hybrid BaseWindow (slide/peek). So a
-  // focused slide looked like "no focused Peek window" → grab → switcher.
-  //
-  // THE FAILING-FIRST ASSERTION: a focused hybrid slide/peek (no focused
-  // BrowserWindow, but an active hybrid window) must NOT register the grab.
-  // The pre-fix predicate (ignoring hasActiveHybridWindow) returned true here.
-  it('does NOT register when a hybrid window is active (slide/peek focused, no BrowserWindow)', () => {
-    // appActive, no focused BrowserWindow (getFocusedWindow null for BaseWindow),
-    // but a slide/peek IS the active hybrid window → the grab must be declined so
-    // ESC reaches the slide's own close handler.
-    assert.strictEqual(shouldRegisterGlobalEscFallback(true, false, true), false);
-  });
-
-  it('DOES register when Peek is active with no focused window of any kind', () => {
-    // The genuine fallback case: Peek active, no focused BrowserWindow AND no
-    // active hybrid window (e.g. Cmd+Tab to Peek on a Space holding none of its
-    // windows) → ESC has nowhere to land, so the global grab opens the switcher.
-    assert.strictEqual(shouldRegisterGlobalEscFallback(true, false, false), true);
-  });
-
-  it('does NOT register when a real BrowserWindow is focused', () => {
-    assert.strictEqual(shouldRegisterGlobalEscFallback(true, true, false), false);
-    assert.strictEqual(shouldRegisterGlobalEscFallback(true, true, true), false);
-  });
-
-  it('does NOT register when Peek is not the active app', () => {
-    assert.strictEqual(shouldRegisterGlobalEscFallback(false, false, false), false);
-    assert.strictEqual(shouldRegisterGlobalEscFallback(false, false, true), false);
-  });
-});
-
-describe('shouldFocusHybridContentOnHostFocus (restore first responder on host raise — traced 2026-06-10)', () => {
-  // The live regression: a hybrid page-host restored via showInactive (session
-  // restore) and later RAISED by chrome / Cmd+Tab / Mission Control fires
-  // baseWin 'focus' but its content WebContentsView is never made first
-  // responder. So ESC reaches neither the content WC before-input-event NOR the
-  // (correctly suppressed) global fallback — dead until the user clicks the
-  // page. THE FAILING-FIRST ASSERTION: on host focus, a live + not-already-
-  // focused content WC must be re-focused.
-  it('DOES focus when not headless, content alive, and not already first responder', () => {
-    assert.strictEqual(shouldFocusHybridContentOnHostFocus(false, false, false), true);
-  });
-
-  it('does NOT focus when the content WC is already first responder (host focus came from a page click)', () => {
-    // Avoids a redundant re-focus and a potential contentWC 'focus' event loop.
-    assert.strictEqual(shouldFocusHybridContentOnHostFocus(false, false, true), false);
-  });
-
-  it('does NOT focus when headless (focus-free — never steal the real first responder)', () => {
-    assert.strictEqual(shouldFocusHybridContentOnHostFocus(true, false, false), false);
-    assert.strictEqual(shouldFocusHybridContentOnHostFocus(true, false, true), false);
-  });
-
-  it('does NOT focus when the content WC has been destroyed', () => {
-    assert.strictEqual(shouldFocusHybridContentOnHostFocus(false, true, false), false);
-  });
-});
-
 describe('shouldCloseContentWCOnFinalize (quit-teardown null-deref → SIGSEGV — peek 9a591551)', () => {
   // The live crash: on quit, runHybridFinalize read `view.webContents
   // .isDestroyed()`, but at teardown `view.webContents` can be `undefined`
@@ -531,123 +384,6 @@ describe('shouldActivateFocusedOnRestore (cold-start z-order + frontmost — pee
   // true here because appFocused is the unconditional first term.
   it('headless + appFocused true returns true (appFocused dominates; OS calls gated downstream)', () => {
     assert.strictEqual(shouldActivateFocusedOnRestore(false, true, true), true);
-  });
-});
-
-describe('resolveCloseTargetId (cmd+W overlay redirect — address bar/widgets open)', () => {
-  // THE FAILING-FIRST ASSERTION: with the shared chrome overlay focused (Cmd+L
-  // opened the address bar/widgets), getFocusedWindow() returns the OVERLAY, not
-  // the page-host. Closing the overlay alone dismissed the chrome and left the
-  // page visible. cmd+W must instead target the active hybrid host so the whole
-  // host goes away.
-  it('targets the active hybrid host when the focused window IS the overlay', () => {
-    assert.strictEqual(resolveCloseTargetId(/* overlay id */ 7, /* isOverlay */ true, /* host */ 3), 3);
-  });
-
-  it('targets the focused BrowserWindow when it is NOT the overlay (settings/modal/canvas host)', () => {
-    assert.strictEqual(resolveCloseTargetId(5, false, 3), 5);
-  });
-
-  it('targets the active hybrid host when no BrowserWindow is focused (frontmost is a BaseWindow — peek ca4ee5e6)', () => {
-    assert.strictEqual(resolveCloseTargetId(null, false, 3), 3);
-  });
-
-  it('returns null when the overlay is focused but there is no active hybrid host', () => {
-    assert.strictEqual(resolveCloseTargetId(7, true, null), null);
-  });
-
-  it('returns null when nothing resolves (no focused window, no active hybrid host)', () => {
-    assert.strictEqual(resolveCloseTargetId(null, false, null), null);
-  });
-});
-
-describe('resolveFocusedVisibleWindowId (tag/untag/devtools active-window lookup under hybrid)', () => {
-  // THE FAILING-FIRST ASSERTION: the user focuses a hybrid page-host, so
-  // trackHybridWindowFocus records its id as the last focused visible window —
-  // but a hybrid host is a BaseWindow, invisible to getLiveWindow. The pre-fix
-  // resolver validated the tracked id ONLY as a live BrowserWindow, discarded
-  // this (correct) hybrid id, and fell through to a wrong/null window — so
-  // `tag <name>` tagged the wrong page and the page-host tags widget never
-  // updated. The tracked hybrid id must win.
-  it('returns the tracked id when it is a live hybrid page-host (the tag-the-wrong-page bug)', () => {
-    assert.strictEqual(
-      resolveFocusedVisibleWindowId(9, /* live */ false, /* hybrid */ true, null, null, /* currentVisibleHybridHost */ null, 11),
-      9,
-    );
-  });
-
-  it('returns the tracked id when it is a live BrowserWindow', () => {
-    assert.strictEqual(
-      resolveFocusedVisibleWindowId(5, true, false, null, null, null, 11),
-      5,
-    );
-  });
-
-  it('ignores a tracked id that is neither live nor hybrid (stale/destroyed)', () => {
-    // Tracked window is gone; fall through to the focused BrowserWindow.
-    assert.strictEqual(
-      resolveFocusedVisibleWindowId(99, false, false, 5, null, null, 11),
-      5,
-    );
-  });
-
-  it('prefers a focused BrowserWindow over the active hybrid host when the tracker is empty', () => {
-    assert.strictEqual(
-      resolveFocusedVisibleWindowId(null, false, false, 5, 3, null, 11),
-      5,
-    );
-  });
-
-  it('falls back to the active hybrid host when the tracker is null/stale and no BrowserWindow is focused', () => {
-    // The same signal the page-host chrome overlay frames over — command and
-    // overlay can't disagree about the active page.
-    assert.strictEqual(
-      resolveFocusedVisibleWindowId(null, false, false, null, 3, null, 11),
-      3,
-    );
-  });
-
-  it('falls back to the current visible hybrid page host before the first visible live window (tag-on-restored-host bug)', () => {
-    // The regression: a page host opened NON-ACTIVATING (session restore /
-    // show:false) never fires a focus event, so the tracker (step 1) and the
-    // active-hybrid id (step 3) are both empty. With the command palette focused,
-    // the CALL SITE nulls the focused BrowserWindow (a modal is never a target),
-    // so resolution must reach the current visible hybrid host — the page the
-    // user is looking at — NOT the first visible live window (which would be the
-    // palette itself). Pre-fix there was no such step and `tag` found nothing.
-    assert.strictEqual(
-      resolveFocusedVisibleWindowId(null, false, false, null, null, /* currentVisibleHybridHost */ 7, 11),
-      7,
-    );
-  });
-
-  it('prefers the active hybrid host over the current visible hybrid host', () => {
-    // A truly-active (focused) host beats the mere last-visible one.
-    assert.strictEqual(
-      resolveFocusedVisibleWindowId(null, false, false, null, 3, 7, 11),
-      3,
-    );
-  });
-
-  it('falls back to the first visible+focusable live window when nothing else resolves', () => {
-    assert.strictEqual(
-      resolveFocusedVisibleWindowId(null, false, false, null, null, null, 11),
-      11,
-    );
-  });
-
-  it('returns null when no window resolves at all', () => {
-    assert.strictEqual(
-      resolveFocusedVisibleWindowId(null, false, false, null, null, null, null),
-      null,
-    );
-  });
-
-  it('ignores a non-positive tracked id', () => {
-    assert.strictEqual(
-      resolveFocusedVisibleWindowId(0, true, true, null, 3, null, null),
-      3,
-    );
   });
 });
 

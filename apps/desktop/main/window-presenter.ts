@@ -23,6 +23,7 @@ import { resolveWindowAddress } from './window-address.js';
 import { urlToHash, getThumbnailPath } from './thumbnails.js';
 import { getHybridWindow } from './hybrid-page-host-registry.js';
 import type { HybridWindowEntry } from './hybrid-page-host-registry.js';
+import { getWindowPreBounds } from './window-state-singleton.js';
 
 export { resolveWindowAddress };
 
@@ -113,13 +114,15 @@ function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
   // Native fullscreen: present the PRE-fullscreen bounds, not the transient
   // work-area-sized fullscreen rect. Session-save persists `bounds`, and
   // persisting the fullscreen rect made the next boot restore a plain window
-  // at work-area size — a fullscreen LOOKALIKE (nativeFullScreen false) that
-  // is visually indistinguishable from real fullscreen and breaks the Esc /
-  // fullscreen-toggle interactions after restart. The stash covers the whole
-  // fullscreen episode (set at enter-initiation by setHybridHostFullScreen,
-  // cleared on the settled leave), so mid-animation saves are covered too.
-  if (entry.preFullScreenBounds) {
-    bounds = entry.preFullScreenBounds;
+  // at work-area size — a fullscreen LOOKALIKE that is visually
+  // indistinguishable from real fullscreen and breaks the Esc / fullscreen-
+  // toggle interactions after restart. The stash (now `fsMode.preBounds` on the
+  // window-state machine) covers the whole fullscreen episode — set at
+  // enter-initiation, cleared on the settled leave — so mid-animation saves are
+  // covered too.
+  const preFullScreenBounds = getWindowPreBounds(entry.windowId);
+  if (preFullScreenBounds) {
+    bounds = preFullScreenBounds;
   }
 
   let favicon = '';

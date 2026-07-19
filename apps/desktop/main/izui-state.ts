@@ -119,6 +119,27 @@ class IzuiStateCoordinator {
   // genuine user click on any of those windows is honored normally. No timer.
   private restoreFocusGuard: { intendedId: number; pending: Set<number> } | null = null;
 
+  // Session-change notifier. The window-state machine mirrors this coordinator's
+  // idle/transient/active tri-state via `SESSION_CHANGED` (staged cutover: the
+  // coordinator stays the single session authority; the reducer only records
+  // what it is told, for `decideEscape` step 6). Seeded once at boot by
+  // `window-state-singleton.ts`. One-way — this module never imports the machine.
+  private sessionChangeListener: ((state: IzuiState) => void) | null = null;
+
+  /** Register (or clear, with null) the session-change mirror callback. */
+  onSessionChange(cb: ((state: IzuiState) => void) | null): void {
+    this.sessionChangeListener = cb;
+  }
+
+  private emitSessionChange(): void {
+    if (!this.sessionChangeListener) return;
+    try {
+      this.sessionChangeListener(this.state);
+    } catch {
+      /* a mirror subscriber throwing must not break session bookkeeping */
+    }
+  }
+
   /**
    * Set custom window provider (for testing)
    */
@@ -152,6 +173,7 @@ class IzuiStateCoordinator {
     if (focused && this.session && this.session.entryMode === 'transient') {
       this.session.entryMode = 'active';
       this.state = 'active';
+      this.emitSessionChange();
       DEBUG && console.log('[izui] Promoted session from transient to active (app gained focus)');
     }
   }
@@ -214,6 +236,7 @@ class IzuiStateCoordinator {
     };
 
     this.state = entryMode;
+    this.emitSessionChange();
     DEBUG && console.log('[izui] Started session:', this.session.id, 'entryMode:', entryMode);
   }
 
@@ -229,6 +252,7 @@ class IzuiStateCoordinator {
     DEBUG && console.log('[izui] Ending session:', this.session.id);
     this.session = null;
     this.state = 'idle';
+    this.emitSessionChange();
   }
 
   /**
@@ -263,6 +287,7 @@ class IzuiStateCoordinator {
       if (this.session.entryMode === 'transient' && result === 'active') {
         this.session.entryMode = 'active';
         this.state = 'active';
+        this.emitSessionChange();
         DEBUG && console.log('[izui] Promoted session from transient to active');
       } else {
         DEBUG && console.log('[izui] Session entryMode unchanged:', this.session.entryMode, '(evaluated:', result, ')');
@@ -288,6 +313,7 @@ class IzuiStateCoordinator {
     this.session.hiddenWindowIds = hiddenIds;
     this.session.preOverlayFocusTarget = this.session.focusedWindowId;
     this.lastOverlayEntryTime = Date.now();
+    this.emitSessionChange();
     console.log('[izui] Entered overlay mode, windowId:', windowId, 'hidden:', hiddenIds.length, 'preOverlayFocus:', this.session.preOverlayFocusTarget);
   }
 
@@ -333,6 +359,7 @@ class IzuiStateCoordinator {
     this.session.preOverlayFocusTarget = null;
     this.session.overlayFocusTarget = null;
     this.lastOverlayExitTime = Date.now();
+    this.emitSessionChange();
   }
 
   /**
@@ -369,6 +396,7 @@ class IzuiStateCoordinator {
     this.session.preOverlayFocusTarget = null;
     this.session.overlayFocusTarget = null;
     this.lastOverlayExitTime = Date.now();
+    this.emitSessionChange();
   }
 
   /**
@@ -589,49 +617,12 @@ class IzuiStateCoordinator {
   }
 }
 
-/**
- * ESC policy: given session state and window role, determine what to do.
- * Pure function — no side effects.
- */
-export function escPolicy(sessionState: string, role: string): 'close' | 'close-and-restore' | 'nothing' {
-  // These roles always close regardless of session state
-  if (['quick-view', 'palette', 'utility'].includes(role)) return 'close';
-  if (role === 'overlay') return 'close-and-restore';
-  // Workspace windows are root/persistent extension windows (groups, search, etc.).
-  // They must NEVER close on ESC regardless of session state — the renderer handles
-  // internal navigation and the window persists.
-  if (role === 'workspace') return 'nothing';
-  // content AND child-content both follow the same rule: ESC closes the window
-  // ONLY when the session is `transient` (app woken without OS focus — ESC
-  // returns the user to the previous app). When the app is OS-focused
-  // (session active/idle), ESC must NEVER close a real content window;
-  // escUnhandledPolicy then opens the Windows switcher. Feature-internal
-  // closes (groups → group → page → esc, space mode, etc.) are renderer-driven
-  // — the renderer returns { handled: true } before policy is ever consulted.
-  if (sessionState === 'transient') return 'close';
-  return 'nothing';
-}
-
-/**
- * ESC unhandled policy: second-phase policy consulted ONLY after the renderer
- * returns { handled: false } AND escPolicy() returns 'nothing'.
- *
- * Determines what to do when ESC has nowhere left to navigate.
- * Pure function — no side effects.
- */
-export function escUnhandledPolicy(sessionState: string, role: string): 'open-switcher' | 'nothing' {
-  // Transient sessions should NOT trigger switcher — user expects ESC to
-  // return to previous app, not open more UI.
-  // Overlay sessions handle their own ESC (close-and-restore).
-  if (sessionState === 'transient' || sessionState === 'overlay') return 'nothing';
-  // In active or idle sessions, workspace, content, and child-content windows
-  // open the switcher when ESC has nowhere left to navigate.
-  // Note: content/child-content only reach here when the renderer's onEscape
-  // returned { handled: false } AND escPolicy returned 'nothing', so page-level
-  // ESC handling (spaces navigation, panel closing, etc.) takes priority.
-  if (['workspace', 'content', 'child-content'].includes(role)) return 'open-switcher';
-  return 'nothing';
-}
+// ESC policy (`escPolicy` / `escUnhandledPolicy`) moved into the window-state
+// reducer's `decideEscape` step 6 (`window-state.ts`) — the machine is now the
+// single ESC decider. This coordinator keeps ONLY the session tri-state
+// (idle/transient/active), `setAppFocused`, and the switcher-overlay WINDOW
+// teardown executor (enterOverlay/exitOverlay/…), which the machine invokes via
+// the CLOSE_SWITCHER seam.
 
 // Singleton instance
 const coordinator = new IzuiStateCoordinator();

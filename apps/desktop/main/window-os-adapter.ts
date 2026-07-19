@@ -150,9 +150,22 @@ export class WindowOsAdapter {
     this.owner = owner;
   }
 
-  /** The shared state owner (read-only consumers in later slices attach to this). */
+  /** The shared state owner (read-only consumers attach to this). */
   getOwner(): WindowStateOwner {
     return this.owner;
+  }
+
+  /**
+   * Public dispatch entry for the live consumers that feed the machine from
+   * outside the native-listener paths this adapter attaches itself: the ESC
+   * before-input seam (ipc.ts / windows.ts → `ESC_PRESSED`), the fullscreen
+   * command (tile-ipc.ts → `FULLSCREEN_REQUESTED`), the synchronous hide seam
+   * (`WINDOW_HIDDEN`), the switcher mirror (`SWITCHER_OPENED`/`SWITCHER_CLOSED`),
+   * and the session mirror (`SESSION_CHANGED`). Runs the SAME pump every native
+   * listener does — effects execute, transition log fires, Esc grab reconciles.
+   */
+  dispatch(event: WindowEvent): void {
+    this.pump(event);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -189,7 +202,7 @@ export class WindowOsAdapter {
 
     win.on('focus', () => {
       this.cancelBlurSettle();
-      this.pump({ type: 'OS_FOCUS_GAINED', id });
+      this.pump({ type: 'OS_FOCUS_GAINED', id, lastHttpUrl: this.readHttpUrl(id) });
     });
     // The ONE deferred-blur settle: blur alone can't tell "focus left Peek" from
     // "focus is moving to the next Peek window" — Electron fires the old window's
@@ -223,7 +236,7 @@ export class WindowOsAdapter {
     if (kind === 'page-host' && rendererWC) {
       rendererWC.on('focus', () => {
         this.cancelBlurSettle();
-        this.pump({ type: 'OS_FOCUS_GAINED', id });
+        this.pump({ type: 'OS_FOCUS_GAINED', id, lastHttpUrl: this.readHttpUrl(id) });
       });
     }
   }
@@ -333,12 +346,19 @@ export class WindowOsAdapter {
         return;
       }
       case 'CLOSE_SWITCHER_WINDOW': {
-        // Restore focus to the previous front, if asked. The teardown of the
-        // switcher OVERLAY window itself is owned by the izui overlay bookkeeping
-        // today and is folded in by the switcher-seam slice (§3) — deferred here,
-        // so this adapter does not yet dismiss the overlay window.
-        if (effect.restoreFocus && effect.restoreTarget != null) {
-          this.raiseWindow(effect.restoreTarget);
+        // Staged cutover: the switcher OVERLAY WINDOW lifecycle stays owned by
+        // izui-state.ts + main.ts. This effect DELEGATES the teardown — it does
+        // not itself destroy the overlay or restore focus.
+        //   - ESC path (restoreFocus:true): the old escPolicy('overlay') route
+        //     is deleted, so this is the SINGLE close path. `closeOrHideWindow`
+        //     tears the overlay down; its 'closed' handler (main.ts) then runs
+        //     `exitOverlay` + the focus restore + `popWindow`.
+        //   - app-blur path (restoreFocus:false): `main.ts did-resign-active`
+        //     owns the teardown (with its cooldown focus-dance protection), so
+        //     this is a no-op — closing here would double-close and defeat the
+        //     cooldown.
+        if (effect.restoreFocus && effect.switcherWindowId != null) {
+          void closeOrHideWindow(effect.switcherWindowId);
         }
         return;
       }
@@ -451,6 +471,22 @@ export class WindowOsAdapter {
       return !win.isDestroyed() && win.isFocused();
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * The window's current http(s) URL (from its renderer WC), or undefined when
+   * it is not on an http(s) page. Fed to `OS_FOCUS_GAINED` so the reducer can
+   * track the devtools target (absorbs the old `lastContentWindowId`).
+   */
+  private readHttpUrl(id: number): string | undefined {
+    const wc = this.windows.get(id)?.rendererWC;
+    if (!wc || wc.isDestroyed()) return undefined;
+    try {
+      const url = wc.getURL();
+      return url.startsWith('http://') || url.startsWith('https://') ? url : undefined;
+    } catch {
+      return undefined;
     }
   }
 

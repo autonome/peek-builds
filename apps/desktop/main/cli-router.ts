@@ -14,6 +14,7 @@
 import { publish } from './pubsub.js';
 import { BrowserWindow, webContents as electronWebContents } from 'electron';
 import { getAllHybridWindows } from './hybrid-page-host-registry.js';
+import { getWindowModeName } from './window-state-singleton.js';
 import { collectProcessMetrics, probeVisibilityState } from './process-metrics.js';
 
 const SYSTEM_ADDRESS = 'peek://system/';
@@ -101,9 +102,10 @@ function debugListWindows(): CliResult {
       hybrid: true,
       // Fullscreen ground truth for hybrid hosts. On a notched display a
       // maximized host and a native-fullscreen host report IDENTICAL content
-      // dimensions, so renderer-side probes can't tell them apart — this is
-      // the registry's settled state (enter/leave-full-screen driven).
-      nativeFullScreen: h.nativeFullScreen,
+      // dimensions, so renderer-side probes can't tell them apart — this is the
+      // window-state machine's SETTLED fullscreen mode (enter/leave-full-screen
+      // driven).
+      nativeFullScreen: getWindowModeName(h.windowId) === 'fullscreen',
       bounds: (() => { try { return h.baseWin.getBounds(); } catch { return undefined; } })(),
     });
   }

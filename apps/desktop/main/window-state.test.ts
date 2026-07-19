@@ -36,6 +36,8 @@ import {
   createInitialState,
   getFrontWindowId,
   getWindowMode,
+  getWindowPreBounds,
+  getDevtoolsTargetId,
   snapshot,
   frontInvariantHolds,
   isEligibleFront,
@@ -167,6 +169,9 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     { type: 'SWITCHER_OPEN_REQUESTED' },
     { type: 'SWITCHER_SELECTED', id: 1 },
     { type: 'SWITCHER_SELECTED', id: null },
+    { type: 'SWITCHER_OPENED', windowId: 2 },
+    { type: 'SWITCHER_CLOSED' },
+    { type: 'OS_FOCUS_GAINED', id: 1, lastHttpUrl: 'https://example.com/' },
   ];
 
   it('reduce is total: defined result + front invariant holds for all combinations', () => {
@@ -728,6 +733,84 @@ describe('switcher lifecycle', () => {
     const { state, effects } = reduce(s, { type: 'APP_RESIGNED' });
     assert.strictEqual(state.switcher.open, false);
     assert.ok(effects.some((e) => e.type === 'CLOSE_SWITCHER_WINDOW' && e.restoreFocus === false));
+  });
+
+  it('CLOSE_SWITCHER_WINDOW carries the overlay window id (ESC path delegates its teardown to izui)', () => {
+    let s = openWindow(createInitialState(), 4, { kind: 'page-host', role: 'content' });
+    s = drive(s, [{ type: 'SWITCHER_OPENED', windowId: 88 }]).state;
+    const { effects } = reduce(s, { type: 'ESC_PRESSED', landedId: 'global' });
+    const close = effects.find((e) => e.type === 'CLOSE_SWITCHER_WINDOW');
+    assert.ok(close && close.type === 'CLOSE_SWITCHER_WINDOW');
+    assert.strictEqual(close.switcherWindowId, 88);
+    assert.strictEqual(close.restoreFocus, true);
+  });
+});
+
+// ── Staged-cutover switcher mirror (SWITCHER_OPENED / SWITCHER_CLOSED) ────────
+
+describe('staged-cutover switcher mirror', () => {
+  it('SWITCHER_OPENED records switcher state with NO effect (izui/main own the window)', () => {
+    let s = openWindow(createInitialState(), 4, { kind: 'page-host', role: 'content' });
+    const { state, effects } = reduce(s, { type: 'SWITCHER_OPENED', windowId: 9 });
+    assert.strictEqual(state.switcher.open, true);
+    assert.ok(state.switcher.open && state.switcher.windowId === 9);
+    assert.ok(!effects.some((e) => e.type === 'OPEN_SWITCHER_WINDOW'), 'mirror must NOT re-open the overlay');
+    // decideEscape step 1 now fires for the externally-opened overlay.
+    assert.deepStrictEqual(decideEscape(state), { kind: 'close-switcher' });
+  });
+
+  it('SWITCHER_CLOSED clears switcher state with NO effect', () => {
+    let s = openWindow(createInitialState(), 4, { kind: 'page-host', role: 'content' });
+    s = drive(s, [{ type: 'SWITCHER_OPENED', windowId: 9 }]).state;
+    const { state, effects } = reduce(s, { type: 'SWITCHER_CLOSED' });
+    assert.strictEqual(state.switcher.open, false);
+    assert.strictEqual(effects.length, 0);
+  });
+
+  it('WINDOW_CLOSED of the overlay window also clears switcher state (safety net)', () => {
+    let s = openWindow(createInitialState(), 4, { kind: 'page-host', role: 'content' });
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: 9, kind: 'browser', role: 'overlay', satellite: true },
+      { type: 'WINDOW_SHOWN', id: 9, focused: true },
+      { type: 'SWITCHER_OPENED', windowId: 9 },
+    ]).state;
+    s = drive(s, [{ type: 'WINDOW_CLOSED', id: 9 }]).state;
+    assert.strictEqual(s.switcher.open, false);
+  });
+});
+
+// ── Devtools-target + pre-fullscreen-bounds selectors ────────────────────────
+
+describe('selectors: getDevtoolsTargetId / getWindowPreBounds', () => {
+  it('getDevtoolsTargetId picks the MRU http(s) window (absorbs lastContentWindowId)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    // Focus with an http url, then a peek:// window (no http url recorded).
+    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: 1, lastHttpUrl: 'https://a.com/' }]).state;
+    s = openWindow(s, 2, { kind: 'page-host', role: 'content' });
+    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: 2 }]).state; // peek:// — no http url
+    assert.strictEqual(getDevtoolsTargetId(s), 1, 'the http-bearing window is the devtools target');
+    // A newer http focus wins by focusSeq.
+    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: 2, lastHttpUrl: 'https://b.com/' }]).state;
+    assert.strictEqual(getDevtoolsTargetId(s), 2);
+  });
+
+  it('getDevtoolsTargetId is null when no window has an http url', () => {
+    let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
+    assert.strictEqual(getDevtoolsTargetId(s), null);
+  });
+
+  it('getWindowPreBounds returns the stash while non-normal, null when normal', () => {
+    let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
+    assert.strictEqual(getWindowPreBounds(s, 1), null, 'normal -> null');
+    s = drive(s, [{ type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS }]).state;
+    assert.deepStrictEqual(getWindowPreBounds(s, 1), BOUNDS);
+    s = drive(s, [
+      { type: 'OS_FULLSCREEN_ENTERED', id: 1 },
+      { type: 'FULLSCREEN_REQUESTED', id: 1, desired: false },
+      { type: 'OS_FULLSCREEN_LEFT', id: 1 },
+    ]).state;
+    assert.strictEqual(getWindowPreBounds(s, 1), null, 'back to normal -> null');
   });
 });
 

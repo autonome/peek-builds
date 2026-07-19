@@ -7,7 +7,6 @@
 
 import { ipcMain, nativeTheme, dialog, BrowserWindow, BaseWindow, WebContentsView, app, screen, webContents, net } from 'electron';
 import { getAllLiveWindows, getLiveWindow, windowFromWebContents } from './window-registry.js';
-import { noteWindowFocus, clearFocusOrder } from './focus-order.js';
 import { hybridResizeDirAt, RESIZE_EDGE_PX, RESIZE_CORNER_PX } from './izui-roles.js';
 import type { ResizeDir } from './izui-roles.js';
 import path from 'node:path';
@@ -84,14 +83,20 @@ import {
   getPrefs,
   showWindowHeadlessSafe,
   showHybridHost,
-  handleHybridEscape,
 } from './windows.js';
+import {
+  registerWindowWithMachine,
+  dispatchWindowEvent,
+  getFrontWindowId,
+  getFrontPageHostId,
+  getWindowModeName,
+  type MachineWindowSpec,
+} from './window-state-singleton.js';
 import {
   TRANSIENT_ROLES,
   inferIzuiRole,
   spacesPolicyForRole,
   selectTransientSiblingsToClose,
-  shouldFocusHybridContentOnHostFocus,
   shouldCloseContentWCOnFinalize,
   windowSelfClosesOnBlur,
   type TransientSiblingCandidate,
@@ -138,9 +143,7 @@ import {
   getHybridContentWC,
   getHybridWindow,
   getAllHybridWindows,
-  getActiveHybridWindowId,
   setHybridMaximizeState,
-  setHybridNativeFullScreen,
   claimHybridDeferredLoad,
   // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
   setHybridLoadError,
@@ -363,127 +366,13 @@ import {
 //   - get-focused-visible-window-id: Returns lastFocusedVisibleWindowId
 // ============================================================================
 
-// Track the last focused content window (for devtools command)
-// Content windows are those with http/https URLs (not peek:// internal pages)
-let lastContentWindowId: number | null = null;
-
-// Track the last focused visible window (for per-window commands)
-// This includes extension windows (peek://{extId}/...) and web pages,
-// but excludes internal background windows and modal windows
-let lastFocusedVisibleWindowId: number | null = null;
-
-/** Returns the last focused visible window ID, for use by tile-ipc.ts nav shims. */
-export function getLastFocusedVisibleWindowId(): number | null {
-  return lastFocusedVisibleWindowId;
-}
-
-/** Returns the last focused content (http/https) window ID. Used by tile:window:devtools. */
-export function getLastContentWindowId(): number | null {
-  return lastContentWindowId;
-}
-
-/** Clears the last-focused content window tracker. Called when the target is destroyed. */
-export function clearLastContentWindowId(): void {
-  lastContentWindowId = null;
-}
-
-/**
- * Update tracking when a content window (http/https) gains focus.
- * Used by devtools command to know which web page to target.
- */
-function trackContentWindowFocus(win: BrowserWindow): void {
-  const url = win.webContents.getURL();
-  // Only track content windows (http/https), not internal peek:// pages
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    lastContentWindowId = win.id;
-    DEBUG && console.log('Updated lastContentWindowId:', lastContentWindowId, url);
-  }
-}
-
-/**
- * Update tracking when a visible (non-background) window gains focus.
- * Used by per-window commands like "theme dark here".
- *
- * IMPORTANT: Modal windows should NOT call this function, otherwise
- * opening the cmd palette would override the target window.
- *
- * `knownRole` is an optional override for the role check, supplied by
- * callers that have the role in hand without going through the registry
- * (e.g. tile-launcher, which creates BrowserWindows that aren't yet in
- * `windowRegistry`).
- */
-export function trackVisibleWindowFocus(win: BrowserWindow, knownRole?: string): void {
-  const url = win.webContents.getURL();
-  // Exclude internal background windows
-  if (url === 'peek://app/background.html') {
-    return;
-  }
-  // Exclude non-focusable windows (e.g., HUD overlay)
-  if (!win.isFocusable()) {
-    return;
-  }
-  // Exclude overlay windows (e.g., windows switcher) — they should not
-  // be tracked as the last focused visible window
-  const winInfo = getWindowInfo(win.id);
-  const role = knownRole ?? (winInfo?.params?.role as string | undefined);
-  if (role === 'overlay') {
-    return;
-  }
-  // Track extension windows (peek://{id}/...) and web pages
-  lastFocusedVisibleWindowId = win.id;
-  noteWindowFocus(win.id);
-  // Unconditional — wrong-window targeting bugs (e.g. maximize hitting
-  // the window behind a focused tile) are reported by symptom; seeing
-  // the tracker transitions in stderr makes them diagnosable without
-  // re-instrumenting the user.
-  console.log(`[focus-tracker] updated lastFocusedVisibleWindowId=${lastFocusedVisibleWindowId} url=${url.slice(0, 80)}`);
-}
-
-/** Exported wrapper for tile-launcher: also runs content-window tracking. */
-export function trackOnWindowFocus(win: BrowserWindow, knownRole: string | undefined): void {
-  trackContentWindowFocus(win);
-  trackVisibleWindowFocus(win, knownRole);
-}
-
-/**
- * Clear lastFocusedVisibleWindowId if it matches the given window ID.
- * Must be called when a window closes to prevent stale ID from being returned
- * by getFocusedVisibleWindowId(), which would cause commands (e.g., tag) to
- * target a closed window and fall back to the wrong window.
- */
-export function clearLastFocusedVisibleWindowId(windowId: number): void {
-  clearFocusOrder(windowId);
-  if (lastFocusedVisibleWindowId === windowId) {
-    DEBUG && console.log('Cleared lastFocusedVisibleWindowId (window closed):', windowId);
-    lastFocusedVisibleWindowId = null;
-  }
-}
-
-/**
- * Update the focus trackers for a hybrid page-host window.
- *
- * Hybrid page-hosts are `BaseWindow`s, not `BrowserWindow`s, so they never
- * flow through `trackOnWindowFocus`/`trackVisibleWindowFocus` (which read
- * `win.webContents.getURL()` — a BaseWindow has no root `.webContents`). The
- * hybrid branch in `setWindowOpenHandler` calls this from the host
- * BaseWindow's `'focus'` event so a focused web page becomes
- * `lastFocusedVisibleWindowId` (and, for an http(s) page, `lastContentWindowId`)
- * exactly like a canvas web window does. Without this, session-save records the
- * WRONG window (the last-focused BrowserWindow, e.g. Settings) as the focused
- * descriptor, and restore brings that window — not the web page — to the front.
- */
-export function trackHybridWindowFocus(windowId: number, url: string): void {
-  // Mirror trackContentWindowFocus: only http(s) pages are "content" windows.
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    lastContentWindowId = windowId;
-  }
-  // Mirror trackVisibleWindowFocus: a hybrid page-host is always a focusable,
-  // non-background, non-overlay visible content window, so it is unconditionally
-  // the last-focused visible window when it gains focus.
-  lastFocusedVisibleWindowId = windowId;
-  noteWindowFocus(windowId);
-  console.log(`[focus-tracker] updated lastFocusedVisibleWindowId=${lastFocusedVisibleWindowId} (hybrid) url=${url.slice(0, 80)}`);
-}
+// Focused-window tracking (S1 `lastFocusedVisibleWindowId` / S4 `lastContentWindowId`
+// / `focus-order.ts`) is GONE — the window-state machine's `front` + per-record
+// `focusSeq`/`lastHttpUrl` are the single authority now. Consumers read
+// `getFrontWindowId()` / `getDevtoolsTargetId()` / `getFocusOrder()` from
+// `window-state-singleton.ts`; every window's focus is fed to the machine by the
+// OS adapter's native `focus` listeners (attached at `registerWindowWithMachine`),
+// so there are no `track*` feeds to maintain here.
 
 /**
  * Convert an Item to an Address-like shape for backward compatibility.
@@ -746,10 +635,11 @@ export function openNewPageWindow(): void {
     trackingSourceId: 'shortcut',
   };
 
-  // Inherit space mode from the last focused visible window
-  if (lastFocusedVisibleWindowId != null) {
+  // Inherit space mode from the front (last focused visible) window
+  const frontId = getFrontWindowId();
+  if (frontId != null) {
     try {
-      const modeEntry = getContextEntry('mode', lastFocusedVisibleWindowId);
+      const modeEntry = getContextEntry('mode', frontId);
       if (modeEntry && modeEntry.value === 'space' && modeEntry.metadata) {
         options.spaceMode = {
           spaceId: modeEntry.metadata.spaceId as string,
@@ -1059,35 +949,14 @@ function assembleHybridPageHost(
     } catch {
       /* a torn-down wc mid-focus must not wedge the focus handler */
     }
-    // Restore first responder to the content WebContentsView when this host
-    // gains focus. showHybridHost applies `contentWC.focus()` only on a FRESH
-    // show; a host restored via showInactive (session restore) and later
-    // RAISED by chrome / Cmd+Tab / Mission Control fires baseWin 'focus' (so
-    // the active-hybrid id — and thus the suppressed global ESC fallback —
-    // is correct) but never made its content WC first responder, so ESC (and
-    // every other before-input key) was dead until the user clicked the page.
-    // The predicate skips headless (focus-free) and the already-focused case
-    // (host focus triggered BY a click into the page → no redundant re-focus
-    // / focus-event loop). Traced 2026-06-10.
-    try {
-      if (
-        shouldFocusHybridContentOnHostFocus(
-          isHeadless(),
-          view.webContents.isDestroyed(),
-          view.webContents.isFocused(),
-        )
-      ) {
-        view.webContents.focus();
-      }
-    } catch {
-      /* focus/isFocused can throw on a torn-down wc — ignore */
-    }
-    try {
-      if (view.webContents.isDestroyed()) return;
-      trackHybridWindowFocus(baseWin.id, view.webContents.getURL());
-    } catch {
-      /* getURL can throw on a torn-down wc — ignore */
-    }
+    // First-responder restore on host focus (the old
+    // `shouldFocusHybridContentOnHostFocus` invariant) is now the machine's
+    // standard `FOCUS_CONTENT` effect on any transition that makes a page-host
+    // front — the OS adapter's `focus` listener (attached at
+    // `registerWindowWithMachine` below) drives it. And focused-window tracking
+    // moved to the machine's `front`/`focusSeq`, so there is no `track*` feed
+    // here either.
+    //
     // A hybrid host gaining focus must run the SAME transient-sibling
     // autoclose the BrowserWindow focus handler does — otherwise focusing
     // a web page (or opening peek/slide B) never dismisses an open
@@ -1102,13 +971,10 @@ function assembleHybridPageHost(
     }
   };
   baseWin.on('focus', onHybridHostFocus);
-  // Track SETTLED native fullscreen state (peek d8ce0ddf). The macOS fullscreen
-  // animation runs ~600ms after setFullScreen(); baseWin.isFullScreen() flips
-  // synchronously at the start, so it can't tell "entering" from "settled". These
-  // events fire on completion, so the registry flag they drive is the
-  // deterministic signal for anything that must not act mid-transition.
-  baseWin.on('enter-full-screen', () => setHybridNativeFullScreen(baseWin.id, true));
-  baseWin.on('leave-full-screen', () => setHybridNativeFullScreen(baseWin.id, false));
+  // Native fullscreen state (SETTLED enter/leave) is now owned by the window-
+  // state machine: the OS adapter attaches `enter-full-screen`/`leave-full-screen`
+  // (→ OS_FULLSCREEN_ENTERED/LEFT) at `registerWindowWithMachine` below. No
+  // registry `setHybridNativeFullScreen` wiring here anymore.
   // Belt-and-suspenders: clicking directly into the page focuses the
   // content webContents even when the host-window focus event is missed.
   view.webContents.on('focus', onHybridHostFocus);
@@ -1195,6 +1061,21 @@ function assembleHybridPageHost(
   // session.ts, which drops it from old snapshots.)
   delete windowParams.restoreBlank;
   registerWindow(baseWin.id, source, windowParams);
+  // Register the page-host with the window-state machine (both window kinds
+  // register — judgment call 2). The OS adapter attaches focus/blur/show/hide/
+  // closed/enter-leave-fullscreen listeners + drives front/fullscreen/Esc.
+  // Satellite = the overlay/palette focus-group surfaces; peeks/slides
+  // (quick-view) stay front-eligible.
+  registerWindowWithMachine({
+    id: baseWin.id,
+    kind: 'page-host',
+    role,
+    satellite: role === 'overlay' || role === 'palette',
+    escapeMode: options.escapeMode as MachineWindowSpec['escapeMode'],
+    lastHttpUrl: url.startsWith('http://') || url.startsWith('https://') ? url : undefined,
+    win: baseWin,
+    contentWC: view.webContents,
+  });
   trackWindow(baseWin as unknown as BrowserWindow);
   getIzuiCoordinator().pushWindow(baseWin.id);
 
@@ -1263,9 +1144,12 @@ function assembleHybridPageHost(
     // animation, so here we only DROP fullscreen synchronously if the host is still
     // in it — enough to keep macOS from stranding a black Space — and never await.
     try {
-      const fsEntry = getHybridWindow(baseWin.id);
-      if (fsEntry?.nativeFullScreen && !baseWin.isDestroyed()) {
-        baseWin.setFullScreen(false);
+      const mode = getWindowModeName(baseWin.id);
+      if (mode != null && mode !== 'normal' && !baseWin.isDestroyed()) {
+        // Drop fullscreen synchronously through the machine's single
+        // setFullScreen owner (the adapter's SET_FULLSCREEN effect runs
+        // synchronously; we don't await the ~600ms settle — quit can't block).
+        dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: baseWin.id, desired: false });
       }
     } catch { /* host gone mid-quit — nothing to exit */ }
     finalizeWindowClose(baseWin.id, {
@@ -1667,9 +1551,12 @@ export function wireHybridContentEvents(
       if (now - lastHybridEscTime < 200) return;
       lastHybridEscTime = now;
       // Block ESC from reaching the page DOM (matches the canvas path's
-      // preventDefault) so the policy decision — not a page handler — owns it.
+      // preventDefault) so the machine's decision — not a page handler — owns it.
+      // Only the DECISION moved: this before-input attach + editable guard +
+      // debounce stay here (input hygiene); the landed id is first-responder
+      // noise — `decideEscape` targets `front`.
       event.preventDefault();
-      void handleHybridEscape(hostWindowId, contentWC);
+      dispatchWindowEvent({ type: 'ESC_PRESSED', landedId: hostWindowId });
       return;
     }
 
@@ -3521,6 +3408,20 @@ export function registerWindowHandlers(): void {
       };
       console.log('Adding window to manager:', win.id, 'escapeMode:', windowParams.escapeMode, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'transient:', isTransient, 'placement:', placement);
       registerWindow(win.id, msg.source, windowParams);
+      // Register the BrowserWindow with the window-state machine. Satellite =
+      // the overlay/palette focus-group surfaces OR a close-on-blur modal
+      // dialog (judgment call 1) — front-ineligible; everything else is a real
+      // target.
+      registerWindowWithMachine({
+        id: win.id,
+        kind: 'browser',
+        role,
+        satellite: role === 'overlay' || role === 'palette' || options.modal === true,
+        escapeMode: options.escapeMode as MachineWindowSpec['escapeMode'],
+        lastHttpUrl: url.startsWith('http://') || url.startsWith('https://') ? url : undefined,
+        win,
+        contentWC: win.webContents,
+      });
       const coordinator = getIzuiCoordinator();
       coordinator.pushWindow(win.id);
 
@@ -3729,14 +3630,12 @@ export function registerWindowHandlers(): void {
       addEscHandler(win);
 
       win.on('focus', () => {
-        console.log(`[focus-tracker] win.on(focus) fired id=${win.id}`);
-        trackContentWindowFocus(win);
-        // Only track non-modal windows for visible window targeting
-        // Modal windows (like cmd palette) shouldn't override the target window
+        // Focused-window tracking (front/focusSeq/lastHttpUrl) is owned by the
+        // window-state machine now — the OS adapter's `focus` listener
+        // (attached at `registerWindowWithMachine` below) feeds it. This handler
+        // keeps only the izui-coordinator focus seed (preOverlayFocusTarget),
+        // the `window:focused` HUD notify, and the transient-sibling autoclose.
         const winInfo = getWindowInfo(win.id);
-        if (!winInfo?.params?.modal) {
-          trackVisibleWindowFocus(win);
-        }
         // Update IZUI coordinator focus tracking (skip modal and overlay windows)
         if (!winInfo?.params?.modal && winInfo?.params?.role !== 'overlay') {
           const coordinator = getIzuiCoordinator();
@@ -3769,11 +3668,6 @@ export function registerWindowHandlers(): void {
         // `closeTransientSiblingsOnFocus`.
         closeTransientSiblingsOnFocus(win.id);
       });
-      // Also track immediately if this is a content/visible window (non-modal only)
-      trackContentWindowFocus(win);
-      if (!options.modal) {
-        trackVisibleWindowFocus(win);
-      }
 
       // Set up DevTools if requested
       winDevtoolsConfig(win);
@@ -3864,7 +3758,7 @@ export function registerWindowHandlers(): void {
               DEBUG && console.log(
                 'window-open: blur for modal window', url,
                 '— focus went to:', focused && !focused.isDestroyed() ? `bw ${focused.id} (${getWindowInfo(focused.id)?.params?.address ?? '?'})` : 'no BrowserWindow',
-                'activeHybrid:', getActiveHybridWindowId(),
+                'frontPageHost:', getFrontPageHostId(),
               );
               // Fire-and-forget (async, never rejects) — blur dismissal.
               void closeOrHideWindow(win.id);
@@ -3916,6 +3810,11 @@ export function registerWindowHandlers(): void {
         }
         const coordinator = getIzuiCoordinator();
         coordinator.enterOverlay(win.id, []);
+        // Mirror the switcher-overlay open into the window-state machine so
+        // `decideEscape` step 1 (`switcher.open → close-switcher`) fires. The
+        // overlay WINDOW lifecycle (teardown/focus-restore/cooldowns) stays
+        // owned by izui + main.ts (staged cutover); this is state-mirror only.
+        dispatchWindowEvent({ type: 'SWITCHER_OPENED', windowId: win.id });
       }
 
       // Notify HUD and other listeners that a window was opened

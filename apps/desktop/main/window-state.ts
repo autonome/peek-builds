@@ -124,7 +124,7 @@ export type WindowEvent =
   | { type: 'WINDOW_SHOWN'; id: number; focused: boolean }
   | { type: 'WINDOW_HIDDEN'; id: number }
   | { type: 'WINDOW_CLOSED'; id: number }
-  | { type: 'OS_FOCUS_GAINED'; id: number }
+  | { type: 'OS_FOCUS_GAINED'; id: number; lastHttpUrl?: string }
   | { type: 'OS_FOCUS_SETTLED_NULL' }
   | { type: 'APP_ACTIVATED' }
   | { type: 'APP_RESIGNED' }
@@ -144,7 +144,18 @@ export type WindowEvent =
   | { type: 'ESC_PRESSED'; landedId: number | 'global' }
   | { type: 'ESC_RENDERER_ANSWER'; id: number; handled: boolean; close?: boolean }
   | { type: 'SWITCHER_OPEN_REQUESTED'; windowId?: number }
-  | { type: 'SWITCHER_SELECTED'; id: number | null };
+  | { type: 'SWITCHER_SELECTED'; id: number | null }
+  /**
+   * Mirror-only (staged cutover): the switcher overlay WINDOW actually opened.
+   * The overlay-window lifecycle (open/select/teardown/focus-restore + the macOS
+   * focus-dance cooldowns) stays owned by `izui-state.ts` + `main.ts`; this event
+   * only records switcher state in the machine so `decideEscape` step 1
+   * (`switcher.open → close-switcher`) and the derived Esc-grab predicate fire
+   * correctly. It emits NO effect — the window already exists.
+   */
+  | { type: 'SWITCHER_OPENED'; windowId: number }
+  /** Mirror-only (staged cutover): the switcher overlay WINDOW closed. Clears switcher state; emits NO effect (izui/main already tore the window down). */
+  | { type: 'SWITCHER_CLOSED' };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Effects — returned by the reducer, executed by the OS adapter (§2.6). The
@@ -156,7 +167,14 @@ export type Effect =
   /** The single sanctioned OS poll: adapter reads `isFullScreen()` once and re-dispatches OS_FULLSCREEN_ENTERED/LEFT. */
   | { type: 'RECONCILE_FULLSCREEN'; id: number }
   | { type: 'OPEN_SWITCHER_WINDOW'; previousFront: number | null }
-  | { type: 'CLOSE_SWITCHER_WINDOW'; restoreTarget: number | null; restoreFocus: boolean }
+  /**
+   * `switcherWindowId` is the overlay window to tear down. In the staged cutover
+   * the adapter DELEGATES the teardown to izui (`closeOrHideWindow`) only on the
+   * ESC path (`restoreFocus:true`); on app-blur (`restoreFocus:false`) the
+   * existing `main.ts did-resign-active` block owns the teardown (with its
+   * cooldown focus-dance protection), so the adapter is a no-op there.
+   */
+  | { type: 'CLOSE_SWITCHER_WINDOW'; restoreTarget: number | null; restoreFocus: boolean; switcherWindowId: number | null }
   | { type: 'RAISE_WINDOW'; id: number }
   /** Make a page-host's content WebContentsView the macOS first responder (the `shouldFocusHybridContentOnHostFocus` invariant, now standard on any front-change to a page-host). */
   | { type: 'FOCUS_CONTENT'; id: number }
@@ -555,7 +573,7 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
     }
 
     case 'OS_FOCUS_GAINED': {
-      applyFocusGained(state, event.id);
+      applyFocusGained(state, event.id, event.lastHttpUrl);
       break;
     }
 
@@ -588,9 +606,12 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
     case 'APP_RESIGNED': {
       state.appActive = false;
       if (state.switcher.open) {
-        // Close without focus theft — the user is switching to another app.
+        // Close without focus theft — the user is switching to another app. In
+        // the staged cutover the adapter treats this (restoreFocus:false) as a
+        // no-op and lets `main.ts did-resign-active` own the actual teardown.
         const restoreTarget = state.switcher.previousFront;
-        effects.push({ type: 'CLOSE_SWITCHER_WINDOW', restoreTarget, restoreFocus: false });
+        const switcherWindowId = state.switcher.windowId;
+        effects.push({ type: 'CLOSE_SWITCHER_WINDOW', restoreTarget, restoreFocus: false, switcherWindowId });
         state.switcher = { open: false };
       }
       break;
@@ -661,6 +682,22 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       }
       break;
     }
+
+    case 'SWITCHER_OPENED': {
+      // Mirror the externally-opened overlay window into switcher state (no
+      // effect — the window already exists). If the machine had already opened
+      // the switcher (decideEscape → OPEN_SWITCHER_WINDOW), this fixes up the
+      // sentinel windowId to the real overlay id.
+      state.switcher = { open: true, windowId: event.windowId, previousFront: state.front };
+      break;
+    }
+
+    case 'SWITCHER_CLOSED': {
+      // Mirror the externally-closed overlay window. Front restoration is owned
+      // by izui/main (and the subsequent OS_FOCUS_GAINED), not this event.
+      state.switcher = { open: false };
+      break;
+    }
   }
 
   enforceFrontInvariant(state, event);
@@ -675,10 +712,16 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
  *   - transition in flight -> ignored for front (the "transition pin")
  *   - else                 -> front = id, bump focusSeq
  */
-function applyFocusGained(state: AppWindowState, id: number): void {
+function applyFocusGained(state: AppWindowState, id: number, lastHttpUrl?: string): void {
   const rec = state.windows.get(id);
   if (!rec) return;
   bumpFocusSeq(state, id);
+  // Track the most-recent http(s) address per record (absorbs the old
+  // `lastContentWindowId` devtools-target tracker). Only set when the focused
+  // window is on an http(s) page, mirroring `trackContentWindowFocus`.
+  if (lastHttpUrl && (lastHttpUrl.startsWith('http://') || lastHttpUrl.startsWith('https://'))) {
+    patchRecord(state, id, { lastHttpUrl });
+  }
   // A satellite (chrome overlay / palette / dialog / switcher) or a not-yet-
   // visible window can never be `front`. Gating here — not only on `satellite`
   // — keeps `front` eligible by construction so the invariant guard never trips.
@@ -693,8 +736,12 @@ function applyEscape(state: AppWindowState, effects: Effect[]): void {
   switch (decision.kind) {
     case 'close-switcher': {
       const restoreTarget = state.switcher.open ? state.switcher.previousFront : null;
+      const switcherWindowId = state.switcher.open ? state.switcher.windowId : null;
       state.switcher = { open: false };
-      effects.push({ type: 'CLOSE_SWITCHER_WINDOW', restoreTarget, restoreFocus: true });
+      // restoreFocus:true → ESC path: the adapter delegates the overlay-window
+      // teardown to izui (`closeOrHideWindow`), the single close path now that
+      // the old `escPolicy('overlay')` route is deleted.
+      effects.push({ type: 'CLOSE_SWITCHER_WINDOW', restoreTarget, restoreFocus: true, switcherWindowId });
       if (restoreTarget != null && isEligibleFront(state.windows.get(restoreTarget))) {
         state.front = restoreTarget;
       }
@@ -755,6 +802,42 @@ export function getWindowMode(state: AppWindowState, id: number): FsMode['name']
   return rec ? rec.fsMode.name : null;
 }
 
+/**
+ * The pre-fullscreen bounds stashed for a window (absorbs the registry's
+ * `preFullScreenBounds` — `window-presenter.ts` reads this to persist the real
+ * window geometry instead of the transient work-area-sized fullscreen rect).
+ * `null` for a `normal` window OR for an OS/green-button entry where no stash
+ * was possible — both mean "no restorable geometry", exactly as before.
+ */
+export function getWindowPreBounds(state: AppWindowState, id: number): Rectangle | null {
+  const rec = state.windows.get(id);
+  if (!rec || rec.fsMode.name === 'normal') return null;
+  return rec.fsMode.preBounds;
+}
+
+/**
+ * A window's MRU focus rank (absorbs `focus-order.ts` `getFocusOrder`): higher =
+ * more recently focused, 0 if never focused / unregistered. Session-save reads
+ * this to rank windows for eager/deferred restore.
+ */
+export function getWindowFocusSeq(state: AppWindowState, id: number): number {
+  return state.windows.get(id)?.focusSeq ?? 0;
+}
+
+/**
+ * Devtools target selector (absorbs `lastContentWindowId`): the most-recently
+ * focused window bearing an http(s) `lastHttpUrl`, or null. Replaces
+ * `getLastContentWindowId()` in the `tile:window:devtools` fallback.
+ */
+export function getDevtoolsTargetId(state: AppWindowState): number | null {
+  let best: WindowRecord | null = null;
+  for (const rec of state.windows.values()) {
+    if (!rec.lastHttpUrl) continue;
+    if (!best || rec.focusSeq > best.focusSeq) best = rec;
+  }
+  return best ? best.id : null;
+}
+
 /** A structural, read-only view for tests + the Playwright bridge. */
 export interface StateSnapshot {
   appActive: boolean;
@@ -808,6 +891,18 @@ export class WindowStateOwner {
 
   getWindowMode(id: number): FsMode['name'] | null {
     return getWindowMode(this.state, id);
+  }
+
+  getWindowPreBounds(id: number): Rectangle | null {
+    return getWindowPreBounds(this.state, id);
+  }
+
+  getDevtoolsTargetId(): number | null {
+    return getDevtoolsTargetId(this.state);
+  }
+
+  getWindowFocusSeq(id: number): number {
+    return getWindowFocusSeq(this.state, id);
   }
 
   snapshot(): StateSnapshot {

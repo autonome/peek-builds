@@ -5,7 +5,7 @@
  * a unified API for managing the Electron application.
  */
 
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, webContents } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme, webContents } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import { getHybridWindow } from './hybrid-page-host-registry.js';
 import path from 'node:path';
@@ -38,9 +38,7 @@ import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHe
 import { getSystemThemeBackgroundColor, showWindowHeadlessSafe, addEscHandler } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import { shouldRegisterGlobalEscFallback } from './izui-roles.js';
-import { getActiveHybridWindowId, onActiveHybridWindowChange } from './hybrid-page-host-registry.js';
-import { clearLastFocusedVisibleWindowId, trackOnWindowFocus } from './ipc.js';
+import { initWindowStateMachine, registerWindowWithMachine } from './window-state-singleton.js';
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { saveSessionSnapshot, reassertColdStartFocusOnce } from './session.js';
@@ -400,12 +398,21 @@ export async function initialize(): Promise<void> {
   configureTileLauncher({
     getProfileSession,
     getSystemThemeBackgroundColor,
-    onWindowFocus: trackOnWindowFocus,
-    // Wire the IZUI ESC handler into the tile-launch path so feature-tile
-    // windows run the escape protocol, matching the `window-open` IPC path.
-    // addEscHandler lives in windows.ts. The handler resolves a tile
-    // window's escape role via tile-launcher's own getTileWindowInfo map,
-    // so tile windows are NOT entered into the shared window-registry.
+    // Register each tile window with the window-state machine so a focused tile
+    // becomes the command target (the OS adapter attaches its focus listeners).
+    // Satellite = the overlay/palette focus-group surfaces; a tile defaults to
+    // the front-eligible 'workspace' role.
+    registerWindow: (win, role) => registerWindowWithMachine({
+      id: win.id,
+      kind: 'browser',
+      role: role ?? 'workspace',
+      satellite: role === 'overlay' || role === 'palette',
+      win,
+      contentWC: win.webContents,
+    }),
+    // Wire the ESC before-input interceptor into the tile-launch path so
+    // feature-tile windows dispatch ESC_PRESSED into the machine, matching the
+    // `window-open` IPC path. addEscHandler lives in windows.ts.
     addEscHandler,
   });
 
@@ -513,104 +520,19 @@ export async function initialize(): Promise<void> {
     }
   });
 
-  // ESC fallback when Peek is active but has no focused window on the
-  // user's current macOS Space. Without this, pressing ESC in this case
-  // does nothing because the per-window `before-input-event` handler
-  // (`windows.ts:addEscHandler`) requires a focused webContents that's
-  // visible on the current Space — and macOS only delivers keystrokes
-  // to the key window. When the user Cmd+Tabs to Peek on a Space that
-  // has none of Peek's windows, there is no reachable key window for
-  // the keystroke to land on.
+  // ESC grab + focused-window/fullscreen state are owned by the window-state
+  // machine now. The OS-level `globalShortcut('Escape')` grab is DERIVED (§2.4):
+  // registered ⇔ `appActive && front === null && !switcher.open`, reconciled by
+  // the OS adapter's subscriber on EVERY transition — replacing the old
+  // `updateEscGlobalRegistration` + its 5 re-evaluation call sites
+  // (browser-window-focus/blur, did-become/resign-active, onActiveHybridWindowChange).
+  // Its handler dispatches `ESC_PRESSED('global')` into the SAME `decideEscape`
+  // the before-input path uses, so a stale grab is harmless.
   //
-  // Workaround: register a focus-gated `globalShortcut` for Escape that
-  // publishes `cmd:execute:windows` (same fallback the per-window ESC
-  // handler uses via escUnhandledPolicy → open-switcher). Registration
-  // is gated to avoid swallowing ESC from other apps or stealing ESC
-  // from per-window handlers when a Peek window IS focused:
-  //   - Register: Peek is the active app AND no Peek window is focused.
-  //   - Unregister: Peek loses focus OR a Peek window gains focus.
-  // While Peek is active with a focused window, normal per-window ESC
-  // routing is preserved; the global hotkey only steps in when there's
-  // genuinely no per-window handler to receive the keystroke.
-  //
-  // Same pattern Spotlight / Alfred / Raycast use for their hotkeys.
-  let _escGlobalRegistered = false;
-  const escGlobalHandler = (): void => {
-    if (getIzuiCoordinator().isWithinOverlayExitCooldown()) {
-      DEBUG && console.log('[esc-fallback] Skipping escGlobalHandler — within overlay exit cooldown');
-      return;
-    }
-    DEBUG && console.log('[esc-fallback] global ESC fired — publishing cmd:execute:windows');
-    publish(getSystemAddress(), 'cmd:execute:windows', {});
-  };
-  const updateEscGlobalRegistration = (): void => {
-    // Quit guard: once before-quit has begun, STOP reacting to the
-    // window-close / focus churn that teardown produces. The blur/active-hybrid
-    // listeners below fire as windows are destroyed during quit, and (via the
-    // deferred setImmediate path) land AFTER `before-quit: cleanup complete`.
-    // Re-registering an OS-level Escape grab at that point runs native
-    // hotkey/session work while webContents/views are being torn down — a
-    // pointless, teardown-racing side effect (observed in a shutdown-crash
-    // trace, peek 048997b2). Drop any existing grab and bail.
-    if (_appIsQuitting) {
-      if (_escGlobalRegistered) {
-        try { globalShortcut.unregister('Escape'); } catch { /* no-op: not held */ }
-        _escGlobalRegistered = false;
-      }
-      return;
-    }
-    // Headless safety: globalShortcut.register is neutralized centrally for
-    // headless test runs (entry.ts), so this hot path can run unguarded — no
-    // OS-wide Escape grab happens regardless of how often focus/blur churn.
-    const appActive = getIzuiCoordinator().isAppFocused();
-    const focusedWin = BrowserWindow.getFocusedWindow();
-    // A hybrid page-host (slide/peek/content) is a BaseWindow, so
-    // getFocusedWindow() returns null for it — counting it as "no focused
-    // window" wrongly grabs ESC away from its own close handler (peek ebb10894).
-    // Treat an active hybrid window as a focused Peek window.
-    const activeHybridId = getActiveHybridWindowId();
-    const shouldRegister = shouldRegisterGlobalEscFallback(
-      appActive,
-      focusedWin !== null,
-      activeHybridId !== null,
-    );
-    if (shouldRegister && !_escGlobalRegistered) {
-      try {
-        const ok = globalShortcut.register('Escape', escGlobalHandler);
-        if (ok) {
-          _escGlobalRegistered = true;
-          DEBUG && console.log('[esc-fallback] global ESC registered (no focused window while Peek active)');
-        } else {
-          DEBUG && console.log('[esc-fallback] global ESC registration declined (already grabbed elsewhere)');
-        }
-      } catch (err) {
-        console.error('[esc-fallback] global ESC register failed:', err);
-      }
-    } else if (!shouldRegister && _escGlobalRegistered) {
-      try {
-        globalShortcut.unregister('Escape');
-      } catch (err) {
-        // Ignore: unregistering a hotkey that isn't held is a no-op on some platforms.
-      }
-      _escGlobalRegistered = false;
-      DEBUG && console.log('[esc-fallback] global ESC unregistered');
-    }
-  };
-  app.on('browser-window-focus', () => {
-    updateEscGlobalRegistration();
-  });
-  app.on('browser-window-blur', () => {
-    // Defer one tick so the next focused window's browser-window-focus
-    // (which usually fires immediately after a blur during in-app
-    // window switching) can settle before we re-check getFocusedWindow.
-    setImmediate(() => updateEscGlobalRegistration());
-  });
-  // Hybrid page-hosts (slides/peeks/content BaseWindows) do NOT fire
-  // app.browser-window-focus/blur, so without this the esc-fallback predicate
-  // would never re-evaluate when a slide/peek gains or loses focus — leaving a
-  // stale global ESC grab that pre-empts the slide's own ESC→close
-  // (peek ebb10894). Re-check on every active-hybrid-window transition.
-  onActiveHybridWindowChange(() => updateEscGlobalRegistration());
+  // Stand the machine up: construct the single adapter, attach its app-level
+  // `did-become/resign-active` listeners (→ APP_ACTIVATED/RESIGNED), and seed
+  // the izui→machine session mirror.
+  initWindowStateMachine();
 
   // Track OS-level app focus for IZUI transient detection.
   // When Peek is the active app, windows opened are "active."
@@ -639,10 +561,9 @@ export async function initialize(): Promise<void> {
           (win as any).__hudHidden = false;
         }
       }
-      // Defer one tick so any browser-window-focus that macOS fires
-      // alongside this activation has a chance to settle first; the
-      // check below reads getFocusedWindow().
-      setImmediate(() => updateEscGlobalRegistration());
+      // (Esc-grab re-evaluation removed — the machine's adapter reconciles the
+      // derived grab on APP_ACTIVATED, which its own did-become-active listener
+      // dispatches.)
     });
     (app as any).on('did-resign-active', () => {
       const coordBefore = getIzuiCoordinator();
@@ -692,10 +613,9 @@ export async function initialize(): Promise<void> {
           (win as any).__hudHidden = true;
         }
       }
-      // Peek is no longer the active app — drop the ESC fallback so we
-      // don't swallow ESC keystrokes from whatever app the user just
-      // switched to.
-      updateEscGlobalRegistration();
+      // (Esc-grab drop removed — the machine's adapter reconciles the derived
+      // grab on APP_RESIGNED, which its own did-resign-active listener
+      // dispatches; `appActive:false` makes the grab predicate false.)
     });
   } else {
     // Non-macOS fallback: use browser-window-focus/blur with focused-window check
@@ -749,9 +669,10 @@ export async function initialize(): Promise<void> {
         const coordinator = getIzuiCoordinator();
         coordinator.clearFocusedWindow(windowId);
 
-        // Clear stale lastFocusedVisibleWindowId so getFocusedVisibleWindowId()
-        // doesn't return a closed window's ID (causes wrong window targeting)
-        clearLastFocusedVisibleWindowId(windowId);
+        // (Stale-front cleanup removed — the window-state machine clears `front`
+        // on WINDOW_CLOSED, dispatched by the OS adapter's own 'closed' listener
+        // for every registered window; the overlay-window close likewise clears
+        // the mirrored switcher state via that same WINDOW_CLOSED.)
 
         // Focus parent window if this was a child
         if (windowData && windowData.params.parentWindowId) {

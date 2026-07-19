@@ -2,17 +2,18 @@
  * Unit tests for hybrid-page-host-registry.ts (P1.4a).
  *
  * The hybrid page-host path shipped window-reuse dedup (find-by-url /
- * find-by-key) and focus-group active-window tracking WITHOUT unit coverage.
- * These tests pin that contract down so the dedup behavior the window-open
- * handler relies on (ipc.ts ~1342 / ~1448) cannot silently regress.
+ * find-by-key) WITHOUT unit coverage. These tests pin that contract down so
+ * the dedup behavior the window-open handler relies on (ipc.ts ~1342 / ~1448)
+ * cannot silently regress.
+ *
+ * Active-window / focus-group / native-fullscreen tracking has moved to the
+ * window-state machine (window-state.test.ts) — this file covers object
+ * lifecycle/lookup/dedup only.
  *
  * A `BaseWindow` / `WebContents` is never constructed here — the registry only
  * touches a tiny surface on each (`isDestroyed` / `isFocused` / `getBounds` /
  * `getURL` / `getTitle` / `on` / `once`), so cheap fakes that drive the same
- * events deterministically cover every path. The registry's own test hooks
- * (`_resetForTests`, `_runDeferredBlurForTests`, `_setActiveHybridWindowForTests`)
- * exist precisely so the `setImmediate`-deferred blur decision can be run
- * synchronously without real OS focus.
+ * events deterministically cover every path.
  */
 
 import { describe, it, beforeEach } from 'node:test';
@@ -20,21 +21,13 @@ import * as assert from 'node:assert';
 import type { BaseWindow, WebContents } from 'electron';
 import {
   _resetForTests,
-  _runDeferredBlurForTests,
-  _setActiveHybridWindowForTests,
   findHybridWindowByKey,
   findHybridWindowByUrl,
-  getActiveHybridWindowBounds,
-  getActiveHybridWindowId,
   getAllHybridWindows,
   getHybridContentWC,
   getHybridWindow,
   getHybridWindowByContentWC,
-  onActiveHybridWindowChange,
   registerHybridWindow,
-  setOverlayFocusProvider,
-  setOverlayWindowIdProvider,
-  isHybridOverlayWindowId,
   markHybridPainted,
   hasHybridPainted,
   HYBRID_SAME_URL_RETRY_CAP,
@@ -44,8 +37,6 @@ import {
   getHybridRetryAttempts,
   clearHybridRetry,
   setHybridMaximizeState,
-  setHybridNativeFullScreen,
-  setHybridHostFullScreen,
   unregisterHybridWindow,
 } from './hybrid-page-host-registry.js';
 
@@ -129,11 +120,10 @@ interface Fake {
 let nextId = 1;
 
 /** Build + register a hybrid window. Returns the fake handles. */
-function mk(opts: { url?: string; title?: string; key?: string; focusedAtRegister?: boolean } = {}): Fake {
+function mk(opts: { url?: string; title?: string; key?: string } = {}): Fake {
   const id = nextId++;
   const baseWin = new FakeBaseWindow();
   const wc = new FakeWebContents(opts.url ?? '', opts.title ?? '');
-  if (opts.focusedAtRegister) baseWin.focused = true;
   registerHybridWindow(id, {
     baseWin: baseWin as unknown as BaseWindow,
     contentWC: wc as unknown as WebContents,
@@ -141,24 +131,6 @@ function mk(opts: { url?: string; title?: string; key?: string; focusedAtRegiste
     url: opts.url,
   });
   return { id, baseWin, wc };
-}
-
-/**
- * Make exactly `winner` the focused hybrid window (single-focus invariant the
- * OS enforces): blur the previously focused, focus the winner. Pass null to
- * blur all (focus left the group). `emitWinnerFocus:false` simulates the
- * platform edge case where the new window's 'focus' is missed but its
- * isFocused() is already true — the case decideAfterBlur's retarget covers.
- */
-function focusOnly(all: Fake[], winner: Fake | null, opts: { emitWinnerFocus?: boolean } = {}): void {
-  const emitWinnerFocus = opts.emitWinnerFocus ?? true;
-  for (const f of all) {
-    const wasFocused = f.baseWin.focused;
-    const isWinner = winner != null && f.id === winner.id;
-    f.baseWin.focused = isWinner;
-    if (wasFocused && !isWinner) f.baseWin.emit('blur');
-  }
-  if (winner && emitWinnerFocus) winner.baseWin.emit('focus');
 }
 
 describe('hybrid-page-host-registry: registration + lookup', () => {
@@ -366,197 +338,6 @@ describe('hybrid-page-host-registry: dedup by key', () => {
   });
 });
 
-describe('hybrid-page-host-registry: active-window tracking', () => {
-  beforeEach(() => {
-    _resetForTests();
-    nextId = 1;
-  });
-
-  it('starts with no active window', () => {
-    assert.strictEqual(getActiveHybridWindowId(), null);
-  });
-
-  it('seeds active id when the window is already focused at registration', () => {
-    const f = mk({ url: 'https://x/', focusedAtRegister: true });
-    assert.strictEqual(getActiveHybridWindowId(), f.id);
-  });
-
-  it("baseWin 'focus' sets the active id and fires the change signal once", () => {
-    const seen: (number | null)[] = [];
-    const off = onActiveHybridWindowChange(id => seen.push(id));
-    const f = mk({ url: 'https://x/' });
-    focusOnly([f], f);
-    assert.strictEqual(getActiveHybridWindowId(), f.id);
-    assert.deepStrictEqual(seen, [f.id]);
-    off();
-  });
-
-  it('content-wc focus is a fallback path to active (host focus missed)', () => {
-    const f = mk({ url: 'https://x/' });
-    f.baseWin.focused = true;
-    f.wc.emit('focus');
-    assert.strictEqual(getActiveHybridWindowId(), f.id);
-  });
-
-  it('getActiveHybridWindowBounds returns the active window outer bounds', () => {
-    const f = mk({ url: 'https://x/' });
-    focusOnly([f], f);
-    assert.deepStrictEqual(getActiveHybridWindowBounds(), { x: 10, y: 20, width: 800, height: 600 });
-  });
-
-  it('reports null active (and bounds) once the active window is destroyed', () => {
-    const f = mk({ url: 'https://x/' });
-    focusOnly([f], f);
-    f.baseWin.destroyed = true;
-    assert.strictEqual(getActiveHybridWindowId(), null);
-    assert.strictEqual(getActiveHybridWindowBounds(), null);
-  });
-
-  it("closing the active window nulls active and fires the change signal", () => {
-    const seen: (number | null)[] = [];
-    const f = mk({ url: 'https://x/' });
-    focusOnly([f], f);
-    const off = onActiveHybridWindowChange(id => seen.push(id));
-    f.baseWin.emit('closed');
-    assert.strictEqual(getActiveHybridWindowId(), null);
-    assert.deepStrictEqual(seen, [null]);
-    off();
-  });
-
-  it('_setActiveHybridWindowForTests rejects an unregistered id', () => {
-    assert.strictEqual(_setActiveHybridWindowForTests(999), false);
-    const f = mk({ url: 'https://x/' });
-    assert.strictEqual(_setActiveHybridWindowForTests(f.id), true);
-    assert.strictEqual(getActiveHybridWindowId(), f.id);
-    assert.strictEqual(_setActiveHybridWindowForTests(null), true);
-    assert.strictEqual(getActiveHybridWindowId(), null);
-  });
-});
-
-describe('hybrid-page-host-registry: focus-group deferred blur', () => {
-  beforeEach(() => {
-    _resetForTests();
-    nextId = 1;
-    setOverlayFocusProvider(null);
-  });
-
-  it("blur alone does NOT immediately deactivate (decision is deferred)", () => {
-    const f = mk({ url: 'https://x/' });
-    focusOnly([f], f);
-    // Blur with nothing else focused, but BEFORE the deferred tick runs.
-    f.baseWin.focused = false;
-    f.baseWin.emit('blur');
-    assert.strictEqual(getActiveHybridWindowId(), f.id, 'stays active until the deferred decision');
-  });
-
-  it('focus landing on the overlay keeps the content window active', () => {
-    const f = mk({ url: 'https://x/' });
-    focusOnly([f], f);
-    setOverlayFocusProvider(() => true); // overlay is now key
-    f.baseWin.focused = false;
-    f.baseWin.emit('blur');
-    assert.strictEqual(_runDeferredBlurForTests(f.id), f.id);
-  });
-
-  it('focus leaving the whole group (no overlay, no hybrid) deactivates', () => {
-    const f = mk({ url: 'https://x/' });
-    focusOnly([f], f);
-    setOverlayFocusProvider(() => false);
-    f.baseWin.focused = false;
-    f.baseWin.emit('blur');
-    assert.strictEqual(_runDeferredBlurForTests(f.id), null);
-  });
-
-  it('a real switch to another hybrid retargets active to it', () => {
-    const a = mk({ url: 'https://a/' });
-    const b = mk({ url: 'https://b/' });
-    focusOnly([a, b], a);
-    assert.strictEqual(getActiveHybridWindowId(), a.id);
-    // Real switch: b's own focus fires, which sets active to b directly.
-    focusOnly([a, b], b);
-    assert.strictEqual(getActiveHybridWindowId(), b.id);
-    // a's deferred decision is now a no-op (active already moved off a).
-    assert.strictEqual(_runDeferredBlurForTests(a.id), b.id);
-  });
-
-  it("retargets to a focused hybrid even when that window's focus event was missed", () => {
-    const a = mk({ url: 'https://a/' });
-    const b = mk({ url: 'https://b/' });
-    focusOnly([a, b], a);
-    // Platform edge: b becomes focused but its 'focus' never fired, so active
-    // is still a. The deferred decision must discover b via isFocused().
-    focusOnly([a, b], b, { emitWinnerFocus: false });
-    assert.strictEqual(getActiveHybridWindowId(), a.id, 'still a — b focus was missed');
-    assert.strictEqual(_runDeferredBlurForTests(a.id), b.id);
-  });
-
-  it('a re-focus before the deferred tick cancels the stale deactivation', () => {
-    const f = mk({ url: 'https://x/' });
-    focusOnly([f], f);
-    // Focus bounces out then back within one tick (e.g. content→overlay→content).
-    f.baseWin.focused = false;
-    f.baseWin.emit('blur');
-    focusOnly([f], f); // re-focus cancels the pending blur check
-    // No pending decision remains → still active.
-    assert.strictEqual(_runDeferredBlurForTests(f.id), f.id);
-    assert.strictEqual(getActiveHybridWindowId(), f.id);
-  });
-
-  it('an overlay-focus provider that throws falls through to deactivate', () => {
-    const f = mk({ url: 'https://x/' });
-    focusOnly([f], f);
-    setOverlayFocusProvider(() => {
-      throw new Error('provider boom');
-    });
-    f.baseWin.focused = false;
-    f.baseWin.emit('blur');
-    assert.strictEqual(_runDeferredBlurForTests(f.id), null);
-  });
-});
-
-describe('hybrid-page-host-registry: overlay window id (cmd+W overlay redirect)', () => {
-  beforeEach(() => {
-    _resetForTests();
-  });
-
-  it('false for any id when no overlay-id provider is registered (canvas path)', () => {
-    assert.strictEqual(isHybridOverlayWindowId(7), false);
-  });
-
-  it('true only for the id the registered provider reports', () => {
-    setOverlayWindowIdProvider(() => 7);
-    assert.strictEqual(isHybridOverlayWindowId(7), true);
-    assert.strictEqual(isHybridOverlayWindowId(8), false);
-  });
-
-  it('tracks the live overlay id (provider reads the singleton, which can change)', () => {
-    let current: number | null = 7;
-    setOverlayWindowIdProvider(() => current);
-    assert.strictEqual(isHybridOverlayWindowId(7), true);
-    current = 9; // overlay recreated with a new id
-    assert.strictEqual(isHybridOverlayWindowId(7), false);
-    assert.strictEqual(isHybridOverlayWindowId(9), true);
-  });
-
-  it('false after the provider is cleared (overlay torn down)', () => {
-    setOverlayWindowIdProvider(() => 7);
-    setOverlayWindowIdProvider(null);
-    assert.strictEqual(isHybridOverlayWindowId(7), false);
-  });
-
-  it('a provider that throws is treated as no match (never throws to the caller)', () => {
-    setOverlayWindowIdProvider(() => {
-      throw new Error('provider boom');
-    });
-    assert.strictEqual(isHybridOverlayWindowId(7), false);
-  });
-
-  it('provider returning null (overlay gone) matches nothing', () => {
-    setOverlayWindowIdProvider(() => null);
-    assert.strictEqual(isHybridOverlayWindowId(7), false);
-  });
-});
-
 // ── Loading-card first-paint tracking ────────────────────────────────────────
 describe('hybrid-page-host-registry: first-paint (loading card gate)', () => {
   beforeEach(() => {
@@ -705,68 +486,10 @@ describe('hybrid-page-host-registry: same-URL retry cap', () => {
  * maximized window. That check is gone; the flag decides. It had no unit
  * coverage at all while it was merely one of two opinions, which is exactly why
  * the divergence went unnoticed — so pin the contract now that it's load-bearing.
+ *
+ * (Native-fullscreen / pre-fullscreen-bounds tracking has moved to the
+ * window-state machine — see window-state.test.ts.)
  */
-describe('hybrid registry — pre-fullscreen bounds stash (fullscreen-lookalike restore trap)', () => {
-  // A fullscreen host reports work-area-sized getBounds(); persisting those in
-  // session-save made the next boot restore a plain window at work-area size —
-  // a fullscreen LOOKALIKE (nativeFullScreen false) visually indistinguishable
-  // from real fullscreen. The stash (set at enter-initiation by the single
-  // fullscreen owner, cleared on the settled leave) is the persistable
-  // geometry for the whole fullscreen episode.
-
-  /** FakeBaseWindow whose setFullScreen synchronously emits the settled event. */
-  function mkFullscreenable(): Fake {
-    const f = mk({ url: 'https://fs.example/' });
-    const win = f.baseWin as FakeBaseWindow & {
-      setFullScreen?: (v: boolean) => void;
-      removeListener?: (ev: string, cb: (...a: unknown[]) => void) => void;
-    };
-    win.setFullScreen = (v: boolean) => {
-      // Mirror macOS: mutate bounds to the fullscreen rect, then settle.
-      if (v) {
-        win.bounds = { x: 0, y: 33, width: 1470, height: 923 };
-        win.emit('enter-full-screen');
-      } else {
-        win.bounds = { x: 10, y: 20, width: 800, height: 600 };
-        win.emit('leave-full-screen');
-      }
-    };
-    win.removeListener = () => { /* timeout-path cleanup only */ };
-    return f;
-  }
-
-  it('registers with no stash', () => {
-    const f = mk();
-    assert.strictEqual(getHybridWindow(f.id)!.preFullScreenBounds, null);
-  });
-
-  it('enter-initiation stashes the PRE-fullscreen bounds (before the rect mutates)', async () => {
-    const f = mkFullscreenable();
-    await setHybridHostFullScreen(f.id, true);
-    assert.deepStrictEqual(getHybridWindow(f.id)!.preFullScreenBounds, {
-      x: 10, y: 20, width: 800, height: 600,
-    });
-  });
-
-  it('the stash survives the settled ENTER (nativeFullScreen true)', async () => {
-    const f = mkFullscreenable();
-    await setHybridHostFullScreen(f.id, true);
-    setHybridNativeFullScreen(f.id, true);
-    assert.deepStrictEqual(getHybridWindow(f.id)!.preFullScreenBounds, {
-      x: 10, y: 20, width: 800, height: 600,
-    });
-  });
-
-  it('the settled LEAVE clears the stash — live bounds become authoritative again', async () => {
-    const f = mkFullscreenable();
-    await setHybridHostFullScreen(f.id, true);
-    setHybridNativeFullScreen(f.id, true);
-    await setHybridHostFullScreen(f.id, false);
-    setHybridNativeFullScreen(f.id, false);
-    assert.strictEqual(getHybridWindow(f.id)!.preFullScreenBounds, null);
-  });
-});
-
 describe('hybrid registry — maximize state', () => {
   beforeEach(() => {
     _resetForTests();

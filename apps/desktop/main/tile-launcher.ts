@@ -80,7 +80,11 @@ import * as tileLifecycle from './tile-lifecycle.js';
 // null and the baseline helpers fall back cleanly.
 let _getProfileSession: (() => Electron.Session) | null = null;
 let _getSystemThemeBackgroundColor: (() => string) | null = null;
-let _onWindowFocus: ((win: BrowserWindow, role: string | undefined) => void) | null = null;
+// Injected from main.ts: registers a tile window with the window-state machine
+// (the OS adapter then attaches its focus/blur/show/hide/closed listeners and
+// tracks it as a possible `front`). Replaces the old `_onWindowFocus` feed into
+// ipc.ts's deleted `trackVisibleWindowFocus`.
+let _registerWindow: ((win: BrowserWindow, role: string | undefined) => void) | null = null;
 // Injected from windows.ts. Like the hooks above, this lives on an
 // electron-heavy module that tile-launcher can't import at top level
 // (it transitively ESM-imports `BrowserWindow`, which is empty under
@@ -118,24 +122,23 @@ export function configureTileLauncher(hooks: {
   getProfileSession?: () => Electron.Session;
   getSystemThemeBackgroundColor?: () => string;
   /**
-   * Called on every tile window's `focus` event. Production wiring
-   * forwards this into `trackVisibleWindowFocus` (and friends) in ipc.ts
-   * so the per-window-targeting tracker (`getFocusedVisibleWindowId`)
-   * sees tile-launched windows. Without it, focusing a tile (tags,
-   * search, etc.) leaves the tracker stale — commands like `maximize`
-   * then resolve to whatever non-tile window was focused last.
+   * Called once per tile window at launch to register it with the window-state
+   * machine (every window-creation site registers — judgment call 2). The OS
+   * adapter then attaches the native focus/blur/show/hide/closed listeners that
+   * drive `front`, so focusing a tile (tags, search, …) makes it the command
+   * target. Replaces the old `onWindowFocus` → `trackVisibleWindowFocus` feed.
    */
-  onWindowFocus?: (win: BrowserWindow, role: string | undefined) => void;
+  registerWindow?: (win: BrowserWindow, role: string | undefined) => void;
   /**
-   * Attaches the IZUI before-input-event ESC interceptor to the tile
-   * window (and its webview guests). Mirrors `addEscHandler(win)` from
-   * the `window-open` IPC path.
+   * Attaches the before-input-event ESC interceptor to the tile window (and its
+   * webview guests). Mirrors `addEscHandler(win)` from the `window-open` IPC
+   * path; its handler dispatches `ESC_PRESSED` into the machine.
    */
   addEscHandler?: (win: BrowserWindow) => void;
 }): void {
   if (hooks.getProfileSession) _getProfileSession = hooks.getProfileSession;
   if (hooks.getSystemThemeBackgroundColor) _getSystemThemeBackgroundColor = hooks.getSystemThemeBackgroundColor;
-  if (hooks.onWindowFocus) _onWindowFocus = hooks.onWindowFocus;
+  if (hooks.registerWindow) _registerWindow = hooks.registerWindow;
   if (hooks.addEscHandler) _addEscHandler = hooks.addEscHandler;
 }
 
@@ -397,17 +400,12 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
     _addEscHandler(win);
   }
 
-  // Forward focus events so the per-window-targeting tracker
-  // (`lastFocusedVisibleWindowId` in ipc.ts) sees tile windows. Without
-  // this, focusing the tags or search tile leaves the tracker pointing
-  // at whatever non-tile window was focused last (e.g. a content
-  // page-host), and commands like `maximize` end up on the wrong window.
-  if (_onWindowFocus) {
-    const role = entry?.role;
-    win.on('focus', () => {
-      if (win.isDestroyed()) return;
-      _onWindowFocus!(win, role);
-    });
+  // Register the tile window with the window-state machine so it is a possible
+  // `front` (focusing tags/search/etc. makes it the command target). The OS
+  // adapter attaches the focus/blur/show/hide/closed listeners — no per-focus
+  // feed needed here anymore.
+  if (_registerWindow) {
+    _registerWindow(win, entry?.role);
   }
 
   // Forward console messages from the tile's webContents to main-process

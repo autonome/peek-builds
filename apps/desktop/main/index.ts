@@ -192,7 +192,6 @@ export {
   applyDarkModeSetting,
   reopenLastClosedWindow,
   openNewPageWindow,
-  clearLastFocusedVisibleWindowId,
   installHybridNavbarActionRouting,
 } from './ipc.js';
 

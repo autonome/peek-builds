@@ -24,7 +24,6 @@ import type { WebContents, BrowserWindow as BrowserWindowType } from 'electron';
 import { createRequire } from 'node:module';
 import {
   getAllHybridWindows,
-  getActiveHybridWindowId,
 } from './hybrid-page-host-registry.js';
 
 const requireElectron = createRequire(import.meta.url);
@@ -123,7 +122,6 @@ export function gatherWebContents(): WcDescriptor[] {
 
   // Map hybrid content-WC id → its registry entry (BaseWindow page-hosts are
   // invisible to BrowserWindow.fromWebContents).
-  const activeHybridId = getActiveHybridWindowId();
   const hybridByWcId = new Map<number, ReturnType<typeof getAllHybridWindows>[number]>();
   for (const h of getAllHybridWindows()) {
     if (!h.contentWC.isDestroyed()) hybridByWcId.set(h.contentWC.id, h);
@@ -159,7 +157,7 @@ export function gatherWebContents(): WcDescriptor[] {
         windowId = h.windowId;
         windowTitle = safe(() => h.title(), '');
         visible = safe(() => h.baseWin.isVisible() && !h.baseWin.isMinimized(), false);
-        focused = activeHybridId === h.windowId;
+        focused = safe(() => h.baseWin.isFocused(), false);
       }
     }
 

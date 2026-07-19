@@ -62,18 +62,12 @@ function createMockWindowProvider(windows: MockWindow[]): WindowProvider {
 // Import will be done after build
 let izuiState: typeof import('./izui-state.js');
 
-// escPolicy and escUnhandledPolicy are pure functions exported by izui-state.ts
-let escPolicy: (sessionState: string, role: string) => 'close' | 'close-and-restore' | 'nothing';
-let escUnhandledPolicy: (sessionState: string, role: string) => 'open-switcher' | 'nothing';
-
 describe('IZUI State Coordinator Tests', () => {
   let mockWindows: MockWindow[];
 
   before(async () => {
     // Dynamic import of the compiled module
     izuiState = await import('./izui-state.js');
-    escPolicy = izuiState.escPolicy;
-    escUnhandledPolicy = izuiState.escUnhandledPolicy;
   });
 
   beforeEach(() => {
@@ -728,180 +722,10 @@ describe('IZUI State Coordinator Tests', () => {
     });
   });
 
-  describe('escPolicy', () => {
-    // Transient UI roles always close regardless of session state
-    it('should close quick-view in any session state', () => {
-      assert.strictEqual(escPolicy('active', 'quick-view'), 'close');
-      assert.strictEqual(escPolicy('transient', 'quick-view'), 'close');
-      assert.strictEqual(escPolicy('idle', 'quick-view'), 'close');
-    });
-
-    it('should close palette in any session state', () => {
-      assert.strictEqual(escPolicy('active', 'palette'), 'close');
-      assert.strictEqual(escPolicy('transient', 'palette'), 'close');
-      assert.strictEqual(escPolicy('idle', 'palette'), 'close');
-    });
-
-    it('should close utility in any session state', () => {
-      assert.strictEqual(escPolicy('active', 'utility'), 'close');
-      assert.strictEqual(escPolicy('transient', 'utility'), 'close');
-      assert.strictEqual(escPolicy('idle', 'utility'), 'close');
-    });
-
-    it('should close-and-restore overlay in any session state', () => {
-      assert.strictEqual(escPolicy('active', 'overlay'), 'close-and-restore');
-      assert.strictEqual(escPolicy('transient', 'overlay'), 'close-and-restore');
-      assert.strictEqual(escPolicy('idle', 'overlay'), 'close-and-restore');
-    });
-
-    // Content roles: close in transient, nothing in active
-    it('should close content in transient session', () => {
-      assert.strictEqual(escPolicy('transient', 'content'), 'close');
-    });
-
-    it('should NOT close content in active session', () => {
-      assert.strictEqual(escPolicy('active', 'content'), 'nothing');
-    });
-
-    // REGRESSION TEST: workspace must NEVER close on ESC regardless of session state.
-    // Workspace windows are root/persistent extension windows (groups, search, etc.)
-    // that should never be dismissed by the backend ESC policy.
-    it('should NOT close workspace in transient session (regression test)', () => {
-      assert.strictEqual(escPolicy('transient', 'workspace'), 'nothing',
-        'workspace windows must never close on ESC — they are root/persistent extension windows');
-    });
-
-    it('should NOT close workspace in active session', () => {
-      assert.strictEqual(escPolicy('active', 'workspace'), 'nothing');
-    });
-
-    // child-content follows the same rule as content: it closes on ESC ONLY in
-    // a transient session (app woken without OS focus — ESC returns to the
-    // previous app). When the app is OS-focused (active/idle), ESC must NEVER
-    // close a real window; escUnhandledPolicy opens the Windows switcher
-    // instead. Feature-internal closes (groups → page, search → page) are
-    // renderer-driven — the renderer returns { handled: true } before policy
-    // is consulted, so they never reach this branch.
-    it('should close child-content in transient session', () => {
-      assert.strictEqual(escPolicy('transient', 'child-content'), 'close');
-    });
-
-    it('should NOT close child-content in active session — opens switcher', () => {
-      assert.strictEqual(escPolicy('active', 'child-content'), 'nothing',
-        'child-content windows must NOT close on ESC while the app is OS-focused ' +
-        '(active session); escUnhandledPolicy opens the switcher instead');
-    });
-
-    it('should NOT close child-content in idle session — opens switcher', () => {
-      assert.strictEqual(escPolicy('idle', 'child-content'), 'nothing');
-    });
-
-    // Idle state: content roles should not close
-    it('should NOT close content in idle state', () => {
-      assert.strictEqual(escPolicy('idle', 'content'), 'nothing');
-    });
-
-    it('should NOT close workspace in idle state', () => {
-      assert.strictEqual(escPolicy('idle', 'workspace'), 'nothing');
-    });
-  });
-
-  describe('ESC on root content window in active session (regression)', () => {
-    it('should not close a content window when session is active', () => {
-      // Simulate: user is working in Peek (active session), has a content window open
-      const coordinator = izuiState.getIzuiCoordinator();
-      // appFocused defaults to true → active session
-      coordinator.evaluateOnShow();
-      coordinator.pushWindow(1); // workspace window
-      coordinator.pushWindow(2); // content window opened from workspace
-
-      // Verify session is active
-      assert.strictEqual(coordinator.getState(), 'active');
-      assert.strictEqual(coordinator.isTransient(), false);
-
-      // escPolicy for child-content in active session is 'nothing' — the app
-      // is OS-focused, so ESC must NOT close the window. escUnhandledPolicy
-      // opens the switcher instead.
-      const action = escPolicy(coordinator.getState(), 'child-content');
-      assert.strictEqual(action, 'nothing',
-        'ESC on child-content in an active (OS-focused) session does NOT close the window; ' +
-        'escUnhandledPolicy opens the switcher');
-
-      // Plain content role (no parent) is still 'nothing' in active session —
-      // there's no obvious return target, the renderer handles internal nav.
-      const contentAction = escPolicy(coordinator.getState(), 'content');
-      assert.strictEqual(contentAction, 'nothing');
-    });
-
-    it('should close a content window when session is transient', () => {
-      // Simulate: user invoked from background (transient session)
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.setAppFocused(false);
-      coordinator.evaluateOnShow();
-      coordinator.pushWindow(1);
-      coordinator.pushWindow(2);
-
-      // Verify session is transient
-      assert.strictEqual(coordinator.getState(), 'transient');
-      assert.strictEqual(coordinator.isTransient(), true);
-
-      // In transient mode, ESC should close content roles but NOT workspace
-      assert.strictEqual(escPolicy(coordinator.getState(), 'child-content'), 'close');
-      assert.strictEqual(escPolicy(coordinator.getState(), 'content'), 'close');
-      assert.strictEqual(escPolicy(coordinator.getState(), 'workspace'), 'nothing',
-        'workspace windows must never close on ESC, even in transient sessions');
-    });
-  });
-
-  describe('escUnhandledPolicy', () => {
-    it('should open switcher for workspace in active session', () => {
-      assert.strictEqual(escUnhandledPolicy('active', 'workspace'), 'open-switcher');
-    });
-
-    it('should open switcher for workspace in idle session', () => {
-      assert.strictEqual(escUnhandledPolicy('idle', 'workspace'), 'open-switcher');
-    });
-
-    it('should NOT open switcher for workspace in transient session', () => {
-      assert.strictEqual(escUnhandledPolicy('transient', 'workspace'), 'nothing',
-        'transient sessions should not trigger switcher — user expects ESC to return to previous app');
-    });
-
-    it('should NOT open switcher for workspace in overlay session', () => {
-      assert.strictEqual(escUnhandledPolicy('overlay', 'workspace'), 'nothing');
-    });
-
-    it('should open switcher for content in active session', () => {
-      assert.strictEqual(escUnhandledPolicy('active', 'content'), 'open-switcher',
-        'content windows in active sessions should open switcher when ESC is unhandled');
-    });
-
-    it('should open switcher for child-content in active session', () => {
-      assert.strictEqual(escUnhandledPolicy('active', 'child-content'), 'open-switcher',
-        'child-content windows in active sessions should open switcher when ESC is unhandled');
-    });
-
-    it('should NOT open switcher for content in transient session', () => {
-      assert.strictEqual(escUnhandledPolicy('transient', 'content'), 'nothing',
-        'transient sessions should not trigger switcher — user expects ESC to return to previous app');
-    });
-
-    it('should NOT open switcher for overlay role in active session', () => {
-      assert.strictEqual(escUnhandledPolicy('active', 'overlay'), 'nothing');
-    });
-
-    it('should NOT open switcher for palette in active session', () => {
-      assert.strictEqual(escUnhandledPolicy('active', 'palette'), 'nothing');
-    });
-
-    it('should NOT open switcher for utility in active session', () => {
-      assert.strictEqual(escUnhandledPolicy('active', 'utility'), 'nothing');
-    });
-
-    it('should NOT open switcher for quick-view in active session', () => {
-      assert.strictEqual(escUnhandledPolicy('active', 'quick-view'), 'nothing');
-    });
-  });
+  // The `escPolicy` / `escUnhandledPolicy` decision-table tests moved to
+  // `window-state.test.ts` with the functions themselves (now `decideEscape`
+  // step 6 in the reducer). The coordinator keeps only session idle/transient/
+  // active + the switcher-overlay executor, tested below.
 
   describe('Pre-overlay focus tracking', () => {
     it('should preserve pre-overlay focus and restore on ESC (no explicit selection)', () => {
@@ -979,36 +803,8 @@ describe('IZUI State Coordinator Tests', () => {
   });
 
   describe('Full ESC flow integration', () => {
-    it('content window: ESC unhandled by page -> escPolicy nothing -> escUnhandledPolicy open-switcher', () => {
-      const coordinator = izuiState.getIzuiCoordinator();
-      // Active session with content window
-      coordinator.startSession('active');
-      coordinator.pushWindow(1);
-
-      const sessionState = coordinator.getState();
-      const role = 'content';
-
-      // Step 1: escPolicy for content in active session returns 'nothing'
-      const action = escPolicy(sessionState, role);
-      assert.strictEqual(action, 'nothing', 'escPolicy should return nothing for content in active session');
-
-      // Step 2: escUnhandledPolicy for content in active session returns 'open-switcher'
-      const unhandledAction = escUnhandledPolicy(sessionState, role);
-      assert.strictEqual(unhandledAction, 'open-switcher',
-        'escUnhandledPolicy should return open-switcher for content in active session');
-    });
-
-    it('workspace window: same flow leads to open-switcher', () => {
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-      coordinator.pushWindow(1);
-
-      const action = escPolicy(coordinator.getState(), 'workspace');
-      assert.strictEqual(action, 'nothing');
-
-      const unhandledAction = escUnhandledPolicy(coordinator.getState(), 'workspace');
-      assert.strictEqual(unhandledAction, 'open-switcher');
-    });
+    // The escPolicy/escUnhandledPolicy step tests moved to window-state.test.ts
+    // (the reducer's `decideEscape` step 6). The overlay-restore flow below stays.
 
     it('overlay ESC without selection uses preOverlayFocusTarget', () => {
       const winA = createMockWindow(1);

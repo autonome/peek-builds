@@ -24,17 +24,13 @@ import {
   getChildWindows,
 } from './main.js';
 import { registerGuest, getGuestsForWindow } from './webview-guest-registry.js';
-import { getTileWindowInfo } from './tile-launcher.js';
-import { getHybridWindow, getAllHybridWindows, getActiveHybridWindowId, getHybridContentWC, isHybridOverlayWindowId, noteHybridWindowHidden, setHybridHostFullScreen } from './hybrid-page-host-registry.js';
-import { resolveHybridEscapeTarget, resolveCloseTargetId, escExitsHybridFullscreen } from './izui-roles.js';
-
+import { getHybridWindow, getAllHybridWindows } from './hybrid-page-host-registry.js';
 import {
-  getIzuiCoordinator,
-  escPolicy,
-  escUnhandledPolicy,
-} from './izui-state.js';
-
-import { publish } from './pubsub.js';
+  getFrontWindowId,
+  getWindowModeName,
+  waitForMode,
+  dispatchWindowEvent,
+} from './window-state-singleton.js';
 
 /**
  * Get the appropriate background color based on system theme
@@ -275,190 +271,15 @@ export function askWebContentsToHandleEscape(
 }
 
 /**
- * Core ESC handling logic for a BrowserWindow.
- * Called when ESC keyDown is detected on the window's own webContents
- * or on a webview guest webContents within the window.
- *
- * Uses IZUI window roles to determine behavior via escPolicy().
- *
- * @param bw - The BrowserWindow to handle ESC for
- * @param source - 'host' if from the window's own webContents, 'webview' if from a guest
+ * ESC decision has moved to the window-state machine. The `before-input-event`
+ * attach + editable guard + 200ms debounce + webview-guest routing stay here
+ * (input hygiene, `addEscHandler` below); only the DECISION moved — the handler
+ * dispatches `ESC_PRESSED` and `decideEscape` (window-state.ts) owns the
+ * outcome. `handleHybridEscape`/`handleEscapeForWindow`/`handleEscapeForWindowId`
+ * (and their `resolveHybridEscapeTarget`/`escExitsHybridFullscreen`/
+ * `escPolicy`/`escUnhandledPolicy` reads) are DELETED — each is now a
+ * `decideEscape` clause.
  */
-async function handleEscapeForWindow(bw: BrowserWindow, source: 'host' | 'webview'): Promise<void> {
-  if (bw.isDestroyed()) return;
-  // The BrowserWindow's own webContents is the renderer that owns the onEscape
-  // callback for a canvas/legacy window.
-  await handleEscapeForWindowId(bw.id, bw.webContents, source, () => bw.isDestroyed());
-}
-
-/**
- * ESC handler for a hybrid page-host (`BaseWindow`).
- *
- * Regression (Cluster B, peek e8081cce/companion): when the hybrid page-host
- * became the default web-page renderer, peeks/slides — which open with
- * `role:'quick-view' + modal + canvas` and are therefore BaseWindows under the
- * hybrid default — stopped closing on ESC. The ESC→close path lived ENTIRELY on
- * the per-`BrowserWindow` `before-input-event` (`addEscHandler`), which is never
- * wired for a BaseWindow host. A focused hybrid host makes its content
- * `WebContentsView` the macOS first responder, so ESC arrives at the content
- * WC's `before-input-event` (`wireHybridContentEvents` in ipc.ts) instead — the
- * SAME class of break as the cmd+W/L/N cluster.
- *
- * This routes the hybrid ESC through the IDENTICAL policy decision the canvas
- * path uses (`handleEscapeForWindowId` → escPolicy / escUnhandledPolicy), with
- * the content WC as the renderer to ask. ONE source of truth — no forked policy.
- * The hostWindowId is the BaseWindow id, which is registered in the shared
- * window registry by the ipc.ts hybrid branch (`registerWindow(baseWin.id, …)`),
- * so role/escapeMode resolve exactly as for a BrowserWindow.
- *
- * WRONG-WINDOW / first-responder redirect (peek ebb10894): `before-input-event`
- * only fires for the macOS first responder. On a fresh peek/slide open the
- * previously-focused hybrid CONTENT host can still hold first-responder for a
- * beat, so ESC lands on ITS content WC and resolves role 'content' → escPolicy
- * 'nothing' → escUnhandledPolicy → the Windows SWITCHER, instead of closing the
- * quick-view the user just opened (the reported "ESC opens the switcher most of
- * the time, unless I click the content first" intermittency). The hybrid
- * registry's `getActiveHybridWindowId()` is the focus source of truth — driven
- * by our OWN `focus` events from `showHybridHost` on open, not the laggy macOS
- * first-responder — so it already points at the just-opened peek/slide. When the
- * ESC landed on a DIFFERENT host than the active hybrid window AND the active
- * window is an always-closeable transient (quick-view/palette/utility/overlay),
- * redirect the ESC to the active host's content WC so it resolves 'close'. The
- * decision is the pure `resolveHybridEscapeTarget` (izui-roles.ts) so it is
- * unit-testable without real OS focus. Same policy core (`handleEscapeForWindowId`
- * → escPolicy) runs afterward — no forked policy, no new ESC path.
- *
- * @param hostWindowId - the hybrid BaseWindow id whose content WC received ESC
- * @param contentWC - that host's content WebContentsView (the renderer to ask)
- */
-export async function handleHybridEscape(
-  hostWindowId: number,
-  contentWC: Electron.WebContents,
-): Promise<void> {
-  // Resolve the ACTUAL target: if ESC landed on the wrong (non-active) hybrid
-  // host because its content WC was still first responder, redirect to the
-  // active hybrid window when that one is an always-closeable transient (the
-  // freshly-opened quick-view peek/slide). Focus source of truth = the registry.
-  const activeId = getActiveHybridWindowId();
-  const activeRole = activeId != null
-    ? (getWindowInfo(activeId)?.params?.role as string | undefined)
-    : undefined;
-  const targetId = resolveHybridEscapeTarget(hostWindowId, activeId, activeRole);
-
-  // Route the ESC to its final host + content WC first, so every step below
-  // (fullscreen precedence, policy core) acts on ONE resolved target.
-  let routedId = hostWindowId;
-  let routedWC = contentWC;
-  if (targetId !== hostWindowId) {
-    // Redirecting to the active host — ask ITS content WC (the renderer that
-    // owns the quick-view) and use ITS liveness probe. Fall back to the landed
-    // host if the active content WC vanished between the decision and here.
-    const activeWC = getHybridContentWC(targetId);
-    if (activeWC && !activeWC.isDestroyed()) {
-      DEBUG && console.log(`[esc] hybrid ESC redirected from host ${hostWindowId} to active host ${targetId} (role ${activeRole})`);
-      routedId = targetId;
-      routedWC = activeWC;
-    }
-  }
-
-  // Native-fullscreen precedence (peek 7fffa286 follow-up): while the routed
-  // host is in SETTLED native fullscreen, ESC exits fullscreen and is consumed —
-  // it never reaches escPolicy/escUnhandledPolicy (which would resolve
-  // 'content' → 'nothing' → open the windows SWITCHER over the fullscreen page).
-  // Only a later ESC, pressed when the host is no longer fullscreen, runs the
-  // policy. The decision is the pure `escExitsHybridFullscreen` (izui-roles.ts);
-  // the exit runs through the single fullscreen owner `setHybridHostFullScreen`,
-  // gated on the owner's `nativeFullScreen` state — no parallel flag, no direct
-  // `setFullScreen` call.
-  const routedHybrid = getHybridWindow(routedId);
-  const routedEscapeMode = getWindowInfo(routedId)?.params?.escapeMode as string | undefined;
-  // Decision trace (peek 7fffa286 follow-up): name every input the
-  // fullscreen-exit precedence reads, so a live ESC log shows exactly why it
-  // exited fullscreen or fell through to the policy.
-  DEBUG && console.log(
-    `[esc] hybrid ESC decision: landed=${hostWindowId} active=${activeId ?? 'null'} routed=${routedId}`,
-    `nativeFullScreen=${routedHybrid?.nativeFullScreen ?? 'no-entry'} escapeMode=${routedEscapeMode ?? 'none'}`,
-  );
-  if (escExitsHybridFullscreen(routedHybrid?.nativeFullScreen ?? false, routedEscapeMode)) {
-    DEBUG && console.log(`[esc] hybrid host ${routedId} is native fullscreen — ESC exits fullscreen`);
-    await setHybridHostFullScreen(routedId, false);
-    return;
-  }
-
-  await handleEscapeForWindowId(routedId, routedWC, 'host', () => routedWC.isDestroyed());
-}
-
-/**
- * Shared core for ESC handling, keyed by window id + the WebContents to ask.
- * Drives the SINGLE escPolicy/escUnhandledPolicy decision for both the canvas
- * BrowserWindow path (`handleEscapeForWindow`) and the hybrid BaseWindow path
- * (`handleHybridEscape`). The only kind-specific inputs are the `askWC` (the
- * renderer that owns `onEscape`) and `isDestroyed` (the liveness probe for the
- * window/wc that owns it).
- */
-async function handleEscapeForWindowId(
-  winId: number,
-  askWC: Electron.WebContents,
-  source: 'host' | 'webview',
-  isDestroyed: () => boolean,
-): Promise<void> {
-  // Resolve escape role/address from the shared window-registry first
-  // (IPC-opened windows, including hybrid page-hosts), then fall back to
-  // tile-launcher's own info map (feature-tile windows, which are deliberately
-  // kept OUT of the shared registry so they don't pollute the "reopen last
-  // closed window" stack). The registry entry is `{ source, params }`; the
-  // tile-info entry is the flat `params` itself — normalize to `params` either way.
-  const registryEntry = getWindowInfo(winId);
-  const tileEntry = registryEntry ? undefined : getTileWindowInfo(winId);
-  const entry = registryEntry ?? tileEntry;
-  if (!entry || isDestroyed()) return;
-
-  const params = (registryEntry ? registryEntry.params : tileEntry) as Record<string, unknown>;
-  // Should always be set by ipc.ts window-open inference (line ~1167); fallback
-  // mirrors that inference's default-default — workspace, not utility — so the
-  // ESC behaviour never silently regresses to "always close" if a window
-  // somehow lands here without role on its registry params.
-  const role = (params.role as string) || 'workspace';
-  DEBUG && console.log(`[esc] ESC keyDown - window ${winId}, source: ${source}, role: ${role}, url: ${params.address}`);
-
-  // escapeMode: 'ignore' is a hard override — let ESC pass through entirely
-  if (params.escapeMode === 'ignore') {
-    DEBUG && console.log('[esc] Ignore mode - not handling ESC');
-    return;
-  }
-
-  // Ask renderer first (dialog close, internal navigation, etc.)
-  const response = await askWebContentsToHandleEscape(winId, askWC);
-  if (response.handled) return;
-
-  // Look up session state and apply role-based policy
-  const coordinator = getIzuiCoordinator();
-  const sessionState = coordinator.getState();
-  const action = escPolicy(sessionState, role);
-  DEBUG && console.log(`[esc] escPolicy(${sessionState}, ${role}) -> ${action}`);
-
-  if (action === 'close' || action === 'close-and-restore') {
-    await closeOrHideWindow(winId);
-  } else {
-    // escPolicy returned 'nothing' — renderer is at root and window won't close.
-    // Consult second-phase policy for unhandled ESC.
-    //
-    // Guard: if an overlay just closed (within 300ms), skip the switcher open.
-    // Without this guard, the ESC that dismissed the overlay lands on the
-    // workspace window immediately after exitOverlay() runs, and
-    // escUnhandledPolicy('active', 'workspace') returns 'open-switcher',
-    // causing the switcher to re-open in a tight loop.
-    if (coordinator.isWithinOverlayExitCooldown()) {
-      DEBUG && console.log(`[esc] Skipping escUnhandledPolicy — within overlay exit cooldown`);
-      return;
-    }
-    const unhandledAction = escUnhandledPolicy(sessionState, role);
-    DEBUG && console.log(`[esc] escUnhandledPolicy(${sessionState}, ${role}) -> ${unhandledAction}`);
-    if (unhandledAction === 'open-switcher') {
-      publish('peek://system/', 'cmd:execute:windows', {});
-    }
-  }
-}
 
 /**
  * Add escape key handler to a window
@@ -505,7 +326,11 @@ export function addEscHandler(bw: BrowserWindow): void {
         // Prevent ESC from propagating to the page (blocks DOM keydown dispatch)
         e.preventDefault();
 
-        await handleEscapeForWindow(bw, source);
+        // Decision moved to the window-state machine: dispatch ESC_PRESSED and
+        // let `decideEscape` own the outcome (the landed id is first-responder
+        // noise; the target is `front`). The attach/debounce/webview routing
+        // above stays here as input hygiene.
+        dispatchWindowEvent({ type: 'ESC_PRESSED', landedId: bw.id });
       }
     });
   };
@@ -797,12 +622,16 @@ export async function closeOrHideWindow(id: number): Promise<void> {
       const hybrid = getHybridWindow(id);
       if (hybrid && !hybrid.baseWin.isDestroyed()) {
         // Black-window fix: exit native fullscreen FIRST, awaited through the
-        // single owner (setHybridHostFullScreen), before the terminal hide/close.
-        // A fullscreen host closed or hidden mid-state strands a black macOS
-        // Space; dropping fullscreen first (and awaiting the settled exit) avoids
-        // it. No-op when the host isn't fullscreen. The host may be torn down
-        // while we await — re-check before touching it below.
-        if (hybrid.nativeFullScreen) await setHybridHostFullScreen(id, false);
+        // window-state machine (the single `setFullScreen` owner), before the
+        // terminal hide/close. A fullscreen host closed or hidden mid-state
+        // strands a black macOS Space; dropping fullscreen first (and awaiting
+        // the settled exit via `waitForMode`) avoids it. No-op when the host
+        // isn't fullscreen. The host may be torn down while we await — re-check.
+        const fsMode = getWindowModeName(id);
+        if (fsMode != null && fsMode !== 'normal') {
+          dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id, desired: false });
+          await waitForMode(id, 'normal');
+        }
         if (hybrid.baseWin.isDestroyed()) return;
         // keepLive parity with the BrowserWindow branch below: a hybrid
         // peek/slide opened with keepLive:true (e.g. the left slide playing
@@ -820,13 +649,13 @@ export async function closeOrHideWindow(id: number): Promise<void> {
         if (hybridEntry?.params.keepLive === true) {
           DEBUG && console.log(`HIDING keepLive hybrid page-host BaseWindow ${id}`);
           hybrid.baseWin.hide();
-          // Host-visibility gate (peek 71cfde09): the host is now hidden but the
-          // active id still points at it, so the shared chrome overlay would
-          // linger revealed over nothing. Clear its active status synchronously
-          // through the registry chokepoint so the overlay's retarget(null)
-          // transition hides the chrome in the same tick (the BaseWindow 'hide'
-          // event fires a tick late on macOS).
-          noteHybridWindowHidden(id);
+          // Host-visibility gate (peek 71cfde09): the host is now hidden but is
+          // still `front`, so the shared chrome overlay would linger revealed
+          // over nothing. Dispatch WINDOW_HIDDEN synchronously so the machine
+          // moves `front` off it in the same tick and the overlay's front-change
+          // subscription retargets/hides — the BaseWindow 'hide' event (which the
+          // adapter also handles) fires a tick late on macOS.
+          dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id });
           maybeHideApp(id);
           return;
         }
@@ -914,12 +743,12 @@ export async function closeOrHideWindow(id: number): Promise<void> {
  * canvas-path / no-window behavior is unchanged.
  */
 export function resolveFocusedWindowIdForClose(): number | null {
-  const focused = BrowserWindow.getFocusedWindow();
-  return resolveCloseTargetId(
-    focused ? focused.id : null,
-    focused != null && isHybridOverlayWindowId(focused.id),
-    getActiveHybridWindowId(),
-  );
+  // The machine's `front` IS the close target: the satellite rule already
+  // excludes the chrome overlay + palette (they can never be front), and a
+  // focused hybrid page-host (a BaseWindow that `getFocusedWindow()` returns
+  // null for) is front too. This replaces the pure `resolveCloseTargetId`
+  // overlay/hybrid resolution — the whole point of the single front authority.
+  return getFrontWindowId();
 }
 
 /**

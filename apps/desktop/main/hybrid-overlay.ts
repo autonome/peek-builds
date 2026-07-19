@@ -53,20 +53,10 @@ import type { BaseWindow, WebContents } from 'electron';
 import { isHeadless, getTilePreloadPath } from './config.js';
 import { DEBUG } from './debug-flag.js';
 import {
-  onActiveHybridWindowChange,
   getHybridWindow,
   getHybridContentWC,
-  getActiveHybridWindowId,
-  getActiveHybridWindowBounds,
   registerHybridWindow,
   getAllHybridWindows,
-  setOverlayFocusProvider,
-  setOverlayWindowIdProvider,
-  isHybridOverlayWindowId,
-  setHybridHostFullScreen,
-  getActiveHybridWindowId as _getActiveHybridWindowIdForBridge,
-  _setActiveHybridWindowForTests,
-  _runDeferredBlurForTests,
   // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
   registerLoadErrorListener,
   getHybridLoadError,
@@ -95,10 +85,18 @@ import { publish, subscribe, unsubscribe, getSystemAddress } from './pubsub.js';
 // became a NEW hybrid host. ipc.ts/main.ts do NOT import hybrid-overlay, so
 // this is a one-way (acyclic) dependency.
 import { wireHybridContentEvents } from './ipc.js';
+import {
+  getFrontPageHostId,
+  subscribeFrontChange,
+  dispatchWindowEvent,
+  waitForMode,
+  registerWindowWithMachine,
+  getWindowModeName,
+} from './window-state-singleton.js';
 import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, registerWindow } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
-import { hybridShowIntent, showHybridHost, closeFocusedWindow, closeOrHideWindow, handleHybridEscape } from './windows.js';
+import { hybridShowIntent, showHybridHost, closeFocusedWindow, closeOrHideWindow } from './windows.js';
 import { headlessActivationPolicy } from './headless-policy.js';
 import { registerLocalShortcut, unregisterLocalShortcut } from './shortcuts.js';
 
@@ -365,27 +363,28 @@ function ensureOverlay(): BrowserWindow {
   // already published the handoff. Re-send the current active state once the
   // renderer has finished loading (and on every reload) so the navbar paints.
   win.webContents.on('did-finish-load', () => {
-    const currentId = getActiveHybridWindowId();
+    const currentId = getFrontPageHostId();
     if (currentId != null) sendActiveHandoff(currentId);
   });
 
   win.on('closed', () => {
     if (overlayWin === win) overlayWin = null;
-    // Drop the focus provider so the registry stops consulting a dead window.
-    setOverlayFocusProvider(null);
   });
 
-  // Focus-group: tell the registry how to learn whether THIS overlay window is
-  // focused. The registry's deferred content-blur decision consults this so a
-  // click into the overlay (navbar URL field, panels, handles) — which blurs the
-  // content BaseWindow and focuses the overlay — does NOT deactivate the content
-  // window. Without this, interacting with the chrome instantly closes it.
-  setOverlayFocusProvider(() => {
-    try {
-      return !win.isDestroyed() && win.isFocused();
-    } catch {
-      return false;
-    }
+  // Register the chrome overlay with the window-state machine as a SATELLITE: it
+  // can hold OS focus (Cmd+L into the navbar) but must never become `front`.
+  // - The machine's deferred-blur settle (adapter) checks EVERY registered
+  //   window's focus, so a click into the overlay keeps the content host `front`
+  //   — replacing the registry's `setOverlayFocusProvider` focus-group.
+  // - The close resolver reads `front` (which excludes this satellite) —
+  //   replacing `setOverlayWindowIdProvider` + `isHybridOverlayWindowId`.
+  registerWindowWithMachine({
+    id: win.id,
+    kind: 'browser',
+    role: 'overlay',
+    satellite: true,
+    win,
+    contentWC: win.webContents,
   });
 
   overlayWin = win;
@@ -557,7 +556,7 @@ function wireAppActiveGate(): void {
     if (!overlayWin || overlayWin.isDestroyed()) {
       // No overlay yet — re-frame below will lazily create it if there is an
       // active hybrid window.
-      const currentId = getActiveHybridWindowId();
+      const currentId = getFrontPageHostId();
       if (currentId != null) retarget(currentId);
       return;
     }
@@ -577,7 +576,7 @@ function wireAppActiveGate(): void {
     }
     // Re-frame onto the current active hybrid window so the overlay snaps back
     // over it (its geometry/level was just restored).
-    const currentId = getActiveHybridWindowId();
+    const currentId = getFrontPageHostId();
     if (currentId != null) {
       try {
         retarget(currentId);
@@ -610,7 +609,7 @@ function wireShowNavbarFocus(): void {
     const msg = raw as { windowId?: number } | null;
     if (!msg || msg.windowId == null) return;
     if (!appActive) return; // never steal focus while backgrounded (R1)
-    if (msg.windowId !== getActiveHybridWindowId()) return; // active window only
+    if (msg.windowId !== getFrontPageHostId()) return; // active window only
     if (!overlayWin || overlayWin.isDestroyed()) return;
     showNavbarFocusCount++;
     try {
@@ -637,7 +636,7 @@ function wireExecuteScript(): void {
     // Resolve the page the script should run in: the active hybrid content WC.
     // No active hybrid window → this request isn't for us (canvas path or none) →
     // stay silent so we don't publish a spurious result.
-    const activeId = getActiveHybridWindowId();
+    const activeId = getFrontPageHostId();
     if (activeId == null) return;
     const wc = getHybridContentWC(activeId);
     if (!wc || wc.isDestroyed()) return;
@@ -789,8 +788,10 @@ function retarget(id: number | null): void {
 
   const baseWin = entry.baseWin;
 
-  // Initial frame.
-  const initial = getActiveHybridWindowBounds();
+  // Initial frame — read the target host's outer bounds directly (replaces the
+  // registry's `getActiveHybridWindowBounds`, which just read the active host).
+  let initial: { x: number; y: number; width: number; height: number } | null = null;
+  try { if (!baseWin.isDestroyed()) initial = baseWin.getBounds(); } catch { /* host gone */ }
   if (initial) frameBounds(initial, baseWin.isFullScreen());
 
   // Follow the active window's move/resize. We re-read getBounds() each time
@@ -874,19 +875,16 @@ export function initHybridOverlay(): void {
   // hybrid window so the URL field is typeable (gated on app-active, see above).
   wireShowNavbarFocus();
 
-  // cmd+W overlay redirect: let the registry recognise the overlay window so the
-  // close resolver targets the active hybrid host instead of the chrome when the
-  // overlay is the focused BrowserWindow (address bar/widgets open). The closure
-  // reads `overlayWin` live, so it tracks the singleton across recreation.
-  setOverlayWindowIdProvider(() =>
-    overlayWin && !overlayWin.isDestroyed() ? overlayWin.id : null,
-  );
+  // cmd+W overlay redirect is now structural: the overlay registers as a
+  // satellite (see ensureOverlay), so it can never be `front` and the close
+  // resolver (`resolveFocusedWindowIdForClose` → `getFrontWindowId`) always
+  // targets the content host — no `setOverlayWindowIdProvider` needed.
 
   // Run extension page-script execution against the active hybrid content WC
   // (the overlay host has webview:null and cannot service it; see above).
   wireExecuteScript();
 
-  unsubscribeActive = onActiveHybridWindowChange((id) => {
+  unsubscribeActive = subscribeFrontChange((id) => {
     try {
       retarget(id);
     } catch (err) {
@@ -898,7 +896,7 @@ export function initHybridOverlay(): void {
   // THE CURRENTLY-ACTIVE window. Non-active windows are handled by the next
   // `sendActiveHandoff` snapshot; no extra mechanism needed for them.
   registerLoadErrorListener((windowId, error) => {
-    if (windowId !== getActiveHybridWindowId()) return;
+    if (windowId !== getFrontPageHostId()) return;
     publish(getSystemAddress(), 'page:load-error', { windowId, error });
   });
 
@@ -922,7 +920,7 @@ export function initHybridOverlay(): void {
 
   // Seed off the current active window in case one is already frontmost at
   // init time (e.g. session restore opened a hybrid window before this ran).
-  const currentId = getActiveHybridWindowId();
+  const currentId = getFrontPageHostId();
   if (currentId != null) {
     retarget(currentId);
   }
@@ -953,9 +951,8 @@ export function teardownHybridOverlay(): void {
   }
   appActive = true;
   showNavbarFocusCount = 0;
-  // Drop the overlay-id provider so close-resolution stops consulting a dead
-  // singleton (mirrors the focus-provider clear in the window 'closed' handler).
-  setOverlayWindowIdProvider(null);
+  // (No overlay-id / focus provider to clear — the overlay's satellite
+  // registration with the machine handles close-resolution + focus-group.)
   // Drop the hybrid-teardown permission-deny listener (re-registered on init).
   registerHybridWindowClosedListener(null);
   if (overlayWin && !overlayWin.isDestroyed()) {
@@ -1093,6 +1090,7 @@ function installTestBridge(): void {
         view.setBounds({ x: 0, y: 0, width: w, height: h });
       } catch { /* getContentSize unsupported in some envs */ }
       registerHybridWindow(baseWin.id, { baseWin, contentWC: view.webContents });
+      registerWindowWithMachine({ id: baseWin.id, kind: 'page-host', role: 'content', satellite: false, win: baseWin, contentWC: view.webContents });
       fakeHosts.set(baseWin.id, baseWin);
       // Install the REAL content→overlay event forwarding (incl. the idle
       // top-band reveal path under test).
@@ -1100,7 +1098,15 @@ function installTestBridge(): void {
       return baseWin.id;
     },
     setActive(id: number | null): boolean {
-      return _setActiveHybridWindowForTests(id);
+      // Machine equivalent of the old synthetic active-id set: dispatch a
+      // synthetic show+focus (or focus-settled-null). The fake host is
+      // registered with the machine above.
+      if (id == null) {
+        dispatchWindowEvent({ type: 'OS_FOCUS_SETTLED_NULL' });
+      } else {
+        dispatchWindowEvent({ type: 'WINDOW_SHOWN', id, focused: true });
+      }
+      return true;
     },
     /**
      * Drive the overlay's maximize TOGGLE for a window through the REAL content
@@ -1264,11 +1270,15 @@ function installTestBridge(): void {
       simFocus = null;
       simOverlayFocused = false;
     },
-    runDeferredBlur(id: number): number | null {
-      return _runDeferredBlurForTests(id);
+    runDeferredBlur(_id: number): number | null {
+      // The machine's deferred-blur settle lives in the OS adapter (setImmediate)
+      // and keeps `front` on an app-switch (design divergence #2), so there is no
+      // synchronous per-window "decide after blur" hook. Best-effort: report the
+      // current front page host.
+      return getFrontPageHostId();
     },
     activeId(): number | null {
-      return _getActiveHybridWindowIdForBridge();
+      return getFrontPageHostId();
     },
     /**
      * Focus-group verification: replace the registry's overlay-focus provider
@@ -1279,7 +1289,11 @@ function installTestBridge(): void {
      * sequence.
      */
     installFocusGroupSim(): void {
-      setOverlayFocusProvider(() => simOverlayFocused);
+      // The focus-group is now structural: the chrome overlay registers with the
+      // machine as a satellite, so its OS focus is accounted for by the adapter's
+      // deferred-blur settle. No provider to install — kept as a no-op so the
+      // E2E bridge surface is unchanged.
+      void simOverlayFocused;
     },
     setHostBounds(
       id: number,
@@ -1326,7 +1340,7 @@ function installTestBridge(): void {
       try {
         return {
           isFullScreen: entry.baseWin.isFullScreen(),
-          nativeFullScreen: entry.nativeFullScreen,
+          nativeFullScreen: getWindowModeName(id) === 'fullscreen',
           maximized: entry.maximized,
           preMaxBounds: entry.preMaxBounds ?? null,
         };
@@ -2739,7 +2753,7 @@ function installTestBridge(): void {
      * unit; this verifies the wiring that feeds it.)
      */
     isHybridOverlayWindowId(id: number): boolean {
-      return isHybridOverlayWindowId(id);
+      return overlayWin != null && !overlayWin.isDestroyed() && overlayWin.id === id;
     },
     /**
      * ESC-close (peek e8081cce companion): build a wired hybrid page-host AND
@@ -2768,6 +2782,16 @@ function installTestBridge(): void {
         view.setBounds({ x: 0, y: 0, width: w, height: h });
       } catch { /* getContentSize unsupported in some envs */ }
       registerHybridWindow(baseWin.id, { baseWin, contentWC: view.webContents });
+      const roledRole = (params.role as string) || 'content';
+      registerWindowWithMachine({
+        id: baseWin.id,
+        kind: 'page-host',
+        role: roledRole,
+        satellite: roledRole === 'overlay' || roledRole === 'palette',
+        escapeMode: params.escapeMode as ('auto' | 'close' | 'navigate' | 'ignore' | undefined),
+        win: baseWin,
+        contentWC: view.webContents,
+      });
       wireHybridContentEvents(view.webContents, baseWin.id, dataUrl, {});
       registerWindow(baseWin.id, 'test-esc', { address: dataUrl, ...params });
       return view.webContents
@@ -2786,7 +2810,11 @@ function installTestBridge(): void {
     runHybridEscape(id: number): Promise<number | null> {
       const entry = getHybridWindow(id);
       if (!entry || entry.contentWC.isDestroyed()) return Promise.resolve(null);
-      return handleHybridEscape(id, entry.contentWC).then(() => id);
+      // Decision now lives in the machine — dispatch ESC_PRESSED (the landed id
+      // is first-responder noise; decideEscape targets `front`). The ask-renderer
+      // round-trip is async inside the adapter; resolve on the next tick.
+      dispatchWindowEvent({ type: 'ESC_PRESSED', landedId: id });
+      return Promise.resolve(id);
     },
     /**
      * ESC-close: resolve once a hybrid host id is GONE from the registry (its
@@ -2927,7 +2955,13 @@ function installTestBridge(): void {
      * bounded timeout fires). Read the outcome via `hostFullscreenState(id)`.
      */
     driveHostFullscreen(id: number, desired: boolean): Promise<void> {
-      return setHybridHostFullScreen(id, desired);
+      // Drive through the machine (the single setFullScreen owner) exactly as the
+      // `fullscreen` command does. Pass current bounds for the preBounds stash.
+      const boundsWin = getHybridWindow(id)?.baseWin ?? null;
+      let bounds: { x: number; y: number; width: number; height: number } | null = null;
+      try { if (boundsWin && !boundsWin.isDestroyed()) bounds = boundsWin.getBounds(); } catch { /* gone */ }
+      dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id, desired, bounds });
+      return waitForMode(id, desired ? 'fullscreen' : 'normal');
     },
   };
 }

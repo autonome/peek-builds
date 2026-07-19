@@ -13,7 +13,7 @@ import { BrowserWindow, dialog, screen, ipcMain } from 'electron';
 import type { IpcMainEvent } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
-import { getFocusOrder } from './focus-order.js';
+import { getFocusOrder, getFrontWindowId } from './window-state-singleton.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
 import type { ClosedWindowEntry } from './main.js';
@@ -21,7 +21,7 @@ import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
 import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
-import { invokeWindowOpen, getLastFocusedVisibleWindowId } from './ipc.js';
+import { invokeWindowOpen } from './ipc.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { shouldActivateFocusedOnRestore } from './izui-roles.js';
 import { WEB_CORE_ADDRESS } from './config.js';
@@ -477,9 +477,9 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   // user has switched away — all of which leave `win.isFocused()` pointing
   // at the wrong window (or nothing), and the head-start ends up firing on
   // some unrelated window that just happens to be first in iteration
-  // order. `lastFocusedVisibleWindowId` excludes modals/overlays/bg and
+  // order. The machine's `front` excludes modals/overlays/bg (satellites) and
   // survives focus shifts to other apps, so it captures user intent.
-  const lastFocusedId = getLastFocusedVisibleWindowId();
+  const lastFocusedId = getFrontWindowId();
 
   for (const [id, winData] of registeredWindows) {
     const win = getLiveWindow(id);
