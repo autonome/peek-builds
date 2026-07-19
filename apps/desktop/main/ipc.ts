@@ -138,6 +138,7 @@ import {
   getHybridContentWC,
   getHybridWindow,
   getAllHybridWindows,
+  getActiveHybridWindowId,
   setHybridMaximizeState,
   setHybridNativeFullScreen,
   claimHybridDeferredLoad,
@@ -3848,7 +3849,14 @@ export function registerWindowHandlers(): void {
                 }
                 return;
               }
-              DEBUG && console.log('window-open: blur for modal window', url);
+              // Name the focus thief in the log: which window (or hybrid host)
+              // took key and is dismissing this modal. Diagnostic for the
+              // palette-dies-over-fullscreen trace (peek 7fffa286 follow-up).
+              DEBUG && console.log(
+                'window-open: blur for modal window', url,
+                '— focus went to:', focused && !focused.isDestroyed() ? `bw ${focused.id} (${getWindowInfo(focused.id)?.params?.address ?? '?'})` : 'no BrowserWindow',
+                'activeHybrid:', getActiveHybridWindowId(),
+              );
               // Fire-and-forget (async, never rejects) — blur dismissal.
               void closeOrHideWindow(win.id);
             });

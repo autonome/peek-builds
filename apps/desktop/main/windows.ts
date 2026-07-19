@@ -372,6 +372,13 @@ export async function handleHybridEscape(
   // `setFullScreen` call.
   const routedHybrid = getHybridWindow(routedId);
   const routedEscapeMode = getWindowInfo(routedId)?.params?.escapeMode as string | undefined;
+  // Decision trace (peek 7fffa286 follow-up): name every input the
+  // fullscreen-exit precedence reads, so a live ESC log shows exactly why it
+  // exited fullscreen or fell through to the policy.
+  DEBUG && console.log(
+    `[esc] hybrid ESC decision: landed=${hostWindowId} active=${activeId ?? 'null'} routed=${routedId}`,
+    `nativeFullScreen=${routedHybrid?.nativeFullScreen ?? 'no-entry'} escapeMode=${routedEscapeMode ?? 'none'}`,
+  );
   if (escExitsHybridFullscreen(routedHybrid?.nativeFullScreen ?? false, routedEscapeMode)) {
     DEBUG && console.log(`[esc] hybrid host ${routedId} is native fullscreen — ESC exits fullscreen`);
     await setHybridHostFullScreen(routedId, false);
