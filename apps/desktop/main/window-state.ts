@@ -296,6 +296,12 @@ export function escPolicy(sessionState: string, role: string): 'close' | 'close-
 /**
  * ESC unhandled policy — ported VERBATIM from `izui-state.ts escUnhandledPolicy`.
  * Second phase: what to do when ESC has nowhere left to navigate.
+ *
+ * The `'overlay'` arm is UNREACHABLE through `reduce`: `window-state-singleton.ts
+ * clampSession` maps the coordinator's 'overlay' to 'active' before it is
+ * dispatched, so `state.session` only ever holds `IzuiSession`. It is kept
+ * because this table is a verbatim port and the parameter is typed `string`;
+ * do not read it as "the switcher-open session suppresses the switcher."
  */
 export function escUnhandledPolicy(sessionState: string, role: string): 'open-switcher' | 'nothing' {
   if (sessionState === 'transient' || sessionState === 'overlay') return 'nothing';
@@ -333,6 +339,84 @@ export function isSatelliteRegistration(
   if (opts.modal === true) return true;
   if (opts.focusable === false) return true;
   return false;
+}
+
+/**
+ * What `WindowOsAdapter.registerWindow` must do for one registration call.
+ * Every field is a decision, not a value — the adapter executes it verbatim.
+ */
+export interface WindowRegistrationDecision {
+  /** The id was already registered: this call is a MERGE, not a first registration. */
+  reRegistration: boolean;
+  /**
+   * Attach the native window listeners (focus/blur/show/hide/closed/fullscreen).
+   * False on a re-registration — attaching a second set would double every
+   * event the window emits.
+   */
+  attachNativeListeners: boolean;
+  /**
+   * Attach the `before-input-event` Escape interceptor (`windows.ts
+   * addEscHandler`). False on a re-registration: a second interceptor turned ONE
+   * physical Escape into TWO `ESC_PRESSED` dispatches, which is what made the
+   * switcher reopen itself in a loop (7fffa286). Also false for a `page-host`
+   * (a BaseWindow has no root webContents; its Escape rides the content
+   * WebContentsView) and for a caller that opts out (the shared chrome overlay,
+   * which handles Escape in its own renderer).
+   */
+  attachEscHandler: boolean;
+  /**
+   * Overwrite the retained renderer WebContents with the incoming spec's.
+   * A first registration always installs one (`null` when the caller supplied
+   * none); a re-registration only when the caller actually passed the field, so
+   * a later, thinner spec cannot blank out a WC the first one established.
+   */
+  adoptRendererWC: boolean;
+  /**
+   * Pump `WINDOW_REGISTERED` into the reducer. ALWAYS true, including on a
+   * duplicate — deliberately. The later spec is the RICHER one (ipc.ts knows the
+   * real `modal`/`focusable`, the tile-launcher hook only `win.isFocusable()`),
+   * and `satellite` lives in the reducer's `WindowRecord`, so swallowing the
+   * re-pump would strand the reducer on the thin spec and regress the
+   * `isSatelliteRegistration` modal clause. `WINDOW_REGISTERED` is an idempotent
+   * MERGE in `reduce` (it preserves `visible`/`focusSeq`/`fsMode`), so the
+   * re-pump costs nothing beyond refreshing the declared fields.
+   */
+  pumpRegisteredEvent: boolean;
+}
+
+/**
+ * decideWindowRegistration — the SINGLE owner of the "is this a re-registration,
+ * and if so what carries over vs. what the new spec overwrites?" branch that
+ * `WindowOsAdapter.registerWindow` executes.
+ *
+ * WHY it lives here and not next to its caller: `window-os-adapter.ts` has a
+ * value-side `import { app, BrowserWindow, globalShortcut } from 'electron'`,
+ * and the main-process unit gate runs its tests under `ELECTRON_RUN_AS_NODE=1`,
+ * where that import throws at parse ("The requested module 'electron' does not
+ * provide an export named 'BrowserWindow'" — see the explanatory comment in
+ * `window-registry.ts`). A test file importing the adapter would take down the
+ * whole ~1950-test runner. `window-state.ts` has zero imports, so the decision
+ * is testable here and nowhere else. Same pattern as the pure predicates in
+ * `izui-roles.ts` and `isSatelliteRegistration` above.
+ */
+export function decideWindowRegistration(input: {
+  /** Whether the adapter already retains an entry for this window id. */
+  alreadyRegistered: boolean;
+  kind: WindowKind;
+  /** Whether the spec carries a `contentWC` field at all (`undefined` = absent). */
+  hasContentWC: boolean;
+  /** The spec's `attachEscHandler` opt-out (`undefined` = default on). */
+  attachEscHandlerRequested?: boolean;
+}): WindowRegistrationDecision {
+  const { alreadyRegistered, kind, hasContentWC, attachEscHandlerRequested } = input;
+  const fresh = !alreadyRegistered;
+  return {
+    reRegistration: alreadyRegistered,
+    attachNativeListeners: fresh,
+    attachEscHandler: fresh && kind === 'browser' && attachEscHandlerRequested !== false,
+    adoptRendererWC: fresh || hasContentWC,
+    pumpRegisteredEvent: true,
+  };
 }
 
 /** A record is a legal `front` iff it is live, visible, and non-satellite. */

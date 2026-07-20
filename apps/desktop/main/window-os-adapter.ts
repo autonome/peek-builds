@@ -46,6 +46,7 @@ import {
 } from './windows.js';
 import {
   WindowStateOwner,
+  decideWindowRegistration,
   type Effect,
   type StateSnapshot,
   type WindowEvent,
@@ -218,41 +219,49 @@ export class WindowOsAdapter {
    * dispatches — and the second one, arriving after the switcher already closed,
    * re-opened it 500ms later in an unbreakable loop. So a repeat registration
    * MERGES the (richer) spec and returns without touching listeners.
+   *
+   * The branch itself is NOT decided here: `decideWindowRegistration`
+   * (`window-state.ts`) owns it, so it can be unit-tested — this module's
+   * value-side `electron` import makes a test file next to it unloadable under
+   * the unit gate's `ELECTRON_RUN_AS_NODE=1`. This method only EXECUTES the
+   * decision against the OS.
    */
   registerWindow(spec: RegisterWindowSpec): void {
     const { id, kind, role, satellite, escapeMode, lastHttpUrl, win } = spec;
     const rendererWC = spec.contentWC ?? null;
 
     const existing = this.windows.get(id);
+    const decision = decideWindowRegistration({
+      alreadyRegistered: existing !== undefined,
+      kind,
+      hasContentWC: spec.contentWC !== undefined,
+      attachEscHandlerRequested: spec.attachEscHandler,
+    });
+
     if (existing) {
-      // Merge, don't drop: the second registration carries the higher-fidelity
-      // spec (ipc.ts knows the real `options.modal` / `options.focusable`, the
-      // tile-launcher hook only `win.isFocusable()`), so its `satellite` must
-      // win. `WINDOW_REGISTERED` is an idempotent merge in the reducer — it
-      // preserves `visible`/`focusSeq`/`fsMode` — so re-pumping it updates the
-      // declared fields without resetting the window's lived state. No listener
-      // and no Esc handler is attached a second time.
       existing.win = win;
       existing.kind = kind;
-      if (spec.contentWC !== undefined) existing.rendererWC = rendererWC;
-      this.pump({ type: 'WINDOW_REGISTERED', id, kind, role, satellite, escapeMode, lastHttpUrl });
-      return;
+      if (decision.adoptRendererWC) existing.rendererWC = rendererWC;
+    } else {
+      this.windows.set(id, { win, kind, rendererWC });
     }
 
-    this.windows.set(id, { win, kind, rendererWC });
-    this.pump({ type: 'WINDOW_REGISTERED', id, kind, role, satellite, escapeMode, lastHttpUrl });
+    if (decision.pumpRegisteredEvent) {
+      this.pump({ type: 'WINDOW_REGISTERED', id, kind, role, satellite, escapeMode, lastHttpUrl });
+    }
 
     // The SINGLE owner of the `before-input-event` Esc attach for browser
-    // windows (see `RegisterWindowSpec.attachEscHandler`). Inheriting the
-    // idempotence above is the whole point: there is exactly one attach per
-    // window, so one keypress can only ever produce one `ESC_PRESSED`.
-    if (kind === 'browser' && spec.attachEscHandler !== false) {
+    // windows (see `RegisterWindowSpec.attachEscHandler`). There is exactly one
+    // attach per window, so one keypress can only ever produce one `ESC_PRESSED`.
+    if (decision.attachEscHandler) {
       try {
         addEscHandler(win as unknown as BrowserWindow);
       } catch (err) {
         DEBUG && console.log('[window-state] esc handler attach failed for', id, err);
       }
     }
+
+    if (!decision.attachNativeListeners) return;
 
     win.on('focus', () => {
       this.cancelBlurSettle();

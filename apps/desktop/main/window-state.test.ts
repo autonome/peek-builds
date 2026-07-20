@@ -42,6 +42,7 @@ import {
   frontInvariantHolds,
   isEligibleFront,
   isSatelliteRegistration,
+  decideWindowRegistration,
   WindowStateOwner,
   type AppWindowState,
   type WindowRecord,
@@ -866,14 +867,22 @@ describe('switcher reopen loop (7fffa286)', () => {
     // two ESC_PRESSED dispatches. #1 closed the switcher (correct); #2 saw a
     // closed switcher, asked the renderer, and 500ms later the unhandled answer
     // re-opened it — forever. The epoch makes #2's answer inert once anything
-    // invalidates it. (The overlay session is mirrored in as 'transient': the
-    // singleton clamps the coordinator's four-state to the reducer's tri-state,
-    // and both are 'nothing' in escUnhandledPolicy, which is what matters here.)
+    // invalidates it.
+    //
+    // Session values here model REALITY (corrected): `window-state-singleton.ts
+    // clampSession` maps the coordinator's 'overlay' to 'active' before it
+    // reaches `reduce`, so the reducer's session is 'active' BEFORE, DURING and
+    // AFTER the switcher is open — it does NOT flip, and `escUnhandledPolicy`
+    // says 'open-switcher' the whole time. What actually makes the late answer
+    // wrong is that the switcher was opened and then closed underneath it (and
+    // the overlay window destroyed). The `SESSION_CHANGED` dispatch below still
+    // fires for real — izui's enterOverlay/exitOverlay emit unconditionally, and
+    // the reducer clears `escAsk` on the EVENT, not on a value change.
     let s = s0();
     s = drive(s, [
       { type: 'WINDOW_REGISTERED', id: 10, kind: 'browser', role: 'overlay', satellite: true },
       { type: 'WINDOW_SHOWN', id: 10, focused: true },
-      { type: 'SESSION_CHANGED', session: 'transient' },
+      { type: 'SESSION_CHANGED', session: 'active' },
       { type: 'SWITCHER_OPENED', windowId: 10 },
     ]).state;
 
@@ -890,7 +899,8 @@ describe('switcher reopen loop (7fffa286)', () => {
     const seq = askSeq(esc2.effects);
 
     // While the renderer is being asked, the world moves on exactly as it did in
-    // the live trace: the overlay session ends and the overlay window closes.
+    // the live trace: izui exits overlay mode (emitting SESSION_CHANGED, same
+    // clamped value) and the overlay window closes.
     let after = reduce(esc2.state, { type: 'SESSION_CHANGED', session: 'active' });
     all.push(...after.effects);
     after = reduce(after.state, { type: 'WINDOW_CLOSED', id: 10 });
@@ -910,6 +920,11 @@ describe('switcher reopen loop (7fffa286)', () => {
     const answer = reduce(moved.state, { type: 'ESC_RENDERER_ANSWER', id: 4, handled: false, seq });
     // Under 'transient' the policy was 'nothing'; under 'active' it would be
     // 'open-switcher'. The answer belongs to the question that was asked.
+    // NOTE: this transient->active flip is izui's `evaluateOnShow` promotion
+    // ratchet, NOT the switcher/overlay path — the singleton clamps 'overlay' to
+    // 'active', so opening the switcher never changes the reducer's session
+    // VALUE (see the reopen-loop test above). This exercises the
+    // SESSION_CHANGED invalidation clause on its own terms.
     assert.deepStrictEqual(answer.effects, [{ type: 'NOTHING' }]);
   });
 
@@ -1075,6 +1090,88 @@ describe('isSatelliteRegistration — single owner of front-ineligibility', () =
 
   it('focusable:undefined is not a satellite (Electron default focusable:true)', () => {
     assert.strictEqual(isSatelliteRegistration('workspace', { focusable: undefined }), false);
+  });
+});
+
+// ── Registration idempotence decision (7fffa286) ─────────────────────────────
+
+describe('decideWindowRegistration — single owner of the re-registration branch', () => {
+  const fresh = (over: Partial<Parameters<typeof decideWindowRegistration>[0]> = {}) =>
+    decideWindowRegistration({ alreadyRegistered: false, kind: 'browser', hasContentWC: true, ...over });
+  const again = (over: Partial<Parameters<typeof decideWindowRegistration>[0]> = {}) =>
+    decideWindowRegistration({ alreadyRegistered: true, kind: 'browser', hasContentWC: true, ...over });
+
+  it('a first browser registration attaches listeners AND the Esc interceptor', () => {
+    assert.deepStrictEqual(fresh(), {
+      reRegistration: false,
+      attachNativeListeners: true,
+      attachEscHandler: true,
+      adoptRendererWC: true,
+      pumpRegisteredEvent: true,
+    });
+  });
+
+  it('a duplicate id attaches NEITHER listeners NOR a second Esc interceptor', () => {
+    const d = again();
+    assert.strictEqual(d.reRegistration, true);
+    assert.strictEqual(d.attachNativeListeners, false);
+    assert.strictEqual(d.attachEscHandler, false, 'a second interceptor is the double-ESC_PRESSED bug');
+  });
+
+  it('a duplicate id STILL re-pumps WINDOW_REGISTERED (the richer spec must reach the reducer)', () => {
+    // `satellite` lives in the reducer record, so swallowing the re-pump would
+    // strand it on the thin tile-launcher spec and regress the
+    // `isSatelliteRegistration` modal clause.
+    assert.strictEqual(again().pumpRegisteredEvent, true);
+    assert.strictEqual(fresh().pumpRegisteredEvent, true);
+  });
+
+  it('a page-host never gets the adapter-owned Esc interceptor (no root webContents)', () => {
+    assert.strictEqual(fresh({ kind: 'page-host' }).attachEscHandler, false);
+    assert.strictEqual(again({ kind: 'page-host' }).attachEscHandler, false);
+  });
+
+  it('an explicit opt-out (the shared chrome overlay) suppresses the Esc attach', () => {
+    assert.strictEqual(fresh({ attachEscHandlerRequested: false }).attachEscHandler, false);
+  });
+
+  it('attachEscHandler undefined/true both mean "attach" for a fresh browser window', () => {
+    assert.strictEqual(fresh({ attachEscHandlerRequested: undefined }).attachEscHandler, true);
+    assert.strictEqual(fresh({ attachEscHandlerRequested: true }).attachEscHandler, true);
+  });
+
+  it('a first registration always installs a renderer WC, even when the spec omits one', () => {
+    // Fresh installs `contentWC ?? null` — the absent case is a real null, not a
+    // carry-over from nothing.
+    assert.strictEqual(fresh({ hasContentWC: false }).adoptRendererWC, true);
+  });
+
+  it('a re-registration adopts the WC only when the spec actually carries one', () => {
+    assert.strictEqual(again({ hasContentWC: true }).adoptRendererWC, true);
+    assert.strictEqual(
+      again({ hasContentWC: false }).adoptRendererWC,
+      false,
+      'a later, thinner spec must not blank out an established WC',
+    );
+  });
+
+  it('is total: every (alreadyRegistered x kind x hasContentWC x optOut) yields booleans', () => {
+    for (const alreadyRegistered of [false, true]) {
+      for (const kind of ['browser', 'page-host'] as const) {
+        for (const hasContentWC of [false, true]) {
+          for (const attachEscHandlerRequested of [undefined, false, true]) {
+            const d = decideWindowRegistration({ alreadyRegistered, kind, hasContentWC, attachEscHandlerRequested });
+            for (const [k, v] of Object.entries(d)) {
+              assert.strictEqual(typeof v, 'boolean', `${k} must be boolean`);
+            }
+            // The two invariants the 7fffa286 fix rests on, over the whole space.
+            assert.strictEqual(d.attachNativeListeners, !alreadyRegistered);
+            if (alreadyRegistered) assert.strictEqual(d.attachEscHandler, false);
+            assert.strictEqual(d.pumpRegisteredEvent, true);
+          }
+        }
+      }
+    }
   });
 });
 
