@@ -50,13 +50,16 @@ async function listTags() {
 /**
  * Get the window the user is acting on for tag/untag.
  *
- * The id comes from `getFocusedVisibleWindowId()`, whose main-side resolver
- * (`resolveFocusedVisibleWindowId` in izui-roles.ts) already understands the
- * hybrid era: it accepts a tracked hybrid page-host id (a BaseWindow, invisible
- * to `getFocusedWindow()`), falls back through the active hybrid host — the same
- * signal the page-host chrome overlay frames over — and then the first visible
- * focusable window. So it returns the page the user is actually looking at, and
- * the same hybrid host is enumerated by `api.window.list()` below.
+ * The id comes from `getFocusedVisibleWindowId()`, whose main-side handler now
+ * returns `getFrontWindowId()` from the window-state machine
+ * (window-state-singleton.ts): the single arbitrated `front` authority that
+ * collapsed the old tracked-id + active-hybrid-host + first-visible-window
+ * cascade. Satellites (command palette / modal issuers, the chrome + switcher
+ * overlays) can never be `front`, so the modal-exclusion and overlay redirects
+ * that cascade used to do are now structural, and a focused hybrid host (a
+ * BaseWindow, invisible to `getFocusedWindow()`) is `front` too. So it returns
+ * the page the user is actually looking at, and the same hybrid host is
+ * enumerated by `api.window.list()` below.
  *
  * If it can't resolve a window, return null (the command reports "No active
  * window") rather than guessing. The old "newest page-canvas window, else

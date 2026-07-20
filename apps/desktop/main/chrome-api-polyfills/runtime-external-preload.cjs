@@ -93,7 +93,8 @@ document.addEventListener('focusout', _peekScheduleReport, true);
 // (MouseEvent.detail) — no timers, no debounce (fsm-pilled). We report only the
 // clean detent-2 case; main (hybrid-window-gesture.ts) maps detent 2 → maximize.
 // Fullscreen is no longer a content gesture — it is command-driven and single-
-// owned by main (tile:window:fullscreen → setHybridHostFullScreen).
+// owned by main (tile:window:fullscreen → the window-state machine's
+// FULLSCREEN_REQUESTED dispatch, window-os-adapter.ts).
 const IPC_CONTENT_WINDOW_GESTURE = 'page:content-window-gesture';
 
 // Broader than _peekIsEditableElement: the gesture must also skip discrete
