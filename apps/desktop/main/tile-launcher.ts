@@ -84,16 +84,11 @@ let _getSystemThemeBackgroundColor: (() => string) | null = null;
 // (the OS adapter then attaches its focus/blur/show/hide/closed listeners and
 // tracks it as a possible `front`). Replaces the old `_onWindowFocus` feed into
 // ipc.ts's deleted `trackVisibleWindowFocus`.
+// The `before-input-event` ESC interceptor rides along with this hook: the
+// window-state machine's registration is the single owner of the attach, so
+// there is no separate `addEscHandler` hook here anymore (two hooks meant two
+// interceptors on any window that registered twice).
 let _registerWindow: ((win: BrowserWindow, role: string | undefined) => void) | null = null;
-// Injected from windows.ts. Like the hooks above, this lives on an
-// electron-heavy module that tile-launcher can't import at top level
-// (it transitively ESM-imports `BrowserWindow`, which is empty under
-// ELECTRON_RUN_AS_NODE=1 unit tests). Without it, tile-launched feature
-// windows get no `before-input-event` ESC interceptor, so the IZUI escape
-// protocol (root ESC → open-switcher) never runs for them — only the
-// `window-open` IPC path wired this, which is why ESC worked for
-// IPC-opened windows but not tile windows.
-let _addEscHandler: ((win: BrowserWindow) => void) | null = null;
 
 /**
  * Lightweight role/address info for every live tile window, keyed by
@@ -127,19 +122,14 @@ export function configureTileLauncher(hooks: {
    * adapter then attaches the native focus/blur/show/hide/closed listeners that
    * drive `front`, so focusing a tile (tags, search, …) makes it the command
    * target. Replaces the old `onWindowFocus` → `trackVisibleWindowFocus` feed.
+   * Registering also attaches the window's before-input-event ESC interceptor
+   * (and its webview guests') — one owner for both.
    */
   registerWindow?: (win: BrowserWindow, role: string | undefined) => void;
-  /**
-   * Attaches the before-input-event ESC interceptor to the tile window (and its
-   * webview guests). Mirrors `addEscHandler(win)` from the `window-open` IPC
-   * path; its handler dispatches `ESC_PRESSED` into the machine.
-   */
-  addEscHandler?: (win: BrowserWindow) => void;
 }): void {
   if (hooks.getProfileSession) _getProfileSession = hooks.getProfileSession;
   if (hooks.getSystemThemeBackgroundColor) _getSystemThemeBackgroundColor = hooks.getSystemThemeBackgroundColor;
   if (hooks.registerWindow) _registerWindow = hooks.registerWindow;
-  if (hooks.addEscHandler) _addEscHandler = hooks.addEscHandler;
 }
 
 // Short grace period given to tiles to run their `api.onShutdown()` callbacks
@@ -382,8 +372,9 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
   tileWindowsAll.add(win);
   if (manifest) loadedManifests.set(tileId, manifest);
 
-  // Record the tile window's role/address for the IZUI ESC handler, and
-  // attach the `before-input-event` ESC interceptor — exactly what the
+  // Record the tile window's role/address for the IZUI ESC handler. The
+  // `before-input-event` ESC interceptor is attached by `_registerWindow`
+  // below (the machine's registration owns it) — exactly what the
   // `window-open` IPC path does for IPC-opened windows, minus the shared
   // window-registry entry. The ESC handler resolves this window's role
   // via `getTileWindowInfo(win.id)` (not `getWindowInfo`), so feature-tile
@@ -396,14 +387,10 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
     role: entry?.role ?? 'workspace',
     address: `peek://${tileId}/${entry?.url ?? ''}`,
   });
-  if (_addEscHandler) {
-    _addEscHandler(win);
-  }
-
   // Register the tile window with the window-state machine so it is a possible
   // `front` (focusing tags/search/etc. makes it the command target). The OS
-  // adapter attaches the focus/blur/show/hide/closed listeners — no per-focus
-  // feed needed here anymore.
+  // adapter attaches the focus/blur/show/hide/closed listeners AND the ESC
+  // interceptor — no per-focus feed needed here anymore.
   if (_registerWindow) {
     _registerWindow(win, entry?.role);
   }

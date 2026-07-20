@@ -101,6 +101,21 @@ export interface AppWindowState {
   windows: Map<number, WindowRecord>;
   /** Monotonic source for `WindowRecord.focusSeq`. */
   focusSeqCounter: number;
+  /**
+   * The ONE outstanding renderer escape question (`ASK_RENDERER`), or null when
+   * no answer is awaited. The renderer answer arrives asynchronously (up to the
+   * IPC timeout), so it MUST be judged against the state that asked it, not
+   * whatever state happens to be current when it lands: during the wait the
+   * session can flip, the switcher can open, the window can close, or a newer
+   * Esc can supersede this one — and each of those changes the step-6 policy
+   * outcome. `seq` is the epoch token: an answer whose `seq` does not match the
+   * pending ask is stale and produces NOTHING. Every clause that invalidates the
+   * question clears this field, which is what makes a stale answer inert
+   * (structural, not a timer or a guard flag).
+   */
+  escAsk: { id: number; seq: number } | null;
+  /** Monotonic source for `escAsk.seq`. Never reset while the app runs. */
+  escSeq: number;
 }
 
 export function createInitialState(): AppWindowState {
@@ -111,6 +126,8 @@ export function createInitialState(): AppWindowState {
     switcher: { open: false },
     windows: new Map(),
     focusSeqCounter: 0,
+    escAsk: null,
+    escSeq: 0,
   };
 }
 
@@ -142,7 +159,12 @@ export type WindowEvent =
   | { type: 'OS_FULLSCREEN_LEFT'; id: number }
   | { type: 'FULLSCREEN_SETTLE_TIMEOUT'; id: number }
   | { type: 'ESC_PRESSED'; landedId: number | 'global' }
-  | { type: 'ESC_RENDERER_ANSWER'; id: number; handled: boolean; close?: boolean }
+  /**
+   * The renderer's answer to an `ASK_RENDERER`. `seq` echoes the epoch of the
+   * ask it answers (see `AppWindowState.escAsk`); an answer that does not match
+   * the pending ask is stale and is dropped.
+   */
+  | { type: 'ESC_RENDERER_ANSWER'; id: number; handled: boolean; close?: boolean; seq: number }
   | { type: 'SWITCHER_OPEN_REQUESTED'; windowId?: number }
   | { type: 'SWITCHER_SELECTED'; id: number | null }
   /**
@@ -153,9 +175,7 @@ export type WindowEvent =
    * (`switcher.open → close-switcher`) and the derived Esc-grab predicate fire
    * correctly. It emits NO effect — the window already exists.
    */
-  | { type: 'SWITCHER_OPENED'; windowId: number }
-  /** Mirror-only (staged cutover): the switcher overlay WINDOW closed. Clears switcher state; emits NO effect (izui/main already tore the window down). */
-  | { type: 'SWITCHER_CLOSED' };
+  | { type: 'SWITCHER_OPENED'; windowId: number };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Effects — returned by the reducer, executed by the OS adapter (§2.6). The
@@ -178,8 +198,13 @@ export type Effect =
   | { type: 'RAISE_WINDOW'; id: number }
   /** Make a page-host's content WebContentsView the macOS first responder (the `shouldFocusHybridContentOnHostFocus` invariant, now standard on any front-change to a page-host). */
   | { type: 'FOCUS_CONTENT'; id: number }
-  /** Ask the renderer whether it handled ESC (the `escape-pressed` IPC, unchanged protocol). */
-  | { type: 'ASK_RENDERER'; id: number }
+  /**
+   * Ask the renderer whether it handled ESC (the `escape-pressed` IPC, unchanged
+   * protocol). `seq` is the epoch token the adapter MUST echo back on the
+   * resulting `ESC_RENDERER_ANSWER` so a deferred answer is judged against the
+   * ask that produced it (see `AppWindowState.escAsk`).
+   */
+  | { type: 'ASK_RENDERER'; id: number; seq: number }
   | { type: 'CLOSE_WINDOW'; id: number }
   /** ESC consumed by leaving fullscreen (also drives the leaving fsMode edge + SET_FULLSCREEN in the same reduce). */
   | { type: 'EXIT_FULLSCREEN'; id: number }
@@ -352,6 +377,8 @@ function cloneState(state: AppWindowState): AppWindowState {
     switcher: state.switcher,
     windows: new Map(state.windows),
     focusSeqCounter: state.focusSeqCounter,
+    escAsk: state.escAsk,
+    escSeq: state.escSeq,
   };
 }
 
@@ -545,6 +572,33 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
 
   switch (event.type) {
     case 'WINDOW_REGISTERED': {
+      const existing = state.windows.get(event.id);
+      if (existing) {
+        // RE-registration is a MERGE, never a reset. Two live call sites register
+        // the same BrowserWindow (the tile-launcher hook and the ipc.ts
+        // window-open site), and the later one carries the RICHER spec (real
+        // `modal`/`focusable` → `isSatelliteRegistration`), so the incoming
+        // declared fields must win. What must NOT be reset is everything the
+        // window has since LIVED: rebuilding a fresh record would drop it back to
+        // `visible:false, focusSeq:0, fsMode:normal`, which silently makes an
+        // already-visible focused window front-ineligible → the front invariant
+        // guard throws (dev) or reassigns `front` (production).
+        state.windows.set(event.id, {
+          ...existing,
+          kind: event.kind,
+          role: event.role,
+          escapeMode: event.escapeMode,
+          satellite: event.satellite,
+          lastHttpUrl: event.lastHttpUrl ?? existing.lastHttpUrl,
+        });
+        // If the richer spec turned the CURRENT front into a satellite, hand
+        // `front` to the MRU successor here rather than leave an illegal front
+        // for the guard to trip on.
+        if (state.front === event.id && !isEligibleFront(state.windows.get(event.id))) {
+          state.front = successorFront(state, event.id);
+        }
+        break;
+      }
       const rec: WindowRecord = {
         id: event.id,
         kind: event.kind,
@@ -588,6 +642,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
 
     case 'WINDOW_CLOSED': {
       state.windows.delete(event.id);
+      // A pending renderer question aimed at this window can never be answered
+      // meaningfully — drop it so a late answer is inert.
+      if (state.escAsk && state.escAsk.id === event.id) state.escAsk = null;
       if (state.front === event.id) {
         state.front = successorFront(state);
       }
@@ -628,11 +685,17 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // Mirror the coordinator's session tri-state. Single authority is
       // `izui-state.ts`; the reducer only records what it is told (§3).
       state.session = event.session;
+      // Step 6's policy table is keyed on the session, so a session change
+      // invalidates any question asked under the previous one.
+      state.escAsk = null;
       break;
     }
 
     case 'APP_RESIGNED': {
       state.appActive = false;
+      // Peek is no longer the active app — an outstanding Esc question must not
+      // resolve into a switcher-open after the user left.
+      state.escAsk = null;
       if (state.switcher.open) {
         // Close without focus theft — the user is switching to another app. In
         // the staged cutover the adapter treats this (restoreFocus:false) as a
@@ -678,11 +741,23 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
     }
 
     case 'ESC_PRESSED': {
+      // A newer Esc supersedes any older pending question outright.
+      state.escAsk = null;
       applyEscape(state, effects);
       break;
     }
 
     case 'ESC_RENDERER_ANSWER': {
+      // Epoch check FIRST: an answer that does not match the outstanding ask
+      // (superseded, or invalidated by a session/switcher/close/app-blur change
+      // during the wait) is judged under a policy that no longer applies, so it
+      // is dropped. This is the structural fix for "Esc reopens the switcher
+      // 500ms after closing it".
+      if (state.escAsk == null || event.seq !== state.escAsk.seq) {
+        effects.push({ type: 'NOTHING' });
+        break;
+      }
+      state.escAsk = null;
       if (event.handled) {
         effects.push({ type: 'NOTHING' });
         break;
@@ -717,13 +792,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // the switcher (decideEscape → OPEN_SWITCHER_WINDOW), this fixes up the
       // sentinel windowId to the real overlay id.
       state.switcher = { open: true, windowId: event.windowId, previousFront: state.front };
-      break;
-    }
-
-    case 'SWITCHER_CLOSED': {
-      // Mirror the externally-closed overlay window. Front restoration is owned
-      // by izui/main (and the subsequent OS_FOCUS_GAINED), not this event.
-      state.switcher = { open: false };
+      // With the switcher open, `decideEscape` step 1 owns Esc — an answer asked
+      // before it opened would resolve under the wrong branch.
+      state.escAsk = null;
       break;
     }
   }
@@ -790,7 +861,11 @@ function applyEscape(state: AppWindowState, effects: Effect[]): void {
       return;
     }
     case 'ask-renderer': {
-      effects.push({ type: 'ASK_RENDERER', id: decision.id });
+      // Stamp the question with a fresh epoch so the (deferred) answer can be
+      // matched back to THIS ask — see `AppWindowState.escAsk`.
+      state.escSeq += 1;
+      state.escAsk = { id: decision.id, seq: state.escSeq };
+      effects.push({ type: 'ASK_RENDERER', id: decision.id, seq: state.escSeq });
       return;
     }
   }

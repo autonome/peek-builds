@@ -36,6 +36,12 @@ export interface MachineWindowSpec {
   win: BaseWindow | BrowserWindow;
   /** Content view WC for a page-host, root WC for a browser. */
   contentWC?: WebContents | null;
+  /**
+   * Opt OUT of the adapter-owned `before-input-event` Esc interceptor (browser
+   * windows only, default on). See `RegisterWindowSpec.attachEscHandler` — the
+   * shared chrome overlay is the one caller that passes false.
+   */
+  attachEscHandler?: boolean;
 }
 
 let adapter: WindowOsAdapter | null = null;

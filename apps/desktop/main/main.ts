@@ -35,7 +35,7 @@ import { createRuleEngine, type RuleEngine } from './rule-engine.js';
 import { listRules as rulesList, type RulesDb } from './rules.js';
 import { installDirectSendGuard, installOffPathWindowGuard, unguardedWebContentsSend } from './tile-ipc-gate.js';
 import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHeadless, getProfile, setTilePreloadPath, getTilePreloadPath, DEBUG } from './config.js';
-import { getSystemThemeBackgroundColor, showWindowHeadlessSafe, addEscHandler } from './windows.js';
+import { getSystemThemeBackgroundColor, showWindowHeadlessSafe } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { initWindowStateMachine, registerWindowWithMachine } from './window-state-singleton.js';
@@ -412,10 +412,9 @@ export async function initialize(): Promise<void> {
       win,
       contentWC: win.webContents,
     }),
-    // Wire the ESC before-input interceptor into the tile-launch path so
-    // feature-tile windows dispatch ESC_PRESSED into the machine, matching the
-    // `window-open` IPC path. addEscHandler lives in windows.ts.
-    addEscHandler,
+    // NOTE: no `addEscHandler` hook — the ESC before-input interceptor is
+    // attached by `registerWindowWithMachine` itself now, so registration is the
+    // single owner and a window registered twice can't get two interceptors.
   });
 
   // Install the load-on-dispatch pre-publish hook. Every subsequent

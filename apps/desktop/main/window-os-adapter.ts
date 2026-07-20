@@ -42,6 +42,7 @@ import {
   showWindowHeadlessSafe,
   askWebContentsToHandleEscape,
   closeOrHideWindow,
+  addEscHandler,
 } from './windows.js';
 import {
   WindowStateOwner,
@@ -115,6 +116,22 @@ export interface RegisterWindowSpec {
    * for a browser. Used for `ASK_RENDERER` and (page-host only) `FOCUS_CONTENT`.
    */
   contentWC?: WebContents | null;
+  /**
+   * Whether THIS adapter owns the window's `before-input-event` Esc interceptor
+   * (`windows.ts addEscHandler` → `ESC_PRESSED`). Defaults to true for `browser`
+   * windows — registration is the single owner of the attach, so it can never be
+   * attached twice for one window.
+   *
+   * Ignored for `page-host` windows: a BaseWindow has no root webContents, and
+   * its Esc already rides on the content WebContentsView's `before-input-event`
+   * (`wireHybridContentEvents` in ipc.ts).
+   *
+   * The ONE browser window that opts OUT is the shared chrome overlay
+   * (`hybrid-overlay.ts`): it has never had a main-process Esc interceptor and
+   * handles Escape in its own renderer (closing the address bar), which a
+   * `preventDefault`ing main-side handler would swallow.
+   */
+  attachEscHandler?: boolean;
 }
 
 /**
@@ -160,8 +177,8 @@ export class WindowOsAdapter {
    * outside the native-listener paths this adapter attaches itself: the ESC
    * before-input seam (ipc.ts / windows.ts → `ESC_PRESSED`), the fullscreen
    * command (tile-ipc.ts → `FULLSCREEN_REQUESTED`), the synchronous hide seam
-   * (`WINDOW_HIDDEN`), the switcher mirror (`SWITCHER_OPENED`/`SWITCHER_CLOSED`),
-   * and the session mirror (`SESSION_CHANGED`). Runs the SAME pump every native
+   * (`WINDOW_HIDDEN`), the switcher mirror (`SWITCHER_OPENED`), and the session
+   * mirror (`SESSION_CHANGED`). Runs the SAME pump every native
    * listener does — effects execute, transition log fires, Esc grab reconciles.
    */
   dispatch(event: WindowEvent): void {
@@ -187,18 +204,55 @@ export class WindowOsAdapter {
   }
 
   /**
-   * Dispatch `WINDOW_REGISTERED` and attach the per-window native listeners for
-   * BOTH kinds (§2.6): `focus`, `blur`, `show`, `hide`, `closed`,
-   * `enter-full-screen`, `leave-full-screen`, plus the content-WC `focus` for
-   * page-hosts. Each is a one-line dispatch — the sole exception is `blur`, which
-   * arms the ONE deferred-blur settle instead of dispatching (§4.4).
+   * Dispatch `WINDOW_REGISTERED`, attach the window's Esc interceptor, and attach
+   * the per-window native listeners for BOTH kinds (§2.6): `focus`, `blur`,
+   * `show`, `hide`, `closed`, `enter-full-screen`, `leave-full-screen`, plus the
+   * content-WC `focus` for page-hosts. Each is a one-line dispatch — the sole
+   * exception is `blur`, which arms the ONE deferred-blur settle instead of
+   * dispatching (§4.4).
+   *
+   * IDEMPOTENT per window id, and that is load-bearing: more than one call site
+   * registers the same BrowserWindow (the tile-launcher hook inside
+   * `createTileBrowserWindow`, then the `ipc.ts` window-open site for the same
+   * window). Re-attaching would give one physical Escape TWO `ESC_PRESSED`
+   * dispatches — and the second one, arriving after the switcher already closed,
+   * re-opened it 500ms later in an unbreakable loop. So a repeat registration
+   * MERGES the (richer) spec and returns without touching listeners.
    */
   registerWindow(spec: RegisterWindowSpec): void {
     const { id, kind, role, satellite, escapeMode, lastHttpUrl, win } = spec;
     const rendererWC = spec.contentWC ?? null;
 
+    const existing = this.windows.get(id);
+    if (existing) {
+      // Merge, don't drop: the second registration carries the higher-fidelity
+      // spec (ipc.ts knows the real `options.modal` / `options.focusable`, the
+      // tile-launcher hook only `win.isFocusable()`), so its `satellite` must
+      // win. `WINDOW_REGISTERED` is an idempotent merge in the reducer — it
+      // preserves `visible`/`focusSeq`/`fsMode` — so re-pumping it updates the
+      // declared fields without resetting the window's lived state. No listener
+      // and no Esc handler is attached a second time.
+      existing.win = win;
+      existing.kind = kind;
+      if (spec.contentWC !== undefined) existing.rendererWC = rendererWC;
+      this.pump({ type: 'WINDOW_REGISTERED', id, kind, role, satellite, escapeMode, lastHttpUrl });
+      return;
+    }
+
     this.windows.set(id, { win, kind, rendererWC });
     this.pump({ type: 'WINDOW_REGISTERED', id, kind, role, satellite, escapeMode, lastHttpUrl });
+
+    // The SINGLE owner of the `before-input-event` Esc attach for browser
+    // windows (see `RegisterWindowSpec.attachEscHandler`). Inheriting the
+    // idempotence above is the whole point: there is exactly one attach per
+    // window, so one keypress can only ever produce one `ESC_PRESSED`.
+    if (kind === 'browser' && spec.attachEscHandler !== false) {
+      try {
+        addEscHandler(win as unknown as BrowserWindow);
+      } catch (err) {
+        DEBUG && console.log('[window-state] esc handler attach failed for', id, err);
+      }
+    }
 
     win.on('focus', () => {
       this.cancelBlurSettle();
@@ -315,9 +369,11 @@ export class WindowOsAdapter {
         // The `escape-pressed` IPC, unchanged protocol. The renderer's answer
         // drives `decideEscape` step 6.
         const wc = this.windows.get(effect.id)?.rendererWC;
+        // `effect.seq` is the ask's epoch — echo it back on BOTH answer paths so
+        // the reducer can drop an answer whose question no longer stands.
         if (!wc || wc.isDestroyed()) {
           // No renderer to ask → treat as unhandled so ESC still resolves.
-          this.pump({ type: 'ESC_RENDERER_ANSWER', id: effect.id, handled: false });
+          this.pump({ type: 'ESC_RENDERER_ANSWER', id: effect.id, handled: false, seq: effect.seq });
           return;
         }
         void askWebContentsToHandleEscape(effect.id, wc).then((ans) => {
@@ -326,6 +382,7 @@ export class WindowOsAdapter {
             id: effect.id,
             handled: ans.handled,
             close: ans.close,
+            seq: effect.seq,
           });
         });
         return;

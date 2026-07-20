@@ -385,6 +385,11 @@ function ensureOverlay(): BrowserWindow {
     satellite: true,
     win,
     contentWC: win.webContents,
+    // The overlay owns Escape in its own renderer (dismissing the address bar /
+    // widgets). A main-process `before-input-event` interceptor would
+    // preventDefault the keystroke before the page ever sees it, so the shared
+    // chrome is the one browser window that opts out of the machine's attach.
+    attachEscHandler: false,
   });
 
   overlayWin = win;

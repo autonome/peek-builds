@@ -76,7 +76,6 @@ import {
 } from './thumbnails.js';
 
 import {
-  addEscHandler,
   winDevtoolsConfig,
   closeOrHideWindow,
   getSystemThemeBackgroundColor,
@@ -3630,8 +3629,12 @@ export function registerWindowHandlers(): void {
         }
       });
 
-      // Add escape key handler to all windows
-      addEscHandler(win);
+      // The ESC `before-input-event` interceptor is attached by
+      // `registerWindowWithMachine` above — registration is the single owner of
+      // the attach. Calling `addEscHandler(win)` here as well gave this window
+      // TWO interceptors (a tile window already got one inside
+      // `createTileBrowserWindow`), so one physical Escape produced two
+      // `ESC_PRESSED` dispatches and the switcher reopened itself in a loop.
 
       win.on('focus', () => {
         // Focused-window tracking (front/focusSeq/lastHttpUrl) is owned by the
