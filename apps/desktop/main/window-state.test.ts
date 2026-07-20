@@ -1,7 +1,8 @@
 /**
  * Unit tests for the pure window-state reducer (`window-state.ts`).
  *
- * Blueprint: `docs/design/fullscreen-escape-window-fsm.md` §5. Three layers:
+ * Blueprint: `docs/design/window-manager.md` (the Window Manager mandate).
+ * Three layers:
  *   1. Totality matrix — every state-class (fsMode x switcher x satellite x
  *      escapeMode x role) x every event returns a DEFINED transition, and the
  *      front invariant holds after every one.

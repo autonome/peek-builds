@@ -2,7 +2,7 @@
  * window-state-singleton.ts — the ONE live `WindowOsAdapter` for the desktop
  * app, plus the thin read/dispatch surface the seam consumers use.
  *
- * Blueprint: `docs/design/fullscreen-escape-window-fsm.md`. `window-state.ts` is
+ * Blueprint: `docs/design/window-manager.md`. `window-state.ts` is
  * the pure reducer, `window-os-adapter.ts` is the OS-boundary adapter; THIS
  * module holds the single adapter instance and exposes the machine to the rest
  * of main (ipc.ts / tile-ipc.ts / windows.ts / main.ts / hybrid-overlay.ts /

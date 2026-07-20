@@ -2,8 +2,10 @@
  * window-os-adapter.ts — the OS-boundary adapter for the deterministic window
  * state machine (design §2.6, Unit C).
  *
- * Blueprint: `docs/design/fullscreen-escape-window-fsm.md`. `window-state.ts`
- * is the pure, Electron-free reducer/owner (§2). THIS module is the ONLY file
+ * Blueprint: `docs/design/window-manager.md`. `window-state.ts` is the pure,
+ * platform-free reducer/owner (rule R1). THIS module is the ONE executor
+ * (rule R2) and must become the sole caller of the `WindowBackend` port
+ * (rule R3) — it is still Electron-coupled today. It is the ONLY file
  * that touches native window events + effects for that domain: it normalizes
  * Electron's `focus`/`blur`/`show`/`hide`/`closed`/`enter-full-screen`/
  * `leave-full-screen` (plus the content-WebContents `focus`) into the reducer's

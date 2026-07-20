@@ -2,8 +2,8 @@
  * window-state.ts — the ONE deterministic owner of front-window / fullscreen /
  * switcher / escape state for the desktop app.
  *
- * Blueprint: `docs/design/fullscreen-escape-window-fsm.md`. This module is the
- * pure core of that design (§2): a single `AppWindowState` value mutated ONLY by
+ * Blueprint: `docs/design/window-manager.md`. This module is the ONE owner of
+ * rule R1 in that mandate: a single `AppWindowState` value mutated ONLY by
  * a pure, Electron-free reducer `reduce(state, event) -> { state, effects[] }`.
  * The reducer never touches Electron, never runs a timer, never performs a side
  * effect — it returns `effects[]` that an OS-boundary adapter (a later slice)
