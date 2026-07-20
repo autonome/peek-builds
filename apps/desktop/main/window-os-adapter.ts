@@ -47,6 +47,7 @@ import {
 import {
   WindowStateOwner,
   decideWindowRegistration,
+  isEligibleFront,
   type Effect,
   type StateSnapshot,
   type WindowEvent,
@@ -583,15 +584,25 @@ export class WindowOsAdapter {
   // Transition log (§5.3) — one DEBUG-gated line per transition. The PERMANENT
   // replacement for the ad-hoc fsDiag / [esc] / [focus-tracker] traces (those old
   // traces are deleted in their own seam slices, not here).
-  // Format: `[window-state] EVENT … front a→b mode(id) x→y`.
+  // Format: `[window-state] EVENT id(N) front a→b mode(id) x→y [satellite=.. eligible=..]`.
   // ───────────────────────────────────────────────────────────────────────────
 
   private logTransition(event: WindowEvent, before: StateSnapshot, after: StateSnapshot): void {
     if (!DEBUG) return;
-    let line = `[window-state] ${event.type} front ${fmt(before.front)}→${fmt(after.front)}`;
+    const id = eventWindowId(event);
+    let line = `[window-state] ${event.type}${id == null ? '' : ` id(${id})`} front ${fmt(before.front)}→${fmt(after.front)}`;
     for (const part of modeDeltas(before, after)) line += ` ${part}`;
+    if (event.type === 'OS_FOCUS_GAINED' && id != null) {
+      const rec = after.windows.find((w) => w.id === id);
+      line += ` satellite=${rec?.satellite ?? 'unknown'} eligible=${isEligibleFront(rec)}`;
+    }
     console.log(line);
   }
+}
+
+/** The window id carried by an event, if it carries one (most do via `id`). */
+function eventWindowId(event: WindowEvent): number | null {
+  return 'id' in event && typeof event.id === 'number' ? event.id : null;
 }
 
 /** Render a nullable id for the transition log. */
