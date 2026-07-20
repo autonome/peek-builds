@@ -47,6 +47,12 @@ import {
 import {
   WindowStateOwner,
   decideWindowRegistration,
+  // The derived Esc-grab predicate lives in `window-state.ts`, NOT here, for the
+  // same reason `decideWindowRegistration` does: this module has a value-side
+  // `electron` import, so a test file importing it dies at parse under the unit
+  // gate's `ELECTRON_RUN_AS_NODE=1`. The predicate is pure reducer-state logic, so
+  // it belongs with the reducer where it is testable. This module only EXECUTES it.
+  deriveEscGrabRegistered,
   isEligibleFront,
   type Effect,
   type StateSnapshot,
@@ -89,19 +95,6 @@ interface AdapterWindow {
    * the root WC for a browser window. `null` if the caller supplied none.
    */
   rendererWC: WebContents | null;
-}
-
-/**
- * Derived Escape-grab predicate (§2.4 "Derived — never stored"): the OS-level
- * `globalShortcut('Escape')` grab is registered IFF Peek is active, there is no
- * front window to receive `before-input-event`, and the switcher is closed.
- *
- * Pure and exported so the later grab-seam slice (which deletes main.ts's
- * `shouldRegisterGlobalEscFallback` + its 5 re-evaluation sites) shares ONE
- * definition, and so it is unit-testable in isolation from the OS.
- */
-export function deriveEscGrabRegistered(snap: StateSnapshot): boolean {
-  return snap.appActive && snap.front === null && !snap.switcher.open;
 }
 
 export interface RegisterWindowSpec {

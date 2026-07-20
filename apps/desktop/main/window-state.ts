@@ -97,6 +97,32 @@ export interface AppWindowState {
    * non-satellite record.
    */
   front: number | null;
+  /**
+   * The claim that the OS currently matches `front`.
+   *
+   * READ THIS BEFORE TOUCHING EITHER FIELD. `front` and `frontAsserted` are two
+   * DIFFERENT things, and conflating them is the exact bug this field exists to
+   * prevent:
+   *   - `front` is INTENT — "the window the user is working in". It is a belief
+   *     the machine holds; nothing about it says the OS agrees.
+   *   - `frontAsserted` is whether we have actually DRIVEN the OS to match that
+   *     intent: the window raised, and — for a `page-host` — its content view
+   *     made the macOS first responder.
+   *
+   * "The target didn't change" (`front === prevFront`) does NOT imply "the OS
+   * still matches the target". The deleted `frontChangeEffects` made exactly that
+   * inference — it returned no effects whenever `front` was unchanged — so a
+   * window that lost first responder while REMAINING `front` (app switch away and
+   * back, a palette taking key, the switcher overlay opening) was never restored,
+   * and its `before-input-event` stayed deaf forever (7c61e917 / 7fffa286).
+   *
+   * So: every event that can plausibly have moved OS focus off `front` clears
+   * this flag (see `invalidatesFrontAssertion`), and the closing assertion step in
+   * `reduce` re-drives the OS (`RAISE_WINDOW` [+ `FOCUS_CONTENT`]) whenever it is
+   * false. It is set to `true` ONLY by that step — never by anything that merely
+   * assigns `front`.
+   */
+  frontAsserted: boolean;
   switcher: SwitcherState;
   windows: Map<number, WindowRecord>;
   /** Monotonic source for `WindowRecord.focusSeq`. */
@@ -123,6 +149,9 @@ export function createInitialState(): AppWindowState {
     appActive: true, // at launch Peek IS the active app (mirrors the coordinator)
     session: 'idle',
     front: null,
+    // Nothing has been driven onto the OS yet. With `front: null` the closing
+    // assertion step has nothing to assert; the derived Esc grab covers that gap.
+    frontAsserted: false,
     switcher: { open: false },
     windows: new Map(),
     focusSeqCounter: 0,
@@ -196,7 +225,13 @@ export type Effect =
    */
   | { type: 'CLOSE_SWITCHER_WINDOW'; restoreTarget: number | null; restoreFocus: boolean; switcherWindowId: number | null }
   | { type: 'RAISE_WINDOW'; id: number }
-  /** Make a page-host's content WebContentsView the macOS first responder (the `shouldFocusHybridContentOnHostFocus` invariant, now standard on any front-change to a page-host). */
+  /**
+   * Make a page-host's content WebContentsView the macOS first responder (the
+   * `shouldFocusHybridContentOnHostFocus` invariant). Emitted by the closing
+   * assertion step alongside `RAISE_WINDOW` whenever the front window is a
+   * page-host and the assertion is not currently held — NOT only when `front`
+   * changes (see `AppWindowState.frontAsserted`).
+   */
   | { type: 'FOCUS_CONTENT'; id: number }
   /**
    * Ask the renderer whether it handled ESC (the `escape-pressed` IPC, unchanged
@@ -458,6 +493,7 @@ function cloneState(state: AppWindowState): AppWindowState {
     appActive: state.appActive,
     session: state.session,
     front: state.front,
+    frontAsserted: state.frontAsserted,
     switcher: state.switcher,
     windows: new Map(state.windows),
     focusSeqCounter: state.focusSeqCounter,
@@ -519,15 +555,81 @@ function enforceFrontInvariant(state: AppWindowState, event: WindowEvent): void 
 }
 
 /**
- * Emit FOCUS_CONTENT when `front` changed to a page-host (the first-responder
- * invariant becomes standard on any transition that makes a page-host front).
- * The adapter gates it on headless/appActive; the reducer only declares intent.
+ * Did THIS transition invalidate the claim that the OS matches `front`?
+ *
+ * The ONE place `frontAsserted` is ever cleared (via `applyFrontAssertion`), so
+ * the whole invalidation rule reads as a single list rather than as assignments
+ * scattered through the case arms. Each clause is a moment where the OS can
+ * plausibly have taken the window raise / first responder away from `front`.
+ *
+ * NOT a list of "events that change front" — a change of `front` is only the
+ * FIRST clause. The others all leave `front` exactly where it was, and they are
+ * the whole reason this predicate exists (see `AppWindowState.frontAsserted`).
  */
-function frontChangeEffects(prevFront: number | null, state: AppWindowState): Effect[] {
-  if (state.front == null || state.front === prevFront) return [];
+function invalidatesFrontAssertion(prev: AppWindowState, next: AppWindowState, event: WindowEvent): boolean {
+  // Trivially: the old assertion was about a different window.
+  if (next.front !== prev.front) return true;
+  switch (event.type) {
+    // The user left Peek; on return, first responder is not guaranteed.
+    case 'APP_RESIGNED':
+      return true;
+    // The switcher overlay took key from the front window.
+    case 'SWITCHER_OPENED':
+      return true;
+    // The switcher overlay held key right up to the selection, so whatever the
+    // selection resolves to has to be re-driven onto the OS — including when it
+    // resolves back to the window that was already `front`.
+    case 'SWITCHER_SELECTED':
+      return true;
+    // The asserted window is gone from screen. Judged against the front BEFORE
+    // it moved to a successor, which is the case this clause is here for.
+    case 'WINDOW_HIDDEN':
+      return event.id === prev.front;
+    // A palette / modal / chrome overlay took key. It is a satellite, so `front`
+    // deliberately did NOT move — which is exactly why the assertion has to.
+    case 'OS_FOCUS_GAINED':
+      return next.windows.get(event.id)?.satellite === true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * The closing assertion step (design §2): run after `enforceFrontInvariant` on
+ * EVERY transition. Clear the assertion if this transition invalidated it, then
+ * — if the machine cannot vouch that the OS matches `front` — describe the work
+ * that makes it true and record the claim.
+ *
+ * `RAISE_WINDOW` alone is enough for a `browser` window (its root webContents IS
+ * first responder whenever the window is key); a `page-host` is a BaseWindow
+ * whose keyboard focus is a second, independently-losable piece of state, so it
+ * additionally needs `FOCUS_CONTENT`.
+ *
+ * Two surfaces legitimately hold key at the moment they take it, and re-raising
+ * `front` in the same breath would yank focus straight back out of them — so the
+ * assertion is deferred to the NEXT transition in both cases:
+ *   - the switcher overlay, for as long as it is open;
+ *   - a satellite that just gained OS focus (design §2: "a satellite stealing key
+ *     is self-healing — when it goes away, the next transition re-asserts").
+ */
+function applyFrontAssertion(
+  prev: AppWindowState,
+  state: AppWindowState,
+  event: WindowEvent,
+  effects: Effect[],
+): void {
+  if (invalidatesFrontAssertion(prev, state, event)) state.frontAsserted = false;
+
+  if (state.switcher.open) return;
+  if (event.type === 'OS_FOCUS_GAINED' && state.windows.get(event.id)?.satellite === true) return;
+
+  if (!state.appActive) return;
+  if (state.front == null || state.frontAsserted) return;
   const rec = state.windows.get(state.front);
-  if (rec && rec.kind === 'page-host') return [{ type: 'FOCUS_CONTENT', id: state.front }];
-  return [];
+  if (!rec) return;
+  effects.push({ type: 'RAISE_WINDOW', id: state.front });
+  if (rec.kind === 'page-host') effects.push({ type: 'FOCUS_CONTENT', id: state.front });
+  state.frontAsserted = true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -865,7 +967,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       if (target != null && isEligibleFront(state.windows.get(target))) {
         state.front = target;
         bumpFocusSeq(state, target);
-        effects.push({ type: 'RAISE_WINDOW', id: target });
+        // NO `RAISE_WINDOW` here. `SWITCHER_SELECTED` invalidates the assertion
+        // (see `invalidatesFrontAssertion`), so the closing step raises the
+        // selection — one place emits the raise, for every path, always.
       }
       break;
     }
@@ -884,7 +988,7 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
   }
 
   enforceFrontInvariant(state, event);
-  effects.push(...frontChangeEffects(prevFront, state));
+  applyFrontAssertion(prev, state, event, effects);
   return { state, effects };
 }
 
@@ -1030,6 +1134,8 @@ export interface StateSnapshot {
   appActive: boolean;
   session: IzuiSession;
   front: number | null;
+  /** See `AppWindowState.frontAsserted` — intent vs. asserted-onto-the-OS. */
+  frontAsserted: boolean;
   switcher: SwitcherState;
   windows: WindowRecord[];
 }
@@ -1039,9 +1145,53 @@ export function snapshot(state: AppWindowState): StateSnapshot {
     appActive: state.appActive,
     session: state.session,
     front: state.front,
+    frontAsserted: state.frontAsserted,
     switcher: state.switcher,
     windows: [...state.windows.values()].map((r) => ({ ...r })),
   };
+}
+
+/**
+ * Derived Escape-grab predicate (design §2 "The Escape grab becomes honest"):
+ * whether the OS-level `globalShortcut('Escape')` safety net should be held.
+ *
+ *   appActive && (front === null || !frontAsserted)
+ *
+ * i.e. the net is on exactly when the machine CANNOT VOUCH that some window is
+ * positioned to receive Escape through `before-input-event`.
+ *
+ * The `!frontAsserted` half is the whole point. The previous version was
+ * `appActive && front === null && !switcher.open` — a remembered belief with no
+ * claim about the OS. Since `OS_FOCUS_SETTLED_NULL` deliberately never clears
+ * `front`, a `front` the OS had drifted away from suppressed the net
+ * PERMANENTLY: the front window was not first responder (so its
+ * `before-input-event` was deaf) AND the grab was off (because `front != null`),
+ * so Escape reached nothing at all, ever again (7fffa286). `frontAsserted` is
+ * precisely "we have driven the OS to match `front`", which makes `!frontAsserted`
+ * the honest form of the signal the old live-OS-read version was approximating.
+ *
+ * Reads reducer state ONLY. Widening it back into live Electron/OS reads is
+ * explicitly REJECTED (design §2 / §7): that reintroduces the rival-authority
+ * pattern this machine exists to delete, and papers over a wrong `front` instead
+ * of surfacing it.
+ *
+ * `!switcher.open` is carried over from the old predicate and is NOT redundant:
+ * `SWITCHER_OPENED` clears `frontAsserted` (the overlay legitimately took key),
+ * which would otherwise switch the grab ON for the one surface that handles
+ * Escape in its own renderer. An OS grab pre-empts `before-input-event`, so it
+ * would eat the switcher's own Escape, and a second `ESC_PRESSED` per keypress is
+ * the switcher-reopen loop (7fffa286).
+ *
+ * Lives here rather than next to its executor in `window-os-adapter.ts` for the
+ * same reason `decideWindowRegistration` does — that module's value-side
+ * `electron` import makes it unloadable from a test under the unit gate's
+ * `ELECTRON_RUN_AS_NODE=1`. This file has zero imports, so the predicate is
+ * testable here and nowhere else.
+ */
+export function deriveEscGrabRegistered(snap: StateSnapshot): boolean {
+  if (!snap.appActive) return false;
+  if (snap.switcher.open) return false;
+  return snap.front === null || !snap.frontAsserted;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
