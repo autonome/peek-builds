@@ -584,13 +584,17 @@ export class WindowOsAdapter {
   // Transition log (§5.3) — one DEBUG-gated line per transition. The PERMANENT
   // replacement for the ad-hoc fsDiag / [esc] / [focus-tracker] traces (those old
   // traces are deleted in their own seam slices, not here).
-  // Format: `[window-state] EVENT id(N) front a→b mode(id) x→y [satellite=.. eligible=..]`.
+  // Format: `[window-state] EVENT id(N)|landed(N|global)|switcher(N) front a→b
+  // mode(id) x→y [satellite=.. eligible=..]`. The tag name matches the field the
+  // id came from (`id`, `landedId`, `windowId`) so a grep for e.g. `landed(` is
+  // unambiguous about which field produced the number (§5.3 follow-up).
   // ───────────────────────────────────────────────────────────────────────────
 
   private logTransition(event: WindowEvent, before: StateSnapshot, after: StateSnapshot): void {
     if (!DEBUG) return;
     const id = eventWindowId(event);
-    let line = `[window-state] ${event.type}${id == null ? '' : ` id(${id})`} front ${fmt(before.front)}→${fmt(after.front)}`;
+    const tag = eventWindowIdTag(event);
+    let line = `[window-state] ${event.type}${tag == null ? '' : ` ${tag}`} front ${fmt(before.front)}→${fmt(after.front)}`;
     for (const part of modeDeltas(before, after)) line += ` ${part}`;
     if (event.type === 'OS_FOCUS_GAINED' && id != null) {
       const rec = after.windows.find((w) => w.id === id);
@@ -600,9 +604,25 @@ export class WindowOsAdapter {
   }
 }
 
-/** The window id carried by an event, if it carries one (most do via `id`). */
+/** The window id carried by an event's canonical `id` field, if it has one. */
 function eventWindowId(event: WindowEvent): number | null {
   return 'id' in event && typeof event.id === 'number' ? event.id : null;
+}
+
+/**
+ * The transition-log tag for whichever field carries an event's window id —
+ * `id`, ESC_PRESSED's `landedId` (`number | 'global'`), or the switcher pair's
+ * `windowId`. Distinct tag names so the log stays unambiguous about which
+ * field produced the number (do not collapse these into one `id(N)`).
+ */
+function eventWindowIdTag(event: WindowEvent): string | null {
+  const id = eventWindowId(event);
+  if (id != null) return `id(${id})`;
+  if (event.type === 'ESC_PRESSED') return `landed(${event.landedId})`;
+  if (event.type === 'SWITCHER_OPEN_REQUESTED' || event.type === 'SWITCHER_OPENED') {
+    return event.windowId == null ? null : `switcher(${event.windowId})`;
+  }
+  return null;
 }
 
 /** Render a nullable id for the transition log. */
