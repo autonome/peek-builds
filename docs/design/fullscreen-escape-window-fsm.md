@@ -1,433 +1,255 @@
-# One deterministic window state machine: front-window / fullscreen / Escape / switcher
+# One deterministic owner for window front / focus / Escape / fullscreen
 
-Design blueprint. Status: approved-for-implementation draft (this doc is the spec the
-next session implements from). Directive: "I want ONE deterministic system" — an
-explicit state machine with named states, one transition owner, illegal states
+Design blueprint. Status: **approved direction, not yet implemented.** Supersedes the
+earlier revision of this file, which documented a staged seam (the machine decides,
+`izui-state.ts` executes the switcher overlay lifecycle). That seam is **rejected** — the
+bug this design exists to close lives precisely in it.
+
+Directive: ONE deterministic system. Named states, one transition owner, illegal states
 unrepresentable, no event-listener backdoors.
 
 ---
 
-## 1. Current-state map — what exists, and where it diverges
+## 1. The actual defect: `front` is remembered, never asserted
 
-### 1.1 The scattered state variables
+The reducer in `window-state.ts` holds `front` — the window the user is working in. It is
+a **belief**. Nothing in the system continuously drives the OS to match it, and nothing
+detects when the OS has drifted away from it.
 
-| # | State | Owner today | Writers | Readers |
-|---|---|---|---|---|
-| S1 | `lastFocusedVisibleWindowId` (module `let`) | `ipc.ts` | `trackVisibleWindowFocus`, `trackHybridWindowFocus`, `trackOnWindowFocus` (3 writers, heterogeneous focus events); cleared only by `clearLastFocusedVisibleWindowId` on window close | `resolveFocusedVisibleWindowId` rank 1 (via `tile:window:get-focused-visible-id` in `tile-ipc.ts`), devtools fallback, session-save focused descriptor |
-| S2 | `activeHybridWindowId` | `hybrid-page-host-registry.ts` | single chokepoint `setActiveHybridWindowId`, fed by BaseWindow `focus`/`blur` (+ deferred `decideAfterBlur`), `show`/`hide`, `noteHybridWindowHidden`, close/unregister | overlay retarget (`onActiveHybridWindowChange`), Esc redirect (`resolveHybridEscapeTarget`), close target (`resolveCloseTargetId`), global-Esc predicate, resolver rank 3 |
-| S3 | `nativeFullScreen` + `preFullScreenBounds` (hybrid entries ONLY) | `hybrid-page-host-registry.ts` | `setHybridNativeFullScreen` (driven by `enter-full-screen`/`leave-full-screen` wired in `ipc.ts assembleHybridPageHost`); stash set by `setHybridHostFullScreen` | Esc precedence (`escExitsHybridFullscreen`), presenter bounds (`window-presenter.ts getHybridPresentation`), overlay suppression |
-| S4 | `lastContentWindowId` (module `let`) | `ipc.ts` | `trackContentWindowFocus`, `trackHybridWindowFocus` | `tile:window:devtools` |
-| S5 | Focus-recency ledger | `focus-order.ts` (`noteWindowFocus`/`getFocusOrder`) | the same 3 focus trackers | session save restore-ranking |
-| S6 | `_escGlobalRegistered` + the OS Escape grab | `main.ts updateEscGlobalRegistration` | re-evaluated from 5 listener sites (`browser-window-focus`, `browser-window-blur` deferred, `did-become-active` deferred, `did-resign-active`, `onActiveHybridWindowChange`) | pre-empts every `before-input-event` |
-| S7 | IZUI session/overlay state (`idle/transient/active/overlay`) | `izui-state.ts` coordinator | `setAppFocused`, `enterOverlay`/`exitOverlay`(+`ForAppBlur`), cooldown timers | `escPolicy`, `escUnhandledPolicy`, switcher lifecycle |
-| S8 | Non-hybrid fullscreen | **NOBODY** | raw `win.setFullScreen(!win.isFullScreen())` in `tile-ipc.ts tile:window:fullscreen` | nothing — no listener, no state, no Esc awareness |
+That is survivable for a `BrowserWindow`, because a `BrowserWindow`'s root `webContents`
+IS its first responder whenever the window is key. Keyboard focus is not a separate piece
+of state; getting the window key gets you the keyboard.
 
-### 1.2 The decision points that read them
+It is **not** survivable for a hybrid page host. A page host is a `BaseWindow` with a
+`WebContentsView` child and no root `webContents`. Its keyboard focus is a *second,
+independently-losable* piece of state: which child view is the macOS first responder. A
+page host can be key, visible, and frontmost while its content view is not first
+responder — in which case its `before-input-event` handler in `ipc.ts
+wireHybridContentEvents` is **deaf**, and Escape reaches nothing at all.
 
-- **Target of `fullscreen`/`maximize`/`center`/`tag`:** `features/windows/background.js`
-  → `api.window.getFocusedVisibleWindowId()` → `tile-ipc.ts` builds SEVEN inputs and calls
-  `izui-roles.ts resolveFocusedVisibleWindowId` (tracked-id S1 ranked FIRST, above the
-  better-disciplined S2).
-- **Fullscreen execution:** `tile-ipc.ts tile:window:fullscreen` — TWO routes: hybrid id
-  → `setHybridHostFullScreen` (settle-aware, stateful); any live BrowserWindow → raw
-  `setFullScreen()` (S8, unmanaged).
-- **Escape:** FOUR entry points/deciders: (a) content-WC `before-input-event` in
-  `ipc.ts wireHybridContentEvents` → `windows.ts handleHybridEscape` (redirect via
-  `resolveHybridEscapeTarget`, fullscreen precedence via `escExitsHybridFullscreen`, then
-  `handleEscapeForWindowId`); (b) per-BrowserWindow `addEscHandler` → same core; (c) the
-  OS-level `globalShortcut('Escape')` in `main.ts` whose handler publishes
-  `cmd:execute:windows` DIRECTLY — no fullscreen check, no shared decision; (d) the
-  policy pair `escPolicy`/`escUnhandledPolicy` in `izui-state.ts`.
-- **Close target (cmd+W):** `windows.ts resolveFocusedWindowIdForClose` →
-  `izui-roles.ts resolveCloseTargetId` (S2 + overlay-id provider).
-- **Global-Esc registration predicate:** `izui-roles.ts shouldRegisterGlobalEscFallback`
-  (appActive, `getFocusedWindow()!==null`, S2 non-null).
+Every bug in this family is that same wound:
 
-### 1.3 Where they diverge — the illegal/ambiguous combinations
-
-These are the observed bug mechanics; each is a combination the current model can
-represent but should not be able to:
-
-1. **S1 ≠ real front window.** S1 is last-writer-wins with no arbitration and is
-   cleared only on CLOSE. A transient settings focus (Space-switch churn, restore
-   dance) writes S1 = settings and nothing ever corrects it → `fullscreen` acts on the
-   SETTINGS window. S2 has arbitration (satellite/overlay focus-group, deferred blur);
-   S1 does not — yet the resolver ranks S1 first.
-2. **S2 momentarily null while a host is visibly front.** Live trace
-   (`/tmp/peek-fullscreen-diag.log`): `activeHybridWindowId=null` right after the host
-   came forward; corrected ~3 s later. During that window every S2 reader (Esc redirect,
-   close target, global-Esc predicate) sees "no hybrid window".
-3. **Global Esc grab live while a window is fullscreen-front.** The predicate reads S2;
-   Space-switch blur churn (or divergence #2) nulls S2 with no focused BrowserWindow
-   → `shouldRegisterGlobalEscFallback` true → OS grab registers → grab PRE-EMPTS
-   `before-input-event`, and its handler opens the switcher unconditionally. This is
-   the just-failed-live path: target resolution was CORRECT (host 7, hybrid branch)
-   and Esc still opened the switcher — the grab (or the `escUnhandledPolicy` fallthrough
-   on a host whose S3 hadn't settled) fired without ever consulting fullscreen state.
-   Four Esc deciders, four different state reads → whichever fires first wins.
-4. **Fullscreen invisible for non-hybrid windows (S8).** A fullscreened settings window
-   has NO state anywhere: Esc on it runs role `workspace` → `escPolicy` 'nothing' →
-   `escUnhandledPolicy` 'open-switcher' — switcher over a fullscreen window, by design
-   of the current model. Session-save also persists its fullscreen bounds (the
-   lookalike trap fixed for hybrids by `aa34cb50` has no non-hybrid equivalent).
-5. **"fullscreen flag set but window not in a fullscreen Space" (and inverse).** S3 is
-   only as good as the settle events arriving; `setHybridHostFullScreen` times out after
-   1.5 s and resolves WITHOUT reconciling S3 against reality. Nothing self-corrects.
-6. **Esc semantics split-brained during the ask-renderer await.** `handleEscapeForWindowId`
-   awaits the renderer up to 500 ms; state (S2, S3, overlay cooldowns) can change
-   underneath, and the post-await decision re-reads the world.
-
-The pattern: four+ independent stores, each with its own writers, each reader picking
-its own precedence. Every fix so far (`c4a73259`, `ebb10894`, `9d50ea29`, `7c61e917`)
-added one more pure predicate reconciling two of them at one seam — correct in
-isolation, and the cluster re-breaks at the next unreconciled seam.
-
----
-
-## 2. The proposed ONE system
-
-### 2.1 Owner
-
-New module **`apps/desktop/main/window-state.ts`** — the single owner of all
-front/fullscreen/switcher/escape state. Structure:
-
-- an `AppWindowState` value (below) held privately;
-- ONE `dispatch(event)` entry — the only mutator; internally a **pure reducer**
-  `reduce(state, event) → { state, effects[] }` (unit-testable, Electron-free);
-- read-only selectors (`getFrontWindowId`, `getWindowMode`, `snapshot()` for tests);
-- `subscribe(listener)` fired on actual transitions (replaces
-  `onActiveHybridWindowChange`);
-- effects are returned by the reducer and executed by the OS adapter (§2.6) — the
-  reducer never touches Electron.
-
-`izui-state.ts`'s coordinator stays for session semantics (`idle/transient/active`)
-but its `overlay` responsibilities move here; see §3.
-
-### 2.2 State shape — illegal states unrepresentable
-
-```ts
-type WindowKind = 'page-host' /* BaseWindow + WebContentsView */ | 'browser';
-
-// Fullscreen is a MODE with explicit async edges, not a boolean.
-// preFullScreenBounds lives INSIDE the non-normal variants: it cannot exist for a
-// normal window, and a fullscreen window cannot lack the concept (null = OS-initiated
-// entry where no stash was possible). This encodes the aa34cb50 lookalike fix
-// structurally.
-type FsMode =
-  | { name: 'normal' }
-  | { name: 'entering-fullscreen'; preBounds: Rectangle | null; pendingDesire?: boolean }
-  | { name: 'fullscreen';          preBounds: Rectangle | null }
-  | { name: 'leaving-fullscreen';  preBounds: Rectangle | null; pendingDesire?: boolean };
-
-interface WindowRecord {
-  id: number;
-  kind: WindowKind;
-  role: string;                 // existing izui role vocabulary
-  escapeMode?: 'auto' | 'close' | 'navigate' | 'ignore';
-  // Satellite = a surface that can hold OS focus but is never "the window the user
-  // is working in": the shared chrome overlay, the command palette / modal dialogs,
-  // the switcher overlay, HUD. Generalizes the registry's overlay focus-group AND
-  // the resolver's modal exclusion into one declared property, set at registration.
-  satellite: boolean;
-  visible: boolean;
-  fsMode: FsMode;
-  focusSeq: number;             // MRU counter (absorbs focus-order.ts)
-  lastHttpUrl?: string;         // absorbs lastContentWindowId (devtools)
-}
-
-interface AppWindowState {
-  appActive: boolean;
-  // THE target. Replaces S1 + S2 as separate truths. Invariant (asserted after every
-  // transition, self-corrected in prod / thrown in dev+test): front is null or refers
-  // to a live, visible, non-satellite record.
-  front: number | null;
-  switcher:
-    | { open: false }
-    | { open: true; windowId: number; previousFront: number | null };
-  windows: Map<number, WindowRecord>;
-}
-```
-
-Notes:
-- There is deliberately NO "tracker" separate from `front`. Session-save's focused
-  descriptor, command targeting, overlay retarget, close target, and the Esc target
-  are all reads of `front`.
-- Multiple windows may each be `fsMode:'fullscreen'` (separate macOS Spaces) — legal.
-- `switcher.open` implies `windows` contains `switcher.windowId` with role `overlay`;
-  `previousFront` is the restore target (absorbs the coordinator's
-  `preOverlayFocusTarget`/`overlayFocusTarget`).
-
-### 2.3 Events (the complete input alphabet)
-
-Normalized by the OS adapter — no other module attaches native listeners.
-
-| Event | Source (adapter) |
+| peek item | Surface symptom |
 |---|---|
-| `WINDOW_REGISTERED {id, kind, role, satellite, escapeMode}` | window-open paths (both kinds) |
-| `WINDOW_SHOWN {id, focused}` / `WINDOW_HIDDEN {id}` / `WINDOW_CLOSED {id}` | show/hide/close seams + native `show`/`hide`/`closed` safety net |
-| `OS_FOCUS_GAINED {id}` | BrowserWindow `focus`, BaseWindow `focus`, content-WC `focus` — all three collapse here |
-| `OS_FOCUS_SETTLED_NULL` | the ONE deferred-blur settle (adapter, §4) concluded focus left all Peek windows |
-| `APP_ACTIVATED` / `APP_RESIGNED` | `did-become-active` / `did-resign-active` |
-| `FULLSCREEN_REQUESTED {id?, desired?}` | `tile:window:fullscreen`, green button intent, Esc exit, teardown exits; `id` defaults to `front` |
-| `OS_FULLSCREEN_ENTERED {id}` / `OS_FULLSCREEN_LEFT {id}` | native `enter-full-screen` / `leave-full-screen`, wired for BOTH kinds at registration (closes S8) |
-| `FULLSCREEN_SETTLE_TIMEOUT {id}` | adapter's bounded timer (1.5 s, as today) |
-| `ESC_PRESSED {landedId \| 'global'}` | `before-input-event` (both kinds) AND the global grab handler — same event |
-| `ESC_RENDERER_ANSWER {id, handled, close}` | reply to the ask-renderer effect |
-| `SWITCHER_OPEN_REQUESTED` / `SWITCHER_SELECTED {id \| null}` | `cmd:execute:windows`, switcher UI |
+| `ebb10894` | Escape opened the switcher instead of closing a focused slide |
+| `7c61e917` | Focused page host where Escape (and every key) is dead until you click the page |
+| `9d50ea29` | Cmd+W closed only the chrome overlay, leaving the page visible |
+| `ca4ee5e6` | Cmd+W no-op'd entirely with a hybrid host frontmost |
+| `7fffa286` (this one) | Third Escape does nothing, ever again, for that page host |
 
-### 2.4 Transition table (decision-dense core)
+The pre-cutover code carried two ad-hoc safety nets for this, and the cutover deleted both:
 
-**Front arbitration** (kills divergences #1 and #2):
+1. **Unconditional first-responder restore.** `ipc.ts onHybridHostFocus` used to call
+   `contentWC.focus()` on every host focus (the `7c61e917` fix). It was replaced by a
+   `FOCUS_CONTENT` effect emitted only from `window-state.ts frontChangeEffects`, which
+   returns `[]` when `state.front === prevFront`. A host that re-gains OS focus without
+   moving `front` now gets no restore.
+2. **The global Escape grab.** `main.ts updateEscGlobalRegistration` computed its predicate
+   from LIVE OS reads at five sites. It was replaced by `window-os-adapter.ts
+   deriveEscGrabRegistered` = `appActive && front === null && !switcher.open` — a
+   remembered belief. Since `OS_FOCUS_SETTLED_NULL` deliberately never clears `front`, a
+   wrong `front` suppresses the safety net permanently.
 
-- `OS_FOCUS_GAINED(id)`:
-  - `windows[id].satellite` → **no front change** (bumps `focusSeq` only). The chrome
-    overlay, palette, dialogs and switcher can never clobber the target. This replaces
-    `decideAfterBlur`'s overlay focus-group AND the resolver's modal exclusion.
-  - any window `entering-`/`leaving-fullscreen` → **ignored for front** ("transition
-    pin"): the macOS Space switch focuses random windows mid-animation; front stays
-    pinned to the transitioning window until it settles. This is what makes the
-    settings-clobber impossible.
-  - else → `front = id`, bump `focusSeq`.
-- `FULLSCREEN_REQUESTED(id)` → `front = id` (making a window fullscreen makes it the
-  target) then the fsMode edge below.
-- `OS_FOCUS_SETTLED_NULL` → front UNCHANGED (the target must survive an app switch;
-  it is corrected only by hide/close/next-focus). `appActive` handles "is Peek front".
-- `WINDOW_HIDDEN`/`WINDOW_CLOSED(id)`: record updated/removed; if `id === front`,
-  `front =` highest-`focusSeq` visible non-satellite window, else null. (No more
-  "cleared only on close, stale forever" — hide corrects too, and there is always a
-  deterministic successor.)
-- `WINDOW_SHOWN(id, focused)`: `focused` → as `OS_FOCUS_GAINED`; non-satellite shown
-  while `front === null` → seed `front = id` (covers the restore/`show:false` case the
-  old resolver's ranks 4–5 patched).
+Both deletions were *correct in direction* — they removed rival authorities. The mistake
+was deleting the nets without giving the machine the one capability that made them
+unnecessary: **the machine must assert `front` onto the OS, not merely remember it.**
 
-**Fullscreen** (per-window `fsMode`; total over every (mode × event) pair):
+---
 
-| From \ Event | `FULLSCREEN_REQUESTED` (toggle/desired) | `OS_FULLSCREEN_ENTERED` | `OS_FULLSCREEN_LEFT` | `FULLSCREEN_SETTLE_TIMEOUT` |
-|---|---|---|---|---|
-| `normal` | → `entering` (stash `preBounds = getBounds()` via effect-captured value); effect `setFullScreen(true)` | → `fullscreen` (`preBounds:null` — OS/green-button initiated) | no-op | n/a |
-| `entering` | record `pendingDesire` (coalesce; no second `setFullScreen` mid-animation) | → `fullscreen` (keep stash); then if `pendingDesire===false` re-dispatch request | → `normal` (aborted by OS) | effect `reconcile(id)` (§2.6) |
-| `fullscreen` | → `leaving`; effect `setFullScreen(false)` | no-op | → `normal` (clear stash; OS/green-button initiated leave) | n/a |
-| `leaving` | record `pendingDesire` | → `fullscreen` (OS won) | → `normal` (clear stash); then honor `pendingDesire===true` | effect `reconcile(id)` |
+## 2. The model: intent plus assertion
 
-`setFullScreen` is called in EXACTLY ONE place (the adapter executing these effects)
-for BOTH window kinds — the raw route in `tile-ipc.ts` is deleted. The settle-await
-that callers like tests want is `waitForMode(id, mode)` on the machine, not a promise
-inside the mutator.
+Two fields, with distinct meanings that must never be conflated.
 
-**Escape — one total decision.** `ESC_PRESSED` runs `decideEscape` inside the reducer;
-BOTH the `before-input-event` path and the global grab dispatch the same event, so a
-stale grab is harmless (defense by shared decision, not by registration timing):
+- **`front: number | null`** — the *intent*. The window the user is working in. Unchanged
+  from today.
+- **`frontAsserted: boolean`** — the *claim that the OS currently matches that intent*: the
+  window is raised, and if it is a page host, its content view is first responder.
+
+The reducer gains one closing step, applied after every transition, alongside the existing
+`enforceFrontInvariant`:
 
 ```
-decideEscape(state):
-  1. state.switcher.open                → CLOSE_SWITCHER (restore previousFront)
-  2. t = state.front; t == null         → OPEN_SWITCHER   (the old global-fallback case)
-  3. windows[t].escapeMode == 'ignore'  → PASS_THROUGH
-  4. windows[t].fsMode.name != 'normal' → EXIT_FULLSCREEN(t)   // entering/full/leaving all exit
-  5. → effect ASK_RENDERER(t); on ESC_RENDERER_ANSWER{handled:true} → done
-  6. role × session policy table (absorbs escPolicy + escUnhandledPolicy verbatim)
-       → CLOSE_WINDOW(t) | OPEN_SWITCHER | NOTHING
+if (appActive && front != null && !frontAsserted) {
+    emit RAISE_WINDOW(front)
+    emit FOCUS_CONTENT(front)   // page-host only
+    frontAsserted = true
+}
 ```
 
-Key properties: step 4 precedes EVERY switcher outcome in EVERY entry path, making
-the live failure (switcher over fullscreen) structurally impossible; the target is
-always `front` — `landedId` is treated as first-responder noise (generalizing
-`resolveHybridEscapeTarget`'s redirect: the landed WC is only used as the reply
-channel when `landedId === front`). The overlay-exit cooldown collapses into the
-switcher state: an Esc that closed the switcher consumed itself (steps run once per
-event), so the 300 ms cooldown timer in the coordinator and in `escGlobalHandler`
-is deleted, not ported.
+And a set of events that **invalidate** the assertion, because each is a moment where the
+OS can plausibly have taken first responder away:
 
-**Switcher:** `SWITCHER_OPEN_REQUESTED` → `switcher = {open, windowId, previousFront: front}`
-+ effect open-overlay-window (the existing windows-feature tile still renders it);
-`SWITCHER_SELECTED(id|null)` → `switcher = {open:false}`, `front = id ?? previousFront`
-+ effects raise/activate. `APP_RESIGNED` while open → close without focus theft
-(today's `exitOverlayForAppBlur`).
+| Event | Why it invalidates |
+|---|---|
+| `APP_RESIGNED` | The user left Peek; on return, first responder is not guaranteed |
+| `WINDOW_HIDDEN` where `id === front` | The asserted window is gone from screen |
+| `SWITCHER_OPENED` | The overlay took key from the front window |
+| `OS_FOCUS_GAINED` on a satellite | A palette / modal / chrome overlay took key |
+| `front` changes to a different id | Trivially, the old assertion is about a different window |
 
-**Derived (never stored):**
-- Global Esc grab: registered ⇔ `appActive && front === null && !switcher.open`.
-  A subscriber (in the adapter) reconciles the OS registration to this predicate on
-  every transition — replacing 5 listener call sites; the handler dispatches
-  `ESC_PRESSED{'global'}` (never publishes `cmd:execute:windows` directly).
-- Command target: `getFrontWindowId()` — replaces `resolveFocusedVisibleWindowId` and
-  its 7 inputs.
-- Close target (cmd+W): `front` — replaces `resolveCloseTargetId` (satellite rule
-  already excludes the chrome overlay).
-- Overlay chrome retarget: `subscribe` on front+visibility — replaces
-  `onActiveHybridWindowChange`.
-- Session-save: focused descriptor = `front`; restore ranking = `focusSeq`;
-  persistable bounds = `fsMode.preBounds ?? getBounds()` (now for both kinds).
-- Devtools target = `lastHttpUrl`-bearing record with highest `focusSeq`.
+`frontChangeEffects` and its `front === prevFront` early-out are **deleted**. That early-out
+is the literal bug: it conflates "the target didn't change" with "the OS still matches the
+target", which is exactly the conflation `7c61e917` proved fatal.
 
-### 2.5 Self-correction (illegal states that OS async could still produce)
+### What this derives for free
 
-- Front invariant checked after every transition; violation self-corrects to the MRU
-  successor (and throws in dev/test so the reducer bug is caught, not papered).
-- `reconcile(id)` effect (only on settle-timeout and on `APP_ACTIVATED`): the adapter
-  reads actual `isFullScreen()` ONCE and dispatches the matching
-  `OS_FULLSCREEN_ENTERED/LEFT`, snapping `fsMode` to reality. This is the single
-  sanctioned OS poll; no other code may read `isFullScreen()` for state.
+Each of these was previously going to be a hand-added special case. Under the assertion
+model they all fall out of the single closing step:
 
-### 2.6 The OS boundary adapter
+- **Switcher dismiss re-raises the restore target.** `applyEscape` case `'close-switcher'`
+  needs no `RAISE_WINDOW` of its own; `SWITCHER_OPENED` cleared the assertion, so closing
+  re-asserts. This also removes the asymmetry with `SWITCHER_SELECTED`, which today is the
+  only path that emits `RAISE_WINDOW`.
+- **Return-from-app-switch restores first responder.** `APP_RESIGNED` cleared it;
+  `APP_ACTIVATED` re-asserts. This is the "app resigned, came back, Escape still dead" case.
+- **A satellite stealing key is self-healing.** When it goes away, the next transition
+  re-asserts the real front.
 
-New module **`apps/desktop/main/window-os-adapter.ts`** — the ONLY file that touches
-native window events/effects for this domain:
+### The Escape grab becomes honest
 
-- attaches, at `WINDOW_REGISTERED` time for BOTH kinds: `focus`, `blur`, `show`,
-  `hide`, `closed`, `enter-full-screen`, `leave-full-screen` (+ content-WC `focus`
-  for page-hosts), each a one-line `dispatch(...)`;
-- owns the ONE deferred-blur settle (§4) that emits `OS_FOCUS_SETTLED_NULL`;
-- executes effects: `setFullScreen`, show/raise/activate + `contentWC.focus()`
-  (the first-responder invariant from `shouldFocusHybridContentOnHostFocus` becomes
-  the standard effect on any transition that makes a page-host front), grab
-  register/unregister, ASK_RENDERER (`escape-pressed` IPC, unchanged protocol),
-  open/close switcher window.
+```
+deriveEscGrabRegistered = appActive && (front === null || !frontAsserted)
+```
+
+The safety net returns, but expressed as **reducer state** rather than a live OS read. It
+is on exactly when the machine cannot vouch that some window is positioned to receive
+Escape — which is the true precondition, and the one the old live-read version was
+approximating. Widening it back into live OS reads is explicitly **rejected**: that
+reintroduces the rival-authority pattern this design exists to delete, and papers over a
+wrong `front` instead of surfacing it.
 
 ---
 
-## 3. Migration / deletion plan — old paths GONE, not dual-run
+## 3. One decider is not enough — the two rules
 
-Implementation lands as one stack: introduce `window-state.ts` + adapter with the
-reducer fully unit-tested FIRST, then cut consumers over seam by seam, deleting each
-old path in the same commit that reroutes it. Grep for every symbol below before
-calling it done.
+An assertion model is only sound if the assertion cannot be silently falsified. If any code
+outside the machine moves OS focus, `frontAsserted` becomes a lie the moment it is set, and
+we have rebuilt the exact failure mode of `deriveEscGrabRegistered`.
 
-**DELETE (folded into the machine):**
+So the design is two rules, and the second is the load-bearing one:
 
-- `ipc.ts`: `lastFocusedVisibleWindowId`, `lastContentWindowId`,
-  `trackVisibleWindowFocus`, `trackContentWindowFocus`, `trackOnWindowFocus`,
-  `trackHybridWindowFocus`, `clearLastFocusedVisibleWindowId`,
-  `clearLastContentWindowId`, `getLastFocusedVisibleWindowId`,
-  `getLastContentWindowId`, the `onHybridHostFocus` tracker feed + the
-  `enter/leave-full-screen` wiring in `assembleHybridPageHost` (adapter owns them).
-- `hybrid-page-host-registry.ts`: `activeHybridWindowId`, `setActiveHybridWindowId`,
-  `getActiveHybridWindowId`, `onActiveHybridWindowChange`, `decideAfterBlur`,
-  `pendingBlurChecks`, `anyHybridContentFocused`, `setOverlayFocusProvider`,
-  `noteHybridWindowHidden` (active-clearing half; the chrome-hide intent becomes
-  `WINDOW_HIDDEN`), entry fields `nativeFullScreen`/`preFullScreenBounds`,
-  `setHybridNativeFullScreen`, `setHybridHostFullScreen` (its settle-aware pattern IS
-  the machine's fullscreen table, generalized to both kinds). The registry shrinks to
-  what it is well-suited for: object ownership (baseWin/contentWC/key/deferredLoad/
-  maximize) — no focus/fullscreen state.
-- `izui-roles.ts`: `resolveFocusedVisibleWindowId`, `resolveHybridEscapeTarget`,
-  `escExitsHybridFullscreen`, `shouldRegisterGlobalEscFallback`,
-  `resolveCloseTargetId`, `shouldFocusHybridContentOnHostFocus` — each becomes a
-  clause of the reducer/`decideEscape`; port their unit tests to reducer tests so no
-  covered regression is dropped.
-- `izui-state.ts`: `escPolicy`, `escUnhandledPolicy` (absorbed as `decideEscape`
-  step 6), `enterOverlay`/`exitOverlay`/`exitOverlayForAppBlur` overlay bookkeeping +
-  both overlay cooldowns (replaced by switcher state; the hide/restore of other
-  windows becomes machine effects). Coordinator keeps only session
-  `idle/transient/active` + `setAppFocused` mirroring `appActive`.
-- `windows.ts`: `handleHybridEscape`, `handleEscapeForWindow`,
-  `handleEscapeForWindowId`, `addEscHandler`'s decision half (the
-  `before-input-event` attach moves to the adapter; debounce stays there as input
-  hygiene), `resolveFocusedWindowIdForClose` (becomes `front` read).
-- `main.ts`: `updateEscGlobalRegistration`, `escGlobalHandler`,
-  `_escGlobalRegistered`, and the five re-evaluation call sites; the
-  `did-become/resign-active` handlers keep their HUD/overlay chores but dispatch
-  `APP_ACTIVATED/RESIGNED` instead of poking Esc registration.
-- `tile-ipc.ts`: `tile:window:fullscreen` BOTH branches → `dispatch(FULLSCREEN_REQUESTED)`
-  (deletes the raw `win.setFullScreen()` route — S8); `tile:window:get-focused-visible-id`
-  body → `getFrontWindowId()`; `tile:window:devtools` fallback → machine selector;
-  all `fsDiag` tracing (replaced by the machine's transition log).
-- `focus-order.ts` (whole module): `focusSeq` in the record replaces it;
-  `window-registry.ts`/`session.ts` consumers read the machine.
-- `features/windows/background.js`: unchanged API surface; the fire-and-forget
-  dispatch comment (palette-spinner fix `d18e9aef`) remains valid — `FULLSCREEN_REQUESTED`
-  returns immediately by construction.
+> **Rule 1 — one decider.** All decisions about front, focus, Escape routing, and
+> fullscreen come from `reduce()` in `window-state.ts`, which emits effects. Largely built.
+>
+> **Rule 2 — one executor.** No code outside `WindowOsAdapter.runEffect` may call
+> `focus()`, `show()`, `moveTop()`, `showHybridHost()`, or `contentWC.focus()`. Code that
+> wants focus to move **dispatches an event** and lets the reducer decide.
 
-**KEEP (genuine OS shims, one per boundary):**
+Rule 2 is enforceable by grep, which is the property worth having — it does not depend on
+anyone remembering this document.
 
-- `hybrid-overlay.ts` `fullscreenable: false` + follow-suppression while host
-  fullscreen (`0687a1f5`) — hard AppKit boundary (black-tile promotion), lowest layer.
-- `showHybridHost`/`hybridShowIntent` (`windows.ts`) — show/activation intent; the
-  adapter calls it as an effect.
-- `window-presenter.ts` — reads `fsMode.preBounds` from the machine instead of the
-  registry entry; otherwise unchanged.
-
-**SUPERSEDED commits in the current stack** (next agent: collapse these — their
-mechanisms are absorbed, their regression tests port to reducer tests):
-
-- `c4a73259` Esc-exits-fullscreen precedence → `decideEscape` step 4.
-- `aa34cb50` fullscreen-lookalike session-save fix → `preBounds` inside `FsMode`.
-- `0687a1f5` overlay-out-of-fullscreen → KEPT as-is (OS shim).
-- `d18e9aef` palette release before Space switch → behavior preserved by construction.
-- `5b363f17` debug-list-windows `nativeFullScreen` → re-point to machine snapshot.
-- `066e210f`, `7d232a11` DEBUG traces (`[fs-target]`/`[fs-toggle]`/Esc decision) →
-  DELETE; the machine's transition log replaces them.
-- Earlier landed fixes absorbed the same way: `efde7394` (single hybrid fullscreen
-  owner → generalized), `ebb10894` (`shouldRegisterGlobalEscFallback` → derived grab),
-  `9d50ea29` (`resolveCloseTargetId` → front), `7c61e917`
-  (`shouldFocusHybridContentOnHostFocus` → standard front-change effect),
-  `8e5c3174` transient-sibling autoclose (stays, but triggered from the machine's
-  front-change subscription instead of raw focus handlers).
+The z-order-only calls (`moveTop` used purely for stacking, never for key) are the one
+carve-out, and they must be named as such at the call site.
 
 ---
 
-## 4. macOS boundary constraints the design must respect
+## 4. Inventory: every OS focus assertion, and its disposition
 
-1. **Native fullscreen is async (~600 ms) and Space-switching.** Only
-   `enter/leave-full-screen` mark completion; `isFullScreen()` flips mid-animation.
-   → Modeled as explicit `entering/leaving` states; the settle events are the only
-   edges into `fullscreen`/`normal`; the transition PIN ignores focus churn while a
-   transition is in flight (this is the fix for the observed S2-null lag and the
-   settings-clobber). Bounded timeout → `reconcile`, never a blind resolve.
-2. **`globalShortcut` pre-empts `before-input-event`.** Any OS grab that exists will
-   eat the key first. → Exactly one grab, derived from machine state, whose handler
-   dispatches into the SAME `decideEscape` — correctness no longer depends on
-   registration racing focus events.
-3. **BaseWindow focus quirks:** `BrowserWindow.getFocusedWindow()` is null for a
-   page-host, and non-null-but-wrong when the chrome overlay holds focus; BaseWindows
-   don't fire `browser-window-focus`. → No consumer reads `getFocusedWindow()`;
-   the adapter normalizes both kinds into `OS_FOCUS_GAINED`, and satellites are
-   declared, not inferred.
-4. **Blur→focus event ordering:** Electron fires old-window `blur` before new-window
-   `focus`, so "focus left Peek" is only knowable one tick later. → The ONE
-   deferred-blur settle lives in the adapter (commented as this boundary), emitting
-   `OS_FOCUS_SETTLED_NULL`; the reducer itself has no timers. This is the single
-   necessary shim on the focus path — the per-registry `decideAfterBlur` copy is
-   deleted, not joined.
-5. **First responder is unobservable headless**, and headless must never steal focus.
-   → All decisions are pure reducer clauses (testable headless); focus side effects
-   run only in the adapter, gated on `isHeadless()` exactly as `hybridShowIntent`
-   does today.
+Surveyed across `apps/desktop/main/`. Roughly thirty sites; four dispositions.
 
----
+### 4.1 Route through the reducer (delete the direct call)
 
-## 5. Verification strategy
+| Site | Today | Becomes |
+|---|---|---|
+| `main.ts` `browser-window-created` → `window.on('closed')` — `parentWin.focus()` | Focus parent after a child closes | `WINDOW_CLOSED` already runs `successorFront`; delete. Parent-preference, if wanted, belongs in `successorFront` |
+| same listener — overlay explicit-selection restore (`targetWin.focus()` / `hybrid.baseWin.focus()`) | Focus switcher-selected window after teardown | Dispatch `SWITCHER_SELECTED`, which finally becomes reachable |
+| same listener — fallback overlay branch (`overlayFocusTarget` / `getPreOverlayFocusTarget`) | Focus restore on dismiss | `switcher.previousFront` already holds this; delete |
+| `ipc.ts` window-open — hybrid keepLive reuse (`show()`+`focus()`+`contentWC.focus()`) | Raise an existing host on key reuse | Dispatch a raise-intent event |
+| `ipc.ts` window-open — hybrid URL-dedup reuse | same | same |
+| `ipc.ts` window-open — BrowserWindow keepLive reuse | same | same |
+| `ipc.ts` window-open — BrowserWindow URL-dedup reuse | same | same |
+| `session.ts reassertColdStartFocusOnce` | One-shot cold-start re-raise | Set `front` at restore; the assertion step does the raise |
+| `session.ts restoreSessionSnapshot` focus block | Activate the saved focused descriptor | same |
+| `tile-ipc.ts` `tile:window:focus` / `:show` / `:show-self` | Renderer asks to focus/show | Dispatch; reducer decides |
+| `chrome-extensions.ts openChromeExtensionPage` | Reuse-raise an extension window | Dispatch a raise-intent event |
+| `windows.ts` + `ipc.ts` `devtools-opened` handlers | Restore first responder after devtools steals it | Invalidate the assertion; the closing step re-asserts |
+| `hybrid-overlay.ts wireShowNavbarFocus` | Overlay takes key for Cmd+L | Dispatch; this is a satellite deliberately taking key, and the reducer must know so it clears `frontAsserted` |
 
-1. **Pure-reducer unit suite** (`window-state.test.ts`, runner 1): totality check —
-   every (state-class × event) pair returns a defined transition (exhaustive matrix
-   over `fsMode × switcher × satellite × escapeMode × role`); invariant check after
-   every transition (front validity); regression ports of every superseded predicate
-   test (`izui-roles.test.ts`, `focused-window-tracking.test.ts`,
-   `hybrid-page-host-registry.test.ts` active-id/fullscreen suites).
-2. **Scenario replays as event scripts.** Each historical bug becomes a literal event
-   sequence asserted against the reducer: the Space-switch settings clobber; the
-   S2-null lag; grab-alive-during-fullscreen → `ESC_PRESSED('global')` must yield
-   `EXIT_FULLSCREEN`; switcher-over-fullscreen; the palette-issuer exclusion;
-   OS-initiated (green button) fullscreen on a settings window.
-3. **Transition log.** The owner logs one line per transition
-   (`[window-state] EVENT … front a→b mode(id) x→y`), DEBUG-gated — the permanent
-   replacement for the ad-hoc `fsDiag`/`[esc]`/`[focus-tracker]` traces, so the next
-   live repro needs zero instrumentation.
-4. **Playwright via the existing hybrid test bridge:** a `snapshot()` test hook;
-   re-point the disruptive fullscreen spec (which already drives
-   `setHybridHostFullScreen` via the bridge) at `FULLSCREEN_REQUESTED`/`waitForMode`.
-5. **Minimal live (non-headless) checklist** — the residue that is genuinely
-   unobservable headless (first responder, real grab pre-emption, real Spaces):
-   (a) `fullscreen` on a page host → Esc exits (no switcher); (b) enter fullscreen,
-   Cmd+Tab away and back → Esc still exits; (c) focus settings → `fullscreen` acts on
-   settings → Esc exits it; (d) Esc with no window on the current Space → switcher
-   opens. Operator performs the gestures only; the agent reads the transition log.
+### 4.2 Primitives — keep, but make adapter-private
+
+`windows.ts showHybridHost`, `windows.ts showWindowHeadlessSafe`. These are *how* the
+adapter asserts. They remain, but the only permitted caller is `runEffect`.
+
+### 4.3 Not focus assertions — leave alone
+
+`session.ts reassertStackingOrder` / `moveTopById`, `hybrid-overlay.ts frameBounds`
+(`showInactive`/`moveTop` to keep chrome above content), `main.ts did-become-active`
+`__hudHidden` `showInactive`, `session-partition.ts` `Notification.show`.
+
+### 4.4 Genuine OS-boundary workaround — keep, comment which boundary
+
+`ipc.ts` modal `blur` handler, the `__lastShowTime < 200ms` re-focus branch. This suppresses
+the macOS NSPanel spurious-blur dance. It is a real Chromium/AppKit boundary quirk, it is at
+the lowest layer, and nothing is stacked on top of it. It must carry a comment naming the
+boundary, per the standing rule.
 
 ---
 
-## What this doc did not decide
+## 5. What `izui-state.ts` becomes
 
-- Exact placement of maximize state (currently clean in the hybrid registry via
-  `setHybridMaximizeState`): candidate for a later fold into `WindowRecord`, out of
-  scope here to keep the first cut focused on the broken cluster.
-- Whether `izui-state.ts`'s `transient` session semantics eventually merge into this
-  machine — they interact only through `decideEscape` step 6 for now.
+The survey found `izui-state.ts` is **not a rival executor** — it is a rival *memory*. Only
+`exitOverlay` and `exitOverlayForAppBlur` touch the OS at all (`showInactive()` over
+`hiddenWindowIds`), and both are inert today because the no-hide overlay model always passes
+an empty list. Everything else records or computes.
+
+That makes it far cheaper to collapse than previously assumed. It keeps exactly one job:
+
+- **Session tri-state** (`idle`/`transient`/`active`) and its one-way mirror into the reducer
+  via `onSessionChange` → `SESSION_CHANGED`. The reducer never derives session itself.
+
+Everything overlay-shaped moves to the machine and is deleted here: `enterOverlay`,
+`exitOverlay`, `exitOverlayForAppBlur`, `setOverlayFocusTarget`, `getPreOverlayFocusTarget`,
+`isOverlay`, both cooldown predicates, and the `setFocusedWindow`/`clearFocusedWindow`
+bookkeeping that shadows the reducer's `front`.
+
+The two macOS focus-dance cooldowns (`isWithinOverlayExitCooldown`,
+`isWithinOverlayEntryCooldown`) deserve a note: they are time-based guards, i.e. exactly the
+shape this codebase's standing rule tells us not to add. They exist because overlay
+teardown raced app-blur. Under one executor that race is structural rather than temporal —
+`SWITCHER_OPENED`/`APP_RESIGNED` ordering is explicit in the reducer — so they should be
+**deleted, not ported**. If a repro shows they were load-bearing, the replacement is a
+reducer state, never a timer.
+
+---
+
+## 6. Implementation sequence
+
+Ordered so the highest-regression-risk area lands last, behind the gate.
+
+1. **Reducer model.** Add `frontAsserted`, the invalidation set, the closing assertion step.
+   Delete `frontChangeEffects` and its early-out. Rewrite `deriveEscGrabRegistered`. Pure,
+   fully unit-testable in `window-state.test.ts` — no Electron, no live app.
+2. **`main.ts` closed-listener demolition.** Delete the parent-focus and both overlay-restore
+   branches; dispatch `SWITCHER_SELECTED` from the real selection path so it stops being
+   dead code.
+3. **`ipc.ts` reuse-raise + `tile-ipc.ts` + `chrome-extensions.ts`.** Convert direct raises to
+   dispatched intents.
+4. **`izui-state.ts` reduction** to session tri-state only; delete the overlay surface and
+   the cooldowns.
+5. **`session.ts` restore.** Last. This area owns the worst regression history in the app
+   (`4f1a974a`, the cold-start focus dance) and it is the one place doing bulk z-order plus
+   focus as a single sweep.
+6. **Enforcement.** A grep-based check that the forbidden calls appear nowhere outside
+   `runEffect` and the named carve-outs.
+
+Live verification is required at steps 2 and 5 — the macOS first-responder interaction is
+**unobservable in headless**, and a green headless suite has given false confidence on this
+exact bug twice already. Instrument, have the operator perform only the reproduction
+gesture, read the log.
+
+---
+
+## 7. Decisions locked — do not re-litigate
+
+- **Satellite rule** is owned solely by `window-state.ts isSatelliteRegistration`: role
+  `overlay`/`palette`, OR modal, OR `focusable === false`. Peeks/slides (`role:'quick-view'`)
+  stay front-eligible.
+- **Every window registers** with the machine; some registrations no-op.
+- **Accepted behavior change:** the switcher's "first Escape clears search, second closes"
+  became "first Escape closes". Do not restore.
+- **Peeks/slides never native-fullscreen** — enforced at the OS boundary, not by a reducer
+  gate.
+- **Duplicate registration re-pumps `WINDOW_REGISTERED` on purpose** — it is an idempotent
+  merge, and the later spec is the richer one.
+- **Rejected: widening `deriveEscGrabRegistered` to read live OS state.** See §2.
+- **Rejected: the staged switcher seam.** See the header.
