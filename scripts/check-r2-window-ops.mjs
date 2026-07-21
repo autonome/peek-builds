@@ -2,10 +2,12 @@
 /**
  * R2 enforcement check — docs/design/window-manager.md §1 R2, §5 step 3.
  *
- * "ONE executor performs OS window operations." Exactly one module —
- * apps/desktop/main/window-os-adapter.ts — may call a window API. Everything
- * else dispatches an event and lets the reducer decide. A violation is a
- * build failure, not a review comment.
+ * "ONE executor performs OS window operations." Exactly one module may call
+ * a window API: since the port landed (§5 step 2) that is the backend
+ * implementation, apps/desktop/main/electron-window-backend.ts — the executor
+ * (window-os-adapter.ts) now issues platform-free port commands and is
+ * scanned like everything else. Everything else dispatches an event and lets
+ * the reducer decide. A violation is a build failure, not a review comment.
  *
  * Mechanics (deliberately mechanical, not a type checker):
  *   - Scans main-process source: apps/desktop/main/**\/*.ts and *.cts —
@@ -43,7 +45,7 @@ import { fileURLToPath } from 'node:url';
 // the check must scan the checkout it is part of no matter where it's run from.
 const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const SCAN_ROOT = path.join(REPO_ROOT, 'apps/desktop/main');
-const EXEMPT_FILE = 'apps/desktop/main/window-os-adapter.ts'; // the executor (R2)
+const EXEMPT_FILE = 'apps/desktop/main/electron-window-backend.ts'; // the backend (R2 via the R3 port)
 
 // The forbidden window-API call names, verbatim from window-manager.md §1 R2.
 // `webContents.focus()` is covered by `focus`.

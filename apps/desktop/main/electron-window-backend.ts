@@ -1,0 +1,621 @@
+/**
+ * electron-window-backend.ts — the Electron implementation of the
+ * `WindowBackend` port (design §3, rule R3).
+ *
+ * Blueprint: `docs/design/window-manager.md`. THIS IS THE ONLY WINDOW-MANAGER
+ * MODULE THAT IMPORTS ELECTRON. The executor (`window-os-adapter.ts`) issues
+ * port commands; this backend performs them against the native handles it
+ * retains, and pushes native reality back as machine events
+ * (`window-state.ts WindowEvent`) through the single `BackendEventSink`
+ * injected at construction. It never dispatches into the reducer itself —
+ * the executor stays the one dispatch owner.
+ *
+ * It is also the sole authority on window identity (§3): `registerWindow`
+ * mints every `WindowId` ("wm-N", idempotent per native window), and the
+ * private `idByOsWindowId` map is the only `WindowId` ↔ Electron translation
+ * in the tree. The platform's numeric id space never crosses this file's
+ * surface except through the comment-annotated migration shims below.
+ *
+ * Two OS/Chromium boundary workarounds live here (and NOWHERE else — the
+ * reducer has no timers, and the executor no longer touches the boundary),
+ * each commented at its site:
+ *   - the ONE deferred-blur settle that emits `OS_FOCUS_SETTLED_NULL` (§4.4);
+ *   - the bounded fullscreen settle timer that emits `FULLSCREEN_SETTLE_TIMEOUT`
+ *     (§2.3) so a stuck `entering`/`leaving` mode self-corrects via `reconcile`.
+ *
+ * Headless gating: focus/activation side effects are gated on `isHeadless()` —
+ * the SAME predicate `hybridShowIntent`/`showHybridHost` (windows.ts) use — so
+ * an agent/CI run never steals the user's OS focus (peek 2b55f3af). We reuse
+ * those seams directly (`showHybridHost` already calls
+ * `hybridShowIntent(isHeadless())`) rather than re-deriving the decision.
+ */
+
+import { app, globalShortcut } from 'electron';
+import type { BaseWindow, BrowserWindow, WebContents } from 'electron';
+
+import { isHeadless, DEBUG } from './config.js';
+import {
+  showHybridHost,
+  showWindowHeadlessSafe,
+  askWebContentsToHandleEscape,
+  closeOrHideWindow,
+  addEscHandler,
+} from './windows.js';
+import {
+  decideWindowRegistration,
+  type WindowRegistrationDecision,
+  type WindowId,
+  type WindowKind,
+} from './window-state.js';
+import type { BackendEventSink, WindowBackend, WindowSpec } from './window-backend.js';
+
+// Bounded wait for the native fullscreen transition to settle, matching the
+// pre-machine owner (`hybrid-page-host-registry.ts HYBRID_FULLSCREEN_SETTLE_TIMEOUT_MS`).
+// The AppKit enter/leave-fullscreen animation runs ~600ms; this leaves margin so
+// a destroyed / no-op window (which never emits the settled event) can't strand
+// the machine in `entering`/`leaving` forever — the timer emits
+// FULLSCREEN_SETTLE_TIMEOUT, whose reducer clause emits RECONCILE_FULLSCREEN.
+const FULLSCREEN_SETTLE_TIMEOUT_MS = 1500;
+
+/**
+ * The structural minimum of a native window this backend drives. Both
+ * `BaseWindow` (page-host) and `BrowserWindow` (browser) satisfy it — a
+ * BaseWindow is NOT a BrowserWindow (no root `.webContents`), so we keep the
+ * per-kind divergence (content WC, raise seam) explicit rather than casting one
+ * to the other. Every method here exists on BOTH kinds in Electron 40.
+ */
+export interface NativeWindow {
+  id: number;
+  isDestroyed(): boolean;
+  isFocused(): boolean;
+  isVisible(): boolean;
+  isFullScreen(): boolean;
+  setFullScreen(flag: boolean): void;
+  on(event: string, listener: (...args: unknown[]) => void): unknown;
+}
+
+/**
+ * The structural minimum of the renderer WebContents this backend drives
+ * (same proto-abstraction move as `NativeWindow`, so `RegisterWindowSpec`
+ * carries no Electron type). Cast back to the real `WebContents` only at the
+ * windows.ts seam calls inside this file.
+ */
+export interface NativeWebContents {
+  isDestroyed(): boolean;
+  focus(): void;
+  getURL(): string;
+  on(event: string, listener: (...args: unknown[]) => void): unknown;
+}
+
+/**
+ * A post-hoc registration spec: the platform-neutral `WindowSpec` plus the
+ * native handles of a window that already exists. Input to the
+ * `registerWindow` migration shim below — the eventual `create(spec)` port
+ * command (§5 step 4) replaces the handle-carrying half.
+ */
+export interface RegisterWindowSpec extends WindowSpec {
+  /** The native window handle (BaseWindow for page-host, BrowserWindow for browser). */
+  win: NativeWindow;
+  /**
+   * The renderer WebContents: the content view's WC for a page-host, the root
+   * WC for a browser. Used for `ASK_RENDERER` and (page-host only) `FOCUS_CONTENT`.
+   */
+  contentWC?: NativeWebContents | null;
+}
+
+/** What `registerWindow` hands back to the executor: the (minted or existing) id plus the registration decision whose pump/esc-attach halves the EXECUTOR performs. */
+export interface BackendRegistration {
+  id: WindowId;
+  decision: WindowRegistrationDecision;
+}
+
+/**
+ * MIGRATION SHIMS — the handle-speaking surface that exists only until later
+ * migration steps absorb its callers. Deliberately OUTSIDE `WindowBackend`:
+ * no port method may accept or return a platform handle (§3), so the executor
+ * types its backend as `WindowBackend & BackendMigrationShims` and the
+ * intersection is exactly what future steps delete.
+ *
+ *   - `registerWindow` (post-hoc join of an already-created native window):
+ *     absorbed when window CREATION moves behind the port — §5 step 4
+ *     (special window classes + registry unification) introduces
+ *     `create(spec)` and retires handle-carrying registration. Callers today:
+ *     `window-state-singleton.ts registerWindowWithMachine` (ipc.ts /
+ *     tile-launcher / hybrid-overlay open sites).
+ *   - `getWindowIdFor` / `getNativeWindowFor` (the numeric-id ↔ handle seam):
+ *     absorbed when the renderer-facing id economy flips to `WindowId` — the
+ *     session/context-store step (§5 step 11, per the §3 scope decision) —
+ *     and the legacy Electron-keyed registries they join against are re-keyed
+ *     (§5 steps 4–8). Callers today: `window-state-singleton.ts` only.
+ */
+export interface BackendMigrationShims {
+  registerWindow(spec: RegisterWindowSpec): BackendRegistration;
+  getWindowIdFor(winOrOsId: NativeWindow | number): WindowId | null;
+  getNativeWindowFor(id: WindowId): NativeWindow | null;
+}
+
+/** What the backend retains per registered window to execute commands against it. */
+interface BackendWindow {
+  win: NativeWindow;
+  kind: WindowKind;
+  /**
+   * The renderer WebContents that answers the `escape-pressed` IPC and is the
+   * macOS first responder: the content `WebContentsView`'s WC for a page-host,
+   * the root WC for a browser window. `null` if the caller supplied none.
+   */
+  rendererWC: NativeWebContents | null;
+}
+
+/**
+ * The Electron backend. Holds native handles + the WindowId mint, performs
+ * port commands, translates native events into machine events via `emit`.
+ */
+export class ElectronWindowBackend implements WindowBackend, BackendMigrationShims {
+  /** The single event channel into the executor's dispatch pump. */
+  private readonly emit: BackendEventSink;
+
+  /** Native handles + renderer WC per registered WM WindowId (for command execution). */
+  private readonly windows = new Map<WindowId, BackendWindow>();
+
+  /**
+   * Reverse lookup: platform (Electron) window id → WM WindowId. PRIVATE — the
+   * platform's numeric ids exist only inside this file's maps and never cross
+   * its surface (design §3: the backend maps `WindowId -> platform handle`
+   * internally and never leaks the handle's id space).
+   */
+  private readonly idByOsWindowId = new Map<number, WindowId>();
+
+  /** WM-internal mint counter for `WindowId` ("wm-1", "wm-2", …). */
+  private windowIdCounter = 0;
+
+  /** The ONE deferred-blur settle handle (§4.4) — coalesced, at most one pending. */
+  private pendingBlurSettle: ReturnType<typeof setImmediate> | null = null;
+
+  /** Per-window bounded fullscreen settle timers (§2.3). */
+  private readonly fullscreenSettleTimers = new Map<WindowId, ReturnType<typeof setTimeout>>();
+
+  /** Whether we currently hold the OS Escape grab (real state incl. failed register — see `setEscGrab`). */
+  private escGrabRegistered = false;
+
+  /** Stable handler reference so register/unregister target the same closure. */
+  private readonly escGrabHandler = (): void => {
+    // The grab fires the SAME `ESC_PRESSED` the before-input-event path does —
+    // `decideEscape` is the single decision, so a stale grab is harmless
+    // (defense by shared decision, not by registration timing, §4.2).
+    this.emit({ type: 'ESC_PRESSED', landedId: 'global' });
+  };
+
+  constructor(emit: BackendEventSink) {
+    this.emit = emit;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Port: app-level listeners.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * App-level focus listeners → `APP_ACTIVATED`/`APP_RESIGNED`. `APP_ACTIVATED`
+   * makes the reducer emit `RECONCILE_FULLSCREEN` for any in-flight transition
+   * (§2.5). Later slices move main.ts's `did-become/resign-active` dispatch here.
+   */
+  attachAppListeners(): void {
+    (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
+      this.emit({ type: 'APP_ACTIVATED' });
+    });
+    (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
+      this.emit({ type: 'APP_RESIGNED' });
+    });
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Migration shims (see `BackendMigrationShims` for the absorption plan).
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * MIGRATION SHIM — post-hoc join (see `BackendMigrationShims`): mint (or
+   * resolve) the `WindowId` for an already-created native window, retain its
+   * handles, and attach the per-window native listeners exactly once.
+   *
+   * IDEMPOTENT per underlying native window (the WindowId is MINTED here, so
+   * idempotency is keyed by the platform window handle), and that is
+   * load-bearing: more than one call site registers the same BrowserWindow
+   * (the tile-launcher hook inside `createTileBrowserWindow`, then the
+   * `ipc.ts` window-open site for the same window). Re-attaching would give
+   * one physical Escape TWO `ESC_PRESSED` dispatches — and the second one,
+   * arriving after the switcher already closed, re-opened it 500ms later in
+   * an unbreakable loop. So a repeat registration MERGES the (richer) spec
+   * and leaves listeners alone.
+   *
+   * The branch itself is NOT decided here: `decideWindowRegistration`
+   * (`window-state.ts`) owns it, so it stays unit-testable away from this
+   * file's value-side `electron` import (unloadable under the unit gate's
+   * `ELECTRON_RUN_AS_NODE=1`). This method executes the decision's
+   * BACKEND half (merge + native-listener attach) and returns the decision;
+   * the executor (`window-os-adapter.ts registerWindow`) performs the pump +
+   * Esc-attach half — it stays the one dispatch owner.
+   */
+  registerWindow(spec: RegisterWindowSpec): BackendRegistration {
+    const { kind, win } = spec;
+    const rendererWC = spec.contentWC ?? null;
+
+    // The WM MINTS the id — it never arrives from outside. Idempotency is
+    // therefore keyed by the UNDERLYING platform window: the same
+    // BrowserWindow/BaseWindow registered twice resolves to the SAME WindowId,
+    // with the later (richer) spec merged in.
+    const osWindowId = win.id;
+    const existingId = this.idByOsWindowId.get(osWindowId);
+    const existing = existingId === undefined ? undefined : this.windows.get(existingId);
+    const decision = decideWindowRegistration({
+      alreadyRegistered: existing !== undefined,
+      kind,
+      hasContentWC: spec.contentWC !== undefined,
+      attachEscHandlerRequested: spec.attachEscHandler,
+      nativeVisible: this.isVisibleSafe(win),
+    });
+
+    let id: WindowId;
+    if (existing !== undefined && existingId !== undefined) {
+      id = existingId;
+      existing.win = win;
+      existing.kind = kind;
+      if (decision.adoptRendererWC) existing.rendererWC = rendererWC;
+    } else {
+      this.windowIdCounter += 1;
+      id = `wm-${this.windowIdCounter}` as WindowId;
+      this.idByOsWindowId.set(osWindowId, id);
+      this.windows.set(id, { win, kind, rendererWC });
+    }
+
+    if (decision.attachNativeListeners) {
+      this.attachNativeListeners(id, osWindowId, win, kind, rendererWC);
+    }
+
+    return { id, decision };
+  }
+
+  /**
+   * MIGRATION SHIM (see `BackendMigrationShims`): the WM WindowId for a
+   * registered native window (or a platform window id a legacy Electron-keyed
+   * registry still holds). `null` when the window was never registered or is
+   * already gone.
+   */
+  getWindowIdFor(winOrOsId: NativeWindow | number): WindowId | null {
+    let osId: number;
+    if (typeof winOrOsId === 'number') {
+      osId = winOrOsId;
+    } else {
+      try {
+        osId = winOrOsId.id;
+      } catch {
+        return null; // destroyed native window — reading .id throws
+      }
+    }
+    return this.idByOsWindowId.get(osId) ?? null;
+  }
+
+  /**
+   * MIGRATION SHIM (see `BackendMigrationShims`): the live native window
+   * handle for a WM WindowId, or `null` when unregistered/destroyed. The
+   * HANDLE crosses (legacy consumers still need to join against
+   * Electron-id-keyed registries until later migration steps); the backend's
+   * numeric maps do not.
+   */
+  getNativeWindowFor(id: WindowId): NativeWindow | null {
+    const entry = this.windows.get(id);
+    if (!entry) return null;
+    try {
+      if (entry.win.isDestroyed()) return null;
+    } catch {
+      return null;
+    }
+    return entry.win;
+  }
+
+  /**
+   * PRIVATE: the platform window id for a WindowId — used only where this
+   * backend must call into a legacy Electron-id-keyed seam (windows.ts
+   * `closeOrHideWindow` / `askWebContentsToHandleEscape`) until those seams
+   * are re-keyed. Never exposed.
+   */
+  private osWindowIdOf(id: WindowId): number | null {
+    const win = this.getNativeWindowFor(id);
+    if (!win) return null;
+    try {
+      return win.id;
+    } catch {
+      return null;
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Native listeners (§2.6): each is a one-line event translation — the sole
+  // exception is `blur`, which arms the ONE deferred-blur settle instead of
+  // emitting (§4.4).
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private attachNativeListeners(
+    id: WindowId,
+    osWindowId: number,
+    win: NativeWindow,
+    kind: WindowKind,
+    rendererWC: NativeWebContents | null,
+  ): void {
+    win.on('focus', () => {
+      this.cancelBlurSettle();
+      this.emit({ type: 'OS_FOCUS_GAINED', id, lastHttpUrl: this.readHttpUrl(id) });
+    });
+    // The ONE deferred-blur settle: blur alone can't tell "focus left Peek" from
+    // "focus is moving to the next Peek window" — Electron fires the old window's
+    // `blur` BEFORE the new window's `focus` (§4.4). So arm a one-tick settle; a
+    // focus that lands in-app cancels it before it runs.
+    win.on('blur', () => {
+      this.armBlurSettle();
+    });
+    win.on('show', () => {
+      this.emit({ type: 'WINDOW_SHOWN', id, focused: this.isFocused(win) });
+    });
+    win.on('hide', () => {
+      this.emit({ type: 'WINDOW_HIDDEN', id });
+    });
+    win.on('closed', () => {
+      this.clearFullscreenSettle(id);
+      this.windows.delete(id);
+      // `osWindowId` was captured at registration — reading `win.id` here would
+      // throw on the already-destroyed native window.
+      this.idByOsWindowId.delete(osWindowId);
+      this.emit({ type: 'WINDOW_CLOSED', id });
+    });
+    win.on('enter-full-screen', () => {
+      this.clearFullscreenSettle(id);
+      this.emit({ type: 'OS_FULLSCREEN_ENTERED', id });
+    });
+    win.on('leave-full-screen', () => {
+      this.clearFullscreenSettle(id);
+      this.emit({ type: 'OS_FULLSCREEN_LEFT', id });
+    });
+    // Page-host: clicking directly into the page focuses the content WC even when
+    // the host BaseWindow's own `focus` is missed (belt-and-suspenders, mirrors
+    // the registry's content-WC focus fallback).
+    if (kind === 'page-host' && rendererWC) {
+      rendererWC.on('focus', () => {
+        this.cancelBlurSettle();
+        this.emit({ type: 'OS_FOCUS_GAINED', id, lastHttpUrl: this.readHttpUrl(id) });
+      });
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Port: commands.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /** Show + raise + activate a window (page-host via the shared show seam). */
+  raiseWindow(id: WindowId): void {
+    const entry = this.windows.get(id);
+    if (!entry) return;
+    const { win, kind, rendererWC } = entry;
+    if (win.isDestroyed()) return;
+    if (kind === 'page-host') {
+      // Reuses `hybridShowIntent(isHeadless())` — headless → showInactive +
+      // opacity-0, never activate/focus; non-headless → activate + first responder.
+      showHybridHost(win as unknown as BaseWindow, rendererWC as unknown as WebContents);
+      return;
+    }
+    // Browser window: headless-safe show (opacity-0 + inactive under headless),
+    // activate + focus only when not headless.
+    const bw = win as unknown as BrowserWindow;
+    showWindowHeadlessSafe(bw, { active: !isHeadless() });
+    if (!isHeadless()) {
+      try {
+        bw.focus();
+      } catch {
+        /* window gone mid-raise */
+      }
+    }
+  }
+
+  /** Make a page-host's content WC the macOS first responder. */
+  focusContent(id: WindowId): void {
+    const wc = this.windows.get(id)?.rendererWC;
+    if (!wc || wc.isDestroyed()) return;
+    wc.focus();
+  }
+
+  /**
+   * Drive native fullscreen (the SINGLE place the platform fullscreen toggle
+   * is called for BOTH kinds — §2.4). NOT gated on headless: the pre-machine
+   * owner (`setHybridHostFullScreen`) wasn't either, and the bridge-driven
+   * "disruptive fullscreen" spec (§5.4) relies on a real transition.
+   * Focus/activation are what headless gates.
+   */
+  setFullscreen(id: WindowId, on: boolean): void {
+    const w = this.windows.get(id)?.win;
+    if (!w || w.isDestroyed()) return;
+    w.setFullScreen(on);
+    // Arm the bounded settle timer so a transition that never emits its
+    // native settled event self-corrects via RECONCILE_FULLSCREEN (§2.3).
+    this.armFullscreenSettle(id);
+  }
+
+  /**
+   * The ONE sanctioned `isFullScreen()` read (§2.5): read reality ONCE and
+   * emit the settled event so the reducer snaps `fsMode` to it. Command in,
+   * event out — no other code may read `isFullScreen()` for state.
+   */
+  reconcileFullscreen(id: WindowId): void {
+    const w = this.windows.get(id)?.win;
+    if (!w || w.isDestroyed()) return;
+    this.emit(
+      w.isFullScreen()
+        ? { type: 'OS_FULLSCREEN_ENTERED', id }
+        : { type: 'OS_FULLSCREEN_LEFT', id },
+    );
+  }
+
+  /**
+   * Route through the existing close/hide seam (honors keepLive, hybrid vs
+   * browser). The seam is still Electron-id-keyed; the backend resolves the
+   * native id (the one place allowed to). The returned promise is test-bridge
+   * settlement only — nothing in the machine waits on it.
+   */
+  closeOrHide(id: WindowId): Promise<void> {
+    const osId = this.osWindowIdOf(id);
+    if (osId == null) return Promise.resolve();
+    return closeOrHideWindow(osId);
+  }
+
+  /**
+   * The `escape-pressed` IPC, unchanged protocol. The renderer's answer drives
+   * `decideEscape` step 6; it comes back as an `ESC_RENDERER_ANSWER` emission
+   * echoing `seq` (the ask's epoch) on BOTH answer paths so the reducer can
+   * drop an answer whose question no longer stands.
+   */
+  askRendererToHandleEscape(id: WindowId, seq: number): Promise<void> {
+    const wc = this.windows.get(id)?.rendererWC;
+    if (!wc || wc.isDestroyed()) {
+      // No renderer to ask → treat as unhandled so ESC still resolves.
+      this.emit({ type: 'ESC_RENDERER_ANSWER', id, handled: false, seq });
+      return Promise.resolve();
+    }
+    // `askWebContentsToHandleEscape` (windows.ts) still speaks Electron ids;
+    // resolve the native id INSIDE the backend (the one place allowed to).
+    return askWebContentsToHandleEscape(
+      this.osWindowIdOf(id) ?? -1,
+      wc as unknown as WebContents,
+    ).then((ans) => {
+      this.emit({
+        type: 'ESC_RENDERER_ANSWER',
+        id,
+        handled: ans.handled,
+        close: ans.close,
+        seq,
+      });
+    });
+  }
+
+  /**
+   * The SINGLE owner of the `before-input-event` Esc attach for browser
+   * windows (see `WindowSpec.attachEscHandler`). Issued by the executor
+   * exactly when `decideWindowRegistration` says so — one attach per window,
+   * so one keypress can only ever produce one `ESC_PRESSED`.
+   */
+  attachEscHandler(id: WindowId): void {
+    const win = this.getNativeWindowFor(id);
+    if (!win) return;
+    try {
+      addEscHandler(win as unknown as BrowserWindow);
+    } catch (err) {
+      DEBUG && console.log('[window-state] esc handler attach failed for', id, err);
+    }
+  }
+
+  /**
+   * Derived Escape grab (§2.4), OS half. The executor re-asserts the desired
+   * state on EVERY transition; this method owns the real registration state —
+   * including a FAILED register (stays false so the next assert retries) —
+   * and no-ops when already matching.
+   */
+  setEscGrab(on: boolean): void {
+    if (on === this.escGrabRegistered) return;
+    if (on) {
+      try {
+        this.escGrabRegistered = globalShortcut.register('Escape', this.escGrabHandler);
+      } catch (err) {
+        console.error('[window-state] Esc grab register failed:', err);
+      }
+    } else {
+      try {
+        globalShortcut.unregister('Escape');
+      } catch {
+        /* unregistering a hotkey not held is a no-op on some platforms */
+      }
+      this.escGrabRegistered = false;
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // The ONE deferred-blur settle (§4.4). The lowest layer: the OS/Chromium
+  // boundary where "focus left all Peek windows" is only knowable one tick after
+  // a blur. The reducer itself has NO timers — this is the single sanctioned one
+  // on the focus path.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private armBlurSettle(): void {
+    if (this.pendingBlurSettle) return; // coalesce — at most one pending settle
+    this.pendingBlurSettle = setImmediate(() => {
+      this.pendingBlurSettle = null;
+      // One tick later Electron has delivered any incoming `focus`. If some Peek
+      // window now holds focus, focus stayed in-app — do nothing. Otherwise it
+      // left the whole group → emit OS_FOCUS_SETTLED_NULL.
+      if (this.anyWindowFocused()) return;
+      this.emit({ type: 'OS_FOCUS_SETTLED_NULL' });
+    });
+  }
+
+  private cancelBlurSettle(): void {
+    if (!this.pendingBlurSettle) return;
+    clearImmediate(this.pendingBlurSettle);
+    this.pendingBlurSettle = null;
+  }
+
+  private anyWindowFocused(): boolean {
+    for (const { win } of this.windows.values()) {
+      if (this.isFocused(win)) return true;
+    }
+    return false;
+  }
+
+  private isFocused(win: NativeWindow): boolean {
+    try {
+      return !win.isDestroyed() && win.isFocused();
+    } catch {
+      return false;
+    }
+  }
+
+  private isVisibleSafe(win: NativeWindow): boolean {
+    try {
+      return !win.isDestroyed() && win.isVisible();
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The window's current http(s) URL (from its renderer WC), or undefined when
+   * it is not on an http(s) page. Fed to `OS_FOCUS_GAINED` so the reducer can
+   * track the devtools target (absorbs the old `lastContentWindowId`).
+   */
+  private readHttpUrl(id: WindowId): string | undefined {
+    const wc = this.windows.get(id)?.rendererWC;
+    if (!wc || wc.isDestroyed()) return undefined;
+    try {
+      const url = wc.getURL();
+      return url.startsWith('http://') || url.startsWith('https://') ? url : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Bounded fullscreen settle timer (§2.3).
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private armFullscreenSettle(id: WindowId): void {
+    this.clearFullscreenSettle(id);
+    this.fullscreenSettleTimers.set(
+      id,
+      setTimeout(() => {
+        this.fullscreenSettleTimers.delete(id);
+        this.emit({ type: 'FULLSCREEN_SETTLE_TIMEOUT', id });
+      }, FULLSCREEN_SETTLE_TIMEOUT_MS),
+    );
+  }
+
+  private clearFullscreenSettle(id: WindowId): void {
+    const t = this.fullscreenSettleTimers.get(id);
+    if (t) {
+      clearTimeout(t);
+      this.fullscreenSettleTimers.delete(id);
+    }
+  }
+}
