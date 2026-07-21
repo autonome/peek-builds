@@ -1057,6 +1057,10 @@ function installTestBridge(): void {
   // bypassed focus entirely, which is why this bug slipped through).
   let simFocus: number | null = null;
   let simOverlayFocused = false;
+  // Lazily-created hidden non-page-host machine window that `focusElsewhere`
+  // moves `front` onto (see its doc) — the machine-native encoding of "focus
+  // landed on a non-hybrid window".
+  let elsewhereWin: BaseWindow | null = null;
   const installFocusSim = (baseWin: BaseWindow) => {
     try {
       (baseWin as unknown as { isFocused: () => boolean }).isFocused = () =>
@@ -1135,22 +1139,23 @@ function installTestBridge(): void {
       // synthetic show+focus (or, for null, hide the front page-host(s)). The
       // fake host is registered with the machine in makeFakeHybridWindow /
       // makeWiredHybridHost above.
-      if (id == null) {
-        // "No hybrid window is active." The machine deliberately keeps `front`
-        // across an app-level focus loss (OS_FOCUS_SETTLED_NULL is a no-op for
-        // front — the target must survive an app switch), so the only honest
-        // way to synthesize "no page-host is front" is to HIDE whatever
-        // page-host currently is — repeatedly, since front falls to the MRU
-        // successor, which may be another (synthetically shown) fake host.
-        // Bounded by the number of registered windows; each pass hides one.
-        for (let i = 0; i < 100; i++) {
-          const front = getFrontPageHostId();
-          if (front == null) break;
-          dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: front });
-        }
-      } else {
-        const wid = getWindowIdFor(id);
-        if (wid == null) return false;
+      // The old bridge kept a SINGLE active-id slot: activating one host (or
+      // null) meant no other host was active. The machine has no such slot —
+      // `front` falls to the MRU successor on WINDOW_HIDDEN, and synthetically
+      // activated fakes stay machine-visible forever (they are never OS-shown,
+      // so no native 'hide' can fire). To keep the bridge's contract, EVERY
+      // setActive first drives the page-host front to null by hiding whatever
+      // page-host is front — repeatedly, since the closing assertion promotes
+      // (and re-raises) the MRU successor each time. Bounded; each pass hides
+      // one machine-visible page-host, so it terminates.
+      const wid = id == null ? null : getWindowIdFor(id);
+      if (id != null && wid == null) return false;
+      for (let i = 0; i < 100; i++) {
+        const front = getFrontPageHostId();
+        if (front == null) break;
+        dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: front });
+      }
+      if (wid != null) {
         dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
       }
       return true;
@@ -1231,6 +1236,15 @@ function installTestBridge(): void {
       if (!w || w.isDestroyed()) return false;
       simFocus = id;
       simOverlayFocused = false;
+      // A host GAINING focus is by definition on screen, but the fake host was
+      // never OS-shown, so the machine's record is not `visible` and the raw
+      // OS_FOCUS_GAINED from the emit below would be front-INELIGIBLE (the
+      // reducer gates front on visibility). Import the shown+focused state
+      // explicitly, exactly like a real focused show does.
+      {
+        const wid = getWindowIdFor(w);
+        if (wid != null) dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
+      }
       w.emit('focus');
       return true;
     },
@@ -1253,6 +1267,12 @@ function installTestBridge(): void {
       if (!entry || entry.contentWC.isDestroyed()) return false;
       simFocus = id;
       simOverlayFocused = false;
+      // Same visibility import as focusHost: content-WC focus implies the host
+      // is on screen; without it the emit's OS_FOCUS_GAINED is front-ineligible.
+      {
+        const wid = getWindowIdFor(id);
+        if (wid != null) dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
+      }
       entry.contentWC.emit('focus');
       return true;
     },
@@ -1316,6 +1336,27 @@ function installTestBridge(): void {
     focusElsewhere(): void {
       simFocus = null;
       simOverlayFocused = false;
+      // "Focus landed on a non-hybrid window." Under the machine this is a real
+      // front move (the old registry nulled its active id instead): drive focus
+      // onto a lazily-created hidden NON-page-host machine window, so `front`
+      // leaves the page-host set → getFrontPageHostId() goes null → the
+      // overlay hides and activeId() reports null, exactly the old bridge
+      // contract. (The other "left the group" case — focus moving to ANOTHER
+      // APP — keeps `front` by design and hides the chrome via
+      // did-resign-active; tests drive that path with appResignActive.)
+      if (!elsewhereWin || elsewhereWin.isDestroyed()) {
+        elsewhereWin = new BaseWindowCtor({ show: false, frame: false, opacity: 0, width: 60, height: 40 });
+        registerWindowWithMachine({
+          kind: 'browser',
+          role: 'workspace',
+          satellite: false,
+          win: elsewhereWin,
+          // A bare BaseWindow has no root webContents for the Esc interceptor.
+          attachEscHandler: false,
+        });
+      }
+      const wid = getWindowIdFor(elsewhereWin);
+      if (wid != null) dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
     },
     runDeferredBlur(_id: number): number | null {
       // The machine's deferred-blur settle lives in the OS adapter (setImmediate)
