@@ -41,6 +41,9 @@ import {
   getDevtoolsTargetId,
   snapshot,
   frontInvariantHolds,
+  stackOrderInvariantHolds,
+  getStackOrder,
+  deriveStackingLevel,
   isEligibleFront,
   isSatelliteRegistration,
   classifyWindowRegistration,
@@ -99,6 +102,10 @@ function drive(start: AppWindowState, events: WindowEvent[]): { state: AppWindow
       frontInvariantHolds(state),
       `front invariant violated after ${ev.type}: front=${state.front}`,
     );
+    assert.ok(
+      stackOrderInvariantHolds(state),
+      `stackOrder invariant violated after ${ev.type}: [${state.stackOrder.join(', ')}]`,
+    );
   }
   return { state, effects };
 }
@@ -137,6 +144,8 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       kind: 'page-host',
       role,
       class: 'primary',
+      stackingLevel: satellite ? 'excluded' : 'stacked',
+      orderable: true,
       escapeMode,
       satellite,
       visible: true,
@@ -153,6 +162,7 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       // Unasserted, so the closing assertion step is exercised across the whole
       // matrix (it must stay total and invariant-preserving when it fires).
       frontAsserted: false,
+      stackOrder: satellite ? [] : [wid(1)],
       switcher: switcherOpen ? { open: true, windowId: wid(2), previousFront: front } : { open: false },
       windows,
       focusSeqCounter: 1,
@@ -204,6 +214,9 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     { type: 'GUEST_TEARDOWN_REQUESTED' },
     { type: 'DEVTOOLS_OPENED', id: wid(1) },
     { type: 'DEVTOOLS_CLOSED', id: wid(1) },
+    // §5 step 5 event (z-order / stacking): the page-host orderability caveat.
+    { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(1) },
+    { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(99) },
   ];
 
   it('reduce is total: defined result + front invariant holds for all combinations', () => {
@@ -235,6 +248,9 @@ describe('totality matrix — every (state-class x event) returns a defined tran
                 }
                 if (!frontInvariantHolds(result.state)) {
                   failures.push(`${fsName}/${switcherOpen}/${satellite}/${escapeMode}/${role} x ${ev.type}: front invariant violated (front=${result.state.front})`);
+                }
+                if (!stackOrderInvariantHolds(result.state)) {
+                  failures.push(`${fsName}/${switcherOpen}/${satellite}/${escapeMode}/${role} x ${ev.type}: stackOrder invariant violated ([${result.state.stackOrder.join(', ')}])`);
                 }
               }
             }
@@ -290,8 +306,8 @@ describe('decideEscape (steps 1-5, total)', () => {
 
   it('step 4: any non-normal fsMode -> exit-fullscreen (entering/full/leaving)', () => {
     for (const name of ['entering-fullscreen', 'fullscreen', 'leaving-fullscreen'] as FsMode['name'][]) {
-      const rec: WindowRecord = { id: wid(1), kind: 'page-host', role: 'content', class: 'primary', satellite: false, visible: true, fsMode: fsOf(name, BOUNDS), focusSeq: 1 };
-      const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), frontAsserted: true, switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
+      const rec: WindowRecord = { id: wid(1), kind: 'page-host', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: true, fsMode: fsOf(name, BOUNDS), focusSeq: 1 };
+      const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), frontAsserted: true, stackOrder: [wid(1)], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
       assert.deepStrictEqual(decideEscape(state), { kind: 'exit-fullscreen', id: wid(1) }, `mode ${name}`);
     }
   });
@@ -1072,9 +1088,9 @@ describe('reduce purity', () => {
 
   it('isEligibleFront rejects satellites, hidden, and absent records', () => {
     assert.strictEqual(isEligibleFront(undefined), false);
-    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
-    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', satellite: false, visible: false, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
-    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', satellite: false, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), true);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'excluded', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: false, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), true);
   });
 });
 
@@ -1236,8 +1252,8 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
   // event sequence can produce this (the reducer only ever assigns an eligible
   // front) — we craft it directly to exercise the guard's throw path.
   function illegalFrontState(): AppWindowState {
-    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 1 };
-    return { appActive: true, session: 'active', front: wid(1), frontAsserted: true, switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
+    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 1 };
+    return { appActive: true, session: 'active', front: wid(1), frontAsserted: true, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
   }
 
   it('THROWS in dev/test when reduce yields an illegal front (naming the event + front id)', () => {
@@ -1265,8 +1281,8 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
 
   it('FULLSCREEN_REQUESTED on a satellite does NOT install an illegal front (and does not throw)', () => {
     // The reducer bug the reviewer flagged: front was assigned unconditionally.
-    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 1 };
-    const s: AppWindowState = { appActive: true, session: 'active', front: null, frontAsserted: false, switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
+    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 1 };
+    const s: AppWindowState = { appActive: true, session: 'active', front: null, frontAsserted: false, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
     const { state } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
     assert.strictEqual(state.front, null, 'a satellite must never become front, even via a fullscreen request');
     assert.strictEqual(getWindowMode(state, wid(1)), 'entering-fullscreen', 'the fsMode edge still runs (total table)');
@@ -1471,6 +1487,7 @@ describe('deriveEscGrabRegistered — truth table over (appActive, front, frontA
       session: 'active',
       front: null,
       frontAsserted: false,
+      stackOrder: [],
       switcher: { open: false },
       windows: [],
       ...over,
@@ -1852,5 +1869,368 @@ describe('devtools transitions (§4.6 dim 8a)', () => {
     const { state, effects } = reduce(s, { type: 'WINDOW_CLOSED', id: wid(5) });
     assert.strictEqual(state.front, wid(1));
     assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)));
+  });
+});
+
+// ── §5 step 5 part A: z-order / stacking (reducer list + SET_STACKING) ───────
+
+/** The SET_STACKING targets of a reduce, in emission order. */
+function stackings(effects: Effect[]): WindowId[] {
+  return effects
+    .filter((e): e is Extract<Effect, { type: 'SET_STACKING' }> => e.type === 'SET_STACKING')
+    .map((e) => e.id);
+}
+
+/** Register + show a window under its realistic class/satellite pairing. */
+function classImportEvents(id: number, cls: WindowRecord['class'], satellite: boolean): WindowEvent[] {
+  return [
+    { type: 'WINDOW_REGISTERED', id: wid(id), kind: 'browser', role: 'content', class: cls, satellite },
+    { type: 'WINDOW_SHOWN', id: wid(id), focused: false },
+  ];
+}
+
+describe('deriveStackingLevel — single owner of stack participation (§4.3 dim 3)', () => {
+  it('primary / quick-view / extension-ui participate in the ordered stack', () => {
+    assert.strictEqual(deriveStackingLevel('primary', false), 'stacked');
+    assert.strictEqual(deriveStackingLevel('quick-view', false), 'stacked');
+    assert.strictEqual(deriveStackingLevel('extension-ui', false), 'stacked');
+  });
+
+  it('hud / overlay / palette pin ABOVE the stack (the SET_ALWAYS_ON_TOP family)', () => {
+    assert.strictEqual(deriveStackingLevel('hud', true), 'pinned');
+    assert.strictEqual(deriveStackingLevel('overlay', true), 'pinned');
+    assert.strictEqual(deriveStackingLevel('palette', true), 'pinned');
+  });
+
+  it('the infrastructure satellite classes are excluded from the ordered stack', () => {
+    assert.strictEqual(deriveStackingLevel('background', true), 'excluded');
+    assert.strictEqual(deriveStackingLevel('bridge', true), 'excluded');
+    assert.strictEqual(deriveStackingLevel('test-fixture', true), 'excluded');
+    assert.strictEqual(deriveStackingLevel('devtools', true), 'excluded');
+  });
+
+  it('a satellite of a normally-stacked class (modal / focusable:false) is excluded, not stacked', () => {
+    assert.strictEqual(deriveStackingLevel('primary', true), 'excluded');
+    assert.strictEqual(deriveStackingLevel('quick-view', true), 'excluded');
+    assert.strictEqual(deriveStackingLevel('extension-ui', true), 'excluded');
+  });
+});
+
+describe('ordered stacking list — membership across the class enum (§5 step 5)', () => {
+  it('registering + showing every class admits ONLY the stacked ones, in shown order', () => {
+    // Realistic (class, satellite) pairings per isSatelliteRegistration/§4.3 8b.
+    const imports: [number, WindowRecord['class'], boolean][] = [
+      [1, 'primary', false],
+      [2, 'quick-view', false],
+      [3, 'overlay', true],
+      [4, 'palette', true],
+      [5, 'hud', true],
+      [6, 'background', true],
+      [7, 'bridge', true],
+      [8, 'extension-ui', false],
+      [9, 'test-fixture', true],
+      [10, 'devtools', true],
+    ];
+    const { state } = drive(createInitialState(), imports.flatMap(([id, cls, sat]) => classImportEvents(id, cls, sat)));
+    assert.deepStrictEqual(getStackOrder(state), [wid(1), wid(2), wid(8)], 'stacked classes only, bottom→top in shown order');
+  });
+
+  it('a fresh registration is NOT in the stack until it is shown', () => {
+    const { state } = drive(createInitialState(), [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'content', class: 'primary', satellite: false },
+    ]);
+    assert.deepStrictEqual(getStackOrder(state), []);
+  });
+
+  it('WINDOW_HIDDEN removes; re-show returns the window at the TOP (native order-front mirror)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    s = openWindow(s, 2, { kind: 'browser', role: 'content' });
+    s = openWindow(s, 3, { kind: 'browser', role: 'content' });
+    assert.deepStrictEqual(getStackOrder(s), [wid(1), wid(2), wid(3)]);
+
+    const hidden = drive(s, [{ type: 'WINDOW_HIDDEN', id: wid(2) }]).state;
+    assert.deepStrictEqual(getStackOrder(hidden), [wid(1), wid(3)]);
+
+    const reshown = drive(hidden, [{ type: 'WINDOW_SHOWN', id: wid(2), focused: false }]).state;
+    assert.deepStrictEqual(getStackOrder(reshown), [wid(1), wid(3), wid(2)]);
+  });
+
+  it('closing the front removes it AND the succession assertion tops the successor (list stays consistent)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    s = openWindow(s, 2, { kind: 'browser', role: 'content' });
+    s = openWindow(s, 3, { kind: 'browser', role: 'content' }); // front 3, MRU 3 > 2 > 1
+    const { state, effects } = reduce(s, { type: 'WINDOW_CLOSED', id: wid(3) });
+    assert.strictEqual(getFrontWindowId(state), wid(2), 'MRU successor');
+    assert.deepStrictEqual(getStackOrder(state), [wid(1), wid(2)], 'closed window gone; successor driven to the top');
+    assert.deepStrictEqual(stackings(effects), [wid(2)], 'the succession is DRIVEN as order, not just recorded');
+    assert.strictEqual(state.frontAsserted, true);
+  });
+
+  it('the richer re-registration merge can demote a stacked window out of the list (modal revealed)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    s = openWindow(s, 2, { kind: 'browser', role: 'utility' }); // front 2, in the stack
+    assert.deepStrictEqual(getStackOrder(s), [wid(1), wid(2)]);
+    // The ipc.ts re-registration carries the real `modal` → satellite:true.
+    const { state } = reduce(s, { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'utility', satellite: true });
+    assert.deepStrictEqual(getStackOrder(state), [wid(1)], 'demoted out of the ordered stack');
+    assert.strictEqual(getFrontWindowId(state), wid(1), 'front handed off by the existing satellite fixup');
+  });
+
+  it('fullscreen transitions do NOT change stack membership (display mode, not a stacking removal)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    s = openWindow(s, 2, { kind: 'browser', role: 'content' });
+    const before = getStackOrder(s);
+    const script: WindowEvent[] = [
+      { type: 'FULLSCREEN_REQUESTED', id: wid(2), desired: true, bounds: BOUNDS },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(2) },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(2), desired: false },
+      { type: 'OS_FULLSCREEN_LEFT', id: wid(2) },
+    ];
+    let cur = s;
+    for (const ev of script) {
+      cur = drive(cur, [ev]).state;
+      assert.deepStrictEqual(getStackOrder(cur), before, `membership changed across ${ev.type}`);
+    }
+  });
+});
+
+describe('SET_STACKING — the closing assertion drives order (frontAsserted means "on top")', () => {
+  it('a front change emits SET_STACKING alongside RAISE_WINDOW and puts the front on top of the list', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2, top
+    const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(1) });
+    assert.strictEqual(getFrontWindowId(state), wid(1));
+    assert.ok(raises(effects, 1), 'activation raise still emitted');
+    assert.deepStrictEqual(stackings(effects), [wid(1)], 'order driven by the same closing step');
+    assert.deepStrictEqual(getStackOrder(state), [wid(2), wid(1)], 'front is the top of the ordered list');
+    assert.strictEqual(state.frontAsserted, true);
+  });
+
+  it('INVARIANT: frontAsserted flips true ONLY with a SET_STACKING(front) and front at the top of the list', () => {
+    // A broad mixed script; at every step where the assertion flips on, the
+    // machine must have DRIVEN order in the same transition.
+    const script: WindowEvent[] = [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: true },
+      { type: 'APP_RESIGNED' },
+      { type: 'APP_ACTIVATED' },
+      { type: 'OS_FOCUS_GAINED', id: wid(1) },
+      { type: 'SWITCHER_OPENED', windowId: wid(9) },
+      { type: 'SWITCHER_SELECTED', id: wid(2) },
+      { type: 'WINDOW_HIDDEN', id: wid(2) },
+      { type: 'WINDOW_CLOSED', id: wid(1) },
+    ];
+    let s = createInitialState();
+    for (const ev of script) {
+      const r = reduce(s, ev);
+      const flippedOn = !s.frontAsserted && r.state.frontAsserted;
+      if (flippedOn) {
+        const front = r.state.front;
+        assert.ok(front != null, `asserted with no front after ${ev.type}`);
+        assert.ok(stackings(r.effects).includes(front), `assertion flipped on without SET_STACKING(front) after ${ev.type}`);
+        const order = getStackOrder(r.state);
+        assert.strictEqual(order[order.length - 1], front, `front not top of stackOrder after ${ev.type}`);
+      }
+      s = r.state;
+    }
+  });
+
+  it('a deferred assertion (switcher open / satellite holds key / app inactive) emits NO SET_STACKING', () => {
+    let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
+
+    // Switcher open: invalidated, deferred.
+    const opened = reduce(s, { type: 'SWITCHER_OPENED', windowId: wid(9) });
+    assert.strictEqual(opened.state.frontAsserted, false);
+    assert.deepStrictEqual(stackings(opened.effects), [], 'no order drive while the switcher holds key');
+
+    // Satellite steals key: invalidated, deferred.
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+    ]).state;
+    const stolen = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(2) });
+    assert.strictEqual(stolen.state.frontAsserted, false);
+    assert.deepStrictEqual(stackings(stolen.effects), [], 'no order drive the instant a palette takes key');
+
+    // App inactive: nothing drives.
+    const resigned = drive(stolen.state, [{ type: 'APP_RESIGNED' }]).state;
+    const inactive = reduce(resigned, { type: 'SESSION_CHANGED', session: 'active' });
+    assert.deepStrictEqual(stackings(inactive.effects), [], 'no order drive while Peek is not the active app');
+  });
+
+  it('SWITCHER_SELECTED drives the selection to the top through the one assertion step', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
+    s = drive(s, [{ type: 'SWITCHER_OPENED', windowId: wid(9) }]).state;
+    const { state, effects } = reduce(s, { type: 'SWITCHER_SELECTED', id: wid(1) });
+    assert.deepStrictEqual(stackings(effects), [wid(1)], 'exactly one order drive, from the closing step');
+    assert.deepStrictEqual(getStackOrder(state), [wid(2), wid(1)]);
+    assert.strictEqual(state.frontAsserted, true);
+  });
+
+  it('Cmd-Tab away and back re-drives ORDER for an unchanged front (the §6 fix, order half)', () => {
+    const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
+    const resigned = reduce(s, { type: 'APP_RESIGNED' });
+    assert.deepStrictEqual(stackings(resigned.effects), [], 'nothing driven while leaving');
+    const back = reduce(resigned.state, { type: 'APP_ACTIVATED' });
+    assert.deepStrictEqual(stackings(back.effects), [wid(1)], 'return re-drives order along with the raise');
+  });
+
+  it('SET_STACKING is the SOLE machine-driven ordering: any reorder not mirrored from a native show/hide/close carries it', () => {
+    const script: WindowEvent[] = [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: true },
+      { type: 'WINDOW_REGISTERED', id: wid(3), kind: 'browser', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(3), focused: false },
+      { type: 'OS_FOCUS_GAINED', id: wid(1) },
+      { type: 'SWITCHER_OPENED', windowId: wid(9) },
+      { type: 'SWITCHER_SELECTED', id: wid(2) },
+      { type: 'WINDOW_HIDDEN', id: wid(2) },
+      { type: 'WINDOW_CLOSED', id: wid(3) },
+      { type: 'APP_RESIGNED' },
+      { type: 'APP_ACTIVATED' },
+    ];
+    const NATIVE_MIRROR = new Set(['WINDOW_SHOWN', 'WINDOW_HIDDEN', 'WINDOW_CLOSED']);
+    let s = createInitialState();
+    for (const ev of script) {
+      const r = reduce(s, ev);
+      const survivors = getStackOrder(s).filter((id) => getStackOrder(r.state).includes(id));
+      const nextOfSurvivors = getStackOrder(r.state).filter((id) => survivors.includes(id));
+      const reordered = JSON.stringify(survivors) !== JSON.stringify(nextOfSurvivors);
+      if (reordered && !NATIVE_MIRROR.has(ev.type)) {
+        assert.ok(stackings(r.effects).length > 0, `machine reordered the stack after ${ev.type} without a SET_STACKING`);
+      }
+      s = r.state;
+    }
+  });
+});
+
+describe('WINDOW_CONTENT_ORDERABLE — the page-host orderability caveat (§5 step 5)', () => {
+  function threeHosts(): AppWindowState {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    s = openWindow(s, 2, { kind: 'page-host', role: 'content' });
+    s = openWindow(s, 3, { kind: 'page-host', role: 'content' }); // front 3
+    return s;
+  }
+
+  it('a page-host registers NON-orderable; a browser window is orderable from birth', () => {
+    const { state } = drive(createInitialState(), [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false },
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'content', satellite: false },
+    ]);
+    const recs = snapshot(state).windows;
+    assert.strictEqual(recs.find((r) => r.id === wid(1))?.orderable, false);
+    assert.strictEqual(recs.find((r) => r.id === wid(2))?.orderable, true);
+  });
+
+  it('first composited frame re-drives SET_STACKING for the window and everything above it, bottom→top', () => {
+    const s = threeHosts();
+    assert.deepStrictEqual(getStackOrder(s), [wid(1), wid(2), wid(3)]);
+    const bottom = reduce(s, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(1) });
+    assert.deepStrictEqual(stackings(bottom.effects), [wid(1), wid(2), wid(3)], 'its earlier raises no-op’d — everything above re-stacks over it');
+    const mid = reduce(bottom.state, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(2) });
+    assert.deepStrictEqual(stackings(mid.effects), [wid(2), wid(3)], 'only the suffix above the newly-orderable window');
+  });
+
+  it('a stray late re-fire is structurally inert (the legacy listener disarm, without the listener)', () => {
+    const s = threeHosts();
+    const first = reduce(s, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(2) });
+    const again = reduce(first.state, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(2) });
+    assert.deepStrictEqual(stackings(again.effects), [], 'no restack on a re-navigation first-frame');
+  });
+
+  it('an unknown id is a no-op', () => {
+    const s = threeHosts();
+    const { state, effects } = reduce(s, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(99) });
+    assert.deepStrictEqual(stackings(effects), []);
+    assert.deepStrictEqual(getStackOrder(state), getStackOrder(s));
+  });
+
+  it('a HIDDEN page-host compositing is marked orderable but re-drives nothing', () => {
+    let s = threeHosts();
+    s = drive(s, [{ type: 'WINDOW_HIDDEN', id: wid(2) }]).state;
+    const { state, effects } = reduce(s, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(2) });
+    assert.deepStrictEqual(stackings(effects), [], 'not in the stack — nothing to re-drive');
+    assert.strictEqual(snapshot(state).windows.find((r) => r.id === wid(2))?.orderable, true, 'compositing is still recorded');
+  });
+
+  it('is order-only: no RAISE_WINDOW, no FOCUS_CONTENT, front and frontAsserted untouched', () => {
+    const s = threeHosts();
+    const { state, effects } = reduce(s, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(1) });
+    assert.strictEqual(hasEffect(effects, 'RAISE_WINDOW'), false, 'compositing must never activate anything');
+    assert.strictEqual(hasEffect(effects, 'FOCUS_CONTENT'), false);
+    assert.strictEqual(getFrontWindowId(state), getFrontWindowId(s));
+    assert.strictEqual(state.frontAsserted, s.frontAsserted);
+  });
+});
+
+describe('restore-shaped import — back→front yields that order, focused on top (§5 step 5)', () => {
+  it('a back→front browser import lands in exactly the imported order with the focused window on top', () => {
+    // The session-restore shape: every window shown WITHOUT focus in back→front
+    // order, then the focused descriptor activated LAST.
+    const { state } = drive(createInitialState(), [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: false }, // seeds front (no front yet)
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+      { type: 'WINDOW_REGISTERED', id: wid(3), kind: 'browser', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(3), focused: false },
+      { type: 'OS_FOCUS_GAINED', id: wid(3) }, // the focused descriptor, activated last
+    ]);
+    assert.deepStrictEqual(getStackOrder(state), [wid(1), wid(2), wid(3)], 'saved order, bottom→top');
+    assert.strictEqual(getFrontWindowId(state), wid(3), 'focused on top');
+    assert.strictEqual(state.frontAsserted, true);
+  });
+
+  it('page-host imports converge onto the saved order as first-frame events arrive in ANY order', () => {
+    let s = createInitialState();
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: false },
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'page-host', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+      { type: 'WINDOW_REGISTERED', id: wid(3), kind: 'page-host', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(3), focused: false },
+      { type: 'OS_FOCUS_GAINED', id: wid(3) },
+    ]).state;
+    assert.deepStrictEqual(getStackOrder(s), [wid(1), wid(2), wid(3)]);
+
+    // First frames land out of order: 2, then 3, then 1. Each re-drives its
+    // suffix; the intended order NEVER changes, and the last arrival's
+    // re-drive realizes the full saved order natively.
+    const r2 = reduce(s, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(2) });
+    assert.deepStrictEqual(stackings(r2.effects), [wid(2), wid(3)]);
+    const r3 = reduce(r2.state, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(3) });
+    assert.deepStrictEqual(stackings(r3.effects), [wid(3)]);
+    const r1 = reduce(r3.state, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(1) });
+    assert.deepStrictEqual(stackings(r1.effects), [wid(1), wid(2), wid(3)], 'the final arrival replays the whole order above it');
+
+    assert.deepStrictEqual(getStackOrder(r1.state), [wid(1), wid(2), wid(3)], 'intent stable throughout');
+    assert.strictEqual(getFrontWindowId(r1.state), wid(3));
+    for (const rec of snapshot(r1.state).windows) assert.strictEqual(rec.orderable, true);
+  });
+});
+
+describe('stacking purity — reduce never mutates the input stackOrder', () => {
+  it('a reordering event leaves the input list untouched', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    s = openWindow(s, 2, { kind: 'browser', role: 'content' }); // [1, 2]
+    const before = [...s.stackOrder];
+    const { state } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(1) }); // reorders to [2, 1]
+    assert.deepStrictEqual(getStackOrder(state), [wid(2), wid(1)]);
+    assert.deepStrictEqual(s.stackOrder, before, 'input array unchanged');
+    assert.notStrictEqual(state.stackOrder, s.stackOrder, 'result holds a fresh array, not the input reference');
   });
 });

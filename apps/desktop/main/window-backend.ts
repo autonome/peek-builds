@@ -216,4 +216,19 @@ export interface WindowBackend {
 
   /** Destroy every registered page-host guest WC (the `DESTROY_ALL_GUESTS` effect — quit teardown, peek d1cf0b9a). */
   destroyAllContentGuests(): void;
+
+  // ── §5 step 5 command (z-order / stacking) ────────────────────────────────
+
+  /**
+   * Place the window at the top of its (regular) window level — RELATIVE ORDER
+   * ONLY (the `SET_STACKING` effect): no activation, no key-window change, no
+   * first-responder change (those are `raiseWindow` / `focusContent`). The
+   * Electron backend implements it as the native relative raise (`moveTop`).
+   * Two native caveats the MACHINE models, not the backend: macOS silently
+   * no-ops the raise for a non-frontmost app, and a page-host's NSWindow
+   * no-ops it until first composited frame — the reducer's appActive gate and
+   * the `WINDOW_CONTENT_ORDERABLE` re-drive cover them; the backend just
+   * issues the raise.
+   */
+  setStacking(id: WindowId): void;
 }

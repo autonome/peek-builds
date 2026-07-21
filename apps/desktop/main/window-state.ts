@@ -83,6 +83,26 @@ export type WindowClass =
   | 'test-fixture'
   | 'devtools';
 
+/**
+ * A window's stacking level (§4.3 dim 3, §5 step 5) — how it participates in
+ * z-order. Derived ONCE per registration by `deriveStackingLevel` (the single
+ * owner of the rule), stored on the record:
+ *
+ *   - `stacked`  participates in the ordered stack (`AppWindowState.stackOrder`):
+ *                primary, quick-view, extension-ui — the windows the user
+ *                actually layers.
+ *   - `pinned`   floats ABOVE the whole regular stack (hud / overlay / palette).
+ *                Their above-ness is realized by the existing `SET_ALWAYS_ON_TOP`
+ *                pin (macOS window level 'floating'), NOT by list position —
+ *                the ordered stack never contains them, and `SET_STACKING`
+ *                (a same-level relative raise) could not express them anyway.
+ *   - `excluded` never on the user-visible stack in an orderable sense:
+ *                background / bridge / test-fixture / devtools plus any other
+ *                satellite (modal dialogs, focusable:false surfaces) — their
+ *                z-relationship is OS/parent-managed, not machine-ordered.
+ */
+export type StackingLevel = 'stacked' | 'pinned' | 'excluded';
+
 /** The window's ESC override. 'ignore' passes ESC straight through to the page. */
 export type EscapeMode = 'auto' | 'close' | 'navigate' | 'ignore';
 
@@ -151,6 +171,26 @@ export interface WindowRecord {
    */
   satellite: boolean;
   visible: boolean;
+  /**
+   * The record's stacking level (§4.3 dim 3) — see `StackingLevel`. Derived by
+   * `deriveStackingLevel` at registration (and re-derived on the richer
+   * re-registration merge, which can flip `satellite`). `stacked` + `visible`
+   * is exactly membership in `AppWindowState.stackOrder`.
+   */
+  stackingLevel: StackingLevel;
+  /**
+   * Whether the window's NSWindow can actually be z-ordered yet. TRUE from
+   * birth for a `browser` window; a `page-host`'s WebContentsView NSWindow
+   * silently NO-OPS relative raises until its content has produced a first
+   * composited frame, so page-hosts start FALSE and flip on the
+   * `WINDOW_CONTENT_ORDERABLE` event (whose reducer clause re-drives
+   * `SET_STACKING` for the window and everything stacked above it — the
+   * machine form of `session.ts reassertStackingOrder`'s first-frame re-assert,
+   * with no timer and no poll). Never reset: compositing survives hide/show,
+   * and a re-fire against an already-orderable window is structurally inert
+   * (the legacy listener's "disarm so a stray late frame can't restack").
+   */
+  orderable: boolean;
   fsMode: FsMode;
   /** MRU counter (absorbs `focus-order.ts`). Higher = more recently focused. */
   focusSeq: number;
@@ -217,6 +257,26 @@ export interface AppWindowState {
    * assigns `front`.
    */
   frontAsserted: boolean;
+  /**
+   * The ordered stack (§4.3 dim 3): BOTTOM → TOP, last element = topmost. The
+   * machine's INTENDED z-order for the level-`stacked` windows — the state
+   * that "owned nowhere" z-order becomes (§6). Membership is exactly the
+   * records with `stackingLevel: 'stacked' && visible: true`; `pinned`
+   * records float above it via `SET_ALWAYS_ON_TOP`, `excluded` records never
+   * enter. Maintained by the transitions:
+   *   - WINDOW_SHOWN raises the shown window to the top (native show /
+   *     showInactive both order the window frontmost);
+   *   - WINDOW_HIDDEN / WINDOW_CLOSED remove it;
+   *   - the closing assertion (`applyFrontAssertion`) raises `front` to the
+   *     top whenever it drives the OS — so "after a machine-driven assertion,
+   *     `front` is the top of this list" is what `frontAsserted` claims;
+   *   - WINDOW_CONTENT_ORDERABLE re-drives `SET_STACKING` to converge native
+   *     order onto this list as page-hosts become orderable.
+   * Fullscreen transitions do NOT change membership: fullscreen is a display
+   * mode (the window occupies its own Space), not a stacking removal, and a
+   * relative raise against it is a harmless native no-op.
+   */
+  stackOrder: WindowId[];
   switcher: SwitcherState;
   windows: Map<WindowId, WindowRecord>;
   /** Monotonic source for `WindowRecord.focusSeq`. */
@@ -246,6 +306,7 @@ export function createInitialState(): AppWindowState {
     // Nothing has been driven onto the OS yet. With `front: null` the closing
     // assertion step has nothing to assert; the derived Esc grab covers that gap.
     frontAsserted: false,
+    stackOrder: [],
     switcher: { open: false },
     windows: new Map(),
     focusSeqCounter: 0,
@@ -304,6 +365,20 @@ export type WindowEvent =
   | { type: 'DEVTOOLS_OPENED'; id: WindowId }
   | { type: 'DEVTOOLS_CLOSED'; id: WindowId }
   | { type: 'WINDOW_SHOWN'; id: WindowId; focused: boolean }
+  /**
+   * A page-host's content produced its first composited frame, making its
+   * NSWindow actually z-orderable (§5 step 5 — the page-host orderability
+   * caveat: until this moment the window server silently NO-OPS relative
+   * raises against it, which is why the legacy restore's bulk `moveTop` pass
+   * left internal tiles on top). The reducer marks the record `orderable` and
+   * re-drives `SET_STACKING` for the window and everything stacked above it,
+   * converging native order onto `stackOrder` as each page-host composites —
+   * event-driven, no timer, no poll (the machine form of `session.ts
+   * reassertStackingOrder` keyed on the private `hybrid:first-frame` IPC).
+   * PRODUCERS ARE NOT WIRED YET (§5 step 5 part B): the event exists unfired;
+   * the legacy first-frame listener still owns the live re-assert.
+   */
+  | { type: 'WINDOW_CONTENT_ORDERABLE'; id: WindowId }
   | { type: 'WINDOW_HIDDEN'; id: WindowId }
   | { type: 'WINDOW_CLOSED'; id: WindowId }
   | { type: 'OS_FOCUS_GAINED'; id: WindowId; lastHttpUrl?: string }
@@ -361,6 +436,18 @@ export type Effect =
    */
   | { type: 'CLOSE_SWITCHER_WINDOW'; restoreTarget: WindowId | null; restoreFocus: boolean; switcherWindowId: WindowId | null }
   | { type: 'RAISE_WINDOW'; id: WindowId }
+  /**
+   * Place the window at the top of its (regular) window level — RELATIVE ORDER
+   * ONLY, the `moveTop` replacement (§4.3 dim 3): no activation, no key-window
+   * change, no first-responder semantics (those are `RAISE_WINDOW` /
+   * `FOCUS_CONTENT`). The SOLE ordering effect: emitted by the closing
+   * assertion step alongside the existing raise (so the machine's own
+   * front-driving also drives order — what makes `frontAsserted` mean "on
+   * top", §6), and re-driven by `WINDOW_CONTENT_ORDERABLE` as page-hosts
+   * become orderable. To realize a full order the reducer emits one per
+   * window, bottom → top (each raise stacks on the previous).
+   */
+  | { type: 'SET_STACKING'; id: WindowId }
   /**
    * Make a page-host's content WebContentsView the macOS first responder (the
    * `shouldFocusHybridContentOnHostFocus` invariant). Emitted by the closing
@@ -564,6 +651,33 @@ export function classifyWindowRegistration(
 }
 
 /**
+ * The classes whose windows pin ABOVE the whole regular stack (`StackingLevel
+ * 'pinned'`): their above-ness rides the existing `SET_ALWAYS_ON_TOP` pin, so
+ * the ordered stack never contains them.
+ */
+const PINNED_CLASSES: ReadonlySet<WindowClass> = new Set<WindowClass>(['hud', 'overlay', 'palette']);
+
+/**
+ * deriveStackingLevel — the SINGLE owner of the "does this window participate
+ * in the ordered stack, float above it, or stay out of it?" rule (§4.3 dim 3).
+ * Judged once per registration from the record's declared class + satellite
+ * flag (both already settled by `classifyWindowRegistration` /
+ * `isSatelliteRegistration`):
+ *   - hud / overlay / palette          -> 'pinned'   (above the stack, via the pin)
+ *   - any other satellite              -> 'excluded' (background/bridge/test-fixture/
+ *                                                     devtools, modals, focusable:false
+ *                                                     — OS/parent-managed z-relationship)
+ *   - the rest                         -> 'stacked'  (primary, quick-view, extension-ui)
+ * Note `stacked` coincides with front-eligibility's non-satellite half by
+ * construction, so a legal `front` is always a `stacked` record.
+ */
+export function deriveStackingLevel(windowClass: WindowClass, satellite: boolean): StackingLevel {
+  if (PINNED_CLASSES.has(windowClass)) return 'pinned';
+  if (satellite) return 'excluded';
+  return 'stacked';
+}
+
+/**
  * What one registration call must do. Every field is a decision, not a value,
  * executed verbatim in two halves: the backend
  * (`electron-window-backend.ts registerWindow`) performs the merge +
@@ -720,6 +834,31 @@ export function frontInvariantHolds(state: AppWindowState): boolean {
   return isEligibleFront(state.windows.get(state.front));
 }
 
+/** A record belongs in the ordered stack iff it is level-`stacked` AND visible. */
+function isStackMember(rec: WindowRecord | undefined): rec is WindowRecord {
+  return !!rec && rec.stackingLevel === 'stacked' && rec.visible;
+}
+
+/**
+ * Whether `stackOrder` currently satisfies its invariant: no duplicates, and
+ * its membership is EXACTLY the records with `stackingLevel 'stacked' &&
+ * visible` (order itself is state, not derivable — this checks consistency,
+ * not position). Exported for the test suite's per-step assertion, the same
+ * way `frontInvariantHolds` is.
+ */
+export function stackOrderInvariantHolds(state: AppWindowState): boolean {
+  const seen = new Set<WindowId>();
+  for (const id of state.stackOrder) {
+    if (seen.has(id)) return false;
+    seen.add(id);
+    if (!isStackMember(state.windows.get(id))) return false;
+  }
+  for (const rec of state.windows.values()) {
+    if (isStackMember(rec) && !seen.has(rec.id)) return false;
+  }
+  return true;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Immutable-update helpers (the reducer must not mutate its input)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -730,6 +869,7 @@ function cloneState(state: AppWindowState): AppWindowState {
     session: state.session,
     front: state.front,
     frontAsserted: state.frontAsserted,
+    stackOrder: [...state.stackOrder],
     switcher: state.switcher,
     windows: new Map(state.windows),
     focusSeqCounter: state.focusSeqCounter,
@@ -751,6 +891,38 @@ function bumpFocusSeq(state: AppWindowState, id: WindowId): void {
   if (!cur) return;
   state.focusSeqCounter += 1;
   state.windows.set(id, { ...cur, focusSeq: state.focusSeqCounter });
+}
+
+/** Drop a window from the ordered stack (hide/close). Mutates the cloned state. */
+function stackRemove(state: AppWindowState, id: WindowId): void {
+  const i = state.stackOrder.indexOf(id);
+  if (i !== -1) state.stackOrder.splice(i, 1);
+}
+
+/**
+ * Move a window to the TOP of the ordered stack (appending if absent) — the
+ * list mirror of a native order-front. No-op for a non-member (hidden /
+ * pinned / excluded), which keeps the membership invariant by construction.
+ */
+function stackRaise(state: AppWindowState, id: WindowId): void {
+  if (!isStackMember(state.windows.get(id))) return;
+  stackRemove(state, id);
+  state.stackOrder.push(id);
+}
+
+/**
+ * Re-establish a single window's stack membership after something that can
+ * flip it (the richer re-registration merge changing `satellite`/`class`).
+ * A window that becomes a member joins at the TOP (it is visible now, and
+ * registration happens at open time); one that stops being a member leaves.
+ */
+function reconcileStackMembership(state: AppWindowState, id: WindowId): void {
+  const rec = state.windows.get(id);
+  if (isStackMember(rec)) {
+    if (!state.stackOrder.includes(id)) state.stackOrder.push(id);
+  } else {
+    stackRemove(state, id);
+  }
 }
 
 /**
@@ -886,6 +1058,15 @@ function applyFrontAssertion(
   if (!rec) return;
   effects.push({ type: 'RAISE_WINDOW', id: state.front });
   if (rec.kind === 'page-host') effects.push({ type: 'FOCUS_CONTENT', id: state.front });
+  // Driving the front now also drives ORDER (§5 step 5): the same closing
+  // assertion that raises/first-responders the front places it on top of the
+  // ordered stack — list and OS together, one emitter. This is what makes
+  // `frontAsserted === true` mean "front is the top of `stackOrder` and we
+  // drove the OS to match", killing the §6 buried-but-asserted state for
+  // machine-driven raises. (A legal front is always a stack member —
+  // `deriveStackingLevel` note — so the raise below is never a no-op.)
+  effects.push({ type: 'SET_STACKING', id: state.front });
+  stackRaise(state, state.front);
   state.frontAsserted = true;
 }
 
@@ -1033,6 +1214,12 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
           escapeMode: event.escapeMode,
           satellite: event.satellite,
           class: event.class ?? existing.class,
+          // Re-derive from the merged (richer) spec — it can flip `satellite`
+          // and therefore the level; membership is reconciled below.
+          stackingLevel: deriveStackingLevel(event.class ?? existing.class, event.satellite),
+          // Orderability only ever upgrades: compositing is a fact about the
+          // native window, not the spec, so a re-registration never resets it.
+          orderable: existing.orderable || event.kind !== 'page-host',
           parentId: event.parentId ?? existing.parentId,
           source: event.source ?? existing.source,
           params: event.params ?? existing.params,
@@ -1044,6 +1231,10 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         if (state.front === event.id && !isEligibleFront(state.windows.get(event.id))) {
           state.front = successorFront(state, event.id);
         }
+        // The re-derived level can add or remove the window from the ordered
+        // stack (e.g. the richer spec revealing `modal` demotes it to
+        // 'excluded' — the same flip the front fixup above handles).
+        reconcileStackMembership(state, event.id);
         // Declared always-on-top intent (see the fresh branch below) —
         // idempotent to re-assert on a richer re-registration.
         if (event.alwaysOnTop === true) {
@@ -1056,6 +1247,10 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         kind: event.kind,
         role: event.role,
         class: event.class ?? 'primary',
+        stackingLevel: deriveStackingLevel(event.class ?? 'primary', event.satellite),
+        // A browser window's NSWindow is orderable from birth; a page-host's
+        // no-ops raises until first composited frame (WINDOW_CONTENT_ORDERABLE).
+        orderable: event.kind !== 'page-host',
         parentId: event.parentId ?? undefined,
         source: event.source,
         params: event.params,
@@ -1124,6 +1319,15 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       const rec = state.windows.get(event.id);
       if (!rec) break;
       patchRecord(state, event.id, { visible: true });
+      // Ordered-stack import: showing orders the window frontmost natively
+      // (`show` and `showInactive` both order-front), so the list mirrors it on
+      // top. This is what makes a restore-shaped back→front import land in
+      // exactly the imported order, focused last/on top. NOTE it deliberately
+      // does NOT invalidate the front assertion: a non-focused show must not
+      // trigger a RAISE_WINDOW (activation) storm — the burial converges when
+      // the focused window's own event arrives, and the legacy restore
+      // machinery still owns live restore ordering until §5 step 5 part B.
+      stackRaise(state, event.id);
       // Session is NOT derived here — `izui-state.ts` owns it and feeds it in via
       // SESSION_CHANGED. Deriving it here would be a rival authority (§3).
       if (event.focused) {
@@ -1140,8 +1344,30 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       const rec = state.windows.get(event.id);
       if (!rec) break;
       patchRecord(state, event.id, { visible: false });
+      stackRemove(state, event.id);
       if (state.front === event.id) {
         state.front = successorFront(state, event.id);
+      }
+      break;
+    }
+
+    case 'WINDOW_CONTENT_ORDERABLE': {
+      const rec = state.windows.get(event.id);
+      if (!rec) break;
+      // Already orderable: a stray late frame (a surviving page-host
+      // re-navigating re-runs its preload and reports again) must not restack —
+      // the structural form of the legacy listener's disarm.
+      if (rec.orderable) break;
+      patchRecord(state, event.id, { orderable: true });
+      // The window's earlier raises were window-server no-ops, so it sits
+      // BELOW its intended position. Re-drive it and everything stacked above
+      // it, bottom → top, converging native order onto `stackOrder` — order
+      // only, no activation, no assertion change (front never moved).
+      const idx = state.stackOrder.indexOf(event.id);
+      if (idx !== -1) {
+        for (const id of state.stackOrder.slice(idx)) {
+          effects.push({ type: 'SET_STACKING', id });
+        }
       }
       break;
     }
@@ -1149,6 +1375,7 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
     case 'WINDOW_CLOSED': {
       const closedRec = prev.windows.get(event.id);
       state.windows.delete(event.id);
+      stackRemove(state, event.id);
       // A pending renderer question aimed at this window can never be answered
       // meaningfully — drop it so a late answer is inert.
       if (state.escAsk && state.escAsk.id === event.id) state.escAsk = null;
@@ -1465,6 +1692,15 @@ export function getWindowPreBounds(state: AppWindowState, id: WindowId): Rectang
 }
 
 /**
+ * The intended z-order of the level-`stacked` windows, BOTTOM → TOP (a copy).
+ * Session-save's z-order rank and the §5 step 5 part B consumers read this
+ * instead of live-polling native order.
+ */
+export function getStackOrder(state: AppWindowState): WindowId[] {
+  return [...state.stackOrder];
+}
+
+/**
  * A window's MRU focus rank (absorbs `focus-order.ts` `getFocusOrder`): higher =
  * more recently focused, 0 if never focused / unregistered. Session-save reads
  * this to rank windows for eager/deferred restore.
@@ -1494,6 +1730,8 @@ export interface StateSnapshot {
   front: WindowId | null;
   /** See `AppWindowState.frontAsserted` — intent vs. asserted-onto-the-OS. */
   frontAsserted: boolean;
+  /** See `AppWindowState.stackOrder` — the intended z-order, bottom → top. */
+  stackOrder: WindowId[];
   switcher: SwitcherState;
   windows: WindowRecord[];
 }
@@ -1504,6 +1742,7 @@ export function snapshot(state: AppWindowState): StateSnapshot {
     session: state.session,
     front: state.front,
     frontAsserted: state.frontAsserted,
+    stackOrder: [...state.stackOrder],
     switcher: state.switcher,
     windows: [...state.windows.values()].map((r) => ({ ...r })),
   };

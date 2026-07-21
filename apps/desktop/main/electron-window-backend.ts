@@ -77,6 +77,8 @@ export interface NativeWindow {
   destroy(): void;
   hide(): void;
   setAlwaysOnTop(flag: boolean, level?: 'normal' | 'floating'): void;
+  /** Relative z-raise without activation (the `setStacking` command). On both kinds in Electron 40. */
+  moveTop(): void;
   on(event: string, listener: (...args: unknown[]) => void): unknown;
 }
 
@@ -678,6 +680,25 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       if (!win.isDestroyed()) win.setAlwaysOnTop(on, on ? 'floating' : undefined);
     } catch {
       /* pinning a torn-down window is a no-op */
+    }
+  }
+
+  /**
+   * Relative raise — order only (the `SET_STACKING` effect, §5 step 5). BOTH
+   * kinds route through the same native `moveTop`: it reorders z within the
+   * window's level WITHOUT activating or taking key (the property the legacy
+   * restore pass relied on). The two caveats — macOS no-ops it for a
+   * non-frontmost app, and a page-host's NSWindow no-ops it until first
+   * composited frame — are modeled in the MACHINE (`window-state.ts`
+   * appActive gate + `WINDOW_CONTENT_ORDERABLE`), not worked around here.
+   */
+  setStacking(id: WindowId): void {
+    const win = this.windows.get(id)?.win;
+    if (!win) return;
+    try {
+      if (!win.isDestroyed()) win.moveTop();
+    } catch {
+      /* moveTop unsupported on some platforms / torn-down window — a no-op */
     }
   }
 

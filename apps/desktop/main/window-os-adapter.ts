@@ -250,6 +250,15 @@ export class WindowOsAdapter {
         this.backend.raiseWindow(effect.id);
         return;
       }
+      case 'SET_STACKING': {
+        // Relative order only — the moveTop replacement (§4.3 dim 3). No
+        // activation and no first-responder semantics (those are RAISE_WINDOW /
+        // FOCUS_CONTENT), so unlike the show/pin family it needs no headless
+        // gate: a relative raise never takes key, steals focus, or repaints a
+        // frame into visibility.
+        this.backend.setStacking(effect.id);
+        return;
+      }
       case 'FOCUS_CONTENT': {
         // Make a page-host's content WC the macOS first responder (the
         // `shouldFocusHybridContentOnHostFocus` invariant, now standard on any
