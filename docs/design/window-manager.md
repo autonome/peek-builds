@@ -197,10 +197,18 @@ current authority. `OUT OF SCOPE` = genuinely not window management.
 
 ### 4.1 Identity and creation
 
-**1a. Window identity / params** — TO ABSORB.
-Today: `main.ts` module-level `windowRegistry` Map, mutated in place by six-plus writers
-with no invariant.
-Becomes: the reducer's window table, keyed by WM id, written only by reducer transitions.
+**1a. Window identity / params** — ABSORBED (§5 step 4).
+The `main.ts` module-level `windowRegistry` Map is deleted. The reducer's window table
+(keyed by WM id, written only by reducer transitions) carries the `{source, params}`
+payload, declared on the registration spec at the ipc.ts open sites (or merged later
+via `WINDOW_PARAMS_SET` — the surviving `main.ts registerWindow` export). The old
+accessors (`getWindowInfo` / `findWindowByKey` / `findWindowByUrl` / `getAllWindows` /
+…) survive as a numeric-Electron-id seam over machine state with identical
+membership: records without a payload (tiles, bridge/background/test-fixture/devtools)
+stay invisible to them, exactly as they were absent from the Map. `params` is stored
+BY REFERENCE and legacy consumers still mutate it in place (`params.currentUrl`,
+`tile:window` bounds writes) — the reducer never reads inside it; collapsing those
+in-place writes is later-step work (geometry §5 step 7, session §5 step 11).
 
 **1b. New-window-vs-reuse dedup** — TO ABSORB.
 Today: not held anywhere; recomputed on every open from **two parallel dedup ladders**
@@ -269,18 +277,24 @@ drift. `maybeHideApp` live-polls `isVisible()`.
 Becomes: `visible` becomes authoritative, updated only by `shown` / `hidden` events;
 app-hide is derived from reducer state, never polled.
 
-**8b. Special window classes** — TO ABSORB. *(Top divergence risk #5.)*
-Today: **8+ independent singletons** — `main.ts mainWindow` and `backgroundWindow`,
-`core-glue.ts coreBackgroundWindow`, `test-fixture-glue.ts testFixtureWindow`,
-`hybrid-overlay.ts overlayWin`, `tile-lifecycle.ts bgWindow`, `tray.ts tray`,
-`chrome-extensions.ts extensionUiWindows` and `_bridgeWindows`. HUD, bridge, extension-UI
-and test-fixture windows are **unclassified** — not satellite, not anything. The HUD is
-identified by sniffing `isAlwaysOnTop() && !isFocusable()` plus a `(win as any).__hudHidden`
-expando.
-Becomes: a `class` field on the window record with a closed enum
+**8b. Special window classes** — ABSORBED (§5 step 4). *(Was top divergence risk #5.)*
+The window record carries a `class` field with a closed enum
 (`primary | quick-view | overlay | palette | hud | background | bridge | extension-ui |
-test-fixture`). Every singleton becomes a lookup by class. The expando and the sniffing
-predicate are deleted.
+test-fixture | devtools`), declared at registration — `window-state.ts
+classifyWindowRegistration` owns the ordinary-window rule; the infrastructure classes
+are declared by their glue modules. `main.ts mainWindow`/`backgroundWindow`,
+`core-glue.ts coreBackgroundWindow` and `test-fixture-glue.ts testFixtureWindow` are
+deleted — their accessors are lookups by class (`window-state-singleton.ts
+getNativeWindowByClass`). The HUD-sniffing predicate (`isAlwaysOnTop() &&
+!isFocusable()`) and the `__hudHidden` expando are deleted: the reducer's
+APP_RESIGNED/APP_ACTIVATED clauses sweep class-`hud` records (a `hiddenByAppBlur`
+record flag) via HIDE_WINDOW/SHOW_WINDOW effects. The chrome-extension
+`extensionUiWindows`/`_bridgeWindows` Maps REMAIN as extension-identity indexes
+(keyed by runtimeId/page — content-side identity, like the hybrid registry), but
+every window in them is a registered class-tagged machine record and all their
+window OPS route through the machine. **Survey corrections:** `tile-lifecycle.ts
+bgWindow` was wrongly listed here — it is a `{tileId, entryId}` identity latch, not
+a window handle; `tray.ts tray` is a Tray, not a window. Neither is WM state.
 
 ### 4.4 Focus and routing
 
@@ -333,10 +347,16 @@ Becomes: a `contentPhase` field on the window record (`deferred | loading | load
 side Maps collapse into it. Content *policy* (what to load, when it's worth loading) may
 stay outside; window lifecycle does not.
 
-**8a. Devtools windows** — TO ABSORB.
-Today: no held state at all; entirely live queries.
-Becomes: devtools windows register like everything else, with class `devtools`, and a
-devtools open/close invalidates the front assertion.
+**8a. Devtools windows** — ABSORBED (§5 step 4).
+A global `web-contents-created` listener (main.ts) registers the detached devtools
+window (when one exists — attached mode has none) with class `devtools`, satellite,
+parented to its host — so closing it hands `front` back via the parent-refocus
+transition — and dispatches `DEVTOOLS_OPENED`/`DEVTOOLS_CLOSED` for the host on both
+edges. Both events invalidate AND re-drive the front assertion in the same transition
+(the machine form of the old scattered "re-focus the content window around devtools"
+handlers). Deliberate carve-out: OS focus landing ON a devtools-class window does NOT
+clear the assertion — otherwise the derived Esc grab would switch on and eat every
+Esc typed inside devtools (parity with the pre-registration behavior).
 
 **11. WebContents ↔ window mapping** — DONE (the id-space part).
 `webview-guest-registry.ts guestToHost` now maps guest webContents id → host `WindowId`,
@@ -384,8 +404,10 @@ failure mode this document exists to prevent (§2).**
    bounded fullscreen §2.3). `window-os-adapter.ts` lost its Electron imports in the same
    commit — its `runEffect` now issues port commands only. Handle-carrying registration
    and the numeric-id seam survive as comment-annotated shims
-   (`electron-window-backend.ts BackendMigrationShims`), absorbed by steps 4 and 11. The
-   R2 check's exempt file swapped to the backend in the same commit.
+   (`electron-window-backend.ts BackendMigrationShims`) — the registration shim until
+   window CREATION moves behind the port (`create(spec)`, still future work after step
+   4), the id seam until step 11. The R2 check's exempt file swapped to the backend in
+   the same commit.
 3. **R2 enforcement check — DONE** (commit b3853bee). `scripts/check-r2-window-ops.mjs`
    runs in the `test:desktop:electron` chain (`apps/desktop/package.json`), with a
    51-entry comment-annotated allowlist covering 129 legacy window-op call sites, each
@@ -393,8 +415,19 @@ failure mode this document exists to prevent (§2).**
    executor — swapped to `apps/desktop/main/electron-window-backend.ts` when the port
    landed (step 2), since that is where the native calls now live. The allowlist only
    ever gets shorter; a PR that lengthens it fails.
-4. **Special window classes + registry unification.** Absorb `windowRegistry`, the 8+
-   singletons, devtools. Delete `__hudHidden` and the always-on-top sniffing predicate.
+4. **Special window classes + registry unification — DONE** (commit fa004fbe). The
+   window record carries the closed `class` enum (§4.3 dim 8b); every window registers
+   (bridge, extension-UI, core background, test fixture, detached devtools);
+   `windowRegistry` is deleted with the machine table as the one registry (§4.1 dim
+   1a); `__hudHidden` + the always-on-top sniffing predicate are deleted (reducer
+   APP_RESIGNED/APP_ACTIVATED sweeps); the `browser-window-created → 'closed' →
+   parentWin.focus()` block became the reducer's parent-refocus transition
+   (registration-declared `parentId`); the port grew the close/destroy/show/hide/pin
+   command family (`closeWindow` guest-safe close, `destroyWindow`, `closeContent`,
+   `showWindow`, `hideWindow`, `pinAlwaysOnTop`, `destroyAllContentGuests`); the R2
+   allowlist shrank 51→40 entries / 129→104 calls. NOT absorbed here (deliberate):
+   handle-carrying registration itself — `create(spec)` is still future work, so the
+   `registerWindow` migration shim stays until window CREATION moves behind the port.
 5. **Z-order / stacking.** Give the reducer stacking. This is what makes `frontAsserted`
    sound (§6) and it must precede session restore.
 6. **Visibility.** Make `visible` authoritative; delete the hand-dispatch of
@@ -422,18 +455,23 @@ cleaning up.
 
 ## 6. Current state
 
-Roughly **1.5 of ~19 dimensions** are owned. That is the honest number. Since this
-document was written, three migration steps have landed — the id space (§5 step 1), the
-port (§5 step 2), and the R2 enforcement check (§5 step 3) — and the machine is live
-behind the seams already cut over (`window-state-singleton.ts` lists the authorities it
-replaced). The §4 dimensions not yet absorbed still run on their old owners.
+Roughly **4.5 of ~19 dimensions** are owned. Since this document was written, four
+migration steps have landed — the id space (§5 step 1), the port (§5 step 2), the R2
+enforcement check (§5 step 3), and special window classes + registry unification (§5
+step 4: window identity/params §4.1 dim 1a, classes §4.3 dim 8b, devtools §4.6 dim 8a)
+— and the machine is live behind the seams already cut over
+(`window-state-singleton.ts` lists the authorities it replaced). The §4 dimensions not
+yet absorbed still run on their old owners.
 
 **`apps/desktop/main/window-state.ts`** — the owner, as R1 describes it, for the dimensions
-it covers. Pure, zero imports, 113 unit tests in `window-state.test.ts`, keyed by
+it covers. Pure, zero imports, 146 unit tests in `window-state.test.ts`, keyed by
 `WindowId`. It owns: `front` (intent), `frontAsserted` (the claim that the OS matches that
 intent), the switcher state, the Escape decision (`applyEscape`), fullscreen mode,
-satellite classification (`isSatelliteRegistration`), and MRU focus order. This is the
-nucleus; everything in §4 grows into it rather than beside it.
+satellite classification (`isSatelliteRegistration`), window classes
+(`classifyWindowRegistration` + the record's closed `class` enum), the window-manager
+registry payload (`source`/`params` — the deleted `main.ts windowRegistry`), parent
+linkage (parent-refocus on WINDOW_CLOSED), the HUD app-blur hide/show sweep, and MRU
+focus order. This is the nucleus; everything in §4 grows into it rather than beside it.
 
 **`apps/desktop/main/window-os-adapter.ts`** — the executor, as R2 describes it, and since
 the port landed (§5 step 2) **Electron-free**: it imports no platform module and holds no
@@ -449,8 +487,11 @@ today; the steps that need more of the §3 table widen it when they land.
 only window-manager module that imports Electron. It retains every native handle, mints
 every `WindowId` (`registerWindow()`, idempotent per native window; its private
 `idByOsWindowId` map is the only `WindowId` ↔ Electron translation in the tree), owns the
-two OS-boundary settles (deferred-blur §4.4, bounded fullscreen §2.3), and carries the
-comment-annotated migration shims (`BackendMigrationShims`) that steps 4 and 11 delete.
+two OS-boundary settles (deferred-blur §4.4, bounded fullscreen §2.3), performs the
+step-4 command family (guest-safe `closeWindow` — the absorbed d1cf0b9a UAF guard —
+`destroyWindow`, `closeContent`, `showWindow`, `hideWindow`, `pinAlwaysOnTop`,
+`destroyAllContentGuests`), and carries the comment-annotated migration shims
+(`BackendMigrationShims`) — deleted when creation moves behind the port and at step 11.
 
 **`apps/desktop/main/window-state-singleton.ts`** — the composition point: holds the one
 machine + adapter pair and exposes the numeric-id seam (`getWindowIdFor()` /
@@ -458,7 +499,7 @@ machine + adapter pair and exposes the numeric-id seam (`getWindowIdFor()` /
 through (§3 scope decision).
 
 **The R2 check is live** — `scripts/check-r2-window-ops.mjs`, in the
-`test:desktop:electron` chain: 51 allowlist entries covering 129 legacy window-op call
+`test:desktop:electron` chain: 40 allowlist entries covering 104 legacy window-op call
 sites, each tagged with the §5 step that deletes it. The sole exempt file is
 `apps/desktop/main/electron-window-backend.ts` (swapped from the executor when the port
 landed). The entry count is the migration's progress bar; it only goes down.
