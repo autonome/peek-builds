@@ -407,13 +407,44 @@ export class WindowOsAdapter {
   // can emit the transition log (§5.3) and reconcile the derived Esc grab.
   // ───────────────────────────────────────────────────────────────────────────
 
+  /** FIFO of events dispatched while a pump was already running (see `pump`). */
+  private readonly pendingEvents: WindowEvent[] = [];
+
+  /** Whether a pump is currently draining (re-entrancy latch for `pump`). */
+  private pumping = false;
+
+  /**
+   * RE-ENTRANCY: effect execution can dispatch back into this pump. The known
+   * cycle is `RAISE_WINDOW` → `raiseWindow` → the windows.ts show seams
+   * (`showHybridHost`/`showWindowHeadlessSafe`) → their own `WINDOW_SHOWN`
+   * dispatch; `RECONCILE_FULLSCREEN` and the destroyed-WC `ASK_RENDERER`
+   * branch also pump from inside `runEffect`. Instead of recursing
+   * mid-`runEffects` (which converged only because `applyFrontAssertion` sets
+   * `frontAsserted = true` BEFORE its effects are executed — an invariant
+   * nothing enforced), nested dispatches are QUEUED and drained strictly
+   * AFTER the current event's effect batch completes. One pump runs at a
+   * time; every event still flows through the identical
+   * reduce → log → effects → Esc-grab-reconcile sequence, in dispatch order.
+   * A top-level `dispatch()` does not return until the queue is fully
+   * drained, so callers keep their synchronous read-after-dispatch contract.
+   */
   private pump(event: WindowEvent): void {
-    const before = this.owner.snapshot();
-    const effects = this.owner.dispatch(event);
-    const after = this.owner.snapshot();
-    this.logTransition(event, before, after);
-    this.runEffects(effects);
-    this.reconcileEscGrab(this.owner.snapshot());
+    this.pendingEvents.push(event);
+    if (this.pumping) return; // nested dispatch — the running drain picks it up
+    this.pumping = true;
+    try {
+      let next: WindowEvent | undefined;
+      while ((next = this.pendingEvents.shift()) !== undefined) {
+        const before = this.owner.snapshot();
+        const effects = this.owner.dispatch(next);
+        const after = this.owner.snapshot();
+        this.logTransition(next, before, after);
+        this.runEffects(effects);
+        this.reconcileEscGrab(this.owner.snapshot());
+      }
+    } finally {
+      this.pumping = false;
+    }
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -485,24 +516,30 @@ export class WindowOsAdapter {
         }
         // `askWebContentsToHandleEscape` (windows.ts) still speaks Electron ids;
         // resolve the native id INSIDE the adapter (the one place allowed to).
-        void askWebContentsToHandleEscape(this.osWindowIdOf(effect.id) ?? -1, wc).then((ans) => {
-          this.pump({
-            type: 'ESC_RENDERER_ANSWER',
-            id: effect.id,
-            handled: ans.handled,
-            close: ans.close,
-            seq: effect.seq,
-          });
-        });
+        // Tracked (not bare `void`) so the E2E test bridge can await the ask's
+        // round trip deterministically — see `waitForPendingAsyncEffects`.
+        this.trackAsyncEffect(
+          askWebContentsToHandleEscape(this.osWindowIdOf(effect.id) ?? -1, wc).then((ans) => {
+            this.pump({
+              type: 'ESC_RENDERER_ANSWER',
+              id: effect.id,
+              handled: ans.handled,
+              close: ans.close,
+              seq: effect.seq,
+            });
+          }),
+        );
         return;
       }
       case 'CLOSE_WINDOW': {
         // Route through the existing close/hide seam (honors keepLive, hybrid vs
         // browser). Fire-and-forget: it is async (its hybrid branch awaits a
         // fullscreen exit); the machine already recorded intent. The seam is
-        // still Electron-id-keyed; the adapter resolves the native id.
+        // still Electron-id-keyed; the adapter resolves the native id. Tracked
+        // so the test bridge can await the close settling (test-bridge support
+        // only — nothing in the machine waits on it).
         const osId = this.osWindowIdOf(effect.id);
-        if (osId != null) void closeOrHideWindow(osId);
+        if (osId != null) this.trackAsyncEffect(closeOrHideWindow(osId));
         return;
       }
       case 'OPEN_SWITCHER_WINDOW': {
@@ -527,7 +564,8 @@ export class WindowOsAdapter {
         //     cooldown.
         if (effect.restoreFocus && effect.switcherWindowId != null) {
           const osId = this.osWindowIdOf(effect.switcherWindowId);
-          if (osId != null) void closeOrHideWindow(osId);
+          // Tracked for the same test-bridge await as CLOSE_WINDOW above.
+          if (osId != null) this.trackAsyncEffect(closeOrHideWindow(osId));
         }
         return;
       }
@@ -549,6 +587,40 @@ export class WindowOsAdapter {
       case 'NOTHING': {
         return;
       }
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Async-effect settlement tracking — TEST-BRIDGE SUPPORT, not machine state.
+  // Two effects spawn work that outlives the pump: `ASK_RENDERER` (the
+  // `escape-pressed` IPC round trip, bounded by windows.ts's ask timeout) and
+  // the delegated `closeOrHideWindow` calls. The machine itself never waits on
+  // them (effects stay fire-and-forget); this set exists ONLY so the E2E bridge
+  // (`hybrid-overlay.ts runHybridEscape`) can await "the ESC round trip has
+  // fully settled" on the same channel the adapter uses, instead of re-deriving
+  // a poll deadline from the ask-timeout constant. Lives here, OUTSIDE the
+  // reducer, because it is promise plumbing, not state.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /** In-flight async effect promises (renderer ESC asks, delegated closes). */
+  private readonly pendingAsyncEffects = new Set<Promise<unknown>>();
+
+  /** Retain an async effect's promise until it settles (never rethrows). */
+  private trackAsyncEffect(p: Promise<unknown>): void {
+    this.pendingAsyncEffects.add(p);
+    const drop = () => this.pendingAsyncEffects.delete(p);
+    p.then(drop, drop);
+  }
+
+  /**
+   * Test-bridge support: resolve once every currently-pending async effect —
+   * and any async effect those spawn while settling (an ESC ask's answer pump
+   * can emit a `CLOSE_WINDOW`) — has settled. Deterministic: the resolution is
+   * the effects' own promises, no timer loop and no re-derived deadline.
+   */
+  async waitForPendingAsyncEffects(): Promise<void> {
+    while (this.pendingAsyncEffects.size > 0) {
+      await Promise.allSettled([...this.pendingAsyncEffects]);
     }
   }
 

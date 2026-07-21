@@ -181,6 +181,17 @@ export function getFocusOrder(id: WindowId): number {
   return getWindowOsAdapter().getOwner().getWindowFocusSeq(id);
 }
 
+/**
+ * Test-bridge support (E2E only): resolve once the adapter's in-flight async
+ * effects — the `escape-pressed` renderer ask and any delegated
+ * `closeOrHideWindow` — have settled. Lets `hybrid-overlay.ts runHybridEscape`
+ * await the ESC round trip deterministically instead of polling on a deadline
+ * re-derived from the ask timeout. Nothing in the app may gate behavior on it.
+ */
+export function waitForPendingWindowEffects(): Promise<void> {
+  return getWindowOsAdapter().waitForPendingAsyncEffects();
+}
+
 /** Test-only: reset the singleton (drops the adapter + its owner state). */
 export function _resetWindowStateSingletonForTests(): void {
   adapter = null;

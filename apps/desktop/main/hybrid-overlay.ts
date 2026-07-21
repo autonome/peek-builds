@@ -94,6 +94,7 @@ import {
   getWindowModeName,
   getWindowIdFor,
   getNativeWindowFor,
+  waitForPendingWindowEffects,
 } from './window-state-singleton.js';
 import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, registerWindow } from './main.js';
@@ -2902,24 +2903,18 @@ function installTestBridge(): void {
       // is first-responder noise; decideEscape targets `front`).
       dispatchWindowEvent({ type: 'ESC_PRESSED', landedId: getWindowIdFor(id) ?? 'global' });
       // Honor the pre-cutover contract (the old impl AWAITED the full
-      // handleHybridEscape round trip): the machine's ask-renderer step resolves
-      // within `askWebContentsToHandleEscape`'s 500ms no-answer timeout, and a
-      // policy close tears the registry entry down in the synchronous hybrid
-      // 'close' handler. Resolve as soon as the entry is gone, else after the
-      // ask window + settle margin — a bounded await on a designed IPC timeout
-      // (same shape as `waitHybridGone` below), not an unbounded poll. The
-      // cutover's fire-and-forget version resolved before the ask timeout ever
-      // fired, so every policy-path ESC spec read state too early.
-      return new Promise((resolve) => {
-        const deadline = Date.now() + 700;
-        const poll = () => {
-          const e = getHybridWindow(id);
-          if (!e || e.baseWin.isDestroyed()) return resolve(id);
-          if (Date.now() > deadline) return resolve(id);
-          setTimeout(poll, 25);
-        };
-        poll();
-      });
+      // handleHybridEscape round trip) DETERMINISTICALLY: the adapter tracks
+      // the async work its effects spawned — the ASK_RENDERER `escape-pressed`
+      // round trip and a policy-close's `closeOrHideWindow` — and this awaits
+      // that same-channel settlement (`waitForPendingWindowEffects`). No timer
+      // loop, and no deadline re-derived from (and silently coupled to)
+      // `askWebContentsToHandleEscape`'s ask timeout: a non-closing ESC
+      // (renderer handled / pass-through / switcher) resolves as soon as its
+      // round trip does, and if the ask timeout ever changes this waits
+      // exactly as long as the real path does. The cutover's fire-and-forget
+      // version resolved before the ask timeout ever fired, so every
+      // policy-path ESC spec read state too early.
+      return waitForPendingWindowEffects().then(() => id);
     },
     /**
      * ESC-close: resolve once a hybrid host id is GONE from the registry (its
