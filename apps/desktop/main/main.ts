@@ -38,8 +38,16 @@ import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHe
 import { getSystemThemeBackgroundColor, showWindowHeadlessSafe } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import { initWindowStateMachine, registerWindowWithMachine } from './window-state-singleton.js';
-import { isSatelliteRegistration } from './window-state.js';
+import {
+  initWindowStateMachine,
+  registerWindowWithMachine,
+  dispatchWindowEvent,
+  getWindowIdFor,
+  getNativeWindowFor,
+  getMachineWindowRecord,
+  listMachineWindowRecords,
+} from './window-state-singleton.js';
+import { isSatelliteRegistration, classifyWindowRegistration } from './window-state.js';
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { saveSessionSnapshot, reassertColdStartFocusOnce } from './session.js';
@@ -124,9 +132,12 @@ export interface CapturedClosePresentation {
  *   (a) push the closed window onto the reopen stack (Cmd+Shift+T), gated by
  *       the same reopen-able / content-role / not-keepLive / not-modal /
  *       not-suppressed-during-quit policy the canvas path has always used;
- *   (b) delete the window from `windowRegistry` and publish the post-delete
- *       `window:removed` signal (the deterministic "fully gone" gate that
- *       close-awaits and dedup-on-reopen wait on);
+ *   (b) retire the window's machine record (WINDOW_CLOSED — idempotent with
+ *       the native 'closed' emission, and the ONLY reliable retire for a
+ *       hybrid BaseWindow, which never emits 'closed' on the normal close
+ *       path) and publish the post-retire `window:removed` signal (the
+ *       deterministic "fully gone" gate that close-awaits and
+ *       dedup-on-reopen wait on);
  *   (c) `scheduleSnapshotOnClose()` so a force-kill before the next autosave
  *       can't resurrect the just-closed window from a stale on-disk snapshot.
  *
@@ -142,7 +153,7 @@ export interface CapturedClosePresentation {
  * matching `'close'` listener (the window must still be alive when captured).
  */
 export function finalizeWindowClose(windowId: number, captured: CapturedClosePresentation): void {
-  const windowData = windowRegistry.get(windowId);
+  const windowData = getWindowInfo(windowId);
 
   // (a) Save to closed window stack for reopen-last-closed.
   // Only save user-facing content windows with web URLs (not background, modals, palettes, etc.)
@@ -206,12 +217,18 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
     }
   }
 
-  // (b) Drop from the registry, then publish the post-delete event — the
+  // (b) Retire the machine record, then publish the post-retire event — the
   // deterministic "the window is fully gone from the registry" signal.
   // Distinct from `window:closed`, which fires earlier (before pushClosedWindow
-  // + delete) and so isn't a safe gate for "you can now re-open the same URL
-  // without dedup matching the previous instance".
-  windowRegistry.delete(windowId);
+  // + retire) and so isn't a safe gate for "you can now re-open the same URL
+  // without dedup matching the previous instance". Idempotent with the
+  // backend's own native-'closed' WINDOW_CLOSED emission — and for a hybrid
+  // BaseWindow (which never emits 'closed' on the normal close path) this
+  // dispatch is the one that retires the record.
+  {
+    const wmId = getWindowIdFor(windowId);
+    if (wmId != null) dispatchWindowEvent({ type: 'WINDOW_CLOSED', id: wmId });
+  }
   try {
     publish('system', 'window:removed', { id: windowId });
   } catch (publishErr) {
@@ -234,7 +251,8 @@ export interface AppConfig {
 
 // App state
 let config: AppConfig;
-let mainWindow: BrowserWindow | null = null;
+// (The old `mainWindow` singleton is gone — window identity lives on the
+// window-state machine's class-tagged records now; §4.3 dim 8b.)
 
 // Diagnostic logger for external URL handling.
 // Writes to /tmp/ so it's always accessible regardless of userData path.
@@ -265,11 +283,16 @@ let _sessionRestoreDone = false;
 // These are transient (not persisted) and always have devtools open
 const devTiles = new Map<string, { path: string }>();
 
-// Window manager: windowId -> { source, params }
-const windowRegistry = new Map<number, {
-  source: string;
-  params: Record<string, unknown>;
-}>();
+// The window-manager registry (windowId -> { source, params }) lives on the
+// window-state machine's window records now (window-manager.md §4.1 dim 1a,
+// §5 step 4) — the module-level Map this file used to hold is DELETED. The
+// exported accessors below (`registerWindow` / `getWindowInfo` /
+// `findWindowByKey` / …) survive as the numeric-Electron-id seam over the
+// machine state: records that carry a `source`+`params` payload are exactly
+// the windows the old Map contained (ipc.ts open sites + the core background
+// window); machine-registered infrastructure windows (tiles, bridge,
+// extension-ui, test-fixture, devtools) carry none and stay invisible to
+// these accessors, preserving the old registry's membership.
 
 // Recently closed windows stack (in-memory, most recent last)
 const MAX_CLOSED_WINDOWS = 50;
@@ -407,10 +430,26 @@ export async function initialize(): Promise<void> {
     registerWindow: (win, role) => registerWindowWithMachine({
       kind: 'browser',
       role: role ?? 'workspace',
+      class: classifyWindowRegistration(role ?? 'workspace', {
+        alwaysOnTop: win.isAlwaysOnTop(),
+        focusable: win.isFocusable(),
+      }),
       satellite: isSatelliteRegistration(role ?? 'workspace', { focusable: win.isFocusable() }),
       win,
       contentWC: win.webContents,
     }),
+    // Tile close routes through the machine (WINDOW_CLOSE_REQUESTED →
+    // CLOSE_WINDOW_DIRECT → backend). Injected — tile-launcher cannot import
+    // the singleton (its unit tests run under ELECTRON_RUN_AS_NODE=1, where
+    // the backend's value-side electron import dies at parse).
+    closeTileWindow: (win) => {
+      const id = getWindowIdFor(win);
+      if (id == null) {
+        console.error('[tile-launcher] closeTileWindow: window', win.id, 'is not machine-registered — cannot close (leak risk)');
+        return;
+      }
+      dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id });
+    },
     // NOTE: no `addEscHandler` hook — the ESC before-input interceptor is
     // attached by `registerWindowWithMachine` itself now, so registration is the
     // single owner and a window registered twice can't get two interceptors.
@@ -550,17 +589,11 @@ export async function initialize(): Promise<void> {
       // first activation after restore. Self-gating one-shot — no-op unless the
       // latch was armed (cold start + non-headless). See session.ts.
       reassertColdStartFocusOnce();
-      // Show any alwaysOnTop overlay windows (e.g. HUD) that were hidden
-      // by the did-resign-active handler below. This hide/show pair
-      // avoids a pubsub round-trip through a renderer.
-      for (const win of getAllLiveWindows()) {
-        // Never re-show overlay/HUD windows under headless — showInactive on an
-        // alwaysOnTop window surfaces it on the user's real desktop.
-        if (!isHeadless() && win.isAlwaysOnTop() && (win as any).__hudHidden) {
-          win.showInactive();
-          (win as any).__hudHidden = false;
-        }
-      }
+      // (HUD re-show removed — the reducer's APP_ACTIVATED clause re-shows
+      // the class-'hud' windows its APP_RESIGNED sweep hid, via SHOW_WINDOW
+      // effects; the executor skips them under headless. The `__hudHidden`
+      // expando is gone — the record's `hiddenByAppBlur` flag replaced it.)
+      //
       // (Esc-grab re-evaluation removed — the machine's adapter reconciles the
       // derived grab on APP_ACTIVATED, which its own did-become-active listener
       // dispatches.)
@@ -584,7 +617,7 @@ export async function initialize(): Promise<void> {
       //    count as main windows for app activation). Skip overlay close if one just opened.
       const coordinator = getIzuiCoordinator();
       if (!coordinator.isWithinOverlayExitCooldown() && !coordinator.isWithinOverlayEntryCooldown()) {
-        for (const [id, data] of windowRegistry) {
+        for (const [id, data] of getAllWindows()) {
           if (data.params.role === 'overlay') {
             const overlayWin = getLiveWindow(id);
             if (overlayWin) {
@@ -603,16 +636,12 @@ export async function initialize(): Promise<void> {
         DEBUG && console.log('[izui] Skipping overlay close in did-resign-active (within cooldown: exit=', coordinator.isWithinOverlayExitCooldown(), 'entry=', coordinator.isWithinOverlayEntryCooldown(), ')');
       }
 
-      // Hide non-focusable alwaysOnTop overlay windows (e.g. HUD) when
-      // the app loses focus. Skip focusable alwaysOnTop windows (e.g.
-      // the cmd panel) — they have their own blur handler and would
-      // blink if hidden here.
-      for (const win of getAllLiveWindows()) {
-        if (win.isAlwaysOnTop() && win.isVisible() && !win.isFocusable()) {
-          win.hide();
-          (win as any).__hudHidden = true;
-        }
-      }
+      // (HUD hide removed — the reducer's APP_RESIGNED clause hides the
+      // visible class-'hud' windows via HIDE_WINDOW effects. The class field
+      // replaced the `isAlwaysOnTop() && !isFocusable()` sniffing predicate;
+      // focusable alwaysOnTop windows classify 'palette'/'primary' and are
+      // untouched, same as the old sweep's isFocusable() skip.)
+      //
       // (Esc-grab drop removed — the machine's adapter reconciles the derived
       // grab on APP_RESIGNED, which its own did-resign-active listener
       // dispatches; `appActive:false` makes the grab predicate false.)
@@ -663,7 +692,7 @@ export async function initialize(): Promise<void> {
     // During app.quit(), windows close concurrently and some may already be destroyed.
     window.on('closed', () => {
       try {
-        const windowData = windowRegistry.get(windowId);
+        const windowData = getWindowInfo(windowId);
 
         // Clean up IZUI coordinator state
         const coordinator = getIzuiCoordinator();
@@ -674,15 +703,10 @@ export async function initialize(): Promise<void> {
         // for every registered window; the overlay-window close likewise clears
         // the mirrored switcher state via that same WINDOW_CLOSED.)
 
-        // Focus parent window if this was a child
-        if (windowData && windowData.params.parentWindowId) {
-          const parentId = windowData.params.parentWindowId as number;
-          const parentWin = getLiveWindow(parentId);
-          if (parentWin) {
-            DEBUG && console.log('[izui] Child window closed, focusing parent:', parentId);
-            parentWin.focus();
-          }
-        }
+        // (Parent refocus removed — a window registered with `parentWindowId`
+        // carries `parentId` on its machine record, and the reducer's
+        // WINDOW_CLOSED transition hands `front` back to the parent + emits
+        // the raise. See window-state.ts.)
 
         if (windowData) {
           // Check if this overlay was already handled by the app-blur path.
@@ -795,7 +819,12 @@ export async function initialize(): Promise<void> {
       } catch (err) {
         // During shutdown, errors here must not prevent the quit sequence
         DEBUG && console.error('[lifecycle] Error in window closed handler:', err);
-        windowRegistry.delete(windowId);
+        try {
+          const wmId = getWindowIdFor(windowId);
+          if (wmId != null) dispatchWindowEvent({ type: 'WINDOW_CLOSED', id: wmId });
+        } catch {
+          // already in error path; suppress
+        }
         try {
           publish('system', 'window:removed', { id: windowId });
         } catch {
@@ -833,6 +862,56 @@ export async function initialize(): Promise<void> {
       if (handleLocalShortcut(input, windowId)) {
         event.preventDefault();
       }
+    });
+  });
+
+  // Devtools windows register like everything else (window-manager.md §4.6
+  // dim 8a): on 'devtools-opened' the detached devtools window (when one
+  // exists — attached mode has none) registers with class 'devtools', parented
+  // to its host so closing it hands `front` back; and both open/close edges
+  // dispatch into the machine, whose transitions invalidate + re-drive the
+  // front assertion (the machine form of the old scattered "re-focus the
+  // content window around devtools" handlers).
+  app.on('web-contents-created', (_e, wc) => {
+    const hostMachineId = (): import('./window-state.js').WindowId | null => {
+      try {
+        // For hybrid page-host content this resolves the owning BaseWindow
+        // (the documented windowFromWebContents TRAP — desired here); both
+        // kinds are machine-registered.
+        const owner = BrowserWindow.fromWebContents(wc);
+        return owner ? getWindowIdFor(owner) : null;
+      } catch {
+        return null;
+      }
+    };
+    wc.on('devtools-opened', () => {
+      const hostId = hostMachineId();
+      try {
+        const devWC = wc.devToolsWebContents;
+        const devWin = devWC ? BrowserWindow.fromWebContents(devWC) : null;
+        const hostWin = BrowserWindow.fromWebContents(wc);
+        if (devWC && devWin && (!hostWin || devWin.id !== hostWin.id)) {
+          registerWindowWithMachine({
+            kind: 'browser',
+            role: 'utility',
+            class: 'devtools',
+            satellite: isSatelliteRegistration('utility', { windowClass: 'devtools' }),
+            win: devWin,
+            contentWC: devWC,
+            // Devtools owns its own Escape; a main-side interceptor would
+            // swallow it before the devtools UI ever saw the keystroke.
+            attachEscHandler: false,
+            parentId: hostId,
+          });
+        }
+      } catch {
+        /* detached devtools window not resolvable — attached mode, or races teardown */
+      }
+      if (hostId != null) dispatchWindowEvent({ type: 'DEVTOOLS_OPENED', id: hostId });
+    });
+    wc.on('devtools-closed', () => {
+      const hostId = hostMachineId();
+      if (hostId != null) dispatchWindowEvent({ type: 'DEVTOOLS_CLOSED', id: hostId });
     });
   });
 }
@@ -1217,17 +1296,49 @@ export async function reloadTile(tileId: string): Promise<object | null> {
 }
 
 /**
- * Register a window in the registry
+ * The numeric-id view over the machine's registry payload (see the note where
+ * the old Map used to live). Enumerates only LIVE windows whose record
+ * carries `source`+`params` — the exact membership the old Map had.
  */
-export function registerWindow(windowId: number, source: string, params: Record<string, unknown>): void {
-  windowRegistry.set(windowId, { source, params });
+function machineRegistryEntries(): Array<[number, { source: string; params: Record<string, unknown> }]> {
+  const out: Array<[number, { source: string; params: Record<string, unknown> }]> = [];
+  for (const rec of listMachineWindowRecords()) {
+    if (rec.source === undefined || rec.params === undefined) continue;
+    const native = getNativeWindowFor(rec.id);
+    if (!native) continue; // destroyed mid-teardown — the old Map's entry was unreadable-by-liveness too
+    out.push([native.id, { source: rec.source, params: rec.params }]);
+  }
+  return out;
 }
 
 /**
- * Get window info from registry
+ * Attach the window-manager registry payload ({ source, params }) to an
+ * already-machine-registered window. The ipc.ts open sites now pass the
+ * payload directly on the registration spec; this export remains for the
+ * merge callers that run AFTER `registerWindowWithMachine` (hybrid-overlay
+ * test bridges, `createBackgroundWindow`).
+ */
+export function registerWindow(windowId: number, source: string, params: Record<string, unknown>): void {
+  const id = getWindowIdFor(windowId);
+  if (id == null) {
+    DEBUG && console.log('[window-registry] registerWindow: window', windowId, 'is not machine-registered — payload dropped');
+    return;
+  }
+  dispatchWindowEvent({ type: 'WINDOW_PARAMS_SET', id, source, params });
+}
+
+/**
+ * Get window info from the machine's registry payload. Undefined for windows
+ * that never carried one (tile windows, bridge/background infra) — same
+ * contract as the deleted Map. The returned `params` is the SAME object
+ * across calls (callers mutate it in place, e.g. `params.currentUrl`).
  */
 export function getWindowInfo(windowId: number): { source: string; params: Record<string, unknown> } | undefined {
-  return windowRegistry.get(windowId);
+  const id = getWindowIdFor(windowId);
+  if (id == null) return undefined;
+  const rec = getMachineWindowRecord(id);
+  if (!rec || rec.source === undefined || rec.params === undefined) return undefined;
+  return { source: rec.source, params: rec.params };
 }
 
 /**
@@ -1236,17 +1347,18 @@ export function getWindowInfo(windowId: number): { source: string; params: Recor
 export function findWindowByKey(source: string, key: string): { id: number; window: BrowserWindow; data: unknown } | null {
   if (!key) return null;
 
-  for (const [id, win] of windowRegistry) {
+  for (const [id, win] of machineRegistryEntries()) {
     if (win.source === source && win.params && win.params.key === key) {
       const browserWindow = getLiveWindow(id);
       if (browserWindow) {
         return { id, window: browserWindow, data: win };
       }
-      // Clean up stale registry entry for destroyed/missing window.
-      // This happens when Cmd+W or OS close destroys a window but the
-      // registry entry wasn't removed (e.g., panel windows on macOS).
-      DEBUG && console.log('findWindowByKey: cleaning up stale entry for key:', key, 'windowId:', id);
-      windowRegistry.delete(id);
+      // A live machine record whose id doesn't resolve to a BrowserWindow is
+      // a hybrid BaseWindow (getLiveWindow is BrowserWindow.fromId-backed) —
+      // skip it; hybrid dedup runs on the hybrid registry before this lookup.
+      // (The old Map deleted "stale" entries here, which for a hybrid was a
+      // live-entry deletion bug; the machine record retires on WINDOW_CLOSED.)
+      DEBUG && console.log('findWindowByKey: id', id, 'has no live BrowserWindow — skipping');
     }
   }
   return null;
@@ -1269,7 +1381,7 @@ export function findWindowByUrl(url: string): { id: number; window: BrowserWindo
   // uses — so window dedupe and item lookup agree on URL identity.
   const normalizedTarget = normalizeUrl(url);
 
-  for (const [id, win] of windowRegistry) {
+  for (const [id, win] of machineRegistryEntries()) {
     const address = win.params && typeof win.params.address === 'string'
       ? (win.params.address as string)
       : null;
@@ -1288,10 +1400,14 @@ export function findWindowByUrl(url: string): { id: number; window: BrowserWindo
 }
 
 /**
- * Remove a window from the registry
+ * Remove a window from the registry — machine form: retire its record
+ * (idempotent with the WINDOW_CLOSED the native teardown emits).
  */
 export function removeWindow(windowId: number): boolean {
-  return windowRegistry.delete(windowId);
+  const id = getWindowIdFor(windowId);
+  if (id == null || getMachineWindowRecord(id) === undefined) return false;
+  dispatchWindowEvent({ type: 'WINDOW_CLOSED', id });
+  return true;
 }
 
 /**
@@ -1299,7 +1415,7 @@ export function removeWindow(windowId: number): boolean {
  */
 export function getChildWindows(source: string): Array<{ id: number; data: { source: string; params: Record<string, unknown> } }> {
   const children = [];
-  for (const [id, win] of windowRegistry) {
+  for (const [id, win] of machineRegistryEntries()) {
     if (win.source === source) {
       children.push({ id, data: win });
     }
@@ -1311,7 +1427,7 @@ export function getChildWindows(source: string): Array<{ id: number; data: { sou
  * Get all registered windows
  */
 export function getAllWindows(): Array<[number, { source: string; params: Record<string, unknown> }]> {
-  return Array.from(windowRegistry.entries());
+  return machineRegistryEntries();
 }
 
 /**
@@ -1443,8 +1559,8 @@ export async function shutdown(): Promise<void> {
 }
 
 // ***** Background Window *****
-
-let backgroundWindow: BrowserWindow | null = null;
+// (No module-level handle — the core background window is a class-'background'
+// machine record; `getBackgroundWindow()` below is a lookup by class.)
 
 /**
  * Launch the core background renderer via tile mechanics.
@@ -1470,11 +1586,6 @@ export async function createBackgroundWindow(): Promise<BrowserWindow> {
   }
 
   const win = await initCore({ tilePreloadPath });
-
-  // Keep the local handle in sync so `getBackgroundWindow()` returns
-  // the same reference even while test code that reads it early hasn't
-  // yet switched to the core-glue accessor.
-  backgroundWindow = win;
 
   // Register in the session registry with the legacy address — other
   // code paths use `WEB_CORE_ADDRESS` to identify the core window
@@ -1519,10 +1630,8 @@ export async function createBackgroundWindow(): Promise<BrowserWindow> {
  * Get the background window
  */
 export function getBackgroundWindow(): BrowserWindow | null {
-  // Prefer the core-glue accessor so callers get a live reference even
-  // if `createBackgroundWindow()` hasn't been called yet in this boot
-  // (e.g. during mid-startup IPC that runs before entry.ts's call).
-  return getCoreBackgroundWindow() ?? backgroundWindow;
+  // The core-glue accessor is itself a class-'background' machine lookup now.
+  return getCoreBackgroundWindow();
 }
 
 // ***** External URL Handling *****

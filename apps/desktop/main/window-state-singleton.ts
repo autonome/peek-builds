@@ -22,15 +22,24 @@
 import type { BaseWindow, BrowserWindow, WebContents } from 'electron';
 import { WindowOsAdapter, type RegisterWindowSpec } from './window-os-adapter.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import type { WindowEvent, FsMode, Rectangle, IzuiSession, WindowId, WindowKind, EscapeMode } from './window-state.js';
+import type { WindowEvent, FsMode, Rectangle, IzuiSession, WindowId, WindowKind, WindowClass, WindowRecord, EscapeMode } from './window-state.js';
 
 /** Register-spec that accepts real Electron window handles (both kinds satisfy the adapter's structural `NativeWindow`). */
 export interface MachineWindowSpec {
   kind: WindowKind;
   role: string;
+  /** Window class (§4.3 dim 8b) — required; ordinary opens use `classifyWindowRegistration`, the infrastructure classes declare theirs. */
+  class: WindowClass;
   satellite: boolean;
   escapeMode?: EscapeMode;
   lastHttpUrl?: string;
+  /** Parent linkage (open params `parentWindowId` → WindowId). Drives the parent-refocus transition on WINDOW_CLOSED. */
+  parentId?: WindowId | null;
+  /** The old `main.ts windowRegistry` payload — opening source + open params (opaque, held by reference on the reducer record). */
+  source?: string;
+  params?: Record<string, unknown>;
+  /** Declared always-on-top intent — registration emits SET_ALWAYS_ON_TOP. */
+  alwaysOnTop?: boolean;
   /** BaseWindow (page-host) or BrowserWindow (browser). */
   win: BaseWindow | BrowserWindow;
   /** Content view WC for a page-host, root WC for a browser. */
@@ -95,7 +104,7 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
 
 /**
  * The WM `WindowId` for a native window handle — or for a numeric ELECTRON
- * window id a legacy Electron-keyed registry (hybrid registry, windowRegistry,
+ * window id a legacy Electron-keyed registry (hybrid registry,
  * renderer-facing tile IPC) still holds. `null` when never registered / gone.
  *
  * This is the ONE sanctioned WM↔platform id conversion surface (with
@@ -179,6 +188,40 @@ export function getDevtoolsTargetId(): WindowId | null {
 /** A window's MRU focus rank (replaces `focus-order.ts` `getFocusOrder`). 0 if unknown. */
 export function getFocusOrder(id: WindowId): number {
   return getWindowOsAdapter().getOwner().getWindowFocusSeq(id);
+}
+
+/**
+ * The live reducer record for one window — READ-ONLY by contract (no copy;
+ * `params` is deliberately the shared mutable bag legacy consumers write
+ * into, see `WindowRecord.params`). This plus `listMachineWindowRecords` is
+ * what the numeric-id registry seam in `main.ts` (`getWindowInfo` /
+ * `findWindowByKey` / `getAllWindows` …) reads instead of the deleted
+ * module-level `windowRegistry` Map (§4.1 dim 1a).
+ */
+export function getMachineWindowRecord(id: WindowId): WindowRecord | undefined {
+  return getWindowOsAdapter().getOwner().getWindowRecord(id);
+}
+
+/** All live reducer records (fresh array; records not copied — read-only by contract). */
+export function listMachineWindowRecords(): WindowRecord[] {
+  return getWindowOsAdapter().getOwner().listWindowRecords();
+}
+
+/**
+ * The first LIVE native window of a class (§4.3 dim 8b) — the lookup that
+ * replaced the per-module window singletons (`core-glue.ts
+ * coreBackgroundWindow` → class 'background', `test-fixture-glue.ts
+ * testFixtureWindow` → class 'test-fixture', …). Null when none is
+ * registered or the native window is gone.
+ */
+export function getNativeWindowByClass(cls: WindowClass): BaseWindow | BrowserWindow | null {
+  const owner = getWindowOsAdapter().getOwner();
+  for (const rec of owner.listWindowRecords()) {
+    if (rec.class !== cls) continue;
+    const native = getNativeWindowFor(rec.id);
+    if (native) return native;
+  }
+  return null;
 }
 
 /**

@@ -89,6 +89,21 @@ let _getSystemThemeBackgroundColor: (() => string) | null = null;
 // there is no separate `addEscHandler` hook here anymore (two hooks meant two
 // interceptors on any window that registered twice).
 let _registerWindow: ((win: BrowserWindow, role: string | undefined) => void) | null = null;
+// Injected from main.ts: closes a tile window through the window-state machine
+// (WINDOW_CLOSE_REQUESTED → the backend's guest-safe close). Injected rather
+// than imported for the same ELECTRON_RUN_AS_NODE reason as the other hooks:
+// the machine singleton transitively value-imports electron, which this
+// module's unit tests cannot load.
+let _closeTileWindow: ((win: BrowserWindow) => void) | null = null;
+
+/** Close a tile window via the injected machine hook; loud no-op when unconfigured (production always configures it in main.ts initialize()). */
+function closeTileWindowViaHook(win: BrowserWindow): void {
+  if (_closeTileWindow) {
+    _closeTileWindow(win);
+    return;
+  }
+  console.error('[tile-launcher] closeTileWindow hook not configured — window', win.id, 'not closed');
+}
 
 /**
  * Lightweight role/address info for every live tile window, keyed by
@@ -126,10 +141,17 @@ export function configureTileLauncher(hooks: {
    * (and its webview guests') — one owner for both.
    */
   registerWindow?: (win: BrowserWindow, role: string | undefined) => void;
+  /**
+   * Closes a tile window through the window-state machine. Tile teardown
+   * (shutdownTile / unloadAllTiles) routes every close through this hook —
+   * rule R2: nothing here calls a window API directly.
+   */
+  closeTileWindow?: (win: BrowserWindow) => void;
 }): void {
   if (hooks.getProfileSession) _getProfileSession = hooks.getProfileSession;
   if (hooks.getSystemThemeBackgroundColor) _getSystemThemeBackgroundColor = hooks.getSystemThemeBackgroundColor;
   if (hooks.registerWindow) _registerWindow = hooks.registerWindow;
+  if (hooks.closeTileWindow) _closeTileWindow = hooks.closeTileWindow;
 }
 
 // Short grace period given to tiles to run their `api.onShutdown()` callbacks
@@ -873,10 +895,10 @@ export function getTileWebPreferencesForWebviewUrl(
  * Without this signal the callback never fires, so intervals / timers /
  * subscriptions inside the tile leak.
  *
- * Returns a promise that resolves once `win.close()` has been called. The
- * `closed` event (which does the real tracked-state cleanup) may fire a tick
- * or two later — callers that need to wait for full teardown should listen
- * for it separately.
+ * Returns a promise that resolves once the close has been dispatched (via
+ * the injected machine hook). The `closed` event (which does the real
+ * tracked-state cleanup) may fire a tick or two later — callers that need to
+ * wait for full teardown should listen for it separately.
  */
 export async function shutdownTile(tileId: string, entryId: string): Promise<void> {
   const key = `${tileId}:${entryId}`;
@@ -898,7 +920,7 @@ export async function shutdownTile(tileId: string, entryId: string): Promise<voi
   await new Promise<void>((resolve) => setTimeout(resolve, TILE_SHUTDOWN_GRACE_MS));
 
   if (!win.isDestroyed()) {
-    win.close();
+    closeTileWindowViaHook(win);
   }
 }
 
@@ -1047,7 +1069,7 @@ export async function unloadAllTiles(): Promise<void> {
   // Phase 3: close every window.
   for (const win of tileWindowsAll) {
     if (!win.isDestroyed()) {
-      win.close();
+      closeTileWindowViaHook(win);
     }
   }
   tileWindows.clear();

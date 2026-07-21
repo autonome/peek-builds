@@ -20,6 +20,7 @@ import {
   shutdownTile,
   unloadTile,
   isTileLoaded,
+  configureTileLauncher,
   __setTileWindowForTest,
   __clearTileStateForTest,
 } from './tile-launcher.js';
@@ -97,9 +98,20 @@ function makeFakeWin(): FakeWin {
   return win;
 }
 
+// Tile close now routes through the injected `closeTileWindow` hook (the
+// window-state machine in production — main.ts configureTileLauncher). The
+// unit fake stands in for the machine and performs the raw close, keeping
+// the ordering contract under test unchanged.
+function configureFakeCloseHook(): void {
+  configureTileLauncher({
+    closeTileWindow: (w) => (w as unknown as FakeWin).close(),
+  });
+}
+
 describe('shutdownTile (registry-backed)', () => {
   beforeEach(() => {
     __clearTileStateForTest();
+    configureFakeCloseHook();
   });
 
   it('sends tile:lifecycle:shutdown to the registered window and then closes it', async () => {
@@ -121,6 +133,7 @@ describe('shutdownTile (registry-backed)', () => {
 describe('unloadTile (registry-backed)', () => {
   beforeEach(() => {
     __clearTileStateForTest();
+    configureFakeCloseHook();
   });
 
   it('sends tile:lifecycle:shutdown before closing and clears registry entry', async () => {

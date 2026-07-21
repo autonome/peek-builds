@@ -28,8 +28,8 @@
 
 /**
  * Discriminated union describing where a window wants to live. Recorded
- * at window-open time on `windowRegistry.params.placement` and consulted
- * on every reuse / display-change pass thereafter.
+ * at window-open time on the machine record's `params.placement` and
+ * consulted on every reuse / display-change pass thereafter.
  *
  * Modes:
  * - `centered`         — peeks, cmd panel, modal palettes

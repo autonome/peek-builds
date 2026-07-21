@@ -25,6 +25,8 @@ import { createTrustedBuiltinGrant } from './tile-manifest.js';
 import { generateToken } from './tile-tokens.js';
 import { registerTrustedBuiltinWindow } from './tile-launcher.js';
 import { ensureTileIpcHandlers } from './tile-compat.js';
+import { registerWindowWithMachine, getNativeWindowByClass } from './window-state-singleton.js';
+import { isSatelliteRegistration } from './window-state.js';
 
 const requireElectron = createRequire(import.meta.url);
 
@@ -37,7 +39,9 @@ export const TEST_FIXTURE_ENTRY_ID = 'resident';
 /** URL of the test fixture renderer (served from app/_test/ via protocol.ts). */
 export const TEST_FIXTURE_URL = 'peek://test/index.html';
 
-let testFixtureWindow: BrowserWindow | null = null;
+// (No module-level window handle — the fixture registers with the
+// window-state machine as class 'test-fixture' and the accessor below is a
+// lookup by class; window-manager.md §4.3 dim 8b.)
 
 /**
  * Options for initializing the test fixture renderer.
@@ -95,7 +99,19 @@ export async function initTestFixture(opts: InitTestFixtureOptions): Promise<voi
     },
   });
 
-  testFixtureWindow = win;
+  // Register with the window-state machine — every window registers (design
+  // §7). Class 'test-fixture' is what `getTestFixtureWindow()` looks up; the
+  // class (and focusable:false) make the record a satellite. No Esc
+  // interceptor — the fixture never receives user input.
+  registerWindowWithMachine({
+    kind: 'browser',
+    role: 'utility',
+    class: 'test-fixture',
+    satellite: isSatelliteRegistration('utility', { windowClass: 'test-fixture', focusable: false }),
+    win,
+    contentWC: win.webContents,
+    attachEscHandler: false,
+  });
 
   // Register with the tile launcher so the main-process pubsubBroadcaster
   // forwards pubsub messages to this window. Tests subscribe to topics
@@ -119,10 +135,6 @@ export async function initTestFixture(opts: InitTestFixtureOptions): Promise<voi
       }
     });
   }
-
-  win.on('closed', () => {
-    testFixtureWindow = null;
-  });
 
   // Load the renderer and wait until its module script has finished
   // executing — signaled by `window.__testReady = true`. Using
@@ -154,9 +166,10 @@ export async function initTestFixture(opts: InitTestFixtureOptions): Promise<voi
 }
 
 /**
- * Accessor for the test fixture window. Returns null when `E2E_TEST` was
- * unset (fixture not launched) or the window was closed.
+ * Accessor for the test fixture window — a lookup by machine class (design
+ * §4.3 dim 8b). Returns null when `E2E_TEST` was unset (fixture not
+ * launched) or the window was closed.
  */
 export function getTestFixtureWindow(): BrowserWindow | null {
-  return testFixtureWindow;
+  return (getNativeWindowByClass('test-fixture') as BrowserWindow | null) ?? null;
 }

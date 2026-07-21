@@ -2869,8 +2869,9 @@ export function registerTileIpcHandlers(): void {
         params: Record<string, unknown>;
       }> = [];
       for (const win of getAllLiveWindows()) {
-        // Params come from windowRegistry (keyed by Electron's id). The
-        // includeInternal filter skips windows without a registry presence.
+        // Params come from the machine's registry payload (getWindowInfo is
+        // the numeric-id seam over the reducer records). The includeInternal
+        // filter skips windows without a registry payload.
         const info = getWindowInfo(win.id);
         if (!args.includeInternal && !info) continue;
         const params: Record<string, unknown> = info ? info.params : {};
@@ -2916,10 +2917,10 @@ export function registerTileIpcHandlers(): void {
           bounds: presentation.bounds,
           maximized: presentation.maximized,
           preMaxBounds: presentation.preMaxBounds,
-          // Hybrid windows DO have windowRegistry params (registered via
-          // registerWindow on the hybrid open branch). Read them the same way
-          // the canvas branch above does, so parentWindowId/role/placement/
-          // escapeMode survive in the listed entry instead of being dropped.
+          // Hybrid windows DO have a registry payload (declared on their
+          // machine registration in the hybrid open branch). Read it the same
+          // way the canvas branch above does, so parentWindowId/role/
+          // placement/escapeMode survive in the listed entry.
           params: getWindowInfo(h.windowId)?.params ?? {},
         });
       }

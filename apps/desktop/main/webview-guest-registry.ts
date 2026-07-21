@@ -18,10 +18,10 @@
  * Electron *window* ids, so its two numeric spaces can't be confused.
  */
 
-import { type WebContents, webContents } from 'electron';
+import type { WebContents } from 'electron';
 import { windowFromWebContents } from './window-registry.js';
 import type { WindowId } from './window-state.js';
-import { getNativeWindowFor, getWindowIdFor } from './window-state-singleton.js';
+import { getNativeWindowFor, getWindowIdFor, dispatchWindowEvent } from './window-state-singleton.js';
 
 const guestToHost = new Map<number, WindowId>();
 
@@ -135,27 +135,33 @@ export function getGuestsForWindow(hostWindowId: WindowId): number[] {
 }
 
 /**
- * Destroy every registered page-host guest WebContents synchronously.
+ * All registered guest WebContents ids. Read by the Electron window backend's
+ * `destroyAllContentGuests` command — the executor-side owner of the actual
+ * `destroy()` calls (rule R2; this module holds the mapping, not the ops).
+ */
+export function getAllGuestWebContentsIds(): number[] {
+  return [...guestToHost.keys()];
+}
+
+/**
+ * Destroy every registered page-host guest WebContents synchronously —
+ * through the window-state machine (GUEST_TEARDOWN_REQUESTED →
+ * DESTROY_ALL_GUESTS → backend.destroyAllContentGuests; the dispatch pump and
+ * the backend command are synchronous, which the before-quit caller depends
+ * on).
  *
  * Called from the `before-quit` handler so guests (which may carry an in-flight
  * chrome-extension relay `ipcRenderer.invoke`) are torn down BEFORE Electron
  * closes their host windows during quit. Without this, app-quit closes leftover
- * page-host windows via the native quit path (NOT closeHostWindow), so a guest
- * is derefed inside `-[NSWindow __close]` → EXC_BAD_ACCESS (peek d1cf0b9a). The
- * interactive close path is already covered by `closeHostWindow`; this closes
- * the quit/teardown gap. Best-effort and synchronous — `destroy()` marks each
- * guest destroyed immediately so the subsequent window closes have no live
- * guest to dereference.
+ * page-host windows via the native quit path (NOT the machine's guest-safe
+ * close), so a guest is derefed inside `-[NSWindow __close]` → EXC_BAD_ACCESS
+ * (peek d1cf0b9a). The interactive close path is already covered by the
+ * backend's guest-safe `closeWindow`; this closes the quit/teardown gap.
  */
 export function destroyAllPageHostGuests(): void {
-  for (const guestId of [...guestToHost.keys()]) {
-    try {
-      const wc = webContents.fromId(guestId);
-      if (wc && !wc.isDestroyed()) {
-        (wc as unknown as { destroy(): void }).destroy();
-      }
-    } catch { /* best-effort during shutdown */ }
-  }
+  try {
+    dispatchWindowEvent({ type: 'GUEST_TEARDOWN_REQUESTED' });
+  } catch { /* best-effort during shutdown */ }
 }
 
 /** Test-only: clear all registry state. */

@@ -26,6 +26,21 @@ export { markRuntimeExternalQuitting } from './chrome-api-polyfills/runtime-exte
 import { buildOptionsCommandName, computeUiEntries } from './chrome-extensions-helpers.js';
 import { invokeWindowOpen } from './ipc.js';
 import { DEBUG, isHeadless } from './config.js';
+import { registerWindowWithMachine, dispatchWindowEvent, getWindowIdFor } from './window-state-singleton.js';
+import { isSatelliteRegistration } from './window-state.js';
+
+/**
+ * Route a bridge/extension-UI window teardown through the window-state
+ * machine (WINDOW_DESTROY_REQUESTED → DESTROY_WINDOW → backend.destroyWindow,
+ * synchronous — the before-quit path depends on that). Every window this
+ * module creates registers at construction, so the id always resolves; a
+ * window the machine no longer knows is already gone.
+ */
+function destroyWindowViaMachine(win: BrowserWindow): void {
+  const id = getWindowIdFor(win);
+  if (id == null) return; // never registered / already retired — nothing to destroy
+  dispatchWindowEvent({ type: 'WINDOW_DESTROY_REQUESTED', id });
+}
 
 /**
  * Chrome extension manifest.json structure (MV3)
@@ -465,6 +480,20 @@ function _spawnBridgeWindow(loaded: LoadedChromeExtension): void {
     },
   });
 
+  // Every window registers with the window-state machine (design §7) — class
+  // 'bridge' (a hidden infrastructure satellite; never front, no Esc
+  // interceptor, no registry payload so it stays invisible to the
+  // session-save/window-manager accessors).
+  registerWindowWithMachine({
+    kind: 'browser',
+    role: 'utility',
+    class: 'bridge',
+    satellite: isSatelliteRegistration('utility', { windowClass: 'bridge' }),
+    win,
+    contentWC: win.webContents,
+    attachEscHandler: false,
+  });
+
   _bridgeWindows.set(runtimeId, win);
   // Keep runtime-external.js in sync so it can route via this window.
   setBridgeWindowsRegistry(_bridgeWindows);
@@ -495,7 +524,7 @@ function _spawnBridgeWindow(loaded: LoadedChromeExtension): void {
 
   win.loadURL(bridgeUrl).catch(err => {
     console.error(`[chrome-ext] bridge window failed to load ${bridgeUrl}:`, err && err.message);
-    if (!win.isDestroyed()) win.destroy();
+    if (!win.isDestroyed()) destroyWindowViaMachine(win);
   });
 
   // After the bridge page is ready, inject the extension's ISOLATED-world
@@ -539,7 +568,7 @@ async function unloadExtension(extId: string): Promise<boolean> {
     const runtimeId = loaded.electronExtension.id;
     const bridgeWin = _bridgeWindows.get(runtimeId);
     if (bridgeWin && !bridgeWin.isDestroyed()) {
-      bridgeWin.destroy();
+      destroyWindowViaMachine(bridgeWin);
     }
     _bridgeWindows.delete(runtimeId);
     setBridgeWindowsRegistry(_bridgeWindows);
@@ -1059,6 +1088,23 @@ export function openChromeExtensionPage(
     },
   });
 
+  // Every window registers with the window-state machine (design §7) — class
+  // 'extension-ui'. Deliberately NOT a satellite: an extension popup is a
+  // real user-facing window, so it stays front-eligible (a focused popup is
+  // the command target). escapeMode 'ignore' + no main-side Esc interceptor:
+  // Esc keeps reaching the extension page's own DOM, exactly as it did when
+  // these windows were unregistered.
+  registerWindowWithMachine({
+    kind: 'browser',
+    role: 'content',
+    class: 'extension-ui',
+    satellite: false,
+    escapeMode: 'ignore',
+    win,
+    contentWC: win.webContents,
+    attachEscHandler: false,
+  });
+
   // Track the window
   extensionUiWindows.set(windowKey, win);
 
@@ -1093,7 +1139,12 @@ export function openChromeExtensionPage(
   // pulling focus away from the terminal/editor on each nodemon restart.
   if (inDevAutoopen && !isHeadless()) {
     win.webContents.once('did-finish-load', () => {
-      try { win.showInactive(); } catch { /* ignore */ }
+      // Show without stealing focus, through the machine (SHOW_WINDOW with
+      // activate:false — the executor's headless gate mirrors the old guard).
+      try {
+        const id = getWindowIdFor(win);
+        if (id != null) dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: false });
+      } catch { /* ignore */ }
       try { win.webContents.openDevTools({ mode: 'detach', activate: false }); } catch { /* ignore */ }
     });
   }
@@ -1134,7 +1185,7 @@ export function openChromeExtensionPage(
   win.loadURL(entry.url).catch(error => {
     console.error(`[chrome-ext] Failed to load ${pageType} page for ${extensionId}:`, error);
     if (!win.isDestroyed()) {
-      win.destroy();
+      destroyWindowViaMachine(win);
     }
   });
 
@@ -1156,17 +1207,17 @@ export async function cleanupChromeExtensions(): Promise<void> {
   }
 
   // Close any open UI windows
-  for (const [key, win] of extensionUiWindows) {
+  for (const [, win] of extensionUiWindows) {
     if (!win.isDestroyed()) {
-      win.destroy();
+      destroyWindowViaMachine(win);
     }
   }
   extensionUiWindows.clear();
 
   // Close all bridge windows
-  for (const [runtimeId, win] of _bridgeWindows) {
+  for (const [, win] of _bridgeWindows) {
     if (!win.isDestroyed()) {
-      win.destroy();
+      destroyWindowViaMachine(win);
     }
   }
   _bridgeWindows.clear();
@@ -1201,12 +1252,15 @@ export async function cleanupChromeExtensions(): Promise<void> {
  * maps are cleared here, so a later cleanup call is a no-op.
  */
 export function destroyChromeExtensionWindowsForShutdown(): void {
+  // `destroyWindowViaMachine` stays SYNCHRONOUS end-to-end (dispatch → effect
+  // → backend.destroyWindow → win.destroy()), which is what this before-quit
+  // path depends on.
   for (const [, win] of extensionUiWindows) {
-    if (!win.isDestroyed()) win.destroy();
+    if (!win.isDestroyed()) destroyWindowViaMachine(win);
   }
   extensionUiWindows.clear();
   for (const [, win] of _bridgeWindows) {
-    if (!win.isDestroyed()) win.destroy();
+    if (!win.isDestroyed()) destroyWindowViaMachine(win);
   }
   _bridgeWindows.clear();
   setBridgeWindowsRegistry(_bridgeWindows);

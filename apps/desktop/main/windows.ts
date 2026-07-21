@@ -4,7 +4,7 @@
  * Helper functions for managing BrowserWindow instances.
  */
 
-import { app, BrowserWindow, ipcMain, nativeTheme, webContents } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import {
   WEB_CORE_ADDRESS,
@@ -23,7 +23,7 @@ import {
   getWindowInfo,
   getChildWindows,
 } from './main.js';
-import { registerGuest, getGuestsForWindow } from './webview-guest-registry.js';
+import { registerGuest } from './webview-guest-registry.js';
 import { getHybridWindow, getAllHybridWindows } from './hybrid-page-host-registry.js';
 import {
   getFrontWindowId,
@@ -248,7 +248,7 @@ export function showHybridHost(
  */
 export function modWindow(bw: BrowserWindow, params: { action: string }): void {
   if (params.action === 'close') {
-    bw.close();
+    closeHostWindow(bw.id, bw);
   }
   if (params.action === 'hide') {
     bw.hide();
@@ -447,84 +447,27 @@ export function winDevtoolsConfig(bw: BrowserWindow): void {
 /** Minimal close surface shared by BrowserWindow and (hybrid) BaseWindow. */
 interface ClosableWindow {
   isDestroyed(): boolean;
-  close(): void;
 }
 
 /**
- * Close a host window, but if it owns page-host guest WebContents (a `<webview>`
- * guest on the canvas path, or a `WebContentsView` content on the hybrid path —
- * both registered via `registerGuest`), DESTROY those guests and wait for them
- * to actually go away FIRST, then close the host.
+ * Close a host window through the window-state machine
+ * (WINDOW_CLOSE_REQUESTED → CLOSE_WINDOW_DIRECT → the backend's guest-safe
+ * `closeWindow`, which destroys registered page-host guests FIRST and then
+ * closes the host — the d1cf0b9a use-after-free guard, whose physical ops
+ * moved behind the port in §5 step 4; guestless windows still close
+ * synchronously inside the dispatch).
  *
- * Why this ordering matters — page-host close use-after-free (peek d1cf0b9a /
- * 4b2cc09d): closing the host directly runs `performClose:` →
- * `-[NSWindow __close]`, which tears the guest renderer down *inside* the native
- * window-close callback. Every http page-host guest carries the chrome-extension
- * runtime-external relay preload (TWP's `<all_urls>` content script matches any
- * http URL since b8eff4d2), so a guest can have an in-flight
- * `ipcRenderer.invoke('peek:runtime-external:send')` at that instant. Tearing it
- * down from the window-close path then derefs a freed cppgc/Blink object →
- * `EXC_BAD_ACCESS` in the main process. Destroying the guest first drains/cancels
- * its IPC through the normal renderer-teardown path, so by the time the host
- * closes there is no live guest to dereference.
- *
- * No-guest windows (settings, modals, overlays, the cmd panel, …) take the
- * synchronous fast path — byte-identical to the previous `win.close()`.
+ * Callers still speak Electron window ids here; the conversion happens at
+ * this boundary. Every window registers with the machine (design §7), so a
+ * null resolution means the window is already retired — nothing to close.
  */
-export function closeHostWindow(hostId: number, win: ClosableWindow): void {
-  // Callers still speak Electron window ids here; the guest registry is keyed
-  // by WM WindowId, so convert at this boundary (the host is still live at
-  // this point, so the mapping resolves).
+export function closeHostWindow(hostId: number, _win: ClosableWindow): void {
   const hostWmId = getWindowIdFor(hostId);
-  const guestIds = hostWmId != null ? getGuestsForWindow(hostWmId) : [];
-  // PEEK_DISABLE_PAGEHOST_CLOSE_GUARD=1 reverts to the raw close (no ordered
-  // guest teardown) — the pre-fix behavior. Test/diagnostic seam for A/B'ing
-  // the page-host close UAF guard; never set in production.
-  if (guestIds.length === 0 || process.env.PEEK_DISABLE_PAGEHOST_CLOSE_GUARD === '1') {
-    if (!win.isDestroyed()) win.close();
+  if (hostWmId == null) {
+    DEBUG && console.log('closeHostWindow: window', hostId, 'is not machine-registered — nothing to close');
     return;
   }
-  void destroyGuestsThenClose(hostId, win, guestIds);
-}
-
-async function destroyGuestsThenClose(
-  hostId: number,
-  win: ClosableWindow,
-  guestIds: number[],
-): Promise<void> {
-  DEBUG && console.log('closeHostWindow: destroying', guestIds.length, 'guest(s) before closing host', hostId);
-  await Promise.all(
-    guestIds.map(
-      (gid) =>
-        new Promise<void>((resolve) => {
-          const wc = webContents.fromId(gid);
-          if (!wc || wc.isDestroyed()) {
-            resolve();
-            return;
-          }
-          let settled = false;
-          const finish = () => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timer);
-            resolve();
-          };
-          // Don't wait forever — close the host anyway after a bounded wait if
-          // the guest never emits 'destroyed' (it usually does within a frame).
-          const timer = setTimeout(finish, 2000);
-          wc.once('destroyed', finish);
-          try {
-            // webContents.destroy() exists at runtime but isn't in the Electron
-            // type defs. Forceful (immediate, skips beforeunload) is what we
-            // want — guarantee the guest is gone before the host closes.
-            (wc as unknown as { destroy(): void }).destroy();
-          } catch {
-            finish();
-          }
-        }),
-    ),
-  );
-  if (!win.isDestroyed()) win.close();
+  dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id: hostWmId });
 }
 
 /**

@@ -96,6 +96,7 @@ import {
   getNativeWindowFor,
   waitForPendingWindowEffects,
 } from './window-state-singleton.js';
+import { classifyWindowRegistration } from './window-state.js';
 import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, registerWindow } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
@@ -399,6 +400,7 @@ function ensureOverlay(): BrowserWindow {
   registerWindowWithMachine({
     kind: 'browser',
     role: 'overlay',
+    class: 'overlay',
     satellite: true,
     win,
     contentWC: win.webContents,
@@ -1100,7 +1102,7 @@ function installTestBridge(): void {
       // then never binds (gate fallout of the WindowId cutover — the old
       // bridge drove the registry's synthetic active id, which needed no
       // registration). Mirrors `makeWiredHybridHost` below.
-      registerWindowWithMachine({ kind: 'page-host', role: 'content', satellite: false, win: baseWin, contentWC: view.webContents });
+      registerWindowWithMachine({ kind: 'page-host', role: 'content', class: classifyWindowRegistration('content'), satellite: false, win: baseWin, contentWC: view.webContents });
       fakeHosts.set(baseWin.id, baseWin);
       return baseWin.id;
     },
@@ -1128,7 +1130,7 @@ function installTestBridge(): void {
         view.setBounds({ x: 0, y: 0, width: w, height: h });
       } catch { /* getContentSize unsupported in some envs */ }
       registerHybridWindow(baseWin.id, { baseWin, contentWC: view.webContents });
-      registerWindowWithMachine({ kind: 'page-host', role: 'content', satellite: false, win: baseWin, contentWC: view.webContents });
+      registerWindowWithMachine({ kind: 'page-host', role: 'content', class: classifyWindowRegistration('content'), satellite: false, win: baseWin, contentWC: view.webContents });
       fakeHosts.set(baseWin.id, baseWin);
       // Install the REAL content→overlay event forwarding (incl. the idle
       // top-band reveal path under test).
@@ -1350,6 +1352,7 @@ function installTestBridge(): void {
         registerWindowWithMachine({
           kind: 'browser',
           role: 'workspace',
+          class: classifyWindowRegistration('workspace'),
           satellite: false,
           win: elsewhereWin,
           // A bare BaseWindow has no root webContents for the Esc interceptor.
@@ -2876,6 +2879,7 @@ function installTestBridge(): void {
       registerWindowWithMachine({
         kind: 'page-host',
         role: roledRole,
+        class: classifyWindowRegistration(roledRole),
         satellite: roledRole === 'overlay' || roledRole === 'palette',
         escapeMode: params.escapeMode as ('auto' | 'close' | 'navigate' | 'ignore' | undefined),
         win: baseWin,

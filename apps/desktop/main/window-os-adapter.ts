@@ -131,9 +131,14 @@ export class WindowOsAdapter {
         id,
         kind: spec.kind,
         role: spec.role,
+        class: spec.class,
         satellite: spec.satellite,
         escapeMode: spec.escapeMode,
         lastHttpUrl: spec.lastHttpUrl,
+        parentId: spec.parentId,
+        source: spec.source,
+        params: spec.params,
+        alwaysOnTop: spec.alwaysOnTop,
       });
     }
 
@@ -296,6 +301,48 @@ export class WindowOsAdapter {
           // Tracked for the same test-bridge await as CLOSE_WINDOW above.
           this.trackAsyncEffect(this.backend.closeOrHide(effect.switcherWindowId));
         }
+        return;
+      }
+      case 'CLOSE_WINDOW_DIRECT': {
+        // Guest-safe direct close (the absorbed windows.ts closeHostWindow
+        // path — destroy registered guests first, then close). Fire-and-forget
+        // for the machine; tracked for the test bridge like CLOSE_WINDOW.
+        this.trackAsyncEffect(this.backend.closeWindow(effect.id));
+        return;
+      }
+      case 'DESTROY_WINDOW': {
+        // Forceful synchronous destroy (extension bridge/UI + quit teardown —
+        // before-quit depends on this completing within the dispatch).
+        this.backend.destroyWindow(effect.id);
+        return;
+      }
+      case 'CLOSE_CONTENT': {
+        this.backend.closeContent(effect.id);
+        return;
+      }
+      case 'SHOW_WINDOW': {
+        // Both consumers (HUD re-show on app-activate, extension-UI dev
+        // autoopen) were `!isHeadless()`-guarded before the machine owned
+        // them — a show under headless would surface an alwaysOnTop window on
+        // the user's real desktop.
+        if (isHeadless()) return;
+        this.backend.showWindow(effect.id, { activate: effect.activate });
+        return;
+      }
+      case 'HIDE_WINDOW': {
+        this.backend.hideWindow(effect.id);
+        return;
+      }
+      case 'SET_ALWAYS_ON_TOP': {
+        // Headless parity with the old post-ctor reinforcement guard: even at
+        // opacity 0, setAlwaysOnTop triggers a macOS compositor repaint that
+        // can flash a thin window frame.
+        if (isHeadless()) return;
+        this.backend.pinAlwaysOnTop(effect.id, effect.on);
+        return;
+      }
+      case 'DESTROY_ALL_GUESTS': {
+        this.backend.destroyAllContentGuests();
         return;
       }
       case 'EXIT_FULLSCREEN': {

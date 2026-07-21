@@ -51,6 +51,8 @@ import { ensureTileIpcHandlers } from './tile-compat.js';
 import { registerBgWindow } from './tile-lifecycle.js';
 import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession } from './session-partition.js';
+import { registerWindowWithMachine, getNativeWindowByClass } from './window-state-singleton.js';
+import { isSatelliteRegistration } from './window-state.js';
 
 const requireElectron = createRequire(import.meta.url);
 
@@ -60,7 +62,9 @@ export const CORE_ID = 'core';
 /** Entry id — single resident renderer. */
 export const CORE_ENTRY_ID = 'background';
 
-let coreBackgroundWindow: BrowserWindow | null = null;
+// (No module-level window handle — the core background renderer registers
+// with the window-state machine as class 'background' and the accessor below
+// is a lookup by class; window-manager.md §4.3 dim 8b.)
 
 /**
  * Options for initializing the core background renderer.
@@ -129,7 +133,22 @@ export async function initCore(opts: InitCoreOptions): Promise<BrowserWindow> {
   };
 
   const win = new BrowserWindowCtor(winPrefs);
-  coreBackgroundWindow = win;
+
+  // Register with the window-state machine — every window registers (design
+  // §7). Class 'background' is what `getCoreBackgroundWindow()` looks up; the
+  // class also makes the record a satellite (never `front`). The hidden infra
+  // window gets no Esc interceptor (it never receives input) and no
+  // registry payload (`source`/`params` come from `createBackgroundWindow`'s
+  // legacy-address merge, preserving the WEB_CORE_ADDRESS identity checks).
+  registerWindowWithMachine({
+    kind: 'browser',
+    role: 'utility',
+    class: 'background',
+    satellite: isSatelliteRegistration('utility', { windowClass: 'background' }),
+    win,
+    contentWC: win.webContents,
+    attachEscHandler: false,
+  });
 
   // Register with the tile launcher so the pubsub broadcaster forwards
   // messages to this window. Without this, `api.subscribe` calls inside
@@ -152,10 +171,6 @@ export async function initCore(opts: InitCoreOptions): Promise<BrowserWindow> {
       }
     });
   }
-
-  win.on('closed', () => {
-    coreBackgroundWindow = null;
-  });
 
   await win.loadURL(WEB_CORE_ADDRESS);
 
@@ -191,9 +206,11 @@ export async function initCore(opts: InitCoreOptions): Promise<BrowserWindow> {
 }
 
 /**
- * Accessor for the core background window. Returns null if core has
- * not yet been initialized or the window was closed.
+ * Accessor for the core background window — a lookup by machine class
+ * (design §4.3 dim 8b: "every singleton becomes a lookup by class").
+ * Returns null if core has not yet been initialized or the window was
+ * closed/destroyed (the machine's native join filters destroyed handles).
  */
 export function getCoreBackgroundWindow(): BrowserWindow | null {
-  return coreBackgroundWindow;
+  return (getNativeWindowByClass('background') as BrowserWindow | null) ?? null;
 }

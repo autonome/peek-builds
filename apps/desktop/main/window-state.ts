@@ -51,6 +51,38 @@ export interface Rectangle {
 
 export type WindowKind = 'page-host' /* BaseWindow + WebContentsView */ | 'browser';
 
+/**
+ * Special window classes (design §4.3 dim 8b) — a CLOSED enum. Every window
+ * carries exactly one class, declared at registration; the class replaces the
+ * 8+ per-module window singletons (`main.ts mainWindow`, `core-glue.ts
+ * coreBackgroundWindow`, `test-fixture-glue.ts testFixtureWindow`,
+ * `chrome-extensions.ts` bridge/UI maps as class-tagged records, …) and the
+ * HUD-sniffing predicate (`isAlwaysOnTop() && !isFocusable()` + the
+ * `__hudHidden` expando — both deleted in §5 step 4).
+ *
+ *   - `primary`      ordinary user-facing content window (page hosts, tiles)
+ *   - `quick-view`   peeks/slides — front-eligible transients
+ *   - `overlay`      chrome overlay / switcher overlay surfaces
+ *   - `palette`      command palette / modal picker surfaces
+ *   - `hud`          always-on-top non-focusable heads-up display
+ *   - `background`   the hidden core background renderer
+ *   - `bridge`       hidden chrome-extension bridge windows
+ *   - `extension-ui` chrome-extension popup/options UI windows
+ *   - `test-fixture` the Playwright test-fixture renderer
+ *   - `devtools`     a detached devtools window
+ */
+export type WindowClass =
+  | 'primary'
+  | 'quick-view'
+  | 'overlay'
+  | 'palette'
+  | 'hud'
+  | 'background'
+  | 'bridge'
+  | 'extension-ui'
+  | 'test-fixture'
+  | 'devtools';
+
 /** The window's ESC override. 'ignore' passes ESC straight through to the page. */
 export type EscapeMode = 'auto' | 'close' | 'navigate' | 'ignore';
 
@@ -75,6 +107,40 @@ export interface WindowRecord {
   kind: WindowKind;
   /** Existing IZUI role vocabulary (palette / quick-view / overlay / workspace / content / child-content / utility). */
   role: string;
+  /**
+   * The window's class (closed enum, §4.3 dim 8b). Declared at registration
+   * (`classifyWindowRegistration` for ordinary windows; the special classes
+   * are declared explicitly by their glue modules). Singleton lookups
+   * (`getCoreBackgroundWindow`, `getTestFixtureWindow`, the HUD hide/show
+   * sweep) are lookups by this field now.
+   */
+  class: WindowClass;
+  /**
+   * The registered parent window (from the open params' `parentWindowId`,
+   * converted to a WindowId at registration). Closing a window with a parent
+   * hands `front` back to the parent — the reducer transition that replaced
+   * the `main.ts browser-window-created → 'closed' → parentWin.focus()` block.
+   */
+  parentId?: WindowId;
+  /**
+   * The window-manager registry payload the deleted `main.ts windowRegistry`
+   * Map used to hold (§4.1 dim 1a): the opening source address plus the open
+   * params. `params` is OPAQUE app data to the reducer — it is stored BY
+   * REFERENCE and legacy consumers still mutate it in place
+   * (`params.currentUrl`, `params.x/width`, …); the reducer itself never
+   * reads inside it. Both fields are absent for windows that never carried a
+   * registry payload (tile windows, bridge/background/test-fixture/devtools),
+   * which is exactly how the numeric-id seam (`main.ts getWindowInfo` /
+   * `getAllWindows`) preserves the old registry's membership.
+   */
+  source?: string;
+  params?: Record<string, unknown>;
+  /**
+   * Set while a `hud`-class window is hidden by the APP_RESIGNED sweep, so
+   * APP_ACTIVATED re-shows exactly the windows that sweep hid — the
+   * structural replacement for the deleted `(win as any).__hudHidden` expando.
+   */
+  hiddenByAppBlur?: boolean;
   escapeMode?: EscapeMode;
   /**
    * Satellite = a surface that can hold OS focus but is never "the window the
@@ -194,7 +260,49 @@ export function createInitialState(): AppWindowState {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type WindowEvent =
-  | { type: 'WINDOW_REGISTERED'; id: WindowId; kind: WindowKind; role: string; satellite: boolean; escapeMode?: EscapeMode; lastHttpUrl?: string }
+  | {
+      type: 'WINDOW_REGISTERED';
+      id: WindowId;
+      kind: WindowKind;
+      role: string;
+      satellite: boolean;
+      escapeMode?: EscapeMode;
+      lastHttpUrl?: string;
+      /** Window class (§4.3 dim 8b). Optional on the raw event (defaults to 'primary'); the registration spec (`WindowSpec.class`) is required, so every real registration declares it. */
+      class?: WindowClass;
+      /** Parent linkage (open params `parentWindowId`, WM-id-converted at the registration seam). Drives the parent-refocus transition on WINDOW_CLOSED. */
+      parentId?: WindowId | null;
+      /** The old windowRegistry payload (§4.1 dim 1a): opening source + open params (opaque, stored by reference). */
+      source?: string;
+      params?: Record<string, unknown>;
+      /** Declared always-on-top intent: registration emits SET_ALWAYS_ON_TOP (replaces the ipc.ts post-ctor `setAlwaysOnTop(true,'floating')` reinforcement). */
+      alwaysOnTop?: boolean;
+    }
+  /**
+   * Merge a windowRegistry payload onto an ALREADY-REGISTERED window — the
+   * machine-side form of the old `main.ts registerWindow(id, source, params)`
+   * writer (its callers run after `registerWindowWithMachine`). No-op for an
+   * unknown id.
+   */
+  | { type: 'WINDOW_PARAMS_SET'; id: WindowId; source: string; params: Record<string, unknown> }
+  /** App code wants this window CLOSED (guest-safe direct close — no keepLive policy; that is CLOSE_WINDOW/closeOrHide). */
+  | { type: 'WINDOW_CLOSE_REQUESTED'; id: WindowId }
+  /** App code wants this window forcefully DESTROYED (extension bridge/UI teardown, quit paths). */
+  | { type: 'WINDOW_DESTROY_REQUESTED'; id: WindowId }
+  /** App code wants this window shown (activate:false = show without stealing focus). */
+  | { type: 'WINDOW_SHOW_REQUESTED'; id: WindowId; activate: boolean }
+  /** App code wants this window's CONTENT surface torn down (the hybrid finalize's `contentWC.close()`). */
+  | { type: 'WINDOW_CONTENT_CLOSE_REQUESTED'; id: WindowId }
+  /** Quit teardown: destroy every registered page-host guest WC before native quit closes their hosts (peek d1cf0b9a). */
+  | { type: 'GUEST_TEARDOWN_REQUESTED' }
+  /**
+   * Devtools opened/closed for a registered window (§4.6 dim 8a). Both
+   * invalidate the front assertion; the closing assertion step then re-drives
+   * the front window — the machine form of the old "re-focus the content
+   * window after devtools opens/closes" handlers.
+   */
+  | { type: 'DEVTOOLS_OPENED'; id: WindowId }
+  | { type: 'DEVTOOLS_CLOSED'; id: WindowId }
   | { type: 'WINDOW_SHOWN'; id: WindowId; focused: boolean }
   | { type: 'WINDOW_HIDDEN'; id: WindowId }
   | { type: 'WINDOW_CLOSED'; id: WindowId }
@@ -269,6 +377,20 @@ export type Effect =
    */
   | { type: 'ASK_RENDERER'; id: WindowId; seq: number }
   | { type: 'CLOSE_WINDOW'; id: WindowId }
+  /** Guest-safe direct close (destroy registered guests, then close the host) — the absorbed windows.ts `closeHostWindow` path. No keepLive policy. */
+  | { type: 'CLOSE_WINDOW_DIRECT'; id: WindowId }
+  /** Forceful native destroy (extension bridge/UI teardown, quit paths). */
+  | { type: 'DESTROY_WINDOW'; id: WindowId }
+  /** Tear down the window's content surface (the hybrid finalize's `contentWC.close()`). */
+  | { type: 'CLOSE_CONTENT'; id: WindowId }
+  /** Show without (or with) activation. Executor skips it under headless — both consumers (HUD re-show, extension-UI dev autoopen) were `!isHeadless()`-guarded before the machine owned them. */
+  | { type: 'SHOW_WINDOW'; id: WindowId; activate: boolean }
+  /** Hide, keep alive (the HUD app-blur sweep). */
+  | { type: 'HIDE_WINDOW'; id: WindowId }
+  /** Pin above regular windows (registration-declared alwaysOnTop). Executor skips under headless (compositor-flash parity with the old guard). */
+  | { type: 'SET_ALWAYS_ON_TOP'; id: WindowId; on: boolean }
+  /** Quit teardown: destroy every registered page-host guest WC (peek d1cf0b9a). */
+  | { type: 'DESTROY_ALL_GUESTS' }
   /** ESC consumed by leaving fullscreen (also drives the leaving fsMode edge + SET_FULLSCREEN in the same reduce). */
   | { type: 'EXIT_FULLSCREEN'; id: WindowId }
   /** ESC passed straight to the page (escapeMode 'ignore'). */
@@ -393,15 +515,52 @@ export function escUnhandledPolicy(sessionState: string, role: string): 'open-sw
  *
  * `focusable` is the RESOLVED focusability (or undefined = Electron's default
  * true); callers normalize before passing.
+ *
+ * Extended with the window CLASS (§5 step 4, rather than duplicating the rule
+ * elsewhere): the infrastructure classes — hud, background, bridge,
+ * test-fixture, devtools — are structurally front-ineligible regardless of
+ * role/focusable. `extension-ui` is deliberately NOT here: an extension popup
+ * is a real user-facing window the user works in, so it stays front-eligible.
  */
+const SATELLITE_CLASSES: ReadonlySet<WindowClass> = new Set<WindowClass>([
+  'hud',
+  'background',
+  'bridge',
+  'test-fixture',
+  'devtools',
+]);
+
 export function isSatelliteRegistration(
   role: string,
-  opts: { modal?: boolean; focusable?: boolean } = {},
+  opts: { modal?: boolean; focusable?: boolean; windowClass?: WindowClass } = {},
 ): boolean {
+  if (opts.windowClass !== undefined && SATELLITE_CLASSES.has(opts.windowClass)) return true;
   if (role === 'overlay' || role === 'palette') return true;
   if (opts.modal === true) return true;
   if (opts.focusable === false) return true;
   return false;
+}
+
+/**
+ * classifyWindowRegistration — the SINGLE owner of the "which class is an
+ * ordinary window-open?" rule (§4.3 dim 8b). The special infrastructure
+ * classes (background / bridge / extension-ui / test-fixture / devtools) are
+ * never inferred — their glue modules declare them explicitly at registration.
+ *
+ * The `hud` arm is the DECLARED replacement for the deleted sniffing
+ * predicate `isAlwaysOnTop() && !isFocusable()` (main.ts app-blur sweep):
+ * the same pair of properties, but judged ONCE from the open params at
+ * registration and stored as a class, instead of live-queried per sweep.
+ */
+export function classifyWindowRegistration(
+  role: string,
+  opts: { alwaysOnTop?: boolean; focusable?: boolean } = {},
+): WindowClass {
+  if (role === 'overlay') return 'overlay';
+  if (role === 'palette') return 'palette';
+  if (role === 'quick-view') return 'quick-view';
+  if (opts.alwaysOnTop === true && opts.focusable === false) return 'hud';
+  return 'primary';
 }
 
 /**
@@ -662,10 +821,31 @@ function invalidatesFrontAssertion(prev: AppWindowState, next: AppWindowState, e
     // it moved to a successor, which is the case this clause is here for.
     case 'WINDOW_HIDDEN':
       return event.id === prev.front;
+    // A child window with a registered parent closed: the parent must be
+    // re-driven (raise + first responder) even when it already was `front` —
+    // the machine form of the deleted `parentWin.focus()` (the front-changed
+    // first clause covers the case where front actually moved).
+    case 'WINDOW_CLOSED':
+      return prev.windows.get(event.id)?.parentId != null;
+    // Devtools took or released key for a registered window (§4.6 dim 8a).
+    // Both edges re-drive the front in the SAME transition (no deferral):
+    // devtools opens with activate:false, and the old handlers immediately
+    // re-focused the content window — re-asserting here preserves that AND
+    // keeps the derived Esc grab off (a grabbed Esc would be eaten before the
+    // devtools/front window ever saw it).
+    case 'DEVTOOLS_OPENED':
+    case 'DEVTOOLS_CLOSED':
+      return true;
     // A palette / modal / chrome overlay took key. It is a satellite, so `front`
     // deliberately did NOT move — which is exactly why the assertion has to.
-    case 'OS_FOCUS_GAINED':
-      return next.windows.get(event.id)?.satellite === true;
+    // EXCEPT a detached devtools window (class 'devtools'): clicking into
+    // devtools must NOT flip the assertion off, or the derived Esc grab would
+    // switch ON and eat every Esc typed inside devtools (before registration,
+    // devtools focus was invisible to the machine — this keeps that behavior).
+    case 'OS_FOCUS_GAINED': {
+      const rec = next.windows.get(event.id);
+      return rec?.satellite === true && rec.class !== 'devtools';
+    }
     default:
       return false;
   }
@@ -852,6 +1032,10 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
           role: event.role,
           escapeMode: event.escapeMode,
           satellite: event.satellite,
+          class: event.class ?? existing.class,
+          parentId: event.parentId ?? existing.parentId,
+          source: event.source ?? existing.source,
+          params: event.params ?? existing.params,
           lastHttpUrl: event.lastHttpUrl ?? existing.lastHttpUrl,
         });
         // If the richer spec turned the CURRENT front into a satellite, hand
@@ -860,12 +1044,21 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         if (state.front === event.id && !isEligibleFront(state.windows.get(event.id))) {
           state.front = successorFront(state, event.id);
         }
+        // Declared always-on-top intent (see the fresh branch below) —
+        // idempotent to re-assert on a richer re-registration.
+        if (event.alwaysOnTop === true) {
+          effects.push({ type: 'SET_ALWAYS_ON_TOP', id: event.id, on: true });
+        }
         break;
       }
       const rec: WindowRecord = {
         id: event.id,
         kind: event.kind,
         role: event.role,
+        class: event.class ?? 'primary',
+        parentId: event.parentId ?? undefined,
+        source: event.source,
+        params: event.params,
         escapeMode: event.escapeMode,
         satellite: event.satellite,
         visible: false,
@@ -874,6 +1067,56 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         lastHttpUrl: event.lastHttpUrl,
       };
       state.windows.set(event.id, rec);
+      // Declared always-on-top: registration is the ONE place the pin is
+      // asserted (replaces the ipc.ts post-ctor `setAlwaysOnTop(true,
+      // 'floating')` reinforcement — the macOS ctor flag alone is unreliable).
+      if (event.alwaysOnTop === true) {
+        effects.push({ type: 'SET_ALWAYS_ON_TOP', id: event.id, on: true });
+      }
+      break;
+    }
+
+    case 'WINDOW_PARAMS_SET': {
+      const rec = state.windows.get(event.id);
+      if (!rec) break; // unknown window — the payload has nothing to attach to
+      state.windows.set(event.id, { ...rec, source: event.source, params: event.params });
+      break;
+    }
+
+    case 'WINDOW_CLOSE_REQUESTED': {
+      // No state change — the record retires on the WINDOW_CLOSED event the
+      // native teardown emits. The effect is emitted even for an unknown id:
+      // the backend resolves the handle itself and no-ops when gone.
+      effects.push({ type: 'CLOSE_WINDOW_DIRECT', id: event.id });
+      break;
+    }
+
+    case 'WINDOW_DESTROY_REQUESTED': {
+      effects.push({ type: 'DESTROY_WINDOW', id: event.id });
+      break;
+    }
+
+    case 'WINDOW_SHOW_REQUESTED': {
+      effects.push({ type: 'SHOW_WINDOW', id: event.id, activate: event.activate });
+      break;
+    }
+
+    case 'WINDOW_CONTENT_CLOSE_REQUESTED': {
+      effects.push({ type: 'CLOSE_CONTENT', id: event.id });
+      break;
+    }
+
+    case 'GUEST_TEARDOWN_REQUESTED': {
+      effects.push({ type: 'DESTROY_ALL_GUESTS' });
+      break;
+    }
+
+    case 'DEVTOOLS_OPENED':
+    case 'DEVTOOLS_CLOSED': {
+      // No state change; both invalidate the front assertion (see
+      // `invalidatesFrontAssertion`), and the closing assertion step re-drives
+      // the front window in the SAME transition — the machine form of the old
+      // "re-focus the content window when devtools opens/closes" handlers.
       break;
     }
 
@@ -904,12 +1147,27 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
     }
 
     case 'WINDOW_CLOSED': {
+      const closedRec = prev.windows.get(event.id);
       state.windows.delete(event.id);
       // A pending renderer question aimed at this window can never be answered
       // meaningfully — drop it so a late answer is inert.
       if (state.escAsk && state.escAsk.id === event.id) state.escAsk = null;
       if (state.front === event.id) {
         state.front = successorFront(state);
+      }
+      // Parent refocus (replaces the deleted main.ts `browser-window-created →
+      // 'closed' → parentWin.focus()` block): a closing window with a
+      // registered parent hands the target back to that parent — taking
+      // precedence over the MRU successor — whenever the parent is a legal
+      // front. `invalidatesFrontAssertion` returns true for this case even
+      // when the parent already WAS front, so the closing assertion step
+      // re-drives the raise/first-responder exactly like the old focus() did.
+      if (closedRec?.parentId != null) {
+        const parent = state.windows.get(closedRec.parentId);
+        if (isEligibleFront(parent)) {
+          state.front = parent.id;
+          bumpFocusSeq(state, parent.id);
+        }
       }
       if (state.switcher.open && state.switcher.windowId === event.id) {
         state.switcher = { open: false };
@@ -941,6 +1199,17 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
           effects.push({ type: 'RECONCILE_FULLSCREEN', id: rec.id });
         }
       }
+      // Re-show the HUD windows the APP_RESIGNED sweep hid — exactly those
+      // (the `hiddenByAppBlur` flag replaces the `__hudHidden` expando), and
+      // without activation. The executor skips SHOW_WINDOW under headless
+      // (parity with the old "never re-show overlay/HUD windows under
+      // headless" guard).
+      for (const rec of [...state.windows.values()]) {
+        if (rec.class === 'hud' && rec.hiddenByAppBlur === true) {
+          patchRecord(state, rec.id, { hiddenByAppBlur: false });
+          effects.push({ type: 'SHOW_WINDOW', id: rec.id, activate: false });
+        }
+      }
       break;
     }
 
@@ -959,6 +1228,18 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // Peek is no longer the active app — an outstanding Esc question must not
       // resolve into a switcher-open after the user left.
       state.escAsk = null;
+      // Hide visible HUD-class windows while the app is inactive (the old
+      // main.ts did-resign-active sweep over `isAlwaysOnTop() && isVisible()
+      // && !isFocusable()` — the class field replaces the sniffing predicate,
+      // `hiddenByAppBlur` replaces the `__hudHidden` expando). Focusable
+      // always-on-top windows (cmd panel → class 'palette') are untouched,
+      // same as before: they have their own blur handling and would blink.
+      for (const rec of [...state.windows.values()]) {
+        if (rec.class === 'hud' && rec.visible) {
+          patchRecord(state, rec.id, { hiddenByAppBlur: true });
+          effects.push({ type: 'HIDE_WINDOW', id: rec.id });
+        }
+      }
       if (state.switcher.open) {
         // Close without focus theft — the user is switching to another app. In
         // the staged cutover the adapter treats this (restoreFocus:false) as a
@@ -1322,6 +1603,20 @@ export class WindowStateOwner {
 
   snapshot(): StateSnapshot {
     return snapshot(this.state);
+  }
+
+  /**
+   * The live record for one window — READ-ONLY by contract (no copy, so the
+   * numeric-id registry seam in main.ts stays allocation-free on hot paths;
+   * note `params` is deliberately a shared mutable bag, see WindowRecord).
+   */
+  getWindowRecord(id: WindowId): WindowRecord | undefined {
+    return this.state.windows.get(id);
+  }
+
+  /** All live records (fresh array, records themselves NOT copied — read-only by contract). */
+  listWindowRecords(): WindowRecord[] {
+    return [...this.state.windows.values()];
   }
 
   /**

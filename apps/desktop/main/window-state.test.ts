@@ -43,6 +43,7 @@ import {
   frontInvariantHolds,
   isEligibleFront,
   isSatelliteRegistration,
+  classifyWindowRegistration,
   decideWindowRegistration,
   deriveEscGrabRegistered,
   WindowStateOwner,
@@ -135,6 +136,7 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       id: wid(1),
       kind: 'page-host',
       role,
+      class: 'primary',
       escapeMode,
       satellite,
       visible: true,
@@ -189,6 +191,19 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     { type: 'SWITCHER_SELECTED', id: null },
     { type: 'SWITCHER_OPENED', windowId: wid(2) },
     { type: 'OS_FOCUS_GAINED', id: wid(1), lastHttpUrl: 'https://example.com/' },
+    // §5 step 4 events (classes + registry unification).
+    { type: 'WINDOW_REGISTERED', id: wid(4), kind: 'browser', role: 'utility', class: 'hud', satellite: true, alwaysOnTop: true },
+    { type: 'WINDOW_PARAMS_SET', id: wid(1), source: 'peek://app/x', params: { key: 'k' } },
+    { type: 'WINDOW_PARAMS_SET', id: wid(99), source: 'peek://app/x', params: {} },
+    { type: 'WINDOW_CLOSE_REQUESTED', id: wid(1) },
+    { type: 'WINDOW_CLOSE_REQUESTED', id: wid(99) },
+    { type: 'WINDOW_DESTROY_REQUESTED', id: wid(1) },
+    { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: false },
+    { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: true },
+    { type: 'WINDOW_CONTENT_CLOSE_REQUESTED', id: wid(1) },
+    { type: 'GUEST_TEARDOWN_REQUESTED' },
+    { type: 'DEVTOOLS_OPENED', id: wid(1) },
+    { type: 'DEVTOOLS_CLOSED', id: wid(1) },
   ];
 
   it('reduce is total: defined result + front invariant holds for all combinations', () => {
@@ -275,7 +290,7 @@ describe('decideEscape (steps 1-5, total)', () => {
 
   it('step 4: any non-normal fsMode -> exit-fullscreen (entering/full/leaving)', () => {
     for (const name of ['entering-fullscreen', 'fullscreen', 'leaving-fullscreen'] as FsMode['name'][]) {
-      const rec: WindowRecord = { id: wid(1), kind: 'page-host', role: 'content', satellite: false, visible: true, fsMode: fsOf(name, BOUNDS), focusSeq: 1 };
+      const rec: WindowRecord = { id: wid(1), kind: 'page-host', role: 'content', class: 'primary', satellite: false, visible: true, fsMode: fsOf(name, BOUNDS), focusSeq: 1 };
       const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), frontAsserted: true, switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
       assert.deepStrictEqual(decideEscape(state), { kind: 'exit-fullscreen', id: wid(1) }, `mode ${name}`);
     }
@@ -1057,9 +1072,9 @@ describe('reduce purity', () => {
 
   it('isEligibleFront rejects satellites, hidden, and absent records', () => {
     assert.strictEqual(isEligibleFront(undefined), false);
-    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
-    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', satellite: false, visible: false, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
-    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', satellite: false, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), true);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', satellite: false, visible: false, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', satellite: false, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), true);
   });
 });
 
@@ -1221,7 +1236,7 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
   // event sequence can produce this (the reducer only ever assigns an eligible
   // front) — we craft it directly to exercise the guard's throw path.
   function illegalFrontState(): AppWindowState {
-    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 1 };
+    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 1 };
     return { appActive: true, session: 'active', front: wid(1), frontAsserted: true, switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
   }
 
@@ -1250,7 +1265,7 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
 
   it('FULLSCREEN_REQUESTED on a satellite does NOT install an illegal front (and does not throw)', () => {
     // The reducer bug the reviewer flagged: front was assigned unconditionally.
-    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 1 };
+    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 1 };
     const s: AppWindowState = { appActive: true, session: 'active', front: null, frontAsserted: false, switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
     const { state } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
     assert.strictEqual(state.front, null, 'a satellite must never become front, even via a fullscreen request');
@@ -1542,5 +1557,300 @@ describe('APP_ACTIVATED reconciles ALL in-flight fullscreen transitions (§2.5)'
     const { effects } = reduce(s, { type: 'APP_ACTIVATED' });
     const reconciled = effects.filter((e) => e.type === 'RECONCILE_FULLSCREEN').map((e) => (e as { id: WindowId }).id).sort();
     assert.deepStrictEqual(reconciled, [wid(1), wid(2)], 'both in-flight windows are reconciled, not just front');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §5 step 4 — special window classes + registry unification
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('classifyWindowRegistration — single owner of the ordinary-window class rule', () => {
+  it('maps the role vocabulary onto classes', () => {
+    assert.strictEqual(classifyWindowRegistration('overlay'), 'overlay');
+    assert.strictEqual(classifyWindowRegistration('palette'), 'palette');
+    assert.strictEqual(classifyWindowRegistration('quick-view'), 'quick-view');
+    assert.strictEqual(classifyWindowRegistration('content'), 'primary');
+    assert.strictEqual(classifyWindowRegistration('workspace'), 'primary');
+    assert.strictEqual(classifyWindowRegistration('child-content'), 'primary');
+  });
+
+  it('alwaysOnTop + focusable:false is hud (the declared form of the deleted sniffing predicate)', () => {
+    assert.strictEqual(classifyWindowRegistration('utility', { alwaysOnTop: true, focusable: false }), 'hud');
+    // Either property alone is NOT a HUD — matches the old predicate's conjunction.
+    assert.strictEqual(classifyWindowRegistration('utility', { alwaysOnTop: true, focusable: true }), 'primary');
+    assert.strictEqual(classifyWindowRegistration('utility', { alwaysOnTop: true }), 'primary', 'focusable undefined = Electron default true');
+    assert.strictEqual(classifyWindowRegistration('utility', { focusable: false }), 'primary');
+  });
+
+  it('role classes win over the hud pair (a non-focusable alwaysOnTop palette is still a palette)', () => {
+    assert.strictEqual(classifyWindowRegistration('palette', { alwaysOnTop: true, focusable: false }), 'palette');
+  });
+});
+
+describe('isSatelliteRegistration — class extension (§5 step 4)', () => {
+  it('infrastructure classes are satellites regardless of role/focusable', () => {
+    for (const cls of ['hud', 'background', 'bridge', 'test-fixture', 'devtools'] as const) {
+      assert.strictEqual(isSatelliteRegistration('content', { windowClass: cls }), true, cls);
+    }
+  });
+
+  it('extension-ui and the ordinary classes stay front-eligible under the class clause', () => {
+    for (const cls of ['extension-ui', 'primary', 'quick-view'] as const) {
+      assert.strictEqual(isSatelliteRegistration('content', { windowClass: cls }), false, cls);
+    }
+  });
+
+  it('the pre-existing rules still apply alongside a front-eligible class', () => {
+    assert.strictEqual(isSatelliteRegistration('overlay', { windowClass: 'primary' }), true);
+    assert.strictEqual(isSatelliteRegistration('content', { windowClass: 'primary', modal: true }), true);
+    assert.strictEqual(isSatelliteRegistration('content', { windowClass: 'primary', focusable: false }), true);
+  });
+});
+
+describe('WINDOW_REGISTERED — class / registry payload / parent linkage / alwaysOnTop', () => {
+  it('defaults class to primary when the raw event omits it', () => {
+    const { state } = reduce(createInitialState(), { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'content', satellite: false });
+    assert.strictEqual(state.windows.get(wid(1))!.class, 'primary');
+  });
+
+  it('stores class, source, params (by reference) and parentId from the registration', () => {
+    const params = { key: 'k', keepLive: true };
+    const { state } = reduce(createInitialState(), {
+      type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'utility', class: 'hud',
+      satellite: true, source: 'peek://hud/background.html', params, parentId: wid(9),
+    });
+    const rec = state.windows.get(wid(1))!;
+    assert.strictEqual(rec.class, 'hud');
+    assert.strictEqual(rec.source, 'peek://hud/background.html');
+    assert.strictEqual(rec.params, params, 'params held BY REFERENCE (legacy consumers mutate in place)');
+    assert.strictEqual(rec.parentId, wid(9));
+  });
+
+  it('re-registration merges: later class wins, absent fields keep the earlier payload', () => {
+    let s = reduce(createInitialState(), {
+      type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'content', satellite: false,
+      source: 'peek://a', params: { key: 'k' }, parentId: wid(3),
+    }).state;
+    s = reduce(s, { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'quick-view', class: 'quick-view', satellite: false }).state;
+    const rec = s.windows.get(wid(1))!;
+    assert.strictEqual(rec.class, 'quick-view', 'later (richer) class wins');
+    assert.strictEqual(rec.source, 'peek://a', 'earlier source survives an absent field');
+    assert.deepStrictEqual(rec.params, { key: 'k' }, 'earlier params survive an absent field');
+    assert.strictEqual(rec.parentId, wid(3), 'earlier parent linkage survives');
+  });
+
+  it('alwaysOnTop:true emits SET_ALWAYS_ON_TOP on fresh registration AND on a re-registration', () => {
+    const first = reduce(createInitialState(), { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'utility', class: 'hud', satellite: true, alwaysOnTop: true });
+    assert.deepStrictEqual(first.effects.filter((e) => e.type === 'SET_ALWAYS_ON_TOP'), [{ type: 'SET_ALWAYS_ON_TOP', id: wid(1), on: true }]);
+    const again = reduce(first.state, { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'utility', class: 'hud', satellite: true, alwaysOnTop: true });
+    assert.ok(hasEffect(again.effects, 'SET_ALWAYS_ON_TOP'), 'idempotent re-pin on the richer re-registration');
+    const without = reduce(first.state, { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'utility', class: 'hud', satellite: true });
+    assert.strictEqual(hasEffect(without.effects, 'SET_ALWAYS_ON_TOP'), false, 'no declared pin -> no effect');
+  });
+});
+
+describe('WINDOW_PARAMS_SET — the registerWindow merge seam', () => {
+  it('attaches source+params to an existing record', () => {
+    let s = reduce(createInitialState(), { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false }).state;
+    const params = { address: 'https://x.test/' };
+    s = reduce(s, { type: 'WINDOW_PARAMS_SET', id: wid(1), source: 'test-esc', params }).state;
+    const rec = s.windows.get(wid(1))!;
+    assert.strictEqual(rec.source, 'test-esc');
+    assert.strictEqual(rec.params, params);
+  });
+
+  it('is a no-op for an unknown window', () => {
+    const { state, effects } = reduce(createInitialState(), { type: 'WINDOW_PARAMS_SET', id: wid(7), source: 's', params: {} });
+    assert.strictEqual(state.windows.size, 0);
+    assert.strictEqual(effects.length, 0);
+  });
+});
+
+describe('request events — pass-through effects (state changes ride the native events)', () => {
+  it('WINDOW_CLOSE_REQUESTED -> CLOSE_WINDOW_DIRECT, record untouched (retires on WINDOW_CLOSED)', () => {
+    const s = openWindow(createInitialState(), 1, {});
+    const { state, effects } = reduce(s, { type: 'WINDOW_CLOSE_REQUESTED', id: wid(1) });
+    assert.deepStrictEqual(effects.filter((e) => e.type === 'CLOSE_WINDOW_DIRECT'), [{ type: 'CLOSE_WINDOW_DIRECT', id: wid(1) }]);
+    assert.ok(state.windows.has(wid(1)), 'the record retires on WINDOW_CLOSED, not on the request');
+  });
+
+  it('WINDOW_CLOSE_REQUESTED for an unknown id still emits (the backend resolves + no-ops)', () => {
+    const { effects } = reduce(createInitialState(), { type: 'WINDOW_CLOSE_REQUESTED', id: wid(9) });
+    assert.ok(hasEffect(effects, 'CLOSE_WINDOW_DIRECT'));
+  });
+
+  it('WINDOW_DESTROY_REQUESTED -> DESTROY_WINDOW', () => {
+    const { effects } = reduce(openWindow(createInitialState(), 1, {}), { type: 'WINDOW_DESTROY_REQUESTED', id: wid(1) });
+    assert.deepStrictEqual(effects.filter((e) => e.type === 'DESTROY_WINDOW'), [{ type: 'DESTROY_WINDOW', id: wid(1) }]);
+  });
+
+  it('WINDOW_SHOW_REQUESTED echoes the activate flag onto SHOW_WINDOW', () => {
+    for (const activate of [true, false]) {
+      const { effects } = reduce(openWindow(createInitialState(), 1, {}), { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate });
+      assert.deepStrictEqual(effects.filter((e) => e.type === 'SHOW_WINDOW'), [{ type: 'SHOW_WINDOW', id: wid(1), activate }]);
+    }
+  });
+
+  it('WINDOW_CONTENT_CLOSE_REQUESTED -> CLOSE_CONTENT even after the record retired (backend holds the WC)', () => {
+    let s = openWindow(createInitialState(), 1, {});
+    s = drive(s, [{ type: 'WINDOW_CLOSED', id: wid(1) }]).state;
+    const { effects } = reduce(s, { type: 'WINDOW_CONTENT_CLOSE_REQUESTED', id: wid(1) });
+    assert.ok(hasEffect(effects, 'CLOSE_CONTENT'));
+  });
+
+  it('GUEST_TEARDOWN_REQUESTED -> DESTROY_ALL_GUESTS', () => {
+    const { effects } = reduce(createInitialState(), { type: 'GUEST_TEARDOWN_REQUESTED' });
+    assert.ok(hasEffect(effects, 'DESTROY_ALL_GUESTS'));
+  });
+});
+
+describe('parent refocus on WINDOW_CLOSED (replaces the main.ts parentWin.focus() block)', () => {
+  function parentAndChild(): AppWindowState {
+    let s = openWindow(createInitialState(), 1, { role: 'content' }); // parent
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'child-content', satellite: false, parentId: wid(1) },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: true },
+    ]).state;
+    return s;
+  }
+
+  it('closing the focused child hands front back to the parent and re-drives it', () => {
+    let s = parentAndChild();
+    // A third, more-recently-focused window would be the MRU successor — the
+    // parent must still win.
+    s = openWindow(s, 3, { role: 'content' });
+    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(2) }]).state;
+    assert.strictEqual(s.front, wid(2));
+    const { state, effects } = reduce(s, { type: 'WINDOW_CLOSED', id: wid(2) });
+    assert.strictEqual(state.front, wid(1), 'parent takes precedence over the MRU successor');
+    assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)), 'the closing assertion step raises the parent');
+  });
+
+  it('re-drives the parent even when it already was front (assertion invalidation, old focus() parity)', () => {
+    let s = parentAndChild();
+    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]).state; // parent focused; child open in background
+    assert.strictEqual(s.front, wid(1));
+    assert.strictEqual(s.frontAsserted, true);
+    const { state, effects } = reduce(s, { type: 'WINDOW_CLOSED', id: wid(2) });
+    assert.strictEqual(state.front, wid(1));
+    assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)), 'front unchanged but the raise is re-driven');
+  });
+
+  it('an ineligible parent (hidden) falls back to the MRU successor', () => {
+    let s = parentAndChild();
+    s = openWindow(s, 3, { role: 'content' });
+    s = drive(s, [
+      { type: 'WINDOW_HIDDEN', id: wid(1) },
+      { type: 'OS_FOCUS_GAINED', id: wid(2) },
+    ]).state;
+    const { state } = reduce(s, { type: 'WINDOW_CLOSED', id: wid(2) });
+    assert.strictEqual(state.front, wid(3), 'hidden parent cannot take front; MRU successor wins');
+  });
+
+  it('closing a parentless window does not invalidate the assertion for an unrelated front', () => {
+    let s = openWindow(createInitialState(), 1, { role: 'content' });
+    s = openWindow(s, 2, { role: 'content', focused: false });
+    assert.strictEqual(s.front, wid(1));
+    const { state, effects } = reduce(s, { type: 'WINDOW_CLOSED', id: wid(2) });
+    assert.strictEqual(state.front, wid(1));
+    assert.strictEqual(effects.some((e) => e.type === 'RAISE_WINDOW'), false, 'no parent linkage -> no re-drive');
+  });
+});
+
+describe('HUD hide/show sweep (replaces the __hudHidden expando + sniffing loops)', () => {
+  function withHud(): AppWindowState {
+    let s = openWindow(createInitialState(), 1, { role: 'content' });
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'utility', class: 'hud', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+    ]).state;
+    return s;
+  }
+
+  it('APP_RESIGNED hides the visible HUD (HIDE_WINDOW + hiddenByAppBlur)', () => {
+    const { state, effects } = reduce(withHud(), { type: 'APP_RESIGNED' });
+    assert.ok(effects.some((e) => e.type === 'HIDE_WINDOW' && e.id === wid(2)));
+    assert.strictEqual(state.windows.get(wid(2))!.hiddenByAppBlur, true);
+    assert.strictEqual(effects.some((e) => e.type === 'HIDE_WINDOW' && (e as { id: WindowId }).id === wid(1)), false, 'non-hud windows untouched');
+  });
+
+  it('APP_ACTIVATED re-shows exactly the sweep-hidden HUD, without activation, and clears the flag', () => {
+    let s = reduce(withHud(), { type: 'APP_RESIGNED' }).state;
+    s = drive(s, [{ type: 'WINDOW_HIDDEN', id: wid(2) }]).state; // native hide confirmation
+    const { state, effects } = reduce(s, { type: 'APP_ACTIVATED' });
+    assert.deepStrictEqual(effects.filter((e) => e.type === 'SHOW_WINDOW'), [{ type: 'SHOW_WINDOW', id: wid(2), activate: false }]);
+    assert.strictEqual(state.windows.get(wid(2))!.hiddenByAppBlur, false);
+  });
+
+  it('a HUD hidden by other means is NOT re-shown on activation', () => {
+    let s = withHud();
+    s = drive(s, [{ type: 'WINDOW_HIDDEN', id: wid(2) }]).state; // hidden, but not by the app-blur sweep
+    const resigned = reduce(s, { type: 'APP_RESIGNED' });
+    assert.strictEqual(hasEffect(resigned.effects, 'HIDE_WINDOW'), false, 'already-hidden HUD is not swept');
+    const activated = reduce(resigned.state, { type: 'APP_ACTIVATED' });
+    assert.strictEqual(hasEffect(activated.effects, 'SHOW_WINDOW'), false);
+  });
+
+  it('a focusable alwaysOnTop palette (class palette) is untouched by the sweep', () => {
+    let s = openWindow(createInitialState(), 1, { role: 'content' });
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(4), kind: 'browser', role: 'palette', class: 'palette', satellite: true, alwaysOnTop: true },
+      { type: 'WINDOW_SHOWN', id: wid(4), focused: false },
+    ]).state;
+    const { effects } = reduce(s, { type: 'APP_RESIGNED' });
+    assert.strictEqual(hasEffect(effects, 'HIDE_WINDOW'), false);
+  });
+});
+
+describe('devtools transitions (§4.6 dim 8a)', () => {
+  it('DEVTOOLS_OPENED invalidates + re-drives the front in the same transition', () => {
+    const s = openWindow(createInitialState(), 1, { role: 'content' });
+    assert.strictEqual(s.frontAsserted, true);
+    const { state, effects } = reduce(s, { type: 'DEVTOOLS_OPENED', id: wid(1) });
+    assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)), 'the front is re-driven immediately (old re-focus-after-devtools parity)');
+    assert.ok(effects.some((e) => e.type === 'FOCUS_CONTENT' && e.id === wid(1)), 'page-host front also re-takes first responder');
+    assert.strictEqual(state.frontAsserted, true, 're-asserted in the same reduce');
+    assert.strictEqual(deriveEscGrabRegistered(snapshot(state)), false, 'the Esc grab stays off while devtools is up');
+  });
+
+  it('DEVTOOLS_CLOSED re-drives the front (the old close-devtools-refocus behavior)', () => {
+    const s = openWindow(createInitialState(), 1, { role: 'content' });
+    const { state, effects } = reduce(s, { type: 'DEVTOOLS_CLOSED', id: wid(1) });
+    assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)));
+    assert.strictEqual(state.frontAsserted, true);
+  });
+
+  it('OS focus landing on a registered devtools window does NOT clear the assertion (Esc grab stays off)', () => {
+    let s = openWindow(createInitialState(), 1, { role: 'content' });
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(5), kind: 'browser', role: 'utility', class: 'devtools', satellite: true, parentId: wid(1) },
+      { type: 'WINDOW_SHOWN', id: wid(5), focused: false },
+    ]).state;
+    const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(5) });
+    assert.strictEqual(state.front, wid(1), 'satellite devtools never becomes front');
+    assert.strictEqual(state.frontAsserted, true, 'devtools focus does not invalidate (clicking into devtools must not arm the grab)');
+    assert.strictEqual(hasEffect(effects, 'RAISE_WINDOW'), false, 'and nothing yanks focus back out of devtools');
+    assert.strictEqual(deriveEscGrabRegistered(snapshot(state)), false, 'Esc typed inside devtools is not grabbed');
+  });
+
+  it('a PALETTE satellite gaining focus still clears the assertion (pre-existing rule intact)', () => {
+    let s = openWindow(createInitialState(), 1, { role: 'content' });
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(6), kind: 'browser', role: 'palette', class: 'palette', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(6), focused: false },
+    ]).state;
+    const { state } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(6) });
+    assert.strictEqual(state.frontAsserted, false, 'non-devtools satellites keep the invalidation clause');
+  });
+
+  it('closing a registered detached devtools window refocuses its parent via the parent-refocus transition', () => {
+    let s = openWindow(createInitialState(), 1, { role: 'content' });
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(5), kind: 'browser', role: 'utility', class: 'devtools', satellite: true, parentId: wid(1) },
+      { type: 'WINDOW_SHOWN', id: wid(5), focused: false },
+    ]).state;
+    const { state, effects } = reduce(s, { type: 'WINDOW_CLOSED', id: wid(5) });
+    assert.strictEqual(state.front, wid(1));
+    assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)));
   });
 });

@@ -27,15 +27,16 @@
  *
  * SCOPE (§5 step 2 + the no-speculative-code rule): the surface below is
  * exactly what the executor issues today — nothing from the §3 full table is
- * pre-built. Later migration steps widen the port (`create`/`destroy` at step
- * 4, `setStacking` at step 5, visibility at step 6, `setBounds` at step 7,
- * `setAlwaysOnTop`/`setVisibleOnAllWorkspaces`/`loadContent` with their
- * steps). Until then, windows are joined post-hoc via the backend's migration
- * shims (see `electron-window-backend.ts BackendMigrationShims`), which sit
- * deliberately OUTSIDE this interface.
+ * pre-built. Step 4 (special window classes + registry unification) widened
+ * it with the close/destroy/show/hide/alwaysOnTop command family; later
+ * steps add theirs (`setStacking` at step 5, visibility events at step 6,
+ * `setBounds` at step 7, `setVisibleOnAllWorkspaces`/`loadContent` with
+ * their steps). Windows are still joined post-hoc via the backend's
+ * migration shims (see `electron-window-backend.ts BackendMigrationShims`),
+ * which sit deliberately OUTSIDE this interface.
  */
 
-import type { WindowEvent, WindowId, WindowKind, EscapeMode } from './window-state.js';
+import type { WindowEvent, WindowId, WindowKind, WindowClass, EscapeMode } from './window-state.js';
 
 /** The port's plain rect currency — the reducer's own `Rectangle` (§3: no platform `Rectangle` ever crosses). Unused by the commands below until the geometry step (§5 step 7). */
 export type { Rectangle as Rect } from './window-state.js';
@@ -57,9 +58,22 @@ export type BackendEventSink = (event: WindowEvent) => void;
 export interface WindowSpec {
   kind: WindowKind;
   role: string;
+  /**
+   * The window's class (§4.3 dim 8b) — REQUIRED on the spec so every
+   * registration site declares its classification (ordinary windows via
+   * `classifyWindowRegistration`, the infrastructure classes explicitly).
+   */
+  class: WindowClass;
   satellite: boolean;
   escapeMode?: EscapeMode;
   lastHttpUrl?: string;
+  /** Parent linkage (open params `parentWindowId` → WindowId at the seam). Drives the parent-refocus transition on WINDOW_CLOSED. */
+  parentId?: WindowId | null;
+  /** The old `main.ts windowRegistry` payload (§4.1 dim 1a) — opening source + open params, stored on the reducer record by reference. */
+  source?: string;
+  params?: Record<string, unknown>;
+  /** Declared always-on-top intent — registration emits SET_ALWAYS_ON_TOP (replaces the post-ctor reinforcement call). */
+  alwaysOnTop?: boolean;
   /**
    * Whether the WM owns this window's per-window Escape interceptor
    * (`attachEscHandler` below). Defaults to true for `browser` windows —
@@ -166,4 +180,40 @@ export interface WindowBackend {
    * emitted as `ESC_PRESSED { landedId: 'global' }`.
    */
   setEscGrab(on: boolean): void;
+
+  // ── §5 step 4 commands (special window classes + registry unification) ────
+
+  /**
+   * Guest-safe direct close (the `CLOSE_WINDOW_DIRECT` effect — the absorbed
+   * `windows.ts closeHostWindow` path): destroy any registered page-host
+   * guest WebContents FIRST (waiting for them to actually go away, the
+   * d1cf0b9a use-after-free guard), then close the host. Guestless windows
+   * close synchronously before the returned promise resolves. No keepLive
+   * policy — that is `closeOrHide`. The promise is test-bridge settlement.
+   */
+  closeWindow(id: WindowId): Promise<void>;
+
+  /** Forceful native destroy (the `DESTROY_WINDOW` effect) — synchronous, skips beforeunload/close events (extension bridge/UI + quit teardown). */
+  destroyWindow(id: WindowId): void;
+
+  /** Tear down the window's retained content surface (the `CLOSE_CONTENT` effect — the hybrid finalize's documented `webContents.close()` teardown). */
+  closeContent(id: WindowId): void;
+
+  /** Show, kind-appropriately, with or without activation (the `SHOW_WINDOW` effect). The EXECUTOR gates this on headless. */
+  showWindow(id: WindowId, opts: { activate: boolean }): void;
+
+  /** Hide, keep alive (the `HIDE_WINDOW` effect — the HUD app-blur sweep). */
+  hideWindow(id: WindowId): void;
+
+  /**
+   * Pin above regular windows (the `SET_ALWAYS_ON_TOP` effect). The EXECUTOR
+   * gates this on headless. Named `pinAlwaysOnTop` — deliberately NOT the
+   * platform method name, same convention as `setFullscreen`: the R2
+   * mechanical check greps the platform call names verbatim, and the port is
+   * a different namespace.
+   */
+  pinAlwaysOnTop(id: WindowId, on: boolean): void;
+
+  /** Destroy every registered page-host guest WC (the `DESTROY_ALL_GUESTS` effect — quit teardown, peek d1cf0b9a). */
+  destroyAllContentGuests(): void;
 }

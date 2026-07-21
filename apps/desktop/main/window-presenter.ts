@@ -58,7 +58,8 @@ export interface WindowPresentation {
 /**
  * Return the canonical presentation for a window, or null if the window
  * doesn't exist or has been destroyed. State is read from the live
- * BrowserWindow + windowRegistry (or the hybrid registry for page-hosts).
+ * BrowserWindow + the machine's registry payload via `getWindowInfo` (or the
+ * hybrid registry for page-hosts).
  */
 export function getWindowPresentation(windowId: number): WindowPresentation | null {
   // Hybrid page-hosts are BaseWindows, invisible to `getLiveWindow`

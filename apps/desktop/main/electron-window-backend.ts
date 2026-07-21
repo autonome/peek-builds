@@ -30,7 +30,7 @@
  * `hybridShowIntent(isHeadless())`) rather than re-deriving the decision.
  */
 
-import { app, globalShortcut } from 'electron';
+import { app, globalShortcut, webContents } from 'electron';
 import type { BaseWindow, BrowserWindow, WebContents } from 'electron';
 
 import { isHeadless, DEBUG } from './config.js';
@@ -41,6 +41,8 @@ import {
   closeOrHideWindow,
   addEscHandler,
 } from './windows.js';
+import { getGuestsForWindow, getAllGuestWebContentsIds } from './webview-guest-registry.js';
+import { shouldCloseContentWCOnFinalize } from './izui-roles.js';
 import {
   decideWindowRegistration,
   type WindowRegistrationDecision,
@@ -71,6 +73,10 @@ export interface NativeWindow {
   isVisible(): boolean;
   isFullScreen(): boolean;
   setFullScreen(flag: boolean): void;
+  close(): void;
+  destroy(): void;
+  hide(): void;
+  setAlwaysOnTop(flag: boolean, level?: 'normal' | 'floating'): void;
   on(event: string, listener: (...args: unknown[]) => void): unknown;
 }
 
@@ -83,6 +89,7 @@ export interface NativeWindow {
 export interface NativeWebContents {
   isDestroyed(): boolean;
   focus(): void;
+  close(): void;
   getURL(): string;
   on(event: string, listener: (...args: unknown[]) => void): unknown;
 }
@@ -529,6 +536,167 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         /* unregistering a hotkey not held is a no-op on some platforms */
       }
       this.escGrabRegistered = false;
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // §5 step 4 commands — close/destroy/show/hide/pin + guest teardown.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Guest-safe direct close (the absorbed `windows.ts closeHostWindow` /
+   * `destroyGuestsThenClose` pair — see `WindowBackend.closeWindow` and the
+   * d1cf0b9a use-after-free history on the old function): destroy the
+   * window's registered page-host guests FIRST, wait for them to actually go
+   * away (bounded), then close the host. Guestless windows take the
+   * synchronous fast path. `PEEK_DISABLE_PAGEHOST_CLOSE_GUARD=1` reverts to
+   * the raw close — the pre-fix behavior, a test/diagnostic seam only.
+   */
+  closeWindow(id: WindowId): Promise<void> {
+    const win = this.windows.get(id)?.win;
+    if (!win) return Promise.resolve();
+    try {
+      if (win.isDestroyed()) return Promise.resolve();
+    } catch {
+      return Promise.resolve();
+    }
+    const guestIds = getGuestsForWindow(id);
+    if (guestIds.length === 0 || process.env.PEEK_DISABLE_PAGEHOST_CLOSE_GUARD === '1') {
+      try {
+        win.close();
+      } catch {
+        /* closing a torn-down window is a no-op */
+      }
+      return Promise.resolve();
+    }
+    return this.destroyGuestsThenClose(win, guestIds);
+  }
+
+  private async destroyGuestsThenClose(win: NativeWindow, guestIds: number[]): Promise<void> {
+    DEBUG && console.log('[window-backend] destroying', guestIds.length, 'guest(s) before closing host');
+    await Promise.all(
+      guestIds.map(
+        (gid) =>
+          new Promise<void>((resolve) => {
+            const wc = webContents.fromId(gid);
+            if (!wc || wc.isDestroyed()) {
+              resolve();
+              return;
+            }
+            let settled = false;
+            const finish = () => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              resolve();
+            };
+            // Don't wait forever — close the host anyway after a bounded wait if
+            // the guest never emits 'destroyed' (it usually does within a frame).
+            const timer = setTimeout(finish, 2000);
+            wc.once('destroyed', finish);
+            try {
+              // webContents.destroy() exists at runtime but isn't in the Electron
+              // type defs. Forceful (immediate, skips beforeunload) is what we
+              // want — guarantee the guest is gone before the host closes.
+              (wc as unknown as { destroy(): void }).destroy();
+            } catch {
+              finish();
+            }
+          }),
+      ),
+    );
+    try {
+      if (!win.isDestroyed()) win.close();
+    } catch {
+      /* torn down while guests settled */
+    }
+  }
+
+  /** Forceful native destroy — synchronous (before-quit teardown depends on it). */
+  destroyWindow(id: WindowId): void {
+    const win = this.windows.get(id)?.win;
+    if (!win) return;
+    try {
+      if (!win.isDestroyed()) win.destroy();
+    } catch {
+      /* destroying a torn-down window is a no-op */
+    }
+  }
+
+  /**
+   * Tear down the retained content surface (the hybrid finalize's documented
+   * `webContents.close()` teardown — no beforeunload wait; the host is
+   * already gone). Gated on the same pure guard the old call site used
+   * (`shouldCloseContentWCOnFinalize`, peek 9a591551: an already-natively-
+   * gone wc resolves to undefined and must be a clean no-op).
+   */
+  closeContent(id: WindowId): void {
+    const wc = this.windows.get(id)?.rendererWC;
+    if (!shouldCloseContentWCOnFinalize(wc)) return;
+    try {
+      wc!.close();
+    } catch (e) {
+      DEBUG && console.log('[window-backend] content wc close failed for', id, e);
+    }
+  }
+
+  /** Show without stealing focus (activate:false) or activating (true), kind-appropriately via the shared show seams. */
+  showWindow(id: WindowId, opts: { activate: boolean }): void {
+    const entry = this.windows.get(id);
+    if (!entry) return;
+    const { win, kind, rendererWC } = entry;
+    try {
+      if (win.isDestroyed()) return;
+    } catch {
+      return;
+    }
+    if (kind === 'page-host') {
+      showHybridHost(win as unknown as BaseWindow, rendererWC as unknown as WebContents, {
+        inactive: !opts.activate,
+      });
+      return;
+    }
+    showWindowHeadlessSafe(win as unknown as BrowserWindow, { active: opts.activate });
+  }
+
+  /** Hide, keep alive (the HUD app-blur sweep). */
+  hideWindow(id: WindowId): void {
+    const win = this.windows.get(id)?.win;
+    if (!win) return;
+    try {
+      if (!win.isDestroyed()) win.hide();
+    } catch {
+      /* hiding a torn-down window is a no-op */
+    }
+  }
+
+  /** Pin above regular windows. 'floating' matches the old post-ctor reinforcement (`setAlwaysOnTop(true,'floating')`). */
+  pinAlwaysOnTop(id: WindowId, on: boolean): void {
+    const win = this.windows.get(id)?.win;
+    if (!win) return;
+    try {
+      if (!win.isDestroyed()) win.setAlwaysOnTop(on, on ? 'floating' : undefined);
+    } catch {
+      /* pinning a torn-down window is a no-op */
+    }
+  }
+
+  /**
+   * Destroy every registered page-host guest WC synchronously — the quit
+   * teardown that used to live in `webview-guest-registry.ts
+   * destroyAllPageHostGuests` (peek d1cf0b9a: a guest with an in-flight
+   * relay invoke torn down inside `-[NSWindow __close]` → EXC_BAD_ACCESS).
+   */
+  destroyAllContentGuests(): void {
+    for (const guestId of getAllGuestWebContentsIds()) {
+      try {
+        const wc = webContents.fromId(guestId);
+        if (wc && !wc.isDestroyed()) {
+          (wc as unknown as { destroy(): void }).destroy();
+        }
+      } catch {
+        /* best-effort during shutdown */
+      }
     }
   }
 

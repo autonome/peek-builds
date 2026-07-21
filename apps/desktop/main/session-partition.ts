@@ -25,6 +25,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { registerProtocolOnSession } from './protocol.js';
 import { installPermissionHandler } from './permission-handler.js';
+import { dispatchWindowEvent, getWindowIdFor } from './window-state-singleton.js';
 import { toChromeUserAgent } from './user-agent.js';
 import { DEBUG, isTestProfile } from './config.js';
 
@@ -336,6 +337,20 @@ function getDownloadsDir(): string {
   return app.getPath('downloads');
 }
 
+/**
+ * Close a download-trigger window through the window-state machine
+ * (WINDOW_CLOSE_REQUESTED → the backend's guest-safe close). Every window is
+ * machine-registered (design §7); an unresolved id means it is already gone.
+ */
+function closeWindowViaMachine(win: { id: number }): void {
+  const id = getWindowIdFor(win.id);
+  if (id == null) {
+    DEBUG && console.log('[download] close target', win.id, 'is not machine-registered — skipping');
+    return;
+  }
+  dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id });
+}
+
 function _registerDownloadHandlerImpl(ses: Session): void {
   ses.on('will-download', (_event, item, webContents) => {
     const rawFilename = item.getFilename();
@@ -368,11 +383,11 @@ function _registerDownloadHandlerImpl(ses: Session): void {
       });
       if (target === 'hybrid-host' && hybrid) {
         DEBUG && console.log('[download] Closing hybrid download-trigger host:', hybrid.windowId);
-        hybrid.baseWin.close();
+        closeWindowViaMachine(hybrid.baseWin);
       } else if (target === 'browser-window' && win) {
         // Top-level window opened just for this download — close it.
         DEBUG && console.log('[download] Closing download-trigger window:', win.id);
-        win.close();
+        closeWindowViaMachine(win);
       }
     } else {
       // Download from a webview guest. Two cases:
@@ -419,7 +434,7 @@ function _registerDownloadHandlerImpl(ses: Session): void {
           }
           if (hostWin) {
             console.log('[download] Closing popup window opened for download:', hostWin.id);
-            hostWin.close();
+            closeWindowViaMachine(hostWin);
           } else {
             DEBUG && console.log('[download] Download from webview guest (no page, no host window found)');
           }

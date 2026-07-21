@@ -42,7 +42,6 @@ import {
 } from './protocol.js';
 
 import {
-  registerWindow,
   getWindowInfo,
   removeWindow,
   findWindowByKey,
@@ -93,7 +92,7 @@ import {
   getNativeWindowFor,
   type MachineWindowSpec,
 } from './window-state-singleton.js';
-import { isSatelliteRegistration } from './window-state.js';
+import { isSatelliteRegistration, classifyWindowRegistration } from './window-state.js';
 import {
   TRANSIENT_ROLES,
   inferIzuiRole,
@@ -1067,20 +1066,29 @@ function assembleHybridPageHost(
   // slot. (Belt-and-suspenders with the restore-side stripKeys entry in
   // session.ts, which drops it from old snapshots.)
   delete windowParams.restoreBlank;
-  registerWindow(baseWin.id, source, windowParams);
   // Register the page-host with the window-state machine (both window kinds
   // register — judgment call 2). The OS adapter attaches focus/blur/show/hide/
   // closed/enter-leave-fullscreen listeners + drives front/fullscreen/Esc.
   // Satellite = the overlay/palette focus-group surfaces; peeks/slides
   // (quick-view) stay front-eligible.
+  //
+  // The registry payload (`source` + `params`, the old main.ts
+  // `registerWindow` write) rides the SAME registration now — the machine's
+  // window record is the one registry (§4.1 dim 1a / §5 step 4); `parentId`
+  // carries the parent linkage that drives the reducer's parent-refocus
+  // transition on WINDOW_CLOSED.
   const hostMachineId = registerWindowWithMachine({
     kind: 'page-host',
     role,
+    class: classifyWindowRegistration(role, { alwaysOnTop: options.alwaysOnTop === true }),
     satellite: role === 'overlay' || role === 'palette',
     escapeMode: options.escapeMode as MachineWindowSpec['escapeMode'],
     lastHttpUrl: url.startsWith('http://') || url.startsWith('https://') ? url : undefined,
     win: baseWin,
     contentWC: view.webContents,
+    source,
+    params: windowParams,
+    parentId: isRealParent ? getWindowIdFor(openerWindow!.id) : null,
   });
   // Track the content-WC→host relationship for the permission lookup
   // (findHostWindowId). The guest registry carries WM WindowIds, so this
@@ -1197,15 +1205,15 @@ function assembleHybridPageHost(
     // wc ONCE and gate on both its existence AND its destroyed signal (the
     // existing lifecycle signal — fsm-pilled: gate, don't rely on the
     // swallow), so an already-torn-down content wc is a clean no-op.
-    const contentWC = view.webContents;
     try {
-      // `webContents.close()` is the documented teardown: with
-      // `waitForBeforeUnload` unspecified it does NOT honor a beforeunload
-      // veto and destroys the wc (firing `'destroyed'`). The host window
-      // is already gone, so a beforeunload prompt would be meaningless.
-      if (shouldCloseContentWCOnFinalize(contentWC)) {
-        contentWC.close();
-      }
+      // The content-surface teardown is a machine effect now
+      // (WINDOW_CONTENT_CLOSE_REQUESTED → CLOSE_CONTENT →
+      // backend.closeContent, which applies the same
+      // `shouldCloseContentWCOnFinalize` guard — peek 9a591551 — and issues
+      // the documented `webContents.close()`: no beforeunload wait; the host
+      // is already gone). The backend retains the content WC per WindowId,
+      // so this works after the machine record was retired above.
+      dispatchWindowEvent({ type: 'WINDOW_CONTENT_CLOSE_REQUESTED', id: hostMachineId });
     } catch (e) {
       DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] content wc close on finalize failed:`, e);
     }
@@ -1255,8 +1263,12 @@ function assembleHybridPageHost(
     // the normal close path the guard makes this a no-op (the host is
     // already closing / destroyGuestsThenClose's own baseWin.close() ran
     // or is about to); runHybridFinalize already consumed the captured
-    // bounds, so any re-entrant 'close' is harmless.
-    try { if (!baseWin.isDestroyed()) baseWin.close(); } catch { /* closing a torn-down host is a no-op */ }
+    // bounds, so any re-entrant 'close' is harmless. Routed through the
+    // machine (WINDOW_CLOSE_REQUESTED → backend guest-safe close; the guest
+    // is already gone here, so it takes the synchronous fast path).
+    try {
+      if (!baseWin.isDestroyed()) dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id: hostMachineId });
+    } catch { /* closing a torn-down host is a no-op */ }
   });
 
   // Show it AT LOAD-START — before awaiting the content — so the window's
@@ -2333,11 +2345,15 @@ export function installHybridNavbarActionRouting(): void {
   });
 
   // Stage B: close-window action from the error overlay's "Close" button.
-  // Mirrors the canvas path's `window.close()` call in the close button handler.
+  // Mirrors the canvas path's `window.close()` call in the close button
+  // handler — routed through the machine (guest-safe close).
   subscribe(getSystemAddress(), 'page:close-window', (raw) => {
     const r = baseWinFor(raw);
     if (!r) return;
-    try { r.baseWin.close(); } catch { /* already gone */ }
+    try {
+      const wmId = getWindowIdFor(r.windowId);
+      if (wmId != null) dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id: wmId });
+    } catch { /* already gone */ }
   });
 
   subscribe(getSystemAddress(), 'page:go-back', (raw) => {
@@ -3339,14 +3355,11 @@ export function registerWindowHandlers(): void {
     { const actualBounds = win.getBounds(); console.log(`[window-open:actual] Window ${win.id} actual bounds after creation: (${actualBounds.x},${actualBounds.y}) ${actualBounds.width}x${actualBounds.height}`); }
     perfMark('after-create');
 
-    // Reinforce alwaysOnTop after creation — on macOS the constructor flag alone
-    // is unreliable; calling setAlwaysOnTop with 'floating' level ensures it stays
-    // above regular windows. Skip in headless: even at opacity=0, setAlwaysOnTop
-    // triggers a macOS compositor repaint that can flash a thin window frame.
-    if (options.alwaysOnTop && !isHeadless()) {
-      win.setAlwaysOnTop(true, 'floating');
-      DEBUG && console.log('[window-open] Set alwaysOnTop floating for window', win.id);
-    }
+    // (alwaysOnTop reinforcement moved into the machine: the registration
+    // below declares `alwaysOnTop`, and the reducer's WINDOW_REGISTERED
+    // clause emits SET_ALWAYS_ON_TOP('floating' in the backend) — the
+    // executor skips it under headless, same compositor-flash guard as the
+    // old inline call.)
 
     // Derive IZUI role now (before the Spaces dispatch below) using the same
     // rules the registration block applies later. Hoisted out of the original
@@ -3464,14 +3477,24 @@ export function registerWindowHandlers(): void {
         placement,
       };
       console.log('Adding window to manager:', win.id, 'escapeMode:', windowParams.escapeMode, 'modal:', windowParams.modal, 'keepLive:', windowParams.keepLive, 'transient:', isTransient, 'placement:', placement);
-      registerWindow(win.id, msg.source, windowParams);
       // Register the BrowserWindow with the window-state machine. Front-
       // ineligibility (satellite) is decided by the shared
       // `isSatelliteRegistration` predicate — see its doc for why a modal /
       // non-focusable window must never become `front`.
+      //
+      // The registry payload (`source` + `params`, the old main.ts
+      // `registerWindow` write) rides the SAME registration now — the
+      // machine's window record is the one registry (§4.1 dim 1a / §5 step
+      // 4). `class` replaces the HUD-sniffing predicate (alwaysOnTop +
+      // focusable:false ⇒ 'hud'); `parentId` drives parent-refocus on close;
+      // `alwaysOnTop` makes registration emit the pin effect.
       const machineWindowId = registerWindowWithMachine({
         kind: 'browser',
         role,
+        class: classifyWindowRegistration(role, {
+          alwaysOnTop: options.alwaysOnTop === true,
+          focusable: options.focusable === undefined ? undefined : !!options.focusable,
+        }),
         satellite: isSatelliteRegistration(role, {
           modal: options.modal === true,
           focusable: options.focusable === undefined ? undefined : !!options.focusable,
@@ -3480,6 +3503,10 @@ export function registerWindowHandlers(): void {
         lastHttpUrl: url.startsWith('http://') || url.startsWith('https://') ? url : undefined,
         win,
         contentWC: win.webContents,
+        source: msg.source,
+        params: windowParams,
+        parentId: parentWindowId != null ? getWindowIdFor(parentWindowId) : null,
+        alwaysOnTop: options.alwaysOnTop === true,
       });
       // Feed the machine the OPEN intent (gate fallout of the WindowId
       // cutover) — but ONLY for an open the caller wants VISIBLE. Under
