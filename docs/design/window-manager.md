@@ -82,7 +82,8 @@ The evidence is countable, from a full survey of `apps/desktop/main/`:
   `window-state.ts`, `izui-state.ts`'s `appFocused`, and `hybrid-overlay.ts`'s own module
   `appActive` let. Three beliefs, three update paths, no reconciliation.
 - **14 per-window registries**, spread across **3 mutually-incompatible id spaces**
-  (Electron window ids, Electron webContents ids, and synthetic ids).
+  (Electron window ids, Electron webContents ids, and synthetic ids). *(The synthetic
+  space has since been deleted — §5 step 1.)*
 - **32 module-level mutable window-state variables** (42 if you count the timing latches),
   each one a piece of window state that no owner owns.
 - **11 decision sites that query Electron live** instead of holding state — asking the OS
@@ -152,19 +153,35 @@ plain structural types: `WindowId`, `Rect { x, y, width, height }`, `WindowSpec`
 `DisplayInfo`. The port is the seam that makes Tauri, ElectroBun, or a native Swift shell
 a reimplementation rather than a rewrite.
 
-**Window identity is an opaque WM-assigned id.** Not an Electron window id. Today there
-are **three colliding id spaces**:
+**Window identity is an opaque WM-assigned id — LANDED** (commits 90becfc5, 5d760baf,
+04d2eb94). `WindowId` is an opaque branded string (`"wm-N"`), minted in exactly one place:
+`window-os-adapter.ts registerWindow()`, which is idempotent per native window and returns
+the existing id on re-registration. The adapter is the **sole** `WindowId` ↔ Electron
+mapper — a private `idByOsWindowId` reverse map; no other module translates. The reducer
+(`window-state.ts`), the adapter, and the singleton (`window-state-singleton.ts`) are
+re-keyed to `WindowId`, and `webview-guest-registry.ts guestToHost` now holds `WindowId`
+values.
 
-1. Electron window ids (`windowRegistry`, `WindowRecord`, most of `main.ts`),
-2. Electron webContents ids (`webview-guest-registry.ts guestToHost`,
-   `hybrid-editable-focus.ts editableByWcId`, `tile-ipc-gate.ts perWcOriginalSend`) —
-   numerically indistinguishable from window ids, so a mix-up is silent,
-3. synthetic ids from `window-registry.ts nextSyntheticId`, counting **down** from
-   `Number.MAX_SAFE_INTEGER` specifically to avoid colliding with the other two — an
-   explicit acknowledgement in code that the id spaces are unsafe.
+When this document was written there were **three colliding id spaces**: Electron window
+ids (`windowRegistry`, `WindowRecord`, most of `main.ts`), Electron webContents ids
+(numerically indistinguishable from window ids, so a mix-up is silent), and synthetic ids
+from `window-registry.ts nextSyntheticId`, counting **down** from
+`Number.MAX_SAFE_INTEGER` specifically to avoid colliding with the other two. The
+synthetic space is now **deleted, grep-zero** — `nextSyntheticId`, `refs`,
+`registerPendingWindow`, `realize`, `getWindowRef`, and the `WindowRef` type are all gone
+(they had no production producers). The other two numeric spaces survive only outside the
+WM core:
 
-A single WM-owned id space is a **precondition** for the port, not a later cleanup. The
-backend maps `WindowId -> platform handle` internally and never leaks the handle.
+**Deliberate scope decision — the renderer-facing id economy stays NUMERIC for now.** The
+`tile-api.d.ts` window/context APIs, pubsub `windowId` payloads, the persisted
+`datastore.ts windowContextState`, and the overlay focus protocol still speak numeric
+Electron window ids. Conversion happens at the seams via `window-state-singleton.ts
+getWindowIdFor()` / `getNativeWindowFor()`. Flipping that economy to `WindowId` is
+**deferred to the session/context-store step**, not skipped.
+
+A single WM-owned id space was a **precondition** for the port, not a later cleanup; it is
+now in place. The backend maps `WindowId -> platform handle` internally and never leaks
+the handle.
 
 **First implementation:** `ElectronWindowBackend`. Portability targets that justify the
 shape: Tauri, ElectroBun, native Swift.
@@ -191,11 +208,12 @@ branch calls show/focus directly — a straight R2 violation, repeated four time
 Becomes: a dedup key index in reducer state; open requests dispatch an intent event and the
 reducer answers reuse-or-create.
 
-**12. Pending / unrealized windows** — TO ABSORB.
-Today: `window-registry.ts refs`, with synthetic ids from `nextSyntheticId` counting down
-from `Number.MAX_SAFE_INTEGER`, realized by a focus request.
-Becomes: a `pending` lifecycle phase on the ordinary reducer window record — same id
-space, no synthetic range, realization is a transition.
+**12. Pending / unrealized windows** — DONE, by deletion rather than absorption.
+The synthetic-id machinery (`window-registry.ts refs`, `nextSyntheticId`,
+`registerPendingWindow`, `realize`, `getWindowRef`, the `WindowRef` type) is deleted,
+grep-zero — it had no production producers. If pending windows return, they get an
+ordinary `WindowId` and a `pending` lifecycle phase on the reducer window record — same id
+space, never a separate synthetic range.
 
 ### 4.2 Geometry
 
@@ -319,17 +337,20 @@ Today: no held state at all; entirely live queries.
 Becomes: devtools windows register like everything else, with class `devtools`, and a
 devtools open/close invalidates the front assertion.
 
-**11. WebContents ↔ window mapping** — TO ABSORB (id space only).
-Today: `webview-guest-registry.ts guestToHost`, `hybrid-editable-focus.ts editableByWcId`,
-`tile-ipc-gate.ts perWcOriginalSend` — all keyed by webContents ids that are numerically
-indistinguishable from window ids.
-Becomes: these keep their own concerns, but re-key onto WM ids so the collision hazard is
-gone. Their *content* concerns are not the WM's business.
+**11. WebContents ↔ window mapping** — DONE (the id-space part).
+`webview-guest-registry.ts guestToHost` now maps guest webContents id → host `WindowId`,
+so a host reference can no longer be confused with a numeric webContents id.
+`hybrid-editable-focus.ts editableByWcId` and `tile-ipc-gate.ts perWcOriginalSend` remain
+keyed by webContents ids, which is correct: their keys are genuinely content-side and
+their values hold no window ids, so no window-id collision exists in them. Their
+*content* concerns are not the WM's business.
 
-**10. Per-window context / mode** — OUT OF SCOPE (but re-key).
+**10. Per-window context / mode** — OUT OF SCOPE (but re-key — deliberately deferred).
 `datastore.ts windowContextState`, keyed by window id plus a `null` key for global. This is
-application content state, not window management. It stays where it is; it must adopt the
-WM id space, and it must be told when a window dies.
+application content state, not window management. It stays where it is; it still speaks
+numeric Electron window ids today (converted at the seams via `window-state-singleton.ts
+getWindowIdFor()` / `getNativeWindowFor()`), and adopting the WM id space is deferred to
+the session/context-store step (§3 scope decision). It must be told when a window dies.
 
 **Peek / slide content features** — EXPLICITLY OUT OF SCOPE. What a peek *shows*, how a
 slide *animates its content*, what the switcher *lists* — none of that is window
@@ -344,13 +365,20 @@ Ordered so the highest-regression-risk area lands last. **Each step deletes its 
 authority in the same commit. Nothing runs in parallel with its replacement — that is the
 failure mode this document exists to prevent (§2).**
 
-1. **Id space.** Introduce the WM id. Collapse `window-registry.ts` synthetic ids into it.
-   Re-key the webContents-keyed maps. Nothing else can be trusted until ids are.
+1. **Id space — DONE** (commits 90becfc5, 5d760baf, 04d2eb94). Branded-string `WindowId`
+   (`"wm-N"`), minted only by `window-os-adapter.ts registerWindow()`; the reducer, the
+   adapter, and `window-state-singleton.ts` are re-keyed to it; the synthetic ids are
+   deleted grep-zero; `guestToHost` holds `WindowId` values. The renderer-facing id
+   economy deliberately stays numeric until the session/context-store step (§3 scope
+   decision).
 2. **The port.** Define `WindowBackend` and `ElectronWindowBackend`. Convert
    `window-os-adapter.ts` to call the port; delete its Electron imports.
-3. **R2 enforcement check.** Land the CI grep now, not at the end, with the current
-   violations listed as an explicit shrinking allowlist. The allowlist only ever gets
-   shorter; a PR that lengthens it fails.
+3. **R2 enforcement check — DONE** (commit b3853bee). `scripts/check-r2-window-ops.mjs`
+   runs in the `test:desktop:electron` chain (`apps/desktop/package.json`), with a
+   51-entry comment-annotated allowlist covering 129 legacy window-op call sites, each
+   entry tagged with the migration step that deletes it; the sole exempt file is
+   `apps/desktop/main/window-os-adapter.ts`. The allowlist only ever gets shorter; a PR
+   that lengthens it fails.
 4. **Special window classes + registry unification.** Absorb `windowRegistry`, the 8+
    singletons, devtools. Delete `__hudHidden` and the always-on-top sniffing predicate.
 5. **Z-order / stacking.** Give the reducer stacking. This is what makes `frontAsserted`
@@ -380,19 +408,35 @@ cleaning up.
 
 ## 6. Current state
 
-Roughly **1.5 of ~19 dimensions** are owned. That is the honest number.
+Roughly **1.5 of ~19 dimensions** are owned. That is the honest number. Since this
+document was written, two migration steps have landed — the id space (§5 step 1) and the
+R2 enforcement check (§5 step 3) — but the machine and adapter are still in **shadow
+mode**: no runtime consumer has been switched onto them yet, so runtime behavior is
+unchanged.
 
 **`apps/desktop/main/window-state.ts`** — the owner, as R1 describes it, for the dimensions
-it covers. Pure, zero imports, 113 unit tests in `window-state.test.ts`. It owns:
-`front` (intent), `frontAsserted` (the claim that the OS matches that intent), the switcher
-state, the Escape decision (`applyEscape`), fullscreen mode, satellite classification
-(`isSatelliteRegistration`), and MRU focus order. This is the nucleus; everything in §4
-grows into it rather than beside it.
+it covers. Pure, zero imports, 113 unit tests in `window-state.test.ts`, keyed by
+`WindowId`. It owns: `front` (intent), `frontAsserted` (the claim that the OS matches that
+intent), the switcher state, the Escape decision (`applyEscape`), fullscreen mode,
+satellite classification (`isSatelliteRegistration`), and MRU focus order. This is the
+nucleus; everything in §4 grows into it rather than beside it.
 
 **`apps/desktop/main/window-os-adapter.ts`** — the executor, as R2 describes it, but **still
 Electron-coupled**. It must become the port implementation's only caller (§5 step 2). Its
 `runEffect` is already the single funnel; the coupling is the remaining defect, not the
-structure.
+structure. It is also the sole authority on window identity: `registerWindow()` mints
+every `WindowId` (idempotent per native window), and its private `idByOsWindowId` map is
+the only `WindowId` ↔ Electron translation in the tree.
+
+**`apps/desktop/main/window-state-singleton.ts`** — the composition point: holds the one
+machine + adapter pair and exposes the numeric-id seam (`getWindowIdFor()` /
+`getNativeWindowFor()`) that the still-numeric renderer-facing id economy converts
+through (§3 scope decision).
+
+**The R2 check is live** — `scripts/check-r2-window-ops.mjs`, in the
+`test:desktop:electron` chain: 51 allowlist entries covering 129 legacy window-op call
+sites, each tagged with the §5 step that deletes it. The entry count is the migration's
+progress bar; it only goes down.
 
 **`frontAsserted` is CURRENTLY UNSOUND**, and this must not be papered over. It claims "we
 have driven the OS to match `front`," but **nothing owns z-order** (§4.3, dimension 3):
