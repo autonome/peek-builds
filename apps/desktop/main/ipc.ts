@@ -2442,7 +2442,23 @@ export function installHybridNavbarActionRouting(): void {
         y: cur.y + Math.floor(cur.height / 2),
       });
       const wa = display.workArea;
-      setHybridMaximizeState(r.windowId, true, cur);
+      // Idempotent re-maximize: when the registry already says MAXIMIZED, a
+      // second page:maximize must NOT restash preMaxBounds — `cur` is the
+      // work-area rect by then, and overwriting the stash strands the next
+      // unmaximize (and close→reopen's saved pre-max rect) at maximized size.
+      // Two intents CAN reach an already-maximized host: the overlay/content
+      // dead-space dblclick gesture racing a direct page:maximize intent —
+      // both live under headless too now that registration/show-seam dispatch
+      // makes `front` (and so the overlay's activeWindowId) work focus-free.
+      // The registry flag is the single source of truth here (geometry never
+      // votes — see reconcileMaximizeAfterResize): flag==true means the
+      // current bounds are not a user rect, because any resize away from the
+      // work area clears the flag (exitMaximizeForResize / the native-resize
+      // reconciler). Still re-snap bounds: the work area may have moved.
+      // Same trap, same guard rationale as tile-ipc.ts's `atWorkArea` check
+      // for BrowserWindows.
+      const alreadyMaximized = getHybridWindow(r.windowId)?.maximized === true;
+      if (!alreadyMaximized) setHybridMaximizeState(r.windowId, true, cur);
       r.baseWin.setBounds({ x: wa.x, y: wa.y, width: wa.width, height: wa.height });
     } catch { /* window gone */ }
   });

@@ -150,6 +150,37 @@ test.describe('Page Layout Maximize @desktop', () => {
     await closeWindow(sharedBgWindow, windowId);
   });
 
+  test('re-maximize is idempotent: a second page:maximize keeps the ORIGINAL pre-max bounds', async () => {
+    // Regression (7fffa286 gate flake): two page:maximize intents can reach an
+    // already-maximized host — e.g. the overlay/content dead-space dblclick
+    // gesture racing a direct intent (both are live now that headless front
+    // tracking works). The handler used to restash preMaxBounds on the second
+    // intent, when getBounds() is already the WORK-AREA rect — so unmaximize
+    // (and close→reopen's saved pre-max rect) got stranded at maximized size.
+    // The registry flag is the single source of truth: maximized==true means
+    // the current bounds are NOT a user rect, so the second intent must not
+    // touch the stash.
+    const windowId = await openHybridWindow(sharedBgWindow, 'https://example.com');
+
+    const before = await findEntry(sharedBgWindow, windowId);
+    expect(before?.maximized).toBe(false);
+    const originalBounds = before.bounds;
+
+    await publishOverlayTopic(sharedApp, 'page:maximize', { windowId });
+    await publishOverlayTopic(sharedApp, 'page:maximize', { windowId });
+
+    const maximized = await findEntry(sharedBgWindow, windowId);
+    expect(maximized?.maximized).toBe(true);
+    expect(maximized?.preMaxBounds, 'second maximize must not restash the work-area rect').toEqual(originalBounds);
+
+    await publishOverlayTopic(sharedApp, 'page:unmaximize', { windowId });
+    const restored = await findEntry(sharedBgWindow, windowId);
+    expect(restored?.maximized).toBe(false);
+    expect(restored?.bounds).toEqual(originalBounds);
+
+    await closeWindow(sharedBgWindow, windowId);
+  });
+
   // Formerly "webview fills window when maximized" (left=0, top=0 of the
   // canvas page's #content DOM element) — DELETED. The hybrid content window
   // IS the native window; there's no DOM child position to measure, so the
