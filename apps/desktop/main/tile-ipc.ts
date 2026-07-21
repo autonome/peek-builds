@@ -3084,6 +3084,18 @@ export function registerTileIpcHandlers(): void {
       if (typeof args.id !== 'number') {
         return { success: false, error: 'Window ID is required' };
       }
+      // Record the focus INTENT in the window-state machine regardless of
+      // headless-ness (gate fallout of the WindowId cutover). Under headless
+      // the native focus() below is skipped and no OS focus event will ever
+      // fire, so without this dispatch `api.window.focus(id)` leaves the
+      // machine's `front` untouched for the whole test run. Non-headless the
+      // OS `'focus'` event dispatches the same OS_FOCUS_GAINED and the
+      // reducer re-merges idempotently. Satellite/hidden arbitration is
+      // structural in the reducer.
+      const dispatchFocusIntent = (): void => {
+        const machineId = getWindowIdFor(args.id);
+        if (machineId != null) dispatchWindowEvent({ type: 'OS_FOCUS_GAINED', id: machineId });
+      };
       const win = getLiveWindow(args.id);
       if (!win) {
         // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Focus
@@ -3092,6 +3104,7 @@ export function registerTileIpcHandlers(): void {
         const hybrid = getHybridWindow(args.id);
         if (hybrid && !hybrid.baseWin.isDestroyed()) {
           if (!isHeadless()) hybrid.baseWin.focus();
+          dispatchFocusIntent();
           return { success: true };
         }
         return { success: false, error: 'Window not found' };
@@ -3099,6 +3112,7 @@ export function registerTileIpcHandlers(): void {
       if (!isHeadless()) {
         win.focus();
       }
+      dispatchFocusIntent();
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

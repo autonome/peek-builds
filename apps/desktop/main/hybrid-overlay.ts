@@ -1034,8 +1034,10 @@ export function _getOverlayStateForTests():
  *       Creates a real headless BaseWindow + WebContentsView (opacity 0, never
  *       shown/focused), registers it as a hybrid window, returns its id.
  *   setActive(id|null) → boolean
- *       Calls `_setActiveHybridWindowForTests` (sets active id + fires the push
- *       signal the overlay listens to). No focus change.
+ *       Drives the window-state machine synthetically: WINDOW_SHOWN{focused}
+ *       for an id (the host becomes `front`, the overlay retargets), or — for
+ *       null — WINDOW_HIDDEN of the front page-host(s) until no page-host is
+ *       front (the overlay hides). No focus change.
  *   setHostBounds(id, {x,y,width,height}) → boolean
  *       Programmatically resizes/moves a fake host's BaseWindow (fires its
  *       'move'/'resize' so the overlay's follow logic runs).
@@ -1087,6 +1089,13 @@ function installTestBridge(): void {
         view.setBounds({ x: 0, y: 0, width: w, height: h });
       } catch { /* getContentSize unsupported in some envs */ }
       registerHybridWindow(baseWin.id, { baseWin, contentWC: view.webContents });
+      // Register with the window-state machine too — `setActive` drives the
+      // machine (`WINDOW_SHOWN`), so a fake host the machine has never seen
+      // resolves to no WindowId and setActive() silently no-ops: the overlay
+      // then never binds (gate fallout of the WindowId cutover — the old
+      // bridge drove the registry's synthetic active id, which needed no
+      // registration). Mirrors `makeWiredHybridHost` below.
+      registerWindowWithMachine({ kind: 'page-host', role: 'content', satellite: false, win: baseWin, contentWC: view.webContents });
       fakeHosts.set(baseWin.id, baseWin);
       return baseWin.id;
     },
@@ -1123,10 +1132,22 @@ function installTestBridge(): void {
     },
     setActive(id: number | null): boolean {
       // Machine equivalent of the old synthetic active-id set: dispatch a
-      // synthetic show+focus (or focus-settled-null). The fake host is
-      // registered with the machine above.
+      // synthetic show+focus (or, for null, hide the front page-host(s)). The
+      // fake host is registered with the machine in makeFakeHybridWindow /
+      // makeWiredHybridHost above.
       if (id == null) {
-        dispatchWindowEvent({ type: 'OS_FOCUS_SETTLED_NULL' });
+        // "No hybrid window is active." The machine deliberately keeps `front`
+        // across an app-level focus loss (OS_FOCUS_SETTLED_NULL is a no-op for
+        // front — the target must survive an app switch), so the only honest
+        // way to synthesize "no page-host is front" is to HIDE whatever
+        // page-host currently is — repeatedly, since front falls to the MRU
+        // successor, which may be another (synthetically shown) fake host.
+        // Bounded by the number of registered windows; each pass hides one.
+        for (let i = 0; i < 100; i++) {
+          const front = getFrontPageHostId();
+          if (front == null) break;
+          dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: front });
+        }
       } else {
         const wid = getWindowIdFor(id);
         if (wid == null) return false;

@@ -83,6 +83,7 @@ interface NativeWindow {
   id: number;
   isDestroyed(): boolean;
   isFocused(): boolean;
+  isVisible(): boolean;
   isFullScreen(): boolean;
   setFullScreen(flag: boolean): void;
   on(event: string, listener: (...args: unknown[]) => void): unknown;
@@ -251,6 +252,7 @@ export class WindowOsAdapter {
       kind,
       hasContentWC: spec.contentWC !== undefined,
       attachEscHandlerRequested: spec.attachEscHandler,
+      nativeVisible: this.isVisibleSafe(win),
     });
 
     let id: WindowId;
@@ -268,6 +270,17 @@ export class WindowOsAdapter {
 
     if (decision.pumpRegisteredEvent) {
       this.pump({ type: 'WINDOW_REGISTERED', id, kind, role, satellite, escapeMode, lastHttpUrl });
+    }
+
+    // Import the native window's CURRENT visibility. A ctor-shown BrowserWindow
+    // never fires a `'show'` transition and (headless) is never focused, so
+    // without this the machine never learns it is on screen and `front` stays
+    // null forever (see `WindowRegistrationDecision.pumpShownEvent`). Runs
+    // AFTER the (richer, on re-registration) WINDOW_REGISTERED pump so
+    // satellite arbitration judges the focused-shown event against the final
+    // spec.
+    if (decision.pumpShownEvent) {
+      this.pump({ type: 'WINDOW_SHOWN', id, focused: true });
     }
 
     // The SINGLE owner of the `before-input-event` Esc attach for browser
@@ -625,6 +638,14 @@ export class WindowOsAdapter {
   private isFocused(win: NativeWindow): boolean {
     try {
       return !win.isDestroyed() && win.isFocused();
+    } catch {
+      return false;
+    }
+  }
+
+  private isVisibleSafe(win: NativeWindow): boolean {
+    try {
+      return !win.isDestroyed() && win.isVisible();
     } catch {
       return false;
     }

@@ -2682,6 +2682,16 @@ export function registerWindowHandlers(): void {
               DEBUG && console.log('[hybrid-page-host] focus-on-key-reuse failed:', e);
             }
           }
+          // Feed the machine the REUSE intent: a key-reuse targets the window
+          // exactly like a fresh open. The show/focus block above is skipped
+          // under headless (and its OS focus events never fire there), so this
+          // dispatch is the only signal the machine gets in a test run — same
+          // seam-rationale as the fresh-open dispatch below (WindowId-cutover
+          // gate fallout).
+          {
+            const reusedId = getWindowIdFor(existingHybrid.baseWin);
+            if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: reusedId, focused: true });
+          }
           return { success: true, id: existingHybrid.windowId, reused: true };
         }
       }
@@ -2754,6 +2764,12 @@ export function registerWindowHandlers(): void {
         } catch (err) {
           console.error('[window-open] tile:lifecycle:visible send threw:', err);
         }
+        // Machine reuse-intent dispatch — see the hybrid key-reuse block above
+        // for the rationale (headless skips the show/focus block entirely).
+        {
+          const reusedId = getWindowIdFor(existingWindow.window);
+          if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: reusedId, focused: true });
+        }
         return { success: true, id: existingWindow.id, reused: true };
       }
 
@@ -2805,6 +2821,12 @@ export function registerWindowHandlers(): void {
           } catch (e) {
             DEBUG && console.log('[hybrid-page-host] reload-on-url-reuse failed:', e);
           }
+          // Machine reuse-intent dispatch — see the hybrid key-reuse block
+          // above for the rationale.
+          {
+            const reusedId = getWindowIdFor(existingHybridByUrl.baseWin);
+            if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: reusedId, focused: true });
+          }
           return { success: true, id: existingHybridByUrl.windowId, reused: true };
         }
       }
@@ -2832,6 +2854,12 @@ export function registerWindowHandlers(): void {
           publish('system', 'page:reload', { windowId: existingByUrl.id });
         } catch (e) {
           DEBUG && console.log('Failed to send reload to reused window:', e);
+        }
+        // Machine reuse-intent dispatch — see the hybrid key-reuse block
+        // above for the rationale.
+        {
+          const reusedId = getWindowIdFor(existingByUrl.window);
+          if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: reusedId, focused: true });
         }
         return { success: true, id: existingByUrl.id, reused: true };
       }
@@ -3437,6 +3465,20 @@ export function registerWindowHandlers(): void {
         win,
         contentWC: win.webContents,
       });
+      // Feed the machine the OPEN intent (gate fallout of the WindowId
+      // cutover). Under HEADLESS the winOptions above force `show: false` and
+      // nothing ever shows or focuses the window at the OS level, so no native
+      // `'show'`/`'focus'` event will EVER reach the adapter — without this
+      // dispatch the machine never learns the window exists on screen and
+      // `front` stays null for the whole run (getFocusedVisibleWindowId null,
+      // session-save loses the focused descriptor, …). Non-headless the OS
+      // events fire too and the reducer re-merges idempotently. `focused`
+      // ports the deleted "track immediately at open" behavior
+      // (`trackVisibleWindowFocus` at this exact site): an open the caller
+      // wants VISIBLE targets the window; a `show:false` open (session
+      // restore) only marks it shown-eligible and seeds `front` when there is
+      // none. Satellite/modal arbitration is structural in the reducer.
+      dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: machineWindowId, focused: options.show !== false });
       const coordinator = getIzuiCoordinator();
       coordinator.pushWindow(win.id);
 

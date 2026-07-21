@@ -1122,7 +1122,27 @@ describe('decideWindowRegistration — single owner of the re-registration branc
       attachEscHandler: true,
       adoptRendererWC: true,
       pumpRegisteredEvent: true,
+      pumpShownEvent: false,
     });
+  });
+
+  it('registering an ALREADY-VISIBLE window imports its visibility (pumpShownEvent)', () => {
+    // A ctor-shown BrowserWindow never fires a 'show' transition, and headless
+    // never focuses it — registration is the only moment the machine can learn
+    // it is on screen. Without this, `front` stays null forever on such
+    // windows (the getFocusedVisibleWindowId-returns-null gate regression).
+    assert.strictEqual(fresh({ nativeVisible: true }).pumpShownEvent, true);
+    assert.strictEqual(fresh({ nativeVisible: false }).pumpShownEvent, false);
+    assert.strictEqual(fresh().pumpShownEvent, false, 'undefined = not visible');
+  });
+
+  it('a re-registration of a visible window ALSO re-imports visibility', () => {
+    // The richer (ipc.ts) registration runs while the window is already on
+    // screen; the shown-import must land AFTER the richer WINDOW_REGISTERED
+    // merge so satellite arbitration judges it against the final spec — the
+    // adapter owns that ordering; here we pin that the decision asks for it.
+    assert.strictEqual(again({ nativeVisible: true }).pumpShownEvent, true);
+    assert.strictEqual(again({ nativeVisible: false }).pumpShownEvent, false);
   });
 
   it('a duplicate id attaches NEITHER listeners NOR a second Esc interceptor', () => {
@@ -1169,19 +1189,24 @@ describe('decideWindowRegistration — single owner of the re-registration branc
     );
   });
 
-  it('is total: every (alreadyRegistered x kind x hasContentWC x optOut) yields booleans', () => {
+  it('is total: every (alreadyRegistered x kind x hasContentWC x optOut x visible) yields booleans', () => {
     for (const alreadyRegistered of [false, true]) {
       for (const kind of ['browser', 'page-host'] as const) {
         for (const hasContentWC of [false, true]) {
           for (const attachEscHandlerRequested of [undefined, false, true]) {
-            const d = decideWindowRegistration({ alreadyRegistered, kind, hasContentWC, attachEscHandlerRequested });
-            for (const [k, v] of Object.entries(d)) {
-              assert.strictEqual(typeof v, 'boolean', `${k} must be boolean`);
+            for (const nativeVisible of [undefined, false, true]) {
+              const d = decideWindowRegistration({ alreadyRegistered, kind, hasContentWC, attachEscHandlerRequested, nativeVisible });
+              for (const [k, v] of Object.entries(d)) {
+                assert.strictEqual(typeof v, 'boolean', `${k} must be boolean`);
+              }
+              // The two invariants the 7fffa286 fix rests on, over the whole space.
+              assert.strictEqual(d.attachNativeListeners, !alreadyRegistered);
+              if (alreadyRegistered) assert.strictEqual(d.attachEscHandler, false);
+              assert.strictEqual(d.pumpRegisteredEvent, true);
+              // Visibility import tracks the native read exactly — never the
+              // registration freshness.
+              assert.strictEqual(d.pumpShownEvent, nativeVisible === true);
             }
-            // The two invariants the 7fffa286 fix rests on, over the whole space.
-            assert.strictEqual(d.attachNativeListeners, !alreadyRegistered);
-            if (alreadyRegistered) assert.strictEqual(d.attachEscHandler, false);
-            assert.strictEqual(d.pumpRegisteredEvent, true);
           }
         }
       }

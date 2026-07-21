@@ -445,6 +445,27 @@ export interface WindowRegistrationDecision {
    * re-pump costs nothing beyond refreshing the declared fields.
    */
   pumpRegisteredEvent: boolean;
+  /**
+   * Pump `WINDOW_SHOWN { focused: true }` after the (re-)registration pump,
+   * importing the native window's CURRENT visibility into the machine. True
+   * whenever the native window is already visible at registration time.
+   *
+   * WHY (gate fallout of the WindowId cutover): a BrowserWindow constructed
+   * with `show: true` (the window-open browser branch, pseudo-tiles) never
+   * fires a `'show'` TRANSITION — it is born visible — and under a headless
+   * run nothing ever focuses it either, so without this import the machine
+   * literally never learns the window exists on screen: `front` stays null and
+   * every front consumer (`getFocusedVisibleWindowId`, session-save's focused
+   * descriptor, the overlay retarget) reads null forever. `focused: true`
+   * ports the deleted "track immediately at open" behavior (old ipc.ts
+   * `trackVisibleWindowFocus` at the open site): opening a visible window
+   * makes it the target. Satellite/modal arbitration is structural in the
+   * reducer (`applyFocusGained` ignores ineligible fronts), so this is safe to
+   * pump for every kind — and on a RE-registration it lands after the richer
+   * `WINDOW_REGISTERED` merge, so a modal is already a satellite by the time
+   * the focused-shown event is judged.
+   */
+  pumpShownEvent: boolean;
 }
 
 /**
@@ -470,8 +491,15 @@ export function decideWindowRegistration(input: {
   hasContentWC: boolean;
   /** The spec's `attachEscHandler` opt-out (`undefined` = default on). */
   attachEscHandlerRequested?: boolean;
+  /**
+   * Whether the native window is ALREADY VISIBLE at registration time
+   * (`win.isVisible()`, read once by the adapter). `undefined` = not visible.
+   * Drives `pumpShownEvent` — see its doc for why registration must import
+   * current visibility (a ctor-shown window has no `'show'` transition).
+   */
+  nativeVisible?: boolean;
 }): WindowRegistrationDecision {
-  const { alreadyRegistered, kind, hasContentWC, attachEscHandlerRequested } = input;
+  const { alreadyRegistered, kind, hasContentWC, attachEscHandlerRequested, nativeVisible } = input;
   const fresh = !alreadyRegistered;
   return {
     reRegistration: alreadyRegistered,
@@ -479,6 +507,7 @@ export function decideWindowRegistration(input: {
     attachEscHandler: fresh && kind === 'browser' && attachEscHandlerRequested !== false,
     adoptRendererWC: fresh || hasContentWC,
     pumpRegisteredEvent: true,
+    pumpShownEvent: nativeVisible === true,
   };
 }
 
