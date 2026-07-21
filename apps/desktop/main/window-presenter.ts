@@ -23,7 +23,7 @@ import { resolveWindowAddress } from './window-address.js';
 import { urlToHash, getThumbnailPath } from './thumbnails.js';
 import { getHybridWindow } from './hybrid-page-host-registry.js';
 import type { HybridWindowEntry } from './hybrid-page-host-registry.js';
-import { getWindowPreBounds } from './window-state-singleton.js';
+import { getWindowPreBounds, getWindowIdFor } from './window-state-singleton.js';
 
 export { resolveWindowAddress };
 
@@ -120,7 +120,10 @@ function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
   // window-state machine) covers the whole fullscreen episode — set at
   // enter-initiation, cleared on the settled leave — so mid-animation saves are
   // covered too.
-  const preFullScreenBounds = getWindowPreBounds(entry.windowId);
+  // The hybrid registry entry is Electron-id-keyed; the machine's stash is
+  // WindowId-keyed — convert through the sanctioned mapping.
+  const machineId = getWindowIdFor(entry.windowId);
+  const preFullScreenBounds = machineId != null ? getWindowPreBounds(machineId) : null;
   if (preFullScreenBounds) {
     bounds = preFullScreenBounds;
   }

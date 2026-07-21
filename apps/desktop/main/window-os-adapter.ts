@@ -59,6 +59,7 @@ import {
   type Effect,
   type StateSnapshot,
   type WindowEvent,
+  type WindowId,
   type WindowKind,
   type EscapeMode,
 } from './window-state.js';
@@ -100,7 +101,6 @@ interface AdapterWindow {
 }
 
 export interface RegisterWindowSpec {
-  id: number;
   kind: WindowKind;
   role: string;
   satellite: boolean;
@@ -140,14 +140,25 @@ export interface RegisterWindowSpec {
 export class WindowOsAdapter {
   private readonly owner: WindowStateOwner;
 
-  /** Native handles + renderer WC per registered window id (for effect execution). */
-  private readonly windows = new Map<number, AdapterWindow>();
+  /** Native handles + renderer WC per registered WM WindowId (for effect execution). */
+  private readonly windows = new Map<WindowId, AdapterWindow>();
+
+  /**
+   * Reverse lookup: platform (Electron) window id → WM WindowId. PRIVATE — the
+   * platform's numeric ids exist only inside this file's maps and never cross
+   * its surface (design §3: the backend maps `WindowId -> platform handle`
+   * internally and never leaks the handle's id space).
+   */
+  private readonly idByOsWindowId = new Map<number, WindowId>();
+
+  /** WM-internal mint counter for `WindowId` ("wm-1", "wm-2", …). */
+  private windowIdCounter = 0;
 
   /** The ONE deferred-blur settle handle (§4.4) — coalesced, at most one pending. */
   private pendingBlurSettle: ReturnType<typeof setImmediate> | null = null;
 
   /** Per-window bounded fullscreen settle timers (§2.3). */
-  private readonly fullscreenSettleTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  private readonly fullscreenSettleTimers = new Map<WindowId, ReturnType<typeof setTimeout>>();
 
   /** Whether we currently hold the OS Escape grab (mirrors `deriveEscGrabRegistered`). */
   private escGrabRegistered = false;
@@ -208,7 +219,9 @@ export class WindowOsAdapter {
    * exception is `blur`, which arms the ONE deferred-blur settle instead of
    * dispatching (§4.4).
    *
-   * IDEMPOTENT per window id, and that is load-bearing: more than one call site
+   * IDEMPOTENT per underlying native window (the WindowId is MINTED here, so
+   * idempotency is keyed by the platform window handle), and that is
+   * load-bearing: more than one call site
    * registers the same BrowserWindow (the tile-launcher hook inside
    * `createTileBrowserWindow`, then the `ipc.ts` window-open site for the same
    * window). Re-attaching would give one physical Escape TWO `ESC_PRESSED`
@@ -222,11 +235,17 @@ export class WindowOsAdapter {
    * the unit gate's `ELECTRON_RUN_AS_NODE=1`. This method only EXECUTES the
    * decision against the OS.
    */
-  registerWindow(spec: RegisterWindowSpec): void {
-    const { id, kind, role, satellite, escapeMode, lastHttpUrl, win } = spec;
+  registerWindow(spec: RegisterWindowSpec): WindowId {
+    const { kind, role, satellite, escapeMode, lastHttpUrl, win } = spec;
     const rendererWC = spec.contentWC ?? null;
 
-    const existing = this.windows.get(id);
+    // The WM MINTS the id — it no longer arrives from outside. Idempotency is
+    // therefore keyed by the UNDERLYING platform window: the same
+    // BrowserWindow/BaseWindow registered twice resolves to the SAME WindowId,
+    // with the later (richer) spec merged in.
+    const osWindowId = win.id;
+    const existingId = this.idByOsWindowId.get(osWindowId);
+    const existing = existingId === undefined ? undefined : this.windows.get(existingId);
     const decision = decideWindowRegistration({
       alreadyRegistered: existing !== undefined,
       kind,
@@ -234,11 +253,16 @@ export class WindowOsAdapter {
       attachEscHandlerRequested: spec.attachEscHandler,
     });
 
-    if (existing) {
+    let id: WindowId;
+    if (existing !== undefined && existingId !== undefined) {
+      id = existingId;
       existing.win = win;
       existing.kind = kind;
       if (decision.adoptRendererWC) existing.rendererWC = rendererWC;
     } else {
+      this.windowIdCounter += 1;
+      id = `wm-${this.windowIdCounter}` as WindowId;
+      this.idByOsWindowId.set(osWindowId, id);
       this.windows.set(id, { win, kind, rendererWC });
     }
 
@@ -257,7 +281,7 @@ export class WindowOsAdapter {
       }
     }
 
-    if (!decision.attachNativeListeners) return;
+    if (!decision.attachNativeListeners) return id;
 
     win.on('focus', () => {
       this.cancelBlurSettle();
@@ -279,6 +303,9 @@ export class WindowOsAdapter {
     win.on('closed', () => {
       this.clearFullscreenSettle(id);
       this.windows.delete(id);
+      // `osWindowId` was captured at registration — reading `win.id` here would
+      // throw on the already-destroyed native window.
+      this.idByOsWindowId.delete(osWindowId);
       this.pump({ type: 'WINDOW_CLOSED', id });
     });
     win.on('enter-full-screen', () => {
@@ -297,6 +324,68 @@ export class WindowOsAdapter {
         this.cancelBlurSettle();
         this.pump({ type: 'OS_FOCUS_GAINED', id, lastHttpUrl: this.readHttpUrl(id) });
       });
+    }
+
+    return id;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // WindowId ↔ native-window mapping. THIS adapter is the only module that owns
+  // the mapping; everything else asks here (via the singleton surface). The
+  // platform's numeric window id never crosses this boundary — callers hand in
+  // a native window handle (or a platform id they already hold from a legacy
+  // registry) and get a WindowId, or hand in a WindowId and get the HANDLE.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * The WM WindowId for a registered native window (or a platform window id a
+   * legacy Electron-keyed registry still holds). `null` when the window was
+   * never registered or is already gone.
+   */
+  getWindowIdFor(winOrOsId: NativeWindow | number): WindowId | null {
+    let osId: number;
+    if (typeof winOrOsId === 'number') {
+      osId = winOrOsId;
+    } else {
+      try {
+        osId = winOrOsId.id;
+      } catch {
+        return null; // destroyed native window — reading .id throws
+      }
+    }
+    return this.idByOsWindowId.get(osId) ?? null;
+  }
+
+  /**
+   * The live native window handle for a WM WindowId, or `null` when
+   * unregistered/destroyed. The HANDLE crosses (legacy consumers still need to
+   * join against Electron-id-keyed registries until later migration steps);
+   * the adapter's numeric maps do not.
+   */
+  getNativeWindowFor(id: WindowId): NativeWindow | null {
+    const entry = this.windows.get(id);
+    if (!entry) return null;
+    try {
+      if (entry.win.isDestroyed()) return null;
+    } catch {
+      return null;
+    }
+    return entry.win;
+  }
+
+  /**
+   * PRIVATE: the platform window id for a WindowId — used only where this
+   * adapter must call into a legacy Electron-id-keyed seam (windows.ts
+   * `closeOrHideWindow` / `askWebContentsToHandleEscape`) until those seams are
+   * re-keyed. Never exposed.
+   */
+  private osWindowIdOf(id: WindowId): number | null {
+    const win = this.getNativeWindowFor(id);
+    if (!win) return null;
+    try {
+      return win.id;
+    } catch {
+      return null;
     }
   }
 
@@ -381,7 +470,9 @@ export class WindowOsAdapter {
           this.pump({ type: 'ESC_RENDERER_ANSWER', id: effect.id, handled: false, seq: effect.seq });
           return;
         }
-        void askWebContentsToHandleEscape(effect.id, wc).then((ans) => {
+        // `askWebContentsToHandleEscape` (windows.ts) still speaks Electron ids;
+        // resolve the native id INSIDE the adapter (the one place allowed to).
+        void askWebContentsToHandleEscape(this.osWindowIdOf(effect.id) ?? -1, wc).then((ans) => {
           this.pump({
             type: 'ESC_RENDERER_ANSWER',
             id: effect.id,
@@ -395,8 +486,10 @@ export class WindowOsAdapter {
       case 'CLOSE_WINDOW': {
         // Route through the existing close/hide seam (honors keepLive, hybrid vs
         // browser). Fire-and-forget: it is async (its hybrid branch awaits a
-        // fullscreen exit); the machine already recorded intent.
-        void closeOrHideWindow(effect.id);
+        // fullscreen exit); the machine already recorded intent. The seam is
+        // still Electron-id-keyed; the adapter resolves the native id.
+        const osId = this.osWindowIdOf(effect.id);
+        if (osId != null) void closeOrHideWindow(osId);
         return;
       }
       case 'OPEN_SWITCHER_WINDOW': {
@@ -420,7 +513,8 @@ export class WindowOsAdapter {
         //     this is a no-op — closing here would double-close and defeat the
         //     cooldown.
         if (effect.restoreFocus && effect.switcherWindowId != null) {
-          void closeOrHideWindow(effect.switcherWindowId);
+          const osId = this.osWindowIdOf(effect.switcherWindowId);
+          if (osId != null) void closeOrHideWindow(osId);
         }
         return;
       }
@@ -446,7 +540,7 @@ export class WindowOsAdapter {
   }
 
   /** Show + raise + activate a window (page-host via the shared show seam). */
-  private raiseWindow(id: number): void {
+  private raiseWindow(id: WindowId): void {
     const entry = this.windows.get(id);
     if (!entry) return;
     const { win, kind, rendererWC } = entry;
@@ -541,7 +635,7 @@ export class WindowOsAdapter {
    * it is not on an http(s) page. Fed to `OS_FOCUS_GAINED` so the reducer can
    * track the devtools target (absorbs the old `lastContentWindowId`).
    */
-  private readHttpUrl(id: number): string | undefined {
+  private readHttpUrl(id: WindowId): string | undefined {
     const wc = this.windows.get(id)?.rendererWC;
     if (!wc || wc.isDestroyed()) return undefined;
     try {
@@ -556,7 +650,7 @@ export class WindowOsAdapter {
   // Bounded fullscreen settle timer (§2.3).
   // ───────────────────────────────────────────────────────────────────────────
 
-  private armFullscreenSettle(id: number): void {
+  private armFullscreenSettle(id: WindowId): void {
     this.clearFullscreenSettle(id);
     this.fullscreenSettleTimers.set(
       id,
@@ -567,7 +661,7 @@ export class WindowOsAdapter {
     );
   }
 
-  private clearFullscreenSettle(id: number): void {
+  private clearFullscreenSettle(id: WindowId): void {
     const t = this.fullscreenSettleTimers.get(id);
     if (t) {
       clearTimeout(t);
@@ -600,8 +694,8 @@ export class WindowOsAdapter {
 }
 
 /** The window id carried by an event's canonical `id` field, if it has one. */
-function eventWindowId(event: WindowEvent): number | null {
-  return 'id' in event && typeof event.id === 'number' ? event.id : null;
+function eventWindowId(event: WindowEvent): WindowId | null {
+  return 'id' in event && typeof event.id === 'string' ? event.id : null;
 }
 
 /**
@@ -621,7 +715,7 @@ function eventWindowIdTag(event: WindowEvent): string | null {
 }
 
 /** Render a nullable id for the transition log. */
-function fmt(id: number | null): string {
+function fmt(id: WindowId | null): string {
   return id == null ? 'none' : String(id);
 }
 

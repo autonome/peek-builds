@@ -30,6 +30,8 @@ import {
   getWindowModeName,
   waitForMode,
   dispatchWindowEvent,
+  getWindowIdFor,
+  getNativeWindowFor,
 } from './window-state-singleton.js';
 
 /**
@@ -329,8 +331,10 @@ export function addEscHandler(bw: BrowserWindow): void {
         // Decision moved to the window-state machine: dispatch ESC_PRESSED and
         // let `decideEscape` own the outcome (the landed id is first-responder
         // noise; the target is `front`). The attach/debounce/webview routing
-        // above stays here as input hygiene.
-        dispatchWindowEvent({ type: 'ESC_PRESSED', landedId: bw.id });
+        // above stays here as input hygiene. The landed id is resolved to the
+        // WM's WindowId at keypress time (registration has long happened);
+        // an unregistered window degrades to 'global' — same decision either way.
+        dispatchWindowEvent({ type: 'ESC_PRESSED', landedId: getWindowIdFor(bw) ?? 'global' });
       }
     });
   };
@@ -627,10 +631,11 @@ export async function closeOrHideWindow(id: number): Promise<void> {
         // strands a black macOS Space; dropping fullscreen first (and awaiting
         // the settled exit via `waitForMode`) avoids it. No-op when the host
         // isn't fullscreen. The host may be torn down while we await — re-check.
-        const fsMode = getWindowModeName(id);
-        if (fsMode != null && fsMode !== 'normal') {
-          dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id, desired: false });
-          await waitForMode(id, 'normal');
+        const machineId = getWindowIdFor(id);
+        const fsMode = machineId != null ? getWindowModeName(machineId) : null;
+        if (machineId != null && fsMode != null && fsMode !== 'normal') {
+          dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, desired: false });
+          await waitForMode(machineId, 'normal');
         }
         if (hybrid.baseWin.isDestroyed()) return;
         // keepLive parity with the BrowserWindow branch below: a hybrid
@@ -655,7 +660,7 @@ export async function closeOrHideWindow(id: number): Promise<void> {
           // moves `front` off it in the same tick and the overlay's front-change
           // subscription retargets/hides — the BaseWindow 'hide' event (which the
           // adapter also handles) fires a tick late on macOS.
-          dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id });
+          if (machineId != null) dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: machineId });
           maybeHideApp(id);
           return;
         }
@@ -748,7 +753,15 @@ export function resolveFocusedWindowIdForClose(): number | null {
   // focused hybrid page-host (a BaseWindow that `getFocusedWindow()` returns
   // null for) is front too. This replaces the pure `resolveCloseTargetId`
   // overlay/hybrid resolution — the whole point of the single front authority.
-  return getFrontWindowId();
+  //
+  // The machine speaks WM WindowId; the close path (`closeOrHideWindow` and the
+  // registries it consults) is still Electron-id-keyed, so resolve the front's
+  // native handle and hand back ITS id. A later migration step re-keys the
+  // close path itself.
+  const front = getFrontWindowId();
+  if (front == null) return null;
+  const win = getNativeWindowFor(front);
+  return win ? win.id : null;
 }
 
 /**

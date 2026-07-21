@@ -23,6 +23,24 @@
 // State shape — illegal states unrepresentable (§2.2)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The WM's own window identity — an opaque branded string (`"wm-1"`, `"wm-2"`),
+ * minted ONLY by the WM (the OS adapter's `registerWindow`, from a WM-internal
+ * counter). Never an Electron window id, never a webContents id.
+ *
+ * Why a STRING brand: the failure mode this type exists to kill is numeric
+ * indistinguishability — Electron window ids and webContents ids are both small
+ * integers, so a mix-up is silent (design §3, "three colliding id spaces"). A
+ * number brand only helps at compile time and evaporates over IPC; a string is
+ * runtime-distinguishable (`typeof`/prefix check) and log-greppable (`wm-` never
+ * collides with a bare number in a trace).
+ *
+ * The adapter maps `WindowId ↔ platform handle` internally and never leaks the
+ * platform id (design §3: "the backend maps WindowId -> platform handle
+ * internally").
+ */
+export type WindowId = string & { readonly __brand: 'WindowId' };
+
 /** Plain rectangle (mirrors Electron's `Rectangle`, kept local so this file is Electron-free). */
 export interface Rectangle {
   x: number;
@@ -53,7 +71,7 @@ export type FsMode =
   | { name: 'leaving-fullscreen'; preBounds: Rectangle | null; pendingDesire?: boolean };
 
 export interface WindowRecord {
-  id: number;
+  id: WindowId;
   kind: WindowKind;
   /** Existing IZUI role vocabulary (palette / quick-view / overlay / workspace / content / child-content / utility). */
   role: string;
@@ -79,7 +97,17 @@ export type IzuiSession = 'idle' | 'transient' | 'active';
 
 export type SwitcherState =
   | { open: false }
-  | { open: true; windowId: number; previousFront: number | null };
+  | {
+      open: true;
+      /**
+       * The overlay window rendering the switcher, or `null` while the machine
+       * has requested the open but the overlay window does not exist yet
+       * (`SWITCHER_OPENED` fixes it up to the real id). Replaces the old `-1`
+       * numeric sentinel.
+       */
+      windowId: WindowId | null;
+      previousFront: WindowId | null;
+    };
 
 export interface AppWindowState {
   appActive: boolean;
@@ -96,7 +124,7 @@ export interface AppWindowState {
    * after every transition): `front` is `null` or refers to a live, visible,
    * non-satellite record.
    */
-  front: number | null;
+  front: WindowId | null;
   /**
    * The claim that the OS currently matches `front`.
    *
@@ -124,7 +152,7 @@ export interface AppWindowState {
    */
   frontAsserted: boolean;
   switcher: SwitcherState;
-  windows: Map<number, WindowRecord>;
+  windows: Map<WindowId, WindowRecord>;
   /** Monotonic source for `WindowRecord.focusSeq`. */
   focusSeqCounter: number;
   /**
@@ -139,7 +167,7 @@ export interface AppWindowState {
    * question clears this field, which is what makes a stale answer inert
    * (structural, not a timer or a guard flag).
    */
-  escAsk: { id: number; seq: number } | null;
+  escAsk: { id: WindowId; seq: number } | null;
   /** Monotonic source for `escAsk.seq`. Never reset while the app runs. */
   escSeq: number;
 }
@@ -166,11 +194,11 @@ export function createInitialState(): AppWindowState {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type WindowEvent =
-  | { type: 'WINDOW_REGISTERED'; id: number; kind: WindowKind; role: string; satellite: boolean; escapeMode?: EscapeMode; lastHttpUrl?: string }
-  | { type: 'WINDOW_SHOWN'; id: number; focused: boolean }
-  | { type: 'WINDOW_HIDDEN'; id: number }
-  | { type: 'WINDOW_CLOSED'; id: number }
-  | { type: 'OS_FOCUS_GAINED'; id: number; lastHttpUrl?: string }
+  | { type: 'WINDOW_REGISTERED'; id: WindowId; kind: WindowKind; role: string; satellite: boolean; escapeMode?: EscapeMode; lastHttpUrl?: string }
+  | { type: 'WINDOW_SHOWN'; id: WindowId; focused: boolean }
+  | { type: 'WINDOW_HIDDEN'; id: WindowId }
+  | { type: 'WINDOW_CLOSED'; id: WindowId }
+  | { type: 'OS_FOCUS_GAINED'; id: WindowId; lastHttpUrl?: string }
   | { type: 'OS_FOCUS_SETTLED_NULL' }
   | { type: 'APP_ACTIVATED' }
   | { type: 'APP_RESIGNED' }
@@ -183,19 +211,19 @@ export type WindowEvent =
    * authority — a split-brain). `decideEscape` step 6 reads this mirrored value.
    */
   | { type: 'SESSION_CHANGED'; session: IzuiSession }
-  | { type: 'FULLSCREEN_REQUESTED'; id?: number; desired?: boolean; bounds?: Rectangle | null }
-  | { type: 'OS_FULLSCREEN_ENTERED'; id: number }
-  | { type: 'OS_FULLSCREEN_LEFT'; id: number }
-  | { type: 'FULLSCREEN_SETTLE_TIMEOUT'; id: number }
-  | { type: 'ESC_PRESSED'; landedId: number | 'global' }
+  | { type: 'FULLSCREEN_REQUESTED'; id?: WindowId; desired?: boolean; bounds?: Rectangle | null }
+  | { type: 'OS_FULLSCREEN_ENTERED'; id: WindowId }
+  | { type: 'OS_FULLSCREEN_LEFT'; id: WindowId }
+  | { type: 'FULLSCREEN_SETTLE_TIMEOUT'; id: WindowId }
+  | { type: 'ESC_PRESSED'; landedId: WindowId | 'global' }
   /**
    * The renderer's answer to an `ASK_RENDERER`. `seq` echoes the epoch of the
    * ask it answers (see `AppWindowState.escAsk`); an answer that does not match
    * the pending ask is stale and is dropped.
    */
-  | { type: 'ESC_RENDERER_ANSWER'; id: number; handled: boolean; close?: boolean; seq: number }
-  | { type: 'SWITCHER_OPEN_REQUESTED'; windowId?: number }
-  | { type: 'SWITCHER_SELECTED'; id: number | null }
+  | { type: 'ESC_RENDERER_ANSWER'; id: WindowId; handled: boolean; close?: boolean; seq: number }
+  | { type: 'SWITCHER_OPEN_REQUESTED'; windowId?: WindowId }
+  | { type: 'SWITCHER_SELECTED'; id: WindowId | null }
   /**
    * Mirror-only (staged cutover): the switcher overlay WINDOW actually opened.
    * The overlay-window lifecycle (open/select/teardown/focus-restore + the macOS
@@ -204,7 +232,7 @@ export type WindowEvent =
    * (`switcher.open → close-switcher`) and the derived Esc-grab predicate fire
    * correctly. It emits NO effect — the window already exists.
    */
-  | { type: 'SWITCHER_OPENED'; windowId: number };
+  | { type: 'SWITCHER_OPENED'; windowId: WindowId };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Effects — returned by the reducer, executed by the OS adapter (§2.6). The
@@ -212,10 +240,10 @@ export type WindowEvent =
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type Effect =
-  | { type: 'SET_FULLSCREEN'; id: number; on: boolean }
+  | { type: 'SET_FULLSCREEN'; id: WindowId; on: boolean }
   /** The single sanctioned OS poll: adapter reads `isFullScreen()` once and re-dispatches OS_FULLSCREEN_ENTERED/LEFT. */
-  | { type: 'RECONCILE_FULLSCREEN'; id: number }
-  | { type: 'OPEN_SWITCHER_WINDOW'; previousFront: number | null }
+  | { type: 'RECONCILE_FULLSCREEN'; id: WindowId }
+  | { type: 'OPEN_SWITCHER_WINDOW'; previousFront: WindowId | null }
   /**
    * `switcherWindowId` is the overlay window to tear down. In the staged cutover
    * the adapter DELEGATES the teardown to izui (`closeOrHideWindow`) only on the
@@ -223,8 +251,8 @@ export type Effect =
    * existing `main.ts did-resign-active` block owns the teardown (with its
    * cooldown focus-dance protection), so the adapter is a no-op there.
    */
-  | { type: 'CLOSE_SWITCHER_WINDOW'; restoreTarget: number | null; restoreFocus: boolean; switcherWindowId: number | null }
-  | { type: 'RAISE_WINDOW'; id: number }
+  | { type: 'CLOSE_SWITCHER_WINDOW'; restoreTarget: WindowId | null; restoreFocus: boolean; switcherWindowId: WindowId | null }
+  | { type: 'RAISE_WINDOW'; id: WindowId }
   /**
    * Make a page-host's content WebContentsView the macOS first responder (the
    * `shouldFocusHybridContentOnHostFocus` invariant). Emitted by the closing
@@ -232,19 +260,19 @@ export type Effect =
    * page-host and the assertion is not currently held — NOT only when `front`
    * changes (see `AppWindowState.frontAsserted`).
    */
-  | { type: 'FOCUS_CONTENT'; id: number }
+  | { type: 'FOCUS_CONTENT'; id: WindowId }
   /**
    * Ask the renderer whether it handled ESC (the `escape-pressed` IPC, unchanged
    * protocol). `seq` is the epoch token the adapter MUST echo back on the
    * resulting `ESC_RENDERER_ANSWER` so a deferred answer is judged against the
    * ask that produced it (see `AppWindowState.escAsk`).
    */
-  | { type: 'ASK_RENDERER'; id: number; seq: number }
-  | { type: 'CLOSE_WINDOW'; id: number }
+  | { type: 'ASK_RENDERER'; id: WindowId; seq: number }
+  | { type: 'CLOSE_WINDOW'; id: WindowId }
   /** ESC consumed by leaving fullscreen (also drives the leaving fsMode edge + SET_FULLSCREEN in the same reduce). */
-  | { type: 'EXIT_FULLSCREEN'; id: number }
+  | { type: 'EXIT_FULLSCREEN'; id: WindowId }
   /** ESC passed straight to the page (escapeMode 'ignore'). */
-  | { type: 'PASS_THROUGH'; id: number }
+  | { type: 'PASS_THROUGH'; id: WindowId }
   | { type: 'NOTHING' };
 
 export interface ReduceResult {
@@ -262,12 +290,12 @@ export interface ReduceResult {
 export type EscapeDecision =
   | { kind: 'close-switcher' }
   | { kind: 'open-switcher' }
-  | { kind: 'pass-through'; id: number }
-  | { kind: 'exit-fullscreen'; id: number }
-  | { kind: 'ask-renderer'; id: number };
+  | { kind: 'pass-through'; id: WindowId }
+  | { kind: 'exit-fullscreen'; id: WindowId }
+  | { kind: 'ask-renderer'; id: WindowId };
 
 export type EscapeUnhandledDecision =
-  | { kind: 'close-window'; id: number }
+  | { kind: 'close-window'; id: WindowId }
   | { kind: 'open-switcher' }
   | { kind: 'nothing' };
 
@@ -303,7 +331,7 @@ export function decideEscape(state: AppWindowState): EscapeDecision {
  * `escPolicy` + `escUnhandledPolicy` VERBATIM (ported below). Consulted only
  * after the renderer answered `handled:false`.
  */
-export function decideEscapeUnhandled(state: AppWindowState, windowId: number): EscapeUnhandledDecision {
+export function decideEscapeUnhandled(state: AppWindowState, windowId: WindowId): EscapeUnhandledDecision {
   const rec = state.windows.get(windowId);
   if (!rec) return { kind: 'nothing' };
   const policy = escPolicy(state.session, rec.role);
@@ -460,7 +488,7 @@ export function isEligibleFront(rec: WindowRecord | undefined): rec is WindowRec
 }
 
 /** MRU successor: the visible non-satellite window with the highest focusSeq (null if none). */
-function successorFront(state: AppWindowState, excludeId?: number): number | null {
+function successorFront(state: AppWindowState, excludeId?: WindowId): WindowId | null {
   let best: WindowRecord | null = null;
   for (const rec of state.windows.values()) {
     if (rec.id === excludeId) continue;
@@ -503,14 +531,14 @@ function cloneState(state: AppWindowState): AppWindowState {
 }
 
 /** Copy a record and apply a patch; write it back into a (freshly cloned) map. */
-function patchRecord(state: AppWindowState, id: number, patch: Partial<WindowRecord>): void {
+function patchRecord(state: AppWindowState, id: WindowId, patch: Partial<WindowRecord>): void {
   const cur = state.windows.get(id);
   if (!cur) return;
   state.windows.set(id, { ...cur, ...patch });
 }
 
 /** Bump a record's focusSeq to a fresh MRU value. Mutates the (already-cloned) state. */
-function bumpFocusSeq(state: AppWindowState, id: number): void {
+function bumpFocusSeq(state: AppWindowState, id: WindowId): void {
   const cur = state.windows.get(id);
   if (!cur) return;
   state.focusSeqCounter += 1;
@@ -655,7 +683,7 @@ function desiredFullscreen(mode: FsMode, desired: boolean | undefined): boolean 
 
 function applyFullscreenRequest(
   state: AppWindowState,
-  id: number,
+  id: WindowId,
   desired: boolean | undefined,
   bounds: Rectangle | null | undefined,
   effects: Effect[],
@@ -691,7 +719,7 @@ function applyFullscreenRequest(
   }
 }
 
-function applyOsFullscreenEntered(state: AppWindowState, id: number, effects: Effect[]): void {
+function applyOsFullscreenEntered(state: AppWindowState, id: WindowId, effects: Effect[]): void {
   const rec = state.windows.get(id);
   if (!rec) return;
   const mode = rec.fsMode;
@@ -719,7 +747,7 @@ function applyOsFullscreenEntered(state: AppWindowState, id: number, effects: Ef
   }
 }
 
-function applyOsFullscreenLeft(state: AppWindowState, id: number, effects: Effect[]): void {
+function applyOsFullscreenLeft(state: AppWindowState, id: WindowId, effects: Effect[]): void {
   const rec = state.windows.get(id);
   if (!rec) return;
   const mode = rec.fsMode;
@@ -954,7 +982,7 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
     }
 
     case 'SWITCHER_OPEN_REQUESTED': {
-      const windowId = event.windowId ?? -1;
+      const windowId = event.windowId ?? null;
       state.switcher = { open: true, windowId, previousFront: state.front };
       effects.push({ type: 'OPEN_SWITCHER_WINDOW', previousFront: prevFront });
       break;
@@ -999,7 +1027,7 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
  *   - transition in flight -> ignored for front (the "transition pin")
  *   - else                 -> front = id, bump focusSeq
  */
-function applyFocusGained(state: AppWindowState, id: number, lastHttpUrl?: string): void {
+function applyFocusGained(state: AppWindowState, id: WindowId, lastHttpUrl?: string): void {
   const rec = state.windows.get(id);
   if (!rec) return;
   bumpFocusSeq(state, id);
@@ -1075,7 +1103,7 @@ function applyUnhandledEscape(state: AppWindowState, decision: EscapeUnhandledDe
 
 function openSwitcher(state: AppWindowState, effects: Effect[]): void {
   const previousFront = state.front;
-  state.switcher = { open: true, windowId: -1, previousFront };
+  state.switcher = { open: true, windowId: null, previousFront };
   effects.push({ type: 'OPEN_SWITCHER_WINDOW', previousFront });
 }
 
@@ -1084,11 +1112,11 @@ function openSwitcher(state: AppWindowState, effects: Effect[]): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Command target / close target / Esc target / session-save focused descriptor. */
-export function getFrontWindowId(state: AppWindowState): number | null {
+export function getFrontWindowId(state: AppWindowState): WindowId | null {
   return state.front;
 }
 
-export function getWindowMode(state: AppWindowState, id: number): FsMode['name'] | null {
+export function getWindowMode(state: AppWindowState, id: WindowId): FsMode['name'] | null {
   const rec = state.windows.get(id);
   return rec ? rec.fsMode.name : null;
 }
@@ -1100,7 +1128,7 @@ export function getWindowMode(state: AppWindowState, id: number): FsMode['name']
  * `null` for a `normal` window OR for an OS/green-button entry where no stash
  * was possible — both mean "no restorable geometry", exactly as before.
  */
-export function getWindowPreBounds(state: AppWindowState, id: number): Rectangle | null {
+export function getWindowPreBounds(state: AppWindowState, id: WindowId): Rectangle | null {
   const rec = state.windows.get(id);
   if (!rec || rec.fsMode.name === 'normal') return null;
   return rec.fsMode.preBounds;
@@ -1111,7 +1139,7 @@ export function getWindowPreBounds(state: AppWindowState, id: number): Rectangle
  * more recently focused, 0 if never focused / unregistered. Session-save reads
  * this to rank windows for eager/deferred restore.
  */
-export function getWindowFocusSeq(state: AppWindowState, id: number): number {
+export function getWindowFocusSeq(state: AppWindowState, id: WindowId): number {
   return state.windows.get(id)?.focusSeq ?? 0;
 }
 
@@ -1120,7 +1148,7 @@ export function getWindowFocusSeq(state: AppWindowState, id: number): number {
  * focused window bearing an http(s) `lastHttpUrl`, or null. Replaces
  * `getLastContentWindowId()` in the `tile:window:devtools` fallback.
  */
-export function getDevtoolsTargetId(state: AppWindowState): number | null {
+export function getDevtoolsTargetId(state: AppWindowState): WindowId | null {
   let best: WindowRecord | null = null;
   for (const rec of state.windows.values()) {
     if (!rec.lastHttpUrl) continue;
@@ -1133,7 +1161,7 @@ export function getDevtoolsTargetId(state: AppWindowState): number | null {
 export interface StateSnapshot {
   appActive: boolean;
   session: IzuiSession;
-  front: number | null;
+  front: WindowId | null;
   /** See `AppWindowState.frontAsserted` — intent vs. asserted-onto-the-OS. */
   frontAsserted: boolean;
   switcher: SwitcherState;
@@ -1222,23 +1250,23 @@ export class WindowStateOwner {
     return () => this.listeners.delete(listener);
   }
 
-  getFrontWindowId(): number | null {
+  getFrontWindowId(): WindowId | null {
     return getFrontWindowId(this.state);
   }
 
-  getWindowMode(id: number): FsMode['name'] | null {
+  getWindowMode(id: WindowId): FsMode['name'] | null {
     return getWindowMode(this.state, id);
   }
 
-  getWindowPreBounds(id: number): Rectangle | null {
+  getWindowPreBounds(id: WindowId): Rectangle | null {
     return getWindowPreBounds(this.state, id);
   }
 
-  getDevtoolsTargetId(): number | null {
+  getDevtoolsTargetId(): WindowId | null {
     return getDevtoolsTargetId(this.state);
   }
 
-  getWindowFocusSeq(id: number): number {
+  getWindowFocusSeq(id: WindowId): number {
     return getWindowFocusSeq(this.state, id);
   }
 
@@ -1251,7 +1279,7 @@ export class WindowStateOwner {
    * want (§2.4) — on the machine, not a promise inside the mutator. Resolves
    * immediately if already there.
    */
-  waitForMode(id: number, mode: FsMode['name']): Promise<void> {
+  waitForMode(id: WindowId, mode: FsMode['name']): Promise<void> {
     if (getWindowMode(this.state, id) === mode) return Promise.resolve();
     return new Promise((resolve) => {
       const unsub = this.subscribe(() => {

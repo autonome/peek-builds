@@ -92,6 +92,8 @@ import {
   waitForMode,
   registerWindowWithMachine,
   getWindowModeName,
+  getWindowIdFor,
+  getNativeWindowFor,
 } from './window-state-singleton.js';
 import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, registerWindow } from './main.js';
@@ -99,6 +101,21 @@ import { getWindowPresentation } from './window-presenter.js';
 import { hybridShowIntent, showHybridHost, closeFocusedWindow, closeOrHideWindow } from './windows.js';
 import { headlessActivationPolicy } from './headless-policy.js';
 import { registerLocalShortcut, unregisterLocalShortcut } from './shortcuts.js';
+
+/**
+ * The front page-host as an ELECTRON window id, or null. The machine's surface
+ * speaks WM WindowId only; this module's internals (the hybrid registry it
+ * frames over, the pubsub payloads its renderer speaks) are still keyed by
+ * Electron window ids, so every read of the front converts here — through the
+ * singleton's sanctioned mapping, never a private map. A later migration step
+ * re-keys the hybrid registry and deletes this shim.
+ */
+function frontPageHostOsId(): number | null {
+  const front = getFrontPageHostId();
+  if (front == null) return null;
+  const win = getNativeWindowFor(front);
+  return win ? win.id : null;
+}
 
 /** Tile id / entry for the overlay's trustedBuiltin grant + pubsub routing. */
 const OVERLAY_TILE_ID = 'page-overlay';
@@ -363,7 +380,7 @@ function ensureOverlay(): BrowserWindow {
   // already published the handoff. Re-send the current active state once the
   // renderer has finished loading (and on every reload) so the navbar paints.
   win.webContents.on('did-finish-load', () => {
-    const currentId = getFrontPageHostId();
+    const currentId = frontPageHostOsId();
     if (currentId != null) sendActiveHandoff(currentId);
   });
 
@@ -379,7 +396,6 @@ function ensureOverlay(): BrowserWindow {
   // - The close resolver reads `front` (which excludes this satellite) —
   //   replacing `setOverlayWindowIdProvider` + `isHybridOverlayWindowId`.
   registerWindowWithMachine({
-    id: win.id,
     kind: 'browser',
     role: 'overlay',
     satellite: true,
@@ -561,7 +577,7 @@ function wireAppActiveGate(): void {
     if (!overlayWin || overlayWin.isDestroyed()) {
       // No overlay yet — re-frame below will lazily create it if there is an
       // active hybrid window.
-      const currentId = getFrontPageHostId();
+      const currentId = frontPageHostOsId();
       if (currentId != null) retarget(currentId);
       return;
     }
@@ -581,7 +597,7 @@ function wireAppActiveGate(): void {
     }
     // Re-frame onto the current active hybrid window so the overlay snaps back
     // over it (its geometry/level was just restored).
-    const currentId = getFrontPageHostId();
+    const currentId = frontPageHostOsId();
     if (currentId != null) {
       try {
         retarget(currentId);
@@ -614,7 +630,7 @@ function wireShowNavbarFocus(): void {
     const msg = raw as { windowId?: number } | null;
     if (!msg || msg.windowId == null) return;
     if (!appActive) return; // never steal focus while backgrounded (R1)
-    if (msg.windowId !== getFrontPageHostId()) return; // active window only
+    if (msg.windowId !== frontPageHostOsId()) return; // active window only
     if (!overlayWin || overlayWin.isDestroyed()) return;
     showNavbarFocusCount++;
     try {
@@ -641,7 +657,7 @@ function wireExecuteScript(): void {
     // Resolve the page the script should run in: the active hybrid content WC.
     // No active hybrid window → this request isn't for us (canvas path or none) →
     // stay silent so we don't publish a spurious result.
-    const activeId = getFrontPageHostId();
+    const activeId = frontPageHostOsId();
     if (activeId == null) return;
     const wc = getHybridContentWC(activeId);
     if (!wc || wc.isDestroyed()) return;
@@ -889,9 +905,12 @@ export function initHybridOverlay(): void {
   // (the overlay host has webview:null and cannot service it; see above).
   wireExecuteScript();
 
-  unsubscribeActive = subscribeFrontChange((id) => {
+  unsubscribeActive = subscribeFrontChange((front) => {
     try {
-      retarget(id);
+      // The machine hands back a WM WindowId; retarget (and the hybrid
+      // registry behind it) still speaks Electron ids — convert at the seam.
+      const win = front != null ? getNativeWindowFor(front) : null;
+      retarget(win ? win.id : null);
     } catch (err) {
       DEBUG && console.log('[hybrid-overlay] retarget failed:', err);
     }
@@ -901,7 +920,7 @@ export function initHybridOverlay(): void {
   // THE CURRENTLY-ACTIVE window. Non-active windows are handled by the next
   // `sendActiveHandoff` snapshot; no extra mechanism needed for them.
   registerLoadErrorListener((windowId, error) => {
-    if (windowId !== getFrontPageHostId()) return;
+    if (windowId !== frontPageHostOsId()) return;
     publish(getSystemAddress(), 'page:load-error', { windowId, error });
   });
 
@@ -925,7 +944,7 @@ export function initHybridOverlay(): void {
 
   // Seed off the current active window in case one is already frontmost at
   // init time (e.g. session restore opened a hybrid window before this ran).
-  const currentId = getFrontPageHostId();
+  const currentId = frontPageHostOsId();
   if (currentId != null) {
     retarget(currentId);
   }
@@ -1095,7 +1114,7 @@ function installTestBridge(): void {
         view.setBounds({ x: 0, y: 0, width: w, height: h });
       } catch { /* getContentSize unsupported in some envs */ }
       registerHybridWindow(baseWin.id, { baseWin, contentWC: view.webContents });
-      registerWindowWithMachine({ id: baseWin.id, kind: 'page-host', role: 'content', satellite: false, win: baseWin, contentWC: view.webContents });
+      registerWindowWithMachine({ kind: 'page-host', role: 'content', satellite: false, win: baseWin, contentWC: view.webContents });
       fakeHosts.set(baseWin.id, baseWin);
       // Install the REAL content→overlay event forwarding (incl. the idle
       // top-band reveal path under test).
@@ -1109,7 +1128,9 @@ function installTestBridge(): void {
       if (id == null) {
         dispatchWindowEvent({ type: 'OS_FOCUS_SETTLED_NULL' });
       } else {
-        dispatchWindowEvent({ type: 'WINDOW_SHOWN', id, focused: true });
+        const wid = getWindowIdFor(id);
+        if (wid == null) return false;
+        dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
       }
       return true;
     },
@@ -1280,10 +1301,10 @@ function installTestBridge(): void {
       // and keeps `front` on an app-switch (design divergence #2), so there is no
       // synchronous per-window "decide after blur" hook. Best-effort: report the
       // current front page host.
-      return getFrontPageHostId();
+      return frontPageHostOsId();
     },
     activeId(): number | null {
-      return getFrontPageHostId();
+      return frontPageHostOsId();
     },
     /**
      * Focus-group verification: replace the registry's overlay-focus provider
@@ -1342,10 +1363,11 @@ function installTestBridge(): void {
     } | null {
       const entry = getHybridWindow(id);
       if (!entry || entry.baseWin.isDestroyed()) return null;
+      const machineId = getWindowIdFor(id);
       try {
         return {
           isFullScreen: entry.baseWin.isFullScreen(),
-          nativeFullScreen: getWindowModeName(id) === 'fullscreen',
+          nativeFullScreen: machineId != null && getWindowModeName(machineId) === 'fullscreen',
           maximized: entry.maximized,
           preMaxBounds: entry.preMaxBounds ?? null,
         };
@@ -2789,7 +2811,6 @@ function installTestBridge(): void {
       registerHybridWindow(baseWin.id, { baseWin, contentWC: view.webContents });
       const roledRole = (params.role as string) || 'content';
       registerWindowWithMachine({
-        id: baseWin.id,
         kind: 'page-host',
         role: roledRole,
         satellite: roledRole === 'overlay' || roledRole === 'palette',
@@ -2818,7 +2839,7 @@ function installTestBridge(): void {
       // Decision now lives in the machine — dispatch ESC_PRESSED (the landed id
       // is first-responder noise; decideEscape targets `front`). The ask-renderer
       // round-trip is async inside the adapter; resolve on the next tick.
-      dispatchWindowEvent({ type: 'ESC_PRESSED', landedId: id });
+      dispatchWindowEvent({ type: 'ESC_PRESSED', landedId: getWindowIdFor(id) ?? 'global' });
       return Promise.resolve(id);
     },
     /**
@@ -2965,8 +2986,10 @@ function installTestBridge(): void {
       const boundsWin = getHybridWindow(id)?.baseWin ?? null;
       let bounds: { x: number; y: number; width: number; height: number } | null = null;
       try { if (boundsWin && !boundsWin.isDestroyed()) bounds = boundsWin.getBounds(); } catch { /* gone */ }
-      dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id, desired, bounds });
-      return waitForMode(id, desired ? 'fullscreen' : 'normal');
+      const machineId = getWindowIdFor(id);
+      if (machineId == null) return Promise.resolve();
+      dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, desired, bounds });
+      return waitForMode(machineId, desired ? 'fullscreen' : 'normal');
     },
   };
 }

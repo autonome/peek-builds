@@ -89,6 +89,8 @@ import {
   getFrontWindowId,
   getFrontPageHostId,
   getWindowModeName,
+  getWindowIdFor,
+  getNativeWindowFor,
   type MachineWindowSpec,
 } from './window-state-singleton.js';
 import { isSatelliteRegistration } from './window-state.js';
@@ -635,8 +637,12 @@ export function openNewPageWindow(): void {
     trackingSourceId: 'shortcut',
   };
 
-  // Inherit space mode from the front (last focused visible) window
-  const frontId = getFrontWindowId();
+  // Inherit space mode from the front (last focused visible) window. The
+  // machine speaks WM WindowId; the context store is still keyed by Electron
+  // window ids, so join through the front's native handle.
+  const front = getFrontWindowId();
+  const frontWin = front != null ? getNativeWindowFor(front) : null;
+  const frontId = frontWin ? frontWin.id : null;
   if (frontId != null) {
     try {
       const modeEntry = getContextEntry('mode', frontId);
@@ -1066,8 +1072,7 @@ function assembleHybridPageHost(
   // closed/enter-leave-fullscreen listeners + drives front/fullscreen/Esc.
   // Satellite = the overlay/palette focus-group surfaces; peeks/slides
   // (quick-view) stay front-eligible.
-  registerWindowWithMachine({
-    id: baseWin.id,
+  const hostMachineId = registerWindowWithMachine({
     kind: 'page-host',
     role,
     satellite: role === 'overlay' || role === 'palette',
@@ -1144,12 +1149,12 @@ function assembleHybridPageHost(
     // animation, so here we only DROP fullscreen synchronously if the host is still
     // in it — enough to keep macOS from stranding a black Space — and never await.
     try {
-      const mode = getWindowModeName(baseWin.id);
+      const mode = getWindowModeName(hostMachineId);
       if (mode != null && mode !== 'normal' && !baseWin.isDestroyed()) {
         // Drop fullscreen synchronously through the machine's single
         // setFullScreen owner (the adapter's SET_FULLSCREEN effect runs
         // synchronously; we don't await the ~600ms settle — quit can't block).
-        dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: baseWin.id, desired: false });
+        dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: hostMachineId, desired: false });
       }
     } catch { /* host gone mid-quit — nothing to exit */ }
     finalizeWindowClose(baseWin.id, {
@@ -1556,7 +1561,10 @@ export function wireHybridContentEvents(
       // debounce stay here (input hygiene); the landed id is first-responder
       // noise — `decideEscape` targets `front`.
       event.preventDefault();
-      dispatchWindowEvent({ type: 'ESC_PRESSED', landedId: hostWindowId });
+      // Resolve the host's WM WindowId at keypress time (registration happened
+      // at window creation); an unregistered host degrades to 'global' — the
+      // landed id is first-responder noise either way.
+      dispatchWindowEvent({ type: 'ESC_PRESSED', landedId: getWindowIdFor(hostWindowId) ?? 'global' });
       return;
     }
 
@@ -3412,8 +3420,7 @@ export function registerWindowHandlers(): void {
       // ineligibility (satellite) is decided by the shared
       // `isSatelliteRegistration` predicate — see its doc for why a modal /
       // non-focusable window must never become `front`.
-      registerWindowWithMachine({
-        id: win.id,
+      const machineWindowId = registerWindowWithMachine({
         kind: 'browser',
         role,
         satellite: isSatelliteRegistration(role, {
@@ -3821,7 +3828,7 @@ export function registerWindowHandlers(): void {
         // `decideEscape` step 1 (`switcher.open → close-switcher`) fires. The
         // overlay WINDOW lifecycle (teardown/focus-restore/cooldowns) stays
         // owned by izui + main.ts (staged cutover); this is state-mirror only.
-        dispatchWindowEvent({ type: 'SWITCHER_OPENED', windowId: win.id });
+        dispatchWindowEvent({ type: 'SWITCHER_OPENED', windowId: machineWindowId });
       }
 
       // Notify HUD and other listeners that a window was opened

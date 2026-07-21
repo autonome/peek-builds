@@ -22,11 +22,10 @@
 import type { BaseWindow, BrowserWindow, WebContents } from 'electron';
 import { WindowOsAdapter, type RegisterWindowSpec } from './window-os-adapter.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import type { WindowEvent, FsMode, Rectangle, IzuiSession, WindowKind, EscapeMode } from './window-state.js';
+import type { WindowEvent, FsMode, Rectangle, IzuiSession, WindowId, WindowKind, EscapeMode } from './window-state.js';
 
 /** Register-spec that accepts real Electron window handles (both kinds satisfy the adapter's structural `NativeWindow`). */
 export interface MachineWindowSpec {
-  id: number;
   kind: WindowKind;
   role: string;
   satellite: boolean;
@@ -82,12 +81,40 @@ function clampSession(state: string): IzuiSession {
   return state === 'overlay' ? 'active' : (state as IzuiSession);
 }
 
-/** Register a window (both kinds) with the machine + attach its native listeners. */
-export function registerWindowWithMachine(spec: MachineWindowSpec): void {
+/**
+ * Register a window (both kinds) with the machine + attach its native
+ * listeners. Returns the WM-minted `WindowId` for this window (stable across
+ * duplicate registrations of the same native window).
+ */
+export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
   // Both BaseWindow and BrowserWindow satisfy the adapter's structural
   // `NativeWindow`; the electron typed-overload `on` isn't assignable to the
   // loose `on` shape, so bridge with a single cast here (not at every call site).
-  getWindowOsAdapter().registerWindow(spec as unknown as RegisterWindowSpec);
+  return getWindowOsAdapter().registerWindow(spec as unknown as RegisterWindowSpec);
+}
+
+/**
+ * The WM `WindowId` for a native window handle — or for a numeric ELECTRON
+ * window id a legacy Electron-keyed registry (hybrid registry, windowRegistry,
+ * renderer-facing tile IPC) still holds. `null` when never registered / gone.
+ *
+ * This is the ONE sanctioned WM↔platform id conversion surface (with
+ * `getNativeWindowFor` below); it delegates to the adapter's private maps. No
+ * other module may keep its own WindowId↔Electron-id mapping.
+ */
+export function getWindowIdFor(win: BaseWindow | BrowserWindow | number): WindowId | null {
+  // Same structural-`NativeWindow` bridge cast as `registerWindowWithMachine`.
+  return getWindowOsAdapter().getWindowIdFor(win as unknown as RegisterWindowSpec['win'] | number);
+}
+
+/**
+ * The live native window handle for a WM `WindowId`, or `null` when
+ * unregistered/destroyed. Legacy consumers use this to join a machine id back
+ * onto the Electron-keyed registries they still run on (a later migration step
+ * re-keys those registries and deletes the need).
+ */
+export function getNativeWindowFor(id: WindowId): BaseWindow | BrowserWindow | null {
+  return getWindowOsAdapter().getNativeWindowFor(id) as unknown as BaseWindow | BrowserWindow | null;
 }
 
 /** Feed an event into the machine (runs effects + Esc-grab reconcile + log). */
@@ -96,7 +123,7 @@ export function dispatchWindowEvent(event: WindowEvent): void {
 }
 
 /** THE target window id (command / close / Esc / session-save focused descriptor). */
-export function getFrontWindowId(): number | null {
+export function getFrontWindowId(): WindowId | null {
   return getWindowOsAdapter().getOwner().getFrontWindowId();
 }
 
@@ -105,7 +132,7 @@ export function getFrontWindowId(): number | null {
  * `getActiveHybridWindowId`): "the frontmost hybrid page host the shared chrome
  * overlay frames itself over".
  */
-export function getFrontPageHostId(): number | null {
+export function getFrontPageHostId(): WindowId | null {
   const owner = getWindowOsAdapter().getOwner();
   const front = owner.getFrontWindowId();
   if (front == null) return null;
@@ -118,7 +145,7 @@ export function getFrontPageHostId(): number | null {
  * `onActiveHybridWindowChange`). Fires with the new front page-host id (or null)
  * only when it actually changes. Returns an unsubscribe function.
  */
-export function subscribeFrontChange(cb: (frontPageHostId: number | null) => void): () => void {
+export function subscribeFrontChange(cb: (frontPageHostId: WindowId | null) => void): () => void {
   let last = getFrontPageHostId();
   return getWindowOsAdapter().getOwner().subscribe(() => {
     const now = getFrontPageHostId();
@@ -130,27 +157,27 @@ export function subscribeFrontChange(cb: (frontPageHostId: number | null) => voi
 }
 
 /** Resolve when window `id` reaches fullscreen `mode` (the settle-await seam). */
-export function waitForMode(id: number, mode: FsMode['name']): Promise<void> {
+export function waitForMode(id: WindowId, mode: FsMode['name']): Promise<void> {
   return getWindowOsAdapter().getOwner().waitForMode(id, mode);
 }
 
 /** The current fullscreen mode name for `id`, or null if unregistered. */
-export function getWindowModeName(id: number): FsMode['name'] | null {
+export function getWindowModeName(id: WindowId): FsMode['name'] | null {
   return getWindowOsAdapter().getOwner().getWindowMode(id);
 }
 
 /** The pre-fullscreen bounds stash for `id` (replaces `preFullScreenBounds`). */
-export function getWindowPreBounds(id: number): Rectangle | null {
+export function getWindowPreBounds(id: WindowId): Rectangle | null {
   return getWindowOsAdapter().getOwner().getWindowPreBounds(id);
 }
 
 /** The devtools fallback target: MRU http(s) window (replaces `getLastContentWindowId`). */
-export function getDevtoolsTargetId(): number | null {
+export function getDevtoolsTargetId(): WindowId | null {
   return getWindowOsAdapter().getOwner().getDevtoolsTargetId();
 }
 
 /** A window's MRU focus rank (replaces `focus-order.ts` `getFocusOrder`). 0 if unknown. */
-export function getFocusOrder(id: number): number {
+export function getFocusOrder(id: WindowId): number {
   return getWindowOsAdapter().getOwner().getWindowFocusSeq(id);
 }
 

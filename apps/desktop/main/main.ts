@@ -405,7 +405,6 @@ export async function initialize(): Promise<void> {
     // predicate — same rule as the ipc.ts window-open site. A tile defaults to
     // the front-eligible 'workspace' role.
     registerWindow: (win, role) => registerWindowWithMachine({
-      id: win.id,
       kind: 'browser',
       role: role ?? 'workspace',
       satellite: isSatelliteRegistration(role ?? 'workspace', { focusable: win.isFocusable() }),

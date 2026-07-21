@@ -13,7 +13,7 @@ import { BrowserWindow, dialog, screen, ipcMain } from 'electron';
 import type { IpcMainEvent } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
-import { getFocusOrder, getFrontWindowId } from './window-state-singleton.js';
+import { getFocusOrder, getFrontWindowId, getWindowIdFor, getNativeWindowFor } from './window-state-singleton.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
 import type { ClosedWindowEntry } from './main.js';
@@ -479,7 +479,12 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   // some unrelated window that just happens to be first in iteration
   // order. The machine's `front` excludes modals/overlays/bg (satellites) and
   // survives focus shifts to other apps, so it captures user intent.
-  const lastFocusedId = getFrontWindowId();
+  // The machine speaks WM WindowId; the descriptor loop below is keyed by
+  // Electron window ids (the registries' key space), so resolve the front's
+  // native handle and compare on ITS id.
+  const front = getFrontWindowId();
+  const frontWin = front != null ? getNativeWindowFor(front) : null;
+  const lastFocusedId = frontWin ? frontWin.id : null;
 
   for (const [id, winData] of registeredWindows) {
     const win = getLiveWindow(id);
@@ -627,7 +632,13 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
       bounds: windowBounds,
       source: winData.source,
       params: sanitized,
-      zOrder: getFocusOrder(id),
+      // getFocusOrder is machine-keyed (WM WindowId); `id` is the registry's
+      // Electron id — convert through the sanctioned mapping. Unregistered
+      // windows rank 0, same as the machine's own "never focused" answer.
+      zOrder: (() => {
+        const machineId = getWindowIdFor(id);
+        return machineId != null ? getFocusOrder(machineId) : 0;
+      })(),
       focused: lastFocusedId != null && id === lastFocusedId,
       context: windowContext,
     });

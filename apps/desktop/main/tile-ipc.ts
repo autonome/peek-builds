@@ -17,6 +17,7 @@
  */
 
 import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme, screen, app, shell } from 'electron';
+import type { BaseWindow } from 'electron';
 import { broadcast, getAllLiveWindows, getAllWindowRefs, getLiveWindow, getWindowRef, realize, windowFromWebContents } from './window-registry.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -128,6 +129,8 @@ import {
   getWindowModeName,
   waitForMode,
   dispatchWindowEvent,
+  getWindowIdFor,
+  getNativeWindowFor,
 } from './window-state-singleton.js';
 import {
   registerGlobalShortcut,
@@ -3044,10 +3047,11 @@ export function registerTileIpcHandlers(): void {
           // machine, the single setFullScreen owner) so a fullscreen host hidden
           // mid-state doesn't strand a black macOS Space. No-op when not
           // fullscreen. Re-check destroyed after the await.
-          const fsMode = getWindowModeName(args.id);
-          if (fsMode != null && fsMode !== 'normal') {
-            dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: args.id, desired: false });
-            await waitForMode(args.id, 'normal');
+          const machineId = getWindowIdFor(args.id);
+          const fsMode = machineId != null ? getWindowModeName(machineId) : null;
+          if (machineId != null && fsMode != null && fsMode !== 'normal') {
+            dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, desired: false });
+            await waitForMode(machineId, 'normal');
           }
           if (hybrid.baseWin.isDestroyed()) return { success: true };
           hybrid.baseWin.hide();
@@ -3055,7 +3059,7 @@ export function registerTileIpcHandlers(): void {
           // machine moves `front` off this host synchronously and the shared
           // chrome overlay hides with it (same tick; the BaseWindow 'hide' event
           // the adapter also handles lags on macOS).
-          dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: args.id });
+          if (machineId != null) dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: machineId });
           return { success: true };
         }
         return { success: false, error: 'Window not found' };
@@ -3568,16 +3572,30 @@ export function registerTileIpcHandlers(): void {
       // fullscreen-lookalike session-save fix); the reducer ignores `bounds` on
       // every other edge. An unregistered id is a reducer no-op (both browser
       // and hybrid windows register at creation).
-      const targetId = typeof args.id === 'number' ? args.id : getFrontWindowId();
-      if (targetId == null) {
+      // Resolve the target both ways at the seam: a renderer-supplied `args.id`
+      // is an ELECTRON window id (the tile IPC surface stays numeric until the
+      // id-space collapse lands); no id means "the front window", which the
+      // machine hands back as a WM WindowId.
+      let machineId: ReturnType<typeof getFrontWindowId> = null;
+      let boundsWin: ReturnType<typeof getLiveWindow> | BaseWindow | null = null;
+      if (typeof args.id === 'number') {
+        machineId = getWindowIdFor(args.id);
+        boundsWin = getLiveWindow(args.id) ?? getHybridWindow(args.id)?.baseWin ?? null;
+      } else {
+        machineId = getFrontWindowId();
+        boundsWin = machineId != null ? getNativeWindowFor(machineId) : null;
+      }
+      if (machineId == null) {
+        // An explicit id that never registered with the machine was a reducer
+        // no-op before the id-space split too — keep that a silent success.
+        if (typeof args.id === 'number') return { success: true };
         return { success: false, error: 'Window not found' };
       }
-      const boundsWin = getLiveWindow(targetId) ?? getHybridWindow(targetId)?.baseWin ?? null;
       let bounds: { x: number; y: number; width: number; height: number } | null = null;
       try {
         if (boundsWin && !boundsWin.isDestroyed()) bounds = boundsWin.getBounds();
       } catch { /* window gone mid-request */ }
-      dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: targetId, bounds });
+      dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, bounds });
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -3613,7 +3631,13 @@ export function registerTileIpcHandlers(): void {
       // overlays) can never be `front`, so the modal-exclusion and overlay
       // redirects that resolver did are now structural. A focused hybrid host
       // (a BaseWindow `getFocusedWindow()` returns null for) is `front` too.
-      return { success: true, data: getFrontWindowId() };
+      //
+      // The renderer-facing id surface stays ELECTRON-numeric until the
+      // id-space collapse lands, so resolve the machine's front back to its
+      // native window's id at this seam.
+      const front = getFrontWindowId();
+      const frontWin = front != null ? getNativeWindowFor(front) : null;
+      return { success: true, data: frontWin ? frontWin.id : null };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
@@ -3645,7 +3669,15 @@ export function registerTileIpcHandlers(): void {
       return { success: false, error: 'trustedBuiltin required for tile:window:devtools' };
     }
     try {
-      const targetId = args.id ?? getDevtoolsTargetId() ?? getFrontWindowId();
+      // args.id is an ELECTRON id from the renderer; the machine's selectors
+      // return WM WindowIds — resolve both to a native Electron id at the seam
+      // (the renderer-facing surface stays numeric until the id-space collapse).
+      let targetId: number | null = typeof args.id === 'number' ? args.id : null;
+      if (targetId == null) {
+        const machineId = getDevtoolsTargetId() ?? getFrontWindowId();
+        const nativeWin = machineId != null ? getNativeWindowFor(machineId) : null;
+        targetId = nativeWin ? nativeWin.id : null;
+      }
       if (!targetId) {
         return { success: false, error: 'No focused window available' };
       }
@@ -4326,11 +4358,12 @@ export function registerTileIpcHandlers(): void {
     }
 
     if (resolvedId === null) {
-      const tracked = getFrontWindowId();
-      if (tracked != null) {
-        const trackedWin = getLiveWindow(tracked);
+      const front = getFrontWindowId();
+      const frontWin = front != null ? getNativeWindowFor(front) : null;
+      if (frontWin) {
+        const trackedWin = getLiveWindow(frontWin.id);
         if (trackedWin) {
-          resolvedId = tracked;
+          resolvedId = frontWin.id;
         }
       }
     }
@@ -6861,7 +6894,14 @@ export function registerTileIpcHandlers(): void {
   // All require trustedBuiltin — only the core background renderer uses these.
 
   const tileResolveWebWindow = (windowId?: number): BrowserWindow | null => {
-    const id = windowId ?? getFrontWindowId();
+    // Caller-supplied ids are ELECTRON ids (renderer surface); the machine's
+    // front is a WM WindowId — resolve it to the native window's id first.
+    let id: number | null = typeof windowId === 'number' ? windowId : null;
+    if (id == null) {
+      const front = getFrontWindowId();
+      const frontWin = front != null ? getNativeWindowFor(front) : null;
+      id = frontWin ? frontWin.id : null;
+    }
     if (!id) return null;
     const win = getLiveWindow(id);
     if (!win) return null;

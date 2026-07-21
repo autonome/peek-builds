@@ -14,7 +14,7 @@
 import { publish } from './pubsub.js';
 import { BrowserWindow, webContents as electronWebContents } from 'electron';
 import { getAllHybridWindows } from './hybrid-page-host-registry.js';
-import { getWindowModeName } from './window-state-singleton.js';
+import { getWindowModeName, getWindowIdFor } from './window-state-singleton.js';
 import { collectProcessMetrics, probeVisibilityState } from './process-metrics.js';
 
 const SYSTEM_ADDRESS = 'peek://system/';
@@ -93,6 +93,9 @@ function debugListWindows(): CliResult {
   // report the CONTENT webContents id (the useful target for debug-eval) and
   // its live url/title.
   for (const h of getAllHybridWindows()) {
+    // The hybrid registry is Electron-id-keyed; the machine is WindowId-keyed —
+    // convert through the sanctioned mapping for the fullscreen-mode read.
+    const machineId = getWindowIdFor(h.windowId);
     out.push({
       windowId: h.windowId,
       webContentsId: h.contentWC.id,
@@ -105,7 +108,7 @@ function debugListWindows(): CliResult {
       // dimensions, so renderer-side probes can't tell them apart — this is the
       // window-state machine's SETTLED fullscreen mode (enter/leave-full-screen
       // driven).
-      nativeFullScreen: getWindowModeName(h.windowId) === 'fullscreen',
+      nativeFullScreen: machineId != null && getWindowModeName(machineId) === 'fullscreen',
       bounds: (() => { try { return h.baseWin.getBounds(); } catch { return undefined; } })(),
     });
   }

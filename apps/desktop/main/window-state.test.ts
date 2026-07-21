@@ -54,9 +54,17 @@ import {
   type FsMode,
   type IzuiSession,
   type Rectangle,
+  type WindowId,
 } from './window-state.js';
 
 // ── Test builders ────────────────────────────────────────────────────────────
+
+/**
+ * Craft a WM WindowId for tests. Mirrors the adapter's mint format ("wm-N");
+ * the pure reducer never checks the shape, only identity — this exists so the
+ * tests can keep speaking small numbers while the type stays branded.
+ */
+const wid = (n: number): WindowId => `wm-${n}` as WindowId;
 
 const ROLES = ['palette', 'quick-view', 'overlay', 'workspace', 'content', 'child-content', 'utility'] as const;
 const FS_NAMES: FsMode['name'][] = ['normal', 'entering-fullscreen', 'fullscreen', 'leaving-fullscreen'];
@@ -105,8 +113,8 @@ function openWindow(
   opts: { kind?: WindowRecord['kind']; role?: string; satellite?: boolean; escapeMode?: WindowRecord['escapeMode']; focused?: boolean } = {},
 ): AppWindowState {
   const { state: s1 } = drive(state, [
-    { type: 'WINDOW_REGISTERED', id, kind: opts.kind ?? 'page-host', role: opts.role ?? 'content', satellite: opts.satellite ?? false, escapeMode: opts.escapeMode },
-    { type: 'WINDOW_SHOWN', id, focused: opts.focused ?? true },
+    { type: 'WINDOW_REGISTERED', id: wid(id), kind: opts.kind ?? 'page-host', role: opts.role ?? 'content', satellite: opts.satellite ?? false, escapeMode: opts.escapeMode },
+    { type: 'WINDOW_SHOWN', id: wid(id), focused: opts.focused ?? true },
   ]);
   return s1;
 }
@@ -124,7 +132,7 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     session: IzuiSession,
   ): AppWindowState {
     const rec: WindowRecord = {
-      id: 1,
+      id: wid(1),
       kind: 'page-host',
       role,
       escapeMode,
@@ -133,9 +141,9 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       fsMode: fsOf(fsName, fsName === 'normal' ? null : BOUNDS),
       focusSeq: 1,
     };
-    const windows = new Map<number, WindowRecord>([[1, rec]]);
+    const windows = new Map<WindowId, WindowRecord>([[wid(1), rec]]);
     // A satellite can never be front (invariant); otherwise the window is front.
-    const front = satellite ? null : 1;
+    const front = satellite ? null : wid(1);
     const state: AppWindowState = {
       appActive: true,
       session,
@@ -143,7 +151,7 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       // Unasserted, so the closing assertion step is exercised across the whole
       // matrix (it must stay total and invariant-preserving when it fires).
       frontAsserted: false,
-      switcher: switcherOpen ? { open: true, windowId: 2, previousFront: front } : { open: false },
+      switcher: switcherOpen ? { open: true, windowId: wid(2), previousFront: front } : { open: false },
       windows,
       focusSeqCounter: 1,
       escAsk: null,
@@ -154,33 +162,33 @@ describe('totality matrix — every (state-class x event) returns a defined tran
   }
 
   const events: WindowEvent[] = [
-    { type: 'WINDOW_REGISTERED', id: 3, kind: 'browser', role: 'content', satellite: false },
-    { type: 'WINDOW_SHOWN', id: 1, focused: true },
-    { type: 'WINDOW_SHOWN', id: 1, focused: false },
-    { type: 'WINDOW_HIDDEN', id: 1 },
-    { type: 'WINDOW_CLOSED', id: 1 },
-    { type: 'OS_FOCUS_GAINED', id: 1 },
+    { type: 'WINDOW_REGISTERED', id: wid(3), kind: 'browser', role: 'content', satellite: false },
+    { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
+    { type: 'WINDOW_SHOWN', id: wid(1), focused: false },
+    { type: 'WINDOW_HIDDEN', id: wid(1) },
+    { type: 'WINDOW_CLOSED', id: wid(1) },
+    { type: 'OS_FOCUS_GAINED', id: wid(1) },
     { type: 'OS_FOCUS_SETTLED_NULL' },
     { type: 'APP_ACTIVATED' },
     { type: 'APP_RESIGNED' },
     { type: 'SESSION_CHANGED', session: 'active' },
-    { type: 'FULLSCREEN_REQUESTED', id: 1 },
-    { type: 'FULLSCREEN_REQUESTED', id: 1, desired: true, bounds: BOUNDS },
-    { type: 'FULLSCREEN_REQUESTED', id: 1, desired: false },
+    { type: 'FULLSCREEN_REQUESTED', id: wid(1) },
+    { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: true, bounds: BOUNDS },
+    { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: false },
     { type: 'FULLSCREEN_REQUESTED' }, // id defaults to front
-    { type: 'OS_FULLSCREEN_ENTERED', id: 1 },
-    { type: 'OS_FULLSCREEN_LEFT', id: 1 },
-    { type: 'FULLSCREEN_SETTLE_TIMEOUT', id: 1 },
-    { type: 'ESC_PRESSED', landedId: 1 },
+    { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
+    { type: 'OS_FULLSCREEN_LEFT', id: wid(1) },
+    { type: 'FULLSCREEN_SETTLE_TIMEOUT', id: wid(1) },
+    { type: 'ESC_PRESSED', landedId: wid(1) },
     { type: 'ESC_PRESSED', landedId: 'global' },
-    { type: 'ESC_RENDERER_ANSWER', id: 1, handled: true, seq: 1 },
-    { type: 'ESC_RENDERER_ANSWER', id: 1, handled: false, seq: 1 },
-    { type: 'ESC_RENDERER_ANSWER', id: 1, handled: false, close: true, seq: 1 },
+    { type: 'ESC_RENDERER_ANSWER', id: wid(1), handled: true, seq: 1 },
+    { type: 'ESC_RENDERER_ANSWER', id: wid(1), handled: false, seq: 1 },
+    { type: 'ESC_RENDERER_ANSWER', id: wid(1), handled: false, close: true, seq: 1 },
     { type: 'SWITCHER_OPEN_REQUESTED' },
-    { type: 'SWITCHER_SELECTED', id: 1 },
+    { type: 'SWITCHER_SELECTED', id: wid(1) },
     { type: 'SWITCHER_SELECTED', id: null },
-    { type: 'SWITCHER_OPENED', windowId: 2 },
-    { type: 'OS_FOCUS_GAINED', id: 1, lastHttpUrl: 'https://example.com/' },
+    { type: 'SWITCHER_OPENED', windowId: wid(2) },
+    { type: 'OS_FOCUS_GAINED', id: wid(1), lastHttpUrl: 'https://example.com/' },
   ];
 
   it('reduce is total: defined result + front invariant holds for all combinations', () => {
@@ -229,7 +237,7 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       for (const role of ROLES) {
         for (const escapeMode of ESC_MODES) {
           const state = buildStateClass('normal', false, false, escapeMode, role, session);
-          const decision = decideEscapeUnhandled(state, 1);
+          const decision = decideEscapeUnhandled(state, wid(1));
           if (!['close-window', 'open-switcher', 'nothing'].includes(decision.kind)) {
             failures.push(`${session}/${role}/${escapeMode}: undefined unhandled decision ${JSON.stringify(decision)}`);
           }
@@ -258,25 +266,25 @@ describe('decideEscape (steps 1-5, total)', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { role: 'content', escapeMode: 'ignore' });
     const { state } = drive(s, [
-      { type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS },
-      { type: 'OS_FULLSCREEN_ENTERED', id: 1 },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
     ]);
     // Even fullscreen, ignore wins (mirrors escExitsHybridFullscreen ignore rule).
-    assert.deepStrictEqual(decideEscape(state), { kind: 'pass-through', id: 1 });
+    assert.deepStrictEqual(decideEscape(state), { kind: 'pass-through', id: wid(1) });
   });
 
   it('step 4: any non-normal fsMode -> exit-fullscreen (entering/full/leaving)', () => {
     for (const name of ['entering-fullscreen', 'fullscreen', 'leaving-fullscreen'] as FsMode['name'][]) {
-      const rec: WindowRecord = { id: 1, kind: 'page-host', role: 'content', satellite: false, visible: true, fsMode: fsOf(name, BOUNDS), focusSeq: 1 };
-      const state: AppWindowState = { appActive: true, session: 'active', front: 1, frontAsserted: true, switcher: { open: false }, windows: new Map([[1, rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
-      assert.deepStrictEqual(decideEscape(state), { kind: 'exit-fullscreen', id: 1 }, `mode ${name}`);
+      const rec: WindowRecord = { id: wid(1), kind: 'page-host', role: 'content', satellite: false, visible: true, fsMode: fsOf(name, BOUNDS), focusSeq: 1 };
+      const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), frontAsserted: true, switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
+      assert.deepStrictEqual(decideEscape(state), { kind: 'exit-fullscreen', id: wid(1) }, `mode ${name}`);
     }
   });
 
   it('step 5: normal, non-ignore -> ask-renderer(front)', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { role: 'content' });
-    assert.deepStrictEqual(decideEscape(s), { kind: 'ask-renderer', id: 1 });
+    assert.deepStrictEqual(decideEscape(s), { kind: 'ask-renderer', id: wid(1) });
   });
 });
 
@@ -328,41 +336,41 @@ describe('historical-bug replays (§5.2)', () => {
   it('(a) Space-switch settings clobber: transition-pin keeps front on the fullscreening host', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'page-host', role: 'content' }); // front = 1
-    s = drive(s, [{ type: 'WINDOW_REGISTERED', id: 2, kind: 'browser', role: 'workspace', satellite: false }, { type: 'WINDOW_SHOWN', id: 2, focused: false }]).state;
-    assert.strictEqual(getFrontWindowId(s), 1, 'host is front after a non-focused settings window shows');
+    s = drive(s, [{ type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'workspace', satellite: false }, { type: 'WINDOW_SHOWN', id: wid(2), focused: false }]).state;
+    assert.strictEqual(getFrontWindowId(s), wid(1), 'host is front after a non-focused settings window shows');
 
     // Begin fullscreen on the host; a Space-switch focus lands on settings mid-animation.
     s = drive(s, [
-      { type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS },
-      { type: 'OS_FOCUS_GAINED', id: 2 }, // Space-switch churn while host is entering-fullscreen
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS },
+      { type: 'OS_FOCUS_GAINED', id: wid(2) }, // Space-switch churn while host is entering-fullscreen
     ]).state;
-    assert.strictEqual(getWindowMode(s, 1), 'entering-fullscreen');
-    assert.strictEqual(getFrontWindowId(s), 1, 'transition pin: settings focus during enter must NOT clobber front');
+    assert.strictEqual(getWindowMode(s, wid(1)), 'entering-fullscreen');
+    assert.strictEqual(getFrontWindowId(s), wid(1), 'transition pin: settings focus during enter must NOT clobber front');
 
-    s = drive(s, [{ type: 'OS_FULLSCREEN_ENTERED', id: 1 }]).state;
-    assert.strictEqual(getFrontWindowId(s), 1, 'front stays the fullscreen host, never the settings window');
-    assert.strictEqual(getWindowMode(s, 1), 'fullscreen');
+    s = drive(s, [{ type: 'OS_FULLSCREEN_ENTERED', id: wid(1) }]).state;
+    assert.strictEqual(getFrontWindowId(s), wid(1), 'front stays the fullscreen host, never the settings window');
+    assert.strictEqual(getWindowMode(s, wid(1)), 'fullscreen');
   });
 
   it('(b) S2-null focus lag: OS_FOCUS_SETTLED_NULL keeps front (the target survives an app switch)', () => {
     let s = createInitialState();
     s = openWindow(s, 7, { kind: 'page-host', role: 'content' });
-    assert.strictEqual(getFrontWindowId(s), 7);
+    assert.strictEqual(getFrontWindowId(s), wid(7));
     s = drive(s, [{ type: 'OS_FOCUS_SETTLED_NULL' }]).state;
-    assert.strictEqual(getFrontWindowId(s), 7, 'front must NOT go null just because OS focus left all windows');
+    assert.strictEqual(getFrontWindowId(s), wid(7), 'front must NOT go null just because OS focus left all windows');
   });
 
   it('(c) grab-alive-during-fullscreen: ESC_PRESSED(global) yields EXIT_FULLSCREEN, never OPEN_SWITCHER', () => {
     let s = createInitialState();
     s = openWindow(s, 7, { kind: 'page-host', role: 'content' });
     s = drive(s, [
-      { type: 'FULLSCREEN_REQUESTED', id: 7, bounds: BOUNDS },
-      { type: 'OS_FULLSCREEN_ENTERED', id: 7 },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(7), bounds: BOUNDS },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(7) },
     ]).state;
-    assert.strictEqual(getWindowMode(s, 7), 'fullscreen');
+    assert.strictEqual(getWindowMode(s, wid(7)), 'fullscreen');
 
     // The stale OS grab dispatches the SAME ESC event as before-input-event.
-    assert.deepStrictEqual(decideEscape(s), { kind: 'exit-fullscreen', id: 7 });
+    assert.deepStrictEqual(decideEscape(s), { kind: 'exit-fullscreen', id: wid(7) });
     const { effects } = drive(s, [{ type: 'ESC_PRESSED', landedId: 'global' }]);
     assert.ok(hasEffect(effects, 'EXIT_FULLSCREEN'), 'global ESC over a fullscreen host must exit fullscreen');
     assert.ok(!hasEffect(effects, 'OPEN_SWITCHER_WINDOW'), 'must NOT open the switcher over a fullscreen window');
@@ -372,18 +380,18 @@ describe('historical-bug replays (§5.2)', () => {
     let s = createInitialState();
     s = openWindow(s, 3, { kind: 'page-host', role: 'content' });
     s = drive(s, [
-      { type: 'FULLSCREEN_REQUESTED', id: 3, bounds: BOUNDS },
-      { type: 'OS_FULLSCREEN_ENTERED', id: 3 },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(3), bounds: BOUNDS },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(3) },
     ]).state;
-    const first = drive(s, [{ type: 'ESC_PRESSED', landedId: 3 }]);
+    const first = drive(s, [{ type: 'ESC_PRESSED', landedId: wid(3) }]);
     assert.ok(hasEffect(first.effects, 'EXIT_FULLSCREEN'));
     assert.ok(!hasEffect(first.effects, 'ASK_RENDERER'), 'no renderer ask while fullscreen');
     assert.ok(!hasEffect(first.effects, 'OPEN_SWITCHER_WINDOW'));
 
     // Only once fullscreen is actually left does ESC reach the renderer/policy.
-    const left = drive(first.state, [{ type: 'OS_FULLSCREEN_LEFT', id: 3 }]);
-    assert.strictEqual(getWindowMode(left.state, 3), 'normal');
-    assert.deepStrictEqual(decideEscape(left.state), { kind: 'ask-renderer', id: 3 });
+    const left = drive(first.state, [{ type: 'OS_FULLSCREEN_LEFT', id: wid(3) }]);
+    assert.strictEqual(getWindowMode(left.state, wid(3)), 'normal');
+    assert.deepStrictEqual(decideEscape(left.state), { kind: 'ask-renderer', id: wid(3) });
   });
 
   it('(e) palette-issuer exclusion: a satellite palette focus never clobbers the front page', () => {
@@ -391,27 +399,27 @@ describe('historical-bug replays (§5.2)', () => {
     s = openWindow(s, 1, { kind: 'page-host', role: 'content' }); // front = 1
     // The command palette opens and takes OS focus — declared satellite.
     s = drive(s, [
-      { type: 'WINDOW_REGISTERED', id: 2, kind: 'browser', role: 'palette', satellite: true },
-      { type: 'WINDOW_SHOWN', id: 2, focused: true },
-      { type: 'OS_FOCUS_GAINED', id: 2 },
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: true },
+      { type: 'OS_FOCUS_GAINED', id: wid(2) },
     ]).state;
-    assert.strictEqual(getFrontWindowId(s), 1, 'the palette (command issuer) must never become the command target');
+    assert.strictEqual(getFrontWindowId(s), wid(1), 'the palette (command issuer) must never become the command target');
   });
 
   it('(f) OS/green-button fullscreen on a settings window: preBounds legitimately null, NOT "missing"', () => {
     let s = createInitialState();
     s = openWindow(s, 5, { kind: 'browser', role: 'workspace' });
     // Green-button / OS-initiated fullscreen: settle event with no prior request.
-    s = drive(s, [{ type: 'OS_FULLSCREEN_ENTERED', id: 5 }]).state;
+    s = drive(s, [{ type: 'OS_FULLSCREEN_ENTERED', id: wid(5) }]).state;
     const snap = snapshot(s);
-    const rec = snap.windows.find((w) => w.id === 5)!;
+    const rec = snap.windows.find((w) => w.id === wid(5))!;
     assert.strictEqual(rec.fsMode.name, 'fullscreen');
     assert.strictEqual((rec.fsMode as { preBounds: Rectangle | null }).preBounds, null, 'OS-initiated entry has a legitimately-null stash');
     // It IS fullscreen for every purpose: ESC exits it (not treated as missing/normal).
-    assert.deepStrictEqual(decideEscape(s), { kind: 'exit-fullscreen', id: 5 });
+    assert.deepStrictEqual(decideEscape(s), { kind: 'exit-fullscreen', id: wid(5) });
     // And the settled leave returns it to normal.
-    s = drive(s, [{ type: 'OS_FULLSCREEN_LEFT', id: 5 }]).state;
-    assert.strictEqual(getWindowMode(s, 5), 'normal');
+    s = drive(s, [{ type: 'OS_FULLSCREEN_LEFT', id: wid(5) }]).state;
+    assert.strictEqual(getWindowMode(s, wid(5)), 'normal');
   });
 });
 
@@ -425,11 +433,11 @@ describe('ported: resolveHybridEscapeTarget -> ESC target is always `front`', ()
     let s = createInitialState();
     s = openWindow(s, 11, { kind: 'page-host', role: 'content' });          // front 11
     s = openWindow(s, 22, { kind: 'page-host', role: 'quick-view' });       // front -> 22
-    assert.strictEqual(getFrontWindowId(s), 22);
+    assert.strictEqual(getFrontWindowId(s), wid(22));
     // ESC lands (as first-responder noise) on 11; decision uses front 22.
-    assert.deepStrictEqual(decideEscape(s), { kind: 'ask-renderer', id: 22 });
+    assert.deepStrictEqual(decideEscape(s), { kind: 'ask-renderer', id: wid(22) });
     // Renderer declines -> quick-view always closes.
-    assert.deepStrictEqual(decideEscapeUnhandled(s, 22), { kind: 'close-window', id: 22 });
+    assert.deepStrictEqual(decideEscapeUnhandled(s, wid(22)), { kind: 'close-window', id: wid(22) });
   });
 });
 
@@ -438,17 +446,17 @@ describe('ported: escExitsHybridFullscreen -> decideEscape step 4 vs escapeMode 
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'page-host', role: 'content', escapeMode });
     return drive(s, [
-      { type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS },
-      { type: 'OS_FULLSCREEN_ENTERED', id: 1 },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
     ]).state;
   }
   it('fullscreen + non-ignore -> exit-fullscreen', () => {
-    assert.deepStrictEqual(decideEscape(fullscreenFront(undefined)), { kind: 'exit-fullscreen', id: 1 });
-    assert.deepStrictEqual(decideEscape(fullscreenFront('auto')), { kind: 'exit-fullscreen', id: 1 });
-    assert.deepStrictEqual(decideEscape(fullscreenFront('close')), { kind: 'exit-fullscreen', id: 1 });
+    assert.deepStrictEqual(decideEscape(fullscreenFront(undefined)), { kind: 'exit-fullscreen', id: wid(1) });
+    assert.deepStrictEqual(decideEscape(fullscreenFront('auto')), { kind: 'exit-fullscreen', id: wid(1) });
+    assert.deepStrictEqual(decideEscape(fullscreenFront('close')), { kind: 'exit-fullscreen', id: wid(1) });
   });
   it("escapeMode 'ignore' keeps winning even in fullscreen -> pass-through", () => {
-    assert.deepStrictEqual(decideEscape(fullscreenFront('ignore')), { kind: 'pass-through', id: 1 });
+    assert.deepStrictEqual(decideEscape(fullscreenFront('ignore')), { kind: 'pass-through', id: wid(1) });
   });
 });
 
@@ -470,27 +478,27 @@ describe('ported: resolveCloseTargetId / resolveFocusedVisibleWindowId -> `front
     let s = createInitialState();
     s = openWindow(s, 3, { kind: 'page-host', role: 'content' });  // host front
     s = drive(s, [
-      { type: 'WINDOW_REGISTERED', id: 7, kind: 'browser', role: 'overlay', satellite: true }, // shared chrome overlay
-      { type: 'WINDOW_SHOWN', id: 7, focused: true },
-      { type: 'OS_FOCUS_GAINED', id: 7 },
+      { type: 'WINDOW_REGISTERED', id: wid(7), kind: 'browser', role: 'overlay', satellite: true }, // shared chrome overlay
+      { type: 'WINDOW_SHOWN', id: wid(7), focused: true },
+      { type: 'OS_FOCUS_GAINED', id: wid(7) },
     ]).state;
-    assert.strictEqual(getFrontWindowId(s), 3, 'the chrome overlay is not the window the user means to act on');
+    assert.strictEqual(getFrontWindowId(s), wid(3), 'the chrome overlay is not the window the user means to act on');
   });
 
   it('a focused page-host wins as the command target (the tag-the-wrong-page bug)', () => {
     let s = createInitialState();
     s = openWindow(s, 9, { kind: 'page-host', role: 'content' });
-    assert.strictEqual(getFrontWindowId(s), 9);
+    assert.strictEqual(getFrontWindowId(s), wid(9));
   });
 
   it('a modal palette (satellite) is excluded as a target', () => {
     let s = createInitialState();
     s = openWindow(s, 9, { kind: 'page-host', role: 'content' });
     s = drive(s, [
-      { type: 'WINDOW_REGISTERED', id: 2, kind: 'browser', role: 'palette', satellite: true },
-      { type: 'WINDOW_SHOWN', id: 2, focused: true },
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: true },
     ]).state;
-    assert.strictEqual(getFrontWindowId(s), 9, 'the palette is the command issuer, never the target');
+    assert.strictEqual(getFrontWindowId(s), wid(9), 'the palette is the command issuer, never the target');
   });
 });
 
@@ -499,16 +507,16 @@ describe('ported: resolveCloseTargetId / resolveFocusedVisibleWindowId -> `front
 describe('ported: focused-window tracking -> front arbitration', () => {
   it('a normal visible focused window becomes front', () => {
     const s = openWindow(createInitialState(), 1, { kind: 'browser', role: 'content' });
-    assert.strictEqual(getFrontWindowId(s), 1);
+    assert.strictEqual(getFrontWindowId(s), wid(1));
   });
 
   it('a background / non-focusable / overlay surface (satellite) does NOT become front', () => {
     for (const role of ['workspace', 'overlay']) {
       let s = createInitialState();
       s = drive(s, [
-        { type: 'WINDOW_REGISTERED', id: 1, kind: 'browser', role, satellite: true },
-        { type: 'WINDOW_SHOWN', id: 1, focused: true },
-        { type: 'OS_FOCUS_GAINED', id: 1 },
+        { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role, satellite: true },
+        { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
+        { type: 'OS_FOCUS_GAINED', id: wid(1) },
       ]).state;
       assert.strictEqual(getFrontWindowId(s), null, `satellite role ${role} must not be front`);
     }
@@ -518,16 +526,16 @@ describe('ported: focused-window tracking -> front arbitration', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
     s = openWindow(s, 2, { kind: 'browser', role: 'content' });
-    assert.strictEqual(getFrontWindowId(s), 2);
+    assert.strictEqual(getFrontWindowId(s), wid(2));
   });
 
   it('closing the front window clears the stale id and picks the MRU successor', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
     s = openWindow(s, 2, { kind: 'browser', role: 'content' }); // front 2, 1 still visible
-    s = drive(s, [{ type: 'WINDOW_CLOSED', id: 2 }]).state;
-    assert.strictEqual(getFrontWindowId(s), 1, 'successor is the remaining visible window');
-    s = drive(s, [{ type: 'WINDOW_CLOSED', id: 1 }]).state;
+    s = drive(s, [{ type: 'WINDOW_CLOSED', id: wid(2) }]).state;
+    assert.strictEqual(getFrontWindowId(s), wid(1), 'successor is the remaining visible window');
+    s = drive(s, [{ type: 'WINDOW_CLOSED', id: wid(1) }]).state;
     assert.strictEqual(getFrontWindowId(s), null, 'no stale id remains');
   });
 
@@ -535,8 +543,8 @@ describe('ported: focused-window tracking -> front arbitration', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
     s = openWindow(s, 2, { kind: 'browser', role: 'content' }); // front 2
-    s = drive(s, [{ type: 'WINDOW_CLOSED', id: 1 }]).state;
-    assert.strictEqual(getFrontWindowId(s), 2);
+    s = drive(s, [{ type: 'WINDOW_CLOSED', id: wid(1) }]).state;
+    assert.strictEqual(getFrontWindowId(s), wid(2));
   });
 });
 
@@ -547,26 +555,26 @@ describe('ported: active-hybrid-window tracking -> front', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
     s = openWindow(s, 2, { kind: 'page-host', role: 'content' });
-    assert.strictEqual(getFrontWindowId(s), 2);
-    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: 1 }]).state;
-    assert.strictEqual(getFrontWindowId(s), 1);
+    assert.strictEqual(getFrontWindowId(s), wid(2));
+    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]).state;
+    assert.strictEqual(getFrontWindowId(s), wid(1));
   });
 
   it('focus landing on the overlay (satellite) keeps the content window as front', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
     s = drive(s, [
-      { type: 'WINDOW_REGISTERED', id: 9, kind: 'browser', role: 'overlay', satellite: true },
-      { type: 'WINDOW_SHOWN', id: 9, focused: true },
-      { type: 'OS_FOCUS_GAINED', id: 9 },
+      { type: 'WINDOW_REGISTERED', id: wid(9), kind: 'browser', role: 'overlay', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(9), focused: true },
+      { type: 'OS_FOCUS_GAINED', id: wid(9) },
     ]).state;
-    assert.strictEqual(getFrontWindowId(s), 1);
+    assert.strictEqual(getFrontWindowId(s), wid(1));
   });
 
   it('closing the front hybrid nulls front (no successor)', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
-    s = drive(s, [{ type: 'WINDOW_CLOSED', id: 1 }]).state;
+    s = drive(s, [{ type: 'WINDOW_CLOSED', id: wid(1) }]).state;
     assert.strictEqual(getFrontWindowId(s), null);
   });
 
@@ -577,49 +585,49 @@ describe('ported: active-hybrid-window tracking -> front', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
     s = drive(s, [{ type: 'OS_FOCUS_SETTLED_NULL' }]).state;
-    assert.strictEqual(getFrontWindowId(s), 1, 'front is corrected only by hide/close/next-focus, not by a null focus settle');
+    assert.strictEqual(getFrontWindowId(s), wid(1), 'front is corrected only by hide/close/next-focus, not by a null focus settle');
   });
 });
 
 describe('ported: pre-fullscreen bounds stash (aa34cb50 lookalike trap)', () => {
   function preBoundsOf(s: AppWindowState, id: number): Rectangle | null | 'no-field' {
-    const rec = snapshot(s).windows.find((w) => w.id === id)!;
+    const rec = snapshot(s).windows.find((w) => w.id === wid(id))!;
     if (rec.fsMode.name === 'normal') return 'no-field';
     return (rec.fsMode as { preBounds: Rectangle | null }).preBounds;
   }
 
   it('registers with no stash (normal has no preBounds field at all)', () => {
     const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    assert.strictEqual(getWindowMode(s, 1), 'normal');
+    assert.strictEqual(getWindowMode(s, wid(1)), 'normal');
     assert.strictEqual(preBoundsOf(s, 1), 'no-field');
   });
 
   it('enter-initiation stashes the PRE-fullscreen bounds (captured by the adapter, carried on the event)', () => {
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    s = drive(s, [{ type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS }]).state;
-    assert.strictEqual(getWindowMode(s, 1), 'entering-fullscreen');
+    s = drive(s, [{ type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS }]).state;
+    assert.strictEqual(getWindowMode(s, wid(1)), 'entering-fullscreen');
     assert.deepStrictEqual(preBoundsOf(s, 1), BOUNDS);
   });
 
   it('the stash survives the settled ENTER', () => {
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
     s = drive(s, [
-      { type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS },
-      { type: 'OS_FULLSCREEN_ENTERED', id: 1 },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
     ]).state;
-    assert.strictEqual(getWindowMode(s, 1), 'fullscreen');
+    assert.strictEqual(getWindowMode(s, wid(1)), 'fullscreen');
     assert.deepStrictEqual(preBoundsOf(s, 1), BOUNDS);
   });
 
   it('the settled LEAVE clears the stash (back to normal, live bounds authoritative)', () => {
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
     s = drive(s, [
-      { type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS },
-      { type: 'OS_FULLSCREEN_ENTERED', id: 1 },
-      { type: 'FULLSCREEN_REQUESTED', id: 1, desired: false },
-      { type: 'OS_FULLSCREEN_LEFT', id: 1 },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: false },
+      { type: 'OS_FULLSCREEN_LEFT', id: wid(1) },
     ]).state;
-    assert.strictEqual(getWindowMode(s, 1), 'normal');
+    assert.strictEqual(getWindowMode(s, wid(1)), 'normal');
     assert.strictEqual(preBoundsOf(s, 1), 'no-field');
   });
 });
@@ -630,73 +638,73 @@ describe('fullscreen transition table (§2.4)', () => {
   const base = () => openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
 
   it('normal + REQUEST(true) -> entering + SET_FULLSCREEN(true)', () => {
-    const { state, effects } = reduce(base(), { type: 'FULLSCREEN_REQUESTED', id: 1, desired: true, bounds: BOUNDS });
-    assert.strictEqual(getWindowMode(state, 1), 'entering-fullscreen');
+    const { state, effects } = reduce(base(), { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: true, bounds: BOUNDS });
+    assert.strictEqual(getWindowMode(state, wid(1)), 'entering-fullscreen');
     assert.ok(effects.some((e) => e.type === 'SET_FULLSCREEN' && e.on === true));
   });
 
   it('normal + toggle (no desired) -> entering', () => {
-    const { state } = reduce(base(), { type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS });
-    assert.strictEqual(getWindowMode(state, 1), 'entering-fullscreen');
+    const { state } = reduce(base(), { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
+    assert.strictEqual(getWindowMode(state, wid(1)), 'entering-fullscreen');
   });
 
   it('entering + REQUEST coalesces pendingDesire (no second SET_FULLSCREEN)', () => {
-    let s = drive(base(), [{ type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS }]).state;
-    const { state, effects } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: 1, desired: false });
-    assert.strictEqual(getWindowMode(state, 1), 'entering-fullscreen');
+    let s = drive(base(), [{ type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS }]).state;
+    const { state, effects } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: false });
+    assert.strictEqual(getWindowMode(state, wid(1)), 'entering-fullscreen');
     assert.ok(!effects.some((e) => e.type === 'SET_FULLSCREEN'), 'no mid-animation second setFullScreen');
   });
 
   it('entering + OS_ENTERED with pendingDesire:false immediately begins leaving', () => {
     let s = drive(base(), [
-      { type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS },
-      { type: 'FULLSCREEN_REQUESTED', id: 1, desired: false }, // coalesced cancel
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: false }, // coalesced cancel
     ]).state;
-    const { state, effects } = reduce(s, { type: 'OS_FULLSCREEN_ENTERED', id: 1 });
-    assert.strictEqual(getWindowMode(state, 1), 'leaving-fullscreen');
+    const { state, effects } = reduce(s, { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) });
+    assert.strictEqual(getWindowMode(state, wid(1)), 'leaving-fullscreen');
     assert.ok(effects.some((e) => e.type === 'SET_FULLSCREEN' && e.on === false));
   });
 
   it('entering + OS_LEFT -> normal (aborted by OS)', () => {
-    let s = drive(base(), [{ type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS }]).state;
-    const { state } = reduce(s, { type: 'OS_FULLSCREEN_LEFT', id: 1 });
-    assert.strictEqual(getWindowMode(state, 1), 'normal');
+    let s = drive(base(), [{ type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS }]).state;
+    const { state } = reduce(s, { type: 'OS_FULLSCREEN_LEFT', id: wid(1) });
+    assert.strictEqual(getWindowMode(state, wid(1)), 'normal');
   });
 
   it('fullscreen + REQUEST(false) -> leaving + SET_FULLSCREEN(false)', () => {
     let s = drive(base(), [
-      { type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS },
-      { type: 'OS_FULLSCREEN_ENTERED', id: 1 },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
     ]).state;
-    const { state, effects } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: 1, desired: false });
-    assert.strictEqual(getWindowMode(state, 1), 'leaving-fullscreen');
+    const { state, effects } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: false });
+    assert.strictEqual(getWindowMode(state, wid(1)), 'leaving-fullscreen');
     assert.ok(effects.some((e) => e.type === 'SET_FULLSCREEN' && e.on === false));
   });
 
   it('leaving + OS_LEFT with pendingDesire:true re-enters', () => {
     let s = drive(base(), [
-      { type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS },
-      { type: 'OS_FULLSCREEN_ENTERED', id: 1 },
-      { type: 'FULLSCREEN_REQUESTED', id: 1, desired: false }, // leaving
-      { type: 'FULLSCREEN_REQUESTED', id: 1, desired: true },  // coalesced re-enter
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: false }, // leaving
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: true },  // coalesced re-enter
     ]).state;
-    const { state, effects } = reduce(s, { type: 'OS_FULLSCREEN_LEFT', id: 1 });
-    assert.strictEqual(getWindowMode(state, 1), 'entering-fullscreen');
+    const { state, effects } = reduce(s, { type: 'OS_FULLSCREEN_LEFT', id: wid(1) });
+    assert.strictEqual(getWindowMode(state, wid(1)), 'entering-fullscreen');
     assert.ok(effects.some((e) => e.type === 'SET_FULLSCREEN' && e.on === true));
   });
 
   it('settle timeout while transitioning -> RECONCILE_FULLSCREEN', () => {
-    let s = drive(base(), [{ type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS }]).state;
-    const { effects } = reduce(s, { type: 'FULLSCREEN_SETTLE_TIMEOUT', id: 1 });
-    assert.ok(effects.some((e) => e.type === 'RECONCILE_FULLSCREEN' && e.id === 1));
+    let s = drive(base(), [{ type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS }]).state;
+    const { effects } = reduce(s, { type: 'FULLSCREEN_SETTLE_TIMEOUT', id: wid(1) });
+    assert.ok(effects.some((e) => e.type === 'RECONCILE_FULLSCREEN' && e.id === wid(1)));
   });
 
   it('FULLSCREEN_REQUESTED makes the target the front window', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
     s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
-    const { state } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS });
-    assert.strictEqual(getFrontWindowId(state), 1);
+    const { state } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
+    assert.strictEqual(getFrontWindowId(state), wid(1));
   });
 });
 
@@ -715,17 +723,17 @@ describe('switcher lifecycle', () => {
     s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
     s = openWindow(s, 2, { kind: 'page-host', role: 'content' });
     s = drive(s, [{ type: 'SWITCHER_OPEN_REQUESTED' }]).state;
-    const { state, effects } = reduce(s, { type: 'SWITCHER_SELECTED', id: 1 });
+    const { state, effects } = reduce(s, { type: 'SWITCHER_SELECTED', id: wid(1) });
     assert.strictEqual(state.switcher.open, false);
-    assert.strictEqual(getFrontWindowId(state), 1);
-    assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === 1));
+    assert.strictEqual(getFrontWindowId(state), wid(1));
+    assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)));
   });
 
   it('SWITCHER_SELECTED(null) restores previousFront', () => {
     let s = openWindow(createInitialState(), 4, { kind: 'page-host', role: 'content' });
     s = drive(s, [{ type: 'SWITCHER_OPEN_REQUESTED' }]).state;
     const { state } = reduce(s, { type: 'SWITCHER_SELECTED', id: null });
-    assert.strictEqual(getFrontWindowId(state), 4);
+    assert.strictEqual(getFrontWindowId(state), wid(4));
   });
 
   it('ESC while switcher open closes it (step 1) and does not exit any fullscreen', () => {
@@ -746,11 +754,11 @@ describe('switcher lifecycle', () => {
 
   it('CLOSE_SWITCHER_WINDOW carries the overlay window id (ESC path delegates its teardown to izui)', () => {
     let s = openWindow(createInitialState(), 4, { kind: 'page-host', role: 'content' });
-    s = drive(s, [{ type: 'SWITCHER_OPENED', windowId: 88 }]).state;
+    s = drive(s, [{ type: 'SWITCHER_OPENED', windowId: wid(88) }]).state;
     const { effects } = reduce(s, { type: 'ESC_PRESSED', landedId: 'global' });
     const close = effects.find((e) => e.type === 'CLOSE_SWITCHER_WINDOW');
     assert.ok(close && close.type === 'CLOSE_SWITCHER_WINDOW');
-    assert.strictEqual(close.switcherWindowId, 88);
+    assert.strictEqual(close.switcherWindowId, wid(88));
     assert.strictEqual(close.restoreFocus, true);
   });
 });
@@ -760,9 +768,9 @@ describe('switcher lifecycle', () => {
 describe('staged-cutover switcher mirror', () => {
   it('SWITCHER_OPENED records switcher state with NO effect (izui/main own the window)', () => {
     let s = openWindow(createInitialState(), 4, { kind: 'page-host', role: 'content' });
-    const { state, effects } = reduce(s, { type: 'SWITCHER_OPENED', windowId: 9 });
+    const { state, effects } = reduce(s, { type: 'SWITCHER_OPENED', windowId: wid(9) });
     assert.strictEqual(state.switcher.open, true);
-    assert.ok(state.switcher.open && state.switcher.windowId === 9);
+    assert.ok(state.switcher.open && state.switcher.windowId === wid(9));
     assert.ok(!effects.some((e) => e.type === 'OPEN_SWITCHER_WINDOW'), 'mirror must NOT re-open the overlay');
     // decideEscape step 1 now fires for the externally-opened overlay.
     assert.deepStrictEqual(decideEscape(state), { kind: 'close-switcher' });
@@ -771,11 +779,11 @@ describe('staged-cutover switcher mirror', () => {
   it('WINDOW_CLOSED of the overlay window also clears switcher state (safety net)', () => {
     let s = openWindow(createInitialState(), 4, { kind: 'page-host', role: 'content' });
     s = drive(s, [
-      { type: 'WINDOW_REGISTERED', id: 9, kind: 'browser', role: 'overlay', satellite: true },
-      { type: 'WINDOW_SHOWN', id: 9, focused: true },
-      { type: 'SWITCHER_OPENED', windowId: 9 },
+      { type: 'WINDOW_REGISTERED', id: wid(9), kind: 'browser', role: 'overlay', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(9), focused: true },
+      { type: 'SWITCHER_OPENED', windowId: wid(9) },
     ]).state;
-    s = drive(s, [{ type: 'WINDOW_CLOSED', id: 9 }]).state;
+    s = drive(s, [{ type: 'WINDOW_CLOSED', id: wid(9) }]).state;
     assert.strictEqual(s.switcher.open, false);
   });
 });
@@ -787,13 +795,13 @@ describe('selectors: getDevtoolsTargetId / getWindowPreBounds', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
     // Focus with an http url, then a peek:// window (no http url recorded).
-    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: 1, lastHttpUrl: 'https://a.com/' }]).state;
+    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1), lastHttpUrl: 'https://a.com/' }]).state;
     s = openWindow(s, 2, { kind: 'page-host', role: 'content' });
-    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: 2 }]).state; // peek:// — no http url
-    assert.strictEqual(getDevtoolsTargetId(s), 1, 'the http-bearing window is the devtools target');
+    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(2) }]).state; // peek:// — no http url
+    assert.strictEqual(getDevtoolsTargetId(s), wid(1), 'the http-bearing window is the devtools target');
     // A newer http focus wins by focusSeq.
-    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: 2, lastHttpUrl: 'https://b.com/' }]).state;
-    assert.strictEqual(getDevtoolsTargetId(s), 2);
+    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(2), lastHttpUrl: 'https://b.com/' }]).state;
+    assert.strictEqual(getDevtoolsTargetId(s), wid(2));
   });
 
   it('getDevtoolsTargetId is null when no window has an http url', () => {
@@ -803,15 +811,15 @@ describe('selectors: getDevtoolsTargetId / getWindowPreBounds', () => {
 
   it('getWindowPreBounds returns the stash while non-normal, null when normal', () => {
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    assert.strictEqual(getWindowPreBounds(s, 1), null, 'normal -> null');
-    s = drive(s, [{ type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS }]).state;
-    assert.deepStrictEqual(getWindowPreBounds(s, 1), BOUNDS);
+    assert.strictEqual(getWindowPreBounds(s, wid(1)), null, 'normal -> null');
+    s = drive(s, [{ type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS }]).state;
+    assert.deepStrictEqual(getWindowPreBounds(s, wid(1)), BOUNDS);
     s = drive(s, [
-      { type: 'OS_FULLSCREEN_ENTERED', id: 1 },
-      { type: 'FULLSCREEN_REQUESTED', id: 1, desired: false },
-      { type: 'OS_FULLSCREEN_LEFT', id: 1 },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: false },
+      { type: 'OS_FULLSCREEN_LEFT', id: wid(1) },
     ]).state;
-    assert.strictEqual(getWindowPreBounds(s, 1), null, 'back to normal -> null');
+    assert.strictEqual(getWindowPreBounds(s, wid(1)), null, 'back to normal -> null');
   });
 });
 
@@ -820,8 +828,8 @@ describe('selectors: getDevtoolsTargetId / getWindowPreBounds', () => {
 describe('ESC renderer round-trip', () => {
   it('handled:true consumes ESC (NOTHING)', () => {
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    const asked = reduce(s, { type: 'ESC_PRESSED', landedId: 1 });
-    const { effects } = reduce(asked.state, { type: 'ESC_RENDERER_ANSWER', id: 1, handled: true, seq: askSeq(asked.effects) });
+    const asked = reduce(s, { type: 'ESC_PRESSED', landedId: wid(1) });
+    const { effects } = reduce(asked.state, { type: 'ESC_RENDERER_ANSWER', id: wid(1), handled: true, seq: askSeq(asked.effects) });
     assert.ok(effects.some((e) => e.type === 'NOTHING'));
   });
 
@@ -832,16 +840,16 @@ describe('ESC renderer round-trip', () => {
     // explicitly; content + active -> nothing -> open-switcher.
     s = reduce(s, { type: 'SESSION_CHANGED', session: 'active' }).state;
     assert.strictEqual(snapshot(s).session, 'active');
-    const asked = reduce(s, { type: 'ESC_PRESSED', landedId: 1 });
-    const { effects } = reduce(asked.state, { type: 'ESC_RENDERER_ANSWER', id: 1, handled: false, seq: askSeq(asked.effects) });
+    const asked = reduce(s, { type: 'ESC_PRESSED', landedId: wid(1) });
+    const { effects } = reduce(asked.state, { type: 'ESC_RENDERER_ANSWER', id: wid(1), handled: false, seq: askSeq(asked.effects) });
     assert.ok(effects.some((e) => e.type === 'OPEN_SWITCHER_WINDOW'));
   });
 
   it('handled:false on a quick-view closes it (step 6, always-close role)', () => {
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'quick-view' });
-    const asked = reduce(s, { type: 'ESC_PRESSED', landedId: 1 });
-    const { effects } = reduce(asked.state, { type: 'ESC_RENDERER_ANSWER', id: 1, handled: false, seq: askSeq(asked.effects) });
-    assert.ok(effects.some((e) => e.type === 'CLOSE_WINDOW' && e.id === 1));
+    const asked = reduce(s, { type: 'ESC_PRESSED', landedId: wid(1) });
+    const { effects } = reduce(asked.state, { type: 'ESC_RENDERER_ANSWER', id: wid(1), handled: false, seq: askSeq(asked.effects) });
+    assert.ok(effects.some((e) => e.type === 'CLOSE_WINDOW' && e.id === wid(1)));
   });
 });
 
@@ -859,11 +867,11 @@ function askSeq(effects: Effect[]): number {
 /** Window 4: a visible, focused, front workspace browser window in an active session. */
 function s0(): AppWindowState {
   const { state } = drive(createInitialState(), [
-    { type: 'WINDOW_REGISTERED', id: 4, kind: 'browser', role: 'workspace', satellite: false },
-    { type: 'WINDOW_SHOWN', id: 4, focused: true },
+    { type: 'WINDOW_REGISTERED', id: wid(4), kind: 'browser', role: 'workspace', satellite: false },
+    { type: 'WINDOW_SHOWN', id: wid(4), focused: true },
     { type: 'SESSION_CHANGED', session: 'active' },
   ]);
-  assert.strictEqual(state.front, 4);
+  assert.strictEqual(state.front, wid(4));
   return state;
 }
 
@@ -886,21 +894,21 @@ describe('switcher reopen loop (7fffa286)', () => {
     // the reducer clears `escAsk` on the EVENT, not on a value change.
     let s = s0();
     s = drive(s, [
-      { type: 'WINDOW_REGISTERED', id: 10, kind: 'browser', role: 'overlay', satellite: true },
-      { type: 'WINDOW_SHOWN', id: 10, focused: true },
+      { type: 'WINDOW_REGISTERED', id: wid(10), kind: 'browser', role: 'overlay', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(10), focused: true },
       { type: 'SESSION_CHANGED', session: 'active' },
-      { type: 'SWITCHER_OPENED', windowId: 10 },
+      { type: 'SWITCHER_OPENED', windowId: wid(10) },
     ]).state;
 
     const all: Effect[] = [];
-    const esc1 = reduce(s, { type: 'ESC_PRESSED', landedId: 10 });
+    const esc1 = reduce(s, { type: 'ESC_PRESSED', landedId: wid(10) });
     all.push(...esc1.effects);
     const close = esc1.effects.find((e) => e.type === 'CLOSE_SWITCHER_WINDOW');
     assert.ok(close && close.type === 'CLOSE_SWITCHER_WINDOW', 'ESC #1 closes the switcher');
     assert.strictEqual(close.restoreFocus, true);
-    assert.strictEqual(close.switcherWindowId, 10);
+    assert.strictEqual(close.switcherWindowId, wid(10));
 
-    const esc2 = reduce(esc1.state, { type: 'ESC_PRESSED', landedId: 10 });
+    const esc2 = reduce(esc1.state, { type: 'ESC_PRESSED', landedId: wid(10) });
     all.push(...esc2.effects);
     const seq = askSeq(esc2.effects);
 
@@ -909,9 +917,9 @@ describe('switcher reopen loop (7fffa286)', () => {
     // clamped value) and the overlay window closes.
     let after = reduce(esc2.state, { type: 'SESSION_CHANGED', session: 'active' });
     all.push(...after.effects);
-    after = reduce(after.state, { type: 'WINDOW_CLOSED', id: 10 });
+    after = reduce(after.state, { type: 'WINDOW_CLOSED', id: wid(10) });
     all.push(...after.effects);
-    const answer = reduce(after.state, { type: 'ESC_RENDERER_ANSWER', id: 4, handled: false, seq });
+    const answer = reduce(after.state, { type: 'ESC_RENDERER_ANSWER', id: wid(4), handled: false, seq });
     all.push(...answer.effects);
 
     assert.ok(!all.some((e) => e.type === 'OPEN_SWITCHER_WINDOW'), 'the switcher must never re-open');
@@ -920,10 +928,10 @@ describe('switcher reopen loop (7fffa286)', () => {
 
   it('a session change during the wait cancels the pending renderer answer', () => {
     let s = drive(s0(), [{ type: 'SESSION_CHANGED', session: 'transient' }]).state;
-    const asked = reduce(s, { type: 'ESC_PRESSED', landedId: 4 });
+    const asked = reduce(s, { type: 'ESC_PRESSED', landedId: wid(4) });
     const seq = askSeq(asked.effects);
     const moved = reduce(asked.state, { type: 'SESSION_CHANGED', session: 'active' });
-    const answer = reduce(moved.state, { type: 'ESC_RENDERER_ANSWER', id: 4, handled: false, seq });
+    const answer = reduce(moved.state, { type: 'ESC_RENDERER_ANSWER', id: wid(4), handled: false, seq });
     // Under 'transient' the policy was 'nothing'; under 'active' it would be
     // 'open-switcher'. The answer belongs to the question that was asked.
     // NOTE: this transient->active flip is izui's `evaluateOnShow` promotion
@@ -935,32 +943,32 @@ describe('switcher reopen loop (7fffa286)', () => {
   });
 
   it('an answer with a matching epoch and nothing intervening is honored', () => {
-    const asked = reduce(s0(), { type: 'ESC_PRESSED', landedId: 4 });
+    const asked = reduce(s0(), { type: 'ESC_PRESSED', landedId: wid(4) });
     const seq = askSeq(asked.effects);
-    const answer = reduce(asked.state, { type: 'ESC_RENDERER_ANSWER', id: 4, handled: false, seq });
+    const answer = reduce(asked.state, { type: 'ESC_RENDERER_ANSWER', id: wid(4), handled: false, seq });
     assert.ok(answer.effects.some((e) => e.type === 'OPEN_SWITCHER_WINDOW'));
     assert.strictEqual(answer.state.switcher.open, true);
-    assert.ok(answer.state.switcher.open && answer.state.switcher.previousFront === 4);
+    assert.ok(answer.state.switcher.open && answer.state.switcher.previousFront === wid(4));
   });
 
   it('a newer ESC supersedes the older pending answer', () => {
-    const first = reduce(s0(), { type: 'ESC_PRESSED', landedId: 4 });
+    const first = reduce(s0(), { type: 'ESC_PRESSED', landedId: wid(4) });
     const seq1 = askSeq(first.effects);
-    const second = reduce(first.state, { type: 'ESC_PRESSED', landedId: 4 });
+    const second = reduce(first.state, { type: 'ESC_PRESSED', landedId: wid(4) });
     const seq2 = askSeq(second.effects);
     assert.notStrictEqual(seq1, seq2);
 
-    const stale = reduce(second.state, { type: 'ESC_RENDERER_ANSWER', id: 4, handled: false, seq: seq1 });
+    const stale = reduce(second.state, { type: 'ESC_RENDERER_ANSWER', id: wid(4), handled: false, seq: seq1 });
     assert.deepStrictEqual(stale.effects, [{ type: 'NOTHING' }]);
-    const live = reduce(stale.state, { type: 'ESC_RENDERER_ANSWER', id: 4, handled: false, seq: seq2 });
+    const live = reduce(stale.state, { type: 'ESC_RENDERER_ANSWER', id: wid(4), handled: false, seq: seq2 });
     assert.ok(live.effects.some((e) => e.type === 'OPEN_SWITCHER_WINDOW'));
   });
 
   it('an answer for a window closed during the wait is inert', () => {
-    const asked = reduce(s0(), { type: 'ESC_PRESSED', landedId: 4 });
+    const asked = reduce(s0(), { type: 'ESC_PRESSED', landedId: wid(4) });
     const seq = askSeq(asked.effects);
-    const closed = reduce(asked.state, { type: 'WINDOW_CLOSED', id: 4 });
-    const answer = reduce(closed.state, { type: 'ESC_RENDERER_ANSWER', id: 4, handled: false, seq });
+    const closed = reduce(asked.state, { type: 'WINDOW_CLOSED', id: wid(4) });
+    const answer = reduce(closed.state, { type: 'ESC_RENDERER_ANSWER', id: wid(4), handled: false, seq });
     assert.deepStrictEqual(answer.effects, [{ type: 'NOTHING' }]);
   });
 
@@ -969,28 +977,28 @@ describe('switcher reopen loop (7fffa286)', () => {
     // richer spec. Rebuilding a fresh record would drop the window back to
     // visible:false / focusSeq:0 and strip it of `front`.
     let s = drive(createInitialState(), [
-      { type: 'WINDOW_REGISTERED', id: 4, kind: 'browser', role: 'workspace', satellite: false },
-      { type: 'WINDOW_SHOWN', id: 4, focused: true },
+      { type: 'WINDOW_REGISTERED', id: wid(4), kind: 'browser', role: 'workspace', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(4), focused: true },
     ]).state;
-    const focusSeq = s.windows.get(4)!.focusSeq;
-    s = drive(s, [{ type: 'WINDOW_REGISTERED', id: 4, kind: 'browser', role: 'workspace', satellite: false }]).state;
-    assert.strictEqual(s.windows.get(4)!.visible, true);
-    assert.strictEqual(s.windows.get(4)!.focusSeq, focusSeq);
-    assert.strictEqual(s.front, 4);
+    const focusSeq = s.windows.get(wid(4))!.focusSeq;
+    s = drive(s, [{ type: 'WINDOW_REGISTERED', id: wid(4), kind: 'browser', role: 'workspace', satellite: false }]).state;
+    assert.strictEqual(s.windows.get(wid(4))!.visible, true);
+    assert.strictEqual(s.windows.get(wid(4))!.focusSeq, focusSeq);
+    assert.strictEqual(s.front, wid(4));
   });
 
   it('a re-registration whose richer spec says satellite hands front to the successor', () => {
     let s = drive(createInitialState(), [
-      { type: 'WINDOW_REGISTERED', id: 4, kind: 'browser', role: 'workspace', satellite: false },
-      { type: 'WINDOW_SHOWN', id: 4, focused: true },
-      { type: 'WINDOW_REGISTERED', id: 5, kind: 'browser', role: 'workspace', satellite: false },
-      { type: 'WINDOW_SHOWN', id: 5, focused: false },
+      { type: 'WINDOW_REGISTERED', id: wid(4), kind: 'browser', role: 'workspace', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(4), focused: true },
+      { type: 'WINDOW_REGISTERED', id: wid(5), kind: 'browser', role: 'workspace', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(5), focused: false },
     ]).state;
-    assert.strictEqual(s.front, 4);
+    assert.strictEqual(s.front, wid(4));
     // ipc.ts knows this one is a modal → isSatelliteRegistration says true.
-    s = drive(s, [{ type: 'WINDOW_REGISTERED', id: 4, kind: 'browser', role: 'workspace', satellite: true }]).state;
-    assert.strictEqual(s.windows.get(4)!.satellite, true);
-    assert.strictEqual(s.front, 5, 'front moves to the MRU successor, never stays illegal');
+    s = drive(s, [{ type: 'WINDOW_REGISTERED', id: wid(4), kind: 'browser', role: 'workspace', satellite: true }]).state;
+    assert.strictEqual(s.windows.get(wid(4))!.satellite, true);
+    assert.strictEqual(s.front, wid(5), 'front moves to the MRU successor, never stays illegal');
   });
 });
 
@@ -999,36 +1007,36 @@ describe('switcher reopen loop (7fffa286)', () => {
 describe('WindowStateOwner (dispatch / subscribe / waitForMode)', () => {
   it('dispatch mutates the single instance and returns effects', () => {
     const owner = new WindowStateOwner();
-    owner.dispatch({ type: 'WINDOW_REGISTERED', id: 1, kind: 'page-host', role: 'content', satellite: false });
-    owner.dispatch({ type: 'WINDOW_SHOWN', id: 1, focused: true });
-    assert.strictEqual(owner.getFrontWindowId(), 1);
+    owner.dispatch({ type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false });
+    owner.dispatch({ type: 'WINDOW_SHOWN', id: wid(1), focused: true });
+    assert.strictEqual(owner.getFrontWindowId(), wid(1));
   });
 
   it('subscribe fires on dispatch with a snapshot + effects', () => {
     const owner = new WindowStateOwner();
-    const seen: number[] = [];
-    owner.subscribe((snap) => seen.push(snap.front ?? -1));
-    owner.dispatch({ type: 'WINDOW_REGISTERED', id: 1, kind: 'page-host', role: 'content', satellite: false });
-    owner.dispatch({ type: 'WINDOW_SHOWN', id: 1, focused: true });
-    assert.deepStrictEqual(seen, [-1, 1]);
+    const seen: (WindowId | null)[] = [];
+    owner.subscribe((snap) => seen.push(snap.front));
+    owner.dispatch({ type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false });
+    owner.dispatch({ type: 'WINDOW_SHOWN', id: wid(1), focused: true });
+    assert.deepStrictEqual(seen, [null, wid(1)]);
   });
 
   it('waitForMode resolves when the window reaches the mode', async () => {
     const owner = new WindowStateOwner();
-    owner.dispatch({ type: 'WINDOW_REGISTERED', id: 1, kind: 'page-host', role: 'content', satellite: false });
-    owner.dispatch({ type: 'WINDOW_SHOWN', id: 1, focused: true });
-    const p = owner.waitForMode(1, 'fullscreen');
-    owner.dispatch({ type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS });
-    owner.dispatch({ type: 'OS_FULLSCREEN_ENTERED', id: 1 });
+    owner.dispatch({ type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false });
+    owner.dispatch({ type: 'WINDOW_SHOWN', id: wid(1), focused: true });
+    const p = owner.waitForMode(wid(1), 'fullscreen');
+    owner.dispatch({ type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
+    owner.dispatch({ type: 'OS_FULLSCREEN_ENTERED', id: wid(1) });
     await p; // resolves, else the test times out
-    assert.strictEqual(owner.getWindowMode(1), 'fullscreen');
+    assert.strictEqual(owner.getWindowMode(wid(1)), 'fullscreen');
   });
 
   it('waitForMode resolves immediately when already in the mode', async () => {
     const owner = new WindowStateOwner();
-    owner.dispatch({ type: 'WINDOW_REGISTERED', id: 1, kind: 'page-host', role: 'content', satellite: false });
-    owner.dispatch({ type: 'WINDOW_SHOWN', id: 1, focused: true });
-    await owner.waitForMode(1, 'normal');
+    owner.dispatch({ type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false });
+    owner.dispatch({ type: 'WINDOW_SHOWN', id: wid(1), focused: true });
+    await owner.waitForMode(wid(1), 'normal');
     assert.ok(true);
   });
 });
@@ -1040,18 +1048,18 @@ describe('reduce purity', () => {
     const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
     const before = snapshot(s);
     const beforeSize = s.windows.size;
-    reduce(s, { type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS });
-    reduce(s, { type: 'WINDOW_CLOSED', id: 1 });
+    reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
+    reduce(s, { type: 'WINDOW_CLOSED', id: wid(1) });
     assert.deepStrictEqual(snapshot(s), before, 'input snapshot unchanged');
     assert.strictEqual(s.windows.size, beforeSize, 'input windows map unchanged');
-    assert.strictEqual(getWindowMode(s, 1), 'normal', 'input record fsMode unchanged');
+    assert.strictEqual(getWindowMode(s, wid(1)), 'normal', 'input record fsMode unchanged');
   });
 
   it('isEligibleFront rejects satellites, hidden, and absent records', () => {
     assert.strictEqual(isEligibleFront(undefined), false);
-    assert.strictEqual(isEligibleFront({ id: 1, kind: 'browser', role: 'content', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
-    assert.strictEqual(isEligibleFront({ id: 1, kind: 'browser', role: 'content', satellite: false, visible: false, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
-    assert.strictEqual(isEligibleFront({ id: 1, kind: 'browser', role: 'content', satellite: false, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), true);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', satellite: false, visible: false, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', satellite: false, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), true);
   });
 });
 
@@ -1188,8 +1196,8 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
   // event sequence can produce this (the reducer only ever assigns an eligible
   // front) — we craft it directly to exercise the guard's throw path.
   function illegalFrontState(): AppWindowState {
-    const rec: WindowRecord = { id: 1, kind: 'browser', role: 'palette', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 1 };
-    return { appActive: true, session: 'active', front: 1, frontAsserted: true, switcher: { open: false }, windows: new Map([[1, rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
+    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 1 };
+    return { appActive: true, session: 'active', front: wid(1), frontAsserted: true, switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
   }
 
   it('THROWS in dev/test when reduce yields an illegal front (naming the event + front id)', () => {
@@ -1197,7 +1205,7 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
     assert.notStrictEqual(process.env.NODE_ENV, 'production');
     assert.throws(
       () => reduce(illegalFrontState(), { type: 'OS_FOCUS_SETTLED_NULL' }),
-      /illegal front=1 after OS_FOCUS_SETTLED_NULL/,
+      /illegal front=wm-1 after OS_FOCUS_SETTLED_NULL/,
     );
   });
 
@@ -1217,11 +1225,11 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
 
   it('FULLSCREEN_REQUESTED on a satellite does NOT install an illegal front (and does not throw)', () => {
     // The reducer bug the reviewer flagged: front was assigned unconditionally.
-    const rec: WindowRecord = { id: 1, kind: 'browser', role: 'palette', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 1 };
-    const s: AppWindowState = { appActive: true, session: 'active', front: null, frontAsserted: false, switcher: { open: false }, windows: new Map([[1, rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
-    const { state } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS });
+    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 1 };
+    const s: AppWindowState = { appActive: true, session: 'active', front: null, frontAsserted: false, switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
+    const { state } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
     assert.strictEqual(state.front, null, 'a satellite must never become front, even via a fullscreen request');
-    assert.strictEqual(getWindowMode(state, 1), 'entering-fullscreen', 'the fsMode edge still runs (total table)');
+    assert.strictEqual(getWindowMode(state, wid(1)), 'entering-fullscreen', 'the fsMode edge still runs (total table)');
   });
 });
 
@@ -1233,24 +1241,26 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
 // on a transition where `front` did NOT move, or pins which events invalidate the claim.
 
 /** Did this reduce describe raising window `id` onto the OS? */
-function raises(effects: Effect[], id: number): boolean {
-  return effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === id);
+function raises(effects: Effect[], id: number | WindowId): boolean {
+  const target = typeof id === 'number' ? wid(id) : id;
+  return effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === target);
 }
 
 /** Did this reduce describe making window `id`'s content view first responder? */
-function focusesContent(effects: Effect[], id: number): boolean {
-  return effects.some((e) => e.type === 'FOCUS_CONTENT' && e.id === id);
+function focusesContent(effects: Effect[], id: number | WindowId): boolean {
+  const target = typeof id === 'number' ? wid(id) : id;
+  return effects.some((e) => e.type === 'FOCUS_CONTENT' && e.id === target);
 }
 
 describe('front assertion — the machine drives `front` onto the OS, not just remembers it', () => {
   it('a front change raises the new front, and a page-host ALSO gets FOCUS_CONTENT', () => {
     const { state, effects } = reduce(
       drive(createInitialState(), [
-        { type: 'WINDOW_REGISTERED', id: 1, kind: 'page-host', role: 'content', satellite: false },
+        { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false },
       ]).state,
-      { type: 'WINDOW_SHOWN', id: 1, focused: true },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
     );
-    assert.strictEqual(getFrontWindowId(state), 1);
+    assert.strictEqual(getFrontWindowId(state), wid(1));
     assert.ok(raises(effects, 1), 'the new front must be raised');
     assert.ok(focusesContent(effects, 1), 'a page-host needs its content view made first responder');
     assert.strictEqual(snapshot(state).frontAsserted, true, 'the claim is recorded');
@@ -1259,11 +1269,11 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
   it('a browser window gets RAISE_WINDOW but NOT FOCUS_CONTENT (its root WC is first responder)', () => {
     const { state, effects } = reduce(
       drive(createInitialState(), [
-        { type: 'WINDOW_REGISTERED', id: 1, kind: 'browser', role: 'content', satellite: false },
+        { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'content', satellite: false },
       ]).state,
-      { type: 'WINDOW_SHOWN', id: 1, focused: true },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
     );
-    assert.strictEqual(getFrontWindowId(state), 1);
+    assert.strictEqual(getFrontWindowId(state), wid(1));
     assert.ok(raises(effects, 1));
     assert.ok(!hasEffect(effects, 'FOCUS_CONTENT'), 'a BrowserWindow has no separate content view to focus');
   });
@@ -1272,8 +1282,8 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
     s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
-    const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: 1 });
-    assert.strictEqual(getFrontWindowId(state), 1);
+    const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(1) });
+    assert.strictEqual(getFrontWindowId(state), wid(1));
     assert.ok(raises(effects, 1));
     assert.ok(!raises(effects, 2), 'the window losing front is not re-raised');
     assert.ok(!hasEffect(effects, 'FOCUS_CONTENT'), 'window 1 is a browser window');
@@ -1297,12 +1307,12 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     assert.strictEqual(snapshot(s).frontAsserted, true);
 
     const resigned = reduce(s, { type: 'APP_RESIGNED' });
-    assert.strictEqual(getFrontWindowId(resigned.state), 1, 'front survives the app switch (by design)');
+    assert.strictEqual(getFrontWindowId(resigned.state), wid(1), 'front survives the app switch (by design)');
     assert.strictEqual(snapshot(resigned.state).frontAsserted, false, 'but the claim about the OS does not');
     assert.ok(!hasEffect(resigned.effects, 'RAISE_WINDOW'), 'no focus theft while Peek is not the active app');
 
     const activated = reduce(resigned.state, { type: 'APP_ACTIVATED' });
-    assert.strictEqual(getFrontWindowId(activated.state), 1, 'front is UNCHANGED across the whole round trip');
+    assert.strictEqual(getFrontWindowId(activated.state), wid(1), 'front is UNCHANGED across the whole round trip');
     assert.ok(raises(activated.effects, 1), 'and yet it must be re-raised — this is the whole fix');
     assert.ok(focusesContent(activated.effects, 1), 'first responder is restored on the page host');
     assert.strictEqual(snapshot(activated.state).frontAsserted, true);
@@ -1311,8 +1321,8 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
   it('SWITCHER_OPENED invalidates without stealing key back; the Esc-close then re-asserts the restore target', () => {
     const s = openWindow(createInitialState(), 4, { kind: 'page-host', role: 'content' });
 
-    const opened = reduce(s, { type: 'SWITCHER_OPENED', windowId: 88 });
-    assert.strictEqual(getFrontWindowId(opened.state), 4, 'front does not move for the overlay');
+    const opened = reduce(s, { type: 'SWITCHER_OPENED', windowId: wid(88) });
+    assert.strictEqual(getFrontWindowId(opened.state), wid(4), 'front does not move for the overlay');
     assert.strictEqual(snapshot(opened.state).frontAsserted, false, 'the overlay took key — the claim is void');
     assert.ok(
       !hasEffect(opened.effects, 'RAISE_WINDOW'),
@@ -1323,7 +1333,7 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     // RAISE_WINDOW of its own; the restore ride entirely on the assertion step.
     const closed = reduce(opened.state, { type: 'ESC_PRESSED', landedId: 'global' });
     assert.strictEqual(closed.state.switcher.open, false);
-    assert.strictEqual(getFrontWindowId(closed.state), 4);
+    assert.strictEqual(getFrontWindowId(closed.state), wid(4));
     assert.ok(hasEffect(closed.effects, 'CLOSE_SWITCHER_WINDOW'));
     assert.ok(raises(closed.effects, 4), 'the restore target is re-asserted on dismiss');
     assert.ok(focusesContent(closed.effects, 4));
@@ -1333,9 +1343,9 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
     s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
-    s = drive(s, [{ type: 'SWITCHER_OPENED', windowId: 99 }]).state;
-    const { state, effects } = reduce(s, { type: 'SWITCHER_SELECTED', id: 1 });
-    assert.strictEqual(getFrontWindowId(state), 1);
+    s = drive(s, [{ type: 'SWITCHER_OPENED', windowId: wid(99) }]).state;
+    const { state, effects } = reduce(s, { type: 'SWITCHER_SELECTED', id: wid(1) });
+    assert.strictEqual(getFrontWindowId(state), wid(1));
     assert.strictEqual(effects.filter((e) => e.type === 'RAISE_WINDOW').length, 1, 'exactly one raise, from one place');
     assert.ok(raises(effects, 1));
     assert.ok(focusesContent(effects, 1));
@@ -1344,13 +1354,13 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
   it('a satellite gaining OS focus invalidates, and the NEXT transition re-asserts the real front', () => {
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
     s = drive(s, [
-      { type: 'WINDOW_REGISTERED', id: 2, kind: 'browser', role: 'palette', satellite: true },
-      { type: 'WINDOW_SHOWN', id: 2, focused: false },
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
     ]).state;
     assert.strictEqual(snapshot(s).frontAsserted, true);
 
-    const stolen = reduce(s, { type: 'OS_FOCUS_GAINED', id: 2 });
-    assert.strictEqual(getFrontWindowId(stolen.state), 1, 'a satellite never becomes front');
+    const stolen = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(2) });
+    assert.strictEqual(getFrontWindowId(stolen.state), wid(1), 'a satellite never becomes front');
     assert.strictEqual(snapshot(stolen.state).frontAsserted, false, 'but it DID take key, so the claim is void');
     assert.ok(
       !hasEffect(stolen.effects, 'RAISE_WINDOW'),
@@ -1358,8 +1368,8 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     );
 
     // The palette goes away — self-healing, per design §2.
-    const healed = reduce(stolen.state, { type: 'WINDOW_CLOSED', id: 2 });
-    assert.strictEqual(getFrontWindowId(healed.state), 1, 'front never moved');
+    const healed = reduce(stolen.state, { type: 'WINDOW_CLOSED', id: wid(2) });
+    assert.strictEqual(getFrontWindowId(healed.state), wid(1), 'front never moved');
     assert.ok(raises(healed.effects, 1), 'the real front is re-asserted on the next transition');
     assert.ok(focusesContent(healed.effects, 1));
   });
@@ -1368,21 +1378,21 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
     s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2, 1 still visible
-    const { state, effects } = reduce(s, { type: 'WINDOW_HIDDEN', id: 2 });
-    assert.strictEqual(getFrontWindowId(state), 1, 'front hands off to the MRU successor');
+    const { state, effects } = reduce(s, { type: 'WINDOW_HIDDEN', id: wid(2) });
+    assert.strictEqual(getFrontWindowId(state), wid(1), 'front hands off to the MRU successor');
     assert.ok(raises(effects, 1), 'the successor is driven onto the OS, not merely recorded');
   });
 
   it('WINDOW_HIDDEN of the ONLY window clears the assertion and asserts nothing', () => {
     const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    const hidden = reduce(s, { type: 'WINDOW_HIDDEN', id: 1 });
+    const hidden = reduce(s, { type: 'WINDOW_HIDDEN', id: wid(1) });
     assert.strictEqual(getFrontWindowId(hidden.state), null, 'no successor');
     assert.strictEqual(snapshot(hidden.state).frontAsserted, false);
     assert.ok(!hasEffect(hidden.effects, 'RAISE_WINDOW'), 'nothing to assert with no front');
 
     // Showing it again re-establishes both the intent and the assertion.
-    const shown = reduce(hidden.state, { type: 'WINDOW_SHOWN', id: 1, focused: true });
-    assert.strictEqual(getFrontWindowId(shown.state), 1);
+    const shown = reduce(hidden.state, { type: 'WINDOW_SHOWN', id: wid(1), focused: true });
+    assert.strictEqual(getFrontWindowId(shown.state), wid(1));
     assert.ok(raises(shown.effects, 1));
   });
 
@@ -1394,9 +1404,9 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     const inactive: WindowEvent[] = [
       { type: 'OS_FOCUS_SETTLED_NULL' },
       { type: 'SESSION_CHANGED', session: 'transient' },
-      { type: 'WINDOW_REGISTERED', id: 2, kind: 'page-host', role: 'content', satellite: false },
-      { type: 'WINDOW_SHOWN', id: 2, focused: true }, // moves front, still must not raise
-      { type: 'OS_FOCUS_GAINED', id: 1 },
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'page-host', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: true }, // moves front, still must not raise
+      { type: 'OS_FOCUS_GAINED', id: wid(1) },
     ];
     for (const ev of inactive) {
       const r = reduce(s, ev);
@@ -1428,20 +1438,20 @@ describe('deriveEscGrabRegistered — truth table over (appActive, front, frontA
   }
 
   it('is total and matches the table for all 8 (appActive x front x frontAsserted) combinations', () => {
-    const rows: { appActive: boolean; front: number | null; frontAsserted: boolean; want: boolean }[] = [
+    const rows: { appActive: boolean; front: WindowId | null; frontAsserted: boolean; want: boolean }[] = [
       // Peek is not the active app -> never grab, whatever we believe about front.
       { appActive: false, front: null, frontAsserted: false, want: false },
       { appActive: false, front: null, frontAsserted: true, want: false },
-      { appActive: false, front: 1, frontAsserted: false, want: false },
-      { appActive: false, front: 1, frontAsserted: true, want: false },
+      { appActive: false, front: wid(1), frontAsserted: false, want: false },
+      { appActive: false, front: wid(1), frontAsserted: true, want: false },
       // No front at all -> nobody can receive before-input-event -> grab.
       { appActive: true, front: null, frontAsserted: false, want: true },
       { appActive: true, front: null, frontAsserted: true, want: true },
       // A front we have NOT driven onto the OS is exactly the 7fffa286 hole: the
       // window is not first responder AND the old predicate switched the net off.
-      { appActive: true, front: 1, frontAsserted: false, want: true },
+      { appActive: true, front: wid(1), frontAsserted: false, want: true },
       // A front we HAVE asserted is positioned to hear Escape -> no grab needed.
-      { appActive: true, front: 1, frontAsserted: true, want: false },
+      { appActive: true, front: wid(1), frontAsserted: true, want: false },
     ];
     for (const row of rows) {
       const got = deriveEscGrabRegistered(snapOf(row));
@@ -1454,11 +1464,11 @@ describe('deriveEscGrabRegistered — truth table over (appActive, front, frontA
   });
 
   it('an open switcher suppresses the grab (it owns Escape in its own renderer)', () => {
-    const open = { open: true as const, windowId: 88, previousFront: 1 };
+    const open = { open: true as const, windowId: wid(88), previousFront: wid(1) };
     // SWITCHER_OPENED clears frontAsserted, so without this clause the grab would
     // switch ON precisely while the overlay is up — and an OS grab pre-empts
     // before-input-event, eating the switcher's own Escape (the reopen loop).
-    assert.strictEqual(deriveEscGrabRegistered(snapOf({ front: 1, frontAsserted: false, switcher: open })), false);
+    assert.strictEqual(deriveEscGrabRegistered(snapOf({ front: wid(1), frontAsserted: false, switcher: open })), false);
     assert.strictEqual(deriveEscGrabRegistered(snapOf({ front: null, frontAsserted: false, switcher: open })), false);
   });
 
@@ -1476,7 +1486,7 @@ describe('deriveEscGrabRegistered — truth table over (appActive, front, frontA
     // assertion is cleared — the net covers precisely that window of time.
     assert.strictEqual(snapshot(resigned.state).frontAsserted, false);
     assert.strictEqual(
-      deriveEscGrabRegistered(snapOf({ appActive: true, front: 1, frontAsserted: false })),
+      deriveEscGrabRegistered(snapOf({ appActive: true, front: wid(1), frontAsserted: false })),
       true,
       'active + unasserted front -> the safety net is ON',
     );
@@ -1494,18 +1504,18 @@ describe('APP_ACTIVATED reconciles ALL in-flight fullscreen transitions (§2.5)'
   it('emits RECONCILE_FULLSCREEN for both an entering AND a leaving window', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
-    s = drive(s, [{ type: 'FULLSCREEN_REQUESTED', id: 1, bounds: BOUNDS }]).state; // 1 -> entering
+    s = drive(s, [{ type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS }]).state; // 1 -> entering
     s = openWindow(s, 2, { kind: 'page-host', role: 'content' });
     s = drive(s, [
-      { type: 'FULLSCREEN_REQUESTED', id: 2, bounds: BOUNDS },
-      { type: 'OS_FULLSCREEN_ENTERED', id: 2 },
-      { type: 'FULLSCREEN_REQUESTED', id: 2, desired: false }, // 2 -> leaving
+      { type: 'FULLSCREEN_REQUESTED', id: wid(2), bounds: BOUNDS },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(2) },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(2), desired: false }, // 2 -> leaving
     ]).state;
-    assert.strictEqual(getWindowMode(s, 1), 'entering-fullscreen');
-    assert.strictEqual(getWindowMode(s, 2), 'leaving-fullscreen');
+    assert.strictEqual(getWindowMode(s, wid(1)), 'entering-fullscreen');
+    assert.strictEqual(getWindowMode(s, wid(2)), 'leaving-fullscreen');
 
     const { effects } = reduce(s, { type: 'APP_ACTIVATED' });
-    const reconciled = effects.filter((e) => e.type === 'RECONCILE_FULLSCREEN').map((e) => (e as { id: number }).id).sort();
-    assert.deepStrictEqual(reconciled, [1, 2], 'both in-flight windows are reconciled, not just front');
+    const reconciled = effects.filter((e) => e.type === 'RECONCILE_FULLSCREEN').map((e) => (e as { id: WindowId }).id).sort();
+    assert.deepStrictEqual(reconciled, [wid(1), wid(2)], 'both in-flight windows are reconciled, not just front');
   });
 });
