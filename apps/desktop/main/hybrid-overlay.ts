@@ -2899,10 +2899,27 @@ function installTestBridge(): void {
       const entry = getHybridWindow(id);
       if (!entry || entry.contentWC.isDestroyed()) return Promise.resolve(null);
       // Decision now lives in the machine — dispatch ESC_PRESSED (the landed id
-      // is first-responder noise; decideEscape targets `front`). The ask-renderer
-      // round-trip is async inside the adapter; resolve on the next tick.
+      // is first-responder noise; decideEscape targets `front`).
       dispatchWindowEvent({ type: 'ESC_PRESSED', landedId: getWindowIdFor(id) ?? 'global' });
-      return Promise.resolve(id);
+      // Honor the pre-cutover contract (the old impl AWAITED the full
+      // handleHybridEscape round trip): the machine's ask-renderer step resolves
+      // within `askWebContentsToHandleEscape`'s 500ms no-answer timeout, and a
+      // policy close tears the registry entry down in the synchronous hybrid
+      // 'close' handler. Resolve as soon as the entry is gone, else after the
+      // ask window + settle margin — a bounded await on a designed IPC timeout
+      // (same shape as `waitHybridGone` below), not an unbounded poll. The
+      // cutover's fire-and-forget version resolved before the ask timeout ever
+      // fired, so every policy-path ESC spec read state too early.
+      return new Promise((resolve) => {
+        const deadline = Date.now() + 700;
+        const poll = () => {
+          const e = getHybridWindow(id);
+          if (!e || e.baseWin.isDestroyed()) return resolve(id);
+          if (Date.now() > deadline) return resolve(id);
+          setTimeout(poll, 25);
+        };
+        poll();
+      });
     },
     /**
      * ESC-close: resolve once a hybrid host id is GONE from the registry (its
