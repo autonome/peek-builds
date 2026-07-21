@@ -15,8 +15,8 @@
  */
 
 import fs from 'node:fs';
-import { getWindowRef } from './window-registry.js';
-import type { WindowRef } from './window-registry.js';
+import type { BrowserWindow as BrowserWindowType } from 'electron';
+import { getLiveWindow } from './window-registry.js';
 import { getWindowInfo } from './main.js';
 import { findUrlItem } from './datastore.js';
 import { resolveWindowAddress } from './window-address.js';
@@ -57,24 +57,22 @@ export interface WindowPresentation {
 
 /**
  * Return the canonical presentation for a window, or null if the window
- * doesn't exist or has been destroyed. Handles both Live windows
- * (state read from the BrowserWindow + windowRegistry) and Pending
- * windows (state read from their descriptor + thumbnail cache).
+ * doesn't exist or has been destroyed. State is read from the live
+ * BrowserWindow + windowRegistry (or the hybrid registry for page-hosts).
  */
 export function getWindowPresentation(windowId: number): WindowPresentation | null {
-  // Hybrid page-hosts are BaseWindows, invisible to `getWindowRef`
+  // Hybrid page-hosts are BaseWindows, invisible to `getLiveWindow`
   // (BrowserWindow.fromId-backed). Check the hybrid registry FIRST so a
   // hybrid id resolves to its content-webContents presentation rather than
-  // falling through to a null ref. No-op when the flag is off: the registry
-  // is empty, so `getHybridWindow` returns null and we fall through to the
-  // canvas/pending path exactly as before.
+  // falling through to a null lookup. No-op when the flag is off: the
+  // registry is empty, so `getHybridWindow` returns null and we fall
+  // through to the BrowserWindow path exactly as before.
   const hybrid = getHybridWindow(windowId);
   if (hybrid) return getHybridPresentation(hybrid);
 
-  const ref = getWindowRef(windowId);
-  if (!ref) return null;
-  if (ref.kind === 'pending') return getPendingPresentation(ref);
-  return getLivePresentation(ref);
+  const win = getLiveWindow(windowId);
+  if (!win) return null;
+  return getLivePresentation(win);
 }
 
 /**
@@ -173,11 +171,7 @@ function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
   };
 }
 
-function getLivePresentation(ref: WindowRef & { kind: 'live' }): WindowPresentation | null {
-  const win = ref.window;
-  // ref.id is the canonical (possibly synthetic) id; win.id is Electron's
-  // own. windowRegistry is keyed by Electron's id, so use win.id for the
-  // info lookup but expose ref.id in the response.
+function getLivePresentation(win: BrowserWindowType): WindowPresentation | null {
   const info = getWindowInfo(win.id);
   const hostUrl = win.webContents.getURL();
 
@@ -240,7 +234,7 @@ function getLivePresentation(ref: WindowRef & { kind: 'live' }): WindowPresentat
   }
 
   return {
-    id: ref.id,
+    id: win.id,
     address,
     title: win.getTitle(),
     favicon,
@@ -250,74 +244,5 @@ function getLivePresentation(ref: WindowRef & { kind: 'live' }): WindowPresentat
     preMaxBounds,
     visible: win.isVisible(),
     focused: win.isFocused(),
-  };
-}
-
-/**
- * Build a presentation for a Pending window from its descriptor. The
- * favicon/thumbnail resolution mirrors the Live path so the user-facing
- * result is indistinguishable from a live window — same icons, same
- * cached screenshots. `visible` is true (pending = "ready to show") and
- * `focused` is false (only Live windows can hold OS focus).
- */
-function getPendingPresentation(ref: WindowRef & { kind: 'pending' }): WindowPresentation {
-  const d = ref.descriptor;
-  const address = d.url;
-  const maximized = d.params.maximized === true;
-
-  let preMaxBounds: Electron.Rectangle | null = null;
-  if (maximized) {
-    const ppx = d.params.preMaxX;
-    const ppy = d.params.preMaxY;
-    const ppw = d.params.preMaxWidth;
-    const pph = d.params.preMaxHeight;
-    if (typeof ppx === 'number' && typeof ppy === 'number'
-      && typeof ppw === 'number' && typeof pph === 'number') {
-      preMaxBounds = { x: ppx, y: ppy, width: ppw, height: pph };
-    }
-  }
-
-  let favicon = '';
-  let thumbnail = '';
-  if (address.startsWith('http://') || address.startsWith('https://')) {
-    try {
-      const item = findUrlItem(address) as { favicon?: string; thumbnail?: string } | null;
-      if (item) {
-        favicon = item.favicon || '';
-        thumbnail = item.thumbnail || '';
-      }
-    } catch {
-      // best-effort
-    }
-    if (!favicon) {
-      try {
-        const host = new URL(address).hostname;
-        if (host) favicon = `https://www.google.com/s2/favicons?domain=${host}&sz=32`;
-      } catch {
-        // unparseable address — leave favicon empty
-      }
-    }
-  } else if (address.startsWith('peek://')) {
-    try {
-      const hash = urlToHash(address);
-      if (fs.existsSync(getThumbnailPath(hash))) {
-        thumbnail = hash;
-      }
-    } catch {
-      // best-effort
-    }
-  }
-
-  return {
-    id: ref.id,
-    address,
-    title: d.title,
-    favicon,
-    thumbnail,
-    bounds: d.bounds,
-    maximized,
-    preMaxBounds,
-    visible: true,
-    focused: false,
   };
 }

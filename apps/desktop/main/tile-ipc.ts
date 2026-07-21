@@ -18,7 +18,7 @@
 
 import { ipcMain, BrowserWindow, net, dialog, webContents, nativeTheme, screen, app, shell } from 'electron';
 import type { BaseWindow } from 'electron';
-import { broadcast, getAllLiveWindows, getAllWindowRefs, getLiveWindow, getWindowRef, realize, windowFromWebContents } from './window-registry.js';
+import { broadcast, getAllLiveWindows, getLiveWindow, windowFromWebContents } from './window-registry.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -2868,21 +2868,13 @@ export function registerTileIpcHandlers(): void {
         preMaxBounds: Electron.Rectangle | null;
         params: Record<string, unknown>;
       }> = [];
-      for (const ref of getAllWindowRefs()) {
-        // For Live refs, params come from windowRegistry (keyed by
-        // Electron's id, exposed via ref.window.id). For Pending refs,
-        // params come from the descriptor. The includeInternal filter
-        // skips windows without a registry presence — pending refs
-        // always have a descriptor.source so they're never internal.
-        let params: Record<string, unknown>;
-        if (ref.kind === 'live') {
-          const info = getWindowInfo(ref.window.id);
-          if (!args.includeInternal && !info) continue;
-          params = info ? info.params : {};
-        } else {
-          params = ref.descriptor.params;
-        }
-        const presentation = getWindowPresentation(ref.id);
+      for (const win of getAllLiveWindows()) {
+        // Params come from windowRegistry (keyed by Electron's id). The
+        // includeInternal filter skips windows without a registry presence.
+        const info = getWindowInfo(win.id);
+        if (!args.includeInternal && !info) continue;
+        const params: Record<string, unknown> = info ? info.params : {};
+        const presentation = getWindowPresentation(win.id);
         if (!presentation) continue;
         windows.push({
           id: presentation.id,
@@ -2901,7 +2893,7 @@ export function registerTileIpcHandlers(): void {
         });
       }
 
-      // Hybrid page-host windows are BaseWindows, so `getAllWindowRefs()`
+      // Hybrid page-host windows are BaseWindows, so `getAllLiveWindows()`
       // (BrowserWindow.getAllWindows-backed) never enumerates them — without
       // this the windows feature can't see them. Each hybrid is presented
       // through the SAME `getWindowPresentation` path as any other window, so
@@ -3092,9 +3084,9 @@ export function registerTileIpcHandlers(): void {
       if (typeof args.id !== 'number') {
         return { success: false, error: 'Window ID is required' };
       }
-      const ref = getWindowRef(args.id);
-      if (!ref) {
-        // Hybrid page-host (BaseWindow) — invisible to getWindowRef. Focus
+      const win = getLiveWindow(args.id);
+      if (!win) {
+        // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Focus
         // the host BaseWindow directly so focusing a hybrid window matches a
         // canvas page. No-op (null) when the flag is off.
         const hybrid = getHybridWindow(args.id);
@@ -3104,10 +3096,6 @@ export function registerTileIpcHandlers(): void {
         }
         return { success: false, error: 'Window not found' };
       }
-      // Pending refs realize on focus — this is the primary user-driven
-      // trigger that turns a "card in the windows feature" into an
-      // actual BrowserWindow.
-      const win = await realize(ref);
       if (!isHeadless()) {
         win.focus();
       }

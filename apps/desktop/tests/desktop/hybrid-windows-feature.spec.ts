@@ -7,7 +7,7 @@ import { createPerDescribeApp } from '../helpers/test-app';
  * Bug: "No pages show up in the windows feature." Hybrid page-hosts are
  * BaseWindows, which `BrowserWindow.getAllWindows()` / the window-registry do
  * NOT enumerate, so the windows feature (which builds its list from
- * `tile:window:list` → `getAllWindowRefs()` + `getWindowPresentation`) never
+ * `tile:window:list` → `getAllLiveWindows()` + `getWindowPresentation`) never
  * saw them. The fix appends hybrid windows from the hybrid registry, presented
  * through the SAME `getWindowPresentation` path as a canvas page, so a hybrid
  * entry is indistinguishable from a canvas page in the feature.
