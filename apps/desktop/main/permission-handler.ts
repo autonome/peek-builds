@@ -26,7 +26,7 @@
  */
 
 import type { Session } from 'electron';
-import { getLiveWindow } from './window-registry.js';
+import { getNativeWindowFor, getWindowIdFor } from './window-state-singleton.js';
 
 import { publish, subscribe } from './pubsub.js';
 import { findHostWindowId } from './webview-guest-registry.js';
@@ -116,9 +116,12 @@ export function installPermissionHandler(ses: Session): void {
       return;
     }
 
-    // 'prompt' — defer the callback and surface the UI.
+    // 'prompt' — defer the callback and surface the UI. `windowId` is the
+    // host's WM WindowId (the guest registry no longer carries raw Electron
+    // window ids).
     const windowId = webContents ? findHostWindowId(webContents) : null;
-    if (windowId == null) {
+    const native = windowId != null ? getNativeWindowFor(windowId) : null;
+    if (windowId == null || native == null) {
       console.warn(
         `[permission] ${permission} from ${requestingUrl}: no host window found, denying`,
       );
@@ -135,26 +138,27 @@ export function installPermissionHandler(ses: Session): void {
       origin,
     });
 
-    // Clean up if the host window closes before the user responds. This path
-    // only covers BrowserWindow hosts — a hybrid page-host is a BaseWindow,
-    // invisible to getLiveWindow, so its teardown instead calls
+    // Clean up if the host window closes before the user responds. `native`
+    // is the live handle for either host kind, but a hybrid BaseWindow may
+    // never emit 'closed' (Electron 40 tears it down without the event — see
+    // the finalize-tail note in ipc.ts), so hybrid teardown ALSO calls
     // `denyPendingRequestsForWindow` (wired via the hybrid registry's
-    // closed-listener seam in hybrid-overlay.ts).
-    const bw = getLiveWindow(windowId);
-    if (bw) {
-      const onClosed = () => {
-        const pending = takePendingRequest(pendingRequests, requestId, publishResolved);
-        if (pending) {
-          DEBUG && console.log(`[permission] window ${windowId} closed, denying ${requestId}`);
-          pending.callback(false);
-        }
-      };
-      bw.once('closed', onClosed);
-    }
+    // closed-listener seam in hybrid-overlay.ts). Both paths are idempotent.
+    const onClosed = () => {
+      const pending = takePendingRequest(pendingRequests, requestId, publishResolved);
+      if (pending) {
+        DEBUG && console.log(`[permission] window ${windowId} closed, denying ${requestId}`);
+        pending.callback(false);
+      }
+    };
+    native.once('closed', onClosed);
 
     publish('permission-handler', 'page:permission-request', {
       requestId,
-      windowId,
+      // Renderer-facing payloads still speak Electron window ids (the overlay
+      // matches this against its active-window id) — deliberate boundary
+      // until the renderer id-space migrates (window-manager.md §5).
+      windowId: native.id,
       permission,
       origin,
       label: labelFor(permission as PermissionName),
@@ -244,7 +248,14 @@ function persistStoredDecision(origin: string, permission: PermissionName, allow
  * `page:permission-resolved` so the overlay prunes its queued prompt.
  */
 export function denyPendingRequestsForWindow(windowId: number): void {
-  const denied = denyPendingForWindow(pendingRequests, windowId, publishResolved);
+  // The hybrid registry's closed-listener seam still speaks Electron window
+  // ids — a deliberate boundary until that registry re-keys onto WM ids in a
+  // later migration step (window-manager.md §4.6). Convert here; the
+  // machine's mapping for a hybrid host survives its teardown (BaseWindows
+  // never emit the 'closed' the adapter cleans up on), so this resolves.
+  const wmId = getWindowIdFor(windowId);
+  if (wmId == null) return;
+  const denied = denyPendingForWindow(pendingRequests, wmId, publishResolved);
   if (denied.length > 0) {
     console.log(
       `[permission] window ${windowId} closed, denied ${denied.length} pending request(s)`,

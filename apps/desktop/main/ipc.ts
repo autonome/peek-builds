@@ -874,8 +874,9 @@ function assembleHybridPageHost(
 
   // P0 seam: mark the content webContents so the permission lookup
   // (registerGuest → findHostWindowId) treats it as page-host content.
+  // (registerGuest itself happens after registerWindowWithMachine below —
+  // the guest registry carries WM WindowIds, which the machine mints.)
   markPageHostContent(view.webContents);
-  registerGuest(view.webContents, baseWin.id);
 
   // P1.4a — register this hybrid window so it is enumerable, dedup-able
   // by url/key, focus-trackable, and targetable. A BaseWindow is not a
@@ -1081,6 +1082,10 @@ function assembleHybridPageHost(
     win: baseWin,
     contentWC: view.webContents,
   });
+  // Track the content-WC→host relationship for the permission lookup
+  // (findHostWindowId). The guest registry carries WM WindowIds, so this
+  // registration uses the machine-minted id from just above.
+  registerGuest(view.webContents, hostMachineId);
   trackWindow(baseWin as unknown as BrowserWindow);
   getIzuiCoordinator().pushWindow(baseWin.id);
 

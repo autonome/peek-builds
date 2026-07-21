@@ -14,13 +14,16 @@
  */
 
 import type { PermissionName } from './permission-policy.js';
+// Type-only import from the pure reducer module — erased at runtime, so this
+// module still loads under plain node with no electron.
+import type { WindowId } from './window-state.js';
 
 /** One deferred permission request awaiting a user (or teardown) decision. */
 export interface PendingPermissionRequest {
   /** The deferred Chromium callback: call with true (grant) or false (deny). */
   callback: (granted: boolean) => void;
-  /** The host page-host window the prompt UI surfaces in. */
-  windowId: number | null;
+  /** The host page-host window (WM WindowId) the prompt UI surfaces in. */
+  windowId: WindowId | null;
   permission: PermissionName;
   origin: string;
 }
@@ -59,7 +62,7 @@ export function takePendingRequest(
  */
 export function denyPendingForWindow(
   pending: Map<string, PendingPermissionRequest>,
-  windowId: number,
+  windowId: WindowId,
   publishResolved: (requestId: string) => void,
 ): string[] {
   const denied: string[] = [];

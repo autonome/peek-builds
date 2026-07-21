@@ -353,8 +353,15 @@ export function addEscHandler(bw: BrowserWindow): void {
     attachEscListener(guestWebContents, 'webview');
     // Track the guest→host relationship so the permission handler (and any
     // other main-process code that gets a guest WebContents from Electron)
-    // can find which page-host BrowserWindow to surface UI in.
-    registerGuest(guestWebContents, bw.id);
+    // can find which page-host window to surface UI in. The registry carries
+    // WM WindowIds; by attach time the host has long been registered with the
+    // machine, so the mapping is available.
+    const hostWmId = getWindowIdFor(bw);
+    if (hostWmId != null) {
+      registerGuest(guestWebContents, hostWmId);
+    } else {
+      DEBUG && console.log(`[esc] did-attach-webview: window ${bw.id} has no WM id; guest not registered`);
+    }
   });
 }
 
@@ -425,7 +432,11 @@ interface ClosableWindow {
  * synchronous fast path — byte-identical to the previous `win.close()`.
  */
 export function closeHostWindow(hostId: number, win: ClosableWindow): void {
-  const guestIds = getGuestsForWindow(hostId);
+  // Callers still speak Electron window ids here; the guest registry is keyed
+  // by WM WindowId, so convert at this boundary (the host is still live at
+  // this point, so the mapping resolves).
+  const hostWmId = getWindowIdFor(hostId);
+  const guestIds = hostWmId != null ? getGuestsForWindow(hostWmId) : [];
   // PEEK_DISABLE_PAGEHOST_CLOSE_GUARD=1 reverts to the raw close (no ordered
   // guest teardown) — the pre-fix behavior. Test/diagnostic seam for A/B'ing
   // the page-host close UAF guard; never set in production.

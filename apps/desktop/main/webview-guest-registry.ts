@@ -1,23 +1,29 @@
 /**
  * Webview Guest → Host Window Registry
  *
- * Maps guest <webview> WebContents IDs to their host BrowserWindow IDs.
- * Populated on `did-attach-webview` (registered alongside the ESC handler in
- * windows.ts) and cleared on guest destroy.
+ * Maps guest <webview> WebContents IDs to the WM `WindowId` of their host
+ * window. Populated on `did-attach-webview` (registered alongside the ESC
+ * handler in windows.ts) and on hybrid page-host construction (ipc.ts), and
+ * cleared on guest destroy.
  *
  * Why this exists: when an Electron API gives us a guest WebContents (e.g.
  * `setPermissionRequestHandler`'s `webContents` arg) we need to know which
- * page-host BrowserWindow to surface UI in. `BrowserWindow.fromWebContents`
+ * page-host window to surface UI in. `BrowserWindow.fromWebContents`
  * returns null for guest contents; `webContents.hostWebContents` is
  * deprecated; URL-substring matching (the old download-handler approach) is
  * fragile. This registry makes the lookup O(1) and reliable.
+ *
+ * Id spaces: keys are webContents ids (Electron's), values are WM
+ * `WindowId`s (window-manager.md §4.6 dim 11) — the map never carries raw
+ * Electron *window* ids, so its two numeric spaces can't be confused.
  */
 
 import { type WebContents, webContents } from 'electron';
-import { getLiveWindow, windowFromWebContents } from './window-registry.js';
-import { getHybridWindow } from './hybrid-page-host-registry.js';
+import { windowFromWebContents } from './window-registry.js';
+import type { WindowId } from './window-state.js';
+import { getNativeWindowFor, getWindowIdFor } from './window-state-singleton.js';
 
-const guestToHost = new Map<number, number>();
+const guestToHost = new Map<number, WindowId>();
 
 /**
  * Set of WebContents IDs that have been explicitly marked as page-host content
@@ -27,14 +33,14 @@ const guestToHost = new Map<number, number>();
 const pageHostContentIds = new Set<number>();
 
 /**
- * Register a guest WebContents as belonging to a host BrowserWindow.
- * Idempotent — a second call for the same guestId overwrites.
+ * Register a guest WebContents as belonging to a host window (by WM
+ * `WindowId`). Idempotent — a second call for the same guestId overwrites.
  *
  * Wires a `destroyed` listener so the entry self-cleans when the guest goes
  * away. Caller should still call `unregisterGuest` if the host window
  * closes before the guest emits destroyed.
  */
-export function registerGuest(guest: WebContents, hostWindowId: number): void {
+export function registerGuest(guest: WebContents, hostWindowId: WindowId): void {
   const guestId = guest.id;
   guestToHost.set(guestId, hostWindowId);
   guest.once('destroyed', () => {
@@ -43,7 +49,7 @@ export function registerGuest(guest: WebContents, hostWindowId: number): void {
 }
 
 /**
- * Look up the host BrowserWindow ID for a given guest WebContents.
+ * Look up the host window's WM `WindowId` for a given guest WebContents.
  *
  * Tries the registry first. If the lookup misses (e.g. for a top-level
  * BrowserWindow's own WebContents, where there's no guest relationship),
@@ -52,26 +58,23 @@ export function registerGuest(guest: WebContents, hostWindowId: number): void {
  *
  * Returns null if no owning window can be found.
  */
-export function findHostWindowId(wc: WebContents): number | null {
+export function findHostWindowId(wc: WebContents): WindowId | null {
   const hostId = guestToHost.get(wc.id);
   if (hostId != null) {
-    const bw = getLiveWindow(hostId);
-    if (bw) return hostId;
-    // Hybrid page-host: the host is a BaseWindow + WebContentsView, invisible
-    // to BrowserWindow.fromId (so getLiveWindow misses it). The hybrid branch
-    // in ipc.ts registers the content WC against the BaseWindow id
-    // (registerGuest + markPageHostContent); validate liveness through the
-    // hybrid registry instead. Without this, a hybrid page's permission
-    // request resolved to "no host window" and was auto-denied.
-    const hybrid = getHybridWindow(hostId);
-    if (hybrid && !hybrid.baseWin.isDestroyed()) return hostId;
+    // Liveness check: the machine's mapping covers BOTH BrowserWindow hosts
+    // and hybrid BaseWindow hosts (both register with the machine), so the
+    // old two-branch getLiveWindow / hybrid-registry probe collapses into
+    // one lookup.
+    if (getNativeWindowFor(hostId) != null) return hostId;
     // Stale entry — fall through to live scan
     guestToHost.delete(wc.id);
   }
 
-  // Top-level case: the WebContents IS a BrowserWindow's own contents
+  // Top-level case: the WebContents IS a BrowserWindow's own contents.
+  // (For hybrid content, fromWebContents resolves to the owning BaseWindow —
+  // see the windowFromWebContents TRAP note — which getWindowIdFor also maps.)
   const direct = windowFromWebContents(wc);
-  if (direct) return direct.id;
+  if (direct) return getWindowIdFor(direct);
 
   return null;
 }
@@ -119,11 +122,11 @@ export function unregisterGuest(guestWebContentsId: number): void {
 }
 
 /**
- * Return all guest WebContents IDs registered to a given host window.
- * Used by callers that want to clean up per-window state when the window
- * closes (e.g. denying pending permission requests).
+ * Return all guest WebContents IDs registered to a given host window (by WM
+ * `WindowId`). Used by callers that want to clean up per-window state when
+ * the window closes (e.g. denying pending permission requests).
  */
-export function getGuestsForWindow(hostWindowId: number): number[] {
+export function getGuestsForWindow(hostWindowId: WindowId): number[] {
   const out: number[] = [];
   for (const [guestId, hostId] of guestToHost) {
     if (hostId === hostWindowId) out.push(guestId);
