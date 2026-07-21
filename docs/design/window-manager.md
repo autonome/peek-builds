@@ -154,13 +154,13 @@ plain structural types: `WindowId`, `Rect { x, y, width, height }`, `WindowSpec`
 a reimplementation rather than a rewrite.
 
 **Window identity is an opaque WM-assigned id — LANDED** (commits 90becfc5, 5d760baf,
-04d2eb94). `WindowId` is an opaque branded string (`"wm-N"`), minted in exactly one place:
-`window-os-adapter.ts registerWindow()`, which is idempotent per native window and returns
-the existing id on re-registration. The adapter is the **sole** `WindowId` ↔ Electron
-mapper — a private `idByOsWindowId` reverse map; no other module translates. The reducer
-(`window-state.ts`), the adapter, and the singleton (`window-state-singleton.ts`) are
-re-keyed to `WindowId`, and `webview-guest-registry.ts guestToHost` now holds `WindowId`
-values.
+04d2eb94; minting moved with the port, 84ce45b4). `WindowId` is an opaque branded string
+(`"wm-N"`), minted in exactly one place — `electron-window-backend.ts registerWindow()` —
+idempotent per native window, returning the existing id on re-registration. The backend is
+the **sole** `WindowId` ↔ Electron mapper — a private `idByOsWindowId` reverse map; no
+other module translates. The reducer (`window-state.ts`), the executor
+(`window-os-adapter.ts`), and the singleton (`window-state-singleton.ts`) are re-keyed to
+`WindowId`, and `webview-guest-registry.ts guestToHost` now holds `WindowId` values.
 
 When this document was written there were **three colliding id spaces**: Electron window
 ids (`windowRegistry`, `WindowRecord`, most of `main.ts`), Electron webContents ids
@@ -183,8 +183,9 @@ A single WM-owned id space was a **precondition** for the port, not a later clea
 now in place. The backend maps `WindowId -> platform handle` internally and never leaks
 the handle.
 
-**First implementation:** `ElectronWindowBackend`. Portability targets that justify the
-shape: Tauri, ElectroBun, native Swift.
+**First implementation — LANDED** (commit 84ce45b4): `electron-window-backend.ts
+ElectronWindowBackend`. Portability targets that justify the shape: Tauri, ElectroBun,
+native Swift.
 
 ---
 
@@ -371,14 +372,27 @@ failure mode this document exists to prevent (§2).**
    deleted grep-zero; `guestToHost` holds `WindowId` values. The renderer-facing id
    economy deliberately stays numeric until the session/context-store step (§3 scope
    decision).
-2. **The port.** Define `WindowBackend` and `ElectronWindowBackend`. Convert
-   `window-os-adapter.ts` to call the port; delete its Electron imports.
+2. **The port — DONE** (commit 84ce45b4). `window-backend.ts` defines the command+event
+   `WindowBackend` port — surface limited to what the executor issues today (raise,
+   focus-content, fullscreen drive + reconcile, close-or-hide, the renderer Escape ask,
+   the Escape grab and per-window interceptor, app-activation listeners); the rest of the
+   §3 table arrives with the steps that need it, never speculatively.
+   `electron-window-backend.ts ElectronWindowBackend` implements it and is the only
+   window-manager module importing Electron: it holds every native handle, mints
+   `WindowId`, translates native events into the machine's event vocabulary through the
+   one injected `BackendEventSink`, and owns the two boundary settles (deferred-blur §4.4,
+   bounded fullscreen §2.3). `window-os-adapter.ts` lost its Electron imports in the same
+   commit — its `runEffect` now issues port commands only. Handle-carrying registration
+   and the numeric-id seam survive as comment-annotated shims
+   (`electron-window-backend.ts BackendMigrationShims`), absorbed by steps 4 and 11. The
+   R2 check's exempt file swapped to the backend in the same commit.
 3. **R2 enforcement check — DONE** (commit b3853bee). `scripts/check-r2-window-ops.mjs`
    runs in the `test:desktop:electron` chain (`apps/desktop/package.json`), with a
    51-entry comment-annotated allowlist covering 129 legacy window-op call sites, each
-   entry tagged with the migration step that deletes it; the sole exempt file is
-   `apps/desktop/main/window-os-adapter.ts`. The allowlist only ever gets shorter; a PR
-   that lengthens it fails.
+   entry tagged with the migration step that deletes it; the sole exempt file is the
+   executor — swapped to `apps/desktop/main/electron-window-backend.ts` when the port
+   landed (step 2), since that is where the native calls now live. The allowlist only
+   ever gets shorter; a PR that lengthens it fails.
 4. **Special window classes + registry unification.** Absorb `windowRegistry`, the 8+
    singletons, devtools. Delete `__hudHidden` and the always-on-top sniffing predicate.
 5. **Z-order / stacking.** Give the reducer stacking. This is what makes `frontAsserted`
@@ -409,10 +423,10 @@ cleaning up.
 ## 6. Current state
 
 Roughly **1.5 of ~19 dimensions** are owned. That is the honest number. Since this
-document was written, two migration steps have landed — the id space (§5 step 1) and the
-R2 enforcement check (§5 step 3) — but the machine and adapter are still in **shadow
-mode**: no runtime consumer has been switched onto them yet, so runtime behavior is
-unchanged.
+document was written, three migration steps have landed — the id space (§5 step 1), the
+port (§5 step 2), and the R2 enforcement check (§5 step 3) — and the machine is live
+behind the seams already cut over (`window-state-singleton.ts` lists the authorities it
+replaced). The §4 dimensions not yet absorbed still run on their old owners.
 
 **`apps/desktop/main/window-state.ts`** — the owner, as R1 describes it, for the dimensions
 it covers. Pure, zero imports, 113 unit tests in `window-state.test.ts`, keyed by
@@ -421,12 +435,22 @@ intent), the switcher state, the Escape decision (`applyEscape`), fullscreen mod
 satellite classification (`isSatelliteRegistration`), and MRU focus order. This is the
 nucleus; everything in §4 grows into it rather than beside it.
 
-**`apps/desktop/main/window-os-adapter.ts`** — the executor, as R2 describes it, but **still
-Electron-coupled**. It must become the port implementation's only caller (§5 step 2). Its
-`runEffect` is already the single funnel; the coupling is the remaining defect, not the
-structure. It is also the sole authority on window identity: `registerWindow()` mints
-every `WindowId` (idempotent per native window), and its private `idByOsWindowId` map is
-the only `WindowId` ↔ Electron translation in the tree.
+**`apps/desktop/main/window-os-adapter.ts`** — the executor, as R2 describes it, and since
+the port landed (§5 step 2) **Electron-free**: it imports no platform module and holds no
+native handle. Its `runEffect` is the single funnel, and every effect it executes is a
+`WindowBackend` port command; native reality re-enters only through the backend's
+injected event sink into its dispatch pump.
+
+**`apps/desktop/main/window-backend.ts`** — the port, as R3 describes it: command + event,
+never query, zero platform imports. Its surface is exactly what the executor issues
+today; the steps that need more of the §3 table widen it when they land.
+
+**`apps/desktop/main/electron-window-backend.ts`** — the Electron implementation, and the
+only window-manager module that imports Electron. It retains every native handle, mints
+every `WindowId` (`registerWindow()`, idempotent per native window; its private
+`idByOsWindowId` map is the only `WindowId` ↔ Electron translation in the tree), owns the
+two OS-boundary settles (deferred-blur §4.4, bounded fullscreen §2.3), and carries the
+comment-annotated migration shims (`BackendMigrationShims`) that steps 4 and 11 delete.
 
 **`apps/desktop/main/window-state-singleton.ts`** — the composition point: holds the one
 machine + adapter pair and exposes the numeric-id seam (`getWindowIdFor()` /
@@ -435,8 +459,9 @@ through (§3 scope decision).
 
 **The R2 check is live** — `scripts/check-r2-window-ops.mjs`, in the
 `test:desktop:electron` chain: 51 allowlist entries covering 129 legacy window-op call
-sites, each tagged with the §5 step that deletes it. The entry count is the migration's
-progress bar; it only goes down.
+sites, each tagged with the §5 step that deletes it. The sole exempt file is
+`apps/desktop/main/electron-window-backend.ts` (swapped from the executor when the port
+landed). The entry count is the migration's progress bar; it only goes down.
 
 **`frontAsserted` is CURRENTLY UNSOUND**, and this must not be papered over. It claims "we
 have driven the OS to match `front`," but **nothing owns z-order** (§4.3, dimension 3):
