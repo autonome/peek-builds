@@ -430,6 +430,27 @@ failure mode this document exists to prevent (§2).**
    `registerWindow` migration shim stays until window CREATION moves behind the port.
 5. **Z-order / stacking.** Give the reducer stacking. This is what makes `frontAsserted`
    sound (§6) and it must precede session restore.
+   **Part A — machinery: DONE** (commit 693816ab). The reducer carries a per-record
+   stacking level (`window-state.ts deriveStackingLevel`: `stacked` participates,
+   `pinned` = hud/overlay/palette above the stack via the existing `SET_ALWAYS_ON_TOP`,
+   `excluded` = the other satellites) and the ordered list
+   (`AppWindowState.stackOrder`, bottom→top; membership = stacked ∧ visible;
+   `stackOrderInvariantHolds` checks it). `SET_STACKING` is the new SOLE ordering
+   effect (relative order only — activation stays `RAISE_WINDOW`), emitted by the
+   closing assertion (`applyFrontAssertion`) alongside the raise, so the machine's own
+   front-driving now also drives order and places `front` at the top of the list. The
+   page-host orderability caveat (an NSWindow no-ops raises until first composited
+   frame) is the `WINDOW_CONTENT_ORDERABLE` event: it marks the record orderable and
+   re-drives `SET_STACKING` for the window and everything above it — no timer, no
+   poll. Port command `window-backend.ts setStacking(id)`, implemented in
+   `electron-window-backend.ts` as the native relative raise (`moveTop`).
+   **Part B — caller cutover: PENDING.** The legacy imperative movers are untouched
+   and still run beside the machine: `session.ts` (`reassertColdStartFocusOnce`,
+   `reassertStackingOrder`, the willActivate restack loop — moveTop ×8, still keyed
+   on the raw `hybrid:first-frame` IPC) and `hybrid-overlay.ts` (moveTop ×1); their
+   R2 entries remain, and no producer fires `WINDOW_CONTENT_ORDERABLE` yet. Part B
+   wires the producers, routes those callers through the machine, and deletes the
+   nine moveTop calls + their allowlist entries.
 6. **Visibility.** Make `visible` authoritative; delete the hand-dispatch of
    `WINDOW_HIDDEN` and the `isVisible()` polling in `maybeHideApp`.
 7. **Geometry / maximize.** Collapse the three stores into one; delete the `isMaximized()`
@@ -455,20 +476,24 @@ cleaning up.
 
 ## 6. Current state
 
-Roughly **4.5 of ~19 dimensions** are owned. Since this document was written, four
+Roughly **5 of ~19 dimensions** are owned. Since this document was written, four
 migration steps have landed — the id space (§5 step 1), the port (§5 step 2), the R2
 enforcement check (§5 step 3), and special window classes + registry unification (§5
 step 4: window identity/params §4.1 dim 1a, classes §4.3 dim 8b, devtools §4.6 dim 8a)
-— and the machine is live behind the seams already cut over
-(`window-state-singleton.ts` lists the authorities it replaced). The §4 dimensions not
-yet absorbed still run on their old owners.
+— plus the MACHINERY half of z-order/stacking (§5 step 5 part A: reducer stacking
+level + ordered list, the `SET_STACKING` effect, the backend `setStacking` command;
+the legacy `moveTop` callers are NOT cut over yet). The machine is live behind the
+seams already cut over (`window-state-singleton.ts` lists the authorities it
+replaced). The §4 dimensions not yet absorbed still run on their old owners.
 
 **`apps/desktop/main/window-state.ts`** — the owner, as R1 describes it, for the dimensions
-it covers. Pure, zero imports, 146 unit tests in `window-state.test.ts`, keyed by
+it covers. Pure, zero imports, 171 unit tests in `window-state.test.ts`, keyed by
 `WindowId`. It owns: `front` (intent), `frontAsserted` (the claim that the OS matches that
 intent), the switcher state, the Escape decision (`applyEscape`), fullscreen mode,
 satellite classification (`isSatelliteRegistration`), window classes
-(`classifyWindowRegistration` + the record's closed `class` enum), the window-manager
+(`classifyWindowRegistration` + the record's closed `class` enum), the stacking level +
+ordered z-order list (`deriveStackingLevel`, `AppWindowState.stackOrder` — §5 step 5
+part A), the window-manager
 registry payload (`source`/`params` — the deleted `main.ts windowRegistry`), parent
 linkage (parent-refocus on WINDOW_CLOSED), the HUD app-blur hide/show sweep, and MRU
 focus order. This is the nucleus; everything in §4 grows into it rather than beside it.
@@ -490,7 +515,8 @@ every `WindowId` (`registerWindow()`, idempotent per native window; its private
 two OS-boundary settles (deferred-blur §4.4, bounded fullscreen §2.3), performs the
 step-4 command family (guest-safe `closeWindow` — the absorbed d1cf0b9a UAF guard —
 `destroyWindow`, `closeContent`, `showWindow`, `hideWindow`, `pinAlwaysOnTop`,
-`destroyAllContentGuests`), and carries the comment-annotated migration shims
+`destroyAllContentGuests`) plus step 5's `setStacking` (the native relative raise,
+`moveTop` — legal only here, the R2-exempt file), and carries the comment-annotated migration shims
 (`BackendMigrationShims`) — deleted when creation moves behind the port and at step 11.
 
 **`apps/desktop/main/window-state-singleton.ts`** — the composition point: holds the one
@@ -504,15 +530,23 @@ sites, each tagged with the §5 step that deletes it. The sole exempt file is
 `apps/desktop/main/electron-window-backend.ts` (swapped from the executor when the port
 landed). The entry count is the migration's progress bar; it only goes down.
 
-**`frontAsserted` is CURRENTLY UNSOUND**, and this must not be papered over. It claims "we
-have driven the OS to match `front`," but **nothing owns z-order** (§4.3, dimension 3):
-`session.ts` drives `moveTop()` during restore and during cold-start re-assert without ever
-informing the reducer, and macOS silently **no-ops `moveTop` for a non-frontmost app**. So
-`frontAsserted` can read `true` while the window is buried behind another window — the
-reducer believes the assertion holds and the Escape-grab safety net
-(`deriveEscGrabRegistered`) stays off. The assertion model does not become trustworthy
-until step 5 of §5 lands. Until then, treat `frontAsserted === true` as "we issued the
-raise," not "the window is on top."
+**`frontAsserted` is sound only for MACHINE-DRIVEN raises so far** (§5 step 5 part A —
+the honest intermediate state; do not paper over the remainder). Since part A, every
+transition that sets `frontAsserted: true` also DRIVES order: the closing assertion
+emits `SET_STACKING(front)` alongside the raise and places `front` at the top of the
+reducer's `stackOrder` — so within the machine's own event flow the claim now means
+"raised, first-respondered, AND ordered on top", which kills the buried-but-asserted
+state for machine-driven raises. What remains unsound until part B cuts the callers
+over: the LEGACY movers still restack behind the machine's back — `session.ts` drives
+`moveTop()` ×8 during restore/cold-start re-assert and `hybrid-overlay.ts` ×1 without
+informing the reducer — and macOS silently **no-ops `moveTop` for a non-frontmost
+app**, so a legacy sweep can bury the asserted front while `frontAsserted` reads
+`true` and the Escape-grab safety net (`deriveEscGrabRegistered`) stays off. Also not
+yet modeled: a show/import of another stacked window does NOT invalidate the
+assertion (deliberate — re-driving there would be a RAISE_WINDOW activation storm
+during restore-shaped imports; the burial converges on the focused window's own
+event). Until part B lands, treat `frontAsserted === true` as "the MACHINE's last
+drive put it on top", not "nothing has restacked since".
 
 ---
 
