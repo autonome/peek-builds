@@ -3482,19 +3482,36 @@ export function registerWindowHandlers(): void {
         contentWC: win.webContents,
       });
       // Feed the machine the OPEN intent (gate fallout of the WindowId
-      // cutover). Under HEADLESS the winOptions above force `show: false` and
-      // nothing ever shows or focuses the window at the OS level, so no native
+      // cutover) — but ONLY for an open the caller wants VISIBLE. Under
+      // HEADLESS the winOptions above force `show: false` and nothing ever
+      // shows or focuses the window at the OS level, so no native
       // `'show'`/`'focus'` event will EVER reach the adapter — without this
       // dispatch the machine never learns the window exists on screen and
       // `front` stays null for the whole run (getFocusedVisibleWindowId null,
       // session-save loses the focused descriptor, …). Non-headless the OS
-      // events fire too and the reducer re-merges idempotently. `focused`
-      // ports the deleted "track immediately at open" behavior
+      // events fire too and the reducer re-merges idempotently. `focused:
+      // true` ports the deleted "track immediately at open" behavior
       // (`trackVisibleWindowFocus` at this exact site): an open the caller
-      // wants VISIBLE targets the window; a `show:false` open (session
-      // restore) only marks it shown-eligible and seeds `front` when there is
-      // none. Satellite/modal arbitration is structural in the reducer.
-      dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: machineWindowId, focused: options.show !== false });
+      // wants visible targets the window. Satellite/modal arbitration is
+      // structural in the reducer.
+      //
+      // A `show:false` open (session-restore pre-warm) gets NO dispatch: the
+      // window is natively HIDDEN here, so recording it as shown is a lie the
+      // machine ACTS on — the reducer's seed branch (`front == null` +
+      // non-satellite) would make the hidden window `front`, and the closing
+      // assertion step then emits RAISE_WINDOW, whose executor shows +
+      // focuses it. During a visible session restore that machine-initiated
+      // activation races (and can precede) session.ts's single-activation
+      // authority — the 4f1a974a design: restore activates the focused
+      // descriptor exactly once — and the headless gate structurally cannot
+      // catch the flash. The window enters the machine when it genuinely
+      // becomes visible: the real show seams (`showWindowHeadlessSafe` /
+      // `showHybridHost` in windows.ts) dispatch WINDOW_SHOWN themselves, and
+      // non-headless the native `'show'`/`'focus'` listeners cover any other
+      // path.
+      if (options.show !== false) {
+        dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: machineWindowId, focused: true });
+      }
       const coordinator = getIzuiCoordinator();
       coordinator.pushWindow(win.id);
 

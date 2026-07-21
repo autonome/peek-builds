@@ -464,6 +464,17 @@ export interface WindowRegistrationDecision {
    * pump for every kind — and on a RE-registration it lands after the richer
    * `WINDOW_REGISTERED` merge, so a modal is already a satellite by the time
    * the focused-shown event is judged.
+   *
+   * CONSTRAINT — registration happens at OPEN time only. `focused: true` is
+   * correct solely because every current caller registers a window at the
+   * moment it is opened, when an already-visible window is by construction the
+   * one the user just targeted; this decision has NO input saying whether the
+   * window actually holds OS focus. If a future path re-registers an
+   * already-visible BACKGROUND window while another window holds OS focus,
+   * this pump would steal `front` from the genuinely-focused window. Such a
+   * path must not reuse this decision as-is: it needs real focus state as an
+   * input (pump `focused: <actual OS focus>` instead), or must suppress the
+   * shown pump entirely.
    */
   pumpShownEvent: boolean;
 }
@@ -507,6 +518,10 @@ export function decideWindowRegistration(input: {
     attachEscHandler: fresh && kind === 'browser' && attachEscHandlerRequested !== false,
     adoptRendererWC: fresh || hasContentWC,
     pumpRegisteredEvent: true,
+    // Registration-time-only assumption — see the `pumpShownEvent` field doc:
+    // visible-at-registration implies "just opened, user-targeted" ONLY while
+    // every caller registers at open time. A path re-registering a visible
+    // background window must not take this branch as-is (latent front-steal).
     pumpShownEvent: nativeVisible === true,
   };
 }
