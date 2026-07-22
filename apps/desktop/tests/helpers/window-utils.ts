@@ -87,7 +87,13 @@ export function getTestProfile(suiteName?: string): string {
 }
 
 /**
- * Wait for window count to reach expected value
+ * Wait for window count to reach expected value.
+ *
+ * Direction-aware: when waiting for the count to RISE, overshoot counts as
+ * reached — two windows can arrive within one 50ms poll gap, so the exact
+ * target may never be observed (count jumps 6→8 and an `=== 7` wait times
+ * out; groups-navigation flake). Symmetrically, waits for the count to FALL
+ * accept undershoot. Only a wait for the current count demands equality.
  */
 export async function waitForWindowCount(
   getWindows: () => Page[],
@@ -95,8 +101,11 @@ export async function waitForWindowCount(
   timeout = 5000
 ): Promise<void> {
   const start = Date.now();
+  const initial = getWindows().length;
+  const reached = (n: number) =>
+    count > initial ? n >= count : count < initial ? n <= count : n === count;
   while (Date.now() - start < timeout) {
-    if (getWindows().length === count) return;
+    if (reached(getWindows().length)) return;
     await sleep(50);
   }
   throw new Error(`Window count didn't reach ${count} within ${timeout}ms (current: ${getWindows().length})`);
