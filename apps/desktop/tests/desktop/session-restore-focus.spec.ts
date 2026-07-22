@@ -22,8 +22,12 @@
  * all — see the `hybridActivations` comment in session.ts), and a single
  * post-loop authority activates ONLY the focused descriptor. That is a
  * structural difference, not an instrumentation gap, so the tests below use
- * the `hybridActivations`/`focuses`/`moveTops` counters (already
- * instrumented) instead of `shows`/`showInactives`.
+ * the `hybridActivations`/`focuses`/`stackDrives` counters (already
+ * instrumented) instead of `shows`/`showInactives`. (`stackDrives` replaced
+ * `moveTops` when §5 step 5 part B cut the restore restack over to the
+ * window-state machine: session.ts no longer calls moveTop at all — it
+ * dispatches STACK_ORDER_IMPORTED and the counter records how many restored
+ * windows were submitted in that saved-order import.)
  *
  * Per feedback_no_sleep_in_tests_or_code: no wall-clock waits.
  * Deterministic save→setAppFocusedForTest→forceRestoreSession→assert.
@@ -71,7 +75,7 @@ test.describe('Session Restore Focus @desktop', () => {
   // RESTORED one (may resolve to the `peek://app/page/…` shell or a deferred
   // blank), so any prefix match leaks restored windows into the next test —
   // which, post full-stacking-order restore, pollutes the restored count and the
-  // moveTops assertions. The background test fixture is internal, so
+  // stackDrives assertions. The background test fixture is internal, so
   // includeInternal:false already excludes it.
   async function resetState() {
     await bgWindow.evaluate(async () => {
@@ -143,7 +147,7 @@ test.describe('Session Restore Focus @desktop', () => {
   const getCounters = () =>
     app.evaluateMain!(((_e: unknown) => {
       return (globalThis as any).__peek_test.getRestoreFocusCounters();
-    }) as any) as Promise<{ shows: number; showInactives: number; focuses: number; moveTops: number; hybridActivations: number; focusedId: number | null }>;
+    }) as any) as Promise<{ shows: number; showInactives: number; focuses: number; stackDrives: number; hybridActivations: number; focusedId: number | null }>;
 
   // Tests ----------------------------------------------------------------
 
@@ -151,8 +155,8 @@ test.describe('Session Restore Focus @desktop', () => {
   // it is an exact scenario duplicate of "in-session restore with
   // appFocused=false does NOT activate" below (same setup: open windows,
   // save, reset, setAppFocused(false), forceRestore, assert
-  // moveTops/focuses/hybridActivations are 0). That test already covers this
-  // regression class for hybrid.
+  // stackDrives/focuses/hybridActivations are 0). That test already covers
+  // this regression class for hybrid.
 
   test('appFocused=true at restore (in-session, non-cold): activates the focused descriptor exactly once', async () => {
     // Hybrid restore has no per-window active-show step to instrument (every
@@ -193,15 +197,15 @@ test.describe('Session Restore Focus @desktop', () => {
     expect(counters.hybridActivations,
       `the activation must go through the hybrid activation path`)
       .toBe(counters.focuses);
-    // Regression guard: full-stacking restore (session.ts "reproduces full
-    // window stacking order") raises EVERY restored window via moveTop() — the
-    // whole saved stack, not just the focused one — so moveTops equals the
-    // restored-window count (each restored window raised exactly once; the
-    // focused descriptor is the one raised + activated LAST). This still proves
-    // the focused descriptor is raised when activated (activation is never a bare
-    // focus() without a moveTop()), it just no longer expects a lone raise.
-    expect(counters.moveTops,
-      `every restored window is raised via moveTop() (full saved stacking order)`)
+    // Regression guard: full-stacking restore submits EVERY restored window to
+    // the window-state machine's saved-order import (STACK_ORDER_IMPORTED —
+    // the whole saved stack, not just the focused one), so stackDrives equals
+    // the restored-window count (each restored window named in the import
+    // exactly once; the focused descriptor lands on top and is activated
+    // LAST). This still proves activation is never a bare focus() without the
+    // saved order being driven — the machine emits SET_STACKING per window.
+    expect(counters.stackDrives,
+      `every restored window is submitted to the machine's saved-order import`)
       .toBe(result.restored);
   });
 
@@ -244,8 +248,8 @@ test.describe('Session Restore Focus @desktop', () => {
     const inSession = await forceRestore();
     expect(inSession.restored).toBeGreaterThan(0);
     const c = await getCounters();
-    expect(c.moveTops,
-      `in-session restore (isColdStart=false) with appFocused=false must NOT moveTop — don't yank a switched-away user`)
+    expect(c.stackDrives,
+      `in-session restore (isColdStart=false) with appFocused=false must NOT restack — don't yank a switched-away user`)
       .toBe(0);
     expect(c.focuses,
       `in-session restore must NOT .focus()/.activate the focused descriptor while appFocused=false`)
@@ -282,14 +286,14 @@ test.describe('Session Restore Focus @desktop', () => {
 
     const c = await getCounters();
     // The single focused descriptor is activated exactly once (focuses===1),
-    // while full-stacking restore raises EVERY restored window via moveTop()
-    // (moveTops === restored count) — the focused descriptor being the one
-    // raised + activated last.
+    // while full-stacking restore submits EVERY restored window to the
+    // machine's saved-order import (stackDrives === restored count) — the
+    // focused descriptor being the one on top, activated last.
     expect(c.focuses,
       `cold-start boot restore activates the focused descriptor exactly once`)
       .toBe(1);
-    expect(c.moveTops,
-      `every restored window is raised via moveTop() (full saved stacking order)`)
+    expect(c.stackDrives,
+      `every restored window is submitted to the machine's saved-order import`)
       .toBe(cold.restored);
     expect(c.focusedId,
       `cold-start restore records the restored focused window id (a real window was raised)`)

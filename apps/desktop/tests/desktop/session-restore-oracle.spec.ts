@@ -17,7 +17,7 @@
  * spec would fail for a harness reason, not a product bug. So it SKIPS unless
  * HEADLESS=0 is explicitly set (the run-oracle.sh path below); the gate's
  * headless-observable coverage of the same mechanism lives in
- * session-restore-focus.spec.ts (moveTops === restored count) and
+ * session-restore-focus.spec.ts (stackDrives === restored count) and
  * session-restore-coldstart.spec.ts (first-frame ordered re-assert counters).
  *
  * Run (visible; paints a few windows + one focus-steal at launch):

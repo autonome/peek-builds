@@ -771,14 +771,14 @@ function frameBounds(
   // paints nothing on the physical desktop.
   if (!win.isVisible()) {
     win.showInactive();
-  } else {
-    // Already visible: re-raise above the now-frontmost content window.
-    try {
-      win.moveTop();
-    } catch {
-      /* moveTop unsupported on some platforms */
-    }
   }
+  // Already visible: nothing more to do. The overlay is PINNED (§4.3 dim 3 —
+  // stacking level 'pinned'): the setAlwaysOnTop(true,'floating') re-assert
+  // just above both holds it at the floating level AND order-fronts it within
+  // that level, and the machine's SET_STACKING raises are relative raises of
+  // NORMAL-level content windows, which can never cross a floating-level
+  // window. The old `win.moveTop()` here was redundant with the pin re-assert
+  // and was the last ordering write outside the machine (§5 step 5 part B).
 }
 
 /**

@@ -113,7 +113,7 @@ import {
   initSessionPartition,
   registerDownloadHandler,
 } from './session-partition.js';
-import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, reassertColdStartFocusOnce } from './session.js';
+import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, reassertColdStartFocusOnce, installFirstFrameOrderableProducer } from './session.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
@@ -1178,6 +1178,11 @@ const onReady = async () => {
 
   // Now mark session as dirty for crash detection going forward
   markSessionDirty();
+
+  // The `hybrid:first-frame` → WINDOW_CONTENT_ORDERABLE producer (§5 step 5
+  // part B): must be listening before ANY page-host can composite so the
+  // machine's per-window orderability is never missed. See session.ts.
+  installFirstFrameOrderableProducer();
 
   // Load persisted closed window stack so undo-close-window works across restarts.
   // This includes windows from the previous session (pushed during before-quit save).

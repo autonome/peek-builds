@@ -228,11 +228,13 @@ test.describe('Restore Cold-Start Oracle @desktop', () => {
     const pid2 = await pidOf(app);
 
     // WHAT THIS ASSERTS — and why NOT the on-screen stack. Cold-start restore
-    // re-asserts the saved z-order by re-running an ordered moveTop pass each time
-    // a page-host reports its FIRST COMPOSITED FRAME (the private hybrid:first-frame
-    // IPC — see session.ts reassertStackingOrder). That wiring is deterministic and
-    // observable here: getRestoreFocusCounters() reports pageHosts (armed) and
-    // firstFrameReasserts (page-hosts that composited and drove a re-assert).
+    // re-asserts the saved z-order each time a page-host reports its FIRST
+    // COMPOSITED FRAME (the private hybrid:first-frame IPC → the session.ts
+    // producer dispatches WINDOW_CONTENT_ORDERABLE and the window-state machine
+    // re-drives SET_STACKING for the window + everything above it in the
+    // imported saved order). That wiring is deterministic and observable here:
+    // getRestoreFocusCounters() reports pageHosts (registered) and
+    // firstFrameReasserts (page-hosts that composited and drove a re-drive).
     //
     // But whether each moveTop then STICKS is gated by macOS window-server
     // orderability, which holds ONLY for the OS-frontmost app. Playwright launches

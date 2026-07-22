@@ -217,6 +217,10 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     // §5 step 5 event (z-order / stacking): the page-host orderability caveat.
     { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(1) },
     { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(99) },
+    // §5 step 5 part B: the session-restore order import.
+    { type: 'STACK_ORDER_IMPORTED', order: [wid(1)] },
+    { type: 'STACK_ORDER_IMPORTED', order: [] },
+    { type: 'STACK_ORDER_IMPORTED', order: [wid(99), wid(1), wid(1)] },
   ];
 
   it('reduce is total: defined result + front invariant holds for all combinations', () => {
@@ -2219,6 +2223,95 @@ describe('restore-shaped import — back→front yields that order, focused on t
     assert.deepStrictEqual(getStackOrder(r1.state), [wid(1), wid(2), wid(3)], 'intent stable throughout');
     assert.strictEqual(getFrontWindowId(r1.state), wid(3));
     for (const rec of snapshot(r1.state).windows) assert.strictEqual(rec.orderable, true);
+  });
+});
+
+describe('STACK_ORDER_IMPORTED — the session-restore order import (§5 step 5 part B)', () => {
+  /** The live restore shape: loop shows FRONT→BACK (focused head start first). */
+  function restoreShapedState(): AppWindowState {
+    return drive(createInitialState(), [
+      // Focused descriptor dispatched first (head start), then zOrder desc.
+      { type: 'WINDOW_REGISTERED', id: wid(3), kind: 'page-host', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(3), focused: false },
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'page-host', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: false },
+    ]).state;
+  }
+
+  it('a front→back restore loop leaves the list INVERTED; the import lands the saved order and drives all of it', () => {
+    const s = restoreShapedState();
+    assert.deepStrictEqual(getStackOrder(s), [wid(3), wid(2), wid(1)], 'show order alone is the inverse of the saved order');
+    const { state, effects } = reduce(s, { type: 'STACK_ORDER_IMPORTED', order: [wid(1), wid(2), wid(3)] });
+    assert.deepStrictEqual(getStackOrder(state), [wid(1), wid(2), wid(3)], 'saved order, bottom→top, focused on top');
+    assert.deepStrictEqual(stackings(effects), [wid(1), wid(2), wid(3)], 'whole order driven bottom→top');
+  });
+
+  it('unknown / hidden / non-member ids are dropped; duplicates deduped', () => {
+    let s = restoreShapedState();
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(6), kind: 'browser', role: 'background', class: 'background', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(6), focused: false }, // excluded class — never a member
+      { type: 'WINDOW_HIDDEN', id: wid(2) },
+    ]).state;
+    const { state } = reduce(s, {
+      type: 'STACK_ORDER_IMPORTED',
+      order: [wid(99), wid(1), wid(6), wid(2), wid(1), wid(3)],
+    });
+    assert.deepStrictEqual(getStackOrder(state), [wid(1), wid(3)], 'only live stacked members survive the import, once each');
+    assert.ok(stackOrderInvariantHolds(state));
+  });
+
+  it('members the import does not name keep their relative order BELOW the imported set (and are driven too)', () => {
+    let s = restoreShapedState(); // [3, 2, 1]
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(4), kind: 'browser', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(4), focused: false },
+      { type: 'WINDOW_REGISTERED', id: wid(5), kind: 'browser', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(5), focused: false },
+    ]).state; // [3, 2, 1, 4, 5]
+    const { state, effects } = reduce(s, { type: 'STACK_ORDER_IMPORTED', order: [wid(1), wid(2)] });
+    assert.deepStrictEqual(getStackOrder(state), [wid(3), wid(4), wid(5), wid(1), wid(2)], 'unnamed keep order, below the import');
+    assert.deepStrictEqual(stackings(effects), [wid(3), wid(4), wid(5), wid(1), wid(2)], 'the entire resulting order is realized');
+  });
+
+  it('an import naming no current member is a structural no-op', () => {
+    const s = restoreShapedState();
+    for (const order of [[], [wid(99)]] as WindowId[][]) {
+      const { state, effects } = reduce(s, { type: 'STACK_ORDER_IMPORTED', order });
+      assert.deepStrictEqual(getStackOrder(state), getStackOrder(s));
+      assert.deepStrictEqual(stackings(effects), []);
+    }
+  });
+
+  it('is order-only: no RAISE_WINDOW, no FOCUS_CONTENT; front and a held assertion untouched', () => {
+    let s = restoreShapedState();
+    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]).state; // asserts front 1
+    assert.strictEqual(s.frontAsserted, true);
+    const { state, effects } = reduce(s, { type: 'STACK_ORDER_IMPORTED', order: [wid(2), wid(3), wid(1)] });
+    assert.strictEqual(hasEffect(effects, 'RAISE_WINDOW'), false, 'an order import must never activate anything');
+    assert.strictEqual(hasEffect(effects, 'FOCUS_CONTENT'), false);
+    assert.strictEqual(getFrontWindowId(state), wid(1));
+    assert.strictEqual(state.frontAsserted, true);
+  });
+
+  it('page-host first frames AFTER the import re-drive their suffix of the IMPORTED order', () => {
+    const s = restoreShapedState(); // 3 and 2 are page-hosts (non-orderable), 1 is a browser
+    const imported = reduce(s, { type: 'STACK_ORDER_IMPORTED', order: [wid(1), wid(2), wid(3)] }).state;
+    const r2 = reduce(imported, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(2) });
+    assert.deepStrictEqual(stackings(r2.effects), [wid(2), wid(3)], 'suffix of the imported order, not the show order');
+    const r3 = reduce(r2.state, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(3) });
+    assert.deepStrictEqual(stackings(r3.effects), [wid(3)]);
+    assert.deepStrictEqual(getStackOrder(r3.state), [wid(1), wid(2), wid(3)], 'intent stable throughout');
+  });
+
+  it('purity: the input state and its stackOrder are untouched by an import', () => {
+    const s = restoreShapedState();
+    const before = [...s.stackOrder];
+    const { state } = reduce(s, { type: 'STACK_ORDER_IMPORTED', order: [wid(1), wid(2), wid(3)] });
+    assert.deepStrictEqual(s.stackOrder, before, 'input array unchanged');
+    assert.notStrictEqual(state.stackOrder, s.stackOrder, 'result holds a fresh array');
   });
 });
 

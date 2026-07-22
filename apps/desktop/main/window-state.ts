@@ -271,7 +271,9 @@ export interface AppWindowState {
    *     top whenever it drives the OS — so "after a machine-driven assertion,
    *     `front` is the top of this list" is what `frontAsserted` claims;
    *   - WINDOW_CONTENT_ORDERABLE re-drives `SET_STACKING` to converge native
-   *     order onto this list as page-hosts become orderable.
+   *     order onto this list as page-hosts become orderable;
+   *   - STACK_ORDER_IMPORTED replaces the list wholesale with a persisted
+   *     bottom→top order (session restore) and drives the whole order.
    * Fullscreen transitions do NOT change membership: fullscreen is a display
    * mode (the window occupies its own Space), not a stacking removal, and a
    * relative raise against it is a harmless native no-op.
@@ -373,12 +375,26 @@ export type WindowEvent =
    * left internal tiles on top). The reducer marks the record `orderable` and
    * re-drives `SET_STACKING` for the window and everything stacked above it,
    * converging native order onto `stackOrder` as each page-host composites —
-   * event-driven, no timer, no poll (the machine form of `session.ts
-   * reassertStackingOrder` keyed on the private `hybrid:first-frame` IPC).
-   * PRODUCERS ARE NOT WIRED YET (§5 step 5 part B): the event exists unfired;
-   * the legacy first-frame listener still owns the live re-assert.
+   * event-driven, no timer, no poll. PRODUCER (§5 step 5 part B): the
+   * permanent `hybrid:first-frame` IPC listener in `session.ts` (the
+   * double-rAF signal from runtime-external-preload.cjs), which replaced the
+   * legacy restore-scoped `reassertStackingOrder` walk.
    */
   | { type: 'WINDOW_CONTENT_ORDERABLE'; id: WindowId }
+  /**
+   * Import a persisted z-order (session restore, bottom → top). Reorder only —
+   * membership is untouched: ids that are unknown / hidden / not stacked are
+   * dropped from the import, and current stack members the import does not
+   * name keep their relative order BELOW the imported set (the import is
+   * authoritative for the windows it names, silent about the rest). The
+   * reducer emits `SET_STACKING` for the entire resulting order, bottom → top
+   * — page-hosts that have not composited yet no-op natively and converge via
+   * their own `WINDOW_CONTENT_ORDERABLE`. Order only: no activation, no
+   * assertion change (activating the focused descriptor stays the restore
+   * focus block's separate step). Replaces the legacy restore's reverse
+   * `moveTop()` walk (§5 step 5 part B).
+   */
+  | { type: 'STACK_ORDER_IMPORTED'; order: WindowId[] }
   | { type: 'WINDOW_HIDDEN'; id: WindowId }
   | { type: 'WINDOW_CLOSED'; id: WindowId }
   | { type: 'OS_FOCUS_GAINED'; id: WindowId; lastHttpUrl?: string }
@@ -1319,14 +1335,13 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       const rec = state.windows.get(event.id);
       if (!rec) break;
       patchRecord(state, event.id, { visible: true });
-      // Ordered-stack import: showing orders the window frontmost natively
+      // Ordered-stack mirror: showing orders the window frontmost natively
       // (`show` and `showInactive` both order-front), so the list mirrors it on
-      // top. This is what makes a restore-shaped back→front import land in
-      // exactly the imported order, focused last/on top. NOTE it deliberately
-      // does NOT invalidate the front assertion: a non-focused show must not
-      // trigger a RAISE_WINDOW (activation) storm — the burial converges when
-      // the focused window's own event arrives, and the legacy restore
-      // machinery still owns live restore ordering until §5 step 5 part B.
+      // top. NOTE it deliberately does NOT invalidate the front assertion: a
+      // non-focused show must not trigger a RAISE_WINDOW (activation) storm —
+      // the burial converges when the focused window's own event arrives. The
+      // live restore loop shows FRONT→BACK (focused head start), so the saved
+      // order arrives afterwards via STACK_ORDER_IMPORTED, not from show order.
       stackRaise(state, event.id);
       // Session is NOT derived here — `izui-state.ts` owns it and feeds it in via
       // SESSION_CHANGED. Deriving it here would be a rival authority (§3).
@@ -1368,6 +1383,28 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         for (const id of state.stackOrder.slice(idx)) {
           effects.push({ type: 'SET_STACKING', id });
         }
+      }
+      break;
+    }
+
+    case 'STACK_ORDER_IMPORTED': {
+      // Reorder only — membership is invariant by construction: the import is
+      // filtered to CURRENT stack members (deduped), and members it does not
+      // name keep their relative order below it. See the event doc.
+      const named = new Set<WindowId>();
+      const imported: WindowId[] = [];
+      for (const id of event.order) {
+        if (named.has(id)) continue;
+        named.add(id);
+        if (isStackMember(state.windows.get(id))) imported.push(id);
+      }
+      if (imported.length === 0) break;
+      const unnamed = state.stackOrder.filter((id) => !named.has(id));
+      state.stackOrder = [...unnamed, ...imported];
+      // Realize the whole order natively, bottom → top (each relative raise
+      // stacks on the previous). Order only — no raise, no assertion change.
+      for (const id of state.stackOrder) {
+        effects.push({ type: 'SET_STACKING', id });
       }
       break;
     }
