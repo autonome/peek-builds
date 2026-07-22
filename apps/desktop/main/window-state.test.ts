@@ -2306,6 +2306,41 @@ describe('STACK_ORDER_IMPORTED — the session-restore order import (§5 step 5 
     assert.deepStrictEqual(getStackOrder(r3.state), [wid(1), wid(2), wid(3)], 'intent stable throughout');
   });
 
+  it('LIVE-RUN REPLAY: late already-visible show mirrors must not scramble the imported order (every native show is emitted twice)', () => {
+    // Observed live (clone cold restore, 2026-07-22): the restore loop's
+    // synchronous show-seam dispatches land DURING the loop, but the backend's
+    // async native-'show' mirrors for the hybrid page-hosts landed AFTER the
+    // post-loop STACK_ORDER_IMPORTED — re-raising each page in show order and
+    // scrambling the machine list; the first-frame re-drives then realized the
+    // scrambled order on the real screen (pages restored REVERSED). The rule:
+    // a WINDOW_SHOWN for an already-visible record reorders NOTHING.
+    let s = restoreShapedState(); // shows P-hosts 3, 2 then browser 1 (front→back loop order)
+    s = drive(s, [{ type: 'STACK_ORDER_IMPORTED', order: [wid(1), wid(2), wid(3)] }]).state;
+    assert.deepStrictEqual(getStackOrder(s), [wid(1), wid(2), wid(3)]);
+
+    // The late duplicate mirrors, in original show order.
+    s = drive(s, [
+      { type: 'WINDOW_SHOWN', id: wid(3), focused: false },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: false },
+    ]).state;
+    assert.deepStrictEqual(getStackOrder(s), [wid(1), wid(2), wid(3)], 'imported order survives the duplicate mirrors');
+
+    // First frames then re-drive suffixes of the IMPORTED order, not show order.
+    const r2 = reduce(s, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(2) });
+    assert.deepStrictEqual(stackings(r2.effects), [wid(2), wid(3)]);
+    const r3 = reduce(r2.state, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(3) });
+    assert.deepStrictEqual(stackings(r3.effects), [wid(3)]);
+    assert.deepStrictEqual(getStackOrder(r3.state), [wid(1), wid(2), wid(3)]);
+  });
+
+  it('a hidden→visible re-show still returns the window at the top (only ALREADY-visible shows are inert)', () => {
+    let s = restoreShapedState(); // [3, 2, 1], front 3 (seeded by first show)
+    s = drive(s, [{ type: 'WINDOW_HIDDEN', id: wid(2) }]).state; // non-front: [3, 1], no succession
+    const reshown = drive(s, [{ type: 'WINDOW_SHOWN', id: wid(2), focused: false }]).state;
+    assert.deepStrictEqual(getStackOrder(reshown), [wid(3), wid(1), wid(2)], 'a real hidden→visible show is a native order-front and mirrors on top');
+  });
+
   it('purity: the input state and its stackOrder are untouched by an import', () => {
     const s = restoreShapedState();
     const before = [...s.stackOrder];

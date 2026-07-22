@@ -1334,15 +1334,23 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
     case 'WINDOW_SHOWN': {
       const rec = state.windows.get(event.id);
       if (!rec) break;
+      // Ordered-stack mirror: a HIDDEN→VISIBLE show orders the window frontmost
+      // natively (`show` and `showInactive` both order-front), so the list
+      // mirrors it on top. An ALREADY-VISIBLE record deliberately does NOT
+      // reorder: every native show is emitted twice (the synchronous show-seam
+      // dispatch and the backend's async native-'show' mirror), and the late
+      // mirror lands AFTER whatever the machine has since decided — live-run
+      // proof: a post-restore STACK_ORDER_IMPORTED was scrambled back to show
+      // order by the trailing page-host mirrors, and the first-frame re-drives
+      // then realized the scrambled order on screen. A raise of a visible
+      // window is a machine decision (front assertion / SET_STACKING /
+      // STACK_ORDER_IMPORTED), never inferred from a repeated native echo.
+      // NOTE it also does NOT invalidate the front assertion: a non-focused
+      // show must not trigger a RAISE_WINDOW (activation) storm — the burial
+      // converges when the focused window's own event arrives.
+      const wasVisible = rec.visible;
       patchRecord(state, event.id, { visible: true });
-      // Ordered-stack mirror: showing orders the window frontmost natively
-      // (`show` and `showInactive` both order-front), so the list mirrors it on
-      // top. NOTE it deliberately does NOT invalidate the front assertion: a
-      // non-focused show must not trigger a RAISE_WINDOW (activation) storm —
-      // the burial converges when the focused window's own event arrives. The
-      // live restore loop shows FRONT→BACK (focused head start), so the saved
-      // order arrives afterwards via STACK_ORDER_IMPORTED, not from show order.
-      stackRaise(state, event.id);
+      if (!wasVisible) stackRaise(state, event.id);
       // Session is NOT derived here — `izui-state.ts` owns it and feeds it in via
       // SESSION_CHANGED. Deriving it here would be a rival authority (§3).
       if (event.focused) {
