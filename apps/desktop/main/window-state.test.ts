@@ -1338,15 +1338,35 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     assert.ok(!hasEffect(effects, 'FOCUS_CONTENT'), 'a BrowserWindow has no separate content view to focus');
   });
 
-  it('switching front between two live windows raises the newcomer only', () => {
+  it('an OS-driven front switch records the assertion WITHOUT echoing a raise (the OS already did it)', () => {
+    // OS_FOCUS_GAINED means the OS made the window key + front on its own —
+    // driving RAISE back at it is the focus-echo feedback loop (see the
+    // record-not-echo clause in applyFrontAssertion; observed live 2026-07-22:
+    // several in-flight show-active focus events + an echoed activating raise
+    // per event = a perpetual multi-window focus ping-pong at restore).
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
     s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
     const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(1) });
     assert.strictEqual(getFrontWindowId(state), wid(1));
-    assert.ok(raises(effects, 1));
-    assert.ok(!raises(effects, 2), 'the window losing front is not re-raised');
+    assert.ok(!hasEffect(effects, 'RAISE_WINDOW'), 'no activating raise echoed back at the OS');
     assert.ok(!hasEffect(effects, 'FOCUS_CONTENT'), 'window 1 is a browser window');
+    assert.strictEqual(snapshot(state).frontAsserted, true, 'the OS event itself is the assertion');
+    const order = getStackOrder(state);
+    assert.strictEqual(order[order.length - 1], wid(1), 'the list mirrors the OS-driven order-front');
+  });
+
+  it('an OS-driven front switch to a PAGE-HOST still drives the content first responder (7c61e917)', () => {
+    // The one half the OS focus event does not vouch for: the host being key
+    // does not make its content WebContentsView first responder.
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    s = openWindow(s, 2, { kind: 'browser', role: 'content' }); // front 2
+    const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(1) });
+    assert.strictEqual(getFrontWindowId(state), wid(1));
+    assert.ok(!hasEffect(effects, 'RAISE_WINDOW'));
+    assert.ok(focusesContent(effects, 1), 'content first responder is still the machine’s to drive');
+    assert.strictEqual(snapshot(state).frontAsserted, true);
   });
 
   it('an already-asserted, unchanged front emits nothing (the assertion is idempotent)', () => {
@@ -2003,14 +2023,28 @@ describe('ordered stacking list — membership across the class enum (§5 step 5
 });
 
 describe('SET_STACKING — the closing assertion drives order (frontAsserted means "on top")', () => {
-  it('a front change emits SET_STACKING alongside RAISE_WINDOW and puts the front on top of the list', () => {
+  it('a MACHINE-driven front change emits SET_STACKING alongside RAISE_WINDOW and tops the list', () => {
+    // Machine-driven: hiding the front hands off to the successor, which the
+    // closing step must DRIVE (raise + order). An OS-driven focus change is
+    // the record-not-echo case (own test below) — the OS already ordered it.
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2, top
+    const { state, effects } = reduce(s, { type: 'WINDOW_HIDDEN', id: wid(2) });
+    assert.strictEqual(getFrontWindowId(state), wid(1));
+    assert.ok(raises(effects, 1), 'activation raise still emitted');
+    assert.deepStrictEqual(stackings(effects), [wid(1)], 'order driven by the same closing step');
+    assert.deepStrictEqual(getStackOrder(state), [wid(1)], 'front is the top of the ordered list');
+    assert.strictEqual(state.frontAsserted, true);
+  });
+
+  it('an OS-driven front change tops the list WITHOUT SET_STACKING (mirror of an order the OS performed)', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
     s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2, top
     const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(1) });
     assert.strictEqual(getFrontWindowId(state), wid(1));
-    assert.ok(raises(effects, 1), 'activation raise still emitted');
-    assert.deepStrictEqual(stackings(effects), [wid(1)], 'order driven by the same closing step');
+    assert.deepStrictEqual(stackings(effects), [], 'nothing to drive — the OS already ordered it front');
     assert.deepStrictEqual(getStackOrder(state), [wid(2), wid(1)], 'front is the top of the ordered list');
     assert.strictEqual(state.frontAsserted, true);
   });
@@ -2038,7 +2072,12 @@ describe('SET_STACKING — the closing assertion drives order (frontAsserted mea
       if (flippedOn) {
         const front = r.state.front;
         assert.ok(front != null, `asserted with no front after ${ev.type}`);
-        assert.ok(stackings(r.effects).includes(front), `assertion flipped on without SET_STACKING(front) after ${ev.type}`);
+        // The OS-driven case (focus landed on front) records without driving —
+        // the OS performed the order itself; every machine-driven flip DRIVES.
+        const osDriven = ev.type === 'OS_FOCUS_GAINED' && ev.id === front;
+        if (!osDriven) {
+          assert.ok(stackings(r.effects).includes(front), `assertion flipped on without SET_STACKING(front) after ${ev.type}`);
+        }
         const order = getStackOrder(r.state);
         assert.strictEqual(order[order.length - 1], front, `front not top of stackOrder after ${ev.type}`);
       }
@@ -2104,7 +2143,9 @@ describe('SET_STACKING — the closing assertion drives order (frontAsserted mea
       { type: 'APP_RESIGNED' },
       { type: 'APP_ACTIVATED' },
     ];
-    const NATIVE_MIRROR = new Set(['WINDOW_SHOWN', 'WINDOW_HIDDEN', 'WINDOW_CLOSED']);
+    // OS_FOCUS_GAINED is a mirror too: the OS keyed + order-fronted the window
+    // itself, so the list reorder has no SET_STACKING (record-not-echo).
+    const NATIVE_MIRROR = new Set(['WINDOW_SHOWN', 'WINDOW_HIDDEN', 'WINDOW_CLOSED', 'OS_FOCUS_GAINED']);
     let s = createInitialState();
     for (const ev of script) {
       const r = reduce(s, ev);

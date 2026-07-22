@@ -1072,6 +1072,30 @@ function applyFrontAssertion(
   if (state.front == null || state.frontAsserted) return;
   const rec = state.windows.get(state.front);
   if (!rec) return;
+
+  // An OS-reported focus landing on `front` IS the assertion: the OS already
+  // made that window key and ordered it front on its own — the event is the
+  // proof that belief and reality match, so record the claim and mirror the
+  // order instead of driving a RAISE back at the OS. Echoing a raise here is
+  // not just redundant, it is a feedback loop: RAISE is an ACTIVATING
+  // show+focus, so with several focus events in flight (a restore loop
+  // show()s multiple tiles active while the app is frontmost), each stale
+  // event flips `front`, the echoed raise re-keys that stale window and emits
+  // a FRESH focus event, and three windows ping-pong forever (observed live,
+  // 2026-07-22 clone restore — megabytes of OS_FOCUS_GAINED → RAISE cycles;
+  // headless runs can never ignite it because a non-frontmost app's focus()
+  // does not move the key window). Without the echo the stale in-flight
+  // events drain and the LAST one matches the true native key window —
+  // convergence by construction. The one half the OS event does NOT vouch
+  // for is a page-host's CONTENT first responder (host key ≠ content focused
+  // — the 7c61e917 raise-by-chrome bug), so that half is still driven.
+  if (event.type === 'OS_FOCUS_GAINED' && state.front === event.id) {
+    if (rec.kind === 'page-host') effects.push({ type: 'FOCUS_CONTENT', id: state.front });
+    stackRaise(state, state.front);
+    state.frontAsserted = true;
+    return;
+  }
+
   effects.push({ type: 'RAISE_WINDOW', id: state.front });
   if (rec.kind === 'page-host') effects.push({ type: 'FOCUS_CONTENT', id: state.front });
   // Driving the front now also drives ORDER (§5 step 5): the same closing
