@@ -438,6 +438,17 @@ export class WindowOsAdapter {
     const id = eventWindowId(event);
     const tag = eventWindowIdTag(event);
     let line = `[window-state] ${event.type}${tag == null ? '' : ` ${tag}`} front ${fmt(before.front)}→${fmt(after.front)}`;
+    // frontAsserted delta (§6): the live-run observable for "the machine drove
+    // the OS to match front" — logged only when the transition flipped it.
+    if (before.frontAsserted !== after.frontAsserted) {
+      line += ` asserted ${before.frontAsserted}→${after.frontAsserted}`;
+    }
+    // Ordered-stack delta (§5 step 5): whenever the intended z-order changed,
+    // log the resulting bottom→top list so a live run can compare it against
+    // the real (CGWindowList) stack.
+    if (before.stackOrder.join(' ') !== after.stackOrder.join(' ')) {
+      line += ` stack=[${after.stackOrder.join(' ')}]`;
+    }
     for (const part of modeDeltas(before, after)) line += ` ${part}`;
     if (event.type === 'OS_FOCUS_GAINED' && id != null) {
       const rec = after.windows.find((w) => w.id === id);
