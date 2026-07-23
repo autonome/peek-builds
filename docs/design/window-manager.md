@@ -717,6 +717,15 @@ failure mode this document exists to prevent (§2).**
    `BaseWindow`). Deliberate hold-over: the devtools guard still skips a
    hybrid front (matches the old null behavior) — extending it to hybrid
    content devtools is a possible follow-up, not done.
+   **8e — clean focus calls routed through the machine: DONE.** The
+   `tile:window` focus IPC (both BrowserWindow and hybrid branches,
+   `tile-ipc.ts`) and all four `ipc.ts` open-dedupe reuse paths now ride
+   `WINDOW_SHOW_REQUESTED {activate:true}` (the headless-gated reuse sites
+   already did via `showWindowHeadlessSafe`); the hand-dispatched
+   `OS_FOCUS_GAINED` mirror in `tile-ipc.ts` is gone. R2 allowlist
+   29 entries / 57 calls. Punted to step 9 (entangled, entries retained):
+   the `ipc.ts` `devtools-opened` first-responder restore and the modal
+   blur-settle re-focus.
 9. **Overlay attach/retarget + transient autoclose.** Fold `hybrid-overlay.ts`'s 40 live
    queries and its private `appActive` into reducer state.
 10. **Displays and Spaces.** Route `display-watcher.ts` through events; add the
