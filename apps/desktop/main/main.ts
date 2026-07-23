@@ -678,8 +678,58 @@ export async function initialize(): Promise<void> {
     });
   }
 
+  // ── Registration tripwire (observe-only) ──────────────────────────────
+  // Assert that every newly created native window promptly registers with
+  // the window-state machine (getWindowIdFor(win) != null). An unregistered
+  // live window is invisible to the machine: focus/front/escape decisions
+  // route around it. Mirrors the headless visible-at-construction guard in
+  // entry.ts. Loud (exitCode + throw) in test/dev profiles; console.error
+  // only in production. The tripwire ONLY observes — it never registers,
+  // shows, or otherwise mutates a window.
+  //
+  // Why a 5000ms setTimeout and not setImmediate: this is a sanctioned
+  // OS/Chromium-boundary workaround at the lowest layer — Electron emits no
+  // 'base-window-created' or registration-complete signal to hook, and
+  // registration is legitimately deferred after construction:
+  // assembleHybridPageHost (ipc.ts) constructs the BaseWindow first and
+  // calls registerWindowWithMachine later in async assembly (the documented
+  // construct→register gap that destroyUnassembledHybridHost exists for),
+  // and detached-devtools BrowserWindows register lazily on
+  // 'devtools-opened'. A timed deferred observation is the only available
+  // hook. Do not stack another timer/poll on top of this one.
+  const REGISTRATION_TRIPWIRE_DELAY_MS = 5000;
+  // Dedup: a window can reach the tripwire via both hooks below
+  // (browser-window-created for BrowserWindows, web-contents-created owner
+  // resolution for BaseWindows); first check claims the window.
+  const registrationTripwireChecked = new WeakSet<Electron.BaseWindow>();
+  const fireRegistrationTripwire = (win: Electron.BaseWindow, origin: string): void => {
+    // A destroyed window went through teardown; the tripwire hunts live
+    // unregistered leaks.
+    if (win.isDestroyed()) return;
+    if (registrationTripwireChecked.has(win)) return;
+    registrationTripwireChecked.add(win);
+    if (getWindowIdFor(win) != null) return;
+    let url = '(no-url)';
+    try {
+      const wc = (win as BrowserWindow).webContents;
+      url = wc ? (wc.getURL() || '(no-url)') : '(no-webcontents)';
+    } catch {
+      /* webContents gone mid-teardown */
+    }
+    const msg = `[registration-tripwire] window id=${win.id} (via ${origin}) still unregistered with the window-state machine ${REGISTRATION_TRIPWIRE_DELAY_MS}ms after creation url=${url} — every live native window must go through registerWindowWithMachine`;
+    console.error(msg);
+    console.error(new Error(msg).stack);
+    if (isTestProfile() || isDevProfile()) {
+      process.exitCode = 1;
+      throw new Error(msg);
+    }
+  };
+
   // Track window events globally
   app.on('browser-window-created', (_, window) => {
+    // Registration tripwire, hook 1: every BrowserWindow. (See the boundary
+    // comment above for why this is a timer.)
+    setTimeout(() => fireRegistrationTripwire(window, 'browser-window-created'), REGISTRATION_TRIPWIRE_DELAY_MS);
     const windowId = window.id;
 
     // Capture the window's canonical presentation before destruction so the
@@ -929,6 +979,27 @@ export async function initialize(): Promise<void> {
       const hostId = hostMachineId();
       if (hostId != null) dispatchWindowEvent({ type: 'DEVTOOLS_CLOSED', id: hostId });
     });
+
+    // Registration tripwire, hook 2: BaseWindow coverage. Electron has no
+    // 'base-window-created' event, so hybrid page-host BaseWindows are
+    // reached through their content WC: BrowserWindow.fromWebContents here
+    // intentionally also resolves owning hybrid BaseWindows (the documented
+    // windowFromWebContents TRAP — desired, same as hostMachineId above).
+    // Owner is resolved at fire time, after the delay, because at
+    // web-contents-created time the WC may not be attached to its window
+    // yet. A null owner means the WC has no window — not a violation.
+    // (See the boundary comment above browser-window-created for why this
+    // is a timer.)
+    setTimeout(() => {
+      if (wc.isDestroyed()) return;
+      let owner: Electron.BaseWindow | null = null;
+      try {
+        owner = BrowserWindow.fromWebContents(wc);
+      } catch {
+        /* races teardown */
+      }
+      if (owner) fireRegistrationTripwire(owner, 'web-contents-created');
+    }, REGISTRATION_TRIPWIRE_DELAY_MS);
   });
 }
 
