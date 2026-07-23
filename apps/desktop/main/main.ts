@@ -767,9 +767,7 @@ export async function initialize(): Promise<void> {
       try {
         const windowData = getWindowInfo(windowId);
 
-        // Clean up IZUI coordinator state
         const coordinator = getIzuiCoordinator();
-        coordinator.clearFocusedWindow(windowId);
 
         // (Stale-front cleanup removed — the window-state machine clears `front`
         // on WINDOW_CLOSED, dispatched by the OS adapter's own 'closed' listener

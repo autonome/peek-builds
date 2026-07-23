@@ -60,7 +60,6 @@ export interface IzuiSession {
   windowStack: number[];
   overlayWindowId: number | null;
   hiddenWindowIds: number[];
-  focusedWindowId: number | null;
   preOverlayFocusTarget: number | null;
   overlayFocusTarget: number | null;
 }
@@ -224,7 +223,6 @@ class IzuiStateCoordinator {
       windowStack: [],
       overlayWindowId: null,
       hiddenWindowIds: [],
-      focusedWindowId: null,
       preOverlayFocusTarget: null,
       overlayFocusTarget: null,
     };
@@ -306,9 +304,9 @@ class IzuiStateCoordinator {
     this.session.overlayWindowId = windowId;
     this.session.hiddenWindowIds = hiddenIds;
     // Seed the focus-restore target from the window-state machine's `front`
-    // (via the injected provider — see setFrontWindowIdProvider), not from
-    // this coordinator's own focusedWindowId tracker (step 8a of the
-    // window-manager migration).
+    // (via the injected provider — see setFrontWindowIdProvider). The machine
+    // is the sole focus authority; the coordinator's own focus tracker was
+    // removed in step 8c of the window-manager migration.
     //
     // Ordering guarantee (why the seed can't be the overlay itself): the
     // switcher window registers with role 'overlay', which
@@ -444,29 +442,6 @@ class IzuiStateCoordinator {
   }
 
   /**
-   * Track when a window gains focus
-   * @param windowId The window that gained focus
-   */
-  setFocusedWindow(windowId: number): void {
-    if (this.session) {
-      this.session.focusedWindowId = windowId;
-    }
-    console.log('[izui] Focused window set:', windowId);
-  }
-
-  /**
-   * Clear focus tracking when a window closes or loses focus
-   * This prevents stale window IDs from being tracked
-   * @param windowId The window to clear
-   */
-  clearFocusedWindow(windowId: number): void {
-    if (this.session && this.session.focusedWindowId === windowId) {
-      this.session.focusedWindowId = null;
-      DEBUG && console.log('[izui] Cleared focused window:', windowId);
-    }
-  }
-
-  /**
    * Add a window to the session's window stack
    * @param windowId The window to add
    */
@@ -551,13 +526,6 @@ class IzuiStateCoordinator {
    */
   isOverlay(): boolean {
     return this.state === 'overlay';
-  }
-
-  /**
-   * Get the focused window ID from the session
-   */
-  getFocusedWindowId(): number | null {
-    return this.session?.focusedWindowId ?? null;
   }
 
   /**

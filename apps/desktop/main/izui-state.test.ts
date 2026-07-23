@@ -197,7 +197,6 @@ describe('IZUI State Coordinator Tests', () => {
       assert.deepStrictEqual(session!.windowStack, []);
       assert.strictEqual(session!.overlayWindowId, null);
       assert.deepStrictEqual(session!.hiddenWindowIds, []);
-      assert.strictEqual(session!.focusedWindowId, null);
     });
 
     it('should not create a new session if one already exists', () => {
@@ -480,76 +479,6 @@ describe('IZUI State Coordinator Tests', () => {
     });
   });
 
-  describe('setFocusedWindow and clearFocusedWindow', () => {
-    it('should track focused window in session', () => {
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-
-      coordinator.setFocusedWindow(42);
-
-      const session = coordinator.getSession()!;
-      assert.strictEqual(session.focusedWindowId, 42);
-    });
-
-    it('should update focused window', () => {
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-
-      coordinator.setFocusedWindow(1);
-      coordinator.setFocusedWindow(2);
-
-      const session = coordinator.getSession()!;
-      assert.strictEqual(session.focusedWindowId, 2);
-    });
-
-    it('should not crash when setting focused window without session', () => {
-      const coordinator = izuiState.getIzuiCoordinator();
-      // No session
-      coordinator.setFocusedWindow(1); // Should not throw
-    });
-
-    it('should clear focused window if it matches', () => {
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-      coordinator.setFocusedWindow(42);
-
-      coordinator.clearFocusedWindow(42);
-
-      const session = coordinator.getSession()!;
-      assert.strictEqual(session.focusedWindowId, null);
-    });
-
-    it('should not clear focused window if it does not match', () => {
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-      coordinator.setFocusedWindow(42);
-
-      coordinator.clearFocusedWindow(99); // Different ID
-
-      const session = coordinator.getSession()!;
-      assert.strictEqual(session.focusedWindowId, 42); // Unchanged
-    });
-
-    it('should not crash when clearing focused window without session', () => {
-      const coordinator = izuiState.getIzuiCoordinator();
-      // No session
-      coordinator.clearFocusedWindow(1); // Should not throw
-    });
-
-    it('should return focused window ID via getFocusedWindowId', () => {
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-      coordinator.setFocusedWindow(123);
-
-      assert.strictEqual(coordinator.getFocusedWindowId(), 123);
-    });
-
-    it('should return null from getFocusedWindowId when no session', () => {
-      const coordinator = izuiState.getIzuiCoordinator();
-      assert.strictEqual(coordinator.getFocusedWindowId(), null);
-    });
-  });
-
   describe('getState', () => {
     it('should return idle initially', () => {
       const coordinator = izuiState.getIzuiCoordinator();
@@ -787,13 +716,11 @@ describe('IZUI State Coordinator Tests', () => {
 
     it('should save null preOverlayFocusTarget when no provider is registered', () => {
       // Boot-order safety: before window-state-singleton.ts wires the
-      // provider, the seed degrades to null rather than throwing (or
-      // silently falling back to the retired focusedWindowId source).
+      // provider, the seed degrades to null rather than throwing.
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.setFrontWindowIdProvider(null);
       coordinator.startSession('active');
       coordinator.pushWindow(1);
-      coordinator.setFocusedWindow(1); // must NOT leak into the seed
 
       coordinator.enterOverlay(100, [1]);
       const session = coordinator.getSession()!;
@@ -801,21 +728,19 @@ describe('IZUI State Coordinator Tests', () => {
         'preOverlayFocusTarget should be null with no provider registered');
     });
 
-    it('seeds from the machine front, not the coordinator focusedWindowId tracker', () => {
-      // Step 8a: enterOverlay reads the injected machine-front provider.
-      // setFocusedWindow (the old seed source) must no longer influence it.
+    it('seeds from the machine front via the injected provider', () => {
+      // Step 8a repointed enterOverlay at the injected machine-front
+      // provider; step 8c deleted the coordinator's own focus tracker
+      // entirely — the machine front is the only possible seed source.
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
       coordinator.pushWindow(5);
       coordinator.pushWindow(7);
-      coordinator.setFocusedWindow(7);
       mockFrontWindowId = 5;
 
       coordinator.enterOverlay(100, [5, 7]);
       assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 5,
-        'seed must come from the machine front (5), not focusedWindowId (7)');
-      assert.strictEqual(coordinator.getFocusedWindowId(), 7,
-        'focusedWindowId tracker itself is untouched by the seed repoint');
+        'seed must come from the machine front (5)');
     });
 
     it('should expose preOverlayFocusTarget via getPreOverlayFocusTarget()', () => {
@@ -879,16 +804,6 @@ describe('IZUI State Coordinator Tests', () => {
   });
 
   describe('IZUI Coordinator as single source of truth for focus/overlay', () => {
-    it('1. Focus tracking updates coordinator: setFocusedWindow(5) → getFocusedWindowId() returns 5', () => {
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-      coordinator.pushWindow(5);
-
-      coordinator.setFocusedWindow(5);
-
-      assert.strictEqual(coordinator.getFocusedWindowId(), 5);
-    });
-
     it('2. Overlay tracks pre-overlay focus: machine front=5 → enterOverlay → getPreOverlayFocusTarget() returns 5', () => {
       const winA = createMockWindow(5);
       mockWindows.push(winA);
@@ -953,7 +868,7 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(restoreTarget, 3, 'Should use explicit selection (3), not pre-overlay (5)');
     });
 
-    it('5. ESC works after switcher closes: after exitOverlay, state is active, focusedWindowId updated', () => {
+    it('5. ESC works after switcher closes: after exitOverlay, state is active', () => {
       const winA = createMockWindow(5);
       winA._visible = false;
       mockWindows.push(winA);
@@ -962,26 +877,21 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.startSession('active');
       coordinator.pushWindow(5);
       coordinator.pushWindow(100);
-      coordinator.setFocusedWindow(5);
 
       coordinator.enterOverlay(100, [5]);
       coordinator.exitOverlay();
 
       assert.strictEqual(coordinator.getState(), 'active');
       assert.strictEqual(coordinator.isOverlay(), false);
-      // Caller can then set focus to restored window
-      coordinator.setFocusedWindow(5);
-      assert.strictEqual(coordinator.getFocusedWindowId(), 5);
     });
 
-    it('6. Overlay does not corrupt focus tracking: overlay window ID never set as focusedWindowId', () => {
+    it('6. Overlay does not corrupt the focus seed: overlay window ID never becomes preOverlayFocusTarget', () => {
       const winA = createMockWindow(5);
       mockWindows.push(winA);
 
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
       coordinator.pushWindow(5);
-      coordinator.setFocusedWindow(5);
       // Machine front stays on the content window: the switcher registers as a
       // satellite (role 'overlay'), which the reducer never lets become front.
       mockFrontWindowId = 5;
@@ -989,11 +899,8 @@ describe('IZUI State Coordinator Tests', () => {
       // Enter overlay with window 100
       coordinator.enterOverlay(100, [5]);
 
-      // The overlay window should NOT be set as the focused window
-      // (In runtime, the focus handler checks role !== 'overlay' before calling setFocusedWindow)
-      // Verify that focusedWindowId is still 5, not 100
-      assert.strictEqual(coordinator.getFocusedWindowId(), 5);
-      // And preOverlayFocusTarget captured correctly
+      // preOverlayFocusTarget captured from the machine front (5), not the
+      // overlay window (100)
       assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 5);
     });
 
@@ -1021,7 +928,6 @@ describe('IZUI State Coordinator Tests', () => {
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('transient');
       coordinator.pushWindow(5);
-      coordinator.setFocusedWindow(5);
       coordinator.enterOverlay(100, [5]);
 
       // In transient mode, the caller (main.ts) checks isTransient and does NOT call exitOverlay
@@ -1047,7 +953,6 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.startSession('active');
       coordinator.pushWindow(5);
       coordinator.pushWindow(100);
-      coordinator.setFocusedWindow(5);
 
       coordinator.enterOverlay(100, [5]);
       coordinator.setOverlayFocusTarget(3);
@@ -1117,7 +1022,6 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.startSession('active');
       coordinator.pushWindow(5);
       coordinator.pushWindow(100);
-      coordinator.setFocusedWindow(5);
 
       // Before overlay: no cooldown
       assert.strictEqual(coordinator.isWithinOverlayExitCooldown(), false,
@@ -1347,7 +1251,6 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.startSession('active');
       coordinator.pushWindow(1);
       coordinator.pushWindow(100);
-      coordinator.setFocusedWindow(1);
       coordinator.enterOverlay(100, [1]);
       coordinator.exitOverlay();
 
@@ -1364,7 +1267,6 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.startSession('active');
       coordinator.pushWindow(1);
       coordinator.pushWindow(100);
-      coordinator.setFocusedWindow(1);
       coordinator.enterOverlay(100, [1]);
       coordinator.exitOverlayForAppBlur();
 

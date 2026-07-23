@@ -283,9 +283,6 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
     const wc = webContents.fromId(wcId);
     return !!(wc && !wc.isDestroyed());
   },
-  /** Test-only: the IZUI coordinator's current focused-window id (or null). */
-  getIzuiFocusedWindowId: (): number | null =>
-    getIzuiCoordinator().getFocusedWindowId(),
   /**
    * Test-only: the window-state machine's `front` — a branded machine
    * WindowId string like "wm-1", NOT a numeric Electron id — or null.

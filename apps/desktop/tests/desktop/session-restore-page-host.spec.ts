@@ -678,14 +678,21 @@ test.describe('Session Restore Page Host @desktop', () => {
       'restore must actually raise+focus the restored hybrid web page (not skip it because getLiveWindow returns null for a BaseWindow)',
     ).toBeGreaterThanOrEqual(1);
 
-    // The IZUI coordinator's focused window — the app's notion of which window
-    // is frontmost — must be the restored WEB PAGE, not Settings.
-    const izuiFocusedId = await app.evaluateMain!(((_e: unknown) =>
-      (globalThis as any).__peek_test.getIzuiFocusedWindowId()) as any) as number | null;
+    // The app's notion of the frontmost window must be the restored WEB PAGE,
+    // not Settings. Assert against the window-state machine's `front` — the
+    // sole focus authority since step 8c deleted the izui coordinator's own
+    // tracker. Machine ids are branded strings ("wm-1"), so map the restored
+    // window's numeric id through the machine registry first.
+    const machineRestoredId = await app.evaluateMain!(((_e: unknown, numericId: number) =>
+      (globalThis as any).__peek_test.getMachineWindowIdFor(numericId)) as any,
+      restoredId) as string | null;
+    expect(machineRestoredId, 'restored web page is registered with the window-state machine').not.toBeNull();
+    const frontWindowId = await app.evaluateMain!(((_e: unknown) =>
+      (globalThis as any).__peek_test.getFrontWindowId()) as any) as string | null;
     expect(
-      izuiFocusedId,
-      'after restore, the focused window must be the restored web page (raised over Settings), not Settings',
-    ).toBe(restoredId);
+      frontWindowId,
+      'after restore, the machine front must be the restored web page (raised over Settings), not Settings',
+    ).toBe(machineRestoredId);
 
     // Cleanup: close everything this test opened + release the focus override.
     await app.evaluateMain!(((_e: unknown) =>
