@@ -2834,22 +2834,16 @@ export function registerWindowHandlers(): void {
           // authority activates. Same rule as the fresh hybrid open
           // (`inactive: options.show === false`).
           const hybridReuseActivate = options.show !== false;
+          // The focus half rides the same dispatch since §5 step 8e: an
+          // activating show echoes WINDOW_SHOWN {focused:true}, and the
+          // reducer's closing front assertion drives RAISE_WINDOW +
+          // FOCUS_CONTENT (content view as first responder, R4 — cmd+L and
+          // other key equivalents route to a responder, no NSBeep) before
+          // the dispatch returns. The old imperative baseWin.focus() +
+          // contentWC.focus() pair is gone.
           {
             const reusedId = getWindowIdFor(existingHybrid.baseWin);
             if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: hybridReuseActivate });
-          }
-          if (!isHeadless() && hybridReuseActivate) {
-            try {
-              // The focus half stays imperative until the focus-rivals step
-              // (§5 step 8). Make the content view the first responder too
-              // (R4 — so cmd+L and other key equivalents route to a
-              // responder, no NSBeep), matching the fresh-open show path
-              // (showHybridHost).
-              existingHybrid.baseWin.focus();
-              if (!existingHybrid.contentWC.isDestroyed()) existingHybrid.contentWC.focus();
-            } catch (e) {
-              DEBUG && console.log('[hybrid-page-host] focus-on-key-reuse failed:', e);
-            }
           }
           return { success: true, id: existingHybrid.windowId, reused: true };
         }
@@ -2924,11 +2918,11 @@ export function registerWindowHandlers(): void {
         // rule the fresh hybrid open already follows
         // (`inactive: options.show === false`).
         const reuseActivate = options.show !== false;
+        // Focus rides the same dispatch since §5 step 8e: an activating show
+        // echoes WINDOW_SHOWN {focused:true} and the reducer's closing front
+        // assertion drives RAISE_WINDOW (an activating show+focus in the
+        // backend), so the old headless-gated imperative focus() is gone.
         showWindowHeadlessSafe(existingWindow.window, { active: reuseActivate });
-        // Focus stays imperative (and headless-gated) until §5 step 8.
-        if (!isHeadless() && reuseActivate) {
-          existingWindow.window.focus();
-        }
         // Signal keepLive-reuse to the renderer BEFORE returning so the
         // renderer's `api.onVisible` handler dispatches its FSM reset
         // ahead of any user input that might arrive on the next turn.
@@ -2985,20 +2979,14 @@ export function registerWindowHandlers(): void {
           // block above: replaces the imperative baseWin.show() and the
           // hand-dispatched WINDOW_SHOWN mirror in one move (the backend
           // echoes WINDOW_SHOWN for the show it performs).
+          // The focus half rides the same dispatch since §5 step 8e — see
+          // the hybrid key-reuse block above (WINDOW_SHOWN {focused:true} →
+          // front assertion → RAISE_WINDOW + FOCUS_CONTENT, R4 first-
+          // responder parity included). The old imperative baseWin.focus() +
+          // contentWC.focus() pair is gone.
           {
             const reusedId = getWindowIdFor(existingHybridByUrl.baseWin);
             if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: true });
-          }
-          if (!isHeadless()) {
-            try {
-              // Focus half stays imperative until §5 step 8. First-responder
-              // parity with the fresh-open show path (R4): focus the content
-              // view so key equivalents route to a responder.
-              existingHybridByUrl.baseWin.focus();
-              if (!existingHybridByUrl.contentWC.isDestroyed()) existingHybridByUrl.contentWC.focus();
-            } catch (e) {
-              DEBUG && console.log('[hybrid-page-host] focus-on-url-reuse failed:', e);
-            }
           }
           // Reload so content is fresh (mirrors the canvas path's reload).
           try {
@@ -3029,11 +3017,11 @@ export function registerWindowHandlers(): void {
         // see the keepLive-reuse block above: the backend's WINDOW_SHOWN
         // echo replaces the hand-dispatched mirror that used to cover
         // headless (where the old gate skipped the show seam entirely).
+        // Focus rides the same dispatch since §5 step 8e — see the
+        // keepLive-reuse block above (WINDOW_SHOWN {focused:true} → front
+        // assertion → RAISE_WINDOW), so the old headless-gated imperative
+        // focus() is gone.
         showWindowHeadlessSafe(existingByUrl.window, { active: true });
-        // Focus stays imperative (and headless-gated) until §5 step 8.
-        if (!isHeadless()) {
-          existingByUrl.window.focus();
-        }
         // Reload the page so content is fresh (the webview may have navigated
         // away or the content may be stale from session restore).
         try {

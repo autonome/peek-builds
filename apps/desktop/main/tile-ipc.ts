@@ -3111,35 +3111,28 @@ export function registerTileIpcHandlers(): void {
       if (typeof args.id !== 'number') {
         return { success: false, error: 'Window ID is required' };
       }
-      // Record the focus INTENT in the window-state machine regardless of
-      // headless-ness (gate fallout of the WindowId cutover). Under headless
-      // the native focus() below is skipped and no OS focus event will ever
-      // fire, so without this dispatch `api.window.focus(id)` leaves the
-      // machine's `front` untouched for the whole test run. Non-headless the
-      // OS `'focus'` event dispatches the same OS_FOCUS_GAINED and the
-      // reducer re-merges idempotently. Satellite/hidden arbitration is
-      // structural in the reducer.
-      const dispatchFocusIntent = (): void => {
-        const machineId = getWindowIdFor(args.id);
-        if (machineId != null) dispatchWindowEvent({ type: 'OS_FOCUS_GAINED', id: machineId });
-      };
+      // Route the raise through the machine (§5 step 8e): one
+      // WINDOW_SHOW_REQUESTED {activate:true} replaces BOTH the imperative
+      // native focus() (BrowserWindow and hybrid BaseWindow branches alike —
+      // the machine path handles both kinds) and the hand-dispatched
+      // OS_FOCUS_GAINED intent mirror. The backend owns the whole activate
+      // policy (headless never steals OS focus) and echoes WINDOW_SHOWN
+      // {focused:true}, so the machine's `front` intent is recorded in both
+      // modes and the closing front assertion drives the raise plus the
+      // first-responder half (FOCUS_CONTENT for page-hosts).
       const win = getLiveWindow(args.id);
       if (!win) {
-        // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Focus
-        // the host BaseWindow directly so focusing a hybrid window matches a
-        // canvas page. No-op (null) when the flag is off.
+        // Hybrid page-host (BaseWindow) — invisible to getLiveWindow;
+        // consult the hybrid registry for the existence check.
         const hybrid = getHybridWindow(args.id);
-        if (hybrid && !hybrid.baseWin.isDestroyed()) {
-          if (!isHeadless()) hybrid.baseWin.focus();
-          dispatchFocusIntent();
-          return { success: true };
+        if (!hybrid || hybrid.baseWin.isDestroyed()) {
+          return { success: false, error: 'Window not found' };
         }
-        return { success: false, error: 'Window not found' };
       }
-      if (!isHeadless()) {
-        win.focus();
+      const machineId = getWindowIdFor(args.id);
+      if (machineId != null) {
+        dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: machineId, activate: true });
       }
-      dispatchFocusIntent();
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
