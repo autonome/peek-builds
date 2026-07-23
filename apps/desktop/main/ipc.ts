@@ -706,7 +706,13 @@ function applyPlacementOnReuse(
       `(${currentBounds.x},${currentBounds.y} ${currentBounds.width}x${currentBounds.height}) -> ` +
       `(${result.bounds.x},${result.bounds.y} ${result.bounds.width}x${result.bounds.height}) [mode:${placement.mode}]`
     );
-    win.setBounds(result.bounds);
+    // Machine-owned since §5 step 7E: computePlacement runs here at the
+    // dispatch site; the write is the reducer's SET_BOUNDS effect through
+    // the port.
+    const machineId = getWindowIdFor(win);
+    if (machineId != null) {
+      dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: result.bounds });
+    }
   }
 }
 
@@ -1976,11 +1982,24 @@ export function wireHybridContentEvents(
     if (dir.includes('s')) height = Math.max(MIN_RESIZE_H, sb.height + dy);
     if (dir.includes('w')) { const nw = Math.max(MIN_RESIZE_W, sb.width - dx); x = sb.x + (sb.width - nw); width = nw; }
     if (dir.includes('n')) { const nh = Math.max(MIN_RESIZE_H, sb.height - dy); y = sb.y + (sb.height - nh); height = nh; }
-    try {
-      hw.baseWin.setBounds(
-        { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) }, false,
-      );
-    } catch { /* gone */ }
+    // Machine-owned since §5 step 7E. Per-move dispatch through the reducer is
+    // deliberate (not the port-command fallback): the pump's dispatch is
+    // synchronous (read-after-dispatch contract) and already carries
+    // BOUNDS_CHANGED at native resize-event frequency, so the gesture stream
+    // costs what its own echo stream already costs — and every geometry write
+    // stays on the ONE event → reducer → SET_BOUNDS path. Maximize was
+    // already exited AT PRESS (exitMaximizeForResize, §5 step 7B), so the
+    // per-move writes land on a non-maximized record. The old direct call
+    // passed animate:false — the port's setWindowBounds omits the flag, which
+    // is the same (false is the Electron default).
+    const resizeMachineId = getWindowIdFor(hostWindowId);
+    if (resizeMachineId != null) {
+      dispatchWindowEvent({
+        type: 'SET_BOUNDS_REQUESTED',
+        id: resizeMachineId,
+        bounds: { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) },
+      });
+    }
     // Keep the overlay renderer's locally-tracked bounds in sync — it owns the
     // navbar-drag MOVE math + maximize stash, and main (not the renderer) drives
     // resize now, so without this its activeBounds would go stale.
@@ -2503,14 +2522,24 @@ export function installHybridNavbarActionRouting(): void {
     ) {
       return;
     }
-    try {
-      r.baseWin.setBounds({
-        x: Math.round(b.x),
-        y: Math.round(b.y),
-        width: Math.round(b.width),
-        height: Math.round(b.height),
+    // Machine-owned since §5 step 7E. Same per-move-through-the-reducer
+    // decision as the band-drag applyResize stream above (synchronous pump,
+    // BOUNDS_CHANGED already runs at this frequency); the overlay renderer
+    // computes the rect, main dispatches the intent, the reducer drives the
+    // one SET_BOUNDS path.
+    const machineId = getWindowIdFor(r.windowId);
+    if (machineId != null) {
+      dispatchWindowEvent({
+        type: 'SET_BOUNDS_REQUESTED',
+        id: machineId,
+        bounds: {
+          x: Math.round(b.x),
+          y: Math.round(b.y),
+          width: Math.round(b.width),
+          height: Math.round(b.height),
+        },
       });
-    } catch { /* window gone mid-set */ }
+    }
   });
 
   // page:drag-cursor — paint the hold-to-drag grab/grabbing cursor over the
@@ -4022,7 +4051,10 @@ export function registerWindowHandlers(): void {
           primaryDisplayId: screen.getPrimaryDisplay().id,
         });
         if (result.kind === 'reposition') {
-          win.setBounds(result.bounds);
+          // Machine-owned since §5 step 7E: the fill rect is computed here at
+          // the dispatch site; the write is the reducer's SET_BOUNDS effect
+          // through the port.
+          dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineWindowId, bounds: result.bounds });
         }
       }
 

@@ -3270,7 +3270,13 @@ export function registerTileIpcHandlers(): void {
         primaryDisplayId: screen.getPrimaryDisplay().id,
       });
       if (result.kind === 'reposition') {
-        win.setBounds(result.bounds);
+        // Machine-owned since §5 step 7E: the rect is computed here at the
+        // dispatch site (reducer keeps zero value imports) and the write is
+        // driven as the reducer's SET_BOUNDS effect through the port.
+        const machineId = getWindowIdFor(win);
+        if (machineId != null) {
+          dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: result.bounds });
+        }
       }
       return { success: true };
     } catch (err) {
@@ -3313,7 +3319,11 @@ export function registerTileIpcHandlers(): void {
           primaryDisplayId,
         });
         if (result.kind === 'reposition') {
-          win.setBounds(result.bounds);
+          // §5 step 7E — same machine-routed write as tile:window:center.
+          const machineId = getWindowIdFor(win);
+          if (machineId != null) {
+            dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: result.bounds });
+          }
         }
         centered++;
       }
@@ -3863,7 +3873,14 @@ export function registerTileIpcHandlers(): void {
       width: args.width ?? current.width,
       height: args.height ?? current.height,
     };
-    win.setBounds(next);
+    // Machine-owned since §5 step 7E: the partial-args merge against the live
+    // rect happens here at the dispatch site; the write is the reducer's
+    // SET_BOUNDS effect through the port. The bounds mirror updates only via
+    // the backend's BOUNDS_CHANGED echo.
+    const machineId = getWindowIdFor(win);
+    if (machineId != null) {
+      dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: next });
+    }
 
     const info = getWindowInfo(win.id);
     if (info) {

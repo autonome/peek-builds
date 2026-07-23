@@ -504,6 +504,29 @@ export type WindowEvent =
    */
   | { type: 'BOUNDS_CHANGED'; id: WindowId; bounds: Rectangle }
   /**
+   * App code wants this window at `bounds` (§4.2 dim 2, §5 step 7E) — the
+   * plain geometry-write intent behind every legacy direct `setBounds`:
+   * tile:window:set-bounds/center IPC, reuse/open placement, and the hybrid
+   * drag/resize streams (page:set-bounds + the band-drag `applyResize`).
+   * Like MAXIMIZE_REQUESTED, the rect is computed AT THE DISPATCH SITE
+   * (`computePlacement`, gesture math) and rides the event — this reducer
+   * keeps ZERO value imports. Emits SET_BOUNDS; the `bounds` mirror is NOT
+   * written here — it updates only via the backend's `BOUNDS_CHANGED` echo
+   * (the mirror stays an honest record of native reality, §5 step 7A).
+   * No-op while `fsMode` is non-normal: fullscreen owns the display, and a
+   * mid-fullscreen bounds write would corrupt the episode's geometry (the
+   * aa34cb50 family — same guard as MAXIMIZE_REQUESTED). Deliberately does
+   * NOT touch `maximized`/`preMaxBounds`: the legacy direct calls never did,
+   * and the only sanctioned maximize-invalidation path stays
+   * MAXIMIZE_EXITED_BY_RESIZE (its producers run at the gesture press, before
+   * the per-move stream dispatches these). High-frequency per-gesture use is
+   * fine by design: the pump already carries `BOUNDS_CHANGED` at native
+   * resize-event frequency, and dispatch is synchronous (read-after-dispatch
+   * contract), so a gesture stream through the reducer costs what the echo
+   * stream already costs.
+   */
+  | { type: 'SET_BOUNDS_REQUESTED'; id: WindowId; bounds: Rectangle }
+  /**
    * App code wants this window maximized — snapped to its display's work
    * area (§4.2 dim 2, §5 step 7A). A reducer TRANSITION, never an OS
    * question: the reducer stashes `preMaxBounds`, flips `maximized`, and
@@ -636,8 +659,9 @@ export type Effect =
   /**
    * Position and size the window (§4.2 dim 2, §5 step 7A) — the §3 table's
    * `setBounds(id, rect)` command, executed by the port's `setWindowBounds`.
-   * Emitted by the maximize/unmaximize transitions today; the geometry
-   * cutovers (7B+) route the legacy `setBounds` call sites through it.
+   * Emitted by the maximize/unmaximize transitions and by
+   * `SET_BOUNDS_REQUESTED` — the inbound intent every legacy direct
+   * `setBounds` call site was routed through (§5 step 7E).
    */
   | { type: 'SET_BOUNDS'; id: WindowId; bounds: Rectangle }
   /** ESC consumed by leaving fullscreen (also drives the leaving fsMode edge + SET_FULLSCREEN in the same reduce). */
@@ -1773,6 +1797,18 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // focus, and echoing anything back at the OS here would loop (our own
       // SET_BOUNDS lands right back as this event).
       patchRecord(state, event.id, { bounds: event.bounds });
+      break;
+    }
+
+    case 'SET_BOUNDS_REQUESTED': {
+      const rec = state.windows.get(event.id);
+      if (!rec) break;
+      // Fullscreen owns the display (aa34cb50 family — same guard as
+      // MAXIMIZE_REQUESTED): a bounds write mid-episode is dropped.
+      if (rec.fsMode.name !== 'normal') break;
+      // Plain geometry write: no mirror write (BOUNDS_CHANGED echoes it),
+      // no maximize interaction (see the event doc).
+      effects.push({ type: 'SET_BOUNDS', id: event.id, bounds: event.bounds });
       break;
     }
 

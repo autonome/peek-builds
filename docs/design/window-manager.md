@@ -638,11 +638,38 @@ failure mode this document exists to prevent (§2).**
    Persisted-snapshot FORMAT untouched (session.ts still writes the same
    keys from the presenter). R2 allowlist unchanged (31 entries / 72 calls —
    the check tracks op calls, not reads).
-   **Parts E+ — remaining caller cutovers: PENDING.** The legacy geometry
-   WRITE authorities still run: `tile-ipc.ts` non-maximize `setBounds`
-   IPC, `ipc.ts` hybrid drag/resize `setBounds` streams + open placement,
-   and the `display-watcher.ts` reprojection (step 10). Each cutover deletes
-   its store + its R2 allowlist entries in the same commit.
+   **Part E — remaining geometry-write cutover: DONE. Step 7 is DONE.**
+   One new inbound event closes the write side:
+   `SET_BOUNDS_REQUESTED {id, bounds}` (`window-state.ts`) — the plain
+   geometry-write intent behind every legacy direct `setBounds` — emitting
+   the existing `SET_BOUNDS` effect. Same shape as the maximize pair: the
+   rect is computed AT THE DISPATCH SITE (`computePlacement`, gesture math)
+   and rides the event (ZERO-value-imports invariant); the `bounds` mirror
+   still updates ONLY via the `BOUNDS_CHANGED` echo; dropped while `fsMode`
+   is non-normal (fullscreen owns the display, the aa34cb50 family — a
+   deliberate divergence from the legacy calls, which would have written
+   blindly mid-episode); deliberately does NOT touch `maximized`/
+   `preMaxBounds` (matching the legacy calls — invalidation stays
+   `MAXIMIZE_EXITED_BY_RESIZE`, whose producers fire at the gesture press).
+   Cutovers: `tile-ipc.ts` `tile:window:center` / `center-all` /
+   `set-bounds` (×3, all dead — entry deleted), `ipc.ts`
+   `applyPlacementOnReuse` + the open-time `options.maximize` work-area fill
+   + BOTH drag/resize streams (`page:set-bounds` and the band-drag
+   `applyResize`). The streams go through the reducer PER EVENT, not through
+   a sanctioned port-command side door: the pump's dispatch is synchronous
+   (read-after-dispatch contract) and already carries `BOUNDS_CHANGED` at
+   native resize-event frequency, so a gesture stream costs what its own
+   echo stream already costs — and one path stays one path. The 7B gesture
+   reconciler is untouched (its live read stays evidence, never authority).
+   The fifth `ipc.ts` hit is the `assembleHybridPageHost` fillView
+   `view.setBounds` — a CHILD-VIEW op on the host's content
+   `WebContentsView`, not a window op: reclassified into the R2 check's
+   not-window-ops section (entry kept at ×1, the mechanical greps can't see
+   receivers). R2: `tile-ipc.ts` `setBounds` entry deleted, `ipc.ts`
+   `setBounds` 5→1 — allowlist 31→30 entries / 72→65 calls. Reducer suite
+   222→228. Geometry writers still on the R2 list are OTHER steps' shares,
+   not step-7 remainder: `hybrid-overlay.ts` overlay-follow geometry (×6,
+   step 9) and the `display-watcher.ts` reprojection clamp (step 10).
 8. **Focus rivals.** Delete `izui-state.ts`'s focus surface and `restoreFocusGuard`; delete
    `BrowserWindow.getFocusedWindow()` from `entry.ts` and `tile-ipc.ts`. Reduce
    `izui-state.ts` to the session tri-state only.

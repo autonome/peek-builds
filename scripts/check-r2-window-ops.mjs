@@ -102,6 +102,8 @@ const ALLOWLIST = [
     why: 'Notification.show for download complete/failed — OS notification, not a window' },
   { file: 'apps/desktop/main/tray.ts', call: 'destroy', count: 1,
     why: 'Tray.destroy on tray teardown — not a window' },
+  { file: 'apps/desktop/main/ipc.ts', call: 'setBounds', count: 1,
+    why: 'WebContentsView content fill (assembleHybridPageHost fillView) — a child-view op inside the host, not a window op; every WINDOW setBounds in this file died in §5 step 7E (SET_BOUNDS_REQUESTED → reducer → port)' },
 
   // ── App/Dock-level surface, not per-window, but same API family ──────────
   { file: 'apps/desktop/main/headless-policy.ts', call: 'hide', count: 1,
@@ -130,8 +132,6 @@ const ALLOWLIST = [
     why: 'reveal overlay without activating — §5 step 9' },
   { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'destroy', count: 2,
     why: 'overlay singleton teardown — §5 step 9' },
-  { file: 'apps/desktop/main/ipc.ts', call: 'setBounds', count: 5,
-    why: 'hybrid host/view geometry — the two maximize-path calls (page:maximize snap + page:unmaximize restore) died in §5 step 7B (machine SET_BOUNDS now drives them); survivors are the open-placement pair, the content-view fill, and the live drag/resize streams (page:set-bounds + applyResize) — geometry, §5 step 7 remainder' },
   { file: 'apps/desktop/main/ipc.ts', call: 'focus', count: 8,
     why: 'activate existing window/contentWC on open-dedupe + devtools — focus rivals, §5 step 8' },
   { file: 'apps/desktop/main/ipc.ts', call: 'setVisibleOnAllWorkspaces', count: 4,
@@ -146,8 +146,6 @@ const ALLOWLIST = [
     why: 'restore-loop focus of the saved-focused window — session restore, §5 step 11' },
   { file: 'apps/desktop/main/tile-ipc.ts', call: 'focus', count: 2,
     why: 'tile:window focus IPC — focus rivals, §5 step 8' },
-  { file: 'apps/desktop/main/tile-ipc.ts', call: 'setBounds', count: 3,
-    why: 'tile:window set-bounds/center placement IPC — the maximize snap + unmaximize restore calls died in §5 step 7C (machine SET_BOUNDS drives them); survivors are plain bounds-write IPC — geometry, §5 step 7 remainder' },
   { file: 'apps/desktop/main/tile-ipc.ts', call: 'setVisibleOnAllWorkspaces', count: 1,
     why: 'tile:window all-workspaces IPC — §5 step 10' },
   { file: 'apps/desktop/main/windows.ts', call: 'focus', count: 3,

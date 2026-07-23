@@ -241,6 +241,9 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     { type: 'MAXIMIZE_RESTORED', id: wid(99), preMaxBounds: BOUNDS },
     { type: 'MAXIMIZE_EXITED_BY_RESIZE', id: wid(1) },
     { type: 'MAXIMIZE_EXITED_BY_RESIZE', id: wid(99) },
+    // §5 step 7E event (the plain geometry-write intent).
+    { type: 'SET_BOUNDS_REQUESTED', id: wid(1), bounds: BOUNDS },
+    { type: 'SET_BOUNDS_REQUESTED', id: wid(99), bounds: BOUNDS },
   ];
 
   it('reduce is total: defined result + front invariant holds for all combinations', () => {
@@ -2564,6 +2567,86 @@ describe('BOUNDS_CHANGED — the sole writer of the bounds mirror (§5 step 7A)'
     assert.strictEqual(rec.maximized, true);
     assert.deepStrictEqual(rec.preMaxBounds, RECT_A);
     assert.deepStrictEqual(rec.bounds, WORK);
+  });
+});
+
+describe('SET_BOUNDS_REQUESTED — the plain geometry-write intent (§5 step 7E)', () => {
+  const RECT_A: Rectangle = { x: 100, y: 120, width: 640, height: 480 };
+  const RECT_B: Rectangle = { x: 5, y: 6, width: 700, height: 500 };
+  const WORK: Rectangle = { x: 0, y: 25, width: 1512, height: 920 };
+
+  function setBoundsEffects(effects: Effect[]): Extract<Effect, { type: 'SET_BOUNDS' }>[] {
+    return effects.filter((e): e is Extract<Effect, { type: 'SET_BOUNDS' }> => e.type === 'SET_BOUNDS');
+  }
+
+  it('drives SET_BOUNDS with the requested rect', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const { effects } = drive(s, [{ type: 'SET_BOUNDS_REQUESTED', id: wid(1), bounds: RECT_A }]);
+    assert.deepStrictEqual(setBoundsEffects(effects), [{ type: 'SET_BOUNDS', id: wid(1), bounds: RECT_A }]);
+  });
+
+  it('does NOT write the bounds mirror — only the BOUNDS_CHANGED echo does (§5 step 7A)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const r1 = drive(s, [
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_A },
+      { type: 'SET_BOUNDS_REQUESTED', id: wid(1), bounds: RECT_B },
+    ]);
+    assert.deepStrictEqual(r1.state.windows.get(wid(1))!.bounds, RECT_A, 'mirror untouched until the echo');
+    const r2 = drive(r1.state, [{ type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_B }]);
+    assert.deepStrictEqual(r2.state.windows.get(wid(1))!.bounds, RECT_B, 'echo is the sole mirror writer');
+  });
+
+  it('is a no-op for an unregistered window', () => {
+    const s = createInitialState();
+    const { effects } = drive(s, [{ type: 'SET_BOUNDS_REQUESTED', id: wid(99), bounds: RECT_A }]);
+    assert.deepStrictEqual(setBoundsEffects(effects), []);
+  });
+
+  it('is dropped while ANY non-normal fsMode (fullscreen owns the display — the aa34cb50 family)', () => {
+    for (const [enterEvents, label] of [
+      [[{ type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: true, bounds: RECT_A }], 'entering-fullscreen'],
+      [[
+        { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: true, bounds: RECT_A },
+        { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
+      ], 'fullscreen'],
+      [[
+        { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: true, bounds: RECT_A },
+        { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
+        { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: false },
+      ], 'leaving-fullscreen'],
+    ] as [WindowEvent[], string][]) {
+      let s = createInitialState();
+      s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+      const r1 = drive(s, enterEvents);
+      const r2 = drive(r1.state, [{ type: 'SET_BOUNDS_REQUESTED', id: wid(1), bounds: RECT_B }]);
+      assert.deepStrictEqual(setBoundsEffects(r2.effects), [], `dropped during ${label}`);
+    }
+  });
+
+  it('leaves maximize state alone: flag + stash survive a plain write (invalidation stays MAXIMIZE_EXITED_BY_RESIZE)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const r1 = drive(s, [
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_A },
+      { type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK },
+    ]);
+    const r2 = drive(r1.state, [{ type: 'SET_BOUNDS_REQUESTED', id: wid(1), bounds: RECT_B }]);
+    const rec = r2.state.windows.get(wid(1))!;
+    assert.strictEqual(rec.maximized, true, 'plain write never exits maximize');
+    assert.deepStrictEqual(rec.preMaxBounds, RECT_A, 'stash untouched');
+    assert.deepStrictEqual(setBoundsEffects(r2.effects), [{ type: 'SET_BOUNDS', id: wid(1), bounds: RECT_B }], 'the write itself still drives');
+  });
+
+  it('is pure geometry: no front/assertion/stacking change', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    assert.strictEqual(s.frontAsserted, true, 'precondition: assertion held');
+    const { state, effects } = drive(s, [{ type: 'SET_BOUNDS_REQUESTED', id: wid(1), bounds: RECT_A }]);
+    assert.strictEqual(state.front, wid(1));
+    assert.strictEqual(state.frontAsserted, true);
+    assert.deepStrictEqual(effects.map((e) => e.type), ['SET_BOUNDS'], 'no raise/stacking/focus rides along');
   });
 });
 
