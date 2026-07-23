@@ -236,8 +236,13 @@ maximize/unmaximize/update-canvas-state dispatch machine events and the
 `isMaximized()` distrust block is gone. `preMaxX/Y/W/H` keys survive only as
 persisted-snapshot/open-options FORMAT (session save writes them from the
 presenter; reopen/restore reads them to seed `MAXIMIZE_RESTORED`) until the
-session read-model step. Still running: the non-maximize `setBounds` IPC +
-drag/resize streams, until the remaining step 7 cutovers.)*
+session read-model step. The geometry READ model is machine-owned — §5 step
+7D: presenter/close-capture/session-save read the reducer through the ONE
+restorable-geometry rule (`window-presenter.ts getRestorableBounds`:
+fullscreen → `fsMode.preBounds`, else the `bounds` mirror), live reads
+surviving only as machine-unseen-window fallbacks. Still running: the
+non-maximize `setBounds` IPC + drag/resize streams, until the remaining
+step 7 cutovers.)*
 Today: split three ways — live Electron `getBounds()`, `windowRegistry.params`
 `preMaxX/Y/W/H`, and (deleted, step 7B) `hybrid-page-host-registry.ts
 InternalEntry.maximized` / `preMaxBounds`. `tile-ipc.ts tile:window:maximize`
@@ -611,12 +616,33 @@ failure mode this document exists to prevent (§2).**
    reader remains; dies with the session read-model cutover). R2:
    `tile-ipc.ts` `setBounds` 5→3, `unmaximize` entry (×2) deleted —
    allowlist 32→31 entries.
-   **Parts D+ — remaining caller cutovers: PENDING.** The other legacy
-   geometry authorities still run: `tile-ipc.ts` non-maximize `setBounds`
+   **Part D — geometry READ-model cutover: DONE.** Presenter, close-capture
+   and (through the presenter) session-save read reducer state, never live
+   Electron queries, and "restorable geometry" is ONE concept with ONE home:
+   `window-presenter.ts getRestorableBounds(machineId)` — fullscreen episode
+   → `fsMode.preBounds` (the aa34cb50 lookalike trap, previously a presenter
+   special case); else the machine's `bounds` mirror, which while maximized
+   IS the maximized rect, persisted alongside `maximized` +
+   `preMaxX/Y/Width/Height` exactly as the session format expects (restore
+   re-seeds via `MAXIMIZE_RESTORED`, 7C). Cutovers, each keeping the live
+   read only as the fallback for a machine-unseen window (tripwire-hunted):
+   - `window-presenter.ts getLivePresentation` — machine bounds via the rule;
+     the hardcoded `maximized:false`/`preMaxBounds:null` for generic
+     BrowserWindows (7C known gap) now reads the machine record, so
+     `tile:window:list` and session-save finally surface generic-window
+     maximize state. `getHybridPresentation`'s two-step (7B mirror + 7A
+     fullscreen override) collapsed into the same rule.
+   - `main.ts` `'close'` capture (`lastBounds`) and `ipc.ts`
+     `captureHybridClose` (`hybridLastBounds`) — the undo-close raw-bounds
+     fallbacks read the machine via the rule.
+   Persisted-snapshot FORMAT untouched (session.ts still writes the same
+   keys from the presenter). R2 allowlist unchanged (31 entries / 72 calls —
+   the check tracks op calls, not reads).
+   **Parts E+ — remaining caller cutovers: PENDING.** The legacy geometry
+   WRITE authorities still run: `tile-ipc.ts` non-maximize `setBounds`
    IPC, `ipc.ts` hybrid drag/resize `setBounds` streams + open placement,
-   the presenter/session maximize read-model (7D), and the
-   `display-watcher.ts` reprojection (step 10). Each cutover deletes its
-   store + its R2 allowlist entries in the same commit.
+   and the `display-watcher.ts` reprojection (step 10). Each cutover deletes
+   its store + its R2 allowlist entries in the same commit.
 8. **Focus rivals.** Delete `izui-state.ts`'s focus surface and `restoreFocusGuard`; delete
    `BrowserWindow.getFocusedWindow()` from `entry.ts` and `tile-ipc.ts`. Reduce
    `izui-state.ts` to the session tri-state only.

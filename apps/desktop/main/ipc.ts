@@ -54,7 +54,7 @@ import {
   scheduleSnapshotOnLifecycleChange,
   finalizeWindowClose,
 } from './main.js';
-import { getWindowPresentation } from './window-presenter.js';
+import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
 
 import {
   APP_DEF_WIDTH,
@@ -1192,7 +1192,12 @@ function assembleHybridPageHost(
   const captureHybridClose = () => {
     try {
       if (!baseWin.isDestroyed()) {
-        hybridLastBounds = baseWin.getBounds();
+        // Machine-owned geometry (§5 step 7D): same cutover as the main.ts
+        // BrowserWindow close-capture — the raw-bounds fallback reads the
+        // machine via the ONE restorable-geometry rule (window-presenter.ts
+        // getRestorableBounds); the live getBounds() survives only for a
+        // window the machine never saw.
+        hybridLastBounds = getRestorableBounds(hostMachineId) ?? baseWin.getBounds();
         hybridLastPresentation = getWindowPresentation(baseWin.id);
       }
     } catch {

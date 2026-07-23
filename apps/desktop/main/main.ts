@@ -49,7 +49,7 @@ import {
 } from './window-state-singleton.js';
 import { isSatelliteRegistration, classifyWindowRegistration } from './window-state.js';
 import type { Placement } from './window-placement.js';
-import { getWindowPresentation } from './window-presenter.js';
+import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
 import { saveSessionSnapshot, reassertColdStartFocusOnce } from './session.js';
 
 // Track app-quit state so the close-debounced save doesn't double-fire
@@ -187,10 +187,10 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
       }
 
       // Pull bounds + maximize state from the presentation captured
-      // pre-destruction. The presenter already returns canvas-aware
-      // bounds for page-hosts (info.params x/y/width/height), the
-      // hybrid content rect for hybrid page-hosts (baseWin.getBounds()),
-      // and BrowserWindow bounds for everything else.
+      // pre-destruction. The presenter reads the window-state machine via
+      // the ONE restorable-geometry rule (window-presenter.ts
+      // getRestorableBounds, §5 step 7D) for every window kind, so a
+      // fullscreen/maximized window reopens at a sane rect.
       const saveBounds = captured.presentation?.bounds ?? captured.bounds;
       const saveMaximized = captured.presentation?.maximized ?? false;
       const savePreMaxBounds: ClosedWindowEntry['preMaximizeBounds'] =
@@ -741,7 +741,14 @@ export async function initialize(): Promise<void> {
     window.on('close', () => {
       try {
         if (!window.isDestroyed()) {
-          lastBounds = window.getBounds();
+          // Machine-owned geometry (§5 step 7D): the raw-bounds fallback
+          // (used when the presentation below is null) reads the machine via
+          // the ONE restorable-geometry rule (window-presenter.ts
+          // getRestorableBounds — fullscreen → preBounds, else the bounds
+          // mirror) so undo-close of a fullscreen/maximized window restores
+          // sanely. The live getBounds() survives only for a window the
+          // machine never saw (unregistered — the tripwire hunts those).
+          lastBounds = getRestorableBounds(getWindowIdFor(window)) ?? window.getBounds();
           lastPresentation = getWindowPresentation(windowId);
         }
       } catch {

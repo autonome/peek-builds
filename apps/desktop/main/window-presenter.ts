@@ -24,8 +24,42 @@ import { urlToHash, getThumbnailPath } from './thumbnails.js';
 import { getHybridWindow } from './hybrid-page-host-registry.js';
 import type { HybridWindowEntry } from './hybrid-page-host-registry.js';
 import { getWindowPreBounds, getWindowIdFor, getMachineWindowRecord } from './window-state-singleton.js';
+import type { WindowId } from './window-state.js';
 
 export { resolveWindowAddress };
+
+/**
+ * THE restorable-geometry rule (§5 step 7D) — the ONE answer to "what rect
+ * should a consumer persist or restore for this window?". Every read-model
+ * consumer (presentation `bounds` → tile:window:list, session-save, the
+ * close-capture that feeds undo-close) goes through here; none re-derive it.
+ *
+ * The rule, in precedence order, all from machine state (never a live
+ * Electron query):
+ *   1. Fullscreen episode (`fsMode` non-normal): the pre-fullscreen stash
+ *      `fsMode.preBounds` — set at enter-initiation, cleared on the settled
+ *      leave, so mid-animation reads are covered. Persisting the transient
+ *      work-area-sized fullscreen rect instead makes the next boot restore a
+ *      plain window at work-area size — a fullscreen LOOKALIKE, visually
+ *      indistinguishable from real fullscreen, that breaks the Esc /
+ *      fullscreen-toggle interactions after restart (the aa34cb50 trap).
+ *   2. Otherwise: the machine's `bounds` mirror (registration-seeded,
+ *      BOUNDS_CHANGED-maintained). When the window is maximized this IS the
+ *      maximized rect — deliberately: the session format persists it as
+ *      `bounds` alongside `maximized` + `preMaxX/Y/Width/Height`, and
+ *      restore/reopen rebuild the window AT that rect and re-seed the machine
+ *      via MAXIMIZE_RESTORED (§5 step 7C).
+ *
+ * Returns null when the machine has no record for the window (unregistered —
+ * shouldn't exist, the registration tripwire hunts those) or its mirror was
+ * never seeded; callers may then fall back to a live read, annotated as such.
+ */
+export function getRestorableBounds(machineId: WindowId | null): Electron.Rectangle | null {
+  if (machineId == null) return null;
+  const preFullScreenBounds = getWindowPreBounds(machineId);
+  if (preFullScreenBounds) return preFullScreenBounds;
+  return getMachineWindowRecord(machineId)?.bounds ?? null;
+}
 
 export interface WindowPresentation {
   id: number;
@@ -42,12 +76,16 @@ export interface WindowPresentation {
   /** Thumbnail hash for `peek://thumbnail/<hash>.jpg`, or empty string. */
   thumbnail: string;
   /**
-   * For page-hosts, the visible webview rect (canvas bounds from
-   * info.params). For other windows, BrowserWindow.getBounds(). Always
-   * the rect a consumer would want to display or persist.
+   * The restorable rect — always the rect a consumer would want to display
+   * or persist, read from the window-state machine via the ONE
+   * restorable-geometry rule (`getRestorableBounds`): fullscreen →
+   * `fsMode.preBounds`; else the machine's bounds mirror (which IS the
+   * maximized rect while maximized, persisted alongside `maximized` +
+   * `preMaxBounds`). Live Electron reads survive only as the fallback for
+   * a window the machine never saw.
    */
   bounds: Electron.Rectangle;
-  /** True when the page-host is in MAXIMIZED state. */
+  /** True when the machine record says the window is maximized (§5 step 7B/7C). */
   maximized: boolean;
   /** Pre-maximize bounds for unmaximize, or null if not maximized. */
   preMaxBounds: Electron.Rectangle | null;
@@ -57,9 +95,11 @@ export interface WindowPresentation {
 
 /**
  * Return the canonical presentation for a window, or null if the window
- * doesn't exist or has been destroyed. State is read from the live
- * BrowserWindow + the machine's registry payload via `getWindowInfo` (or the
- * hybrid registry for page-hosts).
+ * doesn't exist or has been destroyed. Geometry/maximize state is read from
+ * the window-state machine (§5 step 7D — `getRestorableBounds` + the record's
+ * `maximized`/`preMaxBounds`); identity/params come from the machine's
+ * registry payload via `getWindowInfo` (or the hybrid registry for
+ * page-hosts); title/visibility/focus stay live reads.
  */
 export function getWindowPresentation(windowId: number): WindowPresentation | null {
   // Hybrid page-hosts are BaseWindows, invisible to `getLiveWindow`
@@ -116,25 +156,13 @@ function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
   const machineId = getWindowIdFor(entry.windowId);
   const machineRec = machineId != null ? getMachineWindowRecord(machineId) : undefined;
 
-  // Machine-owned geometry (§5 step 7B): prefer the machine's bounds mirror
-  // (registration-seeded, BOUNDS_CHANGED-maintained) over the live read above;
-  // the live read stays as the fallback for a window the machine never saw.
-  if (machineRec?.bounds) {
-    bounds = machineRec.bounds;
-  }
-
-  // Native fullscreen: present the PRE-fullscreen bounds, not the transient
-  // work-area-sized fullscreen rect. Session-save persists `bounds`, and
-  // persisting the fullscreen rect made the next boot restore a plain window
-  // at work-area size — a fullscreen LOOKALIKE that is visually
-  // indistinguishable from real fullscreen and breaks the Esc / fullscreen-
-  // toggle interactions after restart. The stash (now `fsMode.preBounds` on the
-  // window-state machine) covers the whole fullscreen episode — set at
-  // enter-initiation, cleared on the settled leave — so mid-animation saves are
-  // covered too.
-  const preFullScreenBounds = machineId != null ? getWindowPreBounds(machineId) : null;
-  if (preFullScreenBounds) {
-    bounds = preFullScreenBounds;
+  // Machine-owned geometry (§5 steps 7B+7D): the ONE restorable-geometry rule
+  // (fullscreen → fsMode.preBounds; else the machine's bounds mirror — see
+  // getRestorableBounds above). The live read above stays only as the
+  // fallback for a window the machine never saw.
+  const restorableBounds = getRestorableBounds(machineId);
+  if (restorableBounds) {
+    bounds = restorableBounds;
   }
 
   let favicon = '';
@@ -188,17 +216,22 @@ function getLivePresentation(win: BrowserWindowType): WindowPresentation | null 
 
   const address = resolveWindowAddress(hostUrl, info?.params);
 
-  const bounds = win.getBounds();
+  // Machine-owned geometry (§5 step 7D): the ONE restorable-geometry rule
+  // (fullscreen → fsMode.preBounds; else the machine's bounds mirror — see
+  // getRestorableBounds above). The live getBounds() survives only as the
+  // annotated fallback for a window the machine never saw (unregistered —
+  // the registration tripwire hunts those).
+  const machineId = getWindowIdFor(win);
+  const machineRec = machineId != null ? getMachineWindowRecord(machineId) : undefined;
+  const bounds = getRestorableBounds(machineId) ?? win.getBounds();
 
-  // Maximize state was a canvas-page-host concept (page-host FSM tracked
-  // MAXIMIZED in info.params). The canvas path is gone, so this is always
-  // false/null here. The hybrid path DOES have real maximize tracking now
-  // (see getHybridPresentation below) — but hybrid windows are BaseWindows
-  // that never reach this function (getWindowPresentation resolves them via
-  // the hybrid registry first). A plain BrowserWindow (settings, palette,
-  // etc.) has no maximize concept in this app.
-  const maximized = false;
-  const preMaxBounds: Electron.Rectangle | null = null;
+  // Maximize is a reducer fact (§5 step 7C): generic BrowserWindows maximize
+  // through tile:window:maximize → MAXIMIZE_REQUESTED, so the machine record
+  // is the one holder — surfacing it here is what lets tile:window:list and
+  // session-save finally see a maximized generic window (the canvas-era
+  // hardcoded `false` predates the machine).
+  const maximized = machineRec?.maximized === true;
+  const preMaxBounds: Electron.Rectangle | null = maximized ? (machineRec?.preMaxBounds ?? null) : null;
 
   // Favicon + thumbnail. The presenter is the one place that knows the
   // resolution policy — renderers receive a URL string they can drop into
