@@ -7,11 +7,11 @@ import { createPerDescribeApp } from '../helpers/test-app';
  * The hybrid content webContents is a `WebContentsView` (getType() ===
  * 'browserView'), which the entry.ts default-deny SECURITY chokepoint (gated on
  * 'window'/'webview') does NOT cover. `wireHybridContentEvents` therefore
- * installs an explicit `setWindowOpenHandler` on it that mirrors the canvas
- * <webview> guest policy: http(s) `window.open` / `target=_blank` are DENIED
- * the default raw popup and re-routed through the canonical window-open IPC
- * handler (`invokeWindowOpen`). That re-entry takes the hybrid EARLY BRANCH →
- * a NEW opaque BaseWindow + WebContentsView page-host.
+ * installs an explicit `setWindowOpenHandler` on it: every `window.open` /
+ * `target=_blank` popup — http(s) AND non-http(s) (about:blank, data:, …) — is
+ * ADOPTED via allow+createWindow into a NEW opaque BaseWindow +
+ * WebContentsView page-host registered with the window-state machine; only
+ * `javascript:` targets are denied outright.
  *
  * The test bridge's `makeWiredHybrid(dataUrl)` builds a hybrid window and calls
  * the SAME `wireHybridContentEvents` the real branch calls, so the handler under
@@ -100,7 +100,7 @@ test.describe('Hybrid page-host popups (P1.5) @desktop', () => {
     expect(existing).not.toContain(popupId);
   });
 
-  test('non-http(s) window.open (about:blank) is NOT routed to a hybrid host (canvas policy)', async () => {
+  test('non-http(s) window.open (about:blank) is ADOPTED into a machine-registered hybrid host', async () => {
     test.skip(!(await bridgePresent()), 'no hybrid bridge in this configuration');
 
     const opener = await app.evaluateMain!(async () => {
@@ -109,34 +109,79 @@ test.describe('Hybrid page-host popups (P1.5) @desktop', () => {
     });
     expect(opener).not.toBeNull();
 
-    const before = await app.evaluateMain!(() =>
-      (globalThis as any).__peekHybridOverlayTest.hybridCount(),
-    );
     const existing = await app.evaluateMain!(() =>
       (globalThis as any).__peekHybridOverlayTest.hybridIds(),
     );
 
-    // A non-http(s) window.open (about:blank — the canonical case the canvas
-    // guest handler cites) is handled per canvas policy ('allow', NOT
-    // re-routed). It must NOT create a NEW hybrid host (the http(s)-only
-    // re-route branch never fires) — and crucially it is NOT silently dropped:
-    // the handler returned an explicit verdict instead of falling through to a
-    // raw, un-gated popup.
-    await app.evaluateMain!(async (_e, arg) => {
+    // A non-http(s) window.open (about:blank + document.write is the canonical
+    // legitimate case) used to be `{action:'allow'}` with NO createWindow —
+    // Electron minted a default BrowserWindow the window-state machine never
+    // saw. Now it takes the SAME allow+createWindow adoption as http(s): a NEW
+    // hybrid host appears, and it is registered with the machine (the
+    // "every window registers" invariant, design doc §7).
+    const ran = await app.evaluateMain!(async (_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       return b.triggerWindowOpen((arg as any).id, 'about:blank');
     }, { id: opener });
+    expect(ran).toBe(true);
 
     const blankHybrid = await app.evaluateMain!(async (_e, arg) => {
       const b = (globalThis as any).__peekHybridOverlayTest;
-      return b.waitHybridForUrl('about:blank', (arg as any).existing, 1500);
+      return b.waitHybridForUrl('about:blank', (arg as any).existing);
     }, { existing });
-    expect(blankHybrid).toBeNull();
+    expect(blankHybrid).not.toBeNull();
+    expect(existing).not.toContain(blankHybrid);
 
-    // No NEW hybrid host was created for the non-http(s) open.
-    const after = await app.evaluateMain!(() =>
-      (globalThis as any).__peekHybridOverlayTest.hybridCount(),
+    // The adopted popup is registered with the window-state machine.
+    const machineId = await app.evaluateMain!((_e, arg) =>
+      (globalThis as any).__peekHybridOverlayTest.machineWindowIdFor((arg as any).id),
+    { id: blankHybrid });
+    expect(machineId).not.toBeNull();
+  });
+
+  test('javascript: window.open never yields a javascript:-hosted or unregistered window', async () => {
+    test.skip(!(await bridgePresent()), 'no hybrid bridge in this configuration');
+
+    const opener = await app.evaluateMain!(async () => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.makeWiredHybrid('data:text/html,<title>Opener4</title>opener4');
+    });
+    expect(opener).not.toBeNull();
+
+    const existing = await app.evaluateMain!(() =>
+      (globalThis as any).__peekHybridOverlayTest.hybridIds(),
     );
-    expect(after).toBe(before);
+
+    // javascript: has no legitimate popup use; the handler denies a literal
+    // javascript: target outright (defense-in-depth). In practice Chromium
+    // SANITIZES window.open('javascript:…') to an about:blank popup before the
+    // handler ever sees it (observed live: details.url === 'about:blank', the
+    // script does not run in the popup) — so the observable contract asserted
+    // here is: no Peek window ever hosts a javascript: address, and whatever
+    // sanitized popup does appear is adopted + machine-registered like any
+    // other popup, never a raw unregistered window.
+    await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.triggerWindowOpen((arg as any).id, 'javascript:void(0)');
+    }, { id: opener });
+
+    const jsHybrid = await app.evaluateMain!(async (_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      return b.waitHybridForUrl('javascript:', (arg as any).existing, 1500);
+    }, { existing });
+    expect(jsHybrid).toBeNull();
+
+    // Registration invariant: every NEW hybrid host the open produced (i.e.
+    // any sanitized popup) is machine-registered. (Pre-existing test-bridge
+    // openers are excluded — makeWiredHybrid hosts are registry-only by
+    // design and predate this open.)
+    const unregistered = await app.evaluateMain!((_e, arg) => {
+      const b = (globalThis as any).__peekHybridOverlayTest;
+      const prior = new Set((arg as any).existing as number[]);
+      return b.hybridIds()
+        .filter((id: number) => !prior.has(id))
+        .filter((id: number) => b.machineWindowIdFor(id) == null);
+    }, { existing });
+    expect(unregistered).toEqual([]);
   });
 });

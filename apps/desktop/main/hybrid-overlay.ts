@@ -2747,6 +2747,15 @@ function installTestBridge(): void {
     hybridCount(): number {
       return getAllHybridWindows().length;
     },
+    /**
+     * The window-state machine's WindowId for an Electron window id, or null if
+     * the machine has never seen the window. Lets specs assert the registration
+     * invariant ("every window registers with the machine") — e.g. that a
+     * window.open popup adopted into a hybrid host is machine-registered.
+     */
+    machineWindowIdFor(id: number): string | null {
+      return getWindowIdFor(id);
+    },
     /** P1.5: ids of every currently-registered hybrid page-host window. */
     hybridIds(): number[] {
       return getAllHybridWindows().map((e) => e.windowId);

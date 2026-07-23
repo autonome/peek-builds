@@ -2049,10 +2049,29 @@ export function wireHybridContentEvents(
   // null). NOTE: the chrome-extensions popup handler
   // (chrome-extensions.ts ~1090) still uses the deny + `invokeWindowOpen`
   // re-route — that's a separate path, out of scope here. Non-http(s) URLs
-  // (about:blank, data:, etc.) are ALLOWED to open normally.
+  // (about:blank, data:, etc.) take the SAME adoption path — see below.
   contentWC.setWindowOpenHandler((details) => {
     const popupUrl = details.url;
-    if (popupUrl.startsWith('http://') || popupUrl.startsWith('https://')) {
+    // javascript: popups are denied outright. A javascript: window.open target
+    // executes script in the popup context and has no legitimate popup-window
+    // use; adopting it would host attacker-chosen script in a Peek hybrid
+    // window. Deny is the only safe answer here (scheme match is
+    // case-insensitive per URL spec).
+    if (popupUrl.toLowerCase().startsWith('javascript:')) {
+      console.log(`[hybrid-page-host] Popup DENIED (javascript: scheme) from window ${hostWindowId}`);
+      return { action: 'deny' };
+    }
+    {
+      // ALL other schemes — http(s) AND non-http(s) (about:blank, data:, blob:,
+      // etc.) — are adopted into a Peek hybrid host. The non-http(s) case used
+      // to `{action:'allow'}` with NO createWindow, which let Electron mint a
+      // default BrowserWindow the window-state machine never saw — a window
+      // outside the WM's registration invariant ("every window registers with
+      // the machine", design doc §7). Adoption (not denial) because
+      // about:blank + document.write is a common legitimate pattern: the
+      // opener-wired guest WC is adopted unchanged, so that keeps working —
+      // it's just hosted and machine-registered like every other popup.
+      const isHttpPopup = popupUrl.startsWith('http://') || popupUrl.startsWith('https://');
       console.log(`[hybrid-page-host] Popup (allow+createWindow) from window ${hostWindowId}: ${popupUrl}`);
       // Option A — native adoption. Return allow+createWindow so Chromium wires a
       // REAL opener relationship: it creates the guest WebContents (window.opener/
@@ -2101,7 +2120,10 @@ export function wireHybridContentEvents(
             const source = parentInfo ? parentInfo.source : 'system';
             assembleHybridPageHost(baseWin, view, {
               url: popupUrl,
-              options: {},
+              // Non-http(s) popups (about:blank, data:, …) skip history
+              // tracking — the pre-adoption default-window path never
+              // tracked them, and an "about:blank" history item is noise.
+              options: isHttpPopup ? {} : { skipTracking: true },
               source,
               placement: { mode: 'proportional', relX: 0.5, relY: 0.5 },
               contentX: placedBounds.x,
@@ -2144,8 +2166,6 @@ export function wireHybridContentEvents(
         },
       };
     }
-    // Non-http(s) (about:blank, data:, etc.) — allow normally, like canvas.
-    return { action: 'allow' };
   });
 
   // ── Navigation → history tracking + chrome state ─────────────────────────
