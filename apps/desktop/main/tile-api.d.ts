@@ -160,19 +160,6 @@ interface TileWindow {
   maximize(id?: number): Promise<{ success: boolean; error?: string }>;
 
   /**
-   * Push the current canvas page-host state into the registry params so
-   * session save and the close handler can read from a single source of
-   * truth. Called by the page-host renderer on every state-changing
-   * event (resize end, drag end, doMaximize, doUnmaximize). Requires
-   * `window.manage` capability.
-   */
-  updateCanvasState(state: {
-    x: number; y: number; width: number; height: number;
-    maximized: boolean;
-    preMaxX?: number; preMaxY?: number; preMaxWidth?: number; preMaxHeight?: number;
-  }): Promise<{ success: boolean; error?: string }>;
-
-  /**
    * Toggle fullscreen on a window. Omit id for calling window.
    * Requires `window.manage` capability.
    */
