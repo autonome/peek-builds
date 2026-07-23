@@ -407,6 +407,14 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.emit({ type: 'WINDOW_SHOWN', id, focused: this.isFocused(win) });
     });
     win.on('hide', () => {
+      // OS boundary workaround (macOS, lowest layer — this backend): AppKit
+      // delivers stale/lagged 'hide' notifications for BaseWindows (the peek
+      // 71cfde09 lag class). During session restore one arrives for the
+      // just-activated host with the window still on screen, and echoing it
+      // would yank the machine's `front` off the restored window. Validate
+      // the signal against native ground truth: only a window that is
+      // actually not visible echoes WINDOW_HIDDEN.
+      if (!win.isDestroyed() && win.isVisible()) return;
       this.emit({ type: 'WINDOW_HIDDEN', id });
     });
     win.on('closed', () => {
