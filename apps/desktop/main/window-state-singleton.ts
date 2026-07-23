@@ -40,6 +40,8 @@ export interface MachineWindowSpec {
   params?: Record<string, unknown>;
   /** Declared always-on-top intent — registration emits SET_ALWAYS_ON_TOP. */
   alwaysOnTop?: boolean;
+  /** keepLive policy declared at open time — drives the reducer's `WINDOW_CLOSE_OR_HIDE_REQUESTED` hide-vs-close decision (see `WindowRecord.keepLive`). */
+  keepLive?: boolean;
   /** BaseWindow (page-host) or BrowserWindow (browser). */
   win: BaseWindow | BrowserWindow;
   /** Content view WC for a page-host, root WC for a browser. */

@@ -75,6 +75,14 @@ export interface WindowSpec {
   /** Declared always-on-top intent — registration emits SET_ALWAYS_ON_TOP (replaces the post-ctor reinforcement call). */
   alwaysOnTop?: boolean;
   /**
+   * keepLive policy declared at open time (`WindowRecord.keepLive`): the
+   * reducer's `WINDOW_CLOSE_OR_HIDE_REQUESTED` clause branches on it (hide vs
+   * the resolved close), so every registration site that knows the flag must
+   * pass it here — tile entries (`TileEntry.keepLive`), the window-open IPC
+   * options, hybrid host params.
+   */
+  keepLive?: boolean;
+  /**
    * Whether the WM owns this window's per-window Escape interceptor
    * (`attachEscHandler` below). Defaults to true for `browser` windows —
    * registration is the single owner of the attach, so it can never be

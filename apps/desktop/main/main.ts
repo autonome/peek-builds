@@ -427,7 +427,7 @@ export async function initialize(): Promise<void> {
     // Front-ineligibility (satellite) uses the shared `isSatelliteRegistration`
     // predicate — same rule as the ipc.ts window-open site. A tile defaults to
     // the front-eligible 'workspace' role.
-    registerWindow: (win, role) => registerWindowWithMachine({
+    registerWindow: (win, role, keepLive) => registerWindowWithMachine({
       kind: 'browser',
       role: role ?? 'workspace',
       class: classifyWindowRegistration(role ?? 'workspace', {
@@ -437,6 +437,10 @@ export async function initialize(): Promise<void> {
       satellite: isSatelliteRegistration(role ?? 'workspace', { focusable: win.isFocusable() }),
       win,
       contentWC: win.webContents,
+      // A keepLive tile entry's flag lands on the reducer record so the
+      // machine's WINDOW_CLOSE_OR_HIDE_REQUESTED clause hides instead of
+      // closing (the tile-launcher 'close' intercept dispatches that intent).
+      keepLive: keepLive === true,
     }),
     // Tile close routes through the machine (WINDOW_CLOSE_REQUESTED →
     // CLOSE_WINDOW_DIRECT → backend). Injected — tile-launcher cannot import
@@ -449,6 +453,18 @@ export async function initialize(): Promise<void> {
         return;
       }
       dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id });
+    },
+    // keepLive close intercept (tile-launcher's 'close' handler): dispatch the
+    // INTENT — the reducer branches on the record's keepLive (hide vs the
+    // resolved close). Injected for the same ELECTRON_RUN_AS_NODE reason as
+    // closeTileWindow above.
+    closeOrHideTileWindow: (win) => {
+      const id = getWindowIdFor(win);
+      if (id == null) {
+        console.error('[tile-launcher] closeOrHideTileWindow: window', win.id, 'is not machine-registered — cannot hide');
+        return;
+      }
+      dispatchWindowEvent({ type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id });
     },
     // NOTE: no `addEscHandler` hook — the ESC before-input interceptor is
     // attached by `registerWindowWithMachine` itself now, so registration is the
@@ -1324,7 +1340,13 @@ export function registerWindow(windowId: number, source: string, params: Record<
     DEBUG && console.log('[window-registry] registerWindow: window', windowId, 'is not machine-registered — payload dropped');
     return;
   }
-  dispatchWindowEvent({ type: 'WINDOW_PARAMS_SET', id, source, params });
+  // Lift keepLive out of the opaque params bag onto the record FIRST-CLASS
+  // (the payload-after-registration path, e.g. the hybrid test bridge) — the
+  // reducer's WINDOW_CLOSE_OR_HIDE_REQUESTED clause branches on
+  // `WindowRecord.keepLive`, never on params. Absent stays undefined so the
+  // merge keeps any registration-time value.
+  const keepLive = typeof params.keepLive === 'boolean' ? params.keepLive : undefined;
+  dispatchWindowEvent({ type: 'WINDOW_PARAMS_SET', id, source, params, keepLive });
 }
 
 /**

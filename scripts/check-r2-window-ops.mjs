@@ -156,12 +156,10 @@ const ALLOWLIST = [
     why: 'tile:window unmaximize IPC (isMaximized-distrust workaround) — geometry, §5 step 7' },
   { file: 'apps/desktop/main/tile-ipc.ts', call: 'setVisibleOnAllWorkspaces', count: 1,
     why: 'tile:window all-workspaces IPC — §5 step 10' },
-  { file: 'apps/desktop/main/tile-launcher.ts', call: 'hide', count: 1,
-    why: 'hide keepLive tile window instead of closing — visibility, §5 step 6' },
   { file: 'apps/desktop/main/windows.ts', call: 'focus', count: 3,
     why: 'contentWC first-responder + bw/webContents focus (show invariant) — focus rivals, §5 step 8' },
-  { file: 'apps/desktop/main/windows.ts', call: 'hide', count: 6,
-    why: 'closeOrHideWindow keepLive hide, maybeHideApp app.hide + app.dock.hide — visibility, §5 step 6' },
+  { file: 'apps/desktop/main/windows.ts', call: 'hide', count: 4,
+    why: 'modWindow hide action + app-level app.hide (maybeHideApp) + app.dock.hide ×2 (applyDockPreference) — the closeOrHideWindow keepLive hides route through the machine since §5 step 6A-3' },
 ];
 
 // ---------------------------------------------------------------------------

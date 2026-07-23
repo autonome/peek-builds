@@ -88,13 +88,19 @@ let _getSystemThemeBackgroundColor: (() => string) | null = null;
 // window-state machine's registration is the single owner of the attach, so
 // there is no separate `addEscHandler` hook here anymore (two hooks meant two
 // interceptors on any window that registered twice).
-let _registerWindow: ((win: BrowserWindow, role: string | undefined) => void) | null = null;
+let _registerWindow: ((win: BrowserWindow, role: string | undefined, keepLive?: boolean) => void) | null = null;
 // Injected from main.ts: closes a tile window through the window-state machine
 // (WINDOW_CLOSE_REQUESTED → the backend's guest-safe close). Injected rather
 // than imported for the same ELECTRON_RUN_AS_NODE reason as the other hooks:
 // the machine singleton transitively value-imports electron, which this
 // module's unit tests cannot load.
 let _closeTileWindow: ((win: BrowserWindow) => void) | null = null;
+// Injected from main.ts: dispatches WINDOW_CLOSE_OR_HIDE_REQUESTED for a tile
+// window — the reducer (not this module) decides hide-vs-close from the
+// record's keepLive flag (registered via `_registerWindow` below). Used by the
+// keepLive 'close' intercept; injected for the same ELECTRON_RUN_AS_NODE
+// reason as the other hooks.
+let _closeOrHideTileWindow: ((win: BrowserWindow) => void) | null = null;
 
 /** Close a tile window via the injected machine hook; loud no-op when unconfigured (production always configures it in main.ts initialize()). */
 function closeTileWindowViaHook(win: BrowserWindow): void {
@@ -103,6 +109,15 @@ function closeTileWindowViaHook(win: BrowserWindow): void {
     return;
   }
   console.error('[tile-launcher] closeTileWindow hook not configured — window', win.id, 'not closed');
+}
+
+/** Close-or-hide a tile window (keepLive policy — the reducer decides) via the injected machine hook; loud no-op when unconfigured. */
+function closeOrHideTileWindowViaHook(win: BrowserWindow): void {
+  if (_closeOrHideTileWindow) {
+    _closeOrHideTileWindow(win);
+    return;
+  }
+  console.error('[tile-launcher] closeOrHideTileWindow hook not configured — window', win.id, 'not hidden');
 }
 
 /**
@@ -140,18 +155,27 @@ export function configureTileLauncher(hooks: {
    * Registering also attaches the window's before-input-event ESC interceptor
    * (and its webview guests') — one owner for both.
    */
-  registerWindow?: (win: BrowserWindow, role: string | undefined) => void;
+  registerWindow?: (win: BrowserWindow, role: string | undefined, keepLive?: boolean) => void;
   /**
    * Closes a tile window through the window-state machine. Tile teardown
    * (shutdownTile / unloadAllTiles) routes every close through this hook —
    * rule R2: nothing here calls a window API directly.
    */
   closeTileWindow?: (win: BrowserWindow) => void;
+  /**
+   * Close-or-hide a tile window through the window-state machine
+   * (WINDOW_CLOSE_OR_HIDE_REQUESTED): the reducer branches on the record's
+   * keepLive flag — hide (record kept, tile stays warm for showSelf) vs the
+   * resolved close. The keepLive 'close' intercept routes through this hook —
+   * rule R2: nothing here calls a window API directly.
+   */
+  closeOrHideTileWindow?: (win: BrowserWindow) => void;
 }): void {
   if (hooks.getProfileSession) _getProfileSession = hooks.getProfileSession;
   if (hooks.getSystemThemeBackgroundColor) _getSystemThemeBackgroundColor = hooks.getSystemThemeBackgroundColor;
   if (hooks.registerWindow) _registerWindow = hooks.registerWindow;
   if (hooks.closeTileWindow) _closeTileWindow = hooks.closeTileWindow;
+  if (hooks.closeOrHideTileWindow) _closeOrHideTileWindow = hooks.closeOrHideTileWindow;
 }
 
 // Short grace period given to tiles to run their `api.onShutdown()` callbacks
@@ -414,7 +438,10 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
   // adapter attaches the focus/blur/show/hide/closed listeners AND the ESC
   // interceptor — no per-focus feed needed here anymore.
   if (_registerWindow) {
-    _registerWindow(win, entry?.role);
+    // Pass the entry's keepLive flag so the reducer record carries it
+    // first-class — the machine's WINDOW_CLOSE_OR_HIDE_REQUESTED clause (fed
+    // by the keepLive 'close' intercept below) branches hide-vs-close on it.
+    _registerWindow(win, entry?.role, entry?.keepLive === true);
   }
 
   // Forward console messages from the tile's webContents to main-process
@@ -477,12 +504,18 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
   // tile via cmd+W destroys it and the next `tile:window:show-self` IPC
   // returns "Tile window not found". Skip the intercept once the app is
   // quitting — otherwise the resident tile never dies and shutdown hangs.
+  //
+  // The hide itself is a machine decision (§5 step 6A-3): preventDefault the
+  // native close, then dispatch WINDOW_CLOSE_OR_HIDE_REQUESTED via the
+  // injected hook — the reducer reads the record's keepLive (registered with
+  // this entry's flag above) and emits HIDE_WINDOW; the backend performs the
+  // OS hide and its native 'hide' event is the only WINDOW_HIDDEN source.
   if (entry?.keepLive === true) {
     win.on('close', (e) => {
       if (_isAppQuitting) return;
       if (!win.isDestroyed()) {
         e.preventDefault();
-        win.hide();
+        closeOrHideTileWindowViaHook(win);
       }
     });
   }

@@ -32,6 +32,7 @@ import {
   dispatchWindowEvent,
   getWindowIdFor,
   getNativeWindowFor,
+  getMachineWindowRecord,
 } from './window-state-singleton.js';
 
 /**
@@ -605,25 +606,26 @@ export async function closeOrHideWindow(id: number): Promise<void> {
         // peek/slide opened with keepLive:true (e.g. the left slide playing
         // music) must be HIDDEN, not destroyed, so its WebContentsView keeps
         // running in the background and the window-open key/url-reuse path can
-        // re-show it (ipc.ts → baseWin.show()). The window params (incl.
-        // keepLive) are registered for the hybrid baseWin id at creation
-        // (ipc.ts ~2211), so getWindowInfo resolves the same flag the canvas
-        // path reads. `baseWin.hide()` does NOT emit 'close', so the
-        // close-finalize tail (which destroys the content wc + unregisters)
-        // never runs on hide — exactly the keep-alive semantics required (see
-        // the runHybridFinalize comment in ipc.ts). Only a genuine
-        // closeHostWindow frees the resources.
-        const hybridEntry = getWindowInfo(id);
-        if (hybridEntry?.params.keepLive === true) {
-          DEBUG && console.log(`HIDING keepLive hybrid page-host BaseWindow ${id}`);
-          hybrid.baseWin.hide();
-          // Host-visibility gate (peek 71cfde09): the host is now hidden but is
-          // still `front`, so the shared chrome overlay would linger revealed
-          // over nothing. Dispatch WINDOW_HIDDEN synchronously so the machine
-          // moves `front` off it in the same tick and the overlay's front-change
-          // subscription retargets/hides — the BaseWindow 'hide' event (which the
-          // adapter also handles) fires a tick late on macOS.
-          if (machineId != null) dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: machineId });
+        // re-show it (ipc.ts → baseWin.show()). A hide does NOT emit 'close',
+        // so the close-finalize tail (which destroys the content wc +
+        // unregisters) never runs on hide — exactly the keep-alive semantics
+        // required (see the runHybridFinalize comment in ipc.ts). Only a
+        // genuine closeHostWindow frees the resources.
+        //
+        // The hide is a MACHINE decision (§5 step 6A-3): dispatch
+        // WINDOW_CLOSE_OR_HIDE_REQUESTED and let the reducer branch on the
+        // record's first-class keepLive (registered at the ipc.ts open /
+        // merged via WINDOW_PARAMS_SET) → HIDE_WINDOW → backend.hideWindow.
+        // The backend's native 'hide' event is the only WINDOW_HIDDEN source
+        // now — the old synchronous hand-dispatch (peek 71cfde09's "the
+        // BaseWindow 'hide' event fires a tick late" admission) is gone.
+        // This function reads the SAME record field only to keep the resolved
+        // close (the reducer's CLOSE_WINDOW answer routes back through this
+        // seam) from re-dispatching the intent forever.
+        const hybridRec = machineId != null ? getMachineWindowRecord(machineId) : undefined;
+        if (machineId != null && hybridRec?.keepLive === true) {
+          DEBUG && console.log(`keepLive hide via machine for hybrid page-host BaseWindow ${id}`);
+          dispatchWindowEvent({ type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: machineId });
           maybeHideApp(id);
           return;
         }
@@ -651,6 +653,11 @@ export async function closeOrHideWindow(id: number): Promise<void> {
     const params = entry.params;
     DEBUG && console.log('Window parameters - modal:', params.modal, 'keepLive:', params.keepLive);
 
+    // The machine record for this window (a non-null `entry` implies it is
+    // machine-registered — the registry payload lives ON the record).
+    const wmId = getWindowIdFor(id);
+    const rec = wmId != null ? getMachineWindowRecord(wmId) : undefined;
+
     // Never close the background window
     if (params.address === WEB_CORE_ADDRESS) {
       DEBUG && console.log('Refusing to close background window');
@@ -667,8 +674,16 @@ export async function closeOrHideWindow(id: number): Promise<void> {
     // Only keepLive windows are preserved in the background — modal windows
     // without keepLive (peeks, quick-views) should be closed so they can be
     // cleanly recreated on next invocation.
-    else if (params.keepLive === true) {
-      win.hide();
+    //
+    // The hide is a MACHINE decision (§5 step 6A-3): dispatch
+    // WINDOW_CLOSE_OR_HIDE_REQUESTED and the reducer branches on the record's
+    // first-class keepLive (registered at the ipc.ts open) → HIDE_WINDOW →
+    // backend.hideWindow; the native 'hide' event then feeds WINDOW_HIDDEN.
+    // The record field is read here only so the resolved close (the reducer's
+    // CLOSE_WINDOW answer routes back through this seam) can't re-dispatch
+    // the intent forever.
+    else if (wmId != null && rec?.keepLive === true) {
+      dispatchWindowEvent({ type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: wmId });
     } else {
       // close any open windows this window opened
       closeChildWindows(params.address as string);

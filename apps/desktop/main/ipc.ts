@@ -1089,6 +1089,10 @@ function assembleHybridPageHost(
     source,
     params: windowParams,
     parentId: isRealParent ? getWindowIdFor(openerWindow!.id) : null,
+    // keepLive rides the registration so the reducer record carries the flag
+    // FIRST-CLASS — the machine's WINDOW_CLOSE_OR_HIDE_REQUESTED clause (not
+    // the closeOrHideWindow caller) is what branches hide-vs-close on it.
+    keepLive: options.keepLive === true,
   });
   // Track the content-WC→host relationship for the permission lookup
   // (findHostWindowId). The guest registry carries WM WindowIds, so this
@@ -3507,6 +3511,9 @@ export function registerWindowHandlers(): void {
         params: windowParams,
         parentId: parentWindowId != null ? getWindowIdFor(parentWindowId) : null,
         alwaysOnTop: options.alwaysOnTop === true,
+        // keepLive rides the registration (first-class on the reducer record)
+        // — the machine's WINDOW_CLOSE_OR_HIDE_REQUESTED clause branches on it.
+        keepLive: options.keepLive === true,
       });
       // Feed the machine the OPEN intent (gate fallout of the WindowId
       // cutover) — but ONLY for an open the caller wants VISIBLE. Under

@@ -139,6 +139,7 @@ export class WindowOsAdapter {
         source: spec.source,
         params: spec.params,
         alwaysOnTop: spec.alwaysOnTop,
+        keepLive: spec.keepLive,
       });
     }
 
