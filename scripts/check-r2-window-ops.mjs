@@ -130,8 +130,6 @@ const ALLOWLIST = [
     why: 'overlay singleton teardown — §5 step 9' },
   { file: 'apps/desktop/main/ipc.ts', call: 'setBounds', count: 7,
     why: 'hybrid host/view geometry (drag stream, maximize-style bounds) — geometry, §5 step 7' },
-  { file: 'apps/desktop/main/ipc.ts', call: 'show', count: 2,
-    why: 'raise existing hybrid window on workspaceKey/url match — §5 step 6' },
   { file: 'apps/desktop/main/ipc.ts', call: 'focus', count: 8,
     why: 'activate existing window/contentWC on open-dedupe + devtools — focus rivals, §5 step 8' },
   { file: 'apps/desktop/main/ipc.ts', call: 'setVisibleOnAllWorkspaces', count: 4,
@@ -144,10 +142,6 @@ const ALLOWLIST = [
     why: 'overlay-selection/restore focus of the switcher target (BrowserWindow + hybrid, coordinator + fallback paths) — focus rivals, §5 step 8' },
   { file: 'apps/desktop/main/session.ts', call: 'focus', count: 2,
     why: 'restore-loop focus of the saved-focused window — session restore, §5 step 11' },
-  { file: 'apps/desktop/main/tile-ipc.ts', call: 'show', count: 2,
-    why: 'tile:window show IPC (BrowserWindow + hybrid baseWin) — visibility, §5 step 6' },
-  { file: 'apps/desktop/main/tile-ipc.ts', call: 'hide', count: 3,
-    why: 'tile:window hide IPC — visibility, §5 step 6' },
   { file: 'apps/desktop/main/tile-ipc.ts', call: 'focus', count: 2,
     why: 'tile:window focus IPC — focus rivals, §5 step 8' },
   { file: 'apps/desktop/main/tile-ipc.ts', call: 'setBounds', count: 5,
@@ -158,8 +152,8 @@ const ALLOWLIST = [
     why: 'tile:window all-workspaces IPC — §5 step 10' },
   { file: 'apps/desktop/main/windows.ts', call: 'focus', count: 3,
     why: 'contentWC first-responder + bw/webContents focus (show invariant) — focus rivals, §5 step 8' },
-  { file: 'apps/desktop/main/windows.ts', call: 'hide', count: 4,
-    why: 'modWindow hide action + app-level app.hide (maybeHideApp) + app.dock.hide ×2 (applyDockPreference) — the closeOrHideWindow keepLive hides route through the machine since §5 step 6A-3' },
+  { file: 'apps/desktop/main/windows.ts', call: 'hide', count: 3,
+    why: 'app-level ONLY: app.hide (maybeHideApp) + app.dock.hide ×2 (applyDockPreference) — every per-window hide (closeOrHideWindow keepLive 6A-3, modWindow 6A-4) routes through the machine; app-level derivation from reducer visibility is §5 step 6 part B' },
 ];
 
 // ---------------------------------------------------------------------------

@@ -2994,11 +2994,17 @@ export function registerTileIpcHandlers(): void {
       }
       const win = getLiveWindow(args.id);
       if (!win) {
-        // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Show the
-        // host BaseWindow directly. No-op (null) when the flag is off.
+        // Hybrid page-host (BaseWindow) — invisible to getLiveWindow. Route
+        // the show through the machine (§5 step 6A-4): the backend owns the
+        // whole show policy (headless opacity-0 mask, quick-view NSPanel
+        // non-activation) and echoes WINDOW_SHOWN itself, so the old
+        // imperative baseWin.show() + isHeadless() guard here are gone.
         const hybrid = getHybridWindow(args.id);
         if (hybrid && !hybrid.baseWin.isDestroyed()) {
-          if (!isHeadless()) hybrid.baseWin.show();
+          const machineId = getWindowIdFor(args.id);
+          if (machineId != null) {
+            dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: machineId, activate: true });
+          }
           return { success: true };
         }
         return { success: false, error: 'Window not found' };
@@ -3047,17 +3053,26 @@ export function registerTileIpcHandlers(): void {
             await waitForMode(machineId, 'normal');
           }
           if (hybrid.baseWin.isDestroyed()) return { success: true };
-          hybrid.baseWin.hide();
-          // Host-visibility gate (peek 71cfde09): dispatch WINDOW_HIDDEN so the
-          // machine moves `front` off this host synchronously and the shared
-          // chrome overlay hides with it (same tick; the BaseWindow 'hide' event
-          // the adapter also handles lags on macOS).
-          if (machineId != null) dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: machineId });
+          // Route the hide through the machine (§5 step 6A-4):
+          // WINDOW_HIDE_REQUESTED → HIDE_WINDOW → backend.hideWindow. The
+          // backend's native 'hide' listener is the only WINDOW_HIDDEN source
+          // — the old synchronous hand-dispatch (peek 71cfde09's workaround
+          // for the macOS BaseWindow 'hide'-event lag) is gone, the same
+          // acceptance the 6A-3 keepLive cutover made in closeOrHideWindow.
+          if (machineId != null) {
+            dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id: machineId });
+          }
           return { success: true };
         }
         return { success: false, error: 'Window not found' };
       }
-      win.hide();
+      // Machine hide intent (§5 step 6A-4) — R2: only the backend hides.
+      {
+        const machineId = getWindowIdFor(win);
+        if (machineId != null) {
+          dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id: machineId });
+        }
+      }
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -3137,14 +3152,13 @@ export function registerTileIpcHandlers(): void {
       if (!win || win.isDestroyed()) {
         return { success: false, error: 'Tile window not found' };
       }
-      // In headless test runs, keep the window hidden. Otherwise it pops
-      // foreground and steals OS focus from other Electron instances in
-      // parallel Playwright workers, which triggers blur on modal cmd panels
-      // and breaks unrelated tests. The tests that assert showSelf's effect
-      // check state via pubsub / evaluate, not visual presence.
-      if (!isHeadless()) {
-        win.show();
-      }
+      // Machine show intent (§5 step 6A-4): the backend owns the headless
+      // policy now — opacity is zeroed BEFORE the show, so nothing paints on
+      // the real display and no OS focus is stolen from other Electron
+      // instances in parallel Playwright workers (the old blanket
+      // isHeadless() skip). The tests that assert showSelf's effect check
+      // state via pubsub / evaluate, not visual presence.
+      showWindowHeadlessSafe(win, { active: true });
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -3169,7 +3183,13 @@ export function registerTileIpcHandlers(): void {
       if (!win || win.isDestroyed()) {
         return { success: false, error: 'Tile window not found' };
       }
-      win.hide();
+      // Machine hide intent (§5 step 6A-4) — R2: only the backend hides.
+      {
+        const machineId = getWindowIdFor(win);
+        if (machineId != null) {
+          dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id: machineId });
+        }
+      }
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

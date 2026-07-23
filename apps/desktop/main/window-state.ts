@@ -378,6 +378,16 @@ export type WindowEvent =
   | { type: 'WINDOW_DESTROY_REQUESTED'; id: WindowId }
   /** App code wants this window shown (activate:false = show without stealing focus). */
   | { type: 'WINDOW_SHOW_REQUESTED'; id: WindowId; activate: boolean }
+  /**
+   * App code wants this window hidden but kept alive (§5 step 6A-4 — the
+   * `tile:window:hide` / `hide-self` / `modWindow` affordances: re-shown
+   * later via `WINDOW_SHOW_REQUESTED`, never a close). The backend hides;
+   * its native `hide` event (`WINDOW_HIDDEN`) is what writes `visible:false`
+   * — same acceptance as the 6A-3 keepLive cutover. Unlike
+   * `WINDOW_CLOSE_OR_HIDE_REQUESTED` there is no keepLive policy to decide:
+   * the caller's intent IS hide.
+   */
+  | { type: 'WINDOW_HIDE_REQUESTED'; id: WindowId }
   /** App code wants this window's CONTENT surface torn down (the hybrid finalize's `contentWC.close()`). */
   | { type: 'WINDOW_CONTENT_CLOSE_REQUESTED'; id: WindowId }
   /** Quit teardown: destroy every registered page-host guest WC before native quit closes their hosts (peek d1cf0b9a). */
@@ -512,7 +522,7 @@ export type Effect =
   | { type: 'CLOSE_CONTENT'; id: WindowId }
   /** Show without (or with) activation. Executor skips it under headless — both consumers (HUD re-show, extension-UI dev autoopen) were `!isHeadless()`-guarded before the machine owned them. */
   | { type: 'SHOW_WINDOW'; id: WindowId; activate: boolean }
-  /** Hide, keep alive (the HUD app-blur sweep, and the keepLive close-request decision — see `WINDOW_CLOSE_OR_HIDE_REQUESTED`). */
+  /** Hide, keep alive (the HUD app-blur sweep, the keepLive close-request decision — see `WINDOW_CLOSE_OR_HIDE_REQUESTED` — and the plain hide intent, `WINDOW_HIDE_REQUESTED`). */
   | { type: 'HIDE_WINDOW'; id: WindowId }
   /** Pin above regular windows (registration-declared alwaysOnTop). Executor skips under headless (compositor-flash parity with the old guard). */
   | { type: 'SET_ALWAYS_ON_TOP'; id: WindowId; on: boolean }
@@ -1374,6 +1384,15 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
 
     case 'WINDOW_SHOW_REQUESTED': {
       effects.push({ type: 'SHOW_WINDOW', id: event.id, activate: event.activate });
+      break;
+    }
+
+    case 'WINDOW_HIDE_REQUESTED': {
+      // No state change — `visible` flips on the backend's native hide event
+      // (WINDOW_HIDDEN), mirroring WINDOW_SHOW_REQUESTED's echo contract. The
+      // effect is emitted even for an unknown id: the backend resolves the
+      // handle itself and no-ops when gone.
+      effects.push({ type: 'HIDE_WINDOW', id: event.id });
       break;
     }
 

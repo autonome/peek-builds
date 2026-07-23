@@ -221,7 +221,15 @@ export function modWindow(bw: BrowserWindow, params: { action: string }): void {
     closeHostWindow(bw.id, bw);
   }
   if (params.action === 'hide') {
-    bw.hide();
+    // THIN SEAM (§5 step 6A-4): dispatch the hide intent — the HIDE_WINDOW
+    // effect routes to the backend, whose native 'hide' event is the only
+    // WINDOW_HIDDEN source. Mirrors the 'show' action's seam below.
+    const id = getWindowIdFor(bw);
+    if (id == null) {
+      DEBUG && console.log('[windows] modWindow: window not machine-registered — hide dropped');
+    } else {
+      dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id });
+    }
   }
   if (params.action === 'show') {
     showWindowHeadlessSafe(bw, { active: true });

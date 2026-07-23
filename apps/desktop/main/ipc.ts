@@ -2708,25 +2708,31 @@ export function registerWindowHandlers(): void {
                 hybridInfo?.params.placement as Placement | undefined,
                 'hybrid-keepLive-reuse',
               );
-              existingHybrid.baseWin.show();
+            } catch (e) {
+              DEBUG && console.log('[hybrid-page-host] placement-on-key-reuse failed:', e);
+            }
+          }
+          // Machine show intent (§5 step 6A-4): replaces BOTH the imperative
+          // baseWin.show() and the hand-dispatched WINDOW_SHOWN mirror — the
+          // backend performs the OS show (headless opacity-0 mask included)
+          // and echoes WINDOW_SHOWN itself, so a headless run still gets the
+          // reuse signal from the one legitimate source.
+          {
+            const reusedId = getWindowIdFor(existingHybrid.baseWin);
+            if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: true });
+          }
+          if (!isHeadless()) {
+            try {
+              // The focus half stays imperative until the focus-rivals step
+              // (§5 step 8). Make the content view the first responder too
+              // (R4 — so cmd+L and other key equivalents route to a
+              // responder, no NSBeep), matching the fresh-open show path
+              // (showHybridHost).
               existingHybrid.baseWin.focus();
-              // Make the content view the first responder too (R4 — so cmd+L and
-              // other key equivalents route to a responder, no NSBeep), matching
-              // the fresh-open show path (showHybridHost).
               if (!existingHybrid.contentWC.isDestroyed()) existingHybrid.contentWC.focus();
             } catch (e) {
               DEBUG && console.log('[hybrid-page-host] focus-on-key-reuse failed:', e);
             }
-          }
-          // Feed the machine the REUSE intent: a key-reuse targets the window
-          // exactly like a fresh open. The show/focus block above is skipped
-          // under headless (and its OS focus events never fire there), so this
-          // dispatch is the only signal the machine gets in a test run — same
-          // seam-rationale as the fresh-open dispatch below (WindowId-cutover
-          // gate fallout).
-          {
-            const reusedId = getWindowIdFor(existingHybrid.baseWin);
-            if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: reusedId, focused: true });
           }
           return { success: true, id: existingHybrid.windowId, reused: true };
         }
@@ -2785,7 +2791,17 @@ export function registerWindowHandlers(): void {
               skipTransformProcessType: true,
             });
           }
-          showWindowHeadlessSafe(existingWindow.window, { active: true });
+        }
+        // Machine show intent, OUTSIDE the headless gate (§5 step 6A-4):
+        // showWindowHeadlessSafe is a thin WINDOW_SHOW_REQUESTED dispatcher
+        // and the backend owns the headless policy (opacity-0 before show),
+        // so the seam runs in BOTH modes and the backend's WINDOW_SHOWN echo
+        // replaces the hand-dispatched mirror that used to cover headless.
+        // The dispatch completes the OS show synchronously (the pump drains
+        // before returning), so the focus below lands on a shown window.
+        showWindowHeadlessSafe(existingWindow.window, { active: true });
+        // Focus stays imperative (and headless-gated) until §5 step 8.
+        if (!isHeadless()) {
           existingWindow.window.focus();
         }
         // Signal keepLive-reuse to the renderer BEFORE returning so the
@@ -2799,12 +2815,6 @@ export function registerWindowHandlers(): void {
           }
         } catch (err) {
           console.error('[window-open] tile:lifecycle:visible send threw:', err);
-        }
-        // Machine reuse-intent dispatch — see the hybrid key-reuse block above
-        // for the rationale (headless skips the show/focus block entirely).
-        {
-          const reusedId = getWindowIdFor(existingWindow.window);
-          if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: reusedId, focused: true });
         }
         return { success: true, id: existingWindow.id, reused: true };
       }
@@ -2842,10 +2852,24 @@ export function registerWindowHandlers(): void {
                 hybridInfo?.params.placement as Placement | undefined,
                 'hybrid-url-reuse',
               );
-              existingHybridByUrl.baseWin.show();
+            } catch (e) {
+              DEBUG && console.log('[hybrid-page-host] placement-on-url-reuse failed:', e);
+            }
+          }
+          // Machine show intent (§5 step 6A-4) — see the hybrid key-reuse
+          // block above: replaces the imperative baseWin.show() and the
+          // hand-dispatched WINDOW_SHOWN mirror in one move (the backend
+          // echoes WINDOW_SHOWN for the show it performs).
+          {
+            const reusedId = getWindowIdFor(existingHybridByUrl.baseWin);
+            if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: true });
+          }
+          if (!isHeadless()) {
+            try {
+              // Focus half stays imperative until §5 step 8. First-responder
+              // parity with the fresh-open show path (R4): focus the content
+              // view so key equivalents route to a responder.
               existingHybridByUrl.baseWin.focus();
-              // First-responder parity with the fresh-open show path (R4): focus
-              // the content view so key equivalents route to a responder.
               if (!existingHybridByUrl.contentWC.isDestroyed()) existingHybridByUrl.contentWC.focus();
             } catch (e) {
               DEBUG && console.log('[hybrid-page-host] focus-on-url-reuse failed:', e);
@@ -2856,12 +2880,6 @@ export function registerWindowHandlers(): void {
             existingHybridByUrl.contentWC.reload();
           } catch (e) {
             DEBUG && console.log('[hybrid-page-host] reload-on-url-reuse failed:', e);
-          }
-          // Machine reuse-intent dispatch — see the hybrid key-reuse block
-          // above for the rationale.
-          {
-            const reusedId = getWindowIdFor(existingHybridByUrl.baseWin);
-            if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: reusedId, focused: true });
           }
           return { success: true, id: existingHybridByUrl.windowId, reused: true };
         }
@@ -2881,7 +2899,14 @@ export function registerWindowHandlers(): void {
             existingData.params.placement,
             'url-reuse',
           );
-          showWindowHeadlessSafe(existingByUrl.window, { active: true });
+        }
+        // Machine show intent, OUTSIDE the headless gate (§5 step 6A-4) —
+        // see the keepLive-reuse block above: the backend's WINDOW_SHOWN
+        // echo replaces the hand-dispatched mirror that used to cover
+        // headless (where the old gate skipped the show seam entirely).
+        showWindowHeadlessSafe(existingByUrl.window, { active: true });
+        // Focus stays imperative (and headless-gated) until §5 step 8.
+        if (!isHeadless()) {
           existingByUrl.window.focus();
         }
         // Reload the page so content is fresh (the webview may have navigated
@@ -2890,12 +2915,6 @@ export function registerWindowHandlers(): void {
           publish('system', 'page:reload', { windowId: existingByUrl.id });
         } catch (e) {
           DEBUG && console.log('Failed to send reload to reused window:', e);
-        }
-        // Machine reuse-intent dispatch — see the hybrid key-reuse block
-        // above for the rationale.
-        {
-          const reusedId = getWindowIdFor(existingByUrl.window);
-          if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: reusedId, focused: true });
         }
         return { success: true, id: existingByUrl.id, reused: true };
       }

@@ -210,6 +210,9 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     { type: 'WINDOW_DESTROY_REQUESTED', id: wid(1) },
     { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: false },
     { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: true },
+    // §5 step 6A-4: the plain hide intent (tile:window:hide / hide-self / modWindow).
+    { type: 'WINDOW_HIDE_REQUESTED', id: wid(1) },
+    { type: 'WINDOW_HIDE_REQUESTED', id: wid(99) },
     { type: 'WINDOW_CONTENT_CLOSE_REQUESTED', id: wid(1) },
     { type: 'GUEST_TEARDOWN_REQUESTED' },
     { type: 'DEVTOOLS_OPENED', id: wid(1) },
@@ -1767,6 +1770,16 @@ describe('request events — pass-through effects (state changes ride the native
   it('WINDOW_DESTROY_REQUESTED -> DESTROY_WINDOW', () => {
     const { effects } = reduce(openWindow(createInitialState(), 1, {}), { type: 'WINDOW_DESTROY_REQUESTED', id: wid(1) });
     assert.deepStrictEqual(effects.filter((e) => e.type === 'DESTROY_WINDOW'), [{ type: 'DESTROY_WINDOW', id: wid(1) }]);
+  });
+
+  it('WINDOW_HIDE_REQUESTED -> HIDE_WINDOW, record untouched (visible flips on the native hide event)', () => {
+    const s = openWindow(createInitialState(), 1, {});
+    const { state, effects } = reduce(s, { type: 'WINDOW_HIDE_REQUESTED', id: wid(1) });
+    assert.deepEqual(effects.filter((e) => e.type === 'HIDE_WINDOW'), [{ type: 'HIDE_WINDOW', id: wid(1) }]);
+    assert.equal(state.windows.get(wid(1))?.visible, true); // flips on WINDOW_HIDDEN, not here
+    // Unknown id still emits — the backend resolves the handle and no-ops when gone.
+    const unknown = reduce(createInitialState(), { type: 'WINDOW_HIDE_REQUESTED', id: wid(9) });
+    assert.deepEqual(unknown.effects, [{ type: 'HIDE_WINDOW', id: wid(9) }]);
   });
 
   it('WINDOW_SHOW_REQUESTED echoes the activate flag onto SHOW_WINDOW', () => {
