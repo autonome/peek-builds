@@ -1038,10 +1038,17 @@ export function openChromeExtensionPage(
 ): BrowserWindow | null {
   const windowKey = `${extensionId}:${pageType}`;
 
-  // Reuse existing window if it's still open
+  // Reuse existing window if it's still open. Surface it through the machine
+  // (an ACTIVATING show — reuse means "bring it to me", so activate:true,
+  // same as the ipc.ts key/url-reuse shows), never a direct `.focus()` on the
+  // Electron handle: a raw focus is a restack the window-state machine never
+  // sees, so `front`/stacking would go stale.
   const existing = extensionUiWindows.get(windowKey);
   if (existing && !existing.isDestroyed()) {
-    existing.focus();
+    const existingId = getWindowIdFor(existing);
+    if (existingId != null) {
+      dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: existingId, activate: true });
+    }
     return existing;
   }
 
