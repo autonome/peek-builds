@@ -1707,6 +1707,50 @@ describe('WINDOW_PARAMS_SET — the registerWindow merge seam', () => {
   });
 });
 
+describe('WINDOW_CLOSE_OR_HIDE_REQUESTED — reducer-owned keepLive close-request decision (§5 step 6A-1)', () => {
+  it('keepLive window -> HIDE_WINDOW, record untouched (visible flips on the native hide event)', () => {
+    let s = createInitialState();
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'content', satellite: false, keepLive: true },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
+    ]).state;
+    const { state, effects } = reduce(s, { type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: wid(1) });
+    assert.deepStrictEqual(effects.filter((e) => e.type === 'HIDE_WINDOW' || e.type === 'CLOSE_WINDOW'), [{ type: 'HIDE_WINDOW', id: wid(1) }]);
+    assert.ok(state.windows.has(wid(1)), 'still registered — keepLive never closes');
+    assert.strictEqual(state.windows.get(wid(1))!.visible, true, 'visible is untouched here; it flips on WINDOW_HIDDEN');
+  });
+
+  it('non-keepLive window -> CLOSE_WINDOW', () => {
+    const s = openWindow(createInitialState(), 1, {});
+    const { effects } = reduce(s, { type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: wid(1) });
+    assert.deepStrictEqual(effects.filter((e) => e.type === 'HIDE_WINDOW' || e.type === 'CLOSE_WINDOW'), [{ type: 'CLOSE_WINDOW', id: wid(1) }]);
+  });
+
+  it('is a no-op for an unknown id', () => {
+    const { state, effects } = reduce(createInitialState(), { type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: wid(9) });
+    assert.strictEqual(state.windows.size, 0);
+    assert.strictEqual(effects.length, 0);
+  });
+
+  it('a keepLive window hidden then re-shown keeps its identity and rejoins the stack', () => {
+    let s = createInitialState();
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'content', satellite: false, keepLive: true },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
+    ]).state;
+    s = reduce(s, { type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: wid(1) }).state;
+    s = drive(s, [{ type: 'WINDOW_HIDDEN', id: wid(1) }]).state; // native hide confirmation
+    assert.strictEqual(s.windows.get(wid(1))!.visible, false);
+    assert.ok(!s.stackOrder.includes(wid(1)), 'not stacked while hidden');
+    s = drive(s, [{ type: 'WINDOW_SHOWN', id: wid(1), focused: true }]).state;
+    const rec = s.windows.get(wid(1))!;
+    assert.strictEqual(rec.id, wid(1), 'same id — re-show, not re-registration');
+    assert.strictEqual(rec.keepLive, true, 'keepLive policy survives the hide/show round trip');
+    assert.strictEqual(rec.visible, true);
+    assert.ok(s.stackOrder.includes(wid(1)), 'rejoins the ordered stack on re-show');
+  });
+});
+
 describe('request events — pass-through effects (state changes ride the native events)', () => {
   it('WINDOW_CLOSE_REQUESTED -> CLOSE_WINDOW_DIRECT, record untouched (retires on WINDOW_CLOSED)', () => {
     const s = openWindow(createInitialState(), 1, {});

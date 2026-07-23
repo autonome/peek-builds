@@ -156,6 +156,18 @@ export interface WindowRecord {
   source?: string;
   params?: Record<string, unknown>;
   /**
+   * keepLive policy (§4.3 dim 4, §5 step 6): a window opened with
+   * `keepLive: true` (e.g. the left slide playing music) is HIDDEN on
+   * close-or-hide, never closed, so its content keeps running and the
+   * window-open key/url-reuse path can re-show it. First-class on the record
+   * (NOT read out of the opaque `params` bag) because the reducer's
+   * `WINDOW_CLOSE_OR_HIDE_REQUESTED` clause branches on it: keepLive →
+   * `HIDE_WINDOW`, else → `CLOSE_WINDOW`. Set at registration; the
+   * `WINDOW_PARAMS_SET` merge can also carry it (the payload-after-
+   * registration path, e.g. the hybrid test bridge).
+   */
+  keepLive?: boolean;
+  /**
    * Set while a `hud`-class window is hidden by the APP_RESIGNED sweep, so
    * APP_ACTIVATED re-shows exactly the windows that sweep hid — the
    * structural replacement for the deleted `(win as any).__hudHidden` expando.
@@ -340,6 +352,8 @@ export type WindowEvent =
       params?: Record<string, unknown>;
       /** Declared always-on-top intent: registration emits SET_ALWAYS_ON_TOP (replaces the ipc.ts post-ctor `setAlwaysOnTop(true,'floating')` reinforcement). */
       alwaysOnTop?: boolean;
+      /** keepLive policy declared at open time — see `WindowRecord.keepLive`. */
+      keepLive?: boolean;
     }
   /**
    * Merge a windowRegistry payload onto an ALREADY-REGISTERED window — the
@@ -347,9 +361,19 @@ export type WindowEvent =
    * writer (its callers run after `registerWindowWithMachine`). No-op for an
    * unknown id.
    */
-  | { type: 'WINDOW_PARAMS_SET'; id: WindowId; source: string; params: Record<string, unknown> }
-  /** App code wants this window CLOSED (guest-safe direct close — no keepLive policy; that is CLOSE_WINDOW/closeOrHide). */
+  | { type: 'WINDOW_PARAMS_SET'; id: WindowId; source: string; params: Record<string, unknown>; keepLive?: boolean }
+  /** App code wants this window CLOSED (guest-safe direct close — no keepLive policy; that is WINDOW_CLOSE_OR_HIDE_REQUESTED). */
   | { type: 'WINDOW_CLOSE_REQUESTED'; id: WindowId }
+  /**
+   * App code wants this window closed-or-hidden per its keepLive policy (§5
+   * step 6A-1): the reducer — not the caller — decides from the record.
+   * keepLive → `HIDE_WINDOW` (the backend hides; its native `hide` event is
+   * what writes `visible:false`); else → `CLOSE_WINDOW` (the resolved close:
+   * child windows + host). No producers wired yet — this lands the decision
+   * only; the app-facing seam that dispatches it (`windows.ts
+   * closeOrHideWindow`) is future work.
+   */
+  | { type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED'; id: WindowId }
   /** App code wants this window forcefully DESTROYED (extension bridge/UI teardown, quit paths). */
   | { type: 'WINDOW_DESTROY_REQUESTED'; id: WindowId }
   /** App code wants this window shown (activate:false = show without stealing focus). */
@@ -488,7 +512,7 @@ export type Effect =
   | { type: 'CLOSE_CONTENT'; id: WindowId }
   /** Show without (or with) activation. Executor skips it under headless — both consumers (HUD re-show, extension-UI dev autoopen) were `!isHeadless()`-guarded before the machine owned them. */
   | { type: 'SHOW_WINDOW'; id: WindowId; activate: boolean }
-  /** Hide, keep alive (the HUD app-blur sweep). */
+  /** Hide, keep alive (the HUD app-blur sweep, and the keepLive close-request decision — see `WINDOW_CLOSE_OR_HIDE_REQUESTED`). */
   | { type: 'HIDE_WINDOW'; id: WindowId }
   /** Pin above regular windows (registration-declared alwaysOnTop). Executor skips under headless (compositor-flash parity with the old guard). */
   | { type: 'SET_ALWAYS_ON_TOP'; id: WindowId; on: boolean }
@@ -1263,6 +1287,7 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
           parentId: event.parentId ?? existing.parentId,
           source: event.source ?? existing.source,
           params: event.params ?? existing.params,
+          keepLive: event.keepLive ?? existing.keepLive,
           lastHttpUrl: event.lastHttpUrl ?? existing.lastHttpUrl,
         });
         // If the richer spec turned the CURRENT front into a satellite, hand
@@ -1296,6 +1321,7 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         params: event.params,
         escapeMode: event.escapeMode,
         satellite: event.satellite,
+        keepLive: event.keepLive,
         visible: false,
         fsMode: { name: 'normal' },
         focusSeq: 0,
@@ -1314,7 +1340,12 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
     case 'WINDOW_PARAMS_SET': {
       const rec = state.windows.get(event.id);
       if (!rec) break; // unknown window — the payload has nothing to attach to
-      state.windows.set(event.id, { ...rec, source: event.source, params: event.params });
+      state.windows.set(event.id, {
+        ...rec,
+        source: event.source,
+        params: event.params,
+        keepLive: event.keepLive ?? rec.keepLive,
+      });
       break;
     }
 
@@ -1323,6 +1354,16 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // native teardown emits. The effect is emitted even for an unknown id:
       // the backend resolves the handle itself and no-ops when gone.
       effects.push({ type: 'CLOSE_WINDOW_DIRECT', id: event.id });
+      break;
+    }
+
+    case 'WINDOW_CLOSE_OR_HIDE_REQUESTED': {
+      const rec = state.windows.get(event.id);
+      if (!rec) break; // unknown window — nothing to decide against
+      // keepLive: hide, keep the record registered. `visible` is untouched
+      // here — it flips on the backend's native hide event (WINDOW_HIDDEN).
+      // Otherwise: the resolved close (no keepLive policy left to apply).
+      effects.push(rec.keepLive ? { type: 'HIDE_WINDOW', id: event.id } : { type: 'CLOSE_WINDOW', id: event.id });
       break;
     }
 
