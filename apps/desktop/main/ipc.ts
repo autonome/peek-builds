@@ -811,6 +811,48 @@ function resolvePopupContentRect(ctorOptions: Electron.BrowserWindowConstructorO
   return { x, y, width, height };
 }
 
+/**
+ * Leak guard for the hybrid construct→register gap. `createHybridHostBaseWindow`
+ * constructs the native BaseWindow, but machine registration happens deep
+ * inside `assembleHybridPageHost` (`registerWindowWithMachine`) — so a throw
+ * between the two would leak a constructed-never-registered native window if
+ * the surrounding catch just swallowed it. Both hybrid build sites (the fresh
+ * open branch and the popup createWindow adoption) call this from their catch.
+ *
+ * Destruction goes THROUGH the machine, never a direct `.destroy()` (R2: only
+ * the backend performs window ops). If the throw pre-empted registration, the
+ * bare handle is registered first — duplicate/late registration is an
+ * idempotent merge by design (window-manager.md §7), and it is exactly what
+ * lets the one legal destroy path (`WINDOW_DESTROY_REQUESTED` →
+ * `DESTROY_WINDOW` → backend) resolve the handle. Registration-before-destroy
+ * was chosen over hoisting `registerWindowWithMachine` to the top of
+ * `assembleHybridPageHost`: hoisting would reorder the adapter's native focus
+ * listeners relative to `onHybridHostFocus` (regression-prone macOS focus
+ * territory) and still leaves the pre-assemble throw points (the
+ * WebContentsView ctor at both call sites) leaking — the catch guard covers
+ * every throw point with one mechanism.
+ */
+function destroyUnassembledHybridHost(baseWin: Electron.BaseWindow | null): void {
+  if (!baseWin || baseWin.isDestroyed()) return;
+  try {
+    let id = getWindowIdFor(baseWin);
+    if (id == null) {
+      id = registerWindowWithMachine({
+        kind: 'page-host',
+        role: 'content',
+        class: 'primary',
+        satellite: false,
+        win: baseWin,
+      });
+    }
+    dispatchWindowEvent({ type: 'WINDOW_DESTROY_REQUESTED', id });
+  } catch (cleanupErr) {
+    // Cleanup must never mask the original failure — a still-leaked window is
+    // logged loudly instead.
+    console.error('[hybrid-page-host] failed to destroy partially-built host:', cleanupErr);
+  }
+}
+
 interface HybridHostAssembleCtx {
   url: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2082,6 +2124,9 @@ export function wireHybridContentEvents(
       return {
         action: 'allow',
         createWindow: (ctorOptions) => {
+          // Tracks the constructed host across the try so the catch can clean
+          // up a construct→register-gap throw (see destroyUnassembledHybridHost).
+          let constructedHost: Electron.BaseWindow | null = null;
           try {
             // options.webContents is present for window.open / foreground popups
             // (the OAuth case) and UNDEFINED for background-tab (cmd/ctrl-click,
@@ -2089,6 +2134,7 @@ export function wireHybridContentEvents(
             const adoptWC = (ctorOptions as { webContents?: Electron.WebContents }).webContents;
             const rect = resolvePopupContentRect(ctorOptions);
             const baseWin = createHybridHostBaseWindow(rect);
+            constructedHost = baseWin;
             let view: Electron.WebContentsView;
             let rtApplied = false;
             if (adoptWC) {
@@ -2159,6 +2205,12 @@ export function wireHybridContentEvents(
             return view.webContents;
           } catch (e) {
             console.error('[hybrid-page-host] popup createWindow host build failed:', e);
+            // Destroy the partially-built host (through the machine) so a
+            // pre-registration throw can't leak a constructed-never-registered
+            // BaseWindow. Destroying the host does NOT destroy the adopted
+            // guest WC (Electron leaves the main-owned content WC alive), so
+            // the fallback return below still works.
+            destroyUnassembledHybridHost(constructedHost);
             // Best effort: still hand Chromium the guest WC (if any) so the opener
             // isn't left with a broken/null handle; it just won't be Peek-hosted.
             return (ctorOptions as { webContents?: Electron.WebContents }).webContents as Electron.WebContents;
@@ -3205,6 +3257,9 @@ export function registerWindowHandlers(): void {
     // transient-refresh parity) before we ever reach this construction
     // branch. We only get here on a genuine first open.
     if (usePageHost) {
+      // Tracks the constructed host across the try so the catch can clean up
+      // a construct→register-gap throw (see destroyUnassembledHybridHost).
+      let constructedHost: Electron.BaseWindow | null = null;
       try {
         // winOptions.x/y/width/height were filled in above by
         // `computeInitialBounds` (or the caller's explicit x/y) and hold the
@@ -3222,6 +3277,7 @@ export function registerWindowHandlers(): void {
           { x: contentX, y: contentY, width: contentW, height: contentH },
           { type: options.type },
         );
+        constructedHost = baseWin;
 
         // Content view: main owns this webContents handle. Session MUST match
         // today's `<webview>`, which uses partition `persist:${profileId}`
@@ -3319,6 +3375,11 @@ export function registerWindowHandlers(): void {
           pendingWindowKeys.delete(`${msg.source}:${options.key}`);
         }
         console.error('[hybrid-page-host] Failed to open hybrid page window:', error);
+        // Destroy the partially-built host (through the machine) so a
+        // pre-registration throw can't leak a constructed-never-registered
+        // BaseWindow. The caller is being told success:false, so no live
+        // window should remain either way.
+        destroyUnassembledHybridHost(constructedHost);
         const message = error instanceof Error ? error.message : String(error);
         return { success: false, error: message };
       }
