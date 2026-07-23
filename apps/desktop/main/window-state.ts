@@ -1538,9 +1538,11 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       }
       // Re-show the HUD windows the APP_RESIGNED sweep hid — exactly those
       // (the `hiddenByAppBlur` flag replaces the `__hudHidden` expando), and
-      // without activation. The executor skips SHOW_WINDOW under headless
-      // (parity with the old "never re-show overlay/HUD windows under
-      // headless" guard).
+      // without activation. Headless safety lives in the backend's show
+      // policy (§5 step 6A-2): `showWindow` zeroes opacity before showing,
+      // so the re-show can never paint on the user's real desktop (the old
+      // executor-side headless skip is gone — with the windows.ts show seams
+      // routed through SHOW_WINDOW it would suppress every headless show).
       for (const rec of [...state.windows.values()]) {
         if (rec.class === 'hud' && rec.hiddenByAppBlur === true) {
           patchRecord(state, rec.id, { hiddenByAppBlur: false });

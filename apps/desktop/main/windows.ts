@@ -60,66 +60,35 @@ export function getPrefs(): Record<string, unknown> {
 }
 
 /**
- * Show a BrowserWindow in a headless-safe way.
- *
- * On macOS without Xvfb, both win.show() and win.showInactive() surface the
- * window at the OS level regardless of whether the window was constructed with
- * show:false.  Setting opacity to 0 before showing suppresses the on-screen
- * rendering while keeping Electron's internal visibility state intact:
- * isVisible() returns true, and focus/blur events still fire.  This is the
- * behaviour Playwright tests rely on.
- *
- * Under Linux/Xvfb the opacity step is redundant but harmless.
- * In non-headless production builds it is skipped entirely.
+ * Show a BrowserWindow, headless-safe — THIN SEAM (§5 step 6A-2): this
+ * function performs NO OS work. It resolves the machine id and dispatches
+ * `WINDOW_SHOW_REQUESTED`; the `SHOW_WINDOW` effect routes to the backend
+ * (`electron-window-backend.ts showWindow`), which owns the whole show
+ * policy — the headless opacity-0-before-show trick (isVisible() stays true
+ * for tests, nothing paints on the real display), show() vs showInactive(),
+ * and the `WINDOW_SHOWN` echo that keeps the machine's visibility/front in
+ * step even when no native `'show'` event fires (`showInactive` emits none,
+ * and headless runs are focus-free by design).
  *
  * @param win    The BrowserWindow to show.
- * @param opts   { active: true } to call win.show() (steals focus);
- *               default is win.showInactive() (focus-preserving).
+ * @param opts   { active: true } to activate (the backend calls win.show(),
+ *               which steals focus); default is focus-preserving
+ *               (showInactive()).
  */
 export function showWindowHeadlessSafe(
   win: BrowserWindow,
   opts?: { active?: boolean },
 ): void {
-  if (isHeadless()) {
-    try { win.setOpacity(0); } catch { /* setOpacity unsupported on some platforms */ }
+  const id = getWindowIdFor(win);
+  if (id == null) {
+    // Every live window registers with the machine (§5 step 4); an
+    // unregistered handle here is a bug in the open path, not a case to
+    // paper over — there is deliberately no direct-OS fallback (R2: only
+    // the backend performs window ops).
+    DEBUG && console.log('[windows] showWindowHeadlessSafe: window not machine-registered — show dropped');
+    return;
   }
-  if (opts?.active) {
-    win.show();
-  } else {
-    win.showInactive();
-  }
-  // Tell the window-state machine, deterministically. `showInactive()` emits no
-  // `'show'` event, and under headless the `show()`/`focus()` OS focus events
-  // never fire either — so without this seam-side dispatch the machine never
-  // learns the window became visible and `front` goes stale (gate fallout of
-  // the WindowId cutover; same class as the registration-time visibility
-  // import in `window-os-adapter.ts registerWindow`). `focused` mirrors the
-  // CALLER's intent (`active: true` == `win.show()` == the OS would focus it),
-  // so headless and non-headless converge on the same machine state. A window
-  // never registered with the machine resolves to null and is skipped; a
-  // duplicate event for one the OS also reports is an idempotent re-merge in
-  // the reducer.
-  notifyMachineWindowShown(win, opts?.active === true);
-}
-
-/**
- * Dispatch `WINDOW_SHOWN` for a native window the app just showed through one
- * of the two show seams (`showWindowHeadlessSafe` / `showHybridHost`). The
- * machine's `front`/visibility must not depend on Electron's `'show'`/`'focus'`
- * events actually firing — `showInactive` emits neither, and headless runs are
- * focus-free by design.
- */
-function notifyMachineWindowShown(
-  win: BrowserWindow | import('electron').BaseWindow,
-  focusedIntent: boolean,
-): void {
-  try {
-    const id = getWindowIdFor(win);
-    if (id == null) return; // not (yet) registered with the machine
-    dispatchWindowEvent({ type: 'WINDOW_SHOWN', id, focused: focusedIntent });
-  } catch {
-    /* a torn-down window mid-show must not break the show call */
-  }
+  dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: opts?.active === true });
 }
 
 /**
@@ -216,30 +185,30 @@ export function showHybridHost(
     inactive: opts?.inactive === true,
     nonActivating: opts?.nonActivating === true,
   });
-  if (isHeadless()) {
-    // Keep it invisible (opacity 0) — never paints on the physical desktop.
-    try { baseWin.setOpacity(0); } catch { /* setOpacity unsupported on some platforms */ }
-  }
-  if (intent.activated) {
-    // show() activates the app (frontmost + key window) AND raises this window.
-    try { baseWin.show(); } catch { /* show unsupported in some envs */ }
+  // THIN SEAM (§5 step 6A-2): the OS half (opacity-0 / show vs showInactive)
+  // lives behind the port — dispatch the show and let the `SHOW_WINDOW`
+  // effect drive the backend. `activate` carries the CALLER's focus intent,
+  // judged BEFORE the headless/panel masks (every show except an explicitly
+  // `inactive` one — session restore's `show:false` — targets the window).
+  // The backend masks it into the OS variant (headless, and a
+  // `quick-view`-class panel host, show inactive — same decisions
+  // `hybridShowIntent` encodes) and echoes `WINDOW_SHOWN` with the UNMASKED
+  // intent — which is how the machine's `front` tracks quick-views and
+  // headless shows, where no OS focus event will ever fire.
+  const id = getWindowIdFor(baseWin);
+  if (id == null) {
+    DEBUG && console.log('[windows] showHybridHost: host not machine-registered — show dropped');
   } else {
-    // Focus-free: visible (state) but never activated.
-    try { baseWin.showInactive(); } catch { /* showInactive unsupported in some envs */ }
+    dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: opts?.inactive !== true });
   }
+  // The content-focus half STAYS imperative until the focus-rivals step (§5
+  // step 8): make the content WebContentsView the macOS first responder so
+  // key equivalents (cmd+L etc.) route to it instead of beeping at AppKit.
+  // The dispatch above completes the OS show synchronously (the pump drains
+  // before returning), so the focus lands on an already-shown host.
   if (intent.contentFocused) {
-    // Make the content WebContentsView the macOS first responder so key
-    // equivalents (cmd+L etc.) route to it instead of beeping at AppKit.
     try { if (!contentWC.isDestroyed()) contentWC.focus(); } catch { /* wc gone */ }
   }
-  // Tell the window-state machine (see `notifyMachineWindowShown`): the
-  // BaseWindow's `showInactive()` emits no `'show'` event and headless never
-  // fires the focus events, so the machine must be fed at the seam. `focused`
-  // is the CALLER's intent, judged BEFORE the headless mask: every show except
-  // an explicitly `inactive` one (session restore's `show:false`) targets the
-  // window — non-headless the OS focus events would say the same, headless
-  // they never come.
-  notifyMachineWindowShown(baseWin, opts?.inactive !== true);
   return intent;
 }
 

@@ -24,19 +24,21 @@
  *     (§2.3) so a stuck `entering`/`leaving` mode self-corrects via `reconcile`.
  *
  * Headless gating: focus/activation side effects are gated on `isHeadless()` —
- * the SAME predicate `hybridShowIntent`/`showHybridHost` (windows.ts) use — so
- * an agent/CI run never steals the user's OS focus (peek 2b55f3af). We reuse
- * those seams directly (`showHybridHost` already calls
- * `hybridShowIntent(isHeadless())`) rather than re-deriving the decision.
+ * the SAME predicate `hybridShowIntent` (windows.ts) encodes — so an agent/CI
+ * run never steals the user's OS focus (peek 2b55f3af). Since §5 step 6A-2
+ * the SHOW policy itself (opacity-0-before-show, show() vs showInactive(),
+ * the page-host headless/panel masks) lives HERE (`performOsShow` +
+ * `showWindow`): the windows.ts show seams are thin dispatchers into the
+ * machine, and this backend echoes `WINDOW_SHOWN` for the shows it performs
+ * (`showInactive` emits no native `'show'` event, and headless runs are
+ * focus-free by design).
  */
 
 import { app, globalShortcut, webContents } from 'electron';
-import type { BaseWindow, BrowserWindow, WebContents } from 'electron';
+import type { BrowserWindow, WebContents } from 'electron';
 
 import { isHeadless, DEBUG } from './config.js';
 import {
-  showHybridHost,
-  showWindowHeadlessSafe,
   askWebContentsToHandleEscape,
   closeOrHideWindow,
   addEscHandler,
@@ -46,6 +48,7 @@ import { shouldCloseContentWCOnFinalize } from './izui-roles.js';
 import {
   decideWindowRegistration,
   type WindowRegistrationDecision,
+  type WindowClass,
   type WindowId,
   type WindowKind,
 } from './window-state.js';
@@ -76,6 +79,12 @@ export interface NativeWindow {
   close(): void;
   destroy(): void;
   hide(): void;
+  /** Show, activating (app frontmost + key window). */
+  show(): void;
+  /** Show without activating (focus-preserving). */
+  showInactive(): void;
+  /** Window opacity — the headless opacity-0-before-show trick (`performOsShow`). */
+  setOpacity(opacity: number): void;
   setAlwaysOnTop(flag: boolean, level?: 'normal' | 'floating'): void;
   /** Relative z-raise without activation (the `setStacking` command). On both kinds in Electron 40. */
   moveTop(): void;
@@ -147,6 +156,12 @@ export interface BackendMigrationShims {
 interface BackendWindow {
   win: NativeWindow;
   kind: WindowKind;
+  /**
+   * The window's declared class (§4.3 dim 8b), retained for the show policy:
+   * a `quick-view`-class page-host is a `type:'panel'` NSPanel that must
+   * NEVER activate the app on show (regression 524f7aba) — see `showWindow`.
+   */
+  windowClass: WindowClass;
   /**
    * The renderer WebContents that answers the `escape-pressed` IPC and is the
    * macOS first responder: the content `WebContentsView`'s WC for a page-host,
@@ -267,12 +282,13 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       id = existingId;
       existing.win = win;
       existing.kind = kind;
+      existing.windowClass = spec.class;
       if (decision.adoptRendererWC) existing.rendererWC = rendererWC;
     } else {
       this.windowIdCounter += 1;
       id = `wm-${this.windowIdCounter}` as WindowId;
       this.idByOsWindowId.set(osWindowId, id);
-      this.windows.set(id, { win, kind, rendererWC });
+      this.windows.set(id, { win, kind, windowClass: spec.class, rendererWC });
     }
 
     if (decision.attachNativeListeners) {
@@ -397,25 +413,36 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // Port: commands.
   // ───────────────────────────────────────────────────────────────────────────
 
-  /** Show + raise + activate a window (page-host via the shared show seam). */
+  /** Show + raise + activate a window, kind-appropriately (headless stays focus-free). */
   raiseWindow(id: WindowId): void {
     const entry = this.windows.get(id);
     if (!entry) return;
     const { win, kind, rendererWC } = entry;
     if (win.isDestroyed()) return;
     if (kind === 'page-host') {
-      // Reuses `hybridShowIntent(isHeadless())` — headless → showInactive +
-      // opacity-0, never activate/focus; non-headless → activate + first responder.
-      showHybridHost(win as unknown as BaseWindow, rendererWC as unknown as WebContents);
+      // Non-headless: activating show + content first responder (the
+      // `hybridShowIntent` invariant — the R4/R5/R7 dead-focus cluster).
+      // Headless: opacity-0 + showInactive, never activate/focus — but the
+      // WINDOW_SHOWN echo still records the raise's focus INTENT (headless
+      // front-tracking is intent-driven; no OS focus event will ever fire).
+      this.performOsShow(win, !isHeadless());
+      if (!isHeadless() && rendererWC && !rendererWC.isDestroyed()) {
+        try {
+          rendererWC.focus();
+        } catch {
+          /* wc gone mid-raise */
+        }
+      }
+      this.emit({ type: 'WINDOW_SHOWN', id, focused: true });
       return;
     }
     // Browser window: headless-safe show (opacity-0 + inactive under headless),
     // activate + focus only when not headless.
-    const bw = win as unknown as BrowserWindow;
-    showWindowHeadlessSafe(bw, { active: !isHeadless() });
+    this.performOsShow(win, !isHeadless());
+    this.emit({ type: 'WINDOW_SHOWN', id, focused: !isHeadless() });
     if (!isHeadless()) {
       try {
-        bw.focus();
+        (win as unknown as BrowserWindow).focus();
       } catch {
         /* window gone mid-raise */
       }
@@ -642,23 +669,71 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     }
   }
 
-  /** Show without stealing focus (activate:false) or activating (true), kind-appropriately via the shared show seams. */
+  /**
+   * The ONE show implementation (§5 step 6A-2 — the `SHOW_WINDOW` effect).
+   * Owns the whole policy the windows.ts seams used to perform:
+   *   - headless → `setOpacity(0)` BEFORE the show (nothing paints on the
+   *     real display; `isVisible()` stays true for tests);
+   *   - `activate` → `show()` (activates the app + key window), else
+   *     `showInactive()`;
+   *   - page-host OS masks: never activate under headless (focus-free runs),
+   *     and a `quick-view`-class host (a `type:'panel'` NSPanel) NEVER
+   *     activates the app (regression 524f7aba) — its key input rides the
+   *     content-focus half, which stays with the windows.ts caller until the
+   *     focus-rivals step (§5 step 8). A browser window keeps the legacy
+   *     `showWindowHeadlessSafe` behavior: no mask (opacity-0 already covers
+   *     headless).
+   *   - echoes `WINDOW_SHOWN` with the caller's UNMASKED `activate` intent
+   *     (absorbing the seam-side WINDOW_SHOWN dispatch windows.ts used to make):
+   *     `showInactive()` emits no native `'show'` event and headless runs are
+   *     focus-free, so this echo is what keeps the machine's visibility +
+   *     `front` truthful. The native `'show'` listener still mirrors
+   *     activating shows — the reducer's WINDOW_SHOWN merge is idempotent.
+   */
   showWindow(id: WindowId, opts: { activate: boolean }): void {
     const entry = this.windows.get(id);
     if (!entry) return;
-    const { win, kind, rendererWC } = entry;
+    const { win, kind, windowClass } = entry;
     try {
       if (win.isDestroyed()) return;
     } catch {
       return;
     }
-    if (kind === 'page-host') {
-      showHybridHost(win as unknown as BaseWindow, rendererWC as unknown as WebContents, {
-        inactive: !opts.activate,
-      });
-      return;
+    const osActivate =
+      kind === 'page-host'
+        ? opts.activate && !isHeadless() && windowClass !== 'quick-view'
+        : opts.activate;
+    this.performOsShow(win, osActivate);
+    this.emit({ type: 'WINDOW_SHOWN', id, focused: opts.activate });
+  }
+
+  /**
+   * The single native show call pair (+ the headless opacity-0 trick): every
+   * show this backend performs — `showWindow`, `raiseWindow` — funnels here.
+   * Opacity is zeroed BEFORE the show; the entry.ts headless prototype guard
+   * enforces exactly that order.
+   */
+  private performOsShow(win: NativeWindow, activate: boolean): void {
+    if (isHeadless()) {
+      try {
+        win.setOpacity(0);
+      } catch {
+        /* setOpacity unsupported on some platforms */
+      }
     }
-    showWindowHeadlessSafe(win as unknown as BrowserWindow, { active: opts.activate });
+    if (activate) {
+      try {
+        win.show();
+      } catch {
+        /* show unsupported in some envs */
+      }
+    } else {
+      try {
+        win.showInactive();
+      } catch {
+        /* showInactive unsupported in some envs */
+      }
+    }
   }
 
   /** Hide, keep alive (the HUD app-blur sweep). */

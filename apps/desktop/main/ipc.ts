@@ -3532,10 +3532,11 @@ export function registerWindowHandlers(): void {
       // authority — the 4f1a974a design: restore activates the focused
       // descriptor exactly once — and the headless gate structurally cannot
       // catch the flash. The window enters the machine when it genuinely
-      // becomes visible: the real show seams (`showWindowHeadlessSafe` /
-      // `showHybridHost` in windows.ts) dispatch WINDOW_SHOWN themselves, and
-      // non-headless the native `'show'`/`'focus'` listeners cover any other
-      // path.
+      // becomes visible: the show seams (`showWindowHeadlessSafe` /
+      // `showHybridHost` in windows.ts) route through the machine — the
+      // backend's `showWindow` echoes WINDOW_SHOWN for the show it performs —
+      // and non-headless the native `'show'`/`'focus'` listeners cover any
+      // other path.
       if (options.show !== false) {
         dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: machineWindowId, focused: true });
       }

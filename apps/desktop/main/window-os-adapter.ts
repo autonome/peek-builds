@@ -182,11 +182,11 @@ export class WindowOsAdapter {
 
   /**
    * RE-ENTRANCY: effect execution can dispatch back into this pump. The known
-   * cycle is `RAISE_WINDOW` → `backend.raiseWindow` → the windows.ts show
-   * seams (`showHybridHost`/`showWindowHeadlessSafe`) → their own
-   * `WINDOW_SHOWN` dispatch; the backend's synchronous emissions for
-   * `RECONCILE_FULLSCREEN` and the destroyed-WC `ASK_RENDERER` answer also
-   * land here from inside `runEffect`. Instead of recursing mid-`runEffects`
+   * cycle is `RAISE_WINDOW`/`SHOW_WINDOW` → the backend performing the OS
+   * show and synchronously emitting its `WINDOW_SHOWN` echo (§5 step 6A-2);
+   * the backend's synchronous emissions for `RECONCILE_FULLSCREEN` and the
+   * destroyed-WC `ASK_RENDERER` answer also land here from inside
+   * `runEffect`. Instead of recursing mid-`runEffects`
    * (which converged only because `applyFrontAssertion` sets
    * `frontAsserted = true` BEFORE its effects are executed — an invariant
    * nothing enforced), nested dispatches are QUEUED and drained strictly
@@ -330,11 +330,12 @@ export class WindowOsAdapter {
         return;
       }
       case 'SHOW_WINDOW': {
-        // Both consumers (HUD re-show on app-activate, extension-UI dev
-        // autoopen) were `!isHeadless()`-guarded before the machine owned
-        // them — a show under headless would surface an alwaysOnTop window on
-        // the user's real desktop.
-        if (isHeadless()) return;
+        // No executor-side headless gate (§5 step 6A-2): the backend owns the
+        // whole show policy — under headless it zeroes opacity BEFORE showing
+        // and never activates a page-host, so a show can't paint on the real
+        // desktop or steal focus. The old skip predates the seam cutover;
+        // with the windows.ts show seams routed through this effect, skipping
+        // under headless would mean headless runs never show any window.
         this.backend.showWindow(effect.id, { activate: effect.activate });
         return;
       }

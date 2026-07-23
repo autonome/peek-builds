@@ -1140,7 +1140,8 @@ export function openChromeExtensionPage(
   if (inDevAutoopen && !isHeadless()) {
     win.webContents.once('did-finish-load', () => {
       // Show without stealing focus, through the machine (SHOW_WINDOW with
-      // activate:false — the executor's headless gate mirrors the old guard).
+      // activate:false; this whole block is already !isHeadless()-gated
+      // above, so the dev autoopen never fires in a headless run).
       try {
         const id = getWindowIdFor(win);
         if (id != null) dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: false });

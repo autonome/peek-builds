@@ -106,6 +106,8 @@ const ALLOWLIST = [
     why: 'app.dock.hide under headless activation policy — Dock tile, not a window' },
   { file: 'apps/desktop/main/entry.ts', call: 'hide', count: 2,
     why: 'app.dock.hide (headless boot + LSUIElement path) — Dock tile, not a window' },
+  { file: 'apps/desktop/main/windows.ts', call: 'show', count: 1,
+    why: 'app.dock.show in applyDockPreference — Dock tile, not a window (the per-window show/showInactive seams route through the machine since §5 step 6A-2)' },
 
   // ── Real pre-R2 violations: direct window ops awaiting migration ─────────
   // Each is scheduled by a window-manager.md §5 step; delete or decrement the
@@ -156,10 +158,6 @@ const ALLOWLIST = [
     why: 'tile:window all-workspaces IPC — §5 step 10' },
   { file: 'apps/desktop/main/tile-launcher.ts', call: 'hide', count: 1,
     why: 'hide keepLive tile window instead of closing — visibility, §5 step 6' },
-  { file: 'apps/desktop/main/windows.ts', call: 'show', count: 3,
-    why: 'showAppWindow active path + showHybridHost + app.dock.show — §5 step 6' },
-  { file: 'apps/desktop/main/windows.ts', call: 'showInactive', count: 2,
-    why: 'showAppWindow/showHybridHost focus-preserving path — §5 step 6' },
   { file: 'apps/desktop/main/windows.ts', call: 'focus', count: 3,
     why: 'contentWC first-responder + bw/webContents focus (show invariant) — focus rivals, §5 step 8' },
   { file: 'apps/desktop/main/windows.ts', call: 'hide', count: 6,

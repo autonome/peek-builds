@@ -111,10 +111,10 @@ export interface WindowBackend {
 
   /**
    * Show + raise + activate a window, kind-appropriately (the `RAISE_WINDOW`
-   * effect): page-host via the shared hybrid show seam (activate + content
-   * first responder), browser via headless-safe show + focus. Headless runs
-   * stay focus-free — the backend applies the same `isHeadless()` policy the
-   * show seams do.
+   * effect): page-host → activating show + content first responder; browser
+   * → show + focus. Headless runs stay focus-free (opacity-0 + inactive
+   * show, no focus) while the `WINDOW_SHOWN` echo still records the raise's
+   * focus intent for the machine.
    */
   raiseWindow(id: WindowId): void;
 
@@ -199,7 +199,15 @@ export interface WindowBackend {
   /** Tear down the window's retained content surface (the `CLOSE_CONTENT` effect — the hybrid finalize's documented `webContents.close()` teardown). */
   closeContent(id: WindowId): void;
 
-  /** Show, kind-appropriately, with or without activation (the `SHOW_WINDOW` effect). The EXECUTOR gates this on headless. */
+  /**
+   * Show, kind-appropriately, with or without activation (the `SHOW_WINDOW`
+   * effect). The BACKEND owns the whole show policy (§5 step 6A-2): the
+   * headless opacity-0-before-show trick, show() vs showInactive(), the
+   * page-host masks (headless / quick-view panel never activate the app),
+   * and the `WINDOW_SHOWN` echo carrying the caller's unmasked `activate`
+   * intent (no native `'show'` event fires for an inactive show, and
+   * headless runs are focus-free).
+   */
   showWindow(id: WindowId, opts: { activate: boolean }): void;
 
   /** Hide, keep alive (the `HIDE_WINDOW` effect — the HUD app-blur sweep). */
