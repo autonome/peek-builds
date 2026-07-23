@@ -110,6 +110,8 @@ const ALLOWLIST = [
     why: 'app.dock.hide (headless boot + LSUIElement path) — Dock tile, not a window' },
   { file: 'apps/desktop/main/windows.ts', call: 'show', count: 1,
     why: 'app.dock.show in applyDockPreference — Dock tile, not a window (the per-window show/showInactive seams route through the machine since §5 step 6A-2)' },
+  { file: 'apps/desktop/main/windows.ts', call: 'hide', count: 2,
+    why: 'app-level ONLY: app.hide (maybeHideApp) + app.dock.hide (applyDockPreference) — APP-level operations outside the window-backend port scope by design (§5 step 6B); the decision input (visible-window count) is machine state, no isVisible() polling' },
 
   // ── Real pre-R2 violations: direct window ops awaiting migration ─────────
   // Each is scheduled by a window-manager.md §5 step; delete or decrement the
@@ -152,8 +154,6 @@ const ALLOWLIST = [
     why: 'tile:window all-workspaces IPC — §5 step 10' },
   { file: 'apps/desktop/main/windows.ts', call: 'focus', count: 3,
     why: 'contentWC first-responder + bw/webContents focus (show invariant) — focus rivals, §5 step 8' },
-  { file: 'apps/desktop/main/windows.ts', call: 'hide', count: 3,
-    why: 'app-level ONLY: app.hide (maybeHideApp) + app.dock.hide ×2 (applyDockPreference) — every per-window hide (closeOrHideWindow keepLive 6A-3, modWindow 6A-4) routes through the machine; app-level derivation from reducer visibility is §5 step 6 part B' },
 ];
 
 // ---------------------------------------------------------------------------

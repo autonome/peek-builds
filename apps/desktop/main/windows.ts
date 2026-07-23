@@ -5,7 +5,7 @@
  */
 
 import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
-import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
+import { getLiveWindow } from './window-registry.js';
 import {
   WEB_CORE_ADDRESS,
   SETTINGS_ADDRESS,
@@ -24,7 +24,7 @@ import {
   getChildWindows,
 } from './main.js';
 import { registerGuest } from './webview-guest-registry.js';
-import { getHybridWindow, getAllHybridWindows } from './hybrid-page-host-registry.js';
+import { getHybridWindow } from './hybrid-page-host-registry.js';
 import {
   getFrontWindowId,
   getWindowModeName,
@@ -33,7 +33,9 @@ import {
   getWindowIdFor,
   getNativeWindowFor,
   getMachineWindowRecord,
+  listMachineWindowRecords,
 } from './window-state-singleton.js';
+import type { WindowClass } from './window-state.js';
 
 /**
  * Get the appropriate background color based on system theme
@@ -483,58 +485,57 @@ export function closeWindow(params: { id?: number }, callback?: (success: boolea
 }
 
 // TRANSIENT_ROLES is defined in ./izui-roles.ts (pure module, Electron-free).
-// Re-exported here so existing imports `from './windows.js'` keep working.
-// The set covers palette/quick-view/overlay — windows that ride above the
-// workspace, must not affect dock visibility, and on macOS follow the user
-// across Spaces. Used both for dock-count exclusion below and for the
-// focus-driven auto-hide path (a non-transient window gaining focus
+// Re-exported here so existing imports `from './windows.js'` keep working
+// (ipc.ts). The set covers palette/quick-view/overlay — windows that ride
+// above the workspace and on macOS follow the user across Spaces. Used for
+// the focus-driven auto-hide path (a non-transient window gaining focus
 // dismisses any transient sibling via closeOrHideWindow, restoring the
-// blur-on-focus-change behavior that NSPanels swallow).
+// blur-on-focus-change behavior that NSPanels swallow). The app-hide count
+// below filters by machine window CLASS now, not by this role set.
 export { TRANSIENT_ROLES } from './izui-roles.js';
-import { TRANSIENT_ROLES } from './izui-roles.js';
 
 /**
- * Get count of visible persistent windows (excluding background, modals, overlays, HUD).
+ * Window classes that never hold the app open (§5 step 6B): a window of one
+ * of these classes is not "a window the user is working in", so it does not
+ * count toward the visible-window total maybeHideApp reads. The set
+ * reproduces the pre-machine exclusion semantics exactly:
+ *   - 'background'                    was: entry.params.address === WEB_CORE_ADDRESS
+ *   - 'quick-view'/'palette'/'overlay' was: TRANSIENT_ROLES on the registry role
+ *     (classifyWindowRegistration maps those roles 1:1 to these classes)
+ *   - 'hud'                           was: role 'utility' + focusable === false
+ * Deliberately a CLASS set, not the record's `satellite` flag: quick-view is
+ * satellite:false yet transient-excluded, while a detached devtools window
+ * (satellite:true) and extension-ui popups are real visible surfaces that
+ * kept the app open before and must keep doing so.
+ */
+const APP_HIDE_EXCLUDED_CLASSES: ReadonlySet<WindowClass> = new Set<WindowClass>([
+  'background',
+  'quick-view',
+  'palette',
+  'overlay',
+  'hud',
+]);
+
+/**
+ * Get count of visible persistent windows (excluding background, transients, HUD).
  * Used by maybeHideApp to decide whether to hide the app when a window closes.
+ *
+ * Derived from the window-state machine (§5 step 6B): `visible` is reducer
+ * state (written by the backend's WINDOW_SHOWN / WINDOW_HIDDEN echoes), so
+ * BrowserWindows and hybrid page-host BaseWindows come out of ONE table —
+ * no isVisible() polling, no per-registry split.
  */
 export function getVisibleWindowCount(excludeId: number | null = null): number {
-  const liveCount = getAllLiveWindows().filter(win => {
-    if (excludeId && win.id === excludeId) return false;
-    if (!win.isVisible()) return false;
-
-    const entry = getWindowInfo(win.id);
-
-    // Exclude the background window
-    if (entry && entry.params.address === WEB_CORE_ADDRESS) return false;
-
-    // Exclude transient modals and overlays (cmd palette, quick-view, windows switcher)
-    if (entry && TRANSIENT_ROLES.has(entry.params.role as string)) return false;
-
-    // Exclude non-focusable utility windows (HUD)
-    if (entry && entry.params.role === 'utility' && entry.params.focusable === false) return false;
-
-    return true;
+  // excludeId is the numeric Electron id of the window whose close/hide is in
+  // flight — its native hide event may not have echoed into the machine yet,
+  // so it must not hold the app open. Convert it to the machine WindowId and
+  // exclude that record.
+  const excludeMachineId = excludeId != null ? getWindowIdFor(excludeId) : null;
+  return listMachineWindowRecords().filter(rec => {
+    if (excludeMachineId != null && rec.id === excludeMachineId) return false;
+    if (!rec.visible) return false;
+    return !APP_HIDE_EXCLUDED_CLASSES.has(rec.class);
   }).length;
-
-  // Hybrid page-hosts are BaseWindows — invisible to getAllLiveWindows (which is
-  // BrowserWindow.getAllWindows-backed). A lone visible page host (e.g. one left
-  // in native fullscreen) would otherwise count as 0 and let maybeHideApp fire
-  // app.hide() out from under it. Count visible, non-transient hybrid hosts too,
-  // mirroring the live-window predicates: real + visible (isVisible, not
-  // destroyed), not a transient peek/slide.
-  const hybridCount = getAllHybridWindows().filter(h => {
-    if (excludeId && h.windowId === excludeId) return false;
-    try {
-      if (h.baseWin.isDestroyed() || !h.baseWin.isVisible()) return false;
-    } catch {
-      return false;
-    }
-    const entry = getWindowInfo(h.windowId);
-    if (entry && TRANSIENT_ROLES.has(entry.params.role as string)) return false;
-    return true;
-  }).length;
-
-  return liveCount + hybridCount;
 }
 
 /**
@@ -547,17 +548,17 @@ export function getVisibleWindowCount(excludeId: number | null = null): number {
 export function applyDockPreference(): void {
   if (process.platform !== 'darwin' || !app.dock) return;
 
-  if (isTestProfile() || isHeadless()) {
-    app.dock.hide();
-    return;
-  }
-
+  // One decision, one show/hide pair: test profiles and headless runs always
+  // hide the dock; otherwise the preference decides. app.dock.show/hide is an
+  // APP-level operation (Dock tile), not a window operation — out of the
+  // window-backend port's scope, so the calls live here at the app surface
+  // (§5 step 6B).
   const prefs = _getPrefs();
-  const prefShowDock = prefs?.showInDockAndSwitcher === true;
+  const showDock = !isTestProfile() && !isHeadless() && prefs?.showInDockAndSwitcher === true;
 
-  DEBUG && console.log('applyDockPreference:', { prefShowDock });
+  DEBUG && console.log('applyDockPreference:', { showDock });
 
-  if (prefShowDock) {
+  if (showDock) {
     app.dock.show();
   } else {
     app.dock.hide();
@@ -565,7 +566,12 @@ export function applyDockPreference(): void {
 }
 
 /**
- * Hide the app if there are no other visible windows
+ * Hide the app if there are no other visible windows.
+ *
+ * app.hide() is an APP-level operation, not a window operation — it is out of
+ * the window-backend port's scope by design (§5 step 6B): the machine's job
+ * ends at supplying the visibility state this decision reads, and the
+ * app-surface call sits here.
  */
 export function maybeHideApp(excludeId: number): void {
   if (process.platform !== 'darwin') return;

@@ -478,12 +478,24 @@ failure mode this document exists to prevent (§2).**
      bridge's synthetic events for fake hosts (step 9) and `ipc.ts`'s fresh-open
      visible-intent seed (headless opens force ctor `show:false`, so no native
      or backend event ever fires there; dies when open lands behind the port).
-   **Part B — app-level derivation: REMAINING.** `maybeHideApp` /
-   `getVisibleWindowCount` (`windows.ts`) still poll `isVisible()` to decide the
-   app-level `app.hide()`, and `applyDockPreference`'s `app.dock.hide/show` pair
-   is imperative — derive "no visible windows → hide app / dock" from reducer
-   visibility instead. The three surviving `windows.ts` hide-family R2 entries
-   are exactly these app-level calls.
+   **Part B — app-level derivation: DONE.** `windows.ts getVisibleWindowCount`
+   counts machine records (`listMachineWindowRecords`, the record's `visible`
+   flag) instead of polling `isVisible()` across the BrowserWindow + hybrid
+   registries — one table, both window kinds. The exclusion is by window CLASS
+   (`APP_HIDE_EXCLUDED_CLASSES`: background / quick-view / palette / overlay /
+   hud — the exact class image of the old address + TRANSIENT_ROLES +
+   HUD-predicate checks), deliberately NOT by the `satellite` flag: quick-view
+   is satellite:false yet excluded, while devtools (satellite:true) and
+   extension-ui windows count. The in-flight window is still excluded, by
+   machine id via `getWindowIdFor` (its native hide event may not have echoed
+   yet). Design decision (operator, 2026-07-23): `app.hide()` and
+   `app.dock.hide/show` get NO port command — they are app-level operations,
+   not window operations, so they are outside the port's scope (the port
+   governs window ops; this is not an exception to it). The machine's job ends
+   at supplying the visibility state the decision reads; the app-surface calls
+   stay in `windows.ts maybeHideApp` / `applyDockPreference` (the latter
+   collapsed to one preference-derived show/hide decision). The `windows.ts`
+   hide-family R2 entry shrank 3→2 calls accordingly.
 7. **Geometry / maximize.** Collapse the three stores into one; delete the `isMaximized()`
    distrust workaround along with the need for it.
 8. **Focus rivals.** Delete `izui-state.ts`'s focus surface and `restoreFocusGuard`; delete
