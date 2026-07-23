@@ -708,6 +708,15 @@ failure mode this document exists to prevent (§2).**
    (`getMachineWindowIdFor` → `getFrontWindowId`). The izui tri-state,
    app-active tracking, overlay executor, and `enterOverlay()`'s
    machine-front seed via the injected provider remain.
+   **8d — current-window queries via machine front: DONE.** The remaining
+   `BrowserWindow.getFocusedWindow()` calls in `entry.ts` (Cmd+W devtools
+   guard) and `tile-ipc.ts` (`tile:dialogs:save`/`tile:dialogs:open`
+   parenting, `tile:theme:setWindowColorScheme` resolution chain) now resolve
+   through `getFrontWindowId()` → native window. Dialog sheets parent
+   directly over hybrid BaseWindow hosts (Electron dialog APIs accept
+   `BaseWindow`). Deliberate hold-over: the devtools guard still skips a
+   hybrid front (matches the old null behavior) — extending it to hybrid
+   content devtools is a possible follow-up, not done.
 9. **Overlay attach/retarget + transient autoclose.** Fold `hybrid-overlay.ts`'s 40 live
    queries and its private `appActive` into reducer state.
 10. **Displays and Spaces.** Route `display-watcher.ts` through events; add the
