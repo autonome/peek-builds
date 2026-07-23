@@ -10,9 +10,11 @@
  * the reducer decide. A violation is a build failure, not a review comment.
  *
  * Mechanics (deliberately mechanical, not a type checker):
- *   - Scans main-process source: apps/desktop/main/**\/*.ts and *.cts —
- *     the desktop tsconfig's compile scope. Skips *.test.ts (test stubs are
- *     not shipping window ops) and *.d.ts (declarations, not calls).
+ *   - Scans main-process source: apps/desktop/main/**\/*.ts, *.cts, *.js and
+ *     *.mjs — the desktop tsconfig's compile scope plus plain-JS modules
+ *     shipped alongside it (e.g. chrome-api-polyfills/*.js). Skips *.test.*
+ *     (test stubs are not shipping window ops) and *.d.ts (declarations,
+ *     not calls).
  *   - Strips comments, string/template-literal contents (code inside `${...}`
  *     interpolations is kept), and regex-literal contents first, so prose and
  *     HTML payloads don't count as calls. Regex literals are recognized by the
@@ -170,8 +172,8 @@ function collectFiles(dir) {
     if (e.isDirectory()) {
       if (e.name === 'node_modules' || e.name === 'dist') continue;
       out.push(...collectFiles(full));
-    } else if (/\.(ts|cts)$/.test(e.name)) {
-      if (/\.test\.(ts|cts)$/.test(e.name)) continue;
+    } else if (/\.(ts|cts|js|mjs)$/.test(e.name)) {
+      if (/\.test\.(ts|cts|js|mjs)$/.test(e.name)) continue;
       if (/\.d\.(ts|cts)$/.test(e.name)) continue;
       out.push(full);
     }
