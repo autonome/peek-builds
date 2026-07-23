@@ -115,6 +115,7 @@ import {
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, reassertColdStartFocusOnce, installFirstFrameOrderableProducer } from './session.js';
 import { getIzuiCoordinator } from './izui-state.js';
+import { getFrontWindowId, getWindowIdFor } from './window-state-singleton.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
 import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
@@ -285,6 +286,18 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
   /** Test-only: the IZUI coordinator's current focused-window id (or null). */
   getIzuiFocusedWindowId: (): number | null =>
     getIzuiCoordinator().getFocusedWindowId(),
+  /**
+   * Test-only: the window-state machine's `front` — a branded machine
+   * WindowId string like "wm-1", NOT a numeric Electron id — or null.
+   */
+  getFrontWindowId: (): string | null => getFrontWindowId(),
+  /**
+   * Test-only: the machine WindowId (branded string) for a numeric Electron
+   * window id, or null if the window is not registered with the machine.
+   * Lets specs holding numeric ids assert against getFrontWindowId().
+   */
+  getMachineWindowIdFor: (numericId: number): string | null =>
+    getWindowIdFor(numericId),
   /**
    * Read the current on-disk session snapshot directly. Returns the parsed
    * SessionSnapshot object or null if no snapshot exists. Used by tests to

@@ -1200,9 +1200,9 @@ export async function restoreSessionSnapshot(
 
   // Track which window was focused for later focus restoration
   let focusedWindowId: number | null = null;
-  // Every window we successfully restore + show active. Used to arm the IZUI
-  // restore focus guard: the trailing 'focus' events from the NON-focused
-  // members of this set must not clobber the focused window we seed below.
+  // Every window we successfully restore + show active. Feeds the machine's
+  // STACK_ORDER_IMPORTED (saved z-order reproduction) in the willActivate
+  // block below.
   const restoredWindowIds: number[] = [];
   // Subset of restoredWindowIds that are hybrid page-hosts (BaseWindow +
   // WebContentsView). Only these hit the compositing race (see the
@@ -1526,38 +1526,18 @@ export async function restoreSessionSnapshot(
   // still the OS-frontmost app. If the user switched away mid-restore,
   // calling .focus() would yank them back. Best-effort either way.
   //
-  // Also seed izui.session.focusedWindowId directly here. The win.on('focus')
-  // handler that normally updates it can race with .show()/.focus() during
-  // restore — leaving the session with focusedWindowId=null even though
-  // the window is visually focused. Two-phase ESC then fails on first
-  // visit because enterOverlay reads focusedWindowId to seed
-  // preOverlayFocusTarget, and a null pointer leaves exitOverlay with
-  // nothing to restore to (symptom: ESC ESC drops to workspace root).
-  // Seeding here is deterministic; the focus event remains the source of
-  // truth for subsequent user-driven focus changes.
-  //
-  // NOTE (step 8a): enterOverlay now seeds preOverlayFocusTarget from the
-  // window-state machine's `front`, not from this coordinator tracker — the
-  // machine's `front` is driven deterministically by restore's own machine-
-  // routed show dispatches (every loop show is a WINDOW_SHOW_REQUESTED whose
+  // Restore-time focus authority is the window-state machine (step 8a/8b):
+  // enterOverlay seeds preOverlayFocusTarget from the machine's `front`,
+  // which restore drives deterministically through its own machine-routed
+  // show dispatches (every loop show is a WINDOW_SHOW_REQUESTED whose
   // backend synchronously echoes WINDOW_SHOWN, and the hybrid focused
-  // descriptor activates through showHybridHost's dispatch), so this guard
-  // now protects only the coordinator's own focusedWindowId consumers and is
-  // slated for deletion in step 8b/8c.
+  // descriptor activates through showHybridHost's dispatch). The old
+  // coordinator-side restore focus guard (and its deterministic seed of
+  // `session.focusedWindowId`) was deleted in step 8b; that tracker is now
+  // fed only by the async OS focus events, and step 8c deletes it.
   if (focusedWindowId) {
     try {
       const coordinator = getIzuiCoordinator();
-      // Seed the focused window AND arm the restore focus guard in one step.
-      // The guard makes the seed survive the async trailing 'focus' events that
-      // the OTHER restored windows fire from their .show() during the loop —
-      // without it, whichever non-focused window's focus event lands last (e.g.
-      // a Settings BrowserWindow restored after the focused page) clobbers the
-      // seed. The guard self-releases once those windows have each fired once,
-      // so genuine later user focus changes are honored. Deterministic by
-      // construction (independent of focus-event ordering), no timer.
-      const otherRestoredIds = restoredWindowIds.filter((id) => id !== focusedWindowId);
-      coordinator.beginRestoreFocusGuard(focusedWindowId, otherRestoredIds);
-      DEBUG && console.log(`[session] Seeded izui focusedWindowId=${focusedWindowId}, guarding ${otherRestoredIds.length} other restored windows`);
       // Resolve the focused window. A hybrid page-host is a BaseWindow, so
       // getLiveWindow (BrowserWindow.fromId) returns null for it — fall back to
       // the hybrid registry's baseWin. Without this, the web page the user left

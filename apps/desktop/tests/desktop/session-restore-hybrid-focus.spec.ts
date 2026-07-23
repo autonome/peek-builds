@@ -236,13 +236,23 @@ test.describe('Session Restore Hybrid Focus @desktop', () => {
       'restore must raise+activate the restored page A (focused at quit), not page B',
     ).toBe(restoredAId);
 
-    // The app's notion of the frontmost window (IZUI focused id) is page A.
-    const izuiFocusedId = await app.evaluateMain!(((_e: unknown) =>
-      (globalThis as any).__peek_test.getIzuiFocusedWindowId()) as any) as number | null;
+    // The app's notion of the frontmost window is page A. Assert against the
+    // window-state machine's `front` (the focus authority since step 8a/8b) —
+    // the coordinator's focusedWindowId tracker lost its deterministic
+    // restore-time seed when the restore focus guard was deleted (step 8b),
+    // so reading it here would be racy against async OS focus events. The
+    // machine ids are branded strings ("wm-1"), so map the restored window's
+    // numeric id through the machine registry first.
+    const machineAId = await app.evaluateMain!(((_e: unknown, numericId: number) =>
+      (globalThis as any).__peek_test.getMachineWindowIdFor(numericId)) as any,
+      restoredAId) as string | null;
+    expect(machineAId, 'restored page A is registered with the window-state machine').not.toBeNull();
+    const frontWindowId = await app.evaluateMain!(((_e: unknown) =>
+      (globalThis as any).__peek_test.getFrontWindowId()) as any) as string | null;
     expect(
-      izuiFocusedId,
-      'after restore, the focused window must be the restored page A, not page B',
-    ).toBe(restoredAId);
+      frontWindowId,
+      'after restore, the machine front must be the restored page A, not page B',
+    ).toBe(machineAId);
 
     // Cleanup.
     await app.evaluateMain!(((_e: unknown) =>

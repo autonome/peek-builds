@@ -323,10 +323,14 @@ Today: **three coexisting answers** to "which window" —
 `getIzuiCoordinator().getFocusedWindowId()`, and `getFrontWindowId()`.
 Becomes: `getFrontWindowId()` only, backed by the reducer. Delete the other two paths.
 
-**5b. Restore focus guard** — TO ABSORB (delete).
-Today: `izui-state.ts restoreFocusGuard` with `setFocusedWindow` / `getFocusedWindowId` —
+**5b. Restore focus guard** — ABSORBED (§5 step 8b, deleted outright).
+Was: `izui-state.ts restoreFocusGuard` with `setFocusedWindow` / `getFocusedWindowId` —
 a **rival focus authority**. *(Top divergence risk #4.)*
-Becomes: nothing. Restore ordering is expressed as reducer states, not a guard flag.
+Now: nothing. The guard, `beginRestoreFocusGuard`/`clearRestoreFocusGuard`, and
+`session.ts`'s restore-time arm are gone; restore focus determinism lives in the
+machine's `front` (driven by restore's machine-routed show dispatches).
+`setFocusedWindow` / `getFocusedWindowId` remain as a plain tracker until step 8c
+deletes them.
 
 **4b. Transient-sibling autoclose** — TO ABSORB.
 Today: `ipc.ts closeTransientSiblingsOnFocus` plus a `pendingAppResignClose` timer; it
@@ -673,6 +677,18 @@ failure mode this document exists to prevent (§2).**
 8. **Focus rivals.** Delete `izui-state.ts`'s focus surface and `restoreFocusGuard`; delete
    `BrowserWindow.getFocusedWindow()` from `entry.ts` and `tile-ipc.ts`. Reduce
    `izui-state.ts` to the session tri-state only.
+   **8a — switcher focus-restore seed: DONE** (commit eff3bcd6). `enterOverlay`
+   seeds `preOverlayFocusTarget` from the machine's `front`, not the
+   coordinator tracker.
+   **8b — restore focus guard deleted: DONE.** `restoreFocusGuard` +
+   `beginRestoreFocusGuard`/`clearRestoreFocusGuard` (`izui-state.ts`) and
+   `session.ts`'s restore-time arm are gone; `setFocusedWindow` is a plain
+   setter (§4.4 dim 5b). Known, deliberate consequence: the arm was also the
+   only deterministic restore-time seed of `session.focusedWindowId`, so that
+   tracker is now fed only by async OS focus events — acceptable because its
+   last load-bearing reader left in 8a and step 8c deletes it. The
+   session-restore-hybrid-focus spec asserts the machine's `front` instead
+   (test bridge `getFrontWindowId`/`getMachineWindowIdFor` in `entry.ts`).
 9. **Overlay attach/retarget + transient autoclose.** Fold `hybrid-overlay.ts`'s 40 live
    queries and its private `appActive` into reducer state.
 10. **Displays and Spaces.** Route `display-watcher.ts` through events; add the
