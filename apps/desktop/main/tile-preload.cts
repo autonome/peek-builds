@@ -902,25 +902,6 @@ function buildAPI(): Record<string, unknown> {
     },
 
     /**
-     * Push the current canvas page-host state into the window's registry
-     * params. Used by the page-host renderer to keep info.params in sync
-     * with the live state (visible webview bounds + maximize state +
-     * pre-maximize bounds when maximized) so session save and the
-     * close-undo handler can read from a single source of truth at quit
-     * time. Requires `window.manage` (or trustedBuiltin).
-     */
-    updateCanvasState: (state: {
-      x: number; y: number; width: number; height: number;
-      maximized: boolean;
-      preMaxX?: number; preMaxY?: number; preMaxWidth?: number; preMaxHeight?: number;
-    }) => {
-      return ipcRenderer.invoke('tile:window:update-canvas-state', {
-        token: tileToken,
-        ...state,
-      });
-    },
-
-    /**
      * Toggle fullscreen on a window. Requires `window.manage` (or
      * trustedBuiltin).
      */
