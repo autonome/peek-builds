@@ -44,10 +44,27 @@ test.describe('External URL Opening @desktop', () => {
 
     // Type a domain without protocol
     await cmdWindow.fill('input', 'example.com');
+
+    // Subscribe to the window:opened event BEFORE pressing Enter so
+    // there's no race — main publishes this as soon as the new window
+    // is registered (see apps/desktop/main/ipc.ts window-create handler).
+    await bgWindow.evaluate(() => {
+      (window as any).__domainWindowOpened = null;
+      (window as any).app.subscribe('window:opened', (msg: any) => {
+        if (msg?.url && (msg.url.includes('https://example.com') || msg.url.includes('https%3A%2F%2Fexample.com'))) {
+          (window as any).__domainWindowOpened = msg;
+        }
+      });
+    });
+
     await cmdWindow.keyboard.press('Enter');
 
-    // Wait for window to open
-    await sleep(1000);
+    // Wait for the window:opened event for our URL — deterministic.
+    await bgWindow.waitForFunction(
+      () => (window as any).__domainWindowOpened !== null,
+      undefined,
+      { timeout: 5000 }
+    );
 
     // Verify URL was opened (check window list for the URL)
     const windowList = await bgWindow.evaluate(async () => {
@@ -91,10 +108,31 @@ test.describe('External URL Opening @desktop', () => {
 
     // Type URL with http protocol
     await cmdWindow.fill('input', 'http://example.com');
+
+    // Subscribe to the window:opened event BEFORE pressing Enter so
+    // there's no race — main publishes this as soon as the new window
+    // is registered (see apps/desktop/main/ipc.ts window-create handler).
+    await bgWindow.evaluate(() => {
+      (window as any).__httpWindowOpened = null;
+      (window as any).app.subscribe('window:opened', (msg: any) => {
+        if (msg?.url && (
+          msg.url.includes('http://example.com') ||
+          msg.url.includes('http%3A%2F%2Fexample.com') ||
+          msg.url.includes('https://example.com')
+        )) {
+          (window as any).__httpWindowOpened = msg;
+        }
+      });
+    });
+
     await cmdWindow.keyboard.press('Enter');
 
-    // Wait for window to open
-    await sleep(1000);
+    // Wait for the window:opened event for our URL — deterministic.
+    await bgWindow.waitForFunction(
+      () => (window as any).__httpWindowOpened !== null,
+      undefined,
+      { timeout: 5000 }
+    );
 
     // Verify URL was opened (should preserve http://)
     const windowList = await bgWindow.evaluate(async () => {
@@ -145,10 +183,27 @@ test.describe('External URL Opening @desktop', () => {
 
     // Type URL with https protocol
     await cmdWindow.fill('input', 'https://example.com');
+
+    // Subscribe to the window:opened event BEFORE pressing Enter so
+    // there's no race — main publishes this as soon as the new window
+    // is registered (see apps/desktop/main/ipc.ts window-create handler).
+    await bgWindow.evaluate(() => {
+      (window as any).__httpsWindowOpened = null;
+      (window as any).app.subscribe('window:opened', (msg: any) => {
+        if (msg?.url && (msg.url.includes('https://example.com') || msg.url.includes('https%3A%2F%2Fexample.com'))) {
+          (window as any).__httpsWindowOpened = msg;
+        }
+      });
+    });
+
     await cmdWindow.keyboard.press('Enter');
 
-    // Wait for window to open
-    await sleep(1000);
+    // Wait for the window:opened event for our URL — deterministic.
+    await bgWindow.waitForFunction(
+      () => (window as any).__httpsWindowOpened !== null,
+      undefined,
+      { timeout: 5000 }
+    );
 
     // Verify URL was opened
     const windowList = await bgWindow.evaluate(async () => {
@@ -191,10 +246,27 @@ test.describe('External URL Opening @desktop', () => {
 
     // Type localhost with port
     await cmdWindow.fill('input', 'localhost:3000');
+
+    // Subscribe to the window:opened event BEFORE pressing Enter so
+    // there's no race — main publishes this as soon as the new window
+    // is registered (see apps/desktop/main/ipc.ts window-create handler).
+    await bgWindow.evaluate(() => {
+      (window as any).__localhostWindowOpened = null;
+      (window as any).app.subscribe('window:opened', (msg: any) => {
+        if (msg?.url && (msg.url.includes('localhost:3000') || msg.url.includes('localhost%3A3000'))) {
+          (window as any).__localhostWindowOpened = msg;
+        }
+      });
+    });
+
     await cmdWindow.keyboard.press('Enter');
 
-    // Wait for window to open
-    await sleep(1000);
+    // Wait for the window:opened event for our URL — deterministic.
+    await bgWindow.waitForFunction(
+      () => (window as any).__localhostWindowOpened !== null,
+      undefined,
+      { timeout: 5000 }
+    );
 
     // Verify URL was opened (normalized to https://localhost:3000)
     const windowList = await bgWindow.evaluate(async () => {
