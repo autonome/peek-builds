@@ -2828,11 +2828,17 @@ export function registerWindowHandlers(): void {
           // backend performs the OS show (headless opacity-0 mask included)
           // and echoes WINDOW_SHOWN itself, so a headless run still gets the
           // reuse signal from the one legitimate source.
+          // Honor the caller's non-activating intent (`show:false` — how the
+          // session-restore loop opens every descriptor): a restore-driven
+          // key-reuse must not activate; only the restore's post-loop
+          // authority activates. Same rule as the fresh hybrid open
+          // (`inactive: options.show === false`).
+          const hybridReuseActivate = options.show !== false;
           {
             const reusedId = getWindowIdFor(existingHybrid.baseWin);
-            if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: true });
+            if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: hybridReuseActivate });
           }
-          if (!isHeadless()) {
+          if (!isHeadless() && hybridReuseActivate) {
             try {
               // The focus half stays imperative until the focus-rivals step
               // (§5 step 8). Make the content view the first responder too
@@ -2910,9 +2916,17 @@ export function registerWindowHandlers(): void {
         // replaces the hand-dispatched mirror that used to cover headless.
         // The dispatch completes the OS show synchronously (the pump drains
         // before returning), so the focus below lands on a shown window.
-        showWindowHeadlessSafe(existingWindow.window, { active: true });
+        // Honor the caller's non-activating intent (`show:false` — how the
+        // session-restore loop opens every descriptor): a restore-driven
+        // key-reuse must NOT activate, or its show queues an async native
+        // focus event that lands AFTER the restore's post-loop authority and
+        // steals the machine's `front` from the focused descriptor. Same
+        // rule the fresh hybrid open already follows
+        // (`inactive: options.show === false`).
+        const reuseActivate = options.show !== false;
+        showWindowHeadlessSafe(existingWindow.window, { active: reuseActivate });
         // Focus stays imperative (and headless-gated) until §5 step 8.
-        if (!isHeadless()) {
+        if (!isHeadless() && reuseActivate) {
           existingWindow.window.focus();
         }
         // Signal keepLive-reuse to the renderer BEFORE returning so the

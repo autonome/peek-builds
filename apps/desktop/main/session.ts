@@ -104,14 +104,19 @@ export function setRestoreCompleteForTest(value: boolean): void {
   _restoreComplete = value;
 }
 
-// Drift-detection counters for restoreSessionSnapshot. The fix in 853cc48f
-// gates .show()/.focus() on isAppFocused() at restore time so a user who
-// switched away mid-restore isn't yanked back. The bug class — focus
-// stealing from an unconditional .show()/.focus() in the restore loop —
-// silently regresses if someone re-introduces those calls without the
-// guard. Tests in tests/desktop/session-restore-focus.spec.ts read these
-// counters via __peek_test.getRestoreFocusCounters() to assert the gate
-// holds. Counters are reset at the top of restoreSessionSnapshot.
+// Drift-detection counters for restoreSessionSnapshot. Invariant: the
+// per-window restore loop NEVER activates — every loop show is inactive
+// (`shows` must stay 0), and activation belongs exclusively to the
+// post-loop willActivate block. History: 853cc48f first gated the loop's
+// .show()/.focus() on isAppFocused() so a switched-away user isn't
+// yanked back; that gate later proved insufficient — with the app
+// focused, each activating loop .show() queued an async native macOS
+// focus event and the LAST to land stole `front` from the descriptor the
+// post-loop authority had just focused — so the loop now shows inactive
+// unconditionally. Tests in tests/desktop/session-restore-focus.spec.ts
+// read these counters via __peek_test.getRestoreFocusCounters() to
+// assert the invariant holds. Counters are reset at the top of
+// restoreSessionSnapshot.
 let _restoreShowCount = 0;
 let _restoreShowInactiveCount = 0;
 let _restoreFocusCount = 0;
@@ -1375,19 +1380,22 @@ export async function restoreSessionSnapshot(
           const restoredUrl = descriptor.url;
           const win = getLiveWindow(restoredId);
           if (win && !win.isDestroyed()) {
-            // Show now that the window exists. If Peek still has OS-level
-            // focus, .show() activates normally; if the user has switched
-            // away mid-restore, .showInactive() makes the window visible
-            // without yanking the user back to Peek. Both paths use
-            // showWindowHeadlessSafe so that headless test runs don't flash
-            // windows onto the real display (setOpacity(0) + show/showInactive).
-            if (getIzuiCoordinator().isAppFocused()) {
-              showWindowHeadlessSafe(win, { active: true });
-              _restoreShowCount++;
-            } else {
-              showWindowHeadlessSafe(win);
-              _restoreShowInactiveCount++;
-            }
+            // Show now that the window exists — ALWAYS inactive, regardless
+            // of app-focus state. The restore loop NEVER activates: an
+            // activating .show() here queues an async native macOS focus
+            // event per window (ElectronWindowBackend's per-window 'focus'
+            // listener → OS_FOCUS_GAINED → applyFocusGained), and the LAST
+            // one to land steals the machine's `front` from the focused
+            // descriptor the post-loop authority just activated. Activation
+            // belongs EXCLUSIVELY to the post-loop willActivate block (the
+            // single activation point) — same rule the hybrid path already
+            // follows (restored hybrid hosts open inactive; only the focused
+            // descriptor is activated after the loop). showWindowHeadlessSafe
+            // routes through the machine (WINDOW_SHOW_REQUESTED activate:false
+            // → backend showInactive()), so headless runs still don't flash
+            // windows onto the real display (setOpacity(0) before the show).
+            showWindowHeadlessSafe(win);
+            _restoreShowInactiveCount++;
 
             pendingLoads++;
             let settled = false;
