@@ -94,6 +94,7 @@ import {
   getWindowModeName,
   getWindowIdFor,
   getNativeWindowFor,
+  getMachineWindowRecord,
   waitForPendingWindowEffects,
 } from './window-state-singleton.js';
 import { classifyWindowRegistration } from './window-state.js';
@@ -467,6 +468,10 @@ function sendActiveHandoff(id: number | null): void {
   } catch {
     /* datastore unavailable / bad url — spinner-only */
   }
+  // Maximize state lives on the machine record (§5 step 7B); the registry
+  // entry is Electron-id-keyed, so convert through the sanctioned mapping.
+  const activeMachineId = getWindowIdFor(id);
+  const activeMachineRec = activeMachineId != null ? getMachineWindowRecord(activeMachineId) : undefined;
   publish(getSystemAddress(), 'page-overlay:active', {
     windowId: id,
     url: entry.url(),
@@ -482,16 +487,17 @@ function sendActiveHandoff(id: number | null): void {
     // SAME deterministic handoff path as `navbar.loading` — no extra timer.
     loadError: getHybridLoadError(id),
     loading,
-    // Maximize-state hand-off: the registry is the single source of truth for a
-    // hybrid window's maximized flag + pre-maximize bounds (set exclusively via
-    // setHybridMaximizeState). Ship BOTH on every active-window handoff so the
+    // Maximize-state hand-off: the window-state machine record is the single
+    // source of truth for a hybrid window's maximized flag + pre-maximize
+    // bounds (§5 step 7B — written only by the reducer's maximize
+    // transitions). Ship BOTH on every active-window handoff so the
     // overlay RECONCILES its own maximize state to the newly-active window's
     // instead of blindly resetting it — otherwise a maximized window that loses
     // and regains active (window switching) has its overlay `maximized` clobbered
     // to false and forgets it was maximized. Deterministic state hand-off, no
     // timer/visibilitychange (see fsm-pilled).
-    maximized: entry.maximized,
-    preMaxBounds: entry.preMaxBounds,
+    maximized: activeMachineRec?.maximized === true,
+    preMaxBounds: activeMachineRec?.maximized === true ? activeMachineRec.preMaxBounds : null,
     // The INNER content rect (content BaseWindow outer bounds). The renderer
     // places the transparent content hole + chrome relative to this, insetting
     // it by the gutters below — so the overlay center sits exactly over the
@@ -1411,13 +1417,14 @@ function installTestBridge(): void {
       }
     },
     /**
-     * The host BaseWindow's native fullscreen state + the registry's maximize
-     * bookkeeping (`maximized` / `preMaxBounds`). The content triple-click
-     * fullscreen-desync spec (peek d8ce0ddf) uses `isFullScreen` to sequence
-     * around the ASYNC native enter/leave-full-screen transitions (confirmed to
-     * fire in macOS-headless) and `maximized`/`preMaxBounds` to assert the state
-     * machine stays consistent with the window's actual bounds across a
-     * fullscreen round-trip. Returns null if the id is not a live hybrid window.
+     * The host BaseWindow's native fullscreen state + the machine record's
+     * maximize bookkeeping (`maximized` / `preMaxBounds` — §5 step 7B). The
+     * content triple-click fullscreen-desync spec (peek d8ce0ddf) uses
+     * `isFullScreen` to sequence around the ASYNC native enter/leave-full-screen
+     * transitions (confirmed to fire in macOS-headless) and
+     * `maximized`/`preMaxBounds` to assert the state machine stays consistent
+     * with the window's actual bounds across a fullscreen round-trip. Returns
+     * null if the id is not a live hybrid window.
      */
     hostFullscreenState(
       id: number,
@@ -1430,12 +1437,13 @@ function installTestBridge(): void {
       const entry = getHybridWindow(id);
       if (!entry || entry.baseWin.isDestroyed()) return null;
       const machineId = getWindowIdFor(id);
+      const machineRec = machineId != null ? getMachineWindowRecord(machineId) : undefined;
       try {
         return {
           isFullScreen: entry.baseWin.isFullScreen(),
           nativeFullScreen: machineId != null && getWindowModeName(machineId) === 'fullscreen',
-          maximized: entry.maximized,
-          preMaxBounds: entry.preMaxBounds ?? null,
+          maximized: machineRec?.maximized === true,
+          preMaxBounds: machineRec?.maximized === true ? machineRec.preMaxBounds : null,
         };
       } catch {
         return null;

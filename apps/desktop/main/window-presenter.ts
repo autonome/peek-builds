@@ -23,7 +23,7 @@ import { resolveWindowAddress } from './window-address.js';
 import { urlToHash, getThumbnailPath } from './thumbnails.js';
 import { getHybridWindow } from './hybrid-page-host-registry.js';
 import type { HybridWindowEntry } from './hybrid-page-host-registry.js';
-import { getWindowPreBounds, getWindowIdFor } from './window-state-singleton.js';
+import { getWindowPreBounds, getWindowIdFor, getMachineWindowRecord } from './window-state-singleton.js';
 
 export { resolveWindowAddress };
 
@@ -84,16 +84,17 @@ export function getWindowPresentation(windowId: number): WindowPresentation | nu
  * mirrors the Live and Pending paths byte-for-byte so a hybrid window is
  * indistinguishable from a canvas page in the windows feature.
  *
- * Maximize/preMaxBounds are read live off the hybrid registry entry (see
- * hybrid-page-host-registry.ts's setHybridMaximizeState), kept in sync by
- * the page:maximize/page:unmaximize handlers in ipc.ts and by reopen/
- * session-restore seeding a window that was maximized when it was closed
- * or saved. Unlike the old canvas path — where bounds had to be
- * reconstructed from FSM-published webview-rect params because the
- * visible content area was smaller than the outer window — a hybrid
- * window's outer BaseWindow bounds ARE the visible content rect (no
- * surrounding chrome lives in this window), so `bounds` below is always
- * just the live baseWin.getBounds(), maximized or not.
+ * Maximize/preMaxBounds are read off the window-state machine record (§5
+ * step 7B — window-state.ts WindowRecord), written only by the reducer's
+ * maximize transitions, driven by the page:maximize/page:unmaximize
+ * dispatches in ipc.ts and by reopen/session-restore's MAXIMIZE_RESTORED
+ * seed for a window that was maximized when it was closed or saved. Unlike
+ * the old canvas path — where bounds had to be reconstructed from
+ * FSM-published webview-rect params because the visible content area was
+ * smaller than the outer window — a hybrid window's outer BaseWindow bounds
+ * ARE the visible content rect (no surrounding chrome lives in this
+ * window), so `bounds` below is the machine's bounds mirror (falling back
+ * to the live baseWin.getBounds() read), maximized or not.
  */
 function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
   const address = entry.url();
@@ -110,6 +111,18 @@ function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
     // best-effort — a destroyed/odd BaseWindow still presents with defaults
   }
 
+  // The hybrid registry entry is Electron-id-keyed; the machine record is
+  // WindowId-keyed — convert through the sanctioned mapping.
+  const machineId = getWindowIdFor(entry.windowId);
+  const machineRec = machineId != null ? getMachineWindowRecord(machineId) : undefined;
+
+  // Machine-owned geometry (§5 step 7B): prefer the machine's bounds mirror
+  // (registration-seeded, BOUNDS_CHANGED-maintained) over the live read above;
+  // the live read stays as the fallback for a window the machine never saw.
+  if (machineRec?.bounds) {
+    bounds = machineRec.bounds;
+  }
+
   // Native fullscreen: present the PRE-fullscreen bounds, not the transient
   // work-area-sized fullscreen rect. Session-save persists `bounds`, and
   // persisting the fullscreen rect made the next boot restore a plain window
@@ -119,9 +132,6 @@ function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
   // window-state machine) covers the whole fullscreen episode — set at
   // enter-initiation, cleared on the settled leave — so mid-animation saves are
   // covered too.
-  // The hybrid registry entry is Electron-id-keyed; the machine's stash is
-  // WindowId-keyed — convert through the sanctioned mapping.
-  const machineId = getWindowIdFor(entry.windowId);
   const preFullScreenBounds = machineId != null ? getWindowPreBounds(machineId) : null;
   if (preFullScreenBounds) {
     bounds = preFullScreenBounds;
@@ -165,8 +175,8 @@ function getHybridPresentation(entry: HybridWindowEntry): WindowPresentation {
     favicon,
     thumbnail,
     bounds,
-    maximized: entry.maximized,
-    preMaxBounds: entry.maximized ? entry.preMaxBounds : null,
+    maximized: machineRec?.maximized === true,
+    preMaxBounds: machineRec?.maximized === true ? machineRec.preMaxBounds : null,
     visible,
     focused,
   };

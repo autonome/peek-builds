@@ -123,12 +123,16 @@ export class WindowOsAdapter {
    *     only, never twice for one window).
    */
   registerWindow(spec: RegisterWindowSpec): WindowId {
-    const { id, decision } = this.backend.registerWindow(spec);
+    const { id, decision, initialBounds } = this.backend.registerWindow(spec);
 
     if (decision.pumpRegisteredEvent) {
       this.pump({
         type: 'WINDOW_REGISTERED',
         id,
+        // The backend's one registration-time bounds read — seeds the
+        // reducer's bounds mirror (§5 step 7B); a re-registration merge
+        // keeps the lived mirror and only fills absence.
+        bounds: initialBounds ?? undefined,
         kind: spec.kind,
         role: spec.role,
         class: spec.class,

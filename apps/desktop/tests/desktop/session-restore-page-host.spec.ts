@@ -705,12 +705,13 @@ test.describe('Session Restore Page Host @desktop', () => {
   // Hybrid counterpart of the canvas-only maximize round-trip tests above
   // (all skipped under hybrid — they assert on the canvas page-host's own
   // body.classList/URL-params, which don't exist on the hybrid path's bare
-  // content window). This one drives the REAL hybrid maximize state (the
-  // registry added alongside this test — see hybrid-page-host-registry.ts's
-  // setHybridMaximizeState) through the same page:maximize pubsub intent the
-  // overlay navbar button publishes, and asserts on `tile:window:list`'s
-  // presentation-derived maximized/bounds/preMaxBounds fields — the hybrid-
-  // appropriate equivalent of the canvas assertions above.
+  // content window). This one drives the REAL hybrid maximize state (owned
+  // by the window-state machine record since §5 step 7B — the
+  // MAXIMIZE_REQUESTED/MAXIMIZE_RESTORED reducer transitions) through the
+  // same page:maximize pubsub intent the overlay navbar button publishes,
+  // and asserts on `tile:window:list`'s presentation-derived
+  // maximized/bounds/preMaxBounds fields — the hybrid-appropriate
+  // equivalent of the canvas assertions above.
   test('maximized hybrid page host: maximize state survives save+restore', async () => {
     const slug = 'hybrid-maximize-roundtrip';
     const url = `http://127.0.0.1:${serverPort}/${slug}`;

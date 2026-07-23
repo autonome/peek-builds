@@ -90,6 +90,7 @@ import {
   getWindowModeName,
   getWindowIdFor,
   getNativeWindowFor,
+  getMachineWindowRecord,
   type MachineWindowSpec,
 } from './window-state-singleton.js';
 import { isSatelliteRegistration, classifyWindowRegistration } from './window-state.js';
@@ -144,7 +145,6 @@ import {
   getHybridContentWC,
   getHybridWindow,
   getAllHybridWindows,
-  setHybridMaximizeState,
   claimHybridDeferredLoad,
   // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
   setHybridLoadError,
@@ -945,27 +945,10 @@ function assembleHybridPageHost(
       : undefined,
   });
 
-  // Reopen-last-closed (main.ts reopenLastClosedWindow) and session
-  // restore (session.ts restoreSessionSnapshot) both thread a
-  // maximized window's saved state through as open-time options:
-  // `maximized: true` plus `preMaxX/Y/Width/Height` (the pre-maximize
-  // rect to unmaximize back to). Mirrors the canvas path's contract —
-  // the FSM used to boot straight into MAXIMIZED via a `maximized=1`
-  // URL param without calling doMaximize(), because the window's
-  // bounds are ALREADY the maximized rect (computeInitialBounds above
-  // used `winOptions.x/y/width/height`, which reopen/restore set from
-  // the saved presentation.bounds — the live maximized size). So there
-  // is nothing to resize here: just record the state so a later
-  // page:unmaximize (and getHybridPresentation / session save) see it.
-  if (options.maximized === true) {
-    const pmx = options.preMaxX, pmy = options.preMaxY;
-    const pmw = options.preMaxWidth, pmh = options.preMaxHeight;
-    const preMax = (typeof pmx === 'number' && typeof pmy === 'number'
-      && typeof pmw === 'number' && typeof pmh === 'number')
-      ? { x: pmx, y: pmy, width: pmw, height: pmh }
-      : null;
-    setHybridMaximizeState(baseWin.id, true, preMax);
-  }
+  // Construction-time maximize restore moved to a MAXIMIZE_RESTORED dispatch
+  // right after the machine registration below (§5 step 7B) — the machine
+  // record is the one holder of `maximized`/`preMaxBounds` now, and the
+  // dispatch needs the machine-minted id.
 
   // Feed the per-app focus trackers (lastFocusedVisibleWindowId /
   // lastContentWindowId) from the host BaseWindow's focus event. The
@@ -1136,6 +1119,26 @@ function assembleHybridPageHost(
     // the closeOrHideWindow caller) is what branches hide-vs-close on it.
     keepLive: options.keepLive === true,
   });
+  // Reopen-last-closed (main.ts reopenLastClosedWindow) and session restore
+  // (session.ts restoreSessionSnapshot) both thread a maximized window's
+  // saved state through as open-time options: `maximized: true` plus
+  // `preMaxX/Y/Width/Height` (the pre-maximize rect to unmaximize back to).
+  // The window's CREATION bounds already ARE the maximized rect
+  // (computeInitialBounds used `winOptions.x/y/width/height`, which
+  // reopen/restore set from the saved presentation.bounds — the live
+  // maximized size), so there is nothing to resize: MAXIMIZE_RESTORED seeds
+  // the machine record (`maximized` + the SAVED `preMaxBounds`) without
+  // driving a SET_BOUNDS, so a later page:unmaximize (and
+  // getHybridPresentation / session save) see it (§5 step 7B).
+  if (options.maximized === true) {
+    const pmx = options.preMaxX, pmy = options.preMaxY;
+    const pmw = options.preMaxWidth, pmh = options.preMaxHeight;
+    const preMax = (typeof pmx === 'number' && typeof pmy === 'number'
+      && typeof pmw === 'number' && typeof pmh === 'number')
+      ? { x: pmx, y: pmy, width: pmw, height: pmh }
+      : null;
+    dispatchWindowEvent({ type: 'MAXIMIZE_RESTORED', id: hostMachineId, preMaxBounds: preMax });
+  }
   // Track the content-WC→host relationship for the permission lookup
   // (findHostWindowId). The guest registry carries WM WindowIds, so this
   // registration uses the machine-minted id from just above.
@@ -1853,17 +1856,20 @@ export function wireHybridContentEvents(
     return null;
   };
   // A resize gesture ENDS maximize: the host is about to stop filling the work
-  // area, so the registry flag and its stashed preMaxBounds must go now, at the
+  // area, so the machine's flag and its stashed preMaxBounds must go now, at the
   // press. Leaving them set IS the stale-preMaxBounds de-sync — a later maximize
   // toggle would "restore" to a rect the user has since resized away from.
   // Clearing at press rather than release means an abandoned drag still leaves
-  // coherent state. Mirrors the cleared state into the overlay, which keeps a
-  // local copy for its chrome reflow + navbar-drag math and would otherwise still
-  // believe the host is maximized.
+  // coherent state. The transition is the reducer's MAXIMIZE_EXITED_BY_RESIZE
+  // (§5 step 7B) — clears both, drives nothing back at the OS (the gesture owns
+  // the bounds). Mirrors the cleared state into the overlay, which keeps a
+  // local copy for its chrome reflow + navbar-drag math and would otherwise
+  // still believe the host is maximized.
   const exitMaximizeForResize = (): void => {
-    const hw = getHybridWindow(hostWindowId);
-    if (!hw || !hw.maximized) return;
-    setHybridMaximizeState(hostWindowId, false, null);
+    const machineId = getWindowIdFor(hostWindowId);
+    if (machineId == null) return;
+    if (getMachineWindowRecord(machineId)?.maximized !== true) return;
+    dispatchWindowEvent({ type: 'MAXIMIZE_EXITED_BY_RESIZE', id: machineId });
     try {
       publish(getSystemAddress(), 'page-overlay:maximize-state', {
         windowId: hostWindowId, maximized: false, preMaxBounds: null,
@@ -1875,26 +1881,28 @@ export function wireHybridContentEvents(
   // The host is `frame:false` but still `resizable`, so macOS performs a
   // border/corner resize NATIVELY. That gesture never reaches this WC's
   // `input-event` stream, so the press-time `exitMaximizeForResize()` above never
-  // runs: the registry keeps `maximized:true` plus a `preMaxBounds` rect the
-  // window has since been resized away from (for a never-manually-resized host,
-  // the 1024x768 APP_DEF_* creation default). The next navbar double-click reads
-  // that stale flag, publishes `page:unmaximize`, and the window JUMPS to the
-  // default rect instead of filling the work area. `baseWin.on('resize')` was the
-  // only native hook and it only refilled the content view — nothing invalidated
-  // the maximize bookkeeping.
+  // runs: the machine record keeps `maximized:true` plus a `preMaxBounds` rect
+  // the window has since been resized away from (for a never-manually-resized
+  // host, the 1024x768 APP_DEF_* creation default). The next navbar double-click
+  // reads that stale flag, publishes `page:unmaximize`, and the window JUMPS to
+  // the default rect instead of filling the work area. `baseWin.on('resize')` was
+  // the only native hook and it only refilled the content view — nothing
+  // invalidated the maximize bookkeeping.
   //   This CLEARS state on a resize we observe; it is emphatically NOT the
   // deleted `hostMaximized(b)` geometry check returning. That was an AUTHORITY
   // (geometry deciding whether the host counts as maximized) and a GUARD (it
   // REFUSED a resize at the work area). This refuses nothing — a maximized host
-  // stays resizable — and decides nothing: `entry.maximized`, written only by
-  // `setHybridMaximizeState`, remains the single source of truth. Geometry here
-  // is only evidence that a flag set by intent has since been invalidated by the
-  // OS, and the reconciler retires it.
-  //   The app's own paths cannot trip it: `page:maximize` sets the flag true
-  // BEFORE its `setBounds(workArea)`, so the resulting resize sees bounds ==
-  // workArea → no clear; `page:unmaximize` clears the flag before its
-  // `setBounds(prev)` → early-return; and the band drag (`applyResize`) already
-  // ran `exitMaximizeForResize()` at press → early-return.
+  // stays resizable — and decides nothing: the machine record's `maximized`,
+  // written only by the reducer's maximize transitions, remains the single
+  // source of truth. Geometry here is only evidence that a flag set by intent
+  // has since been invalidated by the OS, and the reconciler retires it (via
+  // the same MAXIMIZE_EXITED_BY_RESIZE dispatch as the press-time exit).
+  //   The app's own paths cannot trip it: the reducer commits `maximized:true`
+  // BEFORE its SET_BOUNDS(workArea) effect executes (state is committed before
+  // effects run in the pump), so the resulting native resize sees bounds ==
+  // workArea → no clear; UNMAXIMIZE_REQUESTED clears the flag before its
+  // SET_BOUNDS(preMaxBounds) → early-return; and the band drag (`applyResize`)
+  // already ran `exitMaximizeForResize()` at press → early-return.
   const fillsWorkArea = (b: { x: number; y: number; width: number; height: number }): boolean => {
     const wa = screen.getDisplayNearestPoint({
       x: b.x + Math.floor(b.width / 2),
@@ -1907,8 +1915,14 @@ export function wireHybridContentEvents(
   };
   const reconcileMaximizeAfterResize = (): void => {
     try {
-      const hw = getHybridWindow(hostWindowId);
-      if (!hw || !hw.maximized) return;
+      const machineId = getWindowIdFor(hostWindowId);
+      if (machineId == null) return;
+      if (getMachineWindowRecord(machineId)?.maximized !== true) return;
+      // Live-read geometry deliberately: this handler races the backend's own
+      // 'resize' listener (the BOUNDS_CHANGED mirror write) on the same native
+      // event, so the machine's mirror may be one event stale here. The rect
+      // is EVIDENCE only (does the host still fill the work area?), never
+      // authority — the maximize decision stays on the machine flag above.
       const b = hostBounds();
       if (!b || fillsWorkArea(b)) return;
       exitMaximizeForResize();
@@ -1929,12 +1943,12 @@ export function wireHybridContentEvents(
   // below) — OS parity, and the user no longer has to drag the window out of
   // maximize before they can shrink it. This used to short-circuit on a
   // `hostMaximized(b)` geometry check (bounds === workArea, exact equality),
-  // which was a SECOND definition of "maximized" competing with the registry's
-  // `entry.maximized` flag: the two silently disagreed whenever the work area
-  // moved under a maximized window (display swap, dock/menubar toggle, scale
+  // which was a SECOND definition of "maximized" competing with the tracked
+  // maximize flag: the two silently disagreed whenever the work area moved
+  // under a maximized window (display swap, dock/menubar toggle, scale
   // change), and it also stole resize from any window a user had merely sized to
-  // exactly fill the work area. The registry flag is the single source of truth
-  // (see setHybridMaximizeState); geometry no longer votes.
+  // exactly fill the work area. The machine record's flag is the single source
+  // of truth (window-state.ts WindowRecord.maximized); geometry no longer votes.
   const resizeDirAt = (
     b: { x: number; y: number; width: number; height: number }, gx: number, gy: number, engaged: boolean,
   ): ResizeDir | null => {
@@ -2511,22 +2525,28 @@ export function installHybridNavbarActionRouting(): void {
     setContentCursor(msg.state === 'grab' || msg.state === 'grabbing' ? msg.state : null);
   });
 
-  // page:maximize — snap the host to its display's work area, after stashing the
-  // current bounds for restore. We use explicit work-area bounds rather than
-  // baseWin.maximize() because frameless/panel-style windows on macOS don't
-  // respond to native maximize() reliably (same rationale as page.js's
-  // doMaximize, which sets workArea bounds directly).
+  // page:maximize — snap the host to its display's work area. Machine-owned
+  // since §5 step 7B: the handler resolves the display work area (a dispatch-
+  // site read — the reducer keeps zero value imports, so the rect rides the
+  // event) and dispatches MAXIMIZE_REQUESTED; the REDUCER stashes preMaxBounds
+  // from its own bounds mirror, flips `maximized`, and drives the snap as a
+  // SET_BOUNDS effect through the executor/backend. Explicit work-area bounds
+  // rather than a native maximize() because frameless/panel-style windows on
+  // macOS don't respond to native maximize() reliably (the isMaximized()
+  // distrust this migration deletes — see WindowRecord.maximized).
   //
-  // The pre-maximize bounds + maximized flag are stashed on the hybrid
-  // registry entry (setHybridMaximizeState), not a local map — that makes
-  // them visible to getHybridPresentation (window-presenter.ts), which is
-  // what session save / reopen-last-closed / tile:window:list read. This IS
-  // the single deterministic signal a hybrid window's maximize state ever
-  // changes on; see setHybridMaximizeState's doc comment for why the
-  // BaseWindow's native 'maximize' event is not used instead.
+  // The idempotent re-maximize trap (a second page:maximize must NOT restash
+  // preMaxBounds — by then the current rect IS the work area, and overwriting
+  // the stash strands the next unmaximize at maximized size) lives in the
+  // reducer's MAXIMIZE_REQUESTED clause now, pinned by window-state.test.ts.
+  // Maximize state is visible to getHybridPresentation (window-presenter.ts)
+  // — what session save / reopen-last-closed / tile:window:list read — via
+  // the machine record.
   subscribe(getSystemAddress(), 'page:maximize', (raw) => {
     const r = baseWinFor(raw);
     if (!r) return;
+    const machineId = getWindowIdFor(r.windowId);
+    if (machineId == null) return;
     try {
       const cur = r.baseWin.getBounds();
       const display = screen.getDisplayNearestPoint({
@@ -2534,38 +2554,23 @@ export function installHybridNavbarActionRouting(): void {
         y: cur.y + Math.floor(cur.height / 2),
       });
       const wa = display.workArea;
-      // Idempotent re-maximize: when the registry already says MAXIMIZED, a
-      // second page:maximize must NOT restash preMaxBounds — `cur` is the
-      // work-area rect by then, and overwriting the stash strands the next
-      // unmaximize (and close→reopen's saved pre-max rect) at maximized size.
-      // Two intents CAN reach an already-maximized host: the overlay/content
-      // dead-space dblclick gesture racing a direct page:maximize intent —
-      // both live under headless too now that registration/show-seam dispatch
-      // makes `front` (and so the overlay's activeWindowId) work focus-free.
-      // The registry flag is the single source of truth here (geometry never
-      // votes — see reconcileMaximizeAfterResize): flag==true means the
-      // current bounds are not a user rect, because any resize away from the
-      // work area clears the flag (exitMaximizeForResize / the native-resize
-      // reconciler). Still re-snap bounds: the work area may have moved.
-      // Same trap, same guard rationale as tile-ipc.ts's `atWorkArea` check
-      // for BrowserWindows.
-      const alreadyMaximized = getHybridWindow(r.windowId)?.maximized === true;
-      if (!alreadyMaximized) setHybridMaximizeState(r.windowId, true, cur);
-      r.baseWin.setBounds({ x: wa.x, y: wa.y, width: wa.width, height: wa.height });
+      dispatchWindowEvent({
+        type: 'MAXIMIZE_REQUESTED',
+        id: machineId,
+        workArea: { x: wa.x, y: wa.y, width: wa.width, height: wa.height },
+      });
     } catch { /* window gone */ }
   });
 
-  // page:unmaximize — restore the pre-maximize bounds captured by page:maximize.
-  // No-op if we have no stashed bounds (was never maximized via this path).
+  // page:unmaximize — restore the pre-maximize bounds stashed at maximize.
+  // The reducer's UNMAXIMIZE_REQUESTED clause restores the stash via a
+  // SET_BOUNDS effect and clears both fields; a no-op when not maximized.
   subscribe(getSystemAddress(), 'page:unmaximize', (raw) => {
     const r = baseWinFor(raw);
     if (!r) return;
-    const prev = getHybridWindow(r.windowId)?.preMaxBounds;
-    if (!prev) return;
-    setHybridMaximizeState(r.windowId, false, null);
-    try {
-      r.baseWin.setBounds(prev);
-    } catch { /* window gone */ }
+    const machineId = getWindowIdFor(r.windowId);
+    if (machineId == null) return;
+    dispatchWindowEvent({ type: 'UNMAXIMIZE_REQUESTED', id: machineId });
   });
 
   // ── P1.4b-4: find-in-page routing (overlay find bar → content WC) ───────────

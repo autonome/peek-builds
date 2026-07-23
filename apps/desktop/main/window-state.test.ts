@@ -233,6 +233,14 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     { type: 'MAXIMIZE_REQUESTED', id: wid(99), workArea: BOUNDS },
     { type: 'UNMAXIMIZE_REQUESTED', id: wid(1) },
     { type: 'UNMAXIMIZE_REQUESTED', id: wid(99) },
+    // §5 step 7B events (maximize cutover: registration bounds seed,
+    // construction-time restore, resize-gesture exit).
+    { type: 'WINDOW_REGISTERED', id: wid(5), kind: 'page-host', role: 'content', satellite: false, bounds: BOUNDS },
+    { type: 'MAXIMIZE_RESTORED', id: wid(1), preMaxBounds: BOUNDS },
+    { type: 'MAXIMIZE_RESTORED', id: wid(1), preMaxBounds: null },
+    { type: 'MAXIMIZE_RESTORED', id: wid(99), preMaxBounds: BOUNDS },
+    { type: 'MAXIMIZE_EXITED_BY_RESIZE', id: wid(1) },
+    { type: 'MAXIMIZE_EXITED_BY_RESIZE', id: wid(99) },
   ];
 
   it('reduce is total: defined result + front invariant holds for all combinations', () => {
@@ -2721,5 +2729,195 @@ describe('maximize / unmaximize — machine transitions, never an isMaximized() 
     reduce(r1.state, { type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK });
     assert.strictEqual(before.maximized, false, 'input record not mutated');
     assert.strictEqual(before.preMaxBounds, null);
+  });
+});
+
+// ── §5 step 7B: registration bounds seed + construction restore + gesture exit ──
+
+describe('WINDOW_REGISTERED bounds seed (§5 step 7B)', () => {
+  const RECT_A: Rectangle = { x: 100, y: 120, width: 640, height: 480 };
+  const RECT_B: Rectangle = { x: 5, y: 6, width: 700, height: 500 };
+  const WORK: Rectangle = { x: 0, y: 25, width: 1512, height: 920 };
+
+  it('a registration carrying bounds seeds the mirror', () => {
+    const { state } = drive(createInitialState(), [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false, bounds: RECT_A },
+    ]);
+    assert.deepStrictEqual(state.windows.get(wid(1))!.bounds, RECT_A);
+  });
+
+  it('a registration without bounds leaves the mirror absent (pre-seed behavior unchanged)', () => {
+    const { state } = drive(createInitialState(), [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false },
+    ]);
+    assert.strictEqual(state.windows.get(wid(1))!.bounds, undefined);
+  });
+
+  it('a re-registration NEVER overwrites a lived mirror (BOUNDS_CHANGED reports are fresher)', () => {
+    const { state } = drive(createInitialState(), [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false, bounds: RECT_A },
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_B },
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false, bounds: RECT_A },
+    ]);
+    assert.deepStrictEqual(state.windows.get(wid(1))!.bounds, RECT_B);
+  });
+
+  it('a re-registration fills an ABSENT mirror', () => {
+    const { state } = drive(createInitialState(), [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false },
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false, bounds: RECT_A },
+    ]);
+    assert.deepStrictEqual(state.windows.get(wid(1))!.bounds, RECT_A);
+  });
+
+  it('the seed is what a fresh, never-resized window stashes on its first maximize', () => {
+    // The reason the seed exists: a ctor-placed window fires no native
+    // resize/move, so without the seed the first MAXIMIZE_REQUESTED would
+    // stash null and the following unmaximize would restore nothing.
+    let s = createInitialState();
+    const r1 = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false, bounds: RECT_A },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
+      { type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK },
+    ]);
+    assert.deepStrictEqual(r1.state.windows.get(wid(1))!.preMaxBounds, RECT_A);
+    const r2 = drive(r1.state, [{ type: 'UNMAXIMIZE_REQUESTED', id: wid(1) }]);
+    assert.deepStrictEqual(
+      r2.effects.filter((e) => e.type === 'SET_BOUNDS'),
+      [{ type: 'SET_BOUNDS', id: wid(1), bounds: RECT_A }],
+      'unmaximize round-trips the registration rect',
+    );
+  });
+});
+
+describe('MAXIMIZE_RESTORED — construction-time maximize restore (§5 step 7B)', () => {
+  const RECT_A: Rectangle = { x: 100, y: 120, width: 640, height: 480 };
+  const WORK: Rectangle = { x: 0, y: 25, width: 1512, height: 920 };
+
+  function setBoundsEffects(effects: Effect[]): Extract<Effect, { type: 'SET_BOUNDS' }>[] {
+    return effects.filter((e): e is Extract<Effect, { type: 'SET_BOUNDS' }> => e.type === 'SET_BOUNDS');
+  }
+
+  it('seeds maximized + the SAVED pre-max rect, and drives NO bounds effect', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    const { state, effects } = drive(s, [{ type: 'MAXIMIZE_RESTORED', id: wid(1), preMaxBounds: RECT_A }]);
+    const rec = state.windows.get(wid(1))!;
+    assert.strictEqual(rec.maximized, true);
+    assert.deepStrictEqual(rec.preMaxBounds, RECT_A);
+    assert.deepStrictEqual(setBoundsEffects(effects), [], 'the window was BUILT at the maximized rect — nothing to resize');
+  });
+
+  it('a null saved rect restores maximized with no stash ("no stash was possible")', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    const { state } = drive(s, [{ type: 'MAXIMIZE_RESTORED', id: wid(1), preMaxBounds: null }]);
+    const rec = state.windows.get(wid(1))!;
+    assert.strictEqual(rec.maximized, true);
+    assert.strictEqual(rec.preMaxBounds, null);
+  });
+
+  it('a later unmaximize restores the SAVED rect, not the machine bounds mirror', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    const r1 = drive(s, [
+      // The mirror holds the CREATION bounds — the maximized rect.
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: WORK },
+      { type: 'MAXIMIZE_RESTORED', id: wid(1), preMaxBounds: RECT_A },
+    ]);
+    const r2 = drive(r1.state, [{ type: 'UNMAXIMIZE_REQUESTED', id: wid(1) }]);
+    assert.deepStrictEqual(setBoundsEffects(r2.effects), [{ type: 'SET_BOUNDS', id: wid(1), bounds: RECT_A }]);
+    assert.strictEqual(r2.state.windows.get(wid(1))!.maximized, false);
+  });
+
+  it('is a no-op for an unknown window', () => {
+    const { state, effects } = drive(createInitialState(), [
+      { type: 'MAXIMIZE_RESTORED', id: wid(99), preMaxBounds: RECT_A },
+    ]);
+    assert.strictEqual(state.windows.size, 0);
+    assert.deepStrictEqual(effects, []);
+  });
+
+  it('is a no-op while fsMode is non-normal (fullscreen owns the display — aa34cb50 guard)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    const r1 = drive(s, [
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: true, bounds: RECT_A },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
+    ]);
+    const r2 = drive(r1.state, [{ type: 'MAXIMIZE_RESTORED', id: wid(1), preMaxBounds: RECT_A }]);
+    const rec = r2.state.windows.get(wid(1))!;
+    assert.strictEqual(rec.maximized, false);
+    assert.strictEqual(rec.preMaxBounds, null);
+  });
+});
+
+describe('MAXIMIZE_EXITED_BY_RESIZE — a resize gesture exits maximize at press (§5 step 7B)', () => {
+  const RECT_A: Rectangle = { x: 100, y: 120, width: 640, height: 480 };
+  const SHRUNK: Rectangle = { x: 0, y: 25, width: 1272, height: 740 };
+  const WORK: Rectangle = { x: 0, y: 25, width: 1512, height: 920 };
+
+  function setBoundsEffects(effects: Effect[]): Extract<Effect, { type: 'SET_BOUNDS' }>[] {
+    return effects.filter((e): e is Extract<Effect, { type: 'SET_BOUNDS' }> => e.type === 'SET_BOUNDS');
+  }
+
+  function maximized(): AppWindowState {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    return drive(s, [
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_A },
+      { type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK },
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: WORK }, // the snap echo
+    ]).state;
+  }
+
+  it('clears the flag AND the stash, and drives NOTHING back at the OS', () => {
+    const s = maximized();
+    const { state, effects } = drive(s, [{ type: 'MAXIMIZE_EXITED_BY_RESIZE', id: wid(1) }]);
+    const rec = state.windows.get(wid(1))!;
+    assert.strictEqual(rec.maximized, false);
+    assert.strictEqual(rec.preMaxBounds, null, 'a surviving stash IS the stale-restore de-sync');
+    assert.deepStrictEqual(effects, [], 'the gesture owns the bounds — no SET_BOUNDS, no anything');
+  });
+
+  it('is a no-op when not maximized (a plain resize press must not disturb anything)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    const { state, effects } = drive(s, [{ type: 'MAXIMIZE_EXITED_BY_RESIZE', id: wid(1) }]);
+    assert.strictEqual(state.windows.get(wid(1))!.maximized, false);
+    assert.deepStrictEqual(effects, []);
+  });
+
+  it('is a no-op for an unknown window', () => {
+    const { effects } = drive(createInitialState(), [{ type: 'MAXIMIZE_EXITED_BY_RESIZE', id: wid(99) }]);
+    assert.deepStrictEqual(effects, []);
+  });
+
+  it('the NEXT maximize stashes the post-gesture rect, not the pre-gesture one (stale-stash regression)', () => {
+    const s = maximized();
+    const { state } = drive(s, [
+      { type: 'MAXIMIZE_EXITED_BY_RESIZE', id: wid(1) },
+      // The gesture's own bounds stream lands as native reports:
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: SHRUNK },
+      { type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK },
+    ]);
+    const rec = state.windows.get(wid(1))!;
+    assert.strictEqual(rec.maximized, true);
+    assert.deepStrictEqual(rec.preMaxBounds, SHRUNK, 'unmaximize returns to where the user left the window');
+  });
+
+  it('after the exit, an UNMAXIMIZE_REQUESTED is a no-op (flag already false, nothing snaps back)', () => {
+    const s = maximized();
+    const r1 = drive(s, [{ type: 'MAXIMIZE_EXITED_BY_RESIZE', id: wid(1) }]);
+    const r2 = drive(r1.state, [{ type: 'UNMAXIMIZE_REQUESTED', id: wid(1) }]);
+    assert.deepStrictEqual(setBoundsEffects(r2.effects), [], 'no stale rect to jump to');
+  });
+
+  it('reduce purity: the input record is untouched by the exit', () => {
+    const s = maximized();
+    const before = s.windows.get(wid(1))!;
+    reduce(s, { type: 'MAXIMIZE_EXITED_BY_RESIZE', id: wid(1) });
+    assert.strictEqual(before.maximized, true, 'input record not mutated');
+    assert.deepStrictEqual(before.preMaxBounds, RECT_A);
   });
 });

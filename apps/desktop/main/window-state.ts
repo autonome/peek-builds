@@ -208,10 +208,13 @@ export interface WindowRecord {
   fsMode: FsMode;
   /**
    * The window's last OS-reported outer bounds (§4.2 dim 2, §5 step 7A).
-   * Written SOLELY by the `BOUNDS_CHANGED` clause — the machine's mirror of
+   * Seeded at registration from the backend's one boundary read (§5 step 7B
+   * — see the WINDOW_REGISTERED `bounds` field doc) and from then on written
+   * SOLELY by the `BOUNDS_CHANGED` clause — the machine's mirror of
    * native reality (the backend's resize/move listeners), never a live
    * `getBounds()` question at decision time (§3: command + event, never
-   * query). Absent until the first native report. Deliberately an honest
+   * query). Absent only when registration carried no rect and no native
+   * report has arrived. Deliberately an honest
    * mirror: it also tracks the transient fullscreen rect — the restorable
    * pre-fullscreen geometry lives structurally in `fsMode.preBounds`
    * (the aa34cb50 lookalike trap), not here.
@@ -386,6 +389,18 @@ export type WindowEvent =
       alwaysOnTop?: boolean;
       /** keepLive policy declared at open time — see `WindowRecord.keepLive`. */
       keepLive?: boolean;
+      /**
+       * The window's outer bounds at registration time, read ONCE by the
+       * backend (§5 step 7B — same boundary-read pattern as
+       * `decideWindowRegistration`'s `nativeVisible`). Seeds the
+       * `WindowRecord.bounds` mirror so a window that is never natively
+       * resized/moved before its first MAXIMIZE_REQUESTED still has a real
+       * rect to stash as `preMaxBounds` (a ctor-placed window fires no
+       * `resize`/`move`, so BOUNDS_CHANGED alone leaves the mirror empty
+       * until the first gesture). On a re-registration the LIVED mirror
+       * wins; this only fills an absent one.
+       */
+      bounds?: Rectangle;
     }
   /**
    * Merge a windowRegistry payload onto an ALREADY-REGISTERED window — the
@@ -512,6 +527,32 @@ export type WindowEvent =
    * the truth — no `isMaximized()` distrust dance).
    */
   | { type: 'UNMAXIMIZE_REQUESTED'; id: WindowId }
+  /**
+   * Construction-time maximize restore (§5 step 7B): reopen-last-closed and
+   * session restore rebuild a window whose CREATION bounds already ARE the
+   * maximized rect (the saved presentation bounds), carrying the SAVED
+   * pre-maximize rect separately. Seeds `maximized` + `preMaxBounds` WITHOUT
+   * driving SET_BOUNDS — there is nothing to resize, the machine only needs
+   * to know. `preMaxBounds: null` = the save carried no restorable rect
+   * (same "no stash was possible" meaning as elsewhere). No-op for an
+   * unknown id or while `fsMode` is non-normal (the aa34cb50 guard, same as
+   * MAXIMIZE_REQUESTED).
+   */
+  | { type: 'MAXIMIZE_RESTORED'; id: WindowId; preMaxBounds: Rectangle | null }
+  /**
+   * A resize gesture invalidated maximize (§5 step 7B — the pinned "resize
+   * gesture exits maximize AT PRESS" invariant): dispatched by the band-drag
+   * press on a maximized host, and by the native-resize reconciler when the
+   * OS itself resizes a frameless host away from the work area (that gesture
+   * never enters the app's input stream). Clears `maximized` + `preMaxBounds`
+   * and drives NOTHING back at the OS — the gesture owns the window's bounds;
+   * leaving the stash set is the stale-preMaxBounds de-sync (a later toggle
+   * would "restore" to a rect the user already resized away from). Clearing
+   * at press rather than release means an abandoned drag still leaves
+   * coherent state. No-op when not maximized (so the machine's own
+   * maximize-snap SET_BOUNDS echo cannot self-trip anything here either).
+   */
+  | { type: 'MAXIMIZE_EXITED_BY_RESIZE'; id: WindowId }
   | { type: 'ESC_PRESSED'; landedId: WindowId | 'global' }
   /**
    * The renderer's answer to an `ASK_RENDERER`. `seq` echoes the epoch of the
@@ -1371,6 +1412,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
           params: event.params ?? existing.params,
           keepLive: event.keepLive ?? existing.keepLive,
           lastHttpUrl: event.lastHttpUrl ?? existing.lastHttpUrl,
+          // The lived mirror wins (BOUNDS_CHANGED reports are fresher than a
+          // re-registration's boundary read); the seed only fills absence.
+          bounds: existing.bounds ?? event.bounds,
         });
         // If the richer spec turned the CURRENT front into a satellite, hand
         // `front` to the MRU successor here rather than leave an illegal front
@@ -1406,6 +1450,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         keepLive: event.keepLive,
         visible: false,
         fsMode: { name: 'normal' },
+        // Registration-time seed of the bounds mirror (see the event field
+        // doc); BOUNDS_CHANGED remains the sole ONGOING writer.
+        bounds: event.bounds,
         maximized: false,
         preMaxBounds: null,
         focusSeq: 0,
@@ -1761,6 +1808,25 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // A null stash (maximized with no restorable rect) just clears the
       // flag — there is nowhere to restore to, same as FsMode's null stash.
       if (restore) effects.push({ type: 'SET_BOUNDS', id: event.id, bounds: restore });
+      break;
+    }
+
+    case 'MAXIMIZE_RESTORED': {
+      const rec = state.windows.get(event.id);
+      if (!rec) break;
+      // Same fullscreen guard as MAXIMIZE_REQUESTED (aa34cb50 family).
+      if (rec.fsMode.name !== 'normal') break;
+      // Seed only — the window was CONSTRUCTED at the maximized rect, so no
+      // SET_BOUNDS is driven (see the event doc).
+      patchRecord(state, event.id, { maximized: true, preMaxBounds: event.preMaxBounds });
+      break;
+    }
+
+    case 'MAXIMIZE_EXITED_BY_RESIZE': {
+      const rec = state.windows.get(event.id);
+      if (!rec || !rec.maximized) break; // not maximized — nothing to exit
+      // Clear both, drive nothing: the gesture owns the bounds (event doc).
+      patchRecord(state, event.id, { maximized: false, preMaxBounds: null });
       break;
     }
 

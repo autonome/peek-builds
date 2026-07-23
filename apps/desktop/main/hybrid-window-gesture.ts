@@ -13,10 +13,11 @@
  * This module maps that gesture to a window action against the host BaseWindow:
  *   detent 2 → toggle maximize   — routed back THROUGH the shared chrome overlay
  *              (`page:request-toggle-maximize` → overlay's `toggleMaximize`) so the
- *              overlay stays the single source of truth for maximize state +
- *              chrome reflow. The overlay owns `maximized`/`preMaxBounds` and drives
- *              the SAME toggle the navbar double-click uses; toggling bounds here
- *              directly would desync it.
+ *              overlay stays the single owner of the maximize TOGGLE decision +
+ *              chrome reflow (its renderer keeps a local `maximized` mirror for
+ *              that; the authoritative state lives on the window-state machine
+ *              record — §5 step 7B). It drives the SAME toggle the navbar
+ *              double-click uses; toggling bounds here directly would desync it.
  *
  * Fullscreen is NOT a content gesture. It is command-driven and single-owned by
  * main: the `fullscreen` command → `tile:window:fullscreen` IPC → the registry's

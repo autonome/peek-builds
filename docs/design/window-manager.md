@@ -227,14 +227,18 @@ space, never a separate synthetic range.
 ### 4.2 Geometry
 
 **2. Geometry / bounds / maximize** — TO ABSORB. *(Top divergence risk #1.)*
-*(Machinery landed inert — §5 step 7A; the three legacy stores still run until the
-step 7 cutovers delete them.)*
+*(Machinery landed inert — §5 step 7A. The hybrid store is DELETED — §5 step 7B:
+`hybrid-page-host-registry.ts` `maximized`/`preMaxBounds` are machine-record
+fields now, hybrid maximize is fully machine-owned. Still running: the
+`windowRegistry.params` `preMaxX/Y/W/H` bags + `tile-ipc.ts`'s BrowserWindow
+maximize IPC, until the remaining step 7 cutovers delete them.)*
 Today: split three ways — live Electron `getBounds()`, `windowRegistry.params`
-`preMaxX/Y/W/H`, and `hybrid-page-host-registry.ts InternalEntry.maximized` /
-`preMaxBounds`. `tile-ipc.ts tile:window:maximize` explicitly distrusts Electron's
-`isMaximized()` on frameless macOS windows.
+`preMaxX/Y/W/H`, and (deleted, step 7B) `hybrid-page-host-registry.ts
+InternalEntry.maximized` / `preMaxBounds`. `tile-ipc.ts tile:window:maximize`
+explicitly distrusts Electron's `isMaximized()` on frameless macOS windows.
 Becomes: `bounds` + `maximized` + `preMaxBounds` fields per window record, updated solely
-by the `boundsChanged` event; maximize is a reducer transition, never an OS question.
+by the `boundsChanged` event (plus a one-shot registration-time seed of `bounds`,
+step 7B); maximize is a reducer transition, never an OS question.
 
 **2b. Placement intent** — OWNED, KEEP AS IS.
 `window-placement.ts computePlacement` is already pure and genuinely well-owned. Do not
@@ -528,12 +532,45 @@ failure mode this document exists to prevent (§2).**
    listeners emit `BOUNDS_CHANGED` for every registered window; executor case
    `SET_BOUNDS` in `window-os-adapter.ts` (no headless gate — a bounds write
    neither activates nor shows, same reasoning as `SET_STACKING`).
-   **Parts B+ — caller cutovers: PENDING.** The legacy geometry authorities
-   still run: `tile-ipc.ts` maximize/unmaximize/`setBounds` IPC + the
-   `params.preMaxX/Y/W/H` bags, `hybrid-page-host-registry.ts`
-   `maximized`/`preMaxBounds`, `ipc.ts` hybrid drag/maximize `setBounds`
-   sites, and the `display-watcher.ts` reprojection (step 10). Each cutover
-   deletes its store + its R2 allowlist entries in the same commit.
+   **Part B — hybrid maximize cutover: DONE.** The
+   `hybrid-page-host-registry.ts` store (`InternalEntry.maximized` /
+   `preMaxBounds` / `setHybridMaximizeState`) is DELETED grep-zero; the
+   machine record is the one holder. `ipc.ts page:maximize`/`page:unmaximize`
+   dispatch `MAXIMIZE_REQUESTED` (work area resolved at the dispatch site,
+   carried on the event) / `UNMAXIMIZE_REQUESTED`; readers
+   (`window-presenter.ts getHybridPresentation`, the `hybrid-overlay.ts`
+   active-handoff + test bridge) read the machine record. Reducer semantics
+   added in this step (all pinned in `window-state.test.ts`, suite 206→222):
+   - `MAXIMIZE_RESTORED {id, preMaxBounds}` — the construction-time restore
+     seed (reopen/session-restore build the window AT the maximized rect, so
+     it sets flag+stash and drives NO `SET_BOUNDS`); dispatched by the
+     `ipc.ts` hybrid open path right after machine registration.
+   - `MAXIMIZE_EXITED_BY_RESIZE {id}` — the pinned "resize gesture exits
+     maximize at press" invariant as a transition: clears flag+stash, drives
+     nothing (the gesture owns the bounds). Producers: the band-drag press
+     (`exitMaximizeForResize`) and the native-resize reconciler
+     (`reconcileMaximizeAfterResize`) — both now read the machine flag; the
+     reconciler's work-area comparison stays a live-read because it RACES the
+     backend's own `resize` listener on the same native event (geometry is
+     evidence there, never authority).
+   - `WINDOW_REGISTERED` gained an optional `bounds` seed for the mirror:
+     the backend reads `getBounds()` ONCE at registration (same boundary-read
+     pattern as `nativeVisible`) and the executor carries it on the pump —
+     without it a ctor-placed window that was never natively resized/moved
+     has an empty mirror and its first `MAXIMIZE_REQUESTED` would stash
+     null. A re-registration never overwrites a lived mirror.
+   Divergences from the legacy handlers, deliberate: `page:unmaximize` with a
+   null stash now clears the flag (legacy no-oped), and the maximize stash
+   comes from the machine's mirror rather than a live `getBounds()` at
+   toggle time. R2: `ipc.ts` `setBounds` 7→5 (the maximize snap + restore
+   calls died); the `hybrid-overlay.ts` `setBounds` ×6 are all
+   overlay-follow geometry (step 9's share) and were untouched.
+   **Parts C+ — remaining caller cutovers: PENDING.** The other legacy
+   geometry authorities still run: `tile-ipc.ts` maximize/unmaximize/
+   `setBounds` IPC + the `params.preMaxX/Y/W/H` bags, `ipc.ts` hybrid
+   drag/resize `setBounds` streams + open placement, and the
+   `display-watcher.ts` reprojection (step 10). Each cutover deletes its
+   store + its R2 allowlist entries in the same commit.
 8. **Focus rivals.** Delete `izui-state.ts`'s focus surface and `restoreFocusGuard`; delete
    `BrowserWindow.getFocusedWindow()` from `entry.ts` and `tile-ipc.ts`. Reduce
    `izui-state.ts` to the session tri-state only.

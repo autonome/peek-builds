@@ -36,7 +36,6 @@ import {
   noteHybridRetryAttempt,
   getHybridRetryAttempts,
   clearHybridRetry,
-  setHybridMaximizeState,
   unregisterHybridWindow,
 } from './hybrid-page-host-registry.js';
 
@@ -478,75 +477,7 @@ describe('hybrid-page-host-registry: same-URL retry cap', () => {
   });
 });
 
-/**
- * Maximize state. This registry is the SINGLE definition of "is this host
- * maximized" — ipc.ts's `wireHybridContentEvents` used to carry a second,
- * competing one (a `hostMaximized` geometry check: bounds exactly === workArea),
- * which silently disagreed with this flag whenever the work area moved under a
- * maximized window. That check is gone; the flag decides. It had no unit
- * coverage at all while it was merely one of two opinions, which is exactly why
- * the divergence went unnoticed — so pin the contract now that it's load-bearing.
- *
- * (Native-fullscreen / pre-fullscreen-bounds tracking has moved to the
- * window-state machine — see window-state.test.ts.)
- */
-describe('hybrid registry — maximize state', () => {
-  beforeEach(() => {
-    _resetForTests();
-    nextId = 1;
-  });
-
-  it('registers unmaximized with no stashed bounds', () => {
-    const f = mk({ url: 'https://a.test/' });
-    assert.strictEqual(getHybridWindow(f.id)?.maximized, false);
-    assert.strictEqual(getHybridWindow(f.id)?.preMaxBounds, null);
-  });
-
-  it('maximize stashes preMaxBounds; unmaximize clears BOTH', () => {
-    const f = mk({ url: 'https://a.test/' });
-    const preMax = { x: 10, y: 20, width: 800, height: 600 };
-    setHybridMaximizeState(f.id, true, preMax);
-    assert.strictEqual(getHybridWindow(f.id)?.maximized, true);
-    assert.deepStrictEqual(getHybridWindow(f.id)?.preMaxBounds, preMax);
-
-    setHybridMaximizeState(f.id, false, null);
-    assert.strictEqual(getHybridWindow(f.id)?.maximized, false);
-    assert.strictEqual(getHybridWindow(f.id)?.preMaxBounds, null);
-  });
-
-  /**
-   * The invariant the resize-start exit depends on. Main clears maximize when a
-   * resize drag begins and passes preMaxBounds: null; but even a caller that
-   * wrongly passes a rect must not leave a stash behind on an unmaximized
-   * window. `maximized:false` and a non-null preMaxBounds is the stale-restore
-   * bug — a later maximize toggle would "restore" to a rect the user already
-   * resized away from. Not representable: setHybridMaximizeState nulls it.
-   */
-  it('unmaximize cannot leave a stale preMaxBounds, even if one is passed', () => {
-    const f = mk({ url: 'https://a.test/' });
-    setHybridMaximizeState(f.id, true, { x: 10, y: 20, width: 800, height: 600 });
-    setHybridMaximizeState(f.id, false, { x: 1, y: 2, width: 3, height: 4 });
-    assert.strictEqual(getHybridWindow(f.id)?.maximized, false);
-    assert.strictEqual(getHybridWindow(f.id)?.preMaxBounds, null);
-  });
-
-  it('maximize state is per-window', () => {
-    const a = mk({ url: 'https://a.test/' });
-    const b = mk({ url: 'https://b.test/' });
-    setHybridMaximizeState(a.id, true, { x: 0, y: 0, width: 400, height: 300 });
-    assert.strictEqual(getHybridWindow(a.id)?.maximized, true);
-    assert.strictEqual(getHybridWindow(b.id)?.maximized, false);
-  });
-
-  it('is a no-op for an unregistered id (window closed mid-flight)', () => {
-    assert.doesNotThrow(() => setHybridMaximizeState(9999, true, { x: 0, y: 0, width: 1, height: 1 }));
-    assert.strictEqual(getHybridWindow(9999), null);
-  });
-
-  it('teardown drops the maximize state with the entry', () => {
-    const f = mk({ url: 'https://a.test/' });
-    setHybridMaximizeState(f.id, true, { x: 10, y: 20, width: 800, height: 600 });
-    unregisterHybridWindow(f.id);
-    assert.strictEqual(getHybridWindow(f.id), null);
-  });
-});
+// Maximize-state tests moved with the state itself: `maximized`/`preMaxBounds`
+// now live on the window-state machine record (§5 step 7B) and are pinned in
+// window-state.test.ts (MAXIMIZE_REQUESTED / UNMAXIMIZE_REQUESTED /
+// MAXIMIZE_RESTORED / MAXIMIZE_EXITED_BY_RESIZE suites).

@@ -135,6 +135,14 @@ export interface RegisterWindowSpec extends WindowSpec {
 export interface BackendRegistration {
   id: WindowId;
   decision: WindowRegistrationDecision;
+  /**
+   * The window's outer bounds, read ONCE at registration (§5 step 7B) — the
+   * executor carries it on the pumped `WINDOW_REGISTERED` to seed the
+   * reducer's bounds mirror (a ctor-placed window fires no native
+   * resize/move, so `BOUNDS_CHANGED` alone leaves the mirror empty until the
+   * first gesture). `null` when the read failed (window destroyed mid-call).
+   */
+  initialBounds: Rectangle | null;
 }
 
 /**
@@ -305,7 +313,16 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.attachNativeListeners(id, osWindowId, win, kind, rendererWC);
     }
 
-    return { id, decision };
+    // One boundary read (same pattern as `nativeVisible` above) — seeds the
+    // reducer's bounds mirror via the executor's WINDOW_REGISTERED pump.
+    let initialBounds: Rectangle | null = null;
+    try {
+      if (!win.isDestroyed()) initialBounds = win.getBounds();
+    } catch {
+      /* window gone mid-registration — no rect to seed */
+    }
+
+    return { id, decision, initialBounds };
   }
 
   /**
