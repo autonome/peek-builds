@@ -229,9 +229,15 @@ space, never a separate synthetic range.
 **2. Geometry / bounds / maximize** — TO ABSORB. *(Top divergence risk #1.)*
 *(Machinery landed inert — §5 step 7A. The hybrid store is DELETED — §5 step 7B:
 `hybrid-page-host-registry.ts` `maximized`/`preMaxBounds` are machine-record
-fields now, hybrid maximize is fully machine-owned. Still running: the
-`windowRegistry.params` `preMaxX/Y/W/H` bags + `tile-ipc.ts`'s BrowserWindow
-maximize IPC, until the remaining step 7 cutovers delete them.)*
+fields now, hybrid maximize is fully machine-owned. The generic BrowserWindow
+maximize IPC is machine-owned and the `params` `preMaxX/Y/W/H`/`maximized`
+bags as in-memory authority are DELETED — §5 step 7C: `tile-ipc.ts`'s
+maximize/unmaximize/update-canvas-state dispatch machine events and the
+`isMaximized()` distrust block is gone. `preMaxX/Y/W/H` keys survive only as
+persisted-snapshot/open-options FORMAT (session save writes them from the
+presenter; reopen/restore reads them to seed `MAXIMIZE_RESTORED`) until the
+session read-model step. Still running: the non-maximize `setBounds` IPC +
+drag/resize streams, until the remaining step 7 cutovers.)*
 Today: split three ways — live Electron `getBounds()`, `windowRegistry.params`
 `preMaxX/Y/W/H`, and (deleted, step 7B) `hybrid-page-host-registry.ts
 InternalEntry.maximized` / `preMaxBounds`. `tile-ipc.ts tile:window:maximize`
@@ -565,10 +571,50 @@ failure mode this document exists to prevent (§2).**
    toggle time. R2: `ipc.ts` `setBounds` 7→5 (the maximize snap + restore
    calls died); the `hybrid-overlay.ts` `setBounds` ×6 are all
    overlay-follow geometry (step 9's share) and were untouched.
-   **Parts C+ — remaining caller cutovers: PENDING.** The other legacy
-   geometry authorities still run: `tile-ipc.ts` maximize/unmaximize/
-   `setBounds` IPC + the `params.preMaxX/Y/W/H` bags, `ipc.ts` hybrid
-   drag/resize `setBounds` streams + open placement, and the
+   **Part C — generic BrowserWindow maximize cutover: DONE.** The
+   `tile-ipc.ts` maximize path is machine-owned and the `params` bag as
+   in-memory maximize authority is deleted grep-zero (no live
+   `info.params.preMaxX/Y/Width/Height` or `params.maximized`
+   reads/writes remain):
+   - `tile:window:maximize` dispatches `MAXIMIZE_REQUESTED` (work area
+     resolved at the dispatch site, riding the event — same shape as
+     `ipc.ts page:maximize`). The manual `setBounds(workArea)` + params
+     stash died; the X11 at-work-area slack heuristic (geometry guarding
+     the re-maximize stash-overwrite trap) is subsumed by the reducer's
+     flag-idempotent `MAXIMIZE_REQUESTED` clause — geometry no longer
+     votes. The `tile:window:maximize-request` renderer notification
+     survives, its `prevWindowBounds` now the machine's pre-dispatch
+     bounds mirror (null on re-maximize, matching the unoverwritten
+     stash).
+   - `tile:window:unmaximize` dispatches `UNMAXIMIZE_REQUESTED`; the
+     `isMaximized()` distrust block (stash-else-native fallback, both
+     native `unmaximize()` calls) is deleted entirely — maximize is a
+     reducer fact, never an OS question (§3).
+   - `tile:window:update-canvas-state` (a canvas-era surface with no
+     in-tree callers left, kept as the declared-layout sync channel)
+     routes maximize facts to the machine: `maximized:true` →
+     `MAXIMIZE_RESTORED` (declared stash, no `SET_BOUNDS` — the renderer
+     owns the bounds), `maximized:false` → `MAXIMIZE_EXITED_BY_RESIZE`.
+     Position x/y/width/height still land in `info.params`
+     (session-format passthrough, step 11's read-model).
+   Deliberate semantics changes vs legacy: unmaximize of a
+   never-machine-maximized window is now a reducer no-op (the native
+   `unmaximize()` fallback for "maximized via OS frame dbl-click" died —
+   no in-app path produces that state); a maximized-then-natively-resized
+   BrowserWindow keeps its original stash (generic windows have no
+   resize-exits-maximize reconciler — that producer exists only on the
+   hybrid path). Persisted-snapshot FORMAT untouched: `session.ts` still
+   writes `preMaxX/Y/Width/Height`+`maximized` keys (from the presenter)
+   and reopen/restore still threads them as open options into the
+   `ipc.ts` `MAXIMIZE_RESTORED` seed; `ipc.ts windowParams` still carries
+   the open-time `maximized` passthrough (write-only — no in-memory
+   reader remains; dies with the session read-model cutover). R2:
+   `tile-ipc.ts` `setBounds` 5→3, `unmaximize` entry (×2) deleted —
+   allowlist 32→31 entries.
+   **Parts D+ — remaining caller cutovers: PENDING.** The other legacy
+   geometry authorities still run: `tile-ipc.ts` non-maximize `setBounds`
+   IPC, `ipc.ts` hybrid drag/resize `setBounds` streams + open placement,
+   the presenter/session maximize read-model (7D), and the
    `display-watcher.ts` reprojection (step 10). Each cutover deletes its
    store + its R2 allowlist entries in the same commit.
 8. **Focus rivals.** Delete `izui-state.ts`'s focus surface and `restoreFocusGuard`; delete

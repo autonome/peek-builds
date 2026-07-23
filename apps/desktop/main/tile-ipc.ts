@@ -131,6 +131,7 @@ import {
   dispatchWindowEvent,
   getWindowIdFor,
   getNativeWindowFor,
+  getMachineWindowRecord,
 } from './window-state-singleton.js';
 import {
   registerGlobalShortcut,
@@ -3325,15 +3326,22 @@ export function registerTileIpcHandlers(): void {
 
   // ── tile:window:maximize ──────────────────────────────────────────
   //
-  // Maximize a window. Non-toggling: no-op if already maximized. Pair
-  // with `tile:window:unmaximize` to restore. Gated by `window.manage`.
+  // Maximize a window. Non-toggling: re-maximize re-snaps without
+  // overwriting the pre-maximize stash. Pair with
+  // `tile:window:unmaximize` to restore. Gated by `window.manage`.
   //
-  // We don't rely solely on BrowserWindow.maximize() because frameless /
-  // panel-style windows on macOS don't always flip Electron's internal
-  // isMaximized flag — meaning a subsequent unmaximize() is a no-op. So
-  // we also stash pre-maximize bounds in the window's registry entry and
-  // resize via setBounds(workArea), mirroring the open-time
-  // `maximize: true` path in ipc.ts.
+  // Machine-owned since §5 step 7C (same shape as ipc.ts page:maximize,
+  // §5 step 7B): the handler resolves the display work area at the
+  // dispatch site (the reducer keeps zero value imports, so the rect
+  // rides the event) and dispatches MAXIMIZE_REQUESTED; the REDUCER
+  // stashes preMaxBounds from its own bounds mirror, flips `maximized`,
+  // and drives the snap as a SET_BOUNDS effect through the executor/
+  // backend. Explicit work-area bounds rather than a native maximize()
+  // because frameless/panel-style windows on macOS don't respond to
+  // native maximize() reliably. The old X11 at-work-area slack heuristic
+  // (guarding the re-maximize stash-overwrite trap by GEOMETRY) is
+  // subsumed by the reducer's flag-idempotent MAXIMIZE_REQUESTED clause
+  // — the machine's own flag is trusted, geometry no longer votes.
   registerTileIpc('tile:window:maximize', { mode: 'handle' }, async (event, args: {
     token: string;
     id?: number;
@@ -3363,66 +3371,41 @@ export function registerTileIpcHandlers(): void {
       // by symptom ("the window behind got maximized"), and seeing the
       // resolved id + url in production stderr makes it diagnosable
       // without re-instrumenting the user.
-      const info = getWindowInfo(win.id);
       try {
         console.log(
           `[tile:window:maximize] id=${args.id ?? 'sender-fallback'} resolved=${win.id} url=${win.webContents.getURL().slice(0, 80)}`
         );
       } catch { /* logging must never throw */ }
 
+      const machineId = getWindowIdFor(win);
+      if (machineId == null) {
+        return { success: false, error: 'Window not registered with window-state machine' };
+      }
+      // Dispatch-site reads: current bounds pick the display; the work
+      // area rides the event (the reducer imports no value modules).
       const currentBounds = win.getBounds();
-      const display = screen.getDisplayMatching(currentBounds);
-      const workArea = display.workArea;
-      // X11 WMs (openbox, mutter, kwin) commonly trim a maximized window
-      // to workArea minus a few pixels for resize-affordance borders, so
-      // a window that's effectively maximized may report e.g. 1919x1079
-      // against a 1920x1080 workArea. Strict equality here would treat
-      // the second maximize() call as "from a non-maximized state" and
-      // overwrite the pre-max snapshot with the (already-maximized)
-      // current bounds — turning the next unmaximize into a no-op and
-      // stranding the window at workArea size.
-      const WM_SLACK = 4;
-      const atWorkArea =
-        Math.abs(currentBounds.x - workArea.x) <= WM_SLACK &&
-        Math.abs(currentBounds.y - workArea.y) <= WM_SLACK &&
-        Math.abs(currentBounds.width - workArea.width) <= WM_SLACK &&
-        Math.abs(currentBounds.height - workArea.height) <= WM_SLACK;
-
-      // Only snapshot if the window isn't already filling the work area.
-      // This lets the user resize a maximized window smaller, hit
-      // `maximize` again, and have the new smaller size become the new
-      // pre-maximize snapshot — instead of being stuck with the original
-      // snapshot from the first maximize.
-      // Stored as flat primitives so they survive sanitizeParams in
-      // session save (object values are stripped).
-      if (!atWorkArea && info) {
-        info.params.preMaxX = currentBounds.x;
-        info.params.preMaxY = currentBounds.y;
-        info.params.preMaxWidth = currentBounds.width;
-        info.params.preMaxHeight = currentBounds.height;
-      }
-      // info.params.maximized is the source of truth for session save —
-      // keep it in sync here for the cmd-driven path. The renderer-driven
-      // path (dblclick) updates it via tile:window:update-canvas-state.
-      if (info) {
-        info.params.maximized = true;
-      }
-
-      win.setBounds(workArea);
-      // Targeted notification to the window's renderer — page-host (and
-      // any other renderer that owns internal layout state) subscribes
-      // via api.window.onMaximizeRequest to keep its FSM/bounds in sync
-      // without going through pubsub broadcast. Pass prevWindowBounds so
-      // the renderer captures the pre-maximize size *before* main resized
-      // — querying getBounds() from the renderer after we've already
-      // changed them would record the work-area as the "previous" size.
+      const workArea = screen.getDisplayMatching(currentBounds).workArea;
+      // Pre-dispatch record — the renderer notification below reports the
+      // pre-maximize rect, and after the dispatch the record already
+      // reflects the maximize.
+      const recBefore = getMachineWindowRecord(machineId);
+      dispatchWindowEvent({
+        type: 'MAXIMIZE_REQUESTED',
+        id: machineId,
+        workArea: { x: workArea.x, y: workArea.y, width: workArea.width, height: workArea.height },
+      });
+      // Targeted notification to the window's renderer — a renderer that
+      // owns internal layout state subscribes via
+      // api.window.onMaximizeRequest to keep its layout in sync without
+      // going through pubsub broadcast. prevWindowBounds is null on a
+      // re-maximize (the machine's stash is not overwritten — matching
+      // the reducer's idempotent MAXIMIZE_REQUESTED clause); otherwise
+      // it is the machine's bounds mirror (what the reducer stashed),
+      // falling back to the live read for a mirror the machine never saw.
       try {
         win.webContents.send('tile:window:maximize-request', {
-          prevWindowBounds: atWorkArea ? null : {
-            x: currentBounds.x,
-            y: currentBounds.y,
-            width: currentBounds.width,
-            height: currentBounds.height,
+          prevWindowBounds: recBefore?.maximized === true ? null : {
+            ...(recBefore?.bounds ?? currentBounds),
           },
         });
       } catch { /* renderer may be gone */ }
@@ -3435,11 +3418,14 @@ export function registerTileIpcHandlers(): void {
 
   // ── tile:window:unmaximize ────────────────────────────────────────
   //
-  // Restore a maximized window to its pre-maximize bounds. Reads the
-  // bounds we stashed in the window's registry entry; falls back to
-  // BrowserWindow.unmaximize() if the registry has nothing (window was
-  // maximized via dbl-click on the OS frame, etc.). Gated by
-  // `window.manage`.
+  // Restore a maximized window to its pre-maximize bounds. Machine-owned
+  // since §5 step 7C: dispatches UNMAXIMIZE_REQUESTED — the reducer
+  // restores the stashed preMaxBounds via a SET_BOUNDS effect and clears
+  // flag+stash (a null stash just clears the flag; not-maximized is a
+  // no-op). The old isMaximized() distrust block (stash-else-native
+  // fallback, native unmaximize() calls) is deleted: maximize is a
+  // reducer fact, never an OS question (§3 — the port has no query
+  // half). Gated by `window.manage`.
   registerTileIpc('tile:window:unmaximize', { mode: 'handle' }, async (event, args: {
     token: string;
     id?: number;
@@ -3461,38 +3447,18 @@ export function registerTileIpcHandlers(): void {
       if (!win) {
         return { success: false, error: 'Window not found' };
       }
-      const info = getWindowInfo(win.id);
-      const px = info?.params?.preMaxX, py = info?.params?.preMaxY;
-      const pw = info?.params?.preMaxWidth, ph = info?.params?.preMaxHeight;
-      const stashed = (typeof px === 'number' && typeof py === 'number'
-        && typeof pw === 'number' && typeof ph === 'number')
-        ? { x: px, y: py, width: pw, height: ph }
-        : undefined;
+      const machineId = getWindowIdFor(win);
+      if (machineId == null) {
+        return { success: false, error: 'Window not registered with window-state machine' };
+      }
+      const rec = getMachineWindowRecord(machineId);
       try {
         console.log(
-          `[tile:window:unmaximize] id=${args.id ?? 'sender-fallback'} resolved=${win.id} hasPreBounds=${stashed != null} isMaximized=${win.isMaximized()} url=${win.webContents.getURL().slice(0, 80)}`
+          `[tile:window:unmaximize] id=${args.id ?? 'sender-fallback'} resolved=${win.id} maximized=${rec?.maximized === true} hasPreBounds=${rec?.preMaxBounds != null} url=${win.webContents.getURL().slice(0, 80)}`
         );
       } catch { /* logging must never throw */ }
 
-      if (stashed) {
-        // Clear electron's own maximize flag too, in case it's set.
-        if (win.isMaximized()) {
-          win.unmaximize();
-        }
-        win.setBounds(stashed);
-      } else if (win.isMaximized()) {
-        win.unmaximize();
-      }
-      // Clear cmd-driven path's pre-max snapshot + maximize flag in
-      // info.params; the renderer-driven path (dblclick) clears them via
-      // tile:window:update-canvas-state.
-      if (info) {
-        delete info.params.preMaxX;
-        delete info.params.preMaxY;
-        delete info.params.preMaxWidth;
-        delete info.params.preMaxHeight;
-        info.params.maximized = false;
-      }
+      dispatchWindowEvent({ type: 'UNMAXIMIZE_REQUESTED', id: machineId });
       // Targeted notification — see comment in tile:window:maximize.
       try { win.webContents.send('tile:window:unmaximize-request'); } catch { /* renderer may be gone */ }
       return { success: true };
@@ -3504,14 +3470,13 @@ export function registerTileIpcHandlers(): void {
 
   // ── tile:window:update-canvas-state ─────────────────────────────────
   //
-  // Renderer-driven canvas page-host state sync. The page-host owns the
-  // visible webview bounds and the maximize transitions inside the
-  // fullscreen transparent window; whenever they change (resize END,
-  // drag END, doMaximize, doUnmaximize, drag-out-of-maximize), the
-  // renderer pushes the new state into `info.params` via this IPC.
-  // Session save and the close handler read from `info.params` (rather
-  // than parsing URL search params), so this is the single source of
-  // truth for canvas state at quit time.
+  // Renderer-driven window-state sync (a canvas-page-host-era surface —
+  // the canvas host is deleted and nothing in-tree calls it today, but it
+  // remains the sanctioned channel for a renderer that owns its own
+  // layout to declare position/maximize facts). Position lands in
+  // `info.params` (session-format passthrough, §5 step 11's read-model);
+  // maximize state is dispatched to the window-state machine (§5 step 7C)
+  // — the params bag no longer carries maximize authority.
   //
   // Gated by the same `window.manage` capability as maximize/unmaximize
   // — only the window's own renderer (or trusted callers with manage
@@ -3550,17 +3515,27 @@ export function registerTileIpcHandlers(): void {
       if (typeof args.y === 'number') info.params.y = args.y;
       if (typeof args.width === 'number') info.params.width = args.width;
       if (typeof args.height === 'number') info.params.height = args.height;
-      info.params.maximized = !!args.maximized;
-      if (args.maximized) {
-        if (typeof args.preMaxX === 'number') info.params.preMaxX = args.preMaxX;
-        if (typeof args.preMaxY === 'number') info.params.preMaxY = args.preMaxY;
-        if (typeof args.preMaxWidth === 'number') info.params.preMaxWidth = args.preMaxWidth;
-        if (typeof args.preMaxHeight === 'number') info.params.preMaxHeight = args.preMaxHeight;
-      } else {
-        delete info.params.preMaxX;
-        delete info.params.preMaxY;
-        delete info.params.preMaxWidth;
-        delete info.params.preMaxHeight;
+      // Maximize state goes to the window-state machine, never the params
+      // bag (§5 step 7C — the bag as in-memory maximize authority is
+      // deleted). The renderer already performed the layout itself, so:
+      //   maximized:true  → MAXIMIZE_RESTORED (seed flag + declared stash,
+      //                     drives no SET_BOUNDS — the renderer owns the
+      //                     bounds, same contract as the construction-time
+      //                     restore seed);
+      //   maximized:false → MAXIMIZE_EXITED_BY_RESIZE (clears flag+stash,
+      //                     drives nothing — reducer no-ops if not
+      //                     maximized).
+      const machineId = getWindowIdFor(win);
+      if (machineId != null) {
+        if (args.maximized) {
+          const preMax = (typeof args.preMaxX === 'number' && typeof args.preMaxY === 'number'
+            && typeof args.preMaxWidth === 'number' && typeof args.preMaxHeight === 'number')
+            ? { x: args.preMaxX, y: args.preMaxY, width: args.preMaxWidth, height: args.preMaxHeight }
+            : null;
+          dispatchWindowEvent({ type: 'MAXIMIZE_RESTORED', id: machineId, preMaxBounds: preMax });
+        } else {
+          dispatchWindowEvent({ type: 'MAXIMIZE_EXITED_BY_RESIZE', id: machineId });
+        }
       }
       return { success: true };
     } catch (err) {
