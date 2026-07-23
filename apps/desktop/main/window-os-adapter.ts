@@ -260,6 +260,14 @@ export class WindowOsAdapter {
         this.backend.setStacking(effect.id);
         return;
       }
+      case 'SET_BOUNDS': {
+        // Geometry (§5 step 7): position/size through the port. No headless
+        // gate — a bounds write neither activates, takes key, nor shows a
+        // hidden frame (same reasoning as SET_STACKING). The backend's
+        // resize/move listeners echo the settled rect as BOUNDS_CHANGED.
+        this.backend.setWindowBounds(effect.id, effect.bounds);
+        return;
+      }
       case 'FOCUS_CONTENT': {
         // Make a page-host's content WC the macOS first responder (the
         // `shouldFocusHybridContentOnHostFocus` invariant, now standard on any

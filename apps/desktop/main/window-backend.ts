@@ -21,24 +21,27 @@
  *     backend emits today: `OS_FOCUS_GAINED`, `OS_FOCUS_SETTLED_NULL`,
  *     `WINDOW_SHOWN`, `WINDOW_HIDDEN`, `WINDOW_CLOSED`,
  *     `OS_FULLSCREEN_ENTERED`, `OS_FULLSCREEN_LEFT`,
- *     `FULLSCREEN_SETTLE_TIMEOUT`, `APP_ACTIVATED`, `APP_RESIGNED`,
+ *     `FULLSCREEN_SETTLE_TIMEOUT`, `BOUNDS_CHANGED` (the §3 table's
+ *     `boundsChanged`, from the native resize/move listeners — §5 step 7),
+ *     `APP_ACTIVATED`, `APP_RESIGNED`,
  *     `ESC_PRESSED { landedId: 'global' }` (the OS Escape grab) and
  *     `ESC_RENDERER_ANSWER` (the renderer ask's round trip).
  *
  * SCOPE (§5 step 2 + the no-speculative-code rule): the surface below is
  * exactly what the executor issues today — nothing from the §3 full table is
  * pre-built. Step 4 (special window classes + registry unification) widened
- * it with the close/destroy/show/hide/alwaysOnTop command family; later
- * steps add theirs (`setStacking` at step 5, visibility events at step 6,
- * `setBounds` at step 7, `setVisibleOnAllWorkspaces`/`loadContent` with
- * their steps). Windows are still joined post-hoc via the backend's
- * migration shims (see `electron-window-backend.ts BackendMigrationShims`),
- * which sit deliberately OUTSIDE this interface.
+ * it with the close/destroy/show/hide/alwaysOnTop command family; step 5
+ * added `setStacking`, step 7 the geometry pair (`setWindowBounds` +
+ * `BOUNDS_CHANGED`); later steps add theirs
+ * (`setVisibleOnAllWorkspaces`/`loadContent` with their steps). Windows are
+ * still joined post-hoc via the backend's migration shims (see
+ * `electron-window-backend.ts BackendMigrationShims`), which sit
+ * deliberately OUTSIDE this interface.
  */
 
-import type { WindowEvent, WindowId, WindowKind, WindowClass, EscapeMode } from './window-state.js';
+import type { WindowEvent, WindowId, WindowKind, WindowClass, EscapeMode, Rectangle as Rect } from './window-state.js';
 
-/** The port's plain rect currency — the reducer's own `Rectangle` (§3: no platform `Rectangle` ever crosses). Unused by the commands below until the geometry step (§5 step 7). */
+/** The port's plain rect currency — the reducer's own `Rectangle` (§3: no platform `Rectangle` ever crosses). Carried by `setWindowBounds` and the `BOUNDS_CHANGED` emission since the geometry step (§5 step 7A). */
 export type { Rectangle as Rect } from './window-state.js';
 
 /**
@@ -247,4 +250,21 @@ export interface WindowBackend {
    * issues the raise.
    */
   setStacking(id: WindowId): void;
+
+  // ── §5 step 7 command (geometry / bounds / maximize) ─────────────────────
+
+  /**
+   * Position and size the window (the `SET_BOUNDS` effect — the §3 table's
+   * `setBounds(id, rect)`). The backend's native `resize`/`move` listeners
+   * echo the settled reality back as `BOUNDS_CHANGED`, which is the SOLE
+   * writer of the record's `bounds` mirror — command in, event out, never a
+   * `getBounds()` question.
+   *
+   * NOTE the name is deliberately NOT the platform method name `setBounds`:
+   * the R2 mechanical check (`scripts/check-r2-window-ops.mjs`) greps the
+   * platform call names verbatim, and the port is a different namespace —
+   * same convention as `setFullscreen` / `pinAlwaysOnTop`, spelled with the
+   * `showWindow`/`hideWindow` family's `Window` infix.
+   */
+  setWindowBounds(id: WindowId, rect: Rect): void;
 }

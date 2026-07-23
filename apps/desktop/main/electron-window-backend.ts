@@ -51,6 +51,7 @@ import {
   type WindowClass,
   type WindowId,
   type WindowKind,
+  type Rectangle,
 } from './window-state.js';
 import type { BackendEventSink, WindowBackend, WindowSpec } from './window-backend.js';
 
@@ -88,6 +89,15 @@ export interface NativeWindow {
   setAlwaysOnTop(flag: boolean, level?: 'normal' | 'floating'): void;
   /** Relative z-raise without activation (the `setStacking` command). On both kinds in Electron 40. */
   moveTop(): void;
+  /** Outer-bounds write (the `setWindowBounds` command — §5 step 7). On both kinds in Electron 40. */
+  setBounds(bounds: Rectangle): void;
+  /**
+   * Outer-bounds read — used ONLY inside the resize/move listeners to build
+   * the `BOUNDS_CHANGED` emission (§2.5's sanctioned pattern: the backend
+   * reads reality once, internally, and pushes it as an event; nothing else
+   * may read it).
+   */
+  getBounds(): Rectangle;
   on(event: string, listener: (...args: unknown[]) => void): unknown;
 }
 
@@ -398,6 +408,27 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.clearFullscreenSettle(id);
       this.emit({ type: 'OS_FULLSCREEN_LEFT', id });
     });
+    // Geometry mirror (§5 step 7): every native resize/move lands in the
+    // machine as BOUNDS_CHANGED — the SOLE writer of the record's `bounds`.
+    // Three native names, one translation: `resize` + the continuous `move`
+    // fire on both kinds; macOS additionally fires `moved` once at
+    // gesture-end. A duplicate emission re-merges the same rect in the
+    // reducer, structurally inert.
+    const emitBounds = (): void => {
+      // Read ONCE, inside the backend, and push — never a query across the
+      // port (§3). A window can be destroyed between the native event firing
+      // and this microtask; reading bounds then throws, and there is nothing
+      // left to report.
+      try {
+        if (win.isDestroyed()) return;
+        this.emit({ type: 'BOUNDS_CHANGED', id, bounds: win.getBounds() });
+      } catch {
+        /* window gone mid-event */
+      }
+    };
+    win.on('resize', emitBounds);
+    win.on('move', emitBounds);
+    win.on('moved', emitBounds);
     // Page-host: clicking directly into the page focuses the content WC even when
     // the host BaseWindow's own `focus` is missed (belt-and-suspenders, mirrors
     // the registry's content-WC focus fallback).
@@ -784,6 +815,22 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       if (!win.isDestroyed()) win.moveTop();
     } catch {
       /* moveTop unsupported on some platforms / torn-down window — a no-op */
+    }
+  }
+
+  /**
+   * Position and size the window (the `SET_BOUNDS` effect — §5 step 7). The
+   * SINGLE place the platform bounds write happens for BOTH kinds; the
+   * native `resize`/`move` listeners echo the settled rect back as
+   * `BOUNDS_CHANGED` (command in, event out — no `getBounds()` answer here).
+   */
+  setWindowBounds(id: WindowId, rect: Rectangle): void {
+    const win = this.windows.get(id)?.win;
+    if (!win) return;
+    try {
+      if (!win.isDestroyed()) win.setBounds(rect);
+    } catch {
+      /* torn-down window mid-command — the machine already recorded intent */
     }
   }
 

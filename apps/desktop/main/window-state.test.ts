@@ -150,6 +150,8 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       satellite,
       visible: true,
       fsMode: fsOf(fsName, fsName === 'normal' ? null : BOUNDS),
+      maximized: false,
+      preMaxBounds: null,
       focusSeq: 1,
     };
     const windows = new Map<WindowId, WindowRecord>([[wid(1), rec]]);
@@ -224,6 +226,13 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     { type: 'STACK_ORDER_IMPORTED', order: [wid(1)] },
     { type: 'STACK_ORDER_IMPORTED', order: [] },
     { type: 'STACK_ORDER_IMPORTED', order: [wid(99), wid(1), wid(1)] },
+    // §5 step 7A events (geometry / bounds / maximize).
+    { type: 'BOUNDS_CHANGED', id: wid(1), bounds: BOUNDS },
+    { type: 'BOUNDS_CHANGED', id: wid(99), bounds: BOUNDS },
+    { type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: BOUNDS },
+    { type: 'MAXIMIZE_REQUESTED', id: wid(99), workArea: BOUNDS },
+    { type: 'UNMAXIMIZE_REQUESTED', id: wid(1) },
+    { type: 'UNMAXIMIZE_REQUESTED', id: wid(99) },
   ];
 
   it('reduce is total: defined result + front invariant holds for all combinations', () => {
@@ -313,7 +322,7 @@ describe('decideEscape (steps 1-5, total)', () => {
 
   it('step 4: any non-normal fsMode -> exit-fullscreen (entering/full/leaving)', () => {
     for (const name of ['entering-fullscreen', 'fullscreen', 'leaving-fullscreen'] as FsMode['name'][]) {
-      const rec: WindowRecord = { id: wid(1), kind: 'page-host', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: true, fsMode: fsOf(name, BOUNDS), focusSeq: 1 };
+      const rec: WindowRecord = { id: wid(1), kind: 'page-host', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: true, fsMode: fsOf(name, BOUNDS), maximized: false, preMaxBounds: null, focusSeq: 1 };
       const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), frontAsserted: true, stackOrder: [wid(1)], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
       assert.deepStrictEqual(decideEscape(state), { kind: 'exit-fullscreen', id: wid(1) }, `mode ${name}`);
     }
@@ -1095,9 +1104,9 @@ describe('reduce purity', () => {
 
   it('isEligibleFront rejects satellites, hidden, and absent records', () => {
     assert.strictEqual(isEligibleFront(undefined), false);
-    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'excluded', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
-    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: false, fsMode: { name: 'normal' }, focusSeq: 0 }), false);
-    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: true, fsMode: { name: 'normal' }, focusSeq: 0 }), true);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'excluded', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, focusSeq: 0 }), false);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: false, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, focusSeq: 0 }), false);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, focusSeq: 0 }), true);
   });
 });
 
@@ -1259,7 +1268,7 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
   // event sequence can produce this (the reducer only ever assigns an eligible
   // front) — we craft it directly to exercise the guard's throw path.
   function illegalFrontState(): AppWindowState {
-    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 1 };
+    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, focusSeq: 1 };
     return { appActive: true, session: 'active', front: wid(1), frontAsserted: true, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
   }
 
@@ -1288,7 +1297,7 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
 
   it('FULLSCREEN_REQUESTED on a satellite does NOT install an illegal front (and does not throw)', () => {
     // The reducer bug the reviewer flagged: front was assigned unconditionally.
-    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, focusSeq: 1 };
+    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, focusSeq: 1 };
     const s: AppWindowState = { appActive: true, session: 'active', front: null, frontAsserted: false, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
     const { state } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
     assert.strictEqual(state.front, null, 'a satellite must never become front, even via a fullscreen request');
@@ -2483,5 +2492,234 @@ describe('stacking purity — reduce never mutates the input stackOrder', () => 
     assert.deepStrictEqual(getStackOrder(state), [wid(2), wid(1)]);
     assert.deepStrictEqual(s.stackOrder, before, 'input array unchanged');
     assert.notStrictEqual(state.stackOrder, s.stackOrder, 'result holds a fresh array, not the input reference');
+  });
+});
+
+// ── Geometry: bounds mirror + maximize transitions (§4.2 dim 2, §5 step 7A) ──
+
+describe('BOUNDS_CHANGED — the sole writer of the bounds mirror (§5 step 7A)', () => {
+  const RECT_A: Rectangle = { x: 100, y: 120, width: 640, height: 480 };
+  const RECT_B: Rectangle = { x: 5, y: 6, width: 700, height: 500 };
+
+  it('writes the record bounds; repeated reports last-write-win', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    assert.strictEqual(s.windows.get(wid(1))!.bounds, undefined, 'no bounds until the first native report');
+    const r1 = drive(s, [{ type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_A }]);
+    assert.deepStrictEqual(r1.state.windows.get(wid(1))!.bounds, RECT_A);
+    const r2 = drive(r1.state, [{ type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_B }]);
+    assert.deepStrictEqual(r2.state.windows.get(wid(1))!.bounds, RECT_B);
+  });
+
+  it('is a pure mirror: no effects, and a held front assertion survives', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    assert.strictEqual(s.frontAsserted, true, 'precondition: assertion held');
+    const { state, effects } = drive(s, [{ type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_A }]);
+    assert.deepStrictEqual(effects, [], 'a resize/move echo drives nothing back at the OS');
+    assert.strictEqual(state.frontAsserted, true, 'a bounds report never invalidates the assertion');
+    assert.strictEqual(state.front, wid(1));
+  });
+
+  it('is a no-op for an unregistered window', () => {
+    const s = createInitialState();
+    const { state, effects } = drive(s, [{ type: 'BOUNDS_CHANGED', id: wid(99), bounds: RECT_A }]);
+    assert.deepStrictEqual(effects, []);
+    assert.strictEqual(state.windows.size, 0);
+  });
+
+  it('mirrors honestly during fullscreen too (the restorable rect lives in fsMode.preBounds, not here)', () => {
+    const FS_RECT: Rectangle = { x: 0, y: 0, width: 3024, height: 1964 };
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const { state } = drive(s, [
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_A },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: true, bounds: RECT_A },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: FS_RECT },
+    ]);
+    assert.deepStrictEqual(state.windows.get(wid(1))!.bounds, FS_RECT, 'bounds mirrors native reality');
+    assert.deepStrictEqual(getWindowPreBounds(state, wid(1)), RECT_A, 'the restorable rect is the fsMode stash');
+  });
+
+  it('does NOT clear maximized (our own SET_BOUNDS echo must not self-unmaximize)', () => {
+    const WORK: Rectangle = { x: 0, y: 25, width: 1512, height: 920 };
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const { state } = drive(s, [
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_A },
+      { type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK },
+      // The backend echoes the snap we just drove:
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: WORK },
+    ]);
+    const rec = state.windows.get(wid(1))!;
+    assert.strictEqual(rec.maximized, true);
+    assert.deepStrictEqual(rec.preMaxBounds, RECT_A);
+    assert.deepStrictEqual(rec.bounds, WORK);
+  });
+});
+
+describe('maximize / unmaximize — machine transitions, never an isMaximized() question (§5 step 7A)', () => {
+  const RECT_A: Rectangle = { x: 100, y: 120, width: 640, height: 480 };
+  const WORK: Rectangle = { x: 0, y: 25, width: 1512, height: 920 };
+
+  function setBoundsEffects(effects: Effect[]): Extract<Effect, { type: 'SET_BOUNDS' }>[] {
+    return effects.filter((e): e is Extract<Effect, { type: 'SET_BOUNDS' }> => e.type === 'SET_BOUNDS');
+  }
+
+  it('registration starts unmaximized with no stash', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const rec = s.windows.get(wid(1))!;
+    assert.strictEqual(rec.maximized, false);
+    assert.strictEqual(rec.preMaxBounds, null);
+  });
+
+  it('maximize stashes the reported bounds, flips the flag, and drives SET_BOUNDS(workArea)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const { state, effects } = drive(s, [
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_A },
+      { type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK },
+    ]);
+    const rec = state.windows.get(wid(1))!;
+    assert.strictEqual(rec.maximized, true);
+    assert.deepStrictEqual(rec.preMaxBounds, RECT_A);
+    assert.deepStrictEqual(setBoundsEffects(effects), [{ type: 'SET_BOUNDS', id: wid(1), bounds: WORK }]);
+  });
+
+  it('maximize with no reported bounds stashes null ("no stash was possible", the FsMode.preBounds twin)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const { state, effects } = drive(s, [{ type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK }]);
+    const rec = state.windows.get(wid(1))!;
+    assert.strictEqual(rec.maximized, true);
+    assert.strictEqual(rec.preMaxBounds, null);
+    assert.deepStrictEqual(setBoundsEffects(effects), [{ type: 'SET_BOUNDS', id: wid(1), bounds: WORK }]);
+  });
+
+  it('re-maximize re-snaps but NEVER overwrites the stash (the stale-snapshot unmaximize-no-op trap)', () => {
+    const SHRUNK: Rectangle = { x: 50, y: 50, width: 300, height: 200 };
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const r1 = drive(s, [
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_A },
+      { type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK },
+      // The user resized the maximized window smaller; the mirror tracked it:
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: SHRUNK },
+    ]);
+    const r2 = drive(r1.state, [{ type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK }]);
+    const rec = r2.state.windows.get(wid(1))!;
+    assert.strictEqual(rec.maximized, true);
+    assert.deepStrictEqual(rec.preMaxBounds, RECT_A, 'the original pre-max rect survives a re-maximize');
+    assert.deepStrictEqual(setBoundsEffects(r2.effects), [{ type: 'SET_BOUNDS', id: wid(1), bounds: WORK }], 're-snap is re-driven');
+  });
+
+  it('unmaximize restores the stash: flag off, stash cleared, SET_BOUNDS(preMaxBounds)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const r1 = drive(s, [
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_A },
+      { type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK },
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: WORK }, // the snap echo
+    ]);
+    const r2 = drive(r1.state, [{ type: 'UNMAXIMIZE_REQUESTED', id: wid(1) }]);
+    const rec = r2.state.windows.get(wid(1))!;
+    assert.strictEqual(rec.maximized, false);
+    assert.strictEqual(rec.preMaxBounds, null);
+    assert.deepStrictEqual(setBoundsEffects(r2.effects), [{ type: 'SET_BOUNDS', id: wid(1), bounds: RECT_A }], 'round-trips the pre-max rect');
+  });
+
+  it('unmaximize when not maximized is a no-op (trusted flag — no distrust dance)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const { state, effects } = drive(s, [{ type: 'UNMAXIMIZE_REQUESTED', id: wid(1) }]);
+    assert.strictEqual(state.windows.get(wid(1))!.maximized, false);
+    assert.deepStrictEqual(setBoundsEffects(effects), []);
+  });
+
+  it('unmaximize with a null stash clears the flag and restores nothing', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const r1 = drive(s, [{ type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK }]); // no bounds ever reported
+    const r2 = drive(r1.state, [{ type: 'UNMAXIMIZE_REQUESTED', id: wid(1) }]);
+    const rec = r2.state.windows.get(wid(1))!;
+    assert.strictEqual(rec.maximized, false);
+    assert.strictEqual(rec.preMaxBounds, null);
+    assert.deepStrictEqual(setBoundsEffects(r2.effects), [], 'nowhere to restore to');
+  });
+
+  it('maximize/unmaximize target unknown windows as no-ops', () => {
+    const s = createInitialState();
+    const r1 = drive(s, [{ type: 'MAXIMIZE_REQUESTED', id: wid(99), workArea: WORK }]);
+    assert.deepStrictEqual(setBoundsEffects(r1.effects), []);
+    const r2 = drive(s, [{ type: 'UNMAXIMIZE_REQUESTED', id: wid(99) }]);
+    assert.deepStrictEqual(setBoundsEffects(r2.effects), []);
+  });
+
+  it('maximize while ANY non-normal fsMode is a no-op (fullscreen owns the display)', () => {
+    for (const [enterEvents, label] of [
+      [[{ type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: true, bounds: RECT_A }], 'entering-fullscreen'],
+      [[
+        { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: true, bounds: RECT_A },
+        { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
+      ], 'fullscreen'],
+      [[
+        { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: true, bounds: RECT_A },
+        { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
+        { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: false },
+      ], 'leaving-fullscreen'],
+    ] as [WindowEvent[], string][]) {
+      let s = createInitialState();
+      s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+      const r1 = drive(s, enterEvents);
+      const r2 = drive(r1.state, [{ type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK }]);
+      const rec = r2.state.windows.get(wid(1))!;
+      assert.strictEqual(rec.maximized, false, `${label}: flag untouched`);
+      assert.strictEqual(rec.preMaxBounds, null, `${label}: no stash recorded`);
+      assert.deepStrictEqual(setBoundsEffects(r2.effects), [], `${label}: no SET_BOUNDS`);
+    }
+  });
+
+  it('a maximized flag survives a fullscreen round trip; unmaximize afterwards still restores', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const r1 = drive(s, [
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_A },
+      { type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK },
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: WORK },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: true, bounds: WORK },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
+      { type: 'FULLSCREEN_REQUESTED', id: wid(1), desired: false },
+      { type: 'OS_FULLSCREEN_LEFT', id: wid(1) },
+    ]);
+    assert.strictEqual(r1.state.windows.get(wid(1))!.maximized, true, 'fullscreen is a display mode, not an unmaximize');
+    const r2 = drive(r1.state, [{ type: 'UNMAXIMIZE_REQUESTED', id: wid(1) }]);
+    assert.strictEqual(r2.state.windows.get(wid(1))!.maximized, false);
+    assert.deepStrictEqual(setBoundsEffects(r2.effects), [{ type: 'SET_BOUNDS', id: wid(1), bounds: RECT_A }]);
+  });
+
+  it('the richer re-registration merge preserves bounds + maximize state (lived state, never reset)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const r1 = drive(s, [
+      { type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_A },
+      { type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK },
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'content', satellite: false },
+    ]);
+    const rec = r1.state.windows.get(wid(1))!;
+    assert.deepStrictEqual(rec.bounds, RECT_A);
+    assert.strictEqual(rec.maximized, true);
+    assert.deepStrictEqual(rec.preMaxBounds, RECT_A);
+  });
+
+  it('reduce purity: the input record is untouched by a maximize', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const r1 = drive(s, [{ type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_A }]);
+    const before = r1.state.windows.get(wid(1))!;
+    reduce(r1.state, { type: 'MAXIMIZE_REQUESTED', id: wid(1), workArea: WORK });
+    assert.strictEqual(before.maximized, false, 'input record not mutated');
+    assert.strictEqual(before.preMaxBounds, null);
   });
 });

@@ -227,6 +227,8 @@ space, never a separate synthetic range.
 ### 4.2 Geometry
 
 **2. Geometry / bounds / maximize** — TO ABSORB. *(Top divergence risk #1.)*
+*(Machinery landed inert — §5 step 7A; the three legacy stores still run until the
+step 7 cutovers delete them.)*
 Today: split three ways — live Electron `getBounds()`, `windowRegistry.params`
 `preMaxX/Y/W/H`, and `hybrid-page-host-registry.ts InternalEntry.maximized` /
 `preMaxBounds`. `tile-ipc.ts tile:window:maximize` explicitly distrusts Electron's
@@ -235,8 +237,10 @@ Becomes: `bounds` + `maximized` + `preMaxBounds` fields per window record, updat
 by the `boundsChanged` event; maximize is a reducer transition, never an OS question.
 
 **2b. Placement intent** — OWNED, KEEP AS IS.
-`window-placement.ts computePlacement` is already pure and genuinely well-owned. It becomes
-a pure helper the reducer calls. Do not rewrite it.
+`window-placement.ts computePlacement` is already pure and genuinely well-owned. Do not
+rewrite it. *(Resolution, §5 step 7A: it does NOT become "a helper the reducer calls" —
+the reducer's zero-value-imports invariant wins. Placement rects are computed at the
+dispatch site and carried on the event payload; `computePlacement` stays where it is.)*
 
 **7. Multi-display** — TO ABSORB (partial).
 Today: `display-watcher.ts` is well-structured, but it reprojects bounds by calling
@@ -498,6 +502,38 @@ failure mode this document exists to prevent (§2).**
    hide-family R2 entry shrank 3→2 calls accordingly.
 7. **Geometry / maximize.** Collapse the three stores into one; delete the `isMaximized()`
    distrust workaround along with the need for it.
+   **Part A — machinery: DONE (inert — no caller cutover, R2 allowlist unchanged).**
+   The reducer record carries `bounds` + `maximized` + `preMaxBounds`
+   (`window-state.ts WindowRecord`). Inbound `BOUNDS_CHANGED` is the SOLE
+   writer of `bounds` (an honest mirror of native reality — the restorable
+   pre-fullscreen rect stays structurally in `fsMode.preBounds`, the aa34cb50
+   trap). Maximize/unmaximize are reducer transitions (`MAXIMIZE_REQUESTED` /
+   `UNMAXIMIZE_REQUESTED`), never an OS `isMaximized()` question: maximize
+   stashes `preMaxBounds` from the machine's own bounds mirror and emits the
+   new `SET_BOUNDS` effect with the display work area; a re-maximize re-snaps
+   WITHOUT overwriting the stash (the stale-snapshot trap tile-ipc.ts's X11
+   heuristic guards); maximize is a no-op while `fsMode` is non-normal
+   (fullscreen owns the display); unmaximize restores the stash and clears it.
+   **§4.2 dim 2b resolution:** the dim-2b phrasing "computePlacement becomes a
+   pure helper the reducer calls" is resolved in favor of the reducer's
+   ZERO-value-imports invariant (the unit gate compiles `window-state.ts`
+   standalone): `window-placement.ts computePlacement` stays where it is,
+   unrewritten, and any rect the reducer needs (the maximize work area, future
+   display reprojection) is computed at the DISPATCH SITE and carried on the
+   event payload — the reducer never imports it. Port command
+   `window-backend.ts setWindowBounds(id, rect)` (deliberately NOT the
+   platform name `setBounds` — the R2 check greps platform call names
+   verbatim, same convention as `setFullscreen`/`pinAlwaysOnTop`), executed in
+   `electron-window-backend.ts`, whose native `resize`/`move`/`moved`
+   listeners emit `BOUNDS_CHANGED` for every registered window; executor case
+   `SET_BOUNDS` in `window-os-adapter.ts` (no headless gate — a bounds write
+   neither activates nor shows, same reasoning as `SET_STACKING`).
+   **Parts B+ — caller cutovers: PENDING.** The legacy geometry authorities
+   still run: `tile-ipc.ts` maximize/unmaximize/`setBounds` IPC + the
+   `params.preMaxX/Y/W/H` bags, `hybrid-page-host-registry.ts`
+   `maximized`/`preMaxBounds`, `ipc.ts` hybrid drag/maximize `setBounds`
+   sites, and the `display-watcher.ts` reprojection (step 10). Each cutover
+   deletes its store + its R2 allowlist entries in the same commit.
 8. **Focus rivals.** Delete `izui-state.ts`'s focus surface and `restoreFocusGuard`; delete
    `BrowserWindow.getFocusedWindow()` from `entry.ts` and `tile-ipc.ts`. Reduce
    `izui-state.ts` to the session tri-state only.

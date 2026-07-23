@@ -206,6 +206,36 @@ export interface WindowRecord {
    */
   orderable: boolean;
   fsMode: FsMode;
+  /**
+   * The window's last OS-reported outer bounds (§4.2 dim 2, §5 step 7A).
+   * Written SOLELY by the `BOUNDS_CHANGED` clause — the machine's mirror of
+   * native reality (the backend's resize/move listeners), never a live
+   * `getBounds()` question at decision time (§3: command + event, never
+   * query). Absent until the first native report. Deliberately an honest
+   * mirror: it also tracks the transient fullscreen rect — the restorable
+   * pre-fullscreen geometry lives structurally in `fsMode.preBounds`
+   * (the aa34cb50 lookalike trap), not here.
+   */
+  bounds?: Rectangle;
+  /**
+   * Maximized is a MACHINE-owned flag, set/cleared ONLY by the
+   * MAXIMIZE_REQUESTED / UNMAXIMIZE_REQUESTED transitions — never an OS
+   * `isMaximized()` question (§4.2 dim 2): frameless / panel-style macOS
+   * windows don't reliably flip Electron's native maximize flag (the
+   * tile-ipc.ts + hybrid-page-host-registry distrust workarounds this
+   * absorbs), so the app's own intent is the single truth. "Maximize" here
+   * is the app's work-area snap (a SET_BOUNDS effect), not the platform
+   * `maximize()` call.
+   */
+  maximized: boolean;
+  /**
+   * The outer bounds the window had immediately before it was maximized —
+   * the rect UNMAXIMIZE_REQUESTED restores. Non-null ONLY while `maximized`
+   * (the two transitions maintain the pairing); `null` while maximized means
+   * "no stash was possible" (no bounds had ever been reported), mirroring
+   * `FsMode.preBounds: null`.
+   */
+  preMaxBounds: Rectangle | null;
   /** MRU counter (absorbs `focus-order.ts`). Higher = more recently focused. */
   focusSeq: number;
   /** Absorbs `lastContentWindowId` (devtools target). */
@@ -450,6 +480,38 @@ export type WindowEvent =
   | { type: 'OS_FULLSCREEN_ENTERED'; id: WindowId }
   | { type: 'OS_FULLSCREEN_LEFT'; id: WindowId }
   | { type: 'FULLSCREEN_SETTLE_TIMEOUT'; id: WindowId }
+  /**
+   * The backend's native resize/move report (§4.2 dim 2, §5 step 7A — the
+   * port's `boundsChanged` event): the SOLE writer of `WindowRecord.bounds`.
+   * Emitted by the backend's `'resize'`/`'move'`/`'moved'` listeners for
+   * every registered window; a duplicate report (macOS fires both `move` and
+   * `moved` for one gesture) re-merges the same rect, structurally inert.
+   */
+  | { type: 'BOUNDS_CHANGED'; id: WindowId; bounds: Rectangle }
+  /**
+   * App code wants this window maximized — snapped to its display's work
+   * area (§4.2 dim 2, §5 step 7A). A reducer TRANSITION, never an OS
+   * question: the reducer stashes `preMaxBounds`, flips `maximized`, and
+   * emits SET_BOUNDS(workArea). `workArea` is carried ON THE EVENT by the
+   * dispatch site (which may compute it via `window-placement.ts
+   * computePlacement` / the display work-area) because this reducer keeps
+   * ZERO value imports — see the §4.2 dim 2b resolution note in the design
+   * doc. Already-maximized: re-snap only (SET_BOUNDS re-emitted, stash
+   * untouched — overwriting it with already-maximized bounds is the classic
+   * trap that turns the next unmaximize into a no-op, cf the tile-ipc.ts
+   * X11 near-work-area heuristic). No-op while `fsMode` is not `normal`:
+   * fullscreen owns the display, and a maximize recorded mid-fullscreen
+   * would stash the fullscreen rect as `preMaxBounds` (the aa34cb50
+   * lookalike trap, maximize edition).
+   */
+  | { type: 'MAXIMIZE_REQUESTED'; id: WindowId; workArea: Rectangle }
+  /**
+   * App code wants this window restored from maximized (§5 step 7A): clears
+   * `maximized`, emits SET_BOUNDS(preMaxBounds) when a stash exists, and
+   * clears the stash. No-op when not maximized (the machine's own flag is
+   * the truth — no `isMaximized()` distrust dance).
+   */
+  | { type: 'UNMAXIMIZE_REQUESTED'; id: WindowId }
   | { type: 'ESC_PRESSED'; landedId: WindowId | 'global' }
   /**
    * The renderer's answer to an `ASK_RENDERER`. `seq` echoes the epoch of the
@@ -530,6 +592,13 @@ export type Effect =
   | { type: 'SET_ALWAYS_ON_TOP'; id: WindowId; on: boolean }
   /** Quit teardown: destroy every registered page-host guest WC (peek d1cf0b9a). */
   | { type: 'DESTROY_ALL_GUESTS' }
+  /**
+   * Position and size the window (§4.2 dim 2, §5 step 7A) — the §3 table's
+   * `setBounds(id, rect)` command, executed by the port's `setWindowBounds`.
+   * Emitted by the maximize/unmaximize transitions today; the geometry
+   * cutovers (7B+) route the legacy `setBounds` call sites through it.
+   */
+  | { type: 'SET_BOUNDS'; id: WindowId; bounds: Rectangle }
   /** ESC consumed by leaving fullscreen (also drives the leaving fsMode edge + SET_FULLSCREEN in the same reduce). */
   | { type: 'EXIT_FULLSCREEN'; id: WindowId }
   /** ESC passed straight to the page (escapeMode 'ignore'). */
@@ -1337,6 +1406,8 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         keepLive: event.keepLive,
         visible: false,
         fsMode: { name: 'normal' },
+        maximized: false,
+        preMaxBounds: null,
         focusSeq: 0,
         lastHttpUrl: event.lastHttpUrl,
       };
@@ -1642,6 +1713,54 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       if (rec && (rec.fsMode.name === 'entering-fullscreen' || rec.fsMode.name === 'leaving-fullscreen')) {
         effects.push({ type: 'RECONCILE_FULLSCREEN', id: event.id });
       }
+      break;
+    }
+
+    // ── Geometry (§4.2 dim 2, §5 step 7A) ────────────────────────────────────
+
+    case 'BOUNDS_CHANGED': {
+      const rec = state.windows.get(event.id);
+      if (!rec) break; // unregistered window — nothing to mirror onto
+      // The sole writer of `bounds` (see WindowRecord.bounds). Mirror only:
+      // no effects, no front/assertion change — a resize/move never moves OS
+      // focus, and echoing anything back at the OS here would loop (our own
+      // SET_BOUNDS lands right back as this event).
+      patchRecord(state, event.id, { bounds: event.bounds });
+      break;
+    }
+
+    case 'MAXIMIZE_REQUESTED': {
+      const rec = state.windows.get(event.id);
+      if (!rec) break;
+      // Fullscreen owns the display: a maximize mid-fullscreen (any
+      // non-normal mode) is a no-op — recording it would stash the
+      // fullscreen rect as `preMaxBounds` (the aa34cb50 lookalike trap).
+      if (rec.fsMode.name !== 'normal') break;
+      if (rec.maximized) {
+        // Re-snap only. The stash is NOT overwritten: the machine's flag is
+        // trusted (no isMaximized() distrust), and overwriting the stash
+        // with already-maximized bounds turns the next unmaximize into a
+        // no-op (the exact trap tile-ipc.ts's X11 heuristic guards against).
+        effects.push({ type: 'SET_BOUNDS', id: event.id, bounds: event.workArea });
+        break;
+      }
+      // Stash the pre-maximize rect from the machine's own bounds mirror —
+      // never a live getBounds() read. `null` when no bounds were ever
+      // reported ("no stash was possible", mirroring FsMode.preBounds).
+      patchRecord(state, event.id, { maximized: true, preMaxBounds: rec.bounds ?? null });
+      effects.push({ type: 'SET_BOUNDS', id: event.id, bounds: event.workArea });
+      break;
+    }
+
+    case 'UNMAXIMIZE_REQUESTED': {
+      const rec = state.windows.get(event.id);
+      if (!rec) break;
+      if (!rec.maximized) break; // not maximized — nothing to restore
+      const restore = rec.preMaxBounds;
+      patchRecord(state, event.id, { maximized: false, preMaxBounds: null });
+      // A null stash (maximized with no restorable rect) just clears the
+      // flag — there is nowhere to restore to, same as FsMode's null stash.
+      if (restore) effects.push({ type: 'SET_BOUNDS', id: event.id, bounds: restore });
       break;
     }
 
