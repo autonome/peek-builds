@@ -453,6 +453,36 @@ failure mode this document exists to prevent (§2).**
    multi-tile focus ping-pong at frontmost restore.
 6. **Visibility.** Make `visible` authoritative; delete the hand-dispatch of
    `WINDOW_HIDDEN` and the `isVisible()` polling in `maybeHideApp`.
+   **Part A — per-window show/hide through the machine: DONE** (commits 0996ba38,
+   765a6215, baa51bda, d66a6d51).
+   - **6A-1** (0996ba38): the reducer owns the keepLive close-request decision —
+     `WINDOW_CLOSE_OR_HIDE_REQUESTED` branches on the record's first-class
+     `keepLive` (hide vs the resolved close); no caller decides anymore.
+   - **6A-2** (765a6215): the show path behind the port — `showWindow` in the
+     backend owns the whole policy (headless opacity-0-before-show, activate vs
+     `showInactive`, the quick-view NSPanel non-activation mask) and echoes
+     `WINDOW_SHOWN` with the unmasked intent; the `windows.ts` show seams
+     (`showWindowHeadlessSafe`, `showHybridHost`) are thin dispatchers.
+   - **6A-3** (baa51bda): keepLive producers — `closeOrHideWindow` (both window
+     kinds) and the tile-launcher `close` intercept dispatch the intent; the
+     `windows.ts` hand-dispatched `WINDOW_HIDDEN` died.
+   - **6A-4** (d66a6d51): the last per-window sites — `tile-ipc.ts`
+     `tile:window:show/hide` + `show-self`/`hide-self`, `ipc.ts` hybrid and
+     BrowserWindow key/url-reuse shows, and `windows.ts modWindow` 'hide' all
+     dispatch `WINDOW_SHOW_REQUESTED` / the new `WINDOW_HIDE_REQUESTED` (the
+     plain-hide twin of the show intent). The reuse paths' hand-dispatched
+     `WINDOW_SHOWN` mirrors died with them — the backend's echo is the source.
+     Remaining hand-dispatches of `WINDOW_SHOWN`/`WINDOW_HIDDEN` outside the
+     backend + the executor's registration pump: the `hybrid-overlay.ts` test
+     bridge's synthetic events for fake hosts (step 9) and `ipc.ts`'s fresh-open
+     visible-intent seed (headless opens force ctor `show:false`, so no native
+     or backend event ever fires there; dies when open lands behind the port).
+   **Part B — app-level derivation: REMAINING.** `maybeHideApp` /
+   `getVisibleWindowCount` (`windows.ts`) still poll `isVisible()` to decide the
+   app-level `app.hide()`, and `applyDockPreference`'s `app.dock.hide/show` pair
+   is imperative — derive "no visible windows → hide app / dock" from reducer
+   visibility instead. The three surviving `windows.ts` hide-family R2 entries
+   are exactly these app-level calls.
 7. **Geometry / maximize.** Collapse the three stores into one; delete the `isMaximized()`
    distrust workaround along with the need for it.
 8. **Focus rivals.** Delete `izui-state.ts`'s focus surface and `restoreFocusGuard`; delete
@@ -488,7 +518,7 @@ routes `session.ts` and `hybrid-overlay.ts` through the machine and deletes the 
 yet absorbed still run on their old owners.
 
 **`apps/desktop/main/window-state.ts`** — the owner, as R1 describes it, for the dimensions
-it covers. Pure, zero imports, 171 unit tests in `window-state.test.ts`, keyed by
+it covers. Pure, zero imports, 187 unit tests in `window-state.test.ts`, keyed by
 `WindowId`. It owns: `front` (intent), `frontAsserted` (the claim that the OS matches that
 intent), the switcher state, the Escape decision (`applyEscape`), fullscreen mode,
 satellite classification (`isSatelliteRegistration`), window classes
@@ -526,8 +556,10 @@ machine + adapter pair and exposes the numeric-id seam (`getWindowIdFor()` /
 through (§3 scope decision).
 
 **The R2 check is live** — `scripts/check-r2-window-ops.mjs`, in the
-`test:desktop:electron` chain: 38 allowlist entries covering 95 legacy window-op call
-sites, each tagged with the §5 step that deletes it. The sole exempt file is
+`test:desktop:electron` chain: 33 allowlist entries covering 80 legacy window-op call
+sites (38/95 after step 5; step 6 part A deleted the tile-ipc show/hide, ipc.ts show,
+and per-window windows.ts/tile-launcher hide entries), each tagged with the §5 step
+that deletes it. The sole exempt file is
 `apps/desktop/main/electron-window-backend.ts` (swapped from the executor when the port
 landed). The entry count is the migration's progress bar; it only goes down.
 
