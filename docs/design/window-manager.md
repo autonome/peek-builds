@@ -453,8 +453,9 @@ failure mode this document exists to prevent (§2).**
    multi-tile focus ping-pong at frontmost restore.
 6. **Visibility.** Make `visible` authoritative; delete the hand-dispatch of
    `WINDOW_HIDDEN` and the `isVisible()` polling in `maybeHideApp`.
-   **Part A — per-window show/hide through the machine: DONE** (commits 0996ba38,
-   765a6215, baa51bda, d66a6d51).
+   **Part A — per-window show/hide through the machine: DONE, gate green** (commits
+   0996ba38, 765a6215, baa51bda, d66a6d51; full gate green after the hide-event-lag
+   fix bb9d7226 and test-wait fix 11d53bc6).
    - **6A-1** (0996ba38): the reducer owns the keepLive close-request decision —
      `WINDOW_CLOSE_OR_HIDE_REQUESTED` branches on the record's first-class
      `keepLive` (hide vs the resolved close); no caller decides anymore.
