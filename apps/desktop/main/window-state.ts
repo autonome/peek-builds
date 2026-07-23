@@ -67,6 +67,7 @@ export type WindowKind = 'page-host' /* BaseWindow + WebContentsView */ | 'brows
  *   - `hud`          always-on-top non-focusable heads-up display
  *   - `background`   the hidden core background renderer
  *   - `bridge`       hidden chrome-extension bridge windows
+ *   - `offscreen`    hidden chrome.offscreen polyfill document windows
  *   - `extension-ui` chrome-extension popup/options UI windows
  *   - `test-fixture` the Playwright test-fixture renderer
  *   - `devtools`     a detached devtools window
@@ -79,6 +80,7 @@ export type WindowClass =
   | 'hud'
   | 'background'
   | 'bridge'
+  | 'offscreen'
   | 'extension-ui'
   | 'test-fixture'
   | 'devtools';
@@ -97,7 +99,7 @@ export type WindowClass =
  *                the ordered stack never contains them, and `SET_STACKING`
  *                (a same-level relative raise) could not express them anyway.
  *   - `excluded` never on the user-visible stack in an orderable sense:
- *                background / bridge / test-fixture / devtools plus any other
+ *                background / bridge / offscreen / test-fixture / devtools plus any other
  *                satellite (modal dialogs, focusable:false surfaces) — their
  *                z-relationship is OS/parent-managed, not machine-ordered.
  */
@@ -149,7 +151,7 @@ export interface WindowRecord {
    * REFERENCE and legacy consumers still mutate it in place
    * (`params.currentUrl`, `params.x/width`, …); the reducer itself never
    * reads inside it. Both fields are absent for windows that never carried a
-   * registry payload (tile windows, bridge/background/test-fixture/devtools),
+   * registry payload (tile windows, bridge/offscreen/background/test-fixture/devtools),
    * which is exactly how the numeric-id seam (`main.ts getWindowInfo` /
    * `getAllWindows`) preserves the old registry's membership.
    */
@@ -654,7 +656,7 @@ export function escUnhandledPolicy(sessionState: string, role: string): 'open-sw
  * true); callers normalize before passing.
  *
  * Extended with the window CLASS (§5 step 4, rather than duplicating the rule
- * elsewhere): the infrastructure classes — hud, background, bridge,
+ * elsewhere): the infrastructure classes — hud, background, bridge, offscreen,
  * test-fixture, devtools — are structurally front-ineligible regardless of
  * role/focusable. `extension-ui` is deliberately NOT here: an extension popup
  * is a real user-facing window the user works in, so it stays front-eligible.
@@ -663,6 +665,7 @@ const SATELLITE_CLASSES: ReadonlySet<WindowClass> = new Set<WindowClass>([
   'hud',
   'background',
   'bridge',
+  'offscreen',
   'test-fixture',
   'devtools',
 ]);
@@ -681,7 +684,7 @@ export function isSatelliteRegistration(
 /**
  * classifyWindowRegistration — the SINGLE owner of the "which class is an
  * ordinary window-open?" rule (§4.3 dim 8b). The special infrastructure
- * classes (background / bridge / extension-ui / test-fixture / devtools) are
+ * classes (background / bridge / offscreen / extension-ui / test-fixture / devtools) are
  * never inferred — their glue modules declare them explicitly at registration.
  *
  * The `hud` arm is the DECLARED replacement for the deleted sniffing
@@ -714,8 +717,8 @@ const PINNED_CLASSES: ReadonlySet<WindowClass> = new Set<WindowClass>(['hud', 'o
  * flag (both already settled by `classifyWindowRegistration` /
  * `isSatelliteRegistration`):
  *   - hud / overlay / palette          -> 'pinned'   (above the stack, via the pin)
- *   - any other satellite              -> 'excluded' (background/bridge/test-fixture/
- *                                                     devtools, modals, focusable:false
+ *   - any other satellite              -> 'excluded' (background/bridge/offscreen/
+ *                                                     test-fixture/devtools, modals, focusable:false
  *                                                     — OS/parent-managed z-relationship)
  *   - the rest                         -> 'stacked'  (primary, quick-view, extension-ui)
  * Note `stacked` coincides with front-eligibility's non-satellite half by

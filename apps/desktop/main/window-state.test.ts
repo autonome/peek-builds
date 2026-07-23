@@ -1651,9 +1651,14 @@ describe('classifyWindowRegistration — single owner of the ordinary-window cla
 
 describe('isSatelliteRegistration — class extension (§5 step 4)', () => {
   it('infrastructure classes are satellites regardless of role/focusable', () => {
-    for (const cls of ['hud', 'background', 'bridge', 'test-fixture', 'devtools'] as const) {
+    for (const cls of ['hud', 'background', 'bridge', 'offscreen', 'test-fixture', 'devtools'] as const) {
       assert.strictEqual(isSatelliteRegistration('content', { windowClass: cls }), true, cls);
     }
+  });
+
+  it('offscreen (chrome.offscreen polyfill documents) is an infrastructure satellite exactly like bridge', () => {
+    assert.strictEqual(isSatelliteRegistration('utility', { windowClass: 'offscreen' }), true);
+    assert.strictEqual(deriveStackingLevel('offscreen', true), 'excluded');
   });
 
   it('extension-ui and the ordinary classes stay front-eligible under the class clause', () => {
@@ -2004,6 +2009,7 @@ describe('deriveStackingLevel — single owner of stack participation (§4.3 dim
   it('the infrastructure satellite classes are excluded from the ordered stack', () => {
     assert.strictEqual(deriveStackingLevel('background', true), 'excluded');
     assert.strictEqual(deriveStackingLevel('bridge', true), 'excluded');
+    assert.strictEqual(deriveStackingLevel('offscreen', true), 'excluded');
     assert.strictEqual(deriveStackingLevel('test-fixture', true), 'excluded');
     assert.strictEqual(deriveStackingLevel('devtools', true), 'excluded');
   });
@@ -2029,6 +2035,7 @@ describe('ordered stacking list — membership across the class enum (§5 step 5
       [8, 'extension-ui', false],
       [9, 'test-fixture', true],
       [10, 'devtools', true],
+      [11, 'offscreen', true],
     ];
     const { state } = drive(createInitialState(), imports.flatMap(([id, cls, sat]) => classImportEvents(id, cls, sat)));
     assert.deepStrictEqual(getStackOrder(state), [wid(1), wid(2), wid(8)], 'stacked classes only, bottom→top in shown order');

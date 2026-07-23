@@ -13,6 +13,13 @@
  */
 
 import { channel, registerHandler, removeHandler } from './_ipc-bridge.js';
+// Window-state machine (design §7): every window this module creates registers
+// at construction and tears down via WINDOW_DESTROY_REQUESTED, mirroring
+// chrome-extensions.ts `_spawnBridgeWindow` / `destroyWindowViaMachine`. These
+// relative paths resolve in dist/ (the polyfills are copied next to the
+// compiled main modules by the build's `cp -r` step).
+import { registerWindowWithMachine, dispatchWindowEvent, getWindowIdFor } from '../window-state-singleton.js';
+import { isSatelliteRegistration } from '../window-state.js';
 
 const API = 'offscreen';
 const DEBUG = !!process.env.DEBUG;
@@ -57,6 +64,20 @@ function getExtensionId(event) {
   const url = event.sender.getURL();
   const match = url.match(/^chrome-extension:\/\/([^/]+)/);
   return match ? match[1] : 'unknown';
+}
+
+/**
+ * Route an offscreen-document window teardown through the window-state machine
+ * (WINDOW_DESTROY_REQUESTED → DESTROY_WINDOW → backend.destroyWindow,
+ * synchronous). Mirrors `destroyWindowViaMachine` in chrome-extensions.ts:
+ * every window this module creates registers at construction, so the id always
+ * resolves; a window the machine no longer knows is already gone.
+ * @param {import('electron').BrowserWindow} win
+ */
+function destroyWindowViaMachine(win) {
+  const id = getWindowIdFor(win);
+  if (id == null) return; // never registered / already retired — nothing to destroy
+  dispatchWindowEvent({ type: 'WINDOW_DESTROY_REQUESTED', id });
 }
 
 /**
@@ -107,6 +128,20 @@ async function createDocument(extensionId, params) {
     },
   });
 
+  // Every window registers with the window-state machine (design §7) — class
+  // 'offscreen' (a hidden infrastructure satellite exactly like 'bridge':
+  // never front, no Esc interceptor, no registry payload so it stays invisible
+  // to the session-save/window-manager accessors).
+  registerWindowWithMachine({
+    kind: 'browser',
+    role: 'utility',
+    class: 'offscreen',
+    satellite: isSatelliteRegistration('utility', { windowClass: 'offscreen' }),
+    win,
+    contentWC: win.webContents,
+    attachEscHandler: false,
+  });
+
   offscreenDocs.set(extensionId, { window: win, url: params.url });
 
   win.on('closed', () => {
@@ -119,7 +154,7 @@ async function createDocument(extensionId, params) {
   } catch (err) {
     // Clean up on load failure
     offscreenDocs.delete(extensionId);
-    if (!win.isDestroyed()) win.destroy();
+    if (!win.isDestroyed()) destroyWindowViaMachine(win);
     throw err;
   }
 }
@@ -133,7 +168,7 @@ function closeDocument(extensionId) {
   if (!doc) return;
 
   if (!doc.window.isDestroyed()) {
-    doc.window.destroy();
+    destroyWindowViaMachine(doc.window);
   }
   offscreenDocs.delete(extensionId);
   DEBUG && console.log(`[chrome-polyfill:offscreen] Closed document for ext ${extensionId}`);
@@ -191,7 +226,7 @@ export function setupMainProcess(session, { ipcMain }) {
       // Close all offscreen documents
       for (const [, doc] of offscreenDocs) {
         if (!doc.window.isDestroyed()) {
-          doc.window.destroy();
+          destroyWindowViaMachine(doc.window);
         }
       }
       offscreenDocs.clear();
