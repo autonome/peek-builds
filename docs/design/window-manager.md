@@ -699,6 +699,15 @@ failure mode this document exists to prevent (§2).**
    `win.on('hide')` listener in `electron-window-backend.ts` therefore echoes
    `WINDOW_HIDDEN` only when `win.isVisible()` is false — a commented
    OS-boundary workaround (peek `71cfde09` lag class); do not remove.
+   **8c — izui coordinator focus tracker deleted: DONE.** `setFocusedWindow` /
+   `clearFocusedWindow` / `getFocusedWindowId` and `IzuiSession.focusedWindowId`
+   are gone (`izui-state.ts`), along with the `ipc.ts` focus-handler tracker
+   update, the `main.ts` closed-handler clear, and the
+   `entry.ts` `getIzuiFocusedWindowId` test bridge.
+   `session-restore-page-host.spec.ts` now asserts the machine front
+   (`getMachineWindowIdFor` → `getFrontWindowId`). The izui tri-state,
+   app-active tracking, overlay executor, and `enterOverlay()`'s
+   machine-front seed via the injected provider remain.
 9. **Overlay attach/retarget + transient autoclose.** Fold `hybrid-overlay.ts`'s 40 live
    queries and its private `appActive` into reducer state.
 10. **Displays and Spaces.** Route `display-watcher.ts` through events; add the
