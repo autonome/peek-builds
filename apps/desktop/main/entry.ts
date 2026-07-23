@@ -115,7 +115,7 @@ import {
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, reassertColdStartFocusOnce, installFirstFrameOrderableProducer } from './session.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import { getFrontWindowId, getWindowIdFor } from './window-state-singleton.js';
+import { getFrontWindowId, getWindowIdFor, getNativeWindowFor } from './window-state-singleton.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
 import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
@@ -1132,16 +1132,25 @@ const onReady = async () => {
         label: 'Window',
         submenu: [
           { label: 'Close Window', accelerator: 'CommandOrControl+W', click: () => {
-              const win = BrowserWindow.getFocusedWindow();
-              if (win) {
+              // "Current window" = the window-state machine's front (the sole
+              // focus authority), not BrowserWindow.getFocusedWindow() — the
+              // OS query returns null for hybrid BaseWindow hosts and can
+              // return the chrome overlay when the address bar is focused;
+              // the machine front has neither failure mode.
+              const frontId = getFrontWindowId();
+              const frontWin = frontId != null ? getNativeWindowFor(frontId) : null;
+              if (frontWin instanceof BrowserWindow && !frontWin.isDestroyed()) {
                 // Devtools (detached) isn't a BrowserWindow — it's a child of
                 // the parent's webContents. When the user focuses devtools and
-                // hits Cmd+W, getFocusedWindow() still returns the parent.
-                // Detect via "devtools open AND parent webContents not
-                // focused" — `isDevToolsFocused()` alone has been observed to
-                // return false in Electron 40 when devtools is the OS-focused
+                // hits Cmd+W, the parent stays the machine front (a detached
+                // devtools window is not a machine window). Detect via
+                // "devtools open AND parent webContents not focused" —
+                // `isDevToolsFocused()` alone has been observed to return
+                // false in Electron 40 when devtools is the OS-focused
                 // window. Route to closeDevTools so the parent survives.
-                const wc = win.webContents;
+                // A hybrid BaseWindow front skips this guard, same as the old
+                // getFocusedWindow()===null path did.
+                const wc = frontWin.webContents;
                 if (wc.isDevToolsOpened() && (wc.isDevToolsFocused() || !wc.isFocused())) {
                   wc.closeDevTools();
                   return;

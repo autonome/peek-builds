@@ -1093,9 +1093,16 @@ export function registerTileIpcHandlers(): void {
       filters.push({ name: 'All Files', extensions: ['*'] });
 
       const senderWindow = windowFromWebContents(ev.sender);
-      const focusedWindow = BrowserWindow.getFocusedWindow();
-      const parentWindow = focusedWindow && !focusedWindow.isDestroyed()
-        ? focusedWindow
+      // Parent the dialog over the machine front (the sole focus authority),
+      // not BrowserWindow.getFocusedWindow(): the OS query returns null for a
+      // hybrid BaseWindow host (dialog would fall back to the sender or float
+      // unparented) and returns the chrome overlay when the address bar is
+      // focused (dialog would parent over the chrome, not the page). dialog
+      // parenting accepts a BaseWindow, so a hybrid front parents directly.
+      const frontId = getFrontWindowId();
+      const frontWin = frontId != null ? getNativeWindowFor(frontId) : null;
+      const parentWindow = frontWin && !frontWin.isDestroyed()
+        ? frontWin
         : (senderWindow && senderWindow.isVisible() ? senderWindow : null);
 
       const dialogOpts: Electron.SaveDialogOptions = {
@@ -1129,9 +1136,12 @@ export function registerTileIpcHandlers(): void {
     }
     try {
       const senderWindow = windowFromWebContents(ev.sender);
-      const focusedWindow = BrowserWindow.getFocusedWindow();
-      const parentWindow = focusedWindow && !focusedWindow.isDestroyed()
-        ? focusedWindow
+      // Same front-based parenting as tile:dialogs:save above (machine front,
+      // not getFocusedWindow() — see that handler's comment).
+      const frontId = getFrontWindowId();
+      const frontWin = frontId != null ? getNativeWindowFor(frontId) : null;
+      const parentWindow = frontWin && !frontWin.isDestroyed()
+        ? frontWin
         : (senderWindow && senderWindow.isVisible() ? senderWindow : null);
 
       const openDialogOpts: Electron.OpenDialogOptions = {
@@ -4259,9 +4269,10 @@ export function registerTileIpcHandlers(): void {
   // windowId resolution: callers may pass an explicit windowId, or omit it
   // (null/undefined) and let the handler resolve. Resolution order:
   //   1. Explicit windowId (if positive finite number and window exists)
-  //   2. lastFocusedVisibleWindowId tracked by ipc.ts
-  //   3. BrowserWindow.getFocusedWindow()
-  //   4. First non-destroyed, non-test-fixture, non-background BrowserWindow
+  //   2. The window-state machine's front (the sole focus authority — a
+  //      BrowserWindow.getFocusedWindow() fallback used to follow, but the
+  //      machine front subsumes it and never returns the chrome overlay)
+  //   3. First non-destroyed, non-test-fixture, non-background BrowserWindow
   //      that was not created as modal (by skipping `focusable:false` and
   //      `background.html` URLs). This last branch is the headless-test
   //      fallback — in headless mode all windows have `show:false` so
@@ -4304,13 +4315,6 @@ export function registerTileIpcHandlers(): void {
         if (trackedWin) {
           resolvedId = frontWin.id;
         }
-      }
-    }
-
-    if (resolvedId === null) {
-      const focused = BrowserWindow.getFocusedWindow();
-      if (focused && !focused.isDestroyed()) {
-        resolvedId = focused.id;
       }
     }
 
