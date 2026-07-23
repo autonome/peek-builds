@@ -131,6 +131,21 @@ class IzuiStateCoordinator {
     this.sessionChangeListener = cb;
   }
 
+  // Front-window provider: returns the NUMERIC Electron id of the window-state
+  // machine's `front` (or null). Injected — not imported — because value-
+  // importing `window-state-singleton.ts` from here would (a) drag electron
+  // into the electron-free unit run via `electron-window-backend.ts`, and
+  // (b) create an import cycle (the singleton already value-imports this
+  // module for the session mirror). Wired once at boot by
+  // `window-state-singleton.ts seedSessionMirror`, same one-way pattern as
+  // `onSessionChange`. Stubbed directly in unit tests.
+  private frontWindowIdProvider: (() => number | null) | null = null;
+
+  /** Register (or clear, with null) the machine-front numeric-id provider. */
+  setFrontWindowIdProvider(provider: (() => number | null) | null): void {
+    this.frontWindowIdProvider = provider;
+  }
+
   private emitSessionChange(): void {
     if (!this.sessionChangeListener) return;
     try {
@@ -311,7 +326,24 @@ class IzuiStateCoordinator {
     this.state = 'overlay';
     this.session.overlayWindowId = windowId;
     this.session.hiddenWindowIds = hiddenIds;
-    this.session.preOverlayFocusTarget = this.session.focusedWindowId;
+    // Seed the focus-restore target from the window-state machine's `front`
+    // (via the injected provider — see setFrontWindowIdProvider), not from
+    // this coordinator's own focusedWindowId tracker (step 8a of the
+    // window-manager migration).
+    //
+    // Ordering guarantee (why the seed can't be the overlay itself): the
+    // switcher window registers with role 'overlay', which
+    // `isSatelliteRegistration` (window-state.ts) marks satellite — and the
+    // reducer structurally never lets a satellite become `front`
+    // (`applyFocusGained` / `isEligibleFront`), nor does losing OS focus
+    // clear `front` (OS_FOCUS_SETTLED_NULL keeps it: front is the TARGET,
+    // not the key window). So even though the window-open path dispatches
+    // WINDOW_SHOWN{focused:true} for the switcher BEFORE calling
+    // enterOverlay, `front` still names the pre-overlay window here — the
+    // same value SWITCHER_OPENED snapshots as `switcher.previousFront`.
+    this.session.preOverlayFocusTarget = this.frontWindowIdProvider
+      ? this.frontWindowIdProvider()
+      : null;
     this.lastOverlayEntryTime = Date.now();
     this.emitSessionChange();
     console.log('[izui] Entered overlay mode, windowId:', windowId, 'hidden:', hiddenIds.length, 'preOverlayFocus:', this.session.preOverlayFocusTarget);

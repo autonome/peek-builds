@@ -80,6 +80,17 @@ function seedSessionMirror(): void {
   coord.onSessionChange((state) => dispatchWindowEvent({ type: 'SESSION_CHANGED', session: clampSession(state) }));
   // Seed the machine with the coordinator's current session immediately.
   dispatchWindowEvent({ type: 'SESSION_CHANGED', session: clampSession(coord.getState()) });
+  // Front-id provider for the coordinator's switcher focus-restore seed
+  // (`enterOverlay` → `preOverlayFocusTarget`, step 8a): the machine's `front`
+  // converted to the numeric Electron id the coordinator's session (and its
+  // renderer read surface in tile-ipc.ts) speaks. Injected — the coordinator
+  // must not value-import this module (cycle + electron in the unit run).
+  coord.setFrontWindowIdProvider(() => {
+    const front = getFrontWindowId();
+    if (front == null) return null;
+    const native = getNativeWindowFor(front);
+    return native ? native.id : null;
+  });
 }
 
 /**

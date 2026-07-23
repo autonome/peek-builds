@@ -3901,8 +3901,10 @@ export function registerWindowHandlers(): void {
         // Focused-window tracking (front/focusSeq/lastHttpUrl) is owned by the
         // window-state machine now — the OS adapter's `focus` listener
         // (attached at `registerWindowWithMachine` below) feeds it. This handler
-        // keeps only the izui-coordinator focus seed (preOverlayFocusTarget),
-        // the `window:focused` HUD notify, and the transient-sibling autoclose.
+        // keeps only the izui-coordinator focusedWindowId tracker (no longer
+        // the switcher's preOverlayFocusTarget seed — enterOverlay reads the
+        // machine's `front` since step 8a), the `window:focused` HUD notify,
+        // and the transient-sibling autoclose.
         const winInfo = getWindowInfo(win.id);
         // Update IZUI coordinator focus tracking (skip modal and overlay windows)
         if (!winInfo?.params?.modal && winInfo?.params?.role !== 'overlay') {

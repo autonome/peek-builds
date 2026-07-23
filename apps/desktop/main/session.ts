@@ -1535,6 +1535,15 @@ export async function restoreSessionSnapshot(
   // nothing to restore to (symptom: ESC ESC drops to workspace root).
   // Seeding here is deterministic; the focus event remains the source of
   // truth for subsequent user-driven focus changes.
+  //
+  // NOTE (step 8a): enterOverlay now seeds preOverlayFocusTarget from the
+  // window-state machine's `front`, not from this coordinator tracker — the
+  // machine's `front` is driven deterministically by restore's own machine-
+  // routed show dispatches (every loop show is a WINDOW_SHOW_REQUESTED whose
+  // backend synchronously echoes WINDOW_SHOWN, and the hybrid focused
+  // descriptor activates through showHybridHost's dispatch), so this guard
+  // now protects only the coordinator's own focusedWindowId consumers and is
+  // slated for deletion in step 8b/8c.
   if (focusedWindowId) {
     try {
       const coordinator = getIzuiCoordinator();

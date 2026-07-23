@@ -64,6 +64,11 @@ let izuiState: typeof import('./izui-state.js');
 
 describe('IZUI State Coordinator Tests', () => {
   let mockWindows: MockWindow[];
+  // Stub for the injected machine-front provider (see
+  // setFrontWindowIdProvider): enterOverlay seeds preOverlayFocusTarget from
+  // the window-state machine's `front`, which unit tests drive through this
+  // variable (production wires the real machine in window-state-singleton.ts).
+  let mockFrontWindowId: number | null;
 
   before(async () => {
     // Dynamic import of the compiled module
@@ -73,10 +78,12 @@ describe('IZUI State Coordinator Tests', () => {
   beforeEach(() => {
     // Clear mock windows before each test
     mockWindows = [];
+    mockFrontWindowId = null;
     // Reset all state (session, appFocused, etc.)
     const coordinator = izuiState.getIzuiCoordinator();
     coordinator._resetAll();
     coordinator._setWindowProvider(createMockWindowProvider(mockWindows));
+    coordinator.setFrontWindowIdProvider(() => mockFrontWindowId);
   });
 
   describe('evaluateOnShow', () => {
@@ -738,7 +745,7 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.startSession('active');
       coordinator.pushWindow(1);
       coordinator.pushWindow(2);
-      coordinator.setFocusedWindow(2); // B is focused
+      mockFrontWindowId = 2; // B is the machine's front window
 
       // Enter overlay — should save pre-overlay focus
       coordinator.enterOverlay(100, [1, 2]);
@@ -756,7 +763,7 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.startSession('active');
       coordinator.pushWindow(1);
       coordinator.pushWindow(2);
-      coordinator.setFocusedWindow(2);
+      mockFrontWindowId = 2;
 
       coordinator.enterOverlay(100, [1, 2]);
       coordinator.exitOverlay();
@@ -766,16 +773,49 @@ describe('IZUI State Coordinator Tests', () => {
         'preOverlayFocusTarget should be cleared after exiting overlay');
     });
 
-    it('should save null preOverlayFocusTarget when no window is focused', () => {
+    it('should save null preOverlayFocusTarget when the machine has no front window', () => {
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
       coordinator.pushWindow(1);
-      // No setFocusedWindow call
+      // mockFrontWindowId stays null (no front window in the machine)
 
       coordinator.enterOverlay(100, [1]);
       const session = coordinator.getSession()!;
       assert.strictEqual(session.preOverlayFocusTarget, null,
-        'preOverlayFocusTarget should be null when no window was focused');
+        'preOverlayFocusTarget should be null when the machine has no front window');
+    });
+
+    it('should save null preOverlayFocusTarget when no provider is registered', () => {
+      // Boot-order safety: before window-state-singleton.ts wires the
+      // provider, the seed degrades to null rather than throwing (or
+      // silently falling back to the retired focusedWindowId source).
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.setFrontWindowIdProvider(null);
+      coordinator.startSession('active');
+      coordinator.pushWindow(1);
+      coordinator.setFocusedWindow(1); // must NOT leak into the seed
+
+      coordinator.enterOverlay(100, [1]);
+      const session = coordinator.getSession()!;
+      assert.strictEqual(session.preOverlayFocusTarget, null,
+        'preOverlayFocusTarget should be null with no provider registered');
+    });
+
+    it('seeds from the machine front, not the coordinator focusedWindowId tracker', () => {
+      // Step 8a: enterOverlay reads the injected machine-front provider.
+      // setFocusedWindow (the old seed source) must no longer influence it.
+      const coordinator = izuiState.getIzuiCoordinator();
+      coordinator.startSession('active');
+      coordinator.pushWindow(5);
+      coordinator.pushWindow(7);
+      coordinator.setFocusedWindow(7);
+      mockFrontWindowId = 5;
+
+      coordinator.enterOverlay(100, [5, 7]);
+      assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 5,
+        'seed must come from the machine front (5), not focusedWindowId (7)');
+      assert.strictEqual(coordinator.getFocusedWindowId(), 7,
+        'focusedWindowId tracker itself is untouched by the seed repoint');
     });
 
     it('should expose preOverlayFocusTarget via getPreOverlayFocusTarget()', () => {
@@ -785,7 +825,7 @@ describe('IZUI State Coordinator Tests', () => {
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
       coordinator.pushWindow(2);
-      coordinator.setFocusedWindow(2);
+      mockFrontWindowId = 2;
 
       // Before overlay: should be null
       assert.strictEqual(coordinator.getPreOverlayFocusTarget(), null);
@@ -817,7 +857,7 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.startSession('active');
       coordinator.pushWindow(1);
       coordinator.pushWindow(2);
-      coordinator.setFocusedWindow(2); // B was focused
+      mockFrontWindowId = 2; // B was the machine's front window
 
       // Enter overlay, windows hidden
       coordinator.enterOverlay(100, [1, 2]);
@@ -849,14 +889,14 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(coordinator.getFocusedWindowId(), 5);
     });
 
-    it('2. Overlay tracks pre-overlay focus: setFocusedWindow(5) → enterOverlay → getPreOverlayFocusTarget() returns 5', () => {
+    it('2. Overlay tracks pre-overlay focus: machine front=5 → enterOverlay → getPreOverlayFocusTarget() returns 5', () => {
       const winA = createMockWindow(5);
       mockWindows.push(winA);
 
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
       coordinator.pushWindow(5);
-      coordinator.setFocusedWindow(5);
+      mockFrontWindowId = 5;
 
       coordinator.enterOverlay(100, [5]);
 
@@ -871,7 +911,7 @@ describe('IZUI State Coordinator Tests', () => {
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
       coordinator.pushWindow(5);
-      coordinator.setFocusedWindow(5);
+      mockFrontWindowId = 5;
 
       coordinator.enterOverlay(100, [5]);
       assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 5);
@@ -899,7 +939,7 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.startSession('active');
       coordinator.pushWindow(5);
       coordinator.pushWindow(3);
-      coordinator.setFocusedWindow(5);
+      mockFrontWindowId = 5;
 
       coordinator.enterOverlay(100, [5, 3]);
       assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 5);
@@ -942,6 +982,9 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.startSession('active');
       coordinator.pushWindow(5);
       coordinator.setFocusedWindow(5);
+      // Machine front stays on the content window: the switcher registers as a
+      // satellite (role 'overlay'), which the reducer never lets become front.
+      mockFrontWindowId = 5;
 
       // Enter overlay with window 100
       coordinator.enterOverlay(100, [5]);
@@ -1026,7 +1069,7 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.pushWindow(5);
       coordinator.pushWindow(6);
       coordinator.pushWindow(100); // overlay window stays in stack across cycles
-      coordinator.setFocusedWindow(5);
+      mockFrontWindowId = 5;
 
       // Cycle 1: enter overlay → exit
       coordinator.enterOverlay(100, [5, 6]);
@@ -1042,7 +1085,7 @@ describe('IZUI State Coordinator Tests', () => {
       assert.ok(winB._visible);
 
       // Cycle 2: enter overlay again → exit
-      coordinator.setFocusedWindow(6); // Now 6 is focused
+      mockFrontWindowId = 6; // Now 6 is the machine's front window
       coordinator.enterOverlay(100, [5, 6]);
       assert.strictEqual(coordinator.getState(), 'overlay');
       assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 6);
@@ -1114,7 +1157,7 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.startSession('active');
       coordinator.pushWindow(1);
       coordinator.pushWindow(2);
-      coordinator.setFocusedWindow(2);
+      mockFrontWindowId = 2;
 
       coordinator.enterOverlay(100, [1, 2]);
       assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 2);
