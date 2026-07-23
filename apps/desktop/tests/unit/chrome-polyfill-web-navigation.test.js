@@ -4,7 +4,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const modulePath = join(__dirname, '..', '..', '..', 'backend', 'electron', 'chrome-api-polyfills', 'web-navigation.js');
+const modulePath = join(__dirname, '..', '..', 'main', 'chrome-api-polyfills', 'web-navigation.js');
 
 const { getPreloadScript } = await import(modulePath);
 
