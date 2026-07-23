@@ -1466,6 +1466,24 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     assert.ok(raises(effects, 1), 'the successor is driven onto the OS, not merely recorded');
   });
 
+  it('duplicate WINDOW_HIDDEN (backend echo + late native hide event) is a no-op re-merge', () => {
+    // Since §6A the backend ECHOES WINDOW_HIDDEN synchronously for every hide
+    // it performs (the native BaseWindow 'hide' event lags a tick on macOS —
+    // peek 71cfde09), so the reducer sees the SAME hide twice: echo first,
+    // native mirror later. The second arrival must change nothing — no front
+    // re-succession, no stack change, no effects.
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2, 1 still visible
+    const first = reduce(s, { type: 'WINDOW_HIDDEN', id: wid(2) });
+    assert.strictEqual(getFrontWindowId(first.state), wid(1), 'front hands off on the echo');
+    const dup = reduce(first.state, { type: 'WINDOW_HIDDEN', id: wid(2) });
+    assert.strictEqual(getFrontWindowId(dup.state), wid(1), 'late native mirror moves nothing');
+    assert.strictEqual(dup.state.windows.get(wid(2))!.visible, false);
+    assert.deepStrictEqual(dup.state.stackOrder, first.state.stackOrder, 'stack untouched by the duplicate');
+    assert.deepStrictEqual(dup.effects, [], 'no effects from the duplicate');
+  });
+
   it('WINDOW_HIDDEN of the ONLY window clears the assertion and asserts nothing', () => {
     const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
     const hidden = reduce(s, { type: 'WINDOW_HIDDEN', id: wid(1) });

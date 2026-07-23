@@ -741,10 +741,20 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     const win = this.windows.get(id)?.win;
     if (!win) return;
     try {
-      if (!win.isDestroyed()) win.hide();
+      if (win.isDestroyed()) return;
+      win.hide();
     } catch {
       /* hiding a torn-down window is a no-op */
+      return;
     }
+    // Echo WINDOW_HIDDEN for the hide this backend just performed — the exact
+    // mirror of `showWindow`'s WINDOW_SHOWN echo. The native `'hide'` event
+    // fires a tick LATE on macOS BaseWindows (the documented peek 71cfde09
+    // lag), so without this echo every consumer that reads machine state right
+    // after a hide intent — the overlay's host-visibility gate, `front`
+    // successor promotion — sees stale `visible:true` for a tick. The late
+    // native event still arrives and re-merges idempotently in the reducer.
+    this.emit({ type: 'WINDOW_HIDDEN', id });
   }
 
   /** Pin above regular windows. 'floating' matches the old post-ctor reinforcement (`setAlwaysOnTop(true,'floating')`). */
