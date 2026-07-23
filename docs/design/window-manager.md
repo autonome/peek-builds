@@ -689,6 +689,16 @@ failure mode this document exists to prevent (§2).**
    last load-bearing reader left in 8a and step 8c deletes it. The
    session-restore-hybrid-focus spec asserts the machine's `front` instead
    (test bridge `getFrontWindowId`/`getMachineWindowIdFor` in `entry.ts`).
+   **8b follow-up — session-restore front-steal fixed (two layers).** (1) The
+   restore loop in `session.ts restoreSessionSnapshot` never activates: every
+   in-loop show is inactive, and the window-reuse path honors `show:false`, so
+   the post-loop `willActivate` block is the single activation authority
+   (commit aee38a6d). (2) AppKit can deliver a stale/lagged native `hide`
+   event for a just-activated hybrid host that is still visible — no JS hide
+   call exists (proven via a prototype-level `.hide()` trap). The native
+   `win.on('hide')` listener in `electron-window-backend.ts` therefore echoes
+   `WINDOW_HIDDEN` only when `win.isVisible()` is false — a commented
+   OS-boundary workaround (peek `71cfde09` lag class); do not remove.
 9. **Overlay attach/retarget + transient autoclose.** Fold `hybrid-overlay.ts`'s 40 live
    queries and its private `appActive` into reducer state.
 10. **Displays and Spaces.** Route `display-watcher.ts` through events; add the
