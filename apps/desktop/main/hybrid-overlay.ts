@@ -616,8 +616,16 @@ function wireAppActiveGate(): void {
     }
   };
 
-  app.on('did-resign-active', onAppResignActive);
-  app.on('did-become-active', onAppBecomeActive);
+  // Headless has no real activation (accessory policy — never truly frontmost),
+  // yet macOS/the test loader still emit spurious `did-resign-active` events that
+  // would race the init seed and flip `appActive` false before a test reads its
+  // baseline. Pin `appActive` in headless by NOT letting OS events drive it — the
+  // same rationale as the init seed above; the test bridge (`simAppResignActive`/
+  // `simAppBecomeActive`) drives resign/become transitions directly.
+  if (!isHeadless()) {
+    app.on('did-resign-active', onAppResignActive);
+    app.on('did-become-active', onAppBecomeActive);
+  }
 }
 
 /**
