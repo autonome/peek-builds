@@ -27,6 +27,7 @@ import os from 'os';
 import http from 'http';
 import { fileURLToPath } from 'url';
 import { waitForWindow as waitForWindowHelper, sleep, getTestProfile, waitForAppReady } from '../helpers/window-utils';
+import { accessoryElectronBinaryPath } from '../helpers/accessory-electron';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -222,12 +223,25 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
   // xvfb-run's DISPLAY redirect onto the real compositor.
   const linuxOzoneArgs = process.platform === 'linux' ? ['--ozone-platform=x11'] : [];
 
+  // TEST-ONLY macOS launch-flash fix (unpackaged path): when the globalSetup
+  // (tests/global-setup-electron-accessory.ts) has built a patched
+  // LSUIElement=true copy of Electron, launch THAT so the process never grabs
+  // focus at launch. Same guard as the globalSetup — darwin && headless &&
+  // !packaged — plus fs.existsSync so a missing/skipped copy falls back to
+  // today's behavior. args are unchanged (app dir still comes from args[0]).
+  const useAccessoryElectron =
+    process.platform === 'darwin' &&
+    headless &&
+    !packaged &&
+    fs.existsSync(accessoryElectronBinaryPath());
+
   const launchConfig = packaged
     ? {
         executablePath: path.join(REPO_ROOT, packagedExecutableRelPath()),
         args: [...linuxOzoneArgs, `--user-data-dir=${tempDir}`]
       }
     : {
+        ...(useAccessoryElectron ? { executablePath: accessoryElectronBinaryPath() } : {}),
         args: [...baseArgs, ...linuxOzoneArgs, `--user-data-dir=${tempDir}`]
       };
 

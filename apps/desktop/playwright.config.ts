@@ -25,6 +25,13 @@ const backend = process.env.BACKEND || 'electron';
 export default defineConfig({
   testDir: './tests',
 
+  // TEST-ONLY macOS launch-flash fix: on the unpackaged (source/grep) path,
+  // build a patched "accessory" Electron copy (LSUIElement=true) so headless
+  // runs don't steal the user's focus at process launch. No-op off darwin,
+  // when not headless, or on the packaged path (which patches Peek.app
+  // directly). See tests/global-setup-electron-accessory.ts.
+  globalSetup: './tests/global-setup-electron-accessory.ts',
+
   // Projects for different test categories
   projects: [
     {
