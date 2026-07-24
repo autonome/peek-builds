@@ -9,7 +9,7 @@
 // (side-effectful) import runs, minimizing the launch-time focus flash.
 import './headless-policy.js';
 import { headlessActivationPolicy } from './headless-policy.js';
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, webContents } from 'electron';
+import { app, BaseWindow, BrowserWindow, globalShortcut, ipcMain, Menu, webContents } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import { initHybridOverlay } from './hybrid-overlay.js';
 import fs from 'node:fs';
@@ -1648,12 +1648,13 @@ if (process.platform === 'darwin' && app.setActivationPolicy) {
   if (policy) app.setActivationPolicy(policy);
 }
 
-// Headless strict guard: no BrowserWindow must appear visible immediately
-// after construction during headless test runs. Windows created with show:true
-// flash on the user's physical macOS desktop. Any drift from the isHeadless()
-// gate in BrowserWindow constructors is caught here and fails the process.
+// Headless strict guard: no window — BrowserWindow OR BaseWindow — must appear
+// visible immediately after construction during headless test runs. Windows
+// created with show:true flash on the user's physical macOS desktop. Any drift
+// from the isHeadless() gate in window constructors is caught here and fails the
+// process.
 //
-// Note: BrowserWindow.prototype.show() calls are NOT blocked — session restore,
+// Note: window .show() calls are NOT blocked — session restore,
 // test helpers (showWindow/fireWindowFocus), and page-host flows all legitimately
 // call .show() on already-hidden windows. Only the constructor show:true path
 // is the physical flash vector; it fires the OS compositor before JS can hide
@@ -1682,6 +1683,52 @@ if (isHeadless() && isTestProfile()) {
   });
   console.log('[headless-guard] BrowserWindow creation guard active (visible-at-ctor throws)');
 
+  // ── BaseWindow visible-at-construction sweep ────────────────────────────
+  // Peek's page-hosts, slides and peeks are BaseWindows (a WebContentsView plus
+  // the shared overlay chrome), NOT BrowserWindows — and Electron emits no
+  // app-level creation event for them: `browser-window-created` fires ONLY for
+  // BrowserWindow (verified against the pinned Electron: constructing a
+  // BaseWindow emits no app event at all). So the ctor guard above is blind to
+  // exactly the windows this app shows most, and a `show: true` BaseWindow
+  // never calls .show(), so the prototype guard below can't see it either.
+  //
+  // Trigger: `web-contents-created`, which fires for every page-host's content
+  // WebContentsView — i.e. once per page-host being assembled, a tick or so
+  // after its BaseWindow shell was constructed. Deferred with setImmediate for
+  // the same reason as the ctor guard above.
+  //
+  // Predicate is identical to the show guard below — visible with opacity != 0
+  // is the physical-flash state. The legitimate headless show path
+  // (`electron-window-backend.ts performOsShow`) zeroes opacity BEFORE the
+  // show, so a compliant window is visible-at-opacity-0 and passes. Pure
+  // BaseWindows only: BrowserWindows are the ctor guard's job, and checking
+  // them here too would double-report the same violation.
+  app.on('web-contents-created', () => {
+    setImmediate(() => {
+      for (const win of BaseWindow.getAllWindows()) {
+        if (win instanceof BrowserWindow) continue;
+        if (win.isDestroyed()) continue;
+        let opacity = 0;
+        try {
+          if (!win.isVisible()) continue;
+          opacity = win.getOpacity();
+        } catch {
+          continue; // window torn down mid-sweep
+        }
+        if (opacity === 0) continue;
+        let title = '(no-title)';
+        try { title = win.getTitle() || '(no-title)'; } catch { /* destroyed */ }
+        const msg = `[headless-violation] BaseWindow id=${win.id} visible with opacity=${opacity} (show:true?) title=${title} — fix: gate show: on !isHeadless()`;
+        console.error(msg);
+        console.error(new Error(msg).stack);
+        // Fail hard so CI catches the regression.
+        process.exitCode = 1;
+        throw new Error(msg);
+      }
+    });
+  });
+  console.log('[headless-guard] BaseWindow visible-at-ctor sweep active (no base-window-created event exists)');
+
   // ── show / showInactive prototype guard ────────────────────────────────
   // Any call to win.show() or win.showInactive() that bypasses
   // showWindowHeadlessSafe() will reach here with opacity != 0 and will
@@ -1693,14 +1740,41 @@ if (isHeadless() && isTestProfile()) {
   // Exempt: the opacity is checked BEFORE the original method runs.
   // showWindowHeadlessSafe() already calls setOpacity(0) first, so
   // compliant callers always pass the check.
-  const _origShow = BrowserWindow.prototype.show;
-  const _origShowInactive = BrowserWindow.prototype.showInactive;
+  //
+  // Patched on BaseWindow.prototype ONCE — not on BaseWindow AND BrowserWindow.
+  // In Electron, `BrowserWindow extends BaseWindow`, and show/showInactive/
+  // setOpacity are OWN properties of `BaseWindow.prototype` that
+  // `BrowserWindow.prototype` merely INHERITS (verified against the pinned
+  // Electron: BrowserWindow.prototype has no own `show`). So a single patch
+  // here intercepts BOTH kinds, and intercepts each call exactly once — no
+  // double-throw and no double-report. Patching both classes would instead
+  // stack two wrappers on the same call, which is the ambiguity this avoids.
+  // The violating kind is read off the instance (`this instanceof
+  // BrowserWindow`) so a BrowserWindow violation still reads as a
+  // BrowserWindow and carries the page URL, while a BaseWindow one carries the
+  // window title (a BaseWindow has no root `.webContents`).
+  const _origShow = BaseWindow.prototype.show;
+  const _origShowInactive = BaseWindow.prototype.showInactive;
 
-  function headlessShowGuard(this: BrowserWindow, methodName: 'show' | 'showInactive', origFn: () => void): void {
-    if (!this.isDestroyed() && this.getOpacity() !== 0) {
+  function headlessWindowKind(win: BaseWindow): string {
+    return win instanceof BrowserWindow ? 'BrowserWindow' : 'BaseWindow';
+  }
+
+  /** URL for a BrowserWindow, title for a pure BaseWindow — both best-effort. */
+  function headlessWindowLabel(win: BaseWindow): string {
+    if (win instanceof BrowserWindow) {
       let url = '(no-url)';
-      try { url = this.webContents.getURL() || '(no-url)'; } catch { /* destroyed */ }
-      const msg = `[headless-violation] ${methodName}() called on id=${this.id} with opacity=${this.getOpacity()} (not 0) url=${url} — use showWindowHeadlessSafe()`;
+      try { url = win.webContents.getURL() || '(no-url)'; } catch { /* destroyed */ }
+      return `url=${url}`;
+    }
+    let title = '(no-title)';
+    try { title = win.getTitle() || '(no-title)'; } catch { /* destroyed */ }
+    return `title=${title}`;
+  }
+
+  function headlessShowGuard(this: BaseWindow, methodName: 'show' | 'showInactive', origFn: () => void): void {
+    if (!this.isDestroyed() && this.getOpacity() !== 0) {
+      const msg = `[headless-violation] ${headlessWindowKind(this)}.${methodName}() called on id=${this.id} with opacity=${this.getOpacity()} (not 0) ${headlessWindowLabel(this)} — use showWindowHeadlessSafe()`;
       console.error(msg);
       console.error(new Error(msg).stack);
       process.exitCode = 1;
@@ -1709,14 +1783,14 @@ if (isHeadless() && isTestProfile()) {
     origFn.call(this);
   }
 
-  BrowserWindow.prototype.show = function(this: BrowserWindow) {
+  BaseWindow.prototype.show = function(this: BaseWindow) {
     headlessShowGuard.call(this, 'show', _origShow);
   };
-  BrowserWindow.prototype.showInactive = function(this: BrowserWindow) {
+  BaseWindow.prototype.showInactive = function(this: BaseWindow) {
     headlessShowGuard.call(this, 'showInactive', _origShowInactive);
   };
 
-  console.log('[headless-guard] BrowserWindow show/showInactive prototype guard active (opacity must be 0)');
+  console.log('[headless-guard] BaseWindow+BrowserWindow show/showInactive prototype guard active (opacity must be 0)');
 
   // ── focus / moveTop / restore / center / setVisibleOnAllWorkspaces no-op guard ──
   // These methods can steal OS-level focus from the user's foreground app or
@@ -1763,6 +1837,10 @@ if (isHeadless() && isTestProfile()) {
     };
   }
 
+  // Deliberately BrowserWindow-only (unlike the show/opacity guards above):
+  // these SILENTLY no-op the call, and BaseWindow page-hosts drive moveTop
+  // through the window machine's SET_STACKING effect — swallowing those would
+  // change headless stacking behaviour, not just catch a violation.
   const _origFocus = BrowserWindow.prototype.focus;
   const _origMoveTop = BrowserWindow.prototype.moveTop;
   const _origRestore = BrowserWindow.prototype.restore;
@@ -1785,14 +1863,15 @@ if (isHeadless() && isTestProfile()) {
   // on a hidden window during headless test runs, which would cause a visible
   // flash. The show/showInactive guard above already blocks shows on opacity!=0
   // windows; this guard is the complementary protection for the restore path.
-  const _origSetOpacity = BrowserWindow.prototype.setOpacity;
-  BrowserWindow.prototype.setOpacity = function(this: BrowserWindow, opacity: number) {
+  //
+  // Patched on BaseWindow.prototype for the same reason as the show guard: one
+  // patch, inherited by BrowserWindow, so both kinds are covered exactly once.
+  const _origSetOpacity = BaseWindow.prototype.setOpacity;
+  BaseWindow.prototype.setOpacity = function(this: BaseWindow, opacity: number) {
     if (!this.isDestroyed()) {
       const prev = this.getOpacity();
       if (prev === 0 && opacity !== 0) {
-        let url = '(no-url)';
-        try { url = this.webContents?.getURL?.() ?? '(no-url)'; } catch { /* */ }
-        const msg = `[headless-violation] setOpacity id=${this.id} from=0 to=${opacity} url=${url} — restoring opacity on hidden window causes flash`;
+        const msg = `[headless-violation] ${headlessWindowKind(this)}.setOpacity id=${this.id} from=0 to=${opacity} ${headlessWindowLabel(this)} — restoring opacity on hidden window causes flash`;
         console.error(msg);
         console.error(new Error(msg).stack);
         process.exitCode = 1;
