@@ -239,6 +239,18 @@ export interface WindowRecord {
    * `FsMode.preBounds: null`.
    */
   preMaxBounds: Rectangle | null;
+  /**
+   * Whether the window is pinned to EVERY macOS Space (§4.2 dim 7b, §5 step
+   * 10). Today the platform call (`setVisibleOnAllWorkspaces`) is write-only:
+   * it is issued at open time and never read back, so nothing in the app can
+   * answer "is this window on all Spaces?" without asking the OS — the query
+   * half §3 forbids. This field is the machine's record of that intent,
+   * declared by `SET_VISIBLE_ON_ALL_SPACES_REQUESTED` and readable from state
+   * afterwards. `false` for every window until asked otherwise (the platform
+   * default), and preserved across a re-registration merge like every other
+   * LIVED field.
+   */
+  visibleOnAllSpaces: boolean;
   /** MRU counter (absorbs `focus-order.ts`). Higher = more recently focused. */
   focusSeq: number;
   /** Absorbs `lastContentWindowId` (devtools target). */
@@ -368,6 +380,18 @@ export function createInitialState(): AppWindowState {
 // Event alphabet (§2.3) — normalized by the OS adapter; no payload shape here is
 // Electron-typed.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One window's already-computed target rectangle, carried by `DISPLAY_CHANGED`
+ * (§4.2 dim 7, §5 step 10). The projection math (`window-placement.ts
+ * computePlacement` against the live display layout) runs AT THE DISPATCH SITE
+ * and rides the event — same rule as `MAXIMIZE_REQUESTED.workArea`, because
+ * this reducer keeps ZERO value imports (§4.2 dim 2b resolution).
+ */
+export interface ProjectedWindowBounds {
+  id: WindowId;
+  bounds: Rectangle;
+}
 
 export type WindowEvent =
   | {
@@ -576,6 +600,51 @@ export type WindowEvent =
    * maximize-snap SET_BOUNDS echo cannot self-trip anything here either).
    */
   | { type: 'MAXIMIZE_EXITED_BY_RESIZE'; id: WindowId }
+  /**
+   * The display layout changed (§4.2 dim 7, §5 step 10) — the port's
+   * `displayChanged` event: a display was added, removed, or had its
+   * bounds/workArea/scaleFactor rewritten. Carries the windows whose placement
+   * intent re-projects to a NEW rectangle, each with the rect it should move
+   * to; the reducer emits one `SET_BOUNDS` per surviving entry, in the order
+   * given.
+   *
+   * Why the rects come in on the event: `display-watcher.ts` today asks the OS
+   * for the layout, runs `computePlacement` per window, and calls `setBounds()`
+   * itself — the last big geometry writer outside the machine. The cutover
+   * makes it a pure PRODUCER: it still owns the placement math (this reducer
+   * has ZERO value imports and cannot call `computePlacement`), but it stops
+   * touching windows and dispatches the projected rects here instead, so the
+   * ONE effect funnel (R2) performs the moves. Entries whose placement did not
+   * change ("keep") are filtered at the dispatch site and never appear.
+   *
+   * The reducer drops an entry — no effect, no state change — when the window
+   * is unknown, when the machine's `visible` mirror says it is not on screen
+   * (the legacy watcher's `isVisible()` filter, now answered from state instead
+   * of an OS query), or when its `fsMode` is non-normal (fullscreen owns the
+   * display — the same guard `SET_BOUNDS_REQUESTED`/`MAXIMIZE_REQUESTED`
+   * apply). Like every other geometry write it does NOT touch the `bounds`
+   * mirror (the backend's `BOUNDS_CHANGED` echo is its sole writer) and does
+   * NOT touch `maximized`/`preMaxBounds`: a reprojection re-places the window,
+   * it is not a user gesture, and the legacy watcher never disturbed maximize
+   * state either.
+   */
+  | { type: 'DISPLAY_CHANGED'; projected: ProjectedWindowBounds[] }
+  /**
+   * App code wants this window pinned to (or unpinned from) every macOS Space
+   * (§4.2 dim 7b, §5 step 10) — the inbound intent behind the write-only
+   * `setVisibleOnAllWorkspaces` calls. Records the intent on
+   * `WindowRecord.visibleOnAllSpaces`, which is what makes the state readable
+   * for the first time. No-op for an unknown window.
+   *
+   * MACHINERY ONLY, and deliberately EFFECT-FREE for now: the port declares no
+   * Spaces command yet (`window-backend.ts` — "later steps add theirs
+   * (`setVisibleOnAllWorkspaces`/`loadContent`)"), and R2 says the executor is
+   * the only path to the OS, so there is nothing legitimate to emit here until
+   * the port grows the command. The step-10 cutover adds the port command + its
+   * effect and turns today's direct callers into dispatchers of this event; no
+   * producer dispatches it yet, so the OS behavior is unchanged.
+   */
+  | { type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED'; id: WindowId; on: boolean }
   | { type: 'ESC_PRESSED'; landedId: WindowId | 'global' }
   /**
    * The renderer's answer to an `ASK_RENDERER`. `seq` echoes the epoch of the
@@ -1479,6 +1548,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         bounds: event.bounds,
         maximized: false,
         preMaxBounds: null,
+        // The platform default (§4.2 dim 7b): a fresh window lives on one
+        // Space until something asks otherwise.
+        visibleOnAllSpaces: false,
         focusSeq: 0,
         lastHttpUrl: event.lastHttpUrl,
       };
@@ -1863,6 +1935,38 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       if (!rec || !rec.maximized) break; // not maximized — nothing to exit
       // Clear both, drive nothing: the gesture owns the bounds (event doc).
       patchRecord(state, event.id, { maximized: false, preMaxBounds: null });
+      break;
+    }
+
+    // ── Displays and Spaces (§4.2 dims 7 / 7b, §5 step 10) ───────────────────
+
+    case 'DISPLAY_CHANGED': {
+      for (const projection of event.projected) {
+        const rec = state.windows.get(projection.id);
+        if (!rec) continue; // unregistered window — nothing to move
+        // The legacy watcher's `isVisible()` filter, answered from the
+        // machine's own mirror instead of an OS query (§3: never a question
+        // at decision time). A hidden window is re-placed when it is shown,
+        // not while it is off screen.
+        if (!rec.visible) continue;
+        // Fullscreen owns the display (aa34cb50 family — same guard as
+        // SET_BOUNDS_REQUESTED / MAXIMIZE_REQUESTED): a reprojection mid-
+        // episode would fight the fullscreen geometry and corrupt it.
+        if (rec.fsMode.name !== 'normal') continue;
+        // No mirror write (BOUNDS_CHANGED echoes it), no maximize interaction
+        // — see the event doc.
+        effects.push({ type: 'SET_BOUNDS', id: projection.id, bounds: projection.bounds });
+      }
+      break;
+    }
+
+    case 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED': {
+      const rec = state.windows.get(event.id);
+      if (!rec) break; // unknown window — no record to hold the intent
+      // State only: the port has no Spaces command yet, so there is nothing
+      // for the executor to perform (see the event doc). Re-asserting the
+      // value it already holds is structurally inert.
+      patchRecord(state, event.id, { visibleOnAllSpaces: event.on });
       break;
     }
 
