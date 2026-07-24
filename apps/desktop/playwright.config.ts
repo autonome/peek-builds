@@ -118,9 +118,12 @@ export default defineConfig({
   // `isTestProfile()` in apps/desktop/main/config.ts), so parallel workers
   // don't collide on the lock.
   //
-  // Default is 4 on macOS/Windows (real parallelism across ~44 spec files),
-  // 1 on Linux. Asahi/Fedora/Wayland chokes on 4 simultaneous Electron
-  // instances even with PEEK_HEADLESS=1: tests cluster-fail across page-host
+  // Default is 2 on macOS/Windows (was 4 — four simultaneous Electron
+  // instances is the suite's peak thermal load on a laptop, and worker
+  // concurrency is the direct knob for it; 2 still gives real parallelism
+  // across ~44 spec files), 1 on Linux. Asahi/Fedora/Wayland chokes on 4
+  // simultaneous Electron instances even with PEEK_HEADLESS=1: tests
+  // cluster-fail across page-host
   // / permission-prompt / page-load / page-navbar specs and the OS marks
   // some Electron processes hung (see 2026-05-08 incident — required force-
   // close). Untested whether other Linux desktops (X11, KDE) hit the same;
@@ -139,7 +142,7 @@ export default defineConfig({
   // afterward at --workers=1.
   fullyParallel: false,
   workers: parseInt(
-    process.env.PEEK_TEST_WORKERS || (process.platform === 'linux' ? '1' : '4')
+    process.env.PEEK_TEST_WORKERS || (process.platform === 'linux' ? '1' : '2')
   ),
 
   // CI settings
