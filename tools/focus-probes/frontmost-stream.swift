@@ -16,7 +16,9 @@ let end = Date().addingTimeInterval(duration)
 while Date() < end {
   let f = NSWorkspace.shared.frontmostApplication
   let id = f?.bundleIdentifier ?? f?.localizedName ?? "unknown"
-  print("\(Date().timeIntervalSince1970),\(id)")
+  let pid = f?.processIdentifier ?? -1
+  // CSV: <unix-seconds>,<bundle-id>,<frontmost-pid>
+  print("\(Date().timeIntervalSince1970),\(id),\(pid)")
   fflush(stdout)
   Thread.sleep(forTimeInterval: interval)
 }
