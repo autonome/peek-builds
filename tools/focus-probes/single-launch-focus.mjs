@@ -1,16 +1,21 @@
 // single-launch-focus.mjs — automated, ~5-second single-launch focus-theft probe.
 //
 // WHY: the desktop Playwright suite launches ~140 Electron processes and each
-// grabs macOS focus at launch (pre-JS activation), repeatedly stealing focus
-// from whoever is at the machine. We must NOT use a suite run to test a fix —
-// that IS the focus theft, ~140x over minutes. This launches exactly ONE
-// Electron process and reports whether it became the frontmost (active) app.
+// grabs the macOS KEY WINDOW at launch (pre-JS activation), repeatedly stealing
+// keyboard focus from whoever is at the machine. We must NOT use a suite run to
+// test a fix — that IS the focus theft, ~140x over minutes. This launches
+// exactly ONE Electron process and reports whether it grabbed the topmost /
+// key window.
 //
-// Mechanism: a swift NSWorkspace sampler streams the frontmost bundle id every
-// 50ms (no special permissions). We launch one Electron via Playwright's
-// _electron.launch — the SAME mechanism the suite uses (posix_spawn of the
-// binary, NOT LaunchServices `open`) — and check whether com.github.Electron
-// ever appears as frontmost during its lifetime.
+// Mechanism: a swift sampler streams the OWNER of the topmost on-screen window
+// (the current key window) every 50ms via CGWindowList (no special
+// permissions — owner PID/layer/bounds need none, only window NAMES do). We
+// launch one Electron via Playwright's _electron.launch — the SAME mechanism
+// the suite uses (posix_spawn of the binary, NOT LaunchServices `open`) — and
+// check whether the launched PID ever owns the topmost/key window during its
+// lifetime. NOTE: an _electron.launch app steals the KEY window without ever
+// becoming the frontmost *application*, which is why the old
+// NSWorkspace.frontmostApplication oracle reported false negatives.
 //
 // Env knobs:
 //   PROBE_EXECUTABLE   — executablePath to launch (default: bundled electron).
@@ -45,9 +50,10 @@ const PACKAGED = process.env.PROBE_PACKAGED || null;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Electron identity in NSWorkspace: bundled Electron.app reports
-// com.github.Electron; localizedName "Electron" as a fallback.
-const isElectron = (id) => /electron/i.test(id);
+// Electron identity as a topmost-window OWNER NAME: bundled Electron.app's
+// kCGWindowOwnerName is "Electron". Secondary signal only — PID attribution
+// (below) is authoritative.
+const isElectron = (owner) => /electron/i.test(owner);
 
 async function main() {
   const samples = [];
@@ -56,20 +62,22 @@ async function main() {
   const sampler = spawn('swift', [swiftProbe, samplerDuration, '0.05'], {
     stdio: ['ignore', 'pipe', 'inherit'],
   });
+  // Swift CSV per sample: <unix-seconds>,<topmost-window-owner-name>,<owner-pid>
+  // (owner-pid == -1 / owner == "none" when no layer-0 window is on screen).
   sampler.stdout.on('data', (d) => {
     for (const line of d.toString().split('\n')) {
       const parts = line.split(',');
       if (parts.length < 3) continue;
       const ts = Number(parts[0]);
-      const id = parts[1].trim();
+      const owner = parts[1].trim();
       const pid = Number(parts[2]);
-      if (id) samples.push({ ts, id, pid });
+      if (owner) samples.push({ ts, owner, pid });
     }
   });
 
   // Let swift compile + start sampling before we launch.
   await sleep(1800);
-  const beforeId = samples.length ? samples[samples.length - 1].id : 'unknown';
+  const beforeOwner = samples.length ? samples[samples.length - 1].owner : 'unknown';
 
   // PROBE_NO_HEADLESS=1 → launch WITHOUT headless gating (real visible
   // windows). This is the contrast case: the suspected true source of suite
@@ -116,14 +124,15 @@ async function main() {
     setTimeout(() => { sampler.kill('SIGTERM'); r(); }, 3000);
   });
 
-  // Attribution: the LAUNCHED app stole focus iff a sample's frontmost PID
-  // equals the launched process PID. Bundle-id matching (com.github.Electron
-  // for source, com.autonome.peek for packaged) is a secondary signal — but
-  // com.autonome.peek collides with a running production Peek, so PID wins.
+  // Attribution: the LAUNCHED app stole the key window iff a sample's
+  // topmost-window OWNER PID equals the launched process PID. Owner-name
+  // matching ("Electron" for source, "Peek" for packaged) is a secondary
+  // signal — but the packaged name collides with a running production Peek, so
+  // PID wins.
   const stolenSamples = launchedPid
     ? samples.filter((s) => s.pid === launchedPid)
-    : samples.filter((s) => isElectron(s.id));
-  const distinct = [...new Set(samples.map((s) => `${s.id}#${s.pid}`))];
+    : samples.filter((s) => isElectron(s.owner));
+  const distinct = [...new Set(samples.map((s) => `${s.owner}#${s.pid}`))];
 
   console.log('════════════════════════════════════════════════════════');
   console.log(`  FOCUS PROBE: ${LABEL}`);
@@ -131,16 +140,16 @@ async function main() {
   console.log(`  executablePath : ${launchConfig.executablePath || '(bundled electron)'}`);
   console.log(`  JS accessory   : ${process.env.PROBE_JS_ACCESSORY === '1'}`);
   console.log(`  launched PID   : ${launchedPid ?? '(launch failed)'}`);
-  console.log(`  frontmost before launch : ${beforeId}`);
-  console.log(`  total samples           : ${samples.length}`);
-  console.log(`  launched-app frontmost  : ${stolenSamples.length}`);
-  console.log(`  distinct frontmost seen : ${distinct.join(' | ')}`);
+  console.log(`  topmost-window owner before launch : ${beforeOwner}`);
+  console.log(`  total samples                      : ${samples.length}`);
+  console.log(`  launched-app owned topmost window  : ${stolenSamples.length}`);
+  console.log(`  distinct topmost owners seen       : ${distinct.join(' | ')}`);
   if (launchErr) console.log(`  LAUNCH ERROR   : ${launchErr.message}`);
   console.log('  ------------------------------------------------------');
   console.log(
     stolenSamples.length
-      ? '  RESULT: ❌ FOCUS STOLEN — the launched app became frontmost'
-      : '  RESULT: ✅ no focus theft — the launched app never frontmost',
+      ? '  RESULT: ❌ FOCUS STOLEN — the launched app grabbed the topmost/key window'
+      : '  RESULT: ✅ no focus theft — the launched app never owned the topmost/key window',
   );
   console.log('════════════════════════════════════════════════════════');
 
