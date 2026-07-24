@@ -175,6 +175,25 @@ export interface WindowRecord {
    * structural replacement for the deleted `(win as any).__hudHidden` expando.
    */
   hiddenByAppBlur?: boolean;
+  /**
+   * OVERLAY ATTACHMENT (§4.3 dim 3b, §5 step 9). Set on an OVERLAY record: the
+   * HOST window this overlay frames. Absent = detached (the overlay belongs to
+   * nothing and must not be on screen).
+   *
+   * This one relation replaces `hybrid-overlay.ts`'s module-level
+   * `followedBaseWin` / `onFollowedMove` pair plus its per-follow live queries
+   * (`baseWin.getBounds()`, `baseWin.isFullScreen()`, `overlayWin.isVisible()`).
+   * Attach / retarget / detach are the ONE transition
+   * (`OVERLAY_ATTACH_REQUESTED`, host `null` = detach), and the follow is driven
+   * by the host's `BOUNDS_CHANGED` — command + event, never query (§3).
+   *
+   * Deliberately stored on the OVERLAY (one host per overlay) rather than a
+   * `hostId -> overlayId` map: the app has ONE shared chrome overlay, and this
+   * direction makes "is this overlay attached, and to what?" a record read while
+   * the reverse ("does this host have an overlay?") stays a scan of a handful of
+   * records (`overlayIdForHost`).
+   */
+  overlayFor?: WindowId;
   escapeMode?: EscapeMode;
   /**
    * Satellite = a surface that can hold OS focus but is never "the window the
@@ -373,6 +392,29 @@ export interface AppWindowState {
   escAsk: { id: WindowId; seq: number } | null;
   /** Monotonic source for `escAsk.seq`. Never reset while the app runs. */
   escSeq: number;
+  /**
+   * ARMED app-resign transient sweep (§4.4 dim 4b, §5 step 9) — the structural
+   * replacement for `ipc.ts`'s `pendingAppResignClose` setTimeout HANDLE.
+   *
+   * The problem the timer existed for: macOS fires a brief `did-resign-active`
+   * → `did-become-active` DANCE (no real app switch) during startup restore and
+   * around overlay/activation transitions, and dismissing the hybrid transients
+   * on the resign edge of that dance is what made "the slide hotkey did nothing
+   * the first time after startup" (peek 8e5c3174, second half). The old code
+   * deferred the close by `HYBRID_APP_RESIGN_SETTLE_MS` and had
+   * `did-become-active` `clearTimeout` it.
+   *
+   * Here the DECISION and its CANCELLATION are pure state, not a timer:
+   * `APP_RESIGNED` ARMS this flag (and closes nothing), `APP_ACTIVATED` DISARMS
+   * it — that disarm IS the dance cancel — and `APP_RESIGN_SETTLED` is inert
+   * unless it is still armed. A settle signal that arrives after the app came
+   * back can therefore close nothing at all, which is the property the
+   * `clearTimeout` was buying. The reducer NEVER schedules: the settle signal's
+   * timing belongs to whatever produces `APP_RESIGN_SETTLED` at the OS boundary
+   * (no producer is wired in this slice), and no timing choice out there can
+   * make the reducer dismiss a surface the user is back in front of.
+   */
+  pendingAppResignSweep: boolean;
 }
 
 export function createInitialState(): AppWindowState {
@@ -389,6 +431,7 @@ export function createInitialState(): AppWindowState {
     focusSeqCounter: 0,
     escAsk: null,
     escSeq: 0,
+    pendingAppResignSweep: false,
   };
 }
 
@@ -542,7 +585,53 @@ export type WindowEvent =
    * every registered window; a duplicate report (macOS fires both `move` and
    * `moved` for one gesture) re-merges the same rect, structurally inert.
    */
-  | { type: 'BOUNDS_CHANGED'; id: WindowId; bounds: Rectangle }
+  | {
+      type: 'BOUNDS_CHANGED';
+      id: WindowId;
+      bounds: Rectangle;
+      /**
+       * The OVERLAY FRAME for this host rect (§4.3 dim 3b, §5 step 9) — the
+       * rect an attached overlay must take so it frames `bounds`. Rides the
+       * payload for the same reason `MAXIMIZE_REQUESTED.workArea` does: the
+       * frame is the host rect grown by the chrome gutters and then CLAMPED to
+       * the display work area (`hybrid-overlay.ts expandToOverlayFrame`, which
+       * needs `screen`), so computing it is OS-boundary math and this reducer
+       * keeps ZERO value imports.
+       *
+       * Absent = the dispatch site had no frame to offer (no overlay attached
+       * to this host, or no display info): the follow then drives ORDER and
+       * VISIBILITY only, never a stale rect.
+       */
+      overlayFrame?: Rectangle;
+    }
+  /**
+   * Attach / retarget / detach the chrome overlay (§4.3 dim 3b, §5 step 9) —
+   * ONE transition covering all three, mirroring `hybrid-overlay.ts retarget(id
+   * | null)`: `hostId` non-null attaches (or moves) `id`'s attachment onto that
+   * host and drives the follow; `hostId: null` detaches and takes the overlay
+   * off screen. Re-attaching to the SAME host is a plain re-follow (the
+   * idempotent "re-frame onto the current host" call the app-active gate makes).
+   *
+   * `frame` is the overlay's frame rect for the host's CURRENT bounds, computed
+   * at the dispatch site — see `BOUNDS_CHANGED.overlayFrame` for why the rect
+   * cannot be computed here. Absent = order + visibility only.
+   *
+   * No-op for an unknown overlay id. An unknown/undefined host is a DETACH: an
+   * attachment to a window the machine does not know cannot be followed, and a
+   * dangling `overlayFor` would leave the overlay stranded on screen (today's
+   * `retarget` treats "active window vanished between signal and handling"
+   * exactly this way — clear + hide).
+   */
+  | { type: 'OVERLAY_ATTACH_REQUESTED'; id: WindowId; hostId: WindowId | null; frame?: Rectangle }
+  /**
+   * The app-resign settle point (§4.4 dim 4b, §5 step 9): "the app has stayed
+   * resigned — this was a real app switch, not the macOS activation dance." The
+   * reducer sweeps the visible transient page-hosts ONLY if the sweep is still
+   * armed (see `AppWindowState.pendingAppResignSweep`); an `APP_ACTIVATED` in
+   * between disarms it, so a settle signal that lands after the user came back
+   * closes nothing. Inert on its own — arming happens on `APP_RESIGNED`.
+   */
+  | { type: 'APP_RESIGN_SETTLED' }
   /**
    * App code wants this window at `bounds` (§4.2 dim 2, §5 step 7E) — the
    * plain geometry-write intent behind every legacy direct `setBounds`:
@@ -1153,6 +1242,7 @@ function cloneState(state: AppWindowState): AppWindowState {
     focusSeqCounter: state.focusSeqCounter,
     escAsk: state.escAsk,
     escSeq: state.escSeq,
+    pendingAppResignSweep: state.pendingAppResignSweep,
   };
 }
 
@@ -1400,6 +1490,176 @@ function applyFrontAssertion(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Overlay attachment + transient autoclose (§4.3 dim 3b, §4.4 dim 4b, §5 step 9)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The overlay attached to `hostId`, or null. A scan rather than an index: the
+ * app has one shared chrome overlay and the record set is small — see the
+ * direction note on `WindowRecord.overlayFor`.
+ */
+export function overlayIdForHost(state: AppWindowState, hostId: WindowId): WindowId | null {
+  for (const rec of state.windows.values()) {
+    if (rec.overlayFor === hostId) return rec.id;
+  }
+  return null;
+}
+
+/**
+ * Drive the overlay attached to `hostId` (if any) onto the host — the machine
+ * form of `hybrid-overlay.ts frameBounds()`, with every live query it made
+ * replaced by a record read:
+ *
+ *   `baseWin.isFullScreen()`  -> the host record's `fsMode`
+ *   module-level `appActive`  -> `AppWindowState.appActive` (the ONE copy)
+ *   `overlayWin.isVisible()`  -> the overlay record's `visible`
+ *
+ * The decision, in the SAME order the original performed it:
+ *   - host not `normal` (entering / in / leaving native fullscreen): the chrome
+ *     is unavailable — take the overlay off screen and drive NOTHING else. A
+ *     normal-level window pushed over a fullscreen Space is what AppKit used to
+ *     promote into an all-black fullscreen tile, so this must precede the bounds
+ *     write, not follow it.
+ *   - `frame` given: `SET_BOUNDS` — position/size ALWAYS happens, even while the
+ *     app is inactive.
+ *   - app inactive: STOP (peek 71cfde09 item 7 / R6). Never reveal the chrome or
+ *     float it over the foreground app; `APP_ACTIVATED` re-runs this follow and
+ *     reveals it then, which is why no timer or poll is needed.
+ *   - else: `SET_STACKING` (the overlay's z-pinning re-assert — §4.3 makes
+ *     `setStacking` the sole ordering effect; on a `pinned` record the executor
+ *     realizes it as the floating-level re-assert the original did with
+ *     `setAlwaysOnTop(true, 'floating')`), then `SHOW_WINDOW { activate: false }`
+ *     when the overlay is not already visible — the original's `showInactive()`,
+ *     focus-free.
+ *
+ * `visible` is NOT written here: like every other show/hide intent in this
+ * reducer it flips on the backend's native `shown`/`hidden` echo.
+ */
+function applyOverlayFollow(
+  state: AppWindowState,
+  hostId: WindowId,
+  frame: Rectangle | undefined,
+  effects: Effect[],
+): void {
+  const overlayId = overlayIdForHost(state, hostId);
+  if (overlayId == null) return;
+  const overlay = state.windows.get(overlayId);
+  const host = state.windows.get(hostId);
+  if (!overlay || !host) return;
+
+  if (host.fsMode.name !== 'normal') {
+    if (overlay.visible) effects.push({ type: 'HIDE_WINDOW', id: overlayId });
+    return;
+  }
+  if (frame) effects.push({ type: 'SET_BOUNDS', id: overlayId, bounds: frame });
+  if (!state.appActive) return;
+  effects.push({ type: 'SET_STACKING', id: overlayId });
+  if (!overlay.visible) effects.push({ type: 'SHOW_WINDOW', id: overlayId, activate: false });
+}
+
+/**
+ * Detach an overlay from whatever it framed and take it off screen — the
+ * `retarget(null)` path (no host, or the host vanished). Clearing the relation
+ * is what keeps `overlayFor` from dangling onto a dead id.
+ */
+function detachOverlay(state: AppWindowState, overlayId: WindowId, effects: Effect[]): void {
+  const overlay = state.windows.get(overlayId);
+  if (!overlay) return;
+  if (overlay.overlayFor === undefined) return;
+  patchRecord(state, overlayId, { overlayFor: undefined });
+  if (overlay.visible) effects.push({ type: 'HIDE_WINDOW', id: overlayId });
+}
+
+/**
+ * The roles that are TRANSIENT — they open and close frequently and ride above
+ * the workspace. Ported VERBATIM from `izui-roles.ts TRANSIENT_ROLES` (the
+ * cutover deletes that copy; until then the two must agree).
+ */
+const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay']);
+
+/**
+ * Transient roles that the autoclose EXEMPTS. `overlay` is transient-class but
+ * manages its own show/hide through the attachment relation above, never
+ * through a close — so an autoclose must never touch it (ported verbatim from
+ * `selectTransientSiblingsToClose`'s `if (c.role === 'overlay') continue`).
+ */
+const AUTOCLOSE_EXEMPT_ROLES: ReadonlySet<string> = new Set(['overlay']);
+
+/**
+ * Which transient siblings a newly-focused window dismisses (§4.4 dim 4b) —
+ * the reducer port of `izui-roles.ts selectTransientSiblingsToClose`, with the
+ * candidate gathering (two registries + a live `isVisible()` per window)
+ * replaced by the record set. Semantics are preserved EXACTLY:
+ *
+ *   - a `utility` focuser (a chain popup, child of a transient) closes NOTHING
+ *     — it must not dismiss its transient parent;
+ *   - skip the focuser itself, any non-visible window, any non-transient role;
+ *   - `overlay` is exempt (see `AUTOCLOSE_EXEMPT_ROLES`).
+ *
+ * An UNREGISTERED focuser (no record) has an undefined role, which is not
+ * `utility` — so it closes every visible transient, matching the original's
+ * `getWindowInfo(focusedId)?.params?.role` returning undefined.
+ *
+ * Kind-agnostic on purpose: the original's whole point was that BOTH plain
+ * BrowserWindows and hybrid page-hosts are candidates (the close-on-blur
+ * regression, peek 8e5c3174, was hybrid windows never being in the set).
+ */
+export function selectTransientAutoclose(state: AppWindowState, focusedId: WindowId): WindowId[] {
+  const focuser = state.windows.get(focusedId);
+  if (focuser?.role === 'utility') return [];
+  const out: WindowId[] = [];
+  for (const rec of state.windows.values()) {
+    if (rec.id === focusedId) continue;
+    if (!rec.visible) continue;
+    if (!TRANSIENT_ROLES.has(rec.role)) continue;
+    if (AUTOCLOSE_EXEMPT_ROLES.has(rec.role)) continue;
+    out.push(rec.id);
+  }
+  return out;
+}
+
+/**
+ * Which transient surfaces a REAL app switch dismisses (§4.4 dim 4b) — the
+ * reducer port of `ipc.ts doCloseTransientHybridWindows`. Same role/visibility
+ * rule as the focus-driven autoclose with no focuser to exclude, and scoped to
+ * `page-host` windows: a transient BrowserWindow modal already self-closes via
+ * its own per-window `blur` handler on app blur, so sweeping it here would race
+ * that path (the original's "scoped to HYBRID windows" comment).
+ */
+export function selectAppResignTransients(state: AppWindowState): WindowId[] {
+  const out: WindowId[] = [];
+  for (const rec of state.windows.values()) {
+    if (rec.kind !== 'page-host') continue;
+    if (!rec.visible) continue;
+    if (!TRANSIENT_ROLES.has(rec.role)) continue;
+    if (AUTOCLOSE_EXEMPT_ROLES.has(rec.role)) continue;
+    out.push(rec.id);
+  }
+  return out;
+}
+
+/**
+ * How the autoclose dismisses ONE window: the keepLive decision, identical to
+ * `WINDOW_CLOSE_OR_HIDE_REQUESTED`'s (both producers called the same app-facing
+ * `windows.ts closeOrHideWindow`).
+ *
+ * NOT `DESTROY_WINDOW`, despite §4.4's "emitting destroy effects" wording: a
+ * `keepLive` slide (the left slide playing music) must be HIDDEN, not destroyed
+ * — destroying it is exactly the regression peek 2c94c125 fixed.
+ */
+function closeOrHideEffect(rec: WindowRecord): Effect {
+  return rec.keepLive ? { type: 'HIDE_WINDOW', id: rec.id } : { type: 'CLOSE_WINDOW', id: rec.id };
+}
+
+/** Emit the dismissal effects for a list of transient windows. */
+function pushCloseOrHide(state: AppWindowState, ids: WindowId[], effects: Effect[]): void {
+  for (const id of ids) {
+    const rec = state.windows.get(id);
+    if (rec) effects.push(closeOrHideEffect(rec));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Fullscreen sub-reducer (§2.4 transition table). Total over (mode x event).
 // Mutates the already-cloned `state`; pushes effects onto `effects`.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1644,7 +1904,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // keepLive: hide, keep the record registered. `visible` is untouched
       // here — it flips on the backend's native hide event (WINDOW_HIDDEN).
       // Otherwise: the resolved close (no keepLive policy left to apply).
-      effects.push(rec.keepLive ? { type: 'HIDE_WINDOW', id: event.id } : { type: 'CLOSE_WINDOW', id: event.id });
+      // Shared with the §5 step 9 transient autoclose, whose producers called
+      // the same app-facing `closeOrHideWindow` — one owner of the decision.
+      effects.push(closeOrHideEffect(rec));
       break;
     }
 
@@ -1731,6 +1993,10 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       if (state.front === event.id) {
         state.front = successorFront(state, event.id);
       }
+      // A host that left the screen has no chrome to wear (§5 step 9): detach
+      // its overlay and take it down with it — the `retarget(null)` path.
+      const overlayId = overlayIdForHost(state, event.id);
+      if (overlayId != null) detachOverlay(state, overlayId, effects);
       break;
     }
 
@@ -1804,6 +2070,10 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       if (state.switcher.open && state.switcher.windowId === event.id) {
         state.switcher = { open: false };
       }
+      // The framed host is gone (§5 step 9) — detach + hide its overlay rather
+      // than leave `overlayFor` pointing at a retired id.
+      const orphanedOverlay = overlayIdForHost(state, event.id);
+      if (orphanedOverlay != null) detachOverlay(state, orphanedOverlay, effects);
       // Session end (last window closed -> idle) is owned by `izui-state.ts`
       // (its `popWindow`/`endSession`), mirrored in via SESSION_CHANGED. Not
       // derived here (§3).
@@ -1812,6 +2082,16 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
 
     case 'OS_FOCUS_GAINED': {
       applyFocusGained(state, event.id, event.lastHttpUrl);
+      // Transient-sibling autoclose (§4.4 dim 4b, §5 step 9): the FOCUSER
+      // dismisses the transients it is not. Driven from OS focus only — this
+      // is the machine form of the `win.on('focus')` / `onHybridHostFocus`
+      // producers, and deliberately NOT of `WINDOW_SHOWN { focused: true }`,
+      // which is a registration-time visibility IMPORT (see
+      // `WindowRegistrationDecision.pumpShownEvent`) rather than evidence that
+      // the OS moved focus. The dismissed records retire on their own
+      // `WINDOW_CLOSED` / `WINDOW_HIDDEN`, so this clause is effect-only and
+      // cannot break the front invariant.
+      pushCloseOrHide(state, selectTransientAutoclose(state, event.id), effects);
       break;
     }
 
@@ -1823,6 +2103,10 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
 
     case 'APP_ACTIVATED': {
       state.appActive = true;
+      // The macOS resign→become DANCE cancel (§5 step 9): the user is back, so
+      // the armed app-resign sweep is void. This assignment replaces
+      // `ipc.ts onAppDidBecomeActive`'s `clearTimeout(pendingAppResignClose)`.
+      state.pendingAppResignSweep = false;
       // The transient->active promotion is owned by `izui-state.ts setAppFocused`
       // and mirrored in via SESSION_CHANGED — not derived here (§3).
       // Reconcile any in-flight fullscreen transition against reality (§2.5).
@@ -1844,6 +2128,17 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
           effects.push({ type: 'SHOW_WINDOW', id: rec.id, activate: false });
         }
       }
+      // Re-reveal every attached overlay over its host (§5 step 9) — the
+      // machine form of `hybrid-overlay.ts onAppBecomeActive`'s "restore the
+      // floating level, then re-frame onto the current host". No `frame` is
+      // available on this event, so this drives ORDER + VISIBILITY only; the
+      // host's next `BOUNDS_CHANGED` refreshes the rect, and the overlay's
+      // bounds were never moved while it was hidden. No flag is needed to
+      // remember which overlays to re-show (unlike the HUD sweep's
+      // `hiddenByAppBlur`): the attachment relation IS that memory.
+      for (const rec of [...state.windows.values()]) {
+        if (rec.overlayFor != null) applyOverlayFollow(state, rec.overlayFor, undefined, effects);
+      }
       break;
     }
 
@@ -1862,6 +2157,11 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // Peek is no longer the active app — an outstanding Esc question must not
       // resolve into a switcher-open after the user left.
       state.escAsk = null;
+      // ARM the transient sweep; do NOT run it here (§5 step 9). This edge may
+      // be the resign half of the macOS activation dance, which an
+      // APP_ACTIVATED would immediately disarm — see
+      // `AppWindowState.pendingAppResignSweep`.
+      state.pendingAppResignSweep = true;
       // Hide visible HUD-class windows while the app is inactive (the old
       // main.ts did-resign-active sweep over `isAlwaysOnTop() && isVisible()
       // && !isFocusable()` — the class field replaces the sniffing predicate,
@@ -1874,6 +2174,15 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
           effects.push({ type: 'HIDE_WINDOW', id: rec.id });
         }
       }
+      // The chrome overlay is chrome for the ACTIVE page: while Peek is not the
+      // active app it must not linger on screen or float over the foreground
+      // app (peek 88797f2d / R6). Ports `hybrid-overlay.ts onAppResignActive`'s
+      // hide; the attachment SURVIVES, so APP_ACTIVATED re-reveals it.
+      for (const rec of [...state.windows.values()]) {
+        if (rec.overlayFor != null && rec.visible) {
+          effects.push({ type: 'HIDE_WINDOW', id: rec.id });
+        }
+      }
       if (state.switcher.open) {
         // Close without focus theft — the user is switching to another app. In
         // the staged cutover the adapter treats this (restoreFocus:false) as a
@@ -1883,6 +2192,24 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         effects.push({ type: 'CLOSE_SWITCHER_WINDOW', restoreTarget, restoreFocus: false, switcherWindowId });
         state.switcher = { open: false };
       }
+      break;
+    }
+
+    case 'APP_RESIGN_SETTLED': {
+      // The settle point of a REAL app switch (§4.4 dim 4b, §5 step 9). Inert
+      // unless the sweep is still armed — an APP_ACTIVATED in between (the
+      // macOS dance) disarmed it, which is the whole cancel semantics of the
+      // deleted `pendingAppResignClose` timer, now structural.
+      if (!state.pendingAppResignSweep) break;
+      state.pendingAppResignSweep = false;
+      // Defensive: the app came back without an APP_ACTIVATED reaching the
+      // machine. Belief-vs-reality here is `appActive`'s job, and a visible
+      // surface must never be dismissed while the app is front.
+      if (state.appActive) break;
+      // Focus left Peek entirely, so there is no focuser to exclude: every
+      // visible transient page-host is dismissed (the original passed the
+      // no-match sentinel id -1 with an undefined focuser role).
+      pushCloseOrHide(state, selectAppResignTransients(state), effects);
       break;
     }
 
@@ -1902,11 +2229,21 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
 
     case 'OS_FULLSCREEN_ENTERED': {
       applyOsFullscreenEntered(state, event.id, effects);
+      // Fullscreen edges are the DETERMINISTIC signal for the overlay's
+      // availability (§5 step 9): a host whose bounds already fill the work
+      // area can enter/leave native fullscreen with NO bounds change, so
+      // `BOUNDS_CHANGED` alone cannot be trusted to fire. Ports the
+      // `enter-full-screen`/`leave-full-screen` listeners the old follow wired.
+      applyOverlayFollow(state, event.id, undefined, effects);
       break;
     }
 
     case 'OS_FULLSCREEN_LEFT': {
       applyOsFullscreenLeft(state, event.id, effects);
+      // Back to `normal` -> the same follow re-reveals the overlay, with no
+      // rect needed: it was hidden at its pre-fullscreen frame, never moved
+      // (the fullscreen branch of `applyOverlayFollow` drives no SET_BOUNDS).
+      applyOverlayFollow(state, event.id, undefined, effects);
       break;
     }
 
@@ -1928,6 +2265,31 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // focus, and echoing anything back at the OS here would loop (our own
       // SET_BOUNDS lands right back as this event).
       patchRecord(state, event.id, { bounds: event.bounds });
+      // OVERLAY FOLLOW (§4.3 dim 3b, §5 step 9): the host moved/resized, so its
+      // attached overlay re-frames. This is the "follow ... driven by
+      // boundsChanged" the design names, and it replaces the pair of native
+      // 'move'/'resize' listeners `retarget()` used to attach to whichever host
+      // was active. No attachment -> nothing at all, so the ordinary
+      // bounds-mirror path stays effect-free.
+      applyOverlayFollow(state, event.id, event.overlayFrame, effects);
+      break;
+    }
+
+    case 'OVERLAY_ATTACH_REQUESTED': {
+      const overlay = state.windows.get(event.id);
+      if (!overlay) break; // unknown overlay — nothing to attach
+      const host = event.hostId != null ? state.windows.get(event.hostId) : undefined;
+      if (!host) {
+        // Detach: no host, or a host the machine does not know (the "active
+        // window vanished between signal and handling" case).
+        detachOverlay(state, event.id, effects);
+        break;
+      }
+      // Attach OR retarget — the same assignment either way (the previous
+      // host's follow is dropped with the relation, so there is no `unfollow`
+      // step to perform).
+      patchRecord(state, event.id, { overlayFor: host.id });
+      applyOverlayFollow(state, host.id, event.frame, effects);
       break;
     }
 
@@ -2257,6 +2619,15 @@ export function getDevtoolsTargetId(state: AppWindowState): WindowId | null {
   return best ? best.id : null;
 }
 
+/**
+ * The host an overlay is currently attached to, or null (§4.3 dim 3b). The
+ * reducer-state answer to `hybrid-overlay.ts`'s `followedBaseWin` — a read, not
+ * a live `getBounds()`/`isVisible()` question.
+ */
+export function getOverlayHost(state: AppWindowState, overlayId: WindowId): WindowId | null {
+  return state.windows.get(overlayId)?.overlayFor ?? null;
+}
+
 /** A structural, read-only view for tests + the Playwright bridge. */
 export interface StateSnapshot {
   appActive: boolean;
@@ -2368,6 +2739,16 @@ export class WindowStateOwner {
 
   getDevtoolsTargetId(): WindowId | null {
     return getDevtoolsTargetId(this.state);
+  }
+
+  /** The host this overlay frames, or null (§4.3 dim 3b). */
+  getOverlayHost(overlayId: WindowId): WindowId | null {
+    return getOverlayHost(this.state, overlayId);
+  }
+
+  /** The overlay attached to this host, or null (§4.3 dim 3b). */
+  getOverlayForHost(hostId: WindowId): WindowId | null {
+    return overlayIdForHost(this.state, hostId);
   }
 
   getWindowFocusSeq(id: WindowId): number {

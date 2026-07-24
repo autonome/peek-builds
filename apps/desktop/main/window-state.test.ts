@@ -39,6 +39,10 @@ import {
   getWindowMode,
   getWindowPreBounds,
   getDevtoolsTargetId,
+  getOverlayHost,
+  overlayIdForHost,
+  selectTransientAutoclose,
+  selectAppResignTransients,
   snapshot,
   frontInvariantHolds,
   stackOrderInvariantHolds,
@@ -172,6 +176,7 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       focusSeqCounter: 1,
       escAsk: null,
       escSeq: 0,
+      pendingAppResignSweep: false,
     };
     assert.ok(frontInvariantHolds(state), 'built state class must satisfy the invariant');
     return state;
@@ -253,6 +258,14 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     { type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(1), on: true },
     { type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(1), on: false },
     { type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(99), on: true },
+    // §5 step 9 events (overlay attachment + the app-resign transient sweep).
+    { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(1), hostId: wid(1) },
+    { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(1), hostId: wid(1), frame: BOUNDS },
+    { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(1), hostId: null },
+    { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(1), hostId: wid(99) },
+    { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(99), hostId: wid(1) },
+    { type: 'BOUNDS_CHANGED', id: wid(1), bounds: BOUNDS, overlayFrame: BOUNDS },
+    { type: 'APP_RESIGN_SETTLED' },
   ];
 
   it('reduce is total: defined result + front invariant holds for all combinations', () => {
@@ -343,7 +356,7 @@ describe('decideEscape (steps 1-5, total)', () => {
   it('step 4: any non-normal fsMode -> exit-fullscreen (entering/full/leaving)', () => {
     for (const name of ['entering-fullscreen', 'fullscreen', 'leaving-fullscreen'] as FsMode['name'][]) {
       const rec: WindowRecord = { id: wid(1), kind: 'page-host', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: true, fsMode: fsOf(name, BOUNDS), maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1 };
-      const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), frontAsserted: true, stackOrder: [wid(1)], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
+      const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), frontAsserted: true, stackOrder: [wid(1)], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false };
       assert.deepStrictEqual(decideEscape(state), { kind: 'exit-fullscreen', id: wid(1) }, `mode ${name}`);
     }
   });
@@ -1289,7 +1302,7 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
   // front) — we craft it directly to exercise the guard's throw path.
   function illegalFrontState(): AppWindowState {
     const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1 };
-    return { appActive: true, session: 'active', front: wid(1), frontAsserted: true, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
+    return { appActive: true, session: 'active', front: wid(1), frontAsserted: true, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false };
   }
 
   it('THROWS in dev/test when reduce yields an illegal front (naming the event + front id)', () => {
@@ -1318,7 +1331,7 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
   it('FULLSCREEN_REQUESTED on a satellite does NOT install an illegal front (and does not throw)', () => {
     // The reducer bug the reviewer flagged: front was assigned unconditionally.
     const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1 };
-    const s: AppWindowState = { appActive: true, session: 'active', front: null, frontAsserted: false, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0 };
+    const s: AppWindowState = { appActive: true, session: 'active', front: null, frontAsserted: false, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false };
     const { state } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
     assert.strictEqual(state.front, null, 'a satellite must never become front, even via a fullscreen request');
     assert.strictEqual(getWindowMode(state, wid(1)), 'entering-fullscreen', 'the fsMode edge still runs (total table)');
@@ -3289,5 +3302,536 @@ describe('visibleOnAllSpaces — the macOS Spaces field (§4.2 dim 7b, §5 step 
     const before = s.windows.get(wid(1))!;
     reduce(s, { type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(1), on: true });
     assert.strictEqual(before.visibleOnAllSpaces, false, 'input record not mutated');
+  });
+});
+
+// ── §5 step 9: overlay attachment (§4.3 dim 3b) ──────────────────────────────
+
+/** Effects of one type, in emission order. */
+function effectsOfType<T extends Effect['type']>(effects: Effect[], type: T): Extract<Effect, { type: T }>[] {
+  return effects.filter((e): e is Extract<Effect, { type: T }> => e.type === type);
+}
+
+/** Effect types in emission order — the follow's ORDER is part of the port. */
+function effectShape(effects: Effect[]): string[] {
+  return effects.map((e) => e.type);
+}
+
+describe('overlay attachment / follow / retarget (§4.3 dim 3b, §5 step 9)', () => {
+  const HOST_A: Rectangle = { x: 300, y: 200, width: 900, height: 700 };
+  const HOST_B: Rectangle = { x: 40, y: 60, width: 500, height: 400 };
+  // The frames the DISPATCH SITE computes (host rect + gutters, work-area
+  // clamped) — the reducer never derives these, it only routes them.
+  const FRAME_A: Rectangle = { x: 82, y: 156, width: 1336, height: 752 };
+  const FRAME_B: Rectangle = { x: 0, y: 25, width: 936, height: 452 };
+
+  const OVERLAY = 9;
+
+  /** A registered chrome overlay that is NOT on screen yet. */
+  function registerOverlay(state: AppWindowState): AppWindowState {
+    return drive(state, [
+      { type: 'WINDOW_REGISTERED', id: wid(OVERLAY), kind: 'browser', role: 'overlay', class: 'overlay', satellite: true },
+    ]).state;
+  }
+
+  /** The overlay, on screen (its native `shown` echo has landed). */
+  function showOverlay(state: AppWindowState): AppWindowState {
+    return drive(state, [{ type: 'WINDOW_SHOWN', id: wid(OVERLAY), focused: false }]).state;
+  }
+
+  /** A page-host + a registered overlay; nothing attached yet. */
+  function hostAndOverlay(): AppWindowState {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    s = drive(s, [{ type: 'BOUNDS_CHANGED', id: wid(1), bounds: HOST_A }]).state;
+    return registerOverlay(s);
+  }
+
+  it('attach: sets the relation and drives bounds -> stacking -> show, in that order', () => {
+    const s = hostAndOverlay();
+    const { state, effects } = drive(s, [
+      { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A },
+    ]);
+    assert.strictEqual(getOverlayHost(state, wid(OVERLAY)), wid(1));
+    assert.strictEqual(overlayIdForHost(state, wid(1)), wid(OVERLAY));
+    assert.deepStrictEqual(effectShape(effects), ['SET_BOUNDS', 'SET_STACKING', 'SHOW_WINDOW']);
+    assert.deepStrictEqual(effectsOfType(effects, 'SET_BOUNDS')[0], { type: 'SET_BOUNDS', id: wid(OVERLAY), bounds: FRAME_A });
+    assert.deepStrictEqual(effectsOfType(effects, 'SHOW_WINDOW')[0], { type: 'SHOW_WINDOW', id: wid(OVERLAY), activate: false });
+  });
+
+  it('attach does NOT write `visible` — that rides the backend `shown` echo', () => {
+    const s = hostAndOverlay();
+    const { state } = drive(s, [
+      { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A },
+    ]);
+    assert.strictEqual(state.windows.get(wid(OVERLAY))!.visible, false);
+    const shown = drive(state, [{ type: 'WINDOW_SHOWN', id: wid(OVERLAY), focused: false }]).state;
+    assert.strictEqual(shown.windows.get(wid(OVERLAY))!.visible, true);
+  });
+
+  it('an already-visible overlay is re-framed but never re-shown', () => {
+    let s = hostAndOverlay();
+    s = showOverlay(s);
+    const { effects } = drive(s, [
+      { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A },
+    ]);
+    assert.deepStrictEqual(effectShape(effects), ['SET_BOUNDS', 'SET_STACKING']);
+  });
+
+  it('retarget: the relation MOVES to the new host and follows it (no detach flicker)', () => {
+    let s = hostAndOverlay();
+    s = showOverlay(s);
+    s = drive(s, [
+      { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A },
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'page-host', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: true },
+      { type: 'BOUNDS_CHANGED', id: wid(2), bounds: HOST_B },
+    ]).state;
+    const { state, effects } = drive(s, [
+      { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(2), frame: FRAME_B },
+    ]);
+    assert.strictEqual(getOverlayHost(state, wid(OVERLAY)), wid(2));
+    assert.strictEqual(overlayIdForHost(state, wid(1)), null, 'the old host no longer owns the overlay');
+    assert.deepStrictEqual(effectsOfType(effects, 'SET_BOUNDS')[0].bounds, FRAME_B);
+    assert.strictEqual(effectsOfType(effects, 'HIDE_WINDOW').length, 0, 'a retarget must not blink the chrome off');
+  });
+
+  it('after a retarget the OLD host\'s bounds no longer move the overlay', () => {
+    let s = hostAndOverlay();
+    s = showOverlay(s);
+    s = drive(s, [
+      { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A },
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'page-host', role: 'content', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: true },
+      { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(2), frame: FRAME_B },
+    ]).state;
+    const { effects } = drive(s, [{ type: 'BOUNDS_CHANGED', id: wid(1), bounds: HOST_B, overlayFrame: FRAME_B }]);
+    assert.deepStrictEqual(effects, [], 'only the attached host drives the follow');
+  });
+
+  it('detach (hostId null): clears the relation and takes the overlay off screen', () => {
+    let s = hostAndOverlay();
+    s = showOverlay(s);
+    s = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A }]).state;
+    const { state, effects } = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: null }]);
+    assert.strictEqual(getOverlayHost(state, wid(OVERLAY)), null);
+    assert.deepStrictEqual(effectShape(effects), ['HIDE_WINDOW']);
+  });
+
+  it('detaching an already-hidden overlay drives nothing', () => {
+    let s = hostAndOverlay();
+    s = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A }]).state;
+    const { effects } = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: null }]);
+    assert.deepStrictEqual(effects, []);
+  });
+
+  it('detaching a never-attached overlay is a no-op (idempotent)', () => {
+    const s = hostAndOverlay();
+    const { state, effects } = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: null }]);
+    assert.deepStrictEqual(effects, []);
+    assert.strictEqual(getOverlayHost(state, wid(OVERLAY)), null);
+  });
+
+  it('an UNKNOWN host is a detach ("the active window vanished between signal and handling")', () => {
+    let s = hostAndOverlay();
+    s = showOverlay(s);
+    s = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A }]).state;
+    const { state, effects } = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(77) }]);
+    assert.strictEqual(getOverlayHost(state, wid(OVERLAY)), null, 'no dangling attachment to an unknown id');
+    assert.deepStrictEqual(effectShape(effects), ['HIDE_WINDOW']);
+  });
+
+  it('an UNKNOWN overlay id changes nothing', () => {
+    const s = hostAndOverlay();
+    const { state, effects } = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(77), hostId: wid(1), frame: FRAME_A }]);
+    assert.deepStrictEqual(effects, []);
+    assert.strictEqual(overlayIdForHost(state, wid(1)), null);
+  });
+
+  it('follow: a host BOUNDS_CHANGED re-frames + re-pins the attached overlay', () => {
+    let s = hostAndOverlay();
+    s = showOverlay(s);
+    s = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A }]).state;
+    const { state, effects } = drive(s, [{ type: 'BOUNDS_CHANGED', id: wid(1), bounds: HOST_B, overlayFrame: FRAME_B }]);
+    assert.deepStrictEqual(effectShape(effects), ['SET_BOUNDS', 'SET_STACKING']);
+    assert.deepStrictEqual(effectsOfType(effects, 'SET_BOUNDS')[0], { type: 'SET_BOUNDS', id: wid(OVERLAY), bounds: FRAME_B });
+    assert.deepStrictEqual(state.windows.get(wid(1))!.bounds, HOST_B, 'the host mirror still updates');
+  });
+
+  it('follow without an overlayFrame drives ORDER only — never a stale rect', () => {
+    let s = hostAndOverlay();
+    s = showOverlay(s);
+    s = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A }]).state;
+    const { effects } = drive(s, [{ type: 'BOUNDS_CHANGED', id: wid(1), bounds: HOST_B }]);
+    assert.deepStrictEqual(effectShape(effects), ['SET_STACKING']);
+  });
+
+  it('a bounds report for an UNATTACHED window stays effect-free (the plain mirror path)', () => {
+    const s = hostAndOverlay();
+    const { effects } = drive(s, [{ type: 'BOUNDS_CHANGED', id: wid(1), bounds: HOST_B, overlayFrame: FRAME_B }]);
+    assert.deepStrictEqual(effects, []);
+  });
+
+  it('host in native fullscreen: the overlay is hidden and NOTHING else is driven', () => {
+    let s = hostAndOverlay();
+    s = showOverlay(s);
+    s = drive(s, [
+      { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
+      { type: 'WINDOW_HIDDEN', id: wid(OVERLAY) }, // the hide echo
+    ]).state;
+    const { effects } = drive(s, [{ type: 'BOUNDS_CHANGED', id: wid(1), bounds: HOST_B, overlayFrame: FRAME_B }]);
+    assert.deepStrictEqual(effects, [], 'no bounds/pin/show over a fullscreen Space');
+  });
+
+  it('the fullscreen EDGES are the signal: ENTERED hides, LEFT re-reveals (no bounds change needed)', () => {
+    let s = hostAndOverlay();
+    s = showOverlay(s);
+    s = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A }]).state;
+
+    const entered = drive(s, [{ type: 'OS_FULLSCREEN_ENTERED', id: wid(1) }]);
+    assert.deepStrictEqual(effectsOfType(entered.effects, 'HIDE_WINDOW'), [{ type: 'HIDE_WINDOW', id: wid(OVERLAY) }]);
+
+    const hidden = drive(entered.state, [{ type: 'WINDOW_HIDDEN', id: wid(OVERLAY) }]).state;
+    const left = drive(hidden, [{ type: 'OS_FULLSCREEN_LEFT', id: wid(1) }]);
+    assert.deepStrictEqual(
+      effectShape(left.effects).filter((t) => t === 'SET_STACKING' || t === 'SHOW_WINDOW'),
+      ['SET_STACKING', 'SHOW_WINDOW'],
+      'the overlay returns at the frame it was hidden at',
+    );
+    assert.strictEqual(effectsOfType(left.effects, 'SET_BOUNDS').length, 0, 'it was never moved while hidden');
+    assert.strictEqual(getOverlayHost(left.state, wid(OVERLAY)), wid(1), 'the attachment survived the episode');
+  });
+
+  it('app inactive: position/size only — never reveal the chrome over another app (R6)', () => {
+    let s = hostAndOverlay();
+    s = drive(s, [{ type: 'APP_RESIGNED' }]).state;
+    const { effects } = drive(s, [
+      { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A },
+    ]);
+    assert.deepStrictEqual(effectShape(effects), ['SET_BOUNDS'], 'no pin re-assert, no show while backgrounded');
+  });
+
+  it('APP_RESIGNED hides the chrome but KEEPS the attachment; APP_ACTIVATED re-reveals it', () => {
+    let s = hostAndOverlay();
+    s = showOverlay(s);
+    s = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A }]).state;
+
+    const resigned = drive(s, [{ type: 'APP_RESIGNED' }]);
+    assert.deepStrictEqual(effectsOfType(resigned.effects, 'HIDE_WINDOW'), [{ type: 'HIDE_WINDOW', id: wid(OVERLAY) }]);
+    assert.strictEqual(getOverlayHost(resigned.state, wid(OVERLAY)), wid(1), 'the relation IS the re-show memory');
+
+    const hidden = drive(resigned.state, [{ type: 'WINDOW_HIDDEN', id: wid(OVERLAY) }]).state;
+    const active = drive(hidden, [{ type: 'APP_ACTIVATED' }]);
+    assert.deepStrictEqual(effectsOfType(active.effects, 'SHOW_WINDOW'), [{ type: 'SHOW_WINDOW', id: wid(OVERLAY), activate: false }]);
+    assert.ok(effectsOfType(active.effects, 'SET_STACKING').some((e) => e.id === wid(OVERLAY)));
+  });
+
+  it('APP_ACTIVATED does NOT re-reveal an overlay whose host is fullscreen', () => {
+    let s = hostAndOverlay();
+    s = drive(s, [
+      { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(1) },
+      { type: 'APP_RESIGNED' },
+    ]).state;
+    const { effects } = drive(s, [{ type: 'APP_ACTIVATED' }]);
+    assert.strictEqual(effectsOfType(effects, 'SHOW_WINDOW').length, 0);
+  });
+
+  it('the host being HIDDEN detaches + takes the overlay down with it', () => {
+    let s = hostAndOverlay();
+    s = showOverlay(s);
+    s = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A }]).state;
+    const { state, effects } = drive(s, [{ type: 'WINDOW_HIDDEN', id: wid(1) }]);
+    assert.strictEqual(getOverlayHost(state, wid(OVERLAY)), null);
+    assert.deepStrictEqual(effectsOfType(effects, 'HIDE_WINDOW'), [{ type: 'HIDE_WINDOW', id: wid(OVERLAY) }]);
+  });
+
+  it('the host being CLOSED detaches — no `overlayFor` left pointing at a retired id', () => {
+    let s = hostAndOverlay();
+    s = showOverlay(s);
+    s = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A }]).state;
+    const { state, effects } = drive(s, [{ type: 'WINDOW_CLOSED', id: wid(1) }]);
+    assert.strictEqual(getOverlayHost(state, wid(OVERLAY)), null);
+    assert.deepStrictEqual(effectsOfType(effects, 'HIDE_WINDOW'), [{ type: 'HIDE_WINDOW', id: wid(OVERLAY) }]);
+  });
+
+  it('the overlay is never `front`, attached or not (it is a satellite)', () => {
+    let s = hostAndOverlay();
+    s = showOverlay(s);
+    s = drive(s, [
+      { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A },
+      { type: 'OS_FOCUS_GAINED', id: wid(OVERLAY) },
+    ]).state;
+    assert.strictEqual(getFrontWindowId(s), wid(1));
+  });
+
+  it('reduce purity: attaching does not mutate the input record', () => {
+    const s = hostAndOverlay();
+    const before = s.windows.get(wid(OVERLAY))!;
+    reduce(s, { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A });
+    assert.strictEqual(before.overlayFor, undefined, 'input record not mutated');
+  });
+
+  it('the owner surface exposes both directions of the relation', () => {
+    const owner = new WindowStateOwner();
+    owner.dispatch({ type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false });
+    owner.dispatch({ type: 'WINDOW_SHOWN', id: wid(1), focused: true });
+    owner.dispatch({ type: 'WINDOW_REGISTERED', id: wid(OVERLAY), kind: 'browser', role: 'overlay', class: 'overlay', satellite: true });
+    owner.dispatch({ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A });
+    assert.strictEqual(owner.getOverlayHost(wid(OVERLAY)), wid(1));
+    assert.strictEqual(owner.getOverlayForHost(wid(1)), wid(OVERLAY));
+    owner._resetForTest();
+  });
+});
+
+// ── §5 step 9: transient-sibling autoclose (§4.4 dim 4b) ─────────────────────
+
+describe('transient-sibling autoclose on focus change (§4.4 dim 4b, §5 step 9)', () => {
+  /** A registered + visible window that is NOT the focuser. */
+  function sibling(
+    state: AppWindowState,
+    id: number,
+    opts: { role: string; visible?: boolean; kind?: WindowRecord['kind']; satellite?: boolean; keepLive?: boolean },
+  ): AppWindowState {
+    const events: WindowEvent[] = [
+      {
+        type: 'WINDOW_REGISTERED',
+        id: wid(id),
+        kind: opts.kind ?? 'page-host',
+        role: opts.role,
+        satellite: opts.satellite ?? false,
+        keepLive: opts.keepLive,
+      },
+    ];
+    if (opts.visible !== false) events.push({ type: 'WINDOW_SHOWN', id: wid(id), focused: false });
+    return drive(state, events).state;
+  }
+
+  /** Focuser (id 1) + the given siblings; returns the effects of the focus event. */
+  function focusWith(focuserRole: string, build: (s: AppWindowState) => AppWindowState): Effect[] {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: focuserRole, focused: false });
+    s = build(s);
+    return drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]).effects;
+  }
+
+  function closedIds(effects: Effect[]): WindowId[] {
+    return effectsOfType(effects, 'CLOSE_WINDOW').map((e) => e.id);
+  }
+
+  // ── The table, mirroring izui-roles.test.ts `selectTransientSiblingsToClose` ──
+
+  it('a workspace focuser closes a visible quick-view sibling', () => {
+    const effects = focusWith('workspace', (s) => sibling(s, 2, { role: 'quick-view' }));
+    assert.deepStrictEqual(closedIds(effects), [wid(2)]);
+  });
+
+  it('a quick-view focuser closes the OTHER quick-view (transients dismiss each other)', () => {
+    const effects = focusWith('quick-view', (s) => sibling(s, 2, { role: 'quick-view' }));
+    assert.deepStrictEqual(closedIds(effects), [wid(2)]);
+  });
+
+  it('never closes the focuser itself', () => {
+    const effects = focusWith('quick-view', (s) => s);
+    assert.deepStrictEqual(closedIds(effects), []);
+  });
+
+  it('a utility focuser closes NOTHING (the chain-popup invariant)', () => {
+    const effects = focusWith('utility', (s) => {
+      let next = sibling(s, 2, { role: 'quick-view' });
+      next = sibling(next, 3, { role: 'palette', satellite: true });
+      return next;
+    });
+    assert.deepStrictEqual(closedIds(effects), []);
+  });
+
+  it('skips a non-visible transient', () => {
+    const effects = focusWith('workspace', (s) => sibling(s, 2, { role: 'quick-view', visible: false }));
+    assert.deepStrictEqual(closedIds(effects), []);
+  });
+
+  it('skips non-transient roles (content / workspace / child-content)', () => {
+    const effects = focusWith('workspace', (s) => {
+      let next = sibling(s, 2, { role: 'content' });
+      next = sibling(next, 3, { role: 'workspace' });
+      next = sibling(next, 4, { role: 'child-content' });
+      return next;
+    });
+    assert.deepStrictEqual(closedIds(effects), []);
+  });
+
+  it('EXEMPTS role overlay — it manages its own visibility through the attachment', () => {
+    const effects = focusWith('workspace', (s) => {
+      let next = sibling(s, 2, { role: 'overlay', satellite: true });
+      next = sibling(next, 3, { role: 'quick-view' });
+      return next;
+    });
+    assert.deepStrictEqual(closedIds(effects), [wid(3)]);
+  });
+
+  it('closes BOTH transient classes (palette + quick-view) and leaves the rest', () => {
+    const effects = focusWith('workspace', (s) => {
+      let next = sibling(s, 2, { role: 'palette', satellite: true });
+      next = sibling(next, 3, { role: 'quick-view' });
+      next = sibling(next, 4, { role: 'workspace' });
+      return next;
+    });
+    assert.deepStrictEqual(closedIds(effects).sort(), [wid(2), wid(3)]);
+  });
+
+  // ── Reducer-specific semantics ──────────────────────────────────────────────
+
+  it('is kind-agnostic: a BrowserWindow transient is a candidate too (peek 8e5c3174)', () => {
+    const effects = focusWith('workspace', (s) => sibling(s, 2, { role: 'quick-view', kind: 'browser' }));
+    assert.deepStrictEqual(closedIds(effects), [wid(2)]);
+  });
+
+  it('a keepLive transient is HIDDEN, not closed (peek 2c94c125)', () => {
+    const effects = focusWith('workspace', (s) => sibling(s, 2, { role: 'quick-view', keepLive: true }));
+    assert.deepStrictEqual(closedIds(effects), []);
+    assert.deepStrictEqual(effectsOfType(effects, 'HIDE_WINDOW'), [{ type: 'HIDE_WINDOW', id: wid(2) }]);
+  });
+
+  it('an UNREGISTERED focuser (undefined role, not utility) still dismisses the transients', () => {
+    let s = createInitialState();
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'page-host', role: 'quick-view', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+    ]).state;
+    const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(77) }]);
+    assert.deepStrictEqual(closedIds(effects), [wid(2)]);
+  });
+
+  it('WINDOW_SHOWN { focused: true } does NOT autoclose — it is a visibility import, not OS focus', () => {
+    let s = createInitialState();
+    s = sibling(s, 2, { role: 'quick-view' });
+    const { effects } = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'workspace', satellite: false },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
+    ]);
+    assert.deepStrictEqual(closedIds(effects), []);
+  });
+
+  it('is effect-only: the dismissed records survive until their own close/hide event', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'workspace', focused: false });
+    s = sibling(s, 2, { role: 'quick-view' });
+    const { state } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]);
+    assert.ok(state.windows.has(wid(2)), 'the reducer describes the close; the backend performs it');
+    assert.strictEqual(state.windows.get(wid(2))!.visible, true);
+  });
+
+  it('selectTransientAutoclose is the pure decision behind the clause', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'workspace', focused: false });
+    s = sibling(s, 2, { role: 'quick-view' });
+    assert.deepStrictEqual(selectTransientAutoclose(s, wid(1)), [wid(2)]);
+    assert.deepStrictEqual(selectTransientAutoclose(s, wid(2)), [], 'the focuser is never its own victim');
+  });
+});
+
+// ── §5 step 9: the app-resign sweep — a timer handle becomes reducer state ───
+
+describe('app-resign transient sweep (§4.4 dim 4b — no timer, armed state)', () => {
+  /** A visible transient page-host (a peek/slide) plus one ordinary window. */
+  function withTransient(opts: { kind?: WindowRecord['kind']; keepLive?: boolean; role?: string } = {}): AppWindowState {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content', focused: false });
+    return drive(s, [
+      {
+        type: 'WINDOW_REGISTERED',
+        id: wid(2),
+        kind: opts.kind ?? 'page-host',
+        role: opts.role ?? 'quick-view',
+        satellite: false,
+        keepLive: opts.keepLive,
+      },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+    ]).state;
+  }
+
+  function closedIds(effects: Effect[]): WindowId[] {
+    return effectsOfType(effects, 'CLOSE_WINDOW').map((e) => e.id);
+  }
+
+  it('APP_RESIGNED only ARMS the sweep — it dismisses nothing on the resign edge', () => {
+    const { state, effects } = drive(withTransient(), [{ type: 'APP_RESIGNED' }]);
+    assert.strictEqual(state.pendingAppResignSweep, true);
+    assert.deepStrictEqual(closedIds(effects), [], 'the resign edge may be the macOS dance');
+  });
+
+  it('APP_RESIGN_SETTLED while armed dismisses the visible transient page-hosts', () => {
+    const s = drive(withTransient(), [{ type: 'APP_RESIGNED' }]).state;
+    const { state, effects } = drive(s, [{ type: 'APP_RESIGN_SETTLED' }]);
+    assert.deepStrictEqual(closedIds(effects), [wid(2)]);
+    assert.strictEqual(state.pendingAppResignSweep, false, 'the sweep is consumed');
+  });
+
+  it('the DANCE cancel: APP_ACTIVATED in between disarms it, so the settle closes nothing (8e5c3174)', () => {
+    const s = drive(withTransient(), [{ type: 'APP_RESIGNED' }, { type: 'APP_ACTIVATED' }]).state;
+    assert.strictEqual(s.pendingAppResignSweep, false);
+    const { effects } = drive(s, [{ type: 'APP_RESIGN_SETTLED' }]);
+    assert.deepStrictEqual(closedIds(effects), [], 'a freshly opened slide survives the startup dance');
+  });
+
+  it('a settle with no preceding resign is inert', () => {
+    const { effects } = drive(withTransient(), [{ type: 'APP_RESIGN_SETTLED' }]);
+    assert.deepStrictEqual(effects, []);
+  });
+
+  it('a REPEATED settle is inert (the sweep is consumed, not re-runnable)', () => {
+    const s = drive(withTransient(), [{ type: 'APP_RESIGNED' }, { type: 'APP_RESIGN_SETTLED' }]).state;
+    const { effects } = drive(s, [{ type: 'APP_RESIGN_SETTLED' }]);
+    assert.deepStrictEqual(closedIds(effects), []);
+  });
+
+  it('a second resign re-arms it', () => {
+    let s = drive(withTransient(), [{ type: 'APP_RESIGNED' }, { type: 'APP_RESIGN_SETTLED' }]).state;
+    s = drive(s, [{ type: 'APP_ACTIVATED' }, { type: 'APP_RESIGNED' }]).state;
+    const { effects } = drive(s, [{ type: 'APP_RESIGN_SETTLED' }]);
+    assert.deepStrictEqual(closedIds(effects), [wid(2)]);
+  });
+
+  it('never dismisses while the app is active (defensive: a settle without its resign edge)', () => {
+    let s = withTransient();
+    // Craft the armed-but-active state directly: no legitimate sequence makes it.
+    s = { ...drive(s, [{ type: 'APP_RESIGNED' }]).state, appActive: true };
+    const { effects } = drive(s, [{ type: 'APP_RESIGN_SETTLED' }]);
+    assert.deepStrictEqual(closedIds(effects), []);
+  });
+
+  it('scoped to page-hosts: a BrowserWindow transient self-closes via its own blur handler', () => {
+    const s = drive(withTransient({ kind: 'browser' }), [{ type: 'APP_RESIGNED' }]).state;
+    const { effects } = drive(s, [{ type: 'APP_RESIGN_SETTLED' }]);
+    assert.deepStrictEqual(closedIds(effects), []);
+  });
+
+  it('EXEMPTS role overlay, and skips non-transient / hidden windows', () => {
+    let s = drive(withTransient({ role: 'overlay' }), [
+      { type: 'WINDOW_REGISTERED', id: wid(3), kind: 'page-host', role: 'quick-view', satellite: false },
+      // registered but never shown -> not visible
+    ]).state;
+    s = drive(s, [{ type: 'APP_RESIGNED' }]).state;
+    const { effects } = drive(s, [{ type: 'APP_RESIGN_SETTLED' }]);
+    assert.deepStrictEqual(closedIds(effects), [], 'the overlay and the hidden peek both stay');
+  });
+
+  it('a keepLive slide is HIDDEN by the sweep, never destroyed (peek 2c94c125)', () => {
+    const s = drive(withTransient({ keepLive: true }), [{ type: 'APP_RESIGNED' }]).state;
+    const { effects } = drive(s, [{ type: 'APP_RESIGN_SETTLED' }]);
+    assert.deepStrictEqual(closedIds(effects), []);
+    assert.ok(effectsOfType(effects, 'HIDE_WINDOW').some((e) => e.id === wid(2)));
+  });
+
+  it('selectAppResignTransients is the pure decision behind the clause', () => {
+    const s = withTransient();
+    assert.deepStrictEqual(selectAppResignTransients(s), [wid(2)]);
+  });
+
+  it('the sweep emits NO destroy effects (keepLive would lose a live slide)', () => {
+    const s = drive(withTransient(), [{ type: 'APP_RESIGNED' }]).state;
+    const { effects } = drive(s, [{ type: 'APP_RESIGN_SETTLED' }]);
+    assert.strictEqual(effectsOfType(effects, 'DESTROY_WINDOW').length, 0);
   });
 });
