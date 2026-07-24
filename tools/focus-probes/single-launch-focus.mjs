@@ -50,10 +50,10 @@ const PACKAGED = process.env.PROBE_PACKAGED || null;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Electron identity as a topmost-window OWNER NAME: bundled Electron.app's
-// kCGWindowOwnerName is "Electron". Secondary signal only — PID attribution
-// (below) is authoritative.
-const isElectron = (owner) => /electron/i.test(owner);
+// Electron identity as a NAME (frontmost-app bundle id / topmost-window owner
+// name): bundled Electron.app's kCGWindowOwnerName is "Electron". Secondary
+// signal only — PID attribution (below) is authoritative for BOTH oracles.
+const isElectron = (name) => /electron/i.test(name);
 
 async function main() {
   const samples = [];
@@ -62,22 +62,28 @@ async function main() {
   const sampler = spawn('swift', [swiftProbe, samplerDuration, '0.05'], {
     stdio: ['ignore', 'pipe', 'inherit'],
   });
-  // Swift CSV per sample: <unix-seconds>,<topmost-window-owner-name>,<owner-pid>
-  // (owner-pid == -1 / owner == "none" when no layer-0 window is on screen).
+  // Swift CSV per sample (5-col, dual signal for A/B oracle validation):
+  //   <unix-seconds>,<frontAppPID>,<frontAppName>,<topWinOwnerPID>,<topWinOwnerName>
+  //   frontApp* = NSWorkspace.frontmostApplication (-1,none if nil);
+  //   topWinOwner* = owner of topmost layer-0 window (-1,none if none on screen).
   sampler.stdout.on('data', (d) => {
     for (const line of d.toString().split('\n')) {
       const parts = line.split(',');
-      if (parts.length < 3) continue;
+      if (parts.length < 5) continue;
       const ts = Number(parts[0]);
-      const owner = parts[1].trim();
-      const pid = Number(parts[2]);
-      if (owner) samples.push({ ts, owner, pid });
+      const frontPid = Number(parts[1]);
+      const frontName = parts[2].trim();
+      const topPid = Number(parts[3]);
+      const topName = parts[4].trim();
+      samples.push({ ts, frontPid, frontName, topPid, topName });
     }
   });
 
   // Let swift compile + start sampling before we launch.
   await sleep(1800);
-  const beforeOwner = samples.length ? samples[samples.length - 1].owner : 'unknown';
+  const last = samples.length ? samples[samples.length - 1] : null;
+  const beforeFront = last ? last.frontName : 'unknown';
+  const beforeTop = last ? last.topName : 'unknown';
 
   // PROBE_NO_HEADLESS=1 → launch WITHOUT headless gating (real visible
   // windows). This is the contrast case: the suspected true source of suite
@@ -124,15 +130,20 @@ async function main() {
     setTimeout(() => { sampler.kill('SIGTERM'); r(); }, 3000);
   });
 
-  // Attribution: the LAUNCHED app stole the key window iff a sample's
-  // topmost-window OWNER PID equals the launched process PID. Owner-name
-  // matching ("Electron" for source, "Peek" for packaged) is a secondary
-  // signal — but the packaged name collides with a running production Peek, so
-  // PID wins.
-  const stolenSamples = launchedPid
-    ? samples.filter((s) => s.pid === launchedPid)
-    : samples.filter((s) => isElectron(s.owner));
-  const distinct = [...new Set(samples.map((s) => `${s.owner}#${s.pid}`))];
+  // Attribution (A/B): two INDEPENDENT theft counts, one per oracle. The
+  // LAUNCHED app "stole" a signal iff a sample's PID for that signal equals the
+  // launched process PID. Name matching ("Electron" for source, "Peek" for
+  // packaged) is a secondary fallback only — but the packaged name collides
+  // with a running production Peek, so PID is the PRIMARY decision for BOTH.
+  const frontStolen = (launchedPid
+    ? samples.filter((s) => s.frontPid === launchedPid)
+    : samples.filter((s) => isElectron(s.frontName))).length;
+  const topStolen = (launchedPid
+    ? samples.filter((s) => s.topPid === launchedPid)
+    : samples.filter((s) => isElectron(s.topName))).length;
+  const distinctFront = [...new Set(samples.map((s) => `${s.frontName}#${s.frontPid}`))];
+  const distinctTop = [...new Set(samples.map((s) => `${s.topName}#${s.topPid}`))];
+  const total = samples.length;
 
   console.log('════════════════════════════════════════════════════════');
   console.log(`  FOCUS PROBE: ${LABEL}`);
@@ -140,20 +151,22 @@ async function main() {
   console.log(`  executablePath : ${launchConfig.executablePath || '(bundled electron)'}`);
   console.log(`  JS accessory   : ${process.env.PROBE_JS_ACCESSORY === '1'}`);
   console.log(`  launched PID   : ${launchedPid ?? '(launch failed)'}`);
-  console.log(`  topmost-window owner before launch : ${beforeOwner}`);
-  console.log(`  total samples                      : ${samples.length}`);
-  console.log(`  launched-app owned topmost window  : ${stolenSamples.length}`);
-  console.log(`  distinct topmost owners seen       : ${distinct.join(' | ')}`);
+  console.log(`  frontmost-app before launch  : ${beforeFront}`);
+  console.log(`  topmost-window before launch : ${beforeTop}`);
+  console.log(`  total samples                      : ${total}`);
+  console.log(`  frontmost-app became launched PID : ${frontStolen}/${total}`);
+  console.log(`  topmost-window became launched PID: ${topStolen}/${total}`);
+  console.log(`  distinct frontmost apps seen       : ${distinctFront.join(' | ')}`);
+  console.log(`  distinct topmost owners seen       : ${distinctTop.join(' | ')}`);
   if (launchErr) console.log(`  LAUNCH ERROR   : ${launchErr.message}`);
   console.log('  ------------------------------------------------------');
   console.log(
-    stolenSamples.length
-      ? '  RESULT: ❌ FOCUS STOLEN — the launched app grabbed the topmost/key window'
-      : '  RESULT: ✅ no focus theft — the launched app never owned the topmost/key window',
+    `  RESULT: frontmost-app theft=${frontStolen ? 'yes' : 'no'} (${frontStolen}), `
+      + `topmost-window theft=${topStolen ? 'yes' : 'no'} (${topStolen})`,
   );
   console.log('════════════════════════════════════════════════════════');
 
-  process.exit(stolenSamples.length ? 1 : 0);
+  process.exit(frontStolen || topStolen ? 1 : 0);
 }
 
 main().catch((e) => { console.error(e); process.exit(2); });
