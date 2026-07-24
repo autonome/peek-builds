@@ -726,6 +726,22 @@ failure mode this document exists to prevent (§2).**
    29 entries / 57 calls. Punted to step 9 (entangled, entries retained):
    the `ipc.ts` `devtools-opened` first-responder restore and the modal
    blur-settle re-focus.
+   **8 live verification — DONE (visible macOS run, temporary front-diag
+   instrumentation, reverted after).** Both mandatory focus gestures pass:
+   - **Gesture A (switcher ESC-ESC restore):** `enterOverlay` seeds
+     `preOverlayFocusTarget` to the real machine front; the switcher is a
+     satellite so `front` never moves while it is focused; on ESC dismiss the
+     machine (not the close handler) owns restore via `RAISE_WINDOW`, and the OS
+     focus event lands back on the pre-overlay front. Verified across five
+     open/dismiss cycles.
+   - **Gesture B (restore-then-front):** every restore-loop show is
+     `inactive=true` (the loop never activates); the post-loop decision is the
+     single authority (`willActivate=true`, `focusedId` = the focused
+     descriptor) and activates it via `showHybridHost`; the stale-macOS-hide
+     guard correctly suppresses lagged `'hide'` events for still-visible
+     windows. The only front shift observed afterward was a `DEVTOOLS_OPENED`
+     first-responder grab in the `DEBUG=1` build — the already-known step-9
+     `ipc.ts devtools-opened` punt, not a restore regression.
 9. **Overlay attach/retarget + transient autoclose.** Fold `hybrid-overlay.ts`'s 40 live
    queries and its private `appActive` into reducer state.
 10. **Displays and Spaces.** Route `display-watcher.ts` through events; add the
