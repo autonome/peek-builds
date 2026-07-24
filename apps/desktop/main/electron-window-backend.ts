@@ -736,9 +736,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    *     and a `quick-view`-class host (a `type:'panel'` NSPanel) NEVER
    *     activates the app (regression 524f7aba) — its key input rides the
    *     content-focus half, which stays with the windows.ts caller until the
-   *     focus-rivals step (§5 step 8). A browser window keeps the legacy
-   *     `showWindowHeadlessSafe` behavior: no mask (opacity-0 already covers
-   *     headless).
+   *     focus-rivals step (§5 step 8). A browser window ALSO masks activate
+   *     under headless — matching the `raiseWindow` browser branch. `opacity(0)`
+   *     hides pixels but does NOT stop an activating `win.show()` from doing
+   *     `makeKeyAndOrderFront:` and stealing the macOS key window; only
+   *     `showInactive()` avoids the grab. (Prior comment wrongly claimed
+   *     opacity-0 covered headless — it was the test focus-theft root cause.)
    *   - echoes `WINDOW_SHOWN` with the caller's UNMASKED `activate` intent
    *     (absorbing the seam-side WINDOW_SHOWN dispatch windows.ts used to make):
    *     `showInactive()` emits no native `'show'` event and headless runs are
@@ -758,7 +761,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     const osActivate =
       kind === 'page-host'
         ? opts.activate && !isHeadless() && windowClass !== 'quick-view'
-        : opts.activate;
+        : opts.activate && !isHeadless();
     this.performOsShow(win, osActivate);
     this.emit({ type: 'WINDOW_SHOWN', id, focused: opts.activate });
   }
