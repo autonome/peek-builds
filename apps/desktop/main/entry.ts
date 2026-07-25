@@ -115,7 +115,7 @@ import {
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, reassertColdStartFocusOnce, installFirstFrameOrderableProducer } from './session.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import { getFrontWindowId, getWindowIdFor, getNativeWindowFor } from './window-state-singleton.js';
+import { getFrontWindowId, getWindowIdFor, getNativeWindowFor, dispatchWindowEvent } from './window-state-singleton.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
 import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
@@ -191,25 +191,39 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    */
   reassertColdStartFocusOnce: () => reassertColdStartFocusOnce(),
   /**
-   * Override the IZUI coordinator's OS-focus state for drift-detection
-   * tests. The restore loop's .show()/.focus() gate reads
-   * `isAppFocused()` live; flipping it via this hook lets a test simulate
-   * "user switched away mid-restore" deterministically.
+   * Simulate "Peek is / is not the active app" for drift-detection tests,
+   * across BOTH app-active mirrors: the window-state machine's
+   * `AppWindowState.appActive` (which the restore-focus decision reads — see
+   * session.ts `restore-focus-decision`) and the IZUI coordinator's
+   * `isAppFocused()` (still read by ipc.ts's transient classification).
    *
-   * Sets a forced override (not just the OS-event-driven value) because
-   * opening a new BrowserWindow during restore can fire did-become-active
-   * on macOS, which would otherwise overwrite the test's intent. The
-   * override sticks until `clearAppFocusedForTest()` is called. See
+   * The machine half is a plain `APP_ACTIVATED`/`APP_RESIGNED` dispatch — the
+   * exact event `electron-window-backend.ts attachAppListeners` emits from
+   * did-become/resign-active, so the reducer cannot tell a simulated switch
+   * from a real one.
+   *
+   * The coordinator half sets a forced OVERRIDE (not just the OS-event-driven
+   * value) because opening a new BrowserWindow during restore can fire
+   * did-become-active on macOS, which would otherwise overwrite the test's
+   * intent. That override sticks until `clearAppFocusedForTest()`. See
    * tests/desktop/session-restore-focus.spec.ts.
    */
   setAppFocusedForTest: (focused: boolean) => {
     (getIzuiCoordinator() as unknown as { _setAppFocusOverride(v: boolean | null): void })
       ._setAppFocusOverride(focused);
+    dispatchWindowEvent({ type: focused ? 'APP_ACTIVATED' : 'APP_RESIGNED' });
   },
-  /** Release the test override and restore OS-driven app-focus tracking. */
+  /**
+   * Release the coordinator override and hand both mirrors back to the OS.
+   * The machine has no override to release, so restore its optimistic launch
+   * value (`appActive: true`) explicitly — otherwise a spec that simulated a
+   * resign would leave every later spec sharing the runner believing Peek is
+   * backgrounded.
+   */
   clearAppFocusedForTest: () => {
     (getIzuiCoordinator() as unknown as { _setAppFocusOverride(v: boolean | null): void })
       ._setAppFocusOverride(null);
+    dispatchWindowEvent({ type: 'APP_ACTIVATED' });
   },
   /**
    * Read the restoreSessionSnapshot drift-detection counters. Reset at

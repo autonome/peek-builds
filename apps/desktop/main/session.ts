@@ -13,7 +13,7 @@ import { BrowserWindow, dialog, screen, ipcMain } from 'electron';
 import type { IpcMainEvent } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
-import { getFocusOrder, getFrontWindowId, getWindowIdFor, getNativeWindowFor, getMachineWindowRecord, dispatchWindowEvent } from './window-state-singleton.js';
+import { getFocusOrder, getFrontWindowId, getWindowIdFor, getNativeWindowFor, getMachineWindowRecord, getAppActive, dispatchWindowEvent } from './window-state-singleton.js';
 import type { WindowId } from './window-state.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
@@ -23,7 +23,6 @@ import { getWindowPresentation } from './window-presenter.js';
 import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
 import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
 import { invokeWindowOpen } from './ipc.js';
-import { getIzuiCoordinator } from './izui-state.js';
 import { shouldActivateFocusedOnRestore } from './izui-roles.js';
 import { WEB_CORE_ADDRESS } from './config.js';
 
@@ -1077,7 +1076,7 @@ export async function restoreSessionSnapshot(
   const result = { restored: 0, failed: 0, total: 0 };
 
   // Reset drift-detection counters for this restore pass. Tests read them
-  // afterward to verify the isAppFocused() gate held — see counter
+  // afterward to verify the app-active gate held — see counter
   // declaration above.
   resetRestoreFocusCounters();
   // Clear any stale cold-start re-assert latch from a prior restore; this pass
@@ -1580,7 +1579,6 @@ export async function restoreSessionSnapshot(
   // fed only by the async OS focus events, and step 8c deletes it.
   if (focusedWindowId) {
     try {
-      const coordinator = getIzuiCoordinator();
       // Resolve the focused window. A hybrid page-host is a BaseWindow, so
       // getLiveWindow (BrowserWindow.fromId) returns null for it — fall back to
       // the hybrid registry's baseWin. Without this, the web page the user left
@@ -1591,19 +1589,27 @@ export async function restoreSessionSnapshot(
 
       // Decide whether to RAISE+ACTIVATE the focused descriptor. At cold start
       // Peek is launching and should own the foreground even if the macOS
-      // startup dance transiently flipped appFocused false (the two converged
+      // startup dance transiently flipped app-active false (the two converged
       // bugs: z-order peek 7bb74c90 + not-frontmost peek 8f7010a8). In-session
-      // restore honors appFocused so a switched-away user isn't yanked back.
+      // restore honors app-active so a switched-away user isn't yanked back.
       // Headless never activates (focus-free). See izui-roles.ts.
+      //
+      // App-active comes from the window-state machine (`AppWindowState.appActive`,
+      // fed by the backend's did-become/resign-active listeners), NOT from
+      // `getIzuiCoordinator().isAppFocused()` — that was a third, rival copy of
+      // the same OS state (§4.4 dim 6). Both mirrors are driven by the same two
+      // app events, so the value is the same; the machine's is the one the rest
+      // of the restore path (stacking, front arbitration) already reads.
+      const appActive = getAppActive();
       const willActivate = shouldActivateFocusedOnRestore(
         isColdStart,
-        coordinator.isAppFocused(),
+        appActive,
         isHeadless(),
       );
       // Always-on (non-DEBUG) decision log: the original diagnosis rested on an
       // ABSENCE of logs (the gated block was silently skipped). Make the
       // decision self-evident in prod main.log for any future occurrence.
-      console.log(`[session] restore-focus-decision coldStart=${isColdStart} appFocused=${coordinator.isAppFocused()} headless=${isHeadless()} willActivate=${willActivate} focusedId=${focusedWindowId}`);
+      console.log(`[session] restore-focus-decision coldStart=${isColdStart} appActive=${appActive} headless=${isHeadless()} willActivate=${willActivate} focusedId=${focusedWindowId}`);
 
       // Arm the one-shot cold-start re-assert latch BEFORE touching windows: a
       // trailing did-resign-active could re-strand Peek after this block runs.

@@ -142,7 +142,10 @@ export function windowSelfClosesOnBlur(options: { modal?: boolean }): boolean {
  * testable without real OS focus (mirrors `shouldRegisterGlobalEscFallback`).
  *
  * @param coldStart   this restore is the app's boot restore (not in-session)
- * @param appFocused  `getIzuiCoordinator().isAppFocused()` at restore time
+ * @param appFocused  app-active at restore time — the window-state machine's
+ *                    `AppWindowState.appActive` (`window-state-singleton.ts
+ *                    getAppActive()`). Was `getIzuiCoordinator().isAppFocused()`
+ *                    until that third copy was retired.
  * @param headless    the run is headless/CI (focus-free)
  */
 export function shouldActivateFocusedOnRestore(
