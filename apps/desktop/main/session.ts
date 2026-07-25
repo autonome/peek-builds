@@ -278,13 +278,19 @@ export function reassertColdStartFocusOnce(): boolean {
   // trailing did-resign-active dispatched APP_RESIGNED (assertion invalidated),
   // and the did-become-active that calls this dispatches APP_ACTIVATED, whose
   // closing assertion re-drives RAISE_WINDOW [+FOCUS_CONTENT] + SET_STACKING
-  // for the front window. What the machine does NOT own yet is the focus()
-  // / showHybridHost() activation below (focus is §5 step 8) — that half keeps
-  // its one-shot latch semantics here.
+  // for the front window. The ACTIVATION half is machine-routed too since
+  // §5 step 11: both branches dispatch `WINDOW_SHOW_REQUESTED {activate:true}`
+  // (BrowserWindow via `showWindowHeadlessSafe({active:true})`, page-host via
+  // `showHybridHost`), so the one-shot latch decides WHETHER to re-activate
+  // and the machine performs it. There is no focus-request event and none is
+  // needed: the saved-focused window is already visible, so an activating show
+  // is exactly "raise + make key" — and it echoes WINDOW_SHOWN{focused:true},
+  // which sets the machine's `front` synchronously instead of waiting on the
+  // async OS focus event a bare focus() relied on.
   try {
     const focusWin = getLiveWindow(id);
     if (focusWin && !focusWin.isDestroyed()) {
-      focusWin.focus();
+      showWindowHeadlessSafe(focusWin, { active: true });
       console.log(`[session] cold-start re-assert focused window ${id} on did-become-active`);
       return true;
     }
@@ -1566,7 +1572,7 @@ export async function restoreSessionSnapshot(
 
   // Focus the window that was focused at save time — but only if Peek is
   // still the OS-frontmost app. If the user switched away mid-restore,
-  // calling .focus() would yank them back. Best-effort either way.
+  // activating it would yank them back. Best-effort either way.
   //
   // Restore-time focus authority is the window-state machine (step 8a/8b):
   // enterOverlay seeds preOverlayFocusTarget from the machine's `front`,
@@ -1655,8 +1661,19 @@ export async function restoreSessionSnapshot(
         // activates via showHybridHost() (not a bare focus()) so its content
         // WebContentsView becomes first responder (cmd+L works, overlay reveals)
         // — the same full activation a fresh open does.
+        //
+        // §5 step 11: the BrowserWindow branch now converges on the SAME route.
+        // There is no focus-request event in the machine, and none is needed
+        // here — the loop already showed this window (inactive), so an
+        // activating show IS the activation: `WINDOW_SHOW_REQUESTED
+        // {activate:true}` → SHOW_WINDOW → the backend's `win.show()`
+        // (makeKeyAndOrderFront), which is what a bare focus() did plus the
+        // order-front the rebuilt stack already wants. It also echoes
+        // WINDOW_SHOWN{focused:true}, so the machine's `front` is set
+        // synchronously rather than waiting on the async OS focus event —
+        // the same contract the hybrid branch below has had since step 6A-2.
         if (focusWin) {
-          focusWin.focus();
+          showWindowHeadlessSafe(focusWin, { active: true });
           _restoreFocusCount++;
           _restoreFocusedId = focusedWindowId;
           DEBUG && console.log(`[session] Focused restored window: ${focusedWindowId}`);

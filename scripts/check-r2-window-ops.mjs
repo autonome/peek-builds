@@ -134,8 +134,6 @@ const ALLOWLIST = [
     why: 'close overlay switcher when app loses OS focus (did-resign-active) — §5 step 9' },
   { file: 'apps/desktop/main/main.ts', call: 'focus', count: 4,
     why: 'overlay-selection/restore focus of the switcher target (BrowserWindow + hybrid, coordinator + fallback paths) — focus rivals, §5 step 8' },
-  { file: 'apps/desktop/main/session.ts', call: 'focus', count: 2,
-    why: 'restore-loop focus of the saved-focused window — session restore, §5 step 11' },
   { file: 'apps/desktop/main/windows.ts', call: 'focus', count: 3,
     why: 'contentWC first-responder + bw/webContents focus (show invariant) — focus rivals, §5 step 8' },
 ];
