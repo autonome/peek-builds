@@ -1662,9 +1662,8 @@ export function selectAppResignTransients(state: AppWindowState): WindowId[] {
 }
 
 /**
- * How the autoclose dismisses ONE window: the keepLive decision, identical to
- * `WINDOW_CLOSE_OR_HIDE_REQUESTED`'s (both producers called the same app-facing
- * `windows.ts closeOrHideWindow`).
+ * How `WINDOW_CLOSE_OR_HIDE_REQUESTED` resolves the keepLive decision for ONE
+ * window (the app-facing "close" that may really be a hide).
  *
  * NOT `DESTROY_WINDOW`, despite §4.4's "emitting destroy effects" wording: a
  * `keepLive` slide (the left slide playing music) must be HIDDEN, not destroyed
@@ -1674,11 +1673,25 @@ function closeOrHideEffect(rec: WindowRecord): Effect {
   return rec.keepLive ? { type: 'HIDE_WINDOW', id: rec.id } : { type: 'CLOSE_WINDOW', id: rec.id };
 }
 
-/** Emit the dismissal effects for a list of transient windows. */
+/**
+ * Emit the dismissal effect for a list of AUTOCLOSE transient siblings.
+ *
+ * Unconditionally `CLOSE_WINDOW`, never the keepLive-resolved
+ * `closeOrHideEffect` above: `CLOSE_WINDOW` routes through
+ * `backend.closeOrHide` -> `windows.ts closeOrHideWindow`, which runs the
+ * black-macOS-Space preamble (exit native fullscreen, await the settled
+ * `normal` mode) BEFORE it re-dispatches `WINDOW_CLOSE_OR_HIDE_REQUESTED` to
+ * resolve keepLive here. Pre-resolving to `HIDE_WINDOW` here would skip that
+ * preamble for a fullscreen keepLive victim — the bug this comment is
+ * guarding against (a raw `hide()` while still fullscreen strands a black
+ * Space). Keeping this a bare `CLOSE_WINDOW` reproduces the pre-cutover path,
+ * where every dismissed window (regardless of keepLive) went through
+ * `closeOrHideWindow` and only THAT function's own keepLive branch decided
+ * hide-vs-close.
+ */
 function pushCloseOrHide(state: AppWindowState, ids: WindowId[], effects: Effect[]): void {
   for (const id of ids) {
-    const rec = state.windows.get(id);
-    if (rec) effects.push(closeOrHideEffect(rec));
+    if (state.windows.has(id)) effects.push({ type: 'CLOSE_WINDOW', id });
   }
 }
 
@@ -1927,8 +1940,10 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // keepLive: hide, keep the record registered. `visible` is untouched
       // here — it flips on the backend's native hide event (WINDOW_HIDDEN).
       // Otherwise: the resolved close (no keepLive policy left to apply).
-      // Shared with the §5 step 9 transient autoclose, whose producers called
-      // the same app-facing `closeOrHideWindow` — one owner of the decision.
+      // This is the SOLE keepLive resolution point now: the §5 step 9
+      // transient autoclose (`pushCloseOrHide`) deliberately emits a bare
+      // `CLOSE_WINDOW` instead of pre-resolving here, so `closeOrHideWindow`'s
+      // fullscreen-exit preamble runs before this decision is re-dispatched.
       effects.push(closeOrHideEffect(rec));
       break;
     }

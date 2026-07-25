@@ -3696,10 +3696,32 @@ describe('transient-sibling autoclose on focus change (§4.4 dim 4b, §5 step 9)
     assert.deepStrictEqual(closedIds(effects), [wid(2)]);
   });
 
-  it('a keepLive transient is HIDDEN, not closed (peek 2c94c125)', () => {
+  it('a keepLive transient gets a bare CLOSE_WINDOW from autoclose — NOT pre-resolved to HIDE_WINDOW', () => {
+    // Autoclose must never pre-resolve keepLive itself: CLOSE_WINDOW routes
+    // through `windows.ts closeOrHideWindow`, which runs the black-macOS-Space
+    // fullscreen-exit preamble BEFORE re-dispatching
+    // WINDOW_CLOSE_OR_HIDE_REQUESTED to resolve keepLive (see the next test).
+    // Pre-resolving here (as HIDE_WINDOW) would skip that preamble for a
+    // fullscreen keepLive victim.
     const effects = focusWith('workspace', (s) => sibling(s, 2, { role: 'quick-view', keepLive: true }));
-    assert.deepStrictEqual(closedIds(effects), []);
-    assert.deepStrictEqual(effectsOfType(effects, 'HIDE_WINDOW'), [{ type: 'HIDE_WINDOW', id: wid(2) }]);
+    assert.deepStrictEqual(closedIds(effects), [wid(2)]);
+    assert.deepStrictEqual(effectsOfType(effects, 'HIDE_WINDOW'), []);
+  });
+
+  it('a keepLive transient swept by autoclose still ends up HIDDEN, not destroyed (peek 2c94c125), once WINDOW_CLOSE_OR_HIDE_REQUESTED comes back through', () => {
+    // Simulates the real round trip: the backend's `closeOrHideWindow`
+    // receives the CLOSE_WINDOW effect above, runs its fullscreen-exit
+    // preamble, then re-dispatches WINDOW_CLOSE_OR_HIDE_REQUESTED — which is
+    // where keepLive actually gets resolved.
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'workspace', focused: false });
+    s = sibling(s, 2, { role: 'quick-view', keepLive: true });
+    const focusResult = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]);
+    assert.deepStrictEqual(closedIds(focusResult.effects), [wid(2)]);
+    const requestResult = drive(focusResult.state, [{ type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: wid(2) }]);
+    assert.deepStrictEqual(effectsOfType(requestResult.effects, 'HIDE_WINDOW'), [{ type: 'HIDE_WINDOW', id: wid(2) }]);
+    assert.deepStrictEqual(effectsOfType(requestResult.effects, 'DESTROY_WINDOW'), []);
+    assert.ok(requestResult.state.windows.has(wid(2)), 'still registered — keepLive never closes');
   });
 
   it('an UNREGISTERED focuser (undefined role, not utility) still dismisses the transients', () => {
@@ -3826,11 +3848,24 @@ describe('app-resign transient sweep (§4.4 dim 4b — no timer, armed state)', 
     assert.deepStrictEqual(closedIds(effects), [], 'the overlay and the hidden peek both stay');
   });
 
-  it('a keepLive slide is HIDDEN by the sweep, never destroyed (peek 2c94c125)', () => {
+  it('a keepLive slide gets a bare CLOSE_WINDOW from the sweep — NOT pre-resolved to HIDE_WINDOW', () => {
+    // Same reasoning as the focus-autoclose sibling test above: the sweep
+    // must not pre-resolve keepLive itself, or the black-macOS-Space
+    // fullscreen-exit preamble in `windows.ts closeOrHideWindow` gets skipped.
     const s = drive(withTransient({ keepLive: true }), [{ type: 'APP_RESIGNED' }]).state;
     const { effects } = drive(s, [{ type: 'APP_RESIGN_SETTLED' }]);
-    assert.deepStrictEqual(closedIds(effects), []);
-    assert.ok(effectsOfType(effects, 'HIDE_WINDOW').some((e) => e.id === wid(2)));
+    assert.deepStrictEqual(closedIds(effects), [wid(2)]);
+    assert.deepStrictEqual(effectsOfType(effects, 'HIDE_WINDOW'), []);
+  });
+
+  it('a keepLive slide swept by app-resign still ends up HIDDEN, not destroyed (peek 2c94c125), once WINDOW_CLOSE_OR_HIDE_REQUESTED comes back through', () => {
+    const armed = drive(withTransient({ keepLive: true }), [{ type: 'APP_RESIGNED' }]).state;
+    const sweepResult = drive(armed, [{ type: 'APP_RESIGN_SETTLED' }]);
+    assert.deepStrictEqual(closedIds(sweepResult.effects), [wid(2)]);
+    const requestResult = drive(sweepResult.state, [{ type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: wid(2) }]);
+    assert.deepStrictEqual(effectsOfType(requestResult.effects, 'HIDE_WINDOW'), [{ type: 'HIDE_WINDOW', id: wid(2) }]);
+    assert.deepStrictEqual(effectsOfType(requestResult.effects, 'DESTROY_WINDOW'), []);
+    assert.ok(requestResult.state.windows.has(wid(2)), 'still registered — keepLive never closes');
   });
 
   it('selectAppResignTransients is the pure decision behind the clause', () => {
