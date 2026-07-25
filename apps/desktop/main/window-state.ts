@@ -1587,19 +1587,41 @@ const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', '
 const AUTOCLOSE_EXEMPT_ROLES: ReadonlySet<string> = new Set(['overlay']);
 
 /**
+ * Roles that, when THEY are the one gaining focus, must sweep NOTHING —
+ * the focuser-side exemption set. Distinct from `AUTOCLOSE_EXEMPT_ROLES`
+ * (which protects a transient from being SWEPT); this set protects other
+ * transients from being swept BY a focus on one of these roles:
+ *
+ *   - `utility`  a chain popup, child of a transient — it must not dismiss
+ *                its own transient parent (ported verbatim from the
+ *                pre-cutover `focuser?.role === 'utility'` short-circuit).
+ *   - `overlay`  the shared chrome overlay (`hybrid-overlay.ts`) is app
+ *                chrome attached to the very window it would be dismissing
+ *                (it is explicitly focusable — Cmd+L into the navbar) — a
+ *                focus landing on it is not "the user switched to a
+ *                different window" and must not sweep the host it frames.
+ *                Needed because d9509368 moved this clause from running on
+ *                exactly two focus producers (`ipc.ts` window-open's
+ *                `win.on('focus')` and `onHybridHostFocus`) into the reducer
+ *                driven by `OS_FOCUS_GAINED`, which fires for EVERY
+ *                machine-registered window's focus — including the overlay's.
+ */
+const AUTOCLOSE_FOCUSER_EXEMPT_ROLES: ReadonlySet<string> = new Set(['utility', 'overlay']);
+
+/**
  * Which transient siblings a newly-focused window dismisses (§4.4 dim 4b) —
  * the reducer port of `izui-roles.ts selectTransientSiblingsToClose`, with the
  * candidate gathering (two registries + a live `isVisible()` per window)
  * replaced by the record set. Semantics are preserved EXACTLY:
  *
- *   - a `utility` focuser (a chain popup, child of a transient) closes NOTHING
- *     — it must not dismiss its transient parent;
+ *   - a focuser whose role is in `AUTOCLOSE_FOCUSER_EXEMPT_ROLES` closes
+ *     NOTHING;
  *   - skip the focuser itself, any non-visible window, any non-transient role;
- *   - `overlay` is exempt (see `AUTOCLOSE_EXEMPT_ROLES`).
+ *   - `overlay` is exempt as a VICTIM too (see `AUTOCLOSE_EXEMPT_ROLES`).
  *
- * An UNREGISTERED focuser (no record) has an undefined role, which is not
- * `utility` — so it closes every visible transient, matching the original's
- * `getWindowInfo(focusedId)?.params?.role` returning undefined.
+ * An UNREGISTERED focuser (no record) has an undefined role, which is not in
+ * the exempt set — so it closes every visible transient, matching the
+ * original's `getWindowInfo(focusedId)?.params?.role` returning undefined.
  *
  * Kind-agnostic on purpose: the original's whole point was that BOTH plain
  * BrowserWindows and hybrid page-hosts are candidates (the close-on-blur
@@ -1607,7 +1629,7 @@ const AUTOCLOSE_EXEMPT_ROLES: ReadonlySet<string> = new Set(['overlay']);
  */
 export function selectTransientAutoclose(state: AppWindowState, focusedId: WindowId): WindowId[] {
   const focuser = state.windows.get(focusedId);
-  if (focuser?.role === 'utility') return [];
+  if (focuser && AUTOCLOSE_FOCUSER_EXEMPT_ROLES.has(focuser.role)) return [];
   const out: WindowId[] = [];
   for (const rec of state.windows.values()) {
     if (rec.id === focusedId) continue;

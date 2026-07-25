@@ -3646,6 +3646,15 @@ describe('transient-sibling autoclose on focus change (§4.4 dim 4b, §5 step 9)
     assert.deepStrictEqual(closedIds(effects), []);
   });
 
+  it('an overlay focuser closes NOTHING (the shared chrome overlay is focusable and must not sweep the host it frames — the address-bar-dismisses-the-slide regression)', () => {
+    const effects = focusWith('overlay', (s) => {
+      let next = sibling(s, 2, { role: 'quick-view' });
+      next = sibling(next, 3, { role: 'palette', satellite: true });
+      return next;
+    });
+    assert.deepStrictEqual(closedIds(effects), []);
+  });
+
   it('skips a non-visible transient', () => {
     const effects = focusWith('workspace', (s) => sibling(s, 2, { role: 'quick-view', visible: false }));
     assert.deepStrictEqual(closedIds(effects), []);

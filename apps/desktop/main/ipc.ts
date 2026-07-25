@@ -3747,7 +3747,8 @@ export function registerWindowHandlers(): void {
         // at `registerWindowWithMachine` below) feeds it, and the machine is
         // the sole focus authority (the izui coordinator's own tracker was
         // deleted in step 8c). This handler keeps only the `window:focused`
-        // HUD notify and the transient-sibling autoclose.
+        // HUD notify — the transient-sibling autoclose moved to the machine
+        // (see the comment below).
         const winInfo = getWindowInfo(win.id);
         // Notify HUD and other listeners that a window gained focus.
         // Include `role` so subscribers (e.g. cmd panel's auto-hide-on-
