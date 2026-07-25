@@ -34,7 +34,7 @@
  * focus-free by design).
  */
 
-import { app, globalShortcut, webContents } from 'electron';
+import { app, globalShortcut, screen, webContents } from 'electron';
 import type { BrowserWindow, WebContents } from 'electron';
 
 import { isHeadless, DEBUG } from './config.js';
@@ -56,6 +56,7 @@ import {
   type StackingLevel,
 } from './window-state.js';
 import type { BackendEventSink, WindowBackend, WindowSpec } from './window-backend.js';
+import { expandToOverlayFrame } from './overlay-frame.js';
 
 // Bounded wait for the native fullscreen transition to settle, matching the
 // pre-machine owner (`hybrid-page-host-registry.ts HYBRID_FULLSCREEN_SETTLE_TIMEOUT_MS`).
@@ -429,6 +430,23 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     }
   }
 
+  /**
+   * The work area of the display nearest a window's current bounds, or `null`
+   * when unavailable (some test envs) — mirrors `hybrid-overlay.ts
+   * workAreaNearest`. Used only to compute `BOUNDS_CHANGED.overlayFrame` for
+   * page-hosts (§5 step 9).
+   */
+  private workAreaNearest(content: Rectangle): Rectangle | null {
+    try {
+      return screen.getDisplayNearestPoint({
+        x: content.x + Math.floor(content.width / 2),
+        y: content.y + Math.floor(content.height / 2),
+      }).workArea;
+    } catch {
+      return null;
+    }
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // Native listeners (§2.6): each is a one-line event translation — the sole
   // exception is `blur`, which arms the ONE deferred-blur settle instead of
@@ -496,7 +514,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // left to report.
       try {
         if (win.isDestroyed()) return;
-        this.emit({ type: 'BOUNDS_CHANGED', id, bounds: win.getBounds() });
+        const bounds = win.getBounds();
+        // Only a page-host can host the chrome overlay (§5 step 9) — skip the
+        // frame math for every other window kind.
+        const overlayFrame =
+          kind === 'page-host' ? expandToOverlayFrame(bounds, this.workAreaNearest(bounds)) : undefined;
+        this.emit({ type: 'BOUNDS_CHANGED', id, bounds, overlayFrame });
       } catch {
         /* window gone mid-event */
       }
