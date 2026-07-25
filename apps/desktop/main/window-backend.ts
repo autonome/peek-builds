@@ -32,8 +32,9 @@
  * pre-built. Step 4 (special window classes + registry unification) widened
  * it with the close/destroy/show/hide/alwaysOnTop command family; step 5
  * added `setStacking`, step 7 the geometry pair (`setWindowBounds` +
- * `BOUNDS_CHANGED`); later steps add theirs
- * (`setVisibleOnAllWorkspaces`/`loadContent` with their steps). Windows are
+ * `BOUNDS_CHANGED`), step 10 the macOS Spaces command
+ * (`setVisibleOnAllSpaces`); later steps add theirs (`loadContent` with its
+ * step). Windows are
  * still joined post-hoc via the backend's migration shims (see
  * `electron-window-backend.ts BackendMigrationShims`), which sit
  * deliberately OUTSIDE this interface.
@@ -280,4 +281,38 @@ export interface WindowBackend {
    * `showWindow`/`hideWindow` family's `Window` infix.
    */
   setWindowBounds(id: WindowId, rect: Rect): void;
+
+  // ── §5 step 10 command (macOS Spaces) ────────────────────────────────────
+
+  /**
+   * Pin the window to (or unpin it from) every macOS Space — the
+   * `SET_VISIBLE_ON_ALL_SPACES` effect (§4.2 dim 7b). Named
+   * `setVisibleOnAllSpaces`, deliberately NOT the platform method name
+   * `setVisibleOnAllWorkspaces`: same convention as `setFullscreen` /
+   * `pinAlwaysOnTop` / `setWindowBounds` — the R2 mechanical check
+   * (`scripts/check-r2-window-ops.mjs`) greps the platform call names
+   * verbatim, and the port is a different namespace.
+   *
+   * `opts` is WIDER than the design table's `(id, on)` because two properties
+   * of the real call sites cannot be expressed without it:
+   *
+   *   - `skipTransformProcessType: true` is required on EVERY call. Without
+   *     it macOS toggles the app's activation policy (Accessory ↔ Foreground)
+   *     mid-call and every OTHER Peek window flashes out for a frame.
+   *   - `visibleOnFullScreen: true` belongs on the `on: true` calls only.
+   *
+   * And the ORDERED PAIR that the `anchor` policy issues — `true` then
+   * `false`, synchronously, right after creation, with DIFFERENT options — is
+   * what makes macOS land a window on the user's ACTIVE Space and pin it
+   * there. The pair is expressed as two effects by the reducer's
+   * `SPACES_POLICY_REQUESTED` clause, so the port only ever performs one call
+   * per invocation, but the two calls must be able to differ in their options.
+   *
+   * Non-darwin platforms have no Spaces: the Electron backend no-ops there.
+   */
+  setVisibleOnAllSpaces(
+    id: WindowId,
+    on: boolean,
+    opts?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
+  ): void;
 }

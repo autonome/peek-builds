@@ -114,6 +114,15 @@ export interface NativeWindow {
   /** Outer-bounds write (the `setWindowBounds` command — §5 step 7). On both kinds in Electron 40. */
   setBounds(bounds: Rectangle): void;
   /**
+   * macOS Spaces pin (the `setVisibleOnAllSpaces` command — §5 step 10).
+   * On both kinds in Electron 40; a no-op off darwin, which is why the
+   * backend guards the platform before calling it at all.
+   */
+  setVisibleOnAllWorkspaces(
+    visible: boolean,
+    options?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
+  ): void;
+  /**
    * Outer-bounds read — used ONLY inside the resize/move listeners to build
    * the `BOUNDS_CHANGED` emission (§2.5's sanctioned pattern: the backend
    * reads reality once, internally, and pushes it as an event; nothing else
@@ -942,6 +951,44 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       if (!win.isDestroyed()) win.setBounds(rect);
     } catch {
       /* torn-down window mid-command — the machine already recorded intent */
+    }
+  }
+
+  /**
+   * Pin the window to (or unpin it from) every macOS Space (the
+   * `SET_VISIBLE_ON_ALL_SPACES` effect — §5 step 10).
+   *
+   * darwin-only: Spaces don't exist elsewhere and the platform call is a
+   * no-op there, so the guard is the honest statement of scope rather than a
+   * behavior change (`spacesPolicyForRole` already answers `'none'` off
+   * darwin, so no effect should reach here anyway).
+   *
+   * No `isHeadless()` gate HERE — same convention as `pinAlwaysOnTop` /
+   * `setStacking` / `setWindowBounds`: the executor owns the headless
+   * decision for this family (`window-os-adapter.ts` skips the effect under
+   * headless, matching the `if (!isHeadless())` both `ipc.ts` call sites
+   * already sit inside). `entry.ts`'s headless prototype no-op guard remains
+   * the belt-and-braces backstop that COUNTS any call that slips through.
+   *
+   * Only the options the caller actually supplied are forwarded: an absent
+   * flag must stay absent, not become `false` (`visibleOnFullScreen` belongs
+   * on the `true` call of the anchor pair only).
+   */
+  setVisibleOnAllSpaces(
+    id: WindowId,
+    on: boolean,
+    opts?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
+  ): void {
+    if (process.platform !== 'darwin') return;
+    const win = this.windows.get(id)?.win;
+    if (!win) return;
+    const options: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean } = {};
+    if (opts?.visibleOnFullScreen !== undefined) options.visibleOnFullScreen = opts.visibleOnFullScreen;
+    if (opts?.skipTransformProcessType !== undefined) options.skipTransformProcessType = opts.skipTransformProcessType;
+    try {
+      if (!win.isDestroyed()) win.setVisibleOnAllWorkspaces(on, options);
+    } catch {
+      /* Spaces write against a torn-down window — the machine already recorded intent */
     }
   }
 

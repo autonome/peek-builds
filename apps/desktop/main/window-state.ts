@@ -264,10 +264,17 @@ export interface WindowRecord {
    * it is issued at open time and never read back, so nothing in the app can
    * answer "is this window on all Spaces?" without asking the OS — the query
    * half §3 forbids. This field is the machine's record of that intent,
-   * declared by `SET_VISIBLE_ON_ALL_SPACES_REQUESTED` and readable from state
+   * declared by `SET_VISIBLE_ON_ALL_SPACES_REQUESTED` (raw) or
+   * `SPACES_POLICY_REQUESTED` (role-derived) and readable from state
    * afterwards. `false` for every window until asked otherwise (the platform
    * default), and preserved across a re-registration merge like every other
    * LIVED field.
+   *
+   * Note an `anchor` policy leaves this `false` — its true→false pair ends
+   * unpinned by design, and "anchored to a Space" is exactly what `false`
+   * means. So this field records where the window IS, not which policy put it
+   * there; nothing today needs to tell "anchored via the pair" apart from
+   * "never touched", so no policy field exists.
    */
   visibleOnAllSpaces: boolean;
   /**
@@ -747,15 +754,55 @@ export type WindowEvent =
    * `WindowRecord.visibleOnAllSpaces`, which is what makes the state readable
    * for the first time. No-op for an unknown window.
    *
-   * MACHINERY ONLY, and deliberately EFFECT-FREE for now: the port declares no
-   * Spaces command yet (`window-backend.ts` — "later steps add theirs
-   * (`setVisibleOnAllWorkspaces`/`loadContent`)"), and R2 says the executor is
-   * the only path to the OS, so there is nothing legitimate to emit here until
-   * the port grows the command. The step-10 cutover adds the port command + its
-   * effect and turns today's direct callers into dispatchers of this event; no
-   * producer dispatches it yet, so the OS behavior is unchanged.
+   * This is the RAW path: caller-supplied `on` plus caller-supplied platform
+   * options, straight through to one `SET_VISIBLE_ON_ALL_SPACES` effect. It
+   * exists for the renderer-driven tile IPC
+   * (`tile:window:set-visible-on-all-workspaces`), whose caller passes both
+   * halves and has no role/policy to consult. App-internal, role-driven
+   * callers use `SPACES_POLICY_REQUESTED` instead — it owns the follow/anchor
+   * decision AND the anchor pair.
+   *
+   * The two optional flags are platform call options, NOT state: they ride the
+   * effect and are never stored (`WindowRecord` holds only the `on` intent).
+   * See `WindowBackend.setVisibleOnAllSpaces` for why they must be expressible
+   * per call.
+   *
+   * The effect is emitted even when `on` already equals the record's value:
+   * macOS silently drops the all-Spaces flag across some window/Space
+   * transitions, so a re-assert is a real OS write, not a redundant one (the
+   * keepLive-reuse `follow` re-assert in `ipc.ts` is exactly that).
    */
-  | { type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED'; id: WindowId; on: boolean }
+  | {
+      type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED';
+      id: WindowId;
+      on: boolean;
+      visibleOnFullScreen?: boolean;
+      skipTransformProcessType?: boolean;
+    }
+  /**
+   * The INTENT path behind the same OS write (§4.2 dim 7b, §5 step 10): "apply
+   * this window's role-derived Spaces policy", where the policy comes from the
+   * pure `izui-roles.ts spacesPolicyForRole(role, platform)` at the dispatch
+   * site (the reducer has zero value imports and cannot call it).
+   *
+   *   'follow' — palette/quick-view/overlay (cmd panel, slides, peeks): the
+   *     window rides along to whichever Space the user is on. ONE effect,
+   *     `on:true` with both flags.
+   *   'anchor' — everything else on darwin: the deliberate ORDERED PAIR,
+   *     `true` (both flags) then `false` (skipTransformProcessType only).
+   *     Issued synchronously right after creation, that pair is what makes
+   *     macOS land the window on the user's ACTIVE Space and then pin it
+   *     there — a bare `false` would leave it on the Space the app happened
+   *     to be created from. The two calls carry DIFFERENT options, which is
+   *     why the pair cannot collapse into one effect.
+   *   'none' — non-darwin (no Spaces exist): no effect, no state change.
+   *
+   * The pair lives HERE rather than at the call site so it is unit-testable
+   * and so `ipc.ts` stays a one-line dispatcher. Note the record ends
+   * `visibleOnAllSpaces: false` after an anchor — which reads correctly as
+   * "anchored to a Space", the same value a never-touched window holds.
+   */
+  | { type: 'SPACES_POLICY_REQUESTED'; id: WindowId; policy: 'follow' | 'anchor' | 'none' }
   | { type: 'ESC_PRESSED'; landedId: WindowId | 'global' }
   /**
    * The renderer's answer to an `ASK_RENDERER`. `seq` echoes the epoch of the
@@ -840,6 +887,26 @@ export type Effect =
   | { type: 'HIDE_WINDOW'; id: WindowId }
   /** Pin above regular windows (registration-declared alwaysOnTop). Executor skips under headless (compositor-flash parity with the old guard). */
   | { type: 'SET_ALWAYS_ON_TOP'; id: WindowId; on: boolean }
+  /**
+   * Pin the window to (or unpin it from) every macOS Space (§4.2 dim 7b, §5
+   * step 10) — executed by the port's `setVisibleOnAllSpaces`. Emitted by the
+   * raw `SET_VISIBLE_ON_ALL_SPACES_REQUESTED` and, one or TWO at a time, by
+   * `SPACES_POLICY_REQUESTED`.
+   *
+   * The two optional flags are platform call options that ride the payload
+   * because the executor is stateless w.r.t. records and MUST NOT re-derive
+   * them: `skipTransformProcessType` is required on every real call (it stops
+   * macOS toggling the activation policy, which flashes every other Peek
+   * window), and `visibleOnFullScreen` belongs on the `on:true` calls only.
+   * Absent = "don't pass the option", not `false`.
+   */
+  | {
+      type: 'SET_VISIBLE_ON_ALL_SPACES';
+      id: WindowId;
+      on: boolean;
+      visibleOnFullScreen?: boolean;
+      skipTransformProcessType?: boolean;
+    }
   /** Quit teardown: destroy every registered page-host guest WC (peek d1cf0b9a). */
   | { type: 'DESTROY_ALL_GUESTS' }
   /**
@@ -855,6 +922,14 @@ export type Effect =
   /** ESC passed straight to the page (escapeMode 'ignore'). */
   | { type: 'PASS_THROUGH'; id: WindowId }
   | { type: 'NOTHING' };
+
+/**
+ * The Spaces effect on its own, so the reducer can BUILD one incrementally
+ * (adding only the flags the caller supplied) — a `Effect`-typed local would
+ * reject the property writes, and spreading `undefined` flags in would make
+ * the emitted shape differ from the equivalent literal.
+ */
+type SetVisibleOnAllSpacesEffect = Extract<Effect, { type: 'SET_VISIBLE_ON_ALL_SPACES' }>;
 
 export interface ReduceResult {
   state: AppWindowState;
@@ -2448,10 +2523,52 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
     case 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED': {
       const rec = state.windows.get(event.id);
       if (!rec) break; // unknown window — no record to hold the intent
-      // State only: the port has no Spaces command yet, so there is nothing
-      // for the executor to perform (see the event doc). Re-asserting the
-      // value it already holds is structurally inert.
       patchRecord(state, event.id, { visibleOnAllSpaces: event.on });
+      // Emitted UNCONDITIONALLY, including when the value is unchanged: macOS
+      // drops the all-Spaces flag across some transitions, so a re-assert is
+      // a real write (see the event doc). Only the flags the caller actually
+      // supplied are put on the effect — absent means "don't pass the
+      // option", which is not the same as `false`.
+      const eff: SetVisibleOnAllSpacesEffect = { type: 'SET_VISIBLE_ON_ALL_SPACES', id: event.id, on: event.on };
+      if (event.visibleOnFullScreen !== undefined) eff.visibleOnFullScreen = event.visibleOnFullScreen;
+      if (event.skipTransformProcessType !== undefined) eff.skipTransformProcessType = event.skipTransformProcessType;
+      effects.push(eff);
+      break;
+    }
+
+    case 'SPACES_POLICY_REQUESTED': {
+      const rec = state.windows.get(event.id);
+      if (!rec) break; // unknown window — nothing to apply the policy to
+      if (event.policy === 'none') break; // no Spaces on this platform
+      if (event.policy === 'follow') {
+        patchRecord(state, event.id, { visibleOnAllSpaces: true });
+        effects.push({
+          type: 'SET_VISIBLE_ON_ALL_SPACES',
+          id: event.id,
+          on: true,
+          visibleOnFullScreen: true,
+          skipTransformProcessType: true,
+        });
+        break;
+      }
+      // 'anchor' — the ORDERED PAIR (see the event doc). true-then-false is
+      // what lands the window on the ACTIVE Space and pins it there; the two
+      // calls carry DIFFERENT options, so they cannot collapse into one
+      // effect. Net record value is `false` — "anchored to a Space".
+      patchRecord(state, event.id, { visibleOnAllSpaces: false });
+      effects.push({
+        type: 'SET_VISIBLE_ON_ALL_SPACES',
+        id: event.id,
+        on: true,
+        visibleOnFullScreen: true,
+        skipTransformProcessType: true,
+      });
+      effects.push({
+        type: 'SET_VISIBLE_ON_ALL_SPACES',
+        id: event.id,
+        on: false,
+        skipTransformProcessType: true,
+      });
       break;
     }
 

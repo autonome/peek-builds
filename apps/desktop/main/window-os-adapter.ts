@@ -364,6 +364,21 @@ export class WindowOsAdapter {
         this.backend.pinAlwaysOnTop(effect.id, effect.on);
         return;
       }
+      case 'SET_VISIBLE_ON_ALL_SPACES': {
+        // Headless parity with the two call sites this replaces: BOTH of
+        // `ipc.ts`'s Spaces blocks (fresh-create and keepLive-reuse) sit
+        // inside `if (!isHeadless())`, because the call touches the real
+        // desktop's Space assignment and — without skipTransformProcessType —
+        // the app's activation policy. An agent/CI run must not move windows
+        // between the user's Spaces. Same executor-side gate as
+        // SET_ALWAYS_ON_TOP.
+        if (isHeadless()) return;
+        this.backend.setVisibleOnAllSpaces(effect.id, effect.on, {
+          visibleOnFullScreen: effect.visibleOnFullScreen,
+          skipTransformProcessType: effect.skipTransformProcessType,
+        });
+        return;
+      }
       case 'DESTROY_ALL_GUESTS': {
         this.backend.destroyAllContentGuests();
         return;

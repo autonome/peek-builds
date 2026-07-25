@@ -258,6 +258,11 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     { type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(1), on: true },
     { type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(1), on: false },
     { type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(99), on: true },
+    { type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(1), on: true, visibleOnFullScreen: true, skipTransformProcessType: true },
+    { type: 'SPACES_POLICY_REQUESTED', id: wid(1), policy: 'follow' },
+    { type: 'SPACES_POLICY_REQUESTED', id: wid(1), policy: 'anchor' },
+    { type: 'SPACES_POLICY_REQUESTED', id: wid(1), policy: 'none' },
+    { type: 'SPACES_POLICY_REQUESTED', id: wid(99), policy: 'anchor' },
     // §5 step 9 events (overlay attachment + the app-resign transient sweep).
     { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(1), hostId: wid(1) },
     { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(1), hostId: wid(1), frame: BOUNDS },
@@ -3238,7 +3243,7 @@ describe('DISPLAY_CHANGED — the display-layout reprojection (§4.2 dim 7, §5 
   });
 });
 
-describe('visibleOnAllSpaces — the macOS Spaces field (§4.2 dim 7b, §5 step 10)', () => {
+describe('visibleOnAllSpaces — the macOS Spaces field + the two write paths (§4.2 dim 7b, §5 step 10)', () => {
   it('a fresh window is on ONE space (the platform default)', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
@@ -3254,20 +3259,43 @@ describe('visibleOnAllSpaces — the macOS Spaces field (§4.2 dim 7b, §5 step 
     assert.strictEqual(r2.state.windows.get(wid(1))!.visibleOnAllSpaces, false);
   });
 
-  it('drives NO effect — the port has no Spaces command yet (machinery only)', () => {
+  // INVERTED from the machinery-only commit that landed this field: that
+  // commit asserted "emits NO effects" because the port had no Spaces command.
+  // The port now has `setVisibleOnAllSpaces`, so the raw event is the executor
+  // path for the renderer-driven tile IPC and MUST emit.
+  it('drives the port command — one effect per raw request', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
     const { effects } = drive(s, [{ type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(1), on: true }]);
-    assert.deepStrictEqual(effects, []);
+    assert.deepStrictEqual(effects, [{ type: 'SET_VISIBLE_ON_ALL_SPACES', id: wid(1), on: true }]);
   });
 
-  it('re-asserting the value it already holds is inert', () => {
+  it('carries the caller flags verbatim; an absent flag stays ABSENT (not false)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const withFlags = drive(s, [
+      { type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(1), on: true, visibleOnFullScreen: true, skipTransformProcessType: true },
+    ]);
+    assert.deepStrictEqual(withFlags.effects, [
+      { type: 'SET_VISIBLE_ON_ALL_SPACES', id: wid(1), on: true, visibleOnFullScreen: true, skipTransformProcessType: true },
+    ]);
+    // Only one supplied → only one on the effect.
+    const partial = drive(s, [
+      { type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(1), on: false, skipTransformProcessType: true },
+    ]);
+    assert.deepStrictEqual(partial.effects, [
+      { type: 'SET_VISIBLE_ON_ALL_SPACES', id: wid(1), on: false, skipTransformProcessType: true },
+    ]);
+  });
+
+  it('re-asserting the value it already holds still emits — macOS drops the flag', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
     const r1 = drive(s, [{ type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(1), on: true }]);
     const r2 = drive(r1.state, [{ type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(1), on: true }]);
     assert.strictEqual(r2.state.windows.get(wid(1))!.visibleOnAllSpaces, true);
-    assert.deepStrictEqual(r2.effects, []);
+    assert.deepStrictEqual(r2.effects, [{ type: 'SET_VISIBLE_ON_ALL_SPACES', id: wid(1), on: true }],
+      'the keepLive-reuse follow re-assert is a REAL write, never suppressed as a no-change');
   });
 
   it('is per window: pinning one leaves its sibling alone', () => {
@@ -3302,6 +3330,72 @@ describe('visibleOnAllSpaces — the macOS Spaces field (§4.2 dim 7b, §5 step 
     const before = s.windows.get(wid(1))!;
     reduce(s, { type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(1), on: true });
     assert.strictEqual(before.visibleOnAllSpaces, false, 'input record not mutated');
+  });
+
+  // ── the INTENT path: role-derived policy, with the anchor pair in the reducer ──
+
+  it("'follow' — ONE effect, on:true with both flags, record pinned", () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'palette' });
+    const { state, effects } = drive(s, [{ type: 'SPACES_POLICY_REQUESTED', id: wid(1), policy: 'follow' }]);
+    assert.deepStrictEqual(effects, [
+      { type: 'SET_VISIBLE_ON_ALL_SPACES', id: wid(1), on: true, visibleOnFullScreen: true, skipTransformProcessType: true },
+    ]);
+    assert.strictEqual(state.windows.get(wid(1))!.visibleOnAllSpaces, true);
+  });
+
+  it("'anchor' — EXACTLY TWO effects, true-then-false, with the right flags on each", () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const { state, effects } = drive(s, [{ type: 'SPACES_POLICY_REQUESTED', id: wid(1), policy: 'anchor' }]);
+    // Order is the whole point: true lands the window on the ACTIVE Space,
+    // false then pins it there. `visibleOnFullScreen` is on the true call
+    // only; `skipTransformProcessType` on BOTH (without it macOS toggles the
+    // activation policy and every other Peek window flashes).
+    assert.deepStrictEqual(effects, [
+      { type: 'SET_VISIBLE_ON_ALL_SPACES', id: wid(1), on: true, visibleOnFullScreen: true, skipTransformProcessType: true },
+      { type: 'SET_VISIBLE_ON_ALL_SPACES', id: wid(1), on: false, skipTransformProcessType: true },
+    ]);
+    // Net record value is false — "anchored to a Space", not "never touched".
+    assert.strictEqual(state.windows.get(wid(1))!.visibleOnAllSpaces, false);
+  });
+
+  it("'none' — no effect, no state change (non-darwin: Spaces don't exist)", () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const pinned = drive(s, [{ type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(1), on: true }]);
+    const { state, effects } = drive(pinned.state, [{ type: 'SPACES_POLICY_REQUESTED', id: wid(1), policy: 'none' }]);
+    assert.deepStrictEqual(effects, []);
+    assert.strictEqual(state.windows.get(wid(1))!.visibleOnAllSpaces, true, 'leaves whatever was there alone');
+  });
+
+  it('a policy for an unregistered window is a no-op', () => {
+    const s = createInitialState();
+    for (const policy of ['follow', 'anchor', 'none'] as const) {
+      const { state, effects } = drive(s, [{ type: 'SPACES_POLICY_REQUESTED', id: wid(99), policy }]);
+      assert.deepStrictEqual(effects, [], `${policy}: no effect`);
+      assert.strictEqual(state.windows.size, 0);
+    }
+  });
+
+  it('is per window: a policy on one leaves its sibling alone', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'palette' });
+    s = openWindow(s, 2, { kind: 'browser', role: 'content' });
+    const { state, effects } = drive(s, [{ type: 'SPACES_POLICY_REQUESTED', id: wid(1), policy: 'follow' }]);
+    assert.strictEqual(state.windows.get(wid(1))!.visibleOnAllSpaces, true);
+    assert.strictEqual(state.windows.get(wid(2))!.visibleOnAllSpaces, false);
+    assert.deepStrictEqual(effectsOfType(effects, 'SET_VISIBLE_ON_ALL_SPACES').map((e) => e.id), [wid(1)]);
+  });
+
+  it('reduce purity: an anchor pair does not mutate the input record', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    const pinned = drive(s, [{ type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED', id: wid(1), on: true }]).state;
+    const before = pinned.windows.get(wid(1))!;
+    const r = reduce(pinned, { type: 'SPACES_POLICY_REQUESTED', id: wid(1), policy: 'anchor' });
+    assert.strictEqual(before.visibleOnAllSpaces, true, 'input record not mutated');
+    assert.strictEqual(r.state.windows.get(wid(1))!.visibleOnAllSpaces, false);
   });
 });
 
