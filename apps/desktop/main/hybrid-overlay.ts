@@ -96,6 +96,8 @@ import {
   getNativeWindowFor,
   getMachineWindowRecord,
   waitForPendingWindowEffects,
+  getAppActive,
+  subscribeAppActive,
 } from './window-state-singleton.js';
 import { classifyWindowRegistration } from './window-state.js';
 import { getFaviconForUrl } from './datastore.js';
@@ -147,22 +149,22 @@ let followedBaseWin: BaseWindow | null = null;
 let onFollowedMove: (() => void) | null = null;
 
 // ── R1 app-active gate ──────────────────────────────────────────────────────
-// Whether THE APP (Electron) is currently the frontmost (active) application.
-// The overlay is a transparent `alwaysOnTop:'floating'` window that, when Peek
-// is backgrounded, can float OVER another app AND — because overlay.js drives
-// `setCapture(true)` from forwarded `mousemove`s over the chrome band — capture
-// a click meant for that other app (activating Electron and swallowing the
-// click). The app-active gate forces the overlay click-through + drops its
-// floating level whenever the app resigns active, so it can neither capture nor
-// float over other apps; on become-active we restore the floating + default
-// click-through and re-frame onto the current active hybrid window. We seed it
-// true (the app is normally active at init); `app.isActive?.()` is consulted
-// where available as a belt-and-suspenders read. Listeners are installed by
-// `initHybridOverlay`.
-let appActive = true;
-// The bound resign/become handlers, kept so teardown can detach them.
-let onAppResignActive: (() => void) | null = null;
-let onAppBecomeActive: (() => void) | null = null;
+// Whether THE APP (Electron) is currently the frontmost (active) application is
+// NOT tracked here: it is `AppWindowState.appActive` in the window-state
+// machine, read through `getAppActive()` and observed through
+// `subscribeAppActive()`. This module used to keep a module-level `appActive`
+// fed by its own `app.on('did-resign-active'/'did-become-active')` pair — a
+// second copy of a boolean the machine already owns.
+//
+// The GATE itself still lives here: the overlay is a transparent
+// `alwaysOnTop:'floating'` window that, when Peek is backgrounded, can float
+// OVER another app AND — because overlay.js drives `setCapture(true)` from
+// forwarded `mousemove`s over the chrome band — capture a click meant for that
+// other app (activating Electron and swallowing the click). So on the
+// resign edge we force the overlay click-through + drop its floating level, and
+// on the become edge we restore the floating + default click-through and
+// re-frame onto the current active hybrid window. Wired by `initHybridOverlay`.
+let unsubscribeAppActive: (() => void) | null = null;
 
 // R3 (Cluster B) probe-shortcut fire counter (module scope so the bridge
 // closure + the registered local-shortcut callback share it). Test-only.
@@ -428,7 +430,7 @@ function wireClickCapture(): void {
     // turned the overlay opaque then, the next click would hit it (activating
     // Electron and swallowing the click meant for the other app). Force
     // click-through until the app is active again (become-active restores it).
-    const capture = !!(msg && msg.capture) && appActive;
+    const capture = !!(msg && msg.capture) && getAppActive();
     lastCaptureState = capture;
     if (!overlayWin || overlayWin.isDestroyed()) return;
     if (capture) {
@@ -449,12 +451,16 @@ function wireClickCapture(): void {
  * click-through and re-frame onto the current active hybrid window so the
  * overlay snaps back over it. Idempotent: a second call is a no-op. Every
  * overlayWin access is guarded with isDestroyed().
+ *
+ * The EDGE comes from the machine (`subscribeAppActive`, edge-deduped over
+ * `AppWindowState.appActive`), not from a private `app.on('did-resign-active')`
+ * pair — the backend's `attachAppListeners` is the one producer of that OS
+ * signal.
  */
 function wireAppActiveGate(): void {
-  if (onAppResignActive || onAppBecomeActive) return;
+  if (unsubscribeAppActive) return;
 
-  onAppResignActive = () => {
-    appActive = false;
+  const onAppResignActive = () => {
     if (!overlayWin || overlayWin.isDestroyed()) return;
     try {
       // Force click-through (no forwarding either — we don't want the renderer's
@@ -482,8 +488,7 @@ function wireAppActiveGate(): void {
     }
   };
 
-  onAppBecomeActive = () => {
-    appActive = true;
+  const onAppBecomeActive = () => {
     if (!overlayWin || overlayWin.isDestroyed()) {
       // No overlay yet — re-frame below will lazily create it if there is an
       // active hybrid window.
@@ -517,16 +522,14 @@ function wireAppActiveGate(): void {
     }
   };
 
-  // Headless has no real activation (accessory policy — never truly frontmost),
-  // yet macOS/the test loader still emit spurious `did-resign-active` events that
-  // would race the init seed and flip `appActive` false before a test reads its
-  // baseline. Pin `appActive` in headless by NOT letting OS events drive it — the
-  // same rationale as the init seed above; the test bridge (`simAppResignActive`/
-  // `simAppBecomeActive`) drives resign/become transitions directly.
-  if (!isHeadless()) {
-    app.on('did-resign-active', onAppResignActive);
-    app.on('did-become-active', onAppBecomeActive);
-  }
+  // One subscription, both edges. The test bridge (`simAppResignActive` /
+  // `simAppBecomeActive`) drives the same edges by dispatching `APP_RESIGNED` /
+  // `APP_ACTIVATED` into the machine, so headless tests exercise the production
+  // path rather than a parallel one.
+  unsubscribeAppActive = subscribeAppActive((active) => {
+    if (active) onAppBecomeActive();
+    else onAppResignActive();
+  });
 }
 
 /**
@@ -547,7 +550,7 @@ function wireShowNavbarFocus(): void {
   subscribe(getSystemAddress(), 'page:show-navbar', (raw) => {
     const msg = raw as { windowId?: number } | null;
     if (!msg || msg.windowId == null) return;
-    if (!appActive) return; // never steal focus while backgrounded (R1)
+    if (!getAppActive()) return; // never steal focus while backgrounded (R1)
     if (msg.windowId !== frontPageHostOsId()) return; // active window only
     if (!overlayWin || overlayWin.isDestroyed()) return;
     showNavbarFocusCount++;
@@ -692,9 +695,9 @@ function frameBounds(
   // showInactive() here would re-introduce the exact asymmetry that leaked the
   // overlay over other apps. When the app later becomes active, onAppBecomeActive
   // → retarget() → frameBounds() runs with appActive=true and reveals it via the
-  // existing lifecycle transition (no timer/poll needed). appActive is seeded
-  // true (incl. headless), so headless reveal tests are unaffected.
-  if (!appActive) return;
+  // existing lifecycle transition (no timer/poll needed). The machine seeds
+  // `appActive` true, so a boot-time reveal is unaffected.
+  if (!getAppActive()) return;
 
   // Raise above the content window WITHOUT taking focus. Toggling alwaysOnTop
   // re-asserts the floating level above any window that may have come forward.
@@ -809,27 +812,11 @@ export function initHybridOverlay(): void {
   // the overlay window's lifetime.
   wireClickCapture();
 
-  // R1: seed the app-active state (the app is normally active at init) and
-  // install the resign/become gate so a backgrounded overlay can neither
-  // capture clicks nor float over other apps. `app.isActive()` exists at
-  // runtime on macOS but is absent from this Electron's type defs, so read it
-  // through a guarded cast (it stays `true` when the method is unavailable).
-  try {
-    const maybeIsActive = (app as unknown as { isActive?: () => boolean }).isActive;
-    // Headless has no real activation (accessory policy, never frontmost) and
-    // Electron 43's `app.isActive()` reports false there — which would wrongly
-    // disarm the app-active gate at init, before any test drives a resign/become
-    // transition (capture never arms, Cmd+L never focuses). Keep the "normally
-    // active at init" seed in headless; consult `isActive()` only for a real
-    // (non-headless) app, where a freshly-launched window IS frontmost.
-    appActive = isHeadless()
-      ? true
-      : typeof maybeIsActive === 'function'
-        ? maybeIsActive.call(app)
-        : true;
-  } catch {
-    appActive = true;
-  }
+  // R1: install the resign/become gate so a backgrounded overlay can neither
+  // capture clicks nor float over other apps. No seed here any more — the
+  // app-active boolean is `AppWindowState.appActive` (seeded true at machine
+  // construction, driven by the backend's app listeners); the overlay's old
+  // `app.isActive()` read was the seed for its own private copy.
   wireAppActiveGate();
 
   // R3: focus the overlay window on a Cmd+L (page:show-navbar) for the active
@@ -904,16 +891,12 @@ export function teardownHybridOverlay(): void {
     unsubscribeActive = null;
   }
   unfollow();
-  // R1: detach the app-active gate listeners.
-  if (onAppResignActive) {
-    try { app.removeListener('did-resign-active', onAppResignActive); } catch { /* gone */ }
-    onAppResignActive = null;
+  // R1: drop the app-active gate subscription (the machine keeps owning the
+  // boolean — there is nothing to reset here).
+  if (unsubscribeAppActive) {
+    try { unsubscribeAppActive(); } catch { /* gone */ }
+    unsubscribeAppActive = null;
   }
-  if (onAppBecomeActive) {
-    try { app.removeListener('did-become-active', onAppBecomeActive); } catch { /* gone */ }
-    onAppBecomeActive = null;
-  }
-  appActive = true;
   showNavbarFocusCount = 0;
   // (No overlay-id / focus provider to clear — the overlay's satellite
   // registration with the machine handles close-resolution + focus-group.)
@@ -1460,25 +1443,25 @@ function installTestBridge(): void {
     /**
      * R1 (app-active gate) verification, focus-free. A headless test cannot
      * drive REAL app resign/become-active (no virtual display on macOS), so we
-     * invoke the SAME handlers the `app` `'did-resign-active'`/`'did-become-active'`
-     * events would run. After resign: the overlay must be forced click-through
-     * (captureState false) and drop its floating level (overlayState().alwaysOnTop
-     * false). After become: floating restored (alwaysOnTop true) and click-through
-     * re-armed with forwarding.
+     * dispatch the SAME events the backend's `attachAppListeners` emits for
+     * `'did-resign-active'`/`'did-become-active'` — the machine flips
+     * `appActive` and the overlay's `subscribeAppActive` edge runs the very
+     * production handler. After resign: the overlay must be forced
+     * click-through (captureState false) and drop its floating level
+     * (overlayState().alwaysOnTop false). After become: floating restored
+     * (alwaysOnTop true) and click-through re-armed with forwarding.
      */
     simAppResignActive(): boolean {
-      if (!onAppResignActive) return false;
-      onAppResignActive();
+      dispatchWindowEvent({ type: 'APP_RESIGNED' });
       return true;
     },
     simAppBecomeActive(): boolean {
-      if (!onAppBecomeActive) return false;
-      onAppBecomeActive();
+      dispatchWindowEvent({ type: 'APP_ACTIVATED' });
       return true;
     },
-    /** R1: whether the app-active gate currently considers the app active. */
+    /** R1: whether the machine currently considers the app active. */
     appActiveState(): boolean {
-      return appActive;
+      return getAppActive();
     },
     /**
      * R3: how many times the `page:show-navbar` handler called `overlayWin.focus()`

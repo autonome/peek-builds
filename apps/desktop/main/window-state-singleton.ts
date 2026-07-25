@@ -178,6 +178,34 @@ export function subscribeFrontChange(cb: (frontPageHostId: WindowId | null) => v
   });
 }
 
+/**
+ * Whether Peek is the active (frontmost) application, per the machine —
+ * `AppWindowState.appActive`, fed by `electron-window-backend.ts
+ * attachAppListeners` (`APP_ACTIVATED` / `APP_RESIGNED`). This is THE copy;
+ * no module may keep its own `did-resign-active` mirror.
+ */
+export function getAppActive(): boolean {
+  return getWindowOsAdapter().getOwner().snapshot().appActive;
+}
+
+/**
+ * Subscribe to app-active TRANSITIONS (the edge `hybrid-overlay.ts` used to get
+ * from its own `app.on('did-resign-active'/'did-become-active')` pair). Same
+ * shape as `subscribeFrontChange` above: layered over `getOwner().subscribe`,
+ * edge-deduped so the callback fires only when the boolean actually flips, not
+ * on every dispatch. Returns an unsubscribe function.
+ */
+export function subscribeAppActive(cb: (appActive: boolean) => void): () => void {
+  let last = getAppActive();
+  return getWindowOsAdapter().getOwner().subscribe((snap) => {
+    const now = snap.appActive;
+    if (now !== last) {
+      last = now;
+      cb(now);
+    }
+  });
+}
+
 /** Resolve when window `id` reaches fullscreen `mode` (the settle-await seam). */
 export function waitForMode(id: WindowId, mode: FsMode['name']): Promise<void> {
   return getWindowOsAdapter().getOwner().waitForMode(id, mode);
