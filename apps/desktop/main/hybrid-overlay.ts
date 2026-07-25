@@ -100,6 +100,7 @@ import {
   subscribeAppActive,
 } from './window-state-singleton.js';
 import { classifyWindowRegistration } from './window-state.js';
+import type { Rectangle, WindowId } from './window-state.js';
 import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, registerWindow } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
@@ -131,6 +132,13 @@ const OVERLAY_ENTRY_ID = 'chrome';
 const OVERLAY_URL = 'peek://app/page/overlay.html';
 
 let overlayWin: BrowserWindow | null = null;
+/**
+ * The overlay's own WM `WindowId` — what `OVERLAY_ATTACH_REQUESTED` names. Minted
+ * by `registerWindowWithMachine` in `ensureOverlay()`, cleared in the window's
+ * `'closed'` handler alongside `overlayWin`; the two are always set/cleared
+ * together, so a non-null `overlayWmId` means "the machine knows this overlay".
+ */
+let overlayWmId: WindowId | null = null;
 let unsubscribeActive: (() => void) | null = null;
 
 // True once the click-capture subscription has been installed (idempotent).
@@ -142,11 +150,14 @@ let captureWired = false;
 // Electron has no getter for `setIgnoreMouseEvents`.
 let lastCaptureState = false;
 
-// The hybrid host window the overlay is currently following, plus its bound
-// 'move'/'resize' listeners, so we can detach them when the active window
-// changes (we only ever track the FRONTMOST window's geometry).
-let followedBaseWin: BaseWindow | null = null;
-let onFollowedMove: (() => void) | null = null;
+// FOLLOW is not wired here any more (§5 step 9 cutover). The overlay's
+// geometry/visibility tracking of its host is the ATTACHMENT relation in the
+// window-state machine (`WindowRecord.overlayFor`): the backend emits
+// `BOUNDS_CHANGED` (carrying the precomputed `overlayFrame`) and
+// `OS_FULLSCREEN_ENTERED`/`LEFT` for EVERY registered window, and the reducer
+// routes all of them into `applyOverlayFollow`. The old per-retarget
+// `baseWin.on('move'|'resize'|'enter-full-screen'|'leave-full-screen')` quartet
+// plus `followedBaseWin`/`onFollowedMove`/`unfollow()` are gone with it.
 
 // ── R1 app-active gate ──────────────────────────────────────────────────────
 // Whether THE APP (Electron) is currently the frontmost (active) application is
@@ -223,14 +234,15 @@ function ensureOverlay(): BrowserWindow {
     // focus — typing a URL into the overlay was broken. We keep it focusable so
     // a USER CLICK into the URL field can focus it, but never proactively call
     // `.focus()`/`.show()`/`.activate()`: the overlay still only ever appears
-    // via `showInactive()` (see `frameBounds`), so it never STEALS focus on
-    // appearance — it can only take focus on explicit user interaction.
+    // via the reducer's `SHOW_WINDOW { activate: false }` (the executor's
+    // `showInactive`), so it never STEALS focus on appearance — it can only take
+    // focus on explicit user interaction.
     focusable: true,
     skipTaskbar: true,
     alwaysOnTop: true,
     // Page-host fullscreen black-screen fix (7fffa286): the overlay must NEVER
     // be eligible for macOS native fullscreen. When a host entered its
-    // fullscreen Space, the follow() → frameBounds() resize handler re-bounded
+    // fullscreen Space, the overlay follow re-bounded
     // the overlay to cover the (now display-sized) host and re-showed/raised it
     // mid-transition — and AppKit promoted the overlay into its OWN fullscreen
     // tile (observed live: overlayWin.isFullScreen() === true). A transparent
@@ -239,8 +251,9 @@ function ensureOverlay(): BrowserWindow {
     // black screen" bug. The content host's own Space composited fine the whole
     // time (verified by pixel capture in a minimal harness and by
     // contentWC.capturePage() live). fullscreenable:false makes the promotion
-    // impossible at the AppKit level; frameBounds() additionally hides the
-    // overlay while the followed host is in native fullscreen.
+    // impossible at the AppKit level; the reducer's `applyOverlayFollow`
+    // additionally hides the overlay while its host is in (or entering) native
+    // fullscreen.
     fullscreenable: false,
     opacity: isHeadless() ? 0 : 1,
     webPreferences: {
@@ -261,14 +274,6 @@ function ensureOverlay(): BrowserWindow {
   // Register with the tile launcher so the pubsub broadcaster forwards messages
   // to this window (without this, `api.subscribe` in overlay.js never fires).
   registerTrustedBuiltinWindow(OVERLAY_TILE_ID, OVERLAY_ENTRY_ID, win, token);
-
-  // Float above normal windows. ('floating' keeps it above the content
-  // BaseWindow without sitting over OS panels.)
-  try {
-    win.setAlwaysOnTop(true, 'floating');
-  } catch {
-    /* level arg unsupported on some platforms */
-  }
 
   // Default click-through: every pointer event passes to the content window
   // below. `forward: true` keeps move events flowing so the overlay renderer's
@@ -291,7 +296,10 @@ function ensureOverlay(): BrowserWindow {
   });
 
   win.on('closed', () => {
-    if (overlayWin === win) overlayWin = null;
+    if (overlayWin === win) {
+      overlayWin = null;
+      overlayWmId = null;
+    }
   });
 
   // Register the chrome overlay with the window-state machine as a SATELLITE: it
@@ -301,13 +309,21 @@ function ensureOverlay(): BrowserWindow {
   //   — replacing the registry's `setOverlayFocusProvider` focus-group.
   // - The close resolver reads `front` (which excludes this satellite) —
   //   replacing `setOverlayWindowIdProvider` + `isHybridOverlayWindowId`.
-  registerWindowWithMachine({
+  overlayWmId = registerWindowWithMachine({
     kind: 'browser',
     role: 'overlay',
     class: 'overlay',
     satellite: true,
     win,
     contentWC: win.webContents,
+    // Declared z-pin: registration emits `SET_ALWAYS_ON_TOP {on:true}`, which
+    // the backend realizes as `setAlwaysOnTop(true,'floating')` — the exact
+    // call the post-ctor pin here used to make. DELTA: the executor SKIPS
+    // `SET_ALWAYS_ON_TOP` under headless (compositor-flash parity), where the
+    // old post-ctor call ran unconditionally. The ctor's own `alwaysOnTop:true`
+    // above still pins the window in both modes, so the observable level is
+    // unchanged; only the redundant re-assert is skipped.
+    alwaysOnTop: true,
     // The overlay owns Escape in its own renderer (dismissing the address bar /
     // widgets). A main-process `before-input-event` interceptor would
     // preventDefault the keystroke before the page ever sees it, so the shared
@@ -442,15 +458,18 @@ function wireClickCapture(): void {
 }
 
 /**
- * R1: install the app-active gate. When Electron resigns active (the user
- * clicks into ANOTHER app), the floating overlay must neither capture pointer
- * events nor float above the other app — otherwise a click in the other app
- * lands on the (then-opaque) overlay, activates Electron, and is swallowed. On
- * resign-active we force the overlay click-through AND drop its always-on-top
- * level; on become-active we restore the floating level + default forwarded
- * click-through and re-frame onto the current active hybrid window so the
- * overlay snaps back over it. Idempotent: a second call is a no-op. Every
+ * R1: install the app-active POINTER-POLICY gate. When Electron resigns active
+ * (the user clicks into ANOTHER app), the floating overlay must not capture
+ * pointer events — otherwise a click in the other app lands on the (then-opaque)
+ * overlay, activates Electron, and is swallowed. On resign-active we force the
+ * overlay click-through with forwarding OFF; on become-active we restore the
+ * default forwarded click-through. Idempotent: a second call is a no-op. Every
  * overlayWin access is guarded with isDestroyed().
+ *
+ * `setIgnoreMouseEvents` is CONTENT policy, not window management, which is why
+ * it is the only thing left here: the visibility + z half of both edges is the
+ * reducer's (`APP_RESIGNED` -> `HIDE_WINDOW` for attached overlays,
+ * `APP_ACTIVATED` -> `applyOverlayFollow`), §5 step 9.
  *
  * The EDGE comes from the machine (`subscribeAppActive`, edge-deduped over
  * `AppWindowState.appActive`), not from a private `app.on('did-resign-active')`
@@ -471,37 +490,16 @@ function wireAppActiveGate(): void {
     } catch {
       /* setIgnoreMouseEvents unsupported in some envs */
     }
-    try {
-      // Drop the floating level so the overlay no longer sits above other apps.
-      overlayWin.setAlwaysOnTop(false);
-    } catch {
-      /* level arg unsupported on some platforms */
-    }
-    try {
-      // R6 (peek item 88797f2d): hide the chrome entirely while Peek is not the
-      // active app. The overlay is chrome for the ACTIVE page; when the user
-      // switches to another app it must not linger on screen. become-active
-      // re-frames + re-shows it over the current active hybrid window.
-      if (overlayWin.isVisible()) overlayWin.hide();
-    } catch {
-      /* hide unsupported in some envs */
-    }
+    // The WINDOW half of this edge is the reducer's (§5 step 9): `APP_RESIGNED`
+    // pushes `HIDE_WINDOW` for every attached overlay (peek 88797f2d / R6), so
+    // the chrome leaves the screen while Peek is backgrounded. The old
+    // `setAlwaysOnTop(false)` pin-drop is NOT ported: an off-screen window
+    // cannot float over the foreground app, so dropping the level was redundant
+    // with the hide it accompanied.
   };
 
   const onAppBecomeActive = () => {
-    if (!overlayWin || overlayWin.isDestroyed()) {
-      // No overlay yet — re-frame below will lazily create it if there is an
-      // active hybrid window.
-      const currentId = frontPageHostOsId();
-      if (currentId != null) retarget(currentId);
-      return;
-    }
-    try {
-      // Restore the floating level above the content window.
-      overlayWin.setAlwaysOnTop(true, 'floating');
-    } catch {
-      /* level arg unsupported */
-    }
+    if (!overlayWin || overlayWin.isDestroyed()) return;
     try {
       // Restore default click-through WITH forwarding (so the renderer's
       // mousemove loop can re-arm capture over the chrome band as normal).
@@ -510,16 +508,10 @@ function wireAppActiveGate(): void {
     } catch {
       /* unsupported */
     }
-    // Re-frame onto the current active hybrid window so the overlay snaps back
-    // over it (its geometry/level was just restored).
-    const currentId = frontPageHostOsId();
-    if (currentId != null) {
-      try {
-        retarget(currentId);
-      } catch {
-        /* retarget guarded internally */
-      }
-    }
+    // The re-reveal is the reducer's: `APP_ACTIVATED` runs `applyOverlayFollow`
+    // for every attached overlay, restoring its z-pin and re-showing it over the
+    // host it is still attached to (the attachment survived the resign, so no
+    // re-frame call is needed here).
   };
 
   // One subscription, both edges. The test bridge (`simAppResignActive` /
@@ -612,43 +604,6 @@ function wireExecuteScript(): void {
   });
 }
 
-/** Stop following the currently-followed host window (detach move/resize). */
-function unfollow(): void {
-  if (followedBaseWin && onFollowedMove && !followedBaseWin.isDestroyed()) {
-    try {
-      followedBaseWin.removeListener('move', onFollowedMove);
-      followedBaseWin.removeListener('resize', onFollowedMove);
-      followedBaseWin.removeListener('enter-full-screen', onFollowedMove);
-      followedBaseWin.removeListener('leave-full-screen', onFollowedMove);
-    } catch {
-      /* listener already gone */
-    }
-  }
-  followedBaseWin = null;
-  onFollowedMove = null;
-}
-
-/**
- * Position + size the overlay to FRAME the given INNER content rect: the content
- * `BaseWindow`'s outer bounds expanded by the canvas gutters
- * (`expandToOverlayFrame`), so the chrome renders in the margin AROUND the
- * content and the transparent center sits exactly over the content window. Then
- * raise the overlay above the content window. Focus-free.
- *
- * `hostFullScreen` is the followed host's `isFullScreen()` — it flips
- * synchronously the instant `setFullScreen(true)` is called, so it is true for
- * every mid-transition 'resize' the fullscreen animation emits. While the host
- * is in (or entering) native fullscreen the overlay must NOT be re-bounded /
- * shown / raised over it: a normal-level window pushed over a fullscreen Space
- * is what AppKit used to promote into an all-black fullscreen tile (see the
- * `fullscreenable: false` note in ensureOverlay — that flag is the hard AppKit
- * guarantee; this gate keeps the overlay's own show/hide state honest). The
- * chrome is simply unavailable in native fullscreen — Esc / the fullscreen
- * command exit it via the content WC's before-input-event, which never needed
- * the overlay. On leave-full-screen the host emits 'resize' again with
- * `isFullScreen()` already false, so the SAME follow path re-frames and
- * re-shows the overlay — no extra listener.
- */
 /**
  * The display work area nearest a content rect's center, or `null` when
  * `screen` is unavailable (some test envs) — `expandToOverlayFrame` skips its
@@ -671,118 +626,78 @@ function workAreaNearest(content: {
   }
 }
 
-function frameBounds(
-  content: { x: number; y: number; width: number; height: number },
-  hostFullScreen: boolean,
-): void {
-  const win = ensureOverlay();
-  if (win.isDestroyed()) return;
-  if (hostFullScreen) {
-    if (win.isVisible()) win.hide();
-    return;
-  }
-  const bounds = expandToOverlayFrame(content, workAreaNearest(content));
-  // setBounds in one shot avoids an intermediate paint (R2: no double-paint /
-  // flicker on retarget).
-  win.setBounds(bounds);
-
-  // R6 (peek 71cfde09 item 7): while the app is INACTIVE, position/size only —
-  // never reveal the chrome or float it over the foreground app. A non-activating
-  // (type:'panel') peek can become the active hybrid window without Electron ever
-  // firing did-become-active, so retarget()→frameBounds() runs with appActive
-  // still false. The resign handler (onAppResignActive) already dropped the
-  // floating level and hid the overlay; re-asserting always-on-top or calling
-  // showInactive() here would re-introduce the exact asymmetry that leaked the
-  // overlay over other apps. When the app later becomes active, onAppBecomeActive
-  // → retarget() → frameBounds() runs with appActive=true and reveals it via the
-  // existing lifecycle transition (no timer/poll needed). The machine seeds
-  // `appActive` true, so a boot-time reveal is unaffected.
-  if (!getAppActive()) return;
-
-  // Raise above the content window WITHOUT taking focus. Toggling alwaysOnTop
-  // re-asserts the floating level above any window that may have come forward.
-  try {
-    win.setAlwaysOnTop(true, 'floating');
-  } catch {
-    /* level arg unsupported */
-  }
-
-  // showInactive: visible but never focused. Headless keeps opacity 0 so this
-  // paints nothing on the physical desktop.
-  if (!win.isVisible()) {
-    win.showInactive();
-  }
-  // Already visible: nothing more to do. The overlay is PINNED (§4.3 dim 3 —
-  // stacking level 'pinned'): the setAlwaysOnTop(true,'floating') re-assert
-  // just above both holds it at the floating level AND order-fronts it within
-  // that level, and the machine's SET_STACKING raises are relative raises of
-  // NORMAL-level content windows, which can never cross a floating-level
-  // window. The old `win.moveTop()` here was redundant with the pin re-assert
-  // and was the last ordering write outside the machine (§5 step 5 part B).
+/**
+ * Detach the overlay from whatever it was framing: clear the renderer chrome and
+ * dispatch the null-host attach request, which the reducer turns into "drop
+ * `overlayFor` + `HIDE_WINDOW`". No overlay yet -> nothing to detach (an
+ * un-created overlay is neither attached nor on screen), so this never forces
+ * the singleton into existence.
+ */
+function detachOverlayFromMachine(): void {
+  sendActiveHandoff(null);
+  if (overlayWmId == null) return;
+  dispatchWindowEvent({ type: 'OVERLAY_ATTACH_REQUESTED', id: overlayWmId, hostId: null });
 }
 
 /**
- * Retarget the overlay onto a newly-active hybrid window (or hide on null).
- * Detaches follow-listeners from the previous window and attaches to the new
- * one so we only ever track the frontmost window's geometry.
+ * Retarget the overlay onto a newly-active hybrid window (or detach on null) —
+ * ONE dispatch (§5 step 9 cutover). The machine owns the whole of what
+ * `frameBounds()` used to do imperatively: the fullscreen gate (host record
+ * `fsMode`), the bounds write, the app-active reveal gate, the z-pin re-assert
+ * and the focus-free show. It also owns the FOLLOW: nothing is subscribed to
+ * here any more, because `BOUNDS_CHANGED` / `OS_FULLSCREEN_ENTERED` / `LEFT`
+ * already reach the reducer for every registered window.
+ *
+ * The rect math stays at the dispatch site (`window-state.ts` has zero value
+ * imports, so it can never call `expandToOverlayFrame`): the host's CURRENT
+ * outer bounds are read here, expanded to the overlay frame, and ride the event
+ * as `frame`. Every LATER frame rides `BOUNDS_CHANGED.overlayFrame`, which the
+ * backend computes with the same helper.
+ *
+ * `sendActiveHandoff` stays: it is the renderer payload (url/title/nav-state/
+ * favicon/gutters) the navbar paints from, not window management.
  */
 function retarget(id: number | null): void {
-  unfollow();
-
   if (id == null) {
-    // No active hybrid window — clear the overlay chrome, then hide the window
-    // (centralized show/hide, the natural fix for the old per-canvas
-    // overlay-stays-visible bug 88797f2d).
-    sendActiveHandoff(null);
-    if (overlayWin && !overlayWin.isDestroyed() && overlayWin.isVisible()) {
-      overlayWin.hide();
-    }
+    // No active hybrid window — clear the chrome and detach (the centralized
+    // show/hide that fixed the old per-canvas overlay-stays-visible bug
+    // 88797f2d, now a reducer transition).
+    detachOverlayFromMachine();
     return;
   }
 
   const entry = getHybridWindow(id);
   if (!entry || entry.baseWin.isDestroyed()) {
-    // Active window vanished between signal and handling — clear + hide.
-    sendActiveHandoff(null);
-    if (overlayWin && !overlayWin.isDestroyed() && overlayWin.isVisible()) {
-      overlayWin.hide();
-    }
+    // Active window vanished between signal and handling — clear + detach.
+    detachOverlayFromMachine();
     return;
   }
 
   const baseWin = entry.baseWin;
+  // Lazily mint the singleton (and its machine registration) on the first
+  // attach — the old `frameBounds()` did this via its `ensureOverlay()` call.
+  ensureOverlay();
+  if (overlayWmId == null) return;
 
-  // Initial frame — read the target host's outer bounds directly (replaces the
-  // registry's `getActiveHybridWindowBounds`, which just read the active host).
-  let initial: { x: number; y: number; width: number; height: number } | null = null;
-  try { if (!baseWin.isDestroyed()) initial = baseWin.getBounds(); } catch { /* host gone */ }
-  if (initial) frameBounds(initial, baseWin.isFullScreen());
+  // The host as the machine names it. An unregistered host resolves to null,
+  // which the reducer reads as "a host the machine does not know" and detaches —
+  // the same outcome the vanished-host branch above produces.
+  const hostId = getWindowIdFor(baseWin);
 
-  // Follow the active window's move/resize. We re-read getBounds() each time
-  // (rather than the event payload) so the overlay matches the window's true
-  // current outer bounds even if multiple move/resize events coalesce.
-  const follow = () => {
-    if (baseWin.isDestroyed()) return;
-    try {
-      frameBounds(baseWin.getBounds(), baseWin.isFullScreen());
-    } catch {
-      /* window torn down mid-move */
+  // Rect math at the dispatch site (see the doc above), from the host's live
+  // outer bounds. Undefined when the host is gone mid-call: the reducer then
+  // drives order + visibility only and leaves the overlay at its last frame.
+  let frame: Rectangle | undefined;
+  try {
+    if (!baseWin.isDestroyed()) {
+      const content = baseWin.getBounds();
+      frame = expandToOverlayFrame(content, workAreaNearest(content));
     }
-  };
-  baseWin.on('move', follow);
-  baseWin.on('resize', follow);
-  // Fullscreen edges route through the SAME follow path (frameBounds reads
-  // isFullScreen() and hides/re-shows the overlay accordingly). A host whose
-  // bounds already fill the work area can enter/leave native fullscreen with
-  // NO bounds change, so 'resize' alone cannot be trusted to fire — these
-  // events are the deterministic edge signals. isFullScreen() flips
-  // synchronously at setFullScreen() time, so any mid-animation 'resize' that
-  // does fire is gated identically; there is no window state where the overlay
-  // is shown over a fullscreen host.
-  baseWin.on('enter-full-screen', follow);
-  baseWin.on('leave-full-screen', follow);
-  followedBaseWin = baseWin;
-  onFollowedMove = follow;
+  } catch {
+    /* host torn down between the front signal and here */
+  }
+
+  dispatchWindowEvent({ type: 'OVERLAY_ATTACH_REQUESTED', id: overlayWmId, hostId, frame });
 
   // Tell the overlay renderer which window is now active + a state snapshot so
   // it fully swaps its navbar for the new window (instant paint, no flash).
@@ -879,8 +794,9 @@ export function initHybridOverlay(): void {
 }
 
 /**
- * Tear down the overlay manager: unsubscribe, detach follow-listeners, and
- * destroy the singleton window. Self-contained; safe to call when never
+ * Tear down the overlay manager: unsubscribe and destroy the singleton window
+ * (the follow is the machine's attachment relation, which dies with the
+ * window's registration). Self-contained; safe to call when never
  * initialized. (Not currently wired to any lifecycle hook — the overlay lives
  * for the app's lifetime, like the old chrome — but provided for completeness
  * and test isolation.)
@@ -890,7 +806,6 @@ export function teardownHybridOverlay(): void {
     unsubscribeActive();
     unsubscribeActive = null;
   }
-  unfollow();
   // R1: drop the app-active gate subscription (the machine keeps owning the
   // boolean — there is nothing to reset here).
   if (unsubscribeAppActive) {
@@ -906,6 +821,7 @@ export function teardownHybridOverlay(): void {
     overlayWin.destroy();
   }
   overlayWin = null;
+  overlayWmId = null;
   // Drop the click-capture + show-navbar-focus subscriptions so a later re-init
   // re-wires cleanly.
   try {

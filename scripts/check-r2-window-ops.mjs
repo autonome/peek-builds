@@ -104,6 +104,8 @@ const ALLOWLIST = [
     why: 'Tray.destroy on tray teardown — not a window' },
   { file: 'apps/desktop/main/ipc.ts', call: 'setBounds', count: 1,
     why: 'WebContentsView content fill (assembleHybridPageHost fillView) — a child-view op inside the host, not a window op; every WINDOW setBounds in this file died in §5 step 7E (SET_BOUNDS_REQUESTED → reducer → port)' },
+  { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'setBounds', count: 5,
+    why: 'NOT window ops (re-classified in the §5 step 9 cutover): 4× view.setBounds filling a WebContentsView inside a fake host + 1× the test-bridge setHostBounds, all inside installTestBridge (E2E_TEST only). The one production WINDOW setBounds died with frameBounds() — the overlay frame now rides OVERLAY_ATTACH_REQUESTED.frame / BOUNDS_CHANGED.overlayFrame into the reducer' },
 
   // ── App/Dock-level surface, not per-window, but same API family ──────────
   { file: 'apps/desktop/main/headless-policy.ts', call: 'hide', count: 1,
@@ -118,16 +120,10 @@ const ALLOWLIST = [
   // ── Real pre-R2 violations: direct window ops awaiting migration ─────────
   // Each is scheduled by a window-manager.md §5 step; delete or decrement the
   // entry in the same commit that routes the call through the executor.
-  { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'setAlwaysOnTop', count: 4,
-    why: 'overlay z-pinning (initOverlay/app-active gate/attach) — overlay retarget, §5 step 9' },
-  { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'hide', count: 4,
-    why: 'overlay hide on resign-active/detach — visibility, §5 steps 6+9' },
   { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'focus', count: 1,
     why: 'overlayWin.focus for address-bar typing (page:show-navbar) — focus rivals, §5 step 8' },
-  { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'setBounds', count: 6,
-    why: 'overlay window + WebContentsView geometry tracking the host — §5 steps 7+9' },
-  { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'showInactive', count: 2,
-    why: 'reveal overlay without activating — §5 step 9' },
+  { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'showInactive', count: 1,
+    why: 'TEST BRIDGE ONLY (installTestBridge showFakeHybridWindowInactive, E2E_TEST-gated) — show a fake host focus-free; the production overlay reveal is the reducer\'s SHOW_WINDOW{activate:false} since §5 step 9' },
   { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'destroy', count: 2,
     why: 'overlay singleton teardown — §5 step 9' },
   { file: 'apps/desktop/main/ipc.ts', call: 'focus', count: 2,

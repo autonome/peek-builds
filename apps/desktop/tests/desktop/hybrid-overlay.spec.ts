@@ -1926,9 +1926,11 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
  *
  *  R1 — overlay no longer steals APP focus when backgrounded. The transparent
  *       alwaysOnTop:'floating' overlay must, while the app is NOT frontmost,
- *       force click-through AND drop its floating level so a click in another
- *       app can neither hit it nor be swallowed by an Electron activation. On
- *       become-active the floating level + forwarded click-through are restored.
+ *       force click-through AND leave the screen so a click in another app can
+ *       neither hit it nor be swallowed by an Electron activation. On
+ *       become-active the reveal + forwarded click-through are restored. (Since
+ *       the §5 step 9 cutover the hide is the reducer's `APP_RESIGNED` clause and
+ *       the pin is NOT dropped — off screen already cannot float.)
  *  R2 — click-and-hold on the navbar BACKGROUND drags the active hybrid window
  *       (the canvas gesture), publishing page:set-bounds which main routes to
  *       the host BaseWindow. The old dedicated #drag-zone was occluded by the
@@ -1980,7 +1982,7 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
     return id;
   };
 
-  test('R1: app resign-active forces click-through + drops floating; become-active restores', async () => {
+  test('R1: app resign-active forces click-through + takes the chrome off screen; become-active restores', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
 
     await makeActive('data:text/html,<body>r1 target</body>');
@@ -1997,17 +1999,29 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
     expect(baseline.alwaysOnTop).toBe(true);
     expect(baseline.capture).toBe(true);
 
-    // App resigns active (user clicked into another app). The overlay must drop
-    // its floating level AND be forced click-through so it cannot capture / float.
+    // App resigns active (user clicked into another app). The overlay must leave
+    // the screen AND be forced click-through so it cannot capture / float.
+    //
+    // §5 step 9 cutover delta: the pre-cutover code dropped the floating LEVEL
+    // (`setAlwaysOnTop(false)`) as well as hiding. The reducer's `APP_RESIGNED`
+    // clause only hides — an off-screen window cannot float over the foreground
+    // app, so the pin drop was redundant with the hide it always accompanied.
+    // The invariant under test is therefore asserted where it actually lives:
+    // the overlay is NOT VISIBLE while the app is backgrounded (the pin survives,
+    // and is what puts it back above the host on become-active).
     const afterResign = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       const ok = b.simAppResignActive();
       const st = b.overlayState();
-      return { ok, appActive: b.appActiveState(), alwaysOnTop: st?.alwaysOnTop, capture: b.captureState() };
+      return {
+        ok, appActive: b.appActiveState(),
+        visible: st?.visible, alwaysOnTop: st?.alwaysOnTop, capture: b.captureState(),
+      };
     });
     expect(afterResign.ok).toBe(true);
     expect(afterResign.appActive).toBe(false);
-    expect(afterResign.alwaysOnTop).toBe(false);
+    expect(afterResign.visible).toBe(false);
+    expect(afterResign.alwaysOnTop).toBe(true);
     expect(afterResign.capture).toBe(false);
 
     // While backgrounded, a renderer capture request (its mousemove loop firing
@@ -2020,15 +2034,17 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
     });
     expect(capWhileBg).toBe(false);
 
-    // App becomes active again → floating level restored, click-through re-armed.
+    // App becomes active again → the chrome is re-revealed over its still-attached
+    // host at the floating level, click-through re-armed.
     const afterBecome = await app.evaluateMain!(async () => {
       const b = (globalThis as any).__peekHybridOverlayTest;
       const ok = b.simAppBecomeActive();
       const st = b.overlayState();
-      return { ok, appActive: b.appActiveState(), alwaysOnTop: st?.alwaysOnTop };
+      return { ok, appActive: b.appActiveState(), visible: st?.visible, alwaysOnTop: st?.alwaysOnTop };
     });
     expect(afterBecome.ok).toBe(true);
     expect(afterBecome.appActive).toBe(true);
+    expect(afterBecome.visible).toBe(true);
     expect(afterBecome.alwaysOnTop).toBe(true);
 
     // After become-active, capture can be armed again.
