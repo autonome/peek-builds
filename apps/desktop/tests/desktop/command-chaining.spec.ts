@@ -28,7 +28,7 @@ test.describe('Command Chaining @desktop', () => {
         center: true
       });
     });
-    expect(openResult.success).toBe(true);
+    expect(openResult.success, `open failed: ${JSON.stringify(openResult)}`).toBe(true);
 
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
@@ -64,7 +64,7 @@ test.describe('Command Chaining @desktop', () => {
         center: true
       });
     });
-    expect(openResult.success).toBe(true);
+    expect(openResult.success, `open failed: ${JSON.stringify(openResult)}`).toBe(true);
 
     // Find the cmd window
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
@@ -102,7 +102,7 @@ test.describe('Command Chaining @desktop', () => {
         center: true
       });
     });
-    expect(openResult.success).toBe(true);
+    expect(openResult.success, `open failed: ${JSON.stringify(openResult)}`).toBe(true);
 
     // Find the cmd window
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
@@ -137,7 +137,7 @@ test.describe('Command Chaining @desktop', () => {
         center: true
       });
     });
-    expect(openResult.success).toBe(true);
+    expect(openResult.success, `open failed: ${JSON.stringify(openResult)}`).toBe(true);
 
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
@@ -191,7 +191,7 @@ test.describe('Command Chaining @desktop', () => {
         center: true
       });
     });
-    expect(openResult.success).toBe(true);
+    expect(openResult.success, `open failed: ${JSON.stringify(openResult)}`).toBe(true);
 
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     expect(cmdWindow).toBeTruthy();
@@ -253,7 +253,7 @@ test.describe('Command Chaining @desktop', () => {
         modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
       });
     });
-    expect(openResult.success).toBe(true);
+    expect(openResult.success, `open failed: ${JSON.stringify(openResult)}`).toBe(true);
 
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
@@ -301,7 +301,7 @@ test.describe('Command Chaining @desktop', () => {
         modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
       });
     });
-    expect(openResult.success).toBe(true);
+    expect(openResult.success, `open failed: ${JSON.stringify(openResult)}`).toBe(true);
 
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
@@ -378,7 +378,7 @@ test.describe('Command Chaining @desktop', () => {
         modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
       });
     });
-    expect(openResult.success).toBe(true);
+    expect(openResult.success, `open failed: ${JSON.stringify(openResult)}`).toBe(true);
 
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
@@ -431,7 +431,7 @@ test.describe('Command Chaining @desktop', () => {
         modal: true, width: 600, height: 400, frame: false, transparent: true, alwaysOnTop: true, center: true,
       });
     });
-    expect(openResult.success).toBe(true);
+    expect(openResult.success, `open failed: ${JSON.stringify(openResult)}`).toBe(true);
 
     const cmdWindow = await app.getWindow('cmd/panel.html', 5000);
     await cmdWindow.waitForSelector('input', { timeout: 5000 });
