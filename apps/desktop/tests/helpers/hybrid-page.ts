@@ -73,23 +73,58 @@ export async function hybridBridgePresent(app: DesktopApp): Promise<boolean> {
 }
 
 /**
- * Wait until the overlay renderer has loaded + subscribed
- * (`window.__overlayReady`), so chrome-state reads and pubsub-driven reveals
- * (Cmd+L, loading) are observable. The overlay is created lazily on the first
- * `setActive`, then its renderer loads asynchronously.
+ * Wait until the overlay renderer is actually ready to ACT on `windowId`-gated
+ * messages. Two preconditions, both polled:
+ *
+ *  - `moduleReady` — `window.__overlayReady`, set at the END of `overlay.js`
+ *    module evaluation, so every `api.subscribe(...)` has been issued.
+ *  - `activeHandoffApplied` — the overlay's `page-overlay:active` handoff has
+ *    LANDED and been applied (`paintFromSnapshot` cleared the body's
+ *    `no-active` class), i.e. the renderer holds a non-null `activeWindowId`.
+ *
+ * Module-ready ALONE is not enough, and that gap is a real flake source (peek
+ * `5d9daf4e`). `main/hybrid-overlay.ts sendActiveHandoff()` publishes the
+ * handoff from `retarget()`, which can fire BEFORE the renderer subscribed; the
+ * only recovery is a one-shot re-send from the overlay webContents
+ * `did-finish-load` handler, which resolves strictly AFTER `__overlayReady`
+ * flips. A caller that gated on module-ready alone could therefore publish a
+ * `windowId`-gated topic (`page:show-navbar`, `page:navigated`, …) while
+ * `activeWindowId` was still null — `overlay.js isActive()` / `openNavbarFocused()`
+ * drop it, there is no retry, and the caller's `expect.poll` burns its whole
+ * timeout. Waiting for the handoff to be APPLIED closes that window; it also
+ * proves main has processed the renderer's queued `tile:pubsub:subscribe` IPCs
+ * (`subscribeImpl` in `main/tile-preload.cts` sends fire-and-forget), since the
+ * handoff itself is delivered over that same subscription.
+ *
+ * Every call site activates a window first (`setActive` / `focusHost` /
+ * `openHybridPage({activate:true})`), so requiring the handoff is not a
+ * stricter contract than callers already satisfy. The failure diff names WHICH
+ * precondition was unmet.
  */
 export async function waitOverlayReady(app: DesktopApp): Promise<void> {
   await expect
-    .poll(async () =>
-      app.evaluateMain!(async () => {
-        const b = (globalThis as Record<string, unknown>).__peekHybridOverlayTest as {
-          overlayChromeState(): Promise<{ ready?: boolean } | null>;
-        };
-        const s = await b.overlayChromeState();
-        return s ? s.ready === true : false;
-      }),
+    .poll(
+      async () =>
+        app.evaluateMain!(async () => {
+          const b = (globalThis as Record<string, unknown>).__peekHybridOverlayTest as {
+            overlayChromeState(): Promise<{ ready?: boolean; noActive?: boolean } | null>;
+          };
+          const s = await b.overlayChromeState();
+          if (!s) return { moduleReady: false, activeHandoffApplied: false };
+          return {
+            moduleReady: s.ready === true,
+            activeHandoffApplied: s.noActive === false,
+          };
+        }),
+      {
+        message:
+          'overlay renderer never became usable: moduleReady=window.__overlayReady, ' +
+          'activeHandoffApplied=page-overlay:active applied (body lost .no-active). ' +
+          'A false activeHandoffApplied means the handoff was published before the ' +
+          'renderer subscribed and the did-finish-load re-send never landed.',
+      },
     )
-    .toBe(true);
+    .toEqual({ moduleReady: true, activeHandoffApplied: true });
 }
 
 /**

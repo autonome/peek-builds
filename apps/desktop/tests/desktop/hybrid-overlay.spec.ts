@@ -1,6 +1,12 @@
 import { test, expect, DesktopApp } from '../fixtures/desktop-app';
 import { Page } from '@playwright/test';
 import { createPerDescribeApp } from '../helpers/test-app';
+// The ONE readiness gate for the overlay renderer: module-evaluated AND holding
+// an applied `page-overlay:active` handoff. Every describe below re-exposes it as
+// a local zero-arg `waitOverlayReady()` bound to its own per-describe app. Eight
+// hand-rolled copies used to poll `__overlayReady` only, which does NOT prove the
+// handoff landed — the dropped-message flake in peek `5d9daf4e`.
+import { waitOverlayReady as waitOverlayUsable } from '../helpers/hybrid-page';
 
 /**
  * P1.4b-1 — singleton hybrid chrome overlay retarget/follow verification.
@@ -222,18 +228,7 @@ test.describe('Hybrid Chrome Overlay working navbar (P1.4b-2) @desktop', () => {
   const bridgePresent = async () =>
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
-  // Wait until the overlay renderer has loaded + subscribed (window.__overlayReady).
-  const waitOverlayReady = async () => {
-    await expect
-      .poll(async () =>
-        app.evaluateMain!(async () => {
-          const b = (globalThis as any).__peekHybridOverlayTest;
-          const s = await b.overlayChromeState();
-          return s ? s.ready === true : false;
-        }),
-      )
-      .toBe(true);
-  };
+  const waitOverlayReady = () => waitOverlayUsable(app);
 
   test('active handoff paints navbar for A, swaps to B, clears on null', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
@@ -595,17 +590,7 @@ test.describe('Hybrid Chrome Overlay find + title/favicon (P1.4b-4) @desktop', (
   const bridgePresent = async () =>
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
-  const waitOverlayReady = async () => {
-    await expect
-      .poll(async () =>
-        app.evaluateMain!(async () => {
-          const b = (globalThis as any).__peekHybridOverlayTest;
-          const s = await b.overlayChromeState();
-          return s ? s.ready === true : false;
-        }),
-      )
-      .toBe(true);
-  };
+  const waitOverlayReady = () => waitOverlayUsable(app);
 
   test('page:find-exec routes to the active content WC and finds a match; next advances; stop clears', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
@@ -772,17 +757,7 @@ test.describe('Hybrid Chrome Overlay side panels (P1.4b-5) @desktop', () => {
   const bridgePresent = async () =>
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
-  const waitOverlayReady = async () => {
-    await expect
-      .poll(async () =>
-        app.evaluateMain!(async () => {
-          const b = (globalThis as any).__peekHybridOverlayTest;
-          const s = await b.overlayChromeState();
-          return s ? s.ready === true : false;
-        }),
-      )
-      .toBe(true);
-  };
+  const waitOverlayReady = () => waitOverlayUsable(app);
 
   // Make a hybrid window + activate it, WAIT for the overlay renderer to be ready
   // (its page:navigated subscription must be live — the overlay is created lazily
@@ -1053,17 +1028,7 @@ test.describe('Hybrid Chrome Overlay notes + widgets (P1.4b-6) @desktop', () => 
   const bridgePresent = async () =>
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
-  const waitOverlayReady = async () => {
-    await expect
-      .poll(async () =>
-        app.evaluateMain!(async () => {
-          const b = (globalThis as any).__peekHybridOverlayTest;
-          const s = await b.overlayChromeState();
-          return s ? s.ready === true : false;
-        }),
-      )
-      .toBe(true);
-  };
+  const waitOverlayReady = () => waitOverlayUsable(app);
 
   // Make a hybrid window + activate it, WAIT for the overlay renderer to be ready
   // (so its page:navigated subscription is live — the overlay is created lazily on
@@ -1310,17 +1275,7 @@ test.describe('Hybrid Chrome Overlay focus-group @desktop', () => {
   const bridgePresent = async () =>
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
-  const waitOverlayReady = async () => {
-    await expect
-      .poll(async () =>
-        app.evaluateMain!(async () => {
-          const b = (globalThis as any).__peekHybridOverlayTest;
-          const s = await b.overlayChromeState();
-          return s ? s.ready === true : false;
-        }),
-      )
-      .toBe(true);
-  };
+  const waitOverlayReady = () => waitOverlayUsable(app);
 
   test('clicking the chrome (overlay focus on content blur) does NOT deactivate', async () => {
     test.skip(!(await bridgePresent()), 'no overlay bridge in this configuration');
@@ -1532,17 +1487,7 @@ test.describe('Hybrid Chrome Overlay navbar reveal @desktop', () => {
   const bridgePresent = async () =>
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
-  const waitOverlayReady = async () => {
-    await expect
-      .poll(async () =>
-        app.evaluateMain!(async () => {
-          const b = (globalThis as any).__peekHybridOverlayTest;
-          const s = await b.overlayChromeState();
-          return s ? s.ready === true : false;
-        }),
-      )
-      .toBe(true);
-  };
+  const waitOverlayReady = () => waitOverlayUsable(app);
 
   const makeActive = async (url: string) => {
     const id = await app.evaluateMain!(async (_e, arg) => {
@@ -1748,17 +1693,7 @@ test.describe('Hybrid Chrome Overlay top-border gesture reveal (363e7cff) @deskt
   const bridgePresent = async () =>
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
-  const waitOverlayReady = async () => {
-    await expect
-      .poll(async () =>
-        app.evaluateMain!(async () => {
-          const b = (globalThis as any).__peekHybridOverlayTest;
-          const s = await b.overlayChromeState();
-          return s ? s.ready === true : false;
-        }),
-      )
-      .toBe(true);
-  };
+  const waitOverlayReady = () => waitOverlayUsable(app);
 
   const navbarVisible = async () =>
     app.evaluateMain!(async () => {
@@ -1958,17 +1893,7 @@ test.describe('Hybrid Chrome Overlay regressions R1/R2/R3 @desktop', () => {
   const bridgePresent = async () =>
     app.evaluateMain!(() => Boolean((globalThis as any).__peekHybridOverlayTest));
 
-  const waitOverlayReady = async () => {
-    await expect
-      .poll(async () =>
-        app.evaluateMain!(async () => {
-          const b = (globalThis as any).__peekHybridOverlayTest;
-          const s = await b.overlayChromeState();
-          return s ? s.ready === true : false;
-        }),
-      )
-      .toBe(true);
-  };
+  const waitOverlayReady = () => waitOverlayUsable(app);
 
   const makeActive = async (url: string) => {
     const id = await app.evaluateMain!(async (_e, arg) => {
