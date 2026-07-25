@@ -3696,7 +3696,25 @@ export function registerTileIpcHandlers(): void {
       if (!win) {
         return { success: false, error: 'Window not found' };
       }
-      win.setVisibleOnAllWorkspaces(args.visible === true, args.options || {});
+      const machineId = getWindowIdFor(win);
+      if (machineId == null) {
+        return { success: false, error: 'Window not registered with window-state machine' };
+      }
+      // Machine-owned since §5 step 10: the RAW path. The renderer supplies
+      // both halves (`visible` plus the platform options) and has no role to
+      // consult, so this dispatches SET_VISIBLE_ON_ALL_SPACES_REQUESTED rather
+      // than SPACES_POLICY_REQUESTED. The reducer records the intent on
+      // `WindowRecord.visibleOnAllSpaces` and emits one
+      // SET_VISIBLE_ON_ALL_SPACES effect; only the flags the caller actually
+      // supplied ride it (undefined means "don't pass the option", which is
+      // not the same as `false`).
+      dispatchWindowEvent({
+        type: 'SET_VISIBLE_ON_ALL_SPACES_REQUESTED',
+        id: machineId,
+        on: args.visible === true,
+        visibleOnFullScreen: args.options?.visibleOnFullScreen,
+        skipTransformProcessType: args.options?.skipTransformProcessType,
+      });
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
