@@ -22,7 +22,7 @@
 import type { BaseWindow, BrowserWindow, WebContents } from 'electron';
 import { WindowOsAdapter, type RegisterWindowSpec } from './window-os-adapter.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import type { WindowEvent, FsMode, Rectangle, IzuiSession, WindowId, WindowKind, WindowClass, WindowRecord, EscapeMode } from './window-state.js';
+import type { WindowEvent, FsMode, Rectangle, IzuiSession, WindowId, WindowKind, WindowClass, WindowRecord, EscapeMode, StateSnapshot } from './window-state.js';
 
 /** Register-spec that accepts real Electron window handles (both kinds satisfy the adapter's structural `NativeWindow`). */
 export interface MachineWindowSpec {
@@ -186,6 +186,17 @@ export function subscribeFrontChange(cb: (frontPageHostId: WindowId | null) => v
  */
 export function getAppActive(): boolean {
   return getWindowOsAdapter().getOwner().snapshot().appActive;
+}
+
+/**
+ * The machine's whole structural read-model in one read (`snapshot()`), for the
+ * consumers that project MANY windows at once rather than asking about one —
+ * session save's `serializeSession` is the first. Taking one snapshot also
+ * makes such a pass internally consistent: every window it decides about is
+ * read from the same instant, which a per-window accessor loop cannot promise.
+ */
+export function getWindowStateSnapshot(): StateSnapshot {
+  return getWindowOsAdapter().getOwner().snapshot();
 }
 
 /**

@@ -1,0 +1,441 @@
+/**
+ * Session projection — the pure half of session SAVE (§5 step 11).
+ *
+ * `saveSessionSnapshot` used to be one long loop that mixed three jobs: asking
+ * the OS/registries for facts, DECIDING what the session is, and writing
+ * SQLite. The middle job is the one that has to stop being window-management
+ * code living outside the window-state machine, so it moves here as a single
+ * pure function: `serializeSession(input) -> SessionSnapshot`. `session.ts` is
+ * left with read → project → write.
+ *
+ * Every window-management fact in the projected snapshot is read off the
+ * machine `StateSnapshot` that arrives as a parameter:
+ *   - `visible` (the early-skip axis)  → `WindowRecord.visible`
+ *   - `bounds`                         → THE restorable-geometry rule
+ *                                        (`restorableBoundsFromRecord`, which
+ *                                        `window-presenter.ts getRestorableBounds`
+ *                                        now delegates to — one implementation,
+ *                                        not two)
+ *   - `maximized` / pre-maximize rect  → `WindowRecord.maximized` / `.preMaxBounds`
+ *   - `zOrder`                         → `WindowRecord.focusSeq`
+ *   - `focused`                        → `StateSnapshot.front`
+ * What genuinely is NOT machine state arrives per window from the caller: the
+ * window's URL and title, its saved context row, and the opaque open-params bag.
+ *
+ * Purity, in the same sense as `display-projection.ts` and
+ * `session-save-filter.ts`: no `electron` import, no BrowserWindow/screen, no
+ * datastore, no module state, no clock (`createdAt` is a parameter). Outside
+ * lookups arrive as injected functions (`getPresentation` / `getContext`),
+ * mirroring `ProjectionSources` — that also preserves the original loop's
+ * laziness, so a window skipped by the filters costs no DB/fs read, exactly as
+ * before.
+ *
+ * THE CONSTRAINT: the on-disk `SessionSnapshot` shape is frozen. A field
+ * rename, a reordered key, or an explicit `undefined` where a key used to be
+ * absent silently wipes a user's saved session. `session-projection.test.ts`
+ * pins it against a verbatim transcription of the pre-extraction loop and
+ * compares the JSON TEXT (which is literally what lands in the
+ * `feature_settings` row), not just a deep-equal.
+ */
+
+import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
+import type { WindowContext, WindowDescriptor } from './window-registry.js';
+import type { StateSnapshot, WindowId, WindowRecord } from './window-state.js';
+
+/**
+ * The persisted session. `version`/`createdAt`/`reason`/`windows` and their
+ * order are the on-disk contract — see the module header.
+ */
+export interface SessionSnapshot {
+  version: 1;
+  createdAt: number;
+  reason: 'before-quit' | 'autosave' | 'manual' | 'window-close' | 'window-lifecycle';
+  windows: WindowDescriptor[];
+}
+
+/**
+ * One entry of the window-manager registry (`main.ts getAllWindows`) joined to
+ * its machine id, plus the two facts the machine does not hold: whether the
+ * underlying native window is gone, and the raw URL the early-skip filter
+ * matches `background.html` against.
+ */
+export interface SessionSaveWindow {
+  /** Electron window id — the key space the registries and context rows use. */
+  nativeId: number;
+  /** Machine id (`getWindowIdFor`), or null for a window the machine never saw. */
+  machineId: WindowId | null;
+  /** Registry payload: the opening source address. */
+  source: string;
+  /** Registry payload: the opaque open-params bag (by reference, as everywhere). */
+  params: Record<string, unknown>;
+  /** The native window (BrowserWindow, or the hybrid host BaseWindow) is gone/unknown. */
+  destroyed: boolean;
+  /**
+   * The window's raw URL for the early-skip filter: `webContents.getURL()` for
+   * a BrowserWindow, the hybrid entry's `url()` for a page-host, `''` when
+   * destroyed. NOT the descriptor's URL — that is `presentation.address`.
+   */
+  url: string;
+}
+
+/**
+ * The user-facing self-description of a window (`window-presenter.ts
+ * getWindowPresentation`), narrowed to the fields save consumes. `bounds` is
+ * used only as the fallback for a window the machine has no record for — the
+ * presenter derives it from the same restorable-geometry rule this module
+ * applies, so the two can never disagree for a machine-known window.
+ */
+export interface SessionSavePresentation {
+  address: string;
+  title: string;
+  bounds: Electron.Rectangle;
+}
+
+/**
+ * A log line the projection decided to emit. The pure function does not own a
+ * console; `session.ts` replays these at the level given, preserving the exact
+ * message text and interleaving the save path has always logged (the
+ * always-on `[session:save] Window …` line is what the 6-window save-set
+ * baseline is read off).
+ */
+export interface SessionSaveNotice {
+  /** `debug` = DEBUG-gated `console.log`; `info` = always-on `console.log`; `warn` = `console.warn`. */
+  level: 'debug' | 'info' | 'warn';
+  message: string;
+}
+
+export interface SerializeSessionInput {
+  /** The window-state machine's state — the window-management half of the projection. */
+  snapshot: StateSnapshot;
+  /** The registry walk, in `getAllWindows()` order. */
+  windows: readonly SessionSaveWindow[];
+  /** `window-presenter.ts getWindowPresentation` for a native id. */
+  getPresentation: (nativeId: number) => SessionSavePresentation | null;
+  /** The saved per-window context row (`datastore.ts getContextEntry('mode', id)`). */
+  getContext: (nativeId: number) => WindowContext | undefined;
+  /** `protocol.ts getRegisteredTileIds()` — stale `peek://ext/<id>` windows are dropped. */
+  registeredTileIds: readonly string[];
+  reason: SessionSnapshot['reason'];
+  /** Injected clock (`Date.now()` at the call site). */
+  createdAt: number;
+  /** The `_forceForTest` save opt — bypasses the visibility skip. */
+  forceForTest?: boolean;
+}
+
+export interface SessionProjection {
+  /** Exactly what gets `JSON.stringify`d into the `session/snapshot` row. */
+  snapshot: SessionSnapshot;
+  /**
+   * Descriptor count BEFORE the empty-URL guard. This is what
+   * `SessionMetadata.windowCount` has always recorded — deliberately kept
+   * distinct from `snapshot.windows.length` so the metadata row does not
+   * change meaning under this refactor.
+   */
+  windowCount: number;
+  /** Log lines, in emission order — see `SessionSaveNotice`. */
+  notices: SessionSaveNotice[];
+}
+
+/**
+ * THE restorable-geometry rule (§5 step 7D), expressed over a machine record.
+ *
+ * `window-presenter.ts getRestorableBounds(machineId)` is the singleton-reading
+ * face of this function and delegates to it, so there is exactly one
+ * implementation: fullscreen episode → the pre-fullscreen stash
+ * (`fsMode.preBounds`); otherwise the machine's `bounds` mirror. Persisting the
+ * transient work-area-sized fullscreen rect instead is the aa34cb50
+ * fullscreen-lookalike trap.
+ *
+ * Returns null for an unknown record or one whose mirror was never seeded;
+ * callers may then fall back to a live read, annotated as such.
+ */
+export function restorableBoundsFromRecord(rec: WindowRecord | undefined): Electron.Rectangle | null {
+  if (!rec) return null;
+  const preFullScreenBounds = rec.fsMode.name === 'normal' ? null : rec.fsMode.preBounds;
+  if (preFullScreenBounds) return preFullScreenBounds;
+  return rec.bounds ?? null;
+}
+
+/**
+ * Mirror a Placement intent into flat primitive fields that survive
+ * `sanitizeParams` and the IPC boundary, so the window-open handler can
+ * re-derive `Placement` on restore against the current display layout
+ * instead of pinning to stale absolute coordinates.
+ *
+ * Persistence shape (per docs/window-placement.md §"Persistence"):
+ *   - placementMode: 'centered' | 'edge' | 'proportional' | 'parent-centered'
+ *   - placementEdge: 'top' | 'bottom' | 'left' | 'right'  (mode='edge')
+ *   - placementRelX, placementRelY: numbers in [0, 1]    (mode='proportional')
+ *
+ * Legacy `center: true` / `screenEdge` flags are also written for backward
+ * compatibility with snapshots restored by older code; new restores
+ * prefer the typed `placementMode` field. `parent-centered` is mirrored as
+ * `centered` since `parentId` doesn't survive a restart anyway.
+ */
+export function mirrorPlacementIntent(
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  const placement = params.placement as
+    | { mode?: string; edge?: string; relX?: number; relY?: number }
+    | undefined;
+  const out: Record<string, unknown> = { ...params };
+  if (!placement?.mode) return out;
+
+  switch (placement.mode) {
+    case 'centered':
+      out.placementMode = 'centered';
+      out.center = true;
+      break;
+    case 'parent-centered':
+      // parentId can't survive restart; degrade to centered.
+      out.placementMode = 'centered';
+      out.center = true;
+      break;
+    case 'edge':
+      if (typeof placement.edge === 'string') {
+        out.placementMode = 'edge';
+        out.placementEdge = placement.edge;
+        out.screenEdge = placement.edge;
+      }
+      break;
+    case 'proportional':
+      out.placementMode = 'proportional';
+      if (typeof placement.relX === 'number') out.placementRelX = placement.relX;
+      if (typeof placement.relY === 'number') out.placementRelY = placement.relY;
+      break;
+  }
+  return out;
+}
+
+/**
+ * Sanitize params to only include serializable values.
+ * Mirrors the logic in ipc.ts window-list handler.
+ *
+ * Also strips devtools-open flags (`openDevTools`, `detachedDevTools`) so a
+ * window the user happened to have devtools open on at quit time doesn't
+ * auto-reopen devtools on restore. Devtools state is intentionally not
+ * persisted — it's a transient diagnostic surface.
+ */
+export function sanitizeParams(params: Record<string, unknown>): Record<string, unknown> {
+  const safe: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (key === 'openDevTools' || key === 'detachedDevTools') continue;
+    const type = typeof value;
+    if (type === 'string' || type === 'number' || type === 'boolean' || value === null) {
+      safe[key] = value;
+    } else if (Array.isArray(value)) {
+      if (value.every(v => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' || v === null)) {
+        safe[key] = value;
+      }
+    }
+    // Skip functions, objects, etc. that may not serialize safely
+  }
+  return safe;
+}
+
+/**
+ * Project machine state + the per-window payload into the on-disk
+ * `SessionSnapshot`. Pure — see the module header.
+ *
+ * The order of the skip rules, the descriptor field order, the params
+ * post-processing and the empty-URL guard are all a verbatim carry-over of the
+ * pre-extraction `saveSessionSnapshot` loop; only their INPUTS changed (machine
+ * reads instead of OS reads).
+ */
+export function serializeSession(input: SerializeSessionInput): SessionProjection {
+  const notices: SessionSaveNotice[] = [];
+
+  const recordsById = new Map<WindowId, WindowRecord>();
+  for (const rec of input.snapshot.windows) recordsById.set(rec.id, rec);
+
+  // Collect all "hidden by overlay" window IDs across the registry. When
+  // an overlay (Windows switcher, etc.) is open at quit time, the IZUI
+  // coordinator has hidden every other window — so their records read
+  // !visible below. Without this carve-out the visibility skip drops them
+  // from the snapshot, and quitting with an overlay open silently loses
+  // every other window. The overlay tracks the IDs in
+  // info.params.overlayHiddenWindows; gather them all here so the
+  // visibility check can let them through. (This params side channel is
+  // slated to become record state — §5 step 11 task 6 — and is carried
+  // over unchanged for now.)
+  const overlayHiddenIds = new Set<number>();
+  for (const w of input.windows) {
+    const ids = w.params.overlayHiddenWindows;
+    if (Array.isArray(ids)) {
+      for (const hid of ids) {
+        if (typeof hid === 'number') overlayHiddenIds.add(hid);
+      }
+    }
+  }
+
+  const windowDescriptors: WindowDescriptor[] = [];
+
+  for (const w of input.windows) {
+    const rec = w.machineId != null ? recordsById.get(w.machineId) : undefined;
+
+    // Machine-authoritative visibility (§5 step 11 task 1). NO-RECORD FALLBACK
+    // = true (treat as visible → save the window): every id here comes from
+    // `getAllWindows()`, itself projected from live machine records, so a
+    // missing record means the window retired mid-pass, and dropping a real
+    // user window is the unrecoverable direction. The destroyed
+    // short-circuit stays: a retired window is skipped regardless of the last
+    // mirrored visibility.
+    const visible = w.destroyed ? false : (rec ? rec.visible : true);
+
+    if (
+      shouldSkipWindowForSaveEarly({
+        destroyed: w.destroyed,
+        visible,
+        url: w.url,
+        forceForTest: input.forceForTest,
+        hiddenByActiveOverlay: overlayHiddenIds.has(w.nativeId),
+      })
+    ) {
+      continue;
+    }
+
+    // Skip modal windows
+    if (w.params.modal) {
+      continue;
+    }
+
+    // Skip non-focusable utility windows (e.g. HUD overlays).
+    // These are extension-managed and shouldn't be restored by session.
+    // User-facing utility windows (settings, diagnostic, etc.) ARE saved.
+    if (w.params.role === 'utility' && w.params.focusable === false) {
+      continue;
+    }
+
+    // Skip overlay-role / overlay-flagged windows. Overlays (Windows
+    // switcher, find-bar, peek-card, etc.) are transient UI surfaces
+    // that should not auto-restore on launch. Restoring an overlay
+    // also activates the IZUI coordinator's hide-others behavior, so
+    // users see startup with everything marked hidden and the overlay
+    // sitting on top — never the intent.
+    if (w.params.role === 'overlay' || w.params.overlay === true) {
+      notices.push({ level: 'debug', message: `[session:save] Skipping overlay window ${w.nativeId}` });
+      continue;
+    }
+
+    // The window presenter owns the canonical user-facing URL/title (the
+    // page-host's two-layer URL shape lives there, not here).
+    const presentation = input.getPresentation(w.nativeId);
+    if (!presentation) {
+      notices.push({ level: 'debug', message: `[session:save] No presentation for window ${w.nativeId}, skipping` });
+      continue;
+    }
+    const realUrl = presentation.address;
+
+    // Geometry + maximize are machine facts (§5 steps 7B/7C/7D). The
+    // presentation's rect survives only as the fallback for a window the
+    // machine has no record for — which is exactly the fallback the presenter
+    // itself applies, so this is the same value either way.
+    const windowBounds = restorableBoundsFromRecord(rec) ?? presentation.bounds;
+    const canvasMaximized = rec?.maximized === true;
+    const preMaxBounds = canvasMaximized ? (rec?.preMaxBounds ?? null) : null;
+
+    // Skip windows for unknown tiles (stale from renames/removals)
+    const extMatch = realUrl.match(/^peek:\/\/ext\/([^/]+)/);
+    if (extMatch) {
+      const extId = extMatch[1];
+      if (!input.registeredTileIds.includes(extId)) {
+        notices.push({ level: 'debug', message: `[session:save] Skipping stale tile window ${w.nativeId}: ${extId}` });
+        continue;
+      }
+    }
+
+    notices.push({
+      level: 'info',
+      message: `[session:save] Window ${w.nativeId} "${presentation.title}" bounds: (${windowBounds.x},${windowBounds.y}) ${windowBounds.width}x${windowBounds.height}${canvasMaximized ? " [maximized]" : ""} url=${realUrl.substring(0, 80)}`,
+    });
+
+    // Capture context state for this window
+    const windowContext = input.getContext(w.nativeId);
+
+    const sanitized = sanitizeParams(mirrorPlacementIntent(w.params));
+    // The pass-through above can carry a STALE `params.maximized` for a
+    // hybrid window: it's set once at open time (true only when opened via
+    // reopen/session-restore of a maximized window) and never updated by
+    // page:maximize/page:unmaximize afterward (those update the hybrid
+    // registry, not the general window-registry params). The machine record
+    // is always live, so it — not the pass-through — is authoritative here;
+    // explicitly set both branches rather than only adding the true case.
+    // (Collapsing this flat preMax* bag into the descriptor proper is §5
+    // step 11 task 5; the format is deliberately untouched here.)
+    if (canvasMaximized) {
+      sanitized.maximized = true;
+      // Pre-maximize bounds ride along as flat primitives (mirroring the old
+      // canvas info.params.preMaxX/Y/Width/Height convention) so they survive
+      // sanitizeParams and are available on restore to seed the hybrid
+      // registry — letting an unmaximize after restore land back at the
+      // original pre-maximize size instead of the maximized work-area rect.
+      if (preMaxBounds) {
+        sanitized.preMaxX = preMaxBounds.x;
+        sanitized.preMaxY = preMaxBounds.y;
+        sanitized.preMaxWidth = preMaxBounds.width;
+        sanitized.preMaxHeight = preMaxBounds.height;
+      }
+    } else {
+      delete sanitized.maximized;
+      delete sanitized.preMaxX;
+      delete sanitized.preMaxY;
+      delete sanitized.preMaxWidth;
+      delete sanitized.preMaxHeight;
+    }
+
+    windowDescriptors.push({
+      url: realUrl,
+      key: (w.params.key as string) || undefined,
+      title: presentation.title,
+      bounds: windowBounds,
+      source: w.source,
+      params: sanitized,
+      // Focus recency straight off the record (the machine absorbed
+      // focus-order.ts). Unregistered windows rank 0, same as the machine's
+      // own "never focused" answer.
+      zOrder: rec?.focusSeq ?? 0,
+      // The saved-focused descriptor drives restore's head-start. `front` is
+      // the machine's target window: it excludes modals/overlays/background
+      // (satellites) and survives focus shifts to other apps, which is why
+      // save never asked `win.isFocused()` here.
+      focused: w.machineId != null && w.machineId === input.snapshot.front,
+      context: windowContext,
+    });
+  }
+
+  // Guard: empty-URL filter (belt-and-suspenders).
+  // Even when restore is complete, a window may legitimately have an empty URL
+  // for a brief moment (e.g., created but not yet navigated). Strip those so
+  // they never reach the on-disk snapshot. Log each filtered window so the
+  // decision is visible in main.log without re-instrumenting.
+  const preFilterCount = windowDescriptors.length;
+  const filteredDescriptors = windowDescriptors.filter((d) => {
+    const url = d.url;
+    if (!url || url.trim() === '' || url === 'about:blank' || url === 'about:newtab') {
+      notices.push({
+        level: 'warn',
+        message: `[session:guard] Filtering window with empty/blank URL from snapshot (reason: ${input.reason})`,
+      });
+      return false;
+    }
+    return true;
+  });
+  if (filteredDescriptors.length < preFilterCount) {
+    const dropped = preFilterCount - filteredDescriptors.length;
+    notices.push({
+      level: 'warn',
+      message: `[session:guard] Dropped ${dropped} window(s) with empty/blank URLs from snapshot (reason: ${input.reason})`,
+    });
+  }
+
+  return {
+    snapshot: {
+      version: 1,
+      createdAt: input.createdAt,
+      reason: input.reason,
+      windows: filteredDescriptors,
+    },
+    windowCount: preFilterCount,
+    notices,
+  };
+}

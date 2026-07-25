@@ -23,7 +23,8 @@ import { resolveWindowAddress } from './window-address.js';
 import { urlToHash, getThumbnailPath } from './thumbnails.js';
 import { getHybridWindow } from './hybrid-page-host-registry.js';
 import type { HybridWindowEntry } from './hybrid-page-host-registry.js';
-import { getWindowPreBounds, getWindowIdFor, getMachineWindowRecord } from './window-state-singleton.js';
+import { getWindowIdFor, getMachineWindowRecord } from './window-state-singleton.js';
+import { restorableBoundsFromRecord } from './session-projection.js';
 import type { WindowId } from './window-state.js';
 
 export { resolveWindowAddress };
@@ -53,12 +54,16 @@ export { resolveWindowAddress };
  * Returns null when the machine has no record for the window (unregistered —
  * shouldn't exist, the registration tripwire hunts those) or its mirror was
  * never seeded; callers may then fall back to a live read, annotated as such.
+ *
+ * The rule ITSELF lives in `session-projection.ts restorableBoundsFromRecord`
+ * (a record → rect function with no singleton reads), because session save's
+ * pure projection has to apply the same rule and a second copy of it is exactly
+ * the kind of drift the ONE-rule framing exists to prevent. This function is
+ * its id-keyed, singleton-reading face.
  */
 export function getRestorableBounds(machineId: WindowId | null): Electron.Rectangle | null {
   if (machineId == null) return null;
-  const preFullScreenBounds = getWindowPreBounds(machineId);
-  if (preFullScreenBounds) return preFullScreenBounds;
-  return getMachineWindowRecord(machineId)?.bounds ?? null;
+  return restorableBoundsFromRecord(getMachineWindowRecord(machineId));
 }
 
 export interface WindowPresentation {
