@@ -804,8 +804,14 @@ export type Effect =
    * top", §6), and re-driven by `WINDOW_CONTENT_ORDERABLE` as page-hosts
    * become orderable. To realize a full order the reducer emits one per
    * window, bottom → top (each raise stacks on the previous).
+   *
+   * `level` rides the payload rather than being looked up by the executor from
+   * record state (the executor is stateless w.r.t. records — see
+   * `window-os-adapter.ts`): a `pinned` level realizes as
+   * `setAlwaysOnTop(true, 'floating')` (the overlay's z-pin), anything else as
+   * a plain `moveTop()`.
    */
-  | { type: 'SET_STACKING'; id: WindowId }
+  | { type: 'SET_STACKING'; id: WindowId; level: StackingLevel }
   /**
    * Make a page-host's content WebContentsView the macOS first responder (the
    * `shouldFocusHybridContentOnHostFocus` invariant). Emitted by the closing
@@ -1484,7 +1490,7 @@ function applyFrontAssertion(
   // drove the OS to match", killing the §6 buried-but-asserted state for
   // machine-driven raises. (A legal front is always a stack member —
   // `deriveStackingLevel` note — so the raise below is never a no-op.)
-  effects.push({ type: 'SET_STACKING', id: state.front });
+  effects.push({ type: 'SET_STACKING', id: state.front, level: rec.stackingLevel });
   stackRaise(state, state.front);
   state.frontAsserted = true;
 }
@@ -1553,7 +1559,7 @@ function applyOverlayFollow(
   }
   if (frame) effects.push({ type: 'SET_BOUNDS', id: overlayId, bounds: frame });
   if (!state.appActive) return;
-  effects.push({ type: 'SET_STACKING', id: overlayId });
+  effects.push({ type: 'SET_STACKING', id: overlayId, level: overlay.stackingLevel });
   if (!overlay.visible) effects.push({ type: 'SHOW_WINDOW', id: overlayId, activate: false });
 }
 
@@ -2053,7 +2059,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       const idx = state.stackOrder.indexOf(event.id);
       if (idx !== -1) {
         for (const id of state.stackOrder.slice(idx)) {
-          effects.push({ type: 'SET_STACKING', id });
+          const member = state.windows.get(id);
+          if (!member) continue;
+          effects.push({ type: 'SET_STACKING', id, level: member.stackingLevel });
         }
       }
       break;
@@ -2076,7 +2084,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // Realize the whole order natively, bottom → top (each relative raise
       // stacks on the previous). Order only — no raise, no assertion change.
       for (const id of state.stackOrder) {
-        effects.push({ type: 'SET_STACKING', id });
+        const member = state.windows.get(id);
+        if (!member) continue;
+        effects.push({ type: 'SET_STACKING', id, level: member.stackingLevel });
       }
       break;
     }

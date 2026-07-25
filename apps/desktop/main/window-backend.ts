@@ -39,7 +39,15 @@
  * deliberately OUTSIDE this interface.
  */
 
-import type { WindowEvent, WindowId, WindowKind, WindowClass, EscapeMode, Rectangle as Rect } from './window-state.js';
+import type {
+  WindowEvent,
+  WindowId,
+  WindowKind,
+  WindowClass,
+  EscapeMode,
+  Rectangle as Rect,
+  StackingLevel,
+} from './window-state.js';
 
 /** The port's plain rect currency — the reducer's own `Rectangle` (§3: no platform `Rectangle` ever crosses). Carried by `setWindowBounds` and the `BOUNDS_CHANGED` emission since the geometry step (§5 step 7A). */
 export type { Rectangle as Rect } from './window-state.js';
@@ -248,8 +256,13 @@ export interface WindowBackend {
    * no-ops it until first composited frame — the reducer's appActive gate and
    * the `WINDOW_CONTENT_ORDERABLE` re-drive cover them; the backend just
    * issues the raise.
+   *
+   * `level` rides the call (rather than the backend consulting record state)
+   * so a `pinned` window (the chrome overlay) realizes as the floating-level
+   * re-assert (`setAlwaysOnTop(true, 'floating')`) instead of a plain
+   * `moveTop()` — see the electron backend implementation.
    */
-  setStacking(id: WindowId): void;
+  setStacking(id: WindowId, level: StackingLevel): void;
 
   // ── §5 step 7 command (geometry / bounds / maximize) ─────────────────────
 

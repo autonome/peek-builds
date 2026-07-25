@@ -261,7 +261,7 @@ export class WindowOsAdapter {
         // FOCUS_CONTENT), so unlike the show/pin family it needs no headless
         // gate: a relative raise never takes key, steals focus, or repaints a
         // frame into visibility.
-        this.backend.setStacking(effect.id);
+        this.backend.setStacking(effect.id, effect.level);
         return;
       }
       case 'SET_BOUNDS': {

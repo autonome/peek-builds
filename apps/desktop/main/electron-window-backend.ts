@@ -53,6 +53,7 @@ import {
   type WindowId,
   type WindowKind,
   type Rectangle,
+  type StackingLevel,
 } from './window-state.js';
 import type { BackendEventSink, WindowBackend, WindowSpec } from './window-backend.js';
 
@@ -877,21 +878,31 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   }
 
   /**
-   * Relative raise — order only (the `SET_STACKING` effect, §5 step 5). BOTH
-   * kinds route through the same native `moveTop`: it reorders z within the
-   * window's level WITHOUT activating or taking key (the property the legacy
-   * restore pass relied on). The two caveats — macOS no-ops it for a
-   * non-frontmost app, and a page-host's NSWindow no-ops it until first
-   * composited frame — are modeled in the MACHINE (`window-state.ts`
-   * appActive gate + `WINDOW_CONTENT_ORDERABLE`), not worked around here.
+   * Relative raise — order only (the `SET_STACKING` effect, §5 step 5).
+   * Regular (`stacked`/`excluded`) kinds route through the native `moveTop`:
+   * it reorders z within the window's level WITHOUT activating or taking key
+   * (the property the legacy restore pass relied on). The two caveats — macOS
+   * no-ops it for a non-frontmost app, and a page-host's NSWindow no-ops it
+   * until first composited frame — are modeled in the MACHINE
+   * (`window-state.ts` appActive gate + `WINDOW_CONTENT_ORDERABLE`), not
+   * worked around here.
+   *
+   * A `pinned` window (the chrome overlay) is a DIFFERENT native operation:
+   * `moveTop()` only reorders within the current level, so it cannot lift the
+   * overlay back above the regular stack once anything raises over it — the
+   * original `frameBounds()` re-assert used `setAlwaysOnTop(true, 'floating')`
+   * instead, and that's what this branch realizes. Not headless-gated: the
+   * original ran it under headless too (opacity-0 overlay).
    */
-  setStacking(id: WindowId): void {
+  setStacking(id: WindowId, level: StackingLevel): void {
     const win = this.windows.get(id)?.win;
     if (!win) return;
     try {
-      if (!win.isDestroyed()) win.moveTop();
+      if (win.isDestroyed()) return;
+      if (level === 'pinned') win.setAlwaysOnTop(true, 'floating');
+      else win.moveTop();
     } catch {
-      /* moveTop unsupported on some platforms / torn-down window — a no-op */
+      /* moveTop/setAlwaysOnTop unsupported on some platforms / torn-down window — a no-op */
     }
   }
 

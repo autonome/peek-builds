@@ -3357,6 +3357,10 @@ describe('overlay attachment / follow / retarget (§4.3 dim 3b, §5 step 9)', ()
     assert.deepStrictEqual(effectShape(effects), ['SET_BOUNDS', 'SET_STACKING', 'SHOW_WINDOW']);
     assert.deepStrictEqual(effectsOfType(effects, 'SET_BOUNDS')[0], { type: 'SET_BOUNDS', id: wid(OVERLAY), bounds: FRAME_A });
     assert.deepStrictEqual(effectsOfType(effects, 'SHOW_WINDOW')[0], { type: 'SHOW_WINDOW', id: wid(OVERLAY), activate: false });
+    // The chrome overlay is `pinned` — the payload must carry that level so the
+    // executor realizes it as `setAlwaysOnTop(true, 'floating')`, never a plain
+    // `moveTop()` (the latent moveTop bug this level field exists to prevent).
+    assert.strictEqual(effectsOfType(effects, 'SET_STACKING')[0].level, 'pinned');
   });
 
   it('attach does NOT write `visible` — that rides the backend `shown` echo', () => {
@@ -3455,6 +3459,7 @@ describe('overlay attachment / follow / retarget (§4.3 dim 3b, §5 step 9)', ()
     const { state, effects } = drive(s, [{ type: 'BOUNDS_CHANGED', id: wid(1), bounds: HOST_B, overlayFrame: FRAME_B }]);
     assert.deepStrictEqual(effectShape(effects), ['SET_BOUNDS', 'SET_STACKING']);
     assert.deepStrictEqual(effectsOfType(effects, 'SET_BOUNDS')[0], { type: 'SET_BOUNDS', id: wid(OVERLAY), bounds: FRAME_B });
+    assert.strictEqual(effectsOfType(effects, 'SET_STACKING')[0].level, 'pinned');
     assert.deepStrictEqual(state.windows.get(wid(1))!.bounds, HOST_B, 'the host mirror still updates');
   });
 
@@ -3464,6 +3469,7 @@ describe('overlay attachment / follow / retarget (§4.3 dim 3b, §5 step 9)', ()
     s = drive(s, [{ type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A }]).state;
     const { effects } = drive(s, [{ type: 'BOUNDS_CHANGED', id: wid(1), bounds: HOST_B }]);
     assert.deepStrictEqual(effectShape(effects), ['SET_STACKING']);
+    assert.strictEqual(effectsOfType(effects, 'SET_STACKING')[0].level, 'pinned');
   });
 
   it('a bounds report for an UNATTACHED window stays effect-free (the plain mirror path)', () => {
@@ -3499,6 +3505,7 @@ describe('overlay attachment / follow / retarget (§4.3 dim 3b, §5 step 9)', ()
       ['SET_STACKING', 'SHOW_WINDOW'],
       'the overlay returns at the frame it was hidden at',
     );
+    assert.strictEqual(effectsOfType(left.effects, 'SET_STACKING')[0].level, 'pinned');
     assert.strictEqual(effectsOfType(left.effects, 'SET_BOUNDS').length, 0, 'it was never moved while hidden');
     assert.strictEqual(getOverlayHost(left.state, wid(OVERLAY)), wid(1), 'the attachment survived the episode');
   });
@@ -3524,7 +3531,9 @@ describe('overlay attachment / follow / retarget (§4.3 dim 3b, §5 step 9)', ()
     const hidden = drive(resigned.state, [{ type: 'WINDOW_HIDDEN', id: wid(OVERLAY) }]).state;
     const active = drive(hidden, [{ type: 'APP_ACTIVATED' }]);
     assert.deepStrictEqual(effectsOfType(active.effects, 'SHOW_WINDOW'), [{ type: 'SHOW_WINDOW', id: wid(OVERLAY), activate: false }]);
-    assert.ok(effectsOfType(active.effects, 'SET_STACKING').some((e) => e.id === wid(OVERLAY)));
+    const overlayStacking = effectsOfType(active.effects, 'SET_STACKING').find((e) => e.id === wid(OVERLAY));
+    assert.ok(overlayStacking);
+    assert.strictEqual(overlayStacking.level, 'pinned');
   });
 
   it('APP_ACTIVATED does NOT re-reveal an overlay whose host is fullscreen', () => {
