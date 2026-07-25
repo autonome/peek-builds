@@ -2734,15 +2734,22 @@ export function registerWindowHandlers(): void {
           // window follows the user to the active Space rather than dragging
           // them back to its home Space. Non-transient (anchored) windows
           // intentionally stay where they were opened — macOS pulls the user
-          // to them on show(), which is the desired behavior.
-          // skipTransformProcessType:true prevents the activation-policy
-          // toggle that hides every other Peek window during the call.
+          // to them on show(), which is the desired behavior, so ONLY the
+          // 'follow' policy re-asserts here; an 'anchor' role must NOT get its
+          // creation-time pair replayed on reuse.
+          // Machine-owned since §5 step 10: `spacesPolicyForRole` stays at the
+          // dispatch site (pure policy, same status as `computePlacement`) and
+          // the reducer turns the policy into the SET_VISIBLE_ON_ALL_SPACES
+          // effect(s) — including skipTransformProcessType:true, which prevents
+          // the activation-policy toggle that hides every other Peek window
+          // during the call.
           const reuseRole = existingData.params.role as string | undefined;
-          if (reuseRole && spacesPolicyForRole(reuseRole, process.platform) === 'follow') {
-            existingWindow.window.setVisibleOnAllWorkspaces(true, {
-              visibleOnFullScreen: true,
-              skipTransformProcessType: true,
-            });
+          const reusePolicy = reuseRole ? spacesPolicyForRole(reuseRole, process.platform) : 'none';
+          if (reusePolicy === 'follow') {
+            const spacesMachineId = getWindowIdFor(existingWindow.window);
+            if (spacesMachineId != null) {
+              dispatchWindowEvent({ type: 'SPACES_POLICY_REQUESTED', id: spacesMachineId, policy: reusePolicy });
+            }
           }
         }
         // Machine show intent, OUTSIDE the headless gate (§5 step 6A-4):
@@ -3348,42 +3355,16 @@ export function registerWindowHandlers(): void {
     // executor skips it under headless, same compositor-flash guard as the
     // old inline call.)
 
-    // Derive IZUI role now (before the Spaces dispatch below) using the same
-    // rules the registration block applies later. Hoisted out of the original
-    // inline cascade so the role-derived Spaces policy can run at creation
-    // time. See apps/desktop/main/izui-roles.ts for the cascade.
+    // Derive IZUI role now, using the same rules the registration block
+    // applies later. Hoisted out of the original inline cascade so the
+    // role-derived Spaces policy (dispatched right after registration below)
+    // can run at creation time, before the window is loaded or shown.
+    // See apps/desktop/main/izui-roles.ts for the cascade.
     const parentWindowIdForRole = isRealParent ? openerWindow!.id : null;
     const role = inferIzuiRole(options as Parameters<typeof inferIzuiRole>[0], {
       isWebPage,
       parentWindowId: parentWindowIdForRole,
     });
-
-    // macOS Spaces dispatch by role:
-    //   'follow' — palette/quick-view/overlay (cmd, slides, peeks). Window
-    //     appears on every Space, riding along with the user.
-    //   'anchor' — everything else on darwin. Flip true → false so macOS
-    //     lands the window on the user's active Space and pins it there.
-    //   'none' — non-darwin platforms; macOS Spaces don't exist.
-    // skipTransformProcessType:true is required on both calls — without it,
-    // macOS toggles the app's activation policy (Accessory ↔ Foreground)
-    // and every other Peek window flashes out for a frame.
-    if (!isHeadless()) {
-      const spacesPolicy = spacesPolicyForRole(role, process.platform);
-      if (spacesPolicy === 'follow') {
-        win.setVisibleOnAllWorkspaces(true, {
-          visibleOnFullScreen: true,
-          skipTransformProcessType: true,
-        });
-      } else if (spacesPolicy === 'anchor') {
-        win.setVisibleOnAllWorkspaces(true, {
-          visibleOnFullScreen: true,
-          skipTransformProcessType: true,
-        });
-        win.setVisibleOnAllWorkspaces(false, {
-          skipTransformProcessType: true,
-        });
-      }
-    }
 
     // Register any special-case trustedBuiltin window (diagnostic, settings,
     // hud-overlay, datastore-viewer, cmd-ui, about:blank) with the broadcaster
@@ -3445,8 +3426,8 @@ export function registerWindowHandlers(): void {
       // Add to window manager with modal parameter
       // Note: isTransient was determined BEFORE window creation (at top of handler)
       // to avoid the race condition where the new window becomes focused before we check
-      // Role + parentWindowId were derived earlier (just before the Spaces
-      // dispatch) using ./izui-roles.ts. Re-bound here for the registration
+      // Role + parentWindowId were derived earlier (right after window
+      // creation) using ./izui-roles.ts. Re-bound here for the registration
       // payload below.
       const parentWindowId = parentWindowIdForRole;
 
@@ -3498,6 +3479,30 @@ export function registerWindowHandlers(): void {
         // — the machine's WINDOW_CLOSE_OR_HIDE_REQUESTED clause branches on it.
         keepLive: options.keepLive === true,
       });
+
+      // macOS Spaces intent by role (§5 step 10 — machine-owned):
+      //   'follow' — palette/quick-view/overlay (cmd, slides, peeks). Window
+      //     appears on every Space, riding along with the user.
+      //   'anchor' — everything else on darwin. The reducer emits the ORDERED
+      //     PAIR (true → false) so macOS lands the window on the user's active
+      //     Space and pins it there.
+      //   'none' — non-darwin platforms; macOS Spaces don't exist.
+      // `spacesPolicyForRole` stays here at the dispatch site (pure policy,
+      // same status as `computePlacement`); the reducer owns the pair and puts
+      // skipTransformProcessType:true on every resulting call — without it,
+      // macOS toggles the app's activation policy (Accessory ↔ Foreground) and
+      // every other Peek window flashes out for a frame.
+      // This sits AFTER registration because the reducer needs the record to
+      // exist; it is still synchronous and still precedes any load/show, which
+      // is what the anchor pair requires.
+      if (!isHeadless()) {
+        dispatchWindowEvent({
+          type: 'SPACES_POLICY_REQUESTED',
+          id: machineWindowId,
+          policy: spacesPolicyForRole(role, process.platform),
+        });
+      }
+
       // Feed the machine the OPEN intent (gate fallout of the WindowId
       // cutover) — but ONLY for an open the caller wants VISIBLE. Under
       // HEADLESS the winOptions above force `show: false` and nothing ever

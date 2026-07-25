@@ -128,8 +128,6 @@ const ALLOWLIST = [
     why: 'overlay singleton teardown — §5 step 9' },
   { file: 'apps/desktop/main/ipc.ts', call: 'focus', count: 2,
     why: 'devtools-opened first-responder restore + modal blur-settle re-focus — devtools/modal-entangled, punted from step 8e to §5 step 9 (the open-dedupe focus calls ride WINDOW_SHOW_REQUESTED since 8e)' },
-  { file: 'apps/desktop/main/ipc.ts', call: 'setVisibleOnAllWorkspaces', count: 4,
-    why: 'sticky-window handling on open/Spaces — §5 step 10' },
   { file: 'apps/desktop/main/izui-state.ts', call: 'showInactive', count: 2,
     why: 'restore-without-activating in the focus-restore guard — focus rivals, §5 step 8' },
   { file: 'apps/desktop/main/main.ts', call: 'close', count: 1,
