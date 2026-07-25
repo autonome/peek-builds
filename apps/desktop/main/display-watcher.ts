@@ -17,9 +17,15 @@
  *   placement, so a small debounce keeps redundant projection passes off
  *   the main thread without exposing user-input race surface.
  *
- * - No "stranded rescue" pass. The placement engine projects onto a
- *   present display (own or primary) for every mode, so windows cannot
- *   end up off-screen by construction.
+ * - No "stranded rescue" pass HERE — this module always projects onto a
+ *   present display (own or primary) for every mode it dispatches. But a
+ *   window that is fullscreen or hidden when a change lands is skipped by the
+ *   reducer's `fsMode`/`visible` guards on `DISPLAY_CHANGED`, not stranded:
+ *   the reducer holds the computed rect on
+ *   `WindowRecord.pendingProjectedBounds` and flushes it once the window
+ *   returns to normal and visible (`flushPendingProjection`, `window-state.ts`).
+ *   So the off-screen-by-construction guarantee is conditional on that later
+ *   flush firing, not solely on this module's projection math.
  *
  * THIS MODULE NO LONGER TOUCHES WINDOWS (window-manager.md §5 step 10). It is
  * a pure PRODUCER: it reads the OS (the display layout, the two window

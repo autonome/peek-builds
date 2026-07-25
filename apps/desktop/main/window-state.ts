@@ -251,6 +251,22 @@ export interface WindowRecord {
    * LIVED field.
    */
   visibleOnAllSpaces: boolean;
+  /**
+   * A `DISPLAY_CHANGED` projection computed while the window was blocked from
+   * receiving it (non-`normal` `fsMode`, or `visible:false`) — held here
+   * instead of discarded, so a resolution/display change that lands mid-
+   * fullscreen or while hidden isn't lost. Overwritten (last projection wins)
+   * by a later `DISPLAY_CHANGED` while still blocked. Flushed as a `SET_BOUNDS`
+   * — and cleared — by `flushPendingProjection`, called from every transition
+   * that lifts the block (the `→ normal` `fsMode` transitions, `WINDOW_SHOWN`),
+   * but only once BOTH axes (`fsMode: 'normal'` AND `visible`) are clear; it
+   * stays held if only one axis unblocks. Also cleared — WITHOUT flushing — by
+   * an explicit bounds write (`SET_BOUNDS_REQUESTED` / `MAXIMIZE_REQUESTED` /
+   * `UNMAXIMIZE_REQUESTED`) via `discardPendingProjection`, so a stale
+   * projection can never snap a deliberately-moved window back. `null` when
+   * nothing is held (the common case).
+   */
+  pendingProjectedBounds: Rectangle | null;
   /** MRU counter (absorbs `focus-order.ts`). Higher = more recently focused. */
   focusSeq: number;
   /** Absorbs `lastContentWindowId` (devtools target). */
@@ -617,16 +633,22 @@ export type WindowEvent =
    * ONE effect funnel (R2) performs the moves. Entries whose placement did not
    * change ("keep") are filtered at the dispatch site and never appear.
    *
-   * The reducer drops an entry — no effect, no state change — when the window
-   * is unknown, when the machine's `visible` mirror says it is not on screen
-   * (the legacy watcher's `isVisible()` filter, now answered from state instead
-   * of an OS query), or when its `fsMode` is non-normal (fullscreen owns the
-   * display — the same guard `SET_BOUNDS_REQUESTED`/`MAXIMIZE_REQUESTED`
-   * apply). Like every other geometry write it does NOT touch the `bounds`
-   * mirror (the backend's `BOUNDS_CHANGED` echo is its sole writer) and does
-   * NOT touch `maximized`/`preMaxBounds`: a reprojection re-places the window,
-   * it is not a user gesture, and the legacy watcher never disturbed maximize
-   * state either.
+   * The reducer drops an entry outright — no effect, no state change — only
+   * when the window is unknown. When the machine's `visible` mirror says it is
+   * not on screen (the legacy watcher's `isVisible()` filter, now answered
+   * from state instead of an OS query), or its `fsMode` is non-normal
+   * (fullscreen owns the display — the same guard
+   * `SET_BOUNDS_REQUESTED`/`MAXIMIZE_REQUESTED` apply), the projection is NOT
+   * discarded: it is DEFERRED onto `WindowRecord.pendingProjectedBounds` and
+   * flushed as a `SET_BOUNDS` once both axes clear (see that field's doc and
+   * `flushPendingProjection`) — so a window that is fullscreen or hidden when
+   * a display change lands is still correctly re-placed once it returns to
+   * normal and visible, rather than left stranded at a rect that no longer
+   * satisfies its placement intent. Like every other geometry write it does
+   * NOT touch the `bounds` mirror (the backend's `BOUNDS_CHANGED` echo is its
+   * sole writer) and does NOT touch `maximized`/`preMaxBounds`: a reprojection
+   * re-places the window, it is not a user gesture, and the legacy watcher
+   * never disturbed maximize state either.
    */
   | { type: 'DISPLAY_CHANGED'; projected: ProjectedWindowBounds[] }
   /**
@@ -1141,6 +1163,33 @@ function patchRecord(state: AppWindowState, id: WindowId, patch: Partial<WindowR
   state.windows.set(id, { ...cur, ...patch });
 }
 
+/**
+ * The SINGLE place a window moves from "holding a deferred `DISPLAY_CHANGED`
+ * projection" to "flushed" (see `WindowRecord.pendingProjectedBounds`). Called
+ * from every transition that can lift ONE of the two blocking axes
+ * (`→ normal` fsMode, `WINDOW_SHOWN`); only actually emits once BOTH are
+ * clear — a window that becomes visible while still fullscreen keeps holding.
+ */
+function flushPendingProjection(state: AppWindowState, id: WindowId, effects: Effect[]): void {
+  const rec = state.windows.get(id);
+  if (!rec || rec.pendingProjectedBounds === null) return;
+  if (rec.fsMode.name !== 'normal' || !rec.visible) return; // still blocked on the other axis
+  effects.push({ type: 'SET_BOUNDS', id, bounds: rec.pendingProjectedBounds });
+  patchRecord(state, id, { pendingProjectedBounds: null });
+}
+
+/**
+ * Drop a held `DISPLAY_CHANGED` projection WITHOUT emitting it — called from
+ * every explicit bounds write (`SET_BOUNDS_REQUESTED` / `MAXIMIZE_REQUESTED` /
+ * `UNMAXIMIZE_REQUESTED`) so a stale deferred projection can never snap a
+ * deliberately-moved window back afterwards.
+ */
+function discardPendingProjection(state: AppWindowState, id: WindowId): void {
+  const rec = state.windows.get(id);
+  if (!rec || rec.pendingProjectedBounds === null) return;
+  patchRecord(state, id, { pendingProjectedBounds: null });
+}
+
 /** Bump a record's focusSeq to a fresh MRU value. Mutates the (already-cloned) state. */
 function bumpFocusSeq(state: AppWindowState, id: WindowId): void {
   const cur = state.windows.get(id);
@@ -1445,10 +1494,12 @@ function applyOsFullscreenLeft(state: AppWindowState, id: WindowId, effects: Eff
     case 'fullscreen': {
       // OS/green-button initiated leave — clear stash.
       patchRecord(state, id, { fsMode: { name: 'normal' } });
+      flushPendingProjection(state, id, effects);
       return;
     }
     case 'leaving-fullscreen': {
       patchRecord(state, id, { fsMode: { name: 'normal' } });
+      flushPendingProjection(state, id, effects);
       // Honor a coalesced "actually, re-enter" desire (no captured bounds here).
       if (mode.pendingDesire === true) {
         applyFullscreenRequest(state, id, true, null, effects);
@@ -1458,6 +1509,7 @@ function applyOsFullscreenLeft(state: AppWindowState, id: WindowId, effects: Eff
     case 'entering-fullscreen': {
       // Aborted by the OS mid-enter.
       patchRecord(state, id, { fsMode: { name: 'normal' } });
+      flushPendingProjection(state, id, effects);
       return;
     }
     case 'normal':
@@ -1551,6 +1603,8 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         // The platform default (§4.2 dim 7b): a fresh window lives on one
         // Space until something asks otherwise.
         visibleOnAllSpaces: false,
+        // Nothing has been projected-and-blocked yet — see the field doc.
+        pendingProjectedBounds: null,
         focusSeq: 0,
         lastHttpUrl: event.lastHttpUrl,
       };
@@ -1651,7 +1705,12 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // converges when the focused window's own event arrives.
       const wasVisible = rec.visible;
       patchRecord(state, event.id, { visible: true });
-      if (!wasVisible) stackRaise(state, event.id);
+      if (!wasVisible) {
+        stackRaise(state, event.id);
+        // The other unblock edge for a held DISPLAY_CHANGED projection (see
+        // `pendingProjectedBounds`) — flushes only if `fsMode` is ALSO normal.
+        flushPendingProjection(state, event.id, effects);
+      }
       // Session is NOT derived here — `izui-state.ts` owns it and feeds it in via
       // SESSION_CHANGED. Deriving it here would be a rival authority (§3).
       if (event.focused) {
@@ -1878,6 +1937,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // Fullscreen owns the display (aa34cb50 family — same guard as
       // MAXIMIZE_REQUESTED): a bounds write mid-episode is dropped.
       if (rec.fsMode.name !== 'normal') break;
+      // An explicit write supersedes any held DISPLAY_CHANGED projection —
+      // see `discardPendingProjection`.
+      discardPendingProjection(state, event.id);
       // Plain geometry write: no mirror write (BOUNDS_CHANGED echoes it),
       // no maximize interaction (see the event doc).
       effects.push({ type: 'SET_BOUNDS', id: event.id, bounds: event.bounds });
@@ -1891,6 +1953,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // non-normal mode) is a no-op — recording it would stash the
       // fullscreen rect as `preMaxBounds` (the aa34cb50 lookalike trap).
       if (rec.fsMode.name !== 'normal') break;
+      // An explicit write supersedes any held DISPLAY_CHANGED projection —
+      // see `discardPendingProjection`.
+      discardPendingProjection(state, event.id);
       if (rec.maximized) {
         // Re-snap only. The stash is NOT overwritten: the machine's flag is
         // trusted (no isMaximized() distrust), and overwriting the stash
@@ -1913,6 +1978,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       if (!rec.maximized) break; // not maximized — nothing to restore
       const restore = rec.preMaxBounds;
       patchRecord(state, event.id, { maximized: false, preMaxBounds: null });
+      // An explicit write supersedes any held DISPLAY_CHANGED projection —
+      // see `discardPendingProjection`.
+      discardPendingProjection(state, event.id);
       // A null stash (maximized with no restorable rect) just clears the
       // flag — there is nowhere to restore to, same as FsMode's null stash.
       if (restore) effects.push({ type: 'SET_BOUNDS', id: event.id, bounds: restore });
@@ -1946,13 +2014,20 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         if (!rec) continue; // unregistered window — nothing to move
         // The legacy watcher's `isVisible()` filter, answered from the
         // machine's own mirror instead of an OS query (§3: never a question
-        // at decision time). A hidden window is re-placed when it is shown,
-        // not while it is off screen.
-        if (!rec.visible) continue;
-        // Fullscreen owns the display (aa34cb50 family — same guard as
-        // SET_BOUNDS_REQUESTED / MAXIMIZE_REQUESTED): a reprojection mid-
-        // episode would fight the fullscreen geometry and corrupt it.
-        if (rec.fsMode.name !== 'normal') continue;
+        // at decision time). Fullscreen owns the display (aa34cb50 family —
+        // same guard as SET_BOUNDS_REQUESTED / MAXIMIZE_REQUESTED): a
+        // reprojection mid-episode would fight the fullscreen geometry and
+        // corrupt it. Either condition DEFERS rather than drops: the rect is
+        // held on `pendingProjectedBounds` (last projection wins over any
+        // earlier held one) and flushed by `flushPendingProjection` from
+        // whichever transition lifts the block last — the `→ normal` fsMode
+        // transitions, or `WINDOW_SHOWN` — so a display/resolution change that
+        // lands mid-fullscreen or while hidden still lands once the window is
+        // both normal and visible again.
+        if (!rec.visible || rec.fsMode.name !== 'normal') {
+          patchRecord(state, projection.id, { pendingProjectedBounds: projection.bounds });
+          continue;
+        }
         // No mirror write (BOUNDS_CHANGED echoes it), no maximize interaction
         // — see the event doc.
         effects.push({ type: 'SET_BOUNDS', id: projection.id, bounds: projection.bounds });
