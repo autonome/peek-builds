@@ -3063,8 +3063,8 @@ function installTestBridge(): void {
     },
     /**
      * keepLive regression: drive the EXACT close path that app-switch dismissal
-     * (`doCloseTransientHybridWindows`) and focus-driven autoclose
-     * (`closeTransientSiblingsOnFocus`) funnel a hybrid peek/slide through —
+     * (`window-state.ts selectAppResignTransients`) and focus-driven autoclose
+     * (`selectTransientAutoclose`) funnel a hybrid peek/slide through —
      * `closeOrHideWindow(id)`. A keepLive:true hybrid host must be HIDDEN (its
      * BaseWindow stays live, just `isVisible() === false`); a keepLive:false one
      * must be CLOSED (BaseWindow destroyed, dropped from the registry). The test

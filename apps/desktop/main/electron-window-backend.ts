@@ -44,6 +44,7 @@ import {
   addEscHandler,
 } from './windows.js';
 import { getGuestsForWindow, getAllGuestWebContentsIds } from './webview-guest-registry.js';
+import { getIzuiCoordinator } from './izui-state.js';
 import { shouldCloseContentWCOnFinalize } from './izui-roles.js';
 import {
   decideWindowRegistration,
@@ -62,6 +63,25 @@ import type { BackendEventSink, WindowBackend, WindowSpec } from './window-backe
 // the machine in `entering`/`leaving` forever — the timer emits
 // FULLSCREEN_SETTLE_TIMEOUT, whose reducer clause emits RECONCILE_FULLSCREEN.
 const FULLSCREEN_SETTLE_TIMEOUT_MS = 1500;
+
+/**
+ * How long after a `did-resign-active` we declare the app switch REAL
+ * (`APP_RESIGN_SETTLED`). Same 500ms the deleted `ipc.ts
+ * HYBRID_APP_RESIGN_SETTLE_MS` used.
+ *
+ * macOS fires a brief `did-resign-active` → `did-become-active` DANCE (no real
+ * app switch) during window restoration at startup and around overlay /
+ * activation transitions, and there is NO deterministic OS signal for "the
+ * dance is over" — the only in-process alternative, the deferred-blur settle
+ * that emits `OS_FOCUS_SETTLED_NULL`, fires within a tick and so lands INSIDE
+ * the dance. A settle interval is therefore irreducible, and per §3 it belongs
+ * at the OS boundary (this file), alongside the other two boundary
+ * workarounds. What is NOT here is the DECISION: the reducer's
+ * `pendingAppResignSweep` (armed by `APP_RESIGNED`, disarmed by
+ * `APP_ACTIVATED`) is the sole cancel authority, so this timer only says
+ * "500ms elapsed", never "sweep".
+ */
+const APP_RESIGN_SETTLE_MS = 500;
 
 /**
  * The structural minimum of a native window this backend drives. Both
@@ -216,6 +236,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   /** Per-window bounded fullscreen settle timers (§2.3). */
   private readonly fullscreenSettleTimers = new Map<WindowId, ReturnType<typeof setTimeout>>();
 
+  /** The app-resign settle handle (§5 step 9) — at most one, restarted per resign edge. */
+  private appResignSettleTimer: ReturnType<typeof setTimeout> | null = null;
+
   /** Whether we currently hold the OS Escape grab (real state incl. failed register — see `setEscGrab`). */
   private escGrabRegistered = false;
 
@@ -236,9 +259,16 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   // ───────────────────────────────────────────────────────────────────────────
 
   /**
-   * App-level focus listeners → `APP_ACTIVATED`/`APP_RESIGNED`. `APP_ACTIVATED`
-   * makes the reducer emit `RECONCILE_FULLSCREEN` for any in-flight transition
-   * (§2.5). Later slices move main.ts's `did-become/resign-active` dispatch here.
+   * App-level focus listeners → `APP_ACTIVATED`/`APP_RESIGNED`, plus the
+   * `APP_RESIGN_SETTLED` edge the transient app-switch sweep runs on (§5 step
+   * 9). `APP_ACTIVATED` makes the reducer emit `RECONCILE_FULLSCREEN` for any
+   * in-flight transition (§2.5).
+   *
+   * The settle timer is restarted on every resign edge (so only the LATEST
+   * resign can settle) and is deliberately NOT cancelled on `did-become-active`:
+   * cancelling would put a second copy of the dance-cancel decision here, and
+   * the reducer's `pendingAppResignSweep` disarm already makes a late
+   * `APP_RESIGN_SETTLED` inert.
    */
   attachAppListeners(): void {
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
@@ -246,6 +276,25 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
       this.emit({ type: 'APP_RESIGNED' });
+      if (this.appResignSettleTimer) clearTimeout(this.appResignSettleTimer);
+      this.appResignSettleTimer = setTimeout(() => {
+        this.appResignSettleTimer = null;
+        // Carried over VERBATIM from the deleted `ipc.ts
+        // doCloseTransientHybridWindows` head: a resign fired by an izui
+        // overlay entry/exit transition is activation churn, not an app
+        // switch, so the settle point never arrives for it. The coordinator's
+        // cooldowns are the only signal for that churn and the reducer does
+        // not model them (§5 step 9 explicitly left them unmodelled), so the
+        // read stays at the producer — suppressing the EDGE, never deciding
+        // the sweep. Re-home it when the overlay cooldown becomes machine
+        // state.
+        const coordinator = getIzuiCoordinator();
+        if (coordinator.isWithinOverlayExitCooldown() || coordinator.isWithinOverlayEntryCooldown()) {
+          DEBUG && console.log('[wm-backend] app-resign settle suppressed (izui overlay cooldown)');
+          return;
+        }
+        this.emit({ type: 'APP_RESIGN_SETTLED' });
+      }, APP_RESIGN_SETTLE_MS);
     });
   }
 

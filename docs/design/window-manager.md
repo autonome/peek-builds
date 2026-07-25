@@ -334,12 +334,21 @@ machine's `front` (driven by restore's machine-routed show dispatches).
 `setFocusedWindow` / `getFocusedWindowId` remain as a plain tracker until step 8c
 deletes them.
 
-**4b. Transient-sibling autoclose** — TO ABSORB.
-Today: `ipc.ts closeTransientSiblingsOnFocus` plus a `pendingAppResignClose` timer; it
-fires on focus change and closes windows behind the reducer's back.
-Becomes: a reducer rule on focus-change transitions emitting `destroy` effects. The timer
-is deleted, not ported — if it proves load-bearing the replacement is a reducer state, never
-a timer.
+**4b. Transient-sibling autoclose** — ABSORBED (§5 step 9 cutover).
+Was: `ipc.ts closeTransientSiblingsOnFocus` (+ `gatherTransientSiblingCandidates`,
+`izui-roles.ts selectTransientSiblingsToClose`) plus a `pendingAppResignClose` timer with a
+`did-become-active` cancel; it fired on focus change and closed windows behind the reducer's
+back. All deleted.
+Now: `selectTransientAutoclose` on `OS_FOCUS_GAINED` and `selectAppResignTransients` on
+`APP_RESIGN_SETTLED`, both dismissing through the shared keepLive decision
+(`HIDE_WINDOW`/`CLOSE_WINDOW`, never `DESTROY_WINDOW` — a keepLive slide must survive, peek
+2c94c125). The timer was deleted, not ported: its CANCEL is now reducer state
+(`pendingAppResignSweep`, armed by `APP_RESIGNED`, disarmed by `APP_ACTIVATED`). What
+remains irreducible is the settle DELAY — macOS offers no "the resign→become dance is over"
+signal — so it sits at the OS boundary as `electron-window-backend.ts
+APP_RESIGN_SETTLE_MS`, which only says "500ms elapsed" and never decides the sweep. The one
+piece still unmodelled is the izui overlay entry/exit cooldown, read at that producer to
+suppress the settle EDGE; re-home it when the cooldown becomes machine state.
 
 **6. Roles + session tri-state** — TO ABSORB (partial).
 Today: `izui-state.ts IzuiStateCoordinator`. The role string is duplicated into

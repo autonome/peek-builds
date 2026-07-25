@@ -244,13 +244,17 @@ per-runner status) — don't read the chained exit code as one runner's.
   `role:'quick-view' + modal + canvas`, so under the hybrid default they are **BaseWindows**, and
   the old transient-autoclose lived entirely on `BrowserWindow` (focuser-driven loop over
   `getAllLiveWindows()` only). Fix, FSM-aligned (extend the existing focuser-driven mechanism, no
-  new blur listener): pure `selectTransientSiblingsToClose()` in `izui-roles.ts`; an `ipc.ts`
-  wrapper gathers candidates from BOTH the BrowserWindow and hybrid registries and runs from BOTH
-  the `win.on('focus')` handler AND the hybrid `onHybridHostFocus` path. App-switch
-  (Cmd+Tab-away) is handled separately via `did-resign-active`, **deferred** with a
-  `did-become-active` cancel (`HYBRID_APP_RESIGN_SETTLE_MS`) so the macOS startup activation
-  **dance** can't dismiss a freshly opened slide. Tests: `hybrid-transient-on-blur.spec` +
-  `izui-roles` selector units.
+  new blur listener): a pure selector over candidates from BOTH registries, run from BOTH the
+  `win.on('focus')` handler AND the hybrid host-focus path. App-switch (Cmd+Tab-away) is handled
+  separately via `did-resign-active`, **deferred** with a `did-become-active` cancel so the macOS
+  startup activation **dance** can't dismiss a freshly opened slide.
+  **Now owned by the window-state machine (§5 step 9 cutover):** `window-state.ts
+  selectTransientAutoclose` on `OS_FOCUS_GAINED` and `selectAppResignTransients` on
+  `APP_RESIGN_SETTLED`; the dance cancel is reducer state (`pendingAppResignSweep`, armed by
+  `APP_RESIGNED` / disarmed by `APP_ACTIVATED`) and only the settle DELAY survives, in
+  `electron-window-backend.ts` (`APP_RESIGN_SETTLE_MS`). The `ipc.ts` wrapper, its candidate
+  gatherer and `izui-roles.ts selectTransientSiblingsToClose` are deleted. Tests:
+  `hybrid-transient-on-blur.spec` + the `window-state.test.ts` autoclose table.
 - **slides/peeks cold-wake settings race — DONE.** Separate bug found dogfooding: `yarn start` →
   first slide hotkey did nothing, second worked. The lazy `cli:slide-open` / `cli:peek-open` wake
   handler is registered synchronously (good) but its BODY read `currentSettings` while it was

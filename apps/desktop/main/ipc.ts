@@ -98,10 +98,8 @@ import {
   TRANSIENT_ROLES,
   inferIzuiRole,
   spacesPolicyForRole,
-  selectTransientSiblingsToClose,
   shouldCloseContentWCOnFinalize,
   windowSelfClosesOnBlur,
-  type TransientSiblingCandidate,
 } from './izui-roles.js';
 
 
@@ -144,7 +142,6 @@ import {
   findHybridWindowByKey,
   getHybridContentWC,
   getHybridWindow,
-  getAllHybridWindows,
   claimHybridDeferredLoad,
   // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
   setHybridLoadError,
@@ -164,165 +161,22 @@ import {
   clearHybridRetry,
 } from './hybrid-page-host-registry.js';
 
-/**
- * Gather every live window — BrowserWindow AND hybrid page-host (BaseWindow) —
- * as transient-autoclose candidates, tagged with its registry role and current
- * visibility. Hybrid windows are NOT BrowserWindows, so `getAllLiveWindows()`
- * (BrowserWindow.getAllWindows-backed) can't see them; we union the hybrid
- * registry in. Empty hybrid contribution only if no hybrid windows exist
- * (hybrid is the only page-host path now, not a flag-gated one).
- */
-function gatherTransientSiblingCandidates(): TransientSiblingCandidate[] {
-  const out: TransientSiblingCandidate[] = [];
-  for (const w of getAllLiveWindows()) {
-    let visible = false;
-    try {
-      visible = !w.isDestroyed() && w.isVisible();
-    } catch {
-      /* a window torn down mid-iteration — treat as not visible */
-    }
-    out.push({
-      id: w.id,
-      role: getWindowInfo(w.id)?.params?.role as string | undefined,
-      visible,
-    });
-  }
-  for (const h of getAllHybridWindows()) {
-    let visible = false;
-    try {
-      visible = !h.baseWin.isDestroyed() && h.baseWin.isVisible();
-    } catch {
-      /* BaseWindow gone — treat as not visible */
-    }
-    out.push({
-      id: h.windowId,
-      role: getWindowInfo(h.windowId)?.params?.role as string | undefined,
-      visible,
-    });
-  }
-  return out;
-}
-
-/**
- * Auto-dismiss the transient (palette / quick-view) siblings of a window that
- * just gained focus. IZUI policy: transient surfaces dismiss as soon as focus
- * moves to ANY other window. The focuser-driven model (vs per-window blur) is
- * used because macOS panel-type windows don't fire reliable per-window `blur`
- * on intra-app focus shifts.
- *
- * Called from BOTH the BrowserWindow `win.on('focus')` handler AND the hybrid
- * page-host `onHybridHostFocus` path, so a hybrid peek/slide either closing OR
- * being closed both work (the regression — peek 8e5c3174 — was that this lived
- * only on the BrowserWindow side, over BrowserWindow candidates only). The pure
- * decision is `selectTransientSiblingsToClose`; here we just gather candidates
- * and fire the close.
- */
-function closeTransientSiblingsOnFocus(focusedId: number): void {
-  const focusedRole = getWindowInfo(focusedId)?.params?.role as string | undefined;
-  const candidates = gatherTransientSiblingCandidates();
-  for (const id of selectTransientSiblingsToClose(focusedId, focusedRole, candidates)) {
-    DEBUG && console.log(
-      '[izui] window-focused autoclose transient sibling:', id,
-      'focused:', focusedId, 'role:', focusedRole,
-    );
-    try {
-      // Fire-and-forget: closeOrHideWindow is async (awaits a fullscreen exit on
-      // its hybrid branch) but never rejects (internal try/catch). Transient
-      // autoclose doesn't need to block on the dismissal.
-      void closeOrHideWindow(id);
-    } catch (err) {
-      DEBUG && console.log('[izui] autoclose transient failed:', err);
-    }
-  }
-}
-
-/**
- * Close every visible transient (palette / quick-view, non-overlay) HYBRID
- * peek/slide window. Scoped to HYBRID windows so we don't race the BrowserWindow
- * modal blur path. The actual close-body for the app-resign dismissal below.
- */
-function doCloseTransientHybridWindows(): void {
-  const coordinator = getIzuiCoordinator();
-  if (
-    coordinator.isWithinOverlayExitCooldown() ||
-    coordinator.isWithinOverlayEntryCooldown()
-  ) {
-    DEBUG && console.log('[izui] app-resign: skip hybrid transient close (overlay cooldown)');
-    return;
-  }
-  const candidates: TransientSiblingCandidate[] = [];
-  for (const h of getAllHybridWindows()) {
-    let visible = false;
-    try {
-      visible = !h.baseWin.isDestroyed() && h.baseWin.isVisible();
-    } catch {
-      /* BaseWindow gone — treat as not visible */
-    }
-    candidates.push({
-      id: h.windowId,
-      role: getWindowInfo(h.windowId)?.params?.role as string | undefined,
-      visible,
-    });
-  }
-  // No focuser — focus left the app entirely. id -1 matches nothing and an
-  // undefined focuser-role is not 'utility', so the selector returns every
-  // visible transient (non-overlay) hybrid window.
-  for (const id of selectTransientSiblingsToClose(-1, undefined, candidates)) {
-    DEBUG && console.log('[izui] app-resign autoclose transient hybrid:', id);
-    try {
-      // Fire-and-forget (async, never rejects) — see closeTransientSiblingsOnFocus.
-      void closeOrHideWindow(id);
-    } catch (err) {
-      DEBUG && console.log('[izui] app-resign hybrid close failed:', err);
-    }
-  }
-}
-
-// macOS fires a brief `did-resign-active` → `did-become-active` DANCE (no real
-// app-switch) during window restoration at startup and around overlay/activation
-// transitions — see the cooldown comments in izui-state.ts (300/500 ms windows).
-// A slide/peek opened via global hotkey right at boot would otherwise be
-// opened-then-instantly-closed by the resign edge of that dance (user-visible
-// as "the slide hotkey did nothing the first time after startup"). So we DEFER
-// the close and let a following `did-become-active` CANCEL it — the same
-// deferred-decision shape the hybrid registry uses for content/overlay blur.
-// Only a resign with NO become within the settle window is a real app-switch.
-const HYBRID_APP_RESIGN_SETTLE_MS = 500;
-let pendingAppResignClose: ReturnType<typeof setTimeout> | null = null;
-
-/**
- * Dismiss transient HYBRID peek/slide surfaces when Peek stops being the
- * frontmost app (Cmd+Tab away). The focuser-driven autoclose only fires when
- * ANOTHER Peek window gains focus — it can't fire when focus leaves Peek
- * entirely. Transient BrowserWindow modals already self-close via their
- * per-window `blur` handler on app blur; hybrid peek/slide windows are
- * BaseWindows with NO blur handler, so without this they linger after an
- * app-switch (regression peek 8e5c3174, second half).
- *
- * Deferred (not immediate) to ride out the macOS resign→become activation dance
- * — see HYBRID_APP_RESIGN_SETTLE_MS. `onAppDidBecomeActive` cancels a pending
- * close, so the dance (which re-activates Peek) never dismisses a freshly opened
- * surface.
- */
-function onAppDidResignActive(): void {
-  if (pendingAppResignClose) clearTimeout(pendingAppResignClose);
-  pendingAppResignClose = setTimeout(() => {
-    pendingAppResignClose = null;
-    doCloseTransientHybridWindows();
-  }, HYBRID_APP_RESIGN_SETTLE_MS);
-}
-
-/** Peek became frontmost again — cancel any pending app-resign dismissal. */
-function onAppDidBecomeActive(): void {
-  if (pendingAppResignClose) {
-    clearTimeout(pendingAppResignClose);
-    pendingAppResignClose = null;
-  }
-}
-
-// One-time guard so repeated `registerWindowHandlers()` calls don't stack
-// duplicate app-level listeners.
-let appResignHybridWired = false;
+// Transient-sibling autoclose (focus-driven AND app-resign) is GONE from this
+// file (§5 step 9 cutover). The window-state machine owns both halves now:
+//   - focus-driven: `window-state.ts selectTransientAutoclose`, fired from the
+//     reducer's `OS_FOCUS_GAINED` clause. The backend's per-window native
+//     `focus` listeners (host BaseWindow + content WC + BrowserWindow) are the
+//     exact producers the deleted `closeTransientSiblingsOnFocus` call sites
+//     were, so both kinds still close and are closed (peek 8e5c3174).
+//   - app-switch: `window-state.ts selectAppResignTransients`, fired from the
+//     reducer's `APP_RESIGN_SETTLED` clause. The 500ms deferral + the
+//     `did-become-active` cancel are no longer a `setTimeout` handle here:
+//     `AppWindowState.pendingAppResignSweep` is armed by `APP_RESIGNED` and
+//     disarmed by `APP_ACTIVATED`, and the OS-boundary settle DELAY lives in
+//     `electron-window-backend.ts attachAppListeners` (the lowest layer).
+// Both dismissals route through the reducer's shared keepLive decision
+// (HIDE_WINDOW vs CLOSE_WINDOW), so a keepLive slide is still hidden, never
+// destroyed (peek 2c94c125).
 import {
   getRuntimeExternalWebPrefsForUrl,
   installMainWorldContentScriptInjection,
@@ -994,18 +848,11 @@ function assembleHybridPageHost(
     // moved to the machine's `front`/`focusSeq`, so there is no `track*` feed
     // here either.
     //
-    // A hybrid host gaining focus must run the SAME transient-sibling
-    // autoclose the BrowserWindow focus handler does — otherwise focusing
-    // a web page (or opening peek/slide B) never dismisses an open
-    // peek/slide A (both are now BaseWindows). The wrapper resolves this
-    // host's own role; a transient focuser still closes OTHER transients.
-    // Regression: peek 8e5c3174. Guarded so a focus-bookkeeping throw can
-    // never wedge the close (and vice-versa).
-    try {
-      closeTransientSiblingsOnFocus(baseWin.id);
-    } catch (err) {
-      DEBUG && console.log('[izui] hybrid-focus autoclose failed:', err);
-    }
+    // The transient-sibling autoclose this handler used to run is the
+    // machine's now (§5 step 9): the backend's own `focus` listener on THIS
+    // BaseWindow (and on the content WC) emits `OS_FOCUS_GAINED`, whose
+    // reducer clause runs `selectTransientAutoclose` over both window kinds.
+    // Regression covered: peek 8e5c3174.
   };
   baseWin.on('focus', onHybridHostFocus);
   // Native fullscreen state (SETTLED enter/leave) is now owned by the window-
@@ -2734,17 +2581,12 @@ export function installHybridNavbarActionRouting(): void {
 export let invokeWindowOpen: ((ev: any, msg: any) => Promise<unknown>) | null = null;
 
 export function registerWindowHandlers(): void {
-  // Dismiss transient hybrid peek/slide surfaces when Peek loses app focus
-  // (Cmd+Tab away). Registered once here (app is ready by the time IPC handlers
-  // are wired). Unconditional: macOS is the only platform that emits
-  // `did-resign-active`, so on other platforms these listeners simply never
-  // fire. The become-active listener cancels the deferred close so the startup
-  // resign→become activation dance can't dismiss a freshly opened slide.
-  if (!appResignHybridWired) {
-    appResignHybridWired = true;
-    app.on('did-resign-active', onAppDidResignActive);
-    app.on('did-become-active', onAppDidBecomeActive);
-  }
+  // The `did-resign-active` / `did-become-active` listeners that used to live
+  // here are gone (§5 step 9): `electron-window-backend.ts attachAppListeners`
+  // (wired once from `main.ts initWindowStateMachine`) is the single producer of
+  // `APP_RESIGNED` / `APP_ACTIVATED` / `APP_RESIGN_SETTLED`, and the reducer
+  // owns the arm / disarm / sweep. Re-adding a listener here would double-drive
+  // the sweep.
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const windowOpenHandler = async (ev: any, msg: any) => {
@@ -3916,23 +3758,12 @@ export function registerWindowHandlers(): void {
           role: winInfo?.params?.role as string | undefined,
         });
 
-        // Auto-hide sibling transient windows when another window gains
-        // focus. IZUI policy: palette / quick-view windows are transient —
-        // they should dismiss as soon as focus moves to any other window. The
-        // per-window `blur` handler attached to modals covers Cmd+Tab and
-        // clicks into other apps, but macOS NSPanels (type:'panel' +
-        // alwaysOnTop) don't fire reliable `blur` when focus shifts to another
-        // panel-type window in the same app — so opening slide B from edge X
-        // never closes slide A on edge Y. The cmd panel restored this on the
-        // renderer side via a `window:focused` subscription (commit 6361cf19);
-        // generalize it here for all transient roles in the main process so we
-        // don't need a per-feature renderer hook for every panel-style tile.
-        //
-        // The candidate set spans BOTH BrowserWindows and hybrid page-host
-        // BaseWindows (peeks/slides are the latter under the hybrid default),
-        // and the same close runs from the hybrid focus path — see
-        // `closeTransientSiblingsOnFocus`.
-        closeTransientSiblingsOnFocus(win.id);
+        // The transient-sibling autoclose that used to run here is the
+        // machine's now (§5 step 9): the backend's `focus` listener on this
+        // same BrowserWindow emits `OS_FOCUS_GAINED`, and the reducer's
+        // `selectTransientAutoclose` dismisses the palette / quick-view
+        // siblings across BOTH window kinds. Only the `window:focused` HUD
+        // notify above is left in this handler.
       });
 
       // Set up DevTools if requested

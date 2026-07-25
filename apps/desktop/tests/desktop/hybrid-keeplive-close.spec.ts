@@ -16,8 +16,8 @@ import { createPerDescribeApp } from '../helpers/test-app';
  * hybrid BaseWindow branch — `getLiveWindow(id)` returns null for a BaseWindow,
  * so the close fell to the hybrid branch which ALWAYS `closeHostWindow`'d,
  * destroying the window (and stopping the audio). The app-switch dismissal
- * (`doCloseTransientHybridWindows`) and focus-driven autoclose
- * (`closeTransientSiblingsOnFocus`) both funnel through `closeOrHideWindow`, so
+ * (`window-state.ts selectAppResignTransients`) and focus-driven autoclose
+ * (`selectTransientAutoclose`) both funnel through `closeOrHideWindow`, so
  * both dropped a keepLive music slide on the floor.
  *
  * Focus-free: a macOS-headless run never grants real OS focus, so we drive the

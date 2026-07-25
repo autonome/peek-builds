@@ -153,56 +153,14 @@ export function shouldActivateFocusedOnRestore(
   return appFocused || (coldStart && !headless);
 }
 
-/**
- * One window's role + visibility, as seen by the focus-driven transient
- * autoclose. `role` is `undefined` for a window with no registry entry (those
- * are never transient candidates). `visible` gates out already-hidden windows.
- */
-export interface TransientSiblingCandidate {
-  id: number;
-  role: string | undefined;
-  visible: boolean;
-}
-
-/**
- * Decide which transient sibling windows a newly-focused window must auto-close.
- *
- * IZUI policy: palette / quick-view windows are transient — they dismiss as soon
- * as focus moves to any OTHER window. This is the focuser-driven mechanism
- * (macOS panel-type windows don't fire reliable per-window blur on intra-app
- * focus shifts, so the window that GAINS focus closes its transient siblings).
- *
- * Pure so it can be unit-tested without Electron AND so the SAME decision runs
- * for both window kinds: the caller passes candidates gathered from BOTH the
- * BrowserWindow registry and the hybrid page-host (BaseWindow) registry. Before
- * this existed the loop was inlined in `ipc.ts` over BrowserWindows only, so a
- * hybrid peek/slide (a BaseWindow) was never a closable candidate — the
- * close-on-blur regression (peek 8e5c3174).
- *
- * Rules (mirrors the historical inline loop):
- *   - A 'utility' focuser (e.g. a chain popup, child of a transient) closes
- *     NOTHING — it must not dismiss its transient parent.
- *   - Skip the focuser itself, any non-visible window, and any window whose role
- *     is not transient.
- *   - 'overlay' is transient-class but EXEMPT here: overlays manage their own
- *     restoration via the IZUI coordinator, not closeOrHideWindow.
- */
-export function selectTransientSiblingsToClose(
-  focusedId: number,
-  focusedRole: string | undefined,
-  candidates: readonly TransientSiblingCandidate[],
-): number[] {
-  if (focusedRole === 'utility') return [];
-  const out: number[] = [];
-  for (const c of candidates) {
-    if (c.id === focusedId) continue;
-    if (!c.visible) continue;
-    if (!c.role || !TRANSIENT_ROLES.has(c.role)) continue;
-    if (c.role === 'overlay') continue;
-    out.push(c.id);
-  }
-  return out;
-}
+// `selectTransientSiblingsToClose` + its `TransientSiblingCandidate` shape were
+// retired by the §5 step 9 cutover. The decision lives in the window-state
+// machine now — `window-state.ts selectTransientAutoclose` (focus-driven) and
+// `selectAppResignTransients` (app switch) — reading the reducer's records
+// instead of a candidate list gathered from two registries. Semantics were
+// ported verbatim (utility focuser closes nothing; skip self / hidden /
+// non-transient; 'overlay' exempt) and the unit table moved with them into
+// `window-state.test.ts`.
 
 /**
  * macOS Spaces policy for a role.

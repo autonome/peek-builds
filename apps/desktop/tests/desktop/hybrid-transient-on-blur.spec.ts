@@ -212,7 +212,8 @@ test.describe('Hybrid transient on blur auto-hide @desktop', () => {
     expect(await hybridAlive(page)).toBe(true);
 
     await fireAppResign();
-    // Wait past the deferred-close settle window (HYBRID_APP_RESIGN_SETTLE_MS),
+    // Wait past the deferred-close settle window (electron-window-backend.ts
+    // APP_RESIGN_SETTLE_MS),
     // then assert the non-transient page survived the close pass.
     await new Promise((r) => setTimeout(r, 800));
     expect(await hybridAlive(page)).toBe(true);

@@ -1572,8 +1572,9 @@ function detachOverlay(state: AppWindowState, overlayId: WindowId, effects: Effe
 
 /**
  * The roles that are TRANSIENT — they open and close frequently and ride above
- * the workspace. Ported VERBATIM from `izui-roles.ts TRANSIENT_ROLES` (the
- * cutover deletes that copy; until then the two must agree).
+ * the workspace. Ported VERBATIM from `izui-roles.ts TRANSIENT_ROLES`, which
+ * survives the §5 step 9 cutover for its OTHER consumer (the `peek://`
+ * devtools/URL gating in `ipc.ts`). The two must agree.
  */
 const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay']);
 
