@@ -1914,13 +1914,10 @@ describe('Session Integration Tests', () => {
       url: string,
       params: Record<string, unknown>,
       isVisible: boolean,
-      isDestroyed: boolean,
-      hiddenByActiveOverlay: boolean = false
+      isDestroyed: boolean
     ): boolean {
       if (isDestroyed) return true;
-      // Carve-out: a window hidden because an overlay is currently
-      // covering it is still real content — save it.
-      if (!isVisible && !hiddenByActiveOverlay) return true;
+      if (!isVisible) return true;
       if (url.includes('peek://app/background.html')) return true;
       if (params.modal) return true;
       if (params.role === 'utility' && params.focusable === false) return true;
@@ -1958,31 +1955,19 @@ describe('Session Integration Tests', () => {
       assert.strictEqual(skip, false, 'Focusable utility windows should be saved');
     });
 
-    it('SAVES windows hidden by an active overlay (regression: quitting with overlay open lost every other window)', () => {
-      // The IZUI coordinator hides other windows when an overlay opens.
-      // Those windows are real content the user wants restored — the
-      // !isVisible() skip must be carved out for them.
-      const skip = shouldSkipWindow(
-        'https://example.com/',
-        { role: 'content' },
-        false, // !isVisible — the overlay hid it
-        false,
-        true,  // hiddenByActiveOverlay — coordinator says "this is overlay-hidden, not user-closed"
-      );
-      assert.strictEqual(skip, false, 'Overlay-hidden content windows should still be saved');
-    });
-
-    it('still skips genuinely-invisible windows when no overlay is hiding them', () => {
-      // Defensive: ensure the carve-out is gated. A window that's just
-      // !isVisible() with no overlay claiming it should still be skipped.
+    it('skips invisible content windows — there is no overlay carve-out any more', () => {
+      // Historically an overlay-hidden window was exempted from the
+      // !isVisible() skip, because opening the switcher hid every other
+      // window and quitting with it open then saved an empty session. The
+      // switcher stopped hiding windows in 9904f113, so a window that reads
+      // invisible really is hidden and is skipped like any other.
       const skip = shouldSkipWindow(
         'https://example.com/',
         { role: 'content' },
         false,
         false,
-        false, // no overlay hiding it
       );
-      assert.strictEqual(skip, true, 'Genuinely-invisible windows still skipped');
+      assert.strictEqual(skip, true, 'Invisible content windows are skipped');
     });
 
     it('skips overlay-role windows like the Windows switcher', () => {
@@ -2128,24 +2113,17 @@ describe('Session Integration Tests', () => {
       assert.strictEqual(skip, true, 'Destroyed hybrid window should be skipped');
     });
 
-    it('skips an invisible hybrid window with no overlay carve-out', () => {
+    it('skips an invisible hybrid window — visibility is the machine record, with no overlay exemption', () => {
+      // The `hiddenByActiveOverlay` exemption (fed by the
+      // `params.overlayHiddenWindows` side channel) was retired in §5 step 11
+      // task 6: since 9904f113 the switcher renders over other windows instead
+      // of hiding them, so `visible: false` always means genuinely hidden.
       const skip = shouldSkipWindowForSaveEarly({
         destroyed: false,
         visible: false,
         url: 'https://example.com/',
       });
       assert.strictEqual(skip, true, 'Invisible hybrid window should be skipped');
-    });
-
-    it('SAVES an invisible window hidden by an active overlay (carve-out)', () => {
-      const skip = shouldSkipWindowForSaveEarly({
-        destroyed: false,
-        visible: false,
-        url: 'https://example.com/',
-        hiddenByActiveOverlay: true,
-      });
-      assert.strictEqual(skip, false,
-        'Overlay-hidden content windows should still be saved');
     });
 
     it('forceForTest overrides the invisible skip (Playwright direct-save path)', () => {

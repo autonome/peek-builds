@@ -248,26 +248,11 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
   const recordsById = new Map<WindowId, WindowRecord>();
   for (const rec of input.snapshot.windows) recordsById.set(rec.id, rec);
 
-  // Collect all "hidden by overlay" window IDs across the registry. When
-  // an overlay (Windows switcher, etc.) is open at quit time, the IZUI
-  // coordinator has hidden every other window — so their records read
-  // !visible below. Without this carve-out the visibility skip drops them
-  // from the snapshot, and quitting with an overlay open silently loses
-  // every other window. The overlay tracks the IDs in
-  // info.params.overlayHiddenWindows; gather them all here so the
-  // visibility check can let them through. (This params side channel is
-  // slated to become record state — §5 step 11 task 6 — and is carried
-  // over unchanged for now.)
-  const overlayHiddenIds = new Set<number>();
-  for (const w of input.windows) {
-    const ids = w.params.overlayHiddenWindows;
-    if (Array.isArray(ids)) {
-      for (const hid of ids) {
-        if (typeof hid === 'number') overlayHiddenIds.add(hid);
-      }
-    }
-  }
-
+  // (No overlay carve-out on the visibility rule — see
+  // `session-save-filter.ts`. The switcher stopped hiding other windows in
+  // 9904f113, so `WindowRecord.visible` false always means the window really
+  // is hidden, and the `params.overlayHiddenWindows` side channel that used to
+  // exempt switcher-hidden windows is retired: §5 step 11 task 6.)
   const windowDescriptors: WindowDescriptor[] = [];
 
   for (const w of input.windows) {
@@ -288,7 +273,6 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
         visible,
         url: w.url,
         forceForTest: input.forceForTest,
-        hiddenByActiveOverlay: overlayHiddenIds.has(w.nativeId),
       })
     ) {
       continue;

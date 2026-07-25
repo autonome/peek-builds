@@ -20,23 +20,27 @@
  * hybrid entry. A hybrid window is never the background page, so the
  * background-URL skip never fires for it.
  *
+ * There is deliberately NO overlay carve-out on the visibility rule. One used to
+ * exist (`hiddenByActiveOverlay`, fed by the `params.overlayHiddenWindows` side
+ * channel) because opening the switcher hid every other window, and quitting
+ * with it open then saved an empty session. The switcher stopped hiding windows
+ * in 9904f113 — it renders over them against a blurred backdrop — so no window
+ * is ever "invisible only because an overlay is up", and the exemption had
+ * nothing left to exempt. See §5 step 11 task 6.
+ *
  * @param destroyed  true if the underlying window object is gone / unknown
  * @param visible    isVisible() of the relevant window (BrowserWindow or hybrid BaseWindow)
  * @param url        the window's URL (webContents.getURL() or hybrid entry url())
  * @param forceForTest  the `_forceForTest` opt (bypasses the visibility skip)
- * @param hiddenByActiveOverlay  this window is hidden because an overlay covers it (still save it)
  */
 export function shouldSkipWindowForSaveEarly(args: {
   destroyed: boolean;
   visible: boolean;
   url: string;
   forceForTest?: boolean;
-  hiddenByActiveOverlay?: boolean;
 }): boolean {
   if (args.destroyed) return true;
-  // Carve-out: a window hidden because an overlay is currently covering it is
-  // still real content the user wants back — save it.
-  if (!args.visible && !args.forceForTest && !args.hiddenByActiveOverlay) {
+  if (!args.visible && !args.forceForTest) {
     return true;
   }
   // Skip the background window (hybrid windows never load background.html, so

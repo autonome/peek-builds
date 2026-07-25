@@ -3909,11 +3909,13 @@ export function registerWindowHandlers(): void {
       // We still register with the IZUI coordinator (with an empty
       // hiddenWindowIds list) so the rest of the overlay-state plumbing
       // (escape policy, focus tracking) continues to work.
+      //
+      // Nothing stamps `params.overlayHiddenWindows` any more: that side
+      // channel existed so the session save path could exempt
+      // switcher-hidden windows from its "skip invisible windows" rule, and
+      // since the no-hide change above there are none to exempt. Save reads
+      // `WindowRecord.visible` straight off the machine (§5 step 11 task 6).
       if (options.overlay === true) {
-        const winInfo = getWindowInfo(win.id);
-        if (winInfo) {
-          winInfo.params.overlayHiddenWindows = [];
-        }
         const coordinator = getIzuiCoordinator();
         coordinator.enterOverlay(win.id, []);
         // Mirror the switcher-overlay open into the window-state machine so

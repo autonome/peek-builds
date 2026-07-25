@@ -132,8 +132,8 @@ const ALLOWLIST = [
     why: 'restore-without-activating in the focus-restore guard — focus rivals, §5 step 8' },
   { file: 'apps/desktop/main/main.ts', call: 'close', count: 1,
     why: 'close overlay switcher when app loses OS focus (did-resign-active) — §5 step 9' },
-  { file: 'apps/desktop/main/main.ts', call: 'focus', count: 4,
-    why: 'overlay-selection/restore focus of the switcher target (BrowserWindow + hybrid, coordinator + fallback paths) — focus rivals, §5 step 8' },
+  { file: 'apps/desktop/main/main.ts', call: 'focus', count: 2,
+    why: 'overlay-selection/restore focus of the switcher target (BrowserWindow + hybrid, coordinator path) — focus rivals, §5 step 8. The two fallback-path calls died with the overlayHiddenWindows carve-out: the switcher stopped hiding windows in 9904f113, so that branch was unreachable.' },
   { file: 'apps/desktop/main/windows.ts', call: 'focus', count: 3,
     why: 'contentWC first-responder + bw/webContents focus (show invariant) — focus rivals, §5 step 8' },
 ];

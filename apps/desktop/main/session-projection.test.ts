@@ -141,16 +141,11 @@ function legacySerialize(world: World): { snapshot: unknown; windowCount: number
   const reason = world.reason ?? 'before-quit';
   const records = recordsOf(world);
 
-  const overlayHiddenIds = new Set<number>();
-  for (const f of world.fixtures) {
-    const ids = f.params.overlayHiddenWindows;
-    if (Array.isArray(ids)) {
-      for (const hid of ids) {
-        if (typeof hid === 'number') overlayHiddenIds.add(hid);
-      }
-    }
-  }
-
+  // (The loop used to gather `params.overlayHiddenWindows` here into an
+  // exempt-set for the visibility skip. That side channel was retired — see
+  // `session-save-filter.ts` for why the exemption has nothing left to exempt
+  // — so the oracle drops it too, deliberately, rather than pinning a rule the
+  // shipped code no longer has.)
   const lastFocusedId = world.frontNativeId ?? null;
   const windowDescriptors: WindowDescriptor[] = [];
 
@@ -163,7 +158,7 @@ function legacySerialize(world: World): { snapshot: unknown; windowCount: number
 
     // shouldSkipWindowForSaveEarly, inlined (session-save-filter.ts)
     if (destroyed) continue;
-    if (!visible && !world.forceForTest && !overlayHiddenIds.has(id)) continue;
+    if (!visible && !world.forceForTest) continue;
     if (url.includes('peek://app/background.html')) continue;
 
     if (f.params.modal) continue;
@@ -425,7 +420,12 @@ describe('session-projection — on-disk shape is byte-identical to the pre-extr
       frontNativeId: 7,
     }],
 
-    ['overlay-hidden carve-out saves invisible windows', {
+    // The switcher is open, and a stale `overlayHiddenWindows` key rides along
+    // on its params (an old profile, or a caller copying the retired
+    // convention). It buys nothing: window 1 is invisible per its record and is
+    // skipped, window 2 is the overlay itself and is skipped, window 3 is
+    // visible and is saved. Pins that the side channel is inert on BOTH sides.
+    ['a stale overlayHiddenWindows key does not exempt an invisible window', {
       fixtures: [
         contentFixture(1, 'w1'),
         {
@@ -437,10 +437,12 @@ describe('session-projection — on-disk shape is byte-identical to the pre-extr
           address: 'peek://windows/windows.html',
           title: 'switcher',
         },
+        contentFixture(3, 'w3'),
       ],
       records: [
         makeRecord('w1', { visible: false, bounds: { x: 3, y: 3, width: 30, height: 30 } }),
         makeRecord('w2', { class: 'overlay', satellite: true }),
+        makeRecord('w3', { bounds: { x: 5, y: 5, width: 50, height: 50 }, focusSeq: 2 }),
       ],
     }],
 
@@ -562,19 +564,25 @@ describe('session-projection — skip rules', () => {
     assert.deepStrictEqual(urlsOf(world), ['peek://ext/known/home.html']);
   });
 
-  it('the overlay-hidden side channel defeats the visibility skip', () => {
+  it('the retired overlayHiddenWindows side channel no longer defeats the visibility skip', () => {
+    // Visibility is a machine-record question and nothing else. The switcher
+    // stopped hiding other windows in 9904f113, so the exemption that used to
+    // read this params key was retired (§5 step 11 task 6) — a leftover key
+    // from an old profile must not resurrect it, and the still-visible sibling
+    // must still be saved.
     const world: World = {
       fixtures: [
-        contentFixture(1, 'w1', { address: 'https://hidden-by-switcher.example/' }),
+        contentFixture(1, 'w1', { address: 'https://invisible.example/' }),
         {
           nativeId: 2, machineId: 'w2', source: 's',
           params: { role: 'overlay', overlayHiddenWindows: [1] },
           rawUrl: 'peek://windows/windows.html', address: 'peek://windows/windows.html', title: 'sw',
         },
+        contentFixture(3, 'w3', { address: 'https://visible.example/' }),
       ],
-      records: [makeRecord('w1', { visible: false }), makeRecord('w2')],
+      records: [makeRecord('w1', { visible: false }), makeRecord('w2'), makeRecord('w3')],
     };
-    assert.deepStrictEqual(urlsOf(world), ['https://hidden-by-switcher.example/']);
+    assert.deepStrictEqual(urlsOf(world), ['https://visible.example/']);
   });
 });
 

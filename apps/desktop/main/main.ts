@@ -35,7 +35,7 @@ import { createRuleEngine, type RuleEngine } from './rule-engine.js';
 import { listRules as rulesList, type RulesDb } from './rules.js';
 import { installDirectSendGuard, installOffPathWindowGuard, unguardedWebContentsSend } from './tile-ipc-gate.js';
 import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHeadless, getProfile, setTilePreloadPath, getTilePreloadPath, DEBUG } from './config.js';
-import { getSystemThemeBackgroundColor, showWindowHeadlessSafe } from './windows.js';
+import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import {
@@ -836,37 +836,12 @@ export async function initialize(): Promise<void> {
             DEBUG && console.log('[izui] Overlay closed due to app blur — skipping restoration (already handled)');
             coordinator.popWindow(windowId);
           } else {
-            // Fallback: ad-hoc overlay restoration for non-coordinator path (backward compat)
-            const hiddenWindowIds = windowData.params.overlayHiddenWindows as number[] | undefined;
-            const isTransient = windowData.params.transient === true;
-            if (hiddenWindowIds && hiddenWindowIds.length > 0 && !isTransient) {
-              DEBUG && console.log('[izui] Overlay closed (fallback path), restoring', hiddenWindowIds.length, 'windows');
-              for (const hiddenId of hiddenWindowIds) {
-                const hiddenWin = getLiveWindow(hiddenId);
-                if (hiddenWin) {
-                  // showInactive: activating each one would pull the user to its
-                  // Space; the explicit .focus() below selects the right target.
-                  showWindowHeadlessSafe(hiddenWin);
-                }
-              }
-              const focusTargetId = windowData.params.overlayFocusTarget as number | undefined;
-              const preOverlayTarget = coordinator.getPreOverlayFocusTarget();
-              const restoreFocusId = focusTargetId || preOverlayTarget;
-              if (restoreFocusId) {
-                const targetWin = getLiveWindow(restoreFocusId);
-                if (targetWin) {
-                  targetWin.focus();
-                } else {
-                  // Hybrid page-host (BaseWindow) — focus the host directly.
-                  const hybrid = getHybridWindow(restoreFocusId);
-                  if (hybrid && !hybrid.baseWin.isDestroyed()) hybrid.baseWin.focus();
-                }
-              }
-            } else if (isTransient && hiddenWindowIds && hiddenWindowIds.length > 0) {
-              DEBUG && console.log('[izui] Overlay closed in transient mode (fallback) - not restoring windows');
-            }
-
-            // Pop window for non-overlay path
+            // Non-overlay close. There used to be a fallback here that
+            // re-showed `params.overlayHiddenWindows` for a "non-coordinator"
+            // overlay, left behind when 9904f113 stopped the switcher hiding
+            // windows. Nothing has written that key since, so the branch could
+            // only ever be entered with an empty list — it is gone along with
+            // the rest of the side channel (§5 step 11 task 6).
             coordinator.popWindow(windowId);
           }
 
