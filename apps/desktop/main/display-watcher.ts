@@ -133,9 +133,10 @@ function projectAllWindows(reason: string): void {
 
   for (const d of decisions) {
     console.log(
-      `[display-watcher] Repositioning ${d.label} ${d.nativeId} (${d.mode}): ` +
+      `[display-watcher] Dispatching projection for ${d.label} ${d.nativeId} (${d.mode}): ` +
       `(${d.from.x},${d.from.y} ${d.from.width}x${d.from.height}) -> ` +
-      `(${d.bounds.x},${d.bounds.y} ${d.bounds.width}x${d.bounds.height})`
+      `(${d.bounds.x},${d.bounds.y} ${d.bounds.width}x${d.bounds.height}) ` +
+      `(reducer may still drop this if fullscreen/hidden/unknown)`
     );
   }
 

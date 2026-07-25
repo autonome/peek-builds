@@ -257,11 +257,13 @@ rewrite it. *(Resolution, §5 step 7A: it does NOT become "a helper the reducer 
 the reducer's zero-value-imports invariant wins. Placement rects are computed at the
 dispatch site and carried on the event payload; `computePlacement` stays where it is.)*
 
-**7. Multi-display** — TO ABSORB (partial).
-Today: `display-watcher.ts` is well-structured, but it reprojects bounds by calling
-`setBounds()` directly and never tells the reducer.
-Becomes: it emits `displayChanged` into the reducer; the reducer computes new bounds via
-`computePlacement` and emits `setBounds` effects. The watcher stops touching windows.
+**7. Multi-display** — ABSORBED (§5 step 10, Part A).
+`display-watcher.ts` no longer calls `setBounds()` directly. It reads the OS (display
+snapshot, both window registries, `getWindowInfo`), decides via the pure seam
+`display-projection.ts collectDisplayProjection()`, and dispatches ONE `DISPLAY_CHANGED`
+per pass; the reducer computes bounds and emits the `SET_BOUNDS` effects, which the port
+performs. See §5 step 10 for the full mechanism (parent-centered resolution against the
+projected rect, the `pendingProjectedBounds` fullscreen/hidden retry).
 
 **7b. macOS Spaces** — TO ABSORB.
 Today: `setVisibleOnAllWorkspaces` is write-only, never read back.
@@ -673,7 +675,8 @@ failure mode this document exists to prevent (§2).**
    `setBounds` 5→1 — allowlist 31→30 entries / 72→65 calls. Reducer suite
    222→228. Geometry writers still on the R2 list are OTHER steps' shares,
    not step-7 remainder: `hybrid-overlay.ts` overlay-follow geometry (×6,
-   step 9) and the `display-watcher.ts` reprojection clamp (step 10).
+   step 9). `display-watcher.ts` is no longer on this list at all — step 10
+   deleted its `setBounds` call outright; the module is now a pure producer.
 8. **Focus rivals.** Delete `izui-state.ts`'s focus surface and `restoreFocusGuard`; delete
    `BrowserWindow.getFocusedWindow()` from `entry.ts` and `tile-ipc.ts`. Reduce
    `izui-state.ts` to the session tri-state only.
@@ -746,6 +749,36 @@ failure mode this document exists to prevent (§2).**
    queries and its private `appActive` into reducer state.
 10. **Displays and Spaces.** Route `display-watcher.ts` through events; add the
     space-change listener that does not exist yet.
+    **Part A — Displays: DONE** (commits af540e74, 81175dfe, b8e44377, 10c79748).
+    `display-watcher.ts`'s `projectWindow()` — the direct `win.setBounds()` call
+    it ran per window — is deleted; the module is reduced to a pure producer: it
+    reads the OS (the display snapshot, the two window registries,
+    `getWindowInfo`), decides via the new pure seam `display-projection.ts
+    collectDisplayProjection()`, and dispatches ONE `DISPLAY_CHANGED` per pass
+    carrying the whole batch instead of writing bounds inline window-by-window.
+    The reducer emits the `SET_BOUNDS` effects; the port performs them (R2, the
+    single geometry funnel) (`81175dfe`). Two reducer-side fixes landed inside
+    the same cutover: `parent-centered` now resolves against the PARENT's
+    projected rect for this pass, not its pre-pass snapshot, via on-demand
+    memoized recursion (`projectOne`/`resolveParentProjectedBounds` in
+    `display-projection.ts`) — a `81175dfe` regression closed by `b8e44377`. And
+    `WindowRecord.pendingProjectedBounds` (`window-state.ts`) — a projected rect
+    the reducer now HOLDS instead of discarding when `DISPLAY_CHANGED` lands on
+    a window that is fullscreen or hidden, flushed by `flushPendingProjection`
+    from every transition that lifts one blocking axis (the `→ normal` fsMode
+    transitions, `WINDOW_SHOWN`), emitted only once BOTH axes clear (`10c79748`)
+    — closes a stranding gap the old inline `projectWindow()` walk had no retry
+    mechanism for at all. R2: the `display-watcher.ts setBounds` allowlist entry
+    is gone outright (28 entries / 56 calls, unchanged since). Tests:
+    `display-projection.test.ts` (ordering, parent resolution, drops, purity) +
+    `window-state.test.ts`'s `DISPLAY_CHANGED` describe (deferred/flush cases);
+    270 pass, 0 fail across both files. `tsc --noEmit` clean.
+    **Part B — Spaces: NOT done, machinery inert.**
+    `WindowRecord.visibleOnAllSpaces` and `SET_VISIBLE_ON_ALL_SPACES_REQUESTED`
+    exist in `window-state.ts` (`af540e74`), but nothing dispatches the event and
+    nothing reads the field: `setVisibleOnAllWorkspaces` is not routed through
+    the port, and the Space-change listener this item calls for does not exist.
+    Still to do.
 11. **Session save / restore. Last.** Worst regression history in the app, and the one
     place doing bulk z-order plus focus as a single sweep.
 
