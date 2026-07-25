@@ -1,7 +1,7 @@
 /**
  * Display Change Watcher
  *
- * Listens for display configuration changes and re-projects every visible
+ * Listens for display configuration changes and re-projects every live
  * window's placement intent through the pure engine in
  * `window-placement.ts`. Per the placement spec
  * (docs/window-placement.md):
@@ -20,81 +20,57 @@
  * - No "stranded rescue" pass. The placement engine projects onto a
  *   present display (own or primary) for every mode, so windows cannot
  *   end up off-screen by construction.
+ *
+ * THIS MODULE NO LONGER TOUCHES WINDOWS (window-manager.md §5 step 10). It is
+ * a pure PRODUCER: it reads the OS (the display layout, the two window
+ * registries, the open-time params), decides via `display-projection.ts` who
+ * moves and where, and dispatches ONE `DISPLAY_CHANGED` carrying the batch.
+ * The state machine emits the `SET_BOUNDS` effects and the port performs them
+ * — the single geometry funnel (R2). `dispatchWindowEvent` drains its queue
+ * before returning, so an add/remove pass is still synchronous end to end.
  */
 
 import { BrowserWindow, screen } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import { getAllHybridWindows, getHybridWindow } from './hybrid-page-host-registry.js';
 import { getWindowInfo } from './main.js';
-import { DEBUG, WEB_CORE_ADDRESS } from './config.js';
-import { computePlacement, type Placement } from './window-placement.js';
+import { DEBUG } from './config.js';
+import { collectDisplayProjection, type ProjectionWindow } from './display-projection.js';
+import { dispatchWindowEvent, getWindowIdFor } from './window-state-singleton.js';
 
 /**
- * Minimal shape `projectWindow` needs. `BrowserWindow` and the hybrid
- * page-host's `BaseWindow` both satisfy this structurally (`BrowserWindow
- * extends BaseWindow`), so one projection path drives both without either
- * type having to pretend to be the other.
+ * Resolve the bounds of a `parent-centered` placement's parent. The parent may
+ * be a plain window (`window-registry`) or a hybrid page-host
+ * (`hybrid-page-host-registry`) — checked in that order since the two
+ * registries cover disjoint id spaces.
  */
-type PositionableWindow = Pick<Electron.BaseWindow, 'getBounds' | 'setBounds' | 'isVisible'>;
-
-/**
- * Resolve the bounds of a placement's `parentId` for `parent-centered`
- * mode. The parent may be a plain window (`window-registry`) or a hybrid
- * page-host (`hybrid-page-host-registry`) — checked in that order since the
- * two registries cover disjoint id spaces.
- */
-function resolveParentBounds(placement: Placement): Electron.Rectangle | undefined {
-  if (placement.mode !== 'parent-centered') return undefined;
-  const parent = getLiveWindow(placement.parentId);
+function resolveParentBounds(parentId: number): Electron.Rectangle | undefined {
+  const parent = getLiveWindow(parentId);
   if (parent) return parent.getBounds();
-  const hybridParent = getHybridWindow(placement.parentId);
+  const hybridParent = getHybridWindow(parentId);
   return hybridParent ? hybridParent.baseWin.getBounds() : undefined;
 }
 
 /**
- * Project one window's (or hybrid page-host's) placement intent onto the
- * live display layout and apply the result. Shared by both the plain-window
- * and hybrid-window passes in `projectAllWindows` — same lookup
- * (`getWindowInfo`), same filters (background window, no placement), same
- * `computePlacement` call. Returns true if the window was repositioned.
+ * Every live window as a projection candidate: plain windows first, then
+ * hybrid page-hosts. Hybrid hosts are invisible to `getAllLiveWindows()` — it
+ * only knows `BrowserWindow`s (see that registry's module doc) — so they are
+ * gathered separately and run through the same placement math, which is what
+ * makes display add/remove/rescale reposition them too.
+ *
+ * No `isVisible()` filter: the machine's own `visible` mirror answers that
+ * inside the reducer, so asking the OS here would be a second authority for
+ * one question (design §3).
  */
-function projectWindow(
-  id: number,
-  win: PositionableWindow,
-  displays: Electron.Display[],
-  primaryDisplayId: number,
-  label: string,
-): boolean {
-  if (!win.isVisible()) return false;
-
-  const entry = getWindowInfo(id);
-  // Skip the background window — never positioned, never visible.
-  if (!entry || entry.params.address === WEB_CORE_ADDRESS) return false;
-  const placement = entry.params.placement as Placement | undefined;
-  if (!placement) return false;
-
-  const bounds = win.getBounds();
-  const parentBounds = resolveParentBounds(placement);
-
-  const result = computePlacement({
-    placement,
-    currentBounds: bounds,
-    windowSize: { width: bounds.width, height: bounds.height },
-    displays,
-    primaryDisplayId,
-    parentBounds,
-  });
-
-  if (result.kind === 'reposition') {
-    console.log(
-      `[display-watcher] Repositioning ${label} ${id} (${placement.mode}): ` +
-      `(${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}) -> ` +
-      `(${result.bounds.x},${result.bounds.y} ${result.bounds.width}x${result.bounds.height})`
-    );
-    win.setBounds(result.bounds);
-    return true;
+function collectCandidates(): ProjectionWindow[] {
+  const windows: ProjectionWindow[] = [];
+  for (const win of getAllLiveWindows()) {
+    windows.push({ nativeId: win.id, label: 'window', bounds: win.getBounds() });
   }
-  return false;
+  for (const hybrid of getAllHybridWindows()) {
+    windows.push({ nativeId: hybrid.windowId, label: 'hybrid window', bounds: hybrid.baseWin.getBounds() });
+  }
+  return windows;
 }
 
 /** Coalesce metrics-changed events. Add/remove are synchronous. */
@@ -102,9 +78,9 @@ let _metricsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const METRICS_DEBOUNCE_MS = 50;
 
 /**
- * Project every visible window's placement intent onto the live display
- * layout and apply the result. Called synchronously on add/remove and
- * after a small coalescing window on metrics-changed.
+ * Project every live window's placement intent onto the live display layout
+ * and dispatch the batch. Called synchronously on add/remove and after a small
+ * coalescing window on metrics-changed.
  */
 function projectAllWindows(reason: string): void {
   const displays = screen.getAllDisplays();
@@ -116,26 +92,40 @@ function projectAllWindows(reason: string): void {
     `primary=${primaryDisplayId}`
   );
 
-  let placedCount = 0;
+  const decisions = collectDisplayProjection(
+    {
+      windows: collectCandidates(),
+      getWindowInfo,
+      getMachineId: (nativeId) => getWindowIdFor(nativeId),
+      getParentBounds: resolveParentBounds,
+    },
+    displays,
+    primaryDisplayId,
+  );
 
-  for (const win of getAllLiveWindows()) {
-    if (projectWindow(win.id, win, displays, primaryDisplayId, 'window')) placedCount++;
-  }
-
-  // Hybrid page-host windows (BaseWindow + WebContentsView, tracked in
-  // hybrid-page-host-registry.ts) are invisible to getAllLiveWindows() — it
-  // only knows BrowserWindows (see that registry's module doc). Project them
-  // through the same placement math so display add/remove/rescale repositions
-  // them too.
-  for (const hybrid of getAllHybridWindows()) {
-    if (projectWindow(hybrid.windowId, hybrid.baseWin, displays, primaryDisplayId, 'hybrid window')) placedCount++;
-  }
-
-  if (placedCount > 0) {
-    console.log(`[display-watcher] Repositioned ${placedCount} window(s)`);
-  } else {
+  if (decisions.length === 0) {
     DEBUG && console.log('[display-watcher] No windows needed repositioning');
+    return;
   }
+
+  for (const d of decisions) {
+    console.log(
+      `[display-watcher] Repositioning ${d.label} ${d.nativeId} (${d.mode}): ` +
+      `(${d.from.x},${d.from.y} ${d.from.width}x${d.from.height}) -> ` +
+      `(${d.bounds.x},${d.bounds.y} ${d.bounds.width}x${d.bounds.height})`
+    );
+  }
+
+  // ONE event for the whole pass — the machine decides which entries survive
+  // (unknown / hidden / non-normal fsMode are dropped there) and emits the
+  // SET_BOUNDS effects. Dispatch is synchronous, so the add/remove path keeps
+  // its no-deferred-reposition guarantee.
+  dispatchWindowEvent({
+    type: 'DISPLAY_CHANGED',
+    projected: decisions.map(({ id, bounds }) => ({ id, bounds })),
+  });
+
+  console.log(`[display-watcher] Dispatched reprojection for ${decisions.length} window(s)`);
 }
 
 /** Coalescing handler for metrics-changed events. */

@@ -118,8 +118,6 @@ const ALLOWLIST = [
   // ── Real pre-R2 violations: direct window ops awaiting migration ─────────
   // Each is scheduled by a window-manager.md §5 step; delete or decrement the
   // entry in the same commit that routes the call through the executor.
-  { file: 'apps/desktop/main/display-watcher.ts', call: 'setBounds', count: 1,
-    why: 'clamp window back on-screen after display change — displays, §5 step 10' },
   { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'setAlwaysOnTop', count: 4,
     why: 'overlay z-pinning (initOverlay/app-active gate/attach) — overlay retarget, §5 step 9' },
   { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'hide', count: 4,
