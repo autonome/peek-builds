@@ -61,14 +61,31 @@ function resolveParentBounds(parentId: number): Electron.Rectangle | undefined {
  * No `isVisible()` filter: the machine's own `visible` mirror answers that
  * inside the reducer, so asking the OS here would be a second authority for
  * one question (design §3).
+ *
+ * `getBounds()` runs here, BEFORE `getWindowInfo`/placement filter this list
+ * down in `collectDisplayProjection`, and `getAllHybridWindows()` (unlike
+ * `getAllLiveWindows()`) does not filter destroyed entries. A window that has
+ * gone away between the registry snapshot and this call would otherwise throw
+ * mid-loop and lose the ENTIRE projection pass for every other window. Guard
+ * `isDestroyed()` and wrap the read so one bad window is skipped, not fatal.
  */
 function collectCandidates(): ProjectionWindow[] {
   const windows: ProjectionWindow[] = [];
   for (const win of getAllLiveWindows()) {
-    windows.push({ nativeId: win.id, label: 'window', bounds: win.getBounds() });
+    try {
+      if (win.isDestroyed()) continue;
+      windows.push({ nativeId: win.id, label: 'window', bounds: win.getBounds() });
+    } catch (err) {
+      console.error(`[display-watcher] Skipping window ${win.id} — getBounds() failed:`, err);
+    }
   }
   for (const hybrid of getAllHybridWindows()) {
-    windows.push({ nativeId: hybrid.windowId, label: 'hybrid window', bounds: hybrid.baseWin.getBounds() });
+    try {
+      if (hybrid.baseWin.isDestroyed()) continue;
+      windows.push({ nativeId: hybrid.windowId, label: 'hybrid window', bounds: hybrid.baseWin.getBounds() });
+    } catch (err) {
+      console.error(`[display-watcher] Skipping hybrid window ${hybrid.windowId} — getBounds() failed:`, err);
+    }
   }
   return windows;
 }

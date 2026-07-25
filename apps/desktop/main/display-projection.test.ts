@@ -199,6 +199,78 @@ describe('collectDisplayProjection — the display-change dispatch-site translat
     assert.deepStrictEqual(decisions[0].bounds, { x: 200, y: 250, width: 200, height: 100 });
   });
 
+  it('centers a parent-centered child on its parent\'s PROJECTED rect when the parent also reprojects in the same pass (the collect-then-dispatch regression)', () => {
+    // Child listed BEFORE its parent — proves resolution is dependency-order
+    // (parent before child), not `sources.windows` array order. Pre-fix, this
+    // read the parent's pre-pass snapshot (OFF_CENTER) instead of where the
+    // parent is actually landing (CENTERED) in this very pass.
+    const child = win(20, { bounds: { x: 50, y: 50, width: 100, height: 50 } });
+    const parent = win(10, { bounds: OFF_CENTER });
+    const s = sources([child, parent], {
+      getWindowInfo: (nativeId) => ({
+        params: {
+          address: `peek://w/${nativeId}`,
+          placement: nativeId === 20 ? { mode: 'parent-centered', parentId: 10 } : { mode: 'centered' },
+        },
+      }),
+      getParentBounds: () => {
+        throw new Error('must not fall back to the snapshot accessor — the parent is a candidate this pass');
+      },
+    });
+    const decisions = run(s);
+    assert.deepStrictEqual(decisions.map((d) => d.id), [wid(20), wid(10)], 'array order preserved');
+    const parentProjected = CENTERED; // where the 200x100 parent lands, centered on ONE_DISPLAY
+    assert.deepStrictEqual(decisions[0].bounds, {
+      x: parentProjected.x + Math.round((parentProjected.width - 100) / 2),
+      y: parentProjected.y + Math.round((parentProjected.height - 50) / 2),
+      width: 100,
+      height: 50,
+    });
+    assert.deepStrictEqual(decisions[1].bounds, parentProjected);
+  });
+
+  it('centers a parent-centered child on the parent\'s (unchanged) bounds when the parent does not move', () => {
+    const child = win(20, { bounds: { x: 0, y: 0, width: 100, height: 50 } });
+    const parent = win(10, { bounds: CENTERED }); // already settled — computePlacement reports no-change
+    const s = sources([parent, child], {
+      getWindowInfo: (nativeId) => ({
+        params: {
+          address: `peek://w/${nativeId}`,
+          placement: nativeId === 20 ? { mode: 'parent-centered', parentId: 10 } : { mode: 'centered' },
+        },
+      }),
+      getParentBounds: () => {
+        throw new Error('must not fall back — the parent is a candidate, just a settled one');
+      },
+    });
+    const decisions = run(s);
+    // Only the child moves; the settled parent contributes no decision.
+    assert.deepStrictEqual(decisions.map((d) => d.id), [wid(20)]);
+    assert.deepStrictEqual(decisions[0].bounds, {
+      x: CENTERED.x + Math.round((CENTERED.width - 100) / 2),
+      y: CENTERED.y + Math.round((CENTERED.height - 50) / 2),
+      width: 100,
+      height: 50,
+    });
+  });
+
+  it('falls back to the injected snapshot accessor for a parent-centered child whose parent is absent from the candidate set', () => {
+    const asked: number[] = [];
+    const child = win(20, { bounds: { x: 0, y: 0, width: 100, height: 50 } });
+    const s = sources([child], {
+      getWindowInfo: () => ({
+        params: { address: 'peek://w/20', placement: { mode: 'parent-centered', parentId: 999 } },
+      }),
+      getParentBounds: (parentId) => {
+        asked.push(parentId);
+        return { x: 300, y: 300, width: 400, height: 400 };
+      },
+    });
+    const decisions = run(s);
+    assert.deepStrictEqual(asked, [999], 'no candidate has nativeId 999, so the accessor is consulted');
+    assert.deepStrictEqual(decisions[0].bounds, { x: 300 + 150, y: 300 + 175, width: 100, height: 50 });
+  });
+
   it('a parent-centered window whose parent is gone still projects (engine falls back to primary)', () => {
     // The lookup returning undefined is the destroyed-parent case, and it is
     // NOT a drop here: `computePlacement` documents the fallback (primary

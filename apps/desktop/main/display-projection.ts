@@ -99,27 +99,75 @@ export interface ProjectionDecision {
  *
  * Order is preserved: decisions come out in `sources.windows` order, which is
  * the order the resulting `SET_BOUNDS` effects run in.
+ *
+ * `parent-centered` and dependency order: this pass is a single collect over
+ * a pre-pass bounds snapshot (`sources.windows[].bounds`), not the old
+ * inline walk that moved windows one at a time. That means a naive per-window
+ * read of `sources.getParentBounds()` would center a child on where its
+ * parent WAS, even when the parent is itself reprojecting in this exact
+ * pass — a stale-read regression the old code never had (it usually
+ * processed a parent before its child, since `getAllLiveWindows()` returns
+ * creation order). `resolveParentProjectedBounds` below fixes this by
+ * resolving a parent-centered child against its parent's PROJECTED rect —
+ * computed on demand, memoized, so dependency order (parent before child)
+ * holds regardless of `sources.windows` order. When the parent isn't a
+ * candidate in this pass at all (destroyed / never registered), or plainly
+ * didn't move, its resolved bounds fall back to the live snapshot via
+ * `sources.getParentBounds()` — the same rect the old code would have read.
  */
 export function collectDisplayProjection(
   sources: ProjectionSources,
   displays: Electron.Display[],
   primaryDisplayId: number,
 ): ProjectionDecision[] {
-  const decisions: ProjectionDecision[] = [];
+  const byNativeId = new Map<number, ProjectionWindow>();
+  for (const win of sources.windows) byNativeId.set(win.nativeId, win);
 
-  for (const win of sources.windows) {
+  /** One window's outcome: its post-pass bounds, plus a decision iff it moved. */
+  interface Projected {
+    bounds: Rectangle;
+    decision?: ProjectionDecision;
+  }
+
+  // Memoized per native id so a parent shared by several children (or itself
+  // parent-centered on a grandparent) is computed exactly once, and always
+  // before the first child that reads it.
+  const resolved = new Map<number, Projected>();
+  // Guards a pathological parent-centered cycle (A centers on B, B on A):
+  // treated as "parent absent" rather than recursed forever.
+  const resolving = new Set<number>();
+
+  function resolveParentProjectedBounds(parentId: number): Rectangle | undefined {
+    const parentWin = byNativeId.get(parentId);
+    if (!parentWin || resolving.has(parentId)) return sources.getParentBounds(parentId);
+    return projectOne(parentWin).bounds;
+  }
+
+  function projectOne(win: ProjectionWindow): Projected {
+    const cached = resolved.get(win.nativeId);
+    if (cached) return cached;
+
+    resolving.add(win.nativeId);
+    const result = computeOne(win);
+    resolving.delete(win.nativeId);
+
+    resolved.set(win.nativeId, result);
+    return result;
+  }
+
+  function computeOne(win: ProjectionWindow): Projected {
     const entry = sources.getWindowInfo(win.nativeId);
     // Skip the background window — never positioned, never visible.
-    if (!entry || entry.params.address === WEB_CORE_ADDRESS) continue;
+    if (!entry || entry.params.address === WEB_CORE_ADDRESS) return { bounds: win.bounds };
 
     const placement = entry.params.placement as Placement | undefined;
-    if (!placement) continue;
+    if (!placement) return { bounds: win.bounds };
 
     const id = sources.getMachineId(win.nativeId);
-    if (id == null) continue;
+    if (id == null) return { bounds: win.bounds };
 
     const parentBounds =
-      placement.mode === 'parent-centered' ? sources.getParentBounds(placement.parentId) : undefined;
+      placement.mode === 'parent-centered' ? resolveParentProjectedBounds(placement.parentId) : undefined;
 
     const result = computePlacement({
       placement,
@@ -130,16 +178,25 @@ export function collectDisplayProjection(
       parentBounds,
     });
 
-    if (result.kind !== 'reposition') continue;
+    if (result.kind !== 'reposition') return { bounds: win.bounds };
 
-    decisions.push({
-      id,
+    return {
       bounds: result.bounds,
-      from: win.bounds,
-      label: win.label,
-      nativeId: win.nativeId,
-      mode: placement.mode,
-    });
+      decision: {
+        id,
+        bounds: result.bounds,
+        from: win.bounds,
+        label: win.label,
+        nativeId: win.nativeId,
+        mode: placement.mode,
+      },
+    };
+  }
+
+  const decisions: ProjectionDecision[] = [];
+  for (const win of sources.windows) {
+    const { decision } = projectOne(win);
+    if (decision) decisions.push(decision);
   }
 
   return decisions;
