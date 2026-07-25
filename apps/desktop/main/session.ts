@@ -13,7 +13,7 @@ import { BrowserWindow, dialog, screen, ipcMain } from 'electron';
 import type { IpcMainEvent } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
-import { getFocusOrder, getFrontWindowId, getWindowIdFor, getNativeWindowFor, dispatchWindowEvent } from './window-state-singleton.js';
+import { getFocusOrder, getFrontWindowId, getWindowIdFor, getNativeWindowFor, getMachineWindowRecord, dispatchWindowEvent } from './window-state-singleton.js';
 import type { WindowId } from './window-state.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
@@ -479,6 +479,39 @@ function sanitizeParams(params: Record<string, unknown>): Record<string, unknown
 }
 
 /**
+ * Machine-authoritative visibility for a save-path window, keyed by the
+ * Electron window id the save loops still iterate.
+ *
+ * `WindowRecord.visible` has been the authority since §5 step 6: the adapter
+ * seeds it from the native window at registration (`pumpShownEvent`, for
+ * windows born visible with no `'show'` transition) and the backend's
+ * `'show'`/`'hide'` listeners maintain it thereafter — including the macOS
+ * lagged-`hide` filter for BaseWindows, which the raw `isVisible()` reads this
+ * replaces did not have. Asking the OS again here is a second source of truth
+ * for a fact the machine already owns.
+ *
+ * NO-RECORD FALLBACK = `true` (treat as visible → save the window). Every id
+ * these loops see comes from `getAllWindows()`, which is itself projected from
+ * live machine records, so "registered window, no record" is only reachable if
+ * a window retires between that projection and this read. The two ways to be
+ * wrong are not symmetric: defaulting to `false` SKIPS the window and silently
+ * drops a user's window from the restored session (unrecoverable at restore
+ * time), while defaulting to `true` at worst leaves one stale entry that
+ * restore reopens. Erring toward saving is also safe for the save-set
+ * baseline, because nothing that must stay OUT of the snapshot is kept out by
+ * visibility: the background page is excluded by URL, and overlays / modals /
+ * non-focusable utility windows by their params — checks that never consult
+ * this value. (The shared chrome overlay never even reaches the loop: it
+ * registers with the machine carrying no `source`/`params`, so
+ * `getAllWindows()` drops it.)
+ */
+function isWindowVisiblePerMachine(electronWindowId: number): boolean {
+  const wmId = getWindowIdFor(electronWindowId);
+  const rec = wmId != null ? getMachineWindowRecord(wmId) : undefined;
+  return rec ? rec.visible : true;
+}
+
+/**
  * Save a snapshot of all visible user windows to the datastore.
  *
  * MUST be synchronous — runs in the before-quit handler before closeDatabase().
@@ -569,14 +602,16 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     let earlyUrl: string;
     if (hybridEntry) {
       earlyDestroyed = hybridEntry.baseWin.isDestroyed();
-      // A destroyed baseWin's isVisible() throws; guard it.
-      earlyVisible = earlyDestroyed ? false : hybridEntry.baseWin.isVisible();
+      // Visibility comes from the machine record, not the baseWin — see
+      // `isWindowVisiblePerMachine`. The destroyed short-circuit stays: a
+      // retired window is skipped regardless of the last mirrored visibility.
+      earlyVisible = earlyDestroyed ? false : isWindowVisiblePerMachine(id);
       // A hybrid window is never the background page; its content URL is safe
       // for the background-URL skip (it can never match background.html).
       earlyUrl = earlyDestroyed ? '' : hybridEntry.url();
     } else if (win) {
       earlyDestroyed = false;
-      earlyVisible = win.isVisible();
+      earlyVisible = isWindowVisiblePerMachine(id);
       earlyUrl = win.webContents.getURL();
     } else {
       // Neither a live BrowserWindow nor a hybrid entry — destroyed/unknown.
@@ -1780,7 +1815,9 @@ export function saveSpaceWorkspaces(): void {
 
   for (const [id] of registeredWindows) {
     const win = getLiveWindow(id);
-    if (!win || !win.isVisible()) continue;
+    // Liveness from Electron, visibility from the machine record
+    // (`isWindowVisiblePerMachine` — no OS visibility read on the save path).
+    if (!win || !isWindowVisiblePerMachine(id)) continue;
 
     const rawUrl = win.webContents.getURL();
     if (rawUrl.includes('peek://app/background.html')) continue;
