@@ -233,10 +233,13 @@ fields now, hybrid maximize is fully machine-owned. The generic BrowserWindow
 maximize IPC is machine-owned and the `params` `preMaxX/Y/W/H`/`maximized`
 bags as in-memory authority are DELETED — §5 step 7C: `tile-ipc.ts`'s
 maximize/unmaximize/update-canvas-state dispatch machine events and the
-`isMaximized()` distrust block is gone. `preMaxX/Y/W/H` keys survive only as
-persisted-snapshot/open-options FORMAT (session save writes them from the
-presenter; reopen/restore reads them to seed `MAXIMIZE_RESTORED`) until the
-session read-model step. The geometry READ model is machine-owned — §5 step
+`isMaximized()` distrust block is gone. `preMaxX/Y/W/H` keys survived only as
+persisted-snapshot/open-options FORMAT (session save wrote them from the
+presenter; reopen/restore read them to seed `MAXIMIZE_RESTORED`) until the
+session read-model step, which landed at §5 step 11 task 5: the four flat keys
+collapsed into one nested `preMaxBounds` field, read tolerantly
+(`session-projection.ts readPreMaxBounds`) so a pre-collapse snapshot still
+restores. The geometry READ model is machine-owned — §5 step
 7D: presenter/close-capture/session-save read the reducer through the ONE
 restorable-geometry rule (`window-presenter.ts getRestorableBounds`:
 fullscreen → `fsMode.preBounds`, else the `bounds` mirror), live reads
@@ -509,6 +512,12 @@ failure mode this document exists to prevent (§2).**
      `showInactive`, the quick-view NSPanel non-activation mask) and echoes
      `WINDOW_SHOWN` with the unmasked intent; the `windows.ts` show seams
      (`showWindowHeadlessSafe`, `showHybridHost`) are thin dispatchers.
+     **Known asymmetry:** `raiseWindow` (the front assertion's own show/raise/
+     activate path — §5 step 5) has no matching quick-view mask; it activates
+     a page-host under plain `!isHeadless()` regardless of window class.
+     Currently unreachable (`session.ts` never restores a quick-view host, and
+     `raiseWindow` is already the front assertion's path), but it is a real gap
+     between the two show paths, worth recording rather than leaving to memory.
    - **6A-3** (baa51bda): keepLive producers — `closeOrHideWindow` (both window
      kinds) and the tile-launcher `close` intercept dispatch the intent; the
      `windows.ts` hand-dispatched `WINDOW_HIDDEN` died.
@@ -634,12 +643,15 @@ failure mode this document exists to prevent (§2).**
    no in-app path produces that state); a maximized-then-natively-resized
    BrowserWindow keeps its original stash (generic windows have no
    resize-exits-maximize reconciler — that producer exists only on the
-   hybrid path). Persisted-snapshot FORMAT untouched: `session.ts` still
-   writes `preMaxX/Y/Width/Height`+`maximized` keys (from the presenter)
-   and reopen/restore still threads them as open options into the
-   `ipc.ts` `MAXIMIZE_RESTORED` seed; `ipc.ts windowParams` still carries
-   the open-time `maximized` passthrough (write-only — no in-memory
-   reader remains; dies with the session read-model cutover). R2:
+   hybrid path). Persisted-snapshot FORMAT untouched at this step:
+   `session.ts` still wrote `preMaxX/Y/Width/Height`+`maximized` keys (from the
+   presenter) and reopen/restore still threaded them as open options into the
+   `ipc.ts` `MAXIMIZE_RESTORED` seed — the four flat keys later collapsed into
+   one nested `preMaxBounds` field at §5 step 11 task 5; `maximized` stayed a
+   flat boolean throughout, matching `WindowRecord.maximized`. `ipc.ts
+   windowParams` still carries the open-time `maximized` passthrough
+   (write-only — no in-memory reader remains; dies with the session
+   read-model cutover). R2:
    `tile-ipc.ts` `setBounds` 5→3, `unmaximize` entry (×2) deleted —
    allowlist 32→31 entries.
    **Part D — geometry READ-model cutover: DONE.** Presenter, close-capture
@@ -648,9 +660,11 @@ failure mode this document exists to prevent (§2).**
    `window-presenter.ts getRestorableBounds(machineId)` — fullscreen episode
    → `fsMode.preBounds` (the aa34cb50 lookalike trap, previously a presenter
    special case); else the machine's `bounds` mirror, which while maximized
-   IS the maximized rect, persisted alongside `maximized` +
-   `preMaxX/Y/Width/Height` exactly as the session format expects (restore
-   re-seeds via `MAXIMIZE_RESTORED`, 7C). Cutovers, each keeping the live
+   IS the maximized rect, persisted at this step alongside `maximized` +
+   `preMaxX/Y/Width/Height` exactly as the session format then expected
+   (restore re-seeds via `MAXIMIZE_RESTORED`, 7C) — the four flat keys later
+   collapsed into one nested `preMaxBounds` field at §5 step 11 task 5.
+   Cutovers, each keeping the live
    read only as the fallback for a machine-unseen window (tripwire-hunted):
    - `window-presenter.ts getLivePresentation` — machine bounds via the rule;
      the hardcoded `maximized:false`/`preMaxBounds:null` for generic
@@ -661,9 +675,10 @@ failure mode this document exists to prevent (§2).**
    - `main.ts` `'close'` capture (`lastBounds`) and `ipc.ts`
      `captureHybridClose` (`hybridLastBounds`) — the undo-close raw-bounds
      fallbacks read the machine via the rule.
-   Persisted-snapshot FORMAT untouched (session.ts still writes the same
-   keys from the presenter). R2 allowlist unchanged (31 entries / 72 calls —
-   the check tracks op calls, not reads).
+   Persisted-snapshot FORMAT untouched at this step (session.ts still wrote
+   the same keys from the presenter; collapsed later at §5 step 11 task 5).
+   R2 allowlist unchanged (31 entries / 72 calls — the check tracks op calls,
+   not reads).
    **Part E — remaining geometry-write cutover: DONE. Step 7 is DONE.**
    One new inbound event closes the write side:
    `SET_BOUNDS_REQUESTED {id, bounds}` (`window-state.ts`) — the plain
@@ -812,6 +827,23 @@ failure mode this document exists to prevent (§2).**
     ever actually observed.
 11. **Session save / restore. Last.** Worst regression history in the app, and the one
     place doing bulk z-order plus focus as a single sweep.
+    **Task 5 — the descriptor's pre-maximize rect collapses to one nested field: DONE.**
+    A saved descriptor's `params` bag carried the pre-maximize rect as four flat numbers
+    (`preMaxX`/`preMaxY`/`preMaxWidth`/`preMaxHeight`); it now rides as one nested
+    `params.preMaxBounds` field, named exactly as the machine record names it
+    (`WindowRecord.preMaxBounds`). `params.maximized` stays a flat boolean, mirroring
+    `WindowRecord.maximized`. Migration: tolerant read, new shape on write — no one-shot
+    rewrite pass over stored snapshots, because `session.ts saveSessionSnapshot()`
+    already overwrites the whole snapshot row (`INSERT OR REPLACE INTO feature_settings
+    ... VALUES ('session-snapshot', ...)`), so every stored row converts after one
+    autosave cycle. `session-projection.ts readPreMaxBounds()` owns the tolerant read;
+    its flat-bag branch exists only to absorb pre-collapse snapshots and can be deleted
+    once those have aged out. **Known gap:** the tolerant-read seam is pinned only at
+    the function level — no test drives a genuine pre-collapse ON-DISK snapshot through
+    restore; the `readPreMaxBounds` suite in `session-projection.test.ts` exercises the
+    function directly. Risk is low because `session.ts stripKeys` is an explicit
+    deny-list that does not name these keys, so they are not at risk of being silently
+    dropped on the way through.
 
 **Live verification is mandatory at every seam cutover that touches focus.** macOS
 first-responder behavior is **unobservable in headless tests** and a green headless suite
