@@ -36,6 +36,10 @@
  * pins it against a verbatim transcription of the pre-extraction loop and
  * compares the JSON TEXT (which is literally what lands in the
  * `feature_settings` row), not just a deep-equal.
+ *
+ * This module owns BOTH directions of one piece of that shape: the maximize
+ * state a descriptor carries. `serializeSession` writes it; `readPreMaxBounds`
+ * reads it back for the window-open path.
  */
 
 import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
@@ -154,6 +158,44 @@ export function restorableBoundsFromRecord(rec: WindowRecord | undefined): Elect
   const preFullScreenBounds = rec.fsMode.name === 'normal' ? null : rec.fsMode.preBounds;
   if (preFullScreenBounds) return preFullScreenBounds;
   return rec.bounds ?? null;
+}
+
+/**
+ * Read a saved descriptor's pre-maximize rect back out of its params bag.
+ *
+ * The written shape is one nested field, `preMaxBounds`, named exactly as the
+ * machine record names it (`WindowRecord.preMaxBounds`). It is present only
+ * alongside `maximized: true` and only when a rect was actually stashed.
+ *
+ * The second branch reads the four flat numbers snapshots carried before that
+ * collapse (`preMaxX`/`preMaxY`/`preMaxWidth`/`preMaxHeight`). It exists ONLY
+ * to absorb those older snapshots: session save rewrites the whole snapshot row
+ * on every autosave, so one save cycle after this shipped every stored snapshot
+ * already uses the nested field. Delete the branch once pre-collapse profiles
+ * have aged out.
+ *
+ * Returns null when neither shape is present or complete — "maximized with no
+ * restorable rect", which the reducer accepts as a `MAXIMIZE_RESTORED` seed.
+ */
+export function readPreMaxBounds(params: Record<string, unknown>): Electron.Rectangle | null {
+  const nested = params.preMaxBounds as Partial<Electron.Rectangle> | null | undefined;
+  if (
+    nested != null && typeof nested === 'object'
+    && typeof nested.x === 'number' && typeof nested.y === 'number'
+    && typeof nested.width === 'number' && typeof nested.height === 'number'
+  ) {
+    return { x: nested.x, y: nested.y, width: nested.width, height: nested.height };
+  }
+  // Pre-collapse snapshots only — see above.
+  const x = params.preMaxX, y = params.preMaxY;
+  const width = params.preMaxWidth, height = params.preMaxHeight;
+  if (
+    typeof x === 'number' && typeof y === 'number'
+    && typeof width === 'number' && typeof height === 'number'
+  ) {
+    return { x, y, width, height };
+  }
+  return null;
 }
 
 /**
@@ -344,28 +386,37 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
     // registry, not the general window-registry params). The machine record
     // is always live, so it — not the pass-through — is authoritative here;
     // explicitly set both branches rather than only adding the true case.
-    // (Collapsing this flat preMax* bag into the descriptor proper is §5
-    // step 11 task 5; the format is deliberately untouched here.)
     if (canvasMaximized) {
       sanitized.maximized = true;
-      // Pre-maximize bounds ride along as flat primitives (mirroring the old
-      // canvas info.params.preMaxX/Y/Width/Height convention) so they survive
-      // sanitizeParams and are available on restore to seed the hybrid
-      // registry — letting an unmaximize after restore land back at the
-      // original pre-maximize size instead of the maximized work-area rect.
+      // The pre-maximize rect the window unmaximizes back to, written as ONE
+      // nested field named as the machine record names it (§5 step 11 task 5 —
+      // it used to be four flat numbers, preMaxX/Y/Width/Height). Restore
+      // threads it back through the window-open path (`readPreMaxBounds`) to
+      // seed the machine, so an unmaximize after restore lands at the original
+      // pre-maximize size instead of the maximized work-area rect. Set AFTER
+      // `sanitizeParams`, which drops objects.
       if (preMaxBounds) {
-        sanitized.preMaxX = preMaxBounds.x;
-        sanitized.preMaxY = preMaxBounds.y;
-        sanitized.preMaxWidth = preMaxBounds.width;
-        sanitized.preMaxHeight = preMaxBounds.height;
+        sanitized.preMaxBounds = {
+          x: preMaxBounds.x,
+          y: preMaxBounds.y,
+          width: preMaxBounds.width,
+          height: preMaxBounds.height,
+        };
+      } else {
+        delete sanitized.preMaxBounds;
       }
     } else {
       delete sanitized.maximized;
-      delete sanitized.preMaxX;
-      delete sanitized.preMaxY;
-      delete sanitized.preMaxWidth;
-      delete sanitized.preMaxHeight;
+      delete sanitized.preMaxBounds;
     }
+    // A restored window carries its snapshot's params forward, so the flat bag
+    // from a pre-collapse snapshot can ride back in through the pass-through.
+    // Drop it unconditionally: a newly written snapshot only ever carries the
+    // nested field. Delete with the rest of the pre-collapse read support.
+    delete sanitized.preMaxX;
+    delete sanitized.preMaxY;
+    delete sanitized.preMaxWidth;
+    delete sanitized.preMaxHeight;
 
     windowDescriptors.push({
       url: realUrl,

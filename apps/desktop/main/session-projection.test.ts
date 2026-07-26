@@ -14,6 +14,16 @@
  *
  * The oracle is deliberately dumb and duplicated. It is not shared code and
  * must never be "simplified" to call the implementation.
+ *
+ * DELIBERATE SHAPE CHANGE (§5 step 11 task 5): a maximized descriptor's
+ * pre-maximize rect used to be four flat numbers in `params`
+ * (`preMaxX`/`preMaxY`/`preMaxWidth`/`preMaxHeight`); it is now one nested
+ * `params.preMaxBounds` rect, named as `WindowRecord.preMaxBounds` is. The
+ * oracle was updated to emit the new shape WITH the change — it pins the shape
+ * the save path is supposed to write, and that shape moved on purpose. The old
+ * shape is still READ (`readPreMaxBounds`, tested below), so a snapshot written
+ * before the change still restores; save rewrites the whole snapshot row on
+ * every autosave, so one save cycle converts a profile.
  */
 
 import { describe, it } from 'node:test';
@@ -22,6 +32,7 @@ import * as assert from 'node:assert';
 import {
   serializeSession,
   restorableBoundsFromRecord,
+  readPreMaxBounds,
   sanitizeParams,
   mirrorPlacementIntent,
   type SerializeSessionInput,
@@ -183,18 +194,23 @@ function legacySerialize(world: World): { snapshot: unknown; windowCount: number
     if (canvasMaximized) {
       sanitized.maximized = true;
       if (presentation.preMaxBounds) {
-        sanitized.preMaxX = presentation.preMaxBounds.x;
-        sanitized.preMaxY = presentation.preMaxBounds.y;
-        sanitized.preMaxWidth = presentation.preMaxBounds.width;
-        sanitized.preMaxHeight = presentation.preMaxBounds.height;
+        sanitized.preMaxBounds = {
+          x: presentation.preMaxBounds.x,
+          y: presentation.preMaxBounds.y,
+          width: presentation.preMaxBounds.width,
+          height: presentation.preMaxBounds.height,
+        };
+      } else {
+        delete sanitized.preMaxBounds;
       }
     } else {
       delete sanitized.maximized;
-      delete sanitized.preMaxX;
-      delete sanitized.preMaxY;
-      delete sanitized.preMaxWidth;
-      delete sanitized.preMaxHeight;
+      delete sanitized.preMaxBounds;
     }
+    delete sanitized.preMaxX;
+    delete sanitized.preMaxY;
+    delete sanitized.preMaxWidth;
+    delete sanitized.preMaxHeight;
 
     windowDescriptors.push({
       url: realUrl,
@@ -363,8 +379,23 @@ describe('session-projection — on-disk shape is byte-identical to the pre-extr
       frontNativeId: 1,
     }],
 
-    ['maximized window carries the flat preMax bag', {
+    ['maximized window carries the nested preMax rect', {
       fixtures: [contentFixture(1, 'w1')],
+      records: [makeRecord('w1', {
+        bounds: { x: 0, y: 0, width: 1512, height: 900 },
+        maximized: true,
+        preMaxBounds: { x: 100, y: 110, width: 640, height: 480 },
+      })],
+    }],
+
+    // A window restored from a PRE-COLLAPSE snapshot still carries that
+    // snapshot's flat bag in its params. Re-saving it must emit the nested
+    // rect only — the flat keys do not ride forward, or a profile would never
+    // finish converting.
+    ['a pre-collapse flat bag in params is replaced by the nested rect', {
+      fixtures: [contentFixture(1, 'w1', {
+        params: { ...CONTENT_PARAMS, maximized: true, preMaxX: 1, preMaxY: 2, preMaxWidth: 3, preMaxHeight: 4 },
+      })],
       records: [makeRecord('w1', {
         bounds: { x: 0, y: 0, width: 1512, height: 900 },
         maximized: true,
@@ -635,7 +666,7 @@ describe('session-projection — machine-derived descriptor fields', () => {
     assert.deepStrictEqual(out.map((w) => [w.zOrder, w.focused]), [[3, false], [9, true]]);
   });
 
-  it('maximize + the flat preMax bag come from the record, overriding stale params', () => {
+  it('maximize + the preMax rect come from the record, overriding stale params', () => {
     const world: World = {
       fixtures: [contentFixture(1, 'w1', {
         params: { ...CONTENT_PARAMS, maximized: true, preMaxX: 1, preMaxY: 2, preMaxWidth: 3, preMaxHeight: 4 },
@@ -644,7 +675,104 @@ describe('session-projection — machine-derived descriptor fields', () => {
     };
     const [d] = serializeSession(inputFor(world)).snapshot.windows;
     assert.strictEqual('maximized' in d.params, false);
+    assert.strictEqual('preMaxBounds' in d.params, false);
     assert.strictEqual('preMaxX' in d.params, false);
+  });
+
+  it('a maximized record writes ONE nested preMaxBounds and no flat keys', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1', {
+        // A window restored from a pre-collapse snapshot: the flat bag is
+        // still on its params and must not survive the re-save.
+        params: { ...CONTENT_PARAMS, maximized: true, preMaxX: 1, preMaxY: 2, preMaxWidth: 3, preMaxHeight: 4 },
+      })],
+      records: [makeRecord('w1', {
+        bounds: { x: 0, y: 0, width: 1512, height: 900 },
+        maximized: true,
+        preMaxBounds: { x: 100, y: 110, width: 640, height: 480 },
+      })],
+    };
+    const [d] = serializeSession(inputFor(world)).snapshot.windows;
+    assert.strictEqual(d.params.maximized, true);
+    assert.deepStrictEqual(d.params.preMaxBounds, { x: 100, y: 110, width: 640, height: 480 });
+    for (const k of ['preMaxX', 'preMaxY', 'preMaxWidth', 'preMaxHeight']) {
+      assert.strictEqual(k in d.params, false, `${k} must not ride forward`);
+    }
+  });
+
+  it('maximized with no stash writes maximized alone — no preMaxBounds key at all', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1', { params: { ...CONTENT_PARAMS, preMaxX: 9 } })],
+      records: [makeRecord('w1', {
+        bounds: { x: 1, y: 1, width: 2, height: 2 },
+        maximized: true,
+        preMaxBounds: null,
+      })],
+    };
+    const [d] = serializeSession(inputFor(world)).snapshot.windows;
+    assert.strictEqual(d.params.maximized, true);
+    assert.strictEqual('preMaxBounds' in d.params, false);
+    assert.strictEqual('preMaxX' in d.params, false);
+  });
+});
+
+/**
+ * The READ half of the descriptor's maximize shape. The nested branch is the
+ * shape `serializeSession` writes today; the flat branch exists only to absorb
+ * snapshots written before the collapse and is meant to be deleted once those
+ * have aged out — these cases pin it while it lives.
+ */
+describe('session-projection — readPreMaxBounds', () => {
+  it('reads the nested rect a current snapshot carries', () => {
+    assert.deepStrictEqual(
+      readPreMaxBounds({ maximized: true, preMaxBounds: { x: 1, y: 2, width: 3, height: 4 } }),
+      { x: 1, y: 2, width: 3, height: 4 },
+    );
+  });
+
+  it('reads the flat bag a PRE-COLLAPSE snapshot carries', () => {
+    assert.deepStrictEqual(
+      readPreMaxBounds({ maximized: true, preMaxX: 100, preMaxY: 110, preMaxWidth: 640, preMaxHeight: 480 }),
+      { x: 100, y: 110, width: 640, height: 480 },
+    );
+  });
+
+  it('prefers the nested rect when a params bag somehow carries both', () => {
+    assert.deepStrictEqual(
+      readPreMaxBounds({
+        preMaxBounds: { x: 1, y: 2, width: 3, height: 4 },
+        preMaxX: 9, preMaxY: 9, preMaxWidth: 9, preMaxHeight: 9,
+      }),
+      { x: 1, y: 2, width: 3, height: 4 },
+    );
+  });
+
+  it('returns a fresh object, not the caller\'s (the rect must not alias params)', () => {
+    const rect = { x: 1, y: 2, width: 3, height: 4 };
+    const out = readPreMaxBounds({ preMaxBounds: rect });
+    assert.deepStrictEqual(out, rect);
+    assert.notStrictEqual(out, rect);
+  });
+
+  it('returns null for "maximized with no stash" — no rect in either shape', () => {
+    assert.strictEqual(readPreMaxBounds({ maximized: true }), null);
+    assert.strictEqual(readPreMaxBounds({}), null);
+  });
+
+  it('returns null for an incomplete or wrong-typed rect in either shape', () => {
+    assert.strictEqual(readPreMaxBounds({ preMaxBounds: { x: 1, y: 2, width: 3 } }), null);
+    assert.strictEqual(readPreMaxBounds({ preMaxBounds: { x: 1, y: 2, width: 3, height: '4' } }), null);
+    assert.strictEqual(readPreMaxBounds({ preMaxBounds: null }), null);
+    assert.strictEqual(readPreMaxBounds({ preMaxBounds: 5 }), null);
+    assert.strictEqual(readPreMaxBounds({ preMaxX: 9 }), null);
+    assert.strictEqual(readPreMaxBounds({ preMaxX: 1, preMaxY: 2, preMaxWidth: 3 }), null);
+  });
+
+  it('falls through to the flat bag when the nested field is present but unusable', () => {
+    assert.deepStrictEqual(
+      readPreMaxBounds({ preMaxBounds: null, preMaxX: 1, preMaxY: 2, preMaxWidth: 3, preMaxHeight: 4 }),
+      { x: 1, y: 2, width: 3, height: 4 },
+    );
   });
 });
 

@@ -47,7 +47,7 @@ export { resolveWindowAddress };
  *   2. Otherwise: the machine's `bounds` mirror (registration-seeded,
  *      BOUNDS_CHANGED-maintained). When the window is maximized this IS the
  *      maximized rect — deliberately: the session format persists it as
- *      `bounds` alongside `maximized` + `preMaxX/Y/Width/Height`, and
+ *      `bounds` alongside `maximized` + `preMaxBounds`, and
  *      restore/reopen rebuild the window AT that rect and re-seed the machine
  *      via MAXIMIZE_RESTORED (§5 step 7C).
  *

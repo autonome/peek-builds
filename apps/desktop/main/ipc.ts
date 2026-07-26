@@ -55,6 +55,9 @@ import {
   finalizeWindowClose,
 } from './main.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
+// The session-descriptor maximize shape is owned by the projection module —
+// `serializeSession` writes it, this reads it back on the open path.
+import { readPreMaxBounds } from './session-projection.js';
 
 import {
   APP_DEF_WIDTH,
@@ -445,15 +448,18 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
   // Restore maximize state so the page-host FSM boots into MAXIMIZED.
   if (entry.maximized) options.maximized = true;
 
-  // Pre-maximize bounds: thread through so the reopened page-host can
-  // populate its renderer-side preMaximizeBounds at INIT — letting the
-  // user unmaximize back to the size they had before the original
-  // maximize, even after a close+reopen cycle.
+  // Pre-maximize bounds: thread through so the reopened page-host seeds its
+  // machine record with the rect the user had before the original maximize,
+  // letting them unmaximize back to it even after a close+reopen cycle. Same
+  // nested `preMaxBounds` field the session descriptor carries (§5 step 11
+  // task 5) — one shape for both open paths, read by `readPreMaxBounds`.
   if (entry.preMaximizeBounds) {
-    options.preMaxX = entry.preMaximizeBounds.x;
-    options.preMaxY = entry.preMaximizeBounds.y;
-    options.preMaxWidth = entry.preMaximizeBounds.width;
-    options.preMaxHeight = entry.preMaximizeBounds.height;
+    options.preMaxBounds = {
+      x: entry.preMaximizeBounds.x,
+      y: entry.preMaximizeBounds.y,
+      width: entry.preMaximizeBounds.width,
+      height: entry.preMaximizeBounds.height,
+    };
   }
 
   const bgWin = getBackgroundWindow();
@@ -972,10 +978,12 @@ function assembleHybridPageHost(
     // the closeOrHideWindow caller) is what branches hide-vs-close on it.
     keepLive: options.keepLive === true,
   });
-  // Reopen-last-closed (main.ts reopenLastClosedWindow) and session restore
+  // Reopen-last-closed (reopenLastClosedWindow above) and session restore
   // (session.ts restoreSessionSnapshot) both thread a maximized window's
   // saved state through as open-time options: `maximized: true` plus
-  // `preMaxX/Y/Width/Height` (the pre-maximize rect to unmaximize back to).
+  // `preMaxBounds` (the pre-maximize rect to unmaximize back to).
+  // `readPreMaxBounds` owns that field's shape — it also still accepts the
+  // flat `preMaxX/Y/Width/Height` a pre-collapse snapshot carries.
   // The window's CREATION bounds already ARE the maximized rect
   // (computeInitialBounds used `winOptions.x/y/width/height`, which
   // reopen/restore set from the saved presentation.bounds — the live
@@ -984,13 +992,11 @@ function assembleHybridPageHost(
   // driving a SET_BOUNDS, so a later page:unmaximize (and
   // getHybridPresentation / session save) see it (§5 step 7B).
   if (options.maximized === true) {
-    const pmx = options.preMaxX, pmy = options.preMaxY;
-    const pmw = options.preMaxWidth, pmh = options.preMaxHeight;
-    const preMax = (typeof pmx === 'number' && typeof pmy === 'number'
-      && typeof pmw === 'number' && typeof pmh === 'number')
-      ? { x: pmx, y: pmy, width: pmw, height: pmh }
-      : null;
-    dispatchWindowEvent({ type: 'MAXIMIZE_RESTORED', id: hostMachineId, preMaxBounds: preMax });
+    dispatchWindowEvent({
+      type: 'MAXIMIZE_RESTORED',
+      id: hostMachineId,
+      preMaxBounds: readPreMaxBounds(options),
+    });
   }
   // Track the content-WC→host relationship for the permission lookup
   // (findHostWindowId). The guest registry carries WM WindowIds, so this
