@@ -84,6 +84,9 @@ const SESSION_EAGER_RESTORE_COUNT = 5;
  * All production save calls are no-ops until this flips. Prevents a
  * mid-restore Cmd+Q from overwriting the good snapshot with empty-URL garbage.
  * Starts as true so saves work on fresh launch (no restore in flight).
+ *
+ * Module state, not window state: it describes whether THIS module is allowed
+ * to write its file, not anything about a window.
  */
 let _restoreComplete = true;
 
@@ -111,6 +114,12 @@ export function setRestoreCompleteForTest(value: boolean): void {
   _restoreComplete = value;
 }
 
+// Test observability, NOT window state — these count what the restore DID, and
+// nothing reads them to make a decision. They stay module-level because they
+// are per-restore-run bookkeeping with no home in the machine (the machine
+// holds what IS, not how many times a boot drove it). Read only through
+// `getRestoreFocusCounters()` / `__peek_test`.
+//
 // Drift-detection counters for restoreSessionSnapshot. Invariant: the
 // per-window restore loop NEVER activates — every loop show is inactive
 // (`shows` must stay 0), and activation belongs exclusively to the
@@ -218,6 +227,9 @@ export function resetRestoreFocusCounters(): void {
 // inert in the reducer, which was the old listener's disarm.)
 //
 // Installed once at boot from entry.ts, BEFORE any page-host can load.
+//
+// Module state, not window state: an idempotency guard for THIS module's one
+// ipcMain listener. It says nothing about any window.
 let _firstFrameProducerInstalled = false;
 export function installFirstFrameOrderableProducer(): void {
   if (_firstFrameProducerInstalled) return;
@@ -237,82 +249,23 @@ export function installFirstFrameOrderableProducer(): void {
 }
 
 // ----------------------------------------------------------------------------
-// Cold-start trailing-dance re-assert latch (one-shot).
+// Cold-start trailing-dance re-raise: ARMED here, OWNED by the machine.
 //
 // Bulletproofing for the cold-start activation: the post-loop focused-descriptor
 // block raises+activates the saved-focused window, but it is possible the macOS
 // startup activation dance fires a FINAL `did-resign-active` AFTER that block
 // runs, re-stranding Peek in the background (previous app keeps the menubar).
-// To cover that, a cold-start restore that wanted to activate the focused
-// descriptor (non-headless) ARMS a one-shot latch here. main.ts's existing
-// `did-become-active` handler calls `reassertColdStartFocusOnce()` on the FIRST
-// activation after restore — which re-runs the ACTIVATION (focus/showHybridHost)
-// for the saved focused window EXACTLY ONCE, then disarms. The raise/order half
-// is the machine's: APP_ACTIVATED's closing assertion re-drives the front.
 //
-// FSM-pilled: no timer. The latch is driven by the real `did-become-active`
-// lifecycle event, fires at most once, is gated cold-start + non-headless, and
-// no-ops if the focused window is gone (isDestroyed guard).
-let _coldStartReassertArmed = false;
-let _coldStartReassertId: number | null = null;
-
-/** Disarm the cold-start re-assert latch (called on use and on reset). */
-function disarmColdStartReassert(): void {
-  _coldStartReassertArmed = false;
-  _coldStartReassertId = null;
-}
-
-/**
- * Re-assert the cold-start focused descriptor ONCE, if armed.
- *
- * Called by main.ts's `did-become-active` handler. If a cold-start restore
- * activated the saved-focused window and the startup dance then fired a trailing
- * `did-resign-active` (re-stranding Peek), this re-runs the activation for
- * the saved focused window on the FIRST subsequent activation, then disarms.
- *
- * Self-disarming + no-op when not armed, when the window is gone (isDestroyed),
- * or under headless. Safe to call on every `did-become-active`. Returns true iff
- * it actually re-raised a window (for logging/tests).
- */
-export function reassertColdStartFocusOnce(): boolean {
-  if (!_coldStartReassertArmed) return false;
-  const id = _coldStartReassertId;
-  // Disarm FIRST so this fires at most once regardless of what follows.
-  disarmColdStartReassert();
-  if (id == null) return false;
-  if (isHeadless()) return false;
-  // NOTE: this latch is FOCUS-ONLY now (§5 step 5 part B). The raise/order
-  // half of the old moveTop+activate pair is subsumed by the machine: the
-  // trailing did-resign-active dispatched APP_RESIGNED (assertion invalidated),
-  // and the did-become-active that calls this dispatches APP_ACTIVATED, whose
-  // closing assertion re-drives RAISE_WINDOW [+FOCUS_CONTENT] + SET_STACKING
-  // for the front window. The ACTIVATION half is machine-routed too since
-  // §5 step 11: both branches dispatch `WINDOW_SHOW_REQUESTED {activate:true}`
-  // (BrowserWindow via `showWindowHeadlessSafe({active:true})`, page-host via
-  // `showHybridHost`), so the one-shot latch decides WHETHER to re-activate
-  // and the machine performs it. There is no focus-request event and none is
-  // needed: the saved-focused window is already visible, so an activating show
-  // is exactly "raise + make key" — and it echoes WINDOW_SHOWN{focused:true},
-  // which sets the machine's `front` synchronously instead of waiting on the
-  // async OS focus event a bare focus() relied on.
-  try {
-    const focusWin = getLiveWindow(id);
-    if (focusWin && !focusWin.isDestroyed()) {
-      showWindowHeadlessSafe(focusWin, { active: true });
-      console.log(`[session] cold-start re-assert focused window ${id} on did-become-active`);
-      return true;
-    }
-    const hybridFocus = getHybridWindow(id);
-    if (hybridFocus && !hybridFocus.baseWin.isDestroyed()) {
-      showHybridHost(hybridFocus.baseWin, hybridFocus.contentWC);
-      console.log(`[session] cold-start re-assert activated focused hybrid ${id} on did-become-active`);
-      return true;
-    }
-  } catch {
-    // Best-effort re-assert.
-  }
-  return false;
-}
+// The latch that covers it used to be two module-level lets in here
+// (`_coldStartReassertArmed` / `_coldStartReassertId`) plus a
+// `reassertColdStartFocusOnce()` that main.ts's `did-become-active` handler
+// called and that drove the OS itself. It is reducer state now (§5 step 11):
+// the restore dispatches `COLD_START_FOCUS_ARMED` and `APP_ACTIVATED` — which
+// the backend already emits from that same `did-become-active` — consumes it,
+// re-fronts the window and lets the closing assertion drive raise + first
+// responder + stacking. Same one-shot, no timer, one fewer copy of "which
+// window is meant to be in front". See `window-state.ts
+// AppWindowState.pendingColdStartFocus`.
 
 export interface SessionMetadata {
   lastSaveReason: string;
@@ -879,9 +832,9 @@ export async function restoreSessionSnapshot(
   // afterward to verify the app-active gate held — see counter
   // declaration above.
   resetRestoreFocusCounters();
-  // Clear any stale cold-start re-assert latch from a prior restore; this pass
+  // Clear any stale cold-start re-raise latch from a prior restore; this pass
   // re-arms it only if it activates the focused descriptor at cold start.
-  disarmColdStartReassert();
+  dispatchWindowEvent({ type: 'COLD_START_FOCUS_ARMED', id: null });
 
   // Skip restore in test environments unless _forceForTest is set (used by
   // session-restore Playwright specs that drive save+restore directly).
@@ -1411,12 +1364,16 @@ export async function restoreSessionSnapshot(
       // decision self-evident in prod main.log for any future occurrence.
       console.log(`[session] restore-focus-decision coldStart=${isColdStart} appActive=${appActive} headless=${isHeadless()} willActivate=${willActivate} focusedId=${focusedWindowId}`);
 
-      // Arm the one-shot cold-start re-assert latch BEFORE touching windows: a
+      // Arm the one-shot cold-start re-raise latch BEFORE touching windows: a
       // trailing did-resign-active could re-strand Peek after this block runs.
       // Gated cold-start + non-headless + a window actually present to raise.
+      // The latch itself lives in the machine (see the note above the restore
+      // section); this is only the decision to arm it.
       if (isColdStart && !isHeadless() && (focusWin || (hybridFocus && !hybridFocus.baseWin.isDestroyed()))) {
-        _coldStartReassertArmed = true;
-        _coldStartReassertId = focusedWindowId;
+        const coldStartMachineId = getWindowIdFor(focusedWindowId);
+        if (coldStartMachineId != null) {
+          dispatchWindowEvent({ type: 'COLD_START_FOCUS_ARMED', id: coldStartMachineId });
+        }
       }
 
       if (willActivate) {
@@ -1550,6 +1507,10 @@ export async function restoreSessionSnapshot(
 // Phase 3: Autosave Timer
 // ============================================================================
 
+// Module state, not window state: the handle of this module's own periodic
+// timer plus the interval it was started with (so a prefs change can tell a
+// real change from a no-op restart). Nothing about a window; the reducer never
+// schedules, so a timer could not live there anyway.
 let _autosaveTimer: ReturnType<typeof setInterval> | null = null;
 let _autosaveIntervalMinutes = 0;
 

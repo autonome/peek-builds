@@ -174,6 +174,7 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       escAsk: null,
       escSeq: 0,
       pendingAppResignSweep: false,
+      pendingColdStartFocus: null,
     };
     assert.ok(frontInvariantHolds(state), 'built state class must satisfy the invariant');
     return state;
@@ -272,6 +273,9 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     // §5 step 5 event: the explicit user-requested raise.
     { type: 'RAISE_WINDOW_REQUESTED', id: wid(1) },
     { type: 'RAISE_WINDOW_REQUESTED', id: wid(99) },
+    // §5 step 11: the cold-start re-raise latch (armed by session restore).
+    { type: 'COLD_START_FOCUS_ARMED', id: wid(1) },
+    { type: 'COLD_START_FOCUS_ARMED', id: wid(99) },
   ];
 
   it('reduce is total: defined result + front invariant holds for all combinations', () => {
@@ -362,7 +366,7 @@ describe('decideEscape (steps 1-5, total)', () => {
   it('step 4: any non-normal fsMode -> exit-fullscreen (entering/full/leaving)', () => {
     for (const name of ['entering-fullscreen', 'fullscreen', 'leaving-fullscreen'] as FsMode['name'][]) {
       const rec: WindowRecord = { id: wid(1), kind: 'page-host', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: true, fsMode: fsOf(name, BOUNDS), maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1 };
-      const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), stackOrder: [wid(1)], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false };
+      const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), stackOrder: [wid(1)], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
       assert.deepStrictEqual(decideEscape(state), { kind: 'exit-fullscreen', id: wid(1) }, `mode ${name}`);
     }
   });
@@ -1326,7 +1330,7 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
   // front) — we craft it directly to exercise the guard's throw path.
   function illegalFrontState(): AppWindowState {
     const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1 };
-    return { appActive: true, session: 'active', front: wid(1), stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false };
+    return { appActive: true, session: 'active', front: wid(1), stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
   }
 
   it('THROWS in dev/test when reduce yields an illegal front (naming the event + front id)', () => {
@@ -1355,7 +1359,7 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
   it('FULLSCREEN_REQUESTED on a satellite does NOT install an illegal front (and does not throw)', () => {
     // The reducer bug the reviewer flagged: front was assigned unconditionally.
     const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1 };
-    const s: AppWindowState = { appActive: true, session: 'active', front: null, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false };
+    const s: AppWindowState = { appActive: true, session: 'active', front: null, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
     const { state } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
     assert.strictEqual(state.front, null, 'a satellite must never become front, even via a fullscreen request');
     assert.strictEqual(getWindowMode(state, wid(1)), 'entering-fullscreen', 'the fsMode edge still runs (total table)');
@@ -2299,6 +2303,58 @@ describe('HUD hide/show sweep (replaces the __hudHidden expando + sniffing loops
     ]).state;
     const { effects } = reduce(s, { type: 'APP_RESIGNED' });
     assert.strictEqual(hasEffect(effects, 'HIDE_WINDOW'), false);
+  });
+});
+
+describe('cold-start re-raise latch (§5 step 11 — was session.ts _coldStartReassert*)', () => {
+  // Two windows; wid(2) ends up front because it was shown+focused last.
+  function twoWindows(): AppWindowState {
+    return openWindow(openWindow(createInitialState(), 1), 2);
+  }
+
+  it('COLD_START_FOCUS_ARMED only latches: no effect, no front change', () => {
+    const s = twoWindows();
+    const { state, effects } = reduce(s, { type: 'COLD_START_FOCUS_ARMED', id: wid(1) });
+    assert.strictEqual(state.pendingColdStartFocus, wid(1));
+    assert.strictEqual(state.front, s.front, 'front untouched until the app activates');
+    assert.deepStrictEqual(effects, []);
+  });
+
+  it('APP_ACTIVATED consumes it: the armed window is re-driven onto the OS', () => {
+    let s = reduce(twoWindows(), { type: 'COLD_START_FOCUS_ARMED', id: wid(1) }).state;
+    // The trailing dance: a final did-resign-active strands Peek behind the
+    // previous app, then the user's return re-activates it.
+    s = drive(s, [{ type: 'APP_RESIGNED' }]).state;
+    const { state, effects } = reduce(s, { type: 'APP_ACTIVATED' });
+    assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)));
+    assert.ok(effects.some((e) => e.type === 'FOCUS_CONTENT' && e.id === wid(1)), 'a page-host also re-takes first responder');
+    assert.strictEqual(state.stackOrder[state.stackOrder.length - 1], wid(1), 'and it is ordered to the top of the stack');
+    assert.strictEqual(state.pendingColdStartFocus, null, 'consumed');
+    // `front` is a pure projection of OS focus, so the raise does not assign it
+    // here — the focus event the raise provokes is what moves it.
+    assert.strictEqual(state.front, wid(2), 'front still mirrors the OS until the raise lands');
+    const echoed = reduce(state, { type: 'OS_FOCUS_GAINED', id: wid(1) }).state;
+    assert.strictEqual(echoed.front, wid(1), 'once the OS reports the raise, front follows');
+  });
+
+  it('it fires at most once — a second APP_ACTIVATED does not re-raise', () => {
+    let s = reduce(twoWindows(), { type: 'COLD_START_FOCUS_ARMED', id: wid(1) }).state;
+    s = drive(s, [{ type: 'APP_RESIGNED' }, { type: 'APP_ACTIVATED' }, { type: 'OS_FOCUS_GAINED', id: wid(1) }]).state;
+    assert.strictEqual(s.front, wid(1));
+    // The user then focuses the other window and switches away and back.
+    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(2) }, { type: 'APP_RESIGNED' }]).state;
+    const { state, effects } = reduce(s, { type: 'APP_ACTIVATED' });
+    assert.strictEqual(effects.filter((e) => e.type === 'RAISE_WINDOW').length, 0, 'the spent latch does not yank the front back');
+    assert.strictEqual(state.front, wid(2));
+  });
+
+  it('an armed window that is gone by activation time is a no-op (the old isDestroyed guard)', () => {
+    let s = reduce(twoWindows(), { type: 'COLD_START_FOCUS_ARMED', id: wid(1) }).state;
+    s = drive(s, [{ type: 'WINDOW_CLOSED', id: wid(1) }, { type: 'APP_RESIGNED' }]).state;
+    const { state, effects } = reduce(s, { type: 'APP_ACTIVATED' });
+    assert.strictEqual(effects.filter((e) => e.type === 'RAISE_WINDOW').length, 0);
+    assert.strictEqual(state.front, wid(2));
+    assert.strictEqual(state.pendingColdStartFocus, null);
   });
 });
 

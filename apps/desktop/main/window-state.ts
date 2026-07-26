@@ -407,6 +407,30 @@ export interface AppWindowState {
    * make the reducer dismiss a surface the user is back in front of.
    */
   pendingAppResignSweep: boolean;
+
+  /**
+   * The window a COLD-START restore asked to be re-raised on the FIRST
+   * `APP_ACTIVATED` after it finished, or null. One-shot: `APP_ACTIVATED`
+   * consumes and clears it (§5 step 11).
+   *
+   * Why it exists: restore raises + activates the saved-focused descriptor, but
+   * the macOS startup activation dance can fire a FINAL `did-resign-active`
+   * AFTER that, re-stranding Peek behind the previous app (its menubar, its key
+   * window). The next `did-become-active` is the moment to put the saved-focused
+   * window back in front — so the latch replays that window through
+   * `applyRaiseRequest`, the single `RAISE_WINDOW` emitter, which drives the
+   * raise (+ content first responder for a page-host) and the stacking. `front`
+   * itself is NOT assigned here: it is a pure projection of OS focus, so the
+   * raise's own focus event is what moves it. This was `session.ts`'s pair of
+   * module-level lets (`_coldStartReassertArmed` / `_coldStartReassertId`) plus a
+   * `reassertColdStartFocusOnce()` that called the OS itself.
+   *
+   * No timer, as before: the latch is armed by `COLD_START_FOCUS_ARMED` and
+   * driven by a real lifecycle event. Arming is the restore's decision (cold
+   * start + non-headless + the window is actually there); firing is the
+   * machine's.
+   */
+  pendingColdStartFocus: WindowId | null;
 }
 
 export function createInitialState(): AppWindowState {
@@ -421,6 +445,7 @@ export function createInitialState(): AppWindowState {
     escAsk: null,
     escSeq: 0,
     pendingAppResignSweep: false,
+    pendingColdStartFocus: null,
   };
 }
 
@@ -553,6 +578,15 @@ export type WindowEvent =
   | { type: 'OS_FOCUS_SETTLED_NULL' }
   | { type: 'APP_ACTIVATED' }
   | { type: 'APP_RESIGNED' }
+  /**
+   * A cold-start restore asks for `id` to be put back in front on the first
+   * `APP_ACTIVATED` that follows — see `AppWindowState.pendingColdStartFocus`
+   * for the trailing-dance failure it covers. Arms a latch and nothing else:
+   * no effect, no front change, inert until the app next activates. `id: null`
+   * CLEARS it, which is how a fresh restore pass drops a latch an earlier pass
+   * armed and never spent.
+   */
+  | { type: 'COLD_START_FOCUS_ARMED'; id: WindowId | null }
   /**
    * Session tri-state mirror. `izui-state.ts`'s coordinator is the SINGLE owner
    * of `idle/transient/active` (design §2.1/§3: "coordinator keeps only session
@@ -1344,6 +1378,7 @@ function cloneState(state: AppWindowState): AppWindowState {
     escAsk: state.escAsk,
     escSeq: state.escSeq,
     pendingAppResignSweep: state.pendingAppResignSweep,
+    pendingColdStartFocus: state.pendingColdStartFocus,
   };
 }
 
@@ -2224,6 +2259,12 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // the armed app-resign sweep is void. This assignment replaces
       // `ipc.ts onAppDidBecomeActive`'s `clearTimeout(pendingAppResignClose)`.
       state.pendingAppResignSweep = false;
+      // Consume the cold-start re-raise latch, at most once (§5 step 11). If a
+      // boot restore armed it, THIS is the activation it was waiting for; the
+      // raise itself is driven at the END of this arm, where the retired
+      // closing-assertion step used to run (see below).
+      const coldStartFocus = state.pendingColdStartFocus;
+      state.pendingColdStartFocus = null;
       // The transient->active promotion is owned by `izui-state.ts setAppFocused`
       // and mirrored in via SESSION_CHANGED — not derived here (§3).
       // Reconcile any in-flight fullscreen transition against reality (§2.5).
@@ -2256,6 +2297,15 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       for (const rec of [...state.windows.values()]) {
         if (rec.overlayFor != null) applyOverlayFollow(state, rec.overlayFor, undefined, effects);
       }
+      // Fire the cold-start re-raise LAST, so its RAISE_WINDOW (+ FOCUS_CONTENT
+      // for a page-host) + SET_STACKING and its `stackRaise` land after this
+      // arm's own effects — the position the retired closing-assertion step
+      // occupied, which ran after the whole switch. `applyRaiseRequest` is now
+      // the single `RAISE_WINDOW` emitter and performs exactly the OS work
+      // `session.ts reassertColdStartFocusOnce()` used to do by hand. A gone or
+      // ineligible window is a no-op inside it, which is what the old
+      // `isDestroyed()` guard bought.
+      applyRaiseRequest(state, coldStartFocus, effects);
       break;
     }
 
@@ -2266,6 +2316,13 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // Step 6's policy table is keyed on the session, so a session change
       // invalidates any question asked under the previous one.
       state.escAsk = null;
+      break;
+    }
+
+    case 'COLD_START_FOCUS_ARMED': {
+      // Latch only — no effect, no front change. See
+      // `AppWindowState.pendingColdStartFocus`; `APP_ACTIVATED` fires it.
+      state.pendingColdStartFocus = event.id;
       break;
     }
 

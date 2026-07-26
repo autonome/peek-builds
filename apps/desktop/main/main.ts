@@ -50,7 +50,7 @@ import {
 import { isSatelliteRegistration, classifyWindowRegistration } from './window-state.js';
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
-import { saveSessionSnapshot, reassertColdStartFocusOnce } from './session.js';
+import { saveSessionSnapshot } from './session.js';
 
 // Track app-quit state so the close-debounced save doesn't double-fire
 // alongside the before-quit save. before-quit handler in entry.ts sets
@@ -599,12 +599,12 @@ export async function initialize(): Promise<void> {
     (app as any).on('did-become-active', () => {
       getIzuiCoordinator().setAppFocused(true);
       publish(getSystemAddress(), 'app:focus-changed', { focused: true });
-      // Cold-start trailing-dance safety net: if a boot restore activated the
-      // saved-focused window and the macOS startup dance then fired a trailing
-      // did-resign-active (re-stranding Peek), re-raise that window ONCE on the
-      // first activation after restore. Self-gating one-shot — no-op unless the
-      // latch was armed (cold start + non-headless). See session.ts.
-      reassertColdStartFocusOnce();
+      // (Cold-start trailing-dance re-raise removed — the reducer's
+      // APP_ACTIVATED clause consumes the `pendingColdStartFocus` latch a boot
+      // restore armed and re-fronts that window, so the machine's own
+      // did-become-active listener drives it. session.ts no longer keeps the
+      // armed/id pair, and there is nothing to call from here.)
+      //
       // (HUD re-show removed — the reducer's APP_ACTIVATED clause re-shows
       // the class-'hud' windows its APP_RESIGNED sweep hid, via SHOW_WINDOW
       // effects; the executor skips them under headless. The `__hudHidden`

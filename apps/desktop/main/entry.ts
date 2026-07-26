@@ -113,7 +113,7 @@ import {
   initSessionPartition,
   registerDownloadHandler,
 } from './session-partition.js';
-import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, reassertColdStartFocusOnce, installFirstFrameOrderableProducer } from './session.js';
+import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer } from './session.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import { getFrontWindowId, getWindowIdFor, getNativeWindowFor, dispatchWindowEvent } from './window-state-singleton.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
@@ -184,12 +184,10 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
    * tests/desktop/session-restore-focus.spec.ts.
    */
   forceColdStartRestoreSession: () => restoreSessionSnapshot({ restoreSession: true }, undefined, true, true),
-  /**
-   * Re-run the cold-start trailing-dance re-assert latch ONCE, the same call
-   * main.ts's did-become-active handler makes. Lets a spec drive the safety net
-   * deterministically. Returns true iff it re-raised a window.
-   */
-  reassertColdStartFocusOnce: () => reassertColdStartFocusOnce(),
+  // (`reassertColdStartFocusOnce` removed — the cold-start trailing-dance latch
+  // is reducer state (`pendingColdStartFocus`), fired by APP_ACTIVATED. Drive it
+  // from a spec by dispatching COLD_START_FOCUS_ARMED + APP_ACTIVATED, or cover
+  // it in the window-state unit table; no spec used this bridge.)
   /**
    * Simulate "Peek is / is not the active app" for drift-detection tests,
    * across BOTH app-active mirrors: the window-state machine's
