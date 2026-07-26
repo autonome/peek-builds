@@ -269,10 +269,17 @@ projected rect, the `pendingProjectedBounds` fullscreen/hidden retry).
 Today: `setVisibleOnAllWorkspaces` is write-only, never read back.
 Becomes: a `visibleOnAllSpaces` field per window.
 
-**7c. Space-change events** — TO ABSORB (build new).
-Today: **no listener exists anywhere.** Absence confirmed by survey. The port declares
-`spaceChanged`; the Electron backend must acquire it (NSWorkspace notification via a native
-hook or the closest available Electron signal).
+**7c. Space-change events** — ABSORBED (§5 step 10, Part B).
+`electron-window-backend.ts attachSpaceChangeListener` (called from `attachAppListeners`,
+darwin-only) subscribes to `NSWorkspaceActiveSpaceDidChangeNotification` through
+`systemPreferences.subscribeWorkspaceNotification` and emits `SPACE_CHANGED`. The
+notification's `userInfo` is EMPTY — verified live on a real machine — so the event carries
+no Space identity and the machine holds no per-Space state. The reducer's clause is inert:
+it writes nothing and emits nothing. The all-Spaces flag is sticky collection behavior, so a
+Space switch is not a moment the OS forgets it, and re-asserting would fire a native
+`setVisibleOnAllWorkspaces` per pinned window mid-transition and in the background — the call
+this app has flash regressions on. The listener stays so the signal exists when something
+needs it; the clause in `window-state.ts` carries the full argument.
 
 ### 4.3 Stacking and visibility
 
@@ -782,12 +789,23 @@ failure mode this document exists to prevent (§2).**
     `display-projection.test.ts` (ordering, parent resolution, drops, purity) +
     `window-state.test.ts`'s `DISPLAY_CHANGED` describe (deferred/flush cases);
     270 pass, 0 fail across both files. `tsc --noEmit` clean.
-    **Part B — Spaces: NOT done, machinery inert.**
-    `WindowRecord.visibleOnAllSpaces` and `SET_VISIBLE_ON_ALL_SPACES_REQUESTED`
-    exist in `window-state.ts` (`af540e74`), but nothing dispatches the event and
-    nothing reads the field: `setVisibleOnAllWorkspaces` is not routed through
-    the port, and the Space-change listener this item calls for does not exist.
-    Still to do.
+    **Part B — Spaces: DONE.** `WindowRecord.visibleOnAllSpaces` and
+    `SET_VISIBLE_ON_ALL_SPACES_REQUESTED` landed first as inert machinery
+    (`af540e74`); the write paths then cut over — the port's
+    `setVisibleOnAllSpaces` with its Electron implementation, the role-derived
+    `SPACES_POLICY_REQUESTED` (which owns the follow/anchor decision and the
+    anchor's ordered true-then-false pair), and the renderer-driven tile IPC on
+    the raw event — so every `setVisibleOnAllWorkspaces` call now runs through
+    the reducer. The listener this item called for closes it: the backend
+    subscribes to the macOS active-Space notification and emits `SPACE_CHANGED`
+    (§4.2 dim 7c). The notification says only THAT the Space changed —
+    `userInfo` is empty, verified live — so the reducer stores nothing, and it
+    emits nothing either: the all-Spaces flag is sticky, so there is nothing for
+    a Space switch to undo, and a per-window re-assert mid-transition would be a
+    speculative fix paid for with the native call this app has flash regressions
+    on. The event lands wired but inert, as `visibleOnAllSpaces` itself first did
+    (`af540e74`); the clause is where a re-assert would go if a dropped flag is
+    ever actually observed.
 11. **Session save / restore. Last.** Worst regression history in the app, and the one
     place doing bulk z-order plus focus as a single sweep.
 

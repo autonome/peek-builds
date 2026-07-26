@@ -263,6 +263,7 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     { type: 'SPACES_POLICY_REQUESTED', id: wid(1), policy: 'anchor' },
     { type: 'SPACES_POLICY_REQUESTED', id: wid(1), policy: 'none' },
     { type: 'SPACES_POLICY_REQUESTED', id: wid(99), policy: 'anchor' },
+    { type: 'SPACE_CHANGED' },
     // §5 step 9 events (overlay attachment + the app-resign transient sweep).
     { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(1), hostId: wid(1) },
     { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(1), hostId: wid(1), frame: BOUNDS },
@@ -3396,6 +3397,51 @@ describe('visibleOnAllSpaces — the macOS Spaces field + the two write paths (�
     const r = reduce(pinned, { type: 'SPACES_POLICY_REQUESTED', id: wid(1), policy: 'anchor' });
     assert.strictEqual(before.visibleOnAllSpaces, true, 'input record not mutated');
     assert.strictEqual(r.state.windows.get(wid(1))!.visibleOnAllSpaces, false);
+  });
+});
+
+describe('SPACE_CHANGED — accepted and deliberately inert (§4.2 dim 7c, §5 step 10)', () => {
+  it('emits nothing and changes no pin, whatever Spaces policy each window holds', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'palette' }); // pinned to all Spaces
+    s = openWindow(s, 2, { kind: 'browser', role: 'content' }); // anchored
+    s = openWindow(s, 3, { kind: 'browser', role: 'content' }); // Spaces policy never set
+    let r = drive(s, [{ type: 'SPACES_POLICY_REQUESTED', id: wid(1), policy: 'follow' }]);
+    r = drive(r.state, [{ type: 'SPACES_POLICY_REQUESTED', id: wid(2), policy: 'anchor' }]);
+    const before = r.state;
+    const { state, effects } = drive(before, [{ type: 'SPACE_CHANGED' }]);
+    assert.deepStrictEqual(effects, [], 'a Space switch drives no OS call');
+    // Every record keeps the value it had. Note wid(2) and wid(3) are
+    // indistinguishable in the record — an anchored window and one whose
+    // policy was never set both read `false`.
+    for (const id of [wid(1), wid(2), wid(3)]) {
+      assert.strictEqual(
+        state.windows.get(id)!.visibleOnAllSpaces,
+        before.windows.get(id)!.visibleOnAllSpaces,
+        `visibleOnAllSpaces unchanged for ${id}`,
+      );
+    }
+    assert.strictEqual(state.windows.get(wid(1))!.visibleOnAllSpaces, true);
+    assert.strictEqual(state.windows.get(wid(2))!.visibleOnAllSpaces, false);
+    assert.strictEqual(state.windows.get(wid(3))!.visibleOnAllSpaces, false);
+  });
+
+  it('with no windows at all it is a clean no-op', () => {
+    const { state, effects } = drive(createInitialState(), [{ type: 'SPACE_CHANGED' }]);
+    assert.deepStrictEqual(effects, []);
+    assert.strictEqual(state.windows.size, 0);
+  });
+
+  it('writes no state at all — not the pin, not front, and never the input record', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'palette' });
+    const pinned = drive(s, [{ type: 'SPACES_POLICY_REQUESTED', id: wid(1), policy: 'follow' }]).state;
+    const beforeRec = pinned.windows.get(wid(1))!;
+    const { state } = drive(pinned, [{ type: 'SPACE_CHANGED' }]);
+    assert.strictEqual(state.windows.get(wid(1))!.visibleOnAllSpaces, true);
+    assert.strictEqual(beforeRec.visibleOnAllSpaces, true, 'input record not mutated');
+    assert.strictEqual(state.front, pinned.front, 'front is untouched by a Space switch');
+    assert.deepStrictEqual(state.stackOrder, pinned.stackOrder, 'stack order is untouched too');
   });
 });
 

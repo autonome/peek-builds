@@ -34,7 +34,7 @@
  * focus-free by design).
  */
 
-import { app, globalShortcut, screen, webContents } from 'electron';
+import { app, globalShortcut, screen, systemPreferences, webContents } from 'electron';
 import type { BrowserWindow, WebContents } from 'electron';
 
 import { isHeadless, DEBUG } from './config.js';
@@ -280,6 +280,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * cancelling would put a second copy of the dance-cancel decision here, and
    * the reducer's `pendingAppResignSweep` disarm already makes a late
    * `APP_RESIGN_SETTLED` inert.
+   *
+   * Also the macOS Space-change subscription → `SPACE_CHANGED` (§4.2 dim 7c,
+   * §5 step 10): the workspace notification is the only signal that the user
+   * moved to another Space. Like the two `app` listeners it is attached once
+   * at boot and never removed — the app-level listener set lives as long as
+   * the process.
    */
   attachAppListeners(): void {
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
@@ -307,6 +313,28 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         this.emit({ type: 'APP_RESIGN_SETTLED' });
       }, APP_RESIGN_SETTLE_MS);
     });
+    this.attachSpaceChangeListener();
+  }
+
+  /**
+   * The macOS Space switch → `SPACE_CHANGED`. Darwin-only: Spaces exist
+   * nowhere else and `subscribeWorkspaceNotification` is a macOS-only method,
+   * so this is a no-op on every other platform.
+   *
+   * The notification's `userInfo` is EMPTY — verified live on this app — so
+   * there is nothing to put on the event and no way to name the Space we
+   * moved to. The machine does not need one: its `SPACE_CHANGED` clause is
+   * inert today (see the clause for why), and this subscription exists so the
+   * signal is there when something needs it.
+   */
+  private attachSpaceChangeListener(): void {
+    if (process.platform !== 'darwin') return;
+    systemPreferences.subscribeWorkspaceNotification(
+      'NSWorkspaceActiveSpaceDidChangeNotification',
+      () => {
+        this.emit({ type: 'SPACE_CHANGED' });
+      },
+    );
   }
 
   // ───────────────────────────────────────────────────────────────────────────

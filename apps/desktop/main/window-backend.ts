@@ -23,7 +23,9 @@
  *     `OS_FULLSCREEN_ENTERED`, `OS_FULLSCREEN_LEFT`,
  *     `FULLSCREEN_SETTLE_TIMEOUT`, `BOUNDS_CHANGED` (the §3 table's
  *     `boundsChanged`, from the native resize/move listeners — §5 step 7),
- *     `APP_ACTIVATED`, `APP_RESIGNED`,
+ *     `APP_ACTIVATED`, `APP_RESIGNED`, `SPACE_CHANGED` (the §3 table's
+ *     `spaceChanged`, from the macOS active-Space workspace notification —
+ *     §5 step 10),
  *     `ESC_PRESSED { landedId: 'global' }` (the OS Escape grab) and
  *     `ESC_RENDERER_ANSWER` (the renderer ask's round trip).
  *
@@ -124,8 +126,10 @@ export interface WindowSpec {
 export interface WindowBackend {
   /**
    * Subscribe to app-level activation (macOS `did-become-active` /
-   * `did-resign-active`) and emit `APP_ACTIVATED` / `APP_RESIGNED`. Called
-   * once at boot wiring (`window-state-singleton.ts initWindowStateMachine`).
+   * `did-resign-active`) and emit `APP_ACTIVATED` / `APP_RESIGNED`, plus the
+   * platform's active-Space change → `SPACE_CHANGED` (§5 step 10; no-op where
+   * Spaces don't exist). Called once at boot wiring
+   * (`window-state-singleton.ts initWindowStateMachine`).
    */
   attachAppListeners(): void;
 

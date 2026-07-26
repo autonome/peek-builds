@@ -803,6 +803,26 @@ export type WindowEvent =
    * "anchored to a Space", the same value a never-touched window holds.
    */
   | { type: 'SPACES_POLICY_REQUESTED'; id: WindowId; policy: 'follow' | 'anchor' | 'none' }
+  /**
+   * The user switched to a different macOS Space (§4.2 dim 7c, §5 step 10) —
+   * the port's `spaceChanged`, emitted by the backend's
+   * `NSWorkspaceActiveSpaceDidChangeNotification` subscription.
+   *
+   * It carries NO payload, and cannot: the notification's `userInfo` is empty
+   * (verified on a real machine — two switches, two empty payloads), so macOS
+   * tells us THAT the active Space changed and never WHICH one it is. There is
+   * therefore no Space identity to record, and no per-Space state for the
+   * machine to hold.
+   *
+   * The reducer clause is INERT — it writes no state and emits no effects.
+   * The all-Spaces pin does not need re-asserting on a switch (that flag is
+   * sticky by definition), and re-asserting would fire a native call per
+   * pinned window mid Space-transition, in the background, from the one call
+   * this repo has flash regressions on. The clause carries the full argument.
+   * The event stays wired so the signal exists the day something genuinely
+   * needs it.
+   */
+  | { type: 'SPACE_CHANGED' }
   | { type: 'ESC_PRESSED'; landedId: WindowId | 'global' }
   /**
    * The renderer's answer to an `ASK_RENDERER`. `seq` echoes the epoch of the
@@ -2569,6 +2589,48 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         on: false,
         skipTransformProcessType: true,
       });
+      break;
+    }
+
+    case 'SPACE_CHANGED': {
+      // Deliberately does nothing: no state written, no effects emitted.
+      //
+      // There is no state to write — the event carries no Space identity (see
+      // its doc). And there is nothing to re-assert either. The all-Spaces
+      // flag (`canJoinAllSpaces`) is sticky collection behavior on the native
+      // window; surviving a Space switch is the whole point of setting it, so
+      // a switch is not a moment where the OS forgets it. The claim this
+      // clause was first written from — "macOS silently drops the flag across
+      // some window/Space transitions" — has no source anywhere in this repo.
+      // It was borrowed from `SET_VISIBLE_ON_ALL_SPACES_REQUESTED`, which is
+      // really about not suppressing a write the caller explicitly asked for;
+      // that event's one live re-assert (`ipc.ts`, reusing a hidden keepLive
+      // window) happens at SHOW time for a different stated reason — so the
+      // hidden window follows the user to the active Space instead of dragging
+      // them back to its home Space. Neither is evidence about Space switches.
+      //
+      // Re-asserting anyway would cost one native `setVisibleOnAllWorkspaces`
+      // per follow window on every switch, fired in the middle of the Space
+      // transition animation, and the workspace notification arrives even when
+      // Peek is in the background. That is the exact call this repo has flash
+      // regressions on, so the price is real while the fix is speculative.
+      //
+      // The reason anchored windows would be skipped is still worth recording,
+      // even though nothing is emitted either way: replaying an anchor's
+      // creation-time true-then-false pair on a Space switch would land the
+      // window on whichever Space the user just moved to, teleporting it away
+      // from the Space it was anchored to. (A bare `on: false` effect would
+      // NOT do that — only `SPACES_POLICY_REQUESTED` with the `anchor` policy
+      // emits the pair.) `ipc.ts` states the same rule independently for
+      // keepLive reuse. Note the records cannot actually tell an anchored
+      // window from one whose Spaces policy was never set — both hold
+      // `visibleOnAllSpaces: false` — so the honest phrasing is "do nothing
+      // for anything not pinned to all Spaces".
+      //
+      // So the event lands wired but inert, the way `visibleOnAllSpaces` and
+      // its raw event first landed (`af540e74`). If a genuine dropped flag is
+      // ever observed on a real display, this clause is where the re-assert
+      // belongs.
       break;
     }
 
