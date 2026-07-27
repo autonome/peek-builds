@@ -844,6 +844,30 @@ failure mode this document exists to prevent (§2).**
     function directly. Risk is low because `session.ts stripKeys` is an explicit
     deny-list that does not name these keys, so they are not at risk of being silently
     dropped on the way through.
+    **Task 7 — restore replays the saved stack instead of rebuilding it from focus
+    recency: DONE.** A saved descriptor recorded only `zOrder` (the record's `focusSeq`),
+    and restore rebuilt the stack from it — so the restored order was a focus-recency
+    ranking, not the order that was on screen. The two genuinely disagree: `WINDOW_SHOWN`
+    raises a window in `stackOrder` on ANY show but bumps `focusSeq` only when the show
+    focused it, so a window opened in the background sits visually above the last-focused
+    window and ranks below it by recency — and the old restore put it back underneath. A
+    descriptor now also carries `stackIndex`, its position in the machine's bottom→top
+    `AppWindowState.stackOrder` at save time, and the post-loop `STACK_ORDER_IMPORTED`
+    orders by it. Session restore restores the session as you left it.
+    `zOrder` stays exactly what it was and keeps its OTHER job — the eager/deferred
+    restore-loading split (`SESSION_EAGER_RESTORE_COUNT`): "load what you were last using
+    first" is right even when the visual stack differs, so the two ranks are separate
+    persisted facts rather than one collapsed one. The post-loop reconstruction step does
+    not go away either — the restore loop's own non-activating shows scramble `stackOrder`
+    mid-restore whatever feeds the final import.
+    Migration: same strategy as task 5 — new shape on write, tolerant read, no one-shot
+    pass, for the same reason (save rewrites the whole snapshot row every autosave).
+    `session-projection.ts readStackIndex()` reads the field and
+    `orderRestoredWindowsBottomToTop()` orders with it; its all-unrecorded branch is the
+    old focus-recency ordering, commented as existing only to absorb pre-field snapshots
+    and deletable once those age out. A window with no recorded position sorts below the
+    recorded ones, so the import still names every restored window and the
+    `stackDrives === restored count` invariant the focus specs assert is untouched.
 
 **Live verification is mandatory at every seam cutover that touches focus.** macOS
 first-responder behavior is **unobservable in headless tests** and a green headless suite
@@ -949,6 +973,15 @@ re-drive the OS to match it.
 `front` — macOS restores the app's own window order on activation, and `stackOrder`
 (intent) never moved while the app was away, so there is nothing to re-drive. Unverified
 on a real display.
+
+**Restored z-order is a literal replay of the pre-quit visual stack** (§5 step 11 task 7).
+Each saved descriptor records its position in the machine's `stackOrder`
+(`WindowDescriptor.stackIndex`), and restore imports that order via
+`session-projection.ts orderRestoredWindowsBottomToTop()`. It used to be rebuilt from focus
+recency, which inverted any window that had been shown without being focused. Live-verified
+on macOS before the front-projection rewrite (visible run, quit→relaunch): the window
+focused at quit restores focused and on top, with a clean 6/6 save set (no
+background/overlay/bridge leakage).
 
 ---
 

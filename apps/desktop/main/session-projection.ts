@@ -18,6 +18,7 @@
  *                                        not two)
  *   - `maximized` / pre-maximize rect  → `WindowRecord.maximized` / `.preMaxBounds`
  *   - `zOrder`                         → `WindowRecord.focusSeq`
+ *   - `stackIndex`                     → position in `StateSnapshot.stackOrder`
  *   - `focused`                        → `StateSnapshot.front`
  * What genuinely is NOT machine state arrives per window from the caller: the
  * window's URL and title, its saved context row, and the opaque open-params bag.
@@ -37,9 +38,12 @@
  * compares the JSON TEXT (which is literally what lands in the
  * `feature_settings` row), not just a deep-equal.
  *
- * This module owns BOTH directions of one piece of that shape: the maximize
- * state a descriptor carries. `serializeSession` writes it; `readPreMaxBounds`
- * reads it back for the window-open path.
+ * This module owns BOTH directions of two pieces of that shape:
+ *   - the maximize state a descriptor carries — `serializeSession` writes it,
+ *     `readPreMaxBounds` reads it back for the window-open path;
+ *   - the saved stacking position — `serializeSession` writes `stackIndex`,
+ *     `readStackIndex` + `orderRestoredWindowsBottomToTop` read it back for the
+ *     restore path's `STACK_ORDER_IMPORTED`.
  */
 
 import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
@@ -199,6 +203,57 @@ export function readPreMaxBounds(params: Record<string, unknown>): Electron.Rect
 }
 
 /**
+ * Read a saved descriptor's stacking position back out.
+ *
+ * Written by `serializeSession` as `stackIndex` — the window's index in the
+ * machine's bottom→top `stackOrder` at save time. Returns null when the key is
+ * absent or not a finite number, which is also what a snapshot written before
+ * the field existed produces for every one of its descriptors.
+ */
+export function readStackIndex(descriptor: WindowDescriptor): number | null {
+  const value = (descriptor as { stackIndex?: unknown }).stackIndex;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** One restored window, paired with the stacking position its descriptor carried. */
+export interface RestoredStackEntry {
+  /** The live window id the restore loop got back from the window-open handler. */
+  id: number;
+  /** `readStackIndex` of the descriptor this window was restored from. */
+  stackIndex: number | null;
+}
+
+/**
+ * The BOTTOM → TOP order session restore hands to `STACK_ORDER_IMPORTED`.
+ *
+ * `entries` arrive in restore-dispatch order, which is front→back: the saved
+ * focused descriptor first, then the rest by focus recency.
+ *
+ * Windows whose descriptor recorded a stacking position are ordered by it, so
+ * the stack comes back exactly as it was on screen — including a window that was
+ * shown WITHOUT being focused, which sits above the last-focused window visually
+ * but ranks below it by focus recency.
+ *
+ * A window with no recorded position goes BELOW all recorded ones (keeping its
+ * own reverse-dispatch order), so the returned list still names every restored
+ * window and the caller's drive count stays the restored count.
+ *
+ * The all-unrecorded branch is the focus-recency ordering restore used before
+ * descriptors carried a stacking position. It exists ONLY to absorb snapshots
+ * written before that field shipped: session save rewrites the whole snapshot
+ * row on every autosave, so one save cycle after this shipped every stored
+ * snapshot already carries positions. Delete the branch once pre-field profiles
+ * have aged out.
+ */
+export function orderRestoredWindowsBottomToTop(entries: readonly RestoredStackEntry[]): number[] {
+  const recorded = entries.filter((e) => e.stackIndex !== null);
+  if (recorded.length === 0) return [...entries].reverse().map((e) => e.id);
+  const unrecorded = entries.filter((e) => e.stackIndex === null);
+  const ordered = [...recorded].sort((a, b) => (a.stackIndex as number) - (b.stackIndex as number));
+  return [...[...unrecorded].reverse(), ...ordered].map((e) => e.id);
+}
+
+/**
  * Mirror a Placement intent into flat primitive fields that survive
  * `sanitizeParams` and the IPC boundary, so the window-open handler can
  * re-derive `Placement` on restore against the current display layout
@@ -289,6 +344,12 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
 
   const recordsById = new Map<WindowId, WindowRecord>();
   for (const rec of input.snapshot.windows) recordsById.set(rec.id, rec);
+
+  // The machine's ordered stack, bottom → top, as a lookup. This is the literal
+  // on-screen order; `focusSeq` is not (a window shown without being activated
+  // is raised in the stack but keeps its old focus rank).
+  const stackIndexById = new Map<WindowId, number>();
+  input.snapshot.stackOrder.forEach((id, index) => stackIndexById.set(id, index));
 
   // (No overlay carve-out on the visibility rule — see
   // `session-save-filter.ts`. The switcher stopped hiding other windows in
@@ -429,6 +490,13 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
       // focus-order.ts). Unregistered windows rank 0, same as the machine's
       // own "never focused" answer.
       zOrder: rec?.focusSeq ?? 0,
+      // Where the window actually sat in the stack, bottom → top. Restore
+      // replays this literally instead of rebuilding the stack from `zOrder`,
+      // which inverts any window that was shown without being activated. Left
+      // ABSENT (not null) for a window the machine has no stack position for —
+      // JSON.stringify drops an undefined value, and restore reads an absent
+      // position as "not recorded".
+      stackIndex: w.machineId != null ? stackIndexById.get(w.machineId) : undefined,
       // The saved-focused descriptor drives restore's head-start. `front` is
       // the machine's target window: it excludes modals/overlays/background
       // (satellites) and survives focus shifts to other apps, which is why

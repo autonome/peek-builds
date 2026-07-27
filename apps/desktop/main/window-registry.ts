@@ -71,6 +71,22 @@ export interface WindowDescriptor {
   params: Record<string, unknown>;
   /** Focus-recency rank (higher = more recently focused), not a window stacking order. See focus-order.ts. */
   zOrder: number;
+  /**
+   * The window's position in the on-screen stack at save time, counted BOTTOM →
+   * TOP (0 = bottommost), read off `AppWindowState.stackOrder`. Restore replays
+   * this literally, so the windows come back in the front-to-back order that was
+   * actually on screen rather than in focus-recency order (`zOrder`, which still
+   * drives the eager/deferred restore-loading split).
+   *
+   * Positions are the saved stack's own indices, so they can have gaps: a window
+   * in the stack that save skipped (an overlay, a stale tile) leaves its index
+   * unused. Only the relative order matters.
+   *
+   * Absent for a window the machine had no stack position for, and for every
+   * window of a snapshot written before this field existed — see
+   * `session-projection.ts orderRestoredWindowsBottomToTop`.
+   */
+  stackIndex?: number;
   focused: boolean;
   context?: WindowContext;
 }

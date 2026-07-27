@@ -21,8 +21,8 @@ import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
-import { serializeSession } from './session-projection.js';
-import type { SessionSaveWindow, SessionSnapshot } from './session-projection.js';
+import { serializeSession, readStackIndex, orderRestoredWindowsBottomToTop } from './session-projection.js';
+import type { RestoredStackEntry, SessionSaveWindow, SessionSnapshot } from './session-projection.js';
 import { invokeWindowOpen } from './ipc.js';
 import { shouldActivateFocusedOnRestore } from './izui-roles.js';
 import { WEB_CORE_ADDRESS } from './config.js';
@@ -55,9 +55,12 @@ export { mirrorPlacementIntent } from './session-projection.js';
 // keeping every window in place. Measured on the cpu-perf harness.
 //
 // Tuneable at the code layer only (no UI/pref): bump this constant to keep more
-// windows hot at boot. Recency signal is the existing zOrder sort, which now
-// holds a focus-recency rank (see focus-order.ts) rather than creation/stacking
-// order.
+// windows hot at boot. Recency signal is the existing zOrder sort, which holds a
+// focus-recency rank (the machine's `WindowRecord.focusSeq`) rather than
+// creation/stacking order — and it stays that way deliberately: "load what you
+// were last using first" is the right staging even when the visual stack differs
+// from focus recency. The FINAL on-screen order is a separate question and is
+// answered by the descriptors' `stackIndex` in the post-loop import below.
 const SESSION_EAGER_RESTORE_COUNT = 5;
 
 // ============================================================================
@@ -977,6 +980,11 @@ export async function restoreSessionSnapshot(
   // after a short head-start window so the user-visible focused window
   // reaches interactive significantly faster than the rest. See
   // FOCUSED_HEAD_START_MS handling further down.
+  //
+  // This is the LOADING order only. The final on-screen stack is the saved one
+  // replayed from `stackIndex` after the loop, so a window that was visually in
+  // front but not recently focused still loads late and still comes back in
+  // front.
   const zOrderSorted = [...validWindows].sort((a, b) => b.zOrder - a.zOrder);
   const focusedDescriptor = zOrderSorted.find((w) => w.focused) ?? null;
   const orderedWindows = focusedDescriptor
@@ -992,11 +1000,12 @@ export async function restoreSessionSnapshot(
 
   // Track which window was focused for later focus restoration
   let focusedWindowId: number | null = null;
-  // Every window we successfully restore + show active. Feeds the machine's
-  // STACK_ORDER_IMPORTED (saved z-order reproduction) in the willActivate
-  // block below.
-  const restoredWindowIds: number[] = [];
-  // Subset of restoredWindowIds that are hybrid page-hosts (BaseWindow +
+  // Every window we successfully restore + show active, paired with the
+  // stacking position its descriptor recorded. Feeds the machine's
+  // STACK_ORDER_IMPORTED (the saved stack replayed) in the willActivate block
+  // below.
+  const restoredWindows: RestoredStackEntry[] = [];
+  // Subset of restoredWindows that are hybrid page-hosts (BaseWindow +
   // WebContentsView). Only these hit the compositing race (see the
   // `hybrid:first-frame` producer at the top of this file): their saved-order
   // raises no-op natively until first composited frame, at which point the
@@ -1156,7 +1165,7 @@ export async function restoreSessionSnapshot(
       if (ok) {
         result.restored++;
         if (openResult.id != null) {
-          restoredWindowIds.push(openResult.id);
+          restoredWindows.push({ id: openResult.id, stackIndex: readStackIndex(descriptor) });
         }
 
         // Attach did-finish-load / did-fail-load listeners to measure the
@@ -1384,18 +1393,21 @@ export async function restoreSessionSnapshot(
         // it: internal tiles float above the web pages the user had in front.
         //
         // §5 step 5 part B: the machine owns ordering now. Import the saved stack
-        // BOTTOM→TOP (`restoredWindowIds` is restore order = [focused, then zOrder
-        // desc] = front→back, so REVERSED it is back→front with the focused window
-        // last/on top). The reducer replaces its `stackOrder` with this order and
-        // emits SET_STACKING per window bottom→top — relative raises only, no
-        // activation, no focus steal; only the focused window (activated LAST,
-        // below) becomes key/first-responder. Page-hosts that have not composited
-        // yet no-op natively and converge via the `hybrid:first-frame` →
+        // BOTTOM→TOP, ordered by the position each descriptor recorded
+        // (`stackIndex`, the machine's own `stackOrder` at save time), so the
+        // windows come back in the order that was literally on screen. A snapshot
+        // written before descriptors carried positions falls back to the old
+        // focus-recency rebuild — see `orderRestoredWindowsBottomToTop`. The
+        // reducer replaces its `stackOrder` with this order and emits SET_STACKING
+        // per window bottom→top — relative raises only, no activation, no focus
+        // steal; only the focused window (activated LAST, below) becomes
+        // key/first-responder. Page-hosts that have not composited yet no-op
+        // natively and converge via the `hybrid:first-frame` →
         // WINDOW_CONTENT_ORDERABLE producer as each becomes orderable.
         // Deterministic ordered pass, no timer. Gated by willActivate: skips
         // headless AND the switched-away case, so we never yank the user back.
         const savedOrderBottomToTop: WindowId[] = [];
-        for (const id of [...restoredWindowIds].reverse()) {
+        for (const id of orderRestoredWindowsBottomToTop(restoredWindows)) {
           const machineId = getWindowIdFor(id);
           if (machineId != null) savedOrderBottomToTop.push(machineId);
         }

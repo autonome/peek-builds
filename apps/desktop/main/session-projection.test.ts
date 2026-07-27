@@ -24,6 +24,15 @@
  * shape is still READ (`readPreMaxBounds`, tested below), so a snapshot written
  * before the change still restores; save rewrites the whole snapshot row on
  * every autosave, so one save cycle converts a profile.
+ *
+ * DELIBERATE SHAPE CHANGE (§5 step 11 task 7): a descriptor now also carries
+ * `stackIndex` — its position in the machine's bottom→top `stackOrder` at save
+ * time — so restore replays the stack that was literally on screen instead of
+ * rebuilding it from focus recency. Same migration strategy: the oracle was
+ * updated WITH the change (it pins the shape save is supposed to write), the key
+ * is ABSENT for a window with no stack position, and a snapshot written before
+ * the field falls back to the old focus-recency ordering
+ * (`orderRestoredWindowsBottomToTop`, tested below).
  */
 
 import { describe, it } from 'node:test';
@@ -33,6 +42,8 @@ import {
   serializeSession,
   restorableBoundsFromRecord,
   readPreMaxBounds,
+  readStackIndex,
+  orderRestoredWindowsBottomToTop,
   sanitizeParams,
   mirrorPlacementIntent,
   type SerializeSessionInput,
@@ -68,15 +79,35 @@ function makeRecord(id: string, over: Partial<WindowRecord> = {}): WindowRecord 
   };
 }
 
-function makeStateSnapshot(windows: WindowRecord[], front: WindowId | null = null): StateSnapshot {
+function makeStateSnapshot(
+  windows: WindowRecord[],
+  front: WindowId | null = null,
+  stackOrder: WindowId[] = defaultStackOrder(windows),
+): StateSnapshot {
   return {
     appActive: true,
     session: 'idle',
     front,
-    stackOrder: windows.map((w) => w.id),
+    stackOrder,
     switcher: { open: false },
     windows,
   };
+}
+
+/**
+ * The stack a world gets when it does not name one: record order, filtered to
+ * the machine's own membership rule (`stackingLevel 'stacked' && visible`), so
+ * the fixture cannot hand save a stack containing a window the reducer would
+ * never put there.
+ */
+function defaultStackOrder(windows: WindowRecord[]): WindowId[] {
+  return windows.filter((w) => w.stackingLevel === 'stacked' && w.visible).map((w) => w.id);
+}
+
+/** The world's stack, shared by the oracle and the real projection. */
+function stackOrderOf(world: World): WindowId[] {
+  if (world.stackOrder) return world.stackOrder.map(wid);
+  return defaultStackOrder(world.records);
 }
 
 /**
@@ -103,6 +134,12 @@ interface Fixture {
 interface World {
   fixtures: Fixture[];
   records: WindowRecord[];
+  /**
+   * The machine's ordered stack, BOTTOM → TOP, as machine ids. Defaults to
+   * record order filtered to stack members; name it explicitly when the world
+   * needs a stack that differs from focus recency.
+   */
+  stackOrder?: string[];
   front?: string | null;
   /** What `getNativeWindowFor(front)?.id` answered — the oracle's `lastFocusedId`. */
   frontNativeId?: number | null;
@@ -157,6 +194,10 @@ function legacySerialize(world: World): { snapshot: unknown; windowCount: number
   // — so the oracle drops it too, deliberately, rather than pinning a rule the
   // shipped code no longer has.)
   const lastFocusedId = world.frontNativeId ?? null;
+  // §5 step 11 task 7: the descriptor's saved stacking position. Bottom→top
+  // index in the machine's stack; absent for a window that is not in it.
+  const stackIndexById = new Map<string, number>();
+  stackOrderOf(world).forEach((id, index) => stackIndexById.set(String(id), index));
   const windowDescriptors: WindowDescriptor[] = [];
 
   for (const f of world.fixtures) {
@@ -220,6 +261,7 @@ function legacySerialize(world: World): { snapshot: unknown; windowCount: number
       source: f.source,
       params: sanitized,
       zOrder: f.machineId != null ? (records.get(f.machineId)?.focusSeq ?? 0) : 0,
+      stackIndex: f.machineId != null ? stackIndexById.get(f.machineId) : undefined,
       focused: lastFocusedId != null && id === lastFocusedId,
       context: windowContext,
     });
@@ -306,7 +348,11 @@ function inputFor(world: World): SerializeSessionInput {
     url: f.destroyed === true ? '' : f.rawUrl,
   }));
   return {
-    snapshot: makeStateSnapshot(world.records, world.front == null ? null : wid(world.front)),
+    snapshot: makeStateSnapshot(
+      world.records,
+      world.front == null ? null : wid(world.front),
+      stackOrderOf(world),
+    ),
     windows,
     getPresentation: (nativeId) => {
       const f = world.fixtures.find((x) => x.nativeId === nativeId);
@@ -538,6 +584,29 @@ describe('session-projection — on-disk shape is byte-identical to the pre-extr
       front: null,
       frontNativeId: null,
     }],
+
+    // The on-screen stack disagrees with focus recency: w2 was opened in the
+    // background (visually on top, never focused) while w1 is the last-focused
+    // window. Both ranks ride on disk — zOrder for the eager/deferred restore
+    // split, stackIndex for the stack replay.
+    ['the saved stacking position is not the focus-recency rank', {
+      fixtures: [contentFixture(1, 'w1'), contentFixture(2, 'w2')],
+      records: [
+        makeRecord('w1', { bounds: { x: 1, y: 1, width: 2, height: 2 }, focusSeq: 9 }),
+        makeRecord('w2', { bounds: { x: 3, y: 3, width: 4, height: 4 }, focusSeq: 0 }),
+      ],
+      stackOrder: ['w1', 'w2'],
+      front: 'w1',
+      frontNativeId: 1,
+    }],
+
+    // A window save keeps but the machine's stack does not hold (here: a
+    // window the machine has no record for at all) leaves the key ABSENT, not
+    // null — an explicit null would change the on-disk text.
+    ['a window with no stack position leaves the key absent', {
+      fixtures: [contentFixture(1, 'w1'), contentFixture(2, null as unknown as string, { machineId: null })],
+      records: [makeRecord('w1', { bounds: { x: 1, y: 1, width: 2, height: 2 } })],
+    }],
   ];
 
   for (const [label, world] of worlds) {
@@ -666,6 +735,50 @@ describe('session-projection — machine-derived descriptor fields', () => {
     assert.deepStrictEqual(out.map((w) => [w.zOrder, w.focused]), [[3, false], [9, true]]);
   });
 
+  it('stackIndex is the position in the machine stack, and disagrees with zOrder on a background open', () => {
+    // w1 is the last-focused window; w2 was shown WITHOUT being activated, so
+    // the machine raised it in the stack but never bumped its focusSeq. The two
+    // saved ranks must therefore point opposite ways.
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1'), contentFixture(2, 'w2')],
+      records: [makeRecord('w1', { focusSeq: 9 }), makeRecord('w2', { focusSeq: 0 })],
+      stackOrder: ['w1', 'w2'],
+      front: 'w1',
+      frontNativeId: 1,
+    };
+    const out = serializeSession(inputFor(world)).snapshot.windows;
+    assert.deepStrictEqual(out.map((w) => w.stackIndex), [0, 1], 'w2 is on top of the saved stack');
+    assert.deepStrictEqual(out.map((w) => w.zOrder), [9, 0], 'and below w1 by focus recency');
+  });
+
+  it('a window outside the machine stack gets NO stackIndex key at all', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1'), contentFixture(2, null as unknown as string, { machineId: null })],
+      records: [makeRecord('w1')],
+    };
+    const out = serializeSession(inputFor(world)).snapshot.windows;
+    assert.strictEqual(out[0].stackIndex, 0);
+    assert.strictEqual('stackIndex' in out[1], true, 'the key is written, holding undefined');
+    assert.strictEqual(out[1].stackIndex, undefined);
+    assert.strictEqual(JSON.parse(JSON.stringify(out[1])).stackIndex, undefined, 'and JSON drops it entirely');
+  });
+
+  it('saved positions are the stack own indices — a skipped window leaves a gap', () => {
+    // The machine's stack holds an overlay between two saved windows. Save skips
+    // the overlay, so its index is simply unused; only relative order matters.
+    const world: World = {
+      fixtures: [
+        contentFixture(1, 'w1'),
+        contentFixture(2, 'w2', { params: { role: 'overlay' } }),
+        contentFixture(3, 'w3'),
+      ],
+      records: [makeRecord('w1'), makeRecord('w2'), makeRecord('w3')],
+      stackOrder: ['w1', 'w2', 'w3'],
+    };
+    const out = serializeSession(inputFor(world)).snapshot.windows;
+    assert.deepStrictEqual(out.map((w) => w.stackIndex), [0, 2]);
+  });
+
   it('maximize + the preMax rect come from the record, overriding stale params', () => {
     const world: World = {
       fixtures: [contentFixture(1, 'w1', {
@@ -772,6 +885,131 @@ describe('session-projection — readPreMaxBounds', () => {
     assert.deepStrictEqual(
       readPreMaxBounds({ preMaxBounds: null, preMaxX: 1, preMaxY: 2, preMaxWidth: 3, preMaxHeight: 4 }),
       { x: 1, y: 2, width: 3, height: 4 },
+    );
+  });
+});
+
+describe('session-projection — readStackIndex + orderRestoredWindowsBottomToTop', () => {
+  const desc = (over: Record<string, unknown>) => over as unknown as WindowDescriptor;
+
+  it('reads the position a current snapshot carries, including 0', () => {
+    assert.strictEqual(readStackIndex(desc({ stackIndex: 0 })), 0);
+    assert.strictEqual(readStackIndex(desc({ stackIndex: 7 })), 7);
+  });
+
+  it('returns null for a PRE-FIELD snapshot and for anything that is not a finite number', () => {
+    assert.strictEqual(readStackIndex(desc({})), null, 'a descriptor written before the field existed');
+    assert.strictEqual(readStackIndex(desc({ stackIndex: undefined })), null);
+    assert.strictEqual(readStackIndex(desc({ stackIndex: null })), null);
+    assert.strictEqual(readStackIndex(desc({ stackIndex: '2' })), null);
+    assert.strictEqual(readStackIndex(desc({ stackIndex: NaN })), null);
+    assert.strictEqual(readStackIndex(desc({ stackIndex: Infinity })), null);
+  });
+
+  it('orders recorded windows by their saved position, bottom → top', () => {
+    // Restore dispatch order is front→back; the saved stack says otherwise.
+    assert.deepStrictEqual(
+      orderRestoredWindowsBottomToTop([
+        { id: 10, stackIndex: 2 },
+        { id: 11, stackIndex: 0 },
+        { id: 12, stackIndex: 1 },
+      ]),
+      [11, 12, 10],
+    );
+  });
+
+  it('gaps in the saved positions are irrelevant — only the relative order is', () => {
+    assert.deepStrictEqual(
+      orderRestoredWindowsBottomToTop([
+        { id: 10, stackIndex: 40 },
+        { id: 11, stackIndex: 3 },
+      ]),
+      [11, 10],
+    );
+  });
+
+  it('a PRE-FIELD snapshot falls back to the focus-recency ordering restore used before', () => {
+    // Nothing recorded: the entries are in restore-dispatch order (focused
+    // first, then focus recency descending), so reversing them is exactly the
+    // bottom→top list the old rebuild produced.
+    assert.deepStrictEqual(
+      orderRestoredWindowsBottomToTop([
+        { id: 10, stackIndex: null },
+        { id: 11, stackIndex: null },
+        { id: 12, stackIndex: null },
+      ]),
+      [12, 11, 10],
+    );
+  });
+
+  it('a window with no recorded position sits below every recorded one', () => {
+    assert.deepStrictEqual(
+      orderRestoredWindowsBottomToTop([
+        { id: 10, stackIndex: 1 },
+        { id: 11, stackIndex: null },
+        { id: 12, stackIndex: 0 },
+        { id: 13, stackIndex: null },
+      ]),
+      [13, 11, 12, 10],
+    );
+  });
+
+  it('names every entry, so the caller\'s drive count stays the restored count', () => {
+    for (const entries of [
+      [{ id: 1, stackIndex: 0 }, { id: 2, stackIndex: 1 }],
+      [{ id: 1, stackIndex: null }, { id: 2, stackIndex: null }],
+      [{ id: 1, stackIndex: 5 }, { id: 2, stackIndex: null }],
+    ]) {
+      assert.strictEqual(orderRestoredWindowsBottomToTop(entries).length, entries.length);
+    }
+  });
+
+  it('an empty restore produces an empty import', () => {
+    assert.deepStrictEqual(orderRestoredWindowsBottomToTop([]), []);
+  });
+
+  it('SAVE → RESTORE round trip: a background open comes back ON TOP of the last-focused window', () => {
+    // w1 is the window the user last focused; w2 was opened behind their back
+    // and sits visually above it. Save records both ranks; restore loads by
+    // recency (w1 first) but must stack by position (w2 on top).
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1', { address: 'https://last-focused.example/' }),
+                 contentFixture(2, 'w2', { address: 'https://background-open.example/' })],
+      records: [makeRecord('w1', { focusSeq: 9 }), makeRecord('w2', { focusSeq: 0 })],
+      stackOrder: ['w1', 'w2'],
+      front: 'w1',
+      frontNativeId: 1,
+    };
+    const saved = serializeSession(inputFor(world)).snapshot.windows;
+
+    // `session.ts restoreSessionSnapshot` loading order: focus recency
+    // descending, saved-focused descriptor hoisted to the head.
+    const byRecency = [...saved].sort((a, b) => b.zOrder - a.zOrder);
+    const focused = byRecency.find((w) => w.focused) ?? null;
+    const dispatchOrder = focused ? [focused, ...byRecency.filter((w) => w !== focused)] : byRecency;
+    assert.deepStrictEqual(
+      dispatchOrder.map((w) => w.url),
+      ['https://last-focused.example/', 'https://background-open.example/'],
+      'the last-focused window still loads first',
+    );
+
+    // Each restored window keyed by a stand-in live id.
+    const liveId = new Map(dispatchOrder.map((w, i) => [w, 100 + i]));
+    const entries = dispatchOrder.map((w) => ({ id: liveId.get(w)!, stackIndex: readStackIndex(w) }));
+    const urlOf = new Map([...liveId].map(([w, id]) => [id, w.url]));
+
+    assert.deepStrictEqual(
+      orderRestoredWindowsBottomToTop(entries).map((id) => urlOf.get(id)),
+      ['https://last-focused.example/', 'https://background-open.example/'],
+      'bottom→top: the background open lands on top, as it was on screen',
+    );
+
+    // The pre-change rebuild was the reverse of the dispatch order, which put
+    // the last-focused window on top and buried the background open.
+    assert.deepStrictEqual(
+      [...entries].reverse().map((e) => urlOf.get(e.id)),
+      ['https://background-open.example/', 'https://last-focused.example/'],
+      'the inverted stack the focus-recency rebuild produced',
     );
   });
 });
