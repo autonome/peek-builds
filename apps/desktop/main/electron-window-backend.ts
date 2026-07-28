@@ -31,16 +31,22 @@
  * `showWindow`): the windows.ts show seams are thin dispatchers into the
  * machine, and this backend echoes `WINDOW_SHOWN` for the shows it performs
  * (`showInactive` emits no native `'show'` event, and headless runs take no
- * real OS focus by design). Because the mask means macOS never reports focus
- * for an activation `showWindow` asked for, it also emits the `OS_FOCUS_GAINED`
- * that activation would have produced — see `emitFocusGainedForHeadlessShow`.
- * `raiseWindow` does NOT do this: its echo is `WINDOW_SHOWN {focused:true}`,
- * never `OS_FOCUS_GAINED` — since §5 step 5 a raise can be either the machine
- * re-asserting a `front` it already holds OR an explicit user-requested raise
- * (`RAISE_WINDOW_REQUESTED`), but either way echoing a focus event would feed
- * that belief (or request) back in as fresh OS evidence, and — because
- * `OS_FOCUS_GAINED` alone runs the transient-autoclose sweep — would also
- * dismiss any live palette/quick-view the raise never meant to touch.
+ * real OS focus by design). That echo carries the caller's UNMASKED activation
+ * intent (`WINDOW_SHOWN {focused: activate}`), and the reducer routes a focused
+ * `WINDOW_SHOWN` through the same `applyFocusGained` an `OS_FOCUS_GAINED` uses
+ * — so `front` and `focusSeq` still move under headless without anyone
+ * synthesizing a focus event.
+ *
+ * NEITHER `showWindow` NOR `raiseWindow` ever emits `OS_FOCUS_GAINED` for a
+ * show it performed. That event means "the OS moved focus", and it is the ONLY
+ * event that runs the transient-autoclose sweep (`window-state.ts
+ * selectTransientAutoclose`) and `applyOsFocusRealized`. Emitting it for a show
+ * this backend drove would feed the machine's own decision back in as fresh OS
+ * evidence, and would sweep a live palette/quick-view out from under a show
+ * that never meant to touch it — a headless show that arrives late enough
+ * dismisses a palette opened AFTER the show was requested. `OS_FOCUS_GAINED`
+ * has exactly two producers here, both genuine native reports: the host
+ * window's `'focus'` and the page-host content WC's `'focus'`.
  */
 
 import { app, globalShortcut, screen, systemPreferences, webContents } from 'electron';
@@ -606,9 +612,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * (`selectTransientAutoclose` runs only off `OS_FOCUS_GAINED`). Echoing
    * `OS_FOCUS_GAINED` instead would both feed the machine's own belief back in
    * as fresh OS evidence and sweep a live palette/quick-view out from under a
-   * raise that never meant to touch it — see
-   * `emitFocusGainedForHeadlessShow`'s docblock for the belief-feedback half
-   * of that loop.
+   * raise that never meant to touch it — see `applyOsFocusRealized`'s docblock
+   * for the shape of that feedback loop. The same holds for `showWindow`; see
+   * the module header.
    */
   raiseWindow(id: WindowId): void {
     const entry = this.windows.get(id);
@@ -641,40 +647,6 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         /* window gone mid-raise */
       }
     }
-  }
-
-  /**
-   * The focus notification headless suppressed for a show whose activation the
-   * headless mask declined.
-   *
-   * `performOsShow` downgrades an activating `show()` to `showInactive()` under
-   * headless so an agent/CI run can never steal the user's key window (peek
-   * 2b55f3af). macOS therefore never reports focus for an activation this
-   * backend genuinely asked for, and every consequence of focus — `front`,
-   * `focusSeq`, the transient autoclose — goes missing for the whole run.
-   * Emitting `OS_FOCUS_GAINED` here supplies the event the declined call would
-   * have caused, with the exact payload the native `focus` listener builds.
-   *
-   * This stands in ONLY for a `showWindow` whose activation the headless mask
-   * declined — NOT for a raise. A raise is not a user act: it is the machine
-   * driving the OS toward a `front` the reducer already decided, and the
-   * reducer treats `OS_FOCUS_GAINED` as proof the OS itself moved focus (the
-   * signal `selectTransientAutoclose` sweeps siblings on, and the one
-   * `applyOsFocusRealized` mirrors). Echoing a self-driven raise back as that
-   * proof is exactly the feedback loop this method must not cause — see
-   * `applyOsFocusRealized`'s docblock for the shape of that loop.
-   *
-   * This is not a second opinion about focus alongside the OS: this file is the
-   * R3 port, the one module allowed to model the OS (and the file
-   * `scripts/check-r2-window-ops.mjs` already exempts), and the call it is
-   * standing in for is one this same method declined to make. The reducer still
-   * learns about focus only from events.
-   *
-   * Must be emitted AFTER the show's `WINDOW_SHOWN`: `applyFocusGained` only
-   * moves `front` to a record that is already `visible`.
-   */
-  private emitFocusGainedForHeadlessShow(id: WindowId): void {
-    this.emit({ type: 'OS_FOCUS_GAINED', id, lastHttpUrl: this.readHttpUrl(id) });
   }
 
   /** Make a page-host's content WC the macOS first responder. */
@@ -920,10 +892,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    *     focus-free, so this echo is what keeps the machine's visibility +
    *     `front` truthful. The native `'show'` listener still mirrors
    *     activating shows — the reducer's WINDOW_SHOWN merge is idempotent.
-   *   - under headless, follows an activation the mask declined with the focus
-   *     event the OS would have sent for it (`emitFocusGainedForHeadlessShow`)
-   *     — a genuinely declined activation, unlike `raiseWindow` (see that
-   *     method + `emitFocusGainedForHeadlessShow`'s docblock).
+   *     Because the reducer runs that focused echo through `applyFocusGained`,
+   *     `front`/`focusSeq` move under headless off this event alone — nothing
+   *     here synthesizes an `OS_FOCUS_GAINED` to stand in for the activation
+   *     the headless mask declined. See the module header for why not.
    */
   showWindow(id: WindowId, opts: { activate: boolean }): void {
     const entry = this.windows.get(id);
@@ -934,25 +906,17 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     } catch {
       return;
     }
-    // Split into two questions so the substitute focus event below can name
-    // exactly what headless took away: `wouldActivate` is the activation this
-    // call asks the OS for on a real display, `osActivate` is what headless
-    // lets through. A quick-view page-host is masked on BOTH — it never
-    // activates the app anywhere (regression 524f7aba), so headless suppressed
-    // nothing for it and there is no focus event to stand in for.
-    const wouldActivate =
-      kind === 'page-host' ? opts.activate && windowClass !== 'quick-view' : opts.activate;
-    const osActivate = wouldActivate && !isHeadless();
+    // Two masks on the caller's activation intent, both narrowing what the OS
+    // is asked for: headless never activates (focus-free runs, peek 2b55f3af),
+    // and a quick-view page-host (a `type:'panel'` NSPanel) never activates the
+    // app on ANY display (regression 524f7aba). The echo below still reports the
+    // caller's UNMASKED intent — that is what keeps `front` moving under
+    // headless.
+    const osActivate =
+      (kind === 'page-host' ? opts.activate && windowClass !== 'quick-view' : opts.activate) &&
+      !isHeadless();
     this.performOsShow(win, osActivate);
     this.emit({ type: 'WINDOW_SHOWN', id, focused: opts.activate });
-    if (isHeadless() && wouldActivate) {
-      // Match the native `win.on('focus')` handler (`attachNativeListeners`):
-      // cancel any armed deferred-blur settle before this synthetic focus
-      // lands, or an in-flight settle can fire OS_FOCUS_SETTLED_NULL right
-      // behind it.
-      this.cancelBlurSettle();
-      this.emitFocusGainedForHeadlessShow(id);
-    }
   }
 
   /**
