@@ -30,8 +30,10 @@
  * the page-host headless/panel masks) lives HERE (`performOsShow` +
  * `showWindow`): the windows.ts show seams are thin dispatchers into the
  * machine, and this backend echoes `WINDOW_SHOWN` for the shows it performs
- * (`showInactive` emits no native `'show'` event, and headless runs are
- * focus-free by design).
+ * (`showInactive` emits no native `'show'` event, and headless runs take no
+ * real OS focus by design). Because the mask means macOS never reports focus
+ * for an activation this backend asked for, it also emits the `OS_FOCUS_GAINED`
+ * that activation would have produced — see `emitFocusGainedForHeadlessShow`.
  */
 
 import { app, globalShortcut, screen, systemPreferences, webContents } from 'electron';
@@ -588,9 +590,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (kind === 'page-host') {
       // Non-headless: activating show + content first responder (the
       // `hybridShowIntent` invariant — the R4/R5/R7 dead-focus cluster).
-      // Headless: opacity-0 + showInactive, never activate/focus — but the
-      // WINDOW_SHOWN echo still records the raise's focus INTENT (headless
-      // front-tracking is intent-driven; no OS focus event will ever fire).
+      // Headless: opacity-0 + showInactive, never activate/focus — and the
+      // focus the OS would have reported for the declined activation is
+      // supplied below instead (`emitFocusGainedForHeadlessShow`).
       this.performOsShow(win, !isHeadless());
       if (!isHeadless() && rendererWC && !rendererWC.isDestroyed()) {
         try {
@@ -600,6 +602,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         }
       }
       this.emit({ type: 'WINDOW_SHOWN', id, focused: true });
+      if (isHeadless()) this.emitFocusGainedForHeadlessShow(id);
       return;
     }
     // Browser window: headless-safe show (opacity-0 + inactive under headless),
@@ -612,7 +615,33 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       } catch {
         /* window gone mid-raise */
       }
+    } else {
+      this.emitFocusGainedForHeadlessShow(id);
     }
+  }
+
+  /**
+   * The focus notification headless suppressed.
+   *
+   * `performOsShow` downgrades an activating `show()` to `showInactive()` under
+   * headless so an agent/CI run can never steal the user's key window (peek
+   * 2b55f3af). macOS therefore never reports focus for an activation this
+   * backend genuinely asked for, and every consequence of focus — `front`,
+   * `focusSeq`, the transient autoclose — goes missing for the whole run.
+   * Emitting `OS_FOCUS_GAINED` here supplies the event the declined call would
+   * have caused, with the exact payload the native `focus` listener builds.
+   *
+   * This is not a second opinion about focus alongside the OS: this file is the
+   * R3 port, the one module allowed to model the OS (and the file
+   * `scripts/check-r2-window-ops.mjs` already exempts), and the call it is
+   * standing in for is one this same method declined to make. The reducer still
+   * learns about focus only from events.
+   *
+   * Must be emitted AFTER the show's `WINDOW_SHOWN`: `applyFocusGained` only
+   * moves `front` to a record that is already `visible`.
+   */
+  private emitFocusGainedForHeadlessShow(id: WindowId): void {
+    this.emit({ type: 'OS_FOCUS_GAINED', id, lastHttpUrl: this.readHttpUrl(id) });
   }
 
   /** Make a page-host's content WC the macOS first responder. */
@@ -858,6 +887,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    *     focus-free, so this echo is what keeps the machine's visibility +
    *     `front` truthful. The native `'show'` listener still mirrors
    *     activating shows — the reducer's WINDOW_SHOWN merge is idempotent.
+   *   - under headless, follows an activation the mask declined with the focus
+   *     event the OS would have sent for it (`emitFocusGainedForHeadlessShow`).
    */
   showWindow(id: WindowId, opts: { activate: boolean }): void {
     const entry = this.windows.get(id);
@@ -868,12 +899,18 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     } catch {
       return;
     }
-    const osActivate =
-      kind === 'page-host'
-        ? opts.activate && !isHeadless() && windowClass !== 'quick-view'
-        : opts.activate && !isHeadless();
+    // Split into two questions so the substitute focus event below can name
+    // exactly what headless took away: `wouldActivate` is the activation this
+    // call asks the OS for on a real display, `osActivate` is what headless
+    // lets through. A quick-view page-host is masked on BOTH — it never
+    // activates the app anywhere (regression 524f7aba), so headless suppressed
+    // nothing for it and there is no focus event to stand in for.
+    const wouldActivate =
+      kind === 'page-host' ? opts.activate && windowClass !== 'quick-view' : opts.activate;
+    const osActivate = wouldActivate && !isHeadless();
     this.performOsShow(win, osActivate);
     this.emit({ type: 'WINDOW_SHOWN', id, focused: opts.activate });
+    if (isHeadless() && wouldActivate) this.emitFocusGainedForHeadlessShow(id);
   }
 
   /**
