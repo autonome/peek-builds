@@ -573,6 +573,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       rendererWC.on('focus', () => {
         this.cancelBlurSettle();
         this.emit({ type: 'OS_FOCUS_GAINED', id, lastHttpUrl: this.readHttpUrl(id) });
+        this.emit({ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id, held: true });
+      });
+      // Mirrors the content WC's first-responder status (§5 step 11) — no
+      // consumer yet, purely additive.
+      rendererWC.on('blur', () => {
+        this.emit({ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id, held: false });
       });
     }
   }

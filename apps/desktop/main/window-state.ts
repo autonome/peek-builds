@@ -297,6 +297,16 @@ export interface WindowRecord {
   focusSeq: number;
   /** Absorbs `lastContentWindowId` (devtools target). */
   lastHttpUrl?: string;
+  /**
+   * Whether this window's renderer WebContents currently holds macOS
+   * first-responder status (§5 step 11 — the front/first-responder
+   * collapse). Written SOLELY by `CONTENT_FIRST_RESPONDER_CHANGED`, the
+   * backend's mirror of the native `rendererWC 'focus'`/`'blur'` events —
+   * never a live `wc.isFocused()` question at a decision site (§3). Absent
+   * at registration (same "nothing reported yet" default as
+   * `hiddenByAppBlur`). Purely additive for now: nothing reads this yet.
+   */
+  contentFocused?: boolean;
 }
 
 /** Mirrors the IZUI session coordinator's tri-state (idle / transient / active). */
@@ -840,7 +850,15 @@ export type WindowEvent =
    * (`switcher.open → close-switcher`) and the derived Esc-grab predicate fire
    * correctly. It emits NO effect — the window already exists.
    */
-  | { type: 'SWITCHER_OPENED'; windowId: WindowId };
+  | { type: 'SWITCHER_OPENED'; windowId: WindowId }
+  /**
+   * The window's renderer WebContents gained or lost macOS first-responder
+   * status (§5 step 11 — the front/first-responder collapse). Purely
+   * additive for now: sets `WindowRecord.contentFocused` and nothing else.
+   * No consumer keys off this yet — a later step re-derives
+   * `deriveEscGrabRegistered` from it. No-op for an unknown id.
+   */
+  | { type: 'CONTENT_FIRST_RESPONDER_CHANGED'; id: WindowId; held: boolean };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Effects — returned by the reducer, executed by the OS adapter (§2.6). The
@@ -2241,6 +2259,15 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
     case 'OS_FOCUS_SETTLED_NULL': {
       // Front UNCHANGED — the target must survive an app switch. `appActive`
       // (via APP_RESIGNED) carries "is Peek front", not `front`.
+      break;
+    }
+
+    case 'CONTENT_FIRST_RESPONDER_CHANGED': {
+      // Purely additive (§5 step 11): mirrors the backend's native
+      // focus/blur report onto the record. No-op for an unknown id.
+      const rec = state.windows.get(event.id);
+      if (!rec) break;
+      patchRecord(state, event.id, { contentFocused: event.held });
       break;
     }
 

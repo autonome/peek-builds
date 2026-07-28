@@ -874,6 +874,24 @@ describe('staged-cutover switcher mirror', () => {
   });
 });
 
+// ── CONTENT_FIRST_RESPONDER_CHANGED mirror (§5 step 11, purely additive) ─────
+
+describe('CONTENT_FIRST_RESPONDER_CHANGED mirror', () => {
+  it('flips contentFocused both ways on a known record', () => {
+    let s = openWindow(createInitialState(), 4, { kind: 'page-host', role: 'content' });
+    s = drive(s, [{ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id: wid(4), held: true }]).state;
+    assert.strictEqual(s.windows.get(wid(4))?.contentFocused, true);
+    s = drive(s, [{ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id: wid(4), held: false }]).state;
+    assert.strictEqual(s.windows.get(wid(4))?.contentFocused, false);
+  });
+
+  it('is a no-op for an unknown id', () => {
+    const { state, effects } = reduce(createInitialState(), { type: 'CONTENT_FIRST_RESPONDER_CHANGED', id: wid(99), held: true });
+    assert.strictEqual(state.windows.size, 0);
+    assert.strictEqual(effects.length, 0);
+  });
+});
+
 // ── Devtools-target + pre-fullscreen-bounds selectors ────────────────────────
 
 describe('selectors: getDevtoolsTargetId / getWindowPreBounds', () => {
