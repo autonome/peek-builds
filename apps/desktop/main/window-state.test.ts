@@ -1505,6 +1505,58 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     assert.ok(focusesContent(healed.effects, 1));
   });
 
+  // TODO(wm step 6): unskip. This case FAILS against today's code — verified RED
+  // (`must NOT raise the host out from under a live palette`). It is red because
+  // the rule it tests does not exist yet; it goes green at step 6, which deletes
+  // `applyFrontAssertion` / `invalidatesFrontAssertion` / `frontAsserted`. Skipped
+  // rather than inverted on purpose — asserting the buggy behaviour is correct
+  // would make the eviction permanent. The case above ('a satellite gaining OS
+  // focus…') encodes the CURRENT (buggy) rule and is rewritten at step 6 too.
+  it.skip('a LIVE satellite palette is not evicted by the next transition (command-palette flash-and-vanish)', () => {
+    // The bug the case above encodes the other half of. `OS_FOCUS_GAINED` on a
+    // satellite clears `frontAsserted`, and `applyFrontAssertion` skips the
+    // re-drive ONLY on that same transition. Any following event — a bounds
+    // echo from the host, a session tick, anything — takes the `!frontAsserted`
+    // path and emits a real RAISE_WINDOW + FOCUS_CONTENT at the host while the
+    // palette is still on screen and still holding key. The backend `.focus()`
+    // that follows produces a native focus event on the host, which is exactly
+    // the input `selectTransientAutoclose` reads to pick the palette, and
+    // `windows.ts closeOrHideWindow` hides it. The user sees the command
+    // palette flash and vanish.
+    //
+    // Self-healing is only correct once the satellite is GONE. While it is
+    // visible, the machine must leave it alone.
+    let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+    ]).state;
+
+    const stolen = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(2) });
+    assert.strictEqual(getFrontWindowId(stolen.state), wid(1), 'a satellite never becomes front');
+    assert.strictEqual(stolen.state.windows.get(wid(2))!.visible, true, 'precondition: the palette is on screen');
+
+    // Any inert follow-up while the palette is STILL visible.
+    const next = reduce(stolen.state, { type: 'BOUNDS_CHANGED', id: wid(1), bounds: BOUNDS });
+    assert.strictEqual(next.state.windows.get(wid(2))!.visible, true, 'the palette has not gone away');
+    assert.ok(
+      !raises(next.effects, 1),
+      'must NOT raise the host out from under a live palette — that is the flash-and-vanish',
+    );
+    assert.ok(
+      !focusesContent(next.effects, 1),
+      'and must not make the host content first responder either — same eviction, other half',
+    );
+    assert.ok(
+      !next.effects.some((e) => e.type === 'CLOSE_WINDOW' && e.id === wid(2)),
+      'and nothing closes the palette',
+    );
+    assert.ok(
+      !next.effects.some((e) => e.type === 'HIDE_WINDOW' && e.id === wid(2)),
+      'and nothing hides it',
+    );
+  });
+
   it('WINDOW_HIDDEN of the front invalidates and asserts the successor', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
