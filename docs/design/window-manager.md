@@ -288,8 +288,10 @@ The reducer owns `stackOrder` (bottom→top) plus a per-record stacking level
 (`deriveStackingLevel`); `SET_STACKING` is the sole ordering effect, and the executor's
 `setStacking` — routed to the backend's `setStacking()` — is the only path to the OS.
 `WINDOW_CONTENT_ORDERABLE`, produced from the `hybrid:first-frame` boundary signal, marks a
-record orderable and re-drives `SET_STACKING` for it and everything above it. This was the
-precondition for `frontAsserted` being sound at all, and it now is (see §6).
+record orderable and re-drives `SET_STACKING` for it and everything above it. This is the
+precondition for `SET_STACKING` to actually land where `applyRaiseRequest` and
+`applyOsFocusRealized` (§6) already point `front` — a page-host that can't yet take a raise
+must not be left stacked behind reality once it can.
 
 **3b. Chrome overlay follow / retarget** — TO ABSORB.
 Today: `hybrid-overlay.ts` module-level lets **including its own `appActive` copy** — the
@@ -469,16 +471,17 @@ failure mode this document exists to prevent (§2).**
    allowlist shrank 51→40 entries / 129→104 calls. NOT absorbed here (deliberate):
    handle-carrying registration itself — `create(spec)` is still future work, so the
    `registerWindow` migration shim stays until window CREATION moves behind the port.
-5. **Z-order / stacking — DONE** (commits 693816ab, 9302478d, c18e361b). This is what
-   makes `frontAsserted` sound (§6); it precedes session restore as planned.
+5. **Z-order / stacking — DONE** (commits 693816ab, 9302478d, c18e361b). This is what lets
+   `SET_STACKING` land wherever the reducer's own raise/focus decisions already point
+   `front` (§6); it precedes session restore as planned.
    **Part A — machinery** (commit 693816ab). The reducer carries a per-record
    stacking level (`window-state.ts deriveStackingLevel`: `stacked` participates,
    `pinned` = hud/overlay/palette above the stack via the existing `SET_ALWAYS_ON_TOP`,
    `excluded` = the other satellites) and the ordered list
    (`AppWindowState.stackOrder`, bottom→top; membership = stacked ∧ visible;
    `stackOrderInvariantHolds` checks it). `SET_STACKING` is the new SOLE ordering
-   effect (relative order only — activation stays `RAISE_WINDOW`), emitted by the
-   closing assertion (`applyFrontAssertion`) alongside the raise, so the machine's own
+   effect (relative order only — activation stays `RAISE_WINDOW`), emitted by
+   `applyRaiseRequest` alongside the raise it drives, so the machine's own
    front-driving now also drives order and places `front` at the top of the list. The
    page-host orderability caveat (an NSWindow no-ops raises until first composited
    frame) is the `WINDOW_CONTENT_ORDERABLE` event: it marks the record orderable and
@@ -489,9 +492,10 @@ failure mode this document exists to prevent (§2).**
    (`reassertColdStartFocusOnce`, `reassertStackingOrder`, the willActivate restack
    loop) and `hybrid-overlay.ts` are routed through the machine; both legacy
    `moveTop` R2 allowlist entries are deleted (allowlist now 38 entries / 95 calls).
-   **Live-run fix** (commit c18e361b): OS-driven focus events must record the front
-   assertion, not echo an activating raise — echoing it caused a perpetual
-   multi-tile focus ping-pong at frontmost restore.
+   **Live-run fix** (commit c18e361b): an `OS_FOCUS_GAINED` that landed on `front` must
+   mirror what the OS already did (`applyOsFocusRealized`, §6), not echo an activating
+   raise back at it — echoing it caused a perpetual multi-tile focus ping-pong at
+   frontmost restore.
 6. **Visibility.** Make `visible` authoritative; delete the hand-dispatch of
    `WINDOW_HIDDEN` and the `isVisible()` polling in `maybeHideApp`.
    **Part A — per-window show/hide through the machine: DONE, gate green** (commits
@@ -833,8 +837,9 @@ yet absorbed still run on their old owners.
 
 **`apps/desktop/main/window-state.ts`** — the owner, as R1 describes it, for the dimensions
 it covers. Pure, zero imports, 187 unit tests in `window-state.test.ts`, keyed by
-`WindowId`. It owns: `front` (intent), `frontAsserted` (the claim that the OS matches that
-intent), the switcher state, the Escape decision (`applyEscape`), fullscreen mode,
+`WindowId`. It owns: `front` (a pure projection of OS focus — the most recently
+OS-focused front-eligible window, written only by `applyFocusGained`), the switcher
+state, the Escape decision (`applyEscape`), fullscreen mode,
 satellite classification (`isSatelliteRegistration`), window classes
 (`classifyWindowRegistration` + the record's closed `class` enum), the stacking level +
 ordered z-order list (`deriveStackingLevel`, `AppWindowState.stackOrder` — §5 step 5),
@@ -877,22 +882,41 @@ that deletes it. The sole exempt file is
 `apps/desktop/main/electron-window-backend.ts` (swapped from the executor when the port
 landed). The entry count is the migration's progress bar; it only goes down.
 
-**`frontAsserted` is now SOUND** (§5 step 5, both parts) — the buried-but-asserted state
-described in the previous revision of this section is gone. Every transition that sets
-`frontAsserted: true` also DRIVES order: the closing assertion emits `SET_STACKING(front)`
-alongside the raise and places `front` at the top of the reducer's `stackOrder`, and since
-part B, `session.ts` and `hybrid-overlay.ts` no longer restack behind the machine's back —
-both `moveTop` callers are gone, so nothing outside the machine can bury the asserted front
-anymore. Two findings from the live verification that closed this out:
+**The machine's separate belief about front is deleted; `front` is a pure projection of
+OS focus** (commit ef200b7c) — the claim field, its invalidation clause, and the
+closing-assertion step that used to run at the tail of `reduce` are gone. `front` itself
+survives: the most recently OS-focused front-eligible window, written only by
+`applyFocusGained`, reached from BOTH `OS_FOCUS_GAINED` and `WINDOW_SHOWN {focused:true}`.
+The machine no longer holds a value that can disagree with what macOS reports and then
+re-drive the OS to match it.
 
-- **OS-driven focus events must record the front assertion, not echo an activating raise.**
-  Echoing caused a perpetual multi-tile focus ping-pong at frontmost restore — fixed in
-  commit c18e361b.
-- **Live-verified on macOS** (visible run, quit→relaunch): the window focused at quit
-  restores focused and on top, with `frontAsserted` true and a clean 6/6 save set (no
-  background/overlay/bridge leakage). The full restored z-order is rebuilt from focus
-  recency by `session.ts`, rather than a literal replay of the pre-quit visual stack — a
-  deliberate-for-now behavior for the session step (§5 step 11) to revisit.
+- **`applyRaiseRequest` is the sole `RAISE_WINDOW` emitter**, reached from
+  `RAISE_WINDOW_REQUESTED` and four user-act sites: switcher selection
+  (`SWITCHER_SELECTED`), the `WINDOW_CLOSED` parent/successor handoff, devtools
+  open/close (`DEVTOOLS_OPENED`/`DEVTOOLS_CLOSED`), and `applyEscape`'s close-switcher
+  branch.
+- **Two focus-bearing events, deliberately different.** `OS_FOCUS_GAINED` moves `front`
+  AND runs `selectTransientAutoclose`; `WINDOW_SHOWN {focused:true}` moves `front` but does
+  NOT sweep, because it is a registration-time visibility import
+  (`decideWindowRegistration.pumpShownEvent`) rather than evidence the OS moved focus.
+  Conflating them is what caused the command-palette flash-and-vanish.
+- **`applyOsFocusRealized`** carries what the deleted assertion's record-not-echo branch
+  did: on an `OS_FOCUS_GAINED` for the current front, it pushes `FOCUS_CONTENT` for a
+  page-host and calls `stackRaise` on the window — mirroring an order the OS already
+  performed, never re-driving a raise back at it.
+- **The Escape grab is derived from `WindowRecord.contentFocused`** — the backend's mirror
+  of the renderer WebContents `focus`/`blur` pair — not from a machine-side claim. Absent
+  means "nothing reported yet" and does NOT arm the net.
+- **Termination of the `pump` drain is now structural**, not an ordering coincidence: no
+  arm reachable from `RAISE_WINDOW`'s `WINDOW_SHOWN` echo may call `applyRaiseRequest` —
+  concretely, the `WINDOW_SHOWN` and `OS_FOCUS_GAINED` arms never call it. A unit test pins
+  this: `INVARIANT: no RAISE_WINDOW is emitted from WINDOW_SHOWN or OS_FOCUS_GAINED (the
+  pump's convergence obligation)`.
+
+**Accepted behavior loss:** `APP_ACTIVATED` no longer drives stack order for an unchanged
+`front` — macOS restores the app's own window order on activation, and `stackOrder`
+(intent) never moved while the app was away, so there is nothing to re-drive. Unverified
+on a real display.
 
 ---
 
