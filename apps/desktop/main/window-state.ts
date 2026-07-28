@@ -2262,8 +2262,15 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // A pending renderer question aimed at this window can never be answered
       // meaningfully — drop it so a late answer is inert.
       if (state.escAsk && state.escAsk.id === event.id) state.escAsk = null;
+      // Single raise target for this arm — computed below, emitted once at
+      // the tail via `applyRaiseRequest` (no-op for null). The parent-handoff
+      // assignment runs after the successor one and deliberately overwrites
+      // it: a closing front child with an eligible parent raises the parent,
+      // not the MRU successor.
+      let raiseTarget: WindowId | null = null;
       if (state.front === event.id) {
         state.front = successorFront(state);
+        raiseTarget = state.front;
       }
       // Parent refocus (replaces the deleted main.ts `browser-window-created →
       // 'closed' → parentWin.focus()` block): a closing window with a
@@ -2280,7 +2287,7 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
           // Explicit parent-handoff raise (§5 step 5) — see the
           // `SWITCHER_SELECTED` case for why this no longer waits on the
           // closing assertion step alone.
-          applyRaiseRequest(state, parent.id, effects);
+          raiseTarget = parent.id;
         }
       }
       if (state.switcher.open && state.switcher.windowId === event.id) {
@@ -2293,6 +2300,7 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // Session end (last window closed -> idle) is owned by `izui-state.ts`
       // (its `popWindow`/`endSession`), mirrored in via SESSION_CHANGED. Not
       // derived here (§3).
+      applyRaiseRequest(state, raiseTarget, effects);
       break;
     }
 
