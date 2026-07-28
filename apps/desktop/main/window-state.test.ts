@@ -167,9 +167,6 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       appActive: true,
       session,
       front,
-      // Unasserted, so the closing assertion step is exercised across the whole
-      // matrix (it must stay total and invariant-preserving when it fires).
-      frontAsserted: false,
       stackOrder: satellite ? [] : [wid(1)],
       switcher: switcherOpen ? { open: true, windowId: wid(2), previousFront: front } : { open: false },
       windows,
@@ -365,7 +362,7 @@ describe('decideEscape (steps 1-5, total)', () => {
   it('step 4: any non-normal fsMode -> exit-fullscreen (entering/full/leaving)', () => {
     for (const name of ['entering-fullscreen', 'fullscreen', 'leaving-fullscreen'] as FsMode['name'][]) {
       const rec: WindowRecord = { id: wid(1), kind: 'page-host', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: true, fsMode: fsOf(name, BOUNDS), maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1 };
-      const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), frontAsserted: true, stackOrder: [wid(1)], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false };
+      const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), stackOrder: [wid(1)], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false };
       assert.deepStrictEqual(decideEscape(state), { kind: 'exit-fullscreen', id: wid(1) }, `mode ${name}`);
     }
   });
@@ -1329,7 +1326,7 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
   // front) — we craft it directly to exercise the guard's throw path.
   function illegalFrontState(): AppWindowState {
     const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1 };
-    return { appActive: true, session: 'active', front: wid(1), frontAsserted: true, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false };
+    return { appActive: true, session: 'active', front: wid(1), stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false };
   }
 
   it('THROWS in dev/test when reduce yields an illegal front (naming the event + front id)', () => {
@@ -1358,19 +1355,19 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
   it('FULLSCREEN_REQUESTED on a satellite does NOT install an illegal front (and does not throw)', () => {
     // The reducer bug the reviewer flagged: front was assigned unconditionally.
     const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1 };
-    const s: AppWindowState = { appActive: true, session: 'active', front: null, frontAsserted: false, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false };
+    const s: AppWindowState = { appActive: true, session: 'active', front: null, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false };
     const { state } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
     assert.strictEqual(state.front, null, 'a satellite must never become front, even via a fullscreen request');
     assert.strictEqual(getWindowMode(state, wid(1)), 'entering-fullscreen', 'the fsMode edge still runs (total table)');
   });
 });
 
-// ── The front assertion: intent vs. "the OS actually matches it" ─────────────
+// ── Driving `front` onto the OS: who raises, and who merely records ──────────
 //
-// The defect this whole section pins: the deleted `frontChangeEffects` early-returned
-// whenever `front === prevFront`, i.e. it inferred "the OS still matches the target"
-// from "the target didn't change". Everything below either asserts the OS is re-driven
-// on a transition where `front` did NOT move, or pins which events invalidate the claim.
+// `front` is a pure projection of OS focus. The machine drives a raise ONLY from
+// `applyRaiseRequest` (an explicitly named target); an `OS_FOCUS_GAINED` that
+// landed on `front` is RECORDED, never echoed back as a raise. Everything below
+// pins which side of that line each transition falls on.
 
 /** Did this reduce describe raising window `id` onto the OS? */
 function raises(effects: Effect[], id: number | WindowId): boolean {
@@ -1384,38 +1381,43 @@ function focusesContent(effects: Effect[], id: number | WindowId): boolean {
   return effects.some((e) => e.type === 'FOCUS_CONTENT' && e.id === target);
 }
 
-describe('front assertion — the machine drives `front` onto the OS, not just remembers it', () => {
-  it('a front change raises the new front, and a page-host ALSO gets FOCUS_CONTENT', () => {
+describe('front — a projection of OS focus; raises come from named targets only', () => {
+  it('a front change on WINDOW_SHOWN moves front and emits NO raise (the echo cycle is cut)', () => {
     const { state, effects } = reduce(
       drive(createInitialState(), [
         { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false },
       ]).state,
       { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
     );
-    assert.strictEqual(getFrontWindowId(state), wid(1));
-    assert.ok(raises(effects, 1), 'the new front must be raised');
-    assert.ok(focusesContent(effects, 1), 'a page-host needs its content view made first responder');
-    assert.strictEqual(snapshot(state).frontAsserted, true, 'the claim is recorded');
+    assert.strictEqual(getFrontWindowId(state), wid(1), 'front follows the shown+focused window');
+    assert.ok(!hasEffect(effects, 'RAISE_WINDOW'), 'WINDOW_SHOWN never raises — see applyRaiseRequest');
+    assert.ok(!hasEffect(effects, 'FOCUS_CONTENT'), 'the first-responder half rides OS_FOCUS_GAINED');
   });
 
-  it('a browser window gets RAISE_WINDOW but NOT FOCUS_CONTENT (its root WC is first responder)', () => {
-    const { state, effects } = reduce(
-      drive(createInitialState(), [
-        { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'content', satellite: false },
-      ]).state,
-      { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
-    );
+  it('the companion OS_FOCUS_GAINED is what drives FOCUS_CONTENT for that page-host front', () => {
+    // The real display delivers both for a genuine activating show; the raise
+    // half is already done by the OS, only the content view is left to drive.
+    const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
+    const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(1) });
     assert.strictEqual(getFrontWindowId(state), wid(1));
-    assert.ok(raises(effects, 1));
+    assert.ok(!hasEffect(effects, 'RAISE_WINDOW'));
+    assert.ok(focusesContent(effects, 1), 'a page-host needs its content view made first responder');
+  });
+
+  it('a browser front gets NEITHER RAISE_WINDOW nor FOCUS_CONTENT on OS focus (its root WC is first responder)', () => {
+    const s = openWindow(createInitialState(), 1, { kind: 'browser', role: 'content' });
+    const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(1) });
+    assert.strictEqual(getFrontWindowId(state), wid(1));
+    assert.ok(!hasEffect(effects, 'RAISE_WINDOW'));
     assert.ok(!hasEffect(effects, 'FOCUS_CONTENT'), 'a BrowserWindow has no separate content view to focus');
   });
 
-  it('an OS-driven front switch records the assertion WITHOUT echoing a raise (the OS already did it)', () => {
+  it('an OS-driven front switch mirrors the order WITHOUT echoing a raise (the OS already did it)', () => {
     // OS_FOCUS_GAINED means the OS made the window key + front on its own —
-    // driving RAISE back at it is the focus-echo feedback loop (see the
-    // record-not-echo clause in applyFrontAssertion; observed live 2026-07-22:
-    // several in-flight show-active focus events + an echoed activating raise
-    // per event = a perpetual multi-window focus ping-pong at restore).
+    // driving RAISE back at it is the focus-echo feedback loop (see
+    // `applyOsFocusRealized`; observed live 2026-07-22: several in-flight
+    // show-active focus events + an echoed activating raise per event = a
+    // perpetual multi-window focus ping-pong at restore).
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
     s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
@@ -1423,7 +1425,6 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     assert.strictEqual(getFrontWindowId(state), wid(1));
     assert.ok(!hasEffect(effects, 'RAISE_WINDOW'), 'no activating raise echoed back at the OS');
     assert.ok(!hasEffect(effects, 'FOCUS_CONTENT'), 'window 1 is a browser window');
-    assert.strictEqual(snapshot(state).frontAsserted, true, 'the OS event itself is the assertion');
     const order = getStackOrder(state);
     assert.strictEqual(order[order.length - 1], wid(1), 'the list mirrors the OS-driven order-front');
   });
@@ -1438,52 +1439,53 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     assert.strictEqual(getFrontWindowId(state), wid(1));
     assert.ok(!hasEffect(effects, 'RAISE_WINDOW'));
     assert.ok(focusesContent(effects, 1), 'content first responder is still the machine’s to drive');
-    assert.strictEqual(snapshot(state).frontAsserted, true);
   });
 
-  it('an already-asserted, unchanged front emits nothing (the assertion is idempotent)', () => {
+  it('an unrelated transition on an unchanged front emits nothing', () => {
     const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    assert.strictEqual(snapshot(s).frontAsserted, true);
     const { effects } = reduce(s, { type: 'SESSION_CHANGED', session: 'active' });
     assert.ok(!hasEffect(effects, 'RAISE_WINDOW'), 'no gratuitous re-raise on an unrelated transition');
     assert.ok(!hasEffect(effects, 'FOCUS_CONTENT'));
   });
 
-  it('REGRESSION (frontChangeEffects): APP_RESIGNED then APP_ACTIVATED re-asserts an UNCHANGED front', () => {
+  it('REGRESSION (frontChangeEffects): APP_RESIGNED then APP_ACTIVATED restores an UNCHANGED front via the OS focus it delivers', () => {
     // This is the case the deleted `frontChangeEffects` could not express. The user
     // Cmd+Tabs away and back: `front` never moves, so its `front === prevFront`
     // early-out returned NO effects — a page host came back key but with its content
     // view no longer first responder, so `before-input-event` was deaf and Escape
     // reached nothing at all, permanently (7c61e917 / 7fffa286).
+    //
+    // The fix no longer runs off APP_ACTIVATED (which knows nothing about which
+    // window the OS re-keyed): a real display re-keys the window and delivers
+    // OS_FOCUS_GAINED, and THAT drives the missing first-responder half.
     const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    assert.strictEqual(snapshot(s).frontAsserted, true);
 
     const resigned = reduce(s, { type: 'APP_RESIGNED' });
     assert.strictEqual(getFrontWindowId(resigned.state), wid(1), 'front survives the app switch (by design)');
-    assert.strictEqual(snapshot(resigned.state).frontAsserted, false, 'but the claim about the OS does not');
     assert.ok(!hasEffect(resigned.effects, 'RAISE_WINDOW'), 'no focus theft while Peek is not the active app');
 
     const activated = reduce(resigned.state, { type: 'APP_ACTIVATED' });
     assert.strictEqual(getFrontWindowId(activated.state), wid(1), 'front is UNCHANGED across the whole round trip');
-    assert.ok(raises(activated.effects, 1), 'and yet it must be re-raised — this is the whole fix');
-    assert.ok(focusesContent(activated.effects, 1), 'first responder is restored on the page host');
-    assert.strictEqual(snapshot(activated.state).frontAsserted, true);
+    assert.ok(!hasEffect(activated.effects, 'RAISE_WINDOW'), 'APP_ACTIVATED alone names no target — it raises nothing');
+
+    const refocused = reduce(activated.state, { type: 'OS_FOCUS_GAINED', id: wid(1) });
+    assert.strictEqual(getFrontWindowId(refocused.state), wid(1), 'still unchanged');
+    assert.ok(!hasEffect(refocused.effects, 'RAISE_WINDOW'), 'the OS already re-keyed it');
+    assert.ok(focusesContent(refocused.effects, 1), 'first responder is restored on the page host — the whole fix');
   });
 
-  it('SWITCHER_OPENED invalidates without stealing key back; the Esc-close then re-asserts the restore target', () => {
+  it('SWITCHER_OPENED does not steal key back; the Esc-close then raises the restore target', () => {
     const s = openWindow(createInitialState(), 4, { kind: 'page-host', role: 'content' });
 
     const opened = reduce(s, { type: 'SWITCHER_OPENED', windowId: wid(88) });
     assert.strictEqual(getFrontWindowId(opened.state), wid(4), 'front does not move for the overlay');
-    assert.strictEqual(snapshot(opened.state).frontAsserted, false, 'the overlay took key — the claim is void');
     assert.ok(
       !hasEffect(opened.effects, 'RAISE_WINDOW'),
       'must NOT re-raise front while the switcher is open — that would yank key out of the overlay',
     );
 
-    // Esc dismisses the switcher. `applyEscape` case 'close-switcher' now
-    // requests the raise explicitly (§5 step 5); the INTERIM dedupe guard on
-    // `applyFrontAssertion` stops the closing step from doubling it.
+    // Esc dismisses the switcher. `applyEscape` case 'close-switcher' requests
+    // the raise explicitly (§5 step 5), and it is the only emitter in the arm.
     const closed = reduce(opened.state, { type: 'ESC_PRESSED', landedId: 'global' });
     assert.strictEqual(closed.state.switcher.open, false);
     assert.strictEqual(getFrontWindowId(closed.state), wid(4));
@@ -1497,13 +1499,11 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
     s = drive(s, [{ type: 'SWITCHER_OPEN_REQUESTED', windowId: wid(1) }]).state;
     assert.strictEqual(s.switcher.open, true);
-    // SWITCHER_OPEN_REQUESTED alone never invalidates the assertion (unlike
-    // SWITCHER_OPENED) — before §5 step 5 this meant the closing assertion
-    // step had nothing to re-drive, so Escape emitted no raise at all.
-    assert.strictEqual(snapshot(s).frontAsserted, true);
+    // Before §5 step 5, Escape here emitted no raise at all: the raise was a
+    // side effect of a claim only SWITCHER_OPENED invalidated.
     const closed = reduce(s, { type: 'ESC_PRESSED', landedId: 'global' });
     assert.ok(hasEffect(closed.effects, 'CLOSE_SWITCHER_WINDOW'));
-    assert.ok(raises(closed.effects, 1), 'the explicit raise request fires unconditionally, unlike the old assertion-only path');
+    assert.ok(raises(closed.effects, 1), 'the explicit raise request fires unconditionally');
   });
 
   it('SWITCHER_SELECTED raises the selection through the explicit raise request (one emitter, not two)', () => {
@@ -1518,50 +1518,44 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     assert.ok(focusesContent(effects, 1));
   });
 
-  it('a satellite gaining OS focus invalidates, and the NEXT transition re-asserts the real front', () => {
+  it('a satellite gaining OS focus leaves front alone, and closing that parentless palette raises NOTHING', () => {
+    // The tail used to be the other way round: closing the palette re-drove a
+    // RAISE_WINDOW + FOCUS_CONTENT at the host. That "self-heal" is what the
+    // flash-and-vanish case below is about, and it is gone — the OS gives key
+    // back to whatever it likes when a palette closes, and its focus event is
+    // what the machine records.
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
     s = drive(s, [
       { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
       { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
     ]).state;
-    assert.strictEqual(snapshot(s).frontAsserted, true);
 
     const stolen = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(2) });
     assert.strictEqual(getFrontWindowId(stolen.state), wid(1), 'a satellite never becomes front');
-    assert.strictEqual(snapshot(stolen.state).frontAsserted, false, 'but it DID take key, so the claim is void');
     assert.ok(
       !hasEffect(stolen.effects, 'RAISE_WINDOW'),
       'must not rip key back out of the palette the instant it takes it',
     );
 
-    // The palette goes away — self-healing, per design §2.
-    const healed = reduce(stolen.state, { type: 'WINDOW_CLOSED', id: wid(2) });
-    assert.strictEqual(getFrontWindowId(healed.state), wid(1), 'front never moved');
-    assert.ok(raises(healed.effects, 1), 'the real front is re-asserted on the next transition');
-    assert.ok(focusesContent(healed.effects, 1));
+    const closed = reduce(stolen.state, { type: 'WINDOW_CLOSED', id: wid(2) });
+    assert.strictEqual(getFrontWindowId(closed.state), wid(1), 'front never moved');
+    assert.ok(!hasEffect(closed.effects, 'RAISE_WINDOW'), 'a parentless satellite closing names no raise target');
+    assert.ok(!hasEffect(closed.effects, 'FOCUS_CONTENT'));
   });
 
-  // TODO(wm step 6): unskip. This case FAILS against today's code — verified RED
-  // (`must NOT raise the host out from under a live palette`). It is red because
-  // the rule it tests does not exist yet; it goes green at step 6, which deletes
-  // `applyFrontAssertion` / `invalidatesFrontAssertion` / `frontAsserted`. Skipped
-  // rather than inverted on purpose — asserting the buggy behaviour is correct
-  // would make the eviction permanent. The case above ('a satellite gaining OS
-  // focus…') encodes the CURRENT (buggy) rule and is rewritten at step 6 too.
-  it.skip('a LIVE satellite palette is not evicted by the next transition (command-palette flash-and-vanish)', () => {
-    // The bug the case above encodes the other half of. `OS_FOCUS_GAINED` on a
-    // satellite clears `frontAsserted`, and `applyFrontAssertion` skips the
-    // re-drive ONLY on that same transition. Any following event — a bounds
-    // echo from the host, a session tick, anything — takes the `!frontAsserted`
-    // path and emits a real RAISE_WINDOW + FOCUS_CONTENT at the host while the
-    // palette is still on screen and still holding key. The backend `.focus()`
-    // that follows produces a native focus event on the host, which is exactly
-    // the input `selectTransientAutoclose` reads to pick the palette, and
+  it('a LIVE satellite palette is not evicted by the next transition (command-palette flash-and-vanish)', () => {
+    // The bug: the retired front-assertion claim was cleared by an
+    // `OS_FOCUS_GAINED` on a satellite, and the re-drive was skipped ONLY on
+    // that same transition. Any following event — a bounds echo from the host,
+    // a session tick, anything — took the not-asserted path and emitted a real
+    // RAISE_WINDOW + FOCUS_CONTENT at the host while the palette was still on
+    // screen and still holding key. The backend `.focus()` that follows
+    // produces a native focus event on the host, which is exactly the input
+    // `selectTransientAutoclose` reads to pick the palette, and
     // `windows.ts closeOrHideWindow` hides it. The user sees the command
     // palette flash and vanish.
     //
-    // Self-healing is only correct once the satellite is GONE. While it is
-    // visible, the machine must leave it alone.
+    // Now nothing re-drives a belief, so there is no transition to be evicted by.
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
     s = drive(s, [
       { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
@@ -1620,20 +1614,19 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     assert.deepStrictEqual(dup.effects, [], 'no effects from the duplicate');
   });
 
-  it('WINDOW_HIDDEN of the ONLY window clears the assertion and asserts nothing', () => {
+  it('WINDOW_HIDDEN of the ONLY window leaves no front and raises nothing', () => {
     const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
     const hidden = reduce(s, { type: 'WINDOW_HIDDEN', id: wid(1) });
     assert.strictEqual(getFrontWindowId(hidden.state), null, 'no successor');
-    assert.strictEqual(snapshot(hidden.state).frontAsserted, false);
-    assert.ok(!hasEffect(hidden.effects, 'RAISE_WINDOW'), 'nothing to assert with no front');
+    assert.ok(!hasEffect(hidden.effects, 'RAISE_WINDOW'), 'nothing to raise with no successor');
 
-    // Showing it again re-establishes both the intent and the assertion.
+    // Showing it again re-establishes the intent — and nothing more.
     const shown = reduce(hidden.state, { type: 'WINDOW_SHOWN', id: wid(1), focused: true });
     assert.strictEqual(getFrontWindowId(shown.state), wid(1));
-    assert.ok(raises(shown.effects, 1));
+    assert.ok(!hasEffect(shown.effects, 'RAISE_WINDOW'), 'a show is not a raise');
   });
 
-  it('no re-assert while appActive === false, however many transitions pass', () => {
+  it('no raise while appActive === false, however many transitions pass', () => {
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
     s = drive(s, [{ type: 'APP_RESIGNED' }]).state;
     assert.strictEqual(s.appActive, false);
@@ -1649,13 +1642,101 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
       const r = reduce(s, ev);
       assert.ok(!hasEffect(r.effects, 'RAISE_WINDOW'), `RAISE_WINDOW while inactive after ${ev.type}`);
       assert.ok(!hasEffect(r.effects, 'FOCUS_CONTENT'), `FOCUS_CONTENT while inactive after ${ev.type}`);
-      assert.strictEqual(snapshot(r.state).frontAsserted, false, `asserted while inactive after ${ev.type}`);
       s = r.state;
     }
 
-    // Coming back is what re-asserts.
+    // Coming back does not raise either — APP_ACTIVATED names no target. The
+    // OS focus that follows it is what restores the first responder.
     const back = reduce(s, { type: 'APP_ACTIVATED' });
-    assert.ok(raises(back.effects, getFrontWindowId(back.state)!));
+    assert.ok(!hasEffect(back.effects, 'RAISE_WINDOW'));
+    const refocused = reduce(back.state, { type: 'OS_FOCUS_GAINED', id: getFrontWindowId(back.state)! });
+    assert.ok(!hasEffect(refocused.effects, 'RAISE_WINDOW'));
+    assert.ok(focusesContent(refocused.effects, getFrontWindowId(back.state)!), 'the page-host front regains first responder');
+  });
+
+  it('INVARIANT: no RAISE_WINDOW is emitted from WINDOW_SHOWN or OS_FOCUS_GAINED (the pump’s convergence obligation)', () => {
+    // `window-os-adapter.ts pump` drains nested dispatches instead of
+    // recursing, and its TERMINATION rests on this: `RAISE_WINDOW` echoes as
+    // `WINDOW_SHOWN {focused:true}` (and, for a real activating show, an
+    // `OS_FOCUS_GAINED`), so if either arm could raise again the drain would
+    // never end. Swept over a small state space rather than one case.
+    const kinds: WindowRecord['kind'][] = ['page-host', 'browser'];
+    for (const kind of kinds) {
+      for (const satellite of [false, true]) {
+        for (const switcherOpen of [false, true]) {
+          let s = createInitialState();
+          s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+          s = drive(s, [
+            { type: 'WINDOW_REGISTERED', id: wid(2), kind, role: satellite ? 'palette' : 'content', satellite },
+            { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+          ]).state;
+          if (switcherOpen) s = drive(s, [{ type: 'SWITCHER_OPENED', windowId: wid(88) }]).state;
+          const label = `${kind}/satellite=${satellite}/switcher=${switcherOpen}`;
+          for (const ev of [
+            { type: 'WINDOW_SHOWN', id: wid(2), focused: true } as WindowEvent,
+            { type: 'OS_FOCUS_GAINED', id: wid(2) } as WindowEvent,
+            { type: 'WINDOW_SHOWN', id: wid(1), focused: true } as WindowEvent,
+            { type: 'OS_FOCUS_GAINED', id: wid(1) } as WindowEvent,
+          ]) {
+            const r = reduce(s, ev);
+            assert.ok(!hasEffect(r.effects, 'RAISE_WINDOW'), `${ev.type} raised (${label})`);
+          }
+        }
+      }
+    }
+  });
+
+  it('a raise echo (WINDOW_SHOWN {focused:true}) does not re-raise — the RAISE_WINDOW → WINDOW_SHOWN cycle is cut structurally', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
+    // The one legitimate raise, from a named target.
+    const raised = reduce(s, { type: 'RAISE_WINDOW_REQUESTED', id: wid(1) });
+    assert.ok(raises(raised.effects, 1));
+    // The backend's echo for the show it just performed. Feed it back in.
+    const echo = reduce(raised.state, { type: 'WINDOW_SHOWN', id: wid(1), focused: true });
+    assert.ok(!hasEffect(echo.effects, 'RAISE_WINDOW'), 'the echo must not re-enqueue the raise that produced it');
+    // And the OS focus a real activating show also delivers.
+    const focused = reduce(echo.state, { type: 'OS_FOCUS_GAINED', id: wid(1) });
+    assert.ok(!hasEffect(focused.effects, 'RAISE_WINDOW'), 'nor may its focus report');
+    assert.ok(focusesContent(focused.effects, 1), 'only the first-responder half is (re-)driven');
+  });
+
+  it('WINDOW_CLOSED of the front raises the successor; WINDOW_CLOSED of a non-front satellite raises nothing', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(3), kind: 'browser', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(3), focused: false },
+    ]).state;
+
+    const paletteGone = reduce(s, { type: 'WINDOW_CLOSED', id: wid(3) });
+    assert.strictEqual(getFrontWindowId(paletteGone.state), wid(2), 'front never depended on the palette');
+    assert.ok(!hasEffect(paletteGone.effects, 'RAISE_WINDOW'), 'no target was named');
+
+    const frontGone = reduce(paletteGone.state, { type: 'WINDOW_CLOSED', id: wid(2) });
+    assert.strictEqual(getFrontWindowId(frontGone.state), wid(1), 'front hands off to the MRU successor');
+    assert.ok(raises(frontGone.effects, 1), 'and the successor is a named target — it IS driven');
+    assert.ok(focusesContent(frontGone.effects, 1));
+  });
+
+  it('OS_FOCUS_GAINED on a satellite drives no FOCUS_CONTENT and does not touch the ordered stack', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2, top of stack
+    s = drive(s, [
+      // A page-host satellite, so a stray FOCUS_CONTENT would be observable.
+      { type: 'WINDOW_REGISTERED', id: wid(3), kind: 'page-host', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(3), focused: false },
+    ]).state;
+    const orderBefore = getStackOrder(s);
+
+    const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(3) });
+    assert.strictEqual(getFrontWindowId(state), wid(2), 'a satellite never becomes front');
+    assert.ok(!hasEffect(effects, 'FOCUS_CONTENT'), 'the palette is not front, so nothing is driven for it');
+    assert.ok(!hasEffect(effects, 'RAISE_WINDOW'));
+    assert.deepStrictEqual(getStackOrder(state), orderBefore, 'the ordered stack is untouched');
   });
 });
 
@@ -1772,7 +1853,6 @@ describe('deriveEscGrabRegistered — truth table over (appActive, front, conten
       appActive: true,
       session: 'active',
       front: null,
-      frontAsserted: false,
       stackOrder: [],
       switcher: { open: false },
       windows: [],
@@ -1878,8 +1958,8 @@ describe('deriveEscGrabRegistered — truth table over (appActive, front, conten
     // and stays blurred through APP_ACTIVATED until a fresh live focus report
     // arrives — so the net correctly arms for exactly the gap where
     // before-input-event would otherwise be deaf. Under the OLD predicate this
-    // same gap was covered by `frontAsserted` CLAIMING re-assertion synchronously;
-    // here it is covered by observing the real signal instead.
+    // same gap was covered by a machine-side claim of re-assertion, recorded
+    // synchronously; here it is covered by observing the real signal instead.
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
     s = drive(s, [{ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id: wid(1), held: true }]).state;
     assert.strictEqual(deriveEscGrabRegistered(snapshot(s)), false, 'confirmed focused -> net off');
@@ -2144,14 +2224,13 @@ describe('parent refocus on WINDOW_CLOSED (replaces the main.ts parentWin.focus(
     assert.strictEqual(s.front, wid(2));
     const { state, effects } = reduce(s, { type: 'WINDOW_CLOSED', id: wid(2) });
     assert.strictEqual(state.front, wid(1), 'parent takes precedence over the MRU successor');
-    assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)), 'the closing assertion step raises the parent');
+    assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)), 'the parent-handoff raise targets the parent');
   });
 
-  it('re-drives the parent even when it already was front (assertion invalidation, old focus() parity)', () => {
+  it('re-drives the parent even when it already was front (old focus() parity)', () => {
     let s = parentAndChild();
     s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]).state; // parent focused; child open in background
     assert.strictEqual(s.front, wid(1));
-    assert.strictEqual(s.frontAsserted, true);
     const { state, effects } = reduce(s, { type: 'WINDOW_CLOSED', id: wid(2) });
     assert.strictEqual(state.front, wid(1));
     assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)), 'front unchanged but the raise is re-driven');
@@ -2168,7 +2247,7 @@ describe('parent refocus on WINDOW_CLOSED (replaces the main.ts parentWin.focus(
     assert.strictEqual(state.front, wid(3), 'hidden parent cannot take front; MRU successor wins');
   });
 
-  it('closing a parentless window does not invalidate the assertion for an unrelated front', () => {
+  it('closing a parentless window drives nothing for an unrelated front', () => {
     let s = openWindow(createInitialState(), 1, { role: 'content' });
     s = openWindow(s, 2, { role: 'content', focused: false });
     assert.strictEqual(s.front, wid(1));
@@ -2226,24 +2305,21 @@ describe('HUD hide/show sweep (replaces the __hudHidden expando + sniffing loops
 describe('devtools transitions (§4.6 dim 8a)', () => {
   it('DEVTOOLS_OPENED requests the raise explicitly', () => {
     const s = openWindow(createInitialState(), 1, { role: 'content' });
-    assert.strictEqual(s.frontAsserted, true);
     const { state, effects } = reduce(s, { type: 'DEVTOOLS_OPENED', id: wid(1) });
     assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)), 'the front is re-driven immediately (old re-focus-after-devtools parity)');
     assert.ok(effects.some((e) => e.type === 'FOCUS_CONTENT' && e.id === wid(1)), 'page-host front also re-takes first responder');
     assert.strictEqual(effects.filter((e) => e.type === 'RAISE_WINDOW').length, 1, 'exactly one raise, from one place');
-    assert.strictEqual(state.frontAsserted, true, 're-asserted in the same reduce');
     assert.strictEqual(deriveEscGrabRegistered(snapshot(state)), false, 'the Esc grab stays off while devtools is up');
   });
 
   it('DEVTOOLS_CLOSED requests the raise explicitly', () => {
     const s = openWindow(createInitialState(), 1, { role: 'content' });
-    const { state, effects } = reduce(s, { type: 'DEVTOOLS_CLOSED', id: wid(1) });
+    const { effects } = reduce(s, { type: 'DEVTOOLS_CLOSED', id: wid(1) });
     assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)));
     assert.strictEqual(effects.filter((e) => e.type === 'RAISE_WINDOW').length, 1, 'exactly one raise, from one place');
-    assert.strictEqual(state.frontAsserted, true);
   });
 
-  it('OS focus landing on a registered devtools window does NOT clear the assertion (Esc grab stays off)', () => {
+  it('OS focus landing on a registered devtools window yanks nothing back (Esc grab stays off)', () => {
     let s = openWindow(createInitialState(), 1, { role: 'content' });
     s = drive(s, [
       { type: 'WINDOW_REGISTERED', id: wid(5), kind: 'browser', role: 'utility', class: 'devtools', satellite: true, parentId: wid(1) },
@@ -2251,19 +2327,8 @@ describe('devtools transitions (§4.6 dim 8a)', () => {
     ]).state;
     const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(5) });
     assert.strictEqual(state.front, wid(1), 'satellite devtools never becomes front');
-    assert.strictEqual(state.frontAsserted, true, 'devtools focus does not invalidate (clicking into devtools must not arm the grab)');
     assert.strictEqual(hasEffect(effects, 'RAISE_WINDOW'), false, 'and nothing yanks focus back out of devtools');
     assert.strictEqual(deriveEscGrabRegistered(snapshot(state)), false, 'Esc typed inside devtools is not grabbed');
-  });
-
-  it('a PALETTE satellite gaining focus still clears the assertion (pre-existing rule intact)', () => {
-    let s = openWindow(createInitialState(), 1, { role: 'content' });
-    s = drive(s, [
-      { type: 'WINDOW_REGISTERED', id: wid(6), kind: 'browser', role: 'palette', class: 'palette', satellite: true },
-      { type: 'WINDOW_SHOWN', id: wid(6), focused: false },
-    ]).state;
-    const { state } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(6) });
-    assert.strictEqual(state.frontAsserted, false, 'non-devtools satellites keep the invalidation clause');
   });
 
   it('closing a registered detached devtools window refocuses its parent via the parent-refocus transition', () => {
@@ -2365,7 +2430,7 @@ describe('ordered stacking list — membership across the class enum (§5 step 5
     assert.deepStrictEqual(getStackOrder(reshown), [wid(1), wid(3), wid(2)]);
   });
 
-  it('closing the front removes it AND the succession assertion tops the successor (list stays consistent)', () => {
+  it('closing the front removes it AND the succession raise tops the successor (list stays consistent)', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
     s = openWindow(s, 2, { kind: 'browser', role: 'content' });
@@ -2374,7 +2439,6 @@ describe('ordered stacking list — membership across the class enum (§5 step 5
     assert.strictEqual(getFrontWindowId(state), wid(2), 'MRU successor');
     assert.deepStrictEqual(getStackOrder(state), [wid(1), wid(2)], 'closed window gone; successor driven to the top');
     assert.deepStrictEqual(stackings(effects), [wid(2)], 'the succession is DRIVEN as order, not just recorded');
-    assert.strictEqual(state.frontAsserted, true);
   });
 
   it('the richer re-registration merge can demote a stacked window out of the list (modal revealed)', () => {
@@ -2407,20 +2471,19 @@ describe('ordered stacking list — membership across the class enum (§5 step 5
   });
 });
 
-describe('SET_STACKING — the closing assertion drives order (frontAsserted means "on top")', () => {
+describe('SET_STACKING — a machine-driven raise drives order with it', () => {
   it('a MACHINE-driven front change emits SET_STACKING alongside RAISE_WINDOW and tops the list', () => {
     // Machine-driven: hiding the front hands off to the successor, which the
-    // closing step must DRIVE (raise + order). An OS-driven focus change is
-    // the record-not-echo case (own test below) — the OS already ordered it.
+    // arm must DRIVE (raise + order). An OS-driven focus change is the
+    // record-not-echo case (own test below) — the OS already ordered it.
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
     s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2, top
     const { state, effects } = reduce(s, { type: 'WINDOW_HIDDEN', id: wid(2) });
     assert.strictEqual(getFrontWindowId(state), wid(1));
     assert.ok(raises(effects, 1), 'activation raise still emitted');
-    assert.deepStrictEqual(stackings(effects), [wid(1)], 'order driven by the same closing step');
+    assert.deepStrictEqual(stackings(effects), [wid(1)], 'order driven by the same raise');
     assert.deepStrictEqual(getStackOrder(state), [wid(1)], 'front is the top of the ordered list');
-    assert.strictEqual(state.frontAsserted, true);
   });
 
   it('an OS-driven front change tops the list WITHOUT SET_STACKING (mirror of an order the OS performed)', () => {
@@ -2431,60 +2494,21 @@ describe('SET_STACKING — the closing assertion drives order (frontAsserted mea
     assert.strictEqual(getFrontWindowId(state), wid(1));
     assert.deepStrictEqual(stackings(effects), [], 'nothing to drive — the OS already ordered it front');
     assert.deepStrictEqual(getStackOrder(state), [wid(2), wid(1)], 'front is the top of the ordered list');
-    assert.strictEqual(state.frontAsserted, true);
   });
 
-  it('INVARIANT: frontAsserted flips true ONLY with a SET_STACKING(front) and front at the top of the list', () => {
-    // A broad mixed script; at every step where the assertion flips on, the
-    // machine must have DRIVEN order in the same transition.
-    const script: WindowEvent[] = [
-      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false },
-      { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
-      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'content', satellite: false },
-      { type: 'WINDOW_SHOWN', id: wid(2), focused: true },
-      { type: 'APP_RESIGNED' },
-      { type: 'APP_ACTIVATED' },
-      { type: 'OS_FOCUS_GAINED', id: wid(1) },
-      { type: 'SWITCHER_OPENED', windowId: wid(9) },
-      { type: 'SWITCHER_SELECTED', id: wid(2) },
-      { type: 'WINDOW_HIDDEN', id: wid(2) },
-      { type: 'WINDOW_CLOSED', id: wid(1) },
-    ];
-    let s = createInitialState();
-    for (const ev of script) {
-      const r = reduce(s, ev);
-      const flippedOn = !s.frontAsserted && r.state.frontAsserted;
-      if (flippedOn) {
-        const front = r.state.front;
-        assert.ok(front != null, `asserted with no front after ${ev.type}`);
-        // The OS-driven case (focus landed on front) records without driving —
-        // the OS performed the order itself; every machine-driven flip DRIVES.
-        const osDriven = ev.type === 'OS_FOCUS_GAINED' && ev.id === front;
-        if (!osDriven) {
-          assert.ok(stackings(r.effects).includes(front), `assertion flipped on without SET_STACKING(front) after ${ev.type}`);
-        }
-        const order = getStackOrder(r.state);
-        assert.strictEqual(order[order.length - 1], front, `front not top of stackOrder after ${ev.type}`);
-      }
-      s = r.state;
-    }
-  });
-
-  it('a deferred assertion (switcher open / satellite holds key / app inactive) emits NO SET_STACKING', () => {
+  it('a raise the machine declines (switcher open / satellite holds key / app inactive) emits NO SET_STACKING', () => {
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
 
-    // Switcher open: invalidated, deferred.
+    // Switcher open: nothing is driven at the front.
     const opened = reduce(s, { type: 'SWITCHER_OPENED', windowId: wid(9) });
-    assert.strictEqual(opened.state.frontAsserted, false);
     assert.deepStrictEqual(stackings(opened.effects), [], 'no order drive while the switcher holds key');
 
-    // Satellite steals key: invalidated, deferred.
+    // Satellite steals key: front is untouched.
     s = drive(s, [
       { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
       { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
     ]).state;
     const stolen = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(2) });
-    assert.strictEqual(stolen.state.frontAsserted, false);
     assert.deepStrictEqual(stackings(stolen.effects), [], 'no order drive the instant a palette takes key');
 
     // App inactive: nothing drives.
@@ -2501,15 +2525,6 @@ describe('SET_STACKING — the closing assertion drives order (frontAsserted mea
     const { state, effects } = reduce(s, { type: 'SWITCHER_SELECTED', id: wid(1) });
     assert.deepStrictEqual(stackings(effects), [wid(1)], 'exactly one order drive, from the explicit raise request');
     assert.deepStrictEqual(getStackOrder(state), [wid(2), wid(1)]);
-    assert.strictEqual(state.frontAsserted, true);
-  });
-
-  it('Cmd-Tab away and back re-drives ORDER for an unchanged front (the §6 fix, order half)', () => {
-    const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    const resigned = reduce(s, { type: 'APP_RESIGNED' });
-    assert.deepStrictEqual(stackings(resigned.effects), [], 'nothing driven while leaving');
-    const back = reduce(resigned.state, { type: 'APP_ACTIVATED' });
-    assert.deepStrictEqual(stackings(back.effects), [wid(1)], 'return re-drives order along with the raise');
   });
 
   it('SET_STACKING is the SOLE machine-driven ordering: any reorder not mirrored from a native show/hide/close carries it', () => {
@@ -2595,13 +2610,12 @@ describe('WINDOW_CONTENT_ORDERABLE — the page-host orderability caveat (§5 st
     assert.strictEqual(snapshot(state).windows.find((r) => r.id === wid(2))?.orderable, true, 'compositing is still recorded');
   });
 
-  it('is order-only: no RAISE_WINDOW, no FOCUS_CONTENT, front and frontAsserted untouched', () => {
+  it('is order-only: no RAISE_WINDOW, no FOCUS_CONTENT, front untouched', () => {
     const s = threeHosts();
     const { state, effects } = reduce(s, { type: 'WINDOW_CONTENT_ORDERABLE', id: wid(1) });
     assert.strictEqual(hasEffect(effects, 'RAISE_WINDOW'), false, 'compositing must never activate anything');
     assert.strictEqual(hasEffect(effects, 'FOCUS_CONTENT'), false);
     assert.strictEqual(getFrontWindowId(state), getFrontWindowId(s));
-    assert.strictEqual(state.frontAsserted, s.frontAsserted);
   });
 });
 
@@ -2620,7 +2634,6 @@ describe('restore-shaped import — back→front yields that order, focused on t
     ]);
     assert.deepStrictEqual(getStackOrder(state), [wid(1), wid(2), wid(3)], 'saved order, bottom→top');
     assert.strictEqual(getFrontWindowId(state), wid(3), 'focused on top');
-    assert.strictEqual(state.frontAsserted, true);
   });
 
   it('page-host imports converge onto the saved order as first-frame events arrive in ANY order', () => {
@@ -2711,15 +2724,13 @@ describe('STACK_ORDER_IMPORTED — the session-restore order import (§5 step 5 
     }
   });
 
-  it('is order-only: no RAISE_WINDOW, no FOCUS_CONTENT; front and a held assertion untouched', () => {
+  it('is order-only: no RAISE_WINDOW, no FOCUS_CONTENT; front untouched', () => {
     let s = restoreShapedState();
-    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]).state; // asserts front 1
-    assert.strictEqual(s.frontAsserted, true);
+    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]).state; // front 1
     const { state, effects } = reduce(s, { type: 'STACK_ORDER_IMPORTED', order: [wid(2), wid(3), wid(1)] });
     assert.strictEqual(hasEffect(effects, 'RAISE_WINDOW'), false, 'an order import must never activate anything');
     assert.strictEqual(hasEffect(effects, 'FOCUS_CONTENT'), false);
     assert.strictEqual(getFrontWindowId(state), wid(1));
-    assert.strictEqual(state.frontAsserted, true);
   });
 
   it('page-host first frames AFTER the import re-drive their suffix of the IMPORTED order', () => {
@@ -2805,13 +2816,11 @@ describe('BOUNDS_CHANGED — the sole writer of the bounds mirror (§5 step 7A)'
     assert.deepStrictEqual(r2.state.windows.get(wid(1))!.bounds, RECT_B);
   });
 
-  it('is a pure mirror: no effects, and a held front assertion survives', () => {
+  it('is a pure mirror: no effects, front untouched', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
-    assert.strictEqual(s.frontAsserted, true, 'precondition: assertion held');
     const { state, effects } = drive(s, [{ type: 'BOUNDS_CHANGED', id: wid(1), bounds: RECT_A }]);
     assert.deepStrictEqual(effects, [], 'a resize/move echo drives nothing back at the OS');
-    assert.strictEqual(state.frontAsserted, true, 'a bounds report never invalidates the assertion');
     assert.strictEqual(state.front, wid(1));
   });
 
@@ -2922,13 +2931,11 @@ describe('SET_BOUNDS_REQUESTED — the plain geometry-write intent (§5 step 7E)
     assert.deepStrictEqual(setBoundsEffects(r2.effects), [{ type: 'SET_BOUNDS', id: wid(1), bounds: RECT_B }], 'the write itself still drives');
   });
 
-  it('is pure geometry: no front/assertion/stacking change', () => {
+  it('is pure geometry: no front/stacking change', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
-    assert.strictEqual(s.frontAsserted, true, 'precondition: assertion held');
     const { state, effects } = drive(s, [{ type: 'SET_BOUNDS_REQUESTED', id: wid(1), bounds: RECT_A }]);
     assert.strictEqual(state.front, wid(1));
-    assert.strictEqual(state.frontAsserted, true);
     assert.deepStrictEqual(effects.map((e) => e.type), ['SET_BOUNDS'], 'no raise/stacking/focus rides along');
   });
 });
@@ -3408,13 +3415,11 @@ describe('DISPLAY_CHANGED — the display-layout reprojection (§4.2 dim 7, §5 
     assert.deepStrictEqual(setBoundsEffects(r2.effects), [{ type: 'SET_BOUNDS', id: wid(1), bounds: PROJ_1 }]);
   });
 
-  it('is pure geometry: no front/assertion/stacking change', () => {
+  it('is pure geometry: no front/stacking change', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'browser', role: 'content' });
-    assert.strictEqual(s.frontAsserted, true, 'precondition: assertion held');
     const { state, effects } = drive(s, [{ type: 'DISPLAY_CHANGED', projected: [{ id: wid(1), bounds: PROJ_1 }] }]);
     assert.strictEqual(state.front, wid(1));
-    assert.strictEqual(state.frontAsserted, true);
     assert.deepStrictEqual(state.stackOrder, [wid(1)]);
     assert.deepStrictEqual(effects.map((e) => e.type), ['SET_BOUNDS'], 'no raise/stacking/focus rides along');
   });

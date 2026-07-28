@@ -2676,13 +2676,13 @@ export function registerWindowHandlers(): void {
           // authority activates. Same rule as the fresh hybrid open
           // (`inactive: options.show === false`).
           const hybridReuseActivate = options.show !== false;
-          // The focus half rides the same dispatch since §5 step 8e: an
-          // activating show echoes WINDOW_SHOWN {focused:true}, and the
-          // reducer's closing front assertion drives RAISE_WINDOW +
-          // FOCUS_CONTENT (content view as first responder, R4 — cmd+L and
-          // other key equivalents route to a responder, no NSBeep) before
-          // the dispatch returns. The old imperative baseWin.focus() +
-          // contentWC.focus() pair is gone.
+          // The focus half rides the same dispatch since §5 step 8e: the
+          // backend's activating show IS the raise (`win.show()`), the OS
+          // reports it as OS_FOCUS_GAINED, and `applyOsFocusRealized` drives
+          // the FOCUS_CONTENT half (content view as first responder, R4 —
+          // cmd+L and other key equivalents route to a responder, no NSBeep).
+          // The old imperative baseWin.focus() + contentWC.focus() pair is
+          // gone.
           {
             const reusedId = getWindowIdFor(existingHybrid.baseWin);
             if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: hybridReuseActivate });
@@ -2767,10 +2767,9 @@ export function registerWindowHandlers(): void {
         // rule the fresh hybrid open already follows
         // (`inactive: options.show === false`).
         const reuseActivate = options.show !== false;
-        // Focus rides the same dispatch since §5 step 8e: an activating show
-        // echoes WINDOW_SHOWN {focused:true} and the reducer's closing front
-        // assertion drives RAISE_WINDOW (an activating show+focus in the
-        // backend), so the old headless-gated imperative focus() is gone.
+        // Focus rides the same dispatch since §5 step 8e: the backend's
+        // activating show IS the raise (an activating show+focus), so the old
+        // headless-gated imperative focus() is gone.
         showWindowHeadlessSafe(existingWindow.window, { active: reuseActivate });
         // Signal keepLive-reuse to the renderer BEFORE returning so the
         // renderer's `api.onVisible` handler dispatches its FSM reset
@@ -2829,10 +2828,10 @@ export function registerWindowHandlers(): void {
           // hand-dispatched WINDOW_SHOWN mirror in one move (the backend
           // echoes WINDOW_SHOWN for the show it performs).
           // The focus half rides the same dispatch since §5 step 8e — see
-          // the hybrid key-reuse block above (WINDOW_SHOWN {focused:true} →
-          // front assertion → RAISE_WINDOW + FOCUS_CONTENT, R4 first-
-          // responder parity included). The old imperative baseWin.focus() +
-          // contentWC.focus() pair is gone.
+          // the hybrid key-reuse block above (the activating show IS the
+          // raise → OS_FOCUS_GAINED → `applyOsFocusRealized`'s FOCUS_CONTENT,
+          // R4 first-responder parity included). The old imperative
+          // baseWin.focus() + contentWC.focus() pair is gone.
           {
             const reusedId = getWindowIdFor(existingHybridByUrl.baseWin);
             if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: true });

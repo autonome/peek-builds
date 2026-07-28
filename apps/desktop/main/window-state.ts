@@ -343,32 +343,6 @@ export interface AppWindowState {
    */
   front: WindowId | null;
   /**
-   * The claim that the OS currently matches `front`.
-   *
-   * READ THIS BEFORE TOUCHING EITHER FIELD. `front` and `frontAsserted` are two
-   * DIFFERENT things, and conflating them is the exact bug this field exists to
-   * prevent:
-   *   - `front` is INTENT — "the window the user is working in". It is a belief
-   *     the machine holds; nothing about it says the OS agrees.
-   *   - `frontAsserted` is whether we have actually DRIVEN the OS to match that
-   *     intent: the window raised, and — for a `page-host` — its content view
-   *     made the macOS first responder.
-   *
-   * "The target didn't change" (`front === prevFront`) does NOT imply "the OS
-   * still matches the target". The deleted `frontChangeEffects` made exactly that
-   * inference — it returned no effects whenever `front` was unchanged — so a
-   * window that lost first responder while REMAINING `front` (app switch away and
-   * back, a palette taking key, the switcher overlay opening) was never restored,
-   * and its `before-input-event` stayed deaf forever (7c61e917 / 7fffa286).
-   *
-   * So: every event that can plausibly have moved OS focus off `front` clears
-   * this flag (see `invalidatesFrontAssertion`), and the closing assertion step in
-   * `reduce` re-drives the OS (`RAISE_WINDOW` [+ `FOCUS_CONTENT`]) whenever it is
-   * false. It is set to `true` ONLY by that step — never by anything that merely
-   * assigns `front`.
-   */
-  frontAsserted: boolean;
-  /**
    * The ordered stack (§4.3 dim 3): BOTTOM → TOP, last element = topmost. The
    * machine's INTENDED z-order for the level-`stacked` windows — the state
    * that "owned nowhere" z-order becomes (§6). Membership is exactly the
@@ -378,9 +352,10 @@ export interface AppWindowState {
    *   - WINDOW_SHOWN raises the shown window to the top (native show /
    *     showInactive both order the window frontmost);
    *   - WINDOW_HIDDEN / WINDOW_CLOSED remove it;
-   *   - the closing assertion (`applyFrontAssertion`) raises `front` to the
-   *     top whenever it drives the OS — so "after a machine-driven assertion,
-   *     `front` is the top of this list" is what `frontAsserted` claims;
+   *   - `applyRaiseRequest` raises its target to the top whenever it drives
+   *     the OS (`RAISE_WINDOW` + `SET_STACKING` + this mirror, one emitter),
+   *     and `applyOsFocusRealized` mirrors an OS-reported focus landing on
+   *     `front` to the top without driving anything;
    *   - WINDOW_CONTENT_ORDERABLE re-drives `SET_STACKING` to converge native
    *     order onto this list as page-hosts become orderable;
    *   - STACK_ORDER_IMPORTED replaces the list wholesale with a persisted
@@ -439,9 +414,6 @@ export function createInitialState(): AppWindowState {
     appActive: true, // at launch Peek IS the active app (mirrors the coordinator)
     session: 'idle',
     front: null,
-    // Nothing has been driven onto the OS yet. With `front: null` the closing
-    // assertion step has nothing to assert; the derived Esc grab covers that gap.
-    frontAsserted: false,
     stackOrder: [],
     switcher: { open: false },
     windows: new Map(),
@@ -540,10 +512,9 @@ export type WindowEvent =
   /** Quit teardown: destroy every registered page-host guest WC before native quit closes their hosts (peek d1cf0b9a). */
   | { type: 'GUEST_TEARDOWN_REQUESTED' }
   /**
-   * Devtools opened/closed for a registered window (§4.6 dim 8a). Both
-   * invalidate the front assertion; the closing assertion step then re-drives
-   * the front window — the machine form of the old "re-focus the content
-   * window after devtools opens/closes" handlers.
+   * Devtools opened/closed for a registered window (§4.6 dim 8a). Both edges
+   * re-drive `front` via `applyRaiseRequest` — the machine form of the old
+   * "re-focus the content window after devtools opens/closes" handlers.
    */
   | { type: 'DEVTOOLS_OPENED'; id: WindowId }
   | { type: 'DEVTOOLS_CLOSED'; id: WindowId }
@@ -861,9 +832,9 @@ export type WindowEvent =
   | { type: 'CONTENT_FIRST_RESPONDER_CHANGED'; id: WindowId; held: boolean }
   /**
    * A USER-REQUESTED raise (switcher selection, Escape closing the switcher,
-   * devtools, parent handoff on close) — the machine driving the OS toward a
-   * target the user named, as distinct from `applyFrontAssertion` re-driving
-   * its own belief. Does NOT write `front` and does NOT bump `focusSeq`;
+   * devtools, parent handoff on close, the successor after the front hid) —
+   * the machine driving the OS toward a target something named, never a
+   * re-drive of its own belief. Does NOT write `front` and does NOT bump `focusSeq`;
    * `front` moves only via `applyFocusGained` on the resulting evidence.
    * Backend contract: `RAISE_WINDOW` → `raiseWindow` → `WINDOW_SHOWN
    * {focused:true}`, never `OS_FOCUS_GAINED` — the sweep-free echo.
@@ -893,10 +864,9 @@ export type Effect =
    * Place the window at the top of its (regular) window level — RELATIVE ORDER
    * ONLY, the `moveTop` replacement (§4.3 dim 3): no activation, no key-window
    * change, no first-responder semantics (those are `RAISE_WINDOW` /
-   * `FOCUS_CONTENT`). The SOLE ordering effect: emitted by the closing
-   * assertion step alongside the existing raise (so the machine's own
-   * front-driving also drives order — what makes `frontAsserted` mean "on
-   * top", §6), and re-driven by `WINDOW_CONTENT_ORDERABLE` as page-hosts
+   * `FOCUS_CONTENT`). The SOLE ordering effect: emitted by `applyRaiseRequest`
+   * alongside the raise it drives (so every machine-driven raise also drives
+   * order, §6), and re-driven by `WINDOW_CONTENT_ORDERABLE` as page-hosts
    * become orderable. To realize a full order the reducer emits one per
    * window, bottom → top (each raise stacks on the previous).
    *
@@ -909,10 +879,13 @@ export type Effect =
   | { type: 'SET_STACKING'; id: WindowId; level: StackingLevel }
   /**
    * Make a page-host's content WebContentsView the macOS first responder (the
-   * `shouldFocusHybridContentOnHostFocus` invariant). Emitted by the closing
-   * assertion step alongside `RAISE_WINDOW` whenever the front window is a
-   * page-host and the assertion is not currently held — NOT only when `front`
-   * changes (see `AppWindowState.frontAsserted`).
+   * `shouldFocusHybridContentOnHostFocus` invariant). Exactly two emitters:
+   *   - `applyRaiseRequest`, alongside the `RAISE_WINDOW` it drives, when the
+   *     raise target is a page-host;
+   *   - `applyOsFocusRealized`, on an `OS_FOCUS_GAINED` that landed on `front`
+   *     — the OS made the HOST key, which says nothing about whether its
+   *     content view is first responder (the 7c61e917 raise-by-chrome bug), so
+   *     that one half is driven even though no raise is.
    */
   | { type: 'FOCUS_CONTENT'; id: WindowId }
   /**
@@ -1364,7 +1337,6 @@ function cloneState(state: AppWindowState): AppWindowState {
     appActive: state.appActive,
     session: state.session,
     front: state.front,
-    frontAsserted: state.frontAsserted,
     stackOrder: [...state.stackOrder],
     switcher: state.switcher,
     windows: new Map(state.windows),
@@ -1487,73 +1459,14 @@ function enforceFrontInvariant(state: AppWindowState, event: WindowEvent): void 
 }
 
 /**
- * Did THIS transition invalidate the claim that the OS matches `front`?
+ * Drive a raise onto the OS: `RAISE_WINDOW` (+ `FOCUS_CONTENT` for a page-host)
+ * + `SET_STACKING`, and the matching list mirror.
  *
- * The ONE place `frontAsserted` is ever cleared (via `applyFrontAssertion`), so
- * the whole invalidation rule reads as a single list rather than as assignments
- * scattered through the case arms. Each clause is a moment where the OS can
- * plausibly have taken the window raise / first responder away from `front`.
- *
- * NOT a list of "events that change front" — a change of `front` is only the
- * FIRST clause. The others all leave `front` exactly where it was, and they are
- * the whole reason this predicate exists (see `AppWindowState.frontAsserted`).
- */
-function invalidatesFrontAssertion(prev: AppWindowState, next: AppWindowState, event: WindowEvent): boolean {
-  // Trivially: the old assertion was about a different window.
-  if (next.front !== prev.front) return true;
-  switch (event.type) {
-    // The user left Peek; on return, first responder is not guaranteed.
-    case 'APP_RESIGNED':
-      return true;
-    // The switcher overlay took key from the front window.
-    case 'SWITCHER_OPENED':
-      return true;
-    // The switcher overlay held key right up to the selection, so whatever the
-    // selection resolves to has to be re-driven onto the OS — including when it
-    // resolves back to the window that was already `front`.
-    case 'SWITCHER_SELECTED':
-      return true;
-    // The asserted window is gone from screen. Judged against the front BEFORE
-    // it moved to a successor, which is the case this clause is here for.
-    case 'WINDOW_HIDDEN':
-      return event.id === prev.front;
-    // A child window with a registered parent closed: the parent must be
-    // re-driven (raise + first responder) even when it already was `front` —
-    // the machine form of the deleted `parentWin.focus()` (the front-changed
-    // first clause covers the case where front actually moved).
-    case 'WINDOW_CLOSED':
-      return prev.windows.get(event.id)?.parentId != null;
-    // Devtools took or released key for a registered window (§4.6 dim 8a).
-    // Both edges re-drive the front in the SAME transition (no deferral):
-    // devtools opens with activate:false, and the old handlers immediately
-    // re-focused the content window — re-asserting here preserves that AND
-    // keeps the derived Esc grab off (a grabbed Esc would be eaten before the
-    // devtools/front window ever saw it).
-    case 'DEVTOOLS_OPENED':
-    case 'DEVTOOLS_CLOSED':
-      return true;
-    // A palette / modal / chrome overlay took key. It is a satellite, so `front`
-    // deliberately did NOT move — which is exactly why the assertion has to.
-    // EXCEPT a detached devtools window (class 'devtools'): clicking into
-    // devtools must NOT flip the assertion off, or the derived Esc grab would
-    // switch ON and eat every Esc typed inside devtools (before registration,
-    // devtools focus was invisible to the machine — this keeps that behavior).
-    case 'OS_FOCUS_GAINED': {
-      const rec = next.windows.get(event.id);
-      return rec?.satellite === true && rec.class !== 'devtools';
-    }
-    default:
-      return false;
-  }
-}
-
-/**
- * Drive a USER-REQUESTED raise (see `RAISE_WINDOW_REQUESTED`) onto the OS:
- * `RAISE_WINDOW` (+ `FOCUS_CONTENT` for a page-host) + `SET_STACKING`, and the
- * matching list mirror. Deliberately the SAME tail as `applyFrontAssertion`'s
- * closing raise MINUS `state.frontAsserted = true` — that stays on the
- * assertion, whose INTERIM dedupe guard (immediately below) is what stops the
- * two from double-raising when both fire in the same transition.
+ * The SOLE `RAISE_WINDOW` emitter, and that is load-bearing: no arm reachable
+ * from a `RAISE_WINDOW` echo may call it, i.e. the `WINDOW_SHOWN` and
+ * `OS_FOCUS_GAINED` arms must NEVER call this. That structural fact — not a
+ * runtime ordering coincidence — is what terminates the `window-os-adapter.ts`
+ * `pump` drain (see its docblock).
  */
 function applyRaiseRequest(state: AppWindowState, id: WindowId | null, effects: Effect[]): void {
   if (id == null) return;
@@ -1568,89 +1481,41 @@ function applyRaiseRequest(state: AppWindowState, id: WindowId | null, effects: 
 }
 
 /**
- * The closing assertion step (design §2): run after `enforceFrontInvariant` on
- * EVERY transition. Clear the assertion if this transition invalidated it, then
- * — if the machine cannot vouch that the OS matches `front` — describe the work
- * that makes it true and record the claim.
+ * Record what an `OS_FOCUS_GAINED` that landed on `front` ALREADY realized —
+ * the OS itself made that window key and ordered it front, so the machine
+ * mirrors the order rather than driving a raise back at the OS.
  *
- * `RAISE_WINDOW` alone is enough for a `browser` window (its root webContents IS
- * first responder whenever the window is key); a `page-host` is a BaseWindow
- * whose keyboard focus is a second, independently-losable piece of state, so it
- * additionally needs `FOCUS_CONTENT`.
+ * Echoing a raise here would not be merely redundant, it is a feedback loop:
+ * `RAISE_WINDOW` is an ACTIVATING show+focus, so with several focus events in
+ * flight (a restore loop show()s multiple tiles active while the app is
+ * frontmost), each stale event flips `front`, the echoed raise re-keys that
+ * stale window and emits a FRESH focus event, and three windows ping-pong
+ * forever (observed live, 2026-07-22 clone restore — megabytes of
+ * `OS_FOCUS_GAINED` → `RAISE_WINDOW` cycles; headless runs can never ignite it
+ * because a non-frontmost app's `focus()` does not move the key window).
+ * Without the echo the stale in-flight events drain and the LAST one matches
+ * the true native key window — convergence by construction.
  *
- * Two surfaces legitimately hold key at the moment they take it, and re-raising
- * `front` in the same breath would yank focus straight back out of them — so the
- * assertion is deferred to the NEXT transition in both cases:
- *   - the switcher overlay, for as long as it is open;
- *   - a satellite that just gained OS focus (design §2: "a satellite stealing key
- *     is self-healing — when it goes away, the next transition re-asserts").
+ * The one half the OS event does NOT vouch for is a page-host's CONTENT first
+ * responder (host key ≠ content focused — the 7c61e917 raise-by-chrome bug), so
+ * that half IS driven. Only for `kind: 'page-host'`: `attachNativeListeners`
+ * wires the content `rendererWC` for page-hosts alone, and a browser window's
+ * root webContents is first responder whenever the window is key.
+ *
+ * Called from the `OS_FOCUS_GAINED` arm ONLY — deliberately NOT from
+ * `applyFocusGained`, which `WINDOW_SHOWN {focused:true}` also reaches. That
+ * event's dominant producer is `decideWindowRegistration.pumpShownEvent`, a
+ * registration-time visibility IMPORT that makes no claim about OS focus, so
+ * pushing `FOCUS_CONTENT` from there would steal first responder onto a
+ * just-registered background window.
  */
-function applyFrontAssertion(
-  prev: AppWindowState,
-  state: AppWindowState,
-  event: WindowEvent,
-  effects: Effect[],
-): void {
-  // INTERIM — deleted with this whole function at step 6. An explicit
-  // `RAISE_WINDOW_REQUESTED` site (`applyRaiseRequest`) already emitted
-  // `RAISE_WINDOW` for the current front in THIS transition — without this
-  // guard, 3 of the 4 sites would double-emit it, because
-  // `invalidatesFrontAssertion` forces `frontAsserted = false` for exactly
-  // those events (`SWITCHER_SELECTED`, the `WINDOW_CLOSED` parent handoff,
-  // `DEVTOOLS_OPENED`/`DEVTOOLS_CLOSED`). The flag is set HERE, not inside
-  // `applyRaiseRequest`, because `window-os-adapter.ts` pump's docblock
-  // records that `RAISE_WINDOW` → `WINDOW_SHOWN` re-entrancy converges only
-  // because `frontAsserted` is set BEFORE its effects execute.
-  if (state.front != null && effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === state.front)) {
-    state.frontAsserted = true;
-    return;
-  }
-
-  if (invalidatesFrontAssertion(prev, state, event)) state.frontAsserted = false;
-
-  if (state.switcher.open) return;
-  if (event.type === 'OS_FOCUS_GAINED' && state.windows.get(event.id)?.satellite === true) return;
-
+function applyOsFocusRealized(state: AppWindowState, id: WindowId, effects: Effect[]): void {
   if (!state.appActive) return;
-  if (state.front == null || state.frontAsserted) return;
-  const rec = state.windows.get(state.front);
+  if (state.front !== id) return;
+  const rec = state.windows.get(id);
   if (!rec) return;
-
-  // An OS-reported focus landing on `front` IS the assertion: the OS already
-  // made that window key and ordered it front on its own — the event is the
-  // proof that belief and reality match, so record the claim and mirror the
-  // order instead of driving a RAISE back at the OS. Echoing a raise here is
-  // not just redundant, it is a feedback loop: RAISE is an ACTIVATING
-  // show+focus, so with several focus events in flight (a restore loop
-  // show()s multiple tiles active while the app is frontmost), each stale
-  // event flips `front`, the echoed raise re-keys that stale window and emits
-  // a FRESH focus event, and three windows ping-pong forever (observed live,
-  // 2026-07-22 clone restore — megabytes of OS_FOCUS_GAINED → RAISE cycles;
-  // headless runs can never ignite it because a non-frontmost app's focus()
-  // does not move the key window). Without the echo the stale in-flight
-  // events drain and the LAST one matches the true native key window —
-  // convergence by construction. The one half the OS event does NOT vouch
-  // for is a page-host's CONTENT first responder (host key ≠ content focused
-  // — the 7c61e917 raise-by-chrome bug), so that half is still driven.
-  if (event.type === 'OS_FOCUS_GAINED' && state.front === event.id) {
-    if (rec.kind === 'page-host') effects.push({ type: 'FOCUS_CONTENT', id: state.front });
-    stackRaise(state, state.front);
-    state.frontAsserted = true;
-    return;
-  }
-
-  effects.push({ type: 'RAISE_WINDOW', id: state.front });
-  if (rec.kind === 'page-host') effects.push({ type: 'FOCUS_CONTENT', id: state.front });
-  // Driving the front now also drives ORDER (§5 step 5): the same closing
-  // assertion that raises/first-responders the front places it on top of the
-  // ordered stack — list and OS together, one emitter. This is what makes
-  // `frontAsserted === true` mean "front is the top of `stackOrder` and we
-  // drove the OS to match", killing the §6 buried-but-asserted state for
-  // machine-driven raises. (A legal front is always a stack member —
-  // `deriveStackingLevel` note — so the raise below is never a no-op.)
-  effects.push({ type: 'SET_STACKING', id: state.front, level: rec.stackingLevel });
-  stackRaise(state, state.front);
-  state.frontAsserted = true;
+  if (rec.kind === 'page-host') effects.push({ type: 'FOCUS_CONTENT', id });
+  stackRaise(state, id);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2149,9 +2014,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // key onto a background window. The explicit raise targets
       // `state.front`, the window that actually lost key — the machine form
       // of the old "re-focus the content window when devtools opens/closes"
-      // handlers. Both edges also still invalidate the front assertion (see
-      // `invalidatesFrontAssertion`); the INTERIM dedupe guard on
-      // `applyFrontAssertion` stops that from emitting a second raise.
+      // handlers. Devtools opens with activate:false, so re-driving here also
+      // keeps the derived Esc grab off (a grabbed Esc would be eaten before
+      // the devtools/front window ever saw it).
       applyRaiseRequest(state, state.front, effects);
       break;
     }
@@ -2168,11 +2033,13 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // proof: a post-restore STACK_ORDER_IMPORTED was scrambled back to show
       // order by the trailing page-host mirrors, and the first-frame re-drives
       // then realized the scrambled order on screen. A raise of a visible
-      // window is a machine decision (front assertion / SET_STACKING /
+      // window is a machine decision (`applyRaiseRequest` / SET_STACKING /
       // STACK_ORDER_IMPORTED), never inferred from a repeated native echo.
-      // NOTE it also does NOT invalidate the front assertion: a non-focused
-      // show must not trigger a RAISE_WINDOW (activation) storm — the burial
-      // converges when the focused window's own event arrives.
+      // NOTE this arm emits NO raise at all, on either branch, including
+      // `focused: true` — that is the `RAISE_WINDOW` → `WINDOW_SHOWN` echo
+      // cycle, and cutting it here is what makes the pump's drain terminate
+      // (see `applyRaiseRequest`). The `FOCUS_CONTENT` half of a genuine OS
+      // focus arrives on the accompanying `OS_FOCUS_GAINED`.
       const wasVisible = rec.visible;
       patchRecord(state, event.id, { visible: true });
       if (!wasVisible) {
@@ -2196,15 +2063,23 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
     case 'WINDOW_HIDDEN': {
       const rec = state.windows.get(event.id);
       if (!rec) break;
+      // Judged BEFORE `front` moves to a successor — this is the case the
+      // raise below exists for.
+      const frontLeft = state.front === event.id;
       patchRecord(state, event.id, { visible: false });
       stackRemove(state, event.id);
-      if (state.front === event.id) {
+      if (frontLeft) {
         state.front = successorFront(state, event.id);
       }
       // A host that left the screen has no chrome to wear (§5 step 9): detach
       // its overlay and take it down with it — the `retarget(null)` path.
       const overlayId = overlayIdForHost(state, event.id);
       if (overlayId != null) detachOverlay(state, overlayId, effects);
+      // The front went off screen, so the OS gave key to whatever it liked —
+      // drive the successor explicitly. Placed after `detachOverlay` so the
+      // ordering stays [HIDE_WINDOW(overlay), RAISE_WINDOW, FOCUS_CONTENT,
+      // SET_STACKING]. No-op for a null successor.
+      if (frontLeft) applyRaiseRequest(state, state.front, effects);
       break;
     }
 
@@ -2276,17 +2151,17 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // 'closed' → parentWin.focus()` block): a closing window with a
       // registered parent hands the target back to that parent — taking
       // precedence over the MRU successor — whenever the parent is a legal
-      // front. `invalidatesFrontAssertion` returns true for this case even
-      // when the parent already WAS front, so the closing assertion step
-      // re-drives the raise/first-responder exactly like the old focus() did.
+      // front. The raise below fires even when the parent already WAS front,
+      // which is what re-drives the raise/first-responder exactly like the
+      // old `parentWin.focus()` did.
       if (closedRec?.parentId != null) {
         const parent = state.windows.get(closedRec.parentId);
         if (isEligibleFront(parent)) {
           state.front = parent.id;
           bumpFocusSeq(state, parent.id);
-          // Explicit parent-handoff raise (§5 step 5) — see the
-          // `SWITCHER_SELECTED` case for why this no longer waits on the
-          // closing assertion step alone.
+          // Explicit parent-handoff raise (§5 step 5) — the child held key
+          // right up to its close, so the parent is driven even when it
+          // already was `front`.
           raiseTarget = parent.id;
         }
       }
@@ -2316,6 +2191,10 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // `WINDOW_CLOSED` / `WINDOW_HIDDEN`, so this clause is effect-only and
       // cannot break the front invariant.
       pushCloseOrHide(state, selectTransientAutoclose(state, event.id), effects);
+      // What the OS already did for us, mirrored into the machine (+ the one
+      // half it does not vouch for). Emits NO raise — see `applyRaiseRequest`.
+      // AFTER the autoclose so effect order stays [autoclose…, FOCUS_CONTENT].
+      applyOsFocusRealized(state, event.id, effects);
       break;
     }
 
@@ -2771,10 +2650,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         state.front = target;
         bumpFocusSeq(state, target);
         // Explicit user-requested raise (§5 step 5) — the switcher selection
-        // is the user naming a target, not the machine re-asserting its own
-        // belief. The INTERIM dedupe guard on `applyFrontAssertion` stops the
-        // closing assertion step (which this transition also invalidates)
-        // from emitting a second `RAISE_WINDOW` for the same window.
+        // is the user naming a target. The overlay held key right up to the
+        // selection, so the target has to be driven onto the OS even when it
+        // resolves back to the window that was already `front`.
         applyRaiseRequest(state, target, effects);
       }
       break;
@@ -2794,7 +2672,6 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
   }
 
   enforceFrontInvariant(state, event);
-  applyFrontAssertion(prev, state, event, effects);
   return { state, effects };
 }
 
@@ -2965,8 +2842,6 @@ export interface StateSnapshot {
   appActive: boolean;
   session: IzuiSession;
   front: WindowId | null;
-  /** See `AppWindowState.frontAsserted` — intent vs. asserted-onto-the-OS. */
-  frontAsserted: boolean;
   /** See `AppWindowState.stackOrder` — the intended z-order, bottom → top. */
   stackOrder: WindowId[];
   switcher: SwitcherState;
@@ -2978,7 +2853,6 @@ export function snapshot(state: AppWindowState): StateSnapshot {
     appActive: state.appActive,
     session: state.session,
     front: state.front,
-    frontAsserted: state.frontAsserted,
     stackOrder: [...state.stackOrder],
     switcher: state.switcher,
     windows: [...state.windows.values()].map((r) => ({ ...r })),
@@ -2994,19 +2868,18 @@ export function snapshot(state: AppWindowState): StateSnapshot {
  * i.e. the net is on exactly when the machine CANNOT VOUCH that some window is
  * positioned to receive Escape through `before-input-event`.
  *
- * §5 step 11 re-key: the front-not-first-responder half now reads
+ * §5 step 11 re-key: the front-not-first-responder half reads
  * `WindowRecord.contentFocused` (the backend's mirror of the native
  * `rendererWC 'focus'`/`'blur'` pair, via `CONTENT_FIRST_RESPONDER_CHANGED`)
- * instead of `AppWindowState.frontAsserted`, a machine-side CLAIM that the OS
- * matches an emitted `RAISE_WINDOW`/`FOCUS_CONTENT` rather than a report of
- * what actually happened — `frontAsserted` and its machinery are retired in
- * the NEXT step. Same intent as the old `!frontAsserted`
+ * rather than a machine-side CLAIM that the OS matched an emitted
+ * `RAISE_WINDOW`/`FOCUS_CONTENT`. (It used to read such a claim; that field
+ * and its machinery were retired the step after.) Same intent as the old
  * half: arm the net whenever the front page-host's content is NOT actually the
  * macOS first responder — some palette/satellite holds key instead, so Escape
  * must be caught globally rather than by the content itself. Verified live
  * (2026-07): `contentFocused` stays correct across an app resign/activate
- * cycle where `front` itself briefly oscillates — it is the stable signal
- * `frontAsserted` was only approximating.
+ * cycle where `front` itself briefly oscillates — it is the stable signal the
+ * retired machine-side claim was only approximating.
  *
  * ABSENT (`contentFocused === undefined`) reads as "nothing reported yet", NOT
  * "content is unfocused" — the same convention as `hiddenByAppBlur`. Two cases
@@ -3021,7 +2894,7 @@ export function snapshot(state: AppWindowState): StateSnapshot {
  * own) and would flap the net on for the ordinary micro-gap after every fresh
  * show/raise. So absent does NOT arm: only an EXPLICIT `contentFocused ===
  * false` — an actually-observed loss of first responder — arms the net. This
- * preserves 7fffa286/7c61e917 (the regression pair `frontAsserted` was built
+ * preserves 7fffa286/7c61e917 (the regression pair the retired claim was built
  * for): live evidence shows a real resign fires the content blur BEFORE
  * `APP_RESIGNED` itself, so `contentFocused` is already `false` by the time the
  * app goes inactive, and it STAYS `false` through `APP_ACTIVATED` until a fresh

@@ -62,7 +62,6 @@ function makeStateSnapshot(windows: WindowRecord[], front: WindowId | null = nul
     appActive: true,
     session: 'idle',
     front,
-    frontAsserted: front != null,
     stackOrder: windows.map((w) => w.id),
     switcher: { open: false },
     windows,

@@ -191,15 +191,19 @@ export class WindowOsAdapter {
    * show and synchronously emitting its `WINDOW_SHOWN` echo (§5 step 6A-2);
    * the backend's synchronous emissions for `RECONCILE_FULLSCREEN` and the
    * destroyed-WC `ASK_RENDERER` answer also land here from inside
-   * `runEffect`. Instead of recursing mid-`runEffects`
-   * (which converged only because `applyFrontAssertion` sets
-   * `frontAsserted = true` BEFORE its effects are executed — an invariant
-   * nothing enforced), nested dispatches are QUEUED and drained strictly
-   * AFTER the current event's effect batch completes. One pump runs at a
-   * time; every event still flows through the identical
-   * reduce → log → effects → Esc-grab-reconcile sequence, in dispatch order.
-   * A top-level `dispatch()` does not return until the queue is fully
-   * drained, so callers keep their synchronous read-after-dispatch contract.
+   * `runEffect`. Instead of recursing mid-`runEffects`, nested dispatches are
+   * QUEUED and drained strictly AFTER the current event's effect batch
+   * completes. One pump runs at a time; every event still flows through the
+   * identical reduce → log → effects → Esc-grab-reconcile sequence, in
+   * dispatch order. A top-level `dispatch()` does not return until the queue
+   * is fully drained, so callers keep their synchronous read-after-dispatch
+   * contract.
+   *
+   * The drain TERMINATES on a structural argument, not on an ordering
+   * coincidence: `window-state.ts applyRaiseRequest` is the sole
+   * `RAISE_WINDOW` emitter, and no arm reachable from a `RAISE_WINDOW` echo
+   * (`WINDOW_SHOWN`, `OS_FOCUS_GAINED`) calls it — so an echo can never
+   * re-enqueue the raise that produced it.
    */
   private pump(event: WindowEvent): void {
     this.pendingEvents.push(event);
@@ -467,10 +471,14 @@ export class WindowOsAdapter {
     const id = eventWindowId(event);
     const tag = eventWindowIdTag(event);
     let line = `[window-state] ${event.type}${tag == null ? '' : ` ${tag}`} front ${fmt(before.front)}→${fmt(after.front)}`;
-    // frontAsserted delta (§6): the live-run observable for "the machine drove
-    // the OS to match front" — logged only when the transition flipped it.
-    if (before.frontAsserted !== after.frontAsserted) {
-      line += ` asserted ${before.frontAsserted}→${after.frontAsserted}`;
+    // The front's content-first-responder delta: the live-run observable for
+    // "is the front positioned to hear Escape through before-input-event"
+    // (the same signal `deriveEscGrabRegistered` keys off). Logged only when
+    // it moved for the window that is front AFTER the transition.
+    const beforeFocused = before.windows.find((w) => w.id === after.front)?.contentFocused;
+    const afterFocused = after.windows.find((w) => w.id === after.front)?.contentFocused;
+    if (after.front != null && beforeFocused !== afterFocused) {
+      line += ` contentFocused ${beforeFocused}→${afterFocused}`;
     }
     // Ordered-stack delta (§5 step 5): whenever the intended z-order changed,
     // log the resulting bottom→top list so a live run can compare it against

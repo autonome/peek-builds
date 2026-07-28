@@ -596,11 +596,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
 
   /**
    * Show + raise + activate a window, kind-appropriately (headless stays
-   * focus-free). `raiseWindow` is reachable from the `RAISE_WINDOW` effect —
-   * pushed by `window-state.ts applyFrontAssertion` re-asserting its own
-   * belief, and (since §5 step 5) by `applyRaiseRequest` for an explicit
-   * user-requested raise (switcher selection, Escape closing the switcher,
-   * devtools, parent handoff on close). A raise is an activating show, so its
+   * focus-free). `raiseWindow` is reachable from the `RAISE_WINDOW` effect,
+   * whose sole emitter is `window-state.ts applyRaiseRequest` — a raise at a
+   * target something named (switcher selection, Escape closing the switcher,
+   * devtools, parent handoff on close, the successor after the front hid),
+   * never a re-drive of the machine's own belief. A raise is an activating show, so its
    * truthful echo is `WINDOW_SHOWN {focused:true}` — `front` moves and
    * `applyFocusGained` runs, but the transient-autoclose sweep does NOT
    * (`selectTransientAutoclose` runs only off `OS_FOCUS_GAINED`). Echoing
@@ -659,10 +659,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * declined — NOT for a raise. A raise is not a user act: it is the machine
    * driving the OS toward a `front` the reducer already decided, and the
    * reducer treats `OS_FOCUS_GAINED` as proof the OS itself moved focus (the
-   * signal `selectTransientAutoclose` sweeps siblings on). Echoing a
-   * self-driven raise back as that proof is exactly the feedback loop this
-   * method must not cause — see `applyFrontAssertion`'s comment on why
-   * headless can never legitimately produce this event from a raise.
+   * signal `selectTransientAutoclose` sweeps siblings on, and the one
+   * `applyOsFocusRealized` mirrors). Echoing a self-driven raise back as that
+   * proof is exactly the feedback loop this method must not cause — see
+   * `applyOsFocusRealized`'s docblock for the shape of that loop.
    *
    * This is not a second opinion about focus alongside the OS: this file is the
    * R3 port, the one module allowed to model the OS (and the file
