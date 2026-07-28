@@ -272,6 +272,9 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(99), hostId: wid(1) },
     { type: 'BOUNDS_CHANGED', id: wid(1), bounds: BOUNDS, overlayFrame: BOUNDS },
     { type: 'APP_RESIGN_SETTLED' },
+    // §5 step 5 event: the explicit user-requested raise.
+    { type: 'RAISE_WINDOW_REQUESTED', id: wid(1) },
+    { type: 'RAISE_WINDOW_REQUESTED', id: wid(99) },
   ];
 
   it('reduce is total: defined result + front invariant holds for all combinations', () => {
@@ -1478,17 +1481,32 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
       'must NOT re-raise front while the switcher is open — that would yank key out of the overlay',
     );
 
-    // Esc dismisses the switcher. `applyEscape` case 'close-switcher' emits no
-    // RAISE_WINDOW of its own; the restore ride entirely on the assertion step.
+    // Esc dismisses the switcher. `applyEscape` case 'close-switcher' now
+    // requests the raise explicitly (§5 step 5); the INTERIM dedupe guard on
+    // `applyFrontAssertion` stops the closing step from doubling it.
     const closed = reduce(opened.state, { type: 'ESC_PRESSED', landedId: 'global' });
     assert.strictEqual(closed.state.switcher.open, false);
     assert.strictEqual(getFrontWindowId(closed.state), wid(4));
     assert.ok(hasEffect(closed.effects, 'CLOSE_SWITCHER_WINDOW'));
     assert.ok(raises(closed.effects, 4), 'the restore target is re-asserted on dismiss');
+    assert.strictEqual(closed.effects.filter((e) => e.type === 'RAISE_WINDOW').length, 1, 'exactly one raise, from one place');
     assert.ok(focusesContent(closed.effects, 4));
   });
 
-  it('SWITCHER_SELECTED raises the selection through the assertion step (one emitter, not two)', () => {
+  it('the ESC asymmetry: a switcher opened via SWITCHER_OPEN_REQUESTED alone (never SWITCHER_OPENED) now ALSO raises on close — a real behavior change pinned by §5 step 5, though only SWITCHER_OPENED is dispatched in production so the live path is unchanged', () => {
+    let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
+    s = drive(s, [{ type: 'SWITCHER_OPEN_REQUESTED', windowId: wid(1) }]).state;
+    assert.strictEqual(s.switcher.open, true);
+    // SWITCHER_OPEN_REQUESTED alone never invalidates the assertion (unlike
+    // SWITCHER_OPENED) — before §5 step 5 this meant the closing assertion
+    // step had nothing to re-drive, so Escape emitted no raise at all.
+    assert.strictEqual(snapshot(s).frontAsserted, true);
+    const closed = reduce(s, { type: 'ESC_PRESSED', landedId: 'global' });
+    assert.ok(hasEffect(closed.effects, 'CLOSE_SWITCHER_WINDOW'));
+    assert.ok(raises(closed.effects, 1), 'the explicit raise request fires unconditionally, unlike the old assertion-only path');
+  });
+
+  it('SWITCHER_SELECTED raises the selection through the explicit raise request (one emitter, not two)', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
     s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
@@ -1638,6 +1656,90 @@ describe('front assertion — the machine drives `front` onto the OS, not just r
     // Coming back is what re-asserts.
     const back = reduce(s, { type: 'APP_ACTIVATED' });
     assert.ok(raises(back.effects, getFrontWindowId(back.state)!));
+  });
+});
+
+// ── RAISE_WINDOW_REQUESTED — the explicit, user-requested raise (§5 step 5) ──
+
+describe('RAISE_WINDOW_REQUESTED — an explicit, user-requested raise', () => {
+  it('page-host front: RAISE_WINDOW + FOCUS_CONTENT + SET_STACKING, tops the stack', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2, on top
+    const { state, effects } = reduce(s, { type: 'RAISE_WINDOW_REQUESTED', id: wid(1) });
+    assert.ok(raises(effects, 1));
+    assert.ok(focusesContent(effects, 1));
+    assert.deepStrictEqual(stackings(effects), [wid(1)]);
+    assert.deepStrictEqual(getStackOrder(state), [wid(2), wid(1)]);
+  });
+
+  it('browser front: RAISE_WINDOW + SET_STACKING, no FOCUS_CONTENT', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
+    s = openWindow(s, 2, { kind: 'browser', role: 'content' }); // front 2, on top
+    const { effects } = reduce(s, { type: 'RAISE_WINDOW_REQUESTED', id: wid(1) });
+    assert.ok(raises(effects, 1));
+    assert.ok(!focusesContent(effects, 1), 'a browser window is its own first responder');
+    assert.deepStrictEqual(stackings(effects), [wid(1)]);
+  });
+
+  it('unknown id -> no effects', () => {
+    const { effects } = reduce(createInitialState(), { type: 'RAISE_WINDOW_REQUESTED', id: wid(99) });
+    assert.deepStrictEqual(effects, []);
+  });
+
+  it('a satellite id -> no effects', () => {
+    let s = createInitialState();
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+    ]).state;
+    const { effects } = reduce(s, { type: 'RAISE_WINDOW_REQUESTED', id: wid(2) });
+    assert.deepStrictEqual(effects, []);
+  });
+
+  it('a hidden (registered but not shown) id -> no effects', () => {
+    const s = drive(createInitialState(), [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false },
+    ]).state;
+    const { effects } = reduce(s, { type: 'RAISE_WINDOW_REQUESTED', id: wid(1) });
+    assert.deepStrictEqual(effects, []);
+  });
+
+  it('appActive === false -> no effects (no focus theft while Peek is background)', () => {
+    let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
+    s = drive(s, [{ type: 'APP_RESIGNED' }]).state;
+    const { effects } = reduce(s, { type: 'RAISE_WINDOW_REQUESTED', id: wid(1) });
+    assert.deepStrictEqual(effects, []);
+  });
+
+  it('switcher.open -> no effects (must not yank key out of the overlay)', () => {
+    let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
+    s = drive(s, [{ type: 'SWITCHER_OPENED', windowId: wid(9) }]).state;
+    const { effects } = reduce(s, { type: 'RAISE_WINDOW_REQUESTED', id: wid(1) });
+    assert.deepStrictEqual(effects, []);
+  });
+
+  it('does NOT write `front`, does NOT bump `focusSeq`', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
+    const seqBefore = s.windows.get(wid(1))!.focusSeq;
+    const { state } = reduce(s, { type: 'RAISE_WINDOW_REQUESTED', id: wid(1) });
+    assert.strictEqual(getFrontWindowId(state), wid(2), '`front` is untouched');
+    assert.strictEqual(state.windows.get(wid(1))!.focusSeq, seqBefore, '`focusSeq` is untouched');
+  });
+
+  it('sweeps nothing: a live palette satellite survives the raise (no CLOSE_WINDOW/HIDE_WINDOW)', () => {
+    let s = createInitialState();
+    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+    ]).state;
+    const { effects } = reduce(s, { type: 'RAISE_WINDOW_REQUESTED', id: wid(1) });
+    assert.deepStrictEqual(effectsOfType(effects, 'CLOSE_WINDOW'), []);
+    assert.deepStrictEqual(effectsOfType(effects, 'HIDE_WINDOW'), []);
   });
 });
 
@@ -2042,20 +2144,22 @@ describe('HUD hide/show sweep (replaces the __hudHidden expando + sniffing loops
 });
 
 describe('devtools transitions (§4.6 dim 8a)', () => {
-  it('DEVTOOLS_OPENED invalidates + re-drives the front in the same transition', () => {
+  it('DEVTOOLS_OPENED requests the raise explicitly', () => {
     const s = openWindow(createInitialState(), 1, { role: 'content' });
     assert.strictEqual(s.frontAsserted, true);
     const { state, effects } = reduce(s, { type: 'DEVTOOLS_OPENED', id: wid(1) });
     assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)), 'the front is re-driven immediately (old re-focus-after-devtools parity)');
     assert.ok(effects.some((e) => e.type === 'FOCUS_CONTENT' && e.id === wid(1)), 'page-host front also re-takes first responder');
+    assert.strictEqual(effects.filter((e) => e.type === 'RAISE_WINDOW').length, 1, 'exactly one raise, from one place');
     assert.strictEqual(state.frontAsserted, true, 're-asserted in the same reduce');
     assert.strictEqual(deriveEscGrabRegistered(snapshot(state)), false, 'the Esc grab stays off while devtools is up');
   });
 
-  it('DEVTOOLS_CLOSED re-drives the front (the old close-devtools-refocus behavior)', () => {
+  it('DEVTOOLS_CLOSED requests the raise explicitly', () => {
     const s = openWindow(createInitialState(), 1, { role: 'content' });
     const { state, effects } = reduce(s, { type: 'DEVTOOLS_CLOSED', id: wid(1) });
     assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)));
+    assert.strictEqual(effects.filter((e) => e.type === 'RAISE_WINDOW').length, 1, 'exactly one raise, from one place');
     assert.strictEqual(state.frontAsserted, true);
   });
 
@@ -2091,6 +2195,7 @@ describe('devtools transitions (§4.6 dim 8a)', () => {
     const { state, effects } = reduce(s, { type: 'WINDOW_CLOSED', id: wid(5) });
     assert.strictEqual(state.front, wid(1));
     assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)));
+    assert.strictEqual(effects.filter((e) => e.type === 'RAISE_WINDOW').length, 1, 'exactly one raise, from one place');
   });
 });
 
@@ -2308,13 +2413,13 @@ describe('SET_STACKING — the closing assertion drives order (frontAsserted mea
     assert.deepStrictEqual(stackings(inactive.effects), [], 'no order drive while Peek is not the active app');
   });
 
-  it('SWITCHER_SELECTED drives the selection to the top through the one assertion step', () => {
+  it('SWITCHER_SELECTED drives the selection to the top through the explicit raise request', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
     s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
     s = drive(s, [{ type: 'SWITCHER_OPENED', windowId: wid(9) }]).state;
     const { state, effects } = reduce(s, { type: 'SWITCHER_SELECTED', id: wid(1) });
-    assert.deepStrictEqual(stackings(effects), [wid(1)], 'exactly one order drive, from the closing step');
+    assert.deepStrictEqual(stackings(effects), [wid(1)], 'exactly one order drive, from the explicit raise request');
     assert.deepStrictEqual(getStackOrder(state), [wid(2), wid(1)]);
     assert.strictEqual(state.frontAsserted, true);
   });

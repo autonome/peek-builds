@@ -34,9 +34,13 @@
  * real OS focus by design). Because the mask means macOS never reports focus
  * for an activation `showWindow` asked for, it also emits the `OS_FOCUS_GAINED`
  * that activation would have produced — see `emitFocusGainedForHeadlessShow`.
- * `raiseWindow` does NOT do this: a raise is the machine re-asserting a
- * `front` the reducer already holds, never a user act, so echoing a focus
- * event for it would feed the machine's own belief back in as OS evidence.
+ * `raiseWindow` does NOT do this: its echo is `WINDOW_SHOWN {focused:true}`,
+ * never `OS_FOCUS_GAINED` — since §5 step 5 a raise can be either the machine
+ * re-asserting a `front` it already holds OR an explicit user-requested raise
+ * (`RAISE_WINDOW_REQUESTED`), but either way echoing a focus event would feed
+ * that belief (or request) back in as fresh OS evidence, and — because
+ * `OS_FOCUS_GAINED` alone runs the transient-autoclose sweep — would also
+ * dismiss any live palette/quick-view the raise never meant to touch.
  */
 
 import { app, globalShortcut, screen, systemPreferences, webContents } from 'electron';
@@ -592,14 +596,19 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
 
   /**
    * Show + raise + activate a window, kind-appropriately (headless stays
-   * focus-free). A raise is the machine driving the OS toward a `front` the
-   * reducer already holds — `raiseWindow` is reachable ONLY from the
-   * `RAISE_WINDOW` effect, pushed ONLY by `window-state.ts
-   * applyFrontAssertion` re-asserting its own belief — so nothing downstream
-   * waits on a focus echo here; `front`/`focusSeq`/`frontAsserted` are already
-   * set by the reducer before this effect runs. This is the loop
-   * `emitFocusGainedForHeadlessShow`'s docblock warns against: see it for why
-   * a raise must never echo `OS_FOCUS_GAINED`.
+   * focus-free). `raiseWindow` is reachable from the `RAISE_WINDOW` effect —
+   * pushed by `window-state.ts applyFrontAssertion` re-asserting its own
+   * belief, and (since §5 step 5) by `applyRaiseRequest` for an explicit
+   * user-requested raise (switcher selection, Escape closing the switcher,
+   * devtools, parent handoff on close). A raise is an activating show, so its
+   * truthful echo is `WINDOW_SHOWN {focused:true}` — `front` moves and
+   * `applyFocusGained` runs, but the transient-autoclose sweep does NOT
+   * (`selectTransientAutoclose` runs only off `OS_FOCUS_GAINED`). Echoing
+   * `OS_FOCUS_GAINED` instead would both feed the machine's own belief back in
+   * as fresh OS evidence and sweep a live palette/quick-view out from under a
+   * raise that never meant to touch it — see
+   * `emitFocusGainedForHeadlessShow`'s docblock for the belief-feedback half
+   * of that loop.
    */
   raiseWindow(id: WindowId): void {
     const entry = this.windows.get(id);
@@ -624,7 +633,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // Browser window: headless-safe show (opacity-0 + inactive under headless),
     // activate + focus only when not headless.
     this.performOsShow(win, !isHeadless());
-    this.emit({ type: 'WINDOW_SHOWN', id, focused: !isHeadless() });
+    this.emit({ type: 'WINDOW_SHOWN', id, focused: true });
     if (!isHeadless()) {
       try {
         (win as unknown as BrowserWindow).focus();

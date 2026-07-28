@@ -858,7 +858,17 @@ export type WindowEvent =
    * No consumer keys off this yet — a later step re-derives
    * `deriveEscGrabRegistered` from it. No-op for an unknown id.
    */
-  | { type: 'CONTENT_FIRST_RESPONDER_CHANGED'; id: WindowId; held: boolean };
+  | { type: 'CONTENT_FIRST_RESPONDER_CHANGED'; id: WindowId; held: boolean }
+  /**
+   * A USER-REQUESTED raise (switcher selection, Escape closing the switcher,
+   * devtools, parent handoff on close) — the machine driving the OS toward a
+   * target the user named, as distinct from `applyFrontAssertion` re-driving
+   * its own belief. Does NOT write `front` and does NOT bump `focusSeq`;
+   * `front` moves only via `applyFocusGained` on the resulting evidence.
+   * Backend contract: `RAISE_WINDOW` → `raiseWindow` → `WINDOW_SHOWN
+   * {focused:true}`, never `OS_FOCUS_GAINED` — the sweep-free echo.
+   */
+  | { type: 'RAISE_WINDOW_REQUESTED'; id: WindowId };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Effects — returned by the reducer, executed by the OS adapter (§2.6). The
@@ -1538,6 +1548,26 @@ function invalidatesFrontAssertion(prev: AppWindowState, next: AppWindowState, e
 }
 
 /**
+ * Drive a USER-REQUESTED raise (see `RAISE_WINDOW_REQUESTED`) onto the OS:
+ * `RAISE_WINDOW` (+ `FOCUS_CONTENT` for a page-host) + `SET_STACKING`, and the
+ * matching list mirror. Deliberately the SAME tail as `applyFrontAssertion`'s
+ * closing raise MINUS `state.frontAsserted = true` — that stays on the
+ * assertion, whose INTERIM dedupe guard (immediately below) is what stops the
+ * two from double-raising when both fire in the same transition.
+ */
+function applyRaiseRequest(state: AppWindowState, id: WindowId | null, effects: Effect[]): void {
+  if (id == null) return;
+  if (!state.appActive) return; // no focus theft while Peek is background (sites 2 and 3 fire while inactive)
+  if (state.switcher.open) return; // must not yank key out of the overlay
+  const rec = state.windows.get(id);
+  if (!isEligibleFront(rec)) return;
+  effects.push({ type: 'RAISE_WINDOW', id });
+  if (rec.kind === 'page-host') effects.push({ type: 'FOCUS_CONTENT', id });
+  effects.push({ type: 'SET_STACKING', id, level: rec.stackingLevel });
+  stackRaise(state, id);
+}
+
+/**
  * The closing assertion step (design §2): run after `enforceFrontInvariant` on
  * EVERY transition. Clear the assertion if this transition invalidated it, then
  * — if the machine cannot vouch that the OS matches `front` — describe the work
@@ -1561,6 +1591,21 @@ function applyFrontAssertion(
   event: WindowEvent,
   effects: Effect[],
 ): void {
+  // INTERIM — deleted with this whole function at step 6. An explicit
+  // `RAISE_WINDOW_REQUESTED` site (`applyRaiseRequest`) already emitted
+  // `RAISE_WINDOW` for the current front in THIS transition — without this
+  // guard, 3 of the 4 sites would double-emit it, because
+  // `invalidatesFrontAssertion` forces `frontAsserted = false` for exactly
+  // those events (`SWITCHER_SELECTED`, the `WINDOW_CLOSED` parent handoff,
+  // `DEVTOOLS_OPENED`/`DEVTOOLS_CLOSED`). The flag is set HERE, not inside
+  // `applyRaiseRequest`, because `window-os-adapter.ts` pump's docblock
+  // records that `RAISE_WINDOW` → `WINDOW_SHOWN` re-entrancy converges only
+  // because `frontAsserted` is set BEFORE its effects execute.
+  if (state.front != null && effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === state.front)) {
+    state.frontAsserted = true;
+    return;
+  }
+
   if (invalidatesFrontAssertion(prev, state, event)) state.frontAsserted = false;
 
   if (state.switcher.open) return;
@@ -2098,10 +2143,16 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
 
     case 'DEVTOOLS_OPENED':
     case 'DEVTOOLS_CLOSED': {
-      // No state change; both invalidate the front assertion (see
-      // `invalidatesFrontAssertion`), and the closing assertion step re-drives
-      // the front window in the SAME transition — the machine form of the old
-      // "re-focus the content window when devtools opens/closes" handlers.
+      // No state change. `event.id` — the window whose devtools opened/closed
+      // — is deliberately UNUSED here: `main.ts` dispatches the devtools
+      // host's own id, which need not be `front`, and raising it would steal
+      // key onto a background window. The explicit raise targets
+      // `state.front`, the window that actually lost key — the machine form
+      // of the old "re-focus the content window when devtools opens/closes"
+      // handlers. Both edges also still invalidate the front assertion (see
+      // `invalidatesFrontAssertion`); the INTERIM dedupe guard on
+      // `applyFrontAssertion` stops that from emitting a second raise.
+      applyRaiseRequest(state, state.front, effects);
       break;
     }
 
@@ -2226,6 +2277,10 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         if (isEligibleFront(parent)) {
           state.front = parent.id;
           bumpFocusSeq(state, parent.id);
+          // Explicit parent-handoff raise (§5 step 5) — see the
+          // `SWITCHER_SELECTED` case for why this no longer waits on the
+          // closing assertion step alone.
+          applyRaiseRequest(state, parent.id, effects);
         }
       }
       if (state.switcher.open && state.switcher.windowId === event.id) {
@@ -2268,6 +2323,11 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       const rec = state.windows.get(event.id);
       if (!rec) break;
       patchRecord(state, event.id, { contentFocused: event.held });
+      break;
+    }
+
+    case 'RAISE_WINDOW_REQUESTED': {
+      applyRaiseRequest(state, event.id, effects);
       break;
     }
 
@@ -2702,9 +2762,12 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       if (target != null && isEligibleFront(state.windows.get(target))) {
         state.front = target;
         bumpFocusSeq(state, target);
-        // NO `RAISE_WINDOW` here. `SWITCHER_SELECTED` invalidates the assertion
-        // (see `invalidatesFrontAssertion`), so the closing step raises the
-        // selection — one place emits the raise, for every path, always.
+        // Explicit user-requested raise (§5 step 5) — the switcher selection
+        // is the user naming a target, not the machine re-asserting its own
+        // belief. The INTERIM dedupe guard on `applyFrontAssertion` stops the
+        // closing assertion step (which this transition also invalidates)
+        // from emitting a second `RAISE_WINDOW` for the same window.
+        applyRaiseRequest(state, target, effects);
       }
       break;
     }
@@ -2767,6 +2830,13 @@ function applyEscape(state: AppWindowState, effects: Effect[]): void {
       if (restoreTarget != null && isEligibleFront(state.windows.get(restoreTarget))) {
         state.front = restoreTarget;
       }
+      // Explicit user-requested raise (§5 step 5): Escape closing the switcher
+      // is the user naming the restore target, unconditionally — unlike the
+      // pre-step-5 behavior, this no longer depends on whether the switcher
+      // was opened via `SWITCHER_OPENED` (which invalidated the assertion) or
+      // only `SWITCHER_OPEN_REQUESTED` (which did not). `applyRaiseRequest`
+      // itself is a no-op for a null/ineligible target.
+      applyRaiseRequest(state, restoreTarget, effects);
       return;
     }
     case 'open-switcher': {
