@@ -2981,32 +2981,58 @@ export function snapshot(state: AppWindowState): StateSnapshot {
  * Derived Escape-grab predicate (design §2 "The Escape grab becomes honest"):
  * whether the OS-level `globalShortcut('Escape')` safety net should be held.
  *
- *   appActive && (front === null || !frontAsserted)
+ *   appActive && (front === null || front's WindowRecord.contentFocused === false)
  *
  * i.e. the net is on exactly when the machine CANNOT VOUCH that some window is
  * positioned to receive Escape through `before-input-event`.
  *
- * The `!frontAsserted` half is the whole point. The previous version was
- * `appActive && front === null && !switcher.open` — a remembered belief with no
- * claim about the OS. Since `OS_FOCUS_SETTLED_NULL` deliberately never clears
- * `front`, a `front` the OS had drifted away from suppressed the net
- * PERMANENTLY: the front window was not first responder (so its
- * `before-input-event` was deaf) AND the grab was off (because `front != null`),
- * so Escape reached nothing at all, ever again (7fffa286). `frontAsserted` is
- * precisely "we have driven the OS to match `front`", which makes `!frontAsserted`
- * the honest form of the signal the old live-OS-read version was approximating.
+ * §5 step 11 re-key: the front-not-first-responder half now reads
+ * `WindowRecord.contentFocused` (the backend's mirror of the native
+ * `rendererWC 'focus'`/`'blur'` pair, via `CONTENT_FIRST_RESPONDER_CHANGED`)
+ * instead of `AppWindowState.frontAsserted`, a machine-side CLAIM that the OS
+ * matches an emitted `RAISE_WINDOW`/`FOCUS_CONTENT` rather than a report of
+ * what actually happened — `frontAsserted` and its machinery are retired in
+ * the NEXT step. Same intent as the old `!frontAsserted`
+ * half: arm the net whenever the front page-host's content is NOT actually the
+ * macOS first responder — some palette/satellite holds key instead, so Escape
+ * must be caught globally rather than by the content itself. Verified live
+ * (2026-07): `contentFocused` stays correct across an app resign/activate
+ * cycle where `front` itself briefly oscillates — it is the stable signal
+ * `frontAsserted` was only approximating.
+ *
+ * ABSENT (`contentFocused === undefined`) reads as "nothing reported yet", NOT
+ * "content is unfocused" — the same convention as `hiddenByAppBlur`. Two cases
+ * hit this: (a) a `browser`-kind front, whose kind never gets a
+ * `CONTENT_FIRST_RESPONDER_CHANGED` at all (`attachNativeListeners` wires the
+ * `rendererWC 'focus'/'blur'` pair only for `kind: 'page-host'` — a browser
+ * window's root webContents IS first responder whenever the window is key, so
+ * there is nothing independent to track); (b) a page-host between a just-driven
+ * `FOCUS_CONTENT` and the async native `'focus'` event it produces. Treating
+ * absent as "armed" would permanently arm the net for every browser-kind front
+ * (Escape already works there via `before-input-event` — a regression of its
+ * own) and would flap the net on for the ordinary micro-gap after every fresh
+ * show/raise. So absent does NOT arm: only an EXPLICIT `contentFocused ===
+ * false` — an actually-observed loss of first responder — arms the net. This
+ * preserves 7fffa286/7c61e917 (the regression pair `frontAsserted` was built
+ * for): live evidence shows a real resign fires the content blur BEFORE
+ * `APP_RESIGNED` itself, so `contentFocused` is already `false` by the time the
+ * app goes inactive, and it STAYS `false` through `APP_ACTIVATED` until a fresh
+ * `CONTENT_FIRST_RESPONDER_CHANGED{held:true}` lands — arming the net for
+ * exactly the window where `before-input-event` would otherwise be deaf.
  *
  * Reads reducer state ONLY. Widening it back into live Electron/OS reads is
  * explicitly REJECTED (design §2 / §7): that reintroduces the rival-authority
  * pattern this machine exists to delete, and papers over a wrong `front` instead
  * of surfacing it.
  *
- * `!switcher.open` is carried over from the old predicate and is NOT redundant:
- * `SWITCHER_OPENED` clears `frontAsserted` (the overlay legitimately took key),
- * which would otherwise switch the grab ON for the one surface that handles
- * Escape in its own renderer. An OS grab pre-empts `before-input-event`, so it
- * would eat the switcher's own Escape, and a second `ESC_PRESSED` per keypress is
- * the switcher-reopen loop (7fffa286).
+ * `!switcher.open` is carried over from the old predicate and is NOT redundant
+ * — if anything it is now load-bearing rather than merely reinforcing: the
+ * switcher overlay taking key blurs the front's content WC too (a real,
+ * reported loss of first responder), so without this clause the net would
+ * switch ON for the one surface that handles Escape in its own renderer. An OS
+ * grab pre-empts `before-input-event`, so it would eat the switcher's own
+ * Escape, and a second `ESC_PRESSED` per keypress is the switcher-reopen loop
+ * (7fffa286).
  *
  * Lives here rather than next to its executor in `window-os-adapter.ts` for the
  * same reason `decideWindowRegistration` does — that module transitively
@@ -3018,7 +3044,16 @@ export function snapshot(state: AppWindowState): StateSnapshot {
 export function deriveEscGrabRegistered(snap: StateSnapshot): boolean {
   if (!snap.appActive) return false;
   if (snap.switcher.open) return false;
-  return snap.front === null || !snap.frontAsserted;
+  if (snap.front === null) return true;
+  // `rec` is guaranteed non-null here: `enforceFrontInvariant` runs as the LAST
+  // step of every `reduce`, so a non-null `snap.front` always names a live
+  // record by the time any snapshot is taken (throws in dev/test on a reducer
+  // bug, self-corrects in production) — a dangling front is not a
+  // representable `StateSnapshot`. `.find` (not a direct index) only because
+  // `StateSnapshot.windows` is an array, not a `Map`.
+  const rec = snap.windows.find((w) => w.id === snap.front);
+  // `=== false`, not `!rec?.contentFocused` — see the docblock's ABSENT note.
+  return rec?.contentFocused === false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

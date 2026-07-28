@@ -1745,7 +1745,28 @@ describe('RAISE_WINDOW_REQUESTED — an explicit, user-requested raise', () => {
 
 // ── deriveEscGrabRegistered — the honest safety net (design §2) ──────────────
 
-describe('deriveEscGrabRegistered — truth table over (appActive, front, frontAsserted)', () => {
+describe('deriveEscGrabRegistered — truth table over (appActive, front, contentFocused) — §5 step 11 re-key', () => {
+  function windowRec(id: WindowId, contentFocused?: boolean): WindowRecord {
+    return {
+      id,
+      kind: 'page-host',
+      role: 'content',
+      class: 'primary',
+      stackingLevel: 'stacked',
+      orderable: true,
+      escapeMode: undefined,
+      satellite: false,
+      visible: true,
+      fsMode: fsOf('normal'),
+      maximized: false,
+      preMaxBounds: null,
+      visibleOnAllSpaces: false,
+      pendingProjectedBounds: null,
+      focusSeq: 1,
+      contentFocused,
+    };
+  }
+
   function snapOf(over: Partial<StateSnapshot> = {}): StateSnapshot {
     return {
       appActive: true,
@@ -1759,66 +1780,125 @@ describe('deriveEscGrabRegistered — truth table over (appActive, front, frontA
     };
   }
 
-  it('is total and matches the table for all 8 (appActive x front x frontAsserted) combinations', () => {
-    const rows: { appActive: boolean; front: WindowId | null; frontAsserted: boolean; want: boolean }[] = [
-      // Peek is not the active app -> never grab, whatever we believe about front.
-      { appActive: false, front: null, frontAsserted: false, want: false },
-      { appActive: false, front: null, frontAsserted: true, want: false },
-      { appActive: false, front: wid(1), frontAsserted: false, want: false },
-      { appActive: false, front: wid(1), frontAsserted: true, want: false },
+  it('matches the table across (appActive, front, contentFocused)', () => {
+    const rows: { appActive: boolean; front: WindowId | null; contentFocused?: boolean; want: boolean }[] = [
+      // Peek is not the active app -> never grab, whatever we know about content focus.
+      { appActive: false, front: null, want: false },
+      { appActive: false, front: wid(1), contentFocused: false, want: false },
+      { appActive: false, front: wid(1), contentFocused: true, want: false },
       // No front at all -> nobody can receive before-input-event -> grab.
-      { appActive: true, front: null, frontAsserted: false, want: true },
-      { appActive: true, front: null, frontAsserted: true, want: true },
-      // A front we have NOT driven onto the OS is exactly the 7fffa286 hole: the
-      // window is not first responder AND the old predicate switched the net off.
-      { appActive: true, front: wid(1), frontAsserted: false, want: true },
-      // A front we HAVE asserted is positioned to hear Escape -> no grab needed.
-      { appActive: true, front: wid(1), frontAsserted: true, want: false },
+      { appActive: true, front: null, want: true },
+      // A front whose content EXPLICITLY reported losing first responder is
+      // exactly the 7fffa286/7c61e917 hole -> grab.
+      { appActive: true, front: wid(1), contentFocused: false, want: true },
+      // A front whose content is confirmed focused is positioned to hear Escape
+      // itself -> no grab needed.
+      { appActive: true, front: wid(1), contentFocused: true, want: false },
+      // ABSENT ("nothing reported yet", see the ABSENT note on
+      // deriveEscGrabRegistered) must NOT arm — same as the confirmed-focused row.
+      { appActive: true, front: wid(1), contentFocused: undefined, want: false },
     ];
     for (const row of rows) {
-      const got = deriveEscGrabRegistered(snapOf(row));
+      const windows = row.front != null ? [windowRec(row.front, row.contentFocused)] : [];
+      const got = deriveEscGrabRegistered(snapOf({ appActive: row.appActive, front: row.front, windows }));
       assert.strictEqual(
         got,
         row.want,
-        `appActive=${row.appActive} front=${row.front} frontAsserted=${row.frontAsserted}`,
+        `appActive=${row.appActive} front=${row.front} contentFocused=${row.contentFocused}`,
       );
     }
   });
 
-  it('an open switcher suppresses the grab (it owns Escape in its own renderer)', () => {
-    const open = { open: true as const, windowId: wid(88), previousFront: wid(1) };
-    // SWITCHER_OPENED clears frontAsserted, so without this clause the grab would
-    // switch ON precisely while the overlay is up — and an OS grab pre-empts
-    // before-input-event, eating the switcher's own Escape (the reopen loop).
-    assert.strictEqual(deriveEscGrabRegistered(snapOf({ front: wid(1), frontAsserted: false, switcher: open })), false);
-    assert.strictEqual(deriveEscGrabRegistered(snapOf({ front: null, frontAsserted: false, switcher: open })), false);
+  it('a dangling front (no matching WindowRecord) is NOT a representable StateSnapshot — pins the defined-but-irrelevant fallback', () => {
+    // `enforceFrontInvariant` runs as the LAST step of every `reduce` (throws in
+    // dev/test on a reducer bug, self-corrects in production), so a non-null
+    // `front` naming no live record can never come out of the real reducer —
+    // this row only exists to pin the predicate's behavior for a hand-built
+    // snapshot that violates the invariant on purpose, not to claim `false` is
+    // the "right" answer for a genuinely unvouchable front (it would be `true`
+    // if this state were ever reachable). See the `rec` comment on
+    // `deriveEscGrabRegistered`.
+    const dangling = snapOf({ appActive: true, front: wid(1), windows: [] });
+    assert.strictEqual(deriveEscGrabRegistered(dangling), false);
   });
 
-  it('tracks the live reducer state across the app-switch round trip (the 7fffa286 hole)', () => {
-    // The end-to-end statement: a front that has drifted is never left both deaf
-    // AND unguarded. Under the OLD predicate (`front === null`) the grab was off
-    // for every step here, which is what made the third Escape do nothing forever.
-    const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    assert.strictEqual(deriveEscGrabRegistered(snapshot(s)), false, 'asserted front hears Escape itself');
+  it('an open switcher suppresses the grab even though it really did blur the front content (it owns Escape in its own renderer)', () => {
+    const open = { open: true as const, windowId: wid(88), previousFront: wid(1) };
+    // The switcher taking key genuinely blurs the front's content WC in
+    // production, so `contentFocused` legitimately goes false — without this
+    // clause the net would switch ON precisely while the overlay is up, and an
+    // OS grab pre-empts before-input-event, eating the switcher's own Escape
+    // (the reopen loop).
+    assert.strictEqual(
+      deriveEscGrabRegistered(snapOf({ front: wid(1), windows: [windowRec(wid(1), false)], switcher: open })),
+      false,
+    );
+    assert.strictEqual(deriveEscGrabRegistered(snapOf({ front: null, switcher: open })), false);
+  });
 
+  it('grab arms when the front page-host content loses first responder (a palette takes key)', () => {
+    const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
+    assert.strictEqual(deriveEscGrabRegistered(snapshot(s)), false, 'freshly shown, nothing reported yet');
+    const blurred = drive(s, [{ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id: wid(1), held: false }]).state;
+    assert.strictEqual(deriveEscGrabRegistered(snapshot(blurred)), true, 'palette took key -> the net arms');
+  });
+
+  it('grab disarms when content regains first responder', () => {
+    const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
+    const blurred = drive(s, [{ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id: wid(1), held: false }]).state;
+    assert.strictEqual(deriveEscGrabRegistered(snapshot(blurred)), true);
+    const refocused = drive(blurred, [{ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id: wid(1), held: true }]).state;
+    assert.strictEqual(deriveEscGrabRegistered(snapshot(refocused)), false, 'content took key back -> the net drops');
+  });
+
+  it('the never-reported (absent contentFocused) case does NOT arm the grab', () => {
+    // Two ways to land on absent, both must not permanently arm: (a) a fresh
+    // page-host that has not yet gotten its first live focus report, and (b) a
+    // browser-kind front, which NEVER gets one — `attachNativeListeners` wires
+    // the rendererWC focus/blur pair only for `kind: 'page-host'` (a browser
+    // window's root webContents IS first responder whenever the window is key).
+    const pageHost = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
+    assert.strictEqual(
+      snapshot(pageHost).windows.find((w) => w.id === wid(1))?.contentFocused,
+      undefined,
+      'sanity: no CONTENT_FIRST_RESPONDER_CHANGED has fired yet',
+    );
+    assert.strictEqual(deriveEscGrabRegistered(snapshot(pageHost)), false);
+
+    const browserWin = openWindow(createInitialState(), 2, { kind: 'browser', role: 'content' });
+    assert.strictEqual(
+      deriveEscGrabRegistered(snapshot(browserWin)),
+      false,
+      'a browser front never reports contentFocused at all -- must not arm forever',
+    );
+  });
+
+  it('REGRESSION (7fffa286/7c61e917): grab state is correct across an APP_RESIGNED -> APP_ACTIVATED cycle', () => {
+    // Live-measured (2026-07): the content WC blurs BEFORE APP_RESIGNED lands,
+    // and stays blurred through APP_ACTIVATED until a fresh live focus report
+    // arrives — so the net correctly arms for exactly the gap where
+    // before-input-event would otherwise be deaf. Under the OLD predicate this
+    // same gap was covered by `frontAsserted` CLAIMING re-assertion synchronously;
+    // here it is covered by observing the real signal instead.
+    let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
+    s = drive(s, [{ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id: wid(1), held: true }]).state;
+    assert.strictEqual(deriveEscGrabRegistered(snapshot(s)), false, 'confirmed focused -> net off');
+
+    s = drive(s, [{ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id: wid(1), held: false }]).state;
     const resigned = reduce(s, { type: 'APP_RESIGNED' });
+    assert.strictEqual(getFrontWindowId(resigned.state), wid(1), 'front survives the app switch (by design)');
     assert.strictEqual(deriveEscGrabRegistered(snapshot(resigned.state)), false, 'not the active app');
 
-    // Back in front, but nothing has re-driven the OS yet at the moment the
-    // assertion is cleared — the net covers precisely that window of time.
-    assert.strictEqual(snapshot(resigned.state).frontAsserted, false);
-    assert.strictEqual(
-      deriveEscGrabRegistered(snapOf({ appActive: true, front: wid(1), frontAsserted: false })),
-      true,
-      'active + unasserted front -> the safety net is ON',
-    );
-
     const activated = reduce(resigned.state, { type: 'APP_ACTIVATED' });
+    assert.strictEqual(getFrontWindowId(activated.state), wid(1), 'front is UNCHANGED across the whole round trip');
     assert.strictEqual(
       deriveEscGrabRegistered(snapshot(activated.state)),
-      false,
-      'the same transition re-asserts, so the net drops again immediately',
+      true,
+      'back in front, but content first responder has not been reconfirmed yet -- the safety net is ON',
     );
+
+    const refocused = drive(activated.state, [{ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id: wid(1), held: true }]).state;
+    assert.strictEqual(deriveEscGrabRegistered(snapshot(refocused)), false, 'live refocus report lands -> the net drops');
   });
 });
 
