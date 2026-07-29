@@ -360,6 +360,16 @@ handler we'd been editing. When a hybrid focus/input bug resists and the unit/Pl
 green, suspect (a) anything reading `getFocusedWindow()`, and (b) an OS-level `globalShortcut` that
 pre-empts `before-input-event` — and get a live trace before touching code.
 
+**PROTOCOL RULE — never ask the operator to click the page first. Ever.** When scripting a live
+focus/input verification, a "click the page to make sure it's focused" step **invalidates the
+test**: clicking the content is what fires `contentWC 'focus'` and restores first responder by
+hand, which is exactly the defect under test. `7c61e917` WAS "dead until you click the page" —
+a click-first protocol would have reported it fixed. Focusing a window must be sufficient on its
+own; that is the whole invariant. To bring a window to front without touching its content, use
+Cmd+Tab / the window switcher / Mission Control, or let it be frontmost from launch. If a gesture
+seems to need a preparatory click, the gesture is wrong — not the app. (Operator directive,
+2026-07-29, after this exact mistake was made mid-sitting.)
+
 **Still open (separate, NOT a focus/input bug): keepLive toggle → extension bridge error (peek
 `42fff0a5`).** Checking the keepLive option for a slide/peek logs a chrome-extension compat-bridge
 port disconnect + `[peek:runtime-external:bg] electron.ipcRenderer unavailable on all probed paths`
