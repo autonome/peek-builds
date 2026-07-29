@@ -20,39 +20,12 @@
  * |-----------|----------------------|--------------------------------|
  * | TRANSIENT | Always "default"     | Close immediately              |
  * | ACTIVE    | Target window's mode | Internal nav only, never close |
- * | OVERLAY   | Inherit from previous| Always close, restore hidden   |
+ * | OVERLAY   | Inherit from previous| Always close                   |
  */
 
-import { DEBUG, isHeadless } from './config.js';
-
-// Lazy-load Electron modules to allow testing without Electron
-let BrowserWindow: typeof import('electron').BrowserWindow | null = null;
-
-try {
-  const electron = await import('electron');
-  BrowserWindow = electron.BrowserWindow;
-} catch {
-  // Electron not available (e.g., in unit tests)
-  DEBUG && console.log('[izui-state] Running without Electron (test mode)');
-}
+import { DEBUG } from './config.js';
 
 export type IzuiState = 'idle' | 'transient' | 'active' | 'overlay';
-
-/**
- * Window provider interface for dependency injection (enables testing)
- */
-export interface WindowProvider {
-  getAllWindows(): Array<{ id: number; isDestroyed(): boolean; isFocused(): boolean; isVisible(): boolean; webContents?: { getURL(): string } }>;
-  fromId(id: number): { show(): void; showInactive(): void; isDestroyed(): boolean } | null;
-}
-
-/**
- * Default window provider using Electron's BrowserWindow (or stub for testing)
- */
-const defaultWindowProvider: WindowProvider = {
-  getAllWindows: () => BrowserWindow?.getAllWindows() ?? [],
-  fromId: (id: number) => BrowserWindow?.fromId(id) ?? null,
-};
 
 export interface IzuiSession {
   id: string;
@@ -77,7 +50,6 @@ function generateSessionId(): string {
 class IzuiStateCoordinator {
   private state: IzuiState = 'idle';
   private session: IzuiSession | null = null;
-  private windowProvider: WindowProvider = defaultWindowProvider;
 
   // OS-level app focus state. True when Peek is the active app.
   // Updated by browser-window-focus/blur events in main.ts.
@@ -131,20 +103,6 @@ class IzuiStateCoordinator {
     } catch {
       /* a mirror subscriber throwing must not break session bookkeeping */
     }
-  }
-
-  /**
-   * Set custom window provider (for testing)
-   */
-  _setWindowProvider(provider: WindowProvider): void {
-    this.windowProvider = provider;
-  }
-
-  /**
-   * Reset to default window provider
-   */
-  _resetWindowProvider(): void {
-    this.windowProvider = defaultWindowProvider;
   }
 
   /**
@@ -327,8 +285,7 @@ class IzuiStateCoordinator {
   }
 
   /**
-   * Exit overlay mode and restore hidden windows.
-   * Used for user-initiated close (ESC or selection).
+   * Exit overlay mode. Used for user-initiated close (ESC or selection).
    */
   exitOverlay(): void {
     if (!this.session || this.state !== 'overlay') {
@@ -336,30 +293,7 @@ class IzuiStateCoordinator {
       return;
     }
 
-    const hiddenIds = this.session.hiddenWindowIds;
-    DEBUG && console.log('[izui] Exiting overlay, restoring', hiddenIds.length, 'windows');
-
-    // Restore hidden windows with showInactive(). Plain show() activates
-    // the window, and on macOS each activation pulls the user to the
-    // window's Space — restoring a batch of windows that live on
-    // different Spaces would yank the user to whichever one happens to
-    // come last in iteration order. The caller (main.ts overlay close
-    // handler) issues an explicit `.focus()` on the chosen target
-    // afterward, which is the correct path to activate one window's
-    // Space deterministically.
-    for (const id of hiddenIds) {
-      const win = this.windowProvider.fromId(id);
-      if (win && !win.isDestroyed()) {
-        // In headless test mode, set opacity to 0 so the restored window
-        // doesn't flash on the real display. setOpacity is a BrowserWindow
-        // method — wrapped in a duck-typed check so unit-test mock stubs
-        // (which don't implement it) are unaffected.
-        if (isHeadless() && typeof (win as any).setOpacity === 'function') {
-          try { (win as any).setOpacity(0); } catch { /* unsupported on some platforms */ }
-        }
-        win.showInactive();
-      }
-    }
+    DEBUG && console.log('[izui] Exiting overlay');
 
     // Return to previous state based on entry mode
     this.state = this.session.entryMode;
@@ -373,8 +307,7 @@ class IzuiStateCoordinator {
 
   /**
    * Exit overlay mode due to app losing OS focus (Cmd+Tab away).
-   * Restores hidden windows with showInactive() so they don't steal focus,
-   * and does NOT focus any window — the user is switching to another app.
+   * Does NOT focus any window — the user is switching to another app.
    */
   exitOverlayForAppBlur(): void {
     if (!this.session || this.state !== 'overlay') {
@@ -382,21 +315,7 @@ class IzuiStateCoordinator {
       return;
     }
 
-    const hiddenIds = this.session.hiddenWindowIds;
-    DEBUG && console.log('[izui] Exiting overlay (app blur), restoring', hiddenIds.length, 'windows without focus');
-
-    // Restore hidden windows WITHOUT focusing — use showInactive() to avoid stealing focus.
-    // (Previously called show() despite the docstring saying showInactive — fixed.)
-    for (const id of hiddenIds) {
-      const win = this.windowProvider.fromId(id);
-      if (win && !win.isDestroyed()) {
-        // Same headless-safe guard as exitOverlay above.
-        if (isHeadless() && typeof (win as any).setOpacity === 'function') {
-          try { (win as any).setOpacity(0); } catch { /* unsupported on some platforms */ }
-        }
-        win.showInactive();
-      }
-    }
+    DEBUG && console.log('[izui] Exiting overlay (app blur)');
 
     // Return to previous state based on entry mode
     this.state = this.session.entryMode;

@@ -124,8 +124,6 @@ const ALLOWLIST = [
     why: 'overlayWin.focus for address-bar typing (page:show-navbar) — focus rivals, §5 step 8' },
   { file: 'apps/desktop/main/ipc.ts', call: 'focus', count: 1,
     why: 'modal blur-settle re-focus (win.on(\'blur\') 200ms settle branch) — focus rivals, §5 step 8; the devtools-opened first-responder restore that used to share this entry is gone (§5 step 9 — DEVTOOLS_OPENED now owns it)' },
-  { file: 'apps/desktop/main/izui-state.ts', call: 'showInactive', count: 2,
-    why: 'restore-without-activating in the focus-restore guard — focus rivals, §5 step 8' },
   { file: 'apps/desktop/main/main.ts', call: 'close', count: 1,
     why: 'close overlay switcher when app loses OS focus (did-resign-active) — §5 step 9' },
   { file: 'apps/desktop/main/main.ts', call: 'focus', count: 2,

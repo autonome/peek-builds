@@ -23,21 +23,21 @@ and the commit log, not against the prose elsewhere in this document, which drif
 | 5 | Z-order / stacking (`SET_STACKING`, `stackOrder`) | DONE |
 | 6 | Visibility (`visible` authoritative, app-hide derived, no polling) | DONE |
 | 7 | Geometry / maximize (bounds/maximize collapse into one reducer-owned model) | DONE |
-| 8 | Focus rivals (delete `izui-state.ts`'s focus surface, `getFocusedWindow()` call sites) | PARTIAL — 4 entries / 6 calls still allowlisted under §5 step 8: `hybrid-overlay.ts` `focus` ×1, `izui-state.ts` `showInactive` ×2, `main.ts` `focus` ×2, `windows.ts` `focus` ×1 |
+| 8 | Focus rivals (delete `izui-state.ts`'s focus surface, `getFocusedWindow()` call sites) | PARTIAL — 3 entries / 4 calls still allowlisted under §5 step 8: `hybrid-overlay.ts` `focus` ×1, `main.ts` `focus` ×2, `windows.ts` `focus` ×1. The `izui-state.ts` `showInactive` ×2 entry is gone — the no-hide overlay model (`ipc.ts` always passes `enterOverlay(windowId, [])`) made both restore loops unreachable; deleted by deletion, along with the now-dead window-provider injection apparatus. |
 | 9 | Overlay attach/retarget + transient autoclose | PARTIAL — transient autoclose and overlay follow/retarget are absorbed (`window-state.ts` `selectTransientAutoclose`, `applyOverlayFollow`); the unwired `teardownHybridOverlay` (zero callers) is deleted; the test bridge's `showFakeHybridWindowInactive`/`destroyFakeHybridWindow` now dispatch `WINDOW_SHOW_REQUESTED`/`WINDOW_DESTROY_REQUESTED` instead of driving Electron directly, dropping `hybrid-overlay.ts` `showInactive`/`destroy` from the allowlist entirely; the redundant devtools re-focus calls in `ipc.ts` and `windows.ts` are deleted (`DEVTOOLS_OPENED` already owns first-responder restore); 2 entries / 2 calls still allowlisted under §5 step 9: `ipc.ts` `focus` ×1, `main.ts` `close` ×1 |
 | 10 | Displays and Spaces | DONE |
 | 11 | Session save / restore (last) | PARTIAL — 8 tasks landed (11.1, two Task 3s, two Task 4s, Task 5, Task 7, Task 8 — see §5 step 11 for the full write-up and the task-number collision note); no commit evidence of any task beyond these 8 |
 
 ### The mechanical progress measure
 
-`node scripts/check-r2-window-ops.mjs` (run 2026-07-29): **21 allowlisted entries / 31
+`node scripts/check-r2-window-ops.mjs` (run 2026-07-29): **20 allowlisted entries / 29
 calls**. This number — not the table above, not any other prose in this document — is the
 honest measure of how much window-op code still bypasses the machine. It is expected to
 shrink monotonically to zero; the check fails a PR that grows it.
 
 ### Remaining work, most-tractable first
 
-1. Close step 8: route its 4 residual call sites through the machine, delete their
+1. Close step 8: route its 3 residual entries (4 calls) through the machine, delete their
    allowlist entries.
 2. Close step 9: route its 2 residual call sites through the machine, delete their
    allowlist entries.

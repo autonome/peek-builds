@@ -12,7 +12,6 @@
 
 import { describe, it, before, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
-import type { WindowProvider } from './izui-state.js';
 
 // Mock window interface
 interface MockWindow {
@@ -51,14 +50,6 @@ function createMockWindow(id: number, options: { focused?: boolean; destroyed?: 
   return win;
 }
 
-// Create a mock window provider for testing
-function createMockWindowProvider(windows: MockWindow[]): WindowProvider {
-  return {
-    getAllWindows: () => windows,
-    fromId: (id: number) => windows.find(w => w.id === id) || null,
-  };
-}
-
 // Import will be done after build
 let izuiState: typeof import('./izui-state.js');
 
@@ -82,7 +73,6 @@ describe('IZUI State Coordinator Tests', () => {
     // Reset all state (session, appFocused, etc.)
     const coordinator = izuiState.getIzuiCoordinator();
     coordinator._resetAll();
-    coordinator._setWindowProvider(createMockWindowProvider(mockWindows));
     coordinator.setFrontWindowIdProvider(() => mockFrontWindowId);
   });
 
@@ -345,13 +335,14 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(coordinator.getState(), 'idle');
     });
 
-    it('should exit overlay mode and restore hidden windows', () => {
-      // Set up mock windows that will be "hidden"
+    it('should exit overlay mode and clear hidden-window state without touching any window', () => {
+      // No-hide switcher model: production never populates hiddenWindowIds
+      // (ipc.ts always passes []), so exitOverlay's only job is clearing
+      // session bookkeeping — it does not show or touch any window.
       const hiddenWindow1 = createMockWindow(1);
       const hiddenWindow2 = createMockWindow(2);
       hiddenWindow1._visible = false;
       hiddenWindow2._visible = false;
-      mockWindows.push(hiddenWindow1, hiddenWindow2);
 
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
@@ -361,46 +352,18 @@ describe('IZUI State Coordinator Tests', () => {
 
       assert.strictEqual(coordinator.isOverlay(), false);
       assert.strictEqual(coordinator.getState(), 'active');
-      assert.ok(hiddenWindow1._visible, 'Window 1 should be shown');
-      assert.ok(hiddenWindow2._visible, 'Window 2 should be shown');
+      assert.strictEqual(hiddenWindow1._visible, false, 'exitOverlay must not touch any window');
+      assert.strictEqual(hiddenWindow2._visible, false, 'exitOverlay must not touch any window');
 
       const session = coordinator.getSession()!;
       assert.strictEqual(session.overlayWindowId, null);
       assert.deepStrictEqual(session.hiddenWindowIds, []);
     });
 
-    it('restores hidden windows via showInactive() to preserve the user\'s active macOS Space', () => {
-      // Regression: previously this used .show(), which activates the
-      // window and pulls macOS to its Space. With hidden windows living
-      // across multiple Spaces, restoration was yanking the user to
-      // whichever Space the last-iterated window happens to belong to.
-      // The caller (main.ts overlay-closed handler) issues an explicit
-      // .focus() on the chosen target afterward — that's the right
-      // place to deterministically pick the Space to land on.
-      const hiddenWindow1 = createMockWindow(1);
-      const hiddenWindow2 = createMockWindow(2);
-      hiddenWindow1._visible = false;
-      hiddenWindow2._visible = false;
-      mockWindows.push(hiddenWindow1, hiddenWindow2);
-
-      const coordinator = izuiState.getIzuiCoordinator();
-      coordinator.startSession('active');
-      coordinator.enterOverlay(100, [1, 2]);
-
-      coordinator.exitOverlay();
-
-      assert.strictEqual(hiddenWindow1._lastShowMode, 'showInactive',
-        'Window 1 must be restored via showInactive(), not show()');
-      assert.strictEqual(hiddenWindow2._lastShowMode, 'showInactive',
-        'Window 2 must be restored via showInactive(), not show()');
-    });
-
-    it('exitOverlayForAppBlur also restores via showInactive()', () => {
-      // Same reasoning as the regular exit path — when the user has
-      // Cmd+Tab'd to another app, we must not yank focus back via .show().
+    it('exitOverlayForAppBlur also clears hidden-window state without touching any window', () => {
+      // Same reasoning as the regular exit path.
       const hiddenWindow = createMockWindow(1);
       hiddenWindow._visible = false;
-      mockWindows.push(hiddenWindow);
 
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
@@ -408,8 +371,10 @@ describe('IZUI State Coordinator Tests', () => {
 
       coordinator.exitOverlayForAppBlur();
 
-      assert.strictEqual(hiddenWindow._lastShowMode, 'showInactive',
-        'app-blur path must use showInactive() (matches docstring)');
+      assert.strictEqual(hiddenWindow._visible, false, 'exitOverlayForAppBlur must not touch any window');
+      const session = coordinator.getSession()!;
+      assert.strictEqual(session.overlayWindowId, null);
+      assert.deepStrictEqual(session.hiddenWindowIds, []);
     });
 
     it('should return to transient state after overlay if session was transient', () => {
@@ -596,11 +561,6 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.pushWindow(10); // cmd bar window
 
       // 3. User triggers windows picker (overlay)
-      const hiddenWindow = createMockWindow(10);
-      hiddenWindow._visible = false;
-      mockWindows.length = 0;
-      mockWindows.push(hiddenWindow);
-
       coordinator.enterOverlay(20, [10]);
       assert.strictEqual(coordinator.isOverlay(), true);
       assert.strictEqual(coordinator.isTransient(), true); // Still transient at entry
@@ -608,7 +568,6 @@ describe('IZUI State Coordinator Tests', () => {
       // 4. User presses ESC - exit overlay
       coordinator.exitOverlay();
       assert.strictEqual(coordinator.isOverlay(), false);
-      assert.ok(hiddenWindow._visible, 'Cmd bar should be shown again');
 
       // 5. User presses ESC again - close everything (in transient mode)
       coordinator.popWindow(10);
@@ -772,12 +731,6 @@ describe('IZUI State Coordinator Tests', () => {
     // (the reducer's `decideEscape` step 6). The overlay-restore flow below stays.
 
     it('overlay ESC without selection uses preOverlayFocusTarget', () => {
-      const winA = createMockWindow(1);
-      const winB = createMockWindow(2);
-      winA._visible = false;
-      winB._visible = false;
-      mockWindows.push(winA, winB);
-
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
       coordinator.pushWindow(1);
@@ -792,10 +745,6 @@ describe('IZUI State Coordinator Tests', () => {
 
       // Exit overlay (ESC without selection)
       coordinator.exitOverlay();
-
-      // Windows restored
-      assert.ok(winA._visible, 'Window A should be restored');
-      assert.ok(winB._visible, 'Window B should be restored');
 
       // preOverlayFocusTarget was 2 (B) — caller (main.ts) uses this to focus B
       // After exitOverlay, preOverlayFocusTarget is cleared
@@ -819,10 +768,6 @@ describe('IZUI State Coordinator Tests', () => {
     });
 
     it('3. ESC on switcher restores correct window: after overlay with preOverlayFocusTarget=5, exitOverlay → focus should go to 5', () => {
-      const winA = createMockWindow(5);
-      winA._visible = false;
-      mockWindows.push(winA);
-
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
       coordinator.pushWindow(5);
@@ -836,9 +781,8 @@ describe('IZUI State Coordinator Tests', () => {
 
       coordinator.exitOverlay();
 
-      // The target was 5, and exitOverlay restored the hidden window
+      // The target was 5 — the caller (main.ts) uses it to focus window 5.
       assert.strictEqual(restoreTarget, 5);
-      assert.ok(winA._visible, 'Window 5 should be restored/shown');
       // State returns to active
       assert.strictEqual(coordinator.getState(), 'active');
     });
@@ -965,10 +909,6 @@ describe('IZUI State Coordinator Tests', () => {
     });
 
     it('10. Multiple ESC cycles work: enter overlay → exit → enter overlay → exit → state consistent', () => {
-      const winA = createMockWindow(5);
-      const winB = createMockWindow(6);
-      mockWindows.push(winA, winB);
-
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
       coordinator.pushWindow(5);
@@ -981,13 +921,9 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(coordinator.getState(), 'overlay');
       assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 5);
 
-      winA._visible = false;
-      winB._visible = false;
       coordinator.exitOverlay();
       assert.strictEqual(coordinator.getState(), 'active');
       assert.strictEqual(coordinator.getPreOverlayFocusTarget(), null);
-      assert.ok(winA._visible);
-      assert.ok(winB._visible);
 
       // Cycle 2: enter overlay again → exit
       mockFrontWindowId = 6; // Now 6 is the machine's front window
@@ -995,13 +931,9 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(coordinator.getState(), 'overlay');
       assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 6);
 
-      winA._visible = false;
-      winB._visible = false;
       coordinator.exitOverlay();
       assert.strictEqual(coordinator.getState(), 'active');
       assert.strictEqual(coordinator.getPreOverlayFocusTarget(), null);
-      assert.ok(winA._visible);
-      assert.ok(winB._visible);
 
       // Session still intact
       assert.ok(coordinator.getSession());
@@ -1050,13 +982,7 @@ describe('IZUI State Coordinator Tests', () => {
   });
 
   describe('exitOverlayForAppBlur', () => {
-    it('should restore hidden windows without setting focus target', () => {
-      const winA = createMockWindow(1);
-      const winB = createMockWindow(2);
-      winA._visible = false;
-      winB._visible = false;
-      mockWindows.push(winA, winB);
-
+    it('clears hidden-window and focus-target state without setting focus', () => {
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
       coordinator.pushWindow(1);
@@ -1066,12 +992,8 @@ describe('IZUI State Coordinator Tests', () => {
       coordinator.enterOverlay(100, [1, 2]);
       assert.strictEqual(coordinator.getPreOverlayFocusTarget(), 2);
 
-      // App blur exit — restores windows but clears focus targets
+      // App blur exit — clears session state, does not touch any window or focus target
       coordinator.exitOverlayForAppBlur();
-
-      // Windows should be restored (shown)
-      assert.ok(winA._visible, 'Window A should be restored after app blur');
-      assert.ok(winB._visible, 'Window B should be restored after app blur');
 
       // State should return to previous (active)
       assert.strictEqual(coordinator.getState(), 'active');
@@ -1180,7 +1102,6 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(coordinator.isWithinOverlayExitCooldown(), true);
 
       coordinator._resetAll();
-      coordinator._setWindowProvider(createMockWindowProvider(mockWindows));
 
       assert.strictEqual(coordinator.isWithinOverlayExitCooldown(), false,
         'Cooldown should be cleared after _resetAll');
@@ -1233,7 +1154,6 @@ describe('IZUI State Coordinator Tests', () => {
       assert.strictEqual(coordinator.isWithinOverlayEntryCooldown(), true);
 
       coordinator._resetAll();
-      coordinator._setWindowProvider(createMockWindowProvider(mockWindows));
 
       assert.strictEqual(coordinator.isWithinOverlayEntryCooldown(), false,
         'Entry cooldown should be cleared after _resetAll');
@@ -1243,10 +1163,6 @@ describe('IZUI State Coordinator Tests', () => {
   describe('State is clean after both overlay close paths', () => {
     it('should have identical state after exitOverlay vs exitOverlayForAppBlur', () => {
       // Path 1: normal exitOverlay
-      const win1 = createMockWindow(1);
-      mockWindows.length = 0;
-      mockWindows.push(win1);
-
       const coordinator = izuiState.getIzuiCoordinator();
       coordinator.startSession('active');
       coordinator.pushWindow(1);
@@ -1260,8 +1176,6 @@ describe('IZUI State Coordinator Tests', () => {
 
       // Reset for path 2
       coordinator._resetAll();
-      coordinator._setWindowProvider(createMockWindowProvider(mockWindows));
-      win1._visible = false;
 
       // Path 2: app blur exitOverlay
       coordinator.startSession('active');
