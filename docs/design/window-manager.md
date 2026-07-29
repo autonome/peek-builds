@@ -6,6 +6,59 @@ is forbidden on the way there.
 
 ---
 
+## Where we are
+
+Read this table first. §4 and §5 below are the detailed record; this block is the fast,
+current answer to "how much is done" — verified against `scripts/check-r2-window-ops.mjs`
+and the commit log, not against the prose elsewhere in this document, which drifts.
+
+### Step status (§5 migration sequence, 11 steps)
+
+| Step | What it is | Status |
+|---|---|---|
+| 1 | Id space (`WindowId`, one id-minting seam) | DONE |
+| 2 | The backend port (`WindowBackend` / `ElectronWindowBackend`) | DONE |
+| 3 | R2 enforcement check (`scripts/check-r2-window-ops.mjs`) | DONE |
+| 4 | Special window classes + registry unification | DONE |
+| 5 | Z-order / stacking (`SET_STACKING`, `stackOrder`) | DONE |
+| 6 | Visibility (`visible` authoritative, app-hide derived, no polling) | DONE |
+| 7 | Geometry / maximize (bounds/maximize collapse into one reducer-owned model) | DONE |
+| 8 | Focus rivals (delete `izui-state.ts`'s focus surface, `getFocusedWindow()` call sites) | PARTIAL — 4 entries / 8 calls still allowlisted under §5 step 8: `hybrid-overlay.ts` `focus` ×1, `izui-state.ts` `showInactive` ×2, `main.ts` `focus` ×2, `windows.ts` `focus` ×3 |
+| 9 | Overlay attach/retarget + transient autoclose | PARTIAL — transient autoclose and overlay follow/retarget are absorbed (`window-state.ts` `selectTransientAutoclose`, `applyOverlayFollow`); 4 entries / 6 calls still allowlisted under §5 step 9: `hybrid-overlay.ts` `showInactive` ×1 (test bridge), `destroy` ×2, `ipc.ts` `focus` ×2, `main.ts` `close` ×1 |
+| 10 | Displays and Spaces | DONE |
+| 11 | Session save / restore (last) | PARTIAL — 8 tasks landed (11.1, two Task 3s, two Task 4s, Task 5, Task 7, Task 8 — see §5 step 11 for the full write-up and the task-number collision note); no commit evidence of any task beyond these 8 |
+
+### The mechanical progress measure
+
+`node scripts/check-r2-window-ops.mjs` (run 2026-07-29): **23 allowlisted entries / 37
+calls**. This number — not the table above, not any other prose in this document — is the
+honest measure of how much window-op code still bypasses the machine. It is expected to
+shrink monotonically to zero; the check fails a PR that grows it.
+
+### Remaining work, most-tractable first
+
+1. Close step 8: route its 4 residual call sites through the machine, delete their
+   allowlist entries.
+2. Close step 9: route its 4 residual call sites through the machine, delete their
+   allowlist entries.
+3. Determine whether step 11 has any task beyond the 8 already landed. No commit or doc
+   evidence of one exists as of this writing; if none turns up, step 11 — and the whole
+   migration — is DONE once the R2 allowlist above also reaches zero.
+4. Once steps 8, 9, and 11 are all DONE and the R2 allowlist is empty, delete this block
+   and replace it with a one-line completion note (see the directive below).
+
+### Maintenance directive
+
+**This block is the single source of truth for migration status. Every agent that lands
+window-manager work MUST update this block in the same commit — adjust the step statuses,
+refresh the R2 count, and strike completed items off the remaining-work list. Do NOT
+delete this block until the migration is complete (all 11 steps DONE and the R2 allowlist
+empty); at that point it is replaced by a one-line completion note. Any handoff document
+must point at this block by name (`docs/design/window-manager.md`, "Where we are") rather
+than restating its contents.**
+
+---
+
 ## 1. The mandate
 
 > "Make it one single deterministic system that is a Window Manager. We are making a
@@ -296,11 +349,21 @@ precondition for `SET_STACKING` to actually land where `applyRaiseRequest` and
 `applyOsFocusRealized` (§6) already point `front` — a page-host that can't yet take a raise
 must not be left stacked behind reality once it can.
 
-**3b. Chrome overlay follow / retarget** — TO ABSORB.
-Today: `hybrid-overlay.ts` module-level lets **including its own `appActive` copy** — the
-third copy of app-active. 40 live-query call sites, the densest concentration in the tree.
-Becomes: an overlay-attachment relation in reducer state (`overlayFor: WindowId`); follow
-and retarget are `setBounds` + `setStacking` effects driven by `boundsChanged`.
+**3b. Chrome overlay follow / retarget** — ABSORBED (§5 step 9, commit `1bdd1c11`).
+The overlay-attachment relation lives in reducer state (`WindowRecord.overlayFor`);
+`window-state.ts applyOverlayFollow` drives follow/retarget off `BOUNDS_CHANGED` and
+`OS_FULLSCREEN_ENTERED`/`LEFT` for every registered window, reached through
+`OVERLAY_ATTACH_REQUESTED`. `hybrid-overlay.ts` no longer drives the OS itself for this;
+its own module-level `appActive` copy — the third copy of app-active — is also gone: the
+module now reads `AppWindowState.appActive` through `getAppActive()`/`subscribeAppActive()`
+(see the "FOLLOW is not wired here any more" comment at the old follow site in
+`hybrid-overlay.ts`). **Honest residue, still allowlisted (§5 step 9):**
+`hybrid-overlay.ts` `showInactive` ×1 (test bridge only) and `destroy` ×2 (singleton
+teardown) — `scripts/check-r2-window-ops.mjs`. A further `hybrid-overlay.ts` `focus` ×1
+(address-bar-typing activation) is allowlisted separately under §5 step 8, not this
+dimension. **Not re-verified here:** the original "40 live-query call sites" figure — the
+mechanism it counted is gone, so the number is stale, but no replacement count was taken
+in this pass.
 
 **4. Visibility lifecycle** — TO ABSORB. *(Top divergence risk #2.)*
 Today: `WindowRecord.visible` (a mirror only) plus live `isVisible()` plus
@@ -712,7 +775,7 @@ failure mode this document exists to prevent (§2).**
    not step-7 remainder: `hybrid-overlay.ts` overlay-follow geometry (×6,
    step 9). `display-watcher.ts` is no longer on this list at all — step 10
    deleted its `setBounds` call outright; the module is now a pure producer.
-8. **Focus rivals.** Delete `izui-state.ts`'s focus surface and `restoreFocusGuard`; delete
+8. **Focus rivals — DONE except for 4 residual allowlisted call sites (see below).** Delete `izui-state.ts`'s focus surface and `restoreFocusGuard`; delete
    `BrowserWindow.getFocusedWindow()` from `entry.ts` and `tile-ipc.ts`. Reduce
    `izui-state.ts` to the session tri-state only.
    **8a — switcher focus-restore seed: DONE** (commit eff3bcd6). `enterOverlay`
@@ -780,8 +843,31 @@ failure mode this document exists to prevent (§2).**
      windows. The only front shift observed afterward was a `DEVTOOLS_OPENED`
      first-responder grab in the `DEBUG=1` build — the already-known step-9
      `ipc.ts devtools-opened` punt, not a restore regression.
-9. **Overlay attach/retarget + transient autoclose.** Fold `hybrid-overlay.ts`'s 40 live
-   queries and its private `appActive` into reducer state.
+   **Step 8 residual R2 debt (not yet cut over):** 4 entries / 8 calls remain allowlisted
+   under §5 step 8 in `scripts/check-r2-window-ops.mjs` — `hybrid-overlay.ts` `focus` ×1
+   (overlayWin.focus for address-bar typing, `page:show-navbar`), `izui-state.ts`
+   `showInactive` ×2 (restore-without-activating in the focus-restore guard), `main.ts`
+   `focus` ×2 (overlay-selection/restore focus of the switcher target), `windows.ts`
+   `focus` ×3 (contentWC first-responder + bw/webContents focus, the show invariant).
+   Each is individually justified in the allowlist as "focus rivals, §5 step 8"; none has
+   a caller-cutover write-up here yet.
+9. **Overlay attach/retarget + transient autoclose — PARTIAL.** Transient-sibling
+   autoclose is absorbed (§4.4 dim 4b: `selectTransientAutoclose` /
+   `selectAppResignTransients`). Overlay follow/retarget and the module's own `appActive`
+   copy are absorbed (commit `1bdd1c11`, §4.3 dim 3b): `hybrid-overlay.ts` no longer
+   drives the OS itself for geometry; the reducer owns the follow via
+   `applyOverlayFollow` / `WindowRecord.overlayFor`.
+   **Residual R2 debt:** 4 entries / 6 calls remain allowlisted under §5 step 9 in
+   `scripts/check-r2-window-ops.mjs` — `hybrid-overlay.ts` `showInactive` ×1 (test bridge
+   only, fake-host focus-free show), `destroy` ×2 (overlay singleton teardown), `ipc.ts`
+   `focus` ×2 (devtools-opened first-responder restore + modal blur-settle re-focus,
+   punted from step 8e), `main.ts` `close` ×1 (close the overlay switcher on
+   `did-resign-active`).
+   **Unverified here:** whether further step-9 work beyond the overlay-follow cutover has
+   landed under other commit messages — the commit log carries at least two more
+   `wm step 9`-tagged commits (`ed0f80ce`, `c5c9bcd7`) that this pass did not audit
+   task-by-task. A future pass should reconcile them into this section rather than assume
+   step 9's remaining scope is only the 4 entries above.
 10. **Displays and Spaces.** Route `display-watcher.ts` through events; add the
     space-change listener that does not exist yet.
     **Part A — Displays: DONE** (commits af540e74, 81175dfe, b8e44377, 10c79748).
@@ -869,6 +955,104 @@ failure mode this document exists to prevent (§2).**
     recorded ones, so the import still names every restored window and the
     `stackDrives === restored count` invariant the focus specs assert is untouched.
 
+    **The six tasks below landed on `main` after Task 5 and Task 7 above but had no
+    write-up here until this pass. They are ordered chronologically by commit timestamp,
+    which is NOT the same as their task numbers — see the collision note at the end.**
+
+    **Task 11.1 (2026-07-26) — session SAVE reads `WindowRecord.visible`, not the OS:
+    DONE.** `saveSessionSnapshot`'s early-skip block and `saveSpaceWorkspaces` no longer
+    call `isVisible()` on the native handle; both route through one helper,
+    `isWindowVisiblePerMachine(electronWindowId)`, joining the Electron id onto the
+    machine's `WindowRecord.visible` mirror (owned since §5 step 6). No-record fallback is
+    `true` (treat as visible, save the window) — deliberately asymmetric: a false negative
+    would silently drop a user window from the restored session, a false positive at worst
+    leaves one stale entry. `isVisible` is a read, not in the R2 `FORBIDDEN` set, so this
+    commit does not move the allowlist. Commit `43d0d4e4`.
+
+    **Task 3 (2026-07-26) — restore focus routed through the machine: DONE.** The last two
+    raw window ops in `session.ts` — the restore post-loop's `focusWin.focus()` and the
+    one-shot cold-start `reassertColdStartFocusOnce()` — now dispatch
+    `WINDOW_SHOW_REQUESTED {activate:true}` via `showWindowHeadlessSafe`. No new event was
+    needed: in both sites the target window is already visible (shown inactive by the
+    restore loop), so an activating show IS the activation. Bonus: `SHOW_WINDOW` echoes
+    `WINDOW_SHOWN {focused:true}`, so `front` updates synchronously instead of waiting on
+    the async OS focus event. Deleted the `session.ts` `focus` ×2 R2 entry — the only
+    step-11-tagged one at the time (allowlist 26→25 entries / 46→44 calls). Commit
+    `9e08523a`. **Collides in task number with Task 3 (2026-07-28) below.**
+
+    **Task 4 (2026-07-26) — session SAVE becomes a pure projection of machine state:
+    DONE.** `saveSessionSnapshot` mixed three jobs: reading OS/registry facts, deciding
+    what the session is, and writing SQLite. The deciding job moves out whole into a new
+    pure module, `session-projection.ts serializeSession(input)` (mirrors the
+    `display-projection.ts` / `overlay-frame.ts` seam pattern); `session.ts` is now read →
+    project → write and computes no window decisions. Every window-management fact in a
+    descriptor is read off a machine `StateSnapshot`: `visible` from
+    `WindowRecord.visible`, bounds from the restorable-geometry rule, `maximized`/the flat
+    preMax bag from the record, `zOrder` from `focusSeq`, `focused` from
+    `StateSnapshot.front`. On-disk shape proven unchanged two ways: a legacy-oracle
+    text-diff across 15 fixture worlds, and a real headless A/B run (byte-identical
+    snapshot/metadata rows modulo `createdAt`). One deliberate divergence: `focused` is
+    now `machineId === snapshot.front` rather than joining front through
+    `getNativeWindowFor(front).id` — the two disagree only if `front` is set while its
+    native handle is already gone. Commit `52cb2235`. **Collides in task number with
+    Task 4 (2026-07-28) below.**
+
+    **Task 8 (2026-07-26) — the cold-start re-raise latch becomes reducer state: DONE.** A
+    sweep of `session.ts`'s module-level mutable bindings, classifying each as window
+    state (fold into the machine) or module state (keep, say why). Only one was genuine
+    window state: the cold-start trailing-dance latch (`_coldStartReassertArmed` /
+    `_coldStartReassertId`), which held "which window is meant to be in front" outside the
+    machine and drove the OS itself from `reassertColdStartFocusOnce()`. It is now
+    `AppWindowState.pendingColdStartFocus`, armed by `COLD_START_FOCUS_ARMED` (dispatched
+    by the restore's focus block under the old gate: cold start + non-headless + window
+    present) and consumed by `APP_ACTIVATED`, which re-fronts the window and drives
+    `RAISE_WINDOW` + `FOCUS_CONTENT` + `SET_STACKING`. `reassertColdStartFocusOnce()` is
+    deleted, along with `main.ts`'s `did-become-active` call and its test bridge. The
+    survivors (`_restoreComplete`, `_firstFrameProducerInstalled`, the autosave timer +
+    interval, the `_restore*Count` test-observability block) each get a one-line
+    "why this stays module state" note in source. Commit `52cf2612`.
+
+    **Task 3 (2026-07-28) — `CONTENT_FIRST_RESPONDER_CHANGED`, `WindowRecord.contentFocused`:
+    DONE.** Adds the inbound event and record field that Task 4 (2026-07-28, below) reads:
+    the backend's mirror of the renderer `WebContents` `focus`/`blur` pair. Commit
+    `c43843cc` (a one-line commit message; no further detail is available from the log).
+    **Collides in task number with Task 3 (2026-07-26) above.**
+
+    **Task 4 (2026-07-28) — re-key the Escape grab off `contentFocused`, not
+    `frontAsserted`: DONE.** `deriveEscGrabRegistered`'s front-not-first-responder half now
+    reads the front window's `WindowRecord.contentFocused` (fed by
+    `CONTENT_FIRST_RESPONDER_CHANGED`) instead of the (now-deleted) machine's own
+    `AppWindowState.frontAsserted`, which `frontAsserted` was only ever approximating. Old
+    predicate: `appActive && (front === null || !frontAsserted)`. New:
+    `appActive && (front === null || front's record.contentFocused === false)`. Absent
+    (`contentFocused === undefined`, "nothing reported yet") does NOT arm the grab — only
+    an explicit `false` does; two cases land on absent and must not permanently arm it (a
+    browser-kind front, which never gets this event at all, and a page-host between a
+    just-driven `FOCUS_CONTENT` and the async native `focus` event it produces).
+    Live-verified against the original 7fffa286/7c61e917 regression pair that
+    `frontAsserted` originally existed to guard: a real app resign fires the content blur
+    before `APP_RESIGNED` itself, so `contentFocused` is already `false` by the time the
+    app goes inactive. Commit `555ff5fb`. **Collides in task number with Task 4
+    (2026-07-26) above.**
+
+    **Task-numbering collision, noted rather than fixed:** the 2026-07-26 and 2026-07-28
+    sessions each independently shipped a "Task 3" and a "Task 4" for step 11. Commit
+    history is immutable, so this document does not renumber them — dates disambiguate:
+    "Task 3 (2026-07-26)" (`9e08523a`, restore focus routed through the machine) is
+    unrelated to "Task 3 (2026-07-28)" (`c43843cc`, `CONTENT_FIRST_RESPONDER_CHANGED`);
+    "Task 4 (2026-07-26)" (`52cb2235`, session SAVE as a pure projection) is unrelated to
+    "Task 4 (2026-07-28)" (`555ff5fb`, the Escape-grab re-key). Any future step-11 task
+    number should be checked against this list to avoid a third collision; past ones stay
+    as committed.
+
+    **Step 11 remaining work:** as of this pass, no commit or doc evidence was found of
+    any step-11 task beyond the eight above (11.1, two Task 3s, two Task 4s, Task 5,
+    Task 7, Task 8) — the R2 allowlist carries zero entries tagged step 11
+    (`scripts/check-r2-window-ops.mjs`). Whether step 11 has further tasks left is
+    therefore genuinely open; this document gives no basis to enumerate them, and none
+    should be invented. A future agent auditing step 11 should start from the "Accepted
+    behavior loss" and "Restored z-order" notes in §6.
+
 **Live verification is mandatory at every seam cutover that touches focus.** macOS
 first-responder behavior is **unobservable in headless tests** and a green headless suite
 has produced false confidence on this exact family of bugs twice already. The protocol:
@@ -880,16 +1064,36 @@ cleaning up.
 
 ## 6. Current state
 
-Roughly **6 of ~19 dimensions** are owned. Since this document was written, five
-migration steps have landed — the id space (§5 step 1), the port (§5 step 2), the R2
-enforcement check (§5 step 3), special window classes + registry unification (§5
-step 4: window identity/params §4.1 dim 1a, classes §4.3 dim 8b, devtools §4.6 dim 8a),
-and z-order/stacking (§5 step 5, both parts: reducer stacking level + ordered list, the
-`SET_STACKING` effect, the backend `setStacking` command, and the caller cutover that
-routes `session.ts` and `hybrid-overlay.ts` through the machine and deletes the last
-`moveTop` R2 entries). The machine is live behind the seams already cut over
-(`window-state-singleton.ts` lists the authorities it replaced). The §4 dimensions not
-yet absorbed still run on their old owners.
+**Superseded by "Where we are" at the top of this document — read that first.** What
+follows is a recount taken directly against §4 for this pass, not a copy of the figure
+this section previously carried (which was stale). §4 has ~24 dimension entries; 2 of
+them (dim 10, and the explicitly out-of-scope "Peek / slide content features" line) are
+OUT OF SCOPE and don't count either way. Of the remaining 22 in-scope dimensions,
+**18 are owned or fine-as-is** (ABSORBED / DONE / OWNED-KEEP-AS-IS: 1a, 12, 2, 2b, 3, 3b,
+4, 5b, 4b, 6b, 7, 7b, 7c, 8a, 8b, 9, 11, 5c) and **4 are still genuinely open** (1b —
+new-window-vs-reuse dedup; 6 — roles + session tri-state, partial; 4c — deferred/lazy
+content load, partial; 5 — session save/restore, PARTIAL per §5 step 11). Four of the 18
+"owned" dimensions (2, 4, 7b, 9) had stale "TO ABSORB" markers in §4 at the start of this
+pass — their bodies (or the linked §5 steps' bodies) already documented the landing, but
+the opening status word on the dimension itself hadn't been updated to match. Verified
+directly: `window-state.ts` carries `visibleOnAllSpaces` (dim 7b) and `WindowRecord`'s
+`visible` field is fed only by `shown`/`hidden` events (dim 4, confirmed by the §5 step
+11.1 commit `43d0d4e4`'s own description); no `getFocusedWindowId` symbol remains
+anywhere in `apps/desktop/main/`, and `entry.ts` / `tile-ipc.ts` no longer call
+`BrowserWindow.getFocusedWindow()` live, only in comments (dim 9). Dim 2's "Step 7 is
+DONE" sentence is already in its own body (§4.2). **The stale marker words themselves are
+NOT rewritten in this pass** — out of scope for this truthing pass, which was scoped to
+§6 and dim 3b specifically; a follow-up should fix the four inline markers to match.
+
+Migration steps landed since this document was written: the id space (§5 step 1), the
+port (§5 step 2), the R2 enforcement check (§5 step 3), special window classes + registry
+unification (§5 step 4), z-order/stacking (§5 step 5), visibility (§5 step 6),
+geometry/maximize (§5 step 7), displays and Spaces (§5 step 10) are all DONE; focus
+rivals (§5 step 8) and overlay attach/retarget + transient autoclose (§5 step 9) are each
+PARTIAL with a handful of allowlisted residual call sites; session save/restore (§5 step
+11) is PARTIAL with 8 tasks landed. See "Where we are" for the live per-step table. The
+machine is live behind the seams already cut over (`window-state-singleton.ts` lists the
+authorities it replaced).
 
 **`apps/desktop/main/window-state.ts`** — the owner, as R1 describes it, for the dimensions
 it covers. Pure, zero imports, 187 unit tests in `window-state.test.ts`, keyed by
@@ -931,12 +1135,12 @@ machine + adapter pair and exposes the numeric-id seam (`getWindowIdFor()` /
 through (§3 scope decision).
 
 **The R2 check is live** — `scripts/check-r2-window-ops.mjs`, in the
-`test:desktop:electron` chain: 33 allowlist entries covering 80 legacy window-op call
-sites (38/95 after step 5; step 6 part A deleted the tile-ipc show/hide, ipc.ts show,
-and per-window windows.ts/tile-launcher hide entries), each tagged with the §5 step
-that deletes it. The sole exempt file is
-`apps/desktop/main/electron-window-backend.ts` (swapped from the executor when the port
-landed). The entry count is the migration's progress bar; it only goes down.
+`test:desktop:electron` chain: **23 allowlisted entries / 37 calls** as of this pass
+(`node scripts/check-r2-window-ops.mjs`, 2026-07-29 — see "Where we are" at the top of
+this document for the canonical live count), each tagged with the §5 step that deletes
+it. The sole exempt file is `apps/desktop/main/electron-window-backend.ts` (swapped from
+the executor when the port landed). The entry count is the migration's progress bar; it
+only goes down.
 
 **The machine's separate belief about front is deleted; `front` is a pure projection of
 OS focus** (commit ef200b7c) — the claim field, its invalidation clause, and the
