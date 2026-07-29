@@ -7,7 +7,6 @@
 
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, nativeTheme, webContents } from 'electron';
 import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
-import { getHybridWindow } from './hybrid-page-host-registry.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -808,21 +807,15 @@ export async function initialize(): Promise<void> {
               coordinator.exitOverlay();
 
               if (selectedTargetId != null) {
-                const targetWin = getLiveWindow(selectedTargetId);
-                if (targetWin) {
-                  DEBUG && console.log('[izui] Overlay explicit selection focus:', selectedTargetId);
-                  targetWin.focus();
-                } else {
-                  // Hybrid page-hosts are BaseWindows, invisible to
-                  // getLiveWindow. Route focus to the host BaseWindow so
-                  // selecting a hybrid window in the switcher focuses it just
-                  // like a canvas page. No-op (null) when the flag is off.
-                  const hybrid = getHybridWindow(selectedTargetId);
-                  if (hybrid && !hybrid.baseWin.isDestroyed()) {
-                    DEBUG && console.log('[izui] Overlay explicit selection focus (hybrid):', selectedTargetId);
-                    hybrid.baseWin.focus();
-                  }
-                }
+                // Both BrowserWindows and hybrid BaseWindows seed
+                // idByOsWindowId at registration, so one dispatch covers
+                // both id spaces — no more getLiveWindow/getHybridWindow
+                // fork. The machine path (RAISE_WINDOW + FOCUS_CONTENT for
+                // a page-host + SET_STACKING) also restores the target's
+                // content first responder and stack position, which the old
+                // bare `.focus()` calls did not.
+                const wmId = getWindowIdFor(selectedTargetId);
+                if (wmId != null) dispatchWindowEvent({ type: 'SWITCHER_SELECTED', id: wmId });
               }
             } else {
               DEBUG && console.log('[izui] Overlay closed in transient mode - not restoring windows');
