@@ -974,34 +974,47 @@ function installTestBridge(): void {
       _setHybridLoadingTimeoutMs(ms);
     },
     /**
-     * Make a fake hybrid host visible WITHOUT stealing OS focus (`showInactive`,
-     * stays opacity 0). Lets the keepLive close test assert the host was
-     * actively HIDDEN (`isVisible()` true→false), not merely never shown.
+     * Make a fake hybrid host visible WITHOUT stealing OS focus. Lets the
+     * keepLive close test assert the host was actively HIDDEN (`isVisible()`
+     * true→false), not merely never shown. Routed through the machine (§5
+     * step 9 R2 cleanup): `WINDOW_SHOW_REQUESTED{activate:false}` →
+     * `SHOW_WINDOW{activate:false}` effect → `electron-window-backend.ts
+     * showWindow` → `performOsShow(win,false)` — the exact `showInactive()`
+     * call this used to make directly, now reached through the reducer
+     * instead of driving Electron here.
      */
     showFakeHybridWindowInactive(id: number): boolean {
       const w = fakeHosts.get(id);
       if (!w || w.isDestroyed()) return false;
-      try {
-        w.showInactive();
-      } catch {
-        return false;
-      }
+      const wid = getWindowIdFor(w);
+      if (wid == null) return false;
+      dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: wid, activate: false });
       return true;
     },
     /**
      * Tear down a fake hybrid host: destroy its BaseWindow (firing the 'closed'
      * cleanup that drops it from the hybrid registry). Lets a test return the
      * registry to its empty (flag-off-equivalent) state and assert the
-     * windows-feature hybrid loop is then additive-empty.
+     * windows-feature hybrid loop is then additive-empty. Routed through the
+     * machine (§5 step 9 R2 cleanup): `WINDOW_DESTROY_REQUESTED` →
+     * `DESTROY_WINDOW` effect → `electron-window-backend.ts destroyWindow`,
+     * whose body is a byte-for-byte match of the direct-destroy guard this
+     * replaces. `getWindowIdFor` must resolve — every fake-host construction
+     * path (`makeFakeHybridWindow`, `makeWiredHybridHost`) registers with the
+     * machine, so an unregistered fake here would indicate a construction-path
+     * bug, not a normal case; fail loud rather than silently leaking the
+     * native window.
      */
     destroyFakeHybridWindow(id: number): boolean {
       const w = fakeHosts.get(id);
       if (!w) return false;
-      try {
-        if (!w.isDestroyed()) w.destroy();
-      } catch {
-        /* already torn down */
+      const wid = getWindowIdFor(w);
+      if (wid == null) {
+        throw new Error(
+          `destroyFakeHybridWindow: fake host ${id} is not registered with the window-state machine`,
+        );
       }
+      dispatchWindowEvent({ type: 'WINDOW_DESTROY_REQUESTED', id: wid });
       fakeHosts.delete(id);
       return true;
     },
