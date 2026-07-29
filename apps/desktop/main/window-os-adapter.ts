@@ -23,6 +23,12 @@
 
 import { isHeadless, DEBUG } from './config.js';
 import { publish, getSystemAddress } from './pubsub.js';
+// The overlay SESSION (not a window): `izui-state.ts` is a pure in-process
+// state object importing nothing but `config.js`, so this is not a platform
+// edge — the "no platform module" rule in this file's header still holds.
+// Read for the app-blur cooldown guard and told to drop overlay state on the
+// app-blur dismiss; see `CLOSE_SWITCHER_WINDOW`.
+import { getIzuiCoordinator } from './izui-state.js';
 import type { BackendEventSink, WindowBackend } from './window-backend.js';
 import {
   ElectronWindowBackend,
@@ -312,21 +318,44 @@ export class WindowOsAdapter {
         return;
       }
       case 'CLOSE_SWITCHER_WINDOW': {
-        // Staged cutover: the switcher OVERLAY WINDOW lifecycle stays owned by
-        // izui-state.ts + main.ts. This effect DELEGATES the teardown — it does
-        // not itself destroy the overlay or restore focus.
-        //   - ESC path (restoreFocus:true): the old escPolicy('overlay') route
-        //     is deleted, so this is the SINGLE close path. `closeOrHide`
-        //     tears the overlay down; its 'closed' handler (main.ts) then runs
-        //     `exitOverlay` + the focus restore + `popWindow`.
-        //   - app-blur path (restoreFocus:false): `main.ts did-resign-active`
-        //     owns the teardown (with its cooldown focus-dance protection), so
-        //     this is a no-op — closing here would double-close and defeat the
-        //     cooldown.
-        if (effect.restoreFocus && effect.switcherWindowId != null) {
+        // BOTH switcher-dismiss paths close through this effect (§5 step 9's
+        // last direct window call). The overlay SESSION (izui-state.ts) is
+        // still the staged-cutover owner of restoration, so the two paths
+        // differ only in who restores:
+        //   - ESC path (restoreFocus:true): `closeOrHide` tears the overlay
+        //     down; its 'closed' handler (main.ts) then runs `exitOverlay` +
+        //     the focus restore + `popWindow`.
+        //   - app-blur path (restoreFocus:false): restore WITHOUT focus first
+        //     (`exitOverlayForAppBlur` — the user is switching to another app
+        //     and we must not steal the target app's focus), stamp the
+        //     'closed' handler's skip marker, then close.
+        if (effect.switcherWindowId == null) return;
+        if (effect.restoreFocus) {
           // Tracked for the same test-bridge await as CLOSE_WINDOW above.
           this.trackAsyncEffect(this.backend.closeOrHide(effect.switcherWindowId));
+          return;
         }
+        // The macOS focus-dance guard, carried over VERBATIM from the deleted
+        // `main.ts did-resign-active` loop. An overlay entry/exit transition
+        // itself produces a resign→become-active cycle (entry hides regular
+        // windows and leaves only a panel; exit restores them), so a resign
+        // inside either cooldown is activation churn, not the user leaving —
+        // dismissing on it would close a switcher that just opened. The
+        // reducer deliberately does not model the cooldowns (§5 step 9), so
+        // this stays a READ at the executor, exactly like the backend's
+        // APP_RESIGN_SETTLED suppression. R2 governs window WRITES; a read of
+        // app-level session state is not one, and `izui-state.ts` imports no
+        // platform module so this costs the executor no `electron` edge.
+        // Re-home it when the overlay cooldown becomes machine state.
+        const coordinator = getIzuiCoordinator();
+        if (coordinator.isWithinOverlayExitCooldown() || coordinator.isWithinOverlayEntryCooldown()) {
+          DEBUG && console.log('[wm] switcher app-blur close suppressed (izui overlay cooldown)');
+          return;
+        }
+        coordinator.exitOverlayForAppBlur();
+        this.trackAsyncEffect(
+          this.backend.closeOrHide(effect.switcherWindowId, { closedDueToAppBlur: true }),
+        );
         return;
       }
       case 'CLOSE_WINDOW_DIRECT': {

@@ -175,8 +175,16 @@ export interface WindowBackend {
    * Close-or-hide through the app's existing close/hide policy seam (honors
    * keepLive, hybrid vs browser). Fire-and-forget for the machine; the
    * returned promise is settlement tracking for the E2E test bridge only.
+   *
+   * `closedDueToAppBlur` stamps the legacy `__closedDueToAppBlur` marker the
+   * `main.ts` `'closed'` handler reads to skip its overlay-restoration branch
+   * (the app-blur teardown already restored via
+   * `izui-state.ts exitOverlayForAppBlur()`). It is an OPTION on the close
+   * rather than its own command so the stamp can never be observed apart from
+   * the close it describes — and so it disappears with the side channel when
+   * the overlay session moves into the machine.
    */
-  closeOrHide(id: WindowId): Promise<void>;
+  closeOrHide(id: WindowId, opts?: { closedDueToAppBlur?: boolean }): Promise<void>;
 
   /**
    * Ask the window's renderer to handle an Escape press (the `ASK_RENDERER`

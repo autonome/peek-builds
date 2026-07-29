@@ -619,37 +619,19 @@ export async function initialize(): Promise<void> {
       coordBefore.setAppFocused(false);
       publish(getSystemAddress(), 'app:focus-changed', { focused: false });
 
-      // Close overlay window (e.g. windows switcher) when app loses OS focus.
-      // The overlay is a transient full-screen picker that should dismiss when the user
-      // Cmd+Tabs away.
-      //
-      // COOLDOWN GUARDS:
-      // 1. EXIT cooldown: After an overlay closes, window restoration can trigger a brief
-      //    did-resign-active → did-become-active cycle (macOS focus dance). Skip overlay
-      //    close if we just exited an overlay — prevents closing a newly opened overlay.
-      // 2. ENTRY cooldown: When an overlay opens, hiding all regular windows can trigger
-      //    did-resign-active because only a panel-type window remains (macOS panels don't
-      //    count as main windows for app activation). Skip overlay close if one just opened.
-      const coordinator = getIzuiCoordinator();
-      if (!coordinator.isWithinOverlayExitCooldown() && !coordinator.isWithinOverlayEntryCooldown()) {
-        for (const [id, data] of getAllWindows()) {
-          if (data.params.role === 'overlay') {
-            const overlayWin = getLiveWindow(id);
-            if (overlayWin) {
-              DEBUG && console.log('[izui] App lost focus while overlay open, closing overlay window:', id);
-              // Use app-blur exit path: restores hidden windows but does NOT focus any,
-              // so we don't steal focus from the app the user is switching to.
-              coordinator.exitOverlayForAppBlur();
-              // Mark this window so the 'closed' handler knows not to do overlay restoration
-              (overlayWin as any).__closedDueToAppBlur = true;
-              overlayWin.close();
-            }
-            break;
-          }
-        }
-      } else {
-        DEBUG && console.log('[izui] Skipping overlay close in did-resign-active (within cooldown: exit=', coordinator.isWithinOverlayExitCooldown(), 'entry=', coordinator.isWithinOverlayEntryCooldown(), ')');
-      }
+      // (Overlay-switcher close removed — §5 step 9's LAST direct window call
+      // out of this file. The backend's own did-resign-active listener
+      // dispatches APP_RESIGNED; the reducer's clause emits
+      // CLOSE_SWITCHER_WINDOW(restoreFocus:false) when `switcher.open`, and
+      // the executor performs the SAME sequence this loop did —
+      // `exitOverlayForAppBlur()`, the `__closedDueToAppBlur` stamp, then the
+      // close — behind the same two izui cooldown guards, still on the resign
+      // EDGE (not the ~500ms APP_RESIGN_SETTLED point, so Cmd+Tab dismissal
+      // stays immediate). Two incidental narrowings come with it: the target
+      // is now the machine's `switcher.windowId` rather than "the first
+      // registry entry with role:'overlay'" — which could pick the spaces
+      // border or the chrome overlay — and `closeOrHide` replaces the bare
+      // `close()`, matching what the ESC path already did to the same window.)
 
       // (HUD hide removed — the reducer's APP_RESIGNED clause hides the
       // visible class-'hud' windows via HIDE_WINDOW effects. The class field

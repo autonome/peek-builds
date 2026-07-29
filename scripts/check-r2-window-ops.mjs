@@ -124,8 +124,12 @@ const ALLOWLIST = [
   // blur-settle re-focus (win.on('blur') 200ms settle branch) now dispatches
   // RAISE_WINDOW_REQUESTED. Both reducer gates (appActive, satellite) may drop
   // it — a knowingly best-effort raise, documented at the dispatch site.
-  { file: 'apps/desktop/main/main.ts', call: 'close', count: 1,
-    why: 'close overlay switcher when app loses OS focus (did-resign-active) — §5 step 9' },
+  // `apps/desktop/main/main.ts` `close` is GONE (§5 step 9): the
+  // did-resign-active overlay-switcher close — the LAST direct window call in
+  // step 9 — now rides APP_RESIGNED → CLOSE_SWITCHER_WINDOW(restoreFocus:false)
+  // → the executor, which keeps the izui cooldown guards, the
+  // exitOverlayForAppBlur() restore and the `__closedDueToAppBlur` stamp in
+  // their original order on the resign EDGE.
   // `apps/desktop/main/windows.ts` `focus` is GONE (§5 step 8): showHybridHost's
   // contentWC.focus() — the content-focus half of the show invariant — now rides
   // the reducer's WINDOW_SHOW_REQUESTED arm as a FOCUS_CONTENT effect, so
