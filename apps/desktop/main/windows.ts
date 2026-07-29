@@ -406,20 +406,13 @@ export function winDevtoolsConfig(bw: BrowserWindow): void {
 
     DEBUG && console.log(`Opening DevTools for window ${bw.id} with options:`, devToolsOptions);
 
-    // Open DevTools after a slight delay to let the main window settle
+    // Open DevTools after a slight delay to let the main window settle.
+    // Re-focus after open is owned by the machine now: `main.ts`'s
+    // `web-contents-created` → `devtools-opened` listener dispatches
+    // `DEVTOOLS_OPENED`, whose reducer arm re-raises `state.front` (§5 step
+    // 9/10) — no separate re-focus call or timer here.
     setTimeout(() => {
       bw.webContents.openDevTools(devToolsOptions);
-
-      // when devtools completely open, ensure content window has focus
-      bw.webContents.once('devtools-opened', () => {
-        // Re-focus the content window after devtools opens
-        setTimeout(() => {
-          if (bw.isVisible() && !bw.isDestroyed()) {
-            bw.focus();
-            bw.webContents.focus();
-          }
-        }, 100);
-      });
     }, 50);
   }
 }

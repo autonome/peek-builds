@@ -3789,18 +3789,12 @@ export function registerWindowHandlers(): void {
        // logging toggle.
       if (process.env.DEBUG && url.startsWith('peek://') && !isTestProfile() && !isHeadless()) {
         // Opening detached DevTools on create steals the macOS first responder
-        // from the freshly-shown host window — even with activate:false — so the
-        // window comes up visible/frontmost but with NO responder. Keyboard nav
-        // (tags j/k, page hotkeys) is then dead until the user clicks, which sets
-        // the responder. Restore first responder to the host content on the
-        // deterministic `devtools-opened` signal (NOT a timer — the event fires
-        // once the detached window has taken/released focus). Dev-only path; prod
-        // never auto-opens devtools so this is inert there.
-        win.webContents.once('devtools-opened', () => {
-          if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
-            win.webContents.focus();
-          }
-        });
+        // from the freshly-shown host window — even with activate:false. First
+        // responder restore is owned by the machine now: `main.ts`'s
+        // `web-contents-created` → `devtools-opened` listener dispatches
+        // `DEVTOOLS_OPENED`, whose reducer arm re-raises `state.front` (§5 step
+        // 9/10). Dev-only path; prod never auto-opens devtools so this is inert
+        // there.
         win.webContents.openDevTools({ mode: 'detach', activate: false });
       }
 

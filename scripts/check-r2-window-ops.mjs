@@ -122,16 +122,16 @@ const ALLOWLIST = [
   // entry in the same commit that routes the call through the executor.
   { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'focus', count: 1,
     why: 'overlayWin.focus for address-bar typing (page:show-navbar) — focus rivals, §5 step 8' },
-  { file: 'apps/desktop/main/ipc.ts', call: 'focus', count: 2,
-    why: 'devtools-opened first-responder restore + modal blur-settle re-focus — devtools/modal-entangled, punted from step 8e to §5 step 9 (the open-dedupe focus calls ride WINDOW_SHOW_REQUESTED since 8e)' },
+  { file: 'apps/desktop/main/ipc.ts', call: 'focus', count: 1,
+    why: 'modal blur-settle re-focus (win.on(\'blur\') 200ms settle branch) — focus rivals, §5 step 8; the devtools-opened first-responder restore that used to share this entry is gone (§5 step 9 — DEVTOOLS_OPENED now owns it)' },
   { file: 'apps/desktop/main/izui-state.ts', call: 'showInactive', count: 2,
     why: 'restore-without-activating in the focus-restore guard — focus rivals, §5 step 8' },
   { file: 'apps/desktop/main/main.ts', call: 'close', count: 1,
     why: 'close overlay switcher when app loses OS focus (did-resign-active) — §5 step 9' },
   { file: 'apps/desktop/main/main.ts', call: 'focus', count: 2,
     why: 'overlay-selection/restore focus of the switcher target (BrowserWindow + hybrid, coordinator path) — focus rivals, §5 step 8. The two fallback-path calls died with the overlayHiddenWindows carve-out: the switcher stopped hiding windows in 9904f113, so that branch was unreachable.' },
-  { file: 'apps/desktop/main/windows.ts', call: 'focus', count: 3,
-    why: 'contentWC first-responder + bw/webContents focus (show invariant) — focus rivals, §5 step 8' },
+  { file: 'apps/desktop/main/windows.ts', call: 'focus', count: 1,
+    why: 'showHybridHost\'s contentWC.focus() (content-focus half of the show invariant) — focus rivals, §5 step 8; the winDevtoolsConfig bw/webContents re-focus pair that used to share this entry is gone (§5 step 9 — DEVTOOLS_OPENED now owns it)' },
 ];
 
 // ---------------------------------------------------------------------------
