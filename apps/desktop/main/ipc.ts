@@ -3845,13 +3845,30 @@ export function registerWindowHandlers(): void {
               // produces a brief focus dance that fires blur before focus
               // actually settles. Hiding during this window leaves the
               // NSPanel layer rendered even though `isVisible()` flips to
-              // false. Re-focus instead. Original fix: commit 1b568d40.
+              // false. Suppressing the hide is the load-bearing half and it
+              // still happens unconditionally (the `return` below); the
+              // re-focus is the best-effort half. Original fix: commit 1b568d40.
+              //
+              // §5 step 9 (R2): the direct `win.focus()` is gone — the raise is
+              // a machine dispatch, so `electron-window-backend.ts` stays the
+              // only module that touches an Electron window. Two reducer gates
+              // make this raise BEST-EFFORT and, for this call site, usually a
+              // no-op — knowingly accepted, because the failure mode is "panel
+              // stays up but unkeyed", never "panel vanishes":
+              //   1. `applyRaiseRequest` bails on `!state.appActive`, and this
+              //      is exactly the macOS activation dance where `appActive`
+              //      may still read false.
+              //   2. `isEligibleFront` rejects satellites, and every window
+              //      that gets this handler is `modal:true` — which
+              //      `isSatelliteRegistration` classifies as a satellite. So
+              //      the raise is dropped by construction here.
+              // Neither gate may be relaxed or bypassed to make this land:
+              // `applyRaiseRequest` is the sole `RAISE_WINDOW` emitter and that
+              // is what terminates the OS-adapter pump drain.
               const showTime = (win as { __lastShowTime?: number }).__lastShowTime;
               if (showTime && Date.now() - showTime < 200) {
                 DEBUG && console.log('window-open: blur for modal window suppressed — within show settle window', url);
-                if (!win.isDestroyed()) {
-                  win.focus();
-                }
+                dispatchWindowEvent({ type: 'RAISE_WINDOW_REQUESTED', id: machineWindowId });
                 return;
               }
               // Name the focus thief in the log: which window (or hybrid host)

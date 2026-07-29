@@ -120,8 +120,10 @@ const ALLOWLIST = [
   // ── Real pre-R2 violations: direct window ops awaiting migration ─────────
   // Each is scheduled by a window-manager.md §5 step; delete or decrement the
   // entry in the same commit that routes the call through the executor.
-  { file: 'apps/desktop/main/ipc.ts', call: 'focus', count: 1,
-    why: 'modal blur-settle re-focus (win.on(\'blur\') 200ms settle branch) — focus rivals, §5 step 8; the devtools-opened first-responder restore that used to share this entry is gone (§5 step 9 — DEVTOOLS_OPENED now owns it)' },
+  // `apps/desktop/main/ipc.ts` `focus` is GONE (§5 step 9): the modal
+  // blur-settle re-focus (win.on('blur') 200ms settle branch) now dispatches
+  // RAISE_WINDOW_REQUESTED. Both reducer gates (appActive, satellite) may drop
+  // it — a knowingly best-effort raise, documented at the dispatch site.
   { file: 'apps/desktop/main/main.ts', call: 'close', count: 1,
     why: 'close overlay switcher when app loses OS focus (did-resign-active) — §5 step 9' },
   // `apps/desktop/main/windows.ts` `focus` is GONE (§5 step 8): showHybridHost's
