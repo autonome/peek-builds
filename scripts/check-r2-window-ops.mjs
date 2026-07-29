@@ -120,8 +120,6 @@ const ALLOWLIST = [
   // ── Real pre-R2 violations: direct window ops awaiting migration ─────────
   // Each is scheduled by a window-manager.md §5 step; delete or decrement the
   // entry in the same commit that routes the call through the executor.
-  { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'focus', count: 1,
-    why: 'overlayWin.focus for address-bar typing (page:show-navbar) — focus rivals, §5 step 8' },
   { file: 'apps/desktop/main/ipc.ts', call: 'focus', count: 1,
     why: 'modal blur-settle re-focus (win.on(\'blur\') 200ms settle branch) — focus rivals, §5 step 8; the devtools-opened first-responder restore that used to share this entry is gone (§5 step 9 — DEVTOOLS_OPENED now owns it)' },
   { file: 'apps/desktop/main/main.ts', call: 'close', count: 1,

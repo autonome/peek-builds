@@ -537,6 +537,23 @@ function wireAppActiveGate(): void {
  * message targeting the ACTIVE hybrid window, so a `page:show-navbar` for a
  * background/foreign window — or one that arrives while the app is backgrounded
  * — never steals focus (which would re-introduce the R1 focus theft).
+ *
+ * §5 step 8: the focus itself now rides the machine instead of a raw
+ * `overlayWin.focus()`. `RAISE_WINDOW_REQUESTED` does NOT fit — the overlay
+ * registers `satellite: true` (see `ensureOverlay`), and `applyRaiseRequest`
+ * drops any target failing `isEligibleFront`, which a satellite can never
+ * pass. `WINDOW_SHOW_REQUESTED { activate: true }` is the event that fits: the
+ * reducer pushes `SHOW_WINDOW { activate: true }`, and the backend's
+ * `showWindow` for a `kind:'browser'` window runs `performOsShow(win, true)` →
+ * `win.show()` — on macOS `makeKeyAndOrderFront:`, i.e. a real focus. Headless
+ * masks this to `showInactive()` (strictly safer than today's unconditional
+ * `.focus()`). The one semantic delta: `show()` also re-orders the overlay
+ * front and can activate the app, where `focus()` only focused — invisible
+ * here in practice (the overlay is already `alwaysOnTop:'floating'`-pinned and
+ * this site is app-active-gated) but unobservable headless, so it's pending
+ * live verification. If that delta ever proves too strong, the correct
+ * escalation is a NEW `FOCUS_WINDOW` effect (satellite-legal, no re-ordering)
+ * — NOT loosening `applyRaiseRequest`'s eligibility gate.
  */
 function wireShowNavbarFocus(): void {
   subscribe(getSystemAddress(), 'page:show-navbar', (raw) => {
@@ -545,12 +562,9 @@ function wireShowNavbarFocus(): void {
     if (!getAppActive()) return; // never steal focus while backgrounded (R1)
     if (msg.windowId !== frontPageHostOsId()) return; // active window only
     if (!overlayWin || overlayWin.isDestroyed()) return;
+    if (overlayWmId == null) return;
     showNavbarFocusCount++;
-    try {
-      overlayWin.focus();
-    } catch {
-      /* focus unsupported / window gone */
-    }
+    dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: overlayWmId, activate: true });
   });
 }
 
