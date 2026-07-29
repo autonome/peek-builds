@@ -77,6 +77,9 @@ function makeRecord(id: string, over: Partial<WindowRecord> = {}): WindowRecord 
     visibleOnAllSpaces: false,
     pendingProjectedBounds: null,
     focusSeq: 0,
+    // Runtime registration order; deliberately NOT projected into any
+    // descriptor (see `WindowRecord.openSeq`), so the value is arbitrary here.
+    openSeq: 0,
     ...over,
   };
 }

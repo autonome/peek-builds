@@ -295,6 +295,46 @@ export interface WindowRecord {
   pendingProjectedBounds: Rectangle | null;
   /** MRU counter (absorbs `focus-order.ts`). Higher = more recently focused. */
   focusSeq: number;
+  /**
+   * Registration order (§4.4 dim 4b): a monotonic stamp taken from
+   * `AppWindowState.openSeqCounter` when the record is CREATED. Higher = opened
+   * later. Never reassigned — the richer re-registration merge preserves it,
+   * because "when did this window come into being" is lived state, not spec.
+   *
+   * Exists for exactly one decision: the transient autoclose needs to know
+   * whether the window it is about to dismiss was opened BEFORE or AFTER the
+   * action that produced this focus (see `selectTransientAutoclose`). Deliberately
+   * a reducer-owned counter and not a clock: `window-state.ts` has zero value
+   * imports, and ordering — not elapsed time — is the whole fact.
+   *
+   * NOT persisted in the session descriptor, on purpose: it is runtime ordering
+   * within one app lifetime. A restored window must be numbered by when THIS run
+   * opened it, not inherit a stale stamp from the run that saved it — a restored
+   * host carrying a low saved seq would consider every window of the new session
+   * "newer" and stop sweeping them forever.
+   */
+  openSeq: number;
+  /**
+   * Whether this window has EVER been shown with activation intent
+   * (`WINDOW_SHOW_REQUESTED { activate: true }`) — the app saying "put the user
+   * in this window", which is what makes the focus that eventually arrives the
+   * completion of an action rather than a fresh user gesture. Arms the
+   * first-focus clause in `selectTransientAutoclose`.
+   *
+   * A restore's inactive show (`activate: false`) deliberately does NOT set it:
+   * such a window's first focus comes much later, from a genuine user raise, and
+   * must sweep normally.
+   */
+  shownWithActivateIntent?: boolean;
+  /**
+   * Whether an `OS_FOCUS_GAINED` has ever landed on this window. Written SOLELY
+   * by that arm — NOT by `WINDOW_SHOWN { focused: true }`, which is a
+   * registration-time visibility import rather than evidence the OS moved focus
+   * (the same distinction the autoclose clause itself makes). Absent = "no OS
+   * focus reported yet", the same "nothing reported yet" default as
+   * `hiddenByAppBlur`.
+   */
+  hasHeldOsFocus?: boolean;
   /** Absorbs `lastContentWindowId` (devtools target). */
   lastHttpUrl?: string;
   /**
@@ -370,6 +410,13 @@ export interface AppWindowState {
   /** Monotonic source for `WindowRecord.focusSeq`. */
   focusSeqCounter: number;
   /**
+   * Monotonic source for `WindowRecord.openSeq` — bumped once per record
+   * CREATION (never on a re-registration merge). Reducer state rather than a
+   * module-level counter or a clock: the reducer is pure and imports no values,
+   * so the only place a number can come from is the state it was handed.
+   */
+  openSeqCounter: number;
+  /**
    * The ONE outstanding renderer escape question (`ASK_RENDERER`), or null when
    * no answer is awaited. The renderer answer arrives asynchronously (up to the
    * IPC timeout), so it MUST be judged against the state that asked it, not
@@ -442,6 +489,7 @@ export function createInitialState(): AppWindowState {
     switcher: { open: false },
     windows: new Map(),
     focusSeqCounter: 0,
+    openSeqCounter: 0,
     escAsk: null,
     escSeq: 0,
     pendingAppResignSweep: false,
@@ -1375,6 +1423,7 @@ function cloneState(state: AppWindowState): AppWindowState {
     switcher: state.switcher,
     windows: new Map(state.windows),
     focusSeqCounter: state.focusSeqCounter,
+    openSeqCounter: state.openSeqCounter,
     escAsk: state.escAsk,
     escSeq: state.escSeq,
     pendingAppResignSweep: state.pendingAppResignSweep,
@@ -1690,16 +1739,34 @@ const AUTOCLOSE_FOCUSER_EXEMPT_ROLES: ReadonlySet<string> = new Set(['utility', 
  * Kind-agnostic on purpose: the original's whole point was that BOTH plain
  * BrowserWindows and hybrid page-hosts are candidates (the close-on-blur
  * regression, peek 8e5c3174, was hybrid windows never being in the set).
+ *
+ * ONE further clause, on top of the ported semantics — the SLOW-OPEN RACE. The
+ * user hotkeys a page host (a peek/slide), it takes time to load, and before it
+ * finishes the user opens a palette. Then the host's load completes, it takes
+ * OS focus, and this sweep dismissed the palette the user asked for AFTERWARDS.
+ * The missing fact was never "which role" — it was WHEN the action that caused
+ * this focus was initiated, which is why the fix is not a third entry in
+ * `AUTOCLOSE_FOCUSER_EXEMPT_ROLES` (the roles involved are exactly the ones a
+ * legitimate switch must still sweep). So: a window whose activating show has
+ * not yet produced a focus — `shownWithActivateIntent && !hasHeldOsFocus` —
+ * cannot dismiss anything registered after it (`openSeq` greater than its own).
+ * Every SUBSEQUENT focus on that window sweeps exactly as before, which is what
+ * keeps "the user clicked back onto the host" dismissing the palette.
  */
 export function selectTransientAutoclose(state: AppWindowState, focusedId: WindowId): WindowId[] {
   const focuser = state.windows.get(focusedId);
   if (focuser && AUTOCLOSE_FOCUSER_EXEMPT_ROLES.has(focuser.role)) return [];
+  // See the docblock. An unregistered focuser has no seq and no arming, so it
+  // sweeps everything, unchanged.
+  const focuserIsCompletingItsOpen =
+    focuser !== undefined && focuser.shownWithActivateIntent === true && focuser.hasHeldOsFocus !== true;
   const out: WindowId[] = [];
   for (const rec of state.windows.values()) {
     if (rec.id === focusedId) continue;
     if (!rec.visible) continue;
     if (!TRANSIENT_ROLES.has(rec.role)) continue;
     if (AUTOCLOSE_EXEMPT_ROLES.has(rec.role)) continue;
+    if (focuserIsCompletingItsOpen && rec.openSeq > (focuser as WindowRecord).openSeq) continue;
     out.push(rec.id);
   }
   return out;
@@ -1938,6 +2005,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         }
         break;
       }
+      // Registration order — see `WindowRecord.openSeq`. Bumped ONLY here, on
+      // record creation; the merge branch above keeps the existing stamp.
+      state.openSeqCounter += 1;
       const rec: WindowRecord = {
         id: event.id,
         kind: event.kind,
@@ -1966,6 +2036,7 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         // Nothing has been projected-and-blocked yet — see the field doc.
         pendingProjectedBounds: null,
         focusSeq: 0,
+        openSeq: state.openSeqCounter,
         lastHttpUrl: event.lastHttpUrl,
       };
       state.windows.set(event.id, rec);
@@ -2048,6 +2119,14 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       if (event.activate && showRec?.kind === 'page-host') {
         effects.push({ type: 'FOCUS_CONTENT', id: event.id });
       }
+      // The same `activate` fact, recorded on the record (§4.4 dim 4b): an
+      // activating show is the app saying "put the user in this window", so the
+      // focus that eventually lands is the COMPLETION of that action, not a new
+      // gesture. `selectTransientAutoclose` needs that to tell the slow-open race
+      // apart from a real window switch. Kind-agnostic on purpose (unlike the
+      // FOCUS_CONTENT half above) — the race is about timing, not about having a
+      // separate content WebContents.
+      if (event.activate) patchRecord(state, event.id, { shownWithActivateIntent: true });
       break;
     }
 
@@ -2255,6 +2334,10 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // `WINDOW_CLOSED` / `WINDOW_HIDDEN`, so this clause is effect-only and
       // cannot break the front invariant.
       pushCloseOrHide(state, selectTransientAutoclose(state, event.id), effects);
+      // The SOLE writer of `hasHeldOsFocus`, and necessarily AFTER the sweep
+      // above — the sweep's whole question is whether THIS focus is the
+      // window's first. From here on the window sweeps like any other.
+      patchRecord(state, event.id, { hasHeldOsFocus: true });
       // What the OS already did for us, mirrored into the machine (+ the one
       // half it does not vouch for). Emits NO raise — see `applyRaiseRequest`.
       // AFTER the autoclose so effect order stays [autoclose…, FOCUS_CONTENT].

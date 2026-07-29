@@ -159,6 +159,7 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       visibleOnAllSpaces: false,
       pendingProjectedBounds: null,
       focusSeq: 1,
+      openSeq: 1,
     };
     const windows = new Map<WindowId, WindowRecord>([[wid(1), rec]]);
     // A satellite can never be front (invariant); otherwise the window is front.
@@ -171,6 +172,7 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       switcher: switcherOpen ? { open: true, windowId: wid(2), previousFront: front } : { open: false },
       windows,
       focusSeqCounter: 1,
+      openSeqCounter: 1,
       escAsk: null,
       escSeq: 0,
       pendingAppResignSweep: false,
@@ -365,8 +367,8 @@ describe('decideEscape (steps 1-5, total)', () => {
 
   it('step 4: any non-normal fsMode -> exit-fullscreen (entering/full/leaving)', () => {
     for (const name of ['entering-fullscreen', 'fullscreen', 'leaving-fullscreen'] as FsMode['name'][]) {
-      const rec: WindowRecord = { id: wid(1), kind: 'page-host', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: true, fsMode: fsOf(name, BOUNDS), maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1 };
-      const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), stackOrder: [wid(1)], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
+      const rec: WindowRecord = { id: wid(1), kind: 'page-host', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: true, fsMode: fsOf(name, BOUNDS), maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1, openSeq: 1 };
+      const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), stackOrder: [wid(1)], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, openSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
       assert.deepStrictEqual(decideEscape(state), { kind: 'exit-fullscreen', id: wid(1) }, `mode ${name}`);
     }
   });
@@ -1165,9 +1167,9 @@ describe('reduce purity', () => {
 
   it('isEligibleFront rejects satellites, hidden, and absent records', () => {
     assert.strictEqual(isEligibleFront(undefined), false);
-    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'excluded', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 0 }), false);
-    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: false, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 0 }), false);
-    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 0 }), true);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'excluded', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 0, openSeq: 1 }), false);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: false, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 0, openSeq: 1 }), false);
+    assert.strictEqual(isEligibleFront({ id: wid(1), kind: 'browser', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 0, openSeq: 1 }), true);
   });
 });
 
@@ -1329,8 +1331,8 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
   // event sequence can produce this (the reducer only ever assigns an eligible
   // front) — we craft it directly to exercise the guard's throw path.
   function illegalFrontState(): AppWindowState {
-    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1 };
-    return { appActive: true, session: 'active', front: wid(1), stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
+    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1, openSeq: 1 };
+    return { appActive: true, session: 'active', front: wid(1), stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, openSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
   }
 
   it('THROWS in dev/test when reduce yields an illegal front (naming the event + front id)', () => {
@@ -1358,8 +1360,8 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
 
   it('FULLSCREEN_REQUESTED on a satellite does NOT install an illegal front (and does not throw)', () => {
     // The reducer bug the reviewer flagged: front was assigned unconditionally.
-    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1 };
-    const s: AppWindowState = { appActive: true, session: 'active', front: null, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
+    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1, openSeq: 1 };
+    const s: AppWindowState = { appActive: true, session: 'active', front: null, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, openSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
     const { state } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
     assert.strictEqual(state.front, null, 'a satellite must never become front, even via a fullscreen request');
     assert.strictEqual(getWindowMode(state, wid(1)), 'entering-fullscreen', 'the fsMode edge still runs (total table)');
@@ -1848,6 +1850,7 @@ describe('deriveEscGrabRegistered — truth table over (appActive, front, conten
       visibleOnAllSpaces: false,
       pendingProjectedBounds: null,
       focusSeq: 1,
+      openSeq: 1,
       contentFocused,
     };
   }
@@ -4287,6 +4290,70 @@ describe('transient-sibling autoclose on focus change (§4.4 dim 4b, §5 step 9)
     s = sibling(s, 2, { role: 'quick-view' });
     assert.deepStrictEqual(selectTransientAutoclose(s, wid(1)), [wid(2)]);
     assert.deepStrictEqual(selectTransientAutoclose(s, wid(2)), [], 'the focuser is never its own victim');
+  });
+
+  // ── The slow-open race: a window's FIRST focus cannot sweep what opened after it ──
+  //
+  // The user hotkeys a page host, it takes time to load, and BEFORE it finishes
+  // the user opens a palette. The host's load completes, it takes OS focus, and
+  // the sweep dismissed the palette the user asked for AFTERWARDS. From the
+  // reducer's seat that focus is indistinguishable from "the user just clicked
+  // the host" — which legitimately should dismiss the palette. The missing fact
+  // is WHEN the action that caused the focus was initiated, so the record now
+  // carries `openSeq` (registration order) plus whether it has already held OS
+  // focus. Deliberately NOT a third entry in `AUTOCLOSE_FOCUSER_EXEMPT_ROLES`:
+  // the roles here are the same ones the legitimate switch below must sweep.
+
+  it('a page host shown WITH activate intent does not sweep a palette that opened while it was still loading (its FIRST focus)', () => {
+    let s = createInitialState();
+    s = drive(s, [
+      // The hotkey: register + an activating show. The content is still loading,
+      // so no OS focus has arrived yet.
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'quick-view', satellite: false },
+      { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: true },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: false },
+      // The user, still waiting, opens a palette — a LATER openSeq.
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOW_REQUESTED', id: wid(2), activate: true },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+    ]).state;
+    // The load completes and the host finally takes OS focus.
+    const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]);
+    assert.deepStrictEqual(closedIds(effects), [], 'the palette the user opened AFTER the host survives');
+  });
+
+  it('but the SECOND focus on that same host sweeps a palette opened after its first focus (the legitimate switch)', () => {
+    let s = createInitialState();
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'quick-view', satellite: false },
+      { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: true },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: false },
+      // The host loads and takes focus — its first, with nothing else open.
+      { type: 'OS_FOCUS_GAINED', id: wid(1) },
+      // NOW the user opens a palette, then clicks back on the host.
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOW_REQUESTED', id: wid(2), activate: true },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+    ]).state;
+    const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]);
+    assert.deepStrictEqual(closedIds(effects), [wid(2)], 'every focus after the first sweeps exactly as before');
+  });
+
+  it('a record shown with activate:false (session restore) does NOT arm the exemption — its first focus sweeps normally', () => {
+    // Otherwise a restored host spends its one "first focus" on a genuine user
+    // raise much later and wrongly spares a palette the user had already
+    // dismissed by raising it.
+    let s = createInitialState();
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'quick-view', satellite: false },
+      { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: false },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: false },
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOW_REQUESTED', id: wid(2), activate: true },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+    ]).state;
+    const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]);
+    assert.deepStrictEqual(closedIds(effects), [wid(2)]);
   });
 });
 
