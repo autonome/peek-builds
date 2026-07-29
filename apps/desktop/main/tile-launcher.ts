@@ -88,7 +88,28 @@ let _getSystemThemeBackgroundColor: (() => string) | null = null;
 // window-state machine's registration is the single owner of the attach, so
 // there is no separate `addEscHandler` hook here anymore (two hooks meant two
 // interceptors on any window that registered twice).
-let _registerWindow: ((win: BrowserWindow, role: string | undefined, keepLive?: boolean) => void) | null = null;
+let _registerWindow: ((spec: TileWindowRegistration) => void) | null = null;
+
+/**
+ * Everything the window-state machine needs to register a tile window, taken
+ * from the REQUEST that created it rather than sniffed back off the live
+ * handle. `alwaysOnTop` / `focusable` are the RESOLVED creation intent (the
+ * merged `windowOptions` in `createTileBrowserWindow`, i.e. after the headless
+ * gate and after `browserWindowOverrides`) — not the raw manifest hints, which
+ * would misclassify a headless run.
+ */
+export interface TileWindowRegistration {
+  win: BrowserWindow;
+  /** Manifest entry role; undefined means the caller declared none (defaults to 'workspace'). */
+  role: string | undefined;
+  /** Entry's keepLive flag — the reducer record carries it (hide-vs-close). */
+  keepLive: boolean;
+  /** Resolved `windowOptions.alwaysOnTop` (headless-gated). */
+  alwaysOnTop: boolean;
+  /** Resolved `windowOptions.focusable` (Electron's default is true). */
+  focusable: boolean;
+}
+
 // Injected from main.ts: closes a tile window through the window-state machine
 // (WINDOW_CLOSE_REQUESTED → the backend's guest-safe close). Injected rather
 // than imported for the same ELECTRON_RUN_AS_NODE reason as the other hooks:
@@ -154,8 +175,10 @@ export function configureTileLauncher(hooks: {
    * target. Replaces the old `onWindowFocus` → `trackVisibleWindowFocus` feed.
    * Registering also attaches the window's before-input-event ESC interceptor
    * (and its webview guests') — one owner for both.
+   * The spec carries the creation INTENT (role, keepLive, alwaysOnTop,
+   * focusable) so the machine never has to ask the OS what the window is.
    */
-  registerWindow?: (win: BrowserWindow, role: string | undefined, keepLive?: boolean) => void;
+  registerWindow?: (spec: TileWindowRegistration) => void;
   /**
    * Closes a tile window through the window-state machine. Tile teardown
    * (shutdownTile / unloadAllTiles) routes every close through this hook —
@@ -441,7 +464,18 @@ export function createTileBrowserWindow(spec: CreateTileBrowserWindowSpec): Brow
     // Pass the entry's keepLive flag so the reducer record carries it
     // first-class — the machine's WINDOW_CLOSE_OR_HIDE_REQUESTED clause (fed
     // by the keepLive 'close' intercept below) branches hide-vs-close on it.
-    _registerWindow(win, entry?.role, entry?.keepLive === true);
+    // alwaysOnTop/focusable come from the MERGED windowOptions above — the
+    // same values the constructor just got — so the registration classifies
+    // the window from the request that made it, never from a live OS read
+    // (R2: the machine owns these facts). Reading the raw manifest hints
+    // instead would skip the headless gate on alwaysOnTop.
+    _registerWindow({
+      win,
+      role: entry?.role,
+      keepLive: entry?.keepLive === true,
+      alwaysOnTop: windowOptions.alwaysOnTop === true,
+      focusable: windowOptions.focusable !== false,
+    });
   }
 
   // Forward console messages from the tile's webContents to main-process

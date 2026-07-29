@@ -199,16 +199,26 @@ const WRITE_ALLOWLIST = [
  *                 stay forever. Listed so the check stays explicit and so a
  *                 new read in these files still trips NEW VIOLATION.
  *   'decision'  — value feeds a branch deciding window behaviour. A REAL R2
- *                 violation, tracked here until fixed. These should go to zero.
+ *                 violation, tracked here until fixed. These reached ZERO on
+ *                 2026-07-29 and must stay there: adding one back means a
+ *                 module started re-deriving a fact the reducer owns.
  *
  * { file, call, count, kind, why }
  */
 const READ_ALLOWLIST = [
   // ── Known R2 violations: OS read feeding a window decision ───────────────
-  { file: 'apps/desktop/main/main.ts', call: 'isAlwaysOnTop', count: 1, kind: 'decision',
-    why: 'KNOWN VIOLATION, fix pending: the inline registerWindow callback passed to configureTileLauncher feeds classifyWindowRegistration() from live OS state (win.isAlwaysOnTop()) instead of the machine facts the caller already holds. The window class is a machine fact — deriving it by asking the OS at registration time is exactly the re-derivation R2 forbids. Should become the caller-supplied create params' },
-  { file: 'apps/desktop/main/main.ts', call: 'isFocusable', count: 2, kind: 'decision',
-    why: 'KNOWN VIOLATION, fix pending: same registerWindow callback — win.isFocusable() feeds BOTH classifyWindowRegistration() and isSatelliteRegistration(). Satellite-ness gates whether the window can ever become front, so this is a live-OS read deciding window behaviour. Same fix as the isAlwaysOnTop entry above' },
+  // EMPTY — decision-kind read debt is ZERO. Every remaining entry below is
+  // kind:'reported'. A NEW decision-kind entry is a regression, not a TODO:
+  // the fact belongs to the reducer, so plumb it from the request instead.
+  //
+  // (RETIRED 2026-07-29) apps/desktop/main/main.ts isAlwaysOnTop ×1 +
+  // isFocusable ×2 — the inline registerWindow callback passed to
+  // configureTileLauncher sniffed the live handle to feed
+  // classifyWindowRegistration() and isSatelliteRegistration(). The
+  // tile-launcher hook now carries the creation intent (TileWindowRegistration
+  // { alwaysOnTop, focusable } — the resolved windowOptions the window was
+  // constructed from, headless gate included), so the class and satellite-ness
+  // come from the request that made the window.
   // (RETIRED 2026-07-29) apps/desktop/main/ipc.ts isFocused ×1 — the hybrid
   // content pointer-move handler in wireHybridContentEvents gated the
   // resize-hover cursor on contentWC.isFocused(). It now reads the machine's
@@ -465,6 +475,6 @@ console.log(
   `✔ r2-window-ops: ${files.length} main-process files scanned; 1 exempt executor\n` +
   `   write debt: ${WRITE_ALLOWLIST.length} entries / ${sum(WRITE_ALLOWLIST)} calls (should trend to zero)\n` +
   `   read debt:  ${READ_ALLOWLIST.length} entries / ${sum(READ_ALLOWLIST)} calls — ` +
-  `${readDecision.length}/${sum(readDecision)} decision (real violations, fix pending), ` +
+  `${readDecision.length}/${sum(readDecision)} decision (real violations — must stay zero), ` +
   `${readReported.length}/${sum(readReported)} reported (accepted, may be permanent)`
 );

@@ -426,20 +426,22 @@ export async function initialize(): Promise<void> {
     // Front-ineligibility (satellite) uses the shared `isSatelliteRegistration`
     // predicate — same rule as the ipc.ts window-open site. A tile defaults to
     // the front-eligible 'workspace' role.
-    registerWindow: (win, role, keepLive) => registerWindowWithMachine({
+    // Class and satellite-ness come from the CREATION INTENT the launcher
+    // passes in (the resolved `windowOptions` it built the window from), never
+    // from `win.isAlwaysOnTop()` / `win.isFocusable()` — R2: the machine owns
+    // those facts, and a live read at registration would re-derive (and later
+    // drift from) what the reducer already tracks.
+    registerWindow: ({ win, role, keepLive, alwaysOnTop, focusable }) => registerWindowWithMachine({
       kind: 'browser',
       role: role ?? 'workspace',
-      class: classifyWindowRegistration(role ?? 'workspace', {
-        alwaysOnTop: win.isAlwaysOnTop(),
-        focusable: win.isFocusable(),
-      }),
-      satellite: isSatelliteRegistration(role ?? 'workspace', { focusable: win.isFocusable() }),
+      class: classifyWindowRegistration(role ?? 'workspace', { alwaysOnTop, focusable }),
+      satellite: isSatelliteRegistration(role ?? 'workspace', { focusable }),
       win,
       contentWC: win.webContents,
       // A keepLive tile entry's flag lands on the reducer record so the
       // machine's WINDOW_CLOSE_OR_HIDE_REQUESTED clause hides instead of
       // closing (the tile-launcher 'close' intercept dispatches that intent).
-      keepLive: keepLive === true,
+      keepLive,
     }),
     // Tile close routes through the machine (WINDOW_CLOSE_REQUESTED →
     // CLOSE_WINDOW_DIRECT → backend). Injected — tile-launcher cannot import
