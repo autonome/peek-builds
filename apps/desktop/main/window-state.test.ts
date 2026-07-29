@@ -4355,6 +4355,59 @@ describe('transient-sibling autoclose on focus change (§4.4 dim 4b, §5 step 9)
     const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]);
     assert.deepStrictEqual(closedIds(effects), [wid(2)]);
   });
+
+  // ── The exemption is per ACTIVATING SHOW, not per window lifetime ──────────
+  //
+  // A keepLive peek/slide is HIDDEN rather than closed (peek 2c94c125), so the
+  // hotkey that brings it back is a re-show of a long-lived record that has
+  // already held OS focus. Arming once per lifetime would leave that path — the
+  // commonest one — with the race unfixed. So an activating show RE-STAMPS
+  // `openSeq` from the counter and clears `hasHeldOsFocus`: the clause reads
+  // "newer than this open REQUEST" rather than "newer than my registration",
+  // which is the fact that was wanted all along.
+
+  it('a keepLive record re-shown with activate intent re-arms: a palette opened while it reloads survives (the hide-and-reshow path)', () => {
+    let s = createInitialState();
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'quick-view', satellite: false, keepLive: true },
+      { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: true },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: false },
+      // Its first open completes — it has now held OS focus once.
+      { type: 'OS_FOCUS_GAINED', id: wid(1) },
+      // keepLive: dismissing it HIDES it; the record lives on.
+      { type: 'WINDOW_HIDDEN', id: wid(1) },
+      // The user hotkeys it again — a fresh activating show of that same record.
+      { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: true },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: false },
+      // Still coming back, so the user opens a palette meanwhile.
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOW_REQUESTED', id: wid(2), activate: true },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+    ]).state;
+    const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]);
+    assert.deepStrictEqual(closedIds(effects), [], 'a re-show arms afresh — a lifetime-scoped exemption would sweep here');
+  });
+
+  it('the activating show RE-STAMPS openSeq, so a palette already open BEFORE it is still swept (no over-spare)', () => {
+    // Without the re-stamp the OLD record keeps its ancient registration seq,
+    // every already-open window outranks it, and its next focus would spare
+    // the palette the user is deliberately raising past.
+    let s = createInitialState();
+    s = drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'quick-view', satellite: false, keepLive: true },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: false },
+      { type: 'WINDOW_HIDDEN', id: wid(1) },
+      // The palette opens FIRST — a higher seq than wid(1)'s registration.
+      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOW_REQUESTED', id: wid(2), activate: true },
+      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
+      // NOW the user hotkeys the old hidden record back.
+      { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: true },
+      { type: 'WINDOW_SHOWN', id: wid(1), focused: false },
+    ]).state;
+    const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]);
+    assert.deepStrictEqual(closedIds(effects), [wid(2)], 'the palette predates this open request, so it is swept');
+  });
 });
 
 // ── §5 step 9: the app-resign sweep — a timer handle becomes reducer state ───

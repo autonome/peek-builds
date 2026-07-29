@@ -296,10 +296,13 @@ export interface WindowRecord {
   /** MRU counter (absorbs `focus-order.ts`). Higher = more recently focused. */
   focusSeq: number;
   /**
-   * Registration order (§4.4 dim 4b): a monotonic stamp taken from
-   * `AppWindowState.openSeqCounter` when the record is CREATED. Higher = opened
-   * later. Never reassigned — the richer re-registration merge preserves it,
-   * because "when did this window come into being" is lived state, not spec.
+   * Open order (§4.4 dim 4b): a monotonic stamp taken from
+   * `AppWindowState.openSeqCounter`. Higher = opened later. Written in exactly
+   * two places — record CREATION, and an activating `WINDOW_SHOW_REQUESTED`,
+   * which RE-stamps it because such a show is this window opening again as far
+   * as the user is concerned (a keepLive peek/slide is hidden, not closed, so
+   * the same record is reopened over and over). The richer re-registration
+   * merge preserves whatever the current stamp is; it never resets it.
    *
    * Exists for exactly one decision: the transient autoclose needs to know
    * whether the window it is about to dismiss was opened BEFORE or AFTER the
@@ -315,11 +318,12 @@ export interface WindowRecord {
    */
   openSeq: number;
   /**
-   * Whether this window has EVER been shown with activation intent
+   * Whether this window's LATEST show carried activation intent
    * (`WINDOW_SHOW_REQUESTED { activate: true }`) — the app saying "put the user
    * in this window", which is what makes the focus that eventually arrives the
-   * completion of an action rather than a fresh user gesture. Arms the
-   * first-focus clause in `selectTransientAutoclose`.
+   * completion of an action rather than a fresh user gesture. Together with
+   * `hasHeldOsFocus` it arms the pending-open clause in
+   * `selectTransientAutoclose`.
    *
    * A restore's inactive show (`activate: false`) deliberately does NOT set it:
    * such a window's first focus comes much later, from a genuine user raise, and
@@ -327,8 +331,10 @@ export interface WindowRecord {
    */
   shownWithActivateIntent?: boolean;
   /**
-   * Whether an `OS_FOCUS_GAINED` has ever landed on this window. Written SOLELY
-   * by that arm — NOT by `WINDOW_SHOWN { focused: true }`, which is a
+   * Whether an `OS_FOCUS_GAINED` has landed on this window SINCE its last
+   * activating show. Set solely by that arm, after the sweep it gates; cleared
+   * solely by an activating `WINDOW_SHOW_REQUESTED`, whose focus has not landed
+   * yet. Deliberately NOT written by `WINDOW_SHOWN { focused: true }`, which is a
    * registration-time visibility import rather than evidence the OS moved focus
    * (the same distinction the autoclose clause itself makes). Absent = "no OS
    * focus reported yet", the same "nothing reported yet" default as
@@ -411,9 +417,10 @@ export interface AppWindowState {
   focusSeqCounter: number;
   /**
    * Monotonic source for `WindowRecord.openSeq` — bumped once per record
-   * CREATION (never on a re-registration merge). Reducer state rather than a
-   * module-level counter or a clock: the reducer is pure and imports no values,
-   * so the only place a number can come from is the state it was handed.
+   * CREATION and once per activating `WINDOW_SHOW_REQUESTED` (never on a
+   * re-registration merge). Reducer state rather than a module-level counter or
+   * a clock: the reducer is pure and imports no values, so the only place a
+   * number can come from is the state it was handed.
    */
   openSeqCounter: number;
   /**
@@ -1749,9 +1756,10 @@ const AUTOCLOSE_FOCUSER_EXEMPT_ROLES: ReadonlySet<string> = new Set(['utility', 
  * `AUTOCLOSE_FOCUSER_EXEMPT_ROLES` (the roles involved are exactly the ones a
  * legitimate switch must still sweep). So: a window whose activating show has
  * not yet produced a focus — `shownWithActivateIntent && !hasHeldOsFocus` —
- * cannot dismiss anything registered after it (`openSeq` greater than its own).
- * Every SUBSEQUENT focus on that window sweeps exactly as before, which is what
- * keeps "the user clicked back onto the host" dismissing the palette.
+ * cannot dismiss anything opened after that show (`openSeq` greater than its
+ * own, which the show itself re-stamps). Every SUBSEQUENT focus on that window
+ * sweeps exactly as before, which is what keeps "the user clicked back onto the
+ * host" dismissing the palette.
  */
 export function selectTransientAutoclose(state: AppWindowState, focusedId: WindowId): WindowId[] {
   const focuser = state.windows.get(focusedId);
@@ -2005,8 +2013,9 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         }
         break;
       }
-      // Registration order — see `WindowRecord.openSeq`. Bumped ONLY here, on
-      // record creation; the merge branch above keeps the existing stamp.
+      // Open order — see `WindowRecord.openSeq`. Bumped here, on record
+      // creation, and again on each activating show (`WINDOW_SHOW_REQUESTED`);
+      // the merge branch above keeps whatever stamp the record already has.
       state.openSeqCounter += 1;
       const rec: WindowRecord = {
         id: event.id,
@@ -2126,7 +2135,32 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // apart from a real window switch. Kind-agnostic on purpose (unlike the
       // FOCUS_CONTENT half above) — the race is about timing, not about having a
       // separate content WebContents.
-      if (event.activate) patchRecord(state, event.id, { shownWithActivateIntent: true });
+      //
+      // Scoped to THIS show, not to the window's lifetime, which is why the
+      // record is RE-STAMPED here rather than merely flagged:
+      //
+      //   - `openSeq` takes a fresh value, as if the window were opening now.
+      //     The autoclose clause then means "newer than this open REQUEST",
+      //     which is the fact actually wanted. Without it an old record keeps
+      //     its ancient registration stamp, every already-open window outranks
+      //     it, and a deliberate raise past a palette would wrongly SPARE that
+      //     palette.
+      //   - `hasHeldOsFocus` goes back to false, because this show's focus has
+      //     not landed yet. A keepLive peek/slide is HIDDEN rather than closed
+      //     (peek 2c94c125), so the hotkey that brings it back is a re-show of a
+      //     record that already held focus once; a lifetime-scoped arming would
+      //     leave that — the commonest path — racing exactly as before.
+      //
+      // The counter is bumped only when there is a record to stamp, so an
+      // unknown id neither burns a value nor changes anything.
+      if (event.activate && showRec !== undefined) {
+        state.openSeqCounter += 1;
+        patchRecord(state, event.id, {
+          shownWithActivateIntent: true,
+          openSeq: state.openSeqCounter,
+          hasHeldOsFocus: false,
+        });
+      }
       break;
     }
 
