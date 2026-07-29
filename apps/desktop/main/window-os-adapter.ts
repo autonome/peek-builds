@@ -265,7 +265,10 @@ export class WindowOsAdapter {
         return;
       }
       case 'RAISE_WINDOW': {
-        this.backend.raiseWindow(effect.id);
+        // `opSeq` rides along so the backend can label the focus this raise
+        // provokes as machine-caused (§ `FocusCause`) — otherwise its own echo
+        // comes back looking like a user gesture and sweeps live transients.
+        this.backend.raiseWindow(effect.id, effect.opSeq);
         return;
       }
       case 'SET_STACKING': {
@@ -290,7 +293,7 @@ export class WindowOsAdapter {
         // `shouldFocusHybridContentOnHostFocus` invariant, now standard on any
         // front-change to a page-host). Focus-free under headless.
         if (isHeadless()) return;
-        this.backend.focusContent(effect.id);
+        this.backend.focusContent(effect.id, effect.opSeq);
         return;
       }
       case 'ASK_RENDERER': {
@@ -405,7 +408,7 @@ export class WindowOsAdapter {
         // desktop or steal focus. The old skip predates the seam cutover;
         // with the windows.ts show seams routed through this effect, skipping
         // under headless would mean headless runs never show any window.
-        this.backend.showWindow(effect.id, { activate: effect.activate });
+        this.backend.showWindow(effect.id, { activate: effect.activate, opSeq: effect.opSeq });
         return;
       }
       case 'HIDE_WINDOW': {
@@ -571,17 +574,17 @@ export class WindowOsAdapter {
         ` frontVisible=${front?.visible ?? 'absent'}`;
     }
     if (event.type === 'OS_FOCUS_GAINED' && id != null) {
-      // The FOCUSER's own pending-open state, read off `before` because the
-      // OS_FOCUS_GAINED arm itself writes `hasHeldOsFocus` during this
-      // transition — `selectTransientAutoclose` asked its question first.
+      // The two inputs `selectTransientAutoclose` judged this focus by: WHO
+      // caused it (the executor's report, absent = world) and the FOCUSER's own
+      // open order, read off `before`.
       const focuser = before.windows.find((w) => w.id === id);
+      const cause = event.cause ?? { kind: 'world' as const };
       const swept = effects
         .filter((e) => e.type === 'CLOSE_WINDOW' || e.type === 'CLOSE_WINDOW_DIRECT')
         .map((e) => (e as { id: WindowId }).id);
       line +=
+        ` cause=${cause.kind}${cause.kind === 'machine' ? `(op${cause.opSeq})` : ''}` +
         ` openSeq=${focuser?.openSeq ?? 'absent'}` +
-        ` shownWithActivateIntent=${focuser?.shownWithActivateIntent ?? 'absent'}` +
-        ` hasHeldOsFocus=${focuser?.hasHeldOsFocus ?? 'absent'}` +
         ` swept=[${swept.join(',')}]`;
     }
     diag(line);

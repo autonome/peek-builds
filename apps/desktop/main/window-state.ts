@@ -304,11 +304,12 @@ export interface WindowRecord {
    * the same record is reopened over and over). The richer re-registration
    * merge preserves whatever the current stamp is; it never resets it.
    *
-   * Exists for exactly one decision: the transient autoclose needs to know
-   * whether the window it is about to dismiss was opened BEFORE or AFTER the
-   * action that produced this focus (see `selectTransientAutoclose`). Deliberately
-   * a reducer-owned counter and not a clock: `window-state.ts` has zero value
-   * imports, and ordering — not elapsed time — is the whole fact.
+   * Exists for exactly one decision: on a MACHINE-caused focus (see `FocusCause`)
+   * the transient autoclose needs to know whether the window it is about to
+   * dismiss was opened BEFORE or AFTER the op that produced that focus (see
+   * `selectTransientAutoclose`). Deliberately a reducer-owned counter and not a
+   * clock: `window-state.ts` has zero value imports, and ordering — not elapsed
+   * time — is the whole fact.
    *
    * NOT persisted in the session descriptor, on purpose: it is runtime ordering
    * within one app lifetime. A restored window must be numbered by when THIS run
@@ -317,30 +318,6 @@ export interface WindowRecord {
    * "newer" and stop sweeping them forever.
    */
   openSeq: number;
-  /**
-   * Whether this window's LATEST show carried activation intent
-   * (`WINDOW_SHOW_REQUESTED { activate: true }`) — the app saying "put the user
-   * in this window", which is what makes the focus that eventually arrives the
-   * completion of an action rather than a fresh user gesture. Together with
-   * `hasHeldOsFocus` it arms the pending-open clause in
-   * `selectTransientAutoclose`.
-   *
-   * A restore's inactive show (`activate: false`) deliberately does NOT set it:
-   * such a window's first focus comes much later, from a genuine user raise, and
-   * must sweep normally.
-   */
-  shownWithActivateIntent?: boolean;
-  /**
-   * Whether an `OS_FOCUS_GAINED` has landed on this window SINCE its last
-   * activating show. Set solely by that arm, after the sweep it gates; cleared
-   * solely by an activating `WINDOW_SHOW_REQUESTED`, whose focus has not landed
-   * yet. Deliberately NOT written by `WINDOW_SHOWN { focused: true }`, which is a
-   * registration-time visibility import rather than evidence the OS moved focus
-   * (the same distinction the autoclose clause itself makes). Absent = "no OS
-   * focus reported yet", the same "nothing reported yet" default as
-   * `hiddenByAppBlur`.
-   */
-  hasHeldOsFocus?: boolean;
   /** Absorbs `lastContentWindowId` (devtools target). */
   lastHttpUrl?: string;
   /**
@@ -354,6 +331,38 @@ export interface WindowRecord {
    */
   contentFocused?: boolean;
 }
+
+/**
+ * WHO caused an OS focus report — the provenance an `OS_FOCUS_GAINED` carries.
+ *
+ * The defect this exists for (peek 7fffa286, confirmed from a live trace): the
+ * event meant BOTH "the user switched windows" and "the OS is echoing an
+ * operation the machine itself just requested", and the reducer could not tell
+ * them apart. So the echo of a machine-issued handoff raise swept a palette the
+ * user had opened one transition earlier.
+ *
+ *   - `machine`  the report is the echo of a focus-family effect this machine
+ *                emitted — `opSeq` is that effect's token (`Effect.opSeq`,
+ *                stamped from `AppWindowState.opSeqCounter`). The executor is
+ *                the only honest source: it knows which native call it just
+ *                made. Because the token is a stamp and not a bare boolean, a
+ *                STALE self-echo (an `opSeq` older than the latest op issued for
+ *                that window) is identifiable too.
+ *   - `world`    everything else: a real user gesture, another app handing focus
+ *                back, Mission Control, a click into a page.
+ *
+ * ABSENT on the event means `world` — see `OS_FOCUS_GAINED`. That default is
+ * load-bearing: every producer that has not been taught to report provenance
+ * keeps its exact pre-provenance behavior.
+ */
+export type FocusCause = { kind: 'machine'; opSeq: number } | { kind: 'world' };
+
+/**
+ * The default provenance. A module-level literal rather than an import — this
+ * file keeps ZERO value imports — and never mutated, so sharing one instance is
+ * safe.
+ */
+const WORLD_CAUSE: FocusCause = { kind: 'world' };
 
 /** Mirrors the IZUI session coordinator's tri-state (idle / transient / active). */
 export type IzuiSession = 'idle' | 'transient' | 'active';
@@ -423,6 +432,20 @@ export interface AppWindowState {
    * number can come from is the state it was handed.
    */
   openSeqCounter: number;
+  /**
+   * Monotonic source for the op token stamped on every focus-family effect
+   * (`RAISE_WINDOW` / `SHOW_WINDOW` / `FOCUS_CONTENT` — see `Effect.opSeq`).
+   * Bumped once per stamped effect, so no two ops ever share a token.
+   *
+   * A COUNTER, not a clock: the reducer imports no values, so the only place a
+   * number can come from is the state it was handed — and the fact wanted is
+   * identity/ordering of ops ("is this focus the echo of THAT op"), never
+   * elapsed time. Same reasoning as `focusSeqCounter` / `openSeqCounter`.
+   *
+   * Never reset while the app runs. Not persisted: an op token is meaningless
+   * across processes.
+   */
+  opSeqCounter: number;
   /**
    * The ONE outstanding renderer escape question (`ASK_RENDERER`), or null when
    * no answer is awaited. The renderer answer arrives asynchronously (up to the
@@ -497,6 +520,7 @@ export function createInitialState(): AppWindowState {
     windows: new Map(),
     focusSeqCounter: 0,
     openSeqCounter: 0,
+    opSeqCounter: 0,
     escAsk: null,
     escSeq: 0,
     pendingAppResignSweep: false,
@@ -629,7 +653,14 @@ export type WindowEvent =
   | { type: 'STACK_ORDER_IMPORTED'; order: WindowId[] }
   | { type: 'WINDOW_HIDDEN'; id: WindowId }
   | { type: 'WINDOW_CLOSED'; id: WindowId }
-  | { type: 'OS_FOCUS_GAINED'; id: WindowId; lastHttpUrl?: string }
+  /**
+   * The OS reported that `id` gained focus. `cause` says WHO caused it (see
+   * `FocusCause`) and is ABSENT-means-`world` on purpose: a producer that does
+   * not know, or has not been taught, reports the same event it always did and
+   * gets exactly the pre-provenance behavior. Only the executor can fill in
+   * `machine` honestly — it is the one that made the native call.
+   */
+  | { type: 'OS_FOCUS_GAINED'; id: WindowId; lastHttpUrl?: string; cause?: FocusCause }
   | { type: 'OS_FOCUS_SETTLED_NULL' }
   | { type: 'APP_ACTIVATED' }
   | { type: 'APP_RESIGNED' }
@@ -935,6 +966,23 @@ export type WindowEvent =
 // reducer NEVER performs these; it only describes them.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The op token carried by the FOCUS FAMILY of effects — the three that can make
+ * the OS move focus, and therefore the three whose native call comes back as an
+ * `OS_FOCUS_GAINED` the machine itself asked for.
+ *
+ * The executor arms "expecting a self-caused focus, op N" on the target window
+ * before it makes the native call, and the backend's `'focus'` listeners consume
+ * that arming to stamp `OS_FOCUS_GAINED.cause = { kind: 'machine', opSeq: N }`.
+ * A focus arriving with nothing armed is `world`. That round trip is the whole
+ * provenance mechanism; see `FocusCause`.
+ *
+ * Stamped by `nextOpSeq`, one fresh token per emitted effect.
+ */
+interface OpToken {
+  opSeq: number;
+}
+
 export type Effect =
   | { type: 'SET_FULLSCREEN'; id: WindowId; on: boolean }
   /** The single sanctioned OS poll: adapter reads `isFullScreen()` once and re-dispatches OS_FULLSCREEN_ENTERED/LEFT. */
@@ -948,7 +996,7 @@ export type Effect =
    * cooldown focus-dance protection), so the adapter is a no-op there.
    */
   | { type: 'CLOSE_SWITCHER_WINDOW'; restoreTarget: WindowId | null; restoreFocus: boolean; switcherWindowId: WindowId | null }
-  | { type: 'RAISE_WINDOW'; id: WindowId }
+  | ({ type: 'RAISE_WINDOW'; id: WindowId } & OpToken)
   /**
    * Place the window at the top of its (regular) window level — RELATIVE ORDER
    * ONLY, the `moveTop` replacement (§4.3 dim 3): no activation, no key-window
@@ -976,7 +1024,7 @@ export type Effect =
    *     content view is first responder (the 7c61e917 raise-by-chrome bug), so
    *     that one half is driven even though no raise is.
    */
-  | { type: 'FOCUS_CONTENT'; id: WindowId }
+  | ({ type: 'FOCUS_CONTENT'; id: WindowId } & OpToken)
   /**
    * Ask the renderer whether it handled ESC (the `escape-pressed` IPC, unchanged
    * protocol). `seq` is the epoch token the adapter MUST echo back on the
@@ -992,7 +1040,7 @@ export type Effect =
   /** Tear down the window's content surface (the hybrid finalize's `contentWC.close()`). */
   | { type: 'CLOSE_CONTENT'; id: WindowId }
   /** Show without (or with) activation. Executor skips it under headless — both consumers (HUD re-show, extension-UI dev autoopen) were `!isHeadless()`-guarded before the machine owned them. */
-  | { type: 'SHOW_WINDOW'; id: WindowId; activate: boolean }
+  | ({ type: 'SHOW_WINDOW'; id: WindowId; activate: boolean } & OpToken)
   /** Hide, keep alive (the HUD app-blur sweep, the keepLive close-request decision — see `WINDOW_CLOSE_OR_HIDE_REQUESTED` — and the plain hide intent, `WINDOW_HIDE_REQUESTED`). */
   | { type: 'HIDE_WINDOW'; id: WindowId }
   /** Pin above regular windows (registration-declared alwaysOnTop). Executor skips under headless (compositor-flash parity with the old guard). */
@@ -1431,6 +1479,7 @@ function cloneState(state: AppWindowState): AppWindowState {
     windows: new Map(state.windows),
     focusSeqCounter: state.focusSeqCounter,
     openSeqCounter: state.openSeqCounter,
+    opSeqCounter: state.opSeqCounter,
     escAsk: state.escAsk,
     escSeq: state.escSeq,
     pendingAppResignSweep: state.pendingAppResignSweep,
@@ -1559,14 +1608,24 @@ function enforceFrontInvariant(state: AppWindowState, event: WindowEvent): void 
  * runtime ordering coincidence — is what terminates the `window-os-adapter.ts`
  * `pump` drain (see its docblock).
  */
+/**
+ * Mint the next op token (`Effect.opSeq`) — bumped once per stamped effect, so
+ * two effects of one transition never share a token. The SINGLE place a token
+ * comes from; see `AppWindowState.opSeqCounter`.
+ */
+function nextOpSeq(state: AppWindowState): number {
+  state.opSeqCounter += 1;
+  return state.opSeqCounter;
+}
+
 function applyRaiseRequest(state: AppWindowState, id: WindowId | null, effects: Effect[]): void {
   if (id == null) return;
   if (!state.appActive) return; // no focus theft while Peek is background (sites 2 and 3 fire while inactive)
   if (state.switcher.open) return; // must not yank key out of the overlay
   const rec = state.windows.get(id);
   if (!isEligibleFront(rec)) return;
-  effects.push({ type: 'RAISE_WINDOW', id });
-  if (rec.kind === 'page-host') effects.push({ type: 'FOCUS_CONTENT', id });
+  effects.push({ type: 'RAISE_WINDOW', id, opSeq: nextOpSeq(state) });
+  if (rec.kind === 'page-host') effects.push({ type: 'FOCUS_CONTENT', id, opSeq: nextOpSeq(state) });
   effects.push({ type: 'SET_STACKING', id, level: rec.stackingLevel });
   stackRaise(state, id);
 }
@@ -1605,7 +1664,7 @@ function applyOsFocusRealized(state: AppWindowState, id: WindowId, effects: Effe
   if (state.front !== id) return;
   const rec = state.windows.get(id);
   if (!rec) return;
-  if (rec.kind === 'page-host') effects.push({ type: 'FOCUS_CONTENT', id });
+  if (rec.kind === 'page-host') effects.push({ type: 'FOCUS_CONTENT', id, opSeq: nextOpSeq(state) });
   stackRaise(state, id);
 }
 
@@ -1674,7 +1733,9 @@ function applyOverlayFollow(
   if (frame) effects.push({ type: 'SET_BOUNDS', id: overlayId, bounds: frame });
   if (!state.appActive) return;
   effects.push({ type: 'SET_STACKING', id: overlayId, level: overlay.stackingLevel });
-  if (!overlay.visible) effects.push({ type: 'SHOW_WINDOW', id: overlayId, activate: false });
+  if (!overlay.visible) {
+    effects.push({ type: 'SHOW_WINDOW', id: overlayId, activate: false, opSeq: nextOpSeq(state) });
+  }
 }
 
 /**
@@ -1747,34 +1808,59 @@ const AUTOCLOSE_FOCUSER_EXEMPT_ROLES: ReadonlySet<string> = new Set(['utility', 
  * BrowserWindows and hybrid page-hosts are candidates (the close-on-blur
  * regression, peek 8e5c3174, was hybrid windows never being in the set).
  *
- * ONE further clause, on top of the ported semantics — the SLOW-OPEN RACE. The
- * user hotkeys a page host (a peek/slide), it takes time to load, and before it
- * finishes the user opens a palette. Then the host's load completes, it takes
- * OS focus, and this sweep dismissed the palette the user asked for AFTERWARDS.
- * The missing fact was never "which role" — it was WHEN the action that caused
- * this focus was initiated, which is why the fix is not a third entry in
- * `AUTOCLOSE_FOCUSER_EXEMPT_ROLES` (the roles involved are exactly the ones a
- * legitimate switch must still sweep). So: a window whose activating show has
- * not yet produced a focus — `shownWithActivateIntent && !hasHeldOsFocus` —
- * cannot dismiss anything opened after that show (`openSeq` greater than its
- * own, which the show itself re-stamps). Every SUBSEQUENT focus on that window
- * sweeps exactly as before, which is what keeps "the user clicked back onto the
- * host" dismissing the palette.
+ * ONE further clause, on top of the ported semantics — a focus the MACHINE
+ * caused may not dismiss anything opened after the op that caused it.
+ *
+ * Two live failures, one shape. (i) The slow-open race: the user hotkeys a page
+ * host (a peek/slide), it takes time to load, and before it finishes the user
+ * opens a palette; the host's load completes, it takes OS focus, and the sweep
+ * dismissed the palette the user asked for AFTERWARDS. (ii) The handoff-raise
+ * echo (peek 7fffa286, confirmed trace): a slide hides, the `WINDOW_HIDDEN` arm
+ * hands the front off with `RAISE_WINDOW` + `FOCUS_CONTENT`, and the OS echo of
+ * that machine-issued raise swept a palette the user had opened one transition
+ * earlier.
+ *
+ * In both the missing fact was never "which role" — the roles involved are
+ * exactly the ones a legitimate switch must still sweep, which is why this is
+ * not a third entry in `AUTOCLOSE_FOCUSER_EXEMPT_ROLES`. The missing fact was
+ * WHO asked for this focus and WHEN. `cause` now states the first directly (an
+ * executor report, not an inference), and `openSeq` supplies the second:
+ *
+ *   - `world` (the default): a real switch. Sweeps every visible transient,
+ *     exactly as the ported original did.
+ *   - `machine`: the echo of an op this machine emitted. Spare anything whose
+ *     `openSeq` is greater than the FOCUSER's — i.e. opened after the op that
+ *     produced this focus. An activating `WINDOW_SHOW_REQUESTED` re-stamps
+ *     `openSeq`, so a hotkeyed slide still dismisses a palette that predates
+ *     its show (case (i) spares the palette; a raise target's own `openSeq` is
+ *     legitimately old, so case (ii) spares the newer palette too).
+ *
+ * This clause REPLACED a pair of per-record booleans (`shownWithActivateIntent`
+ * && `!hasHeldOsFocus`) that tried to infer "this focus completes an open" from
+ * record history. They were a proxy for provenance and got case (ii) wrong: the
+ * raise target had already held OS focus, so the proxy read "ordinary switch"
+ * and the ordering test was never consulted. `cause` is the fact itself.
+ *
+ * An UNREGISTERED focuser (no record) has no `openSeq` to compare against, so it
+ * sweeps everything whatever the cause — matching the original's
+ * `getWindowInfo(focusedId)?.params?.role` returning undefined.
  */
-export function selectTransientAutoclose(state: AppWindowState, focusedId: WindowId): WindowId[] {
+export function selectTransientAutoclose(
+  state: AppWindowState,
+  focusedId: WindowId,
+  cause: FocusCause = WORLD_CAUSE,
+): WindowId[] {
   const focuser = state.windows.get(focusedId);
   if (focuser && AUTOCLOSE_FOCUSER_EXEMPT_ROLES.has(focuser.role)) return [];
-  // See the docblock. An unregistered focuser has no seq and no arming, so it
-  // sweeps everything, unchanged.
-  const focuserIsCompletingItsOpen =
-    focuser !== undefined && focuser.shownWithActivateIntent === true && focuser.hasHeldOsFocus !== true;
+  // See the docblock: only a self-caused focus is ordering-limited.
+  const selfCaused = cause.kind === 'machine' && focuser !== undefined;
   const out: WindowId[] = [];
   for (const rec of state.windows.values()) {
     if (rec.id === focusedId) continue;
     if (!rec.visible) continue;
     if (!TRANSIENT_ROLES.has(rec.role)) continue;
     if (AUTOCLOSE_EXEMPT_ROLES.has(rec.role)) continue;
-    if (focuserIsCompletingItsOpen && rec.openSeq > (focuser as WindowRecord).openSeq) continue;
+    if (selfCaused && rec.openSeq > (focuser as WindowRecord).openSeq) continue;
     out.push(rec.id);
   }
   return out;
@@ -2098,7 +2184,7 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
     }
 
     case 'WINDOW_SHOW_REQUESTED': {
-      effects.push({ type: 'SHOW_WINDOW', id: event.id, activate: event.activate });
+      effects.push({ type: 'SHOW_WINDOW', id: event.id, activate: event.activate, opSeq: nextOpSeq(state) });
       // The CONTENT half of the show invariant (§5 step 8 — the last direct OS
       // call `windows.ts showHybridHost` used to make itself). A page-host
       // shown WITH activation intent must also make its content
@@ -2126,40 +2212,27 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // every other focus effect is, in the executor's `FOCUS_CONTENT` arm.
       const showRec = state.windows.get(event.id);
       if (event.activate && showRec?.kind === 'page-host') {
-        effects.push({ type: 'FOCUS_CONTENT', id: event.id });
+        effects.push({ type: 'FOCUS_CONTENT', id: event.id, opSeq: nextOpSeq(state) });
       }
-      // The same `activate` fact, recorded on the record (§4.4 dim 4b): an
-      // activating show is the app saying "put the user in this window", so the
-      // focus that eventually lands is the COMPLETION of that action, not a new
-      // gesture. `selectTransientAutoclose` needs that to tell the slow-open race
-      // apart from a real window switch. Kind-agnostic on purpose (unlike the
-      // FOCUS_CONTENT half above) — the race is about timing, not about having a
-      // separate content WebContents.
-      //
-      // Scoped to THIS show, not to the window's lifetime, which is why the
-      // record is RE-STAMPED here rather than merely flagged:
-      //
-      //   - `openSeq` takes a fresh value, as if the window were opening now.
-      //     The autoclose clause then means "newer than this open REQUEST",
-      //     which is the fact actually wanted. Without it an old record keeps
-      //     its ancient registration stamp, every already-open window outranks
-      //     it, and a deliberate raise past a palette would wrongly SPARE that
-      //     palette.
-      //   - `hasHeldOsFocus` goes back to false, because this show's focus has
-      //     not landed yet. A keepLive peek/slide is HIDDEN rather than closed
-      //     (peek 2c94c125), so the hotkey that brings it back is a re-show of a
-      //     record that already held focus once; a lifetime-scoped arming would
-      //     leave that — the commonest path — racing exactly as before.
+      // Open ORDER, re-stamped (§4.4 dim 4b): an activating show is the app
+      // saying "put the user in this window", and as far as the user is
+      // concerned that is this window opening — now. `selectTransientAutoclose`
+      // compares against this stamp when the focus it later judges was caused by
+      // the machine, so the clause means "newer than this open REQUEST" rather
+      // than "newer than my registration". Without the re-stamp an old record
+      // keeps its ancient registration stamp, every already-open window outranks
+      // it, and a deliberate hotkey past a palette would wrongly SPARE that
+      // palette. Kind-agnostic on purpose (unlike the FOCUS_CONTENT half above)
+      // — ordering is about the request, not about having a separate content
+      // WebContents. A keepLive peek/slide is HIDDEN rather than closed (peek
+      // 2c94c125), so re-stamping per show is what covers the commonest path: a
+      // long-lived record re-shown over and over.
       //
       // The counter is bumped only when there is a record to stamp, so an
       // unknown id neither burns a value nor changes anything.
       if (event.activate && showRec !== undefined) {
         state.openSeqCounter += 1;
-        patchRecord(state, event.id, {
-          shownWithActivateIntent: true,
-          openSeq: state.openSeqCounter,
-          hasHeldOsFocus: false,
-        });
+        patchRecord(state, event.id, { openSeq: state.openSeqCounter });
       }
       break;
     }
@@ -2367,11 +2440,14 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       // the OS moved focus. The dismissed records retire on their own
       // `WINDOW_CLOSED` / `WINDOW_HIDDEN`, so this clause is effect-only and
       // cannot break the front invariant.
-      pushCloseOrHide(state, selectTransientAutoclose(state, event.id), effects);
-      // The SOLE writer of `hasHeldOsFocus`, and necessarily AFTER the sweep
-      // above — the sweep's whole question is whether THIS focus is the
-      // window's first. From here on the window sweeps like any other.
-      patchRecord(state, event.id, { hasHeldOsFocus: true });
+      //
+      // `cause` (absent = `world`) is what keeps a focus the MACHINE asked for
+      // from dismissing surfaces the user opened after it asked — see
+      // `selectTransientAutoclose` and `FocusCause`. Nothing per-record is
+      // written for it: provenance rides the event, so a self-caused echo burns
+      // no latch and the next real focus behaves exactly as if it were the
+      // window's first.
+      pushCloseOrHide(state, selectTransientAutoclose(state, event.id, event.cause ?? WORLD_CAUSE), effects);
       // What the OS already did for us, mirrored into the machine (+ the one
       // half it does not vouch for). Emits NO raise — see `applyRaiseRequest`.
       // AFTER the autoclose so effect order stays [autoclose…, FOCUS_CONTENT].
@@ -2429,7 +2505,7 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
       for (const rec of [...state.windows.values()]) {
         if (rec.class === 'hud' && rec.hiddenByAppBlur === true) {
           patchRecord(state, rec.id, { hiddenByAppBlur: false });
-          effects.push({ type: 'SHOW_WINDOW', id: rec.id, activate: false });
+          effects.push({ type: 'SHOW_WINDOW', id: rec.id, activate: false, opSeq: nextOpSeq(state) });
         }
       }
       // Re-reveal every attached overlay over its host (§5 step 9) — the

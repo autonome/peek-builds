@@ -118,6 +118,18 @@ function hasEffect(effects: Effect[], type: Effect['type']): boolean {
   return effects.some((e) => e.type === type);
 }
 
+/**
+ * The effect with its `opSeq` op token dropped — for the assertions that are
+ * about WHAT the reducer drove, not which op drove it (the token would otherwise
+ * pin every such assertion to the exact number of focus-family effects emitted
+ * earlier in the script). The token itself is asserted directly in the focus
+ * provenance suite; see `Effect.opSeq` / `FocusCause`.
+ */
+function omitOpSeq(effect: Effect): Effect {
+  const { opSeq: _dropped, ...rest } = effect as Effect & { opSeq?: number };
+  return rest as Effect;
+}
+
 // A minimal registered+shown+focused window, via events.
 function openWindow(
   state: AppWindowState,
@@ -173,6 +185,7 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       windows,
       focusSeqCounter: 1,
       openSeqCounter: 1,
+      opSeqCounter: 0,
       escAsk: null,
       escSeq: 0,
       pendingAppResignSweep: false,
@@ -368,7 +381,7 @@ describe('decideEscape (steps 1-5, total)', () => {
   it('step 4: any non-normal fsMode -> exit-fullscreen (entering/full/leaving)', () => {
     for (const name of ['entering-fullscreen', 'fullscreen', 'leaving-fullscreen'] as FsMode['name'][]) {
       const rec: WindowRecord = { id: wid(1), kind: 'page-host', role: 'content', class: 'primary', stackingLevel: 'stacked', orderable: true, satellite: false, visible: true, fsMode: fsOf(name, BOUNDS), maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1, openSeq: 1 };
-      const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), stackOrder: [wid(1)], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, openSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
+      const state: AppWindowState = { appActive: true, session: 'active', front: wid(1), stackOrder: [wid(1)], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, openSeqCounter: 1, opSeqCounter: 0, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
       assert.deepStrictEqual(decideEscape(state), { kind: 'exit-fullscreen', id: wid(1) }, `mode ${name}`);
     }
   });
@@ -1332,7 +1345,7 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
   // front) — we craft it directly to exercise the guard's throw path.
   function illegalFrontState(): AppWindowState {
     const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1, openSeq: 1 };
-    return { appActive: true, session: 'active', front: wid(1), stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, openSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
+    return { appActive: true, session: 'active', front: wid(1), stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, openSeqCounter: 1, opSeqCounter: 0, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
   }
 
   it('THROWS in dev/test when reduce yields an illegal front (naming the event + front id)', () => {
@@ -1361,7 +1374,7 @@ describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
   it('FULLSCREEN_REQUESTED on a satellite does NOT install an illegal front (and does not throw)', () => {
     // The reducer bug the reviewer flagged: front was assigned unconditionally.
     const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1, openSeq: 1 };
-    const s: AppWindowState = { appActive: true, session: 'active', front: null, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, openSeqCounter: 1, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
+    const s: AppWindowState = { appActive: true, session: 'active', front: null, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, openSeqCounter: 1, opSeqCounter: 0, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
     const { state } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
     assert.strictEqual(state.front, null, 'a satellite must never become front, even via a fullscreen request');
     assert.strictEqual(getWindowMode(state, wid(1)), 'entering-fullscreen', 'the fsMode edge still runs (total table)');
@@ -2195,7 +2208,7 @@ describe('request events — pass-through effects (state changes ride the native
   it('WINDOW_SHOW_REQUESTED echoes the activate flag onto SHOW_WINDOW', () => {
     for (const activate of [true, false]) {
       const { effects } = reduce(openWindow(createInitialState(), 1, {}), { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate });
-      assert.deepStrictEqual(effects.filter((e) => e.type === 'SHOW_WINDOW'), [{ type: 'SHOW_WINDOW', id: wid(1), activate }]);
+      assert.deepStrictEqual(effects.filter((e) => e.type === 'SHOW_WINDOW').map(omitOpSeq), [{ type: 'SHOW_WINDOW', id: wid(1), activate }]);
     }
   });
 
@@ -2208,7 +2221,7 @@ describe('request events — pass-through effects (state changes ride the native
   it('WINDOW_SHOW_REQUESTED {activate} on a page-host also focuses its content, AFTER the show', () => {
     const { effects } = reduce(openWindow(createInitialState(), 1, { kind: 'page-host' }), { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: true });
     assert.deepStrictEqual(
-      effects.filter((e) => e.type === 'SHOW_WINDOW' || e.type === 'FOCUS_CONTENT'),
+      effects.filter((e) => e.type === 'SHOW_WINDOW' || e.type === 'FOCUS_CONTENT').map(omitOpSeq),
       [{ type: 'SHOW_WINDOW', id: wid(1), activate: true }, { type: 'FOCUS_CONTENT', id: wid(1) }],
     );
     // …and no raise: a RAISE_WINDOW on the open path is the show/raise echo the
@@ -2228,7 +2241,7 @@ describe('request events — pass-through effects (state changes ride the native
     // Unknown id: SHOW_WINDOW still goes out (the backend resolves the handle
     // and no-ops), but nothing claims it is a page-host.
     const unknown = reduce(createInitialState(), { type: 'WINDOW_SHOW_REQUESTED', id: wid(9), activate: true });
-    assert.deepStrictEqual(unknown.effects, [{ type: 'SHOW_WINDOW', id: wid(9), activate: true }]);
+    assert.deepStrictEqual(unknown.effects.map(omitOpSeq), [{ type: 'SHOW_WINDOW', id: wid(9), activate: true }]);
   });
 
   it('WINDOW_CONTENT_CLOSE_REQUESTED -> CLOSE_CONTENT even after the record retired (backend holds the WC)', () => {
@@ -2317,7 +2330,7 @@ describe('HUD hide/show sweep (replaces the __hudHidden expando + sniffing loops
     let s = reduce(withHud(), { type: 'APP_RESIGNED' }).state;
     s = drive(s, [{ type: 'WINDOW_HIDDEN', id: wid(2) }]).state; // native hide confirmation
     const { state, effects } = reduce(s, { type: 'APP_ACTIVATED' });
-    assert.deepStrictEqual(effects.filter((e) => e.type === 'SHOW_WINDOW'), [{ type: 'SHOW_WINDOW', id: wid(2), activate: false }]);
+    assert.deepStrictEqual(effects.filter((e) => e.type === 'SHOW_WINDOW').map(omitOpSeq), [{ type: 'SHOW_WINDOW', id: wid(2), activate: false }]);
     assert.strictEqual(state.windows.get(wid(2))!.hiddenByAppBlur, false);
   });
 
@@ -3878,7 +3891,7 @@ describe('overlay attachment / follow / retarget (§4.3 dim 3b, §5 step 9)', ()
     assert.strictEqual(overlayIdForHost(state, wid(1)), wid(OVERLAY));
     assert.deepStrictEqual(effectShape(effects), ['SET_BOUNDS', 'SET_STACKING', 'SHOW_WINDOW']);
     assert.deepStrictEqual(effectsOfType(effects, 'SET_BOUNDS')[0], { type: 'SET_BOUNDS', id: wid(OVERLAY), bounds: FRAME_A });
-    assert.deepStrictEqual(effectsOfType(effects, 'SHOW_WINDOW')[0], { type: 'SHOW_WINDOW', id: wid(OVERLAY), activate: false });
+    assert.deepStrictEqual(omitOpSeq(effectsOfType(effects, 'SHOW_WINDOW')[0]), { type: 'SHOW_WINDOW', id: wid(OVERLAY), activate: false });
     // The chrome overlay is `pinned` — the payload must carry that level so the
     // executor realizes it as `setAlwaysOnTop(true, 'floating')`, never a plain
     // `moveTop()` (the latent moveTop bug this level field exists to prevent).
@@ -4052,7 +4065,7 @@ describe('overlay attachment / follow / retarget (§4.3 dim 3b, §5 step 9)', ()
 
     const hidden = drive(resigned.state, [{ type: 'WINDOW_HIDDEN', id: wid(OVERLAY) }]).state;
     const active = drive(hidden, [{ type: 'APP_ACTIVATED' }]);
-    assert.deepStrictEqual(effectsOfType(active.effects, 'SHOW_WINDOW'), [{ type: 'SHOW_WINDOW', id: wid(OVERLAY), activate: false }]);
+    assert.deepStrictEqual(effectsOfType(active.effects, 'SHOW_WINDOW').map(omitOpSeq), [{ type: 'SHOW_WINDOW', id: wid(OVERLAY), activate: false }]);
     const overlayStacking = effectsOfType(active.effects, 'SET_STACKING').find((e) => e.id === wid(OVERLAY));
     assert.ok(overlayStacking);
     assert.strictEqual(overlayStacking.level, 'pinned');
@@ -4292,17 +4305,25 @@ describe('transient-sibling autoclose on focus change (§4.4 dim 4b, §5 step 9)
     assert.deepStrictEqual(selectTransientAutoclose(s, wid(2)), [], 'the focuser is never its own victim');
   });
 
-  // ── The slow-open race: a window's FIRST focus cannot sweep what opened after it ──
+  // ── The slow-open race: a MACHINE-caused focus cannot sweep what opened after it ──
   //
   // The user hotkeys a page host, it takes time to load, and BEFORE it finishes
   // the user opens a palette. The host's load completes, it takes OS focus, and
   // the sweep dismissed the palette the user asked for AFTERWARDS. From the
-  // reducer's seat that focus is indistinguishable from "the user just clicked
-  // the host" — which legitimately should dismiss the palette. The missing fact
-  // is WHEN the action that caused the focus was initiated, so the record now
-  // carries `openSeq` (registration order) plus whether it has already held OS
-  // focus. Deliberately NOT a third entry in `AUTOCLOSE_FOCUSER_EXEMPT_ROLES`:
-  // the roles here are the same ones the legitimate switch below must sweep.
+  // reducer's seat that focus USED to be indistinguishable from "the user just
+  // clicked the host" — which legitimately should dismiss the palette. The
+  // missing facts are WHO caused the focus and WHEN the op that caused it was
+  // issued: the executor reports the first as `OS_FOCUS_GAINED.cause` (the show
+  // it performed is what provoked this focus, so `machine`) and `openSeq`, which
+  // an activating show re-stamps, is the second. Deliberately NOT a third entry
+  // in `AUTOCLOSE_FOCUSER_EXEMPT_ROLES`: the roles here are the same ones the
+  // legitimate switch below must sweep.
+  //
+  // These four scripts were written against the pair of per-record booleans that
+  // preceded `cause` (`shownWithActivateIntent && !hasHeldOsFocus`, commits
+  // 33d01f5d / a188127d). Their EXPECTATIONS are unchanged — only the way the
+  // arming fact reaches the reducer is: it now rides the event as provenance
+  // instead of being inferred from record history.
 
   it('a page host shown WITH activate intent does not sweep a palette that opened while it was still loading (its FIRST focus)', () => {
     let s = createInitialState();
@@ -4317,32 +4338,35 @@ describe('transient-sibling autoclose on focus change (§4.4 dim 4b, §5 step 9)
       { type: 'WINDOW_SHOW_REQUESTED', id: wid(2), activate: true },
       { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
     ]).state;
-    // The load completes and the host finally takes OS focus.
-    const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]);
+    // The load completes and the host finally takes OS focus — provoked by the
+    // show the executor performed for the hotkey, so machine-caused.
+    const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1), cause: { kind: 'machine', opSeq: 1 } }]);
     assert.deepStrictEqual(closedIds(effects), [], 'the palette the user opened AFTER the host survives');
   });
 
-  it('but the SECOND focus on that same host sweeps a palette opened after its first focus (the legitimate switch)', () => {
+  it('but a later WORLD-caused focus on that same host sweeps a palette opened after it (the legitimate switch)', () => {
     let s = createInitialState();
     s = drive(s, [
       { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'quick-view', satellite: false },
       { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: true },
       { type: 'WINDOW_SHOWN', id: wid(1), focused: false },
-      // The host loads and takes focus — its first, with nothing else open.
-      { type: 'OS_FOCUS_GAINED', id: wid(1) },
+      // The host loads and takes focus — machine-caused, nothing else open.
+      { type: 'OS_FOCUS_GAINED', id: wid(1), cause: { kind: 'machine', opSeq: 1 } },
       // NOW the user opens a palette, then clicks back on the host.
       { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
       { type: 'WINDOW_SHOW_REQUESTED', id: wid(2), activate: true },
       { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
     ]).state;
+    // The click is the world moving focus, not the machine — so it sweeps.
     const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]);
-    assert.deepStrictEqual(closedIds(effects), [wid(2)], 'every focus after the first sweeps exactly as before');
+    assert.deepStrictEqual(closedIds(effects), [wid(2)], 'a user switch sweeps exactly as before');
   });
 
-  it('a record shown with activate:false (session restore) does NOT arm the exemption — its first focus sweeps normally', () => {
-    // Otherwise a restored host spends its one "first focus" on a genuine user
-    // raise much later and wrongly spares a palette the user had already
-    // dismissed by raising it.
+  it('a record shown with activate:false (session restore) takes no focus from that show — its later world focus sweeps normally', () => {
+    // A non-activating show (`showInactive`) takes no OS focus, so the backend
+    // arms no self-caused-focus expectation for it: the focus that eventually
+    // lands is a genuine user raise much later, reported as `world`, and must
+    // sweep the palette the user is deliberately raising past.
     let s = createInitialState();
     s = drive(s, [
       { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'quick-view', satellite: false },
@@ -4356,24 +4380,23 @@ describe('transient-sibling autoclose on focus change (§4.4 dim 4b, §5 step 9)
     assert.deepStrictEqual(closedIds(effects), [wid(2)]);
   });
 
-  // ── The exemption is per ACTIVATING SHOW, not per window lifetime ──────────
+  // ── The ordering stamp is per ACTIVATING SHOW, not per window lifetime ─────
   //
   // A keepLive peek/slide is HIDDEN rather than closed (peek 2c94c125), so the
   // hotkey that brings it back is a re-show of a long-lived record that has
-  // already held OS focus. Arming once per lifetime would leave that path — the
-  // commonest one — with the race unfixed. So an activating show RE-STAMPS
-  // `openSeq` from the counter and clears `hasHeldOsFocus`: the clause reads
-  // "newer than this open REQUEST" rather than "newer than my registration",
-  // which is the fact that was wanted all along.
+  // already held OS focus. A per-lifetime stamp would leave that path — the
+  // commonest one — racing exactly as before. So an activating show RE-STAMPS
+  // `openSeq` from the counter: the clause reads "newer than this open REQUEST"
+  // rather than "newer than my registration", which is the fact wanted all along.
 
-  it('a keepLive record re-shown with activate intent re-arms: a palette opened while it reloads survives (the hide-and-reshow path)', () => {
+  it('a keepLive record re-shown with activate intent re-stamps: a palette opened while it reloads survives (the hide-and-reshow path)', () => {
     let s = createInitialState();
     s = drive(s, [
       { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'quick-view', satellite: false, keepLive: true },
       { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: true },
       { type: 'WINDOW_SHOWN', id: wid(1), focused: false },
       // Its first open completes — it has now held OS focus once.
-      { type: 'OS_FOCUS_GAINED', id: wid(1) },
+      { type: 'OS_FOCUS_GAINED', id: wid(1), cause: { kind: 'machine', opSeq: 1 } },
       // keepLive: dismissing it HIDES it; the record lives on.
       { type: 'WINDOW_HIDDEN', id: wid(1) },
       // The user hotkeys it again — a fresh activating show of that same record.
@@ -4384,8 +4407,8 @@ describe('transient-sibling autoclose on focus change (§4.4 dim 4b, §5 step 9)
       { type: 'WINDOW_SHOW_REQUESTED', id: wid(2), activate: true },
       { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
     ]).state;
-    const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]);
-    assert.deepStrictEqual(closedIds(effects), [], 'a re-show arms afresh — a lifetime-scoped exemption would sweep here');
+    const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1), cause: { kind: 'machine', opSeq: 2 } }]);
+    assert.deepStrictEqual(closedIds(effects), [], 'a re-show re-stamps — a lifetime-scoped stamp would sweep here');
   });
 
   it('the activating show RE-STAMPS openSeq, so a palette already open BEFORE it is still swept (no over-spare)', () => {
@@ -4405,8 +4428,109 @@ describe('transient-sibling autoclose on focus change (§4.4 dim 4b, §5 step 9)
       { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: true },
       { type: 'WINDOW_SHOWN', id: wid(1), focused: false },
     ]).state;
-    const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]);
+    const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1), cause: { kind: 'machine', opSeq: 3 } }]);
     assert.deepStrictEqual(closedIds(effects), [wid(2)], 'the palette predates this open request, so it is swept');
+  });
+});
+
+// ── Focus provenance: who caused this focus (peek 7fffa286) ──────────────────
+//
+// The confirmed live trace the provenance model exists for. Three consecutive
+// transitions, all real:
+//
+//   1. a palette opens and LEGITIMATELY sweeps an open slide
+//      `OS_FOCUS_GAINED id(wm-15) fx=[CLOSE_WINDOW(wm-14)] swept=[wm-14]`
+//   2. the slide hides, and the WINDOW_HIDDEN arm hands the front off
+//      `fx=[HIDE_WINDOW(wm-3), RAISE_WINDOW(wm-2), FOCUS_CONTENT(wm-2), SET_STACKING(wm-2)]`
+//   3. the ECHO of that machine-issued raise sweeps the palette
+//      `OS_FOCUS_GAINED id(wm-2) fx=[CLOSE_WINDOW(wm-15)] swept=[wm-15]`
+//
+// Step 3 is the bug: the machine asked for that focus itself, one transition
+// earlier, and the palette is collateral. The reducer could not tell step 1 from
+// step 3 because `OS_FOCUS_GAINED` carried no provenance — it meant both "the
+// user switched windows" and "the OS is echoing an operation the machine itself
+// just requested". The pre-existing arming proxy could not help either: the
+// raise target had already held OS focus (so `shownWithActivateIntent &&
+// !hasHeldOsFocus` was false) and its `openSeq` is legitimately OLDER than the
+// palette's, so the ordering clause was never even consulted.
+
+describe('focus provenance: machine-caused vs world-caused OS focus (peek 7fffa286)', () => {
+  function closedIds(effects: Effect[]): WindowId[] {
+    return effectsOfType(effects, 'CLOSE_WINDOW').map((e) => e.id);
+  }
+
+  /** The op token an effect carries (only the focus family stamps one). */
+  const opSeqOf = (e: Effect): number | undefined => (e as unknown as { opSeq?: number }).opSeq;
+
+  /**
+   * An OLD ordinary window (wm-2, the raise target) plus a palette (wm-15) the
+   * user opened just now — a strictly LATER `openSeq` than wm-2's.
+   */
+  function traceState(): AppWindowState {
+    const s = openWindow(createInitialState(), 2, { kind: 'page-host', role: 'content', focused: true });
+    return drive(s, [
+      { type: 'WINDOW_REGISTERED', id: wid(15), kind: 'browser', role: 'palette', satellite: true },
+      { type: 'WINDOW_SHOW_REQUESTED', id: wid(15), activate: true },
+      { type: 'WINDOW_SHOWN', id: wid(15), focused: false },
+    ]).state;
+  }
+
+  it('a MACHINE-caused focus on an older window does not sweep a newer palette (trace step 3)', () => {
+    const { effects } = drive(traceState(), [
+      { type: 'OS_FOCUS_GAINED', id: wid(2), cause: { kind: 'machine', opSeq: 7 } },
+    ]);
+    assert.deepStrictEqual(
+      closedIds(effects),
+      [],
+      'the machine asked for this focus itself — the palette the user opened after that op survives',
+    );
+  });
+
+  it('a WORLD-caused focus on that same window sweeps the palette, exactly as today (trace step 1)', () => {
+    const { effects } = drive(traceState(), [{ type: 'OS_FOCUS_GAINED', id: wid(2) }]);
+    assert.deepStrictEqual(closedIds(effects), [wid(15)], 'a real window switch dismisses the transients');
+  });
+
+  it('an absent `cause` defaults to world, so every untouched producer keeps todays behavior', () => {
+    // Byte-identical to the assertion above, stated as its own fact: the default
+    // is what keeps the reducer safe while producers are migrated one at a time.
+    const { effects } = drive(traceState(), [{ type: 'OS_FOCUS_GAINED', id: wid(2) }]);
+    assert.deepStrictEqual(closedIds(effects), [wid(15)]);
+  });
+
+  it('a machine-caused echo burns NO one-shot latch: the next world focus still sweeps', () => {
+    const s = drive(traceState(), [
+      { type: 'OS_FOCUS_GAINED', id: wid(2), cause: { kind: 'machine', opSeq: 7 } },
+    ]).state;
+    const { effects } = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(2) }]);
+    assert.deepStrictEqual(
+      closedIds(effects),
+      [wid(15)],
+      'the self-caused echo must not spend the window s "first real focus"',
+    );
+  });
+
+  it('selectTransientAutoclose takes the cause directly, and defaults to world', () => {
+    const s = traceState();
+    assert.deepStrictEqual(selectTransientAutoclose(s, wid(2)), [wid(15)], 'default = world');
+    assert.deepStrictEqual(selectTransientAutoclose(s, wid(2), { kind: 'machine', opSeq: 7 }), []);
+  });
+
+  it('stamps a fresh, monotonic opSeq on every focus-family effect it emits', () => {
+    // The token the executor echoes back as `cause.opSeq`. A reducer-owned
+    // COUNTER, never a clock — `window-state.ts` keeps zero value imports.
+    const s = openWindow(createInitialState(), 1, { kind: 'page-host' });
+    assert.strictEqual(s.opSeqCounter, 0, 'nothing in a plain registration+show stamps an op');
+    const shown = reduce(s, { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: true });
+    const stamped = shown.effects.filter((e) => e.type === 'SHOW_WINDOW' || e.type === 'FOCUS_CONTENT');
+    assert.deepStrictEqual(stamped.map(opSeqOf), [1, 2], 'each focus-family effect carries its own token, in emission order');
+    assert.strictEqual(shown.state.opSeqCounter, 2, 'the counter advances with the stamps');
+    const raised = reduce(shown.state, { type: 'RAISE_WINDOW_REQUESTED', id: wid(1) });
+    assert.deepStrictEqual(
+      raised.effects.filter((e) => e.type === 'RAISE_WINDOW' || e.type === 'FOCUS_CONTENT').map(opSeqOf),
+      [3, 4],
+      'a later transition never re-uses a token',
+    );
   });
 });
 

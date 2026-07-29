@@ -139,15 +139,22 @@ export interface WindowBackend {
    * → show + focus. Headless runs stay focus-free (opacity-0 + inactive
    * show, no focus) while the `WINDOW_SHOWN` echo still records the raise's
    * focus intent for the machine.
+   *
+   * `opSeq` is the effect's op token (`window-state.ts Effect.opSeq`): the
+   * backend arms "expecting a self-caused focus, op N" on the target before the
+   * native call, so the focus it provokes comes back as `OS_FOCUS_GAINED
+   * { cause: { kind: 'machine', opSeq: N } }` instead of masquerading as a user
+   * gesture. See `FocusCause`.
    */
-  raiseWindow(id: WindowId): void;
+  raiseWindow(id: WindowId, opSeq: number): void;
 
   /**
    * Make a page-host's content surface the OS first responder (the
    * `FOCUS_CONTENT` effect — the `shouldFocusHybridContentOnHostFocus`
-   * invariant, standard on any front-change to a page-host).
+   * invariant, standard on any front-change to a page-host). `opSeq` is the
+   * effect's op token — same provenance contract as `raiseWindow`.
    */
-  focusContent(id: WindowId): void;
+  focusContent(id: WindowId, opSeq: number): void;
 
   /**
    * Drive native fullscreen to `on` (the `SET_FULLSCREEN` effect). The backend
@@ -239,8 +246,13 @@ export interface WindowBackend {
    * and the `WINDOW_SHOWN` echo carrying the caller's unmasked `activate`
    * intent (no native `'show'` event fires for an inactive show, and
    * headless runs are focus-free).
+   *
+   * `opts.opSeq` is the effect's op token: an ACTIVATING show can move OS focus,
+   * so the backend arms the same self-caused-focus expectation `raiseWindow`
+   * does before it makes the native call (see `FocusCause`). A non-activating
+   * show takes no focus and arms nothing.
    */
-  showWindow(id: WindowId, opts: { activate: boolean }): void;
+  showWindow(id: WindowId, opts: { activate: boolean; opSeq: number }): void;
 
   /** Hide, keep alive (the `HIDE_WINDOW` effect — the HUD app-blur sweep). */
   hideWindow(id: WindowId): void;

@@ -47,6 +47,15 @@
  * dismisses a palette opened AFTER the show was requested. `OS_FOCUS_GAINED`
  * has exactly two producers here, both genuine native reports: the host
  * window's `'focus'` and the page-host content WC's `'focus'`.
+ *
+ * Those two producers are also the sole source of focus PROVENANCE (peek
+ * 7fffa286): a native focus report cannot say whether the user switched windows
+ * or the OS is echoing a call this backend just made, but the backend itself
+ * knows — so it arms `pendingSelfCausedFocus` before every focus-moving native
+ * call and stamps the resulting event `cause: { kind: 'machine', opSeq }`.
+ * Anything arriving unarmed is `world`. That per-window arming is executor
+ * state, deliberately: the reducer may keep no such thing (it used to infer the
+ * fact from record history and got the machine's own handoff-raise echo wrong).
  */
 
 import { app, globalShortcut, screen, systemPreferences, webContents } from 'electron';
@@ -66,6 +75,7 @@ import { shouldCloseContentWCOnFinalize } from './izui-roles.js';
 import {
   decideWindowRegistration,
   type WindowRegistrationDecision,
+  type FocusCause,
   type WindowClass,
   type WindowId,
   type WindowKind,
@@ -260,6 +270,33 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
 
   /** The ONE deferred-blur settle handle (§4.4) — coalesced, at most one pending. */
   private pendingBlurSettle: ReturnType<typeof setImmediate> | null = null;
+
+  /**
+   * "I am expecting a self-caused focus on this window, from op N" — the op
+   * token (`window-state.ts Effect.opSeq`) of the last focus-family command this
+   * backend performed on each window, still awaiting its native `'focus'`.
+   *
+   * This is the ONLY honest source of focus provenance (`FocusCause`), and it
+   * belongs HERE: the executor knows which native call it just made; the reducer
+   * cannot know and must not guess (it used to guess, from a pair of per-record
+   * booleans, and got the machine's own handoff-raise echo wrong — peek
+   * 7fffa286). State in the backend, never in the reducer.
+   *
+   * Lifecycle, all three edges deliberate:
+   *   - ARMED by `armSelfCausedFocus`, immediately before a native call that can
+   *     move OS focus (an ACTIVATING show, a raise, a content focus). A second
+   *     op on the same window overwrites the token — the latest op is the one
+   *     whose echo is in flight, and an older token surviving would label that
+   *     echo stale.
+   *   - CONSUMED (one shot) by `takeFocusCause` in the `'focus'` listeners.
+   *   - DROPPED on the window's own `blur` and `closed`: focus went somewhere
+   *     else, so whatever arrives next is a NEW event and not our echo. Without
+   *     this a never-echoed arming (a `focus()` on a window that already held
+   *     first responder emits no event) would sit there and mislabel the user's
+   *     next genuine focus as machine-caused — the exact failure mode that makes
+   *     a token safer than a bare boolean.
+   */
+  private readonly pendingSelfCausedFocus = new Map<WindowId, number>();
 
   /** Per-window bounded fullscreen settle timers (§2.3). */
   private readonly fullscreenSettleTimers = new Map<WindowId, ReturnType<typeof setTimeout>>();
@@ -546,13 +583,22 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   ): void {
     win.on('focus', () => {
       this.cancelBlurSettle();
-      this.emit({ type: 'OS_FOCUS_GAINED', id, lastHttpUrl: this.readHttpUrl(id) });
+      this.emit({
+        type: 'OS_FOCUS_GAINED',
+        id,
+        lastHttpUrl: this.readHttpUrl(id),
+        cause: this.takeFocusCause(id),
+      });
     });
     // The ONE deferred-blur settle: blur alone can't tell "focus left Peek" from
     // "focus is moving to the next Peek window" — Electron fires the old window's
     // `blur` BEFORE the new window's `focus` (§4.4). So arm a one-tick settle; a
     // focus that lands in-app cancels it before it runs.
     win.on('blur', () => {
+      // Focus left this window, so any self-caused-focus arming for it is void —
+      // whatever focuses it next is a fresh event, not our echo (see
+      // `pendingSelfCausedFocus`).
+      this.pendingSelfCausedFocus.delete(id);
       this.armBlurSettle();
     });
     win.on('show', () => {
@@ -571,6 +617,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     });
     win.on('closed', () => {
       this.clearFullscreenSettle(id);
+      this.pendingSelfCausedFocus.delete(id);
       this.windows.delete(id);
       // `osWindowId` was captured at registration — reading `win.id` here would
       // throw on the already-destroyed native window.
@@ -617,7 +664,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (kind === 'page-host' && rendererWC) {
       rendererWC.on('focus', () => {
         this.cancelBlurSettle();
-        this.emit({ type: 'OS_FOCUS_GAINED', id, lastHttpUrl: this.readHttpUrl(id) });
+        this.emit({
+          type: 'OS_FOCUS_GAINED',
+          id,
+          lastHttpUrl: this.readHttpUrl(id),
+          cause: this.takeFocusCause(id),
+        });
         this.emit({ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id, held: true });
       });
       // Mirrors the content WC's first-responder status (§5 step 11) — no
@@ -626,6 +678,38 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         this.emit({ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id, held: false });
       });
     }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Focus provenance (peek 7fffa286) — see `pendingSelfCausedFocus`.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Declare, immediately before a native call that can move OS focus onto `id`,
+   * that the focus it provokes is the machine's own — carrying `opSeq`, the
+   * token of the effect that asked for it.
+   *
+   * Call sites are exactly the focus-family commands, and ONLY where the native
+   * call really can take focus: an activating `performOsShow`, `raiseWindow`'s
+   * content focus, `focusContent`. A `showInactive()` takes no focus and arms
+   * nothing — arming it would leave a token nothing consumes.
+   */
+  private armSelfCausedFocus(id: WindowId, opSeq: number): void {
+    this.pendingSelfCausedFocus.set(id, opSeq);
+  }
+
+  /**
+   * Consume the arming for `id` and report the provenance of the focus that just
+   * arrived: `machine` (with the op token) when this backend was expecting it,
+   * `world` otherwise. One shot — a second focus with nothing armed is `world`,
+   * which is what makes a self-caused echo unable to spend a window's "first real
+   * focus".
+   */
+  private takeFocusCause(id: WindowId): FocusCause {
+    const opSeq = this.pendingSelfCausedFocus.get(id);
+    if (opSeq === undefined) return { kind: 'world' };
+    this.pendingSelfCausedFocus.delete(id);
+    return { kind: 'machine', opSeq };
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -648,7 +732,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * for the shape of that feedback loop. The same holds for `showWindow`; see
    * the module header.
    */
-  raiseWindow(id: WindowId): void {
+  raiseWindow(id: WindowId, opSeq: number): void {
     const entry = this.windows.get(id);
     if (!entry) return;
     const { win, kind, rendererWC } = entry;
@@ -657,9 +741,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // Non-headless: activating show + content first responder (the
       // `hybridShowIntent` invariant — the R4/R5/R7 dead-focus cluster).
       // Headless: opacity-0 + showInactive, never activate/focus.
-      this.performOsShow(win, !isHeadless());
+      this.performOsShow(id, win, !isHeadless(), opSeq);
       if (!isHeadless() && rendererWC && !rendererWC.isDestroyed()) {
         try {
+          // The raise's content-focus half provokes `rendererWC 'focus'` — the
+          // producer that carried the peek 7fffa286 sweep. Label it.
+          this.armSelfCausedFocus(id, opSeq);
           rendererWC.focus();
         } catch {
           /* wc gone mid-raise */
@@ -670,10 +757,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     }
     // Browser window: headless-safe show (opacity-0 + inactive under headless),
     // activate + focus only when not headless.
-    this.performOsShow(win, !isHeadless());
+    this.performOsShow(id, win, !isHeadless(), opSeq);
     this.emit({ type: 'WINDOW_SHOWN', id, focused: true });
     if (!isHeadless()) {
       try {
+        this.armSelfCausedFocus(id, opSeq);
         (win as unknown as BrowserWindow).focus();
       } catch {
         /* window gone mid-raise */
@@ -682,9 +770,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   }
 
   /** Make a page-host's content WC the macOS first responder. */
-  focusContent(id: WindowId): void {
+  focusContent(id: WindowId, opSeq: number): void {
     const wc = this.windows.get(id)?.rendererWC;
     if (!wc || wc.isDestroyed()) return;
+    // The focus this call provokes is the machine's own, not a user gesture.
+    this.armSelfCausedFocus(id, opSeq);
     wc.focus();
   }
 
@@ -938,7 +1028,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    *     here synthesizes an `OS_FOCUS_GAINED` to stand in for the activation
    *     the headless mask declined. See the module header for why not.
    */
-  showWindow(id: WindowId, opts: { activate: boolean }): void {
+  showWindow(id: WindowId, opts: { activate: boolean; opSeq: number }): void {
     const entry = this.windows.get(id);
     if (!entry) return;
     const { win, kind, windowClass } = entry;
@@ -956,7 +1046,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     const osActivate =
       (kind === 'page-host' ? opts.activate && windowClass !== 'quick-view' : opts.activate) &&
       !isHeadless();
-    this.performOsShow(win, osActivate);
+    this.performOsShow(id, win, osActivate, opts.opSeq);
     this.emit({ type: 'WINDOW_SHOWN', id, focused: opts.activate });
   }
 
@@ -966,7 +1056,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * Opacity is zeroed BEFORE the show; the entry.ts headless prototype guard
    * enforces exactly that order.
    */
-  private performOsShow(win: NativeWindow, activate: boolean): void {
+  private performOsShow(id: WindowId, win: NativeWindow, activate: boolean, opSeq: number): void {
     if (isHeadless()) {
       try {
         win.setOpacity(0);
@@ -976,6 +1066,11 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     }
     if (activate) {
       try {
+        // An activating show is `makeKeyAndOrderFront:` — it takes the macOS key
+        // window, so the `'focus'` it provokes is self-caused. Armed only on this
+        // branch: `showInactive()` below takes no focus at all (see
+        // `pendingSelfCausedFocus`).
+        this.armSelfCausedFocus(id, opSeq);
         win.show();
       } catch {
         /* show unsupported in some envs */
