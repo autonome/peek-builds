@@ -425,6 +425,26 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       /* window gone mid-registration — no rect to seed */
     }
 
+    // Identity log: ties this wm-N to the platform window + a best-effort URL
+    // so a later log line naming only `id` can be read as evidence about
+    // WHICH window did something. Fires on both the mint and merge branches —
+    // registration is idempotent and the second call (richer spec) is often
+    // where a real URL first becomes available (the first may still be
+    // about:blank pre-`loadURL`).
+    DEBUG &&
+      console.log(
+        '[window-backend] registerWindow',
+        id,
+        'osWindowId',
+        osWindowId,
+        'kind',
+        kind,
+        'class',
+        spec.class,
+        'url',
+        this.urlSafe(rendererWC),
+      );
+
     return { id, decision, initialBounds };
   }
 
@@ -1127,6 +1147,20 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       return !win.isDestroyed() && win.isVisible();
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Best-effort URL read for diagnostic logging (`registerWindow`'s identity
+   * log) — never throws. Returns '' when the WC is absent, destroyed, or the
+   * read otherwise fails (e.g. not yet navigated).
+   */
+  private urlSafe(wc: NativeWebContents | null): string {
+    if (!wc || wc.isDestroyed()) return '';
+    try {
+      return wc.getURL();
+    } catch {
+      return '';
     }
   }
 
