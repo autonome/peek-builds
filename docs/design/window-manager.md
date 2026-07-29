@@ -23,23 +23,23 @@ and the commit log, not against the prose elsewhere in this document, which drif
 | 5 | Z-order / stacking (`SET_STACKING`, `stackOrder`) | DONE |
 | 6 | Visibility (`visible` authoritative, app-hide derived, no polling) | DONE |
 | 7 | Geometry / maximize (bounds/maximize collapse into one reducer-owned model) | DONE |
-| 8 | Focus rivals (delete `izui-state.ts`'s focus surface, `getFocusedWindow()` call sites) | PARTIAL — 1 entry / 1 call still allowlisted under §5 step 8: `windows.ts` `focus` ×1 (`showHybridHost`'s `contentWC.focus()`). `main.ts` `focus` ×2 is gone (this task): the switcher-selection overlay-restore block (`app.on('browser-window-created')`'s `'closed'` handler) now dispatches `SWITCHER_SELECTED` — resolving the selected target through `getWindowIdFor` instead of forking on `getLiveWindow`/`getHybridWindow` and calling `.focus()` directly. `hybrid-overlay.ts` `focus` ×1 is gone (an earlier task): the Cmd+L overlay focus (`wireShowNavbarFocus`) now dispatches `WINDOW_SHOW_REQUESTED { activate: true }` instead of calling `overlayWin.focus()` directly. The `izui-state.ts` `showInactive` ×2 entry is gone — the no-hide overlay model (`ipc.ts` always passes `enterOverlay(windowId, [])`) made both restore loops unreachable; deleted by deletion, along with the now-dead window-provider injection apparatus. |
-| 9 | Overlay attach/retarget + transient autoclose | PARTIAL — transient autoclose and overlay follow/retarget are absorbed (`window-state.ts` `selectTransientAutoclose`, `applyOverlayFollow`); the unwired `teardownHybridOverlay` (zero callers) is deleted; the test bridge's `showFakeHybridWindowInactive`/`destroyFakeHybridWindow` now dispatch `WINDOW_SHOW_REQUESTED`/`WINDOW_DESTROY_REQUESTED` instead of driving Electron directly, dropping `hybrid-overlay.ts` `showInactive`/`destroy` from the allowlist entirely; the redundant devtools re-focus calls in `ipc.ts` and `windows.ts` are deleted (`DEVTOOLS_OPENED` already owns first-responder restore); 2 entries / 2 calls still allowlisted under §5 step 9: `ipc.ts` `focus` ×1, `main.ts` `close` ×1 |
+| 8 | Focus rivals (delete `izui-state.ts`'s focus surface, `getFocusedWindow()` call sites) | PARTIAL — 4 entries / 8 calls still allowlisted under §5 step 8: `hybrid-overlay.ts` `focus` ×1, `izui-state.ts` `showInactive` ×2, `main.ts` `focus` ×2, `windows.ts` `focus` ×3 |
+| 9 | Overlay attach/retarget + transient autoclose | PARTIAL — transient autoclose and overlay follow/retarget are absorbed (`window-state.ts` `selectTransientAutoclose`, `applyOverlayFollow`); 4 entries / 6 calls still allowlisted under §5 step 9: `hybrid-overlay.ts` `showInactive` ×1 (test bridge), `destroy` ×2, `ipc.ts` `focus` ×2, `main.ts` `close` ×1 |
 | 10 | Displays and Spaces | DONE |
 | 11 | Session save / restore (last) | PARTIAL — 8 tasks landed (11.1, two Task 3s, two Task 4s, Task 5, Task 7, Task 8 — see §5 step 11 for the full write-up and the task-number collision note); no commit evidence of any task beyond these 8 |
 
 ### The mechanical progress measure
 
-`node scripts/check-r2-window-ops.mjs` (run 2026-07-29): **18 allowlisted entries / 26
+`node scripts/check-r2-window-ops.mjs` (run 2026-07-29): **23 allowlisted entries / 37
 calls**. This number — not the table above, not any other prose in this document — is the
 honest measure of how much window-op code still bypasses the machine. It is expected to
 shrink monotonically to zero; the check fails a PR that grows it.
 
 ### Remaining work, most-tractable first
 
-1. Close step 8: route its 1 residual entry (1 call) through the machine, delete the
-   allowlist entry.
-2. Close step 9: route its 2 residual call sites through the machine, delete their
+1. Close step 8: route its 4 residual call sites through the machine, delete their
+   allowlist entries.
+2. Close step 9: route its 4 residual call sites through the machine, delete their
    allowlist entries.
 3. Determine whether step 11 has any task beyond the 8 already landed. No commit or doc
    evidence of one exists as of this writing; if none turns up, step 11 — and the whole
@@ -1182,12 +1182,12 @@ machine + adapter pair and exposes the numeric-id seam (`getWindowIdFor()` /
 through (§3 scope decision).
 
 **The R2 check is live** — `scripts/check-r2-window-ops.mjs`, in the
-`test:desktop:electron` chain — each allowlist entry tagged with the §5 step that
-deletes it. See "Where we are" at the top of this document for the canonical live
-entry/call count; this passage deliberately does not restate a number that would go
-stale the next time the allowlist shrinks. The sole exempt file is
-`apps/desktop/main/electron-window-backend.ts` (swapped from the executor when the
-port landed). The entry count is the migration's progress bar; it only goes down.
+`test:desktop:electron` chain: **23 allowlisted entries / 37 calls** as of this pass
+(`node scripts/check-r2-window-ops.mjs`, 2026-07-29 — see "Where we are" at the top of
+this document for the canonical live count), each tagged with the §5 step that deletes
+it. The sole exempt file is `apps/desktop/main/electron-window-backend.ts` (swapped from
+the executor when the port landed). The entry count is the migration's progress bar; it
+only goes down.
 
 **The machine's separate belief about front is deleted; `front` is a pure projection of
 OS focus** (commit ef200b7c) — the claim field, its invalidation clause, and the
