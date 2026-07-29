@@ -106,6 +106,65 @@ than restating its contents.**
 
 ---
 
+## 0. The governing rule set — derive everything from this
+
+**Operator directive, 2026-07-29/30, after a live sitting exposed three bugs that were all
+the same mistake. This section outranks every model described below it. Where sections 3–5
+disagree with this, they are the older design and this is the intent.** The next rewrite
+derives from these rules; it does not add mechanisms alongside them.
+
+> "everything is a window. always." — one single stacking order, always, which is a *fact*
+> regardless of what weird crap you come up with. "I keep having to say that."
+
+**Stored facts, and nothing else:**
+1. **One stacking order containing every window, always.** No exclusions, no eligibility
+   filter, no window removed from the order to make a policy convenient.
+2. **Which window holds key**, as one id or none.
+3. Each window's own lifecycle state, plus its intrinsic properties as created.
+4. Whether the machine itself caused the event currently being handled.
+
+**Everything else is a query over those, computed where the decision is made and never
+stored:** the restore target (topmost window in the order matching a restorable predicate),
+raise eligibility, the target of an input event.
+
+**Why `front` must stop being stored state.** `front` was "the target window", with
+`isEligibleFront` excluding satellites so a palette could never be named by it. That
+exclusion was load-bearing for switcher restore (see section 5's step 8 live-verification
+note) — but it means `front` and the window actually holding key diverge permanently for
+satellites, which is what broke Escape. A window was excluded from a *fact* to make a
+*policy* easy. Replace it with the query in rule 1, and the divergence cannot exist.
+
+**Intrinsic window properties are orthogonal axes — never a pre-combined class name.** At
+least three, all genuine OS properties: **level** (normal / always-on-top, and macOS bands
+levels, so pinned windows sit above normal ones and are ordered among themselves — many
+coexist, no cap implied); **can become key**; **accepts input vs passes clicks through**.
+`classifyWindowRegistration` currently collapses `alwaysOnTop === true && focusable === false`
+into the single class `hud`, and downstream predicates branch on that label — so any window
+wanting a different combination needs a new class or an exception. The existing symptom: the
+stacking exclusion set is deliberately NOT computed from the `satellite` flag, because
+`quick-view` is `satellite: false` yet excluded. Keep the properties; let predicates read
+them; class names may remain creation-time shorthand that nothing downstream branches on.
+Note `focusable: false` is a real fact (the OS genuinely will not give such a window key), so
+"a HUD never holds key" needs no special case — unlike `satellite`, which was an invention.
+
+**Input interpretation lives OUTSIDE the window manager.** Hotkeys and Escape are not window
+manager concerns. Something outside resolves what the user meant and emits a plain window
+intent; the machine never learns that a key called Escape exists. Escape specifically is a
+context-dependent combo button, which is why its policy does not belong inside the machine.
+The machine keeps exactly one job: **the single place that can change window order,
+shown/hidden, and which window holds key.** Today `decideEscape`, `escPolicy`,
+`escUnhandledPolicy` and the `ASK_RENDERER` / `ESC_RENDERER_ANSWER` round trip all live
+inside it and must move out. Two consequences fall out: the `'palette'` and `'utility'` arms
+of `escPolicy` stop being unreachable dead code, and `deriveEscGrabRegistered` becomes the
+Escape subsystem *querying* machine state rather than the machine deciding an OS grab.
+
+**The one hazard in that split:** an interpreter that reads state and then emits an intent has
+a gap where state can change in between. Carry the epoch the intent assumed and let the
+machine drop stale intents — the correlation-token pattern already working in this codebase
+as `ASK_RENDERER{seq}` / `ESC_RENDERER_ANSWER{seq}`.
+
+---
+
 ## 1. The mandate
 
 > "Make it one single deterministic system that is a Window Manager. We are making a
