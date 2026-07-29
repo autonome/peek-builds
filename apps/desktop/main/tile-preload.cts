@@ -2099,17 +2099,32 @@ function buildAPI(): Record<string, unknown> {
     },
   };
 
-  // ── Session (if granted) ──────────────────────────────────────────
+  // ── Session (mixed gating — ONE assignment for the whole namespace) ─
   //
-  // Session operations require the `session` capability. Minimal
-  // surface for now — only `saveSpaceWorkspaces`. Used by
-  // features/spaces and features/groups to persist per-space window
-  // layouts.
+  // This is the ONLY place `api.session` is assigned. It used to be
+  // written twice (here, and again next to `api.nav` further down); the
+  // second assignment silently clobbered the first, so
+  // `saveSpaceWorkspaces` never existed on any tile and every caller —
+  // which all guard with `api.session?.saveSpaceWorkspaces` — no-op'd
+  // instead of throwing. Add new session methods to this object; never
+  // re-assign `api.session`.
+  //
+  // The methods do NOT share a gate:
+  //   - `saveSpaceWorkspaces` requires the `session` capability. Used by
+  //     features/spaces and features/groups to persist per-space window
+  //     layouts.
+  //   - `save` / `restoreInteractive` / `reopenLastClosed` are
+  //     trustedBuiltin only, consumed by the core background renderer
+  //     (renderer/index.js).
+  // Keep them that way: a non-trusted tile with the capability must get
+  // only `saveSpaceWorkspaces`, and a trusted renderer without the
+  // capability must still not reach `saveSpaceWorkspaces`.
   function hasSessionCapability(): boolean {
     return grantedCapabilities?.session === true;
   }
 
   api.session = {
+    // Capability-gated.
     saveSpaceWorkspaces: () => {
       if (!hasSessionCapability()) {
         return Promise.reject(new Error('[tile-preload] api.session.saveSpaceWorkspaces requires the session capability'));
@@ -2117,6 +2132,25 @@ function buildAPI(): Record<string, unknown> {
       return ipcRenderer.invoke('tile:session:save-space-workspaces', {
         token: tileToken,
       });
+    },
+    // trustedBuiltin only.
+    save: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.session requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:session:save', { token: tileToken });
+    },
+    restoreInteractive: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.session requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:session:restore-interactive', { token: tileToken });
+    },
+    reopenLastClosed: () => {
+      if (!trustedBuiltin) {
+        return Promise.resolve({ success: false, error: 'api.session requires trustedBuiltin' });
+      }
+      return ipcRenderer.invoke('tile:session:reopen-last-closed', { token: tileToken });
     },
   };
 
@@ -2472,30 +2506,13 @@ function buildAPI(): Record<string, unknown> {
     },
   };
 
-  // ── Session (trustedBuiltin only) ─────────────────────────────────────
+  // ── Session ───────────────────────────────────────────────────────────
   //
-  // Session save / restore-interactive / reopen-last-closed handlers,
-  // consumed by the core background renderer (app/index.js).
-  api.session = {
-    save: () => {
-      if (!trustedBuiltin) {
-        return Promise.resolve({ success: false, error: 'api.session requires trustedBuiltin' });
-      }
-      return ipcRenderer.invoke('tile:session:save', { token: tileToken });
-    },
-    restoreInteractive: () => {
-      if (!trustedBuiltin) {
-        return Promise.resolve({ success: false, error: 'api.session requires trustedBuiltin' });
-      }
-      return ipcRenderer.invoke('tile:session:restore-interactive', { token: tileToken });
-    },
-    reopenLastClosed: () => {
-      if (!trustedBuiltin) {
-        return Promise.resolve({ success: false, error: 'api.session requires trustedBuiltin' });
-      }
-      return ipcRenderer.invoke('tile:session:reopen-last-closed', { token: tileToken });
-    },
-  };
+  // `api.session` (trustedBuiltin `save` / `restoreInteractive` /
+  // `reopenLastClosed` PLUS the capability-gated `saveSpaceWorkspaces`)
+  // is assigned ONCE, up with the other capability-gated namespaces —
+  // search for "Session (mixed gating". Assigning it a second time here
+  // is what dropped `saveSpaceWorkspaces` from every tile; don't.
 
   // ── Debug flags (trustedBuiltin only) ─────────────────────────────────
   //

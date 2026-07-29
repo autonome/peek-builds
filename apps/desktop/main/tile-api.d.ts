@@ -597,6 +597,12 @@ interface TileSession {
    * Requires `session` capability.
    */
   saveSpaceWorkspaces(): Promise<{ success: boolean; error?: string }>;
+  /** Save the full session. Requires trustedBuiltin. */
+  save(): Promise<{ success: boolean; error?: string }>;
+  /** Restore the saved session interactively. Requires trustedBuiltin. */
+  restoreInteractive(): Promise<{ success: boolean; error?: string }>;
+  /** Reopen the most recently closed window. Requires trustedBuiltin. */
+  reopenLastClosed(): Promise<{ success: boolean; error?: string }>;
 }
 
 // ─── Screen ──────────────────────────────────────────────────────────

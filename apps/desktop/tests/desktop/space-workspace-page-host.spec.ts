@@ -137,14 +137,15 @@ test.describe('space workspaces persist page hosts @desktop', () => {
     // snapshots"), so the existing `forceSaveSession` bridge drives BOTH save
     // paths — no new main-process surface needed for this spec.
     //
-    // NOT driven through `api.session.saveSpaceWorkspaces()`, the entry point
-    // features/spaces + features/groups use: `main/tile-preload.cts` assigns
-    // `api.session` TWICE (the capability-gated `{saveSpaceWorkspaces}` object,
-    // then a later trustedBuiltin-only `{save, restoreInteractive,
-    // reopenLastClosed}` object), and the second assignment clobbers the first,
-    // so that method does not exist on any tile's `window.app`. Separate,
-    // still-open defect — not this spec's subject, but it is why the renderer
-    // entry point cannot be used here.
+    // Deliberately NOT driven through `api.session.saveSpaceWorkspaces()`, the
+    // entry point features/spaces + features/groups use. That method used to be
+    // missing entirely — `main/tile-preload.cts` assigned `api.session` TWICE
+    // and the later trustedBuiltin-only `{save, restoreInteractive,
+    // reopenLastClosed}` object clobbered the capability-gated
+    // `{saveSpaceWorkspaces}` one. That clobber is fixed (the namespace is now
+    // one assignment, gated per method) and the next test asserts the surface;
+    // this test keeps driving the main-process save directly, because that is
+    // the path the failing-first evidence for the hybrid blind spot covered.
     await app.evaluateMain!((() =>
       (globalThis as any).__peek_test.forceSaveSession()) as any);
 
@@ -191,5 +192,40 @@ test.describe('space workspaces persist page hosts @desktop', () => {
         height: expect.any(Number),
       }),
     );
+  });
+
+  test('api.session exposes saveSpaceWorkspaces alongside the trustedBuiltin methods', async () => {
+    // `main/tile-preload.cts` assigned `api.session` twice; the second
+    // assignment (trustedBuiltin `save` / `restoreInteractive` /
+    // `reopenLastClosed`) replaced the first (capability-gated
+    // `saveSpaceWorkspaces`) wholesale, so `saveSpaceWorkspaces` existed on no
+    // tile at all. Every caller guards with `api.session?.saveSpaceWorkspaces`,
+    // so `features/spaces/background.js closeSpace` and `features/groups/home.js`
+    // silently no-op'd instead of throwing — the reason this defect survived.
+    // The namespace is now assigned once with per-method gating; assert all four
+    // are present so a future re-assignment fails here rather than going quiet.
+    const shape = await bgWindow.evaluate(() => {
+      const session = (window as unknown as { app: any }).app?.session;
+      return {
+        present: !!session,
+        saveSpaceWorkspaces: typeof session?.saveSpaceWorkspaces,
+        save: typeof session?.save,
+        restoreInteractive: typeof session?.restoreInteractive,
+        reopenLastClosed: typeof session?.reopenLastClosed,
+      };
+    });
+
+    expect(shape.present, 'api.session is missing from window.app entirely').toBe(true);
+    expect(
+      shape.saveSpaceWorkspaces,
+      'api.session.saveSpaceWorkspaces is missing — api.session was assigned ' +
+        'twice again and the trustedBuiltin object clobbered the capability-gated one',
+    ).toBe('function');
+    expect(
+      shape.save,
+      'api.session.save is missing — the trustedBuiltin session methods were dropped',
+    ).toBe('function');
+    expect(shape.restoreInteractive).toBe('function');
+    expect(shape.reopenLastClosed).toBe('function');
   });
 });
