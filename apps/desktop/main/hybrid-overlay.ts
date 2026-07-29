@@ -794,55 +794,6 @@ export function initHybridOverlay(): void {
 }
 
 /**
- * Tear down the overlay manager: unsubscribe and destroy the singleton window
- * (the follow is the machine's attachment relation, which dies with the
- * window's registration). Self-contained; safe to call when never
- * initialized. (Not currently wired to any lifecycle hook — the overlay lives
- * for the app's lifetime, like the old chrome — but provided for completeness
- * and test isolation.)
- */
-export function teardownHybridOverlay(): void {
-  if (unsubscribeActive) {
-    unsubscribeActive();
-    unsubscribeActive = null;
-  }
-  // R1: drop the app-active gate subscription (the machine keeps owning the
-  // boolean — there is nothing to reset here).
-  if (unsubscribeAppActive) {
-    try { unsubscribeAppActive(); } catch { /* gone */ }
-    unsubscribeAppActive = null;
-  }
-  showNavbarFocusCount = 0;
-  // (No overlay-id / focus provider to clear — the overlay's satellite
-  // registration with the machine handles close-resolution + focus-group.)
-  // Drop the hybrid-teardown permission-deny listener (re-registered on init).
-  registerHybridWindowClosedListener(null);
-  if (overlayWin && !overlayWin.isDestroyed()) {
-    overlayWin.destroy();
-  }
-  overlayWin = null;
-  overlayWmId = null;
-  // Drop the click-capture + show-navbar-focus subscriptions so a later re-init
-  // re-wires cleanly.
-  try {
-    unsubscribe(getSystemAddress(), 'page-overlay:set-capture');
-  } catch {
-    /* never throw on teardown */
-  }
-  try {
-    unsubscribe(getSystemAddress(), 'page:show-navbar');
-  } catch {
-    /* never throw on teardown */
-  }
-  try {
-    unsubscribe(getSystemAddress(), 'page:execute-script');
-  } catch {
-    /* never throw on teardown */
-  }
-  captureWired = false;
-}
-
-/**
  * Test-only: read the singleton overlay's state for focus-free verification.
  * Returns null if no overlay window has been created yet.
  */
