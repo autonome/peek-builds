@@ -1929,8 +1929,27 @@ export function wireHybridContentEvents(
         // timer): when unfocused, clear the hover dir so the host shows no resize
         // cursor until it's focused, rather than flickering. The drag path is
         // unaffected — a press focuses the host and sets its cursor directly.
-        let contentFocused = false;
-        try { contentFocused = contentWC.isFocused(); } catch { contentFocused = false; }
+        //
+        // R2: the FACT comes from the machine, not from a live
+        // `contentWC.isFocused()` here. `WindowRecord.contentFocused` is the
+        // backend's mirror of THIS exact webContents' native focus/blur pair
+        // (`electron-window-backend.ts attachNativeListeners` wires
+        // `rendererWC 'focus'/'blur'` → `CONTENT_FIRST_RESPONDER_CHANGED`, and
+        // `rendererWC` IS the `contentWC: view.webContents` this host registered
+        // with in `assembleHybridPageHost`). Same fact, one owner.
+        //
+        // ABSENT (`contentFocused === undefined`) means "nothing reported yet",
+        // NOT "unfocused" — the same convention `deriveEscGrabRegistered`
+        // documents. It reads it as strict `=== false` because absent must not
+        // ARM the Esc net; this site reads strict `=== true` because absent must
+        // not PAINT a cursor. Same rule underneath: when the machine cannot
+        // vouch that this content is first responder, take no action. That also
+        // matches what the live read did in the only state that is genuinely
+        // never-reported — a host shown inactive and never focused, where
+        // `isFocused()` was false too.
+        const hoverMachineId = getWindowIdFor(hostWindowId);
+        const contentFocused =
+          hoverMachineId != null && getMachineWindowRecord(hoverMachineId)?.contentFocused === true;
         setHoverDir(contentFocused ? resizeDirAt(bounds, input.globalX, input.globalY, wantCursor !== null) : null);
       }
     } else if (t === 'mouseUp' && input.button === 'left') {

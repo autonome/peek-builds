@@ -209,8 +209,11 @@ const READ_ALLOWLIST = [
     why: 'KNOWN VIOLATION, fix pending: the inline registerWindow callback passed to configureTileLauncher feeds classifyWindowRegistration() from live OS state (win.isAlwaysOnTop()) instead of the machine facts the caller already holds. The window class is a machine fact — deriving it by asking the OS at registration time is exactly the re-derivation R2 forbids. Should become the caller-supplied create params' },
   { file: 'apps/desktop/main/main.ts', call: 'isFocusable', count: 2, kind: 'decision',
     why: 'KNOWN VIOLATION, fix pending: same registerWindow callback — win.isFocusable() feeds BOTH classifyWindowRegistration() and isSatelliteRegistration(). Satellite-ness gates whether the window can ever become front, so this is a live-OS read deciding window behaviour. Same fix as the isAlwaysOnTop entry above' },
-  { file: 'apps/desktop/main/ipc.ts', call: 'isFocused', count: 1, kind: 'decision',
-    why: 'KNOWN VIOLATION, fix pending: the hybrid content pointer-move handler in wireHybridContentEvents gates the resize-hover cursor on contentWC.isFocused() (setHoverDir(contentFocused ? … : null)). The intent is right — only the first-responder window paints an injected cursor without flashing — but the focus fact belongs to the machine (it owns front/focus), so this should read machine state rather than poll the OS webContents' },
+  // (RETIRED 2026-07-29) apps/desktop/main/ipc.ts isFocused ×1 — the hybrid
+  // content pointer-move handler in wireHybridContentEvents gated the
+  // resize-hover cursor on contentWC.isFocused(). It now reads the machine's
+  // WindowRecord.contentFocused (strict === true; absent = nothing reported
+  // yet = no cursor), which mirrors that same webContents' native focus/blur.
 
   // ── Reported, not decided: value flows out as data ───────────────────────
   { file: 'apps/desktop/main/window-presenter.ts', call: 'isFocused', count: 2, kind: 'reported',
