@@ -40,6 +40,7 @@ import * as assert from 'node:assert';
 
 import {
   serializeSession,
+  serializeSpaceWorkspaces,
   restorableBoundsFromRecord,
   readPreMaxBounds,
   readStackIndex,
@@ -47,6 +48,7 @@ import {
   sanitizeParams,
   mirrorPlacementIntent,
   type SerializeSessionInput,
+  type SerializeSpaceWorkspacesInput,
   type SessionSaveWindow,
   type SessionSavePresentation,
 } from './session-projection.js';
@@ -364,6 +366,17 @@ function inputFor(world: World): SerializeSessionInput {
     createdAt: CREATED_AT,
     forceForTest: world.forceForTest,
   };
+}
+
+/**
+ * `serializeSpaceWorkspaces` reads the exact same read-phase rows and machine
+ * snapshot `serializeSession` does — reuse `inputFor`'s conversion so a
+ * hybrid-shaped fixture (see `contentFixture`'s `hybridPageHost` override
+ * below) exercises the real save-path row shape rather than a bespoke one.
+ */
+function spaceInputFor(world: World, createdAt = CREATED_AT): SerializeSpaceWorkspacesInput {
+  const { snapshot, windows, getPresentation, getContext } = inputFor(world);
+  return { snapshot, windows, getPresentation, getContext, createdAt };
 }
 
 function assertSameOnDiskShape(world: World, label: string): void {
@@ -1099,5 +1112,147 @@ describe('session-projection — the extracted pure helpers', () => {
     assert.deepStrictEqual(mirrorPlacementIntent({ placement: { mode: 'edge', edge: 'top' } }).screenEdge, 'top');
     assert.strictEqual(mirrorPlacementIntent({ placement: { mode: 'parent-centered' } }).center, true);
     assert.strictEqual(mirrorPlacementIntent({}).placementMode, undefined);
+  });
+});
+
+/**
+ * `serializeSpaceWorkspaces` — the second, entirely separate save path
+ * (`session.ts saveSpaceWorkspaces`, writes `workspace:<spaceId>` rows read by
+ * `features/spaces/background.js` and `features/groups/home.js`). §5 step 11
+ * task 9: this had its own copy of the four defects `serializeSession` already
+ * fixed for the main snapshot. The first test below is the LOAD-BEARING one —
+ * it pins the live bug (every hybrid page-host silently dropped) that
+ * motivated this whole task.
+ */
+describe('serializeSpaceWorkspaces — hybrid page-hosts + machine-derived fields (§5 step 11 task 9)', () => {
+  const SPACE_CONTEXT = (spaceId: string, spaceName = 'My Space'): WindowContext => ({
+    mode: 'space',
+    modeMetadata: { spaceId, spaceName },
+  });
+
+  it('LOAD-BEARING: a hybrid page-host in space mode reaches its workspace snapshot', () => {
+    // The exact row `buildSessionSaveWindows` (session.ts) now produces for a
+    // BaseWindow-backed hybrid page-host: `hybridPageHost: true` in params, a
+    // URL resolved from the hybrid registry (never `getLiveWindow`). Before
+    // the fix, the pre-extraction loop's `if (!win) continue` guard
+    // (`getLiveWindow` is `BrowserWindow.fromId`-backed, always null for a
+    // hybrid BaseWindow) dropped this row before a decision was ever made —
+    // every hybrid page-host in space mode was silently missing from the
+    // saved workspace. Since the canvas removal, every web page window IS a
+    // hybrid page-host, so this was total, not partial, data loss.
+    const world: World = {
+      fixtures: [contentFixture(501, 'w501', {
+        params: { ...CONTENT_PARAMS, hybridPageHost: true },
+        rawUrl: 'https://example.com/hybrid-page',
+        address: 'https://example.com/hybrid-page',
+        context: SPACE_CONTEXT('space-1'),
+      })],
+      records: [makeRecord('w501')],
+    };
+
+    const result = serializeSpaceWorkspaces(spaceInputFor(world));
+    const space = result.get('space-1');
+    assert.ok(space, "the hybrid window's space must be present in the result");
+    assert.strictEqual(space!.windows.length, 1);
+    assert.strictEqual(space!.windows[0].url, 'https://example.com/hybrid-page');
+  });
+
+  it('a destroyed/absent window (no live BrowserWindow, no hybrid entry) is excluded', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1', { destroyed: true, context: SPACE_CONTEXT('space-1') })],
+      records: [makeRecord('w1')],
+    };
+    assert.strictEqual(serializeSpaceWorkspaces(spaceInputFor(world)).size, 0);
+  });
+
+  it('a window with no saved space context is excluded', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1')],
+      records: [makeRecord('w1')],
+    };
+    assert.strictEqual(serializeSpaceWorkspaces(spaceInputFor(world)).size, 0);
+  });
+
+  it('an invisible window is excluded (machine-authoritative visibility, same rule as serializeSession)', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1', { context: SPACE_CONTEXT('space-1') })],
+      records: [makeRecord('w1', { visible: false })],
+    };
+    assert.strictEqual(serializeSpaceWorkspaces(spaceInputFor(world)).size, 0);
+  });
+
+  it('zOrder is TRUE STACK POSITION (StateSnapshot.stackOrder index), not WindowRecord.focusSeq', () => {
+    // w2 was focused most recently (higher focusSeq) but sits BELOW w1 in the
+    // actual on-screen stack — stackOrder is bottom→top, w1 last = topmost.
+    const world: World = {
+      fixtures: [
+        contentFixture(1, 'w1', {
+          context: SPACE_CONTEXT('space-1'),
+        }),
+        contentFixture(2, 'w2', {
+          context: SPACE_CONTEXT('space-1'),
+          rawUrl: 'https://example.com/w2', address: 'https://example.com/w2',
+        }),
+      ],
+      records: [makeRecord('w1', { focusSeq: 1 }), makeRecord('w2', { focusSeq: 9 })],
+      stackOrder: ['w2', 'w1'],
+    };
+    const windows = serializeSpaceWorkspaces(spaceInputFor(world)).get('space-1')!.windows;
+    const w1 = windows.find((w) => w.url === 'https://example.com/')!;
+    const w2 = windows.find((w) => w.url === 'https://example.com/w2')!;
+    assert.strictEqual(w1.zOrder, 1, 'w1 sits on top of the saved stack');
+    assert.strictEqual(w2.zOrder, 0, 'w2 sits below it despite the higher focusSeq');
+  });
+
+  it('focused follows StateSnapshot.front, not OS/live focus', () => {
+    const world: World = {
+      fixtures: [
+        contentFixture(1, 'w1', { context: SPACE_CONTEXT('space-1') }),
+        contentFixture(2, 'w2', {
+          context: SPACE_CONTEXT('space-1'),
+          rawUrl: 'https://example.com/w2', address: 'https://example.com/w2',
+        }),
+      ],
+      records: [makeRecord('w1'), makeRecord('w2')],
+      front: 'w2',
+      frontNativeId: 2,
+    };
+    const windows = serializeSpaceWorkspaces(spaceInputFor(world)).get('space-1')!.windows;
+    const w1 = windows.find((w) => w.url === 'https://example.com/')!;
+    const w2 = windows.find((w) => w.url === 'https://example.com/w2')!;
+    assert.strictEqual(w1.focused, false);
+    assert.strictEqual(w2.focused, true);
+  });
+
+  it('bounds come from restorableBoundsFromRecord (fullscreen stash), not the live presenter rect', () => {
+    const world: World = {
+      fixtures: [contentFixture(1, 'w1', {
+        context: SPACE_CONTEXT('space-1'),
+        liveBounds: { x: 0, y: 0, width: 1, height: 1 },
+      })],
+      records: [makeRecord('w1', {
+        bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+        fsMode: { name: 'fullscreen', preBounds: { x: 10, y: 20, width: 300, height: 400 } },
+      })],
+    };
+    const windows = serializeSpaceWorkspaces(spaceInputFor(world)).get('space-1')!.windows;
+    assert.deepStrictEqual(windows[0].bounds, { x: 10, y: 20, width: 300, height: 400 });
+  });
+
+  it('groups multiple windows under their own spaceId, keyed by spaceName from the context row', () => {
+    const world: World = {
+      fixtures: [
+        contentFixture(1, 'w1', { context: SPACE_CONTEXT('space-1', 'Alpha') }),
+        contentFixture(2, 'w2', {
+          context: SPACE_CONTEXT('space-2', 'Beta'),
+          rawUrl: 'https://example.com/w2', address: 'https://example.com/w2',
+        }),
+      ],
+      records: [makeRecord('w1'), makeRecord('w2')],
+    };
+    const result = serializeSpaceWorkspaces(spaceInputFor(world));
+    assert.strictEqual(result.size, 2);
+    assert.strictEqual(result.get('space-1')!.spaceName, 'Alpha');
+    assert.strictEqual(result.get('space-2')!.spaceName, 'Beta');
   });
 });

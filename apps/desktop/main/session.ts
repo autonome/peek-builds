@@ -11,9 +11,9 @@
 
 import { BrowserWindow, dialog, screen, ipcMain } from 'electron';
 import type { IpcMainEvent } from 'electron';
-import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
+import { getLiveWindow } from './window-registry.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
-import { getWindowIdFor, getMachineWindowRecord, getAppActive, getWindowStateSnapshot, dispatchWindowEvent } from './window-state-singleton.js';
+import { getWindowIdFor, getAppActive, getWindowStateSnapshot, dispatchWindowEvent } from './window-state-singleton.js';
 import type { WindowId } from './window-state.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
@@ -21,7 +21,7 @@ import type { ClosedWindowEntry } from './main.js';
 import { getRegisteredTileIds } from './protocol.js';
 import { getWindowPresentation } from './window-presenter.js';
 import { getHybridWindow, getHybridWindowByContentWC } from './hybrid-page-host-registry.js';
-import { serializeSession, readStackIndex, orderRestoredWindowsBottomToTop } from './session-projection.js';
+import { serializeSession, serializeSpaceWorkspaces, readStackIndex, orderRestoredWindowsBottomToTop } from './session-projection.js';
 import type { RestoredStackEntry, SessionSaveWindow, SessionSnapshot } from './session-projection.js';
 import { invokeWindowOpen } from './ipc.js';
 import { shouldActivateFocusedOnRestore } from './izui-roles.js';
@@ -364,39 +364,73 @@ export function buildRestoreBoundsOptions(
 }
 
 /**
- * Machine-authoritative visibility for a save-path window, keyed by the
- * Electron window id `saveSpaceWorkspaces` still iterates. (The session-snapshot
- * loop no longer calls this: it hands the machine snapshot to
- * `serializeSession`, which reads `WindowRecord.visible` off the record
- * directly — same rule, same no-record fallback, stated in the projection.)
+ * Read phase shared by both save paths (`saveSessionSnapshot` and
+ * `saveSpaceWorkspaces`): gather the one thing the window-state machine does
+ * NOT hold for a registered window — is the native handle gone, and what raw
+ * URL does the early-skip filter match `background.html` against.
  *
- * `WindowRecord.visible` has been the authority since §5 step 6: the adapter
- * seeds it from the native window at registration (`pumpShownEvent`, for
- * windows born visible with no `'show'` transition) and the backend's
- * `'show'`/`'hide'` listeners maintain it thereafter — including the macOS
- * lagged-`hide` filter for BaseWindows, which the raw `isVisible()` reads this
- * replaces did not have. Asking the OS again here is a second source of truth
- * for a fact the machine already owns.
- *
- * NO-RECORD FALLBACK = `true` (treat as visible → save the window). Every id
- * these loops see comes from `getAllWindows()`, which is itself projected from
- * live machine records, so "registered window, no record" is only reachable if
- * a window retires between that projection and this read. The two ways to be
- * wrong are not symmetric: defaulting to `false` SKIPS the window and silently
- * drops a user's window from the restored session (unrecoverable at restore
- * time), while defaulting to `true` at worst leaves one stale entry that
- * restore reopens. Erring toward saving is also safe for the save-set
- * baseline, because nothing that must stay OUT of the snapshot is kept out by
- * visibility: the background page is excluded by URL, and overlays / modals /
- * non-focusable utility windows by their params — checks that never consult
- * this value. (The shared chrome overlay never even reaches the loop: it
- * registers with the machine carrying no `source`/`params`, so
- * `getAllWindows()` drops it.)
+ * Hybrid page-hosts are BaseWindows, so `getLiveWindow` (BrowserWindow.fromId)
+ * returns null for them; they live in the hybrid registry instead. Detecting
+ * them up-front (via `winData.params.hybridPageHost`) is what makes a hybrid
+ * window reach EITHER save path rather than silently vanishing behind a
+ * BrowserWindow-only `if (!win) continue` guard.
  */
-function isWindowVisiblePerMachine(electronWindowId: number): boolean {
-  const wmId = getWindowIdFor(electronWindowId);
-  const rec = wmId != null ? getMachineWindowRecord(wmId) : undefined;
-  return rec ? rec.visible : true;
+function buildSessionSaveWindows(
+  registeredWindows: ReturnType<typeof getAllWindows>,
+): SessionSaveWindow[] {
+  const saveWindows: SessionSaveWindow[] = [];
+  for (const [id, winData] of registeredWindows) {
+    const win = getLiveWindow(id);
+    const hybridEntry =
+      winData.params.hybridPageHost === true ? getHybridWindow(id) : null;
+
+    let destroyed: boolean;
+    let url: string;
+    if (hybridEntry) {
+      destroyed = hybridEntry.baseWin.isDestroyed();
+      // A hybrid window is never the background page; its content URL is safe
+      // for the background-URL skip (it can never match background.html).
+      url = destroyed ? '' : hybridEntry.url();
+    } else if (win) {
+      destroyed = false;
+      url = win.webContents.getURL();
+    } else {
+      // Neither a live BrowserWindow nor a hybrid entry — destroyed/unknown.
+      destroyed = true;
+      url = '';
+    }
+
+    saveWindows.push({
+      nativeId: id,
+      machineId: getWindowIdFor(id),
+      source: winData.source,
+      params: winData.params,
+      destroyed,
+      url,
+    });
+  }
+  return saveWindows;
+}
+
+/**
+ * Read a window's saved context row (mode, spaceId/spaceName, …) for the save
+ * projections. Shared by `serializeSession`'s `getContext` and
+ * `serializeSpaceWorkspaces`'s `getContext` — same lookup, same "no row / read
+ * failed" → `undefined` contract.
+ */
+function readSaveContext(nativeId: number): WindowContext | undefined {
+  try {
+    const modeEntry = getContextEntry('mode', nativeId);
+    if (modeEntry) {
+      return {
+        mode: modeEntry.value as string,
+        modeMetadata: (modeEntry.metadata as Record<string, unknown>) || null,
+      };
+    }
+  } catch {
+    // Context not available, skip
+  }
+  return undefined;
 }
 
 /**
@@ -442,42 +476,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   // window — visibility, geometry, maximize state, focus recency, which one
   // was focused — is read off the machine snapshot inside `serializeSession`.
   const machineSnapshot = getWindowStateSnapshot();
-  const saveWindows: SessionSaveWindow[] = [];
-  for (const [id, winData] of registeredWindows) {
-    const win = getLiveWindow(id);
-
-    // Hybrid page-hosts are BaseWindows, so `getLiveWindow` (BrowserWindow.fromId)
-    // returns null for them. They live in the hybrid registry instead. Detect
-    // them up-front so we source the URL from the hybrid registry rather than
-    // the (absent) BrowserWindow.
-    const hybridEntry =
-      winData.params.hybridPageHost === true ? getHybridWindow(id) : null;
-
-    let destroyed: boolean;
-    let url: string;
-    if (hybridEntry) {
-      destroyed = hybridEntry.baseWin.isDestroyed();
-      // A hybrid window is never the background page; its content URL is safe
-      // for the background-URL skip (it can never match background.html).
-      url = destroyed ? '' : hybridEntry.url();
-    } else if (win) {
-      destroyed = false;
-      url = win.webContents.getURL();
-    } else {
-      // Neither a live BrowserWindow nor a hybrid entry — destroyed/unknown.
-      destroyed = true;
-      url = '';
-    }
-
-    saveWindows.push({
-      nativeId: id,
-      machineId: getWindowIdFor(id),
-      source: winData.source,
-      params: winData.params,
-      destroyed,
-      url,
-    });
-  }
+  const saveWindows = buildSessionSaveWindows(registeredWindows);
 
   // ── Project ─────────────────────────────────────────────────────────────
   // The pure projection owns every window decision: the skip rules, the
@@ -487,20 +486,7 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     snapshot: machineSnapshot,
     windows: saveWindows,
     getPresentation: (nativeId) => getWindowPresentation(nativeId),
-    getContext: (nativeId) => {
-      try {
-        const modeEntry = getContextEntry('mode', nativeId);
-        if (modeEntry) {
-          return {
-            mode: modeEntry.value as string,
-            modeMetadata: (modeEntry.metadata as Record<string, unknown>) || null,
-          };
-        }
-      } catch {
-        // Context not available, skip
-      }
-      return undefined;
-    },
+    getContext: readSaveContext,
     registeredTileIds: getRegisteredTileIds(),
     reason,
     createdAt: Date.now(),
@@ -1591,74 +1577,41 @@ export function saveSpaceWorkspaces(): void {
     return;
   }
 
+  // ── Read ────────────────────────────────────────────────────────────────
+  // Same read phase as `saveSessionSnapshot`: the machine snapshot for every
+  // window-management fact, plus per-window liveness/raw-URL (the two things
+  // the machine does not hold). This is what fixes the hybrid blind spot —
+  // `buildSessionSaveWindows` resolves a hybrid page-host's URL from the
+  // hybrid registry instead of the `getLiveWindow`-only guard this loop used
+  // to have, so a hybrid window reaches the projection below at all.
   const registeredWindows = getAllWindows();
+  const machineSnapshot = getWindowStateSnapshot();
+  const saveWindows = buildSessionSaveWindows(registeredWindows);
 
-  // Use getAllLiveWindows() order for z-order approximation
-  const allBrowserWindows = getAllLiveWindows();
-  const zOrderMap = new Map<number, number>();
-  allBrowserWindows.forEach((win, index) => {
-    zOrderMap.set(win.id, index);
+  // ── Project ─────────────────────────────────────────────────────────────
+  // The pure projection owns the space-grouping decision: which windows are
+  // in space mode, the restorable rect, TRUE STACK POSITION (not focus
+  // recency), and `focused` off the machine's `front` (not OS focus).
+  const spaceSnapshots = serializeSpaceWorkspaces({
+    snapshot: machineSnapshot,
+    windows: saveWindows,
+    getPresentation: (nativeId) => getWindowPresentation(nativeId),
+    getContext: readSaveContext,
+    createdAt: Date.now(),
   });
 
-  // Collect windows grouped by spaceId
-  const spaceWindows = new Map<string, { spaceName: string; windows: Array<{ url: string; bounds: Electron.Rectangle; zOrder: number; focused: boolean }> }>();
-
-  for (const [id] of registeredWindows) {
-    const win = getLiveWindow(id);
-    // Liveness from Electron, visibility from the machine record
-    // (`isWindowVisiblePerMachine` — no OS visibility read on the save path).
-    if (!win || !isWindowVisiblePerMachine(id)) continue;
-
-    const rawUrl = win.webContents.getURL();
-    if (rawUrl.includes('peek://app/background.html')) continue;
-
-    // Check if this window is in space mode
-    let modeEntry;
-    try {
-      modeEntry = getContextEntry('mode', id);
-    } catch {
-      continue;
-    }
-    if (!modeEntry || modeEntry.value !== 'space') continue;
-
-    const metadata = modeEntry.metadata as Record<string, unknown> | null;
-    const spaceId = metadata?.spaceId as string | undefined;
-    const spaceName = metadata?.spaceName as string | undefined;
-    if (!spaceId) continue;
-
-    const presentation = getWindowPresentation(id);
-    if (!presentation) continue;
-
-    if (!spaceWindows.has(spaceId)) {
-      spaceWindows.set(spaceId, { spaceName: spaceName || '', windows: [] });
-    }
-    spaceWindows.get(spaceId)!.windows.push({
-      url: presentation.address,
-      bounds: presentation.bounds,
-      zOrder: zOrderMap.get(id) ?? 0,
-      focused: presentation.focused,
-    });
-  }
-
-  // Write each space's workspace snapshot
+  // ── Write ───────────────────────────────────────────────────────────────
   const upsert = db.prepare(`
     INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'space-workspaces', ?, ?, ?)
   `);
 
-  for (const [spaceId, space] of spaceWindows) {
-    const snapshot = {
-      version: 1,
-      spaceId,
-      spaceName: space.spaceName,
-      createdAt: Date.now(),
-      windows: space.windows,
-    };
+  for (const [spaceId, snapshot] of spaceSnapshots) {
     const key = `workspace:${spaceId}`;
     upsert.run(`space-workspaces:${key}`, key, JSON.stringify(snapshot), Date.now());
   }
 
-  DEBUG && console.log(`[session] Saved workspace snapshots for ${spaceWindows.size} space(s)`);
+  DEBUG && console.log(`[session] Saved workspace snapshots for ${spaceSnapshots.size} space(s)`);
 }
 
 /**

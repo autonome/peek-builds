@@ -26,7 +26,7 @@ and the commit log, not against the prose elsewhere in this document, which drif
 | 8 | Focus rivals (delete `izui-state.ts`'s focus surface, `getFocusedWindow()` call sites) | PARTIAL — 4 entries / 8 calls still allowlisted under §5 step 8: `hybrid-overlay.ts` `focus` ×1, `izui-state.ts` `showInactive` ×2, `main.ts` `focus` ×2, `windows.ts` `focus` ×3 |
 | 9 | Overlay attach/retarget + transient autoclose | PARTIAL — transient autoclose and overlay follow/retarget are absorbed (`window-state.ts` `selectTransientAutoclose`, `applyOverlayFollow`); 4 entries / 6 calls still allowlisted under §5 step 9: `hybrid-overlay.ts` `showInactive` ×1 (test bridge), `destroy` ×2, `ipc.ts` `focus` ×2, `main.ts` `close` ×1 |
 | 10 | Displays and Spaces | DONE |
-| 11 | Session save / restore (last) | PARTIAL — 8 tasks landed (11.1, two Task 3s, two Task 4s, Task 5, Task 7, Task 8 — see §5 step 11 for the full write-up and the task-number collision note); no commit evidence of any task beyond these 8 |
+| 11 | Session save / restore (last) | PARTIAL — 9 tasks landed (11.1, two Task 3s, two Task 4s, Task 5, Task 7, Task 8, Task 9 — see §5 step 11 for the full write-up and the task-number collision note); no commit evidence of any task beyond these 9 |
 
 ### The mechanical progress measure
 
@@ -41,7 +41,7 @@ shrink monotonically to zero; the check fails a PR that grows it.
    allowlist entries.
 2. Close step 9: route its 4 residual call sites through the machine, delete their
    allowlist entries.
-3. Determine whether step 11 has any task beyond the 8 already landed. No commit or doc
+3. Determine whether step 11 has any task beyond the 9 already landed. No commit or doc
    evidence of one exists as of this writing; if none turns up, step 11 — and the whole
    migration — is DONE once the R2 allowlist above also reaches zero.
 4. Once steps 8, 9, and 11 are all DONE and the R2 allowlist is empty, delete this block
@@ -967,7 +967,10 @@ failure mode this document exists to prevent (§2).**
     `true` (treat as visible, save the window) — deliberately asymmetric: a false negative
     would silently drop a user window from the restored session, a false positive at worst
     leaves one stale entry. `isVisible` is a read, not in the R2 `FORBIDDEN` set, so this
-    commit does not move the allowlist. Commit `43d0d4e4`.
+    commit does not move the allowlist. Commit `43d0d4e4`. **Superseded by Task 9
+    (2026-07-29) below:** `isWindowVisiblePerMachine` is deleted — `saveSpaceWorkspaces`
+    reads the same `WindowRecord.visible` fact off one machine snapshot taken up front,
+    like `saveSessionSnapshot` already did.
 
     **Task 3 (2026-07-26) — restore focus routed through the machine: DONE.** The last two
     raw window ops in `session.ts` — the restore post-loop's `focusWin.focus()` and the
@@ -1045,9 +1048,39 @@ failure mode this document exists to prevent (§2).**
     number should be checked against this list to avoid a third collision; past ones stay
     as committed.
 
+    **Task 9 (2026-07-29) — `saveSpaceWorkspaces` becomes a projection of machine state,
+    fixing a live data-loss bug: DONE.** `session.ts saveSpaceWorkspaces` was a SECOND,
+    entirely un-migrated save path (Task 4 (2026-07-26) only extracted
+    `saveSessionSnapshot`) with four defects nobody's task list had named, one of them
+    user-visible today: (1) **every hybrid page-host was silently dropped** — the loop's
+    `if (!win) continue` guard is `getLiveWindow` (`BrowserWindow.fromId`)-backed, always
+    null for a hybrid `BaseWindow`, and since the canvas removal every web page window is
+    hybrid, so saved space-workspace rows (`features/spaces/background.js`,
+    `features/groups/home.js` read them via `workspace:<spaceId>`) held only internal
+    tiles, never web pages; (2) z-order was fabricated from `getAllLiveWindows()`
+    enumeration order, the exact defect Task 4 (2026-07-26) had already removed from the
+    other save path; (3) `focused` was a live `win.isFocused()` read instead of
+    `StateSnapshot.front`, the "one deliberate divergence" Task 4 (2026-07-26) called out
+    and fixed only for `saveSessionSnapshot`; (4) `bounds` came from the live presenter
+    rect instead of `restorableBoundsFromRecord`. Fix: the decision half moves to
+    `session-projection.ts serializeSpaceWorkspaces(input)`, fed by the same hybrid-aware
+    read-phase rows `serializeSession` already consumed (`session.ts` factors that read
+    phase into a shared `buildSessionSaveWindows`, deleting the now-redundant
+    `isWindowVisiblePerMachine` helper Task 11.1 introduced — its job folds into the one
+    machine-snapshot read both save paths now share). `zOrder` in the persisted row is
+    **redefined to TRUE STACK POSITION** (`StateSnapshot.stackOrder` index, the same
+    source `stackIndex` uses), not `WindowRecord.focusSeq` (focus recency) — a deliberate
+    choice: `features/groups/home.js` sorts layout on this field, and stack position, not
+    "most recently used," is what a layout sort means by z-order. The on-disk row shape
+    (`version`/`spaceId`/`spaceName`/`createdAt`/`windows[].{url,bounds,zOrder,focused}`)
+    is unchanged — only where each value is read from changed. Load-bearing test (written
+    RED first, against the pre-fix code, then GREEN): `session-projection.test.ts`
+    "LOAD-BEARING: a hybrid page-host in space mode reaches its workspace snapshot".
+    Commit: this change (see `jj log`).
+
     **Step 11 remaining work:** as of this pass, no commit or doc evidence was found of
-    any step-11 task beyond the eight above (11.1, two Task 3s, two Task 4s, Task 5,
-    Task 7, Task 8) — the R2 allowlist carries zero entries tagged step 11
+    any step-11 task beyond the nine above (11.1, two Task 3s, two Task 4s, Task 5,
+    Task 7, Task 8, Task 9) — the R2 allowlist carries zero entries tagged step 11
     (`scripts/check-r2-window-ops.mjs`). Whether step 11 has further tasks left is
     therefore genuinely open; this document gives no basis to enumerate them, and none
     should be invented. A future agent auditing step 11 should start from the "Accepted
