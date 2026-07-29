@@ -53,6 +53,8 @@ import { app, globalShortcut, screen, systemPreferences, webContents } from 'ele
 import type { BrowserWindow, WebContents } from 'electron';
 
 import { isHeadless, DEBUG } from './config.js';
+// TEMPORARY (live sitting, peek 7fffa286) — reverted with the instrumentation.
+import { diag } from './live-diag.js';
 import {
   askWebContentsToHandleEscape,
   closeOrHideWindow,
@@ -444,6 +446,16 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         'url',
         this.urlSafe(rendererWC),
       );
+
+    // TEMPORARY (live sitting, peek 7fffa286): mirror the identity line into
+    // the diag file. `wm-N` ids are NOT stable across boots, so this binding is
+    // the ONLY way a gesture performed in the sitting can be tied to the ids
+    // every other diag line names. Unconditional (not DEBUG-gated) so the
+    // correlation table is never the missing half of a trace.
+    diag(
+      `[window-backend] registerWindow ${id} osWindowId ${osWindowId} kind ${kind}` +
+        ` class ${spec.class} url ${this.urlSafe(rendererWC)}`,
+    );
 
     return { id, decision, initialBounds };
   }

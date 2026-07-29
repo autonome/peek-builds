@@ -34,6 +34,8 @@ import { createRuleEngine, type RuleEngine } from './rule-engine.js';
 import { listRules as rulesList, type RulesDb } from './rules.js';
 import { installDirectSendGuard, installOffPathWindowGuard, unguardedWebContentsSend } from './tile-ipc-gate.js';
 import { WEB_CORE_ADDRESS, isTestProfile, isDevProfile, isEphemeralProfile, isHeadless, getProfile, setTilePreloadPath, getTilePreloadPath, DEBUG } from './config.js';
+// TEMPORARY (live sitting, peek 7fffa286) — reverted with the instrumentation.
+import { diag } from './live-diag.js';
 import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession, getPartitionString, getCurrentProfileId } from './session-partition.js';
 import { getIzuiCoordinator } from './izui-state.js';
@@ -909,11 +911,17 @@ export async function initialize(): Promise<void> {
     };
     wc.on('devtools-opened', () => {
       const hostId = hostMachineId();
+      // TEMPORARY (live sitting, peek 7fffa286) — g1. Tracks whether the
+      // DETACHED devtools window existed and registered: attached-mode devtools
+      // has no window at all, and the two cases produce very different machine
+      // behaviour on the same gesture.
+      let devWinRegistered = false;
       try {
         const devWC = wc.devToolsWebContents;
         const devWin = devWC ? BrowserWindow.fromWebContents(devWC) : null;
         const hostWin = BrowserWindow.fromWebContents(wc);
         if (devWC && devWin && (!hostWin || devWin.id !== hostWin.id)) {
+          devWinRegistered = true;
           registerWindowWithMachine({
             kind: 'browser',
             role: 'utility',
@@ -930,6 +938,10 @@ export async function initialize(): Promise<void> {
       } catch {
         /* detached devtools window not resolvable — attached mode, or races teardown */
       }
+      // TEMPORARY (live sitting, peek 7fffa286) — g1. Logged BEFORE the
+      // dispatch so it reads immediately above the DEVTOOLS_OPENED transition
+      // line it explains.
+      diag(`[g1] devtools-opened hostId=${hostId ?? 'null'} devWinRegistered=${devWinRegistered}`);
       if (hostId != null) dispatchWindowEvent({ type: 'DEVTOOLS_OPENED', id: hostId });
     });
     wc.on('devtools-closed', () => {

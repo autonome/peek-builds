@@ -68,6 +68,8 @@ import {
   isTestProfile,
   DEBUG,
 } from './config.js';
+// TEMPORARY (live sitting, peek 7fffa286) — reverted with the instrumentation.
+import { diag } from './live-diag.js';
 
 import { getTileWebPreferencesForUrl, registerTrustedBuiltinWindow, createTileBrowserWindow } from './tile-launcher.js';
 import { lookupPseudoTile } from './pseudo-tiles.js';
@@ -1470,6 +1472,15 @@ export function wireHybridContentEvents(
     // source of truth). The early `!modifier` return below would otherwise drop
     // ESC entirely, so this MUST sit above it.
     if (input.type === 'keyDown' && input.key === 'Escape') {
+      // TEMPORARY (live sitting, peek 7fffa286) — g3. Above the editable guard
+      // and the debounce, so a keystroke that gets dropped by either still
+      // proves it reached the content WC's before-input-event at all (an
+      // ABSENCE here is what pointed at the OS-level grab in peek ebb10894).
+      diag(
+        `[g3] hybrid-input key=Escape host=${hostWindowId}` +
+          ` wm=${getWindowIdFor(hostWindowId) ?? 'null'}` +
+          ` editable=${isEditableFocusedForWc(contentWC.id)}`,
+      );
       // Editable-target guard (peek 51798bae): while a text field / textarea /
       // contenteditable inside the page is focused, ESC belongs to the editing
       // context (blur/dismiss the field), NOT the global switcher. The universal
@@ -1501,6 +1512,14 @@ export function wireHybridContentEvents(
     const modifier = process.platform === 'darwin' ? input.meta : input.control;
     if (input.type !== 'keyDown' || !modifier) return;
     if (input.key === 'l') {
+      // TEMPORARY (live sitting, peek 7fffa286) — g3, the Cmd+L half. Pairs
+      // with `[g2] show-navbar` downstream: this line proves the keystroke
+      // reached the content WC, g2 proves the overlay subscriber saw it.
+      diag(
+        `[g3] hybrid-input key=l host=${hostWindowId}` +
+          ` wm=${getWindowIdFor(hostWindowId) ?? 'null'}` +
+          ` editable=${isEditableFocusedForWc(contentWC.id)}`,
+      );
       publish(getSystemAddress(), 'page:show-navbar', { windowId: hostWindowId });
       event.preventDefault();
     } else if (input.key === 'r') {
@@ -1610,6 +1629,12 @@ export function wireHybridContentEvents(
   // compare reports a mismatch for a window that is visually flush.
   const WORK_AREA_MATCH_PX = 2;
   let inRevealBand = false;
+
+  // TEMPORARY (live sitting, peek 7fffa286) — g7's edge-trigger memo. The idle
+  // move stream runs at pointer frequency, so logging per move would drown the
+  // file; only a CHANGE of (contentFocused, computed dir) is a fact worth a
+  // line. Empty string means "nothing logged yet", so the first move prints.
+  let lastDiagHoverKey = '';
 
   // Content-cursor reconciler. `wantCursor` is the intended FULL css cursor value
   // (e.g. 'nw-resize' for edge/corner hover, 'grab'/'grabbing' for the hold-drag
@@ -1948,9 +1973,27 @@ export function wireHybridContentEvents(
         // never-reported — a host shown inactive and never focused, where
         // `isFocused()` was false too.
         const hoverMachineId = getWindowIdFor(hostWindowId);
-        const contentFocused =
-          hoverMachineId != null && getMachineWindowRecord(hoverMachineId)?.contentFocused === true;
-        setHoverDir(contentFocused ? resizeDirAt(bounds, input.globalX, input.globalY, wantCursor !== null) : null);
+        // TEMPORARY (live sitting, peek 7fffa286) — the RAW record value is
+        // kept alongside the strict `=== true` the production gate uses, so g7
+        // can distinguish `false` (observed loss of first responder) from
+        // `absent` (nothing reported yet). The gate itself is unchanged.
+        const rawContentFocused =
+          hoverMachineId != null ? getMachineWindowRecord(hoverMachineId)?.contentFocused : undefined;
+        const contentFocused = rawContentFocused === true;
+        const nextHoverDir = contentFocused
+          ? resizeDirAt(bounds, input.globalX, input.globalY, wantCursor !== null)
+          : null;
+        // TEMPORARY (live sitting, peek 7fffa286) — g7, edge-triggered.
+        const diagHoverKey = `${rawContentFocused ?? 'absent'}|${nextHoverDir ?? 'null'}`;
+        if (diagHoverKey !== lastDiagHoverKey) {
+          lastDiagHoverKey = diagHoverKey;
+          diag(
+            `[g7] hover wm=${hoverMachineId ?? 'null'}` +
+              ` contentFocused=${rawContentFocused ?? 'absent'}` +
+              ` dir=${nextHoverDir ?? 'null'}`,
+          );
+        }
+        setHoverDir(nextHoverDir);
       }
     } else if (t === 'mouseUp' && input.button === 'left') {
       const g = gesture;
@@ -3887,6 +3930,12 @@ export function registerWindowHandlers(): void {
               const showTime = (win as { __lastShowTime?: number }).__lastShowTime;
               if (showTime && Date.now() - showTime < 200) {
                 DEBUG && console.log('window-open: blur for modal window suppressed — within show settle window', url);
+                // TEMPORARY (live sitting, peek 7fffa286) — g4. The settle
+                // branch's raise is best-effort by construction (both reducer
+                // gates usually drop it), so this line plus the `fx=[]` on the
+                // RAISE_WINDOW_REQUESTED transition is the pair that shows
+                // whether the panel got re-keyed or merely survived.
+                diag(`[g4] modal blur-settle url=${url} wm=${machineWindowId} dispatching RAISE`);
                 dispatchWindowEvent({ type: 'RAISE_WINDOW_REQUESTED', id: machineWindowId });
                 return;
               }

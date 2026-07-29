@@ -22,6 +22,9 @@
  */
 
 import { isHeadless, DEBUG } from './config.js';
+// TEMPORARY (live sitting, peek 7fffa286) — reverted with the rest of the
+// instrumentation. Pure fs append, no platform edge.
+import { diag } from './live-diag.js';
 import { publish, getSystemAddress } from './pubsub.js';
 // The overlay SESSION (not a window): `izui-state.ts` is a pure in-process
 // state object importing nothing but `config.js`, so this is not a platform
@@ -221,7 +224,7 @@ export class WindowOsAdapter {
         const before = this.owner.snapshot();
         const effects = this.owner.dispatch(next);
         const after = this.owner.snapshot();
-        this.logTransition(next, before, after);
+        this.logTransition(next, before, after, effects);
         this.runEffects(effects);
         this.reconcileEscGrab(this.owner.snapshot());
       }
@@ -329,6 +332,26 @@ export class WindowOsAdapter {
         //     (`exitOverlayForAppBlur` — the user is switching to another app
         //     and we must not steal the target app's focus), stamp the
         //     'closed' handler's skip marker, then close.
+        // TEMPORARY (live sitting, peek 7fffa286) — g5. Reads the two izui
+        // cooldowns ONCE, up front, so the log states the same facts the guard
+        // below branches on rather than re-reading them after the fact.
+        {
+          const c = getIzuiCoordinator();
+          const exitCooldown = c.isWithinOverlayExitCooldown();
+          const entryCooldown = c.isWithinOverlayEntryCooldown();
+          const action =
+            effect.switcherWindowId == null
+              ? 'suppressed'
+              : effect.restoreFocus || !(exitCooldown || entryCooldown)
+                ? 'closed'
+                : 'suppressed';
+          diag(
+            `[g5] close-switcher restoreFocus=${effect.restoreFocus}` +
+              ` switcherWm=${effect.switcherWindowId ?? 'null'}` +
+              ` exitCooldown=${exitCooldown} entryCooldown=${entryCooldown}` +
+              ` action=${action}`,
+          );
+        }
         if (effect.switcherWindowId == null) return;
         if (effect.restoreFocus) {
           // Tracked for the same test-bridge await as CLOSE_WINDOW above.
@@ -495,7 +518,16 @@ export class WindowOsAdapter {
   // unambiguous about which field produced the number (§5.3 follow-up).
   // ───────────────────────────────────────────────────────────────────────────
 
-  private logTransition(event: WindowEvent, before: StateSnapshot, after: StateSnapshot): void {
+  private logTransition(
+    event: WindowEvent,
+    before: StateSnapshot,
+    after: StateSnapshot,
+    // TEMPORARY (live sitting, peek 7fffa286): the emitted effect batch. The
+    // permanent line never printed the effects, and effects are precisely what
+    // the seven landed commits changed — an EMPTY batch is the load-bearing
+    // signal for "the gate dropped it", so `fx=[]` prints explicitly.
+    effects: Effect[] = [],
+  ): void {
     if (!DEBUG) return;
     const id = eventWindowId(event);
     const tag = eventWindowIdTag(event);
@@ -520,6 +552,40 @@ export class WindowOsAdapter {
       const rec = after.windows.find((w) => w.id === id);
       line += ` satellite=${rec?.satellite ?? 'unknown'} eligible=${isEligibleFront(rec)}`;
     }
+    // ── TEMPORARY live-sitting instrumentation (peek 7fffa286) ──────────────
+    // Everything from here to `console.log` is reverted after the sitting.
+    line += ` fx=[${effects.map(fmtEffect).join(',')}]`;
+    if (
+      event.type === 'RAISE_WINDOW_REQUESTED' ||
+      event.type === 'DEVTOOLS_OPENED' ||
+      event.type === 'WINDOW_SHOW_REQUESTED'
+    ) {
+      // `applyRaiseRequest`'s gate inputs, all readable off `before` — which of
+      // the four bails (background app / switcher open / unknown or
+      // satellite/invisible target) produced an empty `fx`.
+      const front = before.windows.find((w) => w.id === before.front);
+      line +=
+        ` appActive=${before.appActive}` +
+        ` switcherOpen=${before.switcher.open}` +
+        ` frontSatellite=${front?.satellite ?? 'absent'}` +
+        ` frontVisible=${front?.visible ?? 'absent'}`;
+    }
+    if (event.type === 'OS_FOCUS_GAINED' && id != null) {
+      // The FOCUSER's own pending-open state, read off `before` because the
+      // OS_FOCUS_GAINED arm itself writes `hasHeldOsFocus` during this
+      // transition — `selectTransientAutoclose` asked its question first.
+      const focuser = before.windows.find((w) => w.id === id);
+      const swept = effects
+        .filter((e) => e.type === 'CLOSE_WINDOW' || e.type === 'CLOSE_WINDOW_DIRECT')
+        .map((e) => (e as { id: WindowId }).id);
+      line +=
+        ` openSeq=${focuser?.openSeq ?? 'absent'}` +
+        ` shownWithActivateIntent=${focuser?.shownWithActivateIntent ?? 'absent'}` +
+        ` hasHeldOsFocus=${focuser?.hasHeldOsFocus ?? 'absent'}` +
+        ` swept=[${swept.join(',')}]`;
+    }
+    diag(line);
+    // ── end temporary instrumentation ───────────────────────────────────────
     console.log(line);
   }
 }
@@ -548,6 +614,16 @@ function eventWindowIdTag(event: WindowEvent): string | null {
 /** Render a nullable id for the transition log. */
 function fmt(id: WindowId | null): string {
   return id == null ? 'none' : String(id);
+}
+
+/**
+ * TEMPORARY (live sitting, peek 7fffa286): `TYPE(id)` for one emitted effect.
+ * Reverted with the rest of the instrumentation.
+ */
+function fmtEffect(effect: Effect): string {
+  const e = effect as { id?: WindowId; switcherWindowId?: WindowId | null };
+  const target = e.id ?? e.switcherWindowId ?? null;
+  return target == null ? effect.type : `${effect.type}(${target})`;
 }
 
 /** `mode(id) x→y` fragments for every window whose fsMode name changed. */
