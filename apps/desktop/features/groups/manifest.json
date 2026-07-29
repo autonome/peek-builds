@@ -50,7 +50,6 @@
       "queryWindows": true
     },
     "commands": true,
-    "shortcuts": true,
     "settings": { "readForeign": ["spaces"] },
     "rules": true
   },
@@ -95,11 +94,6 @@
       "action": { "type": "execute" }
     }
   ],
-  "shortcuts": [
-    {
-      "keys": "CommandOrControl+G",
-      "command": "groups"
-    }
-  ],
+  "shortcuts": [],
   "settingsSchema": "./settings-schema.json"
 }

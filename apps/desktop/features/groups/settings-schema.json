@@ -1,20 +1,12 @@
 {
   "prefs": {
     "type": "object",
-    "properties": {
-      "shortcutKey": {
-        "type": "string",
-        "description": "Global OS hotkey to open groups manager",
-        "default": "Option+g"
-      }
-    }
+    "properties": {}
   },
   "storageKeys": {
     "PREFS": "prefs"
   },
   "defaults": {
-    "prefs": {
-      "shortcutKey": "Option+g"
-    }
+    "prefs": {}
   }
 }

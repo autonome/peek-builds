@@ -19,7 +19,7 @@ import {
 } from 'peek://app/lib/tag-action-affordances.js';
 import { createSearchResultCard } from 'peek://app/lib/search-result-card.js';
 import { liveQuery } from 'peek://app/lib/live-query.js';
-import { labels, defaults } from './config.js';
+import { labels } from './config.js';
 import { registerNoun, unregisterNoun } from 'peek://cmd/nouns.js';
 
 const api = window.app;
@@ -341,8 +341,8 @@ const setupCreateGroup = () => {
 // ============================================================================
 // Background logic (inlined from background.js)
 // ============================================================================
-// Commands, shortcuts, bulk-open (openGroup), pins, close/switch/restore,
-// settings load/save, and shutdown-related pubsub subscriptions.
+// Commands, bulk-open (openGroup), pins, close/switch/restore, and
+// shutdown-related pubsub subscriptions.
 // Runs once at module load (see bootstrap IIFE at bottom), NOT inside the
 // DOMContentLoaded init() — keeps UI init path clean.
 
@@ -350,11 +350,6 @@ console.log('[ext:groups] background', labels.name);
 
 // Extension content is served from peek://groups/
 const bgAddress = 'peek://groups/home.html';
-
-// In-memory settings cache (loaded from datastore during bg init)
-let currentSettings = {
-  prefs: defaults.prefs
-};
 
 // Track the groups window ID for mode cleanup (from bg-initiated opens)
 let groupsWindowId = null;
@@ -365,23 +360,6 @@ let activeGroupName = null;
 
 // Track suspended (hidden) group windows: groupId -> [windowId, ...]
 const suspendedGroups = new Map();
-
-/** Load settings from datastore */
-const loadSettings = async () => {
-  const result = await api.settings.get('prefs');
-  if (!result.error && result.value) {
-    return { prefs: result.value || defaults.prefs };
-  }
-  return { prefs: defaults.prefs };
-};
-
-/** Save settings to datastore */
-const saveSettings = async (settings) => {
-  const result = await api.settings.set('prefs', settings.prefs);
-  if (result.error) {
-    console.error('[ext:groups] Failed to save settings:', result.error);
-  }
-};
 
 let isOpeningGroups = false;
 const openGroupsWindow = async () => {
@@ -790,15 +768,6 @@ const openGroup = async (groupName) => {
 
 // ===== Registration =====
 
-let registeredShortcut = null;
-const LOCAL_SHORTCUT = 'CommandOrControl+G';
-
-const initShortcut = (shortcut) => {
-  api.shortcuts.register(shortcut, () => { openGroupsWindow(); }, { global: true });
-  registeredShortcut = shortcut;
-  api.shortcuts.register(LOCAL_SHORTCUT, () => { openGroupsWindow(); });
-};
-
 const initCommands = () => {
   registerNoun({
     name: 'groups',
@@ -898,8 +867,6 @@ const uninitCommands = () => {
 
 const initBackground = async () => {
   console.log('[ext:groups] init');
-  currentSettings = await loadSettings();
-  initShortcut(currentSettings.prefs.shortcutKey);
   initCommands();
 
   api.pubsub.subscribe('window:closed', async (msg) => {
@@ -908,44 +875,10 @@ const initBackground = async () => {
       groupsWindowId = null;
     }
   });
-
-  api.pubsub.subscribe('groups:settings-changed', async () => {
-    console.log('[ext:groups] settings changed, reinitializing');
-    uninitBackground();
-    currentSettings = await loadSettings();
-    initShortcut(currentSettings.prefs.shortcutKey);
-    initCommands();
-  });
-
-  api.pubsub.subscribe('groups:settings-update', async (msg) => {
-    console.log('[ext:groups] settings-update received:', msg);
-    try {
-      if (msg.data) {
-        currentSettings = { prefs: msg.data.prefs || currentSettings.prefs };
-      } else if (msg.key === 'prefs' && msg.path) {
-        const field = msg.path.split('.')[1];
-        if (field) {
-          currentSettings.prefs = { ...currentSettings.prefs, [field]: msg.value };
-        }
-      }
-      await saveSettings(currentSettings);
-      uninitBackground();
-      initShortcut(currentSettings.prefs.shortcutKey);
-      initCommands();
-      api.pubsub.publish('groups:settings-changed', currentSettings);
-    } catch (err) {
-      console.error('[ext:groups] settings-update error:', err);
-    }
-  });
 };
 
 const uninitBackground = () => {
   console.log('[ext:groups] uninit');
-  if (registeredShortcut) {
-    api.shortcuts.unregister(registeredShortcut, { global: true });
-    registeredShortcut = null;
-  }
-  api.shortcuts.unregister(LOCAL_SHORTCUT);
   uninitCommands();
 };
 

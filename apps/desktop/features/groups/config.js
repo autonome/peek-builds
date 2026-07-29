@@ -2,9 +2,7 @@ const id = 'groups';
 
 const labels = {
   name: 'Groups',
-  prefs: {
-    shortcutKey: 'Groups shortcut',
-  }
+  prefs: {}
 };
 
 const prefsSchema = {
@@ -13,14 +11,7 @@ const prefsSchema = {
   "title": "Groups preferences",
   "description": "Peek app Groups user preferences",
   "type": "object",
-  "properties": {
-    "shortcutKey": {
-      "description": "Global OS hotkey to open command panel",
-      "type": "string",
-      "default": "Option+Space"
-    },
-  },
-  "required": [ "shortcutKey"]
+  "properties": {}
 };
 
 const schemas = {
@@ -32,9 +23,7 @@ const storageKeys = {
 };
 
 const defaults = {
-  prefs: {
-    shortcutKey: 'Option+g'
-  },
+  prefs: {},
 };
 
 export {
