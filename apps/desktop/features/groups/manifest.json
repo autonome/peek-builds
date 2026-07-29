@@ -50,7 +50,7 @@
       "queryWindows": true
     },
     "commands": true,
-    "settings": { "readForeign": ["spaces"] },
+    "settings": { "readForeign": ["space-workspaces"] },
     "rules": true
   },
   "commands": [

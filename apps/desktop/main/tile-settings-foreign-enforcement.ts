@@ -13,8 +13,8 @@
  * Background: the v1-compat surface exposes `api.settings.getExtKey(extId, key)`
  * via the `feature-settings-get-key` IPC channel with NO capability check —
  * any tile could read any other tile's stored settings. A handful of features
- * depend on this (features-manager reads `lex.session`, groups reads
- * `spaces.workspace:*`, tags reads `editor.prefs`, peeks similar). Rather
+ * depend on this (features-manager reads `lex.session`, groups and spaces read
+ * `space-workspaces.workspace:*`, tags reads `editor.prefs`, peeks similar). Rather
  * than keep the un-gated surface open, the strict handler requires the
  * reading tile to declare a per-tile allowlist via `settings.readForeign`
  * (when `settings` is the existing object form) or the convenience flat

@@ -232,8 +232,16 @@ async function openSpace(spaceName) {
   activeSpaceName = getSpaceDisplayName(tag);
   activeSpaceColor = tag.color;
 
-  // Check for saved workspace state
-  const wsResult = await api.settings.get('workspace:' + tag.id);
+  // Check for saved workspace state.
+  //
+  // The row lives under featureId `space-workspaces`, NOT under this tile's own
+  // `spaces` namespace: `session.ts saveSpaceWorkspaces()` is the sole writer of
+  // `workspace:<spaceId>` and it hardcodes that featureId. Reading it with
+  // `api.settings.get` scoped the query to `WHERE featureId = 'spaces'`, where
+  // nothing is ever written, so this always came back null and every space fell
+  // through to the home-UI branch below. Declared in manifest.json as
+  // `settings.readForeign: ["space-workspaces"]`.
+  const wsResult = await api.settings.getExtKey('space-workspaces', 'workspace:' + tag.id);
   let restored = false;
   if (!wsResult.error && wsResult.value) {
     const snapshot = typeof wsResult.value === 'string' ? JSON.parse(wsResult.value) : wsResult.value;

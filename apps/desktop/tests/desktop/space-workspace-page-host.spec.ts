@@ -29,6 +29,12 @@
  * BaseWindows, this must fail loudly, because that is precisely the condition
  * the regression needs.
  *
+ * THE RESTORE HALF lives here too (third test, remaining-work item 9): the
+ * writer above and both readers disagreed on the featureId — `openSpace` read
+ * its own `spaces` namespace, which nothing writes — so a space always opened
+ * the home UI instead of the user's windows. The readers were repointed at
+ * `space-workspaces` (no migration: the rows on disk never moved).
+ *
  * Network-free: content is served by a local loopback server.
  * Focus-free: hybrid hosts are headless (opacity 0, never shown).
  *
@@ -192,6 +198,138 @@ test.describe('space workspaces persist page hosts @desktop', () => {
         height: expect.any(Number),
       }),
     );
+  });
+
+  test('openSpace reopens the saved windows instead of falling back to the spaces home UI', async () => {
+    // The RESTORE half, end to end, through the entry point a user actually
+    // hits: the `open space <name>` command handled by
+    // `features/spaces/background.js openSpace`.
+    //
+    // The defect this covers is a namespace mismatch, not a projection bug.
+    // `session.ts saveSpaceWorkspaces()` writes `workspace:<spaceId>` under
+    // featureId `space-workspaces`; `openSpace` used to read it with
+    // `api.settings.get(...)`, which `tile:settings:get` scopes to
+    // `WHERE featureId = grant.tileId` — `spaces`, a namespace nothing ever
+    // writes. So the read always returned null, `restored` stayed false, and
+    // the space opened the home UI with the user's windows nowhere.
+    //
+    // DOES NOT SKIP ITSELF (see the file header): every precondition — the
+    // space tag, the hybrid page host, the persisted row — is asserted, so a
+    // broken setup fails loudly instead of quietly retiring the cover.
+    const spaceName = 'space-restore-spec';
+    const spaceId = await bgWindow.evaluate(async (name: string) => {
+      // `openSpace` machine-tags the space itself (`toSpaceTagName` →
+      // `space:<name>`), so mint the tag under exactly that name — the command
+      // below must resolve to THIS tag, and therefore to this row key.
+      const r = await (window as unknown as { app: any }).app.datastore.getOrCreateTag(
+        `space:${name}`,
+      );
+      return (r?.data?.tag?.id ?? null) as string | null;
+    }, spaceName);
+    expect(spaceId, 'could not mint the space tag that keys the workspace row').toBeTruthy();
+
+    const url = `http://127.0.0.1:${serverPort}/restore-page`;
+    const opened = await bgWindow.evaluate(
+      async (u: string) =>
+        await (window as unknown as { app: any }).app.window.open(u, { width: 700, height: 500 }),
+      url,
+    );
+    expect(opened?.success).toBe(true);
+    const windowId = opened.id as number;
+
+    const isHybrid = await app.evaluateMain!(
+      ((_e: unknown, id: number) =>
+        (globalThis as any).__peek_test.isHybridWindowForTest(id)) as any,
+      windowId,
+    );
+    expect(
+      isHybrid,
+      'the opened page host is not a hybrid BaseWindow — this spec restores a ' +
+        'page host and is meaningless without one',
+    ).toBe(true);
+
+    await app.getWindow('restore-page', 15000);
+
+    const ctx = await bgWindow.evaluate(
+      async (arg: { id: number; spaceId: string; spaceName: string }) =>
+        await (window as unknown as { app: any }).app.context.setMode('space', {
+          windowId: arg.id,
+          metadata: { spaceId: arg.spaceId, spaceName: arg.spaceName },
+        }),
+      { id: windowId, spaceId: spaceId as string, spaceName },
+    );
+    expect(ctx?.success).toBe(true);
+
+    await app.evaluateMain!((() =>
+      (globalThis as any).__peek_test.forceSaveSession()) as any);
+
+    // Precondition, asserted: the row this test restores FROM actually exists.
+    // Without it a green restore assertion would prove nothing.
+    const saved = await bgWindow.evaluate(
+      async (key: string) =>
+        await (window as unknown as { app: any }).app.settings.getExtKey('space-workspaces', key),
+      `workspace:${spaceId}`,
+    );
+    const savedRow: SpaceWorkspaceRow | null =
+      typeof saved?.data === 'string' ? JSON.parse(saved.data) : (saved?.data ?? null);
+    expect(
+      (savedRow?.windows ?? []).map((w) => w.url),
+      `the workspace:${spaceId} row does not hold the page host — the save half ` +
+        'broke, so the restore half cannot be under test here',
+    ).toContain(url);
+
+    // Close the page host so a window at this URL after `open space` can only
+    // be one that RESTORE reopened.
+    await bgWindow.evaluate(
+      async (id: number) => await (window as unknown as { app: any }).app.window.close(id),
+      windowId,
+    );
+    await expect
+      .poll(() => app.windows().filter((p) => p.url().includes('/restore-page')).length, {
+        timeout: 10000,
+        message: 'the page host never went away after close — restore would be unfalsifiable',
+      })
+      .toBe(0);
+
+    // Drive the real command the same way the cmd panel does.
+    const result = (await bgWindow.evaluate(async (name: string) => {
+      const api = (window as unknown as { app: any }).app;
+      return await new Promise((resolve) => {
+        const resultTopic = 'cmd:execute:open space:result';
+        api.subscribe(resultTopic, (r: unknown) => resolve(r));
+        api.publish('cmd:execute:open space', {
+          search: name,
+          params: [],
+          expectResult: true,
+          resultTopic,
+        });
+        setTimeout(() => resolve({ error: 'timeout waiting for open space' }), 25000);
+      });
+    }, spaceName)) as { success?: boolean; spaceId?: string; error?: string };
+
+    expect(result?.error, 'the `open space` command never came back').toBeUndefined();
+    expect(result?.success).toBe(true);
+    expect(
+      result?.spaceId,
+      'the command resolved a different space tag than the one the row is keyed on',
+    ).toBe(spaceId);
+
+    await expect
+      .poll(() => app.windows().filter((p) => p.url().includes('/restore-page')).length, {
+        timeout: 20000,
+        message:
+          'openSpace did not reopen the saved page host — it read the workspace row ' +
+          'from its own `spaces` namespace, where saveSpaceWorkspaces never writes, ' +
+          'so `restored` stayed false',
+      })
+      .toBeGreaterThan(0);
+
+    // And it must NOT have taken the `if (!restored)` branch.
+    expect(
+      app.windows().map((p) => p.url()).filter((u) => u.includes('spaces/home.html')),
+      'openSpace opened the spaces home UI — the no-saved-state fallback fired ' +
+        'even though a workspace row exists for this space',
+    ).toEqual([]);
   });
 
   test('api.session exposes saveSpaceWorkspaces alongside the trustedBuiltin methods', async () => {

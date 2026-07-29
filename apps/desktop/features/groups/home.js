@@ -715,8 +715,11 @@ const openGroup = async (groupName) => {
   let savedBoundsMap = null;
   let sortedUrlItems = urlItems;
   try {
+    // `workspace:<id>` rows are written by `session.ts saveSpaceWorkspaces()`
+    // under featureId `space-workspaces` — never under the `spaces` tile's own
+    // namespace, which this used to read and which nothing writes.
     const wsResult = api.settings.getExtKey
-      ? await api.settings.getExtKey('spaces', 'workspace:' + tag.id)
+      ? await api.settings.getExtKey('space-workspaces', 'workspace:' + tag.id)
       : { success: false };
     if (wsResult.success && wsResult.data) {
       const snapshot = typeof wsResult.data === 'string' ? JSON.parse(wsResult.data) : wsResult.data;
