@@ -1128,7 +1128,7 @@ function installTestBridge(): void {
       const w = fakeHosts.get(id);
       const entry = getHybridWindow(id);
       if (!w || w.isDestroyed() || !entry || entry.contentWC.isDestroyed()) return null;
-      return showHybridHost(w, entry.contentWC, opts);
+      return showHybridHost(w, opts);
     },
     /** Whether THIS run is headless (so the applied-show test asserts the right branch). */
     isHeadlessRun(): boolean {

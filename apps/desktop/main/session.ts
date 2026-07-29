@@ -1427,7 +1427,7 @@ export async function restoreSessionSnapshot(
           _restoreFocusedId = focusedWindowId;
           DEBUG && console.log(`[session] Focused restored window: ${focusedWindowId}`);
         } else if (hybridFocus && !hybridFocus.baseWin.isDestroyed()) {
-          showHybridHost(hybridFocus.baseWin, hybridFocus.contentWC);
+          showHybridHost(hybridFocus.baseWin);
           _restoreFocusCount++;
           _restoreHybridActivationCount++;
           _restoreFocusedId = focusedWindowId;

@@ -2019,6 +2019,35 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
 
     case 'WINDOW_SHOW_REQUESTED': {
       effects.push({ type: 'SHOW_WINDOW', id: event.id, activate: event.activate });
+      // The CONTENT half of the show invariant (§5 step 8 — the last direct OS
+      // call `windows.ts showHybridHost` used to make itself). A page-host
+      // shown WITH activation intent must also make its content
+      // `WebContentsView` the macOS first responder, or key equivalents (ESC,
+      // cmd+L) reach no target: NSBeep, and the overlay never reveals
+      // (regression cluster 1b6eaf0b / 7c61e917).
+      //
+      // Not redundant with the show it accompanies: `showWindow` in
+      // `electron-window-backend.ts` MASKS `osActivate` to false for a
+      // `quick-view` page-host (a non-activating `type:'panel'` NSPanel takes
+      // key input without activating the app — regression 524f7aba), so the
+      // show alone never confers first responder there.
+      //
+      // Deliberately NOT routed through `applyRaiseRequest`: that would put a
+      // `RAISE_WINDOW` on the window-OPEN path, and a raise is an activating
+      // show whose `WINDOW_SHOWN` echo would feed straight back — the very
+      // cycle the `WINDOW_SHOWN` arm exists to cut. `applyRaiseRequest` stays
+      // the sole `RAISE_WINDOW` emitter.
+      //
+      // `activate:false` (session restore's `show:false` opens) emits nothing:
+      // a restored host must stay focus-free until the restore loop picks the
+      // ONE descriptor to re-activate. Non-page-host kinds emit nothing either
+      // — only a page-host has a separate content WC to focus (the backend
+      // wires `rendererWC` for page-hosts alone). Headless is handled where
+      // every other focus effect is, in the executor's `FOCUS_CONTENT` arm.
+      const showRec = state.windows.get(event.id);
+      if (event.activate && showRec?.kind === 'page-host') {
+        effects.push({ type: 'FOCUS_CONTENT', id: event.id });
+      }
       break;
     }
 

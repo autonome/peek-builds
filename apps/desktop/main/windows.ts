@@ -181,7 +181,6 @@ export function hybridShowIntent(
  */
 export function showHybridHost(
   baseWin: import('electron').BaseWindow,
-  contentWC: import('electron').WebContents,
   opts?: { inactive?: boolean; nonActivating?: boolean },
 ): { activated: boolean; contentFocused: boolean; showInactive: boolean } {
   const intent = hybridShowIntent(isHeadless(), {
@@ -198,19 +197,19 @@ export function showHybridHost(
   // `hybridShowIntent` encodes) and echoes `WINDOW_SHOWN` with the UNMASKED
   // intent — which is how the machine's `front` tracks quick-views and
   // headless shows, where no OS focus event will ever fire.
+  //
+  // The CONTENT-focus half rides the same dispatch as of §5 step 8: the
+  // reducer's `WINDOW_SHOW_REQUESTED` arm pushes `FOCUS_CONTENT` after
+  // `SHOW_WINDOW` for an activating show of a page-host, so first responder
+  // lands on an already-shown host exactly as the old imperative
+  // `contentWC.focus()` did — but through the executor, per R2. `intent` is
+  // now purely the RETURNED description of what was asked for; nothing here
+  // touches Electron.
   const id = getWindowIdFor(baseWin);
   if (id == null) {
     DEBUG && console.log('[windows] showHybridHost: host not machine-registered — show dropped');
   } else {
     dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: opts?.inactive !== true });
-  }
-  // The content-focus half STAYS imperative until the focus-rivals step (§5
-  // step 8): make the content WebContentsView the macOS first responder so
-  // key equivalents (cmd+L etc.) route to it instead of beeping at AppKit.
-  // The dispatch above completes the OS show synchronously (the pump drains
-  // before returning), so the focus lands on an already-shown host.
-  if (intent.contentFocused) {
-    try { if (!contentWC.isDestroyed()) contentWC.focus(); } catch { /* wc gone */ }
   }
   return intent;
 }

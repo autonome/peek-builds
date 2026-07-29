@@ -1220,7 +1220,7 @@ function assembleHybridPageHost(
   // takes key input while the frontmost app keeps OS focus — the non-activating
   // overlay the user expects (regression 524f7aba). Popups (createWindow path)
   // pass `options:{}` → no role → they activate like a normal web window.
-  showHybridHost(baseWin, view.webContents, {
+  showHybridHost(baseWin, {
     inactive: options.show === false,
     nonActivating: options.role === 'quick-view',
   });

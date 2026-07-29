@@ -124,8 +124,10 @@ const ALLOWLIST = [
     why: 'modal blur-settle re-focus (win.on(\'blur\') 200ms settle branch) — focus rivals, §5 step 8; the devtools-opened first-responder restore that used to share this entry is gone (§5 step 9 — DEVTOOLS_OPENED now owns it)' },
   { file: 'apps/desktop/main/main.ts', call: 'close', count: 1,
     why: 'close overlay switcher when app loses OS focus (did-resign-active) — §5 step 9' },
-  { file: 'apps/desktop/main/windows.ts', call: 'focus', count: 1,
-    why: 'showHybridHost\'s contentWC.focus() (content-focus half of the show invariant) — focus rivals, §5 step 8; the winDevtoolsConfig bw/webContents re-focus pair that used to share this entry is gone (§5 step 9 — DEVTOOLS_OPENED now owns it)' },
+  // `apps/desktop/main/windows.ts` `focus` is GONE (§5 step 8): showHybridHost's
+  // contentWC.focus() — the content-focus half of the show invariant — now rides
+  // the reducer's WINDOW_SHOW_REQUESTED arm as a FOCUS_CONTENT effect, so
+  // windows.ts makes no direct window/WC call at all.
 ];
 
 // ---------------------------------------------------------------------------

@@ -2196,6 +2196,38 @@ describe('request events — pass-through effects (state changes ride the native
     }
   });
 
+  // §5 step 8: the content half of the show invariant. `windows.ts
+  // showHybridHost` used to call `contentWC.focus()` itself (the last direct OS
+  // call in that file) — the machine owns it now. It is NOT redundant with the
+  // show: the backend masks `osActivate` to false for a quick-view page-host
+  // (non-activating NSPanel), so without this the page never gets first
+  // responder and ESC / cmd+L reach nothing.
+  it('WINDOW_SHOW_REQUESTED {activate} on a page-host also focuses its content, AFTER the show', () => {
+    const { effects } = reduce(openWindow(createInitialState(), 1, { kind: 'page-host' }), { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: true });
+    assert.deepStrictEqual(
+      effects.filter((e) => e.type === 'SHOW_WINDOW' || e.type === 'FOCUS_CONTENT'),
+      [{ type: 'SHOW_WINDOW', id: wid(1), activate: true }, { type: 'FOCUS_CONTENT', id: wid(1) }],
+    );
+    // …and no raise: a RAISE_WINDOW on the open path is the show/raise echo the
+    // WINDOW_SHOWN arm exists to cut (`applyRaiseRequest` stays the sole emitter).
+    assert.ok(!hasEffect(effects, 'RAISE_WINDOW'));
+  });
+
+  it('WINDOW_SHOW_REQUESTED emits no FOCUS_CONTENT for activate:false, a non-page-host, or an unknown id', () => {
+    // activate:false — session restore's `show:false` opens must stay focus-free
+    // until the restore loop picks the ONE descriptor to re-activate.
+    const inactive = reduce(openWindow(createInitialState(), 1, { kind: 'page-host' }), { type: 'WINDOW_SHOW_REQUESTED', id: wid(1), activate: false });
+    assert.ok(!hasEffect(inactive.effects, 'FOCUS_CONTENT'));
+    // A browser window has no separate content WC (the backend wires
+    // `rendererWC` for page-hosts alone).
+    const browser = reduce(openWindow(createInitialState(), 2, { kind: 'browser' }), { type: 'WINDOW_SHOW_REQUESTED', id: wid(2), activate: true });
+    assert.ok(!hasEffect(browser.effects, 'FOCUS_CONTENT'));
+    // Unknown id: SHOW_WINDOW still goes out (the backend resolves the handle
+    // and no-ops), but nothing claims it is a page-host.
+    const unknown = reduce(createInitialState(), { type: 'WINDOW_SHOW_REQUESTED', id: wid(9), activate: true });
+    assert.deepStrictEqual(unknown.effects, [{ type: 'SHOW_WINDOW', id: wid(9), activate: true }]);
+  });
+
   it('WINDOW_CONTENT_CLOSE_REQUESTED -> CLOSE_CONTENT even after the record retired (backend holds the WC)', () => {
     let s = openWindow(createInitialState(), 1, {});
     s = drive(s, [{ type: 'WINDOW_CLOSED', id: wid(1) }]).state;
