@@ -26,6 +26,12 @@
  *     genuinely not a window op (a db `.close()`, a socket `.destroy()`)
  *     goes on the allowlist with a justification, same as a real violation.
  *
+ * Two op families, two allowlists, DIFFERENT semantics — see FORBIDDEN_WRITE /
+ * WRITE_ALLOWLIST vs FORBIDDEN_READ / READ_ALLOWLIST. Write debt should trend
+ * to zero; some read debt is permanent by design (a presenter at the registry
+ * boundary must ask the OS what a window looks like). A non-empty allowlist is
+ * therefore NOT by itself evidence of an unfinished migration — read the kinds.
+ *
  * The allowlist below only ever SHRINKS:
  *   - a hit not covered by an entry           → FAIL (new violation)
  *   - an entry whose (file, call) matches 0×  → FAIL (stale — delete it)
@@ -49,9 +55,9 @@ const REPO_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const SCAN_ROOT = path.join(REPO_ROOT, 'apps/desktop/main');
 const EXEMPT_FILE = 'apps/desktop/main/electron-window-backend.ts'; // the backend (R2 via the R3 port)
 
-// The forbidden window-API call names, verbatim from window-manager.md §1 R2.
-// `webContents.focus()` is covered by `focus`.
-const FORBIDDEN = [
+// The forbidden window-API call names that MUTATE a window, verbatim from
+// window-manager.md §1 R2. `webContents.focus()` is covered by `focus`.
+const FORBIDDEN_WRITE = [
   'focus',
   'show',
   'showInactive',
@@ -72,15 +78,55 @@ const FORBIDDEN = [
 ];
 
 /**
- * The shrinking allowlist. Every entry is a CURRENT violation (or a
- * non-window false positive the mechanical pattern can't distinguish),
- * individually justified. DO NOT add entries to unblock new code — dispatch
- * an event to the reducer instead (window-manager.md §1 R2). When you remove
- * a call site, update or delete its entry in the same commit.
+ * Forbidden READ ops — deliberately a THREE-name shortlist, not full coverage.
+ *
+ * Reads matter to R2 because the machine is supposed to be the source of truth
+ * for window facts: a module that asks the OS "is this focused / always-on-top
+ * / focusable?" and BRANCHES on the answer has re-derived state the reducer
+ * already owns, and will disagree with it. That blind spot (the write list had
+ * no read ops at all) hid a real bug for the whole migration.
+ *
+ * Full read coverage measured out at ~360 calls across 32 files, overwhelmingly
+ * `isDestroyed()` liveness guards with near-zero signal — a list that size
+ * stops being read. These three are the highest-signal, lowest-noise subset:
+ * each mirrors a fact the reducer tracks (front/focus, always-on-top, window
+ * class), so a hit is worth a human look.
+ *
+ * DEFERRED ON PURPOSE — do not add without a reason that beats the noise:
+ *   isDestroyed  — pure liveness guard; required at every port boundary and
+ *                  in every setTimeout body (desktop CLAUDE.md rule). ~300 of
+ *                  the ~360.
+ *   isVisible, getBounds, getTitle, getURL — presentation snapshots read at
+ *                  the registry/IPC boundary to ANSWER a query, not to decide
+ *                  window behaviour; mostly co-located with the reads already
+ *                  listed here, so those entries flag the same call sites.
+ *   getFocusedWindow, fromId, fromWebContents — handle RESOLUTION, not state.
+ *                  Legitimately permanent at the boundary where an OS object
+ *                  must be turned into a machine id.
+ */
+const FORBIDDEN_READ = [
+  'isFocused',
+  'isAlwaysOnTop',
+  'isFocusable',
+];
+
+const FORBIDDEN = [...FORBIDDEN_WRITE, ...FORBIDDEN_READ];
+const READ_OPS = new Set(FORBIDDEN_READ);
+
+/**
+ * WRITE debt. Every entry is a CURRENT violation (or a non-window false
+ * positive the mechanical pattern can't distinguish), individually justified.
+ * DO NOT add entries to unblock new code — dispatch an event to the reducer
+ * instead (window-manager.md §1 R2). When you remove a call site, update or
+ * delete its entry in the same commit.
+ *
+ * This list SHOULD trend to zero (modulo the non-window false positives): a
+ * module that mutates a window is by definition doing the executor's job. Read
+ * debt is different — see READ_ALLOWLIST.
  *
  * { file, call, count, why }
  */
-const ALLOWLIST = [
+const WRITE_ALLOWLIST = [
   // ── Not window ops: same method NAME on a non-window receiver ────────────
   // The mechanical pattern cannot see receiver types; these are listed so the
   // check stays explicit instead of the pattern getting clever.
@@ -135,6 +181,59 @@ const ALLOWLIST = [
   // the reducer's WINDOW_SHOW_REQUESTED arm as a FOCUS_CONTENT effect, so
   // windows.ts makes no direct window/WC call at all.
 ];
+
+/**
+ * READ debt — different semantics from WRITE_ALLOWLIST, so do NOT read a
+ * non-empty list here as "the migration is unfinished."
+ *
+ * A read is only an R2 violation when its value feeds a BRANCH that decides
+ * window behaviour: that duplicates the reducer's state and will drift from it.
+ * A read whose value is merely REPORTED — a presentation snapshot, an IPC
+ * response field, a metrics row, a test bridge — asks the OS a question and
+ * hands the answer straight back out. Several of those are legitimately
+ * PERMANENT: at the registry/IPC boundary the OS object IS the source of
+ * truth for what it currently looks like.
+ *
+ * So each entry carries a `kind`:
+ *   'reported'  — value flows out as data, no window decision. Accepted; may
+ *                 stay forever. Listed so the check stays explicit and so a
+ *                 new read in these files still trips NEW VIOLATION.
+ *   'decision'  — value feeds a branch deciding window behaviour. A REAL R2
+ *                 violation, tracked here until fixed. These should go to zero.
+ *
+ * { file, call, count, kind, why }
+ */
+const READ_ALLOWLIST = [
+  // ── Known R2 violations: OS read feeding a window decision ───────────────
+  { file: 'apps/desktop/main/main.ts', call: 'isAlwaysOnTop', count: 1, kind: 'decision',
+    why: 'KNOWN VIOLATION, fix pending: the inline registerWindow callback passed to configureTileLauncher feeds classifyWindowRegistration() from live OS state (win.isAlwaysOnTop()) instead of the machine facts the caller already holds. The window class is a machine fact — deriving it by asking the OS at registration time is exactly the re-derivation R2 forbids. Should become the caller-supplied create params' },
+  { file: 'apps/desktop/main/main.ts', call: 'isFocusable', count: 2, kind: 'decision',
+    why: 'KNOWN VIOLATION, fix pending: same registerWindow callback — win.isFocusable() feeds BOTH classifyWindowRegistration() and isSatelliteRegistration(). Satellite-ness gates whether the window can ever become front, so this is a live-OS read deciding window behaviour. Same fix as the isAlwaysOnTop entry above' },
+  { file: 'apps/desktop/main/ipc.ts', call: 'isFocused', count: 1, kind: 'decision',
+    why: 'KNOWN VIOLATION, fix pending: the hybrid content pointer-move handler in wireHybridContentEvents gates the resize-hover cursor on contentWC.isFocused() (setHoverDir(contentFocused ? … : null)). The intent is right — only the first-responder window paints an injected cursor without flashing — but the focus fact belongs to the machine (it owns front/focus), so this should read machine state rather than poll the OS webContents' },
+
+  // ── Reported, not decided: value flows out as data ───────────────────────
+  { file: 'apps/desktop/main/window-presenter.ts', call: 'isFocused', count: 2, kind: 'reported',
+    why: 'the `focused` field of a WindowPresentation snapshot — getHybridPresentation (BaseWindow branch) + getLivePresentation (BrowserWindow branch). This module IS the registry-boundary presenter: its whole job is to answer "what does this window look like right now" for the windows feature/IPC. Nothing branches on the value. Permanent by design' },
+  { file: 'apps/desktop/main/process-metrics.ts', call: 'isFocused', count: 2, kind: 'reported',
+    why: 'the `focused` column of a per-webContents metrics row — the BrowserWindow.fromWebContents branch and the hybrid BaseWindow branch, both wrapped in safe(). Diagnostics output only; no window behaviour depends on it. Permanent by design' },
+  { file: 'apps/desktop/main/tile-ipc.ts', call: 'isFocused', count: 1, kind: 'reported',
+    why: 'the `focused` field of the tile:window:info response — reporting a window\'s current state back to a tile that asked. No branch' },
+  { file: 'apps/desktop/main/tile-ipc.ts', call: 'isFocusable', count: 1, kind: 'reported',
+    why: 'the last-resort candidate filter in tile:theme:setWindowColorScheme, reached only when neither an explicit windowId nor the machine front resolves (headless). It picks a THEME target, not window behaviour — nothing about show/focus/stacking changes. Weakest "reported" claim on this list: if the decision class ever widens, this is the first entry to re-examine (the machine already knows which windows are satellites)' },
+  { file: 'apps/desktop/main/entry.ts', call: 'isFocused', count: 1, kind: 'reported',
+    why: 'the Cmd+W ("Close Window") menu handler\'s DEVTOOLS guard: wc.isDevToolsOpened() && (wc.isDevToolsFocused() || !wc.isFocused()). A detached devtools window is not a machine window, so the machine cannot know it holds OS focus — this read exists precisely because the fact is outside the machine\'s model (isDevToolsFocused() alone returns false in Electron 40 when devtools is OS-focused, hence the !isFocused() half). Accepted: the target of the close is still resolved by the machine front, this only detects "the keystroke went to devtools"' },
+
+  // ── Test-only observability (E2E bridge / _forTests exports) ─────────────
+  { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'isAlwaysOnTop', count: 1, kind: 'reported',
+    why: '_getOverlayStateForTests() — reads the singleton overlay\'s alwaysOnTop for focus-free spec assertions. Test observability, not production behaviour' },
+  { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'isFocused', count: 2, kind: 'reported',
+    why: 'installTestBridge (E2E_TEST only): hostVisibility() reports a hybrid host BaseWindow\'s focus (a BaseWindow is invisible to BrowserWindow.fromId, so the headless-no-focus-theft spec cannot read it any other way) and overlayFocus() reports the overlay\'s. Both are assertions ABOUT focus — reading the OS is the point' },
+  { file: 'apps/desktop/main/hybrid-overlay.ts', call: 'isFocusable', count: 1, kind: 'reported',
+    why: 'installTestBridge overlayFocus() — asserts the overlay stays focusable:true (click into the URL field can make it key) while never being focused on appearance. Test observability' },
+];
+
+const ALLOWLIST = [...WRITE_ALLOWLIST, ...READ_ALLOWLIST];
 
 // ---------------------------------------------------------------------------
 
@@ -296,6 +395,15 @@ for (const e of ALLOWLIST) {
   allowed.set(key, e);
 }
 
+// Every read-debt entry must declare which kind it is — the whole point of the
+// split is that a reader can tell accepted reporting from an unfixed violation.
+for (const e of READ_ALLOWLIST) {
+  if (e.kind !== 'decision' && e.kind !== 'reported') {
+    console.error(`[r2-check] READ_ALLOWLIST entry needs kind:'decision'|'reported': ${allowKey(e.file, e.call)}`);
+    process.exit(2);
+  }
+}
+
 const failures = [];
 
 // 1. Every actual hit must be covered by an entry with the exact count.
@@ -306,7 +414,12 @@ for (const [file, counts] of actual) {
       failures.push(
         `NEW VIOLATION  ${file} — .${call}( ×${count}\n` +
         `    R2: only the executor (${EXEMPT_FILE}) may call window APIs.\n` +
-        `    Dispatch an event to the reducer instead (docs/design/window-manager.md §1 R2).`
+        (READ_OPS.has(call)
+          ? `    This is a READ. If the value feeds a branch deciding window behaviour,\n` +
+            `    read machine state instead — the reducer owns this fact and yours will drift.\n` +
+            `    If it is only reported outward, add a READ_ALLOWLIST entry (kind:'reported').`
+          : `    Dispatch an event to the reducer instead.`) +
+        `\n    (docs/design/window-manager.md §1 R2)`
       );
     } else if (entry.count !== count) {
       const direction = count > entry.count ? 'GREW' : 'SHRANK';
@@ -342,8 +455,13 @@ if (failures.length) {
   process.exit(1);
 }
 
-const totalAllowed = ALLOWLIST.reduce((s, e) => s + e.count, 0);
+const sum = (list) => list.reduce((s, e) => s + e.count, 0);
+const readDecision = READ_ALLOWLIST.filter((e) => e.kind === 'decision');
+const readReported = READ_ALLOWLIST.filter((e) => e.kind === 'reported');
 console.log(
-  `✔ r2-window-ops: ${files.length} main-process files scanned; ` +
-  `1 exempt executor; ${ALLOWLIST.length} allowlisted legacy entries (${totalAllowed} calls, shrinking)`
+  `✔ r2-window-ops: ${files.length} main-process files scanned; 1 exempt executor\n` +
+  `   write debt: ${WRITE_ALLOWLIST.length} entries / ${sum(WRITE_ALLOWLIST)} calls (should trend to zero)\n` +
+  `   read debt:  ${READ_ALLOWLIST.length} entries / ${sum(READ_ALLOWLIST)} calls — ` +
+  `${readDecision.length}/${sum(readDecision)} decision (real violations, fix pending), ` +
+  `${readReported.length}/${sum(readReported)} reported (accepted, may be permanent)`
 );
