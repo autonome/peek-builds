@@ -25,6 +25,7 @@ import {
   overlayForHost,
   hostForOverlay,
   isContentWindow,
+  topmostBaseLayerPageHost,
   isStaleSelfEcho,
   selectTransientAutoclose,
   selectAppResignTransients,
@@ -2200,6 +2201,72 @@ describe('window-kernel: hostForOverlay', () => {
 
   it('an unregistered id reads null rather than throwing', () => {
     assert.strictEqual(hostForOverlay(attached(), wid(99)), null);
+  });
+});
+
+// ── topmostBaseLayerPageHost: the overlay's attachment driver ───────────────
+
+describe('window-kernel: topmostBaseLayerPageHost', () => {
+  const FLOATING = BASE_LAYER + 1;
+
+  const registerPageHost = (id: WindowId, opts: { layer?: number; role?: string } = {}): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: opts.layer ?? BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: opts.role ?? 'content',
+  });
+
+  /** Visible AND orderable — the two facts the query, like `isContentWindow`, requires. */
+  const shown = (id: WindowId): Event[] => [
+    { type: 'WindowShown', id },
+    { type: 'WindowContentOrderable', id },
+  ];
+
+  it('a floating quick-view above a base-layer page host does not shadow it — the chrome frames the page, not the peek', () => {
+    const base = wid(1);
+    const quickView = wid(2);
+    const state = fold([
+      registerPageHost(base),
+      ...shown(base),
+      // Registered later, in the floating band — a peek opened over the page.
+      registerPageHost(quickView, { layer: FLOATING, role: 'quick-view' }),
+      ...shown(quickView),
+    ]);
+    assert.deepStrictEqual(state.order.map((w) => w.id), [base, quickView], 'the quick-view sits above `base` in `order`');
+    assert.strictEqual(
+      topmostBaseLayerPageHost(state)?.id,
+      base,
+      'kind alone admits the peek too — the role clause is what excludes it',
+    );
+  });
+
+  it('a page-host registered outside the base layer is excluded, even with an admitted role', () => {
+    const floatingHost = wid(1);
+    const state = fold([registerPageHost(floatingHost, { layer: FLOATING }), ...shown(floatingHost)]);
+    assert.strictEqual(topmostBaseLayerPageHost(state), null, 'array position alone would have found it — the layer clause is what excludes it');
+  });
+
+  it('no eligible page-host reads null, even with other windows on screen', () => {
+    const browserWin = wid(1);
+    const utilityHost = wid(2);
+    const state = fold([
+      { type: 'WindowRegistered', id: browserWin, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowShown', id: browserWin },
+      registerPageHost(utilityHost, { role: 'utility' }),
+      ...shown(utilityHost),
+    ]);
+    assert.strictEqual(topmostBaseLayerPageHost(state), null);
+  });
+
+  it('among two base-layer page hosts, the topmost in order wins', () => {
+    const first = wid(1);
+    const second = wid(2);
+    const state = fold([registerPageHost(first), ...shown(first), registerPageHost(second), ...shown(second)]);
+    assert.strictEqual(topmostBaseLayerPageHost(state)?.id, second);
   });
 });
 

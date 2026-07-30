@@ -1704,6 +1704,45 @@ export function isContentWindow(record: WindowRecord): boolean {
   return roleIn(CONTENT_ROLES, record.role);
 }
 
+/**
+ * The page-host the shared chrome overlay should attach to: the topmost
+ * `kind: 'page-host'` window sitting in the base layer. `topmost(state,
+ * pred)` is trustworthy only when every record `pred` admits shares one
+ * `layer` (see `topmost`'s own doc); this predicate holds that contract with
+ * two clauses, neither of which is optional:
+ *
+ *   - a role in `CONTENT_ROLES`   `kind: 'page-host'` alone is not enough to
+ *                                  mean "a base-layer page". `ipc.ts
+ *                                  assembleHybridPageHost` registers EVERY
+ *                                  hybrid page host with `kind: 'page-host'`,
+ *                                  including peeks and slides, which register
+ *                                  `role: 'quick-view'`. Without this clause
+ *                                  the predicate admits a floating quick-view,
+ *                                  and the overlay frames a peek while the
+ *                                  base-layer page underneath it sits
+ *                                  chrome-less.
+ *   - `layer === BASE_LAYER`      a page-host is not confined to the base
+ *                                  layer — one can sit in a floating band
+ *                                  behind the cmd panel, a peek, or a slide,
+ *                                  alongside base-layer page-hosts. `order` is
+ *                                  insertion- and movement-ordered, never
+ *                                  layer-sorted, so without this clause array
+ *                                  position and visual stacking diverge with
+ *                                  no error path — the topmost `order` entry
+ *                                  need not be the topmost on screen.
+ *
+ * `visible` and `orderable` are carried over from the same reasoning
+ * `isContentWindow` and the `SetStacking` emission (`react`) already apply: a
+ * hidden window is not on screen to frame, and a page-host the OS cannot yet
+ * z-order (before its first composited frame) cannot be the overlay's target.
+ */
+export function topmostBaseLayerPageHost(state: State): WindowRecord | null {
+  return topmost(
+    state,
+    (r) => r.kind === 'page-host' && r.visible && r.orderable && r.layer === BASE_LAYER && roleIn(CONTENT_ROLES, r.role),
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Transient autoclose — the role sets and the two selectors, ported from
 // `window-state.ts` (`TRANSIENT_ROLES`, `AUTOCLOSE_EXEMPT_ROLES`,
