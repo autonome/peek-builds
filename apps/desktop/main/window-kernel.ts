@@ -180,7 +180,36 @@ export interface WindowRecord {
    * WindowRecord.overlayFor`.
    */
   overlayFor?: WindowId;
+
+  /**
+   * The newest `opSeq` stamped on a focus-family effect (`ShowWindow` /
+   * `RaiseWindow`) issued for this window — what `isStaleSelfEcho` compares
+   * an incoming `machine`-caused `OsFocusGained` against. Written in `evolve`
+   * exactly where those effects would be emitted (`WindowShown` genuinely
+   * clearing `visible`, `OsFocusGained` genuinely raising), mirroring
+   * `react`'s own diff so it never drifts from what was actually stamped.
+   * `undefined` until the first such effect for this window.
+   */
+  lastOpSeq?: number;
 }
+
+/**
+ * WHO caused an `OsFocusGained` report (ported from `window-state.ts
+ * FocusCause`): without it, an OS focus report means both "the user switched
+ * windows" and "the OS is echoing an operation this machine just requested"
+ * — indistinguishable, which is the defect that let a machine-issued raise
+ * sweep a palette the user had just opened.
+ *
+ *   - `machine`  the echo of a focus-family effect (`RaiseWindow`/
+ *                `ShowWindow`) this machine emitted — `opSeq` is that
+ *                effect's token. Because the token is a stamp rather than a
+ *                boolean, a STALE self-echo (an `opSeq` older than the latest
+ *                one issued for that window — see `isStaleSelfEcho`) is
+ *                identifiable too.
+ *   - `world`    a real user gesture, another app, Mission Control, a page
+ *                click — everything else.
+ */
+export type FocusCause = { kind: 'machine'; opSeq: number } | { kind: 'world' };
 
 /**
  * RULE 1 (§0.1.4): `order` holds EVERY registered window, bottom -> top, as
@@ -225,7 +254,13 @@ export type Event =
   | { type: 'WindowShown'; id: WindowId }
   | { type: 'WindowHidden'; id: WindowId }
   | { type: 'WindowClosed'; id: WindowId }
-  | { type: 'OsFocusGained'; id: WindowId }
+  /**
+   * WHO caused it (see `FocusCause`). Absent means `world` — load-bearing:
+   * a producer not yet taught to report provenance keeps its exact current
+   * behavior. Provenance does not change what `key` becomes here; it only
+   * feeds later decisions (`isStaleSelfEcho`).
+   */
+  | { type: 'OsFocusGained'; id: WindowId; cause?: FocusCause }
   | { type: 'OsFocusLost'; id: WindowId }
   | { type: 'AppActiveChanged'; active: boolean }
   /** The first-composited-frame report — flips `orderable` to `true`. */
@@ -555,6 +590,9 @@ export function evolve(state: State, ev: Event): State {
           // A lived fact (attachment), same reasoning as `fsMode` above —
           // re-registration must not sever a live overlay attachment.
           ...(existing.overlayFor !== undefined ? { overlayFor: existing.overlayFor } : {}),
+          // A lived fact (focus provenance), same reasoning — re-registration
+          // must not erase the newest op issued for this window.
+          ...(existing.lastOpSeq !== undefined ? { lastOpSeq: existing.lastOpSeq } : {}),
           ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
           ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
         };
@@ -598,9 +636,16 @@ export function evolve(state: State, ev: Event): State {
     case 'WindowShown': {
       // Showing can newly clear the visibility axis of a held
       // DisplayChanged projection — flush if fsMode is also already normal.
+      // `lastOpSeq` is stamped only when this genuinely flips `visible`
+      // (the same condition `react` uses to emit `ShowWindow`) — an
+      // already-visible window re-shown is a no-op for the effect too.
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? withPendingProjectionFlushed({ ...w, visible: true }) : w)),
+        order: state.order.map((w) => {
+          if (w.id !== ev.id) return w;
+          const flushed = withPendingProjectionFlushed({ ...w, visible: true });
+          return w.visible ? flushed : { ...flushed, lastOpSeq: state.opSeqCounter };
+        }),
         version: state.version + 1,
       };
     }
@@ -640,9 +685,14 @@ export function evolve(state: State, ev: Event): State {
       }
       const record = state.order[idx];
       const withoutRecord = [...state.order.slice(0, idx), ...state.order.slice(idx + 1)];
+      // `lastOpSeq` is stamped only when this genuinely raises the window
+      // (the same condition `react` uses to emit `RaiseWindow`) — a focus
+      // report on the window already on top moves nothing and stamps nothing.
+      const genuinelyRaised = idx !== state.order.length - 1;
+      const movedRecord = genuinelyRaised ? { ...record, lastOpSeq: state.opSeqCounter } : record;
       return {
         ...state,
-        order: [...withoutRecord, record],
+        order: [...withoutRecord, movedRecord],
         key: ev.id,
         version: state.version + 1,
       };
@@ -1130,6 +1180,20 @@ export function keyWindow(state: State): WindowRecord | null {
     return null;
   }
   return state.order.find((w) => w.id === state.key) ?? null;
+}
+
+/**
+ * True when `cause` is a `machine` echo whose `opSeq` is OLDER than the
+ * newest op issued for `id` (`WindowRecord.lastOpSeq`) — a stale self-echo
+ * that a later decision (the transient sweep, not built here) should
+ * disregard rather than treat as fresh provenance. `world` is never stale
+ * (there is no op to be stale against), and a window with no `lastOpSeq` yet
+ * has nothing to compare against either.
+ */
+export function isStaleSelfEcho(state: State, id: WindowId, cause: FocusCause): boolean {
+  if (cause.kind !== 'machine') return false;
+  const record = state.order.find((w) => w.id === id);
+  return record?.lastOpSeq !== undefined && cause.opSeq < record.lastOpSeq;
 }
 
 /**

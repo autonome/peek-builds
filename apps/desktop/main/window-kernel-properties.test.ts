@@ -37,6 +37,7 @@ import {
   type WindowId,
   type WindowKind,
   type Rectangle,
+  type FocusCause,
 } from './window-kernel.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -133,8 +134,15 @@ function randomLogItem(rng: Rng, state: State): LogItem {
       return { type: 'WindowHidden', id };
     case 3:
       return { type: 'WindowClosed', id };
-    case 4:
-      return { type: 'OsFocusGained', id };
+    // Unfiltered — all three cause shapes (absent, world, machine with an
+    // arbitrary opSeq, including ones from the future and the distant past),
+    // same reasoning as every other event variant here.
+    case 4: {
+      const causeVariant = randomInt(rng, 3);
+      const cause: FocusCause | undefined =
+        causeVariant === 0 ? undefined : causeVariant === 1 ? { kind: 'world' } : { kind: 'machine', opSeq: randomInt(rng, 2001) - 1000 };
+      return cause === undefined ? { type: 'OsFocusGained', id } : { type: 'OsFocusGained', id, cause };
+    }
     case 5:
       return { type: 'OsFocusLost', id };
     case 6:
@@ -373,6 +381,14 @@ function checkInvariants(state: State, prev?: State): string[] {
       const nextRecord = state.order.find((w) => w.id === prevRecord.id);
       if (nextRecord !== undefined && prevRecord.orderable && !nextRecord.orderable) {
         violations.push(`orderable flipped true -> false for ${prevRecord.id}`);
+      }
+      // `lastOpSeq` (focus provenance) never decreases per window.
+      if (
+        nextRecord !== undefined &&
+        prevRecord.lastOpSeq !== undefined &&
+        (nextRecord.lastOpSeq === undefined || nextRecord.lastOpSeq < prevRecord.lastOpSeq)
+      ) {
+        violations.push(`lastOpSeq decreased for ${prevRecord.id}: prev=${prevRecord.lastOpSeq} next=${nextRecord.lastOpSeq}`);
       }
     }
   }

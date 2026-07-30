@@ -23,12 +23,14 @@ import {
   topmost,
   keyWindow,
   overlayForHost,
+  isStaleSelfEcho,
   type State,
   type Event,
   type Effect,
   type WindowId,
   type Command,
   type Rectangle,
+  type FocusCause,
 } from './window-kernel.js';
 
 // ── Test builders ────────────────────────────────────────────────────────────
@@ -919,5 +921,82 @@ describe('window-kernel: overlay attachment', () => {
       undefined,
       'an overlay naming itself as host must not be stored',
     );
+  });
+});
+
+// ── Focus provenance: cause, and isStaleSelfEcho ────────────────────────────
+
+describe('window-kernel: focus provenance (cause) and isStaleSelfEcho', () => {
+  const registerTwo = (): Event[] => [
+    { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+  ];
+
+  it('an OsFocusGained with no cause behaves exactly as one with { kind: "world" }', () => {
+    const state = fold(registerTwo(), initialState());
+    const noCause = evolve(state, { type: 'OsFocusGained', id: wid(1) });
+    const worldCause = evolve(state, { type: 'OsFocusGained', id: wid(1), cause: { kind: 'world' } });
+    assert.deepStrictEqual(noCause, worldCause);
+  });
+
+  it('a machine-caused report and a world-caused report move key identically', () => {
+    const state = fold(registerTwo(), initialState());
+    const machineCause: FocusCause = { kind: 'machine', opSeq: 1 };
+    const worldCause: FocusCause = { kind: 'world' };
+    const viaMachine = evolve(state, { type: 'OsFocusGained', id: wid(1), cause: machineCause });
+    const viaWorld = evolve(state, { type: 'OsFocusGained', id: wid(1), cause: worldCause });
+    assert.strictEqual(viaMachine.key, wid(1));
+    assert.strictEqual(viaWorld.key, wid(1));
+    assert.deepStrictEqual(viaMachine.order.map((w) => w.id), viaWorld.order.map((w) => w.id));
+  });
+
+  it('isStaleSelfEcho: true for an opSeq older than lastOpSeq, false for the current one, false for world', () => {
+    // Raise wid(1) while wid(2) sits on top, so the raise genuinely moves it
+    // and stamps lastOpSeq = state.opSeqCounter (0, since evolve never bumps
+    // it in this slice).
+    const state = fold([...registerTwo(), { type: 'OsFocusGained', id: wid(1) }], initialState());
+    const rec = state.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(rec.lastOpSeq, state.opSeqCounter);
+
+    assert.strictEqual(isStaleSelfEcho(state, wid(1), { kind: 'machine', opSeq: rec.lastOpSeq! - 1 }), true);
+    assert.strictEqual(isStaleSelfEcho(state, wid(1), { kind: 'machine', opSeq: rec.lastOpSeq! }), false);
+    assert.strictEqual(isStaleSelfEcho(state, wid(1), { kind: 'world' }), false);
+  });
+
+  it('lastOpSeq advances only when a focus-family effect is issued for that window', () => {
+    const state = fold(registerTwo(), initialState());
+
+    // wid(2) is already on top of `order` — an OsFocusGained naming it does
+    // not genuinely raise it, so no RaiseWindow effect is emitted and
+    // lastOpSeq must stay unset.
+    const noRaiseEv: Event = { type: 'OsFocusGained', id: wid(2) };
+    const afterNoRaise = evolve(state, noRaiseEv);
+    const noRaiseEffects = react(state, noRaiseEv, afterNoRaise);
+    assert.ok(!noRaiseEffects.some((e) => e.type === 'RaiseWindow'), 'no RaiseWindow effect for a window already on top');
+    assert.strictEqual(afterNoRaise.order.find((w) => w.id === wid(2))?.lastOpSeq, undefined);
+
+    // Raising wid(1) genuinely moves it — a RaiseWindow effect is emitted and
+    // lastOpSeq must advance.
+    const raiseEv: Event = { type: 'OsFocusGained', id: wid(1) };
+    const afterRaise = evolve(state, raiseEv);
+    const raiseEffects = react(state, raiseEv, afterRaise);
+    assert.ok(raiseEffects.some((e) => e.type === 'RaiseWindow' && e.id === wid(1)));
+    assert.strictEqual(afterRaise.order.find((w) => w.id === wid(1))?.lastOpSeq, afterRaise.opSeqCounter);
+
+    // Showing an already-hidden-then-shown window: WindowShown on a window
+    // that is not yet visible genuinely flips it and stamps lastOpSeq; a
+    // second WindowShown on the now-visible window is a no-op for the effect
+    // and must not re-stamp (though the value is unchanged either way here,
+    // this proves the guard runs on both edges of the same field).
+    const shownOnceEv: Event = { type: 'WindowShown', id: wid(1) };
+    const shownOnce = evolve(afterRaise, shownOnceEv);
+    const shownOnceEffects = react(afterRaise, shownOnceEv, shownOnce);
+    assert.ok(shownOnceEffects.some((e) => e.type === 'ShowWindow' && e.id === wid(1)));
+    assert.strictEqual(shownOnce.order.find((w) => w.id === wid(1))?.lastOpSeq, shownOnce.opSeqCounter);
+
+    const shownTwiceEv: Event = { type: 'WindowShown', id: wid(1) };
+    const shownTwice = evolve(shownOnce, shownTwiceEv);
+    const shownTwiceEffects = react(shownOnce, shownTwiceEv, shownTwice);
+    assert.ok(!shownTwiceEffects.some((e) => e.type === 'ShowWindow'), 'an already-visible window re-shown emits no ShowWindow effect');
   });
 });
