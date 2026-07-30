@@ -553,14 +553,46 @@ sort by it when deriving the order**, rather than storing a z.
 | Old | New |
 |---|---|
 | `frontInvariantHolds` | **deleted.** `key` has no eligibility rule; the OS decides. |
-| `stackOrderInvariantHolds` | **unstateable.** One structure cannot disagree with itself. |
-| `isStackMember` / `reconcileStackMembership` / `stackRemove` | **deleted.** Nothing reconciles membership because nothing can leave. |
-| `isEligibleFront` | **deleted.** §0 names it as the exclusion that must go. |
-| `deriveStackingLevel` / `StackingLevel` / `PINNED_CLASSES` | **deleted.** `layer` is declared at creation, not derived from a class name. |
-| `isSatelliteRegistration` / `SATELLITE_CLASSES` / `WindowRecord.satellite` | **deleted.** §0: "`satellite` was an invention". Its two real jobs split: "cannot hold key" → `canBecomeKey: false`; "is chrome, not content" → the `overlayFor` relation. |
-| `enforceFrontInvariant` | **deleted.** Self-repair is the defect, not the safety net. |
+| `stackOrderInvariantHolds` | **half unstateable, half surviving.** Its membership half — every id in `stackOrder` is a `stacked` visible record, and every such record is in `stackOrder` — cannot be stated once membership and order are one structure. Its no-duplicates half is unaffected by the collapse (a list can still repeat an id) and is carried forward as a property-based invariant over `order`, 0.1.8. |
+| `isStackMember` / `reconcileStackMembership` / `stackRemove` | **deleted.** Nothing reconciles membership because nothing can leave. `isStackMember` had two clauses and both are placed: `stackingLevel === 'stacked'` is absorbed by RULE 1, which makes membership universal; `visible` moves into the queries that scan `order` (0.1.5), where it filters a result rather than gating membership. |
+| `isEligibleFront` | **deleted.** Three clauses, of which §0 names one as the exclusion that must go — `!satellite`. The other two do not go with it: the record-resolves clause becomes the accessor that resolves `key` against `order` and answers `null` on a miss (0.1.4), and `visible` becomes a predicate the replacement queries pass in (`topmost(state, restorable)`, 0.1.5). |
+| `deriveStackingLevel` / `StackingLevel` / `PINNED_CLASSES` | **deleted.** Three arms: `pinned` (`hud` / `overlay` / `palette`) → `layer`, declared at creation rather than derived from a class name; `excluded` (any other satellite) → nothing, because RULE 1 makes non-membership unrepresentable; `stacked` → the default every window now has. The `excluded` arm reads the `satellite` flag, so it inherits every arm of `isSatelliteRegistration` below — retiring the class-name half alone does not retire this predicate. |
+| `isSatelliteRegistration` / `SATELLITE_CLASSES` / `WindowRecord.satellite` | **deleted.** §0: "`satellite` was an invention". Four arms, needing four destinations. (1) `windowClass` in `SATELLITE_CLASSES` (`hud`, `background`, `bridge`, `offscreen`, `test-fixture`, `devtools`) — **no single axis**; see below. (2) role `overlay` or `palette` — `overlay` → the `overlayFor` relation; `palette` → **no home**. (3) `modal === true` — **no axis**: a close-on-blur dialog holds key while it is open, so this is lifecycle, owned by the transient-autoclose selector (`selectTransientAutoclose`). (4) `focusable === false` → `canBecomeKey: false`. |
+| `enforceFrontInvariant` | **deleted.** Self-repair is the defect, not the safety net — but it did two things and only one is the defect. The dev/test throw goes with the invariant it guarded. The production arm's MRU-successor pick (`successorFront`) survives as an explicit fallback query, `topmost(state, restorable)` (0.1.5), run by a caller that wants a fallback rather than applied to `key` behind one. |
 | `WindowRecord.focusSeq` / `focusSeqCounter` / `bumpFocusSeq` / `getWindowFocusSeq` | **deleted.** Use-order is position in the one order; see 0.1.10. |
-| `windows.ts APP_HIDE_EXCLUDED_CLASSES` | narrower than feared — its **only** reader is `getVisibleWindowCount()`, feeding `maybeHideApp`. Not a z-order concept at all: it asks "does this window count as a reason to keep the app on screen". Becomes one named predicate at that one call site. |
+| `windows.ts APP_HIDE_EXCLUDED_CLASSES` | narrower than feared — its **only** reader is `getVisibleWindowCount()`, feeding `maybeHideApp`. Not a z-order concept at all: it asks "does this window count as a reason to keep the app on screen". Becomes one named predicate at that one call site. Its five entries are a policy list rather than a property — `quick-view` is non-satellite yet excluded, while a detached devtools window and an extension popup are satellites yet still count — so this is the one surviving decision that branches on `class`, which the 0.1.4 rule forbids. The replacement predicate has to name the thing it means at that call site, not the class set. |
+
+**Every arm of a deleted predicate needs a destination.** A predicate deleted here is replaced by
+one axis only if it had one clause. A mapping that names fewer axes than the predicate had arms is
+incomplete, and stays incomplete until each missing arm is placed on an axis, placed on a relation,
+or written down as having no home. Declaring an arm homeless is a valid outcome and the honest one;
+inventing an axis so the mapping comes out clean is not. The cost of getting this wrong is
+concrete: `class === 'hud'` was recorded as meaning non-focusability, and a rule rebuilt from that
+reading — `!canBecomeKey && visible` — sweeps the spaces screen border and the test fixture along
+with the HUD, because `hud` is three clauses and `!canBecomeKey` is one of them (0.1.4).
+
+**The arms of `isSatelliteRegistration` with no kernel home.** The four arms are a disjunction —
+the first to match returns, so their source order changes nothing about the result and no
+precedence has to be preserved. (Contrast `classifyWindowRegistration`, whose arms return
+*different* classes, where role precedence is load-bearing and is what keeps the spaces screen
+border classified `overlay` instead of `hud`.) Two arms have nowhere to land:
+
+- **The class arm** covers six classes that are front-ineligible for three unrelated reasons.
+  `hud` decomposes as 0.1.4 records it. `background`, `bridge` and `offscreen` are never-visible
+  infrastructure; nothing about the three axes excludes them, and under RULE 1 they sit in `order`
+  like every other window, so whatever must skip them is a query over `visible` / `kind`, not an
+  axis. `devtools` and `test-fixture` are both visible and focusable, so `canBecomeKey` does not
+  describe them either. That `extension-ui` is deliberately absent from the set — an extension
+  popup is a real window the user works in — is itself the evidence that the set encodes a policy
+  judgement per class rather than a shared property.
+- **The `palette` half of the role arm.** A palette window can hold key and takes typed input (the
+  Escape routing in `window-state.ts` handles exactly the case where a palette holds key), so
+  `canBecomeKey: false` is wrong for it, and it is not chrome attached to a host window, so
+  `overlayFor` does not describe it either.
+
+Both are open items. Whatever replaces front-ineligibility has to answer them before these classes
+and roles can be modelled, and until it does, no rule may be written as though `canBecomeKey: false`
+covers what `satellite` covered.
 
 ### 0.1.8 Hardening the kernel
 
