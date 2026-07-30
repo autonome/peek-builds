@@ -58,8 +58,18 @@
  * fact from record history and got the machine's own handoff-raise echo wrong).
  */
 
+import * as fs from 'node:fs';
 import { app, globalShortcut, screen, systemPreferences, webContents } from 'electron';
 import type { BrowserWindow, WebContents } from 'electron';
+
+// TEMPORARY closeContent reachability trace — REVERT after the sitting.
+function ccdiag(line: string): void {
+  try {
+    fs.appendFileSync('/tmp/peek-closecontent-diag.log', `[${new Date().toISOString()}] ${line}\n`);
+  } catch {
+    /* best-effort */
+  }
+}
 
 import { isHeadless, DEBUG } from './config.js';
 import {
@@ -909,7 +919,13 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       return Promise.resolve();
     }
     const guestIds = getGuestsForWindow(id);
+    // TEMPORARY closeContent reachability trace — REVERT after the sitting.
+    ccdiag(
+      `closeWindow id=${id} guests=[${guestIds.join(',')}] ` +
+        `contentWCDestroyed=${(() => { try { const w = this.windows.get(id)?.rendererWC; return w ? String(w.isDestroyed()) : 'none'; } catch { return 'err'; } })()}`,
+    );
     if (guestIds.length === 0 || process.env.PEEK_DISABLE_PAGEHOST_CLOSE_GUARD === '1') {
+      ccdiag(`closeWindow id=${id} FAST PATH (no guests) — raw win.close(), content WC NOT destroyed here`);
       try {
         win.close();
       } catch {
@@ -922,6 +938,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
 
   private async destroyGuestsThenClose(win: NativeWindow, guestIds: number[]): Promise<void> {
     DEBUG && console.log('[window-backend] destroying', guestIds.length, 'guest(s) before closing host');
+    // TEMPORARY closeContent reachability trace — REVERT after the sitting.
+    ccdiag(`destroyGuestsThenClose osWin=${(() => { try { return String(win.id); } catch { return 'err'; } })()} destroying guests=[${guestIds.join(',')}]`);
     await Promise.all(
       guestIds.map(
         (gid) =>
@@ -953,6 +971,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
           }),
       ),
     );
+    // TEMPORARY closeContent reachability trace — REVERT after the sitting.
+    ccdiag(`destroyGuestsThenClose guests settled — now win.close()`);
     try {
       if (!win.isDestroyed()) win.close();
     } catch {
@@ -963,6 +983,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   /** Forceful native destroy — synchronous (before-quit teardown depends on it). */
   destroyWindow(id: WindowId): void {
     const win = this.windows.get(id)?.win;
+    // TEMPORARY closeContent reachability trace — REVERT after the sitting.
+    ccdiag(`destroyWindow id=${id} present=${!!win}`);
     if (!win) return;
     try {
       if (!win.isDestroyed()) win.destroy();
@@ -980,7 +1002,19 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    */
   closeContent(id: WindowId): void {
     const wc = this.windows.get(id)?.rendererWC;
+    // TEMPORARY closeContent reachability trace — REVERT after the sitting.
+    let ccDestroyed: string;
+    try {
+      ccDestroyed = wc ? String(wc.isDestroyed()) : 'n/a';
+    } catch (e) {
+      ccDestroyed = `threw:${String(e)}`;
+    }
+    ccdiag(
+      `closeContent id=${id} present=${!!wc} destroyed=${ccDestroyed} ` +
+        `guard=${shouldCloseContentWCOnFinalize(wc)} hasEntry=${this.windows.has(id)}`,
+    );
     if (!shouldCloseContentWCOnFinalize(wc)) return;
+    ccdiag(`closeContent id=${id} PERFORMING wc.close() on a LIVE content WC`);
     try {
       wc!.close();
     } catch (e) {
