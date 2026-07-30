@@ -26,6 +26,7 @@ import {
   type Event,
   type Effect,
   type WindowId,
+  type Command,
 } from './window-kernel.js';
 
 // ── Test builders ────────────────────────────────────────────────────────────
@@ -318,5 +319,155 @@ describe('window-kernel: raise vs. show', () => {
     const raised = fold(decision.events, state);
     assert.strictEqual(topmost(raised, () => true)?.id, wid(1));
     assert.strictEqual(keyWindow(raised)?.id, wid(1));
+  });
+
+  it('showing a hidden window does NOT change its position in order', () => {
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowRegistered', id: wid(3), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'OsFocusGained', id: wid(2) },
+      ],
+      initialState(),
+    );
+    const orderBefore = state.order.map((w) => w.id);
+    const decision = decide(state, { type: 'ShowWindow', id: wid(1), expectedVersion: state.version });
+    assert.ok('events' in decision);
+    const shown = fold(decision.events, state);
+    assert.deepStrictEqual(shown.order.map((w) => w.id), orderBefore, 'ShowWindow must not reorder');
+    assert.strictEqual(shown.order.find((w) => w.id === wid(1))?.visible, true);
+  });
+});
+
+// ── CloseOrHideWindow — the keepLive branch point ───────────────────────────
+
+describe('window-kernel: CloseOrHideWindow', () => {
+  it('a keepLive window is hidden, not closed, and stays in order', () => {
+    const state = fold(
+      [
+        {
+          type: 'WindowRegistered',
+          id: wid(1),
+          kind: 'page-host',
+          layer: 0,
+          canBecomeKey: true,
+          acceptsInput: true,
+          class: 'primary',
+          keepLive: true,
+        },
+        { type: 'WindowShown', id: wid(1) },
+      ],
+      initialState(),
+    );
+    const decision = decide(state, { type: 'CloseOrHideWindow', id: wid(1), expectedVersion: state.version });
+    assert.ok('events' in decision);
+    assert.deepStrictEqual(decision.events, [{ type: 'WindowHidden', id: wid(1) }]);
+    const next = fold(decision.events, state);
+    assert.strictEqual(next.order.some((w) => w.id === wid(1)), true, 'keepLive window must stay in order');
+    assert.strictEqual(next.order.find((w) => w.id === wid(1))?.visible, false);
+  });
+
+  it('a non-keepLive window is closed and removed from order', () => {
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowShown', id: wid(1) },
+      ],
+      initialState(),
+    );
+    const decision = decide(state, { type: 'CloseOrHideWindow', id: wid(1), expectedVersion: state.version });
+    assert.ok('events' in decision);
+    assert.deepStrictEqual(decision.events, [{ type: 'WindowClosed', id: wid(1) }]);
+    const next = fold(decision.events, state);
+    assert.strictEqual(next.order.some((w) => w.id === wid(1)), false, 'non-keepLive window must be removed');
+  });
+});
+
+// ── orderable gate on SetStacking ────────────────────────────────────────────
+
+describe('window-kernel: orderable gate on SetStacking', () => {
+  it('a page-host is omitted from SetStacking until WindowContentOrderable, which then re-emits it fresh', () => {
+    const registerEvents: Event[] = [
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    ];
+    const registered = fold(registerEvents, initialState());
+    assert.strictEqual(registered.order[0].orderable, false, 'a fresh page-host starts non-orderable');
+
+    // Showing the page-host before it is orderable must NOT emit a SetStacking
+    // for it (it cannot yet be positioned by the OS).
+    const shownEv: Event = { type: 'WindowShown', id: wid(1) };
+    const shown = evolve(registered, shownEv);
+    const shownEffects = react(registered, shownEv, shown);
+    assert.ok(
+      !shownEffects.some((e) => e.type === 'SetStacking' && e.id === wid(1)),
+      'a non-orderable window must not appear in SetStacking',
+    );
+
+    // WindowContentOrderable flips it and must emit a fresh SetStacking for it.
+    const orderableEv: Event = { type: 'WindowContentOrderable', id: wid(1) };
+    const nowOrderable = evolve(shown, orderableEv);
+    assert.strictEqual(nowOrderable.order[0].orderable, true);
+    const orderableEffects = react(shown, orderableEv, nowOrderable);
+    assert.deepStrictEqual(
+      orderableEffects.filter((e) => e.type === 'SetStacking'),
+      [{ type: 'SetStacking', id: wid(1), layer: 0 }],
+      'WindowContentOrderable must emit a fresh SetStacking for the now-orderable window',
+    );
+  });
+});
+
+// ── closing the key window ──────────────────────────────────────────────────
+
+describe('window-kernel: closing the key window raises nothing in its place', () => {
+  it('closing the key window leaves keyWindow() null and the order unchanged besides the removal', () => {
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'OsFocusGained', id: wid(1) },
+      ],
+      initialState(),
+    );
+    // wid(1) was raised to the top by the focus gain.
+    assert.deepStrictEqual(state.order.map((w) => w.id), [wid(2), wid(1)]);
+
+    const closed = evolve(state, { type: 'WindowClosed', id: wid(1) });
+    assert.strictEqual(keyWindow(closed), null, 'nothing picks a successor');
+    // wid(2) is simply what remains — it was never moved by the close.
+    assert.deepStrictEqual(closed.order.map((w) => w.id), [wid(2)]);
+  });
+});
+
+// ── RegisterWindow command ──────────────────────────────────────────────────
+
+describe('window-kernel: RegisterWindow command', () => {
+  it('produces a WindowRegistered event and may name a window not yet in order', () => {
+    const state = initialState();
+    const cmd: Command = {
+      type: 'RegisterWindow',
+      id: wid(1),
+      kind: 'browser',
+      layer: 0,
+      canBecomeKey: true,
+      acceptsInput: true,
+      class: 'primary',
+      expectedVersion: state.version,
+    };
+    const decision = decide(state, cmd);
+    assert.ok('events' in decision);
+    assert.deepStrictEqual(decision.events, [
+      {
+        type: 'WindowRegistered',
+        id: wid(1),
+        kind: 'browser',
+        layer: 0,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+      },
+    ]);
+    const next = fold(decision.events, state);
+    assert.strictEqual(next.order[0].orderable, true, 'a browser is orderable from birth');
   });
 });

@@ -28,9 +28,11 @@ import {
   initialState,
   evolve,
   react,
+  decide,
   keyWindow,
   type State,
   type Event,
+  type Command,
   type Effect,
   type WindowId,
   type WindowKind,
@@ -80,12 +82,28 @@ const wid = (n: number): WindowId => `wkp-${n}` as WindowId;
 const KINDS: readonly WindowKind[] = ['page-host', 'browser'];
 const CLASSES = ['primary', 'hud', 'overlay', 'utility'];
 
-function randomEvent(rng: Rng): Event {
-  const variant = randomInt(rng, 7);
+/** A log item is either a fact fed straight to `evolve`, or a request fed through `decide` first. */
+type LogItem = Event | Command;
+
+/** Distinguishes the two — only `Command` variants carry `expectedVersion`. */
+function isCommand(item: LogItem): item is Command {
+  return 'expectedVersion' in item;
+}
+
+/**
+ * `state` is the live state at generation time — used only to produce a
+ * mostly-plausible `expectedVersion` for the command variants (sometimes
+ * deliberately stale, to exercise rejection). It does not make the log
+ * non-reproducible: the same seed walks the same state trajectory, so the
+ * same seed always produces the same concrete log.
+ */
+function randomLogItem(rng: Rng, state: State): LogItem {
+  const variant = randomInt(rng, 10);
   const id = wid(randomInt(rng, POOL_SIZE));
   switch (variant) {
     case 0: {
       const hasParent = rng() < 0.3;
+      const hasKeepLive = rng() < 0.3;
       return {
         type: 'WindowRegistered',
         id,
@@ -95,6 +113,7 @@ function randomEvent(rng: Rng): Event {
         acceptsInput: randomBool(rng),
         class: pick(rng, CLASSES),
         ...(hasParent ? { parentId: wid(randomInt(rng, POOL_SIZE)) } : {}),
+        ...(hasKeepLive ? { keepLive: randomBool(rng) } : {}),
       };
     }
     case 1:
@@ -108,16 +127,68 @@ function randomEvent(rng: Rng): Event {
     case 5:
       return { type: 'OsFocusLost', id };
     case 6:
-    default:
       return { type: 'AppActiveChanged', active: randomBool(rng) };
+    case 7:
+      return { type: 'WindowContentOrderable', id };
+    case 8: {
+      const hasParent = rng() < 0.3;
+      const hasKeepLive = rng() < 0.3;
+      const stale = rng() < 0.2;
+      return {
+        type: 'RegisterWindow',
+        id,
+        kind: pick(rng, KINDS),
+        layer: randomInt(rng, 4),
+        canBecomeKey: randomBool(rng),
+        acceptsInput: randomBool(rng),
+        class: pick(rng, CLASSES),
+        ...(hasParent ? { parentId: wid(randomInt(rng, POOL_SIZE)) } : {}),
+        ...(hasKeepLive ? { keepLive: randomBool(rng) } : {}),
+        expectedVersion: stale ? state.version + 1 : state.version,
+      };
+    }
+    case 9:
+    default: {
+      const stale = rng() < 0.2;
+      return { type: 'CloseOrHideWindow', id, expectedVersion: stale ? state.version + 1 : state.version };
+    }
   }
 }
 
-function generateLog(seed: number, length: number): Event[] {
+/**
+ * Applies one log item: an `Event` folds straight through `evolve`; a
+ * `Command` first goes through `decide` — a rejection is a no-op (same
+ * `state` returned, by reference, so callers can tell nothing happened), an
+ * acceptance folds its (possibly empty) event list, accumulating `react`
+ * effects at each step exactly like a directly-supplied event would.
+ */
+function stepLogItem(state: State, item: LogItem): { state: State; effects: Effect[] } {
+  if (!isCommand(item)) {
+    const next = evolve(state, item);
+    return { state: next, effects: react(state, item, next) };
+  }
+  const decision = decide(state, item);
+  if ('rejected' in decision) {
+    return { state, effects: [] };
+  }
+  let s = state;
+  const effects: Effect[] = [];
+  for (const ev of decision.events) {
+    const next = evolve(s, ev);
+    effects.push(...react(s, ev, next));
+    s = next;
+  }
+  return { state: s, effects };
+}
+
+function generateLog(seed: number, length: number): LogItem[] {
   const rng = mulberry32(seed);
-  const log: Event[] = [];
+  const log: LogItem[] = [];
+  let state = initialState();
   for (let i = 0; i < length; i++) {
-    log.push(randomEvent(rng));
+    const item = randomLogItem(rng, state);
+    log.push(item);
+    state = stepLogItem(state, item).state;
   }
   return log;
 }
@@ -161,6 +232,13 @@ function checkInvariants(state: State, prev?: State): string[] {
     if (state.opSeqCounter < prev.opSeqCounter) {
       violations.push(`opSeqCounter decreased: prev=${prev.opSeqCounter} next=${state.opSeqCounter}`);
     }
+    // `orderable` never goes true -> false (§0.1.4: "Never reset once true").
+    for (const prevRecord of prev.order) {
+      const nextRecord = state.order.find((w) => w.id === prevRecord.id);
+      if (nextRecord !== undefined && prevRecord.orderable && !nextRecord.orderable) {
+        violations.push(`orderable flipped true -> false for ${prevRecord.id}`);
+      }
+    }
   }
 
   return violations;
@@ -170,35 +248,45 @@ function checkInvariants(state: State, prev?: State): string[] {
 function checkEffectInvariants(effects: Effect[], next: State): string[] {
   const violations: string[] = [];
   for (const effect of effects) {
-    if (!next.order.some((w) => w.id === effect.id)) {
+    const record = next.order.find((w) => w.id === effect.id);
+    if (record === undefined) {
       violations.push(`effect names a window not present in order: ${JSON.stringify(effect)}`);
+      continue;
+    }
+    // No SetStacking effect may ever name a non-orderable or non-visible window.
+    if (effect.type === 'SetStacking' && (!record.visible || !record.orderable)) {
+      violations.push(`SetStacking named a non-visible/non-orderable window: ${JSON.stringify(effect)} record=${JSON.stringify(record)}`);
     }
   }
   return violations;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Local duplicates of the fold helpers from `window-kernel.test.ts` (not
-// exported there, so duplicated here rather than modifying that file).
+// Fold helpers over a mixed `LogItem[]` — an `Event` folds straight through
+// `evolve`; a `Command` goes through `decide`/`stepLogItem` first (see above).
 // ─────────────────────────────────────────────────────────────────────────────
 
-function fold(events: Event[], start: State = initialState()): State {
-  return events.reduce(evolve, start);
+function fold(log: LogItem[], start: State = initialState()): State {
+  let state = start;
+  for (const item of log) {
+    state = stepLogItem(state, item).state;
+  }
+  return state;
 }
 
-function foldWithEffects(events: Event[], start: State = initialState()): { state: State; effects: Effect[] } {
+function foldWithEffects(log: LogItem[], start: State = initialState()): { state: State; effects: Effect[] } {
   let state = start;
   const effects: Effect[] = [];
-  for (const ev of events) {
-    const next = evolve(state, ev);
-    effects.push(...react(state, ev, next));
-    state = next;
+  for (const item of log) {
+    const r = stepLogItem(state, item);
+    effects.push(...r.effects);
+    state = r.state;
   }
   return { state, effects };
 }
 
 /** Reproducibility: every failure message carries the seed and the full JSON log, so it replays verbatim. */
-function reproMessage(seed: number, log: Event[], stepIndex: number, detail: string): string {
+function reproMessage(seed: number, log: LogItem[], stepIndex: number, detail: string): string {
   return `${detail}\n  seed=${seed} step=${stepIndex}/${log.length}\n  log=${JSON.stringify(log)}`;
 }
 
@@ -217,12 +305,20 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
 
       let state = initialState();
       for (let i = 0; i < log.length; i++) {
-        const ev = log[i];
-        let next: State;
+        const item = log[i];
+        let result: { state: State; effects: Effect[] };
         try {
-          next = evolve(state, ev);
+          result = stepLogItem(state, item);
         } catch (err) {
-          throw new Error(reproMessage(seed, log, i, `evolve threw: ${(err as Error).message}`));
+          throw new Error(reproMessage(seed, log, i, `evolve/decide threw: ${(err as Error).message}`));
+        }
+        const { state: next, effects } = result;
+
+        // A rejected command is a no-op — same state, no events, nothing to
+        // check (the version-strictly-increases invariant would misfire on
+        // a genuine no-op, since nothing happened).
+        if (next === state) {
+          continue;
         }
 
         const stateViolations = checkInvariants(next, state);
@@ -230,7 +326,6 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
           throw new Error(reproMessage(seed, log, i, `invariant violation(s): ${stateViolations.join('; ')}`));
         }
 
-        const effects = react(state, ev, next);
         const effectViolations = checkEffectInvariants(effects, next);
         if (effectViolations.length > 0) {
           throw new Error(reproMessage(seed, log, i, `effect invariant violation(s): ${effectViolations.join('; ')}`));

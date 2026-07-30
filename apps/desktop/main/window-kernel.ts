@@ -7,8 +7,10 @@
  *
  * SCOPE: greenfield. NOTHING in the app imports this module yet — it sits
  * alongside the existing reducer (`window-state.ts`), which stays untouched and
- * in charge. This file carries only the first slice of the ~45-event surface
- * (§0.1.1's "~17 commands, ~20 events" split): 3 commands, 7 events.
+ * in charge. This file carries only the first two slices of the ~45-event
+ * surface (§0.1.1's "~17 commands, ~20 events" split): visibility + raise,
+ * on top of the initial slice — 5 commands, 8 events. Geometry (bounds,
+ * maximize, fullscreen, display) is a later slice, not this one.
  *
  * The two structural rules this file exists to prove out (§0.1.1, §0.1.8):
  *
@@ -68,6 +70,21 @@ export interface WindowRecord {
   /** Open order (not use order) — assigned once at registration, never re-derived. */
   openSeq: number;
   parentId?: WindowId;
+
+  /**
+   * A window opened with `keepLive` is HIDDEN on `CloseOrHideWindow`, never
+   * closed, so its content keeps running (e.g. a slide playing music while
+   * backgrounded). The branch lives in `decide`, never in `evolve`.
+   */
+  keepLive?: boolean;
+
+  /**
+   * Whether the window's native window can be z-ordered yet. `true` from
+   * birth for `kind: 'browser'`; a `'page-host'` starts `false` and flips to
+   * `true` on its first-composited-frame report (`WindowContentOrderable`).
+   * Never reset once true.
+   */
+  orderable: boolean;
 }
 
 /**
@@ -108,13 +125,16 @@ export type Event =
       acceptsInput: boolean;
       class: string;
       parentId?: WindowId;
+      keepLive?: boolean;
     }
   | { type: 'WindowShown'; id: WindowId }
   | { type: 'WindowHidden'; id: WindowId }
   | { type: 'WindowClosed'; id: WindowId }
   | { type: 'OsFocusGained'; id: WindowId }
   | { type: 'OsFocusLost'; id: WindowId }
-  | { type: 'AppActiveChanged'; active: boolean };
+  | { type: 'AppActiveChanged'; active: boolean }
+  /** The first-composited-frame report — flips `orderable` to `true`. */
+  | { type: 'WindowContentOrderable'; id: WindowId };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Commands — rejectable requests (§0.1.1, §0.1.2). Every variant carries
@@ -124,7 +144,22 @@ export type Event =
 export type Command =
   | { type: 'RaiseWindow'; id: WindowId; expectedVersion: number }
   | { type: 'ShowWindow'; id: WindowId; expectedVersion: number }
-  | { type: 'HideWindow'; id: WindowId; expectedVersion: number };
+  | { type: 'HideWindow'; id: WindowId; expectedVersion: number }
+  /** The keepLive branch point (§0.1): hide if keepLive, else close. Decided in `decide`, never `evolve`. */
+  | { type: 'CloseOrHideWindow'; id: WindowId; expectedVersion: number }
+  /** Carries the intrinsic properties; `decide` produces a `WindowRegistered` event. */
+  | {
+      type: 'RegisterWindow';
+      id: WindowId;
+      kind: WindowKind;
+      layer: number;
+      canBecomeKey: boolean;
+      acceptsInput: boolean;
+      class: string;
+      parentId?: WindowId;
+      keepLive?: boolean;
+      expectedVersion: number;
+    };
 
 export type Rejection = 'stale-version' | 'no-such-window';
 
@@ -183,7 +218,11 @@ export function evolve(state: State, ev: Event): State {
           class: ev.class,
           visible: existing.visible,
           openSeq: existing.openSeq,
+          // Never reset once true (§0.1.4): a re-registration that names
+          // 'browser' also sets it true; it cannot flip back off.
+          orderable: existing.orderable || ev.kind === 'browser',
           ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
+          ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
         };
         return {
           ...state,
@@ -201,7 +240,11 @@ export function evolve(state: State, ev: Event): State {
         class: ev.class,
         visible: false,
         openSeq: state.openSeqCounter,
+        // `orderable` starts true only for 'browser' (§0.1.4); a 'page-host'
+        // starts false and flips via `WindowContentOrderable`.
+        orderable: ev.kind === 'browser',
         ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
+        ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
       };
       return {
         ...state,
@@ -277,6 +320,16 @@ export function evolve(state: State, ev: Event): State {
       };
     }
 
+    case 'WindowContentOrderable': {
+      // Never resets to false — a miss (unregistered id) or a window already
+      // orderable is a harmless no-op, not a repair.
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, orderable: true } : w)),
+        version: state.version + 1,
+      };
+    }
+
     default: {
       const _exhaustive: never = ev;
       return _exhaustive;
@@ -324,12 +377,25 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
 
   // SetStacking: §0.1.6 — the executor is a re-assert loop, not a diff. Any
   // change to `order` (registration, close, raise) re-emits the FULL
-  // bottom -> top stacking over visible windows, one SetStacking per window.
+  // bottom -> top stacking over visible, ORDERABLE windows, one SetStacking
+  // per window. A window that is not yet orderable (a fresh page-host before
+  // its first composited frame) cannot be positioned by the OS, so it is
+  // omitted from the emission entirely.
   const orderChanged =
     prev.order.length !== next.order.length || prev.order.some((w, i) => w.id !== next.order[i]?.id);
-  if (orderChanged) {
+
+  // When `WindowContentOrderable` flips a window from non-orderable to
+  // orderable, that alone must trigger a fresh full re-emission — the
+  // machine form of the old first-frame re-assert, with no timer and no poll
+  // — even though `order`'s ids/positions did not change.
+  const justBecameOrderable =
+    ev.type === 'WindowContentOrderable' &&
+    prev.order.find((w) => w.id === ev.id)?.orderable !== true &&
+    next.order.find((w) => w.id === ev.id)?.orderable === true;
+
+  if (orderChanged || justBecameOrderable) {
     for (const w of next.order) {
-      if (w.visible) {
+      if (w.visible && w.orderable) {
         effects.push({ type: 'SetStacking', id: w.id, layer: w.layer });
       }
     }
@@ -347,6 +413,28 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
   if (cmd.expectedVersion !== state.version) {
     return { rejected: 'stale-version' };
   }
+
+  // RegisterWindow is the one command that may legitimately name a window
+  // not yet in `order` (that's the point of it) — it skips the existence
+  // guard below entirely and just produces the matching event.
+  if (cmd.type === 'RegisterWindow') {
+    return {
+      events: [
+        {
+          type: 'WindowRegistered',
+          id: cmd.id,
+          kind: cmd.kind,
+          layer: cmd.layer,
+          canBecomeKey: cmd.canBecomeKey,
+          acceptsInput: cmd.acceptsInput,
+          class: cmd.class,
+          ...(cmd.parentId !== undefined ? { parentId: cmd.parentId } : {}),
+          ...(cmd.keepLive !== undefined ? { keepLive: cmd.keepLive } : {}),
+        },
+      ],
+    };
+  }
+
   if (!state.order.some((w) => w.id === cmd.id)) {
     return { rejected: 'no-such-window' };
   }
@@ -360,6 +448,15 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
       return { events: [{ type: 'WindowShown', id: cmd.id }] };
     case 'HideWindow':
       return { events: [{ type: 'WindowHidden', id: cmd.id }] };
+    case 'CloseOrHideWindow': {
+      // THE branch point (§0.1): keepLive === true hides, never closes, so
+      // its content keeps running; otherwise it closes. This guard lives
+      // here, never in `evolve`.
+      const record = state.order.find((w) => w.id === cmd.id)!;
+      return record.keepLive
+        ? { events: [{ type: 'WindowHidden', id: cmd.id }] }
+        : { events: [{ type: 'WindowClosed', id: cmd.id }] };
+    }
   }
 }
 
