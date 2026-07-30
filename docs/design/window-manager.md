@@ -643,6 +643,213 @@ previously estimated:
 - **Bucket D is the cost of the change** — 24 tests asserting the exclusion §0 names as the
   defect. Overturning them *is* the work, not collateral damage.
 
+#### The per-test migration map
+
+The bucket table says how many tests fall into each disposition; this section names them, so the
+classification is a record rather than something the rewrite has to re-derive from the source.
+
+**The load-bearing free variable: `isContentWindow` does not exist yet.**
+`topmost(state, isContentWindow)` is what several of the rewrites below resolve to, and whether
+that predicate admits `role: 'workspace'` and `role: 'quick-view'` decides their outcome. The old
+model kept quick-views front-eligible only so `front` could double as the Escape target
+(`window-state.test.ts` `isSatelliteRegistration — single owner of front-ineligibility` › `role
+quick-view is not a satellite (peeks/slides stay front-eligible)`); the key/main split dissolves
+that coupling, because Escape targets key, not main.
+
+Two gaps in the kernel as written, neither yet implemented:
+
+- The `WindowRegistered` arm does `order: [...state.order, record]`, placing a fresh registration
+  on top. The rule decided above places a background open BELOW the last-focused window — nothing
+  implements it yet.
+- `react` emits `RaiseWindow` whenever `OsFocusGained` moves the target, while three tests in
+  `front — a projection of OS focus; raises come from named targets only` assert no raise is ever
+  emitted from `OS_FOCUS_GAINED`: › `an OS-driven front switch mirrors the order WITHOUT echoing a
+  raise (the OS already did it)`, › `INVARIANT: no RAISE_WINDOW is emitted from WINDOW_SHOWN or
+  OS_FOCUS_GAINED (the pump's convergence obligation)`, and › `a raise echo (WINDOW_SHOWN
+  {focused:true}) does not re-raise — the RAISE_WINDOW → WINDOW_SHOWN cycle is cut structurally`.
+  The kernel and these tests cannot both be right.
+
+Three open policy questions the migration cannot answer by translation alone:
+
+- Whether a raise requested on a `canBecomeKey: false` window is refused outright or reorders
+  without granting key — `RAISE_WINDOW_REQUESTED — an explicit, user-requested raise` › `a
+  satellite id -> no effects`.
+- Whether a palette holding key arms the Escape grab — `deriveEscGrabRegistered — truth table over
+  (appActive, front, contentFocused) — §5 step 11 re-key` › `matches the table across (appActive,
+  front, contentFocused)`, whose `contentFocused: false` case stood in for "someone else holds
+  key."
+- Whether closing a child whose parent is hidden raises anything at all — `parent refocus on
+  WINDOW_CLOSED (replaces the main.ts parentWin.focus() block)` › `an ineligible parent (hidden)
+  falls back to the MRU successor`.
+
+#### The overturn set (bucket D)
+
+24 tests share one shape: a satellite takes OS focus, the old model pins `front` on the content
+window, and the new model instead records `key` on the satellite while answering the original
+question with `topmost(state, isContentWindow)`. Each becomes two assertions where it had one. All
+in `window-state.test.ts`.
+
+Panel-takes-key cases, each rewritten to a `keyWindow(state)` assertion naming the satellite plus a
+`topmost(state, isContentWindow)` assertion naming the content window:
+
+- `historical-bug replays (§5.2)` › `(e) palette-issuer exclusion: a satellite palette focus never
+  clobbers the front page`
+- `ported: active-hybrid-window tracking -> front` › `focus landing on the overlay (satellite)
+  keeps the content window as front`
+- `overlay attachment / follow / retarget (§4.3 dim 3b, §5 step 9)` › `` the overlay is never
+  `front`, attached or not (it is a satellite) ``
+- `` ported: resolveCloseTargetId / resolveFocusedVisibleWindowId -> `front` `` › `overlay
+  (satellite) focus leaves the close/command target on the host (cmd+W redirect)`
+- `front — a projection of OS focus; raises come from named targets only` › `a satellite gaining
+  OS focus leaves front alone, and closing that parentless palette raises NOTHING` and › `a LIVE
+  satellite palette is not evicted by the next transition (command-palette flash-and-vanish)`
+- `deriveEscGrabRegistered — truth table over (appActive, front, contentFocused) — §5 step 11
+  re-key` › `a dangling front (no matching WindowRecord) is NOT a representable StateSnapshot —
+  pins the defined-but-irrelevant fallback`
+
+The overlay case is the showcase for the key/main split: one window genuinely holds key, a
+different window is main, and only two stored facts can say both without pretense. In the
+Escape-grab case, a dangling key is legal by construction (`keyWindow` returns null rather than
+repairing), so the grab arms and nothing can hear `before-input-event`.
+
+Exclusion machinery overturned by deletion, not by rewrite:
+
+- `front-invariant guard (dev/test throws, prod self-corrects)` › `THROWS in dev/test when reduce
+  yields an illegal front (naming the event + front id)` and › `self-corrects (no throw) in
+  production` — the state each test crafts as "illegal" is an ordinary kernel state, and the
+  production self-correct these tests pin is the forbidden repair (0.1.5).
+- The `frontInvariantHolds(...)` and `stackOrderInvariantHolds(...)` assertions the file's
+  `drive()` helper runs after every scripted event.
+
+Order assertions correct only because satellites were filtered out of the stack, and correct for a
+different reason once they are not:
+
+- `front — a projection of OS focus; raises come from named targets only` › `OS_FOCUS_GAINED on a
+  satellite drives no FOCUS_CONTENT and does not touch the ordered stack` — main is unmoved because
+  the palette is not a content window, not because it was filtered from the order; the order does
+  change, since the palette now tops the single order.
+- `SET_STACKING — a machine-driven raise drives order with it` › `a raise the machine declines
+  (switcher open / satellite holds key / app inactive) emits NO SET_STACKING`.
+- `devtools transitions (§4.6 dim 8a)` › `OS focus landing on a registered devtools window yanks
+  nothing back (Esc grab stays off)` — devtools genuinely holds key, which is the reason Escape
+  must not be grabbed; the assertion was already the right answer, reached from a wrong premise.
+
+Two that look alike and are not:
+
+- `` ported: resolveCloseTargetId / resolveFocusedVisibleWindowId -> `front` `` › `a modal palette
+  (satellite) is excluded as a target` dispatches only `WindowShown`, never `OsFocusGained` — `key`
+  is unwritten for a different reason (`WindowShown` does not write key at all), not because the
+  palette was excluded.
+- `ported: focused-window tracking -> front arbitration` › `a background / non-focusable / overlay
+  surface (satellite) does NOT become front` is the most dangerous test in the file: its literal
+  `null` survives a mechanical rename to `keyWindow(state) === null` and would be wrong — a window
+  that genuinely took OS focus genuinely holds key. The correct pair is `keyWindow(state)` naming
+  it and `topmost(state, isContentWindow) === null` (no content window exists in that state). It
+  should also split along the axis it conflates: `canBecomeKey: false` means the adapter never
+  emits `OsFocusGained` at all, while an overlay with `canBecomeKey: true` does take key.
+
+Pins whose mechanism no longer exists:
+
+- `historical-bug replays (§5.2)` › `(b) S2-null focus lag: OS_FOCUS_SETTLED_NULL keeps front (the
+  target survives an app switch)`
+- `ported: active-hybrid-window tracking -> front` › `DELIBERATE DIVERGENCE: focus leaving the
+  whole group keeps front (old decideAfterBlur nulled it)`
+
+`OsFocusLost` writes `key = null` honestly in the new model; what these two protect — the command
+target surviving an app switch — is preserved by `topmost(state, isContentWindow)` (main), so the
+"deliberate divergence" framing they carry no longer applies.
+
+#### Straight deletions
+
+- `isSatelliteRegistration — single owner of front-ineligibility` (10 tests) and
+  `isSatelliteRegistration — class extension (§5 step 4)` (4) — the satellite concept is replaced
+  by the orthogonal `layer` / `canBecomeKey` / `acceptsInput` properties, and `class` becomes
+  lookup-only with nothing branching on it. Some may be worth re-homing as `canBecomeKey`
+  defaulting tests.
+- `deriveStackingLevel — single owner of stack participation (§4.3 dim 3)` (4) — replaced by the
+  numeric `layer` band plus the single unfiltered order.
+- `reduce purity` › `isEligibleFront rejects satellites, hidden, and absent records`.
+- The `front` invariant half of `totality matrix — every (state-class x event) returns a defined
+  transition` › `reduce is total: defined result + front invariant holds for all combinations`,
+  plus the satellite axis of that describe's `buildStateClass` helper.
+
+#### The one-order consequence
+
+`STACK_ORDER_IMPORTED — the session-restore order import (§5 step 5 part B)` › `a background open
+sits ABOVE the last-focused window while ranking BELOW it by focus recency` is rewritten, not
+translated: order becomes bottom-to-top `[background-open, focused]`, key is unwritten by a
+non-activating show, and the assertion that the two orders genuinely disagree is deleted — deleting
+it is the point (0.1.10).
+
+Everything else resting on `focusSeq` / `focusSeqCounter` or the two-list split, deleted along with
+those fields: the four successor-repair tests exercising `successorFront()` — `ported:
+focused-window tracking -> front arbitration` › `closing the front window clears the stale id and
+picks the MRU successor`; `front — a projection of OS focus; raises come from named targets only`
+› `WINDOW_HIDDEN of the front invalidates and asserts the successor` and › `WINDOW_CLOSED of the
+front raises the successor; WINDOW_CLOSED of a non-front satellite raises nothing`; and `ordered
+stacking list — membership across the class enum (§5 step 5)` › `closing the front removes it AND
+the succession raise tops the successor (list stays consistent)`. Also deleted for the same reason:
+the whole of `ordered stacking list — membership across the class enum (§5 step 5)`, `SET_STACKING
+— a machine-driven raise drives order with it`, `WINDOW_CONTENT_ORDERABLE — the page-host
+orderability caveat (§5 step 5)`, `restore-shaped import — back→front yields that order, focused on
+top (§5 step 5)`, and the remainder of `STACK_ORDER_IMPORTED — the session-restore order import (§5
+step 5 part B)` apart from the background-open test above — each treats `stackOrder` as a filtered
+second list; and `stacking purity — reduce never mutates the input stackOrder`.
+
+The same split is written into the on-disk format in `session-projection.test.ts` as `zOrder`
+versus `stackIndex`:
+
+- `session-projection — machine-derived descriptor fields` › `zOrder is the record focusSeq and
+  focused is the machine front` loses `zOrder`'s source field.
+- The same describe's › `stackIndex is the position in the machine stack, and disagrees with
+  zOrder on a background open` is deleted outright — its whole thesis is the disagreement one order
+  removes.
+- `session-projection — readStackIndex + orderRestoredWindowsBottomToTop` › `a PRE-FIELD snapshot
+  falls back to the focus-recency ordering restore used before` loses its input.
+- The same describe's › `SAVE → RESTORE round trip: a background open comes back ON TOP of the
+  last-focused window` is rewritten to "comes back BELOW"; its restore simulation is the two-list
+  algorithm being deleted — the saved order must already put the focused window on top.
+- `serializeSpaceWorkspaces — hybrid page-hosts + machine-derived fields (§5 step 11 task 9)` ›
+  `zOrder is TRUE STACK POSITION (StateSnapshot.stackOrder index), not WindowRecord.focusSeq` is
+  already the right answer and survives unchanged — the strongest existing evidence that the
+  single-order decision is correct.
+
+#### The relation set (bucket C)
+
+`parentId`, replaced by a direct lookup with no eligibility filter and no MRU fallback:
+
+- `parent refocus on WINDOW_CLOSED (replaces the main.ts parentWin.focus() block)` › `closing the
+  focused child hands front back to the parent and re-drives it`
+- the same describe's › `re-drives the parent even when it already was front (old focus()
+  parity)`
+- the same describe's › `an ineligible parent (hidden) falls back to the MRU successor` — a
+  half-overturn: both the eligibility gate and the recency fallback are gone.
+- `devtools transitions (§4.6 dim 8a)` › `closing a registered detached devtools window refocuses
+  its parent via the parent-refocus transition`
+
+`overlayFor`, replaced by `overlayForHost(state, hostId)`: the cmd+W redirect and the
+overlay-is-never-front tests named in the overturn set above belong here too, because the relation
+is what the exclusion was faking. `overlay attachment / follow / retarget (§4.3 dim 3b, §5 step 9)`
+› `the owner surface exposes both directions of the relation` already uses the relation directly
+and is the shape the others move toward.
+
+#### Mechanical (buckets A, B, E)
+
+The rule, not every test name: `front` on a plain window that genuinely last received OS focus
+becomes `keyWindow(state)?.id`; "front is untouched by this transition" becomes "key and order are
+untouched" (the safest bucket); "the window the user means to act on" becomes `topmost(state,
+isContentWindow)?.id`.
+
+`` ported: resolveHybridEscapeTarget -> ESC target is always `front` `` › `ESC targets the front
+quick-view, not the landed content host` becomes "ESC targets the key window, never main" —
+asserting `keyWindow` names the quick-view and, in the same state, `topmost(state,
+isContentWindow)` names the content host.
+
+A mechanical rename is unsafe for anything turning on `successorFront()` (see the one-order
+consequence above), and for `front — a projection of OS focus; raises come from named targets
+only` › `a front change on WINDOW_SHOWN moves front and emits NO raise (the echo cycle is cut)`,
+whose premise disappears because `WindowShown` never writes key in the kernel.
+
 ### 0.1.10 Decisions and remaining questions
 
 **Decided: one order, and nothing else orders windows.** A background open is placed **below**
