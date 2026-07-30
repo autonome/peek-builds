@@ -191,6 +191,16 @@ export interface WindowRecord {
    * `undefined` until the first such effect for this window.
    */
   lastOpSeq?: number;
+
+  /**
+   * Set while this window was hidden by the `AppResignSettled` sweep (ported
+   * from `window-state.ts WindowRecord.hiddenByAppBlur`) — the structural
+   * replacement for a native-window expando. `AppActivated` re-shows exactly
+   * the windows carrying this flag and clears it; a window hidden for any
+   * other reason (a plain `WindowHidden`, an overlay detach) must not be
+   * re-shown by that re-activation.
+   */
+  hiddenByAppBlur?: boolean;
 }
 
 /**
@@ -218,11 +228,13 @@ export type FocusCause = { kind: 'machine'; opSeq: number } | { kind: 'world' };
  * Nothing else changes membership. There is no visibility filter and no
  * eligibility filter — `order` is the total set, always.
  *
- * RULE 2 (§0.1.4): `key` is written ONLY by `OsFocusGained` / `OsFocusLost` /
- * `AppActiveChanged`. It is never inferred, never repaired, never
- * successor-guessed. `null` is a legal steady state. A dangling key id (the
- * window it names has since closed) is made unobservable by `keyWindow`
- * rather than guarded against here — see that function.
+ * RULE 2 (§0.1.4): `key` is written ONLY by `OsFocusGained` / `OsFocusLost`.
+ * It is never inferred, never repaired, never successor-guessed. `null` is a
+ * legal steady state. A dangling key id (the window it names has since
+ * closed) is made unobservable by `keyWindow` rather than guarded against
+ * here — see that function. Losing app-active status does not mean some
+ * other window gained key: `AppResigned`/`AppActivated` (below) never touch
+ * this field.
  */
 export interface State {
   readonly order: readonly WindowRecord[];
@@ -233,6 +245,18 @@ export interface State {
   readonly opSeqCounter: number;
   readonly appActive: boolean;
   readonly openSeqCounter: number;
+  /**
+   * ARMED app-resign sweep — the dance guard (§0.1.9, ported from
+   * `window-state.ts AppWindowState.pendingAppResignSweep`). macOS produces a
+   * resign→activate cycle as ordinary activation churn (entering/leaving an
+   * overlay does it), so a resign must not act immediately: `AppResigned`
+   * only ARMS this flag; `AppActivated` DISARMS it — that disarm IS the dance
+   * cancel. Only `AppResignSettled` arriving while still armed means the
+   * resign was real, and it is the one that hides the sweep-eligible windows.
+   * The settle DELAY itself is not modelled here — it lives in the (not yet
+   * built) executor; this flag models only the arm/disarm/settle ordering.
+   */
+  readonly pendingAppResignSweep: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -262,7 +286,32 @@ export type Event =
    */
   | { type: 'OsFocusGained'; id: WindowId; cause?: FocusCause }
   | { type: 'OsFocusLost'; id: WindowId }
-  | { type: 'AppActiveChanged'; active: boolean }
+  /**
+   * The app lost active status (ported from `window-state.ts APP_RESIGNED`).
+   * ARMS `pendingAppResignSweep` — see that field's doc. Does not itself hide
+   * anything: this may just be the resign half of the macOS activation dance,
+   * which an `AppActivated` before any settle would immediately cancel.
+   */
+  | { type: 'AppResigned' }
+  /**
+   * The app became active (ported from `window-state.ts APP_ACTIVATED`).
+   * DISARMS `pendingAppResignSweep` — the dance cancel. Also re-shows every
+   * window carrying `hiddenByAppBlur` (exactly those the prior
+   * `AppResignSettled` sweep hid) and clears the mark; a window hidden for
+   * any other reason is untouched. Never writes `key`, never reorders `order`.
+   */
+  | { type: 'AppActivated' }
+  /**
+   * The delayed confirmation that a resign was real (ported from
+   * `window-state.ts APP_RESIGN_SETTLED`) — the settle DELAY itself is not
+   * modelled here, only its ordering relative to arm/disarm. Inert unless
+   * `pendingAppResignSweep` is still armed (an `AppActivated` in between — the
+   * dance — already disarmed it); when armed, hides the sweep-eligible
+   * windows (§0.1.4's `canBecomeKey`: "a HUD never holds key" is the same
+   * predicate a resign sweep targets) and marks them `hiddenByAppBlur`. Never
+   * writes `key`, never reorders `order`.
+   */
+  | { type: 'AppResignSettled' }
   /** The first-composited-frame report — flips `orderable` to `true`. */
   | { type: 'WindowContentOrderable'; id: WindowId }
   /**
@@ -452,6 +501,7 @@ export function initialState(): State {
     opSeqCounter: 0,
     appActive: false,
     openSeqCounter: 0,
+    pendingAppResignSweep: false,
   };
 }
 
@@ -593,6 +643,10 @@ export function evolve(state: State, ev: Event): State {
           // A lived fact (focus provenance), same reasoning — re-registration
           // must not erase the newest op issued for this window.
           ...(existing.lastOpSeq !== undefined ? { lastOpSeq: existing.lastOpSeq } : {}),
+          // A lived fact (app-resign sweep memory), same reasoning — a
+          // re-registration mid-sweep must not lose the mark AppActivated
+          // needs to know which windows to re-show.
+          ...(existing.hiddenByAppBlur !== undefined ? { hiddenByAppBlur: existing.hiddenByAppBlur } : {}),
           ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
           ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
         };
@@ -709,10 +763,49 @@ export function evolve(state: State, ev: Event): State {
       };
     }
 
-    case 'AppActiveChanged': {
+    case 'AppResigned': {
+      // ARM only — hides nothing yet. See `pendingAppResignSweep`'s doc: this
+      // may be the resign half of a dance an `AppActivated` is about to cancel.
       return {
         ...state,
-        appActive: ev.active,
+        appActive: false,
+        pendingAppResignSweep: true,
+        version: state.version + 1,
+      };
+    }
+
+    case 'AppActivated': {
+      // Disarm — the dance cancel. Re-show exactly the windows a prior
+      // AppResignSettled sweep hid (`hiddenByAppBlur`), clearing the mark;
+      // anything hidden for another reason is untouched. `key`/`order` are
+      // never touched here.
+      return {
+        ...state,
+        appActive: true,
+        pendingAppResignSweep: false,
+        order: state.order.map((w) =>
+          w.hiddenByAppBlur === true ? { ...w, visible: true, hiddenByAppBlur: false } : w,
+        ),
+        version: state.version + 1,
+      };
+    }
+
+    case 'AppResignSettled': {
+      // Inert unless still armed — an AppActivated in between (the dance)
+      // already disarmed this. When armed, the resign was real: hide the
+      // sweep-eligible windows (§0.1.4's `canBecomeKey === false`, "a HUD
+      // never holds key" — the same predicate the old reducer's `class ===
+      // 'hud'` sniff targeted) and mark them so AppActivated knows to undo
+      // exactly this sweep.
+      if (!state.pendingAppResignSweep) {
+        return { ...state, version: state.version + 1 };
+      }
+      return {
+        ...state,
+        pendingAppResignSweep: false,
+        order: state.order.map((w) =>
+          !w.canBecomeKey && w.visible ? { ...w, visible: false, hiddenByAppBlur: true } : w,
+        ),
         version: state.version + 1,
       };
     }

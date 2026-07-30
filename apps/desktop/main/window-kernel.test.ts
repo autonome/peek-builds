@@ -73,11 +73,11 @@ function buildLog(): Event[] {
     { type: 'OsFocusGained', id: wid(1) },
     { type: 'WindowShown', id: wid(2) },
     { type: 'OsFocusGained', id: wid(2) },
-    { type: 'AppActiveChanged', active: true },
+    { type: 'AppActivated' },
     { type: 'OsFocusLost', id: wid(2) },
     { type: 'WindowHidden', id: wid(3) },
     { type: 'WindowClosed', id: wid(2) },
-    { type: 'AppActiveChanged', active: false },
+    { type: 'AppResigned' },
   ];
 }
 
@@ -178,7 +178,9 @@ describe('window-kernel: evolve is total', () => {
     { type: 'WindowClosed', id: wid(1) },
     { type: 'OsFocusGained', id: wid(1) },
     { type: 'OsFocusLost', id: wid(1) },
-    { type: 'AppActiveChanged', active: !base.appActive },
+    { type: 'AppResigned' },
+    { type: 'AppActivated' },
+    { type: 'AppResignSettled' },
     // Events naming a window that was never registered — must not throw.
     { type: 'WindowShown', id: wid(404) },
     { type: 'OsFocusGained', id: wid(404) },
@@ -998,5 +1000,111 @@ describe('window-kernel: focus provenance (cause) and isStaleSelfEcho', () => {
     const shownTwice = evolve(shownOnce, shownTwiceEv);
     const shownTwiceEffects = react(shownOnce, shownTwiceEv, shownTwice);
     assert.ok(!shownTwiceEffects.some((e) => e.type === 'ShowWindow'), 'an already-visible window re-shown emits no ShowWindow effect');
+  });
+});
+
+// ── App activation, resignation, and the macOS activation dance ────────────
+
+describe('window-kernel: app activation, resignation, and the dance guard', () => {
+  /** A key-holding "primary" window plus a non-key-holding "hud" window, both visible. */
+  const registerPrimaryAndHud = (): Event[] => [
+    { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 1, canBecomeKey: false, acceptsInput: false, class: 'hud' },
+    { type: 'WindowShown', id: wid(1) },
+    { type: 'WindowShown', id: wid(2) },
+    { type: 'OsFocusGained', id: wid(1) },
+  ];
+
+  it('resign then activate with no settle in between hides nothing and leaves nothing armed (the dance case)', () => {
+    const before = fold(registerPrimaryAndHud(), initialState());
+    const resigned = evolve(before, { type: 'AppResigned' });
+    assert.strictEqual(resigned.pendingAppResignSweep, true);
+    const activated = evolve(resigned, { type: 'AppActivated' });
+
+    assert.strictEqual(activated.pendingAppResignSweep, false);
+    assert.strictEqual(activated.appActive, true);
+    // Nothing was hidden, so nothing carries the mark, and both windows are
+    // exactly as visible as they started.
+    for (const w of activated.order) {
+      assert.strictEqual(w.hiddenByAppBlur, undefined);
+    }
+    assert.strictEqual(activated.order.find((w) => w.id === wid(1))?.visible, true);
+    assert.strictEqual(activated.order.find((w) => w.id === wid(2))?.visible, true);
+  });
+
+  it('resign then settle hides the sweep-eligible (non-key-holding) window and marks it hiddenByAppBlur', () => {
+    const before = fold(registerPrimaryAndHud(), initialState());
+    const resigned = evolve(before, { type: 'AppResigned' });
+    const settled = evolve(resigned, { type: 'AppResignSettled' });
+
+    assert.strictEqual(settled.pendingAppResignSweep, false);
+    const hud = settled.order.find((w) => w.id === wid(2))!;
+    assert.strictEqual(hud.visible, false);
+    assert.strictEqual(hud.hiddenByAppBlur, true);
+    // The key-holding, canBecomeKey window is not sweep-eligible — untouched.
+    const primary = settled.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(primary.visible, true);
+    assert.strictEqual(primary.hiddenByAppBlur, undefined);
+  });
+
+  it('a later activation re-shows exactly the windows the sweep hid and clears the mark, leaving other-cause hides alone', () => {
+    const before = fold(registerPrimaryAndHud(), initialState());
+    // A third window, hidden for an unrelated reason (a plain WindowHidden) —
+    // must never be re-shown by the activation below.
+    const withThird = evolve(before, {
+      type: 'WindowRegistered',
+      id: wid(3),
+      kind: 'page-host',
+      layer: 1,
+      canBecomeKey: false,
+      acceptsInput: false,
+      class: 'hud',
+    });
+    const thirdShown = evolve(withThird, { type: 'WindowShown', id: wid(3) });
+    const thirdHiddenPlain = evolve(thirdShown, { type: 'WindowHidden', id: wid(3) });
+
+    const resigned = evolve(thirdHiddenPlain, { type: 'AppResigned' });
+    const settled = evolve(resigned, { type: 'AppResignSettled' });
+    // wid(3) was already hidden (for another reason) before the sweep — the
+    // sweep predicate only touches visible windows, so it stays untouched.
+    assert.strictEqual(settled.order.find((w) => w.id === wid(3))?.hiddenByAppBlur, undefined);
+
+    const activated = evolve(settled, { type: 'AppActivated' });
+    const hud = activated.order.find((w) => w.id === wid(2))!;
+    assert.strictEqual(hud.visible, true);
+    assert.strictEqual(hud.hiddenByAppBlur, false);
+    // The other-cause hide is left alone — still hidden, still unmarked.
+    const third = activated.order.find((w) => w.id === wid(3))!;
+    assert.strictEqual(third.visible, false);
+    assert.strictEqual(third.hiddenByAppBlur, undefined);
+  });
+
+  it('AppResignSettled arriving when not armed is inert', () => {
+    const before = fold(registerPrimaryAndHud(), initialState());
+    // Never resigned — pendingAppResignSweep is false from initialState().
+    assert.strictEqual(before.pendingAppResignSweep, false);
+    const settled = evolve(before, { type: 'AppResignSettled' });
+
+    assert.strictEqual(settled.pendingAppResignSweep, false);
+    assert.deepStrictEqual(settled.order.map((w) => ({ id: w.id, visible: w.visible })), before.order.map((w) => ({ id: w.id, visible: w.visible })));
+    assert.strictEqual(settled.version, before.version + 1, 'still bumps version — an event, not a rejection');
+  });
+
+  it('none of AppResigned/AppActivated/AppResignSettled writes key or reorders order', () => {
+    const before = fold(registerPrimaryAndHud(), initialState());
+    const idOrder = (s: State) => s.order.map((w) => w.id);
+
+    for (const ev of [{ type: 'AppResigned' as const }, { type: 'AppActivated' as const }, { type: 'AppResignSettled' as const }]) {
+      const next = evolve(before, ev);
+      assert.strictEqual(next.key, before.key, `${ev.type} must not write key`);
+      assert.deepStrictEqual(idOrder(next), idOrder(before), `${ev.type} must not reorder order`);
+    }
+
+    // Also across the full dance sequence.
+    const resigned = evolve(before, { type: 'AppResigned' });
+    const settled = evolve(resigned, { type: 'AppResignSettled' });
+    const activated = evolve(settled, { type: 'AppActivated' });
+    assert.strictEqual(activated.key, before.key);
+    assert.deepStrictEqual(idOrder(activated), idOrder(before));
   });
 });

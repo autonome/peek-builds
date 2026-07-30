@@ -110,7 +110,7 @@ function isCommand(item: LogItem): item is Command {
  * same seed always produces the same concrete log.
  */
 function randomLogItem(rng: Rng, state: State): LogItem {
-  const variant = randomInt(rng, 29);
+  const variant = randomInt(rng, 31);
   const id = wid(randomInt(rng, POOL_SIZE));
   switch (variant) {
     case 0: {
@@ -145,8 +145,12 @@ function randomLogItem(rng: Rng, state: State): LogItem {
     }
     case 5:
       return { type: 'OsFocusLost', id };
+    // Unfiltered — nonsense orderings included (settle without a resign,
+    // double activate, resign twice) so the dance guard's total handling of
+    // every combination is exercised, same reasoning as every other event
+    // variant here.
     case 6:
-      return { type: 'AppActiveChanged', active: randomBool(rng) };
+      return { type: 'AppResigned' };
     case 7:
       return { type: 'WindowContentOrderable', id };
     case 8: {
@@ -248,8 +252,7 @@ function randomLogItem(rng: Rng, state: State): LogItem {
       if (hostId === id) hostId = null; // never target self — no window is its own overlay host
       return { type: 'AttachOverlay', overlayId: id, hostId, expectedVersion: stale ? state.version + 1 : state.version };
     }
-    case 28:
-    default: {
+    case 28: {
       // Unfiltered — decide's own synthetic translation of AttachOverlay,
       // fed straight to `evolve` (same reasoning as Maximized/Unmaximized
       // above). `hostId` is drawn from the raw id pool like every other
@@ -261,6 +264,15 @@ function randomLogItem(rng: Rng, state: State): LogItem {
       const hostId: WindowId | null = rng() < 0.2 ? null : wid(randomInt(rng, POOL_SIZE));
       return { type: 'OverlayAttached', overlayId: id, hostId };
     }
+    // App activation dance (this slice) — unfiltered, same reasoning as
+    // case 6 (`AppResigned`) above: nonsense orderings (settle without a
+    // resign, double activate, resign twice) are exactly what exercises the
+    // arm/disarm/settle guard's total handling.
+    case 29:
+      return { type: 'AppActivated' };
+    case 30:
+    default:
+      return { type: 'AppResignSettled' };
   }
 }
 
@@ -359,6 +371,19 @@ function checkInvariants(state: State, prev?: State): string[] {
         violations.push(`window is its own overlay host: ${record.id}`);
       }
     }
+
+    // App activation dance (this slice): `hiddenByAppBlur` names a window the
+    // sweep hid — it can never be true on a window that is currently visible.
+    if (record.hiddenByAppBlur === true && record.visible) {
+      violations.push(`hiddenByAppBlur is set on a visible window: ${record.id}`);
+    }
+  }
+
+  // App activation dance (this slice): the sweep flag can only be armed while
+  // the app is inactive — `AppActivated` disarms it in the same step it flips
+  // `appActive` true.
+  if (state.appActive && state.pendingAppResignSweep) {
+    violations.push('pendingAppResignSweep is true while appActive is true');
   }
 
   const kw = keyWindow(state);
