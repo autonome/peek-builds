@@ -318,16 +318,57 @@ derived from `WM_HINTS.input`.
 
 #### How much of the three axes exists today — measured
 
-- **`layer`** — real but degenerate: `'floating'` is the only non-default level ever passed;
-  `'normal'` is declared in the backend's type signature and never passed anywhere. The multi-band
-  ordering §0 asks for is **unimplemented**, not merely unmodelled.
-- **`canBecomeKey`** — `focusable: false` is threaded through registration and feeds
-  `classifyWindowRegistration`, but **no production window is constructed with it**; only test
-  fixtures. The chrome overlay is `focusable: true` by invariant (a non-focusable overlay cannot
-  take key, which breaks typing a URL in the navbar).
-- **`acceptsInput`** — real and live, but confined to one window: `hybrid-overlay.ts` calls
-  `setIgnoreMouseEvents(true, { forward: true })` and toggles it as the pointer enters and leaves
-  the chrome. Also exposed to tiles via `tile-ipc.ts`.
+**How these are measured.** A window's construction options come from three places, and all three
+must be read before any claim about how production windows are built: main-process construction
+sites (`hybrid-overlay.ts` `ensureOverlay`, `test-fixture-glue.ts`), renderer-driven opens through
+`api.window.open` (`renderer/**` and `features/**` background scripts), and the window entries
+declared in feature manifests, which `tile-launcher.ts` resolves into options and hands to
+`main.ts` `registerWindow`. A survey restricted to main-process sites misses the windows that
+features open for themselves — which is precisely the class of window that carries the unusual
+flags, because the chrome the main process builds is the conventional part of the system.
+
+- **`layer`** — real but degenerate: `'floating'` is the only non-default level ever passed
+  (`electron-window-backend.ts` `pinAlwaysOnTop` and `setStacking`); `'normal'` appears only in
+  that file's `setAlwaysOnTop` type signature and is passed nowhere. Renderer-driven opens cannot
+  widen this — `ipc.ts` coerces `api.window.open`'s `alwaysOnTop` to a boolean, and
+  `tile-launcher.ts` does the same with the manifest field, so no caller outside the backend can
+  name a level. The multi-band ordering §0 asks for is **unimplemented**, not merely unmodelled.
+- **`canBecomeKey`** — `focusable: false` is threaded through registration, feeds
+  `classifyWindowRegistration` and `isSatelliteRegistration`, and **is used by production
+  windows**. Every one of them is opened from a renderer or a manifest, none from a main-process
+  construction site:
+  - `renderer/hud/background.js` `openHud()` opens with `alwaysOnTop: true, focusable: false` and
+    no `role`, so `inferIzuiRole` returns `workspace` and `classifyWindowRegistration` returns
+    `hud`. This is the real HUD, and it is the only production window that classifies `hud`.
+  - `features/spaces/background.js` `showBorder()` opens the screen-border window with the same
+    two flags but `role: 'overlay'`, so the role arm wins and the class is `overlay`, never `hud`.
+    The `border` entry in `features/spaces/manifest.json` declares the same three options and
+    reaches the same classifier through `tile-launcher.ts` and `main.ts` `registerWindow`.
+  - `test-fixture-glue.ts` is `focusable: false` but not always-on-top, and declares the class
+    `test-fixture` outright — test-only, and outside the always-on-top-plus-non-focusable pair.
+
+  The chrome overlay is `focusable: true` by invariant (`hybrid-overlay.ts` `ensureOverlay`): a
+  non-focusable overlay cannot take key, which breaks typing a URL in the navbar.
+- **`acceptsInput`** — real and live in two production windows. The chrome overlay is toggled
+  between capture and click-through by `hybrid-overlay.ts` `wireClickCapture` (as the pointer
+  enters and leaves the chrome) and `wireAppActiveGate` (as the app activates and resigns), using
+  `setIgnoreMouseEvents(false)` and `setIgnoreMouseEvents(true, { forward: true })`. The spaces
+  screen border sets it once at creation: `features/spaces/background.js` `showBorder()` calls
+  `api.window.setIgnoreMouseEvents(id, true, true)`, which lands on the
+  `tile:window:set-ignore-mouse` handler in `tile-ipc.ts`. That handler is the general tile-facing
+  route, gated on the `window.manage` capability, so it is available to any feature that declares
+  it — the axis is not structurally confined to core chrome.
+
+**The old `hud` class decomposes into three parts, not one.** `classifyWindowRegistration` returns
+`hud` for `alwaysOnTop === true && focusable === false`, after the declared roles (`overlay`,
+`palette`, `quick-view`) have already claimed their classes — so role takes precedence over the
+pair. In the orthogonal record the two flags sit on different axes: `alwaysOnTop` is the `layer`
+band, and `focusable: false` is `!canBecomeKey`. A rule that used to read `class === 'hud'`
+therefore needs all three parts restated — the layer band, `!canBecomeKey`, and the role
+exclusion. `!canBecomeKey` on its own is half of the pair, and it is not an inert half: it admits
+the non-focusable window that never floated (the test fixture) and, without the role clause, the
+non-focusable always-on-top windows that a declared role kept out of `hud` (the spaces screen
+border).
 
 ### 0.1.5 Queries that replace `front`
 
