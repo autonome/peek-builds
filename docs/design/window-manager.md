@@ -161,10 +161,16 @@ as `ASK_RENDERER{seq}` / `ESC_RENDERER_ANSWER{seq}`.
 
 ## 0.1 The rewritten kernel — state shape and structure
 
-**Not implemented.** Derives from §0, plus a survey of how other window managers and the
-state-machine literature solve the same problems. Where this disagrees with §3–§5, those are
-the older design. The goal this answers: make the machine as simple as possible; the kernel
-should be hardened to a diamond.
+**Built, not wired.** `apps/desktop/main/window-kernel.ts` (the kernel — `decide`/`evolve`/`react`,
+queries, selectors), `apps/desktop/main/window-escape.ts` (the Escape interpreter) and
+`apps/desktop/main/window-kernel-executor.ts` (`WindowKernelExecutor`, the impure edge that owns
+state, dispatches, and performs effects) exist and carry test coverage. None is wired into the
+running application: `apps/desktop/main/window-state.ts` and `window-os-adapter.ts` still drive
+production, `window-kernel.ts` is imported only by `window-escape.ts`, `window-kernel-executor.ts`
+and their tests, and `WindowKernelExecutor` is constructed nowhere in production. Derives from §0,
+plus a survey of how other window managers and the state-machine literature solve the same
+problems. Where this disagrees with §3–§5, those are the older design. The goal this answers: make
+the machine as simple as possible; the kernel should be hardened to a diamond.
 
 ### The diagnosis
 
@@ -1070,8 +1076,9 @@ Taking it literally is the reading that requires no exception.
 `WindowOsAdapter.registerWindow`. There is no second registration path and no bypass, so excluding
 these windows means *adding* a filter that does not exist today rather than declining to add one.
 The kernel itself has no production producer yet — `window-kernel.ts` is imported only by
-`window-escape.ts` and its own test files — so this is a fact about the registration path the
-kernel's producers will be ported from, not about the kernel as wired.
+`window-escape.ts`, `window-kernel-executor.ts` and their test files, and `WindowKernelExecutor` is
+constructed nowhere in production — so this is a fact about the registration path the kernel's
+producers will be ported from, not about the kernel as wired.
 
 **All five register `role: 'utility'`**, which is exactly what lets `isContentWindow` exclude them
 with no `class` test. That predicate is `visible && canBecomeKey && roleIn(CONTENT_ROLES, role)`,
@@ -2243,6 +2250,13 @@ step-4 command family (guest-safe `closeWindow` — the absorbed d1cf0b9a UAF gu
 machine + adapter pair and exposes the numeric-id seam (`getWindowIdFor()` /
 `getNativeWindowFor()`) that the still-numeric renderer-facing id economy converts
 through (§3 scope decision).
+
+**The §0.1 rewrite exists alongside this, unwired.** `apps/desktop/main/window-kernel.ts` (the
+kernel), `window-escape.ts` (the Escape interpreter) and `window-kernel-executor.ts`
+(`WindowKernelExecutor`, the impure edge) are built and tested. None is constructed in
+production: `window-state.ts` and `window-os-adapter.ts` above remain the modules that drive the
+running app, and `window-kernel.ts` is imported only by `window-escape.ts`,
+`window-kernel-executor.ts` and their tests.
 
 **The R2 check is live** — `scripts/check-r2-window-ops.mjs`, in the
 `test:desktop:electron` chain: **23 allowlisted entries / 37 calls** as of this pass
