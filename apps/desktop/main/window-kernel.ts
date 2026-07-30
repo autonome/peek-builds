@@ -807,15 +807,52 @@ export function evolve(state: State, ev: Event): State {
         // exactly the moment nothing has been reported, and absent is the
         // honest answer for that (see the field's doc).
       };
+      // §0.1.10 — ONE ORDER, and nothing else orders windows. A fresh
+      // registration is placed BELOW the last-focused window, never on top:
+      // "a window that was not focused does not go on top". The consequence
+      // is deliberate — a background-opened window no longer appears above
+      // the window being worked in (the conclusion Metacity's
+      // focus-stealing work reached: stacked below the focused window, but
+      // still mapped).
+      //
+      // REGISTRATION IS THE INSERTION POINT, and the only one. It is the
+      // only event that ADDS to `order`, and the only other event that
+      // moves anything — `OsFocusGained` — is precisely the activating
+      // case, which raises its target to the top on its own. So the two
+      // rules are complete and disjoint: an open lands under the key
+      // window, and taking focus is what puts a window over it. The SHOW
+      // cannot carry the rule: `WindowShown` states only that a window
+      // became visible, and whether the show activated is a separate
+      // reported fact (`OsFocusGained`), so re-deriving "was this a
+      // background open?" at the show would mean putting an activation flag
+      // back onto it — the second ordering input this section deletes. It
+      // is also why `WindowShown` never reorders (see its case below).
+      //
+      // The insertion index is the key window's own. Because a focus gain
+      // moves its target to the END and every later registration lands
+      // below it, the key window is the last element of `order` whenever it
+      // resolves — so this reads as "directly under the window in use,
+      // above everything else". With no key window, or a `key` id naming no
+      // record (it closed, or was never registered), there is nothing to go
+      // below and the record appends on top; that keeps the "key resolves
+      // -> key is topmost" property true by construction, including for the
+      // case where the dangling id is THIS registration's own.
+      const keyIdx = state.key === null ? -1 : state.order.findIndex((w) => w.id === state.key);
+      const insertAt = keyIdx === -1 ? state.order.length : keyIdx;
       return {
         ...state,
-        order: [...state.order, record],
+        order: [...state.order.slice(0, insertAt), record, ...state.order.slice(insertAt)],
         version: state.version + 1,
         openSeqCounter: state.openSeqCounter + 1,
       };
     }
 
     case 'WindowShown': {
+      // Never reorders (§0.1.10): a show states that a window became
+      // visible, not that it became the one in use. Where the window sits
+      // was decided when it was registered (below the key window) and is
+      // changed only by taking focus (`OsFocusGained`).
+      //
       // Showing can newly clear the visibility axis of a held
       // DisplayChanged projection — flush if fsMode is also already normal.
       // `lastOpSeq` is stamped only when this genuinely flips `visible`

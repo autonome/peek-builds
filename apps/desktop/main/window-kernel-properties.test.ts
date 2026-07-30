@@ -482,6 +482,18 @@ function checkInvariants(state: State, prev?: State): string[] {
     violations.push(`keyWindow() resolved to a record not present in order: ${JSON.stringify(kw)}`);
   }
 
+  // §0.1.10 — ONE ORDER: whenever `key` resolves to a record, that record is
+  // the TOPMOST one. Nothing in the kernel may put a window over the one in
+  // use: a fresh registration is inserted BELOW the key window, a focus gain
+  // moves its target to the end, and no other transition touches membership
+  // or position. Stated over every generated log — including the nonsense
+  // ones — rather than over the hand-written scenes, because the pre-rule
+  // kernel (registration appended on top) violated it with two events.
+  const top = state.order[state.order.length - 1];
+  if (kw !== null && top !== undefined && top.id !== kw.id) {
+    violations.push(`the key window is not topmost in order: key=${kw.id} top=${top.id}`);
+  }
+
   if (prev !== undefined) {
     if (!(state.version > prev.version)) {
       violations.push(`version did not strictly increase: prev=${prev.version} next=${state.version}`);
@@ -783,6 +795,54 @@ describe('window-kernel: re-registration of a still-live id merges in place', ()
     const state = fold([registered, registered]);
     const violations = checkInvariants(state);
     assert.deepStrictEqual(violations, []);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pinned placement coverage (§0.1.10) — same reasoning as the merge coverage
+// below: the generator's odds of registering a window WHILE another one holds
+// key are thin (only ~2 of the 32 variants register, and `key` stays null
+// until a focus event names an id that a registration already created), so the
+// one-order invariant is pinned on a hand-built log rather than left to
+// generator luck.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('window-kernel: a registration never lands above the key window', () => {
+  const inUse = wid(0);
+  const opened = wid(1);
+
+  const register = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: 0,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+
+  const windowInUse = (): LogItem[] => [register(inUse), { type: 'WindowShown', id: inUse }, { type: 'OsFocusGained', id: inUse }];
+
+  it('a background open goes under the key window, and every invariant still holds', () => {
+    const before = fold(windowInUse());
+    const after = evolve(before, register(opened));
+    assert.deepStrictEqual(after.order.map((w) => w.id), [opened, inUse]);
+    assert.deepStrictEqual(checkInvariants(after, before), []);
+  });
+
+  it('the invariant names the violation when a record IS placed on top', () => {
+    // The pre-rule shape (`order: [...state.order, record]`), hand-built, so
+    // the clause is proven to fire rather than merely present.
+    const before = fold([...windowInUse(), register(opened)]);
+    const appended: State = {
+      ...before,
+      order: [...before.order.filter((w) => w.id !== opened), before.order.find((w) => w.id === opened)!],
+      version: before.version + 1,
+    };
+    assert.deepStrictEqual(checkInvariants(appended, before), [
+      `the key window is not topmost in order: key=${inUse} top=${opened}`,
+    ]);
   });
 });
 

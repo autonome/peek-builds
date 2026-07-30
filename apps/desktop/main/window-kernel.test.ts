@@ -398,6 +398,155 @@ describe('window-kernel: raise vs. show', () => {
   });
 });
 
+// ── one order: where a background open lands (§0.1.10) ──────────────────────
+
+/**
+ * ONE ORDER, and nothing else orders windows: a background open is placed
+ * BELOW the last-focused window. The two rules that move anything are
+ * complete and disjoint — a registration inserts under the key window, and a
+ * focus gain raises its target to the top — so there is no second list and no
+ * focus-recency counter to disagree with `order`.
+ *
+ * Every window here is registered with the facts its REAL construction site
+ * produces (same discipline as `which windows a real app resign hides`): an
+ * ordinary page host is `kind:'page-host'` at `BASE_LAYER`, focusable,
+ * input-accepting, `class:'primary'`, `role:'content'` — and, being a
+ * page-host, it is NOT positionable by the OS until its first composited
+ * frame reports in (`WindowContentOrderable`). A rule that only held for
+ * windows the OS can already stack would pass vacuously without that step.
+ */
+describe('window-kernel: a background open lands BELOW the key window', () => {
+  /** The page host the user is working in. */
+  const inUse = wid(1);
+  /** The one that opens behind it — a hotkeyed page, a restored session window. */
+  const opened = wid(2);
+
+  const registerPageHost = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+
+  /** One page host on screen, orderable, holding key. */
+  const windowInUse = (): Event[] => [
+    registerPageHost(inUse),
+    { type: 'WindowShown', id: inUse },
+    { type: 'WindowContentOrderable', id: inUse },
+    { type: 'OsFocusGained', id: inUse },
+  ];
+
+  const stackingIds = (effects: Effect[]): WindowId[] =>
+    effects.filter((e) => e.type === 'SetStacking').map((e) => e.id);
+
+  it('a background open sits under the window in use — and the stacking the OS is told to assert says so', () => {
+    const base = fold(windowInUse());
+    assert.strictEqual(keyWindow(base)?.id, inUse);
+
+    const shown = fold([registerPageHost(opened), { type: 'WindowShown', id: opened }], base);
+    assert.deepStrictEqual(shown.order.map((w) => w.id), [opened, inUse], 'bottom -> top');
+    assert.strictEqual(topmost(shown, () => true)?.id, inUse, 'the window in use is still on top');
+    assert.strictEqual(topmost(shown, isContentWindow)?.id, inUse, 'and is still the command target');
+
+    // The first composited frame re-asserts the whole stack — that emission is
+    // the machine's answer for what the screen looks like, bottom -> top.
+    const firstFrame: Event = { type: 'WindowContentOrderable', id: opened };
+    const after = evolve(shown, firstFrame);
+    assert.deepStrictEqual(stackingIds(react(shown, firstFrame, after)), [opened, inUse]);
+  });
+
+  it('an ACTIVATING open still ends on top — the focus gain is what puts it there', () => {
+    const state = fold(
+      [
+        registerPageHost(opened),
+        { type: 'WindowShown', id: opened },
+        { type: 'WindowContentOrderable', id: opened },
+        { type: 'OsFocusGained', id: opened },
+      ],
+      fold(windowInUse()),
+    );
+    assert.deepStrictEqual(state.order.map((w) => w.id), [inUse, opened]);
+    assert.strictEqual(keyWindow(state)?.id, opened);
+    assert.strictEqual(topmost(state, isContentWindow)?.id, opened);
+  });
+
+  it('successive background opens stack under it, newest nearest the top', () => {
+    const state = fold([registerPageHost(wid(3)), registerPageHost(wid(4))], fold(windowInUse()));
+    assert.deepStrictEqual(state.order.map((w) => w.id), [wid(3), wid(4), inUse]);
+  });
+
+  it('with no key window there is nothing to go below — the registration appends on top', () => {
+    const state = fold([registerPageHost(inUse), registerPageHost(opened)]);
+    assert.strictEqual(state.key, null);
+    assert.deepStrictEqual(state.order.map((w) => w.id), [inUse, opened]);
+  });
+
+  it('a key id naming no record is nothing to go below either', () => {
+    // RULE 2: `key` is never repaired, so closing the key window leaves the
+    // field dangling. A registration then has no window in use to sit under.
+    const closed = fold([...windowInUse(), registerPageHost(opened), { type: 'WindowClosed', id: inUse }]);
+    assert.strictEqual(closed.key, inUse, 'still dangling');
+    assert.strictEqual(keyWindow(closed), null);
+
+    const state = evolve(closed, registerPageHost(wid(3)));
+    assert.deepStrictEqual(state.order.map((w) => w.id), [opened, wid(3)]);
+  });
+
+  it('registering the window a dangling key already names puts it on top, so key stays topmost', () => {
+    const state = fold([
+      registerPageHost(inUse),
+      { type: 'OsFocusGained', id: opened }, // an id no record exists for yet
+      registerPageHost(opened),
+    ]);
+    assert.deepStrictEqual(state.order.map((w) => w.id), [inUse, opened]);
+    assert.strictEqual(keyWindow(state)?.id, opened);
+  });
+
+  it('a re-registration is not a re-placement — the merge keeps it under the key window', () => {
+    const base = fold([...windowInUse(), registerPageHost(opened)]);
+    const merged = evolve(base, registerPageHost(opened));
+    assert.deepStrictEqual(merged.order.map((w) => w.id), [opened, inUse]);
+  });
+
+  it('a show never re-places: a background window shown after the key window changed stays where it was', () => {
+    // `opened` is registered under `inUse`, then `inUse` is re-focused, and
+    // only then does `opened` become visible. Position is a registration /
+    // focus fact, so the late show moves nothing.
+    const base = fold([...windowInUse(), registerPageHost(opened), { type: 'OsFocusGained', id: inUse }]);
+    const shown = evolve(base, { type: 'WindowShown', id: opened });
+    assert.deepStrictEqual(shown.order.map((w) => w.id), [opened, inUse]);
+  });
+
+  it('the window in use never leaves the top, so re-focusing it raises nothing; focusing the background open does', () => {
+    const base = fold([
+      ...windowInUse(),
+      registerPageHost(opened),
+      { type: 'WindowShown', id: opened },
+      { type: 'WindowContentOrderable', id: opened },
+    ]);
+
+    const reFocus: Event = { type: 'OsFocusGained', id: inUse };
+    const afterReFocus = evolve(base, reFocus);
+    assert.deepStrictEqual(
+      react(base, reFocus, afterReFocus).filter((e) => e.type === 'RaiseWindow'),
+      [],
+      'the key window was already topmost — nothing moved, so nothing is driven back at the OS',
+    );
+
+    const focusOpened: Event = { type: 'OsFocusGained', id: opened };
+    const afterFocus = evolve(base, focusOpened);
+    assert.deepStrictEqual(
+      react(base, focusOpened, afterFocus).filter((e) => e.type === 'RaiseWindow'),
+      [{ type: 'RaiseWindow', id: opened, opSeq: afterFocus.opSeqCounter }],
+      'a background open genuinely moves when it takes focus — the one raise this placement creates',
+    );
+  });
+});
+
 // ── CloseOrHideWindow — the keepLive branch point ───────────────────────────
 
 describe('window-kernel: CloseOrHideWindow', () => {
