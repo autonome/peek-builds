@@ -547,6 +547,111 @@ describe('window-kernel: a background open lands BELOW the key window', () => {
   });
 });
 
+// ── the raise a focus report drives (and why it is not a feedback loop) ─────
+
+/**
+ * `react` emits `RaiseWindow` off a focus report, which contradicts the old
+ * reducer's standing invariant ("no RAISE_WINDOW from OS_FOCUS_GAINED — the
+ * pump's convergence obligation"). The invariant is superseded, not violated,
+ * and these are the two facts that decide it:
+ *
+ *   - it is the ONLY route to key — `decide` turns a `RaiseWindow` COMMAND
+ *     into an `OsFocusGained` event (§0.1.10, one order), so suppressing the
+ *     emission would leave a raise command with nothing but `SetStacking`,
+ *     which carries no activation;
+ *   - it converges in one step — the raise moves its target to the top, so
+ *     the focus report it provokes finds the target already topmost and the
+ *     diff is empty. The emission is its own fixed point.
+ *
+ * The rule is also STRUCTURAL: "the top of `order` changed under unchanged
+ * membership". It never asks which event moved it, which is why a close or a
+ * registration — a membership change, not a window taking focus — raises
+ * nothing.
+ */
+describe('window-kernel: the raise a focus report drives', () => {
+  const registerPageHost = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+
+  const raises = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'RaiseWindow');
+
+  /** `top` holds key on top; `below` sits under it (a background open). */
+  const twoWindows = (top: WindowId, below: WindowId): State =>
+    fold([
+      registerPageHost(top),
+      { type: 'WindowShown', id: top },
+      { type: 'WindowContentOrderable', id: top },
+      { type: 'OsFocusGained', id: top },
+      registerPageHost(below),
+      { type: 'WindowShown', id: below },
+      { type: 'WindowContentOrderable', id: below },
+    ]);
+
+  it('a RaiseWindow COMMAND reaches the OS as a raise — the machine has no other route to key', () => {
+    // The load-bearing case. `decide` realizes the command as `OsFocusGained`,
+    // so if a focus report emitted no raise this command would produce only
+    // relative stacking — the window would move in the model and never become
+    // the one in use.
+    const state = twoWindows(wid(1), wid(2));
+    const decision = decide(state, { type: 'RaiseWindow', id: wid(2), expectedVersion: state.version });
+    assert.ok('events' in decision);
+    const ev = decision.events[0];
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(
+      raises(react(state, ev, next)),
+      [{ type: 'RaiseWindow', id: wid(2), opSeq: next.opSeqCounter }],
+      'the only effect in the union that takes key',
+    );
+  });
+
+  it('INVARIANT: the raise is its own fixed point — the focus report it provokes emits NOTHING', () => {
+    // The convergence obligation, met structurally instead of by refusing to
+    // emit: a raise is realized as an activating show, whose native focus
+    // comes back as another OsFocusGained for the same window. By then that
+    // window is topmost, so the diff is empty — no second raise, and no
+    // stacking re-assert either.
+    const state = twoWindows(wid(1), wid(2));
+    const first: Event = { type: 'OsFocusGained', id: wid(2) };
+    const raised = evolve(state, first);
+    assert.strictEqual(raises(react(state, first, raised)).length, 1, 'one correcting write');
+
+    const echo: Event = { type: 'OsFocusGained', id: wid(2), cause: { kind: 'machine', opSeq: raised.opSeqCounter } };
+    const afterEcho = evolve(raised, echo);
+    assert.deepStrictEqual(react(raised, echo, afterEcho), [], 'then silence');
+    assert.deepStrictEqual(afterEcho.order.map((w) => w.id), raised.order.map((w) => w.id));
+  });
+
+  it('closing the top window does not raise the one beneath — a membership change is not a raise', () => {
+    // The successor is promoted to the top of `order` by removal alone.
+    // Asserting key for it would be the successor-guessing RULE 2 forbids —
+    // and a raise SHOWS what it raises, so a hidden window beneath would be
+    // put on screen by a close.
+    const state = twoWindows(wid(1), wid(2));
+    const ev: Event = { type: 'WindowClosed', id: wid(1) };
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(next.order.map((w) => w.id), [wid(2)], 'promoted by removal');
+    assert.deepStrictEqual(raises(react(state, ev, next)), []);
+  });
+
+  it('a registration that lands on top does not raise either', () => {
+    // No key window to go under, so the fresh record appends at the top of
+    // `order` — the top id changed, but nothing took focus.
+    const state = fold([registerPageHost(wid(1))]);
+    assert.strictEqual(state.key, null);
+    const ev = registerPageHost(wid(2));
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(next.order.map((w) => w.id), [wid(1), wid(2)]);
+    assert.deepStrictEqual(raises(react(state, ev, next)), []);
+  });
+});
+
 // ── CloseOrHideWindow — the keepLive branch point ───────────────────────────
 
 describe('window-kernel: CloseOrHideWindow', () => {

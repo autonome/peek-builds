@@ -1254,15 +1254,67 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
   }
 
-  // RaiseWindow: only when OsFocusGained genuinely moved the target off its
-  // prior position — a window already on top, or a dangling id with no
-  // record to move, raises nothing.
-  if (ev.type === 'OsFocusGained') {
-    const prevIdx = prev.order.findIndex((w) => w.id === ev.id);
-    const genuinelyRaised = prevIdx !== -1 && prevIdx !== prev.order.length - 1;
-    if (genuinelyRaised) {
-      effects.push({ type: 'RaiseWindow', id: ev.id, opSeq: next.opSeqCounter });
-    }
+  // RaiseWindow: a REORDER put a different window on top. Same structural
+  // shape as every rule above — same membership, different topmost id — so it
+  // reads `prev`/`next` only and never asks which event caused the move.
+  //
+  // A membership change is deliberately NOT a raise. Registration can land a
+  // record on top (no key window to go under), and closing the top window
+  // promotes the one beneath it; in both the set changed rather than a window
+  // taking focus, and asserting key for the promoted window would be exactly
+  // the successor-guessing RULE 2 forbids — worse, the record beneath may be
+  // hidden, and a raise SHOWS what it raises. Length equality is what
+  // excludes both: the only event that reorders without changing membership
+  // is `OsFocusGained`.
+  //
+  // WHY A FOCUS REPORT DRIVES AN OS RAISE AT ALL — this contradicts the old
+  // reducer's standing invariant ("no RAISE_WINDOW from OS_FOCUS_GAINED, the
+  // pump's convergence obligation"), which is superseded here rather than
+  // violated:
+  //
+  //  1. It is the ONLY route to key. §0.1.10 makes use-order and z-order one
+  //     order, so `decide` turns a `RaiseWindow` COMMAND into an
+  //     `OsFocusGained` event — the same event an OS report produces. Drop
+  //     this emission and a raise command reaches the OS as nothing but the
+  //     `SetStacking` re-assert below, which is relative z-order with no
+  //     activation and no first-responder semantics: the machine would move
+  //     the window in its own model and never make it the window in use.
+  //     The old reducer could hold the invariant because its raise had a
+  //     SEPARATE effect route (`window-state.ts applyRaiseRequest`); this
+  //     kernel has one route, and a structural diff cannot tell a report from
+  //     a command — the two states are identical.
+  //
+  //  2. The feedback loop the invariant guarded against cannot run: this
+  //     emission is its own fixed point. The raise moves its target to the
+  //     top, so the focus the OS reports back finds it ALREADY topmost —
+  //     `prev` and `next` have the same top, the diff is empty, and the echo
+  //     emits nothing. One correcting write, then silence. (Provenance —
+  //     `FocusCause` / `lastOpSeq` / `isStaleSelfEcho` — is NOT what closes
+  //     this loop and cannot be: `react` reads no event payload. It solves a
+  //     different problem at a different site — a LATE self-echo, arriving
+  //     after some other window took key, is a genuine raise by this rule and
+  //     must be dropped BEFORE it reaches `evolve`.)
+  //
+  //  3. §0.1.6 asks for exactly this. The OS stack is a write-only projection
+  //     and a reconciliation path is required, not just a write path: when the
+  //     OS reports a focus the machine did not order, the machine re-asserts
+  //     its own model. Against an OS that already agrees the write is
+  //     idempotent — activating an already-key window changes nothing and
+  //     provokes no further focus report.
+  //
+  // Executor obligation: `RaiseWindow` is an ACTIVATING show, so whatever
+  // performs it owes the same activation masks a show owes (never activate
+  // under headless; a quick-view NSPanel never activates the app).
+  const prevTop = prev.order[prev.order.length - 1];
+  const nextTop = next.order[next.order.length - 1];
+  if (
+    prevTop !== undefined &&
+    nextTop !== undefined &&
+    prevTop.id !== nextTop.id &&
+    prev.order.length === next.order.length &&
+    prev.order.some((w) => w.id === nextTop.id)
+  ) {
+    effects.push({ type: 'RaiseWindow', id: nextTop.id, opSeq: next.opSeqCounter });
   }
 
   // SetStacking: §0.1.6 — the executor is a re-assert loop, not a diff. Any
