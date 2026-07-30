@@ -258,6 +258,60 @@ export function evolve(state: State, ev: Event): State {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// react — effects are a PURE PROJECTION of the transition (§0.1.1), not a
+// side-channel: reads nothing but `prev`/`ev`/`next`, no guards, cannot throw.
+// Effects are derived from the DIFFERENCE between `prev` and `next` — never
+// from `ev`'s payload where the two could disagree. Focus-family effects
+// (`ShowWindow`, `RaiseWindow`) carry `opSeq` taken from `next.opSeqCounter`,
+// never a counter of react's own.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function react(prev: State, ev: Event, next: State): Effect[] {
+  const effects: Effect[] = [];
+
+  // Visibility: a record present in both states whose `visible` flipped.
+  // (A closed window vanishes from `next.order` entirely — no HideWindow;
+  // there is no DestroyWindow effect in this slice's Effect union.)
+  for (const nextRecord of next.order) {
+    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
+    if (prevRecord === undefined) {
+      continue;
+    }
+    if (!prevRecord.visible && nextRecord.visible) {
+      effects.push({ type: 'ShowWindow', id: nextRecord.id, opSeq: next.opSeqCounter });
+    } else if (prevRecord.visible && !nextRecord.visible) {
+      effects.push({ type: 'HideWindow', id: nextRecord.id });
+    }
+  }
+
+  // RaiseWindow: only when OsFocusGained genuinely moved the target off its
+  // prior position — a window already on top, or a dangling id with no
+  // record to move, raises nothing.
+  if (ev.type === 'OsFocusGained') {
+    const prevIdx = prev.order.findIndex((w) => w.id === ev.id);
+    const genuinelyRaised = prevIdx !== -1 && prevIdx !== prev.order.length - 1;
+    if (genuinelyRaised) {
+      effects.push({ type: 'RaiseWindow', id: ev.id, opSeq: next.opSeqCounter });
+    }
+  }
+
+  // SetStacking: §0.1.6 — the executor is a re-assert loop, not a diff. Any
+  // change to `order` (registration, close, raise) re-emits the FULL
+  // bottom -> top stacking over visible windows, one SetStacking per window.
+  const orderChanged =
+    prev.order.length !== next.order.length || prev.order.some((w, i) => w.id !== next.order[i]?.id);
+  if (orderChanged) {
+    for (const w of next.order) {
+      if (w.visible) {
+        effects.push({ type: 'SetStacking', id: w.id, layer: w.layer });
+      }
+    }
+  }
+
+  return effects;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // decide — ALL guards live here. Rejects on a stale `expectedVersion` or a
 // command naming a window that isn't in `order`.
 // ─────────────────────────────────────────────────────────────────────────────

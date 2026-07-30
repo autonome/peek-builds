@@ -7,13 +7,10 @@
  * `window-state.test.ts` (`node:test` + `node:assert`, `.js`-suffixed import
  * of the compiled output, a small branded-id builder).
  *
- * NOTE on "effects": §0.1.8 phrases the determinism rule as "identical state
- * AND an identical effect list", describing the eventual `evolve` that also
- * returns effects (mirroring `window-state.ts reduce()`). This slice's
- * `evolve(state, ev): State` returns state only — no function in
- * `window-kernel.ts` produces `Effect`s yet (the type is declared for a later
- * slice). The determinism/prefix-stability tests below are therefore checked
- * over `State` only; there is no effect list to concatenate.
+ * NOTE on "effects": §0.1.1 makes `react(prev, ev, next): Effect[]` a pure
+ * projection of the transition, separate from `evolve`. Both halves of the
+ * determinism rule are enforced below: identical state AND an identical,
+ * concatenated `react` effect list.
  */
 
 import { describe, it } from 'node:test';
@@ -21,11 +18,13 @@ import * as assert from 'node:assert';
 import {
   initialState,
   evolve,
+  react,
   decide,
   topmost,
   keyWindow,
   type State,
   type Event,
+  type Effect,
   type WindowId,
 } from './window-kernel.js';
 
@@ -34,8 +33,29 @@ import {
 /** Craft a WM WindowId for tests — the kernel never checks the shape, only identity. */
 const wid = (n: number): WindowId => `wk-${n}` as WindowId;
 
+/** Recursively `Object.freeze`s `value` — used to prove `react` never writes to its arguments. */
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.values(value as object).forEach(deepFreeze);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 function fold(events: Event[], start: State = initialState()): State {
   return events.reduce(evolve, start);
+}
+
+/** Folds `events`, accumulating `react(prev, ev, next)` at every step (§0.1.1). */
+function foldWithEffects(events: Event[], start: State = initialState()): { state: State; effects: Effect[] } {
+  let state = start;
+  const effects: Effect[] = [];
+  for (const ev of events) {
+    const next = evolve(state, ev);
+    effects.push(...react(state, ev, next));
+    state = next;
+  }
+  return { state, effects };
 }
 
 /** A representative log touching all seven event variants, including a dangling key. */
@@ -59,20 +79,42 @@ function buildLog(): Event[] {
 // ── Replay determinism (§0.1.8 item 2) ──────────────────────────────────────
 
 describe('window-kernel: replay determinism', () => {
-  it('INVARIANT: replay determinism — same log yields identical state', () => {
+  it('INVARIANT: replay determinism — same log yields identical state and effect list', () => {
     const log = buildLog();
-    const s1 = fold(log);
-    const s2 = fold(log);
-    assert.deepStrictEqual(s1, s2);
+    const r1 = foldWithEffects(log);
+    const r2 = foldWithEffects(log);
+    assert.deepStrictEqual(r1.state, r2.state);
+    assert.deepStrictEqual(r1.effects, r2.effects);
   });
 
-  it('INVARIANT: prefix stability — folding a split log resumes to the same state as folding it whole', () => {
+  it('INVARIANT: prefix stability — folding a split log resumes to the same state and effect list as folding it whole', () => {
     const log = buildLog();
-    const whole = fold(log);
+    const whole = foldWithEffects(log);
     for (let n = 0; n <= log.length; n++) {
-      const prefixState = fold(log.slice(0, n));
-      const resumed = fold(log.slice(n), prefixState);
-      assert.deepStrictEqual(resumed, whole, `split at n=${n} diverged from the whole-log fold`);
+      const prefix = foldWithEffects(log.slice(0, n));
+      const resumed = foldWithEffects(log.slice(n), prefix.state);
+      const state = resumed.state;
+      const effects = [...prefix.effects, ...resumed.effects];
+      assert.deepStrictEqual(state, whole.state, `split at n=${n} diverged from the whole-log fold`);
+      assert.deepStrictEqual(effects, whole.effects, `split at n=${n} diverged in effect list`);
+    }
+  });
+
+  it('INVARIANT: react is pure — same (prev, ev, next) yields deeply equal results and mutates neither argument', () => {
+    const log = buildLog();
+    for (let n = 0; n < log.length; n++) {
+      const prev = fold(log.slice(0, n));
+      const ev = log[n];
+      const next = evolve(prev, ev);
+      const frozenPrev = deepFreeze(structuredClone(prev));
+      const frozenNext = deepFreeze(structuredClone(next));
+      const e1 = react(frozenPrev, ev, frozenNext);
+      const e2 = react(frozenPrev, ev, frozenNext);
+      assert.deepStrictEqual(e1, e2, `react(prev, ev, next) not repeatable at step ${n}`);
+      assert.doesNotThrow(
+        () => react(frozenPrev, ev, frozenNext),
+        `react mutated a deep-frozen prev/next at step ${n}`,
+      );
     }
   });
 
