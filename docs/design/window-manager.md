@@ -83,8 +83,8 @@ only change made after that run.
 `front`, bumps `focusSeq` and drives `applyRaiseRequest` correctly, but **has no production
 dispatcher** — `main.ts`'s overlay-close handler still calls `targetWin.focus()` /
 `hybrid.baseWin.focus()` directly and dispatches nothing. Symptom: switch pages via the
-switcher, then `tag <name>` from the palette, and the tag lands on the page you switched away
-from. The fix exists but has not yet reached `main`; do not reimplement it, and do not
+switcher, then `tag <name>` from the palette, and the tag lands on the page that was switched
+away from. The fix exists but has not yet reached `main`; do not reimplement it, and do not
 resurrect the deleted `focus-order.ts` approach (a second focus owner outside the executor).
 
 ### Maintenance directive
@@ -101,13 +101,14 @@ than restating its contents.**
 
 ## 0. The governing rule set — derive everything from this
 
-**Operator directive, 2026-07-29/30, after a live sitting exposed three bugs that were all
-the same mistake. This section outranks every model described below it. Where sections 3–5
-disagree with this, they are the older design and this is the intent.** The next rewrite
-derives from these rules; it does not add mechanisms alongside them.
+**This section states the current rules, adopted after a live session exposed three bugs
+that traced to the same underlying mistake. It outranks every model described below it.
+Where sections 3–5 disagree with this, they describe the older design and this section
+states the intent.** The next rewrite derives from these rules; it does not add mechanisms
+alongside them.
 
-> "everything is a window. always." — one single stacking order, always, which is a *fact*
-> regardless of what weird crap you come up with. "I keep having to say that."
+**Everything is a window, always: one single stacking order, always** — a fact regardless
+of what edge case arises, not a policy to be renegotiated per case.
 
 **Stored facts, and nothing else:**
 1. **One stacking order containing every window, always.** No exclusions, no eligibility
@@ -160,10 +161,10 @@ as `ASK_RENDERER{seq}` / `ESC_RENDERER_ANSWER{seq}`.
 
 ## 0.1 The rewritten kernel — state shape and structure
 
-**Draft, 2026-07-30. NOT IMPLEMENTED.** Derives from §0, plus a survey of how other window
-managers and the state-machine literature solve the same problems. Where this disagrees with
-§3–§5, those are the older design. Operator directive this answers: *make the machine as simple as
-possible; the kernel should be hardened to a diamond.*
+**Not implemented.** Derives from §0, plus a survey of how other window managers and the
+state-machine literature solve the same problems. Where this disagrees with §3–§5, those are
+the older design. The goal this answers: make the machine as simple as possible; the kernel
+should be hardened to a diamond.
 
 ### The diagnosis
 
@@ -228,7 +229,7 @@ fencing tokens in distributed locking.
 **Exact precedent in this domain:** EWMH's `_NET_ACTIVE_WINDOW` client message carries a *source
 indication* and the client's *last user-activity timestamp*, so the window manager can reject a
 stale or illegitimate activation. That is rule 4's provenance plus this token, already
-standardized. We are adopting, not inventing.
+standardized. This is adoption, not invention.
 
 ### 0.1.3 Input interpretation moves out — the dependency arrow points one way
 
@@ -241,7 +242,7 @@ protocol for arbitrating who interprets a keystroke (`keyboard-shortcuts-inhibit
 information down to the dispatcher.
 
 The load-bearing detail is the arrow's direction — the dispatcher never asks the window manager
-"who is focused?" mid-decision. Our rule, stated the same way:
+"who is focused?" mid-decision. The rule here, stated the same way:
 
 > The Escape/hotkey interpreter reads an immutable snapshot of kernel state, emits `Command`s
 > carrying `expectedVersion`, and never queries the kernel mid-decision and never writes to it.
@@ -333,7 +334,7 @@ derived from `WM_HINTS.input`.
 | Question | Query |
 |---|---|
 | Who is taking keystrokes right now? | `state.key` — the stored fact. What Escape needs, and what `front` got wrong. |
-| What should I restore / fall back to? | `topmost(state, restorable)` — scan `order` from the top. |
+| What should be restored / fallen back to? | `topmost(state, restorable)` — scan `order` from the top. |
 | May this window be raised? | `raiseEligible(state, id)` — a named guard in `decide`. |
 | Which page-host does the chrome overlay track? | `hostOf(overlay)` — the `overlayFor` relation. Never was a front question. |
 
@@ -342,19 +343,19 @@ frontPageHostOsId()` (an attachment query — use `overlayFor`), `ipc.ts openNew
 (space-mode inheritance — `topmost(state, isPageHost)`), and `tile-ipc.ts` dialog parenting
 (`state.key ?? topmost(state, isPageHost)`).
 
-**`WindowRecord.focusSeq` and `AppWindowState.focusSeqCounter` are deleted** (operator decision,
-2026-07-30 — see 0.1.10). There is one order; a raise moves the window to the top of it, and "most
-recently used matching P" is `topmost(state, P)`.
+**`WindowRecord.focusSeq` and `AppWindowState.focusSeqCounter` are deleted** (see 0.1.10). There
+is one order; a raise moves the window to the top of it, and "most recently used matching P" is
+`topmost(state, P)`.
 
 `WindowRecord.openSeq` **stays** — a genuinely different fact (open order, not use order) that
 `selectTransientAutoclose` needs, and one that cannot be derived from `order`.
 
 #### Key vs. main: `front` was trying to be two things
 
-AppKit stores **two** focus facts, for exactly our reason: the **key window** receives keyboard
-input, while the **main window** is "the standard window where the user is currently working" —
-the semantic target of menus and commands. When key status shifts from a standard window to a
-*panel*, **main status stays with the standard window**.
+AppKit stores **two** focus facts, for exactly the reason at issue here: the **key window**
+receives keyboard input, while the **main window** is "the standard window where the user is
+currently working" — the semantic target of menus and commands. When key status shifts from a
+standard window to a *panel*, **main status stays with the standard window**.
 
 That is the command-palette case verbatim. The palette holds key; the page-host is still what
 `tag <name>` must act on. `front` was trying to be *main* while being written from focus events —
@@ -383,8 +384,8 @@ exactly that bug).
 **Layers are a fixed ordered set established by construction, not per-window integers sorted at
 realize time.** sway hardcodes 13 `wlr_scene_tree*` struct fields in z-order and never recomputes;
 its ordering ops are *sibling-local*, and changing layer is a **reparent**, not a restack. So
-`layer` is an index into a fixed ordered array we control — not a raw AppKit level. Use 3–4
-layers; treat a layer change as rare and expensive.
+`layer` is an index into a fixed, application-controlled ordered array — not a raw AppKit level.
+Use 3–4 layers; treat a layer change as rare and expensive.
 
 The backend has two ordering primitives: `win.moveTop()`, which reorders within the window's own
 level and does not activate, and `win.setAlwaysOnTop(flag, level)`, which moves between levels.
@@ -399,7 +400,7 @@ one has complained about the cost. Consequences:
 - The executor is a **re-assert loop, not an insert** — O(n) in visible windows, inherently
   idempotent. Mark dirty and re-emit once per tick, not once per mutation.
 - **Never read z-order back from Electron.** The OS stack is a *write-only projection*; the OS
-  reorders behind you on user clicks and `app.activate`. This is EWMH's model —
+  reorders it independently on user clicks and `app.activate`. This is EWMH's model —
   `_NET_CLIENT_LIST_STACKING` is published by the WM, never consulted by it.
 - **A reconciliation path is required, not just a write path.** dwm's `focusin()` exists solely
   because "there are some broken focus acquiring clients"; when X reports a focus dwm didn't
@@ -438,10 +439,10 @@ an ideal test target.
    reproducer. Invariants: no duplicate ids in `order`; `key` resolves or is `null`; `layer` is
    non-decreasing after a realize pass; every emitted effect names a live window. **Highest return
    on this list — do it first.**
-2. **Replay determinism — a standing requirement, enforced by a test that fails when it breaks**
-   (operator directive, 2026-07-30). `fold(evolve, init, events)` is a pure function of the event
-   log: **the same log yields an identical state AND an identical effect list, always.** This is
-   not a property we check once during the rewrite; it is a rule the suite defends forever.
+2. **Replay determinism — a standing requirement, enforced by a test that fails when it breaks.**
+   `fold(evolve, init, events)` is a pure function of the event log: **the same log yields an
+   identical state AND an identical effect list, always.** This is not a property checked once
+   during the rewrite; it is a rule the suite defends forever.
 
    Concretely, three tests, all in the main-process unit runner so they cost nothing:
    - **Determinism.** For a generated event log, fold it twice from `init` and assert deep
@@ -486,7 +487,7 @@ interpreter); branded types beyond ids and the raw/parsed intent boundary.
 state; same behavior = same state* — promote a boolean to a state only when it changes the
 machine's response to an event. Per-window booleans are **never** machine states (that is N-fold
 explosion); they are record fields. **Name every guard** — an anonymous conjunction of five
-context fields re-hides the machine you just made explicit; if you end up with more named guards
+context fields re-hides the machine just made explicit; if there end up being more named guards
 than states, the guards *are* the real state space and the model is too flat.
 
 ### 0.1.9 The test debt, classified
@@ -511,8 +512,8 @@ previously estimated:
 
 ### 0.1.10 Decisions and remaining questions
 
-**DECIDED (operator, 2026-07-30): one order, and nothing else orders windows.** A background open
-is placed **below** the last-focused window. `focusSeq` and `focusSeqCounter` are deleted.
+**Decided: one order, and nothing else orders windows.** A background open is placed **below**
+the last-focused window. `focusSeq` and `focusSeqCounter` are deleted.
 
 The question was whether one order can carry both z-order and use-order. Every surveyed WM keeps
 two lists — dwm `next` (creation) + `snext` (MRU); i3 `nodes_head` + `focus_head`; sway scene graph
@@ -525,8 +526,8 @@ questions.
 
 What this costs, stated plainly so it is not discovered later:
 
-- The behavior changes. A background-opened window no longer appears above the window you are
-  working in. That is arguably the better behavior — it is what Metacity's focus-stealing work
+- The behavior changes. A background-opened window no longer appears above the window currently
+  being worked in. That is arguably the better behavior — it is what Metacity's focus-stealing work
   concluded ("a new window that doesn't get focus should be stacked below the focused window but
   still mapped") — but it *is* a change, and the session-projection test above must be rewritten,
   not translated.
@@ -537,25 +538,22 @@ What this costs, stated plainly so it is not discovered later:
 **Still open:**
 
 1. **Does `order` include never-shown and offscreen windows?** Rule 1 says every window, always,
-   and this draft takes that literally — `background`, `bridge`, `offscreen`, `devtools` and test
-   fixtures all sit in the one order at their own layer. Taking it literally is the reading that
-   requires no exception.
+   and the reading taken here is the literal one — `background`, `bridge`, `offscreen`, `devtools`
+   and test fixtures all sit in the one order at their own layer. Taking it literally is the
+   reading that requires no exception.
 2. **Does `key` survive app deactivation?** When Peek resigns active, no Peek window holds key in
-   the OS sense. Drafted as: `key` goes `null` on resign and is re-reported on activate — honest,
+   the OS sense. One answer: `key` goes `null` on resign and is re-reported on activate — honest,
    but it means "who was last key" becomes a `topmost` query.
 
 ---
 
 ## 1. The mandate
 
-> "Make it one single deterministic system that is a Window Manager. We are making a
-> window manager. Nothing outside of it makes actual Electron/OS window stuff happen.
-> Also inside of it, Electron should be abstracted so we can port to Tauri or ElectroBun
-> or Swift or whatever."
->
-> — operator, 2026-07-20
+**The mandate: one single deterministic system that is the Window Manager.** Nothing outside it
+makes actual Electron/OS window operations happen. Electron is abstracted inside it so the
+system can port to Tauri, ElectroBun, Swift, or any successor toolkit.
 
-Three rules follow from that. They are numbered because the rest of this document, and
+Three rules follow from that mandate. They are numbered because the rest of this document, and
 every future change to window behavior, refers back to them.
 
 ### R1 — ONE owner decides all window state
@@ -608,7 +606,7 @@ This has been attempted repeatedly, over months and years, and it keeps collapsi
 into poorly-architected disjoint chaos. IZUI was supposed to be this system. It did not
 become it.
 
-The reason is specific and it is not "we ran out of time."
+The reason is specific and it is not a matter of running out of time.
 
 **Every prior attempt introduced a NEW authority ALONGSIDE the existing ones instead of
 DELETING them.** Each refactor was additive. Each one shipped a cleaner model, wired it up
@@ -624,13 +622,13 @@ The evidence is countable, from a full survey of `apps/desktop/main/`:
 - **14 per-window registries**, spread across **3 mutually-incompatible id spaces**
   (Electron window ids, Electron webContents ids, and synthetic ids). *(The synthetic
   space has since been deleted — §5 step 1.)*
-- **32 module-level mutable window-state variables** (42 if you count the timing latches),
+- **32 module-level mutable window-state variables** (42 counting the timing latches),
   each one a piece of window state that no owner owns.
 - **11 decision sites that query Electron live** instead of holding state — asking the OS
   a question at decision time, which is precisely how belief and reality diverge.
 
 Fragmentation on this scale is not an accident of rushed work. It is the *predictable
-output* of additive refactoring. You cannot get to one authority by adding a better one.
+output* of additive refactoring. One authority is not reached by adding a better one.
 
 Therefore the mandate is enforced as a **deletion rule with a mechanical check**, not as an
 architecture diagram and not as a convention anyone has to remember:
@@ -1092,7 +1090,7 @@ failure mode this document exists to prevent (§2).**
    is satellite:false yet excluded, while devtools (satellite:true) and
    extension-ui windows count. The in-flight window is still excluded, by
    machine id via `getWindowIdFor` (its native hide event may not have echoed
-   yet). Design decision (operator, 2026-07-23): `app.hide()` and
+   yet). **Design decision:** `app.hide()` and
    `app.dock.hide/show` get NO port command — they are app-level operations,
    not window operations, so they are outside the port's scope (the port
    governs window ops; this is not an exception to it). The machine's job ends
@@ -1426,9 +1424,9 @@ failure mode this document exists to prevent (§2).**
     window and ranks below it by recency — and the old restore put it back underneath. A
     descriptor now also carries `stackIndex`, its position in the machine's bottom→top
     `AppWindowState.stackOrder` at save time, and the post-loop `STACK_ORDER_IMPORTED`
-    orders by it. Session restore restores the session as you left it.
+    orders by it. Session restore restores the session as it was left.
     `zOrder` stays exactly what it was and keeps its OTHER job — the eager/deferred
-    restore-loading split (`SESSION_EAGER_RESTORE_COUNT`): "load what you were last using
+    restore-loading split (`SESSION_EAGER_RESTORE_COUNT`): "load what was last in use
     first" is right even when the visual stack differs, so the two ranks are separate
     persisted facts rather than one collapsed one. The post-loop reconstruction step does
     not go away either — the restore loop's own non-activating shows scramble `stackOrder`
@@ -1543,9 +1541,9 @@ failure mode this document exists to prevent (§2).**
 **Live verification is mandatory at every seam cutover that touches focus.** macOS
 first-responder behavior is **unobservable in headless tests** and a green headless suite
 has produced false confidence on this exact family of bugs twice already. The protocol:
-instrument in a clone, commit the instrumentation, launch, have the **operator perform only
-the reproduction gesture** — the agent does everything else, including reading the log and
-cleaning up.
+instrument in a clone, commit the instrumentation, launch, and confine manual involvement to
+**performing the reproduction gesture** — everything else, including reading the log and
+cleaning up, is automated.
 
 ---
 
