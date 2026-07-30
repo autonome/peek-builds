@@ -47,6 +47,53 @@ shrink monotonically to zero; the check fails a PR that grows it.
 4. Once steps 8, 9, and 11 are all DONE and the R2 allowlist is empty, delete this block
    and replace it with a one-line completion note (see the directive below).
 
+### Landed independently of the machine stack (2026-07-30)
+
+Six commits reached `main` as a deliberate split: user-facing fixes that survive any rewrite
+of the reducer, cherry-picked out of a larger window-manager stack so they would not sit
+stranded behind a planned machine rewrite. What landed, by what it fixes:
+
+- **Space restore works for the first time.** `features/spaces/background.js` `openSpace()`
+  and `features/groups/home.js` now read the featureId that `session.ts saveSpaceWorkspaces()`
+  actually writes (`space-workspaces`); previously both read a namespace nothing writes, so
+  `openSpace` always got null and opened the spaces home UI instead of the saved windows. The
+  READERS moved, not the writer, so existing profile rows stay readable with no migration.
+  `features/spaces/manifest.json` gained `"settings": { "readForeign": ["space-workspaces"] }`.
+- **Hybrid page-hosts stopped being dropped from saved spaces.** `session.ts
+  saveSpaceWorkspaces()` projects machine state instead of a `BrowserWindow.fromId`-backed
+  liveness guard, which had discarded every `BaseWindow` page-host before any decision.
+- **`api.session` no longer clobbers itself.** `tile-preload.cts` merged its two `api.session`
+  assignments, so `saveSpaceWorkspaces` survives on `window.app`.
+- **The groups hotkey stopped stealing `CommandOrControl+G` OS-wide** (it shadowed macOS Find
+  Again); its manifest entry is removed outright.
+- Behavioral cover: `tests/desktop/space-workspace-page-host.spec.ts`, which asserts its
+  preconditions rather than skip-gating them.
+
+**Deliberately NOT split out: the R2 read-op checking commit.** Its `READ_ALLOWLIST`
+enumerates exact call sites that the machine refactors below it had reshaped, so it fails
+`scripts/check-r2-window-ops.mjs` on a count mismatch when applied without them. It stays with
+the machine stack. Consequently the R2 count in "The mechanical progress measure" above is
+still the write-only measure — reads are not yet checked on `main`.
+
+**Why this note exists instead of per-commit doc edits.** Each split commit's own update to
+this block applied on top of two intermediate *machine* docs commits that did not come along,
+so importing them would have stated migration status `main` has not reached. The doc hunks were
+stripped and this single note replaces them — the directive below is satisfied here, not per
+commit.
+
+**Verification:** the full six-runner gate ran green over this stack in an isolated clone —
+4031 tests, 4000 passed, 0 failed, 31 pre-existing intentional skips, exit 0 — plus
+`node scripts/check-r2-window-ops.mjs` clean at 23 entries / 37 calls. This doc note is the
+only change made after that run.
+
+**Known real bug, fix already written but unlanded:** `window-state.ts SWITCHER_SELECTED` sets
+`front`, bumps `focusSeq` and drives `applyRaiseRequest` correctly, but **has no production
+dispatcher** — `main.ts`'s overlay-close handler still calls `targetWin.focus()` /
+`hybrid.baseWin.focus()` directly and dispatches nothing. Symptom: switch pages via the
+switcher, then `tag <name>` from the palette, and the tag lands on the page you switched away
+from. The wire exists in the pending machine stack; do not reimplement it, and do not
+resurrect the deleted `focus-order.ts` approach (a second focus owner outside the executor).
+
 ### Maintenance directive
 
 **This block is the single source of truth for migration status. Every agent that lands
