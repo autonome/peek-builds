@@ -11,12 +11,20 @@
  *   - The macOS Spaces policy that follows from a role: transient/overlay-
  *     class roles follow the user across Spaces; everything else anchors
  *     to the Space where it was first opened.
+ *   - The window-surface derivation (`deriveWindowSurface`): the same open
+ *     params, mapped to the kernel record's three orthogonal per-window
+ *     fields (`layer` / `canBecomeKey` / `acceptsInput`).
  *
  * Importers must NOT add Electron deps here. This module is loaded by
  * unit tests that run under ELECTRON_RUN_AS_NODE=1 — Electron itself is
  * available, but we keep this file Electron-free so it stays trivially
  * testable and so the role taxonomy is decoupled from window plumbing.
+ *
+ * `BASE_LAYER` is imported from `window-kernel.ts`, which has no imports of
+ * its own — so the dependency is one-way and adds no Electron surface.
  */
+
+import { BASE_LAYER } from './window-kernel.js';
 
 /**
  * Transient window roles. These open and close frequently and ride above
@@ -371,4 +379,162 @@ export function downloadCloseTarget(o: {
     return o.hybridPainted ? 'none' : 'hybrid-host';
   }
   return o.hasBrowserWindow ? 'browser-window' : 'none';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Window surface properties — registration facts → the kernel's three
+// orthogonal per-window fields
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The one band above `BASE_LAYER`, and the only one that is realizable.
+ *
+ * `window-kernel-executor.ts stackingLevelForLayer` has exactly two arms —
+ * `layer > BASE_LAYER` is `'pinned'` (Electron always-on-top, realized as
+ * `setAlwaysOnTop(true, 'floating')`), everything else is `'stacked'` — so a
+ * third band would be indistinguishable from this one at the OS boundary.
+ * Electron's level strings cannot separate bands either: `'floating'` and
+ * `'torn-off-menu'` are the SAME `NSWindowLevel` (3). Extra bands become
+ * meaningful only when something below the executor can express them.
+ */
+export const FLOATING_LAYER = BASE_LAYER + 1;
+
+/**
+ * The registration facts the derivation reads. Each is a value some real
+ * construction site passes (or declines to pass), never a live OS query.
+ */
+export interface WindowSurfaceFacts {
+  /**
+   * Resolved Electron `focusable`. `undefined` means the site said nothing,
+   * which is Electron's default of `true` — `main.ts` / `ipc.ts` /
+   * `tile-launcher.ts` all normalize the same way.
+   */
+  focusable?: boolean;
+  /**
+   * Declared always-on-top intent — the value registration already carries
+   * (`ipc.ts` window-open, `tile-launcher.ts`, `hybrid-overlay.ts`).
+   */
+  alwaysOnTop?: boolean;
+  /**
+   * The construction site made the window click-through
+   * (`setIgnoreMouseEvents(true, …)`) before registering it. Nothing infers
+   * this; see `deriveAcceptsInput`.
+   */
+  clickThrough?: boolean;
+}
+
+/** The three orthogonal fields of a kernel `WindowRecord` this module derives. */
+export interface WindowSurfaceProperties {
+  layer: number;
+  canBecomeKey: boolean;
+  acceptsInput: boolean;
+}
+
+/**
+ * Which band a window sits in.
+ *
+ * Keys on the DECLARED `alwaysOnTop` and on nothing else. Every window that
+ * floats above the regular stack in this app states it at its own construction
+ * site: the HUD (`renderer/hud/background.js openHud`), the command panel
+ * (`renderer/cmd/background.js`), the windows switcher
+ * (`features/windows/background.js openWindowsView`), the space-border
+ * indicator (`features/spaces/background.js`), and the shared chrome overlay
+ * (`hybrid-overlay.ts ensureOverlay`).
+ *
+ * NOT keyed on role or class, even though the two sets coincide today.
+ * `window-state.ts classifyWindowRegistration` hands out class `'overlay'` /
+ * `'palette'` on role alone, so `deriveStackingLevel` calls such a window
+ * pinned whether or not anything ever pins it — a role-`'overlay'` window
+ * opened without `alwaysOnTop` would claim a band the OS never gave it.
+ * `alwaysOnTop` is the fact that actually produces the native band, so it is
+ * the fact this reads.
+ *
+ * Peeks and slides (`features/peeks/background.js`,
+ * `features/slides/background.js`, `role: 'quick-view'`) declare no
+ * `alwaysOnTop`, so they land at `BASE_LAYER`. What lifts them visually is
+ * `type: 'panel'` — AppKit panel behaviour, not a band — and treating them as
+ * floating would put them in `isAppResignSweepEligible`'s `layer > BASE_LAYER`
+ * half, which the role clause there is written to keep them out of.
+ */
+export function deriveWindowLayer(facts: Pick<WindowSurfaceFacts, 'alwaysOnTop'>): number {
+  return facts.alwaysOnTop === true ? FLOATING_LAYER : BASE_LAYER;
+}
+
+/**
+ * Whether the OS can give this window the key window.
+ *
+ * Exactly `focusable !== false` — the same normalization
+ * `isSatelliteRegistration` already applies, with `undefined` meaning
+ * Electron's default `true`.
+ *
+ * THE HUD IS WHY THIS EXISTS AS A FIELD: `renderer/hud/background.js openHud`
+ * opens with `focusable: false`, and its role is not declared, so
+ * `inferIzuiRole` returns `'workspace'` — an ordinary, admitted role. Nothing
+ * about its role or class distinguishes it; only the open param does.
+ *
+ * NO ROLE CLAUSE, and no `alwaysOnTop` clause, because the real windows
+ * contradict both:
+ *
+ *   - "an overlay never takes key" is wrong about the shared chrome overlay
+ *     (`hybrid-overlay.ts ensureOverlay`), which is an always-on-top,
+ *     role-`'overlay'` window constructed `focusable: true` ON PURPOSE — Cmd+L
+ *     puts keyboard focus in the navbar's URL input, and a `focusable: false`
+ *     window can never become key on macOS, so typing a URL was broken until
+ *     it was made focusable.
+ *   - "an always-on-top window never takes key" is wrong about the command
+ *     panel (`renderer/cmd/background.js`), which floats and is typed into.
+ *   - "always-on-top is a proxy for non-focusable" is wrong in the other
+ *     direction too: the privileged test fixture (`test-fixture-glue.ts`) is
+ *     `focusable: false` and NOT always-on-top.
+ *
+ * The other two production `focusable: false` windows are the space-border
+ * indicator (`features/spaces/background.js`) and that test fixture.
+ */
+export function deriveCanBecomeKey(facts: Pick<WindowSurfaceFacts, 'focusable'>): boolean {
+  return facts.focusable !== false;
+}
+
+/**
+ * Whether the window takes mouse input, or lets it pass to whatever is below.
+ *
+ * Declared, never inferred: a window is click-through only when its
+ * construction site says so, because the only thing that makes a window
+ * click-through is a `setIgnoreMouseEvents(true, …)` call, and nothing else in
+ * the open params implies one.
+ *
+ * ROLE IS NOT A PROXY — the two production role-`'overlay'` windows sit on
+ * opposite sides of this. `features/windows/background.js openWindowsView`
+ * opens a full-screen switcher the user clicks windows in; it must keep mouse
+ * input. `features/spaces/background.js` opens a screen-edge border the pointer
+ * must pass straight through. Same role, same `alwaysOnTop`, opposite answers.
+ *
+ * THIS IS THE INITIAL VALUE ONLY. The shared chrome overlay
+ * (`hybrid-overlay.ts ensureOverlay`) is click-through from birth — its
+ * `setIgnoreMouseEvents(true, { forward: true })` runs before its
+ * `registerWindowWithMachine` call — but `wireClickCapture` toggles it back on
+ * whenever the pointer is over real chrome. A window whose click-through
+ * changes after registration needs an event, not a re-derivation.
+ *
+ * The space border is the case a derivation CANNOT reach: its
+ * `api.window.setIgnoreMouseEvents(...)` is a separate IPC round trip issued
+ * after `api.window.open` resolves, so its registration genuinely carries no
+ * click-through fact and this returns `true` for it. That is the honest answer
+ * for the registration instant, and the later flip is the same missing-event
+ * gap the overlay's runtime toggle has.
+ */
+export function deriveAcceptsInput(facts: Pick<WindowSurfaceFacts, 'clickThrough'>): boolean {
+  return facts.clickThrough !== true;
+}
+
+/**
+ * All three at once, for a registration site that has one facts object.
+ * Orthogonal by construction (§0.1.4): each field reads its own fact and no
+ * field is computed from another, so this is a grouping, not a combination.
+ */
+export function deriveWindowSurface(facts: WindowSurfaceFacts): WindowSurfaceProperties {
+  return {
+    layer: deriveWindowLayer(facts),
+    canBecomeKey: deriveCanBecomeKey(facts),
+    acceptsInput: deriveAcceptsInput(facts),
+  };
 }

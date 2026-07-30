@@ -22,7 +22,13 @@ import {
   RESIZE_EDGE_PX,
   RESIZE_CORNER_PX,
   TRANSIENT_ROLES,
+  deriveWindowSurface,
+  deriveWindowLayer,
+  deriveCanBecomeKey,
+  deriveAcceptsInput,
+  FLOATING_LAYER,
 } from './izui-roles.js';
+import { BASE_LAYER } from './window-kernel.js';
 
 describe('inferIzuiRole', () => {
   it('returns the explicit role when caller provided one', () => {
@@ -466,5 +472,164 @@ describe('downloadCloseTarget', () => {
       downloadCloseTarget({ isHybridContent: false, hybridPainted: true, hasBrowserWindow: true }),
       'browser-window',
     );
+  });
+});
+
+/**
+ * Window-surface derivation, one case per REAL construction site.
+ *
+ * Every `facts` object below is the registration payload that site actually
+ * produces: the `focusable` / `alwaysOnTop` values its open params or
+ * `BrowserWindow` options carry (normalized the way `ipc.ts` /
+ * `tile-launcher.ts` / `main.ts` normalize them), and `clickThrough` only where
+ * the site calls `setIgnoreMouseEvents` before registering.
+ */
+describe('deriveWindowSurface — real construction sites', () => {
+  it('the HUD (renderer/hud/background.js openHud): focusable:false, alwaysOnTop:true', () => {
+    // No `role` in its params, so `inferIzuiRole` returns 'workspace' — an
+    // ordinary admitted role. Only `focusable:false` sets it apart.
+    assert.deepStrictEqual(
+      deriveWindowSurface({ focusable: false, alwaysOnTop: true }),
+      { layer: FLOATING_LAYER, canBecomeKey: false, acceptsInput: true },
+    );
+  });
+
+  it('the shared chrome overlay (hybrid-overlay.ts ensureOverlay): focusable:true, alwaysOnTop:true, click-through from birth', () => {
+    // focusable:true is deliberate — Cmd+L takes key into the navbar URL input.
+    // setIgnoreMouseEvents(true,{forward:true}) runs before its registration.
+    assert.deepStrictEqual(
+      deriveWindowSurface({ focusable: true, alwaysOnTop: true, clickThrough: true }),
+      { layer: FLOATING_LAYER, canBecomeKey: true, acceptsInput: false },
+    );
+  });
+
+  it('an ordinary hybrid page host (ipc.ts assembleHybridPageHost, role content): declares neither', () => {
+    assert.deepStrictEqual(
+      deriveWindowSurface({}),
+      { layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true },
+    );
+  });
+
+  it('a peek (features/peeks/background.js): role quick-view, modal, type panel — no alwaysOnTop, so BASE_LAYER', () => {
+    assert.deepStrictEqual(
+      deriveWindowSurface({}),
+      { layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true },
+    );
+  });
+
+  it('a slide (features/slides/background.js): same params plus screenEdge — also BASE_LAYER', () => {
+    assert.strictEqual(deriveWindowLayer({}), BASE_LAYER);
+  });
+
+  it('the space-border indicator (features/spaces/background.js) at registration: focusable:false, alwaysOnTop:true, click-through NOT yet declared', () => {
+    // Its api.window.setIgnoreMouseEvents is a separate IPC round trip issued
+    // after api.window.open resolves, so the registration carries no
+    // click-through fact and acceptsInput is true for that instant.
+    assert.deepStrictEqual(
+      deriveWindowSurface({ focusable: false, alwaysOnTop: true }),
+      { layer: FLOATING_LAYER, canBecomeKey: false, acceptsInput: true },
+    );
+  });
+
+  it('the space border once its click-through is known: acceptsInput false', () => {
+    assert.deepStrictEqual(
+      deriveWindowSurface({ focusable: false, alwaysOnTop: true, clickThrough: true }),
+      { layer: FLOATING_LAYER, canBecomeKey: false, acceptsInput: false },
+    );
+  });
+
+  it('the windows switcher (features/windows/background.js openWindowsView): role overlay, alwaysOnTop, and it TAKES clicks', () => {
+    // Same role and same alwaysOnTop as the space border, opposite
+    // acceptsInput — the user clicks windows in it. This is why acceptsInput
+    // cannot key on role.
+    assert.deepStrictEqual(
+      deriveWindowSurface({ alwaysOnTop: true }),
+      { layer: FLOATING_LAYER, canBecomeKey: true, acceptsInput: true },
+    );
+  });
+
+  it('the command panel (renderer/cmd/background.js): role palette, alwaysOnTop, focusable left at Electron default', () => {
+    assert.deepStrictEqual(
+      deriveWindowSurface({ alwaysOnTop: true }),
+      { layer: FLOATING_LAYER, canBecomeKey: true, acceptsInput: true },
+    );
+  });
+
+  it('a manifest tile window — features/spaces manifest "border" entry via tile-launcher.ts: focusable:false, alwaysOnTop:true', () => {
+    // tile-launcher resolves `focusable: hints.focusable !== false` and
+    // `alwaysOnTop: !isHeadless() && hints.alwaysOnTop === true`, then registers
+    // those merged values.
+    assert.deepStrictEqual(
+      deriveWindowSurface({ focusable: false, alwaysOnTop: true }),
+      { layer: FLOATING_LAYER, canBecomeKey: false, acceptsInput: true },
+    );
+  });
+
+  it('a manifest tile window — features/windows manifest "windows-overlay" entry: alwaysOnTop only, focusable resolves true', () => {
+    assert.deepStrictEqual(
+      deriveWindowSurface({ focusable: true, alwaysOnTop: true }),
+      { layer: FLOATING_LAYER, canBecomeKey: true, acceptsInput: true },
+    );
+  });
+
+  it('the privileged test fixture (test-fixture-glue.ts): focusable:false and NOT always-on-top', () => {
+    // The pair that makes a HUD is not a single fact: this window has the
+    // focusable half without the floating half.
+    assert.deepStrictEqual(
+      deriveWindowSurface({ focusable: false }),
+      { layer: BASE_LAYER, canBecomeKey: false, acceptsInput: true },
+    );
+  });
+
+  it('the hidden core background window (core-glue.ts): show:false, but focusable and input are untouched', () => {
+    assert.deepStrictEqual(
+      deriveWindowSurface({}),
+      { layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true },
+    );
+  });
+});
+
+describe('deriveWindowSurface — the clause each real window forces', () => {
+  it('canBecomeKey is not "everything can": the HUD is focusable:false', () => {
+    // FAILING-FIRST ANCHOR. Weakening deriveCanBecomeKey to a constant `true`
+    // (the naive form) fails exactly this assertion — the HUD's inferred role is
+    // 'workspace', so no role or class test distinguishes it.
+    assert.strictEqual(deriveCanBecomeKey({ focusable: false }), false);
+  });
+
+  it('canBecomeKey does not key on role: the chrome overlay is a focusable overlay', () => {
+    assert.strictEqual(deriveCanBecomeKey({ focusable: true }), true);
+  });
+
+  it('canBecomeKey does not key on alwaysOnTop: the cmd panel floats and is typed into', () => {
+    assert.strictEqual(deriveWindowSurface({ alwaysOnTop: true }).canBecomeKey, true);
+  });
+
+  it('focusable:undefined is Electron default true, not a missing value', () => {
+    assert.strictEqual(deriveCanBecomeKey({}), true);
+    assert.strictEqual(deriveCanBecomeKey({ focusable: undefined }), true);
+  });
+
+  it('layer keys on the declared alwaysOnTop, so a quick-view stays at BASE_LAYER', () => {
+    assert.strictEqual(deriveWindowLayer({ alwaysOnTop: undefined }), BASE_LAYER);
+    assert.strictEqual(deriveWindowLayer({ alwaysOnTop: false }), BASE_LAYER);
+    assert.strictEqual(deriveWindowLayer({ alwaysOnTop: true }), FLOATING_LAYER);
+  });
+
+  it('there is one floating band, directly above base', () => {
+    // stackingLevelForLayer has two arms, and 'floating'/'torn-off-menu' are the
+    // same NSWindowLevel — a third band would realize identically.
+    assert.strictEqual(FLOATING_LAYER, BASE_LAYER + 1);
+    assert.ok(FLOATING_LAYER > BASE_LAYER);
+  });
+
+  it('acceptsInput is declared, never inferred: an undeclared window takes input', () => {
+    assert.strictEqual(deriveAcceptsInput({}), true);
+    assert.strictEqual(deriveAcceptsInput({ clickThrough: false }), true);
+    assert.strictEqual(deriveAcceptsInput({ clickThrough: true }), false);
+  });
+
+  it('transparent + unfocusable does not imply click-through — the HUD takes input', () => {
+    assert.strictEqual(deriveWindowSurface({ focusable: false, alwaysOnTop: true }).acceptsInput, true);
   });
 });
