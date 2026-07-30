@@ -38,6 +38,13 @@ import {
   type Rectangle,
   type FocusCause,
 } from './window-kernel.js';
+// The overturn set at the end of this file asserts one behavior the kernel
+// stores the facts for but does not itself decide: whether the OS-level Escape
+// grab arms. `window-escape.ts` is a pure read of this kernel's snapshot (it
+// imports `window-kernel.js` and nothing else), so the overturned devtools /
+// dangling-key cases are pinned against the real predicate rather than
+// restated as prose.
+import { shouldArmEscapeGrab, switcherWindow } from './window-escape.js';
 
 // ── Test builders ────────────────────────────────────────────────────────────
 
@@ -2193,5 +2200,380 @@ describe('window-kernel: hostForOverlay', () => {
 
   it('an unregistered id reads null rather than throwing', () => {
     assert.strictEqual(hostForOverlay(attached(), wid(99)), null);
+  });
+});
+
+// ── The overturn set: what the key/main split reverses ──────────────────────
+//
+// `docs/design/window-manager.md` §0.1.9 ("The overturn set (bucket D)")
+// classifies 24 `window-state.test.ts` tests as behaviors that must be
+// OVERTURNED rather than translated. All share one shape: a satellite takes OS
+// focus, and the old reducer pins `front` on the content window so that ONE
+// stored fact can answer two questions. The kernel stores both — `key` on the
+// window that took focus, `topmost(state, isContentWindow)` for the window the
+// user means to act on — so each of those single assertions becomes two.
+//
+// They are written against the kernel BEFORE anything repoints to it, because
+// the mechanical `front` -> `keyWindow(state)` rename passes several of them
+// while asserting the OPPOSITE of the truth: `a background / non-focusable /
+// overlay surface (satellite) does NOT become front` asserts a literal `null`,
+// which survives the rename and is wrong — a window that genuinely took OS
+// focus genuinely holds key (see "with no content window on screen" below).
+//
+// Every window here carries the facts its REAL construction site produces; a
+// scene of synthetic fixtures would let these pass vacuously.
+describe('window-kernel: what the key/main split overturns', () => {
+  const FLOATING = BASE_LAYER + 1;
+
+  /** An http page opened through `ipc.ts` — `inferIzuiRole` -> 'content'; hybrid, so `kind: 'page-host'`. */
+  const pageHost = wid(1);
+  /** A second page window from the same construction site. */
+  const otherHost = wid(2);
+  /**
+   * The shared chrome overlay: `hybrid-overlay.ts ensureOverlay` opens a
+   * `BrowserWindow` with `focusable: true` (P1.4b-3 — a `focusable:false`
+   * window can never become key, so the navbar URL field could not be typed
+   * in), `alwaysOnTop: true`, `transparent`, and click-through until the
+   * reveal band captures — so `acceptsInput: false`.
+   */
+  const chromeOverlay = wid(3);
+  /**
+   * The command panel: `renderer/cmd/background.js openPanelWindow` —
+   * `role: 'palette'`, `keepLive: true`, `alwaysOnTop: true`, focusable (it is
+   * typed into), and NO parent: its opener is the cmd background tile, not a
+   * window.
+   */
+  const cmdPanel = wid(4);
+  /**
+   * Detached devtools: `main.ts` on `'devtools-opened'` registers
+   * `kind: 'browser'`, `role: 'utility'`, `class: 'devtools'`, parented to its
+   * host, focusable, and NOT floating.
+   */
+  const devtools = wid(5);
+  /** The HUD: `renderer/hud/background.js openHud` — `focusable:false`, `alwaysOnTop:true`, `escapeMode:'ignore'`, no role given so `inferIzuiRole` -> 'workspace'. */
+  const hud = wid(6);
+  /** The core background renderer: `core-glue.ts` — `role:'utility'`, `class:'background'`, never shown. */
+  const backgroundWindow = wid(7);
+
+  const registerPage = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+
+  const registerCmdPanel: Event = {
+    type: 'WindowRegistered',
+    id: cmdPanel,
+    kind: 'browser',
+    layer: FLOATING,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'palette',
+    role: 'palette',
+    keepLive: true,
+  };
+
+  const registerHud: Event = {
+    type: 'WindowRegistered',
+    id: hud,
+    kind: 'browser',
+    layer: FLOATING,
+    canBecomeKey: false,
+    acceptsInput: true,
+    class: 'hud',
+    role: 'workspace',
+    escapeMode: 'ignore',
+  };
+
+  const registerChromeOverlay: Event = {
+    type: 'WindowRegistered',
+    id: chromeOverlay,
+    kind: 'browser',
+    layer: FLOATING,
+    canBecomeKey: true,
+    acceptsInput: false,
+    class: 'overlay',
+    role: 'overlay',
+  };
+
+  /**
+   * The app mid-session: two page windows, the chrome overlay framing the one
+   * in use, the resident command panel, detached devtools on the page, the
+   * HUD, and the never-shown core background renderer. The app is active and
+   * the page host holds key.
+   */
+  const scene = (): State =>
+    fold([
+      registerPage(pageHost),
+      registerPage(otherHost),
+      registerChromeOverlay,
+      registerCmdPanel,
+      { type: 'WindowRegistered', id: devtools, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'devtools', role: 'utility', parentId: pageHost },
+      registerHud,
+      { type: 'WindowRegistered', id: backgroundWindow, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'background', role: 'utility' },
+      { type: 'WindowShown', id: pageHost },
+      { type: 'WindowContentOrderable', id: pageHost },
+      { type: 'WindowShown', id: otherHost },
+      { type: 'WindowContentOrderable', id: otherHost },
+      { type: 'WindowShown', id: chromeOverlay },
+      { type: 'WindowShown', id: cmdPanel },
+      { type: 'WindowShown', id: devtools },
+      { type: 'WindowShown', id: hud },
+      { type: 'AppActivated' },
+      { type: 'OverlayAttached', overlayId: chromeOverlay, hostId: pageHost },
+      { type: 'OsFocusGained', id: pageHost },
+    ]);
+
+  const focusFamilyIds = (effects: Effect[]): WindowId[] =>
+    effects.filter((e) => e.type === 'ShowWindow' || e.type === 'RaiseWindow').map((e) => e.id);
+
+  it('the scene starts where the old model did: the page host holds key AND is the command target', () => {
+    // The premise every case below overturns — while these two agree, one
+    // stored fact is enough, and that is exactly why the old reducer could
+    // hold `front` alone. Each test after this one moves them apart.
+    const state = scene();
+    assert.strictEqual(state.appActive, true);
+    assert.strictEqual(keyWindow(state)?.id, pageHost);
+    assert.strictEqual(topmost(state, isContentWindow)?.id, pageHost);
+    assert.deepStrictEqual(
+      state.order.filter(isContentWindow).map((w) => w.id),
+      [otherHost, pageHost],
+      'two content windows, so "the command target" is a real choice rather than the only candidate',
+    );
+  });
+
+  // ── A palette takes key ────────────────────────────────────────────────────
+
+  it('a palette taking OS focus holds key, and the command target stays the page', () => {
+    // OVERTURNS: `(e) palette-issuer exclusion: a satellite palette focus never
+    // clobbers the front page`, and `a LIVE satellite palette is not evicted by
+    // the next transition`. The palette does clobber `key` — that is what
+    // taking keyboard focus MEANS — and the page survives as main.
+    const state = evolve(scene(), { type: 'OsFocusGained', id: cmdPanel });
+
+    assert.strictEqual(keyWindow(state)?.id, cmdPanel, 'keystrokes go to the palette');
+    assert.strictEqual(topmost(state, isContentWindow)?.id, pageHost, 'the command target is unmoved');
+    assert.notStrictEqual(
+      keyWindow(state)?.id,
+      topmost(state, isContentWindow)?.id,
+      'the two questions now have different answers — which the old single `front` could not express',
+    );
+  });
+
+  it('a focus report on a satellite REORDERS — the old order was only untouched because satellites were filtered out of it', () => {
+    // OVERTURNS: `OS_FOCUS_GAINED on a satellite drives no FOCUS_CONTENT and
+    // does not touch the ordered stack`. There is one order now and the palette
+    // is in it, so the palette tops it; main is unmoved because a palette is
+    // not a content window, NOT because it was filtered from the list.
+    const before = scene();
+    const ev: Event = { type: 'OsFocusGained', id: cmdPanel };
+    const after = evolve(before, ev);
+    const effects = react(before, ev, after);
+
+    assert.strictEqual(before.order[before.order.length - 1].id, pageHost);
+    assert.strictEqual(after.order[after.order.length - 1].id, cmdPanel, 'the palette tops the ONE order');
+    assert.notDeepStrictEqual(after.order.map((w) => w.id), before.order.map((w) => w.id));
+
+    // No content-focus effect exists in the kernel's Effect union at all, and
+    // no focus-family effect names the page: the only op is the raise the
+    // palette's own focus report drives.
+    assert.deepStrictEqual(focusFamilyIds(effects), [cmdPanel]);
+    assert.strictEqual(topmost(after, isContentWindow)?.id, pageHost);
+  });
+
+  // ── The showcase: the chrome overlay ──────────────────────────────────────
+
+  it('the chrome overlay holds key while its host is main — and the attachment names WHICH host', () => {
+    // OVERTURNS: `the overlay is never front (it is a satellite)`, `focus
+    // landing on the overlay (satellite) keeps the content window as front`,
+    // and `overlay (satellite) focus leaves the close/command target on the
+    // host (cmd+W redirect)`. The exclusion was faking a RELATION: it could
+    // say "not the overlay" but never "the host this overlay frames". Both
+    // stored facts say it directly.
+    //
+    // The gesture: the user works in the second page (it takes key, so it is
+    // raised and the overlay retargets onto it), then presses Cmd+L and clicks
+    // the URL field — `hybrid-overlay.ts` keeps the overlay focusable exactly
+    // so this can happen.
+    const state = fold(
+      [
+        { type: 'OsFocusGained', id: otherHost },
+        { type: 'OverlayAttached', overlayId: chromeOverlay, hostId: otherHost },
+        { type: 'OsFocusGained', id: chromeOverlay },
+      ],
+      scene(),
+    );
+
+    assert.strictEqual(keyWindow(state)?.id, chromeOverlay, 'the URL field is typed into — the overlay IS key');
+    assert.strictEqual(topmost(state, isContentWindow)?.id, otherHost, 'main is the page, never the chrome');
+    assert.strictEqual(hostForOverlay(state, chromeOverlay)?.id, otherHost, 'the relation, read from the overlay');
+    assert.strictEqual(overlayForHost(state, otherHost)?.id, chromeOverlay, 'and read from the host');
+    assert.strictEqual(overlayForHost(state, pageHost), null, 'the OTHER page has no overlay — the exclusion could never say this');
+
+    // The Cmd+W redirect, as the composition `isContentWindow` documents: the
+    // key window when it is itself content, else main. With the chrome key,
+    // that resolves to the host — the redirect the old test spelled as "front
+    // is not the overlay".
+    const key = keyWindow(state);
+    const closeTarget = key !== null && isContentWindow(key) ? key : topmost(state, isContentWindow);
+    assert.strictEqual(closeTarget?.id, otherHost);
+  });
+
+  // ── Devtools ──────────────────────────────────────────────────────────────
+
+  it('devtools genuinely IS key — which is precisely why the Escape grab must not arm', () => {
+    // OVERTURNS: `OS focus landing on a registered devtools window yanks
+    // nothing back (Esc grab stays off)`. The old answer was right for the
+    // wrong reason — it kept `front` off devtools and concluded the grab was
+    // irrelevant. The kernel says devtools holds key, and the grab stays off
+    // BECAUSE it does: an OS-level grab would swallow Escape before the
+    // devtools UI ever saw it.
+    //
+    // `shouldArmEscapeGrab` lives in `window-escape.ts` (a pure read of this
+    // kernel's snapshot); the assertion is made against it rather than
+    // restated as prose, so the overturned behavior is actually pinned.
+    const state = evolve(scene(), { type: 'OsFocusGained', id: devtools });
+
+    assert.strictEqual(keyWindow(state)?.id, devtools);
+    assert.strictEqual(topmost(state, isContentWindow)?.id, pageHost, 'the command target the old `front` stood in for');
+
+    // False for the RIGHT reason: the app is active and no switcher is open,
+    // so the only clause left is the key holder.
+    assert.strictEqual(state.appActive, true);
+    assert.strictEqual(switcherWindow(state), null);
+    assert.strictEqual(shouldArmEscapeGrab(state), false);
+
+    // Non-vacuous: the same scene with nobody holding key DOES arm.
+    const nobodyKey = evolve(state, { type: 'OsFocusLost', id: devtools });
+    assert.strictEqual(keyWindow(nobodyKey), null);
+    assert.strictEqual(shouldArmEscapeGrab(nobodyKey), true);
+  });
+
+  // ── Closing a parentless palette that holds key ───────────────────────────
+
+  it('closing a parentless palette that holds key leaves NOBODY holding key, and raises nothing', () => {
+    // OVERTURNS: `a satellite gaining OS focus leaves front alone, and closing
+    // that parentless palette raises NOTHING`. The raise half survives; the
+    // premise does not. `key` names the palette while it lives, the id dangles
+    // once it is gone, and the kernel reports "nobody holds key" instead of
+    // repairing to a successor (RULE 2).
+    const withPalette = evolve(scene(), { type: 'OsFocusGained', id: cmdPanel });
+    assert.strictEqual(withPalette.order.find((w) => w.id === cmdPanel)?.parentId, undefined, 'no parent to hand back to');
+
+    const ev: Event = { type: 'WindowClosed', id: cmdPanel };
+    const closed = evolve(withPalette, ev);
+    const effects = react(withPalette, ev, closed);
+
+    assert.strictEqual(closed.key, cmdPanel, 'the raw field still dangles — unrepaired');
+    assert.strictEqual(keyWindow(closed), null, 'and reads as: nobody holds key');
+    assert.strictEqual(topmost(closed, isContentWindow)?.id, pageHost, 'main is untouched by the close');
+    assert.deepStrictEqual(effects.filter((e) => e.type === 'RaiseWindow'), [], 'nothing is raised in its place');
+    assert.deepStrictEqual(focusFamilyIds(effects), [], 'and nothing is shown either — a raise SHOWS what it raises');
+  });
+
+  // ── The most dangerous rename in the migration ────────────────────────────
+
+  it('with no content window on screen, the focused window still holds key — the command target is what is null', () => {
+    // OVERTURNS, and it is the file's most dangerous test: `a background /
+    // non-focusable / overlay surface (satellite) does NOT become front`
+    // asserts a literal `front === null`, which survives a mechanical rename to
+    // `keyWindow(state) === null` and would be WRONG. The state it builds has
+    // no content window at all, so `null` was answering the command-target
+    // question, not the key question.
+    //
+    // The real shape: boot. The core background renderer and the HUD are up,
+    // the resident command panel exists, no page has been opened yet, and the
+    // user presses the panel hotkey.
+    const boot = fold([
+      { type: 'WindowRegistered', id: backgroundWindow, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'background', role: 'utility' },
+      registerHud,
+      registerCmdPanel,
+      { type: 'WindowShown', id: hud },
+      { type: 'WindowShown', id: cmdPanel },
+      { type: 'AppActivated' },
+      { type: 'OsFocusGained', id: cmdPanel },
+    ]);
+
+    assert.notStrictEqual(keyWindow(boot), null, 'the naive rename asserts null HERE, and is wrong');
+    assert.strictEqual(keyWindow(boot)?.id, cmdPanel);
+    assert.strictEqual(topmost(boot, isContentWindow), null, 'THIS is the null the old assertion meant');
+    assert.deepStrictEqual(boot.order.filter(isContentWindow), [], 'no content window exists to be the target');
+  });
+
+  it('the same old test conflates two axes: a non-focusable window never reports focus at all', () => {
+    // The other half of the split the doc asks for. `canBecomeKey: false` (the
+    // HUD, `focusable:false`) means the OS never gives it focus, so the adapter
+    // never emits `OsFocusGained` for it — `key` is unwritten because no report
+    // exists, not because the kernel excluded anything. An overlay with
+    // `canBecomeKey: true` reports, and takes key.
+    const shownOnly = fold([
+      registerHud,
+      registerChromeOverlay,
+      { type: 'WindowShown', id: hud },
+      { type: 'WindowShown', id: chromeOverlay },
+      { type: 'AppActivated' },
+    ]);
+    assert.strictEqual(shownOnly.order.find((w) => w.id === hud)?.canBecomeKey, false, 'the OS will never make it key');
+    assert.strictEqual(keyWindow(shownOnly), null, 'no report, so nothing wrote key');
+
+    const overlayTookKey = evolve(shownOnly, { type: 'OsFocusGained', id: chromeOverlay });
+    assert.strictEqual(overlayTookKey.order.find((w) => w.id === chromeOverlay)?.canBecomeKey, true);
+    assert.strictEqual(keyWindow(overlayTookKey)?.id, chromeOverlay, 'a focusable overlay DOES take key');
+  });
+
+  // ── Show is not focus ─────────────────────────────────────────────────────
+
+  it('a show never writes key; only a focus report does — the two old tests that look identical differ here', () => {
+    // OVERTURNS: `a modal palette (satellite) is excluded as a target`, which
+    // dispatches only `WindowShown` and reads as an exclusion test. `key` is
+    // unwritten there for a completely different reason from the focus cases
+    // above: `WindowShown` does not write key at all.
+    //
+    // The real pair: the command panel is `keepLive: true`, so closing it HIDES
+    // it and the next hotkey re-shows the same window. A non-activating
+    // re-show emits only `WindowShown`; an activating one is followed by the
+    // OS's own focus report.
+    const hidden = evolve(scene(), { type: 'WindowHidden', id: cmdPanel });
+    assert.strictEqual(keyWindow(hidden)?.id, pageHost);
+
+    const reshownOnly = evolve(hidden, { type: 'WindowShown', id: cmdPanel });
+    assert.strictEqual(reshownOnly.order.find((w) => w.id === cmdPanel)?.visible, true, 'it is on screen');
+    assert.strictEqual(keyWindow(reshownOnly)?.id, pageHost, 'and key did not move');
+    assert.strictEqual(reshownOnly.order[reshownOnly.order.length - 1].id, pageHost, 'nor did the order');
+
+    const thenFocused = evolve(reshownOnly, { type: 'OsFocusGained', id: cmdPanel });
+    assert.strictEqual(keyWindow(thenFocused)?.id, cmdPanel, 'the focus report is the only thing that writes key');
+    assert.strictEqual(topmost(thenFocused, isContentWindow)?.id, pageHost, 'and main still does not move');
+  });
+
+  // ── A dangling key is representable ───────────────────────────────────────
+
+  it('a key id naming no record is a LEGAL state — the old model called it unrepresentable', () => {
+    // OVERTURNS: `a dangling front (no matching WindowRecord) is NOT a
+    // representable StateSnapshot`, and the `front-invariant guard` pair that
+    // threw in dev/test and self-corrected in production — the forbidden
+    // repair (§0.1.5). Here the state is ordinary: `keyWindow` returns null,
+    // so the grab arms and Escape has a listener, which is the honest outcome
+    // when nothing can hear `before-input-event`.
+    //
+    // The real shape: a detached devtools window registers LAZILY, on
+    // `'devtools-opened'` (`main.ts`), so the OS can report focus for a window
+    // the machine has not registered yet.
+    const unregistered = wid(90);
+    const before = scene();
+    const ev: Event = { type: 'OsFocusGained', id: unregistered };
+    const state = evolve(before, ev);
+
+    assert.strictEqual(state.key, unregistered, 'the report is recorded as given');
+    assert.strictEqual(keyWindow(state), null, 'and resolves to: nobody holds key');
+    assert.deepStrictEqual(state.order.map((w) => w.id), before.order.map((w) => w.id), 'an unregistered id moves nothing');
+    assert.deepStrictEqual(react(before, ev, state), [], 'and drives nothing');
+    assert.strictEqual(topmost(state, isContentWindow)?.id, pageHost, 'main is unaffected — it never depended on key');
+    assert.strictEqual(shouldArmEscapeGrab(state), true, 'nobody can hear before-input-event, so the grab arms');
   });
 });
