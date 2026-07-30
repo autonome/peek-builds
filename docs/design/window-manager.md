@@ -199,6 +199,18 @@ evolve(state: State, ev: Event): State;            // TOTAL. No guards. Cannot f
 **All guards live in `decide`; `evolve` has none.** That single constraint is most of the
 line-count reduction and is what makes the kernel testable.
 
+**Effects are a pure projection of the transition, not a side-channel:**
+
+```ts
+react(prev: State, ev: Event, next: State): Effect[];   // pure. No guards, no state.
+```
+
+The alternative — having `evolve` return `{ state, effects }`, or letting `decide` emit effects
+directly — makes the effect list depend on something other than the transition, and replay
+determinism over effects stops being checkable. As a projection it is checkable for free: fold the
+log and concatenate `react` at every step. This also matches 0.1.6 — the OS stack is a write-only
+projection of `order`, so the executor is a dumb re-assert loop with no decisions of its own.
+
 Sorting today's 45 event types by mood gives roughly **~17 commands** (everything named
 `*_REQUESTED`, plus `RAISE_WINDOW_REQUESTED` and `SWITCHER_OPEN_REQUESTED`), **~20 events** (the
 past-tense OS reports — `WINDOW_SHOWN`/`HIDDEN`/`CLOSED`, `OS_FOCUS_GAINED`, `BOUNDS_CHANGED`,
