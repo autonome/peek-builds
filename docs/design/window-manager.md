@@ -337,8 +337,12 @@ frontPageHostOsId()` (an attachment query — use `overlayFor`), `ipc.ts openNew
 (space-mode inheritance — `topmost(state, isPageHost)`), and `tile-ipc.ts` dialog parenting
 (`state.key ?? topmost(state, isPageHost)`).
 
+**`WindowRecord.focusSeq` and `AppWindowState.focusSeqCounter` are deleted** (operator decision,
+2026-07-30 — see 0.1.10). There is one order; a raise moves the window to the top of it, and "most
+recently used matching P" is `topmost(state, P)`.
+
 `WindowRecord.openSeq` **stays** — a genuinely different fact (open order, not use order) that
-`selectTransientAutoclose` needs. Whether `focusSeq` can also go is the open question in 0.1.9.
+`selectTransientAutoclose` needs, and one that cannot be derived from `order`.
 
 #### Key vs. main: `front` was trying to be two things
 
@@ -416,6 +420,7 @@ sort by it when deriving the order**, rather than storing a z.
 | `deriveStackingLevel` / `StackingLevel` / `PINNED_CLASSES` | **deleted.** `layer` is declared at creation, not derived from a class name. |
 | `isSatelliteRegistration` / `SATELLITE_CLASSES` / `WindowRecord.satellite` | **deleted.** §0: "`satellite` was an invention". Its two real jobs split: "cannot hold key" → `canBecomeKey: false`; "is chrome, not content" → the `overlayFor` relation. |
 | `enforceFrontInvariant` | **deleted.** Self-repair is the defect, not the safety net. |
+| `WindowRecord.focusSeq` / `focusSeqCounter` / `bumpFocusSeq` / `getWindowFocusSeq` | **deleted.** Use-order is position in the one order; see 0.1.10. |
 | `windows.ts APP_HIDE_EXCLUDED_CLASSES` | narrower than feared — its **only** reader is `getVisibleWindowCount()`, feeding `maybeHideApp`. Not a z-order concept at all: it asks "does this window count as a reason to keep the app on screen". Becomes one named predicate at that one call site. |
 
 ### 0.1.8 Hardening the kernel
@@ -428,8 +433,29 @@ an ideal test target.
    reproducer. Invariants: no duplicate ids in `order`; `key` resolves or is `null`; `layer` is
    non-decreasing after a realize pass; every emitted effect names a live window. **Highest return
    on this list — do it first.**
-2. **Replay determinism.** `fold(evolve, init, events)` is a pure function of the event log: same
-   log ⇒ identical state *and* identical effect list.
+2. **Replay determinism — a standing requirement, enforced by a test that fails when it breaks**
+   (operator directive, 2026-07-30). `fold(evolve, init, events)` is a pure function of the event
+   log: **the same log yields an identical state AND an identical effect list, always.** This is
+   not a property we check once during the rewrite; it is a rule the suite defends forever.
+
+   Concretely, three tests, all in the main-process unit runner so they cost nothing:
+   - **Determinism.** For a generated event log, fold it twice from `init` and assert deep
+     equality of both the final state and the concatenated effect list. Catches any hidden
+     ambient input — a clock read, a `Math.random()`, iteration over a non-deterministically
+     ordered structure, a captured module-level variable.
+   - **Prefix stability.** Folding `events[0..n]` then applying `events[n+1..]` equals folding the
+     whole log in one pass, for every split point. This is what makes a recorded log a valid test
+     case and a crash dump replayable.
+   - **No command may enter `evolve`.** A type-level guarantee (commands and events are separate
+     unions) plus a runtime assertion in dev, because the moment a rejectable request is folded,
+     replay stops being deterministic — replaying it re-evaluates guards against a state rebuilt
+     from other replayed commands. This is the failure mode the split in 0.1.1 exists to prevent,
+     and this test is what keeps it from creeping back.
+
+   The rule this encodes for anyone editing the kernel: **`evolve` may read nothing but its two
+   arguments.** That is the mechanical test, in the same spirit as `window-state.ts`'s existing
+   zero-value-imports rule — and like that rule, it is worth a check that runs every loop rather
+   than a sentence in a document.
 3. **Idempotence of settling events.** `WINDOW_CLOSED` twice = once, and the second must not
    throw. Catches real duplicate-IPC bugs — `ipc.ts`'s real-tile-launch path already registers
    each window twice.
@@ -478,26 +504,38 @@ previously estimated:
 - **Bucket D is the cost of the change** — 24 tests asserting the exclusion §0 names as the
   defect. Overturning them *is* the work, not collateral damage.
 
-### 0.1.10 Open questions — need the operator's call
+### 0.1.10 Decisions and remaining questions
 
-1. **Can one order carry both z-order and use-order? The app currently says no.** Every surveyed
-   WM keeps two lists — dwm `next` (creation) + `snext` (MRU); i3 `nodes_head` + `focus_head`;
-   sway scene graph + per-seat `focus_stack`. §0 says one order and derives the restore target
-   from it, which works only if raising and focusing always coincide. **They already don't here**:
-   `session-projection.test.ts` has a live test named *"a background open sits ABOVE the
-   last-focused window while ranking BELOW it by focus recency"* — a background open deliberately
-   placed high in z while staying low in MRU. Three ways out:
-   - Place a background open *below* the last-focused window, so one order is honest and `topmost`
-     answers both. Simplest; changes that behavior.
-   - Keep `focusSeq` on the record as a second per-window ordering fact. Truthful to the survey,
-     but a fifth stored fact §0 does not list.
-   - Declare use-order is always queried with a predicate (`topmost(state, isPageHost)`), which
-     papers over the divergence except between two windows of the same kind.
-2. **Does `order` include never-shown and offscreen windows?** Rule 1 says every window, always,
+**DECIDED (operator, 2026-07-30): one order, and nothing else orders windows.** A background open
+is placed **below** the last-focused window. `focusSeq` and `focusSeqCounter` are deleted.
+
+The question was whether one order can carry both z-order and use-order. Every surveyed WM keeps
+two lists — dwm `next` (creation) + `snext` (MRU); i3 `nodes_head` + `focus_head`; sway scene graph
++ per-seat `focus_stack` — and this app already needs both: `session-projection.test.ts` has a live
+test named *"a background open sits ABOVE the last-focused window while ranking BELOW it by focus
+recency"*, i.e. a background open deliberately placed high in z while staying low in MRU. The
+resolution is to remove the divergence at its source rather than model it: **a window that was not
+focused does not go on top.** One order is then honest, and `topmost(state, P)` answers both
+questions.
+
+What this costs, stated plainly so it is not discovered later:
+
+- The behavior changes. A background-opened window no longer appears above the window you are
+  working in. That is arguably the better behavior — it is what Metacity's focus-stealing work
+  concluded ("a new window that doesn't get focus should be stacked below the focused window but
+  still mapped") — but it *is* a change, and the session-projection test above must be rewritten,
+  not translated.
+- Restore ordering must be re-derived: session restore currently replays saved `stackIndex` and
+  separately marks one descriptor focused. Under one order those stop being independent, so the
+  saved order must already put the focused window on top.
+
+**Still open:**
+
+1. **Does `order` include never-shown and offscreen windows?** Rule 1 says every window, always,
    and this draft takes that literally — `background`, `bridge`, `offscreen`, `devtools` and test
    fixtures all sit in the one order at their own layer. Taking it literally is the reading that
    requires no exception.
-3. **Does `key` survive app deactivation?** When Peek resigns active, no Peek window holds key in
+2. **Does `key` survive app deactivation?** When Peek resigns active, no Peek window holds key in
    the OS sense. Drafted as: `key` goes `null` on resign and is re-reported on activate — honest,
    but it means "who was last key" becomes a `topmost` query.
 
