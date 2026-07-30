@@ -121,6 +121,50 @@ export interface WindowRecord {
 
   /** Fullscreen region (§0.1.8) — orthogonal to `key` and to `order`. See `FsMode`. */
   fsMode: FsMode;
+
+  /**
+   * The window's last OS-reported outer bounds. Ported from `window-state.ts
+   * WindowRecord.bounds`: an honest mirror of native reality, never a live
+   * query at decision time. It also tracks the transient fullscreen rect —
+   * the restorable pre-fullscreen geometry lives in `fsMode.preBounds`, NOT
+   * here (the same aa34cb50 lookalike trap the old reducer names). `undefined`
+   * only when no rect has ever been reported. Written by `BoundsChanged` and,
+   * in this kernel's diff-based `react` (§0.1.1: effects are a pure diff of
+   * `prev`/`next`, never a read of `ev`'s payload), also by the accepted
+   * geometry commands below and by a `DisplayChanged` projection that lands
+   * unblocked — each writes the mirror eagerly so the transition is
+   * diffable, trusting the dispatch-is-synchronous contract the old reducer
+   * already documents (a later genuine OS echo just reconfirms the value).
+   */
+  bounds?: Rectangle;
+  /**
+   * Machine-owned, ported from `window-state.ts WindowRecord.maximized`: set
+   * only by the `Maximize`/`Unmaximize` transitions, never an OS
+   * `isMaximized()` report (frameless macOS windows don't reliably flip it).
+   * "Maximize" is a work-area snap (a bounds write), not a platform
+   * `maximize()` call.
+   */
+  maximized: boolean;
+  /**
+   * Non-null ONLY while `maximized` — the two transitions maintain the
+   * pairing. `null` while maximized legitimately means "no bounds had ever
+   * been reported, so no stash was possible" (same distinction as
+   * `FsMode.preBounds`).
+   */
+  preMaxBounds: Rectangle | null;
+  /** Pinned to every macOS Space or not — ported from `window-state.ts WindowRecord.visibleOnAllSpaces`. */
+  visibleOnAllSpaces: boolean;
+  /**
+   * A `DisplayChanged` projection computed while this window was BLOCKED from
+   * receiving it — blocked meaning `fsMode.name !== 'normal'` or
+   * `visible === false`. Last projection wins while still blocked (overwrite,
+   * never queue). Flushed as a bounds write — and cleared — only once BOTH
+   * axes clear (`fsMode.name === 'normal'` AND `visible`); it stays held if
+   * only one axis unblocks. Cleared WITHOUT flushing by any explicit bounds
+   * write (`SetBounds`/`Maximize`/`Unmaximize`), so a stale projection can
+   * never snap a deliberately-moved window back. `null` when nothing is held.
+   */
+  pendingProjectedBounds: Rectangle | null;
 }
 
 /**
@@ -194,7 +238,54 @@ export type Event =
   /** OS report: the window is NOT fullscreen now. Settles `leaving`/`entering`/`fullscreen`. */
   | { type: 'OsFullscreenLeft'; id: WindowId }
   /** The OS never reported a settle for this transition — force it out of `entering`/`leaving`. */
-  | { type: 'FullscreenSettleTimeout'; id: WindowId };
+  | { type: 'FullscreenSettleTimeout'; id: WindowId }
+  /**
+   * The backend's native resize/move report (ported from `window-state.ts
+   * BOUNDS_CHANGED`) — the OS report. The SOLE origin of a fact that writes
+   * `WindowRecord.bounds`; `decide`'s translations of `SetBounds` /
+   * `Maximize` / `Unmaximize` below reuse this same event shape rather than
+   * inventing a second bounds-writing fact, under the dispatch-is-synchronous
+   * contract described on the field.
+   */
+  | { type: 'BoundsChanged'; id: WindowId; bounds: Rectangle }
+  /**
+   * The display layout changed (ported from `window-state.ts
+   * DISPLAY_CHANGED`) — one already-computed target rect per affected
+   * window (this file keeps zero value imports and cannot ask `screen` for
+   * anything itself). A window that is blocked (non-`normal` `fsMode` or
+   * `visible: false`) has its entry held on `pendingProjectedBounds` instead
+   * of applied; an unblocked entry writes `bounds` directly.
+   */
+  | { type: 'DisplayChanged'; projections: ReadonlyArray<{ id: WindowId; bounds: Rectangle }> }
+  /**
+   * A resize gesture invalidated maximize (ported from `window-state.ts
+   * MAXIMIZE_EXITED_BY_RESIZE`) — dispatched at the press of a resize on a
+   * maximized window, or by a native-resize reconciler. Clears `maximized` +
+   * `preMaxBounds`, drives nothing back at the OS: the gesture owns the
+   * window's bounds.
+   */
+  | { type: 'MaximizeExitedByResize'; id: WindowId }
+  /**
+   * `decide`'s translation of an accepted `Maximize` command into a fact
+   * `evolve` can apply mechanically — `preMaxBounds` is resolved by `decide`
+   * from the record's CURRENT `bounds` mirror (never a live query), same
+   * pattern as `FullscreenTransitionStarted.preBounds`.
+   */
+  | { type: 'Maximized'; id: WindowId; preMaxBounds: Rectangle | null }
+  /** `decide`'s translation of an accepted `Unmaximize` command — clears `maximized` + `preMaxBounds`. */
+  | { type: 'Unmaximized'; id: WindowId }
+  /**
+   * `decide`'s translation of every accepted `SetBounds`/`Maximize`/
+   * `Unmaximize` command: an explicit geometry decision supersedes any held
+   * `DisplayChanged` projection, discarding it WITHOUT flushing (a stale
+   * projection must never snap a deliberately-moved window back). Kept as
+   * its own event — rather than folded into `BoundsChanged`/`Maximized`/
+   * `Unmaximized` — so those stay single-purpose and this one fact covers
+   * all three origins identically.
+   */
+  | { type: 'PendingProjectionDiscarded'; id: WindowId }
+  /** `decide`'s translation of an accepted `SetVisibleOnAllSpaces` command. */
+  | { type: 'VisibleOnAllSpacesSet'; id: WindowId; on: boolean };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Commands — rejectable requests (§0.1.1, §0.1.2). Every variant carries
@@ -226,7 +317,36 @@ export type Command =
    * intent; `OsFullscreenEntered`/`OsFullscreenLeft` are what actually settle
    * the region.
    */
-  | { type: 'SetFullscreen'; id: WindowId; desired: boolean; expectedVersion: number };
+  | { type: 'SetFullscreen'; id: WindowId; desired: boolean; expectedVersion: number }
+  /**
+   * App code wants this window at `bounds` (ported from `window-state.ts
+   * SET_BOUNDS_REQUESTED`) — the rect is computed at the dispatch site
+   * (this file keeps zero value imports). No-op while `fsMode` is non-normal:
+   * fullscreen owns the display (the aa34cb50 family).
+   */
+  | { type: 'SetBounds'; id: WindowId; bounds: Rectangle; expectedVersion: number }
+  /**
+   * App code wants this window maximized (ported from `window-state.ts
+   * MAXIMIZE_REQUESTED`) — a work-area snap, not a platform `maximize()`
+   * call. Unlike the old event, this command carries no work-area rect: the
+   * dispatch site issues a separate `SetBounds` for the actual snap, so this
+   * kernel never needs `screen`. No-op while `fsMode` is non-normal (the
+   * aa34cb50 family) or while already maximized (nothing new to snap to).
+   */
+  | { type: 'Maximize'; id: WindowId; expectedVersion: number }
+  /**
+   * App code wants this window restored from maximized (ported from
+   * `window-state.ts UNMAXIMIZE_REQUESTED`): clears `maximized`, restores
+   * `preMaxBounds` when a stash exists. No-op when not maximized.
+   */
+  | { type: 'Unmaximize'; id: WindowId; expectedVersion: number }
+  /**
+   * App code wants this window pinned to (or unpinned from) every macOS
+   * Space (ported from `window-state.ts SET_VISIBLE_ON_ALL_SPACES_REQUESTED`,
+   * raw path only — the role-derived `SPACES_POLICY_REQUESTED` policy stays
+   * outside the kernel and is expressed as a caller composing this command).
+   */
+  | { type: 'SetVisibleOnAllSpaces'; id: WindowId; on: boolean; expectedVersion: number };
 
 export type Rejection = 'stale-version' | 'no-such-window';
 
@@ -246,7 +366,11 @@ export type Effect =
   /** Drive the OS into fullscreen — emitted only when a record freshly transitions INTO `entering`. */
   | { type: 'SetFullscreen'; id: WindowId }
   /** Drive the OS out of fullscreen — emitted only when a record freshly transitions INTO `leaving`. */
-  | { type: 'ExitFullscreen'; id: WindowId };
+  | { type: 'ExitFullscreen'; id: WindowId }
+  /** Move the window's outer bounds — emitted by `react` as a structural diff of `bounds`, never from an event's own payload. */
+  | { type: 'SetBounds'; id: WindowId; bounds: Rectangle }
+  /** Pin/unpin the window on every macOS Space — emitted by `react` as a structural diff of `visibleOnAllSpaces`. */
+  | { type: 'SetVisibleOnAllSpaces'; id: WindowId; on: boolean };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // initialState
@@ -332,6 +456,31 @@ function nextFsModeForSettleTimeout(mode: FsMode): FsMode {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Geometry helpers (this slice) — pure, total, ported from `window-state.ts`
+// `flushPendingProjection` and its `bounds` field-equality reasoning.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Field-wise `Rectangle` equality — `bounds` diffs by value, never by reference. */
+function boundsEqual(a: Rectangle | undefined, b: Rectangle | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+/**
+ * Flush a held `DisplayChanged` projection into `bounds` once BOTH blocking
+ * axes are clear — ported from `window-state.ts flushPendingProjection`.
+ * Total and side-effect-free: called from every evolve case that can newly
+ * clear an axis (`WindowShown`, and the two fsMode settle cases that can land
+ * on `normal`); a record that is still blocked, or holds nothing, passes
+ * through unchanged.
+ */
+function withPendingProjectionFlushed(record: WindowRecord): WindowRecord {
+  if (record.pendingProjectedBounds === null) return record;
+  if (record.fsMode.name !== 'normal' || !record.visible) return record;
+  return { ...record, bounds: record.pendingProjectedBounds, pendingProjectedBounds: null };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // evolve — TOTAL. No guards. Cannot throw. Reads nothing but its two
 // arguments. Every event bumps `version`.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -363,6 +512,13 @@ export function evolve(state: State, ev: Event): State {
           // A lived fact (§0.1.8), same as `visible`/`openSeq` — re-registration
           // must not reset an in-flight or settled fullscreen region.
           fsMode: existing.fsMode,
+          // Lived geometry facts (this slice) — preserved across a
+          // re-registration merge exactly like `fsMode` above.
+          maximized: existing.maximized,
+          preMaxBounds: existing.preMaxBounds,
+          visibleOnAllSpaces: existing.visibleOnAllSpaces,
+          pendingProjectedBounds: existing.pendingProjectedBounds,
+          ...(existing.bounds !== undefined ? { bounds: existing.bounds } : {}),
           ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
           ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
         };
@@ -386,6 +542,12 @@ export function evolve(state: State, ev: Event): State {
         // starts false and flips via `WindowContentOrderable`.
         orderable: ev.kind === 'browser',
         fsMode: { name: 'normal' },
+        // Fresh geometry facts (this slice) — no rect has ever been
+        // reported, nothing is stashed, nothing pinned, nothing held.
+        maximized: false,
+        preMaxBounds: null,
+        visibleOnAllSpaces: false,
+        pendingProjectedBounds: null,
         ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
         ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
       };
@@ -398,9 +560,11 @@ export function evolve(state: State, ev: Event): State {
     }
 
     case 'WindowShown': {
+      // Showing can newly clear the visibility axis of a held
+      // DisplayChanged projection — flush if fsMode is also already normal.
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, visible: true } : w)),
+        order: state.order.map((w) => (w.id === ev.id ? withPendingProjectionFlushed({ ...w, visible: true }) : w)),
         version: state.version + 1,
       };
     }
@@ -512,17 +676,94 @@ export function evolve(state: State, ev: Event): State {
     }
 
     case 'OsFullscreenLeft': {
+      // Can newly clear the fsMode axis of a held DisplayChanged projection
+      // (several of its arms settle onto 'normal') — flush if visible too.
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, fsMode: nextFsModeForOsLeft(w.fsMode) } : w)),
+        order: state.order.map((w) =>
+          w.id === ev.id ? withPendingProjectionFlushed({ ...w, fsMode: nextFsModeForOsLeft(w.fsMode) }) : w,
+        ),
         version: state.version + 1,
       };
     }
 
     case 'FullscreenSettleTimeout': {
+      // Same reasoning as OsFullscreenLeft: the 'leaving' arm can settle onto 'normal'.
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, fsMode: nextFsModeForSettleTimeout(w.fsMode) } : w)),
+        order: state.order.map((w) =>
+          w.id === ev.id ? withPendingProjectionFlushed({ ...w, fsMode: nextFsModeForSettleTimeout(w.fsMode) }) : w,
+        ),
+        version: state.version + 1,
+      };
+    }
+
+    // ── Geometry (this slice) ────────────────────────────────────────────────
+
+    case 'BoundsChanged': {
+      // The sole writer of `bounds` for a genuine OS report; also reused by
+      // `decide`'s translation of SetBounds/Maximize/Unmaximize (see the
+      // event doc). Mirror only — no other field, no effects computed here
+      // (effects are `react`'s job, from the diff).
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, bounds: ev.bounds } : w)),
+        version: state.version + 1,
+      };
+    }
+
+    case 'DisplayChanged': {
+      return {
+        ...state,
+        order: state.order.map((w) => {
+          const projection = ev.projections.find((p) => p.id === w.id);
+          if (projection === undefined) return w; // not named by this event — untouched
+          const blocked = w.fsMode.name !== 'normal' || !w.visible;
+          return blocked ? { ...w, pendingProjectedBounds: projection.bounds } : { ...w, bounds: projection.bounds };
+        }),
+        version: state.version + 1,
+      };
+    }
+
+    case 'MaximizeExitedByResize': {
+      // Total, guard-free: a not-maximized record already holds these values,
+      // so this is an idempotent no-op for it — the guard old code needed
+      // ("not maximized -> nothing to restore") is unnecessary here.
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, maximized: false, preMaxBounds: null } : w)),
+        version: state.version + 1,
+      };
+    }
+
+    case 'Maximized': {
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, maximized: true, preMaxBounds: ev.preMaxBounds } : w)),
+        version: state.version + 1,
+      };
+    }
+
+    case 'Unmaximized': {
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, maximized: false, preMaxBounds: null } : w)),
+        version: state.version + 1,
+      };
+    }
+
+    case 'PendingProjectionDiscarded': {
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, pendingProjectedBounds: null } : w)),
+        version: state.version + 1,
+      };
+    }
+
+    case 'VisibleOnAllSpacesSet': {
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, visibleOnAllSpaces: ev.on } : w)),
         version: state.version + 1,
       };
     }
@@ -576,6 +817,34 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
       effects.push({ type: 'SetFullscreen', id: nextRecord.id });
     } else if (prevRecord.fsMode.name !== 'leaving' && nextRecord.fsMode.name === 'leaving') {
       effects.push({ type: 'ExitFullscreen', id: nextRecord.id });
+    }
+  }
+
+  // Geometry (this slice): `bounds` — a pure structural diff of the mirror,
+  // same pattern as visibility/fullscreen above. Fires regardless of WHICH
+  // event moved the mirror (an OS report, an accepted SetBounds/Maximize/
+  // Unmaximize, an unblocked DisplayChanged projection, or a flushed
+  // pendingProjectedBounds) — never branches on `ev.type`. A genuine OS echo
+  // that merely reconfirms the mirror's current value diffs to nothing, so
+  // re-requesting the current bounds emits no effect.
+  for (const nextRecord of next.order) {
+    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
+    if (prevRecord === undefined) {
+      continue;
+    }
+    if (nextRecord.bounds !== undefined && !boundsEqual(prevRecord.bounds, nextRecord.bounds)) {
+      effects.push({ type: 'SetBounds', id: nextRecord.id, bounds: nextRecord.bounds });
+    }
+  }
+
+  // Geometry (this slice): `visibleOnAllSpaces` — same diff pattern.
+  for (const nextRecord of next.order) {
+    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
+    if (prevRecord === undefined) {
+      continue;
+    }
+    if (prevRecord.visibleOnAllSpaces !== nextRecord.visibleOnAllSpaces) {
+      effects.push({ type: 'SetVisibleOnAllSpaces', id: nextRecord.id, on: nextRecord.visibleOnAllSpaces });
     }
   }
 
@@ -690,6 +959,51 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
       if (cmd.desired) return { events: [] }; // already fullscreen -> no-op, no OS call
       return { events: [{ type: 'FullscreenTransitionStarted', id: cmd.id, entering: false, preBounds: mode.preBounds }] };
     }
+    case 'SetBounds': {
+      const rec = state.order.find((w) => w.id === cmd.id)!;
+      // Fullscreen owns the display (aa34cb50 family, ported from
+      // window-state.ts SET_BOUNDS_REQUESTED): a mid-episode bounds write
+      // would corrupt the fullscreen geometry.
+      if (rec.fsMode.name !== 'normal') return { events: [] };
+      return {
+        events: [
+          { type: 'PendingProjectionDiscarded', id: cmd.id },
+          { type: 'BoundsChanged', id: cmd.id, bounds: cmd.bounds },
+        ],
+      };
+    }
+    case 'Maximize': {
+      const rec = state.order.find((w) => w.id === cmd.id)!;
+      // Same aa34cb50 guard as SetBounds.
+      if (rec.fsMode.name !== 'normal') return { events: [] };
+      // Already maximized: this command carries no work-area rect (the
+      // dispatch site owns that OS-boundary math), so there is nothing new
+      // to snap to — a no-op rather than a re-snap.
+      if (rec.maximized) return { events: [] };
+      return {
+        events: [
+          { type: 'PendingProjectionDiscarded', id: cmd.id },
+          // Stash the pre-maximize rect from the machine's own bounds
+          // mirror — never a live query. `null` = no stash was possible.
+          { type: 'Maximized', id: cmd.id, preMaxBounds: rec.bounds ?? null },
+        ],
+      };
+    }
+    case 'Unmaximize': {
+      const rec = state.order.find((w) => w.id === cmd.id)!;
+      if (!rec.maximized) return { events: [] }; // not maximized — nothing to restore
+      const restore = rec.preMaxBounds;
+      return {
+        events: [
+          { type: 'PendingProjectionDiscarded', id: cmd.id },
+          { type: 'Unmaximized', id: cmd.id },
+          // A null stash just clears the flag — nowhere to restore to.
+          ...(restore !== null ? ([{ type: 'BoundsChanged', id: cmd.id, bounds: restore }] as Event[]) : []),
+        ],
+      };
+    }
+    case 'SetVisibleOnAllSpaces':
+      return { events: [{ type: 'VisibleOnAllSpacesSet', id: cmd.id, on: cmd.on }] };
   }
 }
 

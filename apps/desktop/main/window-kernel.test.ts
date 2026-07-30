@@ -27,6 +27,7 @@ import {
   type Effect,
   type WindowId,
   type Command,
+  type Rectangle,
 } from './window-kernel.js';
 
 // ── Test builders ────────────────────────────────────────────────────────────
@@ -611,5 +612,180 @@ describe('window-kernel: RegisterWindow command', () => {
     ]);
     const next = fold(decision.events, state);
     assert.strictEqual(next.order[0].orderable, true, 'a browser is orderable from birth');
+  });
+});
+
+// ── Geometry: bounds, maximize, display (this slice) ────────────────────────
+
+describe('window-kernel: geometry', () => {
+  const registerTwo = (): Event[] => [
+    { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+  ];
+
+  it('preMaxBounds is non-null only while maximized; Unmaximize restores the stash', () => {
+    const state = fold(registerTwo(), initialState());
+    const rect: Rectangle = { x: 0, y: 0, width: 800, height: 600 };
+    const withBounds = evolve(state, { type: 'BoundsChanged', id: wid(1), bounds: rect });
+
+    const maxDecision = decide(withBounds, { type: 'Maximize', id: wid(1), expectedVersion: withBounds.version });
+    assert.ok('events' in maxDecision);
+    const maximized = fold(maxDecision.events, withBounds);
+    const maxRec = maximized.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(maxRec.maximized, true);
+    assert.deepStrictEqual(maxRec.preMaxBounds, rect, "stashed from the machine's own bounds mirror");
+
+    const unmaxDecision = decide(maximized, { type: 'Unmaximize', id: wid(1), expectedVersion: maximized.version });
+    assert.ok('events' in unmaxDecision);
+    const restored = fold(unmaxDecision.events, maximized);
+    const restoredRec = restored.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(restoredRec.maximized, false);
+    assert.strictEqual(restoredRec.preMaxBounds, null, 'cleared once restored — non-null ONLY while maximized');
+    assert.deepStrictEqual(restoredRec.bounds, rect, 'bounds restored from the stash');
+  });
+
+  it('Maximize with no bounds ever reported stashes null; Unmaximize then restores nothing', () => {
+    const state = fold(registerTwo(), initialState());
+    const maxDecision = decide(state, { type: 'Maximize', id: wid(1), expectedVersion: state.version });
+    assert.ok('events' in maxDecision);
+    assert.deepStrictEqual(maxDecision.events, [
+      { type: 'PendingProjectionDiscarded', id: wid(1) },
+      { type: 'Maximized', id: wid(1), preMaxBounds: null },
+    ]);
+    const maximized = fold(maxDecision.events, state);
+    const maxRec = maximized.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(maxRec.preMaxBounds, null, 'no stash was possible');
+    assert.strictEqual(maxRec.bounds, undefined, 'Maximize alone never writes bounds — a separate SetBounds does the snap');
+
+    const unmaxDecision = decide(maximized, { type: 'Unmaximize', id: wid(1), expectedVersion: maximized.version });
+    assert.ok('events' in unmaxDecision);
+    assert.deepStrictEqual(
+      unmaxDecision.events,
+      [
+        { type: 'PendingProjectionDiscarded', id: wid(1) },
+        { type: 'Unmaximized', id: wid(1) },
+      ],
+      'a null stash clears the flag but restores nothing — no BoundsChanged event',
+    );
+    const restored = fold(unmaxDecision.events, maximized);
+    const restoredRec = restored.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(restoredRec.maximized, false);
+    assert.strictEqual(restoredRec.bounds, undefined);
+  });
+
+  it('DisplayChanged: held while blocked, last projection wins, discarded (not flushed) by an explicit write, flushed only when both axes clear', () => {
+    const state = fold(registerTwo(), initialState());
+    // registerTwo() windows start hidden with fsMode 'normal' — visibility
+    // alone is the blocking axis for this test.
+    const rec0 = state.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(rec0.visible, false);
+    assert.strictEqual(rec0.fsMode.name, 'normal');
+
+    const projA: Rectangle = { x: 1, y: 1, width: 100, height: 100 };
+    const afterA = evolve(state, { type: 'DisplayChanged', projections: [{ id: wid(1), bounds: projA }] });
+    let rec = afterA.order.find((w) => w.id === wid(1))!;
+    assert.deepStrictEqual(rec.pendingProjectedBounds, projA, 'held — the visibility axis is blocked');
+    assert.strictEqual(rec.bounds, undefined, 'not applied while blocked');
+
+    // Last projection wins while still blocked — overwrite, never queue.
+    const projB: Rectangle = { x: 2, y: 2, width: 200, height: 200 };
+    const afterB = evolve(afterA, { type: 'DisplayChanged', projections: [{ id: wid(1), bounds: projB }] });
+    rec = afterB.order.find((w) => w.id === wid(1))!;
+    assert.deepStrictEqual(rec.pendingProjectedBounds, projB, 'last projection wins');
+    assert.strictEqual(rec.bounds, undefined);
+
+    // Discarded WITHOUT flushing by an explicit bounds write: the window is
+    // still hidden (blocked), but SetBounds's guard only cares about
+    // fullscreen, so the command is accepted and clears the stale hold
+    // without ever applying it.
+    const explicitBounds: Rectangle = { x: 9, y: 9, width: 50, height: 50 };
+    const setDecision = decide(afterB, { type: 'SetBounds', id: wid(1), bounds: explicitBounds, expectedVersion: afterB.version });
+    assert.ok('events' in setDecision);
+    assert.deepStrictEqual(setDecision.events, [
+      { type: 'PendingProjectionDiscarded', id: wid(1) },
+      { type: 'BoundsChanged', id: wid(1), bounds: explicitBounds },
+    ]);
+    const afterSet = fold(setDecision.events, afterB);
+    const setRec = afterSet.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(setRec.pendingProjectedBounds, null, 'discarded');
+    assert.deepStrictEqual(setRec.bounds, explicitBounds, 'the deliberate write wins, never the stale projection');
+
+    // Flushed only once BOTH axes clear: hold a fresh projection while
+    // hidden, then show the window (visibility clears; fsMode was already normal).
+    const projC: Rectangle = { x: 3, y: 3, width: 300, height: 300 };
+    const heldAgain = evolve(afterSet, { type: 'DisplayChanged', projections: [{ id: wid(1), bounds: projC }] });
+    const shown = evolve(heldAgain, { type: 'WindowShown', id: wid(1) });
+    const shownRec = shown.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(shownRec.pendingProjectedBounds, null, 'flushed and cleared once both axes are clear');
+    assert.deepStrictEqual(shownRec.bounds, projC);
+  });
+
+  it('a held projection stays held when only one blocking axis clears', () => {
+    const state = fold(registerTwo(), initialState());
+    const shown = evolve(state, { type: 'WindowShown', id: wid(1) }); // clears the visibility axis
+    const fullscreen = fold(
+      [
+        { type: 'FullscreenTransitionStarted', id: wid(1), entering: true, preBounds: null },
+        { type: 'OsFullscreenEntered', id: wid(1) },
+      ],
+      shown,
+    );
+    const proj: Rectangle = { x: 5, y: 5, width: 60, height: 60 };
+    const held = evolve(fullscreen, { type: 'DisplayChanged', projections: [{ id: wid(1), bounds: proj }] });
+    const rec = held.order.find((w) => w.id === wid(1))!;
+    assert.deepStrictEqual(rec.pendingProjectedBounds, proj, 'held — the fsMode axis is still blocked even though visible');
+    assert.strictEqual(rec.bounds, undefined);
+  });
+
+  it('bounds is written only by BoundsChanged — no other geometry event touches it directly', () => {
+    const state = fold(registerTwo(), initialState());
+    const rect: Rectangle = { x: 0, y: 0, width: 10, height: 10 };
+    const withBounds = evolve(state, { type: 'BoundsChanged', id: wid(1), bounds: rect });
+
+    const maximized = evolve(withBounds, { type: 'Maximized', id: wid(1), preMaxBounds: rect });
+    assert.deepStrictEqual(maximized.order.find((w) => w.id === wid(1))?.bounds, rect, 'Maximized alone never moves bounds');
+
+    const unmaximized = evolve(maximized, { type: 'Unmaximized', id: wid(1) });
+    assert.deepStrictEqual(unmaximized.order.find((w) => w.id === wid(1))?.bounds, rect, 'Unmaximized alone never moves bounds');
+
+    const exited = evolve(unmaximized, { type: 'MaximizeExitedByResize', id: wid(1) });
+    assert.deepStrictEqual(exited.order.find((w) => w.id === wid(1))?.bounds, rect, 'MaximizeExitedByResize never moves bounds');
+
+    const pinned = evolve(exited, { type: 'VisibleOnAllSpacesSet', id: wid(1), on: true });
+    assert.deepStrictEqual(pinned.order.find((w) => w.id === wid(1))?.bounds, rect, 'an unrelated field write never moves bounds');
+  });
+
+  it('geometry commands and events touch neither key nor order', () => {
+    const state = fold([...registerTwo(), { type: 'OsFocusGained', id: wid(2) }], initialState());
+    const orderBefore = state.order.map((w) => w.id);
+    const keyBefore = state.key;
+
+    const log: Event[] = [
+      { type: 'BoundsChanged', id: wid(1), bounds: { x: 0, y: 0, width: 10, height: 10 } },
+      { type: 'Maximized', id: wid(1), preMaxBounds: null },
+      { type: 'Unmaximized', id: wid(1) },
+      { type: 'MaximizeExitedByResize', id: wid(1) },
+      { type: 'DisplayChanged', projections: [{ id: wid(1), bounds: { x: 1, y: 1, width: 1, height: 1 } }] },
+      { type: 'PendingProjectionDiscarded', id: wid(1) },
+      { type: 'VisibleOnAllSpacesSet', id: wid(1), on: true },
+    ];
+    const after = fold(log, state);
+    assert.deepStrictEqual(after.order.map((w) => w.id), orderBefore, 'order untouched by any geometry event');
+    assert.strictEqual(after.key, keyBefore, 'key untouched by any geometry event');
+  });
+
+  it('re-requesting the current bounds emits no effect', () => {
+    const state = fold(registerTwo(), initialState());
+    const bounds: Rectangle = { x: 10, y: 10, width: 20, height: 20 };
+    const setDecision = decide(state, { type: 'SetBounds', id: wid(1), bounds, expectedVersion: state.version });
+    assert.ok('events' in setDecision);
+    const first = foldWithEffects(setDecision.events, state);
+    assert.ok(first.effects.some((e) => e.type === 'SetBounds'), 'the first write does emit an effect');
+
+    // Re-request the SAME bounds.
+    const reDecision = decide(first.state, { type: 'SetBounds', id: wid(1), bounds, expectedVersion: first.state.version });
+    assert.ok('events' in reDecision);
+    const second = foldWithEffects(reDecision.events, first.state);
+    assert.deepStrictEqual(second.effects, [], 'a genuine re-request of the current value diffs to nothing');
   });
 });

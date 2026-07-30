@@ -36,6 +36,7 @@ import {
   type Effect,
   type WindowId,
   type WindowKind,
+  type Rectangle,
 } from './window-kernel.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,6 +69,16 @@ function pick<T>(rng: Rng, values: readonly T[]): T {
   return values[randomInt(rng, values.length)];
 }
 
+/** A small, plausible outer-bounds rectangle — this slice's geometry events. */
+function randomRectangle(rng: Rng): Rectangle {
+  return {
+    x: randomInt(rng, 2000),
+    y: randomInt(rng, 2000),
+    width: randomInt(rng, 2000) + 1,
+    height: randomInt(rng, 2000) + 1,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Random event-log generator — deliberately unfiltered. It must produce
 // nonsense as readily as sensible sequences: events naming windows that were
@@ -98,7 +109,7 @@ function isCommand(item: LogItem): item is Command {
  * same seed always produces the same concrete log.
  */
 function randomLogItem(rng: Rng, state: State): LogItem {
-  const variant = randomInt(rng, 16);
+  const variant = randomInt(rng, 27);
   const id = wid(randomInt(rng, POOL_SIZE));
   switch (variant) {
     case 0: {
@@ -168,8 +179,58 @@ function randomLogItem(rng: Rng, state: State): LogItem {
     case 14:
       return { type: 'OsFullscreenLeft', id };
     case 15:
-    default:
       return { type: 'FullscreenSettleTimeout', id };
+    // Geometry commands (this slice) — go through `decide`, same
+    // stale-expectedVersion treatment as the other command variants above.
+    case 16: {
+      const stale = rng() < 0.2;
+      return { type: 'SetBounds', id, bounds: randomRectangle(rng), expectedVersion: stale ? state.version + 1 : state.version };
+    }
+    case 17: {
+      const stale = rng() < 0.2;
+      return { type: 'Maximize', id, expectedVersion: stale ? state.version + 1 : state.version };
+    }
+    case 18: {
+      const stale = rng() < 0.2;
+      return { type: 'Unmaximize', id, expectedVersion: stale ? state.version + 1 : state.version };
+    }
+    case 19: {
+      const stale = rng() < 0.2;
+      return {
+        type: 'SetVisibleOnAllSpaces',
+        id,
+        on: randomBool(rng),
+        expectedVersion: stale ? state.version + 1 : state.version,
+      };
+    }
+    // Unfiltered — the OS-report-style geometry events, fed straight to
+    // `evolve` bypassing `decide`, same reasoning as the fullscreen family
+    // above (variants 11-15).
+    case 20:
+      return { type: 'BoundsChanged', id, bounds: randomRectangle(rng) };
+    case 21: {
+      const count = 1 + randomInt(rng, 2);
+      const projections = Array.from({ length: count }, () => ({
+        id: wid(randomInt(rng, POOL_SIZE)),
+        bounds: randomRectangle(rng),
+      }));
+      return { type: 'DisplayChanged', projections };
+    }
+    case 22:
+      return { type: 'MaximizeExitedByResize', id };
+    // Unfiltered — `decide`'s own synthetic geometry translations, fed
+    // directly so nonsense combos (e.g. a Maximized against a not-`normal`
+    // fsMode) exercise evolve's total handling directly, same reasoning as
+    // FullscreenTransitionStarted/FullscreenDesireRecorded above.
+    case 23:
+      return { type: 'Maximized', id, preMaxBounds: rng() < 0.5 ? null : randomRectangle(rng) };
+    case 24:
+      return { type: 'Unmaximized', id };
+    case 25:
+      return { type: 'PendingProjectionDiscarded', id };
+    case 26:
+    default:
+      return { type: 'VisibleOnAllSpacesSet', id, on: randomBool(rng) };
   }
 }
 
@@ -247,6 +308,16 @@ function checkInvariants(state: State, prev?: State): string[] {
     if (record.fsMode.name !== 'normal' && !hasPreBounds) {
       violations.push(`non-normal fsMode missing preBounds for ${record.id}: ${JSON.stringify(record.fsMode)}`);
     }
+
+    // Geometry (this slice): preMaxBounds is non-null EXACTLY while maximized.
+    if (record.preMaxBounds !== null && !record.maximized) {
+      violations.push(`preMaxBounds is non-null while not maximized for ${record.id}: ${JSON.stringify(record.preMaxBounds)}`);
+    }
+    // pendingProjectedBounds is held only while the window is blocked on at
+    // least one axis (non-normal fsMode, or hidden).
+    if (record.pendingProjectedBounds !== null && record.fsMode.name === 'normal' && record.visible) {
+      violations.push(`pendingProjectedBounds held for ${record.id} but neither axis is blocked`);
+    }
   }
 
   const kw = keyWindow(state);
@@ -294,7 +365,11 @@ function checkSettleTimeoutInvariant(item: LogItem, next: State): string[] {
   return violations;
 }
 
-/** Extra invariant on `react`'s output: every emitted effect names a window still in `next.order`. */
+/**
+ * Extra invariant on `react`'s output: every emitted effect names a window
+ * still in `next.order` — this is what guarantees, among other things, that
+ * no `SetBounds` effect (this slice) ever names a window absent from `order`.
+ */
 function checkEffectInvariants(effects: Effect[], next: State): string[] {
   const violations: string[] = [];
   for (const effect of effects) {
