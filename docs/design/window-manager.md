@@ -654,8 +654,10 @@ mood-sorting tally, not a specification.
 
 **Unaddressed — the design is silent (7).** `DEVTOOLS_OPENED`, `DEVTOOLS_CLOSED`,
 `COLD_START_FOCUS_ARMED`, `CLOSE_WINDOW_DIRECT`, `DESTROY_WINDOW`, `CLOSE_CONTENT`,
-`DESTROY_ALL_GUESTS`. §0.1 never says how the kernel decides to close, destroy, or tear down a
-window; `WindowClosed` exists only as an OS report.
+`DESTROY_ALL_GUESTS`. §0.1 decides that teardown goes through the kernel the same way every other
+window decision does (below), but does not yet wire it: no step names `DESTROY_WINDOW`,
+`CLOSE_CONTENT`, `DESTROY_ALL_GUESTS`, or `CLOSE_WINDOW_DIRECT` as a kernel command, and none of the
+four has an effect yet; `WindowClosed` still exists only as an OS report.
 
 §5's eleven steps migrate authorities into `window-state.ts`, not into the kernel — no wiring
 sequence for the kernel appears anywhere in this document. There is no step for the switcher and
@@ -669,6 +671,34 @@ retained arms are themselves focus authority: `window-state.ts`'s `SWITCHER_SELE
 `STACK_ORDER_IMPORTED` orders `stackOrder`. Retaining them means a second writer of front — the
 exact failure mode §2 exists to prevent. The permissible shape is the inverse: port those decisions
 into the kernel in the same commits that cut over focus and order.
+
+#### Decided: window teardown enters the kernel as commands and leaves as effects
+
+`DESTROY_WINDOW`, `CLOSE_CONTENT`, `DESTROY_ALL_GUESTS`, and `CLOSE_WINDOW_DIRECT` each need a
+kernel command and a corresponding effect, in the same shape as the `CloseWindow` effect already
+added (`window-kernel.ts` `Effect`, derived in `react` as a structural membership diff, performed
+in `window-kernel-executor.ts` `performEffect`). Teardown is not a caller composition outside the
+kernel the way Escape (`window-escape.ts`), the switcher, and spaces policy are.
+
+The kernel never initiates a close on its own. `window-kernel.ts`'s `selectTransientAutoclose` and
+`selectAppResignTransients` are queries, not transitions — each answers which windows should be
+dismissed, and the caller turns each id into a `CloseOrHideWindow` command (the file states this
+directly above both selectors). Every removal of a window therefore enters as a command from
+outside; the kernel does its bookkeeping and emits the effect that performs the teardown.
+
+The precedents that put Escape, the switcher, and spaces policy outside the kernel do not transfer
+to teardown, because none of those three mutate window membership. `order` is membership; teardown
+changes it.
+
+Leaving teardown outside would create two paths for removing a window: a command-driven close, and
+an out-of-band `backend.destroyWindow` that the kernel learns about only afterwards through a
+`WindowClosed` OS report. The out-of-band path is a second authority over `order` — the exact
+failure mode §2 exists to prevent.
+
+What survives from the two transient-autoclose selectors is the split between deciding and
+emitting: the kernel decides some closes nobody requested, but does not emit them directly — they
+round-trip through a caller as commands, which is what keeps `evolve` guard-free and effects a
+pure structural diff.
 
 #### Three lossy ports
 
@@ -1262,14 +1292,7 @@ behavior of `front`, whose role is now split — so they constrain main. That le
 reader that needs `key` to survive deactivation. The decision stays open; what the evidence removes
 is the claim that nulling breaks a caller.
 
-#### Open question 3: does window teardown become kernel commands?
-
-Whether `DESTROY_WINDOW`, `CLOSE_CONTENT`, `DESTROY_ALL_GUESTS`, and `CLOSE_WINDOW_DIRECT` become
-kernel commands, or stay a caller composition outside the kernel the way Escape, the switcher, and
-spaces policy already do, is undecided. The three existing precedents favour the latter, and it
-keeps the kernel's effect surface small.
-
-#### Open question 4: which registration path is correct under headless?
+#### Open question 3: which registration path is correct under headless?
 
 `ipc.ts` gates `alwaysOnTop` on the constructor option but registers the raw
 `options.alwaysOnTop === true`, while `tile-launcher.ts` registers the headless-gated resolved
