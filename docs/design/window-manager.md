@@ -165,6 +165,344 @@ as `ASK_RENDERER{seq}` / `ESC_RENDERER_ANSWER{seq}`.
 
 ---
 
+## 0.1 The rewritten kernel — state shape and structure
+
+**Draft, 2026-07-30. NOT IMPLEMENTED.** Derives from §0, plus a survey of how other window
+managers and the state-machine literature solve the same problems. Where this disagrees with
+§3–§5, those are the older design. Operator directive this answers: *make the machine as simple as
+possible; the kernel should be hardened to a diamond.*
+
+### The diagnosis
+
+The reducer is ~3200 lines and 45 event types because of three structural mistakes, each with a
+named, well-documented fix:
+
+1. **Commands and events share one union.** Requests that may be rejected and facts that already
+   happened are the same type, so guards are scattered across arms that cannot express rejection.
+2. **Input interpretation lives inside the state owner.** §0 says this; the literature agrees and
+   every mature system puts the boundary in the same place.
+3. **Invariants are maintained by guards that a better encoding would make unstateable.**
+   `stackOrderInvariantHolds`, `frontInvariantHolds`, `reconcileStackMembership` and
+   `enforceFrontInvariant` all exist to repair states a different data structure could not
+   represent.
+
+### 0.1.1 Split the union: `decide` and `evolve`
+
+```ts
+type Command = { ...; expectedVersion: number };   // a request. MAY BE REJECTED.
+type Event   = { ... };                            // a fact. Already happened. Cannot be rejected.
+
+decide(state: State, cmd: Command): { events: Event[] } | { rejected: Reason };
+evolve(state: State, ev: Event): State;            // TOTAL. No guards. Cannot fail.
+```
+
+**All guards live in `decide`; `evolve` has none.** That single constraint is most of the
+line-count reduction and is what makes the kernel testable.
+
+Sorting today's 45 event types by mood gives roughly **~17 commands** (everything named
+`*_REQUESTED`, plus `RAISE_WINDOW_REQUESTED` and `SWITCHER_OPEN_REQUESTED`), **~20 events** (the
+past-tense OS reports — `WINDOW_SHOWN`/`HIDDEN`/`CLOSED`, `OS_FOCUS_GAINED`, `BOUNDS_CHANGED`,
+`DISPLAY_CHANGED`, `APP_ACTIVATED`/`RESIGNED`, `WINDOW_CONTENT_ORDERABLE`, …), and **~8 that leave
+entirely** with the Escape subsystem.
+
+Why mixing them is not merely untidy: **replay determinism becomes false.** Replaying a stored
+command re-evaluates its guards against a state rebuilt from other replayed commands, so one log
+can produce different states. Replaying events is idempotent by construction, and every hardening
+technique below depends on it.
+
+### 0.1.2 Stale intents: `version` / `expectedVersion`
+
+§0 names the hazard in moving interpretation out — an interpreter reads state, decides, and emits
+an intent, and state can change in between. The standard answer is an **expected-version token**,
+not a bespoke per-subsystem sequence number: `State.version` is one monotonic counter incremented
+on every accepted event; every `Command` carries `expectedVersion`; `decide` rejects on mismatch
+with a typed reason. This replaces `ASK_RENDERER{seq}` / `ESC_RENDERER_ANSWER{seq}` and `escSeq`.
+It is ~10 lines, and it is the same mechanism as optimistic concurrency in event sourcing and as
+fencing tokens in distributed locking.
+
+**Exact precedent in this domain:** EWMH's `_NET_ACTIVE_WINDOW` client message carries a *source
+indication* and the client's *last user-activity timestamp*, so the window manager can reject a
+stale or illegitimate activation. That is rule 4's provenance plus this token, already
+standardized. We are adopting, not inventing.
+
+### 0.1.3 Input interpretation moves out — the dependency arrow points one way
+
+Three shipping systems put the boundary in the same place. **X11**: the server owns the window
+tree and delivers raw input; the WM is just another client owning focus/stacking *policy*; clients
+interpret their own keys. **Wayland**: `wl_seat` holds one keyboard focus; the compositor decides
+*which surface* has focus, the client decides *what the key means* — there is even a negotiated
+protocol for arbitrating who interprets a keystroke (`keyboard-shortcuts-inhibit`). **Android**:
+`InputReader`/`InputDispatcher` are separate from `WindowManagerService`, and WMS *pushes* focus
+information down to the dispatcher.
+
+The load-bearing detail is the arrow's direction — the dispatcher never asks the window manager
+"who is focused?" mid-decision. Our rule, stated the same way:
+
+> The Escape/hotkey interpreter reads an immutable snapshot of kernel state, emits `Command`s
+> carrying `expectedVersion`, and never queries the kernel mid-decision and never writes to it.
+
+It is independently testable as a pure `(keyEvent, snapshot) → Command | null`. This removes
+`decideEscape`, `applyEscape`, `decideEscapeUnhandled`, `escPolicy`, `escUnhandledPolicy`,
+`applyUnhandledEscape`, `escAsk`, `escSeq`, `EscapeMode`, `session: IzuiSession`, the whole
+`switcher: SwitcherState` sub-machine, and the `ASK_RENDERER` / `ESC_RENDERER_ANSWER` round trip.
+`deriveEscGrabRegistered` becomes that subsystem querying a snapshot.
+
+### 0.1.4 The state shape
+
+```ts
+interface State {
+  /** RULE 1. EVERY window, bottom → top. Membership, order, and the records are ONE structure —
+   *  not a Map plus a parallel id array. A window enters on registration and leaves on
+   *  destruction; nothing else changes membership. */
+  readonly order: readonly WindowRecord[];
+
+  /** RULE 2. Which window holds key, or none. Written ONLY from OS reports. Never inferred,
+   *  never repaired, never successor-guessed. `null` is a legal steady state. */
+  readonly key: WindowId | null;
+
+  /** RULE 4 + stale-intent rejection. */
+  readonly version: number;
+  readonly opSeqCounter: number;
+
+  readonly appActive: boolean;
+  readonly openSeqCounter: number;
+}
+```
+
+**One structure, not two, is the trick.** Today `windows: Map<WindowId, WindowRecord>` and
+`stackOrder: WindowId[]` each independently encode membership, so they can disagree — which is
+exactly why `stackOrderInvariantHolds`, `isStackMember`, `reconcileStackMembership` and
+`stackRemove` exist. Collapsing them into one ordered array makes that entire class of bug
+**unrepresentable rather than untested**, and deletes more code than any other item here.
+
+`key` is the one field that can still dangle. Rather than guard it, make a dangling key
+*unobservable*: expose it only through an accessor that resolves the id against `order` and
+returns `null` on a miss. A stale key id then behaves as "nobody holds key", which is the honest
+answer anyway.
+
+#### `WindowRecord`: orthogonal properties, no pre-combined class
+
+```ts
+interface WindowRecord {
+  id: WindowId;
+  kind: WindowKind;
+
+  layer: number;          // index into a FIXED ordered layer array (see 0.1.6). Higher = above.
+  canBecomeKey: boolean;  // Electron `focusable`. §0: "a HUD never holds key" needs no special case.
+  acceptsInput: boolean;  // false = click-through (`setIgnoreMouseEvents`).
+
+  class: WindowClass;     // creation-time shorthand for logs and singleton lookups. Nothing branches on it.
+
+  // lifecycle + geometry carry over unchanged: visible, orderable, fsMode, bounds, maximized,
+  // preMaxBounds, visibleOnAllSpaces, pendingProjectedBounds, openSeq, parentId, overlayFor,
+  // keepLive, role, source, params, lastHttpUrl, hiddenByAppBlur, contentFocused.
+}
+```
+
+**The rule that keeps `class` honest.** A *lookup* by class is allowed (find the background
+window, sweep the HUDs); a *policy predicate* branching on class is not. Mechanical test: outside
+registration, `rec.class` may appear in an equality test whose result is an identity, never in one
+whose result is a decision. Every decision reads `layer`, `canBecomeKey`, `acceptsInput`, or a
+relation. Checkable by lint, like the existing zero-value-imports rule.
+
+**These three bits are the industry-standard encoding**, not an invention: AppKit exposes
+`isVisible` / `ignoresMouseEvents` / `canBecomeKeyWindow` independently; wlr-layer-shell has
+`keyboard_interactivity: none`; ICCCM has the No-Input model; dwm has one `neverfocus` bool
+derived from `WM_HINTS.input`.
+
+#### How much of the three axes exists today — measured
+
+- **`layer`** — real but degenerate: `'floating'` is the only non-default level ever passed;
+  `'normal'` is declared in the backend's type signature and never passed anywhere. The multi-band
+  ordering §0 asks for is **unimplemented**, not merely unmodelled.
+- **`canBecomeKey`** — `focusable: false` is threaded through registration and feeds
+  `classifyWindowRegistration`, but **no production window is constructed with it**; only test
+  fixtures. The chrome overlay is `focusable: true` by invariant (a non-focusable overlay cannot
+  take key, which breaks typing a URL in the navbar).
+- **`acceptsInput`** — real and live, but confined to one window: `hybrid-overlay.ts` calls
+  `setIgnoreMouseEvents(true, { forward: true })` and toggles it as the pointer enters and leaves
+  the chrome. Also exposed to tiles via `tile-ipc.ts`.
+
+### 0.1.5 Queries that replace `front`
+
+| Question | Query |
+|---|---|
+| Who is taking keystrokes right now? | `state.key` — the stored fact. What Escape needs, and what `front` got wrong. |
+| What should I restore / fall back to? | `topmost(state, restorable)` — scan `order` from the top. |
+| May this window be raised? | `raiseEligible(state, id)` — a named guard in `decide`. |
+| Which page-host does the chrome overlay track? | `hostOf(overlay)` — the `overlayFor` relation. Never was a front question. |
+
+Three current readers ask something that is none of those: `hybrid-overlay.ts
+frontPageHostOsId()` (an attachment query — use `overlayFor`), `ipc.ts openNewPageWindow()`
+(space-mode inheritance — `topmost(state, isPageHost)`), and `tile-ipc.ts` dialog parenting
+(`state.key ?? topmost(state, isPageHost)`).
+
+`WindowRecord.openSeq` **stays** — a genuinely different fact (open order, not use order) that
+`selectTransientAutoclose` needs. Whether `focusSeq` can also go is the open question in 0.1.9.
+
+#### Key vs. main: `front` was trying to be two things
+
+AppKit stores **two** focus facts, for exactly our reason: the **key window** receives keyboard
+input, while the **main window** is "the standard window where the user is currently working" —
+the semantic target of menus and commands. When key status shifts from a standard window to a
+*panel*, **main status stays with the standard window**.
+
+That is the command-palette case verbatim. The palette holds key; the page-host is still what
+`tag <name>` must act on. `front` was trying to be *main* while being written from focus events —
+which is why it drifts, and why `isEligibleFront` had to exclude satellites: it was hand-rolling
+"panels don't become main."
+
+**This needs no second stored fact.** `key` is stored (rule 2); *main* is the query
+`topmost(state, isContentWindow)`. Naming the distinction is the point — bucket A of the test debt
+below is asking for `key`, bucket B is asking for main, and today both read one field.
+
+#### `key` is reported, never repaired — a real behavior change
+
+`enforceFrontInvariant` currently rewrites `front` to a successor at the end of every `reduce()`.
+That self-repair is what let `front` drift from the window actually holding key, which is the
+Escape bug. In the new shape there is nothing to repair: between "the key window closed" and "the
+OS reports the next one", `key` is `null`. Callers relying on `front` being effectively never-null
+switch to `topmost(state, …)`, which is total.
+
+Every surveyed WM does it this way — restore-after-close is a **scan, never a stored successor**.
+dwm walks its MRU list for the first visible client; i3 descends `focus_head`; sway filters
+`focus_stack` by ancestry. A stored successor pointer is redundant and goes stale (sway #5773 is
+exactly that bug).
+
+### 0.1.6 Layers and realizing the order against Electron
+
+**Layers are a fixed ordered set established by construction, not per-window integers sorted at
+realize time.** sway hardcodes 13 `wlr_scene_tree*` struct fields in z-order and never recomputes;
+its ordering ops are *sibling-local*, and changing layer is a **reparent**, not a restack. So
+`layer` is an index into a fixed ordered array we control — not a raw AppKit level. Use 3–4
+layers; treat a layer change as rare and expensive.
+
+The backend has two ordering primitives: `win.moveTop()`, which reorders within the window's own
+level and does not activate, and `win.setAlwaysOnTop(flag, level)`, which moves between levels.
+**There is no "place this window below that one."** So a total order is realized by replaying
+`moveTop()` over `order`, bottom → top, within each layer — a sort by re-insertion. `session.ts
+reassertStackingOrder` was already doing this by hand.
+
+This is exactly what dwm does (`restack()` chains each window `Below` the previous one), and **no
+surveyed WM computes a minimal diff** — dwm re-emits the entire stack on every focus change and no
+one has complained about the cost. Consequences:
+
+- The executor is a **re-assert loop, not an insert** — O(n) in visible windows, inherently
+  idempotent. Mark dirty and re-emit once per tick, not once per mutation.
+- **Never read z-order back from Electron.** The OS stack is a *write-only projection*; the OS
+  reorders behind you on user clicks and `app.activate`. This is EWMH's model —
+  `_NET_CLIENT_LIST_STACKING` is published by the WM, never consulted by it.
+- **A reconciliation path is required, not just a write path.** dwm's `focusin()` exists solely
+  because "there are some broken focus acquiring clients"; when X reports a focus dwm didn't
+  order, dwm re-asserts its own model. Full re-emission is idempotent, so the next re-assert
+  corrects any external perturbation for free.
+
+**Electron hazards worth recording:** `'floating'` and `'torn-off-menu'` are the *same*
+`NSWindowLevel` (3); toggling `setAlwaysOnTop(false)` → `(true)` on one window can knock *other*
+windows out of always-on-top (electron#31536); `setAlwaysOnTop(false)` is "not respected until
+window clicked" (#45024); `moveTop()` has crashed (#14392). Electron also cannot express AppKit's
+`addChildWindow(_:ordered:)` — a *persistent* "keep B just above A" constraint. For dialogs and
+popovers, do what EWMH does with `WM_TRANSIENT_FOR`: store the parent edge and **topologically
+sort by it when deriving the order**, rather than storing a z.
+
+### 0.1.7 Invariants: deleted, or made unstateable
+
+| Old | New |
+|---|---|
+| `frontInvariantHolds` | **deleted.** `key` has no eligibility rule; the OS decides. |
+| `stackOrderInvariantHolds` | **unstateable.** One structure cannot disagree with itself. |
+| `isStackMember` / `reconcileStackMembership` / `stackRemove` | **deleted.** Nothing reconciles membership because nothing can leave. |
+| `isEligibleFront` | **deleted.** §0 names it as the exclusion that must go. |
+| `deriveStackingLevel` / `StackingLevel` / `PINNED_CLASSES` | **deleted.** `layer` is declared at creation, not derived from a class name. |
+| `isSatelliteRegistration` / `SATELLITE_CLASSES` / `WindowRecord.satellite` | **deleted.** §0: "`satellite` was an invention". Its two real jobs split: "cannot hold key" → `canBecomeKey: false`; "is chrome, not content" → the `overlayFor` relation. |
+| `enforceFrontInvariant` | **deleted.** Self-repair is the defect, not the safety net. |
+| `windows.ts APP_HIDE_EXCLUDED_CLASSES` | narrower than feared — its **only** reader is `getVisibleWindowCount()`, feeding `maybeHideApp`. Not a z-order concept at all: it asks "does this window count as a reason to keep the app on screen". Becomes one named predicate at that one call site. |
+
+### 0.1.8 Hardening the kernel
+
+In priority order. Everything here is cheap *because* of 0.1.1 — a total, guard-free `evolve` is
+an ideal test target.
+
+1. **Property-based model testing** (`fast-check` `modelRun`): generate random command/event
+   sequences, assert the invariant list after **every** step; failures shrink to a minimal
+   reproducer. Invariants: no duplicate ids in `order`; `key` resolves or is `null`; `layer` is
+   non-decreasing after a realize pass; every emitted effect names a live window. **Highest return
+   on this list — do it first.**
+2. **Replay determinism.** `fold(evolve, init, events)` is a pure function of the event log: same
+   log ⇒ identical state *and* identical effect list.
+3. **Idempotence of settling events.** `WINDOW_CLOSED` twice = once, and the second must not
+   throw. Catches real duplicate-IPC bugs — `ipc.ts`'s real-tile-launch path already registers
+   each window twice.
+4. **Curated commutativity.** Events touching disjoint windows commute. Assert over a *curated*
+   independent set, not all pairs — many pairs are order-dependent by design, and an allowlist of
+   exceptions is documentation with extra steps.
+5. **Exhaustive `switch` with a `never` default** in `evolve` — compiler-enforced total transition
+   coverage.
+6. **Single-writer enforcement, mechanically.** Deep-`readonly` exported state; one `dispatch`
+   chokepoint; a lint rule barring imports of kernel internals from outside the kernel;
+   `Object.freeze` on returned state in dev builds. The enforceable version of the existing
+   zero-value-imports discipline.
+7. **`replay(log)` entry point** plus dumping the log on crash, so a live bug report becomes a
+   deterministic test case.
+
+**Deliberately skipped as over-engineering here:** a maintained TLA+ or Alloy specification (a
+single-process pure reducer has none of the interleaving formal methods exist to find, and the
+structural invariants become unstateable under 0.1.4 anyway); deterministic-simulation apparatus —
+simulator, fault injection, seed farm; an XState runtime dependency (take the taxonomy, not the
+interpreter); branded types beyond ids and the raw/parsed intent boundary.
+
+**Guard and state discipline**, from the statechart literature: *different behavior = different
+state; same behavior = same state* — promote a boolean to a state only when it changes the
+machine's response to an event. Per-window booleans are **never** machine states (that is N-fold
+explosion); they are record fields. **Name every guard** — an anonymous conjunction of five
+context fields re-hides the machine you just made explicit; if you end up with more named guards
+than states, the guards *are* the real state space and the model is too flat.
+
+### 0.1.9 The test debt, classified
+
+Every test mentioning `front` was read and sorted by what it actually claims. **118 distinct
+tests** (108 in `window-state.test.ts`, 10 in `session-projection.test.ts`) — larger than the ~69
+previously estimated:
+
+| Bucket | Count | Disposition |
+|---|---|---|
+| **A — means "who holds key"** | 49 | Mechanical: `front` → `key`. |
+| **B — means "topmost matching"** | 17 | Rewrite as `topmost(state, P)`. |
+| **C — means a relation** | 6 | Parent hand-back on close, fullscreen-owner pin. |
+| **D — pins the exclusion behavior** | 24 | **Must be overturned.** |
+| **E — incidental** | 22 | Mostly the `front→back` z-order homonym. No claim. |
+
+- **Bucket A is the largest, and most of its tests assert that `front` is untouched by non-focus
+  events and mirrors OS focus reports.** The suite already believes key is a *reported* fact — the
+  rewrite is closer to what the tests want than to what the code does.
+- **Bucket D is the cost of the change** — 24 tests asserting the exclusion §0 names as the
+  defect. Overturning them *is* the work, not collateral damage.
+
+### 0.1.10 Open questions — need the operator's call
+
+1. **Can one order carry both z-order and use-order? The app currently says no.** Every surveyed
+   WM keeps two lists — dwm `next` (creation) + `snext` (MRU); i3 `nodes_head` + `focus_head`;
+   sway scene graph + per-seat `focus_stack`. §0 says one order and derives the restore target
+   from it, which works only if raising and focusing always coincide. **They already don't here**:
+   `session-projection.test.ts` has a live test named *"a background open sits ABOVE the
+   last-focused window while ranking BELOW it by focus recency"* — a background open deliberately
+   placed high in z while staying low in MRU. Three ways out:
+   - Place a background open *below* the last-focused window, so one order is honest and `topmost`
+     answers both. Simplest; changes that behavior.
+   - Keep `focusSeq` on the record as a second per-window ordering fact. Truthful to the survey,
+     but a fifth stored fact §0 does not list.
+   - Declare use-order is always queried with a predicate (`topmost(state, isPageHost)`), which
+     papers over the divergence except between two windows of the same kind.
+2. **Does `order` include never-shown and offscreen windows?** Rule 1 says every window, always,
+   and this draft takes that literally — `background`, `bridge`, `offscreen`, `devtools` and test
+   fixtures all sit in the one order at their own layer. Taking it literally is the reading that
+   requires no exception.
+3. **Does `key` survive app deactivation?** When Peek resigns active, no Peek window holds key in
+   the OS sense. Drafted as: `key` goes `null` on resign and is re-reported on activate — honest,
+   but it means "who was last key" becomes a `topmost` query.
+
+---
+
 ## 1. The mandate
 
 > "Make it one single deterministic system that is a Window Manager. We are making a
