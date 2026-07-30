@@ -951,15 +951,121 @@ What this costs, stated plainly so it is not discovered later:
   separately marks one descriptor focused. Under one order those stop being independent, so the
   saved order must already put the focused window on top.
 
-**Still open:**
+**Still open.** Both questions below are parked awaiting a decision. The evidence bearing on each
+is assembled under it; neither is answered here, and neither is softened into a recommendation.
 
-1. **Does `order` include never-shown and offscreen windows?** Rule 1 says every window, always,
-   and the reading taken here is the literal one — `background`, `bridge`, `offscreen`, `devtools`
-   and test fixtures all sit in the one order at their own layer. Taking it literally is the
-   reading that requires no exception.
-2. **Does `key` survive app deactivation?** When Peek resigns active, no Peek window holds key in
-   the OS sense. One answer: `key` goes `null` on resign and is re-reported on activate — honest,
-   but it means "who was last key" becomes a `topmost` query.
+#### Open question 1: does `order` include never-shown and offscreen windows?
+
+Rule 1 says every window, always, and the reading taken here is the literal one — `background`,
+`bridge`, `offscreen`, `devtools` and test fixtures all sit in the one order at their own layer.
+Taking it literally is the reading that requires no exception.
+
+**They already register, through the one shared path.** `background` (`core-glue.ts`), `bridge`
+(`chrome-extensions.ts`), `offscreen` (`chrome-api-polyfills/offscreen.js`), `test-fixture`
+(`test-fixture-glue.ts`) and `devtools` (`main.ts`) each call `window-state-singleton.ts`
+`registerWindowWithMachine`, which reaches the reducer through `window-os-adapter.ts`
+`WindowOsAdapter.registerWindow`. There is no second registration path and no bypass, so excluding
+these windows means *adding* a filter that does not exist today rather than declining to add one.
+The kernel itself has no production producer yet — `window-kernel.ts` is imported only by
+`window-escape.ts` and its own test files — so this is a fact about the registration path the
+kernel's producers will be ported from, not about the kernel as wired.
+
+**All five register `role: 'utility'`**, which is exactly what lets `isContentWindow` exclude them
+with no `class` test. That predicate is `visible && canBecomeKey && roleIn(CONTENT_ROLES, role)`,
+and `CONTENT_ROLES` is the allow-list `content` / `child-content` / `workspace`. Membership in
+`order` therefore costs these windows no eligibility anywhere a content predicate is used.
+
+**What including them costs — three things, all bounded.** They occupy positions in `order`; every
+`topmost` scan walks past them; and `react` considers them for `SetStacking`. The third is already
+settled: `react` emits `SetStacking` only for records where `w.visible && w.orderable`, so a
+never-shown infrastructure window emits nothing. That exclusion is incidental rather than
+deliberate — it is by visibility, and it would stop applying to any of these windows that was ever
+shown.
+
+**What excluding them costs.** A second membership rule beside the one order: a set of windows the
+machine knows about that `order` does not contain. That is the divergence RULE 1 exists to
+delete — membership and order become two structures again, and "every window, always" stops being
+a checkable property.
+
+**The layer constraint bears on it.** §0.1.5 and §0.1.6 record that `order` is not layer-sorted and
+that a `topmost` predicate is safe only when the set it admits lies within one layer band.
+Infrastructure windows do not widen any band a predicate already spans: `role: 'utility'` keeps
+them out of every content predicate, and never being visible keeps them out of every `visible`
+clause. They enlarge the array that is scanned without enlarging any set that is admitted.
+
+**What each answer commits to.** Including them keeps one membership rule and one structure, and
+leaves every query carrying its own exclusions — which they already do. Excluding them introduces
+a registration-time membership test, which must then name the excluded set by some property. The
+only property these five share today is a `class` string, and §0.1.4 forbids branching on `class`.
+The same set already has no home in §0.1.7's mapping of `isSatelliteRegistration`'s arms:
+`background` / `bridge` / `offscreen` are never-visible infrastructure while `devtools` and
+`test-fixture` are visible and focusable, so no single axis describes what an exclusion would have
+to name.
+
+#### Open question 2: does `key` survive app deactivation?
+
+When Peek resigns active, no Peek window holds key in the OS sense. The drafted answer is that
+`key` goes `null` on resign and is re-reported on activate — honest, but it means "who was last
+key" becomes a `topmost` query.
+
+**No production reader wants `key` for the survives-a-switch question.** §0.1.5's wiring map
+records that `keyWindow(state)` is the correct replacement for **none** of the existing production
+readers of `front`; every one of them wants the topmost content window. The reason is precisely the
+matter at issue: old `front` was sticky across an app switch, while `key` is nulled by
+`OsFocusLost`. `isContentWindow`'s own doc states the same thing — `topmost(state, isContentWindow)`
+is AppKit's *main window*, and main is the thing that survives.
+
+**Where a null `key` at save time would be silently wrong.** `session-projection.ts`
+`serializeSession` and `serializeSpaceWorkspaces` record `focused` per descriptor.
+`saveSpaceWorkspaces` runs inside `saveSessionSnapshot`, so both projections share its save
+reasons: `before-quit`, `window-lifecycle` (a debounced window close or open), `autosave`
+(periodic, and therefore able to land while the app is inactive) and `manual`. If `key` is null at
+any of those moments, a reader that mapped `focused` to `key` writes `focused: false` for every
+window and restore loses its head-start window. That constrains which query the session reader
+uses, not what `key` holds: the mapping §0.1.5 already assigns it is `topmost(state, <content
+predicate>)`, which is total and unaffected by deactivation.
+
+**The old reducer deliberately refuses to null on blur.** `window-state.ts` handles
+`OS_FOCUS_SETTLED_NULL` as an explicit no-op, whose comment states that the target must survive an
+app switch and that `appActive` — not `front` — carries "is Peek front". `window-state.test.ts`
+pins this twice: *(b) S2-null focus lag: OS_FOCUS_SETTLED_NULL keeps front (the target survives an
+app switch)*, and *DELIBERATE DIVERGENCE: focus leaving the whole group keeps front (old
+decideAfterBlur nulled it)* — the second recording that the reducer already reversed an earlier
+design which did null.
+
+**The counter-consideration.** Under the key/main split, both pins constrain *main*, not *key*.
+Surviving an app switch is main's job, answered by `topmost(state, isContentWindow)`, and nulling
+`key` honestly is what makes RULE 2 — report, never repair — true. A `key` kept populated while no
+Peek window holds key in the OS sense is a repaired value under another name, and repairing `front`
+is the defect §0.1.5 identifies as the source of the Escape bug.
+
+**What the kernel does today.** `key` is written only by the `OsFocusGained` and `OsFocusLost` arms
+of `evolve`. `AppResigned` sets `appActive: false` and arms `pendingAppResignSweep`; `AppActivated`
+sets `appActive: true`, disarms it, and re-shows the records carrying `hiddenByAppBlur`;
+`AppResignSettled` hides the sweep-eligible records when still armed. **None of the three touches
+`key` or `order`** — `State`'s doc says so and each arm's return confirms it. So the answer is
+decided entirely by whether a producer emits `OsFocusLost` on deactivation; the app-activation arms
+themselves neither null nor preserve `key`. No such producer exists yet.
+
+**The provenance machinery does not settle it either.** `isStaleSelfEcho` compares an incoming
+`OsFocusGained`'s `cause.opSeq` against the target record's `lastOpSeq`, and the macOS resign-dance
+guard is `pendingAppResignSweep` (armed by `AppResigned`, disarmed by `AppActivated`, acted on only
+by `AppResignSettled`). Both exist to keep the dance — macOS's spurious resign/activate cycle —
+from being read as a real app switch. Neither writes `key`, so neither stops a dance from nulling
+and re-reporting `key` twice. Nulling on deactivation therefore has to be driven from the settle,
+not from the resign edge, for the same reason the sweep is.
+
+**What each answer commits to.** Nulling commits every "which window was last worked in" reader to
+`topmost(state, isContentWindow)` — the mapping §0.1.5 already assigns all of them — and commits
+the null to the settle point rather than the resign edge. Preserving commits `key` to naming a
+window that does not hold OS key, which needs either a second stored field or a stated exception to
+RULE 2, and re-opens the drift `enforceFrontInvariant` produced.
+
+**Where the evidence points.** Every reader that a null `key` would hurt is already mapped to a
+content query rather than to `key`, and the two reducer tests that read as counter-evidence pin the
+behavior of `front`, whose role is now split — so they constrain main. That leaves no identified
+reader that needs `key` to survive deactivation. The decision stays open; what the evidence removes
+is the claim that nulling breaks a caller.
 
 ---
 
