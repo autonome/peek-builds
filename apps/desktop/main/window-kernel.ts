@@ -225,6 +225,64 @@ export interface WindowRecord {
    * re-shown by that re-activation.
    */
   hiddenByAppBlur?: boolean;
+
+  /**
+   * ESCAPE OVERRIDE, declared at registration. `'ignore'` means "Escape is
+   * this window's own business — hand it to the page and decide nothing".
+   * ABSENT means the window takes part in the ordinary Escape path; that is
+   * the meaningful default, not a hole, and it is what every window without
+   * an explicit override gets.
+   *
+   * ONE value, deliberately, where `window-state.ts EscapeMode` names four
+   * (`'auto' | 'close' | 'navigate' | 'ignore'`). Only `'ignore'` is ever a
+   * decision input: the old reducer branches on it once (`decideEscape` step
+   * 3 -> pass-through) and never reads the other three. `'close'` and
+   * `'auto'` reach no branch at all; `'navigate'` is read exactly once and
+   * NOT as an escape decision — `izui-roles.ts inferIzuiRole` maps it to
+   * `role: 'workspace'` at registration, so by the time a record exists the
+   * fact has already become a role. The three survive as prose on
+   * `windows.ts addEscHandler`, which still documents the app-facing
+   * `api.window.open({ escapeMode })` vocabulary; modelling them here would
+   * be modelling dead inputs.
+   *
+   * Live producers of `'ignore'`: `renderer/hud/background.js` (the HUD) and
+   * `chrome-extensions.ts` (extension popup/options pages, whose own DOM
+   * handles Escape).
+   *
+   * The kernel stores this and nothing more. WHAT Escape does is interpreted
+   * outside the machine (§0: "input interpretation lives OUTSIDE the window
+   * manager") — the kernel never learns that a key called Escape exists.
+   */
+  escapeMode?: 'ignore';
+
+  /**
+   * Whether this window's CONTENT web contents currently holds macOS
+   * first-responder status — the mirror of the native `rendererWC
+   * 'focus'`/`'blur'` pair, written solely by
+   * `ContentFirstResponderChanged`, never a live `wc.isFocused()` question at
+   * a decision site. Ported from `window-state.ts
+   * WindowRecord.contentFocused`.
+   *
+   * THREE-VALUED ON PURPOSE — `undefined` is NOT `false`, and collapsing the
+   * two is a bug, not a simplification. `undefined` means "nothing has been
+   * reported yet"; `false` means "an observed loss of first responder". The
+   * consumer this exists for (`window-state.ts deriveEscGrabRegistered`, and
+   * whatever replaces it outside the kernel) tests `=== false` explicitly,
+   * because the two absent cases must NOT behave like an observed loss:
+   *
+   *   - a `kind: 'browser'` window never gets a report at all (its root web
+   *     contents IS first responder whenever the window is key, so there is
+   *     nothing independent to track). Reading absent as unfocused would arm
+   *     the OS-level Escape grab permanently for every browser window —
+   *     where Escape already works through `before-input-event`.
+   *   - a page-host in the micro-gap between a just-driven content focus and
+   *     the async native `'focus'` event it produces. Reading absent as
+   *     unfocused would flap the grab on after every fresh show/raise.
+   *
+   * Also why a plain `boolean` defaulting to `false` at registration would be
+   * wrong: registration is exactly the moment nothing has been reported.
+   */
+  contentFocused?: boolean;
 }
 
 /**
@@ -299,6 +357,8 @@ export type Event =
       role?: string;
       parentId?: WindowId;
       keepLive?: boolean;
+      /** See `WindowRecord.escapeMode` — one live value, absent is meaningful. */
+      escapeMode?: 'ignore';
     }
   | { type: 'WindowShown'; id: WindowId }
   | { type: 'WindowHidden'; id: WindowId }
@@ -339,6 +399,17 @@ export type Event =
   | { type: 'AppResignSettled' }
   /** The first-composited-frame report — flips `orderable` to `true`. */
   | { type: 'WindowContentOrderable'; id: WindowId }
+  /**
+   * The backend's mirror of the native `rendererWC 'focus'`/`'blur'` pair
+   * (ported from `window-state.ts CONTENT_FIRST_RESPONDER_CHANGED`) — the
+   * sole writer of `WindowRecord.contentFocused`, and the producer that makes
+   * that field's three-valued distinction meaningful: before the first such
+   * report the field is absent, and absent is not `false` (see the field's
+   * doc). A report naming an unregistered window is a no-op, like every other
+   * dangling-id event here. Drives no effect: it is a report ABOUT the OS, not
+   * a request OF it.
+   */
+  | { type: 'ContentFirstResponderChanged'; id: WindowId; held: boolean }
   /**
    * `decide`'s translation of a `SetFullscreen` command that starts a FRESH
    * transition (the target was settled — `normal`/`fullscreen`) into a fact
@@ -445,6 +516,8 @@ export type Command =
       role?: string;
       parentId?: WindowId;
       keepLive?: boolean;
+      /** See `WindowRecord.escapeMode` — one live value, absent is meaningful. */
+      escapeMode?: 'ignore';
       expectedVersion: number;
     }
   /**
@@ -673,6 +746,12 @@ export function evolve(state: State, ev: Event): State {
           // re-registration mid-sweep must not lose the mark AppActivated
           // needs to know which windows to re-show.
           ...(existing.hiddenByAppBlur !== undefined ? { hiddenByAppBlur: existing.hiddenByAppBlur } : {}),
+          // A lived fact (first-responder mirror), same reasoning — the
+          // window's content did not lose or gain first responder because a
+          // producer re-registered it, and dropping the field here would
+          // silently turn an observed `false` back into "nothing reported
+          // yet", which is a DIFFERENT answer (see the field's doc).
+          ...(existing.contentFocused !== undefined ? { contentFocused: existing.contentFocused } : {}),
           // An intrinsic, declared-at-registration property — a
           // re-registration that names a role overwrites the old one. Absent
           // from the event, the existing role is kept rather than erased
@@ -681,6 +760,18 @@ export function evolve(state: State, ev: Event): State {
           ...(ev.role !== undefined ? { role: ev.role } : existing.role !== undefined ? { role: existing.role } : {}),
           ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
           ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
+          // Intrinsic, same shape as `role` above: an event that names one
+          // overwrites, an event that omits one KEEPS the existing value
+          // rather than erasing it. The asymmetry is deliberate — absent on
+          // the event means "this producer did not report an override", not
+          // "clear the override" — and it matters because the two live
+          // producers of `'ignore'` (the HUD, extension pages) are exactly
+          // the kind of window a second registration path can re-announce.
+          ...(ev.escapeMode !== undefined
+            ? { escapeMode: ev.escapeMode }
+            : existing.escapeMode !== undefined
+              ? { escapeMode: existing.escapeMode }
+              : {}),
         };
         return {
           ...state,
@@ -711,6 +802,10 @@ export function evolve(state: State, ev: Event): State {
         ...(ev.role !== undefined ? { role: ev.role } : {}),
         ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
         ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
+        ...(ev.escapeMode !== undefined ? { escapeMode: ev.escapeMode } : {}),
+        // `contentFocused` is deliberately NOT seeded: registration is
+        // exactly the moment nothing has been reported, and absent is the
+        // honest answer for that (see the field's doc).
       };
       return {
         ...state,
@@ -848,6 +943,19 @@ export function evolve(state: State, ev: Event): State {
       return {
         ...state,
         order: state.order.map((w) => (w.id === ev.id ? { ...w, orderable: true } : w)),
+        version: state.version + 1,
+      };
+    }
+
+    case 'ContentFirstResponderChanged': {
+      // Mechanical mirror write, total and guard-free: an unregistered id is
+      // a harmless no-op, and `held` is stored as reported — the machine
+      // never infers first-responder status, it only records what the OS
+      // said. This is the ONLY writer of `contentFocused`, which is what
+      // keeps "absent = nothing reported yet" true by construction.
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, contentFocused: ev.held } : w)),
         version: state.version + 1,
       };
     }
@@ -1176,6 +1284,7 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
           ...(cmd.role !== undefined ? { role: cmd.role } : {}),
           ...(cmd.parentId !== undefined ? { parentId: cmd.parentId } : {}),
           ...(cmd.keepLive !== undefined ? { keepLive: cmd.keepLive } : {}),
+          ...(cmd.escapeMode !== undefined ? { escapeMode: cmd.escapeMode } : {}),
         },
       ],
     };
@@ -1334,6 +1443,138 @@ export function overlayForHost(state: State, hostId: WindowId): WindowRecord | n
   return null;
 }
 
+/**
+ * The host an overlay is currently attached to, or null when it is detached
+ * (or is not a registered window at all). Reads the OVERLAY record's own
+ * `overlayFor` field — the direction the relation is stored in.
+ *
+ * The OPPOSITE query from `overlayForHost` above, and not interchangeable
+ * with it. This one answers "what am I currently framing?", which is what
+ * every read-back caller in `hybrid-overlay.ts` asks: `ensureOverlay()`'s
+ * `did-finish-load` handoff, `wireShowNavbarFocus()`'s windowId gate,
+ * `wireExecuteScript()`, `initHybridOverlay()`'s load-error callback, and the
+ * test bridge. `overlayForHost` takes the host id those callers are trying to
+ * FIND, so it cannot serve them.
+ *
+ * Deliberately NOT an ordering query either. "The topmost page-host" is
+ * non-null in states where the overlay frames nothing — the base window was
+ * destroyed, or the overlay id is not minted yet — and answering a read-back
+ * with it paints chrome over a window that has none attached.
+ */
+export function hostForOverlay(state: State, overlayId: WindowId): WindowRecord | null {
+  const overlay = state.order.find((w) => w.id === overlayId);
+  if (overlay === undefined || overlay.overlayFor === undefined) return null;
+  return state.order.find((w) => w.id === overlay.overlayFor) ?? null;
+}
+
+/**
+ * The roles of a real, document-like window — the ones a user thinks of as
+ * "what I am working in". Everything else is a panel, chrome, or
+ * infrastructure. See `isContentWindow` for why the membership is what it is.
+ */
+export const CONTENT_ROLES: ReadonlySet<string> = new Set(['content', 'child-content', 'workspace']);
+
+/**
+ * THE content predicate — `topmost(state, isContentWindow)` is AppKit's *main
+ * window* (§0.1.5 "Key vs. main"): the standard window where the user is
+ * currently working, and so the semantic target of menus and commands. It is
+ * the replacement for the old `window-state.ts isEligibleFront` (`visible &&
+ * !satellite && live`), and it is the correct mapping for every production
+ * reader of the retired `front` field — `keyWindow(state)` is the mapping for
+ * NONE of them. Old `front` was satellite-excluding and sticky across app
+ * switches; kernel `key` is neither (`OsFocusLost` nulls it, and the shared
+ * chrome overlay can hold it), so a naive `key` mapping silently changes
+ * behaviour with no error path.
+ *
+ * `WindowRecord` carries no `satellite` field — that flag was an invention
+ * (§0), so the exclusion is reconstructed from the genuine OS-level and
+ * declared facts:
+ *
+ *   - `visible`        the surviving half of `isEligibleFront`. Nothing off
+ *                      screen is what the user is working in.
+ *   - `canBecomeKey`   the `focusable: false` half. The OS genuinely will
+ *                      never give such a window key, so it can never be what
+ *                      the user is working in. This clause alone excludes the
+ *                      HUD (`renderer/hud/background.js`, `alwaysOnTop:true,
+ *                      focusable:false`) — which is load-bearing, because the
+ *                      HUD's INFERRED role is `'workspace'`, an admitted one.
+ *                      It also excludes the space-border indicator
+ *                      (`features/spaces/background.js`) and the privileged
+ *                      test fixture (`test-fixture-glue.ts`).
+ *   - a role in
+ *     `CONTENT_ROLES`  an allow-list, not a deny-list: an unknown role, or no
+ *                      role at all, is NOT content. A deny-list would admit
+ *                      every future surface by default, which is the failure
+ *                      mode `satellite` had.
+ *
+ * WHAT THE ROLE ALLOW-LIST EXCLUDES, and why:
+ *
+ *   - `'palette'` / `'quick-view'` — panel-like transients. AppKit's rule
+ *     exactly: when key shifts from a standard window to a PANEL, main stays
+ *     with the standard window. The command palette holds key while the page
+ *     host is still what a command must act on.
+ *
+ *     `'quick-view'` (peeks and slides) is the deliberate change here. The
+ *     old model kept quick-views front-eligible on purpose — there is an
+ *     explicit `isSatelliteRegistration` test saying so — but only because
+ *     `front` had to double as the ESCAPE target as well as the command
+ *     target. That coupling is exactly what the key/main split dissolves:
+ *     Escape now targets `key` (the window actually taking keystrokes), so
+ *     nothing is lost by treating a peek as the panel it is. A focused slide
+ *     still receives its own Escape, because it holds key.
+ *
+ *   - `'overlay'` — the shared chrome overlay and the space-border indicator.
+ *     Chrome attached to a window, never the window itself. It is
+ *     deliberately focusable (typing a URL in the navbar takes key), so the
+ *     role clause, not `canBecomeKey`, is what excludes it.
+ *
+ *   - `'utility'` — chain popups, AND every infrastructure window: each of
+ *     `background` (`core-glue.ts`), `bridge` (`chrome-extensions.ts`),
+ *     `offscreen` (`chrome-api-polyfills/offscreen.js`), `test-fixture` and
+ *     `devtools` (`main.ts`) registers with `role: 'utility'`. That is why
+ *     this predicate needs no `class` test to exclude them — which also keeps
+ *     it inside §0.1.4's rule that `class` may be read for an identity, never
+ *     for a decision.
+ *
+ * WHAT IT ADMITS: `'content'` and `'child-content'` (ordinary page hosts, and
+ * chrome-extension popup/options pages, which register `role: 'content'` and
+ * were front-eligible before), and `'workspace'` (the settings window, and
+ * any non-web-page surface `inferIzuiRole` defaults to that role).
+ *
+ * NO `layer` CLAUSE, deliberately. Every window that floats above the base
+ * layer in production is already excluded by one of the three clauses above —
+ * the HUD and space border by `canBecomeKey`, the cmd panel and peeks/slides
+ * by role — so a `layer <= BASE_LAYER` clause would discriminate nothing
+ * today, and tomorrow it would silently demote a content window someone pins
+ * on top. `isAppResignSweepEligible` DOES test `layer` because there the
+ * clause has live windows on both sides of it; here it does not.
+ *
+ * INTERACTION WITH `hiddenByAppBlur` AND THE `AppActivated` RE-SHOW — checked,
+ * and it is a non-interaction by construction. The app-resign sweep hides only
+ * `isAppResignSweepEligible` windows, which requires `!canBecomeKey`; this
+ * predicate requires `canBecomeKey`. The two sets are therefore DISJOINT, so
+ * no content window is ever hidden by an app switch and no `visible` answer
+ * here flickers as the app resigns and re-activates. (A property invariant
+ * asserts the disjointness rather than leaving it to this comment.) The
+ * separate `selectAppResignTransients` dismissal is also disjoint: it takes
+ * only transient roles, none of which are in `CONTENT_ROLES`.
+ *
+ * ONE PREDICATE, NOT THE ONLY ONE. Two upcoming callers want a NARROWER set
+ * and must not be served by widening this one: `tile-ipc.ts`
+ * `tileResolveWebWindow` and `tile:window:devtools` want http/https content
+ * only. That needs a URL fact this kernel does not carry yet (the old
+ * `WindowRecord.lastHttpUrl`); until it does, those callers post-filter. The
+ * Cmd+W target (`windows.ts resolveFocusedWindowIdForClose`) is a
+ * COMPOSITION, not a fourth predicate: the key window when it is itself
+ * content, else `topmost(state, isContentWindow)` — which is precisely the
+ * overlay-focused redirect that predicate already hand-rolls.
+ */
+export function isContentWindow(record: WindowRecord): boolean {
+  if (!record.visible) return false;
+  if (!record.canBecomeKey) return false;
+  return roleIn(CONTENT_ROLES, record.role);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Transient autoclose — the role sets and the two selectors, ported from
 // `window-state.ts` (`TRANSIENT_ROLES`, `AUTOCLOSE_EXEMPT_ROLES`,
@@ -1352,7 +1593,7 @@ export function overlayForHost(state: State, hostId: WindowId): WindowRecord | n
  * the workspace. Ported VERBATIM from `izui-roles.ts TRANSIENT_ROLES` (via
  * `window-state.ts`); all three copies must agree.
  */
-const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay']);
+export const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay']);
 
 /**
  * Transient roles the autoclose EXEMPTS as a VICTIM. `overlay` is
@@ -1360,7 +1601,7 @@ const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', '
  * relation (`WindowRecord.overlayFor`), never through a close — so an
  * autoclose must never touch it.
  */
-const AUTOCLOSE_EXEMPT_ROLES: ReadonlySet<string> = new Set(['overlay']);
+export const AUTOCLOSE_EXEMPT_ROLES: ReadonlySet<string> = new Set(['overlay']);
 
 /**
  * Roles that, when THEY are the one gaining focus, sweep NOTHING — the
@@ -1374,13 +1615,20 @@ const AUTOCLOSE_EXEMPT_ROLES: ReadonlySet<string> = new Set(['overlay']);
  *                landing on it is not "the user switched to a different
  *                window".
  */
-const AUTOCLOSE_FOCUSER_EXEMPT_ROLES: ReadonlySet<string> = new Set(['utility', 'overlay']);
+export const AUTOCLOSE_FOCUSER_EXEMPT_ROLES: ReadonlySet<string> = new Set(['utility', 'overlay']);
 
 /** Default provenance for a focus report that carries none — see `FocusCause`. */
 const WORLD_CAUSE: FocusCause = { kind: 'world' };
 
-/** `role` is optional on a record; an absent role is in no set. */
-function roleIn(set: ReadonlySet<string>, role: string | undefined): boolean {
+/**
+ * `role` is optional on a record; an absent role is in no set. Exported
+ * alongside the role sets themselves so an out-of-file caller consuming them
+ * gets that convention rather than re-deriving it — `set.has(rec.role)` does
+ * not type-check against an optional role, and the tempting workarounds
+ * (`rec.role ?? ''`, a non-null assertion) each quietly invent a membership
+ * answer for a window that declared nothing.
+ */
+export function roleIn(set: ReadonlySet<string>, role: string | undefined): boolean {
   return role !== undefined && set.has(role);
 }
 

@@ -23,6 +23,8 @@ import {
   topmost,
   keyWindow,
   overlayForHost,
+  hostForOverlay,
+  isContentWindow,
   isStaleSelfEcho,
   selectTransientAutoclose,
   selectAppResignTransients,
@@ -1416,5 +1418,372 @@ describe('window-kernel: transient autoclose', () => {
   it('selectAppResignTransients has no focuser to exclude and reads no cause', () => {
     const state = fold([reg(1, 'palette'), reg(2, 'quick-view'), show(1), show(2), { type: 'OsFocusGained', id: wid(1) }], initialState());
     assert.deepStrictEqual(selectAppResignTransients(state), [wid(2), wid(1)], 'both go, in current order position');
+  });
+});
+
+// ── escapeMode: one live value, absent is meaningful ────────────────────────
+
+describe('window-kernel: escapeMode', () => {
+  const regWith = (n: number, escapeMode?: 'ignore'): Event => ({
+    type: 'WindowRegistered',
+    id: wid(n),
+    kind: 'browser',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+    ...(escapeMode !== undefined ? { escapeMode } : {}),
+  });
+
+  it('a window registered without one carries no escapeMode — absent, not a default value', () => {
+    const state = fold([regWith(1)]);
+    const rec = state.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(rec.escapeMode, undefined);
+    assert.strictEqual('escapeMode' in rec, false, 'absent means the key is not there at all');
+  });
+
+  it("the HUD's declared override is stored verbatim", () => {
+    // `renderer/hud/background.js` opens with `escapeMode: 'ignore'`.
+    const state = fold([regWith(1, 'ignore')]);
+    assert.strictEqual(state.order.find((w) => w.id === wid(1))?.escapeMode, 'ignore');
+  });
+
+  it('a re-registration that omits escapeMode KEEPS the declared override', () => {
+    // The failure this guards: a second registration path that never learned
+    // about the override silently strips it, and Escape starts closing the
+    // HUD instead of reaching its page.
+    const state = fold([regWith(1, 'ignore'), regWith(1)]);
+    assert.strictEqual(state.order.find((w) => w.id === wid(1))?.escapeMode, 'ignore');
+  });
+
+  it('a re-registration that names one overwrites — it is an intrinsic, like role', () => {
+    const state = fold([regWith(1), regWith(1, 'ignore')]);
+    assert.strictEqual(state.order.find((w) => w.id === wid(1))?.escapeMode, 'ignore');
+  });
+
+  it('the RegisterWindow command carries it through decide unchanged', () => {
+    const cmd: Command = {
+      type: 'RegisterWindow',
+      id: wid(1),
+      kind: 'browser',
+      layer: BASE_LAYER,
+      canBecomeKey: true,
+      acceptsInput: true,
+      class: 'extension-ui',
+      role: 'content',
+      escapeMode: 'ignore',
+      expectedVersion: 0,
+    };
+    const decision = decide(initialState(), cmd);
+    assert.ok(!('rejected' in decision));
+    assert.strictEqual((decision.events[0] as { escapeMode?: string }).escapeMode, 'ignore');
+  });
+});
+
+// ── contentFocused: three-valued, and it must stay that way ─────────────────
+
+describe('window-kernel: contentFocused is three-valued', () => {
+  const reg = (n: number, kind: 'page-host' | 'browser'): Event => ({
+    type: 'WindowRegistered',
+    id: wid(n),
+    kind,
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+
+  const pageHost = wid(1);
+  const browser = wid(2);
+
+  it('registration reports nothing — absent, which is NOT false', () => {
+    const state = fold([reg(1, 'page-host')]);
+    const rec = state.order.find((w) => w.id === pageHost)!;
+    assert.strictEqual(rec.contentFocused, undefined);
+    assert.strictEqual('contentFocused' in rec, false);
+    // The distinction that matters to every consumer: `=== false` is the test,
+    // and it must not fire on a window that has simply never reported.
+    assert.strictEqual(rec.contentFocused === false, false, 'absent must not read as an observed loss');
+  });
+
+  it('a browser window never reports, so it stays absent forever', () => {
+    // Its root web contents IS first responder whenever the window is key —
+    // there is nothing independent to track, so no producer ever fires.
+    const state = fold([reg(2, 'browser'), { type: 'WindowShown', id: browser }, { type: 'OsFocusGained', id: browser }]);
+    assert.strictEqual(state.order.find((w) => w.id === browser)?.contentFocused, undefined);
+  });
+
+  it('ContentFirstResponderChanged writes exactly what was reported, both ways', () => {
+    const held = fold([reg(1, 'page-host'), { type: 'ContentFirstResponderChanged', id: pageHost, held: true }]);
+    assert.strictEqual(held.order.find((w) => w.id === pageHost)?.contentFocused, true);
+
+    const lost = evolve(held, { type: 'ContentFirstResponderChanged', id: pageHost, held: false });
+    assert.strictEqual(lost.order.find((w) => w.id === pageHost)?.contentFocused, false);
+    assert.strictEqual(lost.order.find((w) => w.id === pageHost)?.contentFocused === false, true);
+  });
+
+  it('an observed false survives a re-registration — it must not decay back to absent', () => {
+    // The two are DIFFERENT answers: `false` arms an Escape safety net,
+    // absent deliberately does not. Dropping the field on the merge is the
+    // exact bug class both prior property-test failures were.
+    const state = fold([
+      reg(1, 'page-host'),
+      { type: 'ContentFirstResponderChanged', id: pageHost, held: false },
+      reg(1, 'page-host'),
+    ]);
+    assert.strictEqual(state.order.find((w) => w.id === pageHost)?.contentFocused, false);
+  });
+
+  it('a true survives a re-registration too', () => {
+    const state = fold([
+      reg(1, 'page-host'),
+      { type: 'ContentFirstResponderChanged', id: pageHost, held: true },
+      reg(1, 'page-host'),
+    ]);
+    assert.strictEqual(state.order.find((w) => w.id === pageHost)?.contentFocused, true);
+  });
+
+  it('a report for an unregistered window is a no-op, and drives no effect', () => {
+    const before = fold([reg(1, 'page-host')]);
+    const ev: Event = { type: 'ContentFirstResponderChanged', id: wid(99), held: true };
+    const after = evolve(before, ev);
+    assert.deepStrictEqual(after.order, before.order);
+    assert.strictEqual(after.version, before.version + 1);
+    assert.deepStrictEqual(react(before, ev, after), [], 'a report ABOUT the OS drives nothing AT it');
+  });
+
+  it('the report never touches key, order, or visibility', () => {
+    const base = fold([
+      reg(1, 'page-host'),
+      reg(2, 'browser'),
+      { type: 'WindowShown', id: pageHost },
+      { type: 'OsFocusGained', id: pageHost },
+    ]);
+    const after = evolve(base, { type: 'ContentFirstResponderChanged', id: pageHost, held: false });
+    assert.strictEqual(after.key, base.key);
+    assert.deepStrictEqual(after.order.map((w) => w.id), base.order.map((w) => w.id));
+    assert.strictEqual(after.order.find((w) => w.id === pageHost)?.visible, true);
+  });
+});
+
+// ── The content predicate (AppKit's "main" window) ──────────────────────────
+
+/**
+ * Every window below is registered with the facts its REAL construction site
+ * produces, so a predicate that matches nothing — or matches everything —
+ * fails here rather than passing vacuously.
+ */
+describe('window-kernel: which window the user is working in', () => {
+  const FLOATING = BASE_LAYER + 1;
+
+  /** An ordinary http page host: `ipc.ts` window-open, `inferIzuiRole` -> 'content'. */
+  const pageHost = wid(1);
+  /** A page opened from another page: `inferIzuiRole` -> 'child-content'. */
+  const childPage = wid(2);
+  /** The settings window: a non-web-page surface, so `inferIzuiRole` -> 'workspace'. */
+  const settings = wid(3);
+  /** A chrome-extension popup: `chrome-extensions.ts` registers `role:'content', class:'extension-ui'`. */
+  const extensionPopup = wid(4);
+  /** The HUD: `renderer/hud/background.js` — `alwaysOnTop:true, focusable:false`, inferred role 'workspace'. */
+  const hud = wid(5);
+  /** The shared chrome overlay: `hybrid-overlay.ts` — focusable BY INVARIANT (typing a URL takes key). */
+  const chromeOverlay = wid(6);
+  /** The cmd panel: floats, focusable, `role:'palette'`. */
+  const cmdPanel = wid(7);
+  /** A slide: opened `modal:true`, so `inferIzuiRole` -> 'quick-view'. Focusable. */
+  const slide = wid(8);
+  /** Detached devtools: `main.ts` registers `role:'utility', class:'devtools'` — a real, focusable window. */
+  const devtools = wid(9);
+  /** The core background window: `core-glue.ts` — `role:'utility', class:'background'`, never shown. */
+  const backgroundWindow = wid(10);
+
+  const scene = (): State =>
+    fold([
+      { type: 'WindowRegistered', id: pageHost, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowRegistered', id: childPage, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'child-content', parentId: pageHost },
+      { type: 'WindowRegistered', id: settings, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'workspace' },
+      { type: 'WindowRegistered', id: extensionPopup, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'extension-ui', role: 'content', escapeMode: 'ignore' },
+      { type: 'WindowRegistered', id: hud, kind: 'browser', layer: FLOATING, canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace', escapeMode: 'ignore' },
+      { type: 'WindowRegistered', id: chromeOverlay, kind: 'browser', layer: FLOATING, canBecomeKey: true, acceptsInput: false, class: 'overlay', role: 'overlay' },
+      { type: 'WindowRegistered', id: cmdPanel, kind: 'browser', layer: FLOATING, canBecomeKey: true, acceptsInput: true, class: 'palette', role: 'palette' },
+      { type: 'WindowRegistered', id: slide, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'quick-view', role: 'quick-view', keepLive: true },
+      { type: 'WindowRegistered', id: devtools, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'devtools', role: 'utility' },
+      { type: 'WindowRegistered', id: backgroundWindow, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'background', role: 'utility' },
+      { type: 'WindowShown', id: pageHost },
+      { type: 'WindowShown', id: childPage },
+      { type: 'WindowShown', id: settings },
+      { type: 'WindowShown', id: extensionPopup },
+      { type: 'WindowShown', id: hud },
+      { type: 'WindowShown', id: chromeOverlay },
+      { type: 'WindowShown', id: cmdPanel },
+      { type: 'WindowShown', id: slide },
+      { type: 'WindowShown', id: devtools },
+      { type: 'OsFocusGained', id: pageHost },
+    ]);
+
+  const contentIds = (state: State): WindowId[] => state.order.filter(isContentWindow).map((w) => w.id);
+
+  it('admits the document-like windows, and no others', () => {
+    const admitted = contentIds(scene());
+    assert.ok(admitted.length > 0, 'a predicate that matches nothing in production is the bug this test exists for');
+    assert.deepStrictEqual(new Set(admitted), new Set([childPage, settings, extensionPopup, pageHost]));
+  });
+
+  it('names a reason for every exclusion', () => {
+    const state = scene();
+    const rec = (id: WindowId) => state.order.find((w) => w.id === id)!;
+
+    assert.strictEqual(isContentWindow(rec(hud)), false, 'focusable:false — the OS will never give it key');
+    assert.strictEqual(isContentWindow(rec(chromeOverlay)), false, 'chrome attached to a window, not the window');
+    assert.strictEqual(isContentWindow(rec(cmdPanel)), false, 'a panel: key shifts to it, main does not');
+    assert.strictEqual(isContentWindow(rec(slide)), false, 'a panel too — quick-views are no longer main-eligible');
+    assert.strictEqual(isContentWindow(rec(devtools)), false, 'role utility — infrastructure');
+    assert.strictEqual(isContentWindow(rec(backgroundWindow)), false, 'never shown, and role utility');
+  });
+
+  it('the HUD is excluded by canBecomeKey alone — its inferred role is an admitted one', () => {
+    // If the predicate were role-only, the HUD would be main: it opens with no
+    // explicit role, and `inferIzuiRole`'s non-web-page tail returns 'workspace'.
+    const rec = scene().order.find((w) => w.id === hud)!;
+    assert.strictEqual(rec.role, 'workspace', 'the admitted role — so the role clause cannot be what excludes it');
+    assert.strictEqual(rec.canBecomeKey, false);
+    assert.strictEqual(isContentWindow(rec), false);
+  });
+
+  it('the chrome overlay is excluded by role alone — it is deliberately focusable', () => {
+    const rec = scene().order.find((w) => w.id === chromeOverlay)!;
+    assert.strictEqual(rec.canBecomeKey, true, 'typing a URL in the navbar takes key');
+    assert.strictEqual(isContentWindow(rec), false);
+  });
+
+  it('an unknown or absent role is not content — the allow-list has no default-admit', () => {
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(20), kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+      { type: 'WindowRegistered', id: wid(21), kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'something-new' },
+      { type: 'WindowShown', id: wid(20) },
+      { type: 'WindowShown', id: wid(21) },
+    ]);
+    assert.deepStrictEqual(contentIds(state), []);
+  });
+
+  it('a hidden content window is not main — the visible half of the old rule', () => {
+    const state = evolve(scene(), { type: 'WindowHidden', id: settings });
+    assert.strictEqual(contentIds(state).includes(settings), false);
+  });
+
+  // ── key vs. main: the split this predicate exists for ──────────────────────
+
+  it('a palette taking key does not move main', () => {
+    const state = evolve(scene(), { type: 'OsFocusGained', id: cmdPanel });
+    assert.strictEqual(keyWindow(state)?.id, cmdPanel, 'the palette takes keystrokes');
+    assert.strictEqual(topmost(state, isContentWindow)?.id, pageHost, 'the page host is still the command target');
+  });
+
+  it('a focused slide holds key, so Escape reaches it — which is why main may exclude it', () => {
+    // The old model kept quick-views front-eligible ONLY so `front` could
+    // double as the Escape target. Escape now reads `key`, so the coupling
+    // is gone and a peek/slide can be the panel it is.
+    const state = evolve(scene(), { type: 'OsFocusGained', id: slide });
+    assert.strictEqual(keyWindow(state)?.id, slide);
+    assert.strictEqual(topmost(state, isContentWindow)?.id, pageHost);
+  });
+
+  it('the chrome overlay taking key at Cmd+N time does not lose the page host', () => {
+    // The live bug this maps to: `openNewPageWindow` inherits space mode from
+    // the front window, and the overlay routinely holds key (Cmd+L).
+    const state = evolve(scene(), { type: 'OsFocusGained', id: chromeOverlay });
+    assert.strictEqual(keyWindow(state)?.id, chromeOverlay);
+    assert.strictEqual(topmost(state, isContentWindow)?.id, pageHost);
+  });
+
+  it('main survives the loss of key entirely — which `keyWindow` cannot', () => {
+    // Sessions save on quit / app-resign / window-close, exactly when
+    // `OsFocusLost` has already nulled `key`. Mapping a saved descriptor's
+    // `focused` flag to `keyWindow` would mark every one of them false.
+    const state = evolve(scene(), { type: 'OsFocusLost', id: pageHost });
+    assert.strictEqual(keyWindow(state), null);
+    assert.strictEqual(topmost(state, isContentWindow)?.id, pageHost);
+  });
+
+  it('main follows a raise, because a raise moves the window to the top of order', () => {
+    const state = evolve(scene(), { type: 'OsFocusGained', id: settings });
+    assert.strictEqual(topmost(state, isContentWindow)?.id, settings);
+  });
+
+  // ── The hiddenByAppBlur / AppActivated interaction ────────────────────────
+
+  it('no content window is touched by the app-resign sweep — the two sets are disjoint', () => {
+    // `isAppResignSweepEligible` requires `!canBecomeKey`; this predicate
+    // requires `canBecomeKey`. So `visible` here cannot flicker across an app
+    // switch, and main is stable through resign -> settle -> activate.
+    const before = scene();
+    const settled = evolve(evolve(before, { type: 'AppResigned' }), { type: 'AppResignSettled' });
+    const activated = evolve(settled, { type: 'AppActivated' });
+
+    assert.deepStrictEqual(new Set(contentIds(settled)), new Set(contentIds(before)));
+    assert.deepStrictEqual(new Set(contentIds(activated)), new Set(contentIds(before)));
+    assert.strictEqual(topmost(settled, isContentWindow)?.id, pageHost);
+    assert.strictEqual(topmost(activated, isContentWindow)?.id, pageHost);
+
+    // And the sweep genuinely did something, so the assertion above is not vacuous.
+    assert.deepStrictEqual(settled.order.filter((w) => w.hiddenByAppBlur === true).map((w) => w.id), [hud]);
+  });
+
+  it('the transient dismissal is disjoint from the content set too', () => {
+    const state = scene();
+    const dismissed = new Set(selectAppResignTransients(state));
+    assert.ok(dismissed.size > 0, 'the slide is dismissed — otherwise this proves nothing');
+    assert.deepStrictEqual(contentIds(state).filter((id) => dismissed.has(id)), []);
+  });
+});
+
+// ── hostForOverlay: the read-back direction ─────────────────────────────────
+
+describe('window-kernel: hostForOverlay', () => {
+  const host = wid(1);
+  const otherHost = wid(2);
+  const overlay = wid(3);
+
+  const attached = (): State =>
+    fold([
+      { type: 'WindowRegistered', id: host, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowRegistered', id: otherHost, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowRegistered', id: overlay, kind: 'browser', layer: BASE_LAYER + 1, canBecomeKey: true, acceptsInput: false, class: 'overlay', role: 'overlay' },
+      { type: 'OverlayAttached', overlayId: overlay, hostId: host },
+    ]);
+
+  it("reads the overlay record's own attachment", () => {
+    assert.strictEqual(hostForOverlay(attached(), overlay)?.id, host);
+  });
+
+  it('is the opposite direction from overlayForHost — neither answers the other question', () => {
+    const state = attached();
+    assert.strictEqual(overlayForHost(state, host)?.id, overlay);
+    assert.strictEqual(hostForOverlay(state, host), null, 'a host is not attached to anything itself');
+    assert.strictEqual(overlayForHost(state, overlay), null);
+  });
+
+  it('a detached overlay reads null, even while a page host is topmost', () => {
+    const state = evolve(attached(), { type: 'OverlayAttached', overlayId: overlay, hostId: null });
+    assert.strictEqual(hostForOverlay(state, overlay), null);
+    // The distinction this query exists for: an ordering query would answer
+    // with a host the overlay is NOT framing.
+    assert.strictEqual(topmost(state, (r) => r.kind === 'page-host')?.id, otherHost);
+  });
+
+  it('follows a retarget', () => {
+    const state = evolve(attached(), { type: 'OverlayAttached', overlayId: overlay, hostId: otherHost });
+    assert.strictEqual(hostForOverlay(state, overlay)?.id, otherHost);
+  });
+
+  it('the host closing reads back as detached, not as a dangling record', () => {
+    const state = evolve(attached(), { type: 'WindowClosed', id: host });
+    assert.strictEqual(hostForOverlay(state, overlay), null);
+  });
+
+  it('an unregistered id reads null rather than throwing', () => {
+    assert.strictEqual(hostForOverlay(attached(), wid(99)), null);
   });
 });

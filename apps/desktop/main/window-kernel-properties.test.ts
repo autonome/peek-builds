@@ -33,6 +33,8 @@ import {
   selectTransientAutoclose,
   selectAppResignTransients,
   isAppResignSweepEligible,
+  isContentWindow,
+  hostForOverlay,
   type State,
   type Event,
   type Command,
@@ -111,6 +113,12 @@ const ROLES: readonly (string | undefined)[] = [
   'child-content',
   undefined,
 ];
+/**
+ * The Escape override plus `undefined` — absent is a meaningful value, not a
+ * hole, so generation must produce it at least as often as the one live
+ * override.
+ */
+const ESCAPE_MODES: readonly ('ignore' | undefined)[] = ['ignore', undefined];
 
 /** A log item is either a fact fed straight to `evolve`, or a request fed through `decide` first. */
 type LogItem = Event | Command;
@@ -128,13 +136,14 @@ function isCommand(item: LogItem): item is Command {
  * same seed always produces the same concrete log.
  */
 function randomLogItem(rng: Rng, state: State): LogItem {
-  const variant = randomInt(rng, 31);
+  const variant = randomInt(rng, 32);
   const id = wid(randomInt(rng, POOL_SIZE));
   switch (variant) {
     case 0: {
       const hasParent = rng() < 0.3;
       const hasKeepLive = rng() < 0.3;
       const role = pick(rng, ROLES);
+      const escapeMode = pick(rng, ESCAPE_MODES);
       return {
         type: 'WindowRegistered',
         id,
@@ -146,6 +155,7 @@ function randomLogItem(rng: Rng, state: State): LogItem {
         ...(role !== undefined ? { role } : {}),
         ...(hasParent ? { parentId: wid(randomInt(rng, POOL_SIZE)) } : {}),
         ...(hasKeepLive ? { keepLive: randomBool(rng) } : {}),
+        ...(escapeMode !== undefined ? { escapeMode } : {}),
       };
     }
     case 1:
@@ -178,6 +188,7 @@ function randomLogItem(rng: Rng, state: State): LogItem {
       const hasKeepLive = rng() < 0.3;
       const stale = rng() < 0.2;
       const role = pick(rng, ROLES);
+      const escapeMode = pick(rng, ESCAPE_MODES);
       return {
         type: 'RegisterWindow',
         id,
@@ -189,6 +200,7 @@ function randomLogItem(rng: Rng, state: State): LogItem {
         ...(role !== undefined ? { role } : {}),
         ...(hasParent ? { parentId: wid(randomInt(rng, POOL_SIZE)) } : {}),
         ...(hasKeepLive ? { keepLive: randomBool(rng) } : {}),
+        ...(escapeMode !== undefined ? { escapeMode } : {}),
         expectedVersion: stale ? state.version + 1 : state.version,
       };
     }
@@ -293,8 +305,14 @@ function randomLogItem(rng: Rng, state: State): LogItem {
     case 29:
       return { type: 'AppActivated' };
     case 30:
-    default:
       return { type: 'AppResignSettled' };
+    // Unfiltered like everything else: the first-responder mirror is reported
+    // for ids that were never registered, for `browser`-kind windows that
+    // would never produce one in production, and in nonsense orders (held
+    // twice, lost before ever held).
+    case 31:
+    default:
+      return { type: 'ContentFirstResponderChanged', id, held: randomBool(rng) };
   }
 }
 
@@ -406,6 +424,50 @@ function checkInvariants(state: State, prev?: State): string[] {
     if (record.role !== undefined && (typeof record.role !== 'string' || record.role.length === 0)) {
       violations.push(`malformed role for ${record.id}: ${JSON.stringify(record.role)}`);
     }
+
+    // Escape override: absent, or exactly the ONE live value. Nothing may
+    // smuggle a fourth-vocabulary value ('auto'/'close'/'navigate') onto a
+    // record through the registration merge.
+    if (record.escapeMode !== undefined && record.escapeMode !== 'ignore') {
+      violations.push(`invalid escapeMode for ${record.id}: ${JSON.stringify(record.escapeMode)}`);
+    }
+
+    // First-responder mirror: THREE-VALUED. Absent, `true`, or `false` — and
+    // never anything that would let a consumer's `=== false` test misfire.
+    if (record.contentFocused !== undefined && typeof record.contentFocused !== 'boolean') {
+      violations.push(`malformed contentFocused for ${record.id}: ${JSON.stringify(record.contentFocused)}`);
+    }
+
+    // The content predicate is SOUND: everything it admits is visible, can
+    // hold key, and declares a document-like role. Restated independently
+    // (like the role sets below) so this is a check, not a tautology.
+    if (isContentWindow(record)) {
+      if (!record.visible || !record.canBecomeKey) {
+        violations.push(`isContentWindow admitted a hidden or non-key-capable window: ${record.id}`);
+      }
+      if (record.role === undefined || !CONTENT_ROLES_EXPECTED.has(record.role)) {
+        violations.push(`isContentWindow admitted a non-content role for ${record.id}: ${JSON.stringify(record.role)}`);
+      }
+    }
+
+    // The `hiddenByAppBlur` / `AppActivated` interaction, asserted rather than
+    // reasoned about in a comment: a content window is never a candidate for
+    // the app-resign hide sweep, so the predicate's `visible` clause cannot
+    // flicker across an app switch. The two predicates disagree on
+    // `canBecomeKey` by construction; this catches either one drifting.
+    if (isContentWindow(record) && isAppResignSweepEligible(record)) {
+      violations.push(`a window is both content and app-resign-sweep eligible: ${record.id}`);
+    }
+
+    // `hostForOverlay` and `overlayFor` are the same fact read two ways.
+    const host = hostForOverlay(state, record.id);
+    if (record.overlayFor === undefined) {
+      if (host !== null) {
+        violations.push(`hostForOverlay returned a host for a detached record ${record.id}: ${host.id}`);
+      }
+    } else if (host === null || host.id !== record.overlayFor) {
+      violations.push(`hostForOverlay disagreed with overlayFor for ${record.id}: ${JSON.stringify(host?.id)}`);
+    }
   }
 
   // App activation dance (this slice): the sweep flag can only be armed while
@@ -444,6 +506,20 @@ function checkInvariants(state: State, prev?: State): string[] {
       ) {
         violations.push(`lastOpSeq decreased for ${prevRecord.id}: prev=${prevRecord.lastOpSeq} next=${nextRecord.lastOpSeq}`);
       }
+      // `contentFocused` NEVER DECAYS BACK TO ABSENT. Once the OS has
+      // reported first-responder status for a window, "nothing reported yet"
+      // is no longer a true statement about it — and it is a DIFFERENT answer
+      // from `false` for every consumer (see the field's doc). The only way
+      // to lose it is a registration merge dropping the field, which is
+      // exactly the bug class both prior property-test failures were.
+      if (nextRecord !== undefined && prevRecord.contentFocused !== undefined && nextRecord.contentFocused === undefined) {
+        violations.push(`contentFocused decayed back to absent for ${prevRecord.id}`);
+      }
+      // Same rule for the Escape override, for the same reason: a
+      // re-registration that omits it means "did not report", never "clear".
+      if (nextRecord !== undefined && prevRecord.escapeMode !== undefined && nextRecord.escapeMode === undefined) {
+        violations.push(`escapeMode was silently stripped from ${prevRecord.id}`);
+      }
     }
   }
 
@@ -474,6 +550,13 @@ function checkSettleTimeoutInvariant(item: LogItem, next: State): string[] {
  * — the kernel keeps them private, and an independent restatement is what
  * makes this a check rather than a tautology.
  */
+/**
+ * The document-like roles `isContentWindow` admits, restated independently of
+ * the kernel's own `CONTENT_ROLES` for the same reason as the sets below: an
+ * imported constant would make the soundness check a tautology.
+ */
+const CONTENT_ROLES_EXPECTED = new Set(['content', 'child-content', 'workspace']);
+
 const TRANSIENT_ROLES_EXPECTED = new Set(['palette', 'quick-view', 'overlay']);
 const AUTOCLOSE_EXEMPT_ROLES_EXPECTED = new Set(['overlay']);
 const AUTOCLOSE_FOCUSER_EXEMPT_ROLES_EXPECTED = new Set(['utility', 'overlay']);
@@ -700,5 +783,114 @@ describe('window-kernel: re-registration of a still-live id merges in place', ()
     const state = fold([registered, registered]);
     const violations = checkInvariants(state);
     assert.deepStrictEqual(violations, []);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pinned merge coverage — MEASURED, not assumed. The random generator's odds
+// of producing "a lived fact is written for id X, and X is then re-registered
+// while still live" are thin at POOL_SIZE=6 / LOG_LENGTH=30: only ~2 of the
+// 32 variants register, so most ids are never registered at all, and across
+// all 200 seeds the combination for a given field may not occur even once.
+// That was checked by deliberately dropping `contentFocused` from the merge:
+// every seed still passed. So the merge invariants above are pinned here on a
+// hand-built log instead of left to generator luck — the re-registration merge
+// is where both bugs this property suite has ever caught lived, and each was a
+// lived field silently dropped.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('window-kernel: the re-registration merge preserves every lived fact', () => {
+  const id = wid(0);
+  const host = wid(1);
+
+  const register = (escapeMode?: 'ignore'): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: 1,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+    ...(escapeMode !== undefined ? { escapeMode } : {}),
+  });
+
+  /** A log that writes every lived fact the record can carry, then re-registers. */
+  const livedLog = (): LogItem[] => [
+    { type: 'WindowRegistered', id: host, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+    register('ignore'),
+    { type: 'WindowShown', id },
+    { type: 'OsFocusGained', id },
+    { type: 'WindowContentOrderable', id },
+    { type: 'BoundsChanged', id, bounds: { x: 1, y: 2, width: 3, height: 4 } },
+    { type: 'Maximized', id, preMaxBounds: { x: 5, y: 6, width: 7, height: 8 } },
+    { type: 'VisibleOnAllSpacesSet', id, on: true },
+    { type: 'OverlayAttached', overlayId: id, hostId: host },
+    { type: 'ContentFirstResponderChanged', id, held: false },
+    { type: 'FullscreenTransitionStarted', id, entering: true, preBounds: { x: 9, y: 9, width: 9, height: 9 } },
+  ];
+
+  it('a re-registration that names none of them changes no lived fact', () => {
+    const before = fold(livedLog());
+    const after = evolve(before, register());
+    const prevRecord = before.order.find((w) => w.id === id)!;
+    const nextRecord = after.order.find((w) => w.id === id)!;
+
+    // Everything except `version` is identical — the merge overwrote the
+    // intrinsics with the same values and touched nothing else.
+    assert.deepStrictEqual(nextRecord, prevRecord);
+    assert.deepStrictEqual(checkInvariants(after, before), []);
+  });
+
+  it('every lived fact is actually set, so the assertion above is not vacuous', () => {
+    const record = fold(livedLog()).order.find((w) => w.id === id)!;
+    assert.strictEqual(record.visible, true);
+    assert.strictEqual(record.orderable, true);
+    assert.strictEqual(record.fsMode.name, 'entering');
+    assert.notStrictEqual(record.bounds, undefined);
+    assert.strictEqual(record.maximized, true);
+    assert.notStrictEqual(record.preMaxBounds, null);
+    assert.strictEqual(record.visibleOnAllSpaces, true);
+    assert.strictEqual(record.overlayFor, host);
+    assert.notStrictEqual(record.lastOpSeq, undefined);
+    assert.strictEqual(record.contentFocused, false);
+    assert.strictEqual(record.escapeMode, 'ignore');
+  });
+
+  it('the hiddenByAppBlur mark survives a re-registration mid-sweep', () => {
+    // Registered non-focusable + floating so the sweep takes it, which is the
+    // only way to set the mark.
+    const swept = wid(2);
+    const reg: Event = { type: 'WindowRegistered', id: swept, kind: 'browser', layer: 1, canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace' };
+    const before = fold([reg, { type: 'WindowShown', id: swept }, { type: 'AppResigned' }, { type: 'AppResignSettled' }]);
+    assert.strictEqual(before.order.find((w) => w.id === swept)?.hiddenByAppBlur, true);
+
+    const after = evolve(before, reg);
+    assert.strictEqual(after.order.find((w) => w.id === swept)?.hiddenByAppBlur, true);
+    assert.deepStrictEqual(checkInvariants(after, before), []);
+  });
+
+  it('the prev/next invariants name the field when a lived fact IS dropped', () => {
+    // Feeds `checkInvariants` a hand-mutilated `next` — the shape a merge bug
+    // produces — so the two new prev/next clauses are proven to fire rather
+    // than merely present.
+    const before = fold(livedLog());
+    const record = before.order.find((w) => w.id === id)!;
+    const strip = (field: 'contentFocused' | 'escapeMode'): State => {
+      const mutilated: Record<string, unknown> = { ...record };
+      delete mutilated[field];
+      return {
+        ...before,
+        order: before.order.map((w) => (w.id === id ? (mutilated as unknown as typeof record) : w)),
+        version: before.version + 1,
+      };
+    };
+
+    assert.deepStrictEqual(checkInvariants(strip('contentFocused'), before), [
+      `contentFocused decayed back to absent for ${id}`,
+    ]);
+    assert.deepStrictEqual(checkInvariants(strip('escapeMode'), before), [
+      `escapeMode was silently stripped from ${id}`,
+    ]);
   });
 });
