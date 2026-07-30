@@ -1583,10 +1583,12 @@ export function loadClosedWindowStack(): void {
  * callbacks can run before the BrowserWindows are closed. Finally closes the
  * database.
  *
- * NOTE: entry.ts's `before-quit` handler invokes this without awaiting (that
- * handler is synchronous). We still perform the broadcast+wait synchronously
- * from JS's perspective — the whole sequence is short (TILE_SHUTDOWN_GRACE_MS)
- * and runs on the event loop. Signal paths (SIGINT/SIGTERM) also don't await
+ * NOTE: `entry.ts runBeforeQuitCleanup` invokes this without awaiting. That
+ * body is itself async — it awaits the page-host guest teardown at its tail,
+ * because host windows must not close over live content WebContents — but this
+ * call is deliberately not part of that wait: the broadcast+grace sequence is
+ * short (TILE_SHUTDOWN_GRACE_MS) and runs on the event loop, so quit does not
+ * hold for it. Signal paths (SIGINT/SIGTERM) also don't await
  * but call process.exit() immediately after, so tiles may not finish cleanup
  * on abrupt termination — that's expected (grace-period cleanup is
  * best-effort, never guaranteed).

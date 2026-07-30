@@ -734,8 +734,9 @@ construction sites falsifies three derivations that would otherwise look correct
   `alwaysOnTop`, and their above-ness is `type: 'panel'` AppKit behaviour. Placing them above base
   would put them in `isAppResignSweepEligible`'s `layer > BASE_LAYER` half, which its role clause
   exists to keep them out of.
-- **`layer` keys on the declared `alwaysOnTop`, not on class.** `classifyWindowRegistration` assigns
-  class `overlay` / `palette` on role alone, so a class-based derivation would call a role-overlay
+- **`layer` keys on the registered `alwaysOnTop` — the resolved, headless-gated value (§0.1.10) —
+  not on class.** `classifyWindowRegistration` assigns class `overlay` / `palette` on role alone,
+  so a class-based derivation would call a role-overlay
   window pinned even when nothing pinned it. The sets coincide today only because all three
   role-overlay/palette sites also declare `alwaysOnTop`.
 - **Two bands suffice.** `'floating'` and `'torn-off-menu'` are the same macOS window level, so a
@@ -1175,6 +1176,15 @@ What this costs, stated plainly so it is not discovered later:
   separately marks one descriptor focused. Under one order those stop being independent, so the
   saved order must already put the focused window on top.
 
+**Decided: registration carries the resolved creation intent, not the raw request.** Both
+`ipc.ts` registration sites (`assembleHybridPageHost` and the window-open IPC handler) and
+`tile-launcher.ts createTileBrowserWindow` register the headless-gated `alwaysOnTop` the window was
+actually constructed with. Registering the raw request made the same declared intent yield
+`FLOATING_LAYER` on the `ipc.ts` path and `BASE_LAYER` on the `tile-launcher.ts` one under
+headless, and told the machine a window was pinned that the constructor had been explicitly told
+not to pin. The record describes the window that exists; an option the constructor declined is not
+a fact about it.
+
 **Still open.** Both questions below are parked awaiting a decision. The evidence bearing on each
 is assembled under it; neither is answered here, and neither is softened into a recommendation.
 
@@ -1291,13 +1301,6 @@ content query rather than to `key`, and the two reducer tests that read as count
 behavior of `front`, whose role is now split — so they constrain main. That leaves no identified
 reader that needs `key` to survive deactivation. The decision stays open; what the evidence removes
 is the claim that nulling breaks a caller.
-
-#### Open question 3: which registration path is correct under headless?
-
-`ipc.ts` gates `alwaysOnTop` on the constructor option but registers the raw
-`options.alwaysOnTop === true`, while `tile-launcher.ts` registers the headless-gated resolved
-value — so the same declared intent yields `layer: FLOATING` on one path and `BASE_LAYER` on the
-other under headless. Which path is correct is undecided.
 
 ---
 
