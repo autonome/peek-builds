@@ -165,6 +165,33 @@ export function initialState(): State {
 export function evolve(state: State, ev: Event): State {
   switch (ev.type) {
     case 'WindowRegistered': {
+      // Re-registration of a still-live id is real, expected traffic (e.g.
+      // `ipc.ts`'s tile-launch path registers the same window twice) — a
+      // "richer re-registration merge", not a rejection: the event's
+      // intrinsic, declared-at-registration properties overwrite the
+      // existing record, but LIVED facts (`visible`, `openSeq`) and its
+      // position in `order` are preserved. Re-registration is not a raise.
+      const existingIdx = state.order.findIndex((w) => w.id === ev.id);
+      if (existingIdx !== -1) {
+        const existing = state.order[existingIdx];
+        const merged: WindowRecord = {
+          id: existing.id,
+          kind: ev.kind,
+          layer: ev.layer,
+          canBecomeKey: ev.canBecomeKey,
+          acceptsInput: ev.acceptsInput,
+          class: ev.class,
+          visible: existing.visible,
+          openSeq: existing.openSeq,
+          ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
+        };
+        return {
+          ...state,
+          order: [...state.order.slice(0, existingIdx), merged, ...state.order.slice(existingIdx + 1)],
+          version: state.version + 1,
+        };
+      }
+
       const record: WindowRecord = {
         id: ev.id,
         kind: ev.kind,

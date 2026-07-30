@@ -236,6 +236,57 @@ describe('window-kernel: key is never repaired', () => {
   });
 });
 
+// ── re-registration merges, does not append or reorder ──────────────────────
+
+describe('window-kernel: re-registration merges in place', () => {
+  it('re-registering a live window merges in place and does NOT move it in the order', () => {
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowRegistered', id: wid(3), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'OsFocusGained', id: wid(1) },
+      ],
+      initialState(),
+    );
+    // wid(1) is shown, holds key, and — from the OsFocusGained raise — sits
+    // at the bottom of `order` (moved there ahead of wid(2)/wid(3)).
+    assert.deepStrictEqual(state.order.map((w) => w.id), [wid(2), wid(3), wid(1)]);
+    assert.strictEqual(state.order.find((w) => w.id === wid(1))?.visible, true);
+    const openSeqBefore = state.order.find((w) => w.id === wid(1))!.openSeq;
+
+    // Re-register wid(1) with different intrinsic properties.
+    const reRegistered = evolve(state, {
+      type: 'WindowRegistered',
+      id: wid(1),
+      kind: 'browser',
+      layer: 2,
+      canBecomeKey: false,
+      acceptsInput: false,
+      class: 'hud',
+      parentId: wid(2),
+    });
+
+    // Same id count — no duplicate, no drop.
+    assert.strictEqual(reRegistered.order.length, 3);
+    // Position unchanged — re-registration is not a raise.
+    assert.deepStrictEqual(reRegistered.order.map((w) => w.id), [wid(2), wid(3), wid(1)]);
+
+    const merged = reRegistered.order.find((w) => w.id === wid(1))!;
+    // Intrinsic properties declared at registration are updated from the event.
+    assert.strictEqual(merged.kind, 'browser');
+    assert.strictEqual(merged.layer, 2);
+    assert.strictEqual(merged.canBecomeKey, false);
+    assert.strictEqual(merged.acceptsInput, false);
+    assert.strictEqual(merged.class, 'hud');
+    assert.strictEqual(merged.parentId, wid(2));
+    // Lived facts are preserved, not reset by the re-registration.
+    assert.strictEqual(merged.visible, true);
+    assert.strictEqual(merged.openSeq, openSeqBefore);
+  });
+});
+
 // ── raise vs. show ───────────────────────────────────────────────────────────
 
 describe('window-kernel: raise vs. show', () => {

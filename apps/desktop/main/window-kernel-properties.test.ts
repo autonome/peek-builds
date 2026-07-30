@@ -202,26 +202,6 @@ function reproMessage(seed: number, log: Event[], stepIndex: number, detail: str
   return `${detail}\n  seed=${seed} step=${stepIndex}/${log.length}\n  log=${JSON.stringify(log)}`;
 }
 
-/**
- * KNOWN KERNEL GAP, found by this property run, NOT fixed here (out of scope
- * — see the file header / task instructions): `evolve`'s `WindowRegistered`
- * branch has no guard against re-registering an id that is already present
- * in `order` (still open, never closed) — it unconditionally appends a
- * second record, so `order` ends up with two entries sharing one id. That
- * breaks the "no duplicate ids in order" invariant this file was written to
- * check (§0.1.8 item 1's own invariant list names it explicitly). Roughly
- * half of seeds 0..199 hit this — it is not a rare corner, it fires any time
- * a log contains two `WindowRegistered`s for the same id with no
- * `WindowClosed` between them. A minimal, permanent reproducer is pinned
- * below as a skipped test; see that test for the fix this file expects.
- *
- * This one known category is excluded from failing the per-seed loop below
- * so the loop still exercises (and can fail on) every OTHER invariant —
- * counters, `keyWindow`, well-formed records, effect targets, `evolve`
- * never throwing, and replay/effect-list determinism — across all 200 seeds.
- */
-const KNOWN_BUG_DUPLICATE_REGISTRATION_PREFIX = 'duplicate id in order:';
-
 // ─────────────────────────────────────────────────────────────────────────────
 // The property tests — a fixed, committed list of seeds (deterministic, not
 // time-derived): 0..199.
@@ -245,12 +225,7 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
           throw new Error(reproMessage(seed, log, i, `evolve threw: ${(err as Error).message}`));
         }
 
-        // See KNOWN_BUG_DUPLICATE_REGISTRATION_PREFIX above: one already-found,
-        // not-fixed-here kernel gap is excluded so it doesn't swamp every
-        // other invariant this loop checks.
-        const stateViolations = checkInvariants(next, state).filter(
-          (v) => !v.startsWith(KNOWN_BUG_DUPLICATE_REGISTRATION_PREFIX),
-        );
+        const stateViolations = checkInvariants(next, state);
         if (stateViolations.length > 0) {
           throw new Error(reproMessage(seed, log, i, `invariant violation(s): ${stateViolations.join('; ')}`));
         }
@@ -280,17 +255,15 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pinned reproducer for the known, not-fixed-here kernel gap (see
-// KNOWN_BUG_DUPLICATE_REGISTRATION_PREFIX above). Skipped so the gap doesn't
-// fail this file's landing commit — un-skip once `evolve`'s
-// `WindowRegistered` branch guards against re-registering a still-live id.
-// First surfaced by this property run at seed 0 (and ~half of seeds 0..199);
-// this is the minimal form of that failure, kept independent of the log
-// generator so it survives any future change to `generateLog`.
+// Pinned reproducer, first surfaced by this property run at seed 0 (and
+// ~half of seeds 0..199): two `WindowRegistered` events for the same id with
+// no `WindowClosed` in between (the id is still live when the second one
+// lands) must merge in place, not append a second record. Kept independent
+// of the log generator so it survives any future change to `generateLog`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('window-kernel: known gaps (documented, not fixed in this commit)', () => {
-  it.skip('KNOWN BUG: re-registering a still-open id appends a second record instead of being rejected/no-op — violates "no duplicate ids in order"', () => {
+describe('window-kernel: re-registration of a still-live id merges in place', () => {
+  it('a second WindowRegistered for a still-open id merges — no duplicate id in order', () => {
     const id = wid(0);
     const registered: Event = {
       type: 'WindowRegistered',
@@ -301,11 +274,8 @@ describe('window-kernel: known gaps (documented, not fixed in this commit)', () 
       acceptsInput: true,
       class: 'primary',
     };
-    // Two WindowRegistered events for the same id, with no WindowClosed in
-    // between — the id is still live when the second one lands.
     const state = fold([registered, registered]);
     const violations = checkInvariants(state);
-    // Expected once fixed: no violations. Currently: ['duplicate id in order: wkp-0'].
     assert.deepStrictEqual(violations, []);
   });
 });
