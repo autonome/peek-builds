@@ -74,6 +74,15 @@ export type FsMode =
   | { name: 'leaving'; preBounds: Rectangle | null; pendingDesire?: boolean };
 
 /**
+ * Index 0 of §0.1.6's fixed ordered layer array — where every ordinary window
+ * sits. A record at a HIGHER index floats above the whole regular stack; that
+ * is what Electron's `alwaysOnTop` buys, expressed as a band rather than a
+ * per-window boolean. The array itself belongs to the (not yet built) adapter,
+ * so the kernel names only the floor its own predicates compare against.
+ */
+export const BASE_LAYER = 0;
+
+/**
  * A registered window's record. §0.1.4: "orthogonal properties, no
  * pre-combined class" — `layer` / `canBecomeKey` / `acceptsInput` are each
  * looked up independently; nothing branches on `class` (a lookup-only field,
@@ -323,9 +332,9 @@ export type Event =
    * modelled here, only its ordering relative to arm/disarm. Inert unless
    * `pendingAppResignSweep` is still armed (an `AppActivated` in between — the
    * dance — already disarmed it); when armed, hides the sweep-eligible
-   * windows (§0.1.4's `canBecomeKey`: "a HUD never holds key" is the same
-   * predicate a resign sweep targets) and marks them `hiddenByAppBlur`. Never
-   * writes `key`, never reorders `order`.
+   * windows (`isAppResignSweepEligible` — the heads-up surfaces that float
+   * above the stack and cannot hold key) and marks them `hiddenByAppBlur`.
+   * Never writes `key`, never reorders `order`.
    */
   | { type: 'AppResignSettled' }
   /** The first-composited-frame report — flips `orderable` to `true`. */
@@ -816,11 +825,10 @@ export function evolve(state: State, ev: Event): State {
 
     case 'AppResignSettled': {
       // Inert unless still armed — an AppActivated in between (the dance)
-      // already disarmed this. When armed, the resign was real: hide the
-      // sweep-eligible windows (§0.1.4's `canBecomeKey === false`, "a HUD
-      // never holds key" — the same predicate the old reducer's `class ===
-      // 'hud'` sniff targeted) and mark them so AppActivated knows to undo
-      // exactly this sweep.
+      // already disarmed this. When armed, the resign was real: hide every
+      // sweep-eligible window (`isAppResignSweepEligible` — the two orthogonal
+      // properties that made a window the old reducer's `hud` class) and mark
+      // them so AppActivated knows to undo exactly this sweep.
       if (!state.pendingAppResignSweep) {
         return { ...state, version: state.version + 1 };
       }
@@ -828,7 +836,7 @@ export function evolve(state: State, ev: Event): State {
         ...state,
         pendingAppResignSweep: false,
         order: state.order.map((w) =>
-          !w.canBecomeKey && w.visible ? { ...w, visible: false, hiddenByAppBlur: true } : w,
+          isAppResignSweepEligible(w) ? { ...w, visible: false, hiddenByAppBlur: true } : w,
         ),
         version: state.version + 1,
       };
@@ -1450,9 +1458,11 @@ export function selectTransientAutoclose(
  * that.
  *
  * Distinct from what `evolve`'s `AppResignSettled` arm does, and not a second
- * answer to the same question: that arm HIDES the windows that cannot hold key
- * (the HUD predicate) and marks them for `AppActivated` to restore, while
- * these transients are focusable and get dismissed outright.
+ * answer to the same question: that arm reversibly HIDES the heads-up surfaces
+ * (`isAppResignSweepEligible`) and marks them for `AppActivated` to restore,
+ * while these transients are dismissed outright and never come back. The two
+ * sets cannot overlap — a transient role is excluded from the hide predicate
+ * by construction, so no window is both hidden-for-later and dismissed.
  */
 export function selectAppResignTransients(state: State): WindowId[] {
   const out: WindowId[] = [];
@@ -1464,4 +1474,42 @@ export function selectAppResignTransients(state: State): WindowId[] {
     out.push(rec.id);
   }
   return out;
+}
+
+/**
+ * Which windows a REAL app switch hides for the duration — `evolve`'s
+ * `AppResignSettled` arm applies exactly this, and `AppActivated` undoes
+ * exactly what it marked. Ported from `window-state.ts`'s `class === 'hud' &&
+ * visible` sweep, decomposed into the orthogonal facts that MADE a window that
+ * class (`classifyWindowRegistration`: `alwaysOnTop && focusable === false`,
+ * with the role classes taking precedence):
+ *
+ *   - `layer > BASE_LAYER`   the `alwaysOnTop` half — it floats above the
+ *                            whole regular stack;
+ *   - `!canBecomeKey`        the `focusable: false` half — §0.1.4's "a HUD
+ *                            never holds key";
+ *   - a non-transient role   the role precedence, kept as a role test because
+ *                            it is one: a palette / quick-view / overlay
+ *                            declares its own app-resign policy (see
+ *                            `selectAppResignTransients`, and the chrome
+ *                            overlay's attachment relation), and never
+ *                            classified as a HUD however it was constructed;
+ *   - `visible`              nothing hidden for another reason may be marked,
+ *                            or the re-show on activation would resurrect it.
+ *
+ * NEITHER half of the pair is sufficient alone, and the difference is live in
+ * both directions: `!canBecomeKey` on its own also takes the space-border
+ * indicator (`features/spaces/background.js`, an `alwaysOnTop` role-`overlay`
+ * window) and the privileged test fixture (`test-fixture-glue.ts`,
+ * `focusable: false` but NOT floating), neither of which the old reducer ever
+ * swept; `layer > BASE_LAYER` on its own takes the focusable always-on-top
+ * windows (a cmd panel) that the old sweep deliberately left alone because
+ * they have their own blur handling and would blink.
+ */
+export function isAppResignSweepEligible(record: WindowRecord): boolean {
+  if (!record.visible) return false;
+  if (record.canBecomeKey) return false;
+  if (record.layer <= BASE_LAYER) return false;
+  if (roleIn(TRANSIENT_ROLES, record.role)) return false;
+  return true;
 }

@@ -26,6 +26,8 @@ import {
   isStaleSelfEcho,
   selectTransientAutoclose,
   selectAppResignTransients,
+  isAppResignSweepEligible,
+  BASE_LAYER,
   type State,
   type Event,
   type Effect,
@@ -1154,6 +1156,121 @@ describe('window-kernel: app activation, resignation, and the dance guard', () =
     const activated = evolve(settled, { type: 'AppActivated' });
     assert.strictEqual(activated.key, before.key);
     assert.deepStrictEqual(idOrder(activated), idOrder(before));
+  });
+});
+
+// ── The app-resign sweep predicate ──────────────────────────────────────────
+
+/**
+ * Every window below is registered with the facts its REAL construction site
+ * produces, so a predicate that matches nothing in production fails here
+ * rather than passing vacuously — the defect this suite exists to catch. The
+ * old reducer swept `class === 'hud' && visible`, i.e. exactly one of these.
+ */
+describe('window-kernel: which windows a real app resign hides', () => {
+  const FLOATING = BASE_LAYER + 1;
+
+  /** The ordinary page-host the user works in. */
+  const workspace = wid(1);
+  /** The HUD: `renderer/hud/background.js` opens `alwaysOnTop:true, focusable:false`, no role. */
+  const hud = wid(2);
+  /** The space-border indicator: `features/spaces/background.js` — same two flags, but `role:'overlay'`. */
+  const spaceBorder = wid(3);
+  /** The privileged test fixture: `test-fixture-glue.ts` — `focusable:false`, and NOT floating. */
+  const testFixture = wid(4);
+  /** The cmd panel: floats, but takes key to type in — its own blur handling, would blink. */
+  const cmdPanel = wid(5);
+  /** A quick-view that happens to be non-focusable — the would-be overlap with the transient sweep. */
+  const quickView = wid(6);
+  /** A HUD hidden before the resign, for a reason of its own. */
+  const alreadyHiddenHud = wid(7);
+
+  const scene = (): State =>
+    fold([
+      { type: 'WindowRegistered', id: workspace, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'workspace' },
+      { type: 'WindowRegistered', id: hud, kind: 'browser', layer: FLOATING, canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace' },
+      { type: 'WindowRegistered', id: spaceBorder, kind: 'browser', layer: FLOATING, canBecomeKey: false, acceptsInput: false, class: 'overlay', role: 'overlay' },
+      { type: 'WindowRegistered', id: testFixture, kind: 'browser', layer: BASE_LAYER, canBecomeKey: false, acceptsInput: true, class: 'test-fixture', role: 'utility' },
+      { type: 'WindowRegistered', id: cmdPanel, kind: 'browser', layer: FLOATING, canBecomeKey: true, acceptsInput: true, class: 'palette', role: 'palette' },
+      { type: 'WindowRegistered', id: quickView, kind: 'page-host', layer: FLOATING, canBecomeKey: false, acceptsInput: true, class: 'quick-view', role: 'quick-view' },
+      { type: 'WindowRegistered', id: alreadyHiddenHud, kind: 'browser', layer: FLOATING, canBecomeKey: false, acceptsInput: true, class: 'hud', role: 'workspace' },
+      { type: 'WindowShown', id: workspace },
+      { type: 'WindowShown', id: hud },
+      { type: 'WindowShown', id: spaceBorder },
+      { type: 'WindowShown', id: testFixture },
+      { type: 'WindowShown', id: cmdPanel },
+      { type: 'WindowShown', id: quickView },
+      { type: 'OsFocusGained', id: workspace },
+    ]);
+
+  const sweptBy = (state: State): WindowId[] =>
+    state.order.filter((w) => w.hiddenByAppBlur === true).map((w) => w.id);
+
+  it('the sweep takes the HUD — and it is the ONLY window it takes', () => {
+    const settled = evolve(evolve(scene(), { type: 'AppResigned' }), { type: 'AppResignSettled' });
+    const swept = sweptBy(settled);
+
+    // A predicate matching nothing (the inert failure mode) dies on this line.
+    assert.ok(swept.length > 0, 'a real app resign must hide something — a sweep that matches nothing is the bug');
+    assert.deepStrictEqual(swept, [hud]);
+    assert.strictEqual(settled.order.find((w) => w.id === hud)?.visible, false);
+
+    // Everything else stayed exactly as visible as it was. Each of these is a
+    // window `!canBecomeKey && visible` alone would have taken.
+    for (const id of [workspace, spaceBorder, testFixture, cmdPanel, quickView]) {
+      assert.strictEqual(settled.order.find((w) => w.id === id)?.visible, true, `${id} must not be hidden by the resign sweep`);
+    }
+    // The already-hidden HUD is not visible, so it is never marked — otherwise
+    // the re-show on activation would resurrect a window nobody asked for.
+    assert.strictEqual(settled.order.find((w) => w.id === alreadyHiddenHud)?.hiddenByAppBlur, undefined);
+  });
+
+  it('both halves of the HUD pair are load-bearing — neither alone selects the HUD', () => {
+    const state = scene();
+    const rec = (id: WindowId) => state.order.find((w) => w.id === id)!;
+
+    assert.strictEqual(isAppResignSweepEligible(rec(hud)), true, 'floats above the stack AND cannot hold key');
+    assert.strictEqual(isAppResignSweepEligible(rec(testFixture)), false, 'cannot hold key, but does not float');
+    assert.strictEqual(isAppResignSweepEligible(rec(cmdPanel)), false, 'floats, but takes key — its own blur handling');
+    assert.strictEqual(isAppResignSweepEligible(rec(workspace)), false, 'neither');
+    assert.strictEqual(isAppResignSweepEligible(rec(spaceBorder)), false, 'a declared role owns its own app-resign policy');
+    assert.strictEqual(isAppResignSweepEligible(rec(alreadyHiddenHud)), false, 'already hidden, for a reason of its own');
+  });
+
+  it('the hide sweep and the transient dismissal name disjoint windows', () => {
+    const state = scene();
+    const dismissed = selectAppResignTransients(state);
+    const hidden = state.order.filter(isAppResignSweepEligible).map((w) => w.id);
+
+    // The quick-view is non-focusable AND floating, so only the role clause
+    // keeps it out of the hide set — it is dismissed outright instead, and a
+    // window may never be both (dismissal is final; the hide is undone by
+    // `AppActivated`).
+    assert.deepStrictEqual(dismissed, [quickView]);
+    assert.deepStrictEqual(hidden, [hud]);
+    assert.deepStrictEqual(hidden.filter((id) => dismissed.includes(id)), []);
+  });
+
+  it('the following activation re-shows exactly the HUD the sweep hid', () => {
+    const settled = evolve(evolve(scene(), { type: 'AppResigned' }), { type: 'AppResignSettled' });
+    const activated = evolve(settled, { type: 'AppActivated' });
+
+    assert.strictEqual(activated.order.find((w) => w.id === hud)?.visible, true);
+    assert.strictEqual(activated.order.find((w) => w.id === hud)?.hiddenByAppBlur, false);
+    assert.strictEqual(activated.order.find((w) => w.id === alreadyHiddenHud)?.visible, false);
+    assert.deepStrictEqual(sweptBy(activated), []);
+  });
+
+  it('the sweep emits a HideWindow effect for exactly the windows it hid', () => {
+    const resigned = evolve(scene(), { type: 'AppResigned' });
+    const settleEv: Event = { type: 'AppResignSettled' };
+    const settled = evolve(resigned, settleEv);
+    const effects = react(resigned, settleEv, settled);
+
+    assert.deepStrictEqual(
+      effects.filter((e) => e.type === 'HideWindow').map((e) => e.id),
+      [hud],
+    );
   });
 });
 

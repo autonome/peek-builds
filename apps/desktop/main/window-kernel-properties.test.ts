@@ -32,6 +32,7 @@ import {
   keyWindow,
   selectTransientAutoclose,
   selectAppResignTransients,
+  isAppResignSweepEligible,
   type State,
   type Event,
   type Command,
@@ -541,6 +542,16 @@ function checkAutocloseInvariants(state: State): string[] {
       AUTOCLOSE_EXEMPT_ROLES_EXPECTED.has(rec.role)
     ) {
       violations.push(`selectAppResignTransients named an ineligible window: ${victim}`);
+    }
+  }
+
+  // The two app-resign sweeps answer different questions about the same edge
+  // and may never name the same window: the hide is reversible and undone by
+  // `AppActivated`, the transient dismissal is final.
+  const dismissed = new Set(selectAppResignTransients(state));
+  for (const record of state.order) {
+    if (isAppResignSweepEligible(record) && dismissed.has(record.id)) {
+      violations.push(`a window is both hidden by the app-resign sweep and dismissed as a transient: ${record.id}`);
     }
   }
 
