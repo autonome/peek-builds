@@ -165,6 +165,21 @@ export interface WindowRecord {
    * never snap a deliberately-moved window back. `null` when nothing is held.
    */
   pendingProjectedBounds: Rectangle | null;
+
+  /**
+   * OVERLAY ATTACHMENT. Set on an OVERLAY record: the host window this
+   * overlay frames. Absent = detached — the overlay belongs to nothing and
+   * must not be on screen. Stored on the OVERLAY (one host per overlay),
+   * not as a host -> overlay map: the app has ONE shared chrome overlay, so
+   * "is this overlay attached, and to what?" is a record read, while the
+   * reverse ("does this host have an overlay?") stays a scan of a handful
+   * of records (`overlayForHost`). Attach / retarget / detach are the ONE
+   * transition (`AttachOverlay`, `hostId: null` = detach); the follow is
+   * driven by the host's `BoundsChanged` (`react`'s diff), never a live
+   * query at decision time — ported from `window-state.ts
+   * WindowRecord.overlayFor`.
+   */
+  overlayFor?: WindowId;
 }
 
 /**
@@ -285,7 +300,15 @@ export type Event =
    */
   | { type: 'PendingProjectionDiscarded'; id: WindowId }
   /** `decide`'s translation of an accepted `SetVisibleOnAllSpaces` command. */
-  | { type: 'VisibleOnAllSpacesSet'; id: WindowId; on: boolean };
+  | { type: 'VisibleOnAllSpacesSet'; id: WindowId; on: boolean }
+  /**
+   * `decide`'s translation of an accepted `AttachOverlay` command — attach,
+   * retarget, and detach are all this ONE event (`hostId: null` = detach).
+   * `evolve` just writes the given `hostId` onto the overlay record; the
+   * follow itself is `react`'s job, driven off the host's next
+   * `BoundsChanged`, never a live query at this event's own dispatch time.
+   */
+  | { type: 'OverlayAttached'; overlayId: WindowId; hostId: WindowId | null };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Commands — rejectable requests (§0.1.1, §0.1.2). Every variant carries
@@ -346,7 +369,14 @@ export type Command =
    * raw path only — the role-derived `SPACES_POLICY_REQUESTED` policy stays
    * outside the kernel and is expressed as a caller composing this command).
    */
-  | { type: 'SetVisibleOnAllSpaces'; id: WindowId; on: boolean; expectedVersion: number };
+  | { type: 'SetVisibleOnAllSpaces'; id: WindowId; on: boolean; expectedVersion: number }
+  /**
+   * Attach, retarget, or detach the shared chrome overlay — `hostId: null`
+   * is detach. One transition, no separate detach command (see the doc on
+   * `WindowRecord.overlayFor`). `decide` rejects if either named window is
+   * absent from `order`.
+   */
+  | { type: 'AttachOverlay'; overlayId: WindowId; hostId: WindowId | null; expectedVersion: number };
 
 export type Rejection = 'stale-version' | 'no-such-window';
 
@@ -519,6 +549,9 @@ export function evolve(state: State, ev: Event): State {
           visibleOnAllSpaces: existing.visibleOnAllSpaces,
           pendingProjectedBounds: existing.pendingProjectedBounds,
           ...(existing.bounds !== undefined ? { bounds: existing.bounds } : {}),
+          // A lived fact (attachment), same reasoning as `fsMode` above —
+          // re-registration must not sever a live overlay attachment.
+          ...(existing.overlayFor !== undefined ? { overlayFor: existing.overlayFor } : {}),
           ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
           ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
         };
@@ -580,10 +613,14 @@ export function evolve(state: State, ev: Event): State {
     case 'WindowClosed': {
       // RULE 1: removal is the only way membership shrinks. `key`, even if it
       // names this id, is left untouched — see `keyWindow` for why a dangling
-      // key id is unobservable rather than repaired here.
+      // key id is unobservable rather than repaired here. A record whose
+      // `overlayFor` names the closed id is detached mechanically in the
+      // same pass — an overlay must never keep pointing at a retired host.
       return {
         ...state,
-        order: state.order.filter((w) => w.id !== ev.id),
+        order: state.order
+          .filter((w) => w.id !== ev.id)
+          .map((w) => (w.overlayFor === ev.id ? { ...w, overlayFor: undefined } : w)),
         version: state.version + 1,
       };
     }
@@ -768,6 +805,18 @@ export function evolve(state: State, ev: Event): State {
       };
     }
 
+    case 'OverlayAttached': {
+      // Mechanical write — attach, retarget, and detach are this ONE case.
+      // `hostId: null` clears the relation (`overlayFor: undefined`); a
+      // nonexistent `overlayId` is a harmless no-op, same as any other
+      // dangling-id event elsewhere in this file.
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.overlayId ? { ...w, overlayFor: ev.hostId ?? undefined } : w)),
+        version: state.version + 1,
+      };
+    }
+
     default: {
       const _exhaustive: never = ev;
       return _exhaustive;
@@ -848,6 +897,32 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
   }
 
+  // Overlay follow (§ WindowRecord.overlayFor): an attached overlay's bounds
+  // effect mirrors its HOST's bounds diff — never a live query, never a
+  // branch on `ev.type`. A detached overlay (`overlayFor` undefined) has no
+  // host to diff against and is skipped.
+  for (const nextRecord of next.order) {
+    if (nextRecord.overlayFor === undefined) continue;
+    const prevHost = prev.order.find((w) => w.id === nextRecord.overlayFor);
+    const nextHost = next.order.find((w) => w.id === nextRecord.overlayFor);
+    if (nextHost === undefined) continue;
+    if (nextHost.bounds !== undefined && !boundsEqual(prevHost?.bounds, nextHost.bounds)) {
+      effects.push({ type: 'SetBounds', id: nextRecord.id, bounds: nextHost.bounds });
+    }
+  }
+
+  // Overlay detach (an AttachOverlay retarget/detach, or the host closing):
+  // a structural diff of `overlayFor` going from set -> unset. `evolve`
+  // never flips `visible` for this, so a still-visible overlay must be
+  // driven off screen explicitly here.
+  for (const nextRecord of next.order) {
+    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
+    if (prevRecord === undefined) continue;
+    if (prevRecord.overlayFor !== undefined && nextRecord.overlayFor === undefined && nextRecord.visible) {
+      effects.push({ type: 'HideWindow', id: nextRecord.id });
+    }
+  }
+
   // RaiseWindow: only when OsFocusGained genuinely moved the target off its
   // prior position — a window already on top, or a dangling id with no
   // record to move, raises nothing.
@@ -917,6 +992,19 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
         },
       ],
     };
+  }
+
+  // AttachOverlay carries `overlayId`/`hostId`, not `id` — handled here,
+  // before the generic `cmd.id` guard below, same reasoning as the
+  // RegisterWindow special-case above.
+  if (cmd.type === 'AttachOverlay') {
+    if (!state.order.some((w) => w.id === cmd.overlayId)) {
+      return { rejected: 'no-such-window' };
+    }
+    if (cmd.hostId !== null && !state.order.some((w) => w.id === cmd.hostId)) {
+      return { rejected: 'no-such-window' };
+    }
+    return { events: [{ type: 'OverlayAttached', overlayId: cmd.overlayId, hostId: cmd.hostId }] };
   }
 
   if (!state.order.some((w) => w.id === cmd.id)) {
@@ -1031,4 +1119,16 @@ export function keyWindow(state: State): WindowRecord | null {
     return null;
   }
   return state.order.find((w) => w.id === state.key) ?? null;
+}
+
+/**
+ * The overlay attached to `hostId`, or null — the reverse scan named on
+ * `WindowRecord.overlayFor`'s doc comment. A scan rather than an index: the
+ * app has one shared chrome overlay and the record set is small.
+ */
+export function overlayForHost(state: State, hostId: WindowId): WindowRecord | null {
+  for (const w of state.order) {
+    if (w.overlayFor === hostId) return w;
+  }
+  return null;
 }

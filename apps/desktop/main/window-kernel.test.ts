@@ -22,6 +22,7 @@ import {
   decide,
   topmost,
   keyWindow,
+  overlayForHost,
   type State,
   type Event,
   type Effect,
@@ -787,5 +788,117 @@ describe('window-kernel: geometry', () => {
     assert.ok('events' in reDecision);
     const second = foldWithEffects(reDecision.events, first.state);
     assert.deepStrictEqual(second.effects, [], 'a genuine re-request of the current value diffs to nothing');
+  });
+});
+
+// ── Overlay attachment: the shared chrome overlay relation ──────────────────
+
+describe('window-kernel: overlay attachment', () => {
+  const registerHostsAndOverlay = (): Event[] => [
+    { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    { type: 'WindowRegistered', id: wid(3), kind: 'browser', layer: 1, canBecomeKey: false, acceptsInput: false, class: 'overlay' },
+  ];
+  const overlayId = wid(3);
+  const hostA = wid(1);
+  const hostB = wid(2);
+
+  it('attach, retarget to a different host, and detach all go through the one AttachOverlay/OverlayAttached transition', () => {
+    const state = fold(registerHostsAndOverlay(), initialState());
+
+    // Attach to hostA.
+    const attachDecision = decide(state, { type: 'AttachOverlay', overlayId, hostId: hostA, expectedVersion: state.version });
+    assert.ok('events' in attachDecision);
+    assert.deepStrictEqual(attachDecision.events, [{ type: 'OverlayAttached', overlayId, hostId: hostA }]);
+    let s = fold(attachDecision.events, state);
+    assert.strictEqual(s.order.find((w) => w.id === overlayId)?.overlayFor, hostA);
+    assert.strictEqual(overlayForHost(s, hostA)?.id, overlayId);
+
+    // Retarget to hostB — same command shape, no separate "retarget" command.
+    const retargetDecision = decide(s, { type: 'AttachOverlay', overlayId, hostId: hostB, expectedVersion: s.version });
+    assert.ok('events' in retargetDecision);
+    assert.deepStrictEqual(retargetDecision.events, [{ type: 'OverlayAttached', overlayId, hostId: hostB }]);
+    s = fold(retargetDecision.events, s);
+    assert.strictEqual(s.order.find((w) => w.id === overlayId)?.overlayFor, hostB);
+    assert.strictEqual(overlayForHost(s, hostA), null, 'no longer attached to hostA');
+    assert.strictEqual(overlayForHost(s, hostB)?.id, overlayId);
+
+    // Detach — hostId: null, same command shape.
+    const detachDecision = decide(s, { type: 'AttachOverlay', overlayId, hostId: null, expectedVersion: s.version });
+    assert.ok('events' in detachDecision);
+    assert.deepStrictEqual(detachDecision.events, [{ type: 'OverlayAttached', overlayId, hostId: null }]);
+    s = fold(detachDecision.events, s);
+    assert.strictEqual(s.order.find((w) => w.id === overlayId)?.overlayFor, undefined);
+    assert.strictEqual(overlayForHost(s, hostB), null);
+  });
+
+  it('an attached overlay follows its host BoundsChanged; a detached one does not', () => {
+    const registered = fold(registerHostsAndOverlay(), initialState());
+    const attached = fold(
+      [{ type: 'OverlayAttached', overlayId, hostId: hostA }],
+      registered,
+    );
+
+    const bounds: Rectangle = { x: 10, y: 20, width: 300, height: 400 };
+    const boundsEv: Event = { type: 'BoundsChanged', id: hostA, bounds };
+    const nextAttached = evolve(attached, boundsEv);
+    const attachedEffects = react(attached, boundsEv, nextAttached);
+    assert.ok(
+      attachedEffects.some((e) => e.type === 'SetBounds' && e.id === overlayId && JSON.stringify(e.bounds) === JSON.stringify(bounds)),
+      'an attached overlay must follow its host bounds change',
+    );
+
+    // Detach, then move hostA's bounds again — no follow this time.
+    const detached = evolve(attached, { type: 'OverlayAttached', overlayId, hostId: null });
+    const bounds2: Rectangle = { x: 1, y: 2, width: 3, height: 4 };
+    const boundsEv2: Event = { type: 'BoundsChanged', id: hostA, bounds: bounds2 };
+    const nextDetached = evolve(detached, boundsEv2);
+    const detachedEffects = react(detached, boundsEv2, nextDetached);
+    assert.ok(
+      !detachedEffects.some((e) => e.type === 'SetBounds' && e.id === overlayId),
+      'a detached overlay must not follow bounds changes',
+    );
+  });
+
+  it('closing the host detaches the overlay and drives it off screen', () => {
+    const registered = fold(registerHostsAndOverlay(), initialState());
+    const attached = fold(
+      [{ type: 'OverlayAttached', overlayId, hostId: hostA }, { type: 'WindowShown', id: overlayId }],
+      registered,
+    );
+    assert.strictEqual(attached.order.find((w) => w.id === overlayId)?.visible, true);
+
+    const closeEv: Event = { type: 'WindowClosed', id: hostA };
+    const closed = evolve(attached, closeEv);
+    const effects = react(attached, closeEv, closed);
+
+    assert.strictEqual(closed.order.find((w) => w.id === overlayId)?.overlayFor, undefined, 'overlay is detached');
+    assert.ok(
+      effects.some((e) => e.type === 'HideWindow' && e.id === overlayId),
+      'the now-detached overlay must be driven off screen',
+    );
+  });
+
+  it('attaching neither writes key nor reorders order', () => {
+    const state = fold([...registerHostsAndOverlay(), { type: 'OsFocusGained', id: hostB }], initialState());
+    const orderBefore = state.order.map((w) => w.id);
+    const keyBefore = state.key;
+
+    const decision = decide(state, { type: 'AttachOverlay', overlayId, hostId: hostA, expectedVersion: state.version });
+    assert.ok('events' in decision);
+    const attached = fold(decision.events, state);
+    assert.deepStrictEqual(attached.order.map((w) => w.id), orderBefore, 'order must be untouched by an attach');
+    assert.strictEqual(attached.key, keyBefore, 'key must be untouched by an attach');
+  });
+
+  it('decide rejects an attach naming an overlay or a host absent from order', () => {
+    const state = fold(registerHostsAndOverlay(), initialState());
+    const unknown = wid(99);
+
+    const badOverlay = decide(state, { type: 'AttachOverlay', overlayId: unknown, hostId: hostA, expectedVersion: state.version });
+    assert.deepStrictEqual(badOverlay, { rejected: 'no-such-window' });
+
+    const badHost = decide(state, { type: 'AttachOverlay', overlayId, hostId: unknown, expectedVersion: state.version });
+    assert.deepStrictEqual(badHost, { rejected: 'no-such-window' });
   });
 });

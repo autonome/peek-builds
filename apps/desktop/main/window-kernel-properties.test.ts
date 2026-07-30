@@ -109,7 +109,7 @@ function isCommand(item: LogItem): item is Command {
  * same seed always produces the same concrete log.
  */
 function randomLogItem(rng: Rng, state: State): LogItem {
-  const variant = randomInt(rng, 27);
+  const variant = randomInt(rng, 29);
   const id = wid(randomInt(rng, POOL_SIZE));
   switch (variant) {
     case 0: {
@@ -229,8 +229,30 @@ function randomLogItem(rng: Rng, state: State): LogItem {
     case 25:
       return { type: 'PendingProjectionDiscarded', id };
     case 26:
-    default:
       return { type: 'VisibleOnAllSpacesSet', id, on: randomBool(rng) };
+    // Overlay attachment (this slice) — goes through `decide`, same
+    // stale-expectedVersion treatment as the other command variants above.
+    // hostId is drawn from the raw id pool (possibly unregistered, possibly
+    // `id` itself) since `decide`'s guard is what's under test here.
+    case 27: {
+      const stale = rng() < 0.2;
+      let hostId: WindowId | null = rng() < 0.2 ? null : wid(randomInt(rng, POOL_SIZE));
+      if (hostId === id) hostId = null; // never target self — no window is its own overlay host
+      return { type: 'AttachOverlay', overlayId: id, hostId, expectedVersion: stale ? state.version + 1 : state.version };
+    }
+    case 28:
+    default: {
+      // Unfiltered — decide's own synthetic translation of AttachOverlay,
+      // fed straight to `evolve` (same reasoning as Maximized/Unmaximized
+      // above). Unlike the command above, `hostId` is drawn from windows
+      // CURRENTLY in `order` (excluding `id` itself): this event bypasses
+      // `decide`'s guard entirely, so a dangling `overlayFor` or a
+      // self-attached overlay here would be a genuine invariant violation,
+      // not generator noise.
+      const candidates = state.order.filter((w) => w.id !== id);
+      const hostId = candidates.length === 0 || rng() < 0.2 ? null : pick(rng, candidates).id;
+      return { type: 'OverlayAttached', overlayId: id, hostId };
+    }
   }
 }
 
@@ -317,6 +339,17 @@ function checkInvariants(state: State, prev?: State): string[] {
     // least one axis (non-normal fsMode, or hidden).
     if (record.pendingProjectedBounds !== null && record.fsMode.name === 'normal' && record.visible) {
       violations.push(`pendingProjectedBounds held for ${record.id} but neither axis is blocked`);
+    }
+
+    // Overlay attachment (this slice): `overlayFor` never dangles onto a
+    // window absent from `order`, and no window is its own overlay host.
+    if (record.overlayFor !== undefined) {
+      if (!state.order.some((w) => w.id === record.overlayFor)) {
+        violations.push(`overlayFor names a window absent from order for ${record.id}: ${JSON.stringify(record.overlayFor)}`);
+      }
+      if (record.overlayFor === record.id) {
+        violations.push(`window is its own overlay host: ${record.id}`);
+      }
     }
   }
 
