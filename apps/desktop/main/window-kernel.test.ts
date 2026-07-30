@@ -1259,9 +1259,9 @@ describe('window-kernel: focus provenance (cause) and isStaleSelfEcho', () => {
   });
 
   it('isStaleSelfEcho: true for an opSeq older than lastOpSeq, false for the current one, false for world', () => {
-    // Raise wid(1) while wid(2) sits on top, so the raise genuinely moves it
-    // and stamps lastOpSeq = state.opSeqCounter (0, since evolve never bumps
-    // it in this slice).
+    // Raise wid(1) while wid(2) sits on top, so the raise genuinely moves it,
+    // mints a token, and stamps lastOpSeq = that token (= state.opSeqCounter,
+    // which the raise itself advanced).
     const state = fold([...registerTwo(), { type: 'OsFocusGained', id: wid(1) }], initialState());
     const rec = state.order.find((w) => w.id === wid(1))!;
     assert.strictEqual(rec.lastOpSeq, state.opSeqCounter);
@@ -1306,6 +1306,160 @@ describe('window-kernel: focus provenance (cause) and isStaleSelfEcho', () => {
     const shownTwice = evolve(shownOnce, shownTwiceEv);
     const shownTwiceEffects = react(shownOnce, shownTwiceEv, shownTwice);
     assert.ok(!shownTwiceEffects.some((e) => e.type === 'ShowWindow'), 'an already-visible window re-shown emits no ShowWindow effect');
+  });
+});
+
+// ── The op counter: what makes one op distinguishable from another ─────────
+
+/**
+ * `State.opSeqCounter` is the ordering `isStaleSelfEcho` reads, and it is
+ * INERT unless `evolve` advances it: with the counter frozen every op ever
+ * issued carries the same token, no echo can be older than any other, and a
+ * guard that is correct in form matches nothing live traffic produces. These
+ * tests state the counter's own behaviour — advance on exactly the
+ * transitions that issue a focus-family op, stay put on every other one, and
+ * hand `evolve`'s record stamp and `react`'s effect token the SAME number —
+ * so a counter that stops advancing fails here instead of passing vacuously.
+ */
+describe('window-kernel: the op counter advances once per issued op', () => {
+  const registerPageHost = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+
+  const focusFamily = (effects: Effect[]): Extract<Effect, { opSeq: number }>[] =>
+    effects.filter((e): e is Extract<Effect, { opSeq: number }> => e.type === 'ShowWindow' || e.type === 'RaiseWindow');
+
+  /** One transition, with everything the two coherence rules need to be checked. */
+  function step(state: State, ev: Event): { next: State; effects: Effect[] } {
+    const next = evolve(state, ev);
+    return { next, effects: react(state, ev, next) };
+  }
+
+  /**
+   * THE ROUND-TRIP RULE, asserted rather than assumed: for every focus-family
+   * effect `react` emits, the token on the effect, the counter in `next`, and
+   * the `lastOpSeq` stamped on the named record are one and the same number —
+   * and that number is exactly one more than the pre-transition counter.
+   * Anything else and the echo the backend sends back cannot line up with the
+   * stamp the guard compares it to.
+   */
+  function assertCoherent(prev: State, next: State, effects: Effect[], label: string): void {
+    const stamped = focusFamily(effects);
+    assert.strictEqual(
+      next.opSeqCounter,
+      prev.opSeqCounter + (stamped.length > 0 ? 1 : 0),
+      `${label}: the counter advances exactly when an op is issued`,
+    );
+    for (const effect of stamped) {
+      assert.strictEqual(effect.opSeq, next.opSeqCounter, `${label}: react stamps next.opSeqCounter on ${effect.type}`);
+      assert.strictEqual(
+        next.order.find((w) => w.id === effect.id)?.lastOpSeq,
+        next.opSeqCounter,
+        `${label}: evolve's record stamp equals react's effect token for ${effect.id}`,
+      );
+    }
+  }
+
+  it('a genuine show and a genuine raise each mint a fresh token; nothing else moves the counter', () => {
+    let state = fold([registerPageHost(wid(1)), registerPageHost(wid(2))]);
+    assert.strictEqual(state.opSeqCounter, 0, 'registration issues no op');
+
+    const shown = step(state, { type: 'WindowShown', id: wid(1) });
+    assertCoherent(state, shown.next, shown.effects, 'first show');
+    assert.strictEqual(shown.next.opSeqCounter, 1);
+    state = shown.next;
+
+    const reshown = step(state, { type: 'WindowShown', id: wid(1) });
+    assertCoherent(state, reshown.next, reshown.effects, 're-show of a visible window');
+    assert.strictEqual(reshown.next.opSeqCounter, 1, 'an already-visible window re-shown issues nothing');
+    state = reshown.next;
+
+    const raised = step(state, { type: 'OsFocusGained', id: wid(1) });
+    assertCoherent(state, raised.next, raised.effects, 'raise');
+    assert.strictEqual(raised.next.opSeqCounter, 2);
+    state = raised.next;
+
+    const refocused = step(state, { type: 'OsFocusGained', id: wid(1) });
+    assertCoherent(state, refocused.next, refocused.effects, 'focus report on the topmost window');
+    assert.strictEqual(refocused.next.opSeqCounter, 2, 'a window already on top moves nothing, so no op is issued');
+    state = refocused.next;
+
+    // A sample of the transitions that are not focus-family ops at all.
+    for (const ev of [
+      { type: 'WindowHidden', id: wid(1) } as Event,
+      { type: 'BoundsChanged', id: wid(2), bounds: { x: 1, y: 2, width: 3, height: 4 } } as Event,
+      { type: 'WindowContentOrderable', id: wid(2) } as Event,
+      { type: 'OsFocusLost', id: wid(1) } as Event,
+      { type: 'AppResigned' } as Event,
+      { type: 'WindowClosed', id: wid(2) } as Event,
+    ]) {
+      const after = step(state, ev);
+      assertCoherent(state, after.next, after.effects, `${ev.type}`);
+      assert.strictEqual(after.next.opSeqCounter, 2, `${ev.type} issues no focus-family op`);
+      state = after.next;
+    }
+  });
+
+  it('two ops for the same window carry DIFFERENT tokens — which is what makes the earlier one stale', () => {
+    // The whole point of the counter. Every event here is ordinary traffic;
+    // no token is written by hand.
+    let state = fold([
+      registerPageHost(wid(1)),
+      registerPageHost(wid(2)),
+      { type: 'WindowShown', id: wid(1) },
+      { type: 'WindowShown', id: wid(2) },
+    ]);
+
+    state = evolve(state, { type: 'OsFocusGained', id: wid(1) });
+    const firstRaiseToken = state.order.find((w) => w.id === wid(1))!.lastOpSeq!;
+    state = evolve(state, { type: 'OsFocusGained', id: wid(2) });
+    state = evolve(state, { type: 'OsFocusGained', id: wid(1) });
+    const secondRaiseToken = state.order.find((w) => w.id === wid(1))!.lastOpSeq!;
+
+    assert.ok(secondRaiseToken > firstRaiseToken, 'a second op for the same window must not reuse the first op\'s token');
+    assert.strictEqual(isStaleSelfEcho(state, wid(1), { kind: 'machine', opSeq: firstRaiseToken }), true);
+    assert.strictEqual(isStaleSelfEcho(state, wid(1), { kind: 'machine', opSeq: secondRaiseToken }), false);
+  });
+
+  it('an AppActivated re-show issues ONE op, and stamps every window it puts back on screen', () => {
+    // The third arm that issues focus-family effects: the resign sweep's undo.
+    // `react` emits one ShowWindow per re-shown window, all carrying the same
+    // token, so all of them must be stamped with it.
+    const hud = (id: WindowId): Event => ({
+      type: 'WindowRegistered',
+      id,
+      kind: 'page-host',
+      layer: BASE_LAYER + 1,
+      canBecomeKey: false,
+      acceptsInput: false,
+      class: 'hud',
+    });
+    const before = fold([
+      hud(wid(1)),
+      hud(wid(2)),
+      { type: 'WindowShown', id: wid(1) },
+      { type: 'WindowShown', id: wid(2) },
+      { type: 'AppResigned' },
+      { type: 'AppResignSettled' },
+    ]);
+    assert.deepStrictEqual(before.order.map((w) => w.visible), [false, false], 'the sweep hid both');
+
+    const activated = step(before, { type: 'AppActivated' });
+    assert.strictEqual(focusFamily(activated.effects).length, 2, 'one ShowWindow per re-shown window');
+    assertCoherent(before, activated.next, activated.effects, 'AppActivated re-show');
+    assert.strictEqual(activated.next.opSeqCounter, before.opSeqCounter + 1, 'one op, not one per window');
+
+    // A second activation re-shows nothing, so it issues nothing.
+    const again = step(activated.next, { type: 'AppActivated' });
+    assert.deepStrictEqual(again.effects, []);
+    assert.strictEqual(again.next.opSeqCounter, activated.next.opSeqCounter);
   });
 });
 

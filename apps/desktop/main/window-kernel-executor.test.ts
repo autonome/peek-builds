@@ -286,12 +286,13 @@ describe('the stale self-echo guard at the dispatch site', () => {
    * a genuine reorder emits `RaiseWindow`, an ACTIVATING show. Left alone it
    * would drive a real OS focus-steal.
    *
-   * ON THE TOKEN VALUES BELOW: nothing advances `State.opSeqCounter` today, so
-   * every op the kernel stamps carries token 0 and the only expressible OLDER
-   * token is a synthetic one. These tests pin the ordering RULE the guard
-   * applies, which is what the executor owns; making live traffic produce
-   * distinguishable tokens is a change to the pure kernel's counter, not to
-   * this file.
+   * ON THE TOKEN VALUES BELOW: these tests pin the ordering RULE the guard
+   * applies, and some of them reach an older token by arithmetic on the stamp
+   * (`stamped - 1`) rather than by issuing a second op. That is deliberate
+   * economy, not the proof that the guard fires on real traffic — the proof is
+   * the last test in this describe, which issues two ops for the same window
+   * through ordinary dispatches and replays the FIRST one's token exactly as
+   * the backend received it.
    */
   function twoWindowsWithAnIssuedOp(): { exec: WindowKernelExecutor; backend: RecordingBackend } {
     const made = makeExecutor();
@@ -394,8 +395,65 @@ describe('the stale self-echo guard at the dispatch site', () => {
     exec.dispatch({ type: 'WindowHidden', id: wid(2) });
 
     assert.strictEqual(reentered, true);
-    assert.strictEqual(exec.getState().order.find((w) => w.id === wid(3))!.lastOpSeq, 0);
+    // The show stamped wid(3) with the token its own op minted — whatever the
+    // counter had reached by then — and the echo's -1 is older than any token
+    // the counter can mint.
+    assert.strictEqual(exec.getState().order.find((w) => w.id === wid(3))!.lastOpSeq, exec.getState().opSeqCounter);
     assert.strictEqual(exec.getState().key, wid(2), 'the late echo never took key');
+  });
+
+  /**
+   * THE GUARD ON REAL TRAFFIC — no synthetic token anywhere.
+   *
+   * Every event below is one a producer really sends, and the token replayed
+   * as the late echo is read off the backend call the executor actually made,
+   * exactly as `electron-window-backend.ts armSelfCausedFocus` would hold it
+   * until the OS reports the focus back. It fails if `State.opSeqCounter`
+   * stops advancing: with a frozen counter both raises of wid(1) carry the
+   * same token, the late echo is indistinguishable from the current one, the
+   * guard lets it through, and it drives a real raise — the OS focus-steal
+   * this guard exists to prevent.
+   */
+  it('drops the late echo of a superseded op, with every token minted by ordinary traffic', () => {
+    const { exec, backend } = makeExecutor();
+    exec.dispatch(register(wid(1)));
+    exec.dispatch(register(wid(2)));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    exec.dispatch({ type: 'WindowShown', id: wid(2) });
+
+    // Op 1 — the user picks wid(1). The raise the executor issues is the one
+    // whose echo arrives late, so its token is captured from the port call.
+    exec.dispatch({ type: 'OsFocusGained', id: wid(1), cause: { kind: 'world' } });
+    const firstRaise = backend.of('raiseWindow').at(-1)!;
+    assert.deepStrictEqual(firstRaise.args[0], wid(1));
+    const supersededToken = firstRaise.args[1] as number;
+
+    // Op 2 and op 3 — the user goes to wid(2), then back to wid(1). The
+    // second raise of wid(1) SUPERSEDES the first.
+    exec.dispatch({ type: 'OsFocusGained', id: wid(2), cause: { kind: 'world' } });
+    exec.dispatch({ type: 'OsFocusGained', id: wid(1), cause: { kind: 'world' } });
+    const currentToken = backend.of('raiseWindow').at(-1)!.args[1] as number;
+    assert.ok(
+      currentToken > supersededToken,
+      `two ops for the same window must carry different tokens (got ${supersededToken} then ${currentToken})`,
+    );
+
+    // The user moves on to wid(2) for good.
+    exec.dispatch({ type: 'OsFocusGained', id: wid(2), cause: { kind: 'world' } });
+    const versionBefore = exec.getState().version;
+    backend.calls.length = 0;
+
+    // Only NOW does the OS echo the FIRST raise of wid(1) back.
+    exec.dispatch({ type: 'OsFocusGained', id: wid(1), cause: { kind: 'machine', opSeq: supersededToken } });
+
+    assert.strictEqual(exec.getState().key, wid(2), 'key must stay where the user left it');
+    assert.strictEqual(exec.getState().version, versionBefore, 'a dropped event never reaches evolve');
+    assert.deepStrictEqual(backend.names(), [], 'no raise, so no OS focus-steal');
+
+    // And the guard is an ordering test, not a blanket "drop machine echoes":
+    // the echo of the op that is still current is honoured.
+    exec.dispatch({ type: 'OsFocusGained', id: wid(1), cause: { kind: 'machine', opSeq: currentToken } });
+    assert.strictEqual(exec.getState().key, wid(1));
   });
 });
 

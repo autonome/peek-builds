@@ -210,8 +210,11 @@ export interface WindowRecord {
    * `RaiseWindow`) issued for this window — what `isStaleSelfEcho` compares
    * an incoming `machine`-caused `OsFocusGained` against. Written in `evolve`
    * exactly where those effects would be emitted (`WindowShown` genuinely
-   * clearing `visible`, `OsFocusGained` genuinely raising), mirroring
-   * `react`'s own diff so it never drifts from what was actually stamped.
+   * clearing `visible`, `OsFocusGained` genuinely raising, `AppActivated`
+   * re-showing a window the resign sweep hid), mirroring `react`'s own diff so
+   * it never drifts from what was actually stamped. The value written is the
+   * token of THAT op — the same `opSeqCounter` `react` stamps on the effect
+   * (see `State.opSeqCounter`), never the pre-transition counter.
    * `undefined` until the first such effect for this window.
    */
   lastOpSeq?: number;
@@ -323,7 +326,25 @@ export interface State {
   readonly key: WindowId | null;
   /** RULE 4 + stale-intent rejection (§0.1.2). Bumped by every accepted event. */
   readonly version: number;
-  /** Reserved for the (not-yet-built) effect-stamping executor — the `OpToken` counter. */
+  /**
+   * The `OpToken` counter — the ordering the stale-echo guard reads
+   * (`isStaleSelfEcho`). ONE TOKEN PER TRANSITION THAT ISSUES AT LEAST ONE
+   * FOCUS-FAMILY OP: `evolve` bumps it by exactly 1 in each arm whose diff
+   * `react` turns into a `ShowWindow`/`RaiseWindow` (a `WindowShown` that
+   * genuinely flips `visible`, an `OsFocusGained` that genuinely raises, an
+   * `AppActivated` that re-shows what the resign sweep hid), and leaves it
+   * untouched in every other transition. That is what makes the token
+   * meaningful: two ops issued at different moments carry different numbers,
+   * so an echo of the older one is recognisable as stale.
+   *
+   * The bump is a PER-TRANSITION scalar, not per-effect, because `react`
+   * stamps every focus-family effect it emits with `next.opSeqCounter` — one
+   * `AppActivated` re-showing three windows issues one op with one token
+   * against three windows, and each of those records is stamped
+   * `lastOpSeq` = that same value. `evolve`'s stamp and `react`'s token are
+   * therefore the same number by construction; the property suite asserts the
+   * equality rather than trusting the two sites to stay in step.
+   */
   readonly opSeqCounter: number;
   readonly appActive: boolean;
   readonly openSeqCounter: number;
@@ -857,14 +878,18 @@ export function evolve(state: State, ev: Event): State {
       // DisplayChanged projection — flush if fsMode is also already normal.
       // `lastOpSeq` is stamped only when this genuinely flips `visible`
       // (the same condition `react` uses to emit `ShowWindow`) — an
-      // already-visible window re-shown is a no-op for the effect too.
+      // already-visible window re-shown is a no-op for the effect too, and
+      // issues no op, so the counter does not move either.
+      const issuesShow = state.order.some((w) => w.id === ev.id && !w.visible);
+      const opSeq = issuesShow ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
         ...state,
         order: state.order.map((w) => {
           if (w.id !== ev.id) return w;
           const flushed = withPendingProjectionFlushed({ ...w, visible: true });
-          return w.visible ? flushed : { ...flushed, lastOpSeq: state.opSeqCounter };
+          return w.visible ? flushed : { ...flushed, lastOpSeq: opSeq };
         }),
+        opSeqCounter: opSeq,
         version: state.version + 1,
       };
     }
@@ -906,13 +931,16 @@ export function evolve(state: State, ev: Event): State {
       const withoutRecord = [...state.order.slice(0, idx), ...state.order.slice(idx + 1)];
       // `lastOpSeq` is stamped only when this genuinely raises the window
       // (the same condition `react` uses to emit `RaiseWindow`) — a focus
-      // report on the window already on top moves nothing and stamps nothing.
+      // report on the window already on top moves nothing, stamps nothing,
+      // and issues no op, so the counter stays put.
       const genuinelyRaised = idx !== state.order.length - 1;
-      const movedRecord = genuinelyRaised ? { ...record, lastOpSeq: state.opSeqCounter } : record;
+      const opSeq = genuinelyRaised ? state.opSeqCounter + 1 : state.opSeqCounter;
+      const movedRecord = genuinelyRaised ? { ...record, lastOpSeq: opSeq } : record;
       return {
         ...state,
         order: [...withoutRecord, movedRecord],
         key: ev.id,
+        opSeqCounter: opSeq,
         version: state.version + 1,
       };
     }
@@ -944,13 +972,25 @@ export function evolve(state: State, ev: Event): State {
       // AppResignSettled sweep hid (`hiddenByAppBlur`), clearing the mark;
       // anything hidden for another reason is untouched. `key`/`order` are
       // never touched here.
+      //
+      // The re-show is a focus-family op like any other: `react` emits a
+      // `ShowWindow` per window whose `visible` flips, all carrying the ONE
+      // token this transition mints, so every window it shows is stamped with
+      // that same token. A re-activation that re-shows nothing (the ordinary
+      // dance cancel, or a marked window that is somehow already visible)
+      // issues no op and does not move the counter.
+      const reshown = state.order.some((w) => w.hiddenByAppBlur === true && !w.visible);
+      const opSeq = reshown ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
         ...state,
         appActive: true,
         pendingAppResignSweep: false,
         order: state.order.map((w) =>
-          w.hiddenByAppBlur === true ? { ...w, visible: true, hiddenByAppBlur: false } : w,
+          w.hiddenByAppBlur === true
+            ? { ...w, visible: true, hiddenByAppBlur: false, ...(w.visible ? {} : { lastOpSeq: opSeq }) }
+            : w,
         ),
+        opSeqCounter: opSeq,
         version: state.version + 1,
       };
     }

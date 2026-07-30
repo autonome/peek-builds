@@ -323,23 +323,82 @@ function randomLogItem(rng: Rng, state: State): LogItem {
  * acceptance folds its (possibly empty) event list, accumulating `react`
  * effects at each step exactly like a directly-supplied event would.
  */
-function stepLogItem(state: State, item: LogItem): { state: State; effects: Effect[] } {
+function stepLogItem(state: State, item: LogItem): { state: State; effects: Effect[]; steps: Step[] } {
   if (!isCommand(item)) {
     const next = evolve(state, item);
-    return { state: next, effects: react(state, item, next) };
+    const effects = react(state, item, next);
+    return { state: next, effects, steps: [{ prev: state, next, effects }] };
   }
   const decision = decide(state, item);
   if ('rejected' in decision) {
-    return { state, effects: [] };
+    return { state, effects: [], steps: [] };
   }
   let s = state;
   const effects: Effect[] = [];
+  const steps: Step[] = [];
   for (const ev of decision.events) {
     const next = evolve(s, ev);
-    effects.push(...react(s, ev, next));
+    const stepEffects = react(s, ev, next);
+    effects.push(...stepEffects);
+    steps.push({ prev: s, next, effects: stepEffects });
     s = next;
   }
-  return { state: s, effects };
+  return { state: s, effects, steps };
+}
+
+/**
+ * ONE `evolve`/`react` transition. Kept per-EVENT rather than per-log-item so
+ * the op-token invariants below are stated over the unit they are actually
+ * about: a command can fold into several events, and aggregating their effects
+ * would blur which transition minted which token.
+ */
+interface Step {
+  prev: State;
+  next: State;
+  effects: Effect[];
+}
+
+/**
+ * THE OP-TOKEN INVARIANTS (`State.opSeqCounter` / `WindowRecord.lastOpSeq`).
+ *
+ * This is the counter that makes an echo's provenance ORDERABLE, and it is
+ * inert unless `evolve` advances it — a frozen counter hands every op ever
+ * issued the same token, so `isStaleSelfEcho` matches nothing live traffic
+ * produces while every example-based test that injects a synthetic older
+ * token still passes. Stated as a biconditional in both directions, so the
+ * counter cannot go inert (no advance where an op is issued) or noisy
+ * (an advance where none is) without a failure here:
+ *
+ *   1. the counter advances by exactly 1 on a transition that emits at least
+ *      one focus-family effect, and not at all on any other transition;
+ *   2. every focus-family effect carries `next.opSeqCounter` as its token;
+ *   3. the record that effect names carries the SAME number as `lastOpSeq` —
+ *      `evolve`'s stamp and `react`'s token are one value, which is what lets
+ *      the echo the backend sends back line up with the stamp the guard
+ *      compares it against.
+ */
+function checkOpSeqInvariants(step: Step): string[] {
+  const violations: string[] = [];
+  const stamped = step.effects.filter((e) => e.type === 'ShowWindow' || e.type === 'RaiseWindow');
+  const expected = step.prev.opSeqCounter + (stamped.length > 0 ? 1 : 0);
+  if (step.next.opSeqCounter !== expected) {
+    violations.push(
+      `opSeqCounter moved ${step.prev.opSeqCounter} -> ${step.next.opSeqCounter} on a transition emitting ${stamped.length} focus-family effect(s); expected ${expected}`,
+    );
+  }
+  for (const effect of stamped) {
+    const token = (effect as { opSeq: number }).opSeq;
+    if (token !== step.next.opSeqCounter) {
+      violations.push(`${effect.type} for ${effect.id} carries opSeq ${token}, not next.opSeqCounter ${step.next.opSeqCounter}`);
+    }
+    const record = step.next.order.find((w) => w.id === effect.id);
+    if (record === undefined || record.lastOpSeq !== token) {
+      violations.push(
+        `${effect.type} for ${effect.id} was issued with token ${token} but the record stamps lastOpSeq=${JSON.stringify(record?.lastOpSeq)}`,
+      );
+    }
+  }
+  return violations;
 }
 
 function generateLog(seed: number, length: number): LogItem[] {
@@ -719,13 +778,24 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
       let state = initialState();
       for (let i = 0; i < log.length; i++) {
         const item = log[i];
-        let result: { state: State; effects: Effect[] };
+        let result: { state: State; effects: Effect[]; steps: Step[] };
         try {
           result = stepLogItem(state, item);
         } catch (err) {
           throw new Error(reproMessage(seed, log, i, `evolve/decide threw: ${(err as Error).message}`));
         }
-        const { state: next, effects } = result;
+        const { state: next, effects, steps } = result;
+
+        // Per-EVENT, and checked before the `next === state` early-out below:
+        // a command that folds to zero events is a genuine no-op, but a
+        // transition that changed nothing else can still have moved the
+        // counter, and that would be a bug rather than a no-op.
+        for (const step of steps) {
+          const opSeqViolations = checkOpSeqInvariants(step);
+          if (opSeqViolations.length > 0) {
+            throw new Error(reproMessage(seed, log, i, `op-token invariant violation(s): ${opSeqViolations.join('; ')}`));
+          }
+        }
 
         // A rejected command is a no-op — same state, no events, nothing to
         // check (the version-strictly-increases invariant would misfire on
@@ -770,6 +840,98 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
       assert.deepStrictEqual(r1.state, fold(log), reproMessage(seed, log, log.length, 'fold() and foldWithEffects() diverged'));
     });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The op-token invariants, proven non-vacuous — MEASURED, not assumed. Both
+// halves matter: the generated logs must actually issue focus-family ops (or
+// clause 1 never has a positive case to check), and the checker must actually
+// name a violation when the counter misbehaves (or it is decoration).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('window-kernel: the op-token invariants are not vacuous', () => {
+  /**
+   * MEASURED at POOL_SIZE=6 / LOG_LENGTH=30 / 200 seeds: 27 seeds issue an op,
+   * 28 ops in 6000 generated log items. THIN — and deliberately recorded
+   * rather than rounded up, because it says where the real coverage lives: an
+   * op needs a REGISTERED window that is also currently hidden (a show) or not
+   * currently topmost (a raise), and the unfiltered generator produces that
+   * combination rarely. A counter that stopped advancing would fail ~27 seeds
+   * here, which is a signal but not the proof; the example-based coverage
+   * (`window-kernel.test.ts` "the op counter advances once per issued op",
+   * `window-kernel-executor.test.ts` "drops the late echo of a superseded op")
+   * is what actually pins this behaviour. Constraining generation to make ops
+   * common is exactly the move that would make the invariant vacuous, so the
+   * generator stays unfiltered and this test just states the measurement.
+   */
+  it('the generated logs issue focus-family ops at the measured rate', () => {
+    let issued = 0;
+    let seedsWithAnOp = 0;
+    for (let seed = 0; seed < SEED_COUNT; seed++) {
+      const log = generateLog(seed, LOG_LENGTH);
+      let state = initialState();
+      let emittingTransitions = 0;
+      let count = 0;
+      for (const item of log) {
+        const result = stepLogItem(state, item);
+        for (const step of result.steps) {
+          const stamped = step.effects.filter((e) => e.type === 'ShowWindow' || e.type === 'RaiseWindow');
+          count += stamped.length;
+          if (stamped.length > 0) emittingTransitions += 1;
+        }
+        state = result.state;
+      }
+      issued += count;
+      if (count > 0) seedsWithAnOp += 1;
+      assert.strictEqual(state.opSeqCounter, emittingTransitions, `seed ${seed}: one token minted per emitting transition`);
+    }
+    assert.ok(seedsWithAnOp >= 20, `only ${seedsWithAnOp}/${SEED_COUNT} seeds issued an op (${issued} ops total)`);
+    assert.ok(issued >= 20, `only ${issued} focus-family ops across ${SEED_COUNT} seeds`);
+  });
+
+  it('the checker names the violation when the counter goes inert', () => {
+    // The pre-fix shape, hand-built: a transition that emits a ShowWindow but
+    // leaves the counter (and the record's stamp) where they were.
+    const id = wid(0);
+    const reg: Event = { type: 'WindowRegistered', id, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' };
+    const prev = fold([reg]);
+    const next = evolve(prev, { type: 'WindowShown', id });
+    const inert: State = {
+      ...next,
+      opSeqCounter: prev.opSeqCounter,
+      order: next.order.map((w) => (w.id === id ? { ...w, lastOpSeq: prev.opSeqCounter } : w)),
+    };
+    const violations = checkOpSeqInvariants({
+      prev,
+      next: inert,
+      effects: [{ type: 'ShowWindow', id, opSeq: inert.opSeqCounter }],
+    });
+    assert.deepStrictEqual(violations, [
+      `opSeqCounter moved 0 -> 0 on a transition emitting 1 focus-family effect(s); expected 1`,
+    ]);
+  });
+
+  it('the checker names the violation when the stamp and the token disagree', () => {
+    // The other half of the round trip: the counter advanced and `react`
+    // stamped the effect, but the record kept an older `lastOpSeq` — the shape
+    // a stamp written from the PRE-transition counter produces.
+    const id = wid(0);
+    const reg: Event = { type: 'WindowRegistered', id, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' };
+    const prev = fold([reg]);
+    const next = evolve(prev, { type: 'WindowShown', id });
+    const mismatched: State = {
+      ...next,
+      order: next.order.map((w) => (w.id === id ? { ...w, lastOpSeq: prev.opSeqCounter } : w)),
+    };
+    const violations = checkOpSeqInvariants({
+      prev,
+      next: mismatched,
+      effects: [{ type: 'ShowWindow', id, opSeq: mismatched.opSeqCounter }],
+    });
+    assert.deepStrictEqual(violations, [
+      `ShowWindow for ${id} was issued with token 1 but the record stamps lastOpSeq=0`,
+    ]);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
