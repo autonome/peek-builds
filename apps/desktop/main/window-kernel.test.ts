@@ -901,4 +901,23 @@ describe('window-kernel: overlay attachment', () => {
     const badHost = decide(state, { type: 'AttachOverlay', overlayId, hostId: unknown, expectedVersion: state.version });
     assert.deepStrictEqual(badHost, { rejected: 'no-such-window' });
   });
+
+  it('evolve normalizes an OverlayAttached naming an unregistered or self host into a detach', () => {
+    const registered = fold(registerHostsAndOverlay(), initialState());
+
+    const unknown = wid(99);
+    const danglingHost = evolve(registered, { type: 'OverlayAttached', overlayId, hostId: unknown });
+    assert.strictEqual(
+      danglingHost.order.find((w) => w.id === overlayId)?.overlayFor,
+      undefined,
+      'a hostId absent from order must not be stored',
+    );
+
+    const selfHost = evolve(registered, { type: 'OverlayAttached', overlayId, hostId: overlayId });
+    assert.strictEqual(
+      selfHost.order.find((w) => w.id === overlayId)?.overlayFor,
+      undefined,
+      'an overlay naming itself as host must not be stored',
+    );
+  });
 });

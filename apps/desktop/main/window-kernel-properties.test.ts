@@ -244,13 +244,13 @@ function randomLogItem(rng: Rng, state: State): LogItem {
     default: {
       // Unfiltered — decide's own synthetic translation of AttachOverlay,
       // fed straight to `evolve` (same reasoning as Maximized/Unmaximized
-      // above). Unlike the command above, `hostId` is drawn from windows
-      // CURRENTLY in `order` (excluding `id` itself): this event bypasses
-      // `decide`'s guard entirely, so a dangling `overlayFor` or a
-      // self-attached overlay here would be a genuine invariant violation,
-      // not generator noise.
-      const candidates = state.order.filter((w) => w.id !== id);
-      const hostId = candidates.length === 0 || rng() < 0.2 ? null : pick(rng, candidates).id;
+      // above). `hostId` is drawn from the raw id pool like every other
+      // event variant here — possibly unregistered, possibly `id` itself,
+      // possibly a since-closed id. This bypasses `decide`'s guard entirely,
+      // so `evolve` must normalize a nonsensical host into a detach rather
+      // than store it; `checkInvariants` below holds only because of that
+      // normalization, not because this generator avoids the cases.
+      const hostId: WindowId | null = rng() < 0.2 ? null : wid(randomInt(rng, POOL_SIZE));
       return { type: 'OverlayAttached', overlayId: id, hostId };
     }
   }

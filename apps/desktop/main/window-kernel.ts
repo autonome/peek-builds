@@ -304,9 +304,12 @@ export type Event =
   /**
    * `decide`'s translation of an accepted `AttachOverlay` command — attach,
    * retarget, and detach are all this ONE event (`hostId: null` = detach).
-   * `evolve` just writes the given `hostId` onto the overlay record; the
-   * follow itself is `react`'s job, driven off the host's next
-   * `BoundsChanged`, never a live query at this event's own dispatch time.
+   * As an event, it is a fact already decided elsewhere and can never be
+   * rejected here: `evolve` normalizes a `hostId` that isn't registered, or
+   * that names the overlay itself, into a detach rather than storing it —
+   * see `evolve`'s `OverlayAttached` case. The follow itself is `react`'s
+   * job, driven off the host's next `BoundsChanged`, never a live query at
+   * this event's own dispatch time.
    */
   | { type: 'OverlayAttached'; overlayId: WindowId; hostId: WindowId | null };
 
@@ -809,10 +812,18 @@ export function evolve(state: State, ev: Event): State {
       // Mechanical write — attach, retarget, and detach are this ONE case.
       // `hostId: null` clears the relation (`overlayFor: undefined`); a
       // nonexistent `overlayId` is a harmless no-op, same as any other
-      // dangling-id event elsewhere in this file.
+      // dangling-id event elsewhere in this file. As an event this can name
+      // ANY `hostId` — unregistered, since-closed, or the overlay itself —
+      // so it's normalized rather than trusted: a `hostId` absent from
+      // `order`, or equal to `ev.overlayId`, resolves to a detach, keeping
+      // the two `overlayFor` invariants (never dangling, never self) true
+      // by construction instead of by relying on callers to only ever pass
+      // a valid host.
+      const resolvedHostId: WindowId | undefined =
+        ev.hostId !== null && ev.hostId !== ev.overlayId && state.order.some((w) => w.id === ev.hostId) ? ev.hostId : undefined;
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.overlayId ? { ...w, overlayFor: ev.hostId ?? undefined } : w)),
+        order: state.order.map((w) => (w.id === ev.overlayId ? { ...w, overlayFor: resolvedHostId } : w)),
         version: state.version + 1,
       };
     }
