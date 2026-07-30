@@ -470,6 +470,29 @@ non-null while the overlay frames nothing — an ordering query sitting in the r
 paints a navbar over a window with no chrome attached, and runs extension script in a page that is
 not visible.
 
+**`order` carries no layer information, and this retarget query is exactly where that stops being
+free.** In `window-kernel.ts` `evolve`, five arms touch a position in `order` — `initialState`,
+the `WindowRegistered` merge and fresh-registration branches, `WindowClosed`, and `OsFocusGained`
+— and none reads `layer`; every other arm is a field rewrite over `order.map(...)`. So `order`
+legitimately holds a base-layer window above a floating-layer one, and `topmost` (which scans
+`order` from the end) can return a window that is not visually on top of it. That is correct, not
+a bug: `react` walks `order` in raw sequence and the executor's bottom-to-top `moveTop()` replay
+realizes each layer band correctly regardless of cross-band position (0.1.6) — but it means
+cross-band position in the array is unobservable to the OS, and therefore meaningless input to a
+predicate whose admitted set spans bands.
+
+The one predicate that already scans all of `order`, `isContentWindow`, is safe only because it
+collapses to a single band: the HUD and the space border are excluded by `canBecomeKey`, and the
+cmd panel and peeks/slides are excluded by role. The retarget predicate above,
+`topmost(state, r => r.kind === 'page-host' && r.visible && r.orderable)`, carries no such clause
+— it admits a page-host in a floating band (behind the cmd panel, a peek, a slide) alongside
+base-layer page-hosts. That set is genuinely cross-band, and for it array position and visual
+stacking can diverge with no error path. This predicate needs scrutiny before it lands: either add
+a `layer` clause, or replace it with a query that respects bands. General rule — a `topmost`
+predicate is safe only when the set it admits lies within one layer band; a predicate spanning
+bands must add a `layer` clause or be replaced by a band-aware query. Registering any content
+window above the base layer would silently break `isContentWindow` the same way.
+
 **`tile-ipc.ts` dialog parenting** (`tile:dialogs:save`, `tile:dialogs:open`) wants the opener's
 own window, resolved from `ev.sender` — not any ordering query. The current `front` read works
 around `BrowserWindow.getFocusedWindow()` returning null for a hybrid `BaseWindow` host, and
@@ -539,6 +562,27 @@ one has complained about the cost. Consequences:
   because "there are some broken focus acquiring clients"; when X reports a focus dwm didn't
   order, dwm re-asserts its own model. Full re-emission is idempotent, so the next re-assert
   corrects any external perturbation for free.
+
+**Consequence for any `topmost` predicate: `order` is not layer-sorted, so a cross-band predicate
+is unsafe.** `order` is insertion- and movement-ordered only — nothing in `window-kernel.ts
+evolve` sorts a position in `order` by `layer` — so it can legitimately hold a base-layer window
+above a floating-layer one. The bottom-to-top `moveTop()` replay above realizes every band
+correctly regardless of that interleaving, because cross-band relative position in the array is
+unobservable to the OS. `topmost(state, pred)` has no such cover: it scans `order` end-to-start
+and returns the first match, so a predicate whose admitted set spans layer bands can return a
+window that is not visually topmost, with no error path to catch it. A `topmost` predicate is
+therefore safe only when the set it admits lies within one layer band; a predicate spanning bands
+must either add a `layer` clause or be replaced by a query that respects bands. See 0.1.5 for the
+one predicate this already threatens.
+
+**The `layer` → realized-band mapping is a design claim, not yet a built or tested one.** `react`
+emits `SetStacking` carrying the numeric `layer`, but no executor consumes that effect yet —
+`window-kernel.ts` is imported only by `window-escape.ts` and the kernel's own test files.
+`electron-window-backend.ts` `WindowBackend.setStacking` takes a `StackingLevel` (`'pinned' |
+'stacked' | 'excluded'`), not a `layer` index, and routes `'pinned'` through
+`setAlwaysOnTop(true, 'floating')` rather than `moveTop()`. Until the `layer`-to-`StackingLevel`
+mapping is written and exercised, "the bands are realized correctly" describes the intended
+executor, not the one that exists.
 
 **Electron hazards worth recording:** `'floating'` and `'torn-off-menu'` are the *same*
 `NSWindowLevel` (3); toggling `setAlwaysOnTop(false)` → `(true)` on one window can knock *other*
