@@ -379,6 +379,98 @@ dwm walks its MRU list for the first visible client; i3 descends `focus_head`; s
 `focus_stack` by ancestry. A stored successor pointer is redundant and goes stale (sway #5773 is
 exactly that bug).
 
+#### Wiring map: each current reader of `front`, resolved
+
+`keyWindow(state)` is the mapping that looks obvious and is wrong for every production reader of
+`front` below. Old `front` was satellite-excluding and sticky across app switches; kernel `key` is
+neither — `OsFocusLost` nulls it, and a satellite such as the shared chrome overlay can hold it.
+Every reader in this map wants the topmost content window, never the key window.
+
+**Two readers turn a naive `key` mapping into a silent bug, with no error path to catch it:**
+
+- `session-projection.ts` `serializeSession` / `serializeSpaceWorkspaces` read
+  `focused: w.machineId === snapshot.front`. Sessions save on quit, app-resign, and window
+  close — exactly when `OsFocusLost` has already nulled `key`. Mapping to `keyWindow` marks every
+  saved descriptor `focused: false` and leaves restore with no head-start window. Correct mapping:
+  `topmost(state, <content predicate>)`.
+
+- `ipc.ts` `openNewPageWindow()` inherits exactly one thing, the datastore context row
+  `getContextEntry('mode', <electron id>)`: when its value is `'space'`, it copies
+  `metadata.spaceId` / `spaceName` / `color` into `options.spaceMode`. The chrome overlay
+  routinely holds key at Cmd+N time — Cmd+L opens the address bar, and `main.ts` special-cases
+  only Cmd+L for the overlay, so Cmd+N passes straight through. The overlay has no mode row, so
+  space mode drops silently: the `try` swallows, and `if (modeEntry && …)` falls through with no
+  error. The structurally correct fix threads the dispatch-site window id into
+  `openNewPageWindow(sourceWindowId?)` — `handleLocalShortcut` already receives it at both
+  dispatch sites (`main.ts` `windowId`, `ipc.ts` `wireHybridContentEvents` `hostWindowId`) —
+  falling back to `topmost(content)` only when the source is the overlay or carries no mode row.
+  That reuses the opener-lineage rule `windowOpenHandler` already applies via
+  `windowFromWebContents(ev.sender)`, rather than adding a rival authority. Note the pre-existing
+  asymmetry this does not paper over: the opener-lineage path inherits both `'space'` and
+  `'group'` mode, while `openNewPageWindow` inherits only `'space'`.
+
+**`hybrid-overlay.ts` `frontPageHostOsId()` is two different queries wearing one name:**
+
+- The read-back of the current attachment — `ensureOverlay()`'s `did-finish-load` handler
+  (`sendActiveHandoff`), `wireShowNavbarFocus()`'s windowId gate, `wireExecuteScript()`,
+  `initHybridOverlay()`'s `registerLoadErrorListener` callback, and the test bridge `activeId()` /
+  `runDeferredBlur()` — all want the overlay record's own `overlayFor` field, not an ordering
+  query. `overlayForHost(state, hostId)` runs the wrong direction; it takes the host id these
+  callers are trying to find. No exported `hostForOverlay(state, overlayId)` query exists yet —
+  one needs adding, or these callers read the field directly.
+
+- The driver that decides the attachment — `initHybridOverlay()`'s `subscribeFrontChange` →
+  `retarget()`, and its seed read — is a genuine ordering query:
+  `topmost(state, r => r.kind === 'page-host' && r.visible && r.orderable)`.
+
+The split matters because `retarget(id)` detaches when `getHybridWindow(id)` is null, the base
+window is destroyed, or the overlay id is not yet minted. In those states the topmost page-host is
+non-null while the overlay frames nothing — an ordering query sitting in the read-back position
+paints a navbar over a window with no chrome attached, and runs extension script in a page that is
+not visible.
+
+**`tile-ipc.ts` dialog parenting** (`tile:dialogs:save`, `tile:dialogs:open`) wants the opener's
+own window, resolved from `ev.sender` — not any ordering query. The current `front` read works
+around `BrowserWindow.getFocusedWindow()` returning null for a hybrid `BaseWindow` host, and
+returning the overlay when the address bar is focused; neither case argues for an ordering query.
+`webview-registry`'s `findHostWindowId(wc)` is the canonical resolver — it handles `<webview>`
+guests and top-level content, with a machine-side liveness check; `window-registry.ts`
+`windowFromWebContents` also resolves a hybrid content web contents to its owning `BaseWindow`.
+`topmost(content)` stays as the fallback only for an invisible or headless sender. Fixing this also
+fixes a pre-existing bug: a dialog raised by a background or non-front tile currently parents onto
+the wrong window.
+
+**Mechanical mappings — all to `topmost(state, <predicate>)`:** `tile-ipc.ts`
+`tile:window:get-focused-visible-id`, `tile:window:fullscreen` (default target),
+`tile:window:set-color-scheme` (the `resolvedId === null` branch), `tileResolveWebWindow` and
+`tile:window:devtools` (both already post-filter on http/https — fold that into the predicate
+rather than filtering after), `windows.ts` `resolveFocusedWindowIdForClose`, and `entry.ts`'s
+Close Window menu handler (reads `front` only for its detached-devtools guard and can delegate to
+`resolveFocusedWindowIdForClose` instead). `window-state-singleton.ts` `getFrontWindowId` becomes a
+thin wrapper over the same query, or is deleted in favor of per-caller predicates; its one injected
+consumer is `seedSessionMirror` → `coord.setFrontWindowIdProvider(...)`, read by `izui-state.ts`
+`enterOverlay` for `session.preOverlayFocusTarget` — the content window session restore should
+return to once the switcher palette takes key.
+
+**Incidental, deletable reads:** `ipc.ts` `wireHybridContentEvents`'s DEBUG blur log,
+`window-os-adapter.ts`'s dispatch log builder (`fmt(before.front) → fmt(after.front)`), and
+`session-projection.ts`'s module-header doc lines — none carry behavior.
+
+**Any predicate filtering on `visible` needs re-checking** against `hiddenByAppBlur` and the
+`AppActivated` re-show path, which interact with it. The kernel's `order` carries no visibility
+filter, and `WindowRecord` has no `satellite` field — the old `isEligibleFront` exclusion has to be
+reconstructed from `role` / `class` / `canBecomeKey`.
+
+**`subscribeFrontChange` has exactly one subscriber** — `hybrid-overlay.ts` `initHybridOverlay` →
+`retarget()` — and no kernel equivalent: the kernel is a pure `decide` / `evolve` / `react` triple
+with no subscribe surface, and `OsFocusGained` / `OsFocusLost` have no producers yet. The preferred
+replacement is an effect, not a subscription — "the topmost page-host changed" is a structural
+diff `react(prev, ev, next)` can emit, which makes the driver push-based, removes the overlay's
+last reason to read an ordering query, and closes the re-entrancy hazard where `retarget` can be
+called from a subscribe callback mid-dispatch. If a polling shape is kept instead, the dedup key
+must be `topmost(pageHost)`, not `keyWindow` — otherwise the overlay detaches and re-attaches on
+every Cmd+L and the chrome visibly flickers.
+
 ### 0.1.6 Layers and realizing the order against Electron
 
 **Layers are a fixed ordered set established by construction, not per-window integers sorted at
