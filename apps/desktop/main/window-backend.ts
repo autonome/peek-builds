@@ -266,8 +266,15 @@ export interface WindowBackend {
    */
   pinAlwaysOnTop(id: WindowId, on: boolean): void;
 
-  /** Destroy every registered page-host guest WC (the `DESTROY_ALL_GUESTS` effect — quit teardown, peek d1cf0b9a). */
-  destroyAllContentGuests(): void;
+  /**
+   * Destroy every registered page-host guest WC (the `DESTROY_ALL_GUESTS`
+   * effect — quit teardown, peek d1cf0b9a). Resolves once the guests have
+   * actually reported destruction, or once the teardown budget expires:
+   * `webContents.destroy()` returning is NOT the teardown, so a caller that
+   * needs the guests gone before host windows close must await this. Bounded
+   * per guest and over the batch, so it can never turn a quit into a hang.
+   */
+  destroyAllContentGuests(): Promise<void>;
 
   // ── §5 step 5 command (z-order / stacking) ────────────────────────────────
 

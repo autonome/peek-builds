@@ -132,7 +132,7 @@ import { startCpuWatch } from './cpu-watch.js';
 import { DEBUG } from './config.js';
 import { isDevToolsEnabled } from './debug-flag.js';
 import { isPageHostContent, destroyAllPageHostGuests } from './webview-guest-registry.js';
-import { planBeforeQuit, type QuitCleanupPhase } from './izui-roles.js';
+import { planBeforeQuit, runDeferredQuitCleanup, type QuitCleanupPhase } from './izui-roles.js';
 import { enforceSandboxOnWebContents } from './sandbox-enforcement.js';
 import {
   getRuntimeExternalWebPrefsForUrl,
@@ -963,7 +963,7 @@ const onQuit = async () => {
 // When tests call app.quit() directly (via electronApp.evaluate), the onQuit
 // function above is bypassed. This before-quit handler ensures hot reload watchers,
 // database connections, and other resources are cleaned up so the process can exit.
-function runBeforeQuitCleanup(): void {
+async function runBeforeQuitCleanup(): Promise<void> {
   DEBUG && console.log('[lifecycle] before-quit: running cleanup');
   // FIRST: silence the runtime-external relay before any teardown below. The
   // handler stays registered through quit, so a late content-script LOG_EVENT
@@ -985,13 +985,23 @@ function runBeforeQuitCleanup(): void {
   // guest with an in-flight chrome-ext relay invoke would otherwise be derefed
   // inside -[NSWindow __close] → EXC_BAD_ACCESS (peek d1cf0b9a). Runs AFTER
   // saveSessionSnapshot above so session restore still sees live guests.
-  try { destroyAllPageHostGuests(); } catch (e) { DEBUG && console.error('[lifecycle] destroyAllPageHostGuests error:', e); }
+  // Issued here, AWAITED at the tail: the destroys should be in flight while
+  // the extension-window teardown below runs, but the quit must not proceed
+  // until the guests have actually reported destruction.
+  let guestTeardown: Promise<void> = Promise.resolve();
+  try { guestTeardown = destroyAllPageHostGuests(); } catch (e) { DEBUG && console.error('[lifecycle] destroyAllPageHostGuests error:', e); }
   // Same rationale for the chrome-extension bridge windows: they relay
   // structured-clone messages over a live BG-SW Port and must be destroy()'d
   // (not left to the native quit __close) or they fault the same way. The async
   // cleanupChromeExtensions() that normally does this only runs via onQuit,
   // which a direct app.quit() bypasses — so do the window teardown here too.
   try { destroyChromeExtensionWindowsForShutdown(); } catch (e) { DEBUG && console.error('[lifecycle] destroyChromeExtensionWindowsForShutdown error:', e); }
+  // The ONE await in this body, and the reason the ordering above is real
+  // rather than claimed: `wc.destroy()` returns with the guest still alive, so
+  // without this the re-quit closed every host window over a live content
+  // WebContents. Bounded in the backend (per guest AND over the batch), so a
+  // wedged renderer costs a short pause, never a quit that never happens.
+  try { await guestTeardown; } catch (e) { DEBUG && console.error('[lifecycle] guest teardown wait error:', e); }
   DEBUG && console.log('[lifecycle] before-quit: cleanup complete');
 }
 
@@ -1011,15 +1021,19 @@ app.on('before-quit', (event) => {
   if (!decision.scheduleCleanup) return;
   DEBUG && console.log('[lifecycle] before-quit: deferring cleanup off the native key-event stack');
   setImmediate(() => {
-    try {
-      runBeforeQuitCleanup();
-    } finally {
-      // `finally`, NOT the try body: a throwing cleanup must never swallow the
-      // re-quit. We vetoed the user's quit — failing to re-issue it hangs the
-      // app forever, which is strictly worse than the crash this fix removes.
-      _quitCleanupPhase = 'done';
-      app.quit();
-    }
+    // `runDeferredQuitCleanup` (izui-roles.ts) owns the ordering AND the hang
+    // safety: it awaits the cleanup — the page-host guest teardown inside it is
+    // asynchronous and its completion is what keeps host windows from closing
+    // over live guests — and re-quits from `finally`, so neither a throw nor a
+    // rejected wait can swallow the re-quit we owe the user.
+    void runDeferredQuitCleanup(
+      runBeforeQuitCleanup,
+      () => {
+        _quitCleanupPhase = 'done';
+        app.quit();
+      },
+      (e) => { DEBUG && console.error('[lifecycle] before-quit cleanup error:', e); },
+    );
   });
 });
 

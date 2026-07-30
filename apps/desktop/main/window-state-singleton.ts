@@ -287,6 +287,17 @@ export function waitForPendingWindowEffects(): Promise<void> {
   return getWindowOsAdapter().waitForPendingAsyncEffects();
 }
 
+/**
+ * Resolve once the guest teardown requested by the last
+ * `GUEST_TEARDOWN_REQUESTED` has settled. Unlike
+ * `waitForPendingWindowEffects` above this IS production sequencing: the
+ * before-quit handler awaits it so Electron's quit cannot close host windows
+ * over guests that are still alive. Bounded inside the backend.
+ */
+export function waitForGuestTeardown(): Promise<void> {
+  return getWindowOsAdapter().waitForGuestTeardown();
+}
+
 /** Test-only: reset the singleton (drops the adapter + its owner state). */
 export function _resetWindowStateSingletonForTests(): void {
   adapter = null;

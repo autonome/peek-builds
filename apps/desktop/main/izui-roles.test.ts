@@ -14,6 +14,7 @@ import {
   spacesPolicyForRole,
   shouldCloseContentWCOnFinalize,
   planBeforeQuit,
+  runDeferredQuitCleanup,
   type QuitCleanupPhase,
   shouldActivateFocusedOnRestore,
   windowSelfClosesOnBlur,
@@ -282,6 +283,69 @@ describe('planBeforeQuit (Cmd+Q SIGSEGV on a focused hybrid page-host)', () => {
     assert.match(String(threw), /cleanup blew up/, 'sanity: the cleanup really threw');
     // The `finally` must have re-quit BEFORE the throw propagated.
     assert.strictEqual(reallyQuit, true, 'a throwing cleanup must not strand the app unquit');
+  });
+});
+
+describe('runDeferredQuitCleanup (the re-quit waits for the async cleanup)', () => {
+  // The live defect this pins: the deferred cleanup issued the page-host guest
+  // `wc.destroy()` calls and returned. `destroy()` is not synchronously
+  // observable — every guest was still alive ~1ms later when Electron's quit
+  // closed its host window, which is the d1cf0b9a deref. So the ordering that
+  // matters is "the cleanup has FINISHED before the re-quit is issued", and
+  // finishing is asynchronous.
+
+  it('issues the re-quit only after an async cleanup has settled (THE FIX)', async () => {
+    const order: string[] = [];
+    await runDeferredQuitCleanup(
+      async () => {
+        order.push('cleanup-start');
+        await new Promise((r) => setTimeout(r, 5));
+        order.push('cleanup-done');
+      },
+      () => order.push('quit'),
+    );
+    // Drop the await inside runDeferredQuitCleanup (the pre-fix fire-and-forget
+    // shape) and this reads ['cleanup-start', 'quit', 'cleanup-done'].
+    assert.deepStrictEqual(order, ['cleanup-start', 'cleanup-done', 'quit']);
+  });
+
+  it('a synchronous cleanup still quits, in order', async () => {
+    const order: string[] = [];
+    await runDeferredQuitCleanup(
+      () => { order.push('cleanup'); },
+      () => order.push('quit'),
+    );
+    assert.deepStrictEqual(order, ['cleanup', 'quit']);
+  });
+
+  it('still quits when the cleanup REJECTS (a hang is worse than a failed cleanup)', async () => {
+    const order: string[] = [];
+    const seen: unknown[] = [];
+    await runDeferredQuitCleanup(
+      async () => {
+        await new Promise((r) => setTimeout(r, 1));
+        throw new Error('teardown blew up');
+      },
+      () => order.push('quit'),
+      (e) => seen.push(e),
+    );
+    assert.deepStrictEqual(order, ['quit'], 'the re-quit we owe the user is issued anyway');
+    assert.match(String(seen[0]), /teardown blew up/, 'and the failure is reported, not swallowed silently');
+  });
+
+  it('still quits when the cleanup throws synchronously', async () => {
+    let quit = 0;
+    await runDeferredQuitCleanup(
+      () => { throw new Error('sync boom'); },
+      () => { quit++; },
+    );
+    assert.strictEqual(quit, 1);
+  });
+
+  it('quits exactly once', async () => {
+    let quit = 0;
+    await runDeferredQuitCleanup(async () => {}, () => { quit++; });
+    assert.strictEqual(quit, 1);
   });
 });
 

@@ -21,7 +21,12 @@
 import type { WebContents } from 'electron';
 import { windowFromWebContents } from './window-registry.js';
 import type { WindowId } from './window-state.js';
-import { getNativeWindowFor, getWindowIdFor, dispatchWindowEvent } from './window-state-singleton.js';
+import {
+  getNativeWindowFor,
+  getWindowIdFor,
+  dispatchWindowEvent,
+  waitForGuestTeardown,
+} from './window-state-singleton.js';
 
 const guestToHost = new Map<number, WindowId>();
 
@@ -144,11 +149,9 @@ export function getAllGuestWebContentsIds(): number[] {
 }
 
 /**
- * Destroy every registered page-host guest WebContents synchronously —
- * through the window-state machine (GUEST_TEARDOWN_REQUESTED →
- * DESTROY_ALL_GUESTS → backend.destroyAllContentGuests; the dispatch pump and
- * the backend command are synchronous, which the before-quit caller depends
- * on).
+ * Destroy every registered page-host guest WebContents through the window-state
+ * machine (GUEST_TEARDOWN_REQUESTED → DESTROY_ALL_GUESTS →
+ * backend.destroyAllContentGuests) and resolve once they are ACTUALLY gone.
  *
  * Called from the `before-quit` handler so guests (which may carry an in-flight
  * chrome-extension relay `ipcRenderer.invoke`) are torn down BEFORE Electron
@@ -157,11 +160,22 @@ export function getAllGuestWebContentsIds(): number[] {
  * close), so a guest is derefed inside `-[NSWindow __close]` → EXC_BAD_ACCESS
  * (peek d1cf0b9a). The interactive close path is already covered by the
  * backend's guest-safe `closeWindow`; this closes the quit/teardown gap.
+ *
+ * THE RETURNED PROMISE IS THE ORDERING. The dispatch is synchronous, but the
+ * destruction it triggers is not: `webContents.destroy()` returns with the
+ * guest still alive. A caller that dispatched and moved on delivered none of
+ * the ordering above — every guest was still live when its host window closed
+ * ~1ms later. Await this before letting the quit proceed. Bounded in the
+ * backend, so the await cannot hang the quit.
  */
-export function destroyAllPageHostGuests(): void {
+export function destroyAllPageHostGuests(): Promise<void> {
   try {
     dispatchWindowEvent({ type: 'GUEST_TEARDOWN_REQUESTED' });
-  } catch { /* best-effort during shutdown */ }
+  } catch {
+    /* best-effort during shutdown — nothing was requested, nothing to await */
+    return Promise.resolve();
+  }
+  return waitForGuestTeardown();
 }
 
 /** Test-only: clear all registry state. */

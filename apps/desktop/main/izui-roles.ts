@@ -279,6 +279,39 @@ export function planBeforeQuit(phase: QuitCleanupPhase): BeforeQuitDecision {
 }
 
 /**
+ * The body `planBeforeQuit`'s `scheduleCleanup` decision queues: run the
+ * cleanup, then re-issue the quit we vetoed.
+ *
+ * THE `await` IS THE POINT. Part of the cleanup is asynchronous and its
+ * completion is load-bearing: the page-host guest teardown only issues
+ * `webContents.destroy()` calls, which return while the guests are still alive
+ * and only report `'destroyed'` a turn or two later. Re-quitting without
+ * waiting hands Electron a set of host windows to close over live content
+ * WebContents — the exact deref d1cf0b9a is about — and it was measured doing
+ * precisely that: six guests, all still live when their hosts closed ~1ms after
+ * the "teardown". The cleanup's own waits are bounded, so awaiting them here
+ * cannot hang the quit.
+ *
+ * HANG SAFETY (same argument as `planBeforeQuit`, now covering rejection AND
+ * a pending await): the re-quit is issued from `finally`, so neither a throwing
+ * cleanup nor a rejected wait can swallow it. We vetoed the user's quit —
+ * failing to re-issue it is strictly worse than whatever the cleanup hit.
+ */
+export async function runDeferredQuitCleanup(
+  cleanup: () => void | Promise<void>,
+  requestQuit: () => void,
+  onError?: (err: unknown) => void,
+): Promise<void> {
+  try {
+    await cleanup();
+  } catch (err) {
+    onError?.(err);
+  } finally {
+    requestQuit();
+  }
+}
+
+/**
  * Hybrid page-host edge/corner resize band.
  *
  * Round-2 resize is driven entirely from MAIN against the content WebContents'

@@ -109,8 +109,9 @@ class RecordingBackend implements WindowBackend {
   pinAlwaysOnTop(id: BackendWindowId, on: boolean): void {
     this.record('pinAlwaysOnTop', id, on);
   }
-  destroyAllContentGuests(): void {
+  destroyAllContentGuests(): Promise<void> {
     this.record('destroyAllContentGuests');
+    return Promise.resolve();
   }
   setStacking(id: BackendWindowId, level: StackingLevel): void {
     this.record('setStacking', id, level);

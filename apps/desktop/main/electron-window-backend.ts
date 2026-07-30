@@ -81,7 +81,25 @@ import {
   type StackingLevel,
 } from './window-state.js';
 import type { BackendEventSink, WindowBackend, WindowSpec } from './window-backend.js';
+import {
+  destroyGuestsAndWait,
+  QUIT_GUEST_TEARDOWN_BUDGET_MS,
+  type TeardownGuest,
+} from './guest-teardown.js';
 import { expandToOverlayFrame } from './overlay-frame.js';
+
+/**
+ * The one place `webContents.destroy()` is actually called. `guest-teardown.ts`
+ * owns the bounded WAIT and stays platform-free by taking this as a callback,
+ * which also keeps the destroy inside the backend (rule R2).
+ *
+ * Forceful (immediate, skips beforeunload) is what both callers want — the
+ * guarantee is "the guest is gone", not "the guest was asked nicely".
+ * `destroy()` exists at runtime but isn't in the Electron type defs.
+ */
+function requestGuestDestroy(guest: TeardownGuest): void {
+  (guest as unknown as { destroy(): void }).destroy();
+}
 
 // Bounded wait for the native fullscreen transition to settle, matching the
 // pre-machine owner (`hybrid-page-host-registry.ts HYBRID_FULLSCREEN_SETTLE_TIMEOUT_MS`).
@@ -922,42 +940,26 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
 
   private async destroyGuestsThenClose(win: NativeWindow, guestIds: number[]): Promise<void> {
     DEBUG && console.log('[window-backend] destroying', guestIds.length, 'guest(s) before closing host');
-    await Promise.all(
-      guestIds.map(
-        (gid) =>
-          new Promise<void>((resolve) => {
-            const wc = webContents.fromId(gid);
-            if (!wc || wc.isDestroyed()) {
-              resolve();
-              return;
-            }
-            let settled = false;
-            const finish = () => {
-              if (settled) return;
-              settled = true;
-              clearTimeout(timer);
-              resolve();
-            };
-            // Don't wait forever — close the host anyway after a bounded wait if
-            // the guest never emits 'destroyed' (it usually does within a frame).
-            const timer = setTimeout(finish, 2000);
-            wc.once('destroyed', finish);
-            try {
-              // webContents.destroy() exists at runtime but isn't in the Electron
-              // type defs. Forceful (immediate, skips beforeunload) is what we
-              // want — guarantee the guest is gone before the host closes.
-              (wc as unknown as { destroy(): void }).destroy();
-            } catch {
-              finish();
-            }
-          }),
-      ),
-    );
+    await destroyGuestsAndWait(this.resolveLiveGuests(guestIds), requestGuestDestroy);
     try {
       if (!win.isDestroyed()) win.close();
     } catch {
       /* torn down while guests settled */
     }
+  }
+
+  /** Guest ids → live WebContents. Ids with no live wc need no wait at all. */
+  private resolveLiveGuests(guestIds: readonly number[]): WebContents[] {
+    const live: WebContents[] = [];
+    for (const gid of guestIds) {
+      try {
+        const wc = webContents.fromId(gid);
+        if (wc && !wc.isDestroyed()) live.push(wc);
+      } catch {
+        /* an id whose wc can't be resolved is already gone */
+      }
+    }
+    return live;
   }
 
   /** Forceful native destroy — synchronous (before-quit teardown depends on it). */
@@ -1188,22 +1190,27 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   }
 
   /**
-   * Destroy every registered page-host guest WC synchronously — the quit
-   * teardown that used to live in `webview-guest-registry.ts
-   * destroyAllPageHostGuests` (peek d1cf0b9a: a guest with an in-flight
-   * relay invoke torn down inside `-[NSWindow __close]` → EXC_BAD_ACCESS).
+   * Destroy every registered page-host guest WC and resolve once they are
+   * actually gone — the quit teardown that used to live in
+   * `webview-guest-registry.ts destroyAllPageHostGuests` (peek d1cf0b9a: a
+   * guest with an in-flight relay invoke torn down inside `-[NSWindow __close]`
+   * → EXC_BAD_ACCESS).
+   *
+   * The RESOLUTION is the whole point, and it is why this is async. Issuing the
+   * `destroy()` calls is not the teardown: `webContents.destroy()` returns
+   * without throwing while `isDestroyed()` still reads `false`, so a caller that
+   * only called it went on to let Electron close the host windows over six live
+   * content WebContents — measured, the exact ordering d1cf0b9a is about. The
+   * caller must await this before the quit proceeds; `guest-teardown.ts` bounds
+   * the wait per guest AND over the batch so a wedged renderer cannot turn a
+   * quit into a hang.
    */
-  destroyAllContentGuests(): void {
-    for (const guestId of getAllGuestWebContentsIds()) {
-      try {
-        const wc = webContents.fromId(guestId);
-        if (wc && !wc.isDestroyed()) {
-          (wc as unknown as { destroy(): void }).destroy();
-        }
-      } catch {
-        /* best-effort during shutdown */
-      }
-    }
+  destroyAllContentGuests(): Promise<void> {
+    const guests = this.resolveLiveGuests(getAllGuestWebContentsIds());
+    DEBUG && console.log('[window-backend] quit teardown: destroying', guests.length, 'guest(s)');
+    return destroyGuestsAndWait(guests, requestGuestDestroy, {
+      overallMs: QUIT_GUEST_TEARDOWN_BUDGET_MS,
+    });
   }
 
   // ───────────────────────────────────────────────────────────────────────────

@@ -369,8 +369,11 @@ export class WindowOsAdapter {
         return;
       }
       case 'DESTROY_WINDOW': {
-        // Forceful synchronous destroy (extension bridge/UI + quit teardown —
-        // before-quit depends on this completing within the dispatch).
+        // Forceful destroy of the native WINDOW (extension bridge/UI + quit
+        // teardown). Genuinely synchronous, unlike `webContents.destroy()`:
+        // `BaseWindow.destroy()` tears the window down within the call, so
+        // there is nothing to await here. Do not read across from this to
+        // DESTROY_ALL_GUESTS — a guest WC's destruction lands on a LATER turn.
         this.backend.destroyWindow(effect.id);
         return;
       }
@@ -416,7 +419,16 @@ export class WindowOsAdapter {
         return;
       }
       case 'DESTROY_ALL_GUESTS': {
-        this.backend.destroyAllContentGuests();
+        // Quit teardown. The command is ASYNC and its settlement is load-bearing
+        // — `webContents.destroy()` returns while the guest is still alive, so
+        // "the destroys were issued" is not "the guests are gone" (measured: all
+        // six still live when their host BaseWindows closed ~1ms later). The
+        // before-quit sequencing awaits `waitForGuestTeardown()` before it lets
+        // the re-quit through; the promise is bounded inside the backend, so
+        // that await cannot hang the quit.
+        const teardown = this.backend.destroyAllContentGuests();
+        this.guestTeardown = teardown;
+        this.trackAsyncEffect(teardown);
         return;
       }
       case 'EXIT_FULLSCREEN': {
@@ -456,6 +468,27 @@ export class WindowOsAdapter {
 
   /** In-flight async effect promises (renderer ESC asks, delegated closes). */
   private readonly pendingAsyncEffects = new Set<Promise<unknown>>();
+
+  /**
+   * Settlement of the most recent `DESTROY_ALL_GUESTS`. NOT test-bridge
+   * support: the before-quit sequencing gates the re-quit on it, which is the
+   * whole reason quit-time guest teardown now happens before host windows
+   * close. Kept separate from `pendingAsyncEffects` deliberately — that set is
+   * an unbounded "wait for everything" the quit path must not depend on.
+   */
+  private guestTeardown: Promise<void> = Promise.resolve();
+
+  /**
+   * Resolve once the last requested guest teardown has settled (bounded inside
+   * the backend). Resolved already when no teardown has been requested.
+   */
+  async waitForGuestTeardown(): Promise<void> {
+    try {
+      await this.guestTeardown;
+    } catch {
+      /* the teardown is best-effort; quit proceeds either way */
+    }
+  }
 
   /** Retain an async effect's promise until it settles (never rethrows). */
   private trackAsyncEffect(p: Promise<unknown>): void {
