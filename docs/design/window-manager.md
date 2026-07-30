@@ -481,8 +481,15 @@ Every reader in this map wants the topmost content window, never the key window.
   one needs adding, or these callers read the field directly.
 
 - The driver that decides the attachment — `initHybridOverlay()`'s `subscribeFrontChange` →
-  `retarget()`, and its seed read — is a genuine ordering query:
-  `topmost(state, r => r.kind === 'page-host' && r.visible && r.orderable)`.
+  `retarget()`, and its seed read — is a genuine ordering query. The predicate proposed here,
+  `topmost(state, r => r.kind === 'page-host' && r.visible && r.orderable)`, is wrong as written,
+  in two independent ways (the second is developed below): it has no role clause, so it admits a
+  `quick-view` page-host — every hybrid page-host registers `kind: 'page-host'` via `ipc.ts
+  assembleHybridPageHost`, peeks and slides included, with `role: 'quick-view'` — and the set it
+  admits spans more than one `layer`, which the rule below forbids for any `topmost` predicate.
+  Implemented as written, the chrome would frame a floating peek while a base-layer page sits
+  underneath it. It needs a role clause and a layer clause added, or a layer-aware replacement,
+  before it lands.
 
 The split matters because `retarget(id)` detaches when `getHybridWindow(id)` is null, the base
 window is destroyed, or the overlay id is not yet minted. In those states the topmost page-host is
@@ -507,11 +514,72 @@ cmd panel and peeks/slides are excluded by role. The retarget predicate above,
 `topmost(state, r => r.kind === 'page-host' && r.visible && r.orderable)`, carries no such clause
 — it admits a page-host in a floating band (behind the cmd panel, a peek, a slide) alongside
 base-layer page-hosts. That set is genuinely cross-band, and for it array position and visual
-stacking can diverge with no error path. This predicate needs scrutiny before it lands: either add
-a `layer` clause, or replace it with a query that respects bands. General rule — a `topmost`
-predicate is safe only when the set it admits lies within one layer band; a predicate spanning
-bands must add a `layer` clause or be replaced by a band-aware query. Registering any content
-window above the base layer would silently break `isContentWindow` the same way.
+stacking can diverge with no error path. This is the layer half of the two-fold defect noted above
+— the predicate must not land without either a `layer` clause or a band-aware replacement. General
+rule — a `topmost` predicate is safe only when the set it admits lies within one layer band; a
+predicate spanning bands must add a `layer` clause or be replaced by a band-aware query. Registering
+any content window above the base layer would silently break `isContentWindow` the same way.
+
+#### `hostOf(overlay)` and `topmost(state, isContentWindow)` are orthogonal, not aliases
+
+`hostOf(overlay)` (the `overlayFor` relation) and `topmost(state, isContentWindow)` name different
+windows and nothing makes them the same. Attachment is driven by the front signal filtered on
+`kind === 'page-host'` (`window-state-singleton.ts` `getFrontPageHostId`, polled by
+`subscribeFrontChange`, consumed by `hybrid-overlay.ts` `retarget`); order is moved by
+`OsFocusGained` and mutated by `WindowRegistered` / `WindowClosed`. The two coincide in the case
+most tests exercise — focusing a page-host raises it and makes it front in the same motion — and
+diverge on three independent axes:
+
+1. **Predicate mismatch.** `kind === 'page-host'` and `role ∈ CONTENT_ROLES` plus `canBecomeKey`
+   are two different sets; neither contains the other. A focused peek makes attachment name the
+   peek while the content query names the page beneath it. A focused extension popup or settings
+   window (`kind: 'browser', role: 'content'`, per `chrome-extensions.ts` and the `main.ts`
+   `registerWindow` seam) makes `getFrontPageHostId` return null and the overlay detach, while the
+   content query still names the popup.
+2. **Events move one and not the other.** `WindowRegistered` inserts at the key window's index,
+   not the topmost content window's index — a background window registered while a chrome overlay
+   holds key lands above the attached host. `WindowShown` / `WindowHidden` never reorder, so a host
+   hidden and later re-shown without regaining focus becomes the topmost content window while
+   attachment stays elsewhere — a stable steady state, not a transient.
+3. **Conditions local to `retarget` with no kernel counterpart.** It detaches when the hybrid
+   registry lookup fails, the base window is destroyed, or the overlay id is not yet minted; in
+   each case no `WindowClosed` has necessarily reached the kernel, so a real visible window is
+   still named by the content query while attachment is null.
+
+What does not diverge, checked and not to re-investigate: `WindowContentOrderable` sets only
+`orderable`, which `isContentWindow` never reads (it feeds only `react`'s `SetStacking`
+emission) — that gap is between the model's order and the OS stack, not between attachment and the
+content query. `isAppResignSweepEligible` requires `!canBecomeKey` and `isContentWindow` requires
+`canBecomeKey`, so the two are disjoint by construction and no content window is hidden by an app
+switch; the overlay itself is excluded from the sweep by role and hidden by `hybrid-overlay.ts`
+`wireAppActiveGate` without dropping `overlayFor`, so attachment survives an app switch correctly.
+And `evolve`'s `WindowClosed` arm clears `overlayFor` in the same pass that removes the record, so
+a retired host is never named by attachment.
+
+No kernel invariant should force the two to agree. Such an invariant would be false in every
+divergence above, and enforcing it would mean either constraining order to follow attachment — a
+second ordering rule, which §0 forbids — or constraining attachment to follow order, which is
+impossible because the overlay can only frame a `kind: 'page-host'` window present in the hybrid
+registry, and `isContentWindow` neither knows nor should know about `kind`. The two are orthogonal
+by construction, not by oversight. The enforcement boundary that already exists — the local
+invariants the `OverlayAttached` arm holds (`overlayFor` never dangles, never self) plus the
+mechanical detach in `WindowClosed` — is the right one; the invariants worth adding are about
+`overlayFor` alone, not its agreement with order: at most one record carries it, and a record
+carrying it has `role === 'overlay'`.
+
+The real hazard is not that attachment and order disagree — they are allowed to. It is that
+`hybrid-overlay.ts` `frontPageHostOsId()` today is a single query serving both roles (above);
+splitting it into the read-back (`hostOf(overlay)`) and the driver (a layer-aware ordering query,
+still to be built — see the correction above) removes the hazard. Making the two agree does not.
+
+Per caller, which relation is correct: the read-back call sites listed above want attachment,
+always. `windows.ts` `resolveFocusedWindowIdForClose` wants `keyWindow` when it is itself a content
+window, else `topmost(state, isContentWindow)` — never attachment; a focused extension popup is
+the disproof, since attachment is null there while Cmd+W plainly must close the popup. `tile-ipc.ts`
+`tile:dialogs:save` / `tile:dialogs:open` want neither, as the next paragraph covers — the opener's
+own window, resolved from `ev.sender` — and attachment would be actively wrong there: it would
+parent a dialog raised by a background tile onto the attached host instead of the tile that opened
+it.
 
 **`tile-ipc.ts` dialog parenting** (`tile:dialogs:save`, `tile:dialogs:open`) wants the opener's
 own window, resolved from `ev.sender` — not any ordering query. The current `front` read works
