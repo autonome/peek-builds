@@ -7,10 +7,12 @@
  *
  * SCOPE: greenfield. NOTHING in the app imports this module yet — it sits
  * alongside the existing reducer (`window-state.ts`), which stays untouched and
- * in charge. This file carries only the first two slices of the ~45-event
- * surface (§0.1.1's "~17 commands, ~20 events" split): visibility + raise,
- * on top of the initial slice — 5 commands, 8 events. Geometry (bounds,
- * maximize, fullscreen, display) is a later slice, not this one.
+ * in charge. This file carries the first two slices of the ~45-event surface
+ * (§0.1.1's "~17 commands, ~20 events" split) — visibility + raise, 5
+ * commands/8 events — plus fullscreen (§0.1.8: pulled forward out of the
+ * geometry slice because it is orthogonal to `key`/`order` and needs no
+ * bounds tracking to land): 6 commands, 13 events total. The REST of
+ * geometry (bounds, maximize, display) is still a later slice.
  *
  * The two structural rules this file exists to prove out (§0.1.1, §0.1.8):
  *
@@ -43,14 +45,45 @@ export type WindowId = string & { readonly __brand: 'WindowId' };
 
 export type WindowKind = 'page-host' | 'browser';
 
+/** Minimal outer-bounds rectangle — enough to stash/restore a pre-fullscreen frame. */
+export interface Rectangle {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Fullscreen as its own orthogonal region on the record (§0.1.8), not flags
+ * spread across the machine: independent of `key` and of position in
+ * `order`. `preBounds` (the pre-fullscreen rectangle to restore on exit)
+ * lives INSIDE the non-normal variants — it CANNOT exist for a `normal`
+ * window, and a non-normal window cannot lack the *concept*: `preBounds:
+ * null` is the legitimate "OS/green-button entry where no stash was
+ * possible" case, never "field missing". This is the `window-state.ts
+ * FsMode` encoding (the `aa34cb50` fullscreen-lookalike trap), ported
+ * verbatim because the encoding — not the reducer's code shape — is what's
+ * load-bearing. `pendingDesire` coalesces a request that arrives mid-flight
+ * (§0.1.8's async edge): it is applied when the in-flight transition
+ * settles, never opens a second transition.
+ */
+export type FsMode =
+  | { name: 'normal' }
+  | { name: 'entering'; preBounds: Rectangle | null; pendingDesire?: boolean }
+  | { name: 'fullscreen'; preBounds: Rectangle | null }
+  | { name: 'leaving'; preBounds: Rectangle | null; pendingDesire?: boolean };
+
 /**
  * A registered window's record. §0.1.4: "orthogonal properties, no
  * pre-combined class" — `layer` / `canBecomeKey` / `acceptsInput` are each
  * looked up independently; nothing branches on `class` (a lookup-only field,
  * §0.1.4's "mechanical test").
  *
- * Starting field set only — the design lists geometry/fsMode/etc. as
- * "carry over unchanged" for a later slice; this file adds none of that yet.
+ * Starting field set only — the design lists geometry/etc. as "carry over
+ * unchanged" for a later slice; this file adds none of that yet. Fullscreen
+ * (`fsMode`) is pulled forward out of that later slice deliberately (§0.1.8):
+ * it is orthogonal to everything else here, so it does not need geometry
+ * tracking to land on the record first.
  */
 export interface WindowRecord {
   id: WindowId;
@@ -85,6 +118,9 @@ export interface WindowRecord {
    * Never reset once true.
    */
   orderable: boolean;
+
+  /** Fullscreen region (§0.1.8) — orthogonal to `key` and to `order`. See `FsMode`. */
+  fsMode: FsMode;
 }
 
 /**
@@ -134,7 +170,31 @@ export type Event =
   | { type: 'OsFocusLost'; id: WindowId }
   | { type: 'AppActiveChanged'; active: boolean }
   /** The first-composited-frame report — flips `orderable` to `true`. */
-  | { type: 'WindowContentOrderable'; id: WindowId };
+  | { type: 'WindowContentOrderable'; id: WindowId }
+  /**
+   * `decide`'s translation of a `SetFullscreen` command that starts a FRESH
+   * transition (the target was settled — `normal`/`fullscreen`) into a fact
+   * `evolve` can apply mechanically. The "is a transition already in
+   * flight" guard lives in `decide` (§0.1.8) — by the time this event
+   * exists, that guard has already run, so `evolve` just writes the given
+   * fields, no per-mode branching. `preBounds` is resolved by `decide` from
+   * the CURRENT record (its own read of `state`, same as any other guard).
+   */
+  | { type: 'FullscreenTransitionStarted'; id: WindowId; entering: boolean; preBounds: Rectangle | null }
+  /**
+   * `decide`'s translation of a `SetFullscreen` command that arrived while a
+   * transition was already in flight (`entering`/`leaving`) — coalesces
+   * into `pendingDesire` rather than starting a second transition. Applied
+   * when that transition settles (`OsFullscreenEntered`/`OsFullscreenLeft`/
+   * `FullscreenSettleTimeout` below).
+   */
+  | { type: 'FullscreenDesireRecorded'; id: WindowId; desired: boolean }
+  /** OS report: the window IS fullscreen now. Settles `entering`/`leaving`/`normal` (§0.1.8). */
+  | { type: 'OsFullscreenEntered'; id: WindowId }
+  /** OS report: the window is NOT fullscreen now. Settles `leaving`/`entering`/`fullscreen`. */
+  | { type: 'OsFullscreenLeft'; id: WindowId }
+  /** The OS never reported a settle for this transition — force it out of `entering`/`leaving`. */
+  | { type: 'FullscreenSettleTimeout'; id: WindowId };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Commands — rejectable requests (§0.1.1, §0.1.2). Every variant carries
@@ -159,7 +219,14 @@ export type Command =
       parentId?: WindowId;
       keepLive?: boolean;
       expectedVersion: number;
-    };
+    }
+  /**
+   * Fullscreen intent (§0.1.8) — orthogonal to `RaiseWindow`/`ShowWindow`:
+   * never writes `key`, never reorders `order`. The command only expresses
+   * intent; `OsFullscreenEntered`/`OsFullscreenLeft` are what actually settle
+   * the region.
+   */
+  | { type: 'SetFullscreen'; id: WindowId; desired: boolean; expectedVersion: number };
 
 export type Rejection = 'stale-version' | 'no-such-window';
 
@@ -175,7 +242,11 @@ export type Effect =
   | { type: 'SetStacking'; id: WindowId; layer: number }
   | { type: 'ShowWindow'; id: WindowId; opSeq: number }
   | { type: 'HideWindow'; id: WindowId }
-  | { type: 'RaiseWindow'; id: WindowId; opSeq: number };
+  | { type: 'RaiseWindow'; id: WindowId; opSeq: number }
+  /** Drive the OS into fullscreen — emitted only when a record freshly transitions INTO `entering`. */
+  | { type: 'SetFullscreen'; id: WindowId }
+  /** Drive the OS out of fullscreen — emitted only when a record freshly transitions INTO `leaving`. */
+  | { type: 'ExitFullscreen'; id: WindowId };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // initialState
@@ -190,6 +261,74 @@ export function initialState(): State {
     appActive: false,
     openSeqCounter: 0,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fullscreen transition table (§0.1.8) — pure `FsMode -> FsMode` helpers,
+// ported from `window-state.ts applyFullscreenRequest` /
+// `applyOsFullscreenEntered` / `applyOsFullscreenLeft`. Kept as free
+// functions (not inlined in `evolve`'s switch) because each is total over
+// `FsMode['name']` on its own, same reasoning as the old sub-reducer.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** `OsFullscreenEntered` settles `entering` -> `fullscreen` (or straight through to `leaving` on a coalesced cancel). */
+function nextFsModeForOsEntered(mode: FsMode): FsMode {
+  switch (mode.name) {
+    case 'normal':
+      // Green-button/OS-initiated entry — no stash was possible.
+      return { name: 'fullscreen', preBounds: null };
+    case 'entering':
+      // Honor a coalesced "actually, leave" desire recorded mid-animation.
+      return mode.pendingDesire === false
+        ? { name: 'leaving', preBounds: mode.preBounds }
+        : { name: 'fullscreen', preBounds: mode.preBounds };
+    case 'leaving':
+      // The OS won the race — fullscreen after all. Ported verbatim from
+      // `window-state.ts`: a `pendingDesire` recorded here is dropped, not honored.
+      return { name: 'fullscreen', preBounds: mode.preBounds };
+    case 'fullscreen':
+      return mode;
+  }
+}
+
+/** `OsFullscreenLeft` settles `leaving` -> `normal` (or straight through to `entering` on a coalesced re-enter). */
+function nextFsModeForOsLeft(mode: FsMode): FsMode {
+  switch (mode.name) {
+    case 'fullscreen':
+      // Green-button/OS-initiated leave — clears the stash.
+      return { name: 'normal' };
+    case 'leaving':
+      // Honor a coalesced "actually, re-enter" desire; no captured bounds here.
+      return mode.pendingDesire === true ? { name: 'entering', preBounds: null } : { name: 'normal' };
+    case 'entering':
+      // Aborted by the OS mid-enter. Ported verbatim: a `pendingDesire`
+      // recorded here is dropped, not honored.
+      return { name: 'normal' };
+    case 'normal':
+      return mode;
+  }
+}
+
+/**
+ * `FullscreenSettleTimeout` — the OS never reported a settle for this
+ * transition. Unlike the two settle functions above, this ALWAYS lands on a
+ * settled bucket (`normal`/`fullscreen`), never chains into the other
+ * transitional state, even when a `pendingDesire` was recorded — chaining
+ * would just trade one stuck transition for another, and "never leave the
+ * record transitional after a timeout" is the whole point of this event. A
+ * `pendingDesire` that was still pending when the timeout fired is dropped;
+ * the caller re-requests once settled, if it's still wanted.
+ */
+function nextFsModeForSettleTimeout(mode: FsMode): FsMode {
+  switch (mode.name) {
+    case 'entering':
+      return { name: 'fullscreen', preBounds: mode.preBounds };
+    case 'leaving':
+      return { name: 'normal' };
+    case 'normal':
+    case 'fullscreen':
+      return mode;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -221,6 +360,9 @@ export function evolve(state: State, ev: Event): State {
           // Never reset once true (§0.1.4): a re-registration that names
           // 'browser' also sets it true; it cannot flip back off.
           orderable: existing.orderable || ev.kind === 'browser',
+          // A lived fact (§0.1.8), same as `visible`/`openSeq` — re-registration
+          // must not reset an in-flight or settled fullscreen region.
+          fsMode: existing.fsMode,
           ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
           ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
         };
@@ -243,6 +385,7 @@ export function evolve(state: State, ev: Event): State {
         // `orderable` starts true only for 'browser' (§0.1.4); a 'page-host'
         // starts false and flips via `WindowContentOrderable`.
         orderable: ev.kind === 'browser',
+        fsMode: { name: 'normal' },
         ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
         ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
       };
@@ -330,6 +473,60 @@ export function evolve(state: State, ev: Event): State {
       };
     }
 
+    case 'FullscreenTransitionStarted': {
+      // `decide` already ran the in-flight guard and resolved `preBounds` —
+      // this is a mechanical write, no per-mode branching.
+      return {
+        ...state,
+        order: state.order.map((w) =>
+          w.id === ev.id
+            ? { ...w, fsMode: ev.entering ? { name: 'entering', preBounds: ev.preBounds } : { name: 'leaving', preBounds: ev.preBounds } }
+            : w,
+        ),
+        version: state.version + 1,
+      };
+    }
+
+    case 'FullscreenDesireRecorded': {
+      return {
+        ...state,
+        order: state.order.map((w) => {
+          if (w.id !== ev.id) return w;
+          const mode = w.fsMode;
+          // Total against nonsense input (a fuzzed sequence bypassing
+          // `decide`'s guard): coalescing only means something on an
+          // in-flight transition; on a settled record this is a no-op.
+          if (mode.name !== 'entering' && mode.name !== 'leaving') return w;
+          return { ...w, fsMode: { ...mode, pendingDesire: ev.desired } };
+        }),
+        version: state.version + 1,
+      };
+    }
+
+    case 'OsFullscreenEntered': {
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, fsMode: nextFsModeForOsEntered(w.fsMode) } : w)),
+        version: state.version + 1,
+      };
+    }
+
+    case 'OsFullscreenLeft': {
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, fsMode: nextFsModeForOsLeft(w.fsMode) } : w)),
+        version: state.version + 1,
+      };
+    }
+
+    case 'FullscreenSettleTimeout': {
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, fsMode: nextFsModeForSettleTimeout(w.fsMode) } : w)),
+        version: state.version + 1,
+      };
+    }
+
     default: {
       const _exhaustive: never = ev;
       return _exhaustive;
@@ -361,6 +558,24 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
       effects.push({ type: 'ShowWindow', id: nextRecord.id, opSeq: next.opSeqCounter });
     } else if (prevRecord.visible && !nextRecord.visible) {
       effects.push({ type: 'HideWindow', id: nextRecord.id });
+    }
+  }
+
+  // Fullscreen (§0.1.8): a pure structural diff of `fsMode.name`, same
+  // pattern as the visibility loop above — never branches on `ev.type`, so a
+  // command-driven start, a coalesced re-entry after `leaving`, and a forced
+  // settle-timeout resolution are all covered by one rule. A record whose
+  // `fsMode.name` doesn't change (idempotent re-request, or a pendingDesire
+  // coalesced without changing the transition's name) emits nothing.
+  for (const nextRecord of next.order) {
+    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
+    if (prevRecord === undefined) {
+      continue;
+    }
+    if (prevRecord.fsMode.name !== 'entering' && nextRecord.fsMode.name === 'entering') {
+      effects.push({ type: 'SetFullscreen', id: nextRecord.id });
+    } else if (prevRecord.fsMode.name !== 'leaving' && nextRecord.fsMode.name === 'leaving') {
+      effects.push({ type: 'ExitFullscreen', id: nextRecord.id });
     }
   }
 
@@ -456,6 +671,24 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
       return record.keepLive
         ? { events: [{ type: 'WindowHidden', id: cmd.id }] }
         : { events: [{ type: 'WindowClosed', id: cmd.id }] };
+    }
+    case 'SetFullscreen': {
+      const rec = state.order.find((w) => w.id === cmd.id)!;
+      const mode = rec.fsMode;
+      // THE guard (§0.1.8's async edge, same shape as CloseOrHideWindow's
+      // keepLive branch above): a request arriving while a transition is
+      // already in flight does not start a second one — it coalesces into
+      // `pendingDesire`, applied when that transition settles.
+      if (mode.name === 'entering' || mode.name === 'leaving') {
+        return { events: [{ type: 'FullscreenDesireRecorded', id: cmd.id, desired: cmd.desired }] };
+      }
+      if (mode.name === 'normal') {
+        if (!cmd.desired) return { events: [] }; // already normal -> no-op, no OS call
+        return { events: [{ type: 'FullscreenTransitionStarted', id: cmd.id, entering: true, preBounds: null }] };
+      }
+      // mode.name === 'fullscreen'
+      if (cmd.desired) return { events: [] }; // already fullscreen -> no-op, no OS call
+      return { events: [{ type: 'FullscreenTransitionStarted', id: cmd.id, entering: false, preBounds: mode.preBounds }] };
     }
   }
 }

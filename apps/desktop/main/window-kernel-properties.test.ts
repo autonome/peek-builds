@@ -98,7 +98,7 @@ function isCommand(item: LogItem): item is Command {
  * same seed always produces the same concrete log.
  */
 function randomLogItem(rng: Rng, state: State): LogItem {
-  const variant = randomInt(rng, 10);
+  const variant = randomInt(rng, 16);
   const id = wid(randomInt(rng, POOL_SIZE));
   switch (variant) {
     case 0: {
@@ -147,11 +147,29 @@ function randomLogItem(rng: Rng, state: State): LogItem {
         expectedVersion: stale ? state.version + 1 : state.version,
       };
     }
-    case 9:
-    default: {
+    case 9: {
       const stale = rng() < 0.2;
       return { type: 'CloseOrHideWindow', id, expectedVersion: stale ? state.version + 1 : state.version };
     }
+    case 10: {
+      const stale = rng() < 0.2;
+      return { type: 'SetFullscreen', id, desired: randomBool(rng), expectedVersion: stale ? state.version + 1 : state.version };
+    }
+    // Unfiltered — the four "internal" fullscreen events, fed straight to
+    // `evolve` bypassing `decide`, so nonsense combos (e.g. a
+    // FullscreenDesireRecorded against a settled record) exercise its
+    // total handling directly, same as any other event variant here.
+    case 11:
+      return { type: 'FullscreenTransitionStarted', id, entering: randomBool(rng), preBounds: null };
+    case 12:
+      return { type: 'FullscreenDesireRecorded', id, desired: randomBool(rng) };
+    case 13:
+      return { type: 'OsFullscreenEntered', id };
+    case 14:
+      return { type: 'OsFullscreenLeft', id };
+    case 15:
+    default:
+      return { type: 'FullscreenSettleTimeout', id };
   }
 }
 
@@ -215,6 +233,20 @@ function checkInvariants(state: State, prev?: State): string[] {
     if (typeof record.layer !== 'number' || !Number.isFinite(record.layer)) {
       violations.push(`malformed layer for ${record.id}: ${JSON.stringify(record.layer)}`);
     }
+    // Fullscreen (§0.1.8): `fsMode.name` is always one of the four, and
+    // `preBounds` is present exactly when non-normal — never a missing key
+    // on a non-normal record, never a stray key on `normal`.
+    const fsModeNames = ['normal', 'entering', 'fullscreen', 'leaving'];
+    if (!fsModeNames.includes(record.fsMode.name)) {
+      violations.push(`invalid fsMode.name for ${record.id}: ${JSON.stringify(record.fsMode)}`);
+    }
+    const hasPreBounds = 'preBounds' in record.fsMode;
+    if (record.fsMode.name === 'normal' && hasPreBounds) {
+      violations.push(`normal fsMode carries a preBounds key for ${record.id}: ${JSON.stringify(record.fsMode)}`);
+    }
+    if (record.fsMode.name !== 'normal' && !hasPreBounds) {
+      violations.push(`non-normal fsMode missing preBounds for ${record.id}: ${JSON.stringify(record.fsMode)}`);
+    }
   }
 
   const kw = keyWindow(state);
@@ -241,6 +273,24 @@ function checkInvariants(state: State, prev?: State): string[] {
     }
   }
 
+  return violations;
+}
+
+/**
+ * Extra invariant tied to a specific log item rather than to `state` alone
+ * (§0.1.8): a window named by a `FullscreenSettleTimeout` must never sit in
+ * `entering`/`leaving` afterward — that's the entire point of the event.
+ */
+function checkSettleTimeoutInvariant(item: LogItem, next: State): string[] {
+  const violations: string[] = [];
+  if (item.type === 'FullscreenSettleTimeout') {
+    const record = next.order.find((w) => w.id === item.id);
+    if (record !== undefined && (record.fsMode.name === 'entering' || record.fsMode.name === 'leaving')) {
+      violations.push(
+        `FullscreenSettleTimeout left ${item.id} in a transitional fsMode: ${JSON.stringify(record.fsMode)}`,
+      );
+    }
+  }
   return violations;
 }
 
@@ -329,6 +379,11 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
         const effectViolations = checkEffectInvariants(effects, next);
         if (effectViolations.length > 0) {
           throw new Error(reproMessage(seed, log, i, `effect invariant violation(s): ${effectViolations.join('; ')}`));
+        }
+
+        const settleViolations = checkSettleTimeoutInvariant(item, next);
+        if (settleViolations.length > 0) {
+          throw new Error(reproMessage(seed, log, i, `settle-timeout invariant violation(s): ${settleViolations.join('; ')}`));
         }
 
         state = next;

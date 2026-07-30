@@ -439,6 +439,148 @@ describe('window-kernel: closing the key window raises nothing in its place', ()
   });
 });
 
+// ── Fullscreen: an orthogonal region (§0.1.8) ───────────────────────────────
+
+describe('window-kernel: fullscreen is orthogonal to key and order', () => {
+  const registerTwo = (): Event[] => [
+    { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+  ];
+
+  it('the four-state transition table', () => {
+    const state = fold(registerTwo(), initialState());
+
+    // normal -> entering, via a fresh SetFullscreen command.
+    const enterDecision = decide(state, { type: 'SetFullscreen', id: wid(1), desired: true, expectedVersion: state.version });
+    assert.ok('events' in enterDecision);
+    let s = fold(enterDecision.events, state);
+    assert.strictEqual(s.order.find((w) => w.id === wid(1))?.fsMode.name, 'entering');
+
+    // entering -> fullscreen, via the OS report.
+    s = evolve(s, { type: 'OsFullscreenEntered', id: wid(1) });
+    assert.strictEqual(s.order.find((w) => w.id === wid(1))?.fsMode.name, 'fullscreen');
+
+    // fullscreen -> leaving, via a fresh SetFullscreen(false) command.
+    const leaveDecision = decide(s, { type: 'SetFullscreen', id: wid(1), desired: false, expectedVersion: s.version });
+    assert.ok('events' in leaveDecision);
+    s = fold(leaveDecision.events, s);
+    assert.strictEqual(s.order.find((w) => w.id === wid(1))?.fsMode.name, 'leaving');
+
+    // leaving -> normal, via the OS report.
+    s = evolve(s, { type: 'OsFullscreenLeft', id: wid(1) });
+    assert.strictEqual(s.order.find((w) => w.id === wid(1))?.fsMode.name, 'normal');
+  });
+
+  it('a request arriving mid-transition records pendingDesire and is applied on settle', () => {
+    const state = fold(registerTwo(), initialState());
+
+    // Start entering.
+    const enterDecision = decide(state, { type: 'SetFullscreen', id: wid(1), desired: true, expectedVersion: state.version });
+    assert.ok('events' in enterDecision);
+    let s = fold(enterDecision.events, state);
+    assert.strictEqual(s.order.find((w) => w.id === wid(1))?.fsMode.name, 'entering');
+
+    // A second request arrives mid-flight (change of mind: actually leave) —
+    // must NOT start a second transition, only coalesce.
+    const midFlight = decide(s, { type: 'SetFullscreen', id: wid(1), desired: false, expectedVersion: s.version });
+    assert.ok('events' in midFlight);
+    assert.deepStrictEqual(midFlight.events, [{ type: 'FullscreenDesireRecorded', id: wid(1), desired: false }]);
+    s = fold(midFlight.events, s);
+    const midMode = s.order.find((w) => w.id === wid(1))?.fsMode;
+    assert.strictEqual(midMode?.name, 'entering', 'still entering — no second transition opened');
+    assert.strictEqual((midMode as { pendingDesire?: boolean }).pendingDesire, false);
+
+    // The in-flight transition settles — the OS reports it entered — and the
+    // coalesced "actually, leave" desire is applied: net result is `leaving`.
+    s = evolve(s, { type: 'OsFullscreenEntered', id: wid(1) });
+    assert.strictEqual(s.order.find((w) => w.id === wid(1))?.fsMode.name, 'leaving');
+  });
+
+  it('FullscreenSettleTimeout never leaves a record in a transitional state', () => {
+    const state = fold(registerTwo(), initialState());
+
+    const entering = fold([{ type: 'FullscreenTransitionStarted', id: wid(1), entering: true, preBounds: null }], state);
+    const settledFromEntering = evolve(entering, { type: 'FullscreenSettleTimeout', id: wid(1) });
+    assert.strictEqual(settledFromEntering.order.find((w) => w.id === wid(1))?.fsMode.name, 'fullscreen');
+
+    const leaving = fold(
+      [
+        { type: 'FullscreenTransitionStarted', id: wid(1), entering: true, preBounds: null },
+        { type: 'OsFullscreenEntered', id: wid(1) },
+        { type: 'FullscreenTransitionStarted', id: wid(1), entering: false, preBounds: null },
+      ],
+      state,
+    );
+    assert.strictEqual(leaving.order.find((w) => w.id === wid(1))?.fsMode.name, 'leaving');
+    const settledFromLeaving = evolve(leaving, { type: 'FullscreenSettleTimeout', id: wid(1) });
+    assert.strictEqual(settledFromLeaving.order.find((w) => w.id === wid(1))?.fsMode.name, 'normal');
+  });
+
+  it('preBounds: null survives a round trip and is distinguishable from "no stash concept"', () => {
+    const state = fold(registerTwo(), initialState());
+    // OS/green-button entry — no stash was possible, preBounds is `null`.
+    const entered = evolve(state, { type: 'OsFullscreenEntered', id: wid(1) });
+    const mode = entered.order.find((w) => w.id === wid(1))?.fsMode;
+    assert.strictEqual(mode?.name, 'fullscreen');
+    assert.ok(mode && 'preBounds' in mode, 'preBounds is a present key, not a missing field');
+    assert.strictEqual((mode as { preBounds: unknown }).preBounds, null);
+
+    // A `normal` record must never carry the key at all.
+    const stillNormal = entered.order.find((w) => w.id === wid(2))?.fsMode;
+    assert.strictEqual(stillNormal?.name, 'normal');
+    assert.ok(stillNormal && !('preBounds' in stillNormal), 'a normal window has no preBounds concept');
+  });
+
+  it('a fullscreen transition changes neither key nor the contents/positions of order', () => {
+    const state = fold(
+      [...registerTwo(), { type: 'OsFocusGained', id: wid(2) }],
+      initialState(),
+    );
+    const orderBefore = state.order.map((w) => w.id);
+    const keyBefore = state.key;
+
+    const decision = decide(state, { type: 'SetFullscreen', id: wid(1), desired: true, expectedVersion: state.version });
+    assert.ok('events' in decision);
+    const entering = fold(decision.events, state);
+    assert.deepStrictEqual(entering.order.map((w) => w.id), orderBefore, 'order must be untouched by a fullscreen request');
+    assert.strictEqual(entering.key, keyBefore, 'key must be untouched by a fullscreen request');
+
+    const settled = evolve(entering, { type: 'OsFullscreenEntered', id: wid(1) });
+    assert.deepStrictEqual(settled.order.map((w) => w.id), orderBefore, 'order must be untouched by the OS settle');
+    assert.strictEqual(settled.key, keyBefore, 'key must be untouched by the OS settle');
+  });
+
+  it('re-requesting the state a window is already in emits no effect', () => {
+    const state = fold(registerTwo(), initialState());
+
+    // Already normal, request normal again.
+    const alreadyNormal = decide(state, { type: 'SetFullscreen', id: wid(1), desired: false, expectedVersion: state.version });
+    assert.ok('events' in alreadyNormal);
+    assert.deepStrictEqual(alreadyNormal.events, []);
+
+    // Drive to fullscreen, then re-request fullscreen.
+    const fullscreen = fold(
+      [
+        { type: 'FullscreenTransitionStarted', id: wid(1), entering: true, preBounds: null },
+        { type: 'OsFullscreenEntered', id: wid(1) },
+      ],
+      state,
+    );
+    const alreadyFullscreen = decide(fullscreen, {
+      type: 'SetFullscreen',
+      id: wid(1),
+      desired: true,
+      expectedVersion: fullscreen.version,
+    });
+    assert.ok('events' in alreadyFullscreen);
+    assert.deepStrictEqual(alreadyFullscreen.events, []);
+    const next = fold(alreadyFullscreen.events, fullscreen);
+    const effects = foldWithEffects(alreadyFullscreen.events, fullscreen).effects;
+    assert.strictEqual(next, fullscreen, 'no events -> no state change');
+    assert.deepStrictEqual(effects, [], 'no effect for a no-op re-request');
+  });
+});
+
 // ── RegisterWindow command ──────────────────────────────────────────────────
 
 describe('window-kernel: RegisterWindow command', () => {
