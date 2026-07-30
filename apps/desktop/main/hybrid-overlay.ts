@@ -51,8 +51,6 @@
 import { app, BrowserWindow, BaseWindow as BaseWindowCtor, WebContentsView, screen } from 'electron';
 import type { BaseWindow, WebContents } from 'electron';
 import { isHeadless, getTilePreloadPath } from './config.js';
-// TEMPORARY (live sitting, peek 7fffa286) — reverted with the instrumentation.
-import { diag } from './live-diag.js';
 import { DEBUG } from './debug-flag.js';
 import {
   getHybridWindow,
@@ -560,23 +558,12 @@ function wireAppActiveGate(): void {
 function wireShowNavbarFocus(): void {
   subscribe(getSystemAddress(), 'page:show-navbar', (raw) => {
     const msg = raw as { windowId?: number } | null;
-    // TEMPORARY (live sitting, peek 7fffa286) — g2. Emitted BEFORE the four
-    // guards so a Cmd+L that produces no dispatch still shows which input
-    // failed; a second `dispatched` line follows only when all guards passed.
-    diag(
-      `[g2] show-navbar win=${msg?.windowId ?? 'null'}` +
-        ` appActive=${getAppActive()}` +
-        ` frontHost=${frontPageHostOsId() ?? 'null'}` +
-        ` overlayLive=${!!overlayWin && !overlayWin.isDestroyed()}` +
-        ` overlayWmId=${overlayWmId ?? 'null'}`,
-    );
     if (!msg || msg.windowId == null) return;
     if (!getAppActive()) return; // never steal focus while backgrounded (R1)
     if (msg.windowId !== frontPageHostOsId()) return; // active window only
     if (!overlayWin || overlayWin.isDestroyed()) return;
     if (overlayWmId == null) return;
     showNavbarFocusCount++;
-    diag('[g2] show-navbar dispatched');
     dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: overlayWmId, activate: true });
   });
 }
