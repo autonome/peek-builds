@@ -961,10 +961,17 @@ function assembleHybridPageHost(
   // window record is the one registry (§4.1 dim 1a / §5 step 4); `parentId`
   // carries the parent linkage that drives the reducer's parent-refocus
   // transition on WINDOW_CLOSED.
+  //
+  // Registration carries the resolved creation intent, not the raw request —
+  // headless never floats a hybrid host above the user's real desktop (same
+  // gate the BrowserWindow path applies to `winOptions.alwaysOnTop` below), so
+  // the machine never believes a window is pinned that headless declined to
+  // pin.
+  const alwaysOnTopResolved = !isHeadless() && options.alwaysOnTop === true;
   const hostMachineId = registerWindowWithMachine({
     kind: 'page-host',
     role,
-    class: classifyWindowRegistration(role, { alwaysOnTop: options.alwaysOnTop === true }),
+    class: classifyWindowRegistration(role, { alwaysOnTop: alwaysOnTopResolved }),
     satellite: role === 'overlay' || role === 'palette',
     escapeMode: options.escapeMode as MachineWindowSpec['escapeMode'],
     lastHttpUrl: url.startsWith('http://') || url.startsWith('https://') ? url : undefined,
@@ -3480,11 +3487,18 @@ export function registerWindowHandlers(): void {
       // 4). `class` replaces the HUD-sniffing predicate (alwaysOnTop +
       // focusable:false ⇒ 'hud'); `parentId` drives parent-refocus on close;
       // `alwaysOnTop` makes registration emit the pin effect.
+      //
+      // Both fields below read `winOptions.alwaysOnTop` (the RESOLVED, headless-
+      // gated value the window was actually built with — see the gate above,
+      // just before `new BrowserWindow(winOptions)`/`createTileBrowserWindow`),
+      // not the raw `options.alwaysOnTop` request. Registering the raw request
+      // would tell the machine a headless window is pinned when the constructor
+      // was explicitly told not to pin it.
       const machineWindowId = registerWindowWithMachine({
         kind: 'browser',
         role,
         class: classifyWindowRegistration(role, {
-          alwaysOnTop: options.alwaysOnTop === true,
+          alwaysOnTop: winOptions.alwaysOnTop === true,
           focusable: options.focusable === undefined ? undefined : !!options.focusable,
         }),
         satellite: isSatelliteRegistration(role, {
@@ -3498,7 +3512,7 @@ export function registerWindowHandlers(): void {
         source: msg.source,
         params: windowParams,
         parentId: parentWindowId != null ? getWindowIdFor(parentWindowId) : null,
-        alwaysOnTop: options.alwaysOnTop === true,
+        alwaysOnTop: winOptions.alwaysOnTop === true,
         // keepLive rides the registration (first-class on the reducer record)
         // — the machine's WINDOW_CLOSE_OR_HIDE_REQUESTED clause branches on it.
         keepLive: options.keepLive === true,
