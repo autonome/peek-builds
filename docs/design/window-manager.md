@@ -268,6 +268,9 @@ interface State {
 
   /** RULE 4 + stale-intent rejection. */
   readonly version: number;
+  /** RULE 4's counter: orders the machine's own focus-family actions so a later state can
+   *  recognize an earlier one's echo as stale. Bumped by exactly one per transition that
+   *  issues a `ShowWindow`/`RaiseWindow` effect, never per effect. */
   readonly opSeqCounter: number;
 
   readonly appActive: boolean;
@@ -286,6 +289,23 @@ exactly why `stackOrderInvariantHolds`, `isStackMember`, `reconcileStackMembersh
 returns `null` on a miss. A stale key id then behaves as "nobody holds key", which is the honest
 answer anyway.
 
+**`opSeqCounter` (`window-kernel.ts`) advances by exactly one in each transition whose diff
+`react` turns into a focus-family effect** (`ShowWindow` or `RaiseWindow`): a `WindowShown` that
+genuinely flips `visible`, an `OsFocusGained` that genuinely raises, or an `AppActivated` that
+re-shows what the app-resign sweep hid. The bump is per TRANSITION, not per effect — one
+`AppActivated` re-showing three windows issues one op with one token, and `react` stamps every
+focus-family effect it emits with that token, so all three records land the same `lastOpSeq`.
+`evolve` writes the stamp and `react` reads the token from the same post-transition counter value,
+so the two agree by construction; a property-based test asserts the equality per-transition,
+per-event rather than trusting the two sites to stay in step by hand.
+
+The reason the ordering matters: it lets a later state recognize an earlier action's own echo as
+stale. `WindowRecord.lastOpSeq` holds the newest such token issued for that window; an incoming
+`OsFocusGained` whose provenance is `machine` (`FocusCause`) carries the token of the op it is an
+echo of. `WindowKernelExecutor apply()` (`window-kernel-executor.ts`) compares the two and drops a
+stale echo before it ever reaches `evolve` — which it must, because `react` reads no event payload
+and structurally cannot consult provenance to make the same call.
+
 #### `WindowRecord`: orthogonal properties, no pre-combined class
 
 ```ts
@@ -301,7 +321,7 @@ interface WindowRecord {
 
   // lifecycle + geometry carry over unchanged: visible, orderable, fsMode, bounds, maximized,
   // preMaxBounds, visibleOnAllSpaces, pendingProjectedBounds, openSeq, parentId, overlayFor,
-  // keepLive, role, source, params, lastHttpUrl, hiddenByAppBlur, contentFocused.
+  // keepLive, role, source, params, lastHttpUrl, hiddenByAppBlur, contentFocused, lastOpSeq.
 }
 ```
 
@@ -575,14 +595,29 @@ therefore safe only when the set it admits lies within one layer band; a predica
 must either add a `layer` clause or be replaced by a query that respects bands. See 0.1.5 for the
 one predicate this already threatens.
 
-**The `layer` → realized-band mapping is a design claim, not yet a built or tested one.** `react`
-emits `SetStacking` carrying the numeric `layer`, but no executor consumes that effect yet —
-`window-kernel.ts` is imported only by `window-escape.ts` and the kernel's own test files.
-`electron-window-backend.ts` `WindowBackend.setStacking` takes a `StackingLevel` (`'pinned' |
-'stacked' | 'excluded'`), not a `layer` index, and routes `'pinned'` through
-`setAlwaysOnTop(true, 'floating')` rather than `moveTop()`. Until the `layer`-to-`StackingLevel`
-mapping is written and exercised, "the bands are realized correctly" describes the intended
-executor, not the one that exists.
+**The `layer` → realized-band mapping is now written and exercised.**
+`window-kernel-executor.ts` `stackingLevelForLayer()` realizes it: `layer > BASE_LAYER` maps to
+`'pinned'` (Electron's always-on-top band, realized via `setAlwaysOnTop(true, 'floating')`);
+everything at or below `BASE_LAYER` maps to `'stacked'` (the regular band, via the `moveTop()`
+replay). `'excluded'` is unreachable — non-membership is unrepresentable under RULE 1, so a
+window the OS is left to manage on its own is simply never emitted a `SetStacking` at all
+(`react`'s `visible && orderable` filter), rather than being emitted one that says "exclude me".
+`WindowKernelExecutor` is the executor R2 describes for this kernel: it owns one `State`, exposes
+`getState`/`subscribe`/`dispatch`/`execute`, performs effects against `WindowBackend`, and replays
+`SetStacking` last, grouped by layer lowest-first with array order preserved within a band — never
+a read-back from Electron. It is constructed by nothing in production: `window-state.ts` and its
+adapter still drive the running app, and `window-kernel.ts` is now imported by
+`window-kernel-executor.ts`, `window-escape.ts`, and the kernel's own test files.
+
+Two items the executor leaves open rather than done. The quick-view and headless activation masks
+for a raise are applied in the executor's `planRaise()`, not in `electron-window-backend.ts
+raiseWindow()` — that function is live on the old machine's `RAISE_WINDOW` effect, and changing it
+would alter production behavior for the running app's peeks and slides; the mask belongs on the
+backend eventually and needs its own commit and gate run. And no `subscribeFrontChange` equivalent
+has been built on the new executor: its one live subscriber (the shared chrome overlay's
+retarget) wants an effect rather than a subscription, and the query it would dedup on spans more
+than one `layer` band and needs a layer-aware replacement first — `WindowKernelExecutor.subscribe`
+is deliberately the base surface only, not that consumer's shape.
 
 **Electron hazards worth recording:** `'floating'` and `'torn-off-menu'` are the *same*
 `NSWindowLevel` (3); toggling `setAlwaysOnTop(false)` → `(true)` on one window can knock *other*
