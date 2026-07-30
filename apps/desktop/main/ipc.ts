@@ -10,16 +10,6 @@ import { getAllLiveWindows, getLiveWindow, windowFromWebContents } from './windo
 import { hybridResizeDirAt, RESIZE_EDGE_PX, RESIZE_CORNER_PX } from './izui-roles.js';
 import type { ResizeDir } from './izui-roles.js';
 import path from 'node:path';
-import * as ccdiagFs from 'node:fs';
-
-// TEMPORARY closeContent reachability trace — REVERT after the sitting.
-function ccdiag(line: string): void {
-  try {
-    ccdiagFs.appendFileSync('/tmp/peek-closecontent-diag.log', `[${new Date().toISOString()}] ${line}\n`);
-  } catch {
-    /* best-effort */
-  }
-}
 
 import {
   getDb,
@@ -1082,14 +1072,7 @@ function assembleHybridPageHost(
   };
 
   let hybridFinalized = false;
-  const runHybridFinalize = (ccTrigger = 'unknown') => {
-    // TEMPORARY closeContent reachability trace — REVERT after the sitting.
-    ccdiag(
-      `runHybridFinalize trigger=${ccTrigger} osWin=${baseWin.id} machineId=${hostMachineId} ` +
-        `alreadyFinalized=${hybridFinalized} ` +
-        `viewWCPresent=${(() => { try { return String(!!view.webContents); } catch { return 'err'; } })()} ` +
-        `viewWCDestroyed=${(() => { try { return String(view.webContents?.isDestroyed()); } catch (e) { return `threw:${String(e)}`; } })()}`,
-    );
+  const runHybridFinalize = () => {
     if (hybridFinalized) return;
     hybridFinalized = true;
     // Black-window fix, quit path (best-effort). The interactive close/hide paths
@@ -1164,11 +1147,11 @@ function assembleHybridPageHost(
 
   baseWin.on('close', () => {
     captureHybridClose();
-    runHybridFinalize('baseWin:close');
+    runHybridFinalize();
   });
   baseWin.once('closed', () => {
     captureHybridClose();
-    runHybridFinalize('baseWin:closed');
+    runHybridFinalize();
   });
   // IMPORTANT: prepend, not append. The page-host close-UAF guard
   // (windows.ts closeHostWindow → destroyGuestsThenClose) destroys this
@@ -1191,7 +1174,7 @@ function assembleHybridPageHost(
   // harmless here.)
   view.webContents.prependOnceListener('destroyed', () => {
     captureHybridClose();
-    runHybridFinalize('contentWC:destroyed');
+    runHybridFinalize();
     // Opener-initiated close: when the opener page calls the popup's
     // window.opener-proxy .close() (or the popup calls window.close()),
     // Chromium destroys the content WebContents directly, leaving this
