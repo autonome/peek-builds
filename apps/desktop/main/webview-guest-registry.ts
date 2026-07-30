@@ -18,8 +18,18 @@
  * Electron *window* ids, so its two numeric spaces can't be confused.
  */
 
+import * as ccdiagFs from 'node:fs';
 import type { WebContents } from 'electron';
 import { windowFromWebContents } from './window-registry.js';
+
+// TEMPORARY closeContent reachability trace — REVERT after the sitting.
+function ccdiag(line: string): void {
+  try {
+    ccdiagFs.appendFileSync('/tmp/peek-closecontent-diag.log', `[${new Date().toISOString()}] ${line}\n`);
+  } catch {
+    /* best-effort */
+  }
+}
 import type { WindowId } from './window-state.js';
 import { getNativeWindowFor, getWindowIdFor, dispatchWindowEvent } from './window-state-singleton.js';
 
@@ -159,9 +169,18 @@ export function getAllGuestWebContentsIds(): number[] {
  * backend's guest-safe `closeWindow`; this closes the quit/teardown gap.
  */
 export function destroyAllPageHostGuests(): void {
+  // TEMPORARY closeContent reachability trace — REVERT after the sitting.
+  ccdiag(
+    `destroyAllPageHostGuests ENTER guestToHost.size=${guestToHost.size} ` +
+      `entries=[${[...guestToHost.entries()].map(([g, h]) => `${g}->${h}`).join(' ')}] ` +
+      `pageHostContentIds=[${[...pageHostContentIds].join(',')}]`,
+  );
   try {
     dispatchWindowEvent({ type: 'GUEST_TEARDOWN_REQUESTED' });
-  } catch { /* best-effort during shutdown */ }
+  } catch (e) {
+    ccdiag(`destroyAllPageHostGuests dispatch THREW: ${String(e)}`);
+  }
+  ccdiag(`destroyAllPageHostGuests EXIT guestToHost.size=${guestToHost.size}`);
 }
 
 /** Test-only: clear all registry state. */

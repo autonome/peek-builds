@@ -1228,16 +1228,30 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * relay invoke torn down inside `-[NSWindow __close]` → EXC_BAD_ACCESS).
    */
   destroyAllContentGuests(): void {
-    for (const guestId of getAllGuestWebContentsIds()) {
+    // TEMPORARY closeContent reachability trace — REVERT after the sitting.
+    const ccIds = getAllGuestWebContentsIds();
+    ccdiag(`destroyAllContentGuests ENTER ids=[${ccIds.join(',')}] count=${ccIds.length}`);
+    for (const guestId of ccIds) {
       try {
         const wc = webContents.fromId(guestId);
+        ccdiag(
+          `destroyAllContentGuests gid=${guestId} resolved=${!!wc} ` +
+            `destroyed=${(() => { try { return wc ? String(wc.isDestroyed()) : 'n/a'; } catch (e) { return `threw:${String(e)}`; } })()} ` +
+            `hasDestroyFn=${(() => { try { return String(typeof (wc as unknown as { destroy?: unknown })?.destroy); } catch { return 'err'; } })()}`,
+        );
         if (wc && !wc.isDestroyed()) {
           (wc as unknown as { destroy(): void }).destroy();
+          ccdiag(
+            `destroyAllContentGuests gid=${guestId} destroy() returned; nowDestroyed=` +
+              `${(() => { try { return String(wc.isDestroyed()); } catch (e) { return `threw:${String(e)}`; } })()}`,
+          );
         }
-      } catch {
-        /* best-effort during shutdown */
+      } catch (e) {
+        // TEMPORARY: capture the swallowed error instead of discarding it.
+        ccdiag(`destroyAllContentGuests gid=${guestId} THREW: ${String(e)}`);
       }
     }
+    ccdiag(`destroyAllContentGuests EXIT processed=${ccIds.length}`);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
