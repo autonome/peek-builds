@@ -599,6 +599,8 @@ export type Effect =
   | { type: 'SetStacking'; id: WindowId; layer: number }
   | { type: 'ShowWindow'; id: WindowId; opSeq: number }
   | { type: 'HideWindow'; id: WindowId }
+  /** Drive the OS to close the window (dismiss the non-keepLive branch of `CloseOrHideWindow`) — visibility-only, same as `HideWindow`, carries no `opSeq`. */
+  | { type: 'CloseWindow'; id: WindowId }
   | { type: 'RaiseWindow'; id: WindowId; opSeq: number }
   /** Drive the OS into fullscreen — emitted only when a record freshly transitions INTO `entering`. */
   | { type: 'SetFullscreen'; id: WindowId }
@@ -1209,7 +1211,7 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
 
   // Visibility: a record present in both states whose `visible` flipped.
   // (A closed window vanishes from `next.order` entirely — no HideWindow;
-  // there is no DestroyWindow effect in this slice's Effect union.)
+  // its dismissal is the CloseWindow diff below instead.)
   for (const nextRecord of next.order) {
     const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
     if (prevRecord === undefined) {
@@ -1219,6 +1221,17 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
       effects.push({ type: 'ShowWindow', id: nextRecord.id, opSeq: next.opSeqCounter });
     } else if (prevRecord.visible && !nextRecord.visible) {
       effects.push({ type: 'HideWindow', id: nextRecord.id });
+    }
+  }
+
+  // Close: a record present in `prev.order` and absent from `next.order` —
+  // RULE 1 makes `WindowClosed` the only event that shrinks membership, so
+  // this membership diff is exactly "this window was closed", never a branch
+  // on `ev.type`. Mirrors the visibility loop above, one level up (presence
+  // rather than a field on a still-present record).
+  for (const prevRecord of prev.order) {
+    if (!next.order.some((w) => w.id === prevRecord.id)) {
+      effects.push({ type: 'CloseWindow', id: prevRecord.id });
     }
   }
 

@@ -568,6 +568,18 @@ describe('effect performance', () => {
     assert.deepStrictEqual(backend.of('hideWindow').map((c) => c.args[0]), [wid(1)]);
   });
 
+  it('a non-keepLive CloseOrHideWindow closes through the guest-safe direct close, never closeOrHide/destroyWindow', () => {
+    const { exec, backend } = makeExecutor();
+    exec.dispatch(register(wid(1)));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    backend.calls.length = 0;
+    const out = exec.execute({ type: 'CloseOrHideWindow', id: wid(1), expectedVersion: exec.getState().version });
+    assert.ok('applied' in out);
+    assert.deepStrictEqual(backend.of('closeWindow').map((c) => c.args[0]), [wid(1)]);
+    assert.deepStrictEqual(backend.of('closeOrHide'), []);
+    assert.deepStrictEqual(backend.of('destroyWindow'), []);
+  });
+
   it('drives fullscreen in and out through the one port command', () => {
     const { exec, backend } = makeExecutor();
     exec.dispatch(register(wid(1)));

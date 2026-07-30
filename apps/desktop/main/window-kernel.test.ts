@@ -702,6 +702,51 @@ describe('window-kernel: CloseOrHideWindow', () => {
     const next = fold(decision.events, state);
     assert.strictEqual(next.order.some((w) => w.id === wid(1)), false, 'non-keepLive window must be removed');
   });
+
+  it('a non-keepLive window reaches the OS: react emits CloseWindow naming it', () => {
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowShown', id: wid(1) },
+      ],
+      initialState(),
+    );
+    const decision = decide(state, { type: 'CloseOrHideWindow', id: wid(1), expectedVersion: state.version });
+    assert.ok('events' in decision);
+    const ev = decision.events[0];
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+    assert.deepStrictEqual(
+      effects.filter((e) => e.type === 'CloseWindow'),
+      [{ type: 'CloseWindow', id: wid(1) }],
+    );
+  });
+
+  it('a keepLive window produces HideWindow and NOT CloseWindow', () => {
+    const state = fold(
+      [
+        {
+          type: 'WindowRegistered',
+          id: wid(1),
+          kind: 'page-host',
+          layer: 0,
+          canBecomeKey: true,
+          acceptsInput: true,
+          class: 'primary',
+          keepLive: true,
+        },
+        { type: 'WindowShown', id: wid(1) },
+      ],
+      initialState(),
+    );
+    const decision = decide(state, { type: 'CloseOrHideWindow', id: wid(1), expectedVersion: state.version });
+    assert.ok('events' in decision);
+    const ev = decision.events[0];
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+    assert.deepStrictEqual(effects, [{ type: 'HideWindow', id: wid(1) }]);
+    assert.ok(!effects.some((e) => e.type === 'CloseWindow'));
+  });
 });
 
 // ── orderable gate on SetStacking ────────────────────────────────────────────

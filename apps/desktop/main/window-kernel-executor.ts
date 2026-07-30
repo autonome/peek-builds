@@ -379,6 +379,19 @@ export class WindowKernelExecutor {
         this.backend.hideWindow(effect.id);
         return;
       }
+      case 'CloseWindow': {
+        // `decide`'s keepLive branch already ran (§0.1: CloseOrHideWindow ->
+        // WindowClosed only on the non-keepLive arm), so this must not
+        // re-apply that policy — `closeOrHide` would. `closeWindow` is the
+        // guest-safe direct close with no keepLive policy of its own;
+        // `destroyWindow` skips beforeunload/close events entirely and is
+        // reserved for forceful teardown, never ordinary dismissal (design
+        // note: HIDE_WINDOW/CLOSE_WINDOW, never DESTROY_WINDOW). Fire-and-
+        // forget, same as every other effect here — the promise is test-bridge
+        // settlement only.
+        void this.backend.closeWindow(effect.id);
+        return;
+      }
       case 'RaiseWindow': {
         const record = this.state.order.find((w) => w.id === effect.id);
         switch (planRaise(record, this.headless)) {

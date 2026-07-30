@@ -716,12 +716,18 @@ function checkAutocloseInvariants(state: State): string[] {
  * Extra invariant on `react`'s output: every emitted effect names a window
  * still in `next.order` — this is what guarantees, among other things, that
  * no `SetBounds` effect (this slice) ever names a window absent from `order`.
+ *
+ * `CloseWindow` is the one deliberate exception: RULE 1 makes `WindowClosed`
+ * the sole way membership shrinks, so `react` derives `CloseWindow` from a
+ * record's ABSENCE in `next.order` (see `react`'s close diff) — the effect
+ * can only ever name a window that has already left `order`, by construction.
  */
 function checkEffectInvariants(effects: Effect[], next: State): string[] {
   const violations: string[] = [];
   for (const effect of effects) {
     const record = next.order.find((w) => w.id === effect.id);
     if (record === undefined) {
+      if (effect.type === 'CloseWindow') continue;
       violations.push(`effect names a window not present in order: ${JSON.stringify(effect)}`);
       continue;
     }
