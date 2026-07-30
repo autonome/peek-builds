@@ -629,6 +629,91 @@ called from a subscribe callback mid-dispatch. If a polling shape is kept instea
 must be `topmost(pageHost)`, not `keyWindow` — otherwise the overlay detaches and re-attaches on
 every Cmd+L and the chrome visibly flickers.
 
+#### The kernel does not yet cover the old machine
+
+Measured against `apps/desktop/main/window-state.ts`'s 45 event types and 21 effect types: 29 have
+no home in `window-kernel.ts`, `window-kernel-executor.ts`, or `window-escape.ts`.
+
+**Deleted by design (5).** `ESC_RENDERER_ANSWER` and `ASK_RENDERER` are replaced by `version` /
+`expectedVersion` plus the mirrored `EscapeKeyPress.rendererHandled` fact (0.1.2); `SWITCHER_SELECTED`,
+`SWITCHER_OPENED`, and `SET_ALWAYS_ON_TOP` are subsumed into `SetStacking` plus `layer` (0.1.4,
+0.1.6).
+
+**Homed outside the kernel (8).** `ESC_PRESSED`, `SWITCHER_OPEN_REQUESTED`, `OPEN_SWITCHER_WINDOW`,
+`CLOSE_SWITCHER_WINDOW`, and `PASS_THROUGH` belong to `window-escape.ts` or an app action — the
+kernel never creates windows. `SESSION_CHANGED` is a caller-supplied `EscapeSession`. `SPACE_CHANGED`
+belongs to `electron-window-backend.ts attachSpaceChangeListener` — the machine holds no per-Space
+state. `RECONCILE_FULLSCREEN` belongs to `electron-window-backend.ts`, which owns the bounded
+fullscreen settle.
+
+**Expected in the kernel but unwritten (9).** `WINDOW_PARAMS_SET`, `WINDOW_CLOSE_REQUESTED`,
+`WINDOW_DESTROY_REQUESTED`, `WINDOW_CONTENT_CLOSE_REQUESTED`, `GUEST_TEARDOWN_REQUESTED`,
+`STACK_ORDER_IMPORTED`, `MAXIMIZE_RESTORED`, `SPACES_POLICY_REQUESTED`, and `CLOSE_WINDOW`. Seven of
+these rest only on 0.1.1's blanket count of "~17 commands (everything named `*_REQUESTED`)" — a
+mood-sorting tally, not a specification.
+
+**Unaddressed — the design is silent (7).** `DEVTOOLS_OPENED`, `DEVTOOLS_CLOSED`,
+`COLD_START_FOCUS_ARMED`, `CLOSE_WINDOW_DIRECT`, `DESTROY_WINDOW`, `CLOSE_CONTENT`,
+`DESTROY_ALL_GUESTS`. §0.1 never says how the kernel decides to close, destroy, or tear down a
+window; `WindowClosed` exists only as an OS report.
+
+§5's eleven steps migrate authorities into `window-state.ts`, not into the kernel — no wiring
+sequence for the kernel appears anywhere in this document. There is no step for the switcher and
+none for the close/destroy family as a decision surface.
+
+**The consequence for §2's rule.** A partial cutover — the kernel owning focus/order/visibility/
+geometry while `window-state.ts` retains close/switcher/session — is forbidden, because those
+retained arms are themselves focus authority: `window-state.ts`'s `SWITCHER_SELECTED` arm sets
+`front`, bumps `focusSeq`, and drives `applyRaiseRequest`; `COLD_START_FOCUS_ARMED` is consumed by
+`APP_ACTIVATED`, which re-fronts and drives `RAISE_WINDOW` / `FOCUS_CONTENT` / `SET_STACKING`;
+`STACK_ORDER_IMPORTED` orders `stackOrder`. Retaining them means a second writer of front — the
+exact failure mode §2 exists to prevent. The permissible shape is the inverse: port those decisions
+into the kernel in the same commits that cut over focus and order.
+
+#### Three lossy ports
+
+Three transitions already ported from the old machine to the kernel drop a sub-behavior the old
+machine had, each with its own consequence.
+
+- **`RAISE_WINDOW_REQUESTED` → `Command.RaiseWindow`.** `decide` synchronously manufactures an
+  `OsFocusGained`, so `key` moves optimistically with no OS confirmation. The old machine moved
+  `front` only from the real OS echo (`applyOsFocusRealized`).
+- **`FULLSCREEN_SETTLE_TIMEOUT`.** The kernel force-settles optimistically (`entering` →
+  `fullscreen`, `leaving` → `normal`); the old machine emitted `RECONCILE_FULLSCREEN` and re-asked
+  the OS once.
+- **`FOCUS_CONTENT`.** `react` emits `RaiseWindow` only when the top of `order` changes, so a
+  re-raise of the already-topmost window produces an empty diff and no `focusContent` call. That is
+  the shape of the fixed `7c61e917` regression — a restored host raised by its chrome never regains
+  first responder, and Escape has no handler at all.
+
+#### Registration facts the kernel needs but no site supplies
+
+`layer`, `canBecomeKey`, and `acceptsInput` are fields on `WindowRegistered` that no production
+registration site passes; `MachineWindowSpec`, `WindowSpec`, and `RegisterWindowSpec` have none of
+them. `izui-roles.ts deriveWindowSurface()` derives all three from open params. A survey of real
+construction sites falsifies three derivations that would otherwise look correct:
+
+- **`canBecomeKey` keys on neither role nor `alwaysOnTop`.** `hybrid-overlay.ts ensureOverlay` is an
+  always-on-top `role: 'overlay'` window that is deliberately `focusable: true` so Cmd+L can type in
+  the navbar, and `test-fixture-glue.ts` registers `focusable: false` without being always-on-top.
+  It is exactly `focusable !== false`.
+- **`acceptsInput` keys on neither role nor `alwaysOnTop`.** The two production `role: 'overlay'`
+  windows disagree: `features/windows/background.js openWindowsView` takes clicks, while
+  `features/spaces/background.js`'s border passes them through.
+- **Peeks and slides (`role: 'quick-view'`) sit at `BASE_LAYER`, not above it.** They declare no
+  `alwaysOnTop`, and their above-ness is `type: 'panel'` AppKit behaviour. Placing them above base
+  would put them in `isAppResignSweepEligible`'s `layer > BASE_LAYER` half, which its role clause
+  exists to keep them out of.
+- **`layer` keys on the declared `alwaysOnTop`, not on class.** `classifyWindowRegistration` assigns
+  class `overlay` / `palette` on role alone, so a class-based derivation would call a role-overlay
+  window pinned even when nothing pinned it. The sets coincide today only because all three
+  role-overlay/palette sites also declare `alwaysOnTop`.
+- **Two bands suffice.** `'floating'` and `'torn-off-menu'` are the same macOS window level, so a
+  third band would realize identically at the OS boundary.
+
+`acceptsInput` is stored and merged but read by nothing in the kernel today — no query, predicate,
+or effect consults it.
+
 ### 0.1.6 Layers and realizing the order against Electron
 
 **Layers are a fixed ordered set established by construction, not per-window integers sorted at
@@ -1176,6 +1261,20 @@ content query rather than to `key`, and the two reducer tests that read as count
 behavior of `front`, whose role is now split — so they constrain main. That leaves no identified
 reader that needs `key` to survive deactivation. The decision stays open; what the evidence removes
 is the claim that nulling breaks a caller.
+
+#### Open question 3: does window teardown become kernel commands?
+
+Whether `DESTROY_WINDOW`, `CLOSE_CONTENT`, `DESTROY_ALL_GUESTS`, and `CLOSE_WINDOW_DIRECT` become
+kernel commands, or stay a caller composition outside the kernel the way Escape, the switcher, and
+spaces policy already do, is undecided. The three existing precedents favour the latter, and it
+keeps the kernel's effect surface small.
+
+#### Open question 4: which registration path is correct under headless?
+
+`ipc.ts` gates `alwaysOnTop` on the constructor option but registers the raw
+`options.alwaysOnTop === true`, while `tile-launcher.ts` registers the headless-gated resolved
+value — so the same declared intent yields `layer: FLOATING` on one path and `BASE_LAYER` on the
+other under headless. Which path is correct is undecided.
 
 ---
 
