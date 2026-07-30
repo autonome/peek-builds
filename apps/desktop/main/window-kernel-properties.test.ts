@@ -30,6 +30,8 @@ import {
   react,
   decide,
   keyWindow,
+  selectTransientAutoclose,
+  selectAppResignTransients,
   type State,
   type Event,
   type Command,
@@ -93,6 +95,21 @@ const POOL_SIZE = 6;
 const wid = (n: number): WindowId => `wkp-${n}` as WindowId;
 const KINDS: readonly WindowKind[] = ['page-host', 'browser'];
 const CLASSES = ['primary', 'hud', 'overlay', 'utility'];
+/**
+ * The live IZUI role vocabulary plus `undefined` — a registration that names
+ * no role is as legitimate as one that does, and both the transient sets and
+ * the exempt sets must be reachable by generation.
+ */
+const ROLES: readonly (string | undefined)[] = [
+  'palette',
+  'quick-view',
+  'overlay',
+  'utility',
+  'workspace',
+  'content',
+  'child-content',
+  undefined,
+];
 
 /** A log item is either a fact fed straight to `evolve`, or a request fed through `decide` first. */
 type LogItem = Event | Command;
@@ -116,6 +133,7 @@ function randomLogItem(rng: Rng, state: State): LogItem {
     case 0: {
       const hasParent = rng() < 0.3;
       const hasKeepLive = rng() < 0.3;
+      const role = pick(rng, ROLES);
       return {
         type: 'WindowRegistered',
         id,
@@ -124,6 +142,7 @@ function randomLogItem(rng: Rng, state: State): LogItem {
         canBecomeKey: randomBool(rng),
         acceptsInput: randomBool(rng),
         class: pick(rng, CLASSES),
+        ...(role !== undefined ? { role } : {}),
         ...(hasParent ? { parentId: wid(randomInt(rng, POOL_SIZE)) } : {}),
         ...(hasKeepLive ? { keepLive: randomBool(rng) } : {}),
       };
@@ -157,6 +176,7 @@ function randomLogItem(rng: Rng, state: State): LogItem {
       const hasParent = rng() < 0.3;
       const hasKeepLive = rng() < 0.3;
       const stale = rng() < 0.2;
+      const role = pick(rng, ROLES);
       return {
         type: 'RegisterWindow',
         id,
@@ -165,6 +185,7 @@ function randomLogItem(rng: Rng, state: State): LogItem {
         canBecomeKey: randomBool(rng),
         acceptsInput: randomBool(rng),
         class: pick(rng, CLASSES),
+        ...(role !== undefined ? { role } : {}),
         ...(hasParent ? { parentId: wid(randomInt(rng, POOL_SIZE)) } : {}),
         ...(hasKeepLive ? { keepLive: randomBool(rng) } : {}),
         expectedVersion: stale ? state.version + 1 : state.version,
@@ -377,6 +398,13 @@ function checkInvariants(state: State, prev?: State): string[] {
     if (record.hiddenByAppBlur === true && record.visible) {
       violations.push(`hiddenByAppBlur is set on a visible window: ${record.id}`);
     }
+
+    // Transient autoclose (this slice): `role` is an intrinsic declared at
+    // registration — either absent or a non-empty string, never an empty
+    // string or a non-string smuggled through the merge.
+    if (record.role !== undefined && (typeof record.role !== 'string' || record.role.length === 0)) {
+      violations.push(`malformed role for ${record.id}: ${JSON.stringify(record.role)}`);
+    }
   }
 
   // App activation dance (this slice): the sweep flag can only be armed while
@@ -436,6 +464,86 @@ function checkSettleTimeoutInvariant(item: LogItem, next: State): string[] {
       );
     }
   }
+  return violations;
+}
+
+/**
+ * Extra invariants on the two transient-autoclose selectors, checked against
+ * every generated state. The role sets are restated here rather than imported
+ * — the kernel keeps them private, and an independent restatement is what
+ * makes this a check rather than a tautology.
+ */
+const TRANSIENT_ROLES_EXPECTED = new Set(['palette', 'quick-view', 'overlay']);
+const AUTOCLOSE_EXEMPT_ROLES_EXPECTED = new Set(['overlay']);
+const AUTOCLOSE_FOCUSER_EXEMPT_ROLES_EXPECTED = new Set(['utility', 'overlay']);
+
+function checkAutocloseInvariants(state: State): string[] {
+  const violations: string[] = [];
+
+  const isSweepableVictim = (id: WindowId, focusedId: WindowId): boolean => {
+    const rec = state.order.find((w) => w.id === id);
+    if (rec === undefined) return false;
+    if (rec.id === focusedId) return false;
+    if (!rec.visible) return false;
+    if (rec.role === undefined) return false;
+    if (!TRANSIENT_ROLES_EXPECTED.has(rec.role)) return false;
+    if (AUTOCLOSE_EXEMPT_ROLES_EXPECTED.has(rec.role)) return false;
+    return true;
+  };
+
+  // Every id in the pool, plus one that is never registered, as the focuser.
+  const focusers = [...Array.from({ length: POOL_SIZE }, (_, n) => wid(n)), wid(POOL_SIZE + 100)];
+  for (const focusedId of focusers) {
+    const world = selectTransientAutoclose(state, focusedId, { kind: 'world' });
+    const machine = selectTransientAutoclose(state, focusedId, { kind: 'machine', opSeq: 0 });
+
+    if (new Set(world).size !== world.length) {
+      violations.push(`selectTransientAutoclose returned a duplicate id for ${focusedId}: ${JSON.stringify(world)}`);
+    }
+    for (const victim of [...world, ...machine]) {
+      if (!isSweepableVictim(victim, focusedId)) {
+        violations.push(`selectTransientAutoclose named an ineligible victim ${victim} for focuser ${focusedId}`);
+      }
+    }
+    // A machine cause arms an ORDERING test — it can only ever spare windows
+    // relative to a world-caused focus, never sweep extra ones.
+    for (const victim of machine) {
+      if (!world.includes(victim)) {
+        violations.push(`machine-caused sweep is not a subset of the world-caused one for ${focusedId}: ${victim}`);
+      }
+    }
+    // A window newer than the focuser is never in the machine-caused sweep.
+    const focuser = state.order.find((w) => w.id === focusedId);
+    if (focuser !== undefined) {
+      for (const victim of machine) {
+        const rec = state.order.find((w) => w.id === victim)!;
+        if (rec.openSeq > focuser.openSeq) {
+          violations.push(`machine-caused sweep took a window opened after the focuser: ${victim} > ${focusedId}`);
+        }
+      }
+      // An exempt focuser sweeps nothing, whatever the cause.
+      if (focuser.role !== undefined && AUTOCLOSE_FOCUSER_EXEMPT_ROLES_EXPECTED.has(focuser.role)) {
+        if (world.length > 0 || machine.length > 0) {
+          violations.push(`an exempt focuser (${focuser.role}) swept something: ${JSON.stringify(world)}`);
+        }
+      }
+    }
+  }
+
+  for (const victim of selectAppResignTransients(state)) {
+    const rec = state.order.find((w) => w.id === victim);
+    if (
+      rec === undefined ||
+      rec.kind !== 'page-host' ||
+      !rec.visible ||
+      rec.role === undefined ||
+      !TRANSIENT_ROLES_EXPECTED.has(rec.role) ||
+      AUTOCLOSE_EXEMPT_ROLES_EXPECTED.has(rec.role)
+    ) {
+      violations.push(`selectAppResignTransients named an ineligible window: ${victim}`);
+    }
+  }
+
   return violations;
 }
 
@@ -528,6 +636,11 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
         const effectViolations = checkEffectInvariants(effects, next);
         if (effectViolations.length > 0) {
           throw new Error(reproMessage(seed, log, i, `effect invariant violation(s): ${effectViolations.join('; ')}`));
+        }
+
+        const autocloseViolations = checkAutocloseInvariants(next);
+        if (autocloseViolations.length > 0) {
+          throw new Error(reproMessage(seed, log, i, `autoclose invariant violation(s): ${autocloseViolations.join('; ')}`));
         }
 
         const settleViolations = checkSettleTimeoutInvariant(item, next);

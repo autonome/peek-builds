@@ -99,6 +99,21 @@ export interface WindowRecord {
   /** Creation-time shorthand for logs and singleton lookups. Nothing branches on it. */
   class: string;
 
+  /**
+   * The IZUI role vocabulary the app already speaks (`palette` / `quick-view` /
+   * `overlay` / `workspace` / `content` / `child-content` / `utility`) — one of
+   * the fields §0.1.4 carries over unchanged from `window-state.ts
+   * WindowRecord.role`. Distinct from `class`: `class` is a lookup-only
+   * shorthand nothing branches on, while `role` is a declared policy fact that
+   * transient autoclose reads (see `selectTransientAutoclose`).
+   *
+   * Optional, and `undefined` is meaningful rather than a hole: a window
+   * registered without one is in no role set, so it is never a transient
+   * victim and never a focuser exemption — the same behavior the old selector
+   * gave an unregistered focuser whose role read `undefined`.
+   */
+  role?: string;
+
   visible: boolean;
   /** Open order (not use order) — assigned once at registration, never re-derived. */
   openSeq: number;
@@ -272,6 +287,7 @@ export type Event =
       canBecomeKey: boolean;
       acceptsInput: boolean;
       class: string;
+      role?: string;
       parentId?: WindowId;
       keepLive?: boolean;
     }
@@ -417,6 +433,7 @@ export type Command =
       canBecomeKey: boolean;
       acceptsInput: boolean;
       class: string;
+      role?: string;
       parentId?: WindowId;
       keepLive?: boolean;
       expectedVersion: number;
@@ -647,6 +664,12 @@ export function evolve(state: State, ev: Event): State {
           // re-registration mid-sweep must not lose the mark AppActivated
           // needs to know which windows to re-show.
           ...(existing.hiddenByAppBlur !== undefined ? { hiddenByAppBlur: existing.hiddenByAppBlur } : {}),
+          // An intrinsic, declared-at-registration property — a
+          // re-registration that names a role overwrites the old one. Absent
+          // from the event, the existing role is kept rather than erased
+          // (same shape as `parentId`/`keepLive` below): a producer that never
+          // learned to report a role must not silently strip one.
+          ...(ev.role !== undefined ? { role: ev.role } : existing.role !== undefined ? { role: existing.role } : {}),
           ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
           ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
         };
@@ -676,6 +699,7 @@ export function evolve(state: State, ev: Event): State {
         preMaxBounds: null,
         visibleOnAllSpaces: false,
         pendingProjectedBounds: null,
+        ...(ev.role !== undefined ? { role: ev.role } : {}),
         ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
         ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
       };
@@ -1141,6 +1165,7 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
           canBecomeKey: cmd.canBecomeKey,
           acceptsInput: cmd.acceptsInput,
           class: cmd.class,
+          ...(cmd.role !== undefined ? { role: cmd.role } : {}),
           ...(cmd.parentId !== undefined ? { parentId: cmd.parentId } : {}),
           ...(cmd.keepLive !== undefined ? { keepLive: cmd.keepLive } : {}),
         },
@@ -1299,4 +1324,144 @@ export function overlayForHost(state: State, hostId: WindowId): WindowRecord | n
     if (w.overlayFor === hostId) return w;
   }
   return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Transient autoclose — the role sets and the two selectors, ported from
+// `window-state.ts` (`TRANSIENT_ROLES`, `AUTOCLOSE_EXEMPT_ROLES`,
+// `AUTOCLOSE_FOCUSER_EXEMPT_ROLES`, `selectTransientAutoclose`,
+// `selectAppResignTransients`).
+//
+// They are QUERIES, not transitions: each answers "which windows should be
+// dismissed", and the caller turns each id into a `CloseOrHideWindow` command
+// — which is where the keepLive branch already lives (§0.1, `decide`). That
+// keeps `evolve` guard-free and keeps effects a structural diff, instead of
+// teaching an event arm to sweep.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The roles that are TRANSIENT — they open and close frequently and ride above
+ * the workspace. Ported VERBATIM from `izui-roles.ts TRANSIENT_ROLES` (via
+ * `window-state.ts`); all three copies must agree.
+ */
+const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay']);
+
+/**
+ * Transient roles the autoclose EXEMPTS as a VICTIM. `overlay` is
+ * transient-class but manages its own show/hide through the attachment
+ * relation (`WindowRecord.overlayFor`), never through a close — so an
+ * autoclose must never touch it.
+ */
+const AUTOCLOSE_EXEMPT_ROLES: ReadonlySet<string> = new Set(['overlay']);
+
+/**
+ * Roles that, when THEY are the one gaining focus, sweep NOTHING — the
+ * focuser-side exemption set, distinct from `AUTOCLOSE_EXEMPT_ROLES`:
+ *
+ *   - `utility`  a chain popup, child of a transient — it must not dismiss
+ *                its own transient parent.
+ *   - `overlay`  the shared chrome overlay is app chrome attached to the very
+ *                window it would be dismissing, and it is deliberately
+ *                focusable (typing a URL in the navbar takes key), so a focus
+ *                landing on it is not "the user switched to a different
+ *                window".
+ */
+const AUTOCLOSE_FOCUSER_EXEMPT_ROLES: ReadonlySet<string> = new Set(['utility', 'overlay']);
+
+/** Default provenance for a focus report that carries none — see `FocusCause`. */
+const WORLD_CAUSE: FocusCause = { kind: 'world' };
+
+/** `role` is optional on a record; an absent role is in no set. */
+function roleIn(set: ReadonlySet<string>, role: string | undefined): boolean {
+  return role !== undefined && set.has(role);
+}
+
+/**
+ * Which transient siblings a newly-focused window dismisses. Semantics ported
+ * exactly from `window-state.ts selectTransientAutoclose`:
+ *
+ *   - a focuser whose role is in `AUTOCLOSE_FOCUSER_EXEMPT_ROLES` closes
+ *     NOTHING;
+ *   - skip the focuser itself, any non-visible window, any non-transient role;
+ *   - `overlay` is exempt as a VICTIM too (`AUTOCLOSE_EXEMPT_ROLES`);
+ *   - an UNREGISTERED focuser (no record) has no role, which is in no exempt
+ *     set — so it sweeps every visible transient.
+ *
+ * Kind-agnostic on purpose: BOTH `browser` and `page-host` windows are
+ * candidates (the close-on-blur regression, peek 8e5c3174, was hybrid page
+ * hosts never being in the candidate set).
+ *
+ * ONE further clause on top of that: a focus the MACHINE caused may not
+ * dismiss anything opened AFTER the op that caused it. Two live failures share
+ * this shape. (i) The slow-open race: a hotkeyed page host takes time to load,
+ * the user opens a palette meanwhile, the host finally takes OS focus and the
+ * sweep dismissed the palette asked for afterwards. (ii) The handoff-raise
+ * echo (peek 7fffa286): a slide hides, the machine hands the front off with a
+ * raise, and the OS echo of that machine-issued raise swept a palette the user
+ * had opened one transition earlier.
+ *
+ * In both, the missing fact was never "which role" — the roles involved are
+ * exactly the ones a legitimate switch must still sweep, which is why this is
+ * not a third entry in `AUTOCLOSE_FOCUSER_EXEMPT_ROLES`. The missing fact was
+ * WHO asked for this focus and WHEN: `cause` states the first (an executor
+ * report, never an inference) and `openSeq` supplies the second.
+ *
+ * So `machine` ARMS AN ORDERING TEST — it never skips the sweep. A palette
+ * that the machine legitimately raised over a slide is machine-caused too, and
+ * it must still sweep that slide; what spares a window is being NEWER than the
+ * focuser, not the cause on its own. `world` (the default) runs no ordering
+ * test and sweeps every visible transient.
+ *
+ * `isStaleSelfEcho` is deliberately not consulted: a stale self-echo is still
+ * a machine echo, and the ordering test it arms is already the conservative
+ * answer for one (spare anything newer than the focuser). Reading staleness
+ * here could only widen the sweep, which is the direction both live failures
+ * came from.
+ */
+export function selectTransientAutoclose(
+  state: State,
+  focusedId: WindowId,
+  cause: FocusCause = WORLD_CAUSE,
+): WindowId[] {
+  const focuser = state.order.find((w) => w.id === focusedId);
+  if (focuser !== undefined && roleIn(AUTOCLOSE_FOCUSER_EXEMPT_ROLES, focuser.role)) return [];
+  // The ordering floor is armed ONLY by a machine cause on a registered
+  // focuser — an unregistered one has no `openSeq` to compare against, so it
+  // sweeps everything whatever the cause.
+  const orderingFloor: number | null = cause.kind === 'machine' && focuser !== undefined ? focuser.openSeq : null;
+  const out: WindowId[] = [];
+  for (const rec of state.order) {
+    if (rec.id === focusedId) continue;
+    if (!rec.visible) continue;
+    if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
+    if (roleIn(AUTOCLOSE_EXEMPT_ROLES, rec.role)) continue;
+    if (orderingFloor !== null && rec.openSeq > orderingFloor) continue;
+    out.push(rec.id);
+  }
+  return out;
+}
+
+/**
+ * Which transient surfaces a REAL app switch dismisses — ported from
+ * `window-state.ts selectAppResignTransients`. Same role/visibility rule as
+ * the focus-driven selector with no focuser to exclude, and scoped to
+ * `page-host` windows: a transient `browser` window already self-closes on
+ * app blur through its own per-window path, so sweeping it here would race
+ * that.
+ *
+ * Distinct from what `evolve`'s `AppResignSettled` arm does, and not a second
+ * answer to the same question: that arm HIDES the windows that cannot hold key
+ * (the HUD predicate) and marks them for `AppActivated` to restore, while
+ * these transients are focusable and get dismissed outright.
+ */
+export function selectAppResignTransients(state: State): WindowId[] {
+  const out: WindowId[] = [];
+  for (const rec of state.order) {
+    if (rec.kind !== 'page-host') continue;
+    if (!rec.visible) continue;
+    if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
+    if (roleIn(AUTOCLOSE_EXEMPT_ROLES, rec.role)) continue;
+    out.push(rec.id);
+  }
+  return out;
 }

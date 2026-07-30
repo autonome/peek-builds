@@ -24,6 +24,8 @@ import {
   keyWindow,
   overlayForHost,
   isStaleSelfEcho,
+  selectTransientAutoclose,
+  selectAppResignTransients,
   type State,
   type Event,
   type Effect,
@@ -291,6 +293,52 @@ describe('window-kernel: re-registration merges in place', () => {
     // Lived facts are preserved, not reset by the re-registration.
     assert.strictEqual(merged.visible, true);
     assert.strictEqual(merged.openSeq, openSeqBefore);
+  });
+
+  it('re-registration overwrites a named role and keeps the existing one when the event names none', () => {
+    const state = fold(
+      [
+        {
+          type: 'WindowRegistered',
+          id: wid(1),
+          kind: 'page-host',
+          layer: 0,
+          canBecomeKey: true,
+          acceptsInput: true,
+          class: 'primary',
+          role: 'quick-view',
+        },
+      ],
+      initialState(),
+    );
+    assert.strictEqual(state.order.find((w) => w.id === wid(1))?.role, 'quick-view');
+
+    const reRoled = evolve(state, {
+      type: 'WindowRegistered',
+      id: wid(1),
+      kind: 'page-host',
+      layer: 0,
+      canBecomeKey: true,
+      acceptsInput: true,
+      class: 'primary',
+      role: 'palette',
+    });
+    assert.strictEqual(reRoled.order.find((w) => w.id === wid(1))?.role, 'palette', 'a named role overwrites');
+
+    const roleless = evolve(reRoled, {
+      type: 'WindowRegistered',
+      id: wid(1),
+      kind: 'page-host',
+      layer: 0,
+      canBecomeKey: true,
+      acceptsInput: true,
+      class: 'primary',
+    });
+    assert.strictEqual(
+      roleless.order.find((w) => w.id === wid(1))?.role,
+      'palette',
+      'a re-registration naming no role must not strip the one already declared',
+    );
   });
 });
 
@@ -1106,5 +1154,150 @@ describe('window-kernel: app activation, resignation, and the dance guard', () =
     const activated = evolve(settled, { type: 'AppActivated' });
     assert.strictEqual(activated.key, before.key);
     assert.deepStrictEqual(idOrder(activated), idOrder(before));
+  });
+});
+
+// ── Transient autoclose (the two selectors) ─────────────────────────────────
+
+describe('window-kernel: transient autoclose', () => {
+  /** Registration event for a window with a role; `openSeq` follows registration order. */
+  const reg = (n: number, role: string | undefined, kind: 'page-host' | 'browser' = 'page-host'): Event => ({
+    type: 'WindowRegistered',
+    id: wid(n),
+    kind,
+    layer: 0,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    ...(role !== undefined ? { role } : {}),
+  });
+  const show = (n: number): Event => ({ type: 'WindowShown', id: wid(n) });
+
+  /**
+   * wid(1) workspace, wid(2) palette, wid(3) quick-view, wid(4) overlay,
+   * wid(5) utility, wid(6) roleless, wid(7) a HIDDEN palette. Registration
+   * order is also `openSeq` order.
+   */
+  const scene = (): State =>
+    fold(
+      [
+        reg(1, 'workspace'),
+        reg(2, 'palette'),
+        reg(3, 'quick-view'),
+        reg(4, 'overlay'),
+        reg(5, 'utility'),
+        reg(6, undefined),
+        reg(7, 'palette'),
+        show(1),
+        show(2),
+        show(3),
+        show(4),
+        show(5),
+        show(6),
+      ],
+      initialState(),
+    );
+
+  it('a world-caused focus sweeps every visible transient but the focuser, the overlay, and the hidden', () => {
+    const state = scene();
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(1), { kind: 'world' }), [wid(2), wid(3)]);
+  });
+
+  it('the default cause is world', () => {
+    const state = scene();
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(1)), selectTransientAutoclose(state, wid(1), { kind: 'world' }));
+  });
+
+  it('the focuser is never its own victim', () => {
+    const state = scene();
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(2), { kind: 'world' }), [wid(3)]);
+  });
+
+  it('a utility or overlay focuser sweeps nothing; a roleless one sweeps everything', () => {
+    const state = scene();
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(5)), [], 'utility must not dismiss its transient parent');
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(4)), [], 'the chrome overlay is not a window switch');
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(6)), [wid(2), wid(3)], 'no role is in no exempt set');
+  });
+
+  it('an unregistered focuser sweeps every visible transient, whatever the cause', () => {
+    const state = scene();
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(99), { kind: 'world' }), [wid(2), wid(3)]);
+    assert.deepStrictEqual(
+      selectTransientAutoclose(state, wid(99), { kind: 'machine', opSeq: 0 }),
+      [wid(2), wid(3)],
+      'no record means no openSeq to order against — the ordering test cannot arm',
+    );
+  });
+
+  it('INVARIANT: a machine-caused focus ARMS an openSeq ordering test — it does not skip the sweep', () => {
+    // A slide opens first, a palette after it. Both visible, both transient.
+    const state = fold([reg(1, 'quick-view'), reg(2, 'palette'), show(1), show(2)], initialState());
+    const slide = wid(1);
+    const palette = wid(2);
+    const machine: FocusCause = { kind: 'machine', opSeq: 0 };
+
+    // (i) The slow-open race / handoff-raise echo: the machine puts focus on
+    // the OLDER slide, so the palette the user opened afterwards is spared.
+    assert.deepStrictEqual(selectTransientAutoclose(state, slide, machine), [], 'a newer transient outlives a machine focus on an older window');
+    // The same focus caused by the WORLD is an ordinary switch and still sweeps.
+    assert.deepStrictEqual(selectTransientAutoclose(state, slide, { kind: 'world' }), [palette]);
+
+    // (ii) The other direction, which a "machine means no sweep" shortcut would
+    // get wrong: the machine legitimately raises the NEWER palette, and the
+    // older slide must still be swept. Ordering decides, not the cause.
+    assert.deepStrictEqual(
+      selectTransientAutoclose(state, palette, machine),
+      [slide],
+      'a machine-caused focus still sweeps anything older than the focuser',
+    );
+  });
+
+  it('the ordering test spares only what is strictly newer than the focuser', () => {
+    // Three transients in a known open order; the machine focuses the middle one.
+    const state = fold(
+      [reg(1, 'quick-view'), reg(2, 'palette'), reg(3, 'palette'), show(1), show(2), show(3)],
+      initialState(),
+    );
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(2), { kind: 'machine', opSeq: 0 }), [wid(1)]);
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(2), { kind: 'world' }), [wid(1), wid(3)]);
+  });
+
+  it('an exempt focuser stays exempt under a machine cause', () => {
+    const state = scene();
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(5), { kind: 'machine', opSeq: 0 }), []);
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(4), { kind: 'machine', opSeq: 0 }), []);
+  });
+
+  it('the selector is kind-agnostic — a transient browser window is a victim too', () => {
+    const state = fold([reg(1, 'workspace'), reg(2, 'palette', 'browser'), show(1), show(2)], initialState());
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(1)), [wid(2)]);
+  });
+
+  it('selectAppResignTransients takes visible transient page-hosts only', () => {
+    const state = fold(
+      [
+        reg(1, 'workspace'),
+        reg(2, 'palette'),
+        reg(3, 'quick-view'),
+        reg(4, 'overlay'),
+        reg(5, 'palette', 'browser'),
+        reg(6, 'quick-view'),
+        show(1),
+        show(2),
+        show(3),
+        show(4),
+        show(5),
+      ],
+      initialState(),
+    );
+    // wid(1) non-transient, wid(4) overlay-exempt, wid(5) a browser (it
+    // self-closes on app blur), wid(6) never shown.
+    assert.deepStrictEqual(selectAppResignTransients(state), [wid(2), wid(3)]);
+  });
+
+  it('selectAppResignTransients has no focuser to exclude and reads no cause', () => {
+    const state = fold([reg(1, 'palette'), reg(2, 'quick-view'), show(1), show(2), { type: 'OsFocusGained', id: wid(1) }], initialState());
+    assert.deepStrictEqual(selectAppResignTransients(state), [wid(2), wid(1)], 'both go, in current order position');
   });
 });
