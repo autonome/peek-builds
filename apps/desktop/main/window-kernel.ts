@@ -437,14 +437,16 @@ export interface State {
    * armed and never spent — and arms a real id later in the same pass. Both are
    * ordinary traffic, and "clear" has no separate event.
    *
-   * Written by `ColdStartFocusArmed` and by nothing else, which is also all
-   * this slice carries: SPENDING the latch (the activation arm that consumes
-   * it) is a separate slice, so today a fresh arm is the only thing that
-   * changes the field.
+   * Armed by `ColdStartFocusArmed` and spent by `AppActivated`, which clears it
+   * to `null` and records the re-raise on `lastFocusAssert` — see that arm for
+   * why the spend goes through the assert fact rather than through `order`. The
+   * latch is one-shot: an activation with nothing armed changes neither field,
+   * and only a fresh arm refills it.
    *
    * The id is stored AS GIVEN, including one naming no member of `order`:
-   * arming happens before the named window is guaranteed live, and whether it
-   * is still there is a question for the moment the latch is spent.
+   * arming happens before the named window is guaranteed live, and a window
+   * that has gone by the time the latch is spent makes the spend a no-op —
+   * `react`'s assert rule emits nothing for a target absent from `order`.
    */
   readonly pendingColdStartFocus: WindowId | null;
 }
@@ -1341,17 +1343,72 @@ export function evolve(state: State, ev: Event): State {
       // dance cancel, or a marked window that is somehow already visible)
       // issues no op and does not move the counter.
       const reshown = state.order.some((w) => w.hiddenByAppBlur === true && !w.visible);
-      const opSeq = reshown ? state.opSeqCounter + 1 : state.opSeqCounter;
+
+      // SPENDING THE COLD-START FOCUS LATCH. `pendingColdStartFocus` names the
+      // window a restore asked a later activation to put back in front (see
+      // that field's doc for why the app needs it at all); this is the
+      // activation, so the latch is spent here and cleared unconditionally —
+      // one-shot, and only a fresh arm ever refills it.
+      //
+      // SPENT AS AN ASSERT FACT, NOT AS A MOVE IN `order`. The latch exists for
+      // the case where the model ALREADY believes the armed window is on top
+      // and only the OS disagrees: a trailing `did-resign-active` at cold start
+      // leaves the app stranded behind the previous one while the window model
+      // is entirely correct. Consuming the latch by moving the record to the
+      // top of `order` would therefore diff to NOTHING in exactly the scenario
+      // the latch was built for, and `react` could not rescue it — `react` may
+      // not branch on `ev.type`, so it has nothing else to read. Writing
+      // `lastFocusAssert` is the whole mechanism: it is a fact whose `seq`
+      // makes a repeat visible even when the payload and the window model are
+      // identical, which is what `react`'s assert rule diffs into a
+      // `RaiseWindow` (plus `FocusContent` for a content window).
+      //
+      // ORDERING IS `react`'s, NOT THIS ARM'S. The assert rule is the LAST rule
+      // in `react`, so the raise is emitted after this transition's re-show
+      // work no matter where in this object the field is written — which is how
+      // the old machine's ordering survives the port (it raised at the TAIL of
+      // its `APP_ACTIVATED` arm, after the same re-show).
+      //
+      // `key` is NOT written (RULE 2): `front` is a pure projection of OS
+      // focus, and the focus echo the raise itself provokes is what moves it.
+      //
+      // A latch naming a window absent from `order` needs no guard here, and
+      // gets none — `evolve` is total. `react`'s assert rule is already gated
+      // on the target being in `next.order`, so such a latch emits nothing and
+      // is simply cleared; the old machine's consumption was a no-op in the
+      // same case.
+      const latched = state.pendingColdStartFocus;
+      // Mirrors `react`'s emission exactly, the same way `FocusAssertRequested`
+      // computes its own `issuesRaise`: a token is minted for a transition that
+      // issues at least one op, and a latch that raises nothing issues none.
+      const assertsFocus = latched !== null && state.order.some((w) => w.id === latched);
+
+      const opSeq = reshown || assertsFocus ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
         ...state,
         appActive: true,
         pendingAppResignSweep: false,
-        order: state.order.map((w) =>
-          w.hiddenByAppBlur === true
-            ? { ...w, visible: true, hiddenByAppBlur: false, ...(w.visible ? {} : { lastOpSeq: opSeq }) }
-            : w,
-        ),
+        order: state.order.map((w) => {
+          const reshow = w.hiddenByAppBlur === true;
+          // One op means one token: a window both re-shown and raised carries
+          // that single number once.
+          const stamped = (reshow && !w.visible) || (assertsFocus && w.id === latched);
+          if (!reshow && !stamped) {
+            return w;
+          }
+          return {
+            ...w,
+            ...(reshow ? { visible: true, hiddenByAppBlur: false } : {}),
+            ...(stamped ? { lastOpSeq: opSeq } : {}),
+          };
+        }),
         opSeqCounter: opSeq,
+        pendingColdStartFocus: null,
+        // Untouched when no latch was held — an activation that was not asked
+        // to re-raise anything must not bump the assert `seq`, or every app
+        // activation would project to a spurious raise.
+        lastFocusAssert:
+          latched !== null ? { id: latched, seq: nextFocusAssertSeq(state) } : state.lastFocusAssert,
         version: state.version + 1,
       };
     }

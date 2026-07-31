@@ -3445,8 +3445,8 @@ describe('window-kernel: the stack-order import', () => {
 // ── Arming the cold-start focus latch ───────────────────────────────────────
 //
 // The ARMING half only — what writes `State.pendingColdStartFocus`. SPENDING it
-// (the activation that re-raises the latched window and clears the field) is a
-// separate slice, so nothing below asserts a consumption.
+// (the activation that re-raises the latched window and clears the field) has
+// its own block at the end of this file.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('window-kernel: arming the cold-start focus latch', () => {
@@ -3605,5 +3605,193 @@ describe('window-kernel: arming the cold-start focus latch', () => {
         assert.strictEqual(next!.pendingColdStartFocus, id);
       }
     }
+  });
+});
+
+// ── Spending the cold-start focus latch ─────────────────────────────────────
+//
+// The other half: `AppActivated` consumes `State.pendingColdStartFocus` by
+// clearing it and recording a `lastFocusAssert`, which `react`'s assert rule
+// turns into the raise. The scenario the latch exists for is the one where the
+// window model is ALREADY right and only the OS is wrong, so the tests below
+// insist on a raise even when the armed window is topmost and key — a
+// consumption that moved the record in `order` would emit nothing there.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('window-kernel: spending the cold-start focus latch', () => {
+  const contentWindow = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+
+  /** Two restored pages, `wid(2)` topmost and key — the post-restore shape. */
+  const restored = (): State =>
+    fold(
+      [
+        contentWindow(wid(1)),
+        contentWindow(wid(2)),
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'WindowShown', id: wid(2) },
+        { type: 'OsFocusGained', id: wid(2) },
+      ],
+      initialState(),
+    );
+
+  const armed = (id: WindowId | null, start: State = restored()): State =>
+    fold([{ type: 'ColdStartFocusArmed', id }], start);
+
+  const activate = (state: State): { state: State; effects: Effect[] } =>
+    foldWithEffects([{ type: 'AppActivated' }], state);
+
+  it('an activation with a latch held raises the latched window and clears the latch', () => {
+    const before = armed(wid(1));
+    const after = activate(before);
+
+    assert.deepStrictEqual(after.effects, [
+      { type: 'RaiseWindow', id: wid(1), opSeq: after.state.opSeqCounter },
+      { type: 'FocusContent', id: wid(1) },
+    ]);
+    assert.strictEqual(after.state.pendingColdStartFocus, null, 'the latch was spent');
+    assert.strictEqual(after.state.lastFocusAssert?.id, wid(1));
+    assert.strictEqual(
+      after.state.lastFocusAssert?.seq,
+      (before.lastFocusAssert?.seq ?? 0) + 1,
+      'the assert seq advanced, which is what `react` diffs',
+    );
+  });
+
+  it('a latch naming the window that is ALREADY topmost and key still raises it', () => {
+    // THE case the latch exists for: a trailing cold-start resign strands the
+    // app behind another one while the window model is entirely correct. A
+    // consumption that spent the latch by moving the record to the top of
+    // `order` would diff to nothing here and emit nothing.
+    const before = armed(wid(2));
+    assert.strictEqual(topmost(before, () => true)?.id, wid(2), 'the armed window is already on top');
+    assert.strictEqual(before.key, wid(2), 'and already key');
+
+    const after = activate(before);
+    assert.deepStrictEqual(after.effects, [
+      { type: 'RaiseWindow', id: wid(2), opSeq: after.state.opSeqCounter },
+      { type: 'FocusContent', id: wid(2) },
+    ]);
+    assert.deepStrictEqual(
+      after.state.order.map((w) => w.id),
+      before.order.map((w) => w.id),
+      'and `order` did not move — the raise is the fact, not a reorder',
+    );
+  });
+
+  it('an activation with NO latch emits nothing and does not bump the assert seq', () => {
+    // The non-regression that matters most: a bumped seq on every activation
+    // would project to a spurious raise every time the user comes back to the
+    // app.
+    const before = restored();
+    assert.strictEqual(before.pendingColdStartFocus, null, 'nothing armed');
+    const after = activate(before);
+
+    assert.deepStrictEqual(after.effects, []);
+    assert.strictEqual(after.state.lastFocusAssert, before.lastFocusAssert, 'the field was not rewritten');
+    assert.strictEqual(after.state.opSeqCounter, before.opSeqCounter, 'no op, no token');
+
+    // Also true when an assert already happened, so "unchanged" is a real
+    // comparison rather than `null === null`.
+    const asserted = fold([{ type: 'FocusAssertRequested', id: wid(1) }], before);
+    const seq = asserted.lastFocusAssert!.seq;
+    const activated = activate(asserted);
+    assert.deepStrictEqual(activated.effects, []);
+    assert.strictEqual(activated.state.lastFocusAssert!.seq, seq, 'the seq stood still');
+  });
+
+  it('a latch naming a window absent from `order` emits nothing, and is still cleared', () => {
+    // No guard in `evolve` makes this so — it is total, and records the request
+    // as asked. `react`'s assert rule is gated on the target being in
+    // `next.order`, so the no-op falls out of the projection.
+    const before = armed(wid(404));
+    assert.ok(!before.order.some((w) => w.id === wid(404)), 'the latch names no live window');
+
+    const after = activate(before);
+    assert.deepStrictEqual(after.effects, []);
+    assert.strictEqual(after.state.opSeqCounter, before.opSeqCounter, 'no effect, no token');
+    assert.strictEqual(after.state.pendingColdStartFocus, null, 'spent anyway');
+    assert.strictEqual(after.state.lastFocusAssert?.id, wid(404), 'the request is recorded as asked');
+  });
+
+  it('the latch is one-shot: a second activation with no re-arm emits nothing', () => {
+    const first = activate(armed(wid(1)));
+    assert.strictEqual(first.effects.length, 2, 'the first activation spent it');
+
+    const second = activate(first.state);
+    assert.deepStrictEqual(second.effects, [], 'nothing left to spend');
+    assert.strictEqual(second.state.lastFocusAssert!.seq, first.state.lastFocusAssert!.seq);
+    assert.strictEqual(second.state.opSeqCounter, first.state.opSeqCounter);
+
+    // A fresh arm refills it, and the next activation spends that one.
+    const third = activate(armed(wid(2), second.state));
+    assert.deepStrictEqual(third.effects, [
+      { type: 'RaiseWindow', id: wid(2), opSeq: third.state.opSeqCounter },
+      { type: 'FocusContent', id: wid(2) },
+    ]);
+  });
+
+  it('`key` is untouched by the consumption', () => {
+    // RULE 2: `OsFocusGained`/`OsFocusLost` are the only writers. `front` is a
+    // projection of OS focus, and the focus echo the raise provokes is what
+    // moves it — the raise itself does not.
+    for (const id of [wid(1), wid(2), wid(404)]) {
+      const before = armed(id);
+      assert.strictEqual(before.key, wid(2));
+      assert.strictEqual(activate(before).state.key, wid(2), `key moved on a latch naming ${id}`);
+    }
+  });
+
+  it('a re-show and the latched raise on one activation share ONE op token', () => {
+    // The op-counter biconditional (`window-kernel-properties.test.ts`
+    // `checkOpSeqInvariants`): one advance per transition that issues at least
+    // one focus-family effect, and every effect carrying that number, stamped
+    // on the record it names.
+    const swept = fold(
+      [
+        {
+          type: 'WindowRegistered',
+          id: wid(3),
+          kind: 'page-host',
+          layer: BASE_LAYER + 1,
+          canBecomeKey: false,
+          acceptsInput: false,
+          class: 'hud',
+        },
+        { type: 'WindowShown', id: wid(3) },
+        { type: 'AppResigned' },
+        { type: 'AppResignSettled' },
+      ],
+      restored(),
+    );
+    const before = armed(wid(1), swept);
+    const hidden = before.order.filter((w) => w.hiddenByAppBlur === true);
+    assert.ok(hidden.length > 0, 'the sweep hid something to re-show');
+
+    const after = activate(before);
+    const token = after.state.opSeqCounter;
+    assert.strictEqual(token, before.opSeqCounter + 1, 'one advance, not one per effect');
+    for (const effect of after.effects) {
+      if (effect.type === 'ShowWindow' || effect.type === 'RaiseWindow') {
+        assert.strictEqual(effect.opSeq, token, `${effect.type} carries the transition's token`);
+        assert.strictEqual(
+          after.state.order.find((w) => w.id === effect.id)?.lastOpSeq,
+          token,
+          `${effect.type} target ${effect.id} is stamped with it`,
+        );
+      }
+    }
+    assert.ok(
+      after.effects.some((e) => e.type === 'RaiseWindow' && e.id === wid(1)),
+      'the raise is in there alongside the re-show',
+    );
   });
 });
