@@ -838,14 +838,18 @@ fullscreen settle.
 `WINDOW_DESTROY_REQUESTED`, `WINDOW_CONTENT_CLOSE_REQUESTED`, `GUEST_TEARDOWN_REQUESTED`,
 `STACK_ORDER_IMPORTED`, `MAXIMIZE_RESTORED`, `SPACES_POLICY_REQUESTED`, and `CLOSE_WINDOW`. Seven of
 these rest only on 0.1.1's blanket count of "~17 commands (everything named `*_REQUESTED`)" — a
-mood-sorting tally, not a specification.
+mood-sorting tally, not a specification. `STACK_ORDER_IMPORTED` is decided below, in "Decided:
+devtools re-assert, cold-start focus, and stack-order import enter the kernel" — not yet wired.
 
 **Unaddressed — the design is silent (7).** `DEVTOOLS_OPENED`, `DEVTOOLS_CLOSED`,
 `COLD_START_FOCUS_ARMED`, `CLOSE_WINDOW_DIRECT`, `DESTROY_WINDOW`, `CLOSE_CONTENT`,
 `DESTROY_ALL_GUESTS`. §0.1 decides that teardown goes through the kernel the same way every other
 window decision does (below), but does not yet wire it: no step names `DESTROY_WINDOW`,
 `CLOSE_CONTENT`, `DESTROY_ALL_GUESTS`, or `CLOSE_WINDOW_DIRECT` as a kernel command, and none of the
-four has an effect yet; `WindowClosed` still exists only as an OS report.
+four has an effect yet; `WindowClosed` still exists only as an OS report. `DEVTOOLS_OPENED`,
+`DEVTOOLS_CLOSED`, and `COLD_START_FOCUS_ARMED` are likewise decided below, in "Decided: devtools
+re-assert, cold-start focus, and stack-order import enter the kernel" — none of the three is wired
+yet either.
 
 §5's eleven steps migrate authorities into `window-state.ts`, not into the kernel — no wiring
 sequence for the kernel appears anywhere in this document. There is no step for the switcher and
@@ -887,6 +891,99 @@ What survives from the two transient-autoclose selectors is the split between de
 emitting: the kernel decides some closes nobody requested, but does not emit them directly — they
 round-trip through a caller as commands, which is what keeps `evolve` guard-free and effects a
 pure structural diff.
+
+#### Decided: devtools re-assert, cold-start focus, and stack-order import enter the kernel
+
+**Devtools re-assert is not a devtools concept in the kernel.** The old `window-state.ts`
+`DEVTOOLS_OPENED`/`DEVTOOLS_CLOSED` shared arm ignores `event.id` outright and calls
+`applyRaiseRequest(state, state.front, effects)` — its entire content is "re-assert the raise on
+whatever is currently front". No devtools event, no devtools `WindowRecord` field, and no devtools
+`Command` enters the kernel; it becomes a generic focus re-assert, and the caller (`main.ts`, in the
+`app.on('web-contents-created')` handler that wires `devtools-opened` / `devtools-closed`) computes
+the target itself.
+
+The mechanism follows the teardown precedent: `State.lastFocusAssert: { id, seq } | null`, written
+by `Event.FocusAssertRequested` from `Command.AssertFocus`, diffed by `seq` in `react` into
+`RaiseWindow` plus a new `Effect.FocusContent`. Re-asserting focus on the key window is a **no-diff**
+transition in the kernel — devtools opens `activate:false` so the top of `order` never moves — and
+`react` may not branch on `ev.type`, so the request has to become a fact `react` can diff. A naive
+port as `Command.RaiseWindow` is a silent no-op that reproduces the `7c61e917` regression shape. The
+`react` rule for this fact is emitted last, after the `SetStacking` block, because the old machine
+raises after its re-show and overlay-reveal work and `react` emits in rule order.
+
+The old arm's guards live in `applyRaiseRequest` — `id != null`, `state.appActive`,
+`!state.switcher.open`, `isEligibleFront(rec)`. `isEligibleFront` maps to the existing
+`isContentWindow` query and moves to `decide`. The switcher condition does not enter the kernel (the
+switcher is homed outside it per this section), so the caller owns it.
+
+**`COLD_START_FOCUS_ARMED` ports as state, but its firing needs the same mechanism.**
+`State.pendingColdStartFocus: WindowId | null` ports over unchanged, written by
+`Command.ArmColdStartFocus` / `Event.ColdStartFocusArmed`. The `null` payload is meaningful — it
+clears a latch a prior restore pass armed and never spent — and must survive. `evolve` stores the id
+as given even when the window is absent from `order`: arming happens before the window is guaranteed
+live. Arming emits nothing, correctly by construction, since nothing in `react` diffs that field.
+
+The hazard is on the consumption side. The latch exists for the case where the model already
+believes the armed window is on top and only the OS disagrees (a trailing `did-resign-active`
+leaving the app behind the previous one). If the `AppActivated` arm consumed the latch by moving the
+record to the top of `order`, the diff would be empty in exactly the scenario the latch was written
+for. `AppActivated` instead clears `pendingColdStartFocus` and writes `lastFocusAssert` — the fact
+the devtools decision above introduces. One mechanism covers both primitives.
+
+The guard relocates to state rather than being ported, because it is a behavioural relocation: the
+old arm's eligibility test cannot live in `evolve` (total, guard-free), and a `decide`-time check
+when arming is insufficient because the window can die between arming and activation. The
+eligibility failure therefore lands at the executor, where the port resolves the handle and no-ops
+when it is gone — what the teardown effects already rely on.
+
+**`STACK_ORDER_IMPORTED` enters as a reorder-only command**, `Command.ImportStackOrder { order,
+expectedVersion }` → `Event.StackOrderImported`. It preserves membership and may replace nothing but
+relative position within `order` — not `key`, not `visible`, not `layer`, not `lastOpSeq`. Because
+`evolve` is total and guard-free, the permutation is built so that dropping or adding an id is
+**impossible rather than merely avoided**: the result is assembled from `state.order`'s own records,
+with unknown ids in the payload silently inert. `decide` carries the stale-version guard and must not
+reject unknown ids — `session.ts restoreSessionSnapshot` assembles the payload through
+`getWindowIdFor` over windows that may have died mid-restore. `react`'s existing order-changed rule
+emits the full bottom→top `SetStacking` sweep for free, so no new effect type is needed. An empty
+import is the identity permutation and emits nothing without any guard in `evolve`.
+
+Three places the kernel deliberately diverges from the old arm, each a conscious divergence:
+
+- **The membership filter.** The old arm keeps only ids passing `isStackMember` (`stackingLevel ===
+  'stacked' && visible`). The kernel's `order` is the total registered set, so its only admissible
+  filter is "is in `order`" — silently dropping hidden windows would be a membership change and is
+  forbidden.
+- **Where unnamed windows go.** The old arm pushes unnamed members below the entire imported set
+  (pinned by `window-state.test.ts` "members the import does not name keep their relative order
+  below the imported set" — consciously not ported). In the kernel that would drag the command
+  panel, HUD, peeks/slides and the chrome overlay beneath every restored page in array position,
+  corrupting the `topmost(...)`-based queries. The kernel instead permutes only within the array
+  slots the named ids already occupy, leaving every unnamed record at its current index.
+- **The spurious raise.** A reorder-only import satisfies every clause of `react`'s current raise
+  rule (same membership, different topmost, `nextTop` existed in `prev`), so it would emit an
+  activating `RaiseWindow` — forbidden by the old arm and pinned by `window-state.test.ts` ("an order
+  import must never activate anything"). This cannot be avoided inside `react` by branching on
+  `ev.type`.
+
+**Consequently, `react`'s raise rule is re-based on `key`.** The rule changes from "top of `order`
+changed, with equal membership and `nextTop` present in `prev`" to "`next.key !== prev.key`, or the
+`lastFocusAssert` seq changed". It remains a pure state diff and still never branches on `ev.type`;
+it is more faithful, because `decide` on a raise command already returns `OsFocusGained` and that
+event is the only writer of `key`, so the raise path is preserved verbatim while a reorder that
+leaves `key` alone emits nothing; it removes the current rule's reliance on a fragile
+length-equality trick; and it closes the re-raise-of-the-already-topmost-window hole recorded below
+in "Three lossy ports" under `FOCUS_CONTENT`. The existing decision that `react` must emit
+`RaiseWindow` off a focus report is preserved, not overturned — the emission remains its own fixed
+point, because the OS focus echo names the window `key` already holds and therefore diffs to
+nothing.
+
+**`getDevtoolsTargetId` stays outside the kernel for now.** `WindowRecord` carries no `lastHttpUrl`
+and `State` no `focusSeq`, and `isContentWindow`'s docblock already declares that
+`tile:window:devtools` must post-filter until a URL fact lands. Its single production caller is
+`tile-ipc.ts`'s `tile:window:devtools` handler, via `window-state-singleton.ts
+getDevtoolsTargetId`. The old selector ranks by `focusSeq` (most-recently-focused), the kernel's
+replacement ranks by `order` position, and §0.1.10 declares those to be the same order — so it is a
+no-op in principle, but it is an assumption being spent rather than a fact being preserved.
 
 #### Measured: quit no longer reaches `closeContent` with a live WebContents
 
