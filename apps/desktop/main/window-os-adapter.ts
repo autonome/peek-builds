@@ -150,6 +150,11 @@ export class WindowOsAdapter {
         params: spec.params,
         alwaysOnTop: spec.alwaysOnTop,
         keepLive: spec.keepLive,
+        // Carried through, unread by this reducer today — see the field docs
+        // on `WindowSpec` / `WindowRecord`.
+        layer: spec.layer,
+        canBecomeKey: spec.canBecomeKey,
+        acceptsInput: spec.acceptsInput,
       });
     }
 

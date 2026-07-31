@@ -101,6 +101,7 @@ import {
 } from './window-state-singleton.js';
 import { classifyWindowRegistration } from './window-state.js';
 import type { Rectangle, WindowId } from './window-state.js';
+import { deriveWindowSurface } from './izui-roles.js';
 import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, registerWindow } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
@@ -314,6 +315,10 @@ function ensureOverlay(): BrowserWindow {
     role: 'overlay',
     class: 'overlay',
     satellite: true,
+    // Click-through from birth (the `setIgnoreMouseEvents` call above runs
+    // before this registration) — see `deriveAcceptsInput`'s doc for why the
+    // runtime `wireClickCapture` toggle needs an event, not a re-derivation.
+    ...deriveWindowSurface({ alwaysOnTop: true, focusable: true, clickThrough: true }),
     win,
     contentWC: win.webContents,
     // Declared z-pin: registration emits `SET_ALWAYS_ON_TOP {on:true}`, which
@@ -903,7 +908,7 @@ function installTestBridge(): void {
       // then never binds (gate fallout of the WindowId cutover — the old
       // bridge drove the registry's synthetic active id, which needed no
       // registration). Mirrors `makeWiredHybridHost` below.
-      registerWindowWithMachine({ kind: 'page-host', role: 'content', class: classifyWindowRegistration('content'), satellite: false, win: baseWin, contentWC: view.webContents });
+      registerWindowWithMachine({ kind: 'page-host', role: 'content', class: classifyWindowRegistration('content'), satellite: false, ...deriveWindowSurface({}), win: baseWin, contentWC: view.webContents });
       fakeHosts.set(baseWin.id, baseWin);
       return baseWin.id;
     },
@@ -931,7 +936,7 @@ function installTestBridge(): void {
         view.setBounds({ x: 0, y: 0, width: w, height: h });
       } catch { /* getContentSize unsupported in some envs */ }
       registerHybridWindow(baseWin.id, { baseWin, contentWC: view.webContents });
-      registerWindowWithMachine({ kind: 'page-host', role: 'content', class: classifyWindowRegistration('content'), satellite: false, win: baseWin, contentWC: view.webContents });
+      registerWindowWithMachine({ kind: 'page-host', role: 'content', class: classifyWindowRegistration('content'), satellite: false, ...deriveWindowSurface({}), win: baseWin, contentWC: view.webContents });
       fakeHosts.set(baseWin.id, baseWin);
       // Install the REAL content→overlay event forwarding (incl. the idle
       // top-band reveal path under test).
@@ -1168,6 +1173,7 @@ function installTestBridge(): void {
           role: 'workspace',
           class: classifyWindowRegistration('workspace'),
           satellite: false,
+          ...deriveWindowSurface({}),
           win: elsewhereWin,
           // A bare BaseWindow has no root webContents for the Esc interceptor.
           attachEscHandler: false,
@@ -2707,6 +2713,7 @@ function installTestBridge(): void {
         class: classifyWindowRegistration(roledRole),
         satellite: roledRole === 'overlay' || roledRole === 'palette',
         escapeMode: params.escapeMode as ('auto' | 'close' | 'navigate' | 'ignore' | undefined),
+        ...deriveWindowSurface({}),
         win: baseWin,
         contentWC: view.webContents,
       });

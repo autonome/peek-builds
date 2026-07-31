@@ -103,6 +103,7 @@ import {
   spacesPolicyForRole,
   shouldCloseContentWCOnFinalize,
   windowSelfClosesOnBlur,
+  deriveWindowSurface,
 } from './izui-roles.js';
 
 
@@ -708,6 +709,7 @@ function destroyUnassembledHybridHost(baseWin: Electron.BaseWindow | null): void
         role: 'content',
         class: 'primary',
         satellite: false,
+        ...deriveWindowSurface({}),
         win: baseWin,
       });
     }
@@ -975,6 +977,7 @@ function assembleHybridPageHost(
     satellite: role === 'overlay' || role === 'palette',
     escapeMode: options.escapeMode as MachineWindowSpec['escapeMode'],
     lastHttpUrl: url.startsWith('http://') || url.startsWith('https://') ? url : undefined,
+    ...deriveWindowSurface({ alwaysOnTop: alwaysOnTopResolved, focusable: options.focusable === undefined ? undefined : !!options.focusable }),
     win: baseWin,
     contentWC: view.webContents,
     source,
@@ -3507,6 +3510,10 @@ export function registerWindowHandlers(): void {
         }),
         escapeMode: options.escapeMode as MachineWindowSpec['escapeMode'],
         lastHttpUrl: url.startsWith('http://') || url.startsWith('https://') ? url : undefined,
+        ...deriveWindowSurface({
+          alwaysOnTop: winOptions.alwaysOnTop === true,
+          focusable: options.focusable === undefined ? undefined : !!options.focusable,
+        }),
         win,
         contentWC: win.webContents,
         source: msg.source,

@@ -27,6 +27,7 @@ import { registerTrustedBuiltinWindow } from './tile-launcher.js';
 import { ensureTileIpcHandlers } from './tile-compat.js';
 import { registerWindowWithMachine, getNativeWindowByClass } from './window-state-singleton.js';
 import { isSatelliteRegistration } from './window-state.js';
+import { deriveWindowSurface } from './izui-roles.js';
 
 const requireElectron = createRequire(import.meta.url);
 
@@ -108,6 +109,7 @@ export async function initTestFixture(opts: InitTestFixtureOptions): Promise<voi
     role: 'utility',
     class: 'test-fixture',
     satellite: isSatelliteRegistration('utility', { windowClass: 'test-fixture', focusable: false }),
+    ...deriveWindowSurface({ focusable: false }),
     win,
     contentWC: win.webContents,
     attachEscHandler: false,

@@ -111,6 +111,19 @@ export interface WindowSpec {
    * `preventDefault`ing main-side handler would swallow.
    */
   attachEscHandler?: boolean;
+  /**
+   * The kernel's three orthogonal per-window fields (`izui-roles.ts
+   * WindowSurfaceProperties`, `deriveWindowSurface`). Required so every
+   * registration site declares them explicitly — no call site may fall back
+   * on a guessed default — but NOTHING in this reducer reads them yet: they
+   * ride the spec purely so a later cutover to `window-kernel.ts` (whose
+   * `Event.WindowRegistered` requires all three) needs no call-site changes.
+   */
+  layer: number;
+  /** See `layer` above. */
+  canBecomeKey: boolean;
+  /** See `layer` above. */
+  acceptsInput: boolean;
 }
 
 /**

@@ -47,6 +47,7 @@ import {
   listMachineWindowRecords,
 } from './window-state-singleton.js';
 import { isSatelliteRegistration, classifyWindowRegistration } from './window-state.js';
+import { deriveWindowSurface } from './izui-roles.js';
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
 import { saveSessionSnapshot } from './session.js';
@@ -436,6 +437,7 @@ export async function initialize(): Promise<void> {
       role: role ?? 'workspace',
       class: classifyWindowRegistration(role ?? 'workspace', { alwaysOnTop, focusable }),
       satellite: isSatelliteRegistration(role ?? 'workspace', { focusable }),
+      ...deriveWindowSurface({ alwaysOnTop, focusable }),
       win,
       contentWC: win.webContents,
       // A keepLive tile entry's flag lands on the reducer record so the
@@ -919,6 +921,7 @@ export async function initialize(): Promise<void> {
             role: 'utility',
             class: 'devtools',
             satellite: isSatelliteRegistration('utility', { windowClass: 'devtools' }),
+            ...deriveWindowSurface({}),
             win: devWin,
             contentWC: devWC,
             // Devtools owns its own Escape; a main-side interceptor would

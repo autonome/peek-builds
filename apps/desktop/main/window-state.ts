@@ -330,6 +330,19 @@ export interface WindowRecord {
    * `hiddenByAppBlur`). Purely additive for now: nothing reads this yet.
    */
   contentFocused?: boolean;
+  /**
+   * The kernel's three orthogonal per-window fields (`izui-roles.ts
+   * WindowSurfaceProperties` / `window-kernel.ts Event.WindowRegistered`).
+   * Set at registration from the event (same "richer re-registration wins"
+   * merge as every other declared field below). Purely additive for now:
+   * nothing in THIS reducer reads them — they exist so a later cutover to
+   * `window-kernel.ts` needs no new plumbing at the registration seam.
+   */
+  layer?: number;
+  /** See `layer` above. */
+  canBecomeKey?: boolean;
+  /** See `layer` above. */
+  acceptsInput?: boolean;
 }
 
 /**
@@ -577,6 +590,20 @@ export type WindowEvent =
        * wins; this only fills an absent one.
        */
       bounds?: Rectangle;
+      /**
+       * The kernel's three orthogonal per-window fields (`izui-roles.ts
+       * WindowSurfaceProperties`). Optional here (unlike the required
+       * `WindowSpec` the registration seam populates) so the many raw
+       * `WINDOW_REGISTERED` events this reducer's own tests construct keep
+       * compiling. Stored on the record below; nothing in THIS reducer reads
+       * them — they exist so a later cutover to `window-kernel.ts` needs no
+       * new plumbing.
+       */
+      layer?: number;
+      /** See `layer` above. */
+      canBecomeKey?: boolean;
+      /** See `layer` above. */
+      acceptsInput?: boolean;
     }
   /**
    * Merge a windowRegistry payload onto an ALREADY-REGISTERED window — the
@@ -2081,6 +2108,10 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
           // The lived mirror wins (BOUNDS_CHANGED reports are fresher than a
           // re-registration's boundary read); the seed only fills absence.
           bounds: existing.bounds ?? event.bounds,
+          // Unread by this reducer — see the field docs on `WindowRecord`.
+          layer: event.layer ?? existing.layer,
+          canBecomeKey: event.canBecomeKey ?? existing.canBecomeKey,
+          acceptsInput: event.acceptsInput ?? existing.acceptsInput,
         });
         // If the richer spec turned the CURRENT front into a satellite, hand
         // `front` to the MRU successor here rather than leave an illegal front
@@ -2133,6 +2164,10 @@ export function reduce(prev: AppWindowState, event: WindowEvent): ReduceResult {
         focusSeq: 0,
         openSeq: state.openSeqCounter,
         lastHttpUrl: event.lastHttpUrl,
+        // Unread by this reducer — see the field docs on `WindowRecord`.
+        layer: event.layer,
+        canBecomeKey: event.canBecomeKey,
+        acceptsInput: event.acceptsInput,
       };
       state.windows.set(event.id, rec);
       // Declared always-on-top: registration is the ONE place the pin is

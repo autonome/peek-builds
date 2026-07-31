@@ -52,6 +52,19 @@ export interface MachineWindowSpec {
    * shared chrome overlay is the one caller that passes false.
    */
   attachEscHandler?: boolean;
+  /**
+   * The kernel's three orthogonal per-window fields (`izui-roles.ts
+   * WindowSurfaceProperties`, `deriveWindowSurface`). Required so every
+   * registration site declares them explicitly; nothing in this (old)
+   * machine reads them yet — they ride the spec so the later cutover to
+   * `window-kernel.ts` (whose `Event.WindowRegistered` requires all three)
+   * needs no call-site changes.
+   */
+  layer: number;
+  /** See `layer` above. */
+  canBecomeKey: boolean;
+  /** See `layer` above. */
+  acceptsInput: boolean;
 }
 
 let adapter: WindowOsAdapter | null = null;

@@ -53,6 +53,7 @@ import { getSystemThemeBackgroundColor } from './windows.js';
 import { getProfileSession } from './session-partition.js';
 import { registerWindowWithMachine, getNativeWindowByClass } from './window-state-singleton.js';
 import { isSatelliteRegistration } from './window-state.js';
+import { deriveWindowSurface } from './izui-roles.js';
 
 const requireElectron = createRequire(import.meta.url);
 
@@ -145,6 +146,7 @@ export async function initCore(opts: InitCoreOptions): Promise<BrowserWindow> {
     role: 'utility',
     class: 'background',
     satellite: isSatelliteRegistration('utility', { windowClass: 'background' }),
+    ...deriveWindowSurface({}),
     win,
     contentWC: win.webContents,
     attachEscHandler: false,

@@ -28,6 +28,7 @@ import { invokeWindowOpen } from './ipc.js';
 import { DEBUG, isHeadless } from './config.js';
 import { registerWindowWithMachine, dispatchWindowEvent, getWindowIdFor } from './window-state-singleton.js';
 import { isSatelliteRegistration } from './window-state.js';
+import { deriveWindowSurface } from './izui-roles.js';
 
 /**
  * Route a bridge/extension-UI window teardown through the window-state
@@ -489,6 +490,7 @@ function _spawnBridgeWindow(loaded: LoadedChromeExtension): void {
     role: 'utility',
     class: 'bridge',
     satellite: isSatelliteRegistration('utility', { windowClass: 'bridge' }),
+    ...deriveWindowSurface({}),
     win,
     contentWC: win.webContents,
     attachEscHandler: false,
@@ -1107,6 +1109,7 @@ export function openChromeExtensionPage(
     class: 'extension-ui',
     satellite: false,
     escapeMode: 'ignore',
+    ...deriveWindowSurface({}),
     win,
     contentWC: win.webContents,
     attachEscHandler: false,
