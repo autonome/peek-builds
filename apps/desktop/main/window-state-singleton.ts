@@ -23,6 +23,7 @@ import type { BaseWindow, BrowserWindow, WebContents } from 'electron';
 import { WindowOsAdapter, type RegisterWindowSpec } from './window-os-adapter.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import type { WindowEvent, FsMode, Rectangle, IzuiSession, WindowId, WindowKind, WindowClass, WindowRecord, EscapeMode, StateSnapshot } from './window-state.js';
+import { shadowKernelRegisterWindow } from './window-kernel-shadow.js';
 
 /** Register-spec that accepts real Electron window handles (both kinds satisfy the adapter's structural `NativeWindow`). */
 export interface MachineWindowSpec {
@@ -125,7 +126,23 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
   // Both BaseWindow and BrowserWindow satisfy the adapter's structural
   // `NativeWindow`; the electron typed-overload `on` isn't assignable to the
   // loose `on` shape, so bridge with a single cast here (not at every call site).
-  return getWindowOsAdapter().registerWindow(spec as unknown as RegisterWindowSpec);
+  const id = getWindowOsAdapter().registerWindow(spec as unknown as RegisterWindowSpec);
+  // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
+  // over nothing; see that module's doc for why this can never change what
+  // actually happens on screen.
+  shadowKernelRegisterWindow({
+    id,
+    kind: spec.kind,
+    layer: spec.layer,
+    canBecomeKey: spec.canBecomeKey,
+    acceptsInput: spec.acceptsInput,
+    class: spec.class,
+    role: spec.role,
+    ...(spec.parentId != null ? { parentId: spec.parentId } : {}),
+    ...(spec.keepLive !== undefined ? { keepLive: spec.keepLive } : {}),
+    ...(spec.escapeMode !== undefined ? { escapeMode: spec.escapeMode } : {}),
+  });
+  return id;
 }
 
 /**
