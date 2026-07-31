@@ -120,6 +120,48 @@ const ROLES: readonly (string | undefined)[] = [
  */
 const ESCAPE_MODES: readonly ('ignore' | undefined)[] = ['ignore', undefined];
 
+/**
+ * A stack-order import payload, DELIBERATELY MALFORMED as often as not. The
+ * membership-preservation and one-order invariants below are worth nothing
+ * against a generator that only ever emits well-formed orders, so all five
+ * shapes are produced: empty, ids that were never registered, duplicates, an
+ * arbitrary partial subset (which also produces duplicates on its own), and a
+ * full shuffled permutation of the pool.
+ */
+function randomStackOrderPayload(rng: Rng): WindowId[] {
+  switch (randomInt(rng, 5)) {
+    case 0:
+      // Empty — the identity permutation, and the shape `session.ts` produces
+      // when every window it walked has already died.
+      return [];
+    case 1:
+      // Names nothing that was ever registered.
+      return Array.from({ length: 1 + randomInt(rng, 3) }, () => wid(POOL_SIZE + randomInt(rng, 4)));
+    case 2: {
+      // Explicit duplicates, interleaved — collapsing to the first occurrence
+      // is a documented property of the arm, not a caller obligation.
+      const a = wid(randomInt(rng, POOL_SIZE));
+      const b = wid(randomInt(rng, POOL_SIZE));
+      return [a, b, a, b, a];
+    }
+    case 3:
+      // An arbitrary partial subset drawn with replacement — repeats and
+      // omissions both fall out of this without being arranged.
+      return Array.from({ length: 1 + randomInt(rng, POOL_SIZE) }, () => wid(randomInt(rng, POOL_SIZE)));
+    default: {
+      // A full permutation of the pool (Fisher-Yates over the seeded rng).
+      const ids = Array.from({ length: POOL_SIZE }, (_, n) => wid(n));
+      for (let i = ids.length - 1; i > 0; i--) {
+        const j = randomInt(rng, i + 1);
+        const swap = ids[i];
+        ids[i] = ids[j];
+        ids[j] = swap;
+      }
+      return ids;
+    }
+  }
+}
+
 /** A log item is either a fact fed straight to `evolve`, or a request fed through `decide` first. */
 type LogItem = Event | Command;
 
@@ -136,7 +178,7 @@ function isCommand(item: LogItem): item is Command {
  * same seed always produces the same concrete log.
  */
 function randomLogItem(rng: Rng, state: State): LogItem {
-  const variant = randomInt(rng, 33);
+  const variant = randomInt(rng, 36);
   const id = wid(randomInt(rng, POOL_SIZE));
   switch (variant) {
     case 0: {
@@ -326,8 +368,7 @@ function randomLogItem(rng: Rng, state: State): LogItem {
     // op rate the next describe MEASURES is thin enough that it moved: 27 seeds
     // -> 15, below its own floor. One slot keeps the existing coverage where it
     // was measured while still reaching every teardown arm.
-    case 32:
-    default: {
+    case 32: {
       const stale = rng() < 0.2;
       const expectedVersion = stale ? state.version + 1 : state.version;
       switch (randomInt(rng, 4)) {
@@ -341,6 +382,44 @@ function randomLogItem(rng: Rng, state: State): LogItem {
         default:
           return { type: 'DestroyAllGuests', expectedVersion };
       }
+    }
+    // Stack-order import — the command and the raw event, by a sub-roll (same
+    // shape as the `cause` sub-roll in variant 4). The payload comes from
+    // `randomStackOrderPayload`, which is malformed as often as not: empty,
+    // unknown ids, duplicates, partial subsets, full permutations. None of
+    // those shapes is held back — the arm's membership preservation is claimed
+    // to fall out of its construction rather than out of caller discipline,
+    // and that claim is only tested if the generator attacks it.
+    case 33: {
+      const order = randomStackOrderPayload(rng);
+      if (rng() < 0.5) return { type: 'StackOrderImported', order };
+      const stale = rng() < 0.2;
+      return { type: 'ImportStackOrder', order, expectedVersion: stale ? state.version + 1 : state.version };
+    }
+    // Cold-start focus latch — command and raw event, same sub-roll shape.
+    // `null` is a real payload (it CLEARS the latch), not an omission, so it is
+    // generated as a value. The id pool is WIDER than the registration pool, so
+    // a latch naming a window that was never registered is ordinary generated
+    // traffic; a latch naming a window CLOSED before any activation spends it
+    // falls out on its own from the `WindowClosed` variant, and that is the
+    // production case the arm's "needs no guard here, and gets none" rests on.
+    case 34: {
+      const latch: WindowId | null = rng() < 0.25 ? null : wid(randomInt(rng, POOL_SIZE + 2));
+      if (rng() < 0.5) return { type: 'ColdStartFocusArmed', id: latch };
+      const stale = rng() < 0.2;
+      return { type: 'ArmColdStartFocus', id: latch, expectedVersion: stale ? state.version + 1 : state.version };
+    }
+    // Focus assert — command and raw event, and the split is load-bearing
+    // rather than symmetry for its own sake: `decide` gates `AssertFocus` on
+    // `isContentWindow`, so generating only the command would leave `evolve`'s
+    // and `react`'s handling of an assert on a NON-content or unregistered
+    // window ungenerated. `id` is drawn from the raw pool like every other
+    // variant here, so most targets are one or the other.
+    case 35:
+    default: {
+      if (rng() < 0.5) return { type: 'FocusAssertRequested', id };
+      const stale = rng() < 0.2;
+      return { type: 'AssertFocus', id, expectedVersion: stale ? state.version + 1 : state.version };
     }
   }
 }
@@ -936,8 +1015,8 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
 
 describe('window-kernel: the op-token invariants are not vacuous', () => {
   /**
-   * MEASURED at POOL_SIZE=6 / LOG_LENGTH=30 / 200 seeds: 31 seeds issue an op,
-   * 33 ops in 6000 generated log items. THIN — and deliberately recorded
+   * MEASURED at POOL_SIZE=6 / LOG_LENGTH=30 / 200 seeds: 37 seeds issue an op,
+   * 41 ops in 6000 generated log items. THIN — and deliberately recorded
    * rather than rounded up, because it says where the real coverage lives: an
    * op needs a REGISTERED window that is also currently hidden (a show) or not
    * currently the key holder (a raise), and the unfiltered generator produces
@@ -945,23 +1024,64 @@ describe('window-kernel: the op-token invariants are not vacuous', () => {
    *
    * THE NUMBER IS TRAJECTORY-SENSITIVE, not proportional to how many variants
    * exist. It was 27 seeds / 28 ops before the teardown variant (32) was added,
-   * then 19/20 after; one extra variant in 33 cannot dilute a rate by a third,
-   * and it did not — adding any variant re-rolls every seed's whole log, and
-   * this rate rides on rare id/state coincidences, so it moves for reasons
-   * unrelated to the addition. The jump to 31/33 has a cause that is not a
-   * re-roll, though: the raise rule now diffs `State.key` instead of the top of
-   * `order`, and a focus report takes key from another window far more often
-   * than it reorders a stack (an already-topmost window taking key back from a
-   * palette emits a raise now, and moves nothing). Re-measure and re-record
-   * after any generator or rule change rather than reading a move either way as
-   * a regression. A counter that stopped advancing
-   * would fail ~31 seeds here, which is a signal but not the proof; the
+   * then 19/20 after, then 31/33; one extra variant in 33 cannot dilute a rate
+   * by a third, and it did not — adding any variant re-rolls every seed's whole
+   * log, and this rate rides on rare id/state coincidences, so it moves for
+   * reasons unrelated to the addition. Two of the moves have a cause that is
+   * not a re-roll, though. The jump to 31/33: the raise rule now diffs
+   * `State.key` instead of the top of `order`, and a focus report takes key
+   * from another window far more often than it reorders a stack (an
+   * already-topmost window taking key back from a palette emits a raise now,
+   * and moves nothing). The move to 37/41: variant 35 emits a raw
+   * `FocusAssertRequested`, whose raise is gated only on the target being in
+   * `order` — `react`'s assert rule needs no content window, unlike `decide`'s
+   * `AssertFocus` guard — so the handful of asserts that name a registered
+   * window each mint a token that no other variant would have. Re-measure and
+   * re-record after any generator or rule change rather than reading a move
+   * either way as a regression. A counter that stopped advancing
+   * would fail ~37 seeds here, which is a signal but not the proof; the
    * example-based coverage
    * (`window-kernel.test.ts` "the op counter advances once per issued op",
    * `window-kernel-executor.test.ts` "drops the late echo of a superseded op")
    * is what actually pins this behaviour. Constraining generation to make ops
    * common is exactly the move that would make the invariant vacuous, so the
    * generator stays unfiltered and this test just states the measurement.
+   *
+   * WHAT THE THREE NEWEST FAMILIES ACTUALLY REACH, measured the same way and
+   * recorded because the shortfall is the useful part. Each is generated ~170
+   * times across the 6000 items, but the arms that carry their invariants are
+   * reached far less often, and for one shared reason: `order` is nearly always
+   * 0-1 records deep at POOL_SIZE=6 (registration is 2 variants in 36 and
+   * closes are as frequent), so a payload drawn from the id pool usually names
+   * nothing live.
+   *
+   *   - stack-order import: 170 generated, only 3 of them actually PERMUTE
+   *     `order` (the rest name no live window, or name one), and only 2 land
+   *     while `key` resolves. So the membership-preservation clause sees real
+   *     permutations, but barely.
+   *   - cold-start latch: 174 arms, and 30 activations spend a held latch — all
+   *     30 naming a window that is NOT in `order`. The arm's raise-emitting
+   *     half (a latch spent onto a live window) is generated zero times and is
+   *     pinned only by `window-kernel.test.ts`.
+   *   - focus assert: 168 generated, 158 naming a window absent from `order`
+   *     and the remaining 10 naming a registered NON-content window. Zero name
+   *     a content window, so `react`'s `FocusContent` half of the assert rule
+   *     is generated zero times.
+   *
+   * A REACHABLE CONFLICT THIS GENERATION DID NOT HAPPEN TO HIT, recorded so it
+   * is not rediscovered as a mystery failure. The §0.1.10 one-order clause in
+   * `checkInvariants` ("the key window is not topmost in order") justifies
+   * itself with "no other transition touches membership or position" — and
+   * `StackOrderImported` now does. It permutes within the slots the named ids
+   * occupy without touching `key` (deliberately: an import must never
+   * activate anything), so an import naming the key window and one below it
+   * demotes the key window and violates the clause. Verified by hand on two
+   * registered windows: key on the upper one, import `[key, other]`, and the
+   * key window lands at the bottom. The 200 seeds miss it only because those 3
+   * permuting imports were too shallow. Which side is wrong — the import
+   * should hold the key window at the top, or the one-order clause should not
+   * span a permutation — is a semantics question for the blueprint, not
+   * something to settle by weakening either one here.
    */
   it('the generated logs issue focus-family ops at the measured rate', () => {
     let issued = 0;
@@ -984,12 +1104,12 @@ describe('window-kernel: the op-token invariants are not vacuous', () => {
       if (count > 0) seedsWithAnOp += 1;
       assert.strictEqual(state.opSeqCounter, emittingTransitions, `seed ${seed}: one token minted per emitting transition`);
     }
-    // Floors sit just under the recorded measurement (31/33), the same margin
-    // the previous pairs (15/15 under 19/20, 20/20 under 27/28) carried — they
-    // exist to catch the invariant going vacuous, not to pin an exact
-    // trajectory.
-    assert.ok(seedsWithAnOp >= 25, `only ${seedsWithAnOp}/${SEED_COUNT} seeds issued an op (${issued} ops total)`);
-    assert.ok(issued >= 25, `only ${issued} focus-family ops across ${SEED_COUNT} seeds`);
+    // Floors sit just under the recorded measurement (37/41), the same margin
+    // the previous pairs (15/15 under 19/20, 20/20 under 27/28, 25/25 under
+    // 31/33) carried — they exist to catch the invariant going vacuous, not to
+    // pin an exact trajectory.
+    assert.ok(seedsWithAnOp >= 30, `only ${seedsWithAnOp}/${SEED_COUNT} seeds issued an op (${issued} ops total)`);
+    assert.ok(issued >= 30, `only ${issued} focus-family ops across ${SEED_COUNT} seeds`);
   });
 
   it('the checker names the violation when the counter goes inert', () => {
@@ -1066,7 +1186,7 @@ describe('window-kernel: re-registration of a still-live id merges in place', ()
 // ─────────────────────────────────────────────────────────────────────────────
 // Pinned placement coverage (§0.1.10) — same reasoning as the merge coverage
 // below: the generator's odds of registering a window WHILE another one holds
-// key are thin (only ~2 of the 32 variants register, and `key` stays null
+// key are thin (only ~2 of the 36 variants register, and `key` stays null
 // until a focus event names an id that a registration already created), so the
 // one-order invariant is pinned on a hand-built log rather than left to
 // generator luck.
@@ -1115,7 +1235,7 @@ describe('window-kernel: a registration never lands above the key window', () =>
 // Pinned merge coverage — MEASURED, not assumed. The random generator's odds
 // of producing "a lived fact is written for id X, and X is then re-registered
 // while still live" are thin at POOL_SIZE=6 / LOG_LENGTH=30: only ~2 of the
-// 32 variants register, so most ids are never registered at all, and across
+// 36 variants register, so most ids are never registered at all, and across
 // all 200 seeds the combination for a given field may not occur even once.
 // That was checked by deliberately dropping `contentFocused` from the merge:
 // every seed still passed. So the merge invariants above are pinned here on a
@@ -1223,12 +1343,14 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
 // ─────────────────────────────────────────────────────────────────────────────
 // The `lastFocusAssert` clauses, proven to fire.
 //
-// The generator does not produce a focus assert — adding a variant re-rolls
-// every seed's whole log and moves the recorded focus-family op rate the
-// describe above MEASURES, which is a change to make deliberately and
-// re-measure, not a side effect of adding a family. So the two clauses are
-// pinned here against hand-built states instead, the same anti-vacuity move the
-// merge clauses above use: a clause nobody has ever seen fail is decoration.
+// The generator DOES produce a focus assert now (variant 35, both the command
+// and the raw event), but it almost never produces one that fires these two
+// clauses: `lastFocusAssert` is only written by a second assert following a
+// first, and the measurement recorded above shows the generated asserts name a
+// window absent from `order` 158 times in 168. So the two clauses stay pinned
+// here against hand-built states, the same anti-vacuity move the merge clauses
+// above use: a clause nobody has ever seen fail is decoration, and generated
+// coverage that thin is not a substitute for one that has.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('window-kernel: the lastFocusAssert invariants name the violation', () => {
