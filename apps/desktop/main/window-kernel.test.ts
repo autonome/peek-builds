@@ -2877,3 +2877,265 @@ describe('window-kernel: teardown commands and effects', () => {
     }
   });
 });
+
+// ── Focus assert: a request that carries no state change of its own ──────────
+//
+// The port of the old machine's shared `DEVTOOLS_OPENED`/`DEVTOOLS_CLOSED` arm
+// (`window-state.ts`, `applyRaiseRequest(state, state.front, effects)`).
+// Devtools opens with `activate: false` and takes macOS first responder off the
+// content `WebContentsView` of the front window; nothing about the window model
+// changes, so re-driving the raise is the only thing that gives first responder
+// back — and without it the `7c61e917` shape returns (no `before-input-event`,
+// so Escape has no handler at all).
+//
+// The whole point of the family: in this kernel the transition is a NO-DIFF one
+// — the target is already topmost, already visible, already key — so the
+// request has to become a fact `react` can diff, exactly like teardown above.
+// A plain `RaiseWindow` command would fold to an `OsFocusGained` that reorders
+// nothing and therefore drives nothing at all.
+
+describe('window-kernel: the focus assert', () => {
+  const contentWindow = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+
+  /** A palette: focusable and visible, but NOT `isContentWindow` (its role is not a content role). */
+  const paletteWindow = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'palette',
+  });
+
+  /** One visible, focused content window — the shape the devtools re-assert names. */
+  const frontContent = (id: WindowId = wid(1)): State =>
+    fold([contentWindow(id), { type: 'WindowShown', id }, { type: 'OsFocusGained', id }], initialState());
+
+  function run(state: State, cmd: Command): { events: Event[]; effects: Effect[]; state: State } {
+    const decision = decide(state, cmd);
+    assert.ok('events' in decision, `command ${cmd.type} was rejected: ${JSON.stringify(decision)}`);
+    const folded = foldWithEffects(decision.events, state);
+    return { events: decision.events, effects: folded.effects, state: folded.state };
+  }
+
+  // ── The emission ──────────────────────────────────────────────────────────
+
+  it('AssertFocus re-drives the raise on a window that is already front', () => {
+    const state = frontContent();
+    const result = run(state, { type: 'AssertFocus', id: wid(1), expectedVersion: state.version });
+
+    assert.deepStrictEqual(result.events, [{ type: 'FocusAssertRequested', id: wid(1) }]);
+    assert.deepStrictEqual(result.effects, [
+      { type: 'RaiseWindow', id: wid(1), opSeq: result.state.opSeqCounter },
+      { type: 'FocusContent', id: wid(1) },
+    ]);
+  });
+
+  it('the transition it projects changes nothing else — which is why the fact has to exist', () => {
+    // If any of these moved, `react` would have something else to diff and the
+    // whole `lastFocusAssert` mechanism would be unnecessary. They do not.
+    const state = frontContent();
+    const result = run(state, { type: 'AssertFocus', id: wid(1), expectedVersion: state.version });
+
+    assert.strictEqual(result.state.key, state.key, 'key is untouched (RULE 2)');
+    assert.deepStrictEqual(
+      result.state.order.map((w) => w.id),
+      state.order.map((w) => w.id),
+      'membership and position are untouched (RULE 1)',
+    );
+    const before = state.order[0];
+    const after = result.state.order[0];
+    assert.strictEqual(after.visible, before.visible);
+    assert.strictEqual(after.orderable, before.orderable);
+    assert.deepStrictEqual(after.fsMode, before.fsMode);
+    assert.strictEqual(after.contentFocused, before.contentFocused);
+  });
+
+  it('a plain RaiseWindow command on the same window drives NOTHING — the regression this replaces', () => {
+    // The silent no-op that reproduces `7c61e917`: `decide` turns `RaiseWindow`
+    // into an `OsFocusGained`, the window is already topmost, so `react`'s
+    // reorder rule sees the same top in `prev` and `next` and emits nothing —
+    // and there is no `FocusContent` in that path at all.
+    const state = frontContent();
+    const result = run(state, { type: 'RaiseWindow', id: wid(1), expectedVersion: state.version });
+    assert.deepStrictEqual(result.effects, [], 'no raise, and above all no content focus');
+  });
+
+  // ── The seq that makes repetition visible ─────────────────────────────────
+
+  it('two identical asserts for the same window are two asserts', () => {
+    // Every devtools open/close names the same window with the same payload,
+    // so `seq` is the ONLY thing that distinguishes them.
+    const state = frontContent();
+    const first = run(state, { type: 'AssertFocus', id: wid(1), expectedVersion: state.version });
+    const second = run(first.state, { type: 'AssertFocus', id: wid(1), expectedVersion: first.state.version });
+
+    assert.strictEqual(first.effects.length, 2);
+    assert.strictEqual(second.effects.length, 2, 'the second request is not swallowed as a duplicate');
+    assert.strictEqual(first.state.lastFocusAssert?.seq, 1);
+    assert.strictEqual(second.state.lastFocusAssert?.seq, 2, 'the seq is what kept the second request from diffing to nothing');
+  });
+
+  it('a later unrelated transition re-emits nothing — the field is a record, not a queue', () => {
+    const state = frontContent();
+    const asserted = run(state, { type: 'AssertFocus', id: wid(1), expectedVersion: state.version });
+    const after = foldWithEffects([{ type: 'WindowHidden', id: wid(1) }], asserted.state);
+
+    assert.deepStrictEqual(after.effects, [{ type: 'HideWindow', id: wid(1) }], 'no second RaiseWindow, no second FocusContent');
+    assert.deepStrictEqual(after.state.lastFocusAssert, asserted.state.lastFocusAssert, 'and the recorded assert is untouched');
+  });
+
+  // ── The op token ──────────────────────────────────────────────────────────
+
+  it('the assert mints one op token and stamps it on the record it raises', () => {
+    // `RaiseWindow` is a focus-family effect, so the same biconditional every
+    // other op-issuing arm holds applies here: exactly one token per transition
+    // that issues an op, carried by the effect and stamped on the record.
+    const state = frontContent();
+    const result = run(state, { type: 'AssertFocus', id: wid(1), expectedVersion: state.version });
+
+    assert.strictEqual(result.state.opSeqCounter, state.opSeqCounter + 1, 'exactly one token');
+    const raise = result.effects.find((e) => e.type === 'RaiseWindow') as Extract<Effect, { type: 'RaiseWindow' }>;
+    assert.strictEqual(raise.opSeq, result.state.opSeqCounter);
+    assert.strictEqual(result.state.order[0].lastOpSeq, raise.opSeq, 'evolve stamp and react token are one value');
+  });
+
+  // ── The content / non-content split on FocusContent ───────────────────────
+
+  it('a non-content target gets no FocusContent — the split is real, not decorative', () => {
+    // Reached by dispatching the EVENT, which bypasses `decide`: through the
+    // command path `decide`'s own `isContentWindow` gate answers first (below),
+    // so this is the path where `react`'s clause is what decides.
+    const palette = fold(
+      [paletteWindow(wid(2)), { type: 'WindowShown', id: wid(2) }, { type: 'OsFocusGained', id: wid(2) }],
+      initialState(),
+    );
+    const result = foldWithEffects([{ type: 'FocusAssertRequested', id: wid(2) }], palette);
+    assert.deepStrictEqual(result.effects, [{ type: 'RaiseWindow', id: wid(2), opSeq: result.state.opSeqCounter }]);
+
+    // Same event, same shape of state, a content role: both halves.
+    const content = frontContent();
+    const contentResult = foldWithEffects([{ type: 'FocusAssertRequested', id: wid(1) }], content);
+    assert.deepStrictEqual(contentResult.effects, [
+      { type: 'RaiseWindow', id: wid(1), opSeq: contentResult.state.opSeqCounter },
+      { type: 'FocusContent', id: wid(1) },
+    ]);
+  });
+
+  it('an assert naming a window that is not registered drives nothing at all', () => {
+    // Only reachable as a raw event (`decide` rejects the command). There is
+    // nothing to raise, so nothing is emitted — and no token is minted either,
+    // which is what keeps the op-counter biconditional true.
+    const state = frontContent();
+    const result = foldWithEffects([{ type: 'FocusAssertRequested', id: wid(404) }], state);
+    assert.deepStrictEqual(result.effects, []);
+    assert.strictEqual(result.state.opSeqCounter, state.opSeqCounter, 'no effect, no token');
+    assert.strictEqual(result.state.lastFocusAssert?.id, wid(404), 'the request is still recorded as asked');
+  });
+
+  // ── Rule order: the assert is LAST ────────────────────────────────────────
+
+  it('the assert rule emits after the stacking re-assert', () => {
+    // No single event both reorders `order` and records an assert, so the
+    // ordering is stated against a transition that carries both: the real
+    // `OsFocusGained` reorder, with the assert fact laid on top of its `next`.
+    // `react` is a pure function of `(prev, ev, next)`, so this is the same
+    // call the executor would make.
+    const base = fold(
+      [
+        contentWindow(wid(1)),
+        { type: 'WindowShown', id: wid(1) },
+        // A page-host is not orderable until its first composited frame, and
+        // the stacking rule skips what the OS cannot yet position.
+        { type: 'WindowContentOrderable', id: wid(1) },
+        contentWindow(wid(2)),
+        { type: 'WindowShown', id: wid(2) },
+        { type: 'WindowContentOrderable', id: wid(2) },
+      ],
+      initialState(),
+    );
+    // wid(1) sits at the BOTTOM (registration appends with no key window), so
+    // focusing it is a genuine reorder and the stacking rule really fires.
+    const ev: Event = { type: 'OsFocusGained', id: wid(1) };
+    const reordered = evolve(base, ev);
+    const withAssert: State = { ...reordered, lastFocusAssert: { id: wid(1), seq: 1 } };
+
+    const effects = react(base, ev, withAssert);
+    const types = effects.map((e) => e.type);
+    assert.ok(types.includes('SetStacking'), 'the transition really does re-assert stacking');
+    assert.deepStrictEqual(
+      types.slice(-2),
+      ['RaiseWindow', 'FocusContent'],
+      'the assert lands after the re-show / overlay / stacking work, mirroring the old arm',
+    );
+    assert.ok(types.lastIndexOf('SetStacking') < types.length - 2, 'and every SetStacking precedes it');
+  });
+
+  // ── decide holds the guards ───────────────────────────────────────────────
+
+  it('a stale expectedVersion is rejected', () => {
+    const state = frontContent();
+    assert.deepStrictEqual(
+      decide(state, { type: 'AssertFocus', id: wid(1), expectedVersion: state.version + 1 }),
+      { rejected: 'stale-version' },
+    );
+  });
+
+  it('an unknown window is rejected — this command is NOT exempt like teardown', () => {
+    const state = frontContent();
+    assert.deepStrictEqual(
+      decide(state, { type: 'AssertFocus', id: wid(404), expectedVersion: state.version }),
+      { rejected: 'no-such-window' },
+    );
+    // The contrast that makes the point: the same unknown id IS accepted by a
+    // teardown command, whose exemption exists for the hybrid finalize race.
+    const teardown = decide(state, { type: 'CloseContent', id: wid(404), expectedVersion: state.version });
+    assert.ok('events' in teardown);
+  });
+
+  it('a target that is not the window the user works in is accepted and drives nothing', () => {
+    // The port of `applyRaiseRequest`'s `isEligibleFront(rec)` early return: an
+    // activating show onto a background surface would steal key.
+    const state = fold(
+      [contentWindow(wid(1)), { type: 'WindowShown', id: wid(1) }, paletteWindow(wid(2)), { type: 'WindowShown', id: wid(2) }],
+      initialState(),
+    );
+    assert.strictEqual(isContentWindow(state.order.find((w) => w.id === wid(2))!), false);
+    const result = run(state, { type: 'AssertFocus', id: wid(2), expectedVersion: state.version });
+    assert.deepStrictEqual(result.events, [], 'no event');
+    assert.deepStrictEqual(result.effects, [], 'and so no effect');
+
+    // A hidden content window is not "what the user is working in" either.
+    const hidden = fold([contentWindow(wid(3))], state);
+    const hiddenResult = run(hidden, { type: 'AssertFocus', id: wid(3), expectedVersion: hidden.version });
+    assert.deepStrictEqual(hiddenResult.effects, []);
+  });
+
+  // ── evolve stays total ────────────────────────────────────────────────────
+
+  it('evolve does not throw on a focus-assert event, from any state', () => {
+    const states: Array<[string, State]> = [
+      ['empty', initialState()],
+      ['one front content window', frontContent()],
+      ['retired window', fold([{ type: 'WindowClosed', id: wid(1) }], frontContent())],
+    ];
+    for (const [label, state] of states) {
+      let next: State | undefined;
+      assert.doesNotThrow(() => {
+        next = evolve(state, { type: 'FocusAssertRequested', id: wid(1) });
+      }, label);
+      assert.strictEqual(next!.version, state.version + 1, 'every event bumps version');
+    }
+  });
+});

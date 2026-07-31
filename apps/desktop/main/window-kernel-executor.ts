@@ -473,6 +473,24 @@ export class WindowKernelExecutor {
         void this.backend.closeWindow(effect.id);
         return;
       }
+      case 'FocusContent': {
+        // Headless-gated, for the same reason the `inactive-show` raise plan
+        // is: taking macOS first responder IS taking focus, and an agent/CI
+        // run must not take it (peek `2b55f3af`). The raise this effect is
+        // paired with already masks itself; this half has to mask itself too,
+        // or the pair would be focus-free in one call and focus-stealing in
+        // the next.
+        if (this.headless) return;
+        // The port takes the op token; the effect does not carry one (see the
+        // `FocusContent` effect's doc). `this.state` is `next` by the time
+        // effects run (`apply` assigns it before `runEffects`), so this is the
+        // very token the `RaiseWindow` emitted alongside it carries — the two
+        // halves of one raise arm the backend's self-caused-focus expectation
+        // with one number, exactly as the `show-and-focus-content` plan above
+        // does when it reuses `effect.opSeq` for both calls.
+        this.backend.focusContent(effect.id, this.state.opSeqCounter);
+        return;
+      }
       case 'DestroyAllGuests': {
         // Process-wide, names no window. The call is ASYNC and its settlement
         // is load-bearing — `webContents.destroy()` returns while the guest is

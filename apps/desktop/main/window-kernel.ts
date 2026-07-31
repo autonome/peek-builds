@@ -384,6 +384,52 @@ export interface State {
    * pending".
    */
   readonly lastTeardown: TeardownRequest | null;
+  /**
+   * The most recent FOCUS ASSERT request, or `null` before any — "re-assert
+   * the raise on this window, which is already where the machine wants it".
+   *
+   * WHY IT IS STATE AT ALL, and it is the same reason `lastTeardown` above is:
+   * the request changes nothing else the kernel stores. Its target is already
+   * topmost, already visible, already key — so `prev` and `next` are identical
+   * everywhere else, and a transition with no state diff has no effect either,
+   * because `react` is a pure structural projection that may not branch on
+   * `ev.type`. The request therefore has to become a FACT `react` can diff,
+   * and this field is that fact.
+   *
+   * WHY THE APP NEEDS ONE. Devtools opens with `activate: false` and takes
+   * macOS first responder off the content `WebContentsView` of whatever window
+   * is in front. Nothing about the window model changed — the same window is
+   * still front, still visible, still key — but its content no longer hears
+   * keystrokes, which is the `7c61e917` shape ("dead until you click the
+   * page": no `before-input-event`, so Escape has no handler at all). The old
+   * machine handled it by re-running its raise on the current front
+   * (`window-state.ts`'s shared `DEVTOOLS_OPENED`/`DEVTOOLS_CLOSED` arm ->
+   * `applyRaiseRequest`), which is exactly what this fact reproduces.
+   *
+   * `seq` is what makes repetition visible, for the same reason it is on
+   * `TeardownRequest`: two asserts for the same window are two asserts, and
+   * comparing payloads would collapse them into one — which for this family is
+   * the whole point, since the payload is IDENTICAL every time (open devtools,
+   * close devtools, open again). It counts asserts only; it is not
+   * `opSeqCounter`, which orders focus ops and is read by the stale-echo guard.
+   *
+   * Nothing clears the field. A later unrelated transition leaves it
+   * untouched, which diffs to nothing, so "stale" here is unobservable: the
+   * value means "the last assert requested was this one", not "an assert is
+   * pending".
+   */
+  readonly lastFocusAssert: FocusAssertRequest | null;
+}
+
+/**
+ * A focus re-assert the kernel was asked to perform. Always names a window —
+ * unlike `TeardownRequest`, there is no process-wide variant: "re-assert the
+ * raise" is meaningless without a target, and the CALLER picks that target
+ * (see the `AssertFocus` command for which conditions the caller owns).
+ */
+export interface FocusAssertRequest {
+  id: WindowId;
+  seq: number;
 }
 
 /**
@@ -579,7 +625,17 @@ export type Event =
   /** The guest-safe direct close — destroy registered guests, await them, then close the host. No keepLive policy. */
   | { type: 'WindowDirectCloseRequested'; id: WindowId }
   /** Quit teardown: destroy every registered page-host guest WC, process-wide. Names no window. */
-  | { type: 'GuestTeardownRequested' };
+  | { type: 'GuestTeardownRequested' }
+  /**
+   * `decide`'s translation of an accepted `AssertFocus` command: a request to
+   * re-drive the raise onto a window that is ALREADY where the machine wants
+   * it (see `State.lastFocusAssert`). Records the request on that field and
+   * changes nothing else about the window model — `key` is untouched (RULE 2
+   * leaves it to `OsFocusGained`/`OsFocusLost`), `order` is untouched (RULE 1),
+   * and no record field moves except the focus-op stamp the raise it drives
+   * carries.
+   */
+  | { type: 'FocusAssertRequested'; id: WindowId };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Commands — rejectable requests (§0.1.1, §0.1.2). Every variant carries
@@ -708,7 +764,46 @@ export type Command =
    * fan-out over `order` would miss every guest whose host record has already
    * retired — which at quit is the common case, not the corner one.
    */
-  | { type: 'DestroyAllGuests'; expectedVersion: number };
+  | { type: 'DestroyAllGuests'; expectedVersion: number }
+  /**
+   * RE-ASSERT THE RAISE on a window that is already front — the port of the
+   * old machine's shared `DEVTOOLS_OPENED`/`DEVTOOLS_CLOSED` arm (see
+   * `State.lastFocusAssert` for why the app needs it at all).
+   *
+   * NOT exempt from the unknown-window rejection, unlike the four teardown
+   * commands above. Their exemption exists for one measured race — `ipc.ts
+   * runHybridFinalize` naming a record retired microseconds earlier in the
+   * same synchronous body — and this command has no such producer: its caller
+   * picks the target by READING the current state (`topmost(state,
+   * isContentWindow)`), so a target absent from `order` means the caller asked
+   * about a window that does not exist, which is precisely what the guard is
+   * for.
+   *
+   * A target that is not `isContentWindow` is accepted and does nothing (no
+   * events) — the port of `applyRaiseRequest`'s `isEligibleFront(rec)` early
+   * return, and the reason it must not be a raise: driving an activating show
+   * onto a window the user is not working in steals key onto a background
+   * surface.
+   *
+   * TWO CONDITIONS THE CALLER OWNS, both of them guards the old
+   * `applyRaiseRequest` held itself:
+   *
+   *   - `state.appActive` — no focus theft while Peek is in the background.
+   *     The kernel HAS this fact, so the guard could live here; it does not,
+   *     because it belongs with the switcher condition below rather than being
+   *     split across two layers, and a caller that assembles the request
+   *     already knows whether the app is active.
+   *   - the switcher is not open — must not yank key out of the switcher
+   *     overlay. This one CANNOT live here: the switcher is homed outside the
+   *     kernel (§0: input interpretation and the surfaces built on it are not
+   *     the window manager's business), and inventing a kernel switcher
+   *     concept to hold one guard would put a second model of that surface in
+   *     the machine.
+   *
+   * So the composition at the call site is: app active, switcher closed, and a
+   * target of `topmost(state, isContentWindow)`.
+   */
+  | { type: 'AssertFocus'; id: WindowId; expectedVersion: number };
 
 export type Rejection = 'stale-version' | 'no-such-window';
 
@@ -749,7 +844,19 @@ export type Effect =
   /** Guest-safe direct close: destroy and await the window's guests, then close the host. */
   | { type: 'CloseWindowDirect'; id: WindowId }
   /** Destroy every registered page-host guest WebContents, process-wide. The one effect that names no window. */
-  | { type: 'DestroyAllGuests' };
+  | { type: 'DestroyAllGuests' }
+  /**
+   * Make the window's CONTENT surface the OS first responder — the port of the
+   * old `FOCUS_CONTENT` effect, and the half of a raise that an already-front
+   * window still needs when something took first responder off it without
+   * changing anything else (devtools opening with `activate: false`).
+   *
+   * Carries no `opSeq`, unlike the focus-family pair above. It never moves the
+   * key window on its own, so there is no self-caused FOCUS report for a token
+   * to disambiguate; the assert that emits it emits a `RaiseWindow` in the same
+   * transition, and that one carries the token for both.
+   */
+  | { type: 'FocusContent'; id: WindowId };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // initialState
@@ -765,12 +872,23 @@ export function initialState(): State {
     openSeqCounter: 0,
     pendingAppResignSweep: false,
     lastTeardown: null,
+    lastFocusAssert: null,
   };
 }
 
 /** The next `TeardownRequest.seq` — one per teardown event, monotone, never reused. */
 function nextTeardownSeq(state: State): number {
   return (state.lastTeardown?.seq ?? 0) + 1;
+}
+
+/**
+ * The next `FocusAssertRequest.seq` — one per focus-assert event, monotone,
+ * never reused. Derived from state rather than from a module counter, same as
+ * `nextTeardownSeq` above: a module counter would make `evolve` read something
+ * other than its two arguments and would break replay determinism.
+ */
+function nextFocusAssertSeq(state: State): number {
+  return (state.lastFocusAssert?.seq ?? 0) + 1;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1381,6 +1499,37 @@ export function evolve(state: State, ev: Event): State {
       };
     }
 
+    case 'FocusAssertRequested': {
+      // One shape, same as the teardown arms above: record the request on the
+      // fact `react` diffs (`lastFocusAssert`) and touch nothing about the
+      // window model. `key` and `order` are deliberately untouched — the
+      // target is ALREADY topmost and already key, which is the entire reason
+      // this event exists.
+      //
+      // The one record write is the focus-op stamp, and it is not an
+      // exception to that: `react` turns this transition into a `RaiseWindow`,
+      // a focus-family effect, so the same stamp every other op-issuing arm
+      // writes has to be written here too or the token the backend arms its
+      // self-caused-focus expectation with would be a previous op's. The
+      // condition mirrors `react`'s own emission exactly (a registered
+      // target), the same way `WindowShown`'s `issuesShow` and
+      // `OsFocusGained`'s `genuinelyRaised` do — one token per transition that
+      // issues at least one op, and none for a transition that issues none.
+      //
+      // Total and guard-free like every arm here: an id absent from `order`
+      // still records the request (the field is a record of what was asked)
+      // and simply matches no record to stamp.
+      const issuesRaise = state.order.some((w) => w.id === ev.id);
+      const opSeq = issuesRaise ? state.opSeqCounter + 1 : state.opSeqCounter;
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, lastOpSeq: opSeq } : w)),
+        opSeqCounter: opSeq,
+        lastFocusAssert: { id: ev.id, seq: nextFocusAssertSeq(state) },
+        version: state.version + 1,
+      };
+    }
+
     default: {
       const _exhaustive: never = ev;
       return _exhaustive;
@@ -1617,6 +1766,46 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
   }
 
+  // Focus assert: a structural diff of `State.lastFocusAssert`, the same shape
+  // as the teardown rule above and for the same reason — the transition it
+  // projects changes nothing else, so there is nothing else to diff. The `seq`
+  // comparison is what makes it a diff rather than a read: a transition that
+  // did not ask for an assert leaves the field alone and emits nothing, and
+  // two asserts for the same window carry different `seq` values, so the
+  // second is a second assert rather than a no-op. That matters more here than
+  // it does for teardown: the payload is identical every single time (open
+  // devtools, close devtools, open again), so `seq` is the ONLY thing
+  // distinguishing them.
+  //
+  // LAST, deliberately. `react` emits in rule order and the executor performs
+  // in that order, so an assert has to land after the re-show / overlay-reveal
+  // / stacking work above — the old machine's arm ran `applyRaiseRequest`
+  // after its own re-show work for the same reason. An assert emitted first
+  // would drive first responder onto the content surface and then have a
+  // re-show or a stacking re-assert land on top of it.
+  //
+  // Faithful to `applyRaiseRequest`: a raise, plus the content-focus half for
+  // a window whose content surface is a thing to focus, and nothing for a
+  // target that is not there to raise. The two reads of `next.order` are
+  // structural, not branches on `ev.type` — the rule holds identically for an
+  // assert fed in directly and for one `decide` translated from a command.
+  const focusAssert = next.lastFocusAssert;
+  if (focusAssert !== null && focusAssert.seq !== prev.lastFocusAssert?.seq) {
+    const record = next.order.find((w) => w.id === focusAssert.id);
+    if (record !== undefined) {
+      effects.push({ type: 'RaiseWindow', id: focusAssert.id, opSeq: next.opSeqCounter });
+      // `isContentWindow` rather than `kind === 'page-host'` (the old arm's
+      // own test): this kernel's content predicate is the one that answers
+      // "the window the user is working in", and it is the same predicate
+      // `decide` gates the command on — so through the command path this
+      // clause always holds, and it earns its keep for an assert dispatched
+      // as a raw event, which bypasses `decide` entirely.
+      if (isContentWindow(record)) {
+        effects.push({ type: 'FocusContent', id: focusAssert.id });
+      }
+    }
+  }
+
   return effects;
 }
 
@@ -1777,6 +1966,21 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
     }
     case 'SetVisibleOnAllSpaces':
       return { events: [{ type: 'VisibleOnAllSpacesSet', id: cmd.id, on: cmd.on }] };
+    case 'AssertFocus': {
+      // Reached only after the unknown-window guard above — this command is
+      // NOT exempt from it (see the command's own doc for why the teardown
+      // exemption does not carry over).
+      //
+      // THE remaining guard, and the port of `applyRaiseRequest`'s
+      // `isEligibleFront(rec)` early return: a target that is not the kind of
+      // window the user works in is accepted and drives nothing, rather than
+      // being raised. The two conditions the old function ALSO held —
+      // `state.appActive` and `!state.switcher.open` — belong to the caller;
+      // the command's doc records which and why.
+      const rec = state.order.find((w) => w.id === cmd.id)!;
+      if (!isContentWindow(rec)) return { events: [] };
+      return { events: [{ type: 'FocusAssertRequested', id: cmd.id }] };
+    }
   }
 }
 

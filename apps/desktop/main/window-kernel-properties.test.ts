@@ -603,6 +603,21 @@ function checkInvariants(state: State, prev?: State): string[] {
     if (state.lastTeardown !== null && prev.lastTeardown !== null && state.lastTeardown.seq < prev.lastTeardown.seq) {
       violations.push(`lastTeardown.seq decreased: prev=${prev.lastTeardown.seq} next=${state.lastTeardown.seq}`);
     }
+    // Focus assert: the same two clauses, for the same reason — the whole
+    // family rests on `lastFocusAssert.seq` being what `react` diffs, and the
+    // payload is IDENTICAL between consecutive requests (the same window, every
+    // devtools open and close), so a repeated or reset seq collapses two
+    // asserts into one and the second re-assert silently never reaches the OS.
+    if (prev.lastFocusAssert !== null && state.lastFocusAssert === null) {
+      violations.push('lastFocusAssert was cleared back to null');
+    }
+    if (
+      state.lastFocusAssert !== null &&
+      prev.lastFocusAssert !== null &&
+      state.lastFocusAssert.seq < prev.lastFocusAssert.seq
+    ) {
+      violations.push(`lastFocusAssert.seq decreased: prev=${prev.lastFocusAssert.seq} next=${state.lastFocusAssert.seq}`);
+    }
     // `orderable` never goes true -> false (§0.1.4: "Never reset once true").
     for (const prevRecord of prev.order) {
       const nextRecord = state.order.find((w) => w.id === prevRecord.id);
@@ -1195,6 +1210,54 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     ]);
     assert.deepStrictEqual(checkInvariants(strip('escapeMode'), before), [
       `escapeMode was silently stripped from ${id}`,
+    ]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The `lastFocusAssert` clauses, proven to fire.
+//
+// The generator does not produce a focus assert — adding a variant re-rolls
+// every seed's whole log and moves the recorded focus-family op rate the
+// describe above MEASURES, which is a change to make deliberately and
+// re-measure, not a side effect of adding a family. So the two clauses are
+// pinned here against hand-built states instead, the same anti-vacuity move the
+// merge clauses above use: a clause nobody has ever seen fail is decoration.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('window-kernel: the lastFocusAssert invariants name the violation', () => {
+  const id = wid(0);
+
+  /** One visible, focused content window, then an assert on it. */
+  const asserted = (): { prev: State; next: State } => {
+    const prev = fold([
+      { type: 'WindowRegistered', id, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowShown', id },
+      { type: 'OsFocusGained', id },
+      { type: 'FocusAssertRequested', id },
+    ]);
+    const next = evolve(prev, { type: 'FocusAssertRequested', id });
+    return { prev, next };
+  };
+
+  it('the assert really is recorded, so the mutilations below are of a real fact', () => {
+    const { prev, next } = asserted();
+    assert.strictEqual(prev.lastFocusAssert?.seq, 1);
+    assert.strictEqual(next.lastFocusAssert?.seq, 2, 'a second identical request is a second assert');
+    assert.deepStrictEqual(checkInvariants(next, prev), []);
+  });
+
+  it('a cleared field is named', () => {
+    const { prev, next } = asserted();
+    assert.deepStrictEqual(checkInvariants({ ...next, lastFocusAssert: null }, prev), [
+      'lastFocusAssert was cleared back to null',
+    ]);
+  });
+
+  it('a seq that went backwards is named — the shape that collapses two asserts into one', () => {
+    const { prev, next } = asserted();
+    assert.deepStrictEqual(checkInvariants({ ...next, lastFocusAssert: { id, seq: 0 } }, prev), [
+      'lastFocusAssert.seq decreased: prev=1 next=0',
     ]);
   });
 });

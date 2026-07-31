@@ -702,6 +702,47 @@ describe('effect performance', () => {
     assert.deepStrictEqual(backend.of('closeContent').map((c) => c.args[0]), [wid(1)]);
   });
 
+  it('AssertFocus drives the raise and the content-focus half through the port', () => {
+    // The devtools re-assert: nothing about the window model changes, so the
+    // only proof the executor did anything is the pair of port calls.
+    const { exec, backend } = makeExecutor();
+    exec.dispatch(register(wid(1), { kind: 'page-host', role: 'content' }));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    exec.dispatch({ type: 'OsFocusGained', id: wid(1) });
+    backend.calls.length = 0;
+
+    const out = exec.execute({ type: 'AssertFocus', id: wid(1), expectedVersion: exec.getState().version });
+    assert.ok('applied' in out);
+    assert.deepStrictEqual(backend.of('raiseWindow').map((c) => c.args[0]), [wid(1)]);
+    const focus = backend.of('focusContent');
+    assert.deepStrictEqual(focus.map((c) => c.args[0]), [wid(1)]);
+    assert.strictEqual(
+      focus[0].args[1],
+      exec.getState().opSeqCounter,
+      'the content-focus half carries the same op token as the raise it rides with',
+    );
+    assert.deepStrictEqual(backend.of('raiseWindow')[0].args[1], focus[0].args[1]);
+  });
+
+  it('a headless run asserts focus without taking first responder', () => {
+    // Focus-free by construction (2b55f3af): the raise degrades to a
+    // non-activating show, and the content-focus half must degrade with it —
+    // taking first responder IS taking focus.
+    const { exec, backend } = makeExecutor({ headless: true });
+    exec.dispatch(register(wid(1), { kind: 'page-host', role: 'content' }));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    exec.dispatch({ type: 'OsFocusGained', id: wid(1) });
+    backend.calls.length = 0;
+
+    exec.execute({ type: 'AssertFocus', id: wid(1), expectedVersion: exec.getState().version });
+    assert.deepStrictEqual(backend.of('focusContent'), []);
+    assert.deepStrictEqual(backend.of('raiseWindow'), []);
+    assert.deepStrictEqual(
+      backend.of('showWindow').map((c) => (c.args[1] as { activate?: boolean } | undefined)?.activate),
+      [false],
+    );
+  });
+
   it('a teardown leaves the record in place — the close report is what retires it', () => {
     const { exec, backend } = makeExecutor();
     exec.dispatch(register(wid(1)));
