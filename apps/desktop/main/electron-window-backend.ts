@@ -87,7 +87,11 @@ import {
   type TeardownGuest,
 } from './guest-teardown.js';
 import { expandToOverlayFrame } from './overlay-frame.js';
-import { shadowKernelOsFocusGained, shadowKernelOsFocusSettled } from './window-kernel-shadow.js';
+import {
+  shadowKernelOsFocusGained,
+  shadowKernelOsFocusSettled,
+  shadowKernelWindowClosed,
+} from './window-kernel-shadow.js';
 
 /**
  * The one place `webContents.destroy()` is actually called. `guest-teardown.ts`
@@ -634,6 +638,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // throw on the already-destroyed native window.
       this.idByOsWindowId.delete(osWindowId);
       this.emit({ type: 'WINDOW_CLOSED', id });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
+      // over nothing; RULE 1 makes this the only event that shrinks its `order`.
+      shadowKernelWindowClosed(id);
     });
     win.on('enter-full-screen', () => {
       this.clearFullscreenSettle(id);

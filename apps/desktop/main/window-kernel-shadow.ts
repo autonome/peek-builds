@@ -297,3 +297,30 @@ export function shadowKernelCloseWindowDirect(id: WindowId): void {
 export function shadowKernelDestroyAllGuests(): void {
   shadowExecute({ type: 'DestroyAllGuests', expectedVersion: getShadowKernelExecutor().getState().version });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Close report — the fourth real input this step feeds the kernel.
+// `window-kernel.ts` RULE 1 makes `WindowClosed` the ONLY event that shrinks
+// `order`; the four teardown commands above deliberately retire no record.
+// Without this, the shadow kernel's `order` only ever grows and diverges
+// further from reality with every window that actually closes. Translated at
+// every production site that reports a completed close to the old machine's
+// mirrored `WINDOW_CLOSED` (`main.ts finalizeWindowClose`, that same handler's
+// error-path fallback, `main.ts removeWindow`, and `electron-window-backend.ts`'s
+// own native `'closed'` listener) — dispatched as an EVENT (past-tense fact,
+// same as OS focus above), alongside the existing old-machine dispatch, never
+// in place of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate a completed close report into the kernel's `WindowClosed` event.
+ * The backend's handle map (`idByOsWindowId`) and the kernel's own record map
+ * diverge by design — a hybrid page-host never fires the native `'closed'`
+ * that clears `idByOsWindowId` on the normal close path, so a caller can
+ * legitimately name a window whose record already retired. `evolve` normalizes
+ * an event naming an unknown window rather than rejecting it, so no guard is
+ * needed here.
+ */
+export function shadowKernelWindowClosed(id: WindowId): void {
+  shadowDispatch({ type: 'WindowClosed', id });
+}

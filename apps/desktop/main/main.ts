@@ -51,6 +51,7 @@ import { deriveWindowSurface } from './izui-roles.js';
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
 import { saveSessionSnapshot } from './session.js';
+import { shadowKernelWindowClosed } from './window-kernel-shadow.js';
 
 // Track app-quit state so the close-debounced save doesn't double-fire
 // alongside the before-quit save. before-quit handler in entry.ts sets
@@ -228,6 +229,9 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
   {
     const wmId = getWindowIdFor(windowId);
     if (wmId != null) dispatchWindowEvent({ type: 'WINDOW_CLOSED', id: wmId });
+    // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
+    // over nothing; RULE 1 makes this the only event that shrinks its `order`.
+    if (wmId != null) shadowKernelWindowClosed(wmId);
   }
   try {
     publish('system', 'window:removed', { id: windowId });
@@ -847,6 +851,7 @@ export async function initialize(): Promise<void> {
         try {
           const wmId = getWindowIdFor(windowId);
           if (wmId != null) dispatchWindowEvent({ type: 'WINDOW_CLOSED', id: wmId });
+          if (wmId != null) shadowKernelWindowClosed(wmId);
         } catch {
           // already in error path; suppress
         }
@@ -1460,6 +1465,7 @@ export function removeWindow(windowId: number): boolean {
   const id = getWindowIdFor(windowId);
   if (id == null || getMachineWindowRecord(id) === undefined) return false;
   dispatchWindowEvent({ type: 'WINDOW_CLOSED', id });
+  shadowKernelWindowClosed(id);
   return true;
 }
 

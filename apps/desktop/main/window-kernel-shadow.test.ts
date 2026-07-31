@@ -16,6 +16,7 @@ import {
   shadowKernelOsFocusGained,
   shadowKernelOsFocusSettled,
   shadowKernelRegisterWindow,
+  shadowKernelWindowClosed,
 } from './window-kernel-shadow.js';
 import { BASE_LAYER, type WindowId } from './window-kernel.js';
 
@@ -200,5 +201,52 @@ describe('window-kernel-shadow: teardown feed', () => {
     assert.strictEqual(state.version, versionBefore + 4);
     assert.strictEqual(state.lastTeardown?.kind, 'destroy-all-guests');
     assert.strictEqual(state.order.length, 0, 'a dangling id never joins order');
+  });
+});
+
+describe('window-kernel-shadow: close report feed', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('a close report removes the window from the shadow kernel order (peek 7fffa286)', () => {
+    const id = wid(40);
+    shadowKernelRegisterWindow({
+      id,
+      kind: 'browser',
+      layer: BASE_LAYER,
+      canBecomeKey: true,
+      acceptsInput: true,
+      class: 'primary',
+    });
+    assert.ok(
+      getShadowKernelExecutor().getState().order.some((w) => w.id === id),
+      'precondition: the window is a member before the close report',
+    );
+
+    shadowKernelWindowClosed(id);
+
+    // RULE 1 (window-kernel.ts): `WindowClosed` is the ONLY event that
+    // shrinks `order`. Without this feed the shadow kernel's `order` only
+    // ever grows, diverging further from reality with every real close.
+    assert.ok(
+      !getShadowKernelExecutor().getState().order.some((w) => w.id === id),
+      'a close report must remove the window from order',
+    );
+  });
+
+  it('a close report naming a window with no record is absorbed, not thrown or rejected into the caller', () => {
+    const danglingId = wid(41); // never registered with the shadow kernel
+    const versionBefore = getShadowKernelExecutor().getState().version;
+
+    assert.doesNotThrow(() => shadowKernelWindowClosed(danglingId));
+
+    // `WindowClosed` is an event (`evolve`, not `decide`) — there is no
+    // `decide`-side rejection to exempt here; `evolve`'s unconditional
+    // filter simply no-ops on an id that was never a member, while the
+    // dispatch itself still advances version, same as any other event.
+    const state = getShadowKernelExecutor().getState();
+    assert.strictEqual(state.version, versionBefore + 1);
+    assert.strictEqual(state.order.length, 0, 'a dangling close report never adds a member');
   });
 });
