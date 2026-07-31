@@ -16,17 +16,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import unhandled from 'electron-unhandled';
-import * as qdiagFs from 'node:fs';
-
-// TEMPORARY quit-teardown ordering probe — REVERT after the sitting.
-const QDIAG_T0 = Date.now();
-function qdiag(line: string): void {
-  try {
-    qdiagFs.appendFileSync('/tmp/peek-quit-diag.log', `[+${Date.now() - QDIAG_T0}ms] ${line}\n`);
-  } catch {
-    // best-effort diagnostic only
-  }
-}
 
 // Import from local backend modules
 import {
@@ -975,9 +964,6 @@ const onQuit = async () => {
 // function above is bypassed. This before-quit handler ensures hot reload watchers,
 // database connections, and other resources are cleaned up so the process can exit.
 async function runBeforeQuitCleanup(): Promise<void> {
-  // TEMPORARY quit-teardown ordering probe — REVERT after the sitting.
-  qdiag('runBeforeQuitCleanup ENTER');
-  try {
   DEBUG && console.log('[lifecycle] before-quit: running cleanup');
   // FIRST: silence the runtime-external relay before any teardown below. The
   // handler stays registered through quit, so a late content-script LOG_EVENT
@@ -1015,15 +1001,8 @@ async function runBeforeQuitCleanup(): Promise<void> {
   // without this the re-quit closed every host window over a live content
   // WebContents. Bounded in the backend (per guest AND over the batch), so a
   // wedged renderer costs a short pause, never a quit that never happens.
-  // TEMPORARY quit-teardown ordering probe — REVERT after the sitting.
-  qdiag('runBeforeQuitCleanup awaiting guest teardown');
   try { await guestTeardown; } catch (e) { DEBUG && console.error('[lifecycle] guest teardown wait error:', e); }
-  qdiag('runBeforeQuitCleanup guest teardown awaited');
   DEBUG && console.log('[lifecycle] before-quit: cleanup complete');
-  } finally {
-    // TEMPORARY quit-teardown ordering probe — REVERT after the sitting.
-    qdiag('runBeforeQuitCleanup EXIT');
-  }
 }
 
 // The cleanup above frees native views (destroyAllPageHostGuests → wc.destroy()),
@@ -1047,8 +1026,6 @@ app.on('before-quit', (event) => {
     // asynchronous and its completion is what keeps host windows from closing
     // over live guests — and re-quits from `finally`, so neither a throw nor a
     // rejected wait can swallow the re-quit we owe the user.
-    // TEMPORARY quit-teardown ordering probe — REVERT after the sitting.
-    qdiag('runDeferredQuitCleanup dispatching');
     void runDeferredQuitCleanup(
       runBeforeQuitCleanup,
       () => {

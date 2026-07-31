@@ -58,19 +58,8 @@
  * fact from record history and got the machine's own handoff-raise echo wrong).
  */
 
-import * as qdiagFs from 'node:fs';
 import { app, globalShortcut, screen, systemPreferences, webContents } from 'electron';
 import type { BrowserWindow, WebContents } from 'electron';
-
-// TEMPORARY quit-teardown ordering probe — REVERT after the sitting.
-const QDIAG_T0 = Date.now();
-function qdiag(line: string): void {
-  try {
-    qdiagFs.appendFileSync('/tmp/peek-quit-diag.log', `[+${Date.now() - QDIAG_T0}ms] ${line}\n`);
-  } catch {
-    /* best-effort */
-  }
-}
 
 import { isHeadless, DEBUG } from './config.js';
 import {
@@ -993,16 +982,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    */
   closeContent(id: WindowId): void {
     const wc = this.windows.get(id)?.rendererWC;
-    // TEMPORARY quit-teardown ordering probe — REVERT after the sitting.
-    const guard = shouldCloseContentWCOnFinalize(wc);
-    qdiag(
-      `closeContent id=${id} resolved=${!!wc} ` +
-        `destroyed=${(() => { try { return wc ? String(wc.isDestroyed()) : 'n/a'; } catch (e) { return `threw:${String(e)}`; } })()} ` +
-        `guard=${guard}`,
-    );
-    if (!guard) return;
+    if (!shouldCloseContentWCOnFinalize(wc)) return;
     try {
-      qdiag(`closeContent id=${id} PERFORMING wc.close()`);
       wc!.close();
     } catch (e) {
       DEBUG && console.log('[window-backend] content wc close failed for', id, e);
@@ -1227,31 +1208,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   destroyAllContentGuests(): Promise<void> {
     const guests = this.resolveLiveGuests(getAllGuestWebContentsIds());
     DEBUG && console.log('[window-backend] quit teardown: destroying', guests.length, 'guest(s)');
-    // TEMPORARY quit-teardown ordering probe — REVERT after the sitting.
-    const ids = getAllGuestWebContentsIds();
-    qdiag(`destroyAllContentGuests ENTER registered=[${ids.join(',')}] live=${guests.length}`);
     return destroyGuestsAndWait(guests, requestGuestDestroy, {
       overallMs: QUIT_GUEST_TEARDOWN_BUDGET_MS,
-    }).then(
-      () => {
-        qdiag(
-          `destroyAllContentGuests RESOLVED stillAlive=[${ids
-            .filter((gid) => {
-              try {
-                const wc = webContents.fromId(gid);
-                return !!wc && !wc.isDestroyed();
-              } catch {
-                return false;
-              }
-            })
-            .join(',')}]`,
-        );
-      },
-      (e) => {
-        qdiag(`destroyAllContentGuests REJECTED: ${String(e)}`);
-        throw e;
-      },
-    );
+    });
   }
 
   // ───────────────────────────────────────────────────────────────────────────
