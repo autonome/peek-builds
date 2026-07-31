@@ -27,6 +27,7 @@ import {
   dispatchWindowEvent,
   waitForGuestTeardown,
 } from './window-state-singleton.js';
+import { shadowKernelDestroyAllGuests } from './window-kernel-shadow.js';
 
 const guestToHost = new Map<number, WindowId>();
 
@@ -171,6 +172,10 @@ export function getAllGuestWebContentsIds(): number[] {
 export function destroyAllPageHostGuests(): Promise<void> {
   try {
     dispatchWindowEvent({ type: 'GUEST_TEARDOWN_REQUESTED' });
+    // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+    // authoritative over nothing; see that module's doc for why this can
+    // never change what actually happens on screen.
+    shadowKernelDestroyAllGuests();
   } catch {
     /* best-effort during shutdown — nothing was requested, nothing to await */
     return Promise.resolve();

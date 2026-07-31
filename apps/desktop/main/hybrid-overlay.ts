@@ -102,6 +102,7 @@ import {
 import { classifyWindowRegistration } from './window-state.js';
 import type { Rectangle, WindowId } from './window-state.js';
 import { deriveWindowSurface } from './izui-roles.js';
+import { shadowKernelDestroyWindow } from './window-kernel-shadow.js';
 import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, registerWindow } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
@@ -1034,6 +1035,10 @@ function installTestBridge(): void {
         );
       }
       dispatchWindowEvent({ type: 'WINDOW_DESTROY_REQUESTED', id: wid });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen.
+      shadowKernelDestroyWindow(wid);
       fakeHosts.delete(id);
       return true;
     },

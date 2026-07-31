@@ -256,3 +256,44 @@ export function shadowKernelOsFocusSettled(): void {
   if (key === null) return;
   shadowDispatch({ type: 'OsFocusLost', id: key });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Teardown — the third real input this step feeds the kernel (see
+// `docs/design/window-manager.md` "Decided: window teardown enters the kernel
+// as commands and leaves as effects"). The four commands below are the ONLY
+// way a teardown enters the kernel, translated at the production sites that
+// dispatch the old machine's mirrored events today (`chrome-extensions.ts
+// destroyWindowViaMachine`, `ipc.ts destroyUnassembledHybridHost` and
+// `runHybridFinalize`'s content-close, `webview-guest-registry.ts
+// destroyAllPageHostGuests`, `windows.ts closeHostWindow`, `hybrid-overlay.ts`'s
+// test-bridge destroy).
+//
+// All four are exempt from `decide`'s unknown-window rejection (see each
+// command's own doc in `window-kernel.ts`) — a call site can legitimately name
+// a window whose record already retired microseconds earlier in the same
+// synchronous body (the hybrid finalize race: `runHybridFinalize` retires the
+// record via `finalizeWindowClose` before dispatching the content-close a few
+// lines later). That exemption lives in `decide`, not here; `shadowExecute`'s
+// existing try/catch is what keeps a rejection or a thrown error from ever
+// reaching these callers, same as every command above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Translate a forceful native-destroy teardown into the kernel's `DestroyWindow` command. */
+export function shadowKernelDestroyWindow(id: WindowId): void {
+  shadowExecute({ type: 'DestroyWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
+}
+
+/** Translate the hybrid finalize's content-surface teardown into the kernel's `CloseContent` command. */
+export function shadowKernelCloseContent(id: WindowId): void {
+  shadowExecute({ type: 'CloseContent', id, expectedVersion: getShadowKernelExecutor().getState().version });
+}
+
+/** Translate a guest-safe direct close (`windows.ts closeHostWindow`) into the kernel's `CloseWindowDirect` command. */
+export function shadowKernelCloseWindowDirect(id: WindowId): void {
+  shadowExecute({ type: 'CloseWindowDirect', id, expectedVersion: getShadowKernelExecutor().getState().version });
+}
+
+/** Translate the quit-time guest teardown into the kernel's `DestroyAllGuests` command. Names no window. */
+export function shadowKernelDestroyAllGuests(): void {
+  shadowExecute({ type: 'DestroyAllGuests', expectedVersion: getShadowKernelExecutor().getState().version });
+}

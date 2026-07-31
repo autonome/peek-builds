@@ -97,6 +97,7 @@ import {
   type MachineWindowSpec,
 } from './window-state-singleton.js';
 import { isSatelliteRegistration, classifyWindowRegistration } from './window-state.js';
+import { shadowKernelDestroyWindow, shadowKernelCloseContent } from './window-kernel-shadow.js';
 import {
   TRANSIENT_ROLES,
   inferIzuiRole,
@@ -714,6 +715,10 @@ function destroyUnassembledHybridHost(baseWin: Electron.BaseWindow | null): void
       });
     }
     dispatchWindowEvent({ type: 'WINDOW_DESTROY_REQUESTED', id });
+    // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
+    // over nothing; see that module's doc for why this can never change what
+    // actually happens on screen.
+    shadowKernelDestroyWindow(id);
   } catch (cleanupErr) {
     // Cleanup must never mask the original failure — a still-leaked window is
     // logged loudly instead.
@@ -1137,6 +1142,10 @@ function assembleHybridPageHost(
       // is already gone). The backend retains the content WC per WindowId,
       // so this works after the machine record was retired above.
       dispatchWindowEvent({ type: 'WINDOW_CONTENT_CLOSE_REQUESTED', id: hostMachineId });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen.
+      shadowKernelCloseContent(hostMachineId);
     } catch (e) {
       DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] content wc close on finalize failed:`, e);
     }

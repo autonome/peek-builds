@@ -29,6 +29,7 @@ import { DEBUG, isHeadless } from './config.js';
 import { registerWindowWithMachine, dispatchWindowEvent, getWindowIdFor } from './window-state-singleton.js';
 import { isSatelliteRegistration } from './window-state.js';
 import { deriveWindowSurface } from './izui-roles.js';
+import { shadowKernelDestroyWindow } from './window-kernel-shadow.js';
 
 /**
  * Route a bridge/extension-UI window teardown through the window-state
@@ -41,6 +42,10 @@ function destroyWindowViaMachine(win: BrowserWindow): void {
   const id = getWindowIdFor(win);
   if (id == null) return; // never registered / already retired — nothing to destroy
   dispatchWindowEvent({ type: 'WINDOW_DESTROY_REQUESTED', id });
+  // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
+  // over nothing; see that module's doc for why this can never change what
+  // actually happens on screen.
+  shadowKernelDestroyWindow(id);
 }
 
 /**
