@@ -444,6 +444,45 @@ export class WindowKernelExecutor {
         this.backend.setStacking(effect.id, stackingLevelForLayer(effect.layer));
         return;
       }
+      case 'DestroyWindow': {
+        // Forceful native destroy (extension bridge / UI teardown). Genuinely
+        // synchronous, unlike `webContents.destroy()`: `BaseWindow.destroy()`
+        // tears the window down within the call, so there is nothing to await.
+        // Do not read across from this to `DestroyAllGuests` — a guest WC's
+        // destruction lands on a LATER turn.
+        //
+        // No guest pass, by construction: this is not the teardown for a
+        // window that owns page-host guests, and `CloseWindowDirect` below is
+        // (peek `d1cf0b9a`).
+        this.backend.destroyWindow(effect.id);
+        return;
+      }
+      case 'CloseContent': {
+        // The wedged-guest fallback, not the ordinary quit path (see the
+        // `CloseContent` command). The port's guard finds an already-destroyed
+        // WebContents and returns, so on every ordinary path this call does
+        // nothing at all.
+        this.backend.closeContent(effect.id);
+        return;
+      }
+      case 'CloseWindowDirect': {
+        // Guest-safe: `closeWindow` destroys and AWAITS the window's registered
+        // guests before closing the host. Fire-and-forget here, same as
+        // `CloseWindow` — the promise is test-bridge settlement only. No
+        // keepLive policy is re-applied: the caller's intent was close.
+        void this.backend.closeWindow(effect.id);
+        return;
+      }
+      case 'DestroyAllGuests': {
+        // Process-wide, names no window. The call is ASYNC and its settlement
+        // is load-bearing — `webContents.destroy()` returns while the guest is
+        // still alive — but the await belongs to the quit sequencing that owns
+        // the port (`entry.ts runBeforeQuitCleanup` awaits it before the
+        // re-quit), not to the pump: an executor that blocked here would stall
+        // every other effect in the batch.
+        void this.backend.destroyAllContentGuests();
+        return;
+      }
       default: {
         const exhaustive: never = effect;
         void exhaustive;

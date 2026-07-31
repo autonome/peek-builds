@@ -360,7 +360,45 @@ export interface State {
    * built) executor; this flag models only the arm/disarm/settle ordering.
    */
   readonly pendingAppResignSweep: boolean;
+  /**
+   * The most recent teardown request, or `null` before any (§0.1.5 "window
+   * teardown enters the kernel as commands and leaves as effects").
+   *
+   * WHY IT IS STATE AT ALL. Teardown changes nothing else the kernel stores:
+   * the record retires on the native `WindowClosed` report the teardown
+   * causes, never on the request itself (the same acceptance the old machine's
+   * `WINDOW_DESTROY_REQUESTED` / `WINDOW_CONTENT_CLOSE_REQUESTED` /
+   * `GUEST_TEARDOWN_REQUESTED` arms record). A transition with no state diff
+   * has no effect either, because `react` is a pure structural projection and
+   * may not branch on `ev.type`. So the request has to become a FACT `react`
+   * can diff, and this field is that fact.
+   *
+   * `seq` is what makes repetition visible: two identical destroy requests for
+   * the same window are two teardowns, and comparing payloads would collapse
+   * them into one. It counts teardowns only — it is not `opSeqCounter`, which
+   * orders focus ops and is read by the stale-echo guard.
+   *
+   * Nothing clears the field. A later non-teardown transition leaves it
+   * untouched, which diffs to nothing, so "stale" here is unobservable: the
+   * value means "the last teardown requested was this one", not "a teardown is
+   * pending".
+   */
+  readonly lastTeardown: TeardownRequest | null;
 }
+
+/**
+ * A teardown the kernel was asked to perform (§0.1.5). Three name a window;
+ * `destroy-all-guests` names none — the event, the effect, and the port's
+ * `destroyAllContentGuests` are all process-wide, iterating the guest map
+ * directly. Fanning it out over `order` at any layer would MISS guests whose
+ * host record has already retired, which is precisely the quit case it exists
+ * for.
+ */
+export type TeardownRequest =
+  | { kind: 'destroy-window'; id: WindowId; seq: number }
+  | { kind: 'close-content'; id: WindowId; seq: number }
+  | { kind: 'close-window-direct'; id: WindowId; seq: number }
+  | { kind: 'destroy-all-guests'; seq: number };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Events — past-tense facts. Already happened. `evolve` cannot reject them.
@@ -512,7 +550,36 @@ export type Event =
    * job, driven off the host's next `BoundsChanged`, never a live query at
    * this event's own dispatch time.
    */
-  | { type: 'OverlayAttached'; overlayId: WindowId; hostId: WindowId | null };
+  | { type: 'OverlayAttached'; overlayId: WindowId; hostId: WindowId | null }
+  /**
+   * TEARDOWN (§0.1.5) — the four facts below are `decide`'s translations of
+   * the teardown commands, and they share one shape: each records that a
+   * teardown was asked for (`State.lastTeardown`) and changes NOTHING else.
+   * Membership shrinks on `WindowClosed` alone (RULE 1), which arrives later
+   * as the native report the teardown causes; a teardown fact that also
+   * retired the record would make the kernel a second authority over `order`
+   * and would double-count the close.
+   *
+   * All four are legitimate for a window absent from `order`: see the
+   * commands' own doc for why (`ipc.ts runHybridFinalize` names a record
+   * retired microseconds earlier, in the same synchronous body).
+   *
+   * Forceful native destroy — the extension-bridge / UI-teardown path. Skips
+   * beforeunload and close events entirely, and has NO guest pass, so it is
+   * never the right teardown for a window that owns page-host guests (peek
+   * `d1cf0b9a`: a guest dereferenced inside `-[NSWindow __close]`).
+   */
+  | { type: 'WindowDestroyRequested'; id: WindowId }
+  /**
+   * The window's CONTENT surface torn down (the hybrid finalize's
+   * `contentWC.close()`) — the bounded-timeout fallback, see the
+   * `CloseContent` command.
+   */
+  | { type: 'WindowContentCloseRequested'; id: WindowId }
+  /** The guest-safe direct close — destroy registered guests, await them, then close the host. No keepLive policy. */
+  | { type: 'WindowDirectCloseRequested'; id: WindowId }
+  /** Quit teardown: destroy every registered page-host guest WC, process-wide. Names no window. */
+  | { type: 'GuestTeardownRequested' };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Commands — rejectable requests (§0.1.1, §0.1.2). Every variant carries
@@ -583,7 +650,65 @@ export type Command =
    * `WindowRecord.overlayFor`). `decide` rejects if either named window is
    * absent from `order`.
    */
-  | { type: 'AttachOverlay'; overlayId: WindowId; hostId: WindowId | null; expectedVersion: number };
+  | { type: 'AttachOverlay'; overlayId: WindowId; hostId: WindowId | null; expectedVersion: number }
+  /**
+   * TEARDOWN (§0.1.5) — the four commands below are the ONLY way a teardown
+   * enters the kernel, and they share one property that the rest of this union
+   * does not: **they are exempt from `decide`'s unknown-window rejection.**
+   *
+   * That exemption is required, not a convenience. `ipc.ts runHybridFinalize`
+   * dispatches a content-close naming a window that `finalizeWindowClose`
+   * retired microseconds earlier, in the same synchronous body — on every
+   * hybrid close; the opener-initiated path has the same shape, its
+   * `hostMachineId` being a captured constant that is never re-resolved. The
+   * old machine accepts this deliberately (`window-state.ts`, pinned by
+   * `window-state.test.ts` "even after the record retired"), and the port must
+   * too: rejecting would silently drop every hybrid content-WC teardown. The
+   * port resolves the native handle itself and no-ops when it is already gone,
+   * which is what makes accepting a dangling id safe.
+   *
+   * Forceful native destroy (extension bridge / UI teardown). NEVER for a
+   * window that owns page-host guests — it has no guest pass; `CloseWindowDirect`
+   * is the teardown that does (peek `d1cf0b9a`).
+   */
+  | { type: 'DestroyWindow'; id: WindowId; expectedVersion: number }
+  /**
+   * Tear down the window's CONTENT surface (the hybrid finalize's
+   * `contentWC.close()`).
+   *
+   * A BOUNDED-TIMEOUT FALLBACK, not the ordinary quit path. Since
+   * `electron-window-backend.ts destroyAllContentGuests` awaits
+   * `guest-teardown.ts destroyGuestsAndWait` and `entry.ts runBeforeQuitCleanup`
+   * awaits that before the re-quit, no ordinary path reaches this with a live
+   * WebContents: both interactive closes no-op (the guest pass already
+   * destroyed the WC, and finalize is triggered BY that WC's `'destroyed'`
+   * event), and quit no-ops too — measured over six restored page hosts, zero
+   * real `wc.close()` calls. The one case that still delivers a live
+   * WebContents is a wedged guest outliving `QUIT_GUEST_TEARDOWN_BUDGET_MS`,
+   * where quit proceeds by design.
+   */
+  | { type: 'CloseContent'; id: WindowId; expectedVersion: number }
+  /**
+   * The guest-safe direct close (the absorbed `windows.ts closeHostWindow`
+   * path): the port destroys and AWAITS the window's registered guests, then
+   * closes the host. No keepLive policy — the caller's intent is close.
+   *
+   * Distinct from `CloseOrHideWindow` in origin, not in realization: that one
+   * resolves keepLive and retires the record, and its `CloseWindow` effect is
+   * derived from the resulting membership diff. This one asserts nothing about
+   * membership; the record retires when the native close reports back.
+   */
+  | { type: 'CloseWindowDirect'; id: WindowId; expectedVersion: number }
+  /**
+   * Quit teardown: destroy every registered page-host guest WebContents before
+   * native quit closes their hosts (peek `d1cf0b9a`).
+   *
+   * NAMES NO WINDOW, and must not be reshaped into one that does. The port's
+   * `destroyAllContentGuests` iterates the process-wide guest map; a caller-side
+   * fan-out over `order` would miss every guest whose host record has already
+   * retired — which at quit is the common case, not the corner one.
+   */
+  | { type: 'DestroyAllGuests'; expectedVersion: number };
 
 export type Rejection = 'stale-version' | 'no-such-window';
 
@@ -609,7 +734,22 @@ export type Effect =
   /** Move the window's outer bounds — emitted by `react` as a structural diff of `bounds`, never from an event's own payload. */
   | { type: 'SetBounds'; id: WindowId; bounds: Rectangle }
   /** Pin/unpin the window on every macOS Space — emitted by `react` as a structural diff of `visibleOnAllSpaces`. */
-  | { type: 'SetVisibleOnAllSpaces'; id: WindowId; on: boolean };
+  | { type: 'SetVisibleOnAllSpaces'; id: WindowId; on: boolean }
+  /**
+   * TEARDOWN (§0.1.5) — the four below are emitted by `react` as a structural
+   * diff of `State.lastTeardown`, one per teardown transition, and each may
+   * name a window that is NOT in `order` (the commands' exemption; see them
+   * for why). The port resolves the handle and no-ops when it is gone.
+   *
+   * Forceful native destroy — no guest pass, no beforeunload.
+   */
+  | { type: 'DestroyWindow'; id: WindowId }
+  /** Tear down the window's content surface — the wedged-guest fallback (see the `CloseContent` command). */
+  | { type: 'CloseContent'; id: WindowId }
+  /** Guest-safe direct close: destroy and await the window's guests, then close the host. */
+  | { type: 'CloseWindowDirect'; id: WindowId }
+  /** Destroy every registered page-host guest WebContents, process-wide. The one effect that names no window. */
+  | { type: 'DestroyAllGuests' };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // initialState
@@ -624,7 +764,13 @@ export function initialState(): State {
     appActive: false,
     openSeqCounter: 0,
     pendingAppResignSweep: false,
+    lastTeardown: null,
   };
+}
+
+/** The next `TeardownRequest.seq` — one per teardown event, monotone, never reused. */
+function nextTeardownSeq(state: State): number {
+  return (state.lastTeardown?.seq ?? 0) + 1;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1190,6 +1336,51 @@ export function evolve(state: State, ev: Event): State {
       };
     }
 
+    // TEARDOWN (§0.1.5) — four arms, one shape: record the request on
+    // `lastTeardown` (the fact `react` diffs) and change nothing else.
+    //
+    // Membership is deliberately untouched. `WindowClosed` is the sole event
+    // that shrinks `order` (RULE 1), and it arrives on its own as the native
+    // report the teardown causes; retiring the record here would emit a
+    // `CloseWindow` from the membership diff ON TOP of the teardown effect,
+    // closing the same window twice through two different port methods.
+    //
+    // Total and guard-free like every arm here: an id absent from `order` is
+    // stored as given rather than filtered out, which is exactly what the
+    // commands' unknown-window exemption requires downstream.
+    case 'WindowDestroyRequested': {
+      return {
+        ...state,
+        lastTeardown: { kind: 'destroy-window', id: ev.id, seq: nextTeardownSeq(state) },
+        version: state.version + 1,
+      };
+    }
+
+    case 'WindowContentCloseRequested': {
+      return {
+        ...state,
+        lastTeardown: { kind: 'close-content', id: ev.id, seq: nextTeardownSeq(state) },
+        version: state.version + 1,
+      };
+    }
+
+    case 'WindowDirectCloseRequested': {
+      return {
+        ...state,
+        lastTeardown: { kind: 'close-window-direct', id: ev.id, seq: nextTeardownSeq(state) },
+        version: state.version + 1,
+      };
+    }
+
+    case 'GuestTeardownRequested': {
+      // No `id` to store — the request is process-wide.
+      return {
+        ...state,
+        lastTeardown: { kind: 'destroy-all-guests', seq: nextTeardownSeq(state) },
+        version: state.version + 1,
+      };
+    }
+
     default: {
       const _exhaustive: never = ev;
       return _exhaustive;
@@ -1396,6 +1587,36 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
   }
 
+  // Teardown (§0.1.5): a structural diff of `State.lastTeardown` — the same
+  // shape as every rule above, one level up from a record field. The `seq`
+  // comparison is what makes it a diff rather than a read: a transition that
+  // did not request a teardown leaves the field alone and emits nothing, and
+  // two identical requests for the same window carry different `seq` values,
+  // so the second is a second teardown rather than a no-op.
+  //
+  // The switch is over STATE (`kind`), never over `ev.type` — which is why
+  // this rule holds identically for a teardown fed in directly and for one
+  // `decide` translated from a command. `destroy-all-guests` is the one arm
+  // whose effect names no window: it is process-wide by construction (see
+  // `TeardownRequest`).
+  const teardown = next.lastTeardown;
+  if (teardown !== null && teardown.seq !== prev.lastTeardown?.seq) {
+    switch (teardown.kind) {
+      case 'destroy-window':
+        effects.push({ type: 'DestroyWindow', id: teardown.id });
+        break;
+      case 'close-content':
+        effects.push({ type: 'CloseContent', id: teardown.id });
+        break;
+      case 'close-window-direct':
+        effects.push({ type: 'CloseWindowDirect', id: teardown.id });
+        break;
+      case 'destroy-all-guests':
+        effects.push({ type: 'DestroyAllGuests' });
+        break;
+    }
+  }
+
   return effects;
 }
 
@@ -1443,6 +1664,32 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
       return { rejected: 'no-such-window' };
     }
     return { events: [{ type: 'OverlayAttached', overlayId: cmd.overlayId, hostId: cmd.hostId }] };
+  }
+
+  // TEARDOWN (§0.1.5) — handled BEFORE the existence guard below, and that
+  // ordering is the whole point: these four are exempt from unknown-window
+  // rejection. `ipc.ts runHybridFinalize` names a window `finalizeWindowClose`
+  // retired microseconds earlier in the same synchronous body, on every hybrid
+  // close, so a rejecting arm would silently drop the content-WC teardown of
+  // every hybrid window. See the commands' own doc for the full reasoning; the
+  // old machine's four arms accept the same traffic, pinned by
+  // `window-state.test.ts` ("even after the record retired").
+  //
+  // `DestroyAllGuests` carries no `cmd.id` at all and so must be answered here
+  // regardless — same structural reason `RegisterWindow` and `AttachOverlay`
+  // are handled above. There is no guard left for any of the four: `decide`
+  // holds all guards, and teardown has none to hold.
+  if (cmd.type === 'DestroyWindow') {
+    return { events: [{ type: 'WindowDestroyRequested', id: cmd.id }] };
+  }
+  if (cmd.type === 'CloseContent') {
+    return { events: [{ type: 'WindowContentCloseRequested', id: cmd.id }] };
+  }
+  if (cmd.type === 'CloseWindowDirect') {
+    return { events: [{ type: 'WindowDirectCloseRequested', id: cmd.id }] };
+  }
+  if (cmd.type === 'DestroyAllGuests') {
+    return { events: [{ type: 'GuestTeardownRequested' }] };
   }
 
   if (!state.order.some((w) => w.id === cmd.id)) {

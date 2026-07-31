@@ -637,6 +637,81 @@ describe('effect performance', () => {
     assert.deepStrictEqual(backend.of('setVisibleOnAllSpaces'), []);
   });
 
+  // ── Teardown (§0.1.5) ─────────────────────────────────────────────────────
+
+  it('DestroyWindow performs the forceful native destroy', () => {
+    const { exec, backend } = makeExecutor();
+    exec.dispatch(register(wid(1)));
+    backend.calls.length = 0;
+    const out = exec.execute({ type: 'DestroyWindow', id: wid(1), expectedVersion: exec.getState().version });
+    assert.ok('applied' in out);
+    assert.deepStrictEqual(backend.of('destroyWindow').map((c) => c.args[0]), [wid(1)]);
+    assert.deepStrictEqual(backend.of('closeWindow'), [], 'destroy is not a close');
+  });
+
+  it('CloseWindowDirect goes through the guest-safe close, never destroyWindow', () => {
+    // `closeWindow` destroys and AWAITS the window's registered guests before
+    // closing the host; `destroyWindow` has no guest pass, and routing a
+    // guest-owning window there reintroduces the d1cf0b9a crash (a guest
+    // dereferenced inside -[NSWindow __close]).
+    const { exec, backend } = makeExecutor();
+    exec.dispatch(register(wid(1), { kind: 'page-host' }));
+    backend.calls.length = 0;
+    const out = exec.execute({ type: 'CloseWindowDirect', id: wid(1), expectedVersion: exec.getState().version });
+    assert.ok('applied' in out);
+    assert.deepStrictEqual(backend.of('closeWindow').map((c) => c.args[0]), [wid(1)]);
+    assert.deepStrictEqual(backend.of('destroyWindow'), []);
+    assert.deepStrictEqual(backend.of('closeOrHide'), [], 'no keepLive policy is re-applied');
+  });
+
+  it('CloseContent tears down only the content surface', () => {
+    const { exec, backend } = makeExecutor();
+    exec.dispatch(register(wid(1), { kind: 'page-host' }));
+    backend.calls.length = 0;
+    const out = exec.execute({ type: 'CloseContent', id: wid(1), expectedVersion: exec.getState().version });
+    assert.ok('applied' in out);
+    assert.deepStrictEqual(backend.of('closeContent').map((c) => c.args[0]), [wid(1)]);
+    assert.deepStrictEqual(backend.of('closeWindow'), [], 'the host window is not touched');
+    assert.deepStrictEqual(backend.of('destroyWindow'), []);
+  });
+
+  it('DestroyAllGuests calls the process-wide port method with no window id', () => {
+    const { exec, backend } = makeExecutor();
+    exec.dispatch(register(wid(1), { kind: 'page-host' }));
+    exec.dispatch(register(wid(2), { kind: 'page-host' }));
+    backend.calls.length = 0;
+    const out = exec.execute({ type: 'DestroyAllGuests', expectedVersion: exec.getState().version });
+    assert.ok('applied' in out);
+    const calls = backend.of('destroyAllContentGuests');
+    assert.strictEqual(calls.length, 1, 'one process-wide call, not one per window');
+    assert.deepStrictEqual(calls[0].args, [], 'and it names no window');
+  });
+
+  it('a teardown naming a window absent from order still reaches the port', () => {
+    // The hybrid-finalize shape: the record retired microseconds earlier, in
+    // the same synchronous body. The port resolves the handle itself and
+    // no-ops when it is gone, so the executor must not withhold the call.
+    const { exec, backend } = makeExecutor();
+    exec.dispatch(register(wid(1)));
+    exec.dispatch({ type: 'WindowClosed', id: wid(1) });
+    backend.calls.length = 0;
+    assert.strictEqual(exec.getState().order.length, 0);
+
+    const out = exec.execute({ type: 'CloseContent', id: wid(1), expectedVersion: exec.getState().version });
+    assert.ok('applied' in out);
+    assert.deepStrictEqual(backend.of('closeContent').map((c) => c.args[0]), [wid(1)]);
+  });
+
+  it('a teardown leaves the record in place — the close report is what retires it', () => {
+    const { exec, backend } = makeExecutor();
+    exec.dispatch(register(wid(1)));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    backend.calls.length = 0;
+    exec.execute({ type: 'DestroyWindow', id: wid(1), expectedVersion: exec.getState().version });
+    assert.deepStrictEqual(exec.getState().order.map((w) => w.id), [wid(1)]);
+    assert.deepStrictEqual(backend.of('closeWindow'), [], 'no CloseWindow was derived from a membership diff');
+  });
+
   it('a backend that throws does not break the dispatch', () => {
     const throwing = new Proxy(new RecordingBackend(), {
       get(target, prop, receiver) {

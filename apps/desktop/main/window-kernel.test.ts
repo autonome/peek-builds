@@ -2689,3 +2689,191 @@ describe('window-kernel: what the key/main split overturns', () => {
     assert.strictEqual(shouldArmEscapeGrab(state), true, 'nobody can hear before-input-event, so the grab arms');
   });
 });
+
+// ── Teardown: commands in, effects out (§0.1.5) ──────────────────────────────
+
+describe('window-kernel: teardown commands and effects', () => {
+  const register = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: 0,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+  });
+
+  const oneWindow = (): State => fold([register(wid(1)), { type: 'WindowShown', id: wid(1) }], initialState());
+
+  /** Runs one command end to end and returns the events it produced plus the effects those events drove. */
+  function run(state: State, cmd: Command): { events: Event[]; effects: Effect[]; state: State } {
+    const decision = decide(state, cmd);
+    assert.ok('events' in decision, `command ${cmd.type} was rejected: ${JSON.stringify(decision)}`);
+    const folded = foldWithEffects(decision.events, state);
+    return { events: decision.events, effects: folded.effects, state: folded.state };
+  }
+
+  // ── One command, one event, one effect ───────────────────────────────────
+
+  const table: Array<{ cmd: Command; event: Event; effect: Effect }> = [
+    {
+      cmd: { type: 'DestroyWindow', id: wid(1), expectedVersion: 0 },
+      event: { type: 'WindowDestroyRequested', id: wid(1) },
+      effect: { type: 'DestroyWindow', id: wid(1) },
+    },
+    {
+      cmd: { type: 'CloseContent', id: wid(1), expectedVersion: 0 },
+      event: { type: 'WindowContentCloseRequested', id: wid(1) },
+      effect: { type: 'CloseContent', id: wid(1) },
+    },
+    {
+      cmd: { type: 'CloseWindowDirect', id: wid(1), expectedVersion: 0 },
+      event: { type: 'WindowDirectCloseRequested', id: wid(1) },
+      effect: { type: 'CloseWindowDirect', id: wid(1) },
+    },
+    {
+      cmd: { type: 'DestroyAllGuests', expectedVersion: 0 },
+      event: { type: 'GuestTeardownRequested' },
+      effect: { type: 'DestroyAllGuests' },
+    },
+  ];
+
+  for (const { cmd, event, effect } of table) {
+    it(`${cmd.type} produces exactly one event and one effect`, () => {
+      const state = oneWindow();
+      const result = run(state, { ...cmd, expectedVersion: state.version });
+      assert.deepStrictEqual(result.events, [event]);
+      assert.deepStrictEqual(result.effects, [effect]);
+    });
+
+    it(`${cmd.type} retires no record — membership shrinks on WindowClosed alone`, () => {
+      const state = oneWindow();
+      const result = run(state, { ...cmd, expectedVersion: state.version });
+      assert.deepStrictEqual(
+        result.state.order.map((w) => w.id),
+        state.order.map((w) => w.id),
+        'order is unchanged: the record retires on the native close report, not on the request',
+      );
+      assert.strictEqual(result.state.order[0].visible, true, 'and nothing about the record moved either');
+    });
+  }
+
+  // ── Constraint: teardown is exempt from the unknown-window rejection ──────
+
+  it('a teardown command naming a window that never registered is ACCEPTED', () => {
+    // `decide` rejects `ShowWindow` for the same id — the exemption is per
+    // command family, not a hole in the guard.
+    const state = oneWindow();
+    assert.deepStrictEqual(
+      decide(state, { type: 'ShowWindow', id: wid(404), expectedVersion: state.version }),
+      { rejected: 'no-such-window' },
+    );
+    for (const { cmd, event } of table) {
+      const named = 'id' in cmd ? { ...cmd, id: wid(404), expectedVersion: state.version } : { ...cmd, expectedVersion: state.version };
+      const decision = decide(state, named);
+      assert.ok('events' in decision, `${cmd.type} must not be rejected for an unknown window`);
+      assert.deepStrictEqual(decision.events, ['id' in event ? { ...event, id: wid(404) } : event]);
+    }
+  });
+
+  it('a content close naming a window retired microseconds earlier still reaches the OS', () => {
+    // The measured production shape: `ipc.ts runHybridFinalize` dispatches the
+    // content close AFTER `finalizeWindowClose` retired the record, in the same
+    // synchronous body, on every hybrid close. A rejecting port would silently
+    // drop every hybrid content-WC teardown.
+    const retired = fold([{ type: 'WindowClosed', id: wid(1) }], oneWindow());
+    assert.strictEqual(retired.order.length, 0, 'the record is gone before the command is issued');
+
+    const result = run(retired, { type: 'CloseContent', id: wid(1), expectedVersion: retired.version });
+    assert.deepStrictEqual(result.effects, [{ type: 'CloseContent', id: wid(1) }]);
+  });
+
+  // ── Constraint: DestroyAllGuests names no window ──────────────────────────
+
+  it('DestroyAllGuests carries no window id — at the command, the event, and the effect', () => {
+    const state = oneWindow();
+    const cmd: Command = { type: 'DestroyAllGuests', expectedVersion: state.version };
+    assert.strictEqual('id' in cmd, false);
+    const result = run(state, cmd);
+    assert.strictEqual('id' in result.events[0], false);
+    assert.strictEqual('id' in result.effects[0], false);
+  });
+
+  it('DestroyAllGuests is one effect regardless of how many windows are registered', () => {
+    // The port iterates the process-wide guest map. A fan-out over `order`
+    // would scale with membership here AND would miss guests whose host has
+    // already retired — the common case at quit.
+    const many = fold([register(wid(1)), register(wid(2)), register(wid(3))], initialState());
+    const result = run(many, { type: 'DestroyAllGuests', expectedVersion: many.version });
+    assert.deepStrictEqual(result.effects, [{ type: 'DestroyAllGuests' }]);
+
+    const none = initialState();
+    const emptyResult = run(none, { type: 'DestroyAllGuests', expectedVersion: none.version });
+    assert.deepStrictEqual(emptyResult.effects, [{ type: 'DestroyAllGuests' }], 'and it fires with nothing registered at all');
+  });
+
+  // ── The seq that makes repetition visible ─────────────────────────────────
+
+  it('two identical teardown requests are two effects, not one', () => {
+    const state = oneWindow();
+    const first = run(state, { type: 'DestroyWindow', id: wid(1), expectedVersion: state.version });
+    const second = run(first.state, { type: 'DestroyWindow', id: wid(1), expectedVersion: first.state.version });
+    assert.deepStrictEqual(first.effects, [{ type: 'DestroyWindow', id: wid(1) }]);
+    assert.deepStrictEqual(second.effects, [{ type: 'DestroyWindow', id: wid(1) }]);
+    assert.ok(second.state.lastTeardown !== null);
+    assert.strictEqual(second.state.lastTeardown.seq, 2, 'the seq is what kept the second request from diffing to nothing');
+  });
+
+  it('a later non-teardown transition re-emits nothing — the field is a record, not a queue', () => {
+    const state = oneWindow();
+    const teardown = run(state, { type: 'DestroyWindow', id: wid(1), expectedVersion: state.version });
+    const after = foldWithEffects([{ type: 'WindowHidden', id: wid(1) }], teardown.state);
+    assert.deepStrictEqual(after.effects, [{ type: 'HideWindow', id: wid(1) }], 'no second DestroyWindow');
+    assert.deepStrictEqual(after.state.lastTeardown, teardown.state.lastTeardown, 'and the recorded teardown is untouched');
+  });
+
+  // ── decide still holds the version guard ──────────────────────────────────
+
+  it('a stale expectedVersion is rejected for teardown too — only the window guard is exempted', () => {
+    const state = oneWindow();
+    for (const { cmd } of table) {
+      const stale = { ...cmd, expectedVersion: state.version + 1 };
+      assert.deepStrictEqual(decide(state, stale), { rejected: 'stale-version' }, `${cmd.type} must honour expectedVersion`);
+    }
+  });
+
+  // ── react stays a projection ──────────────────────────────────────────────
+
+  it('a teardown event fed straight to evolve drives the same effect as the command path', () => {
+    // `react` switches on `lastTeardown.kind` (state), never on `ev.type`, so
+    // the two entry points cannot diverge.
+    const state = oneWindow();
+    const viaCommand = run(state, { type: 'CloseWindowDirect', id: wid(1), expectedVersion: state.version });
+    const viaEvent = foldWithEffects([{ type: 'WindowDirectCloseRequested', id: wid(1) }], state);
+    assert.deepStrictEqual(viaEvent.effects, viaCommand.effects);
+    assert.deepStrictEqual(viaEvent.state, viaCommand.state);
+  });
+
+  it('evolve does not throw on any teardown event, from any state', () => {
+    const states: Array<[string, State]> = [
+      ['empty', initialState()],
+      ['one window', oneWindow()],
+      ['retired window', fold([{ type: 'WindowClosed', id: wid(1) }], oneWindow())],
+    ];
+    const events: Event[] = [
+      { type: 'WindowDestroyRequested', id: wid(1) },
+      { type: 'WindowContentCloseRequested', id: wid(404) },
+      { type: 'WindowDirectCloseRequested', id: wid(1) },
+      { type: 'GuestTeardownRequested' },
+    ];
+    for (const [label, state] of states) {
+      for (const ev of events) {
+        let next: State | undefined;
+        assert.doesNotThrow(() => {
+          next = evolve(state, ev);
+        }, `${label} x ${ev.type}`);
+        assert.strictEqual(next!.version, state.version + 1, 'every event bumps version');
+      }
+    }
+  });
+});
