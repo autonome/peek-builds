@@ -526,7 +526,54 @@ rule — a `topmost` predicate is safe only when the set it admits lies within o
 predicate spanning bands must add a `layer` clause or be replaced by a band-aware query. Registering
 any content window above the base layer would silently break `isContentWindow` the same way.
 
+**`session-projection.ts` reads `focusSeq` and `stackOrder` directly, not just `front`:**
+
+- `serializeSession` emits `zOrder` from `WindowRecord.focusSeq` and `stackIndex` from a map built
+  over `snapshot.stackOrder`; `serializeSpaceWorkspaces` emits `zOrder` from the same map.
+  Resolution: one order is enough — both fields become position in the kernel's `order`. The two
+  orderings diverge in the old machine only because `window-state.ts`'s `WINDOW_SHOWN` non-focused
+  branch calls `stackRaise` without `bumpFocusSeq`; the kernel deletes that producer rather than
+  reconciling the two facts (`window-kernel-properties.test.ts checkInvariants` enforces `the key
+  window is not topmost in order` over every generated log), so no consumer can observe a
+  difference. `STACK_ORDER_IMPORTED` enters the kernel as a reorder-only command that replaces
+  `order` wholesale, preserving membership by construction, exactly as `window-state.ts`'s arm
+  does. `session-projection.test.ts`'s two pinned-divergence tests get rewritten to pin the
+  kernel's fact (a background open registers below the key window), not re-pointed at the new
+  fields, and `renderer/lib/session.js sortWindowsByZOrder`, which has no callers anywhere in the
+  tree, is deleted.
+
+**`window-state.ts getDevtoolsTargetId` (exported through `window-state-singleton.ts`) is a third
+unsurveyed `focusSeq` reader, with no `visible` clause** — a live behavior difference from any
+`topmost` replacement. Resolution: `lastHttpUrl` does not join the kernel record — its only reader
+is this caller, `applyFocusGained` only ever sets it and never clears it (a window that navigates
+from https to `peek://` stays a stale devtools candidate forever), and the kernel exists to stop
+storing facts it can derive. The replacement is a filtered scan of `order`, reading each
+candidate's live URL at call time, which also retires the staleness and adds the `visible` clause
+the current selector lacks — an intended behavior change, not a preserving translation.
+
+**Two test-bridge readers are unlisted, and one depends on deleted behavior:**
+
+- `entry.ts __peek_test.getFrontWindowId` — asserted by `session-restore-hybrid-focus.spec.ts` and
+  `session-restore-page-host.spec.ts` as "which window did restore focus". Resolution:
+  `topmost(state, isContentWindow)`, not `keyWindow`, which is null exactly where those specs
+  assert.
+- `hybrid-overlay.ts`'s test-bridge `setActive` loops up to 100 times because, in its own words,
+  each closing assertion promotes and re-raises the MRU successor — it is written against
+  `enforceFrontInvariant`'s successor repair, the mechanism "key is reported, never repaired"
+  deletes. Resolution: re-pointing its `activeId()` is not enough; the bridge contract must be
+  rewritten against `hostOf(overlay)`.
+
+**`window-state-singleton.ts getFocusOrder` reads `focusSeq` and has zero callers** — dead, and
+still a compile blocker. Resolution: delete.
+
+**`shortcuts.ts LocalShortcutEntry.callback` takes no arguments today.** Threading
+`sourceWindowId` into `openNewPageWindow` (the fix described above for its silent space-mode drop)
+first requires widening this callback's signature to accept the dispatch-site window id.
+
 #### The map above is incomplete — re-measured against the code
+
+The gaps re-measured below are now folded into the map above; this section stays as the measured
+evidence they were derived from.
 
 Re-checking every entry against the tree found the map's hazards intact and its call-site inventory
 short by roughly a third. It names readers of `front`; the cutover also deletes `focusSeq` and
@@ -587,6 +634,11 @@ which only the `main.ts` tile-launcher seam and the `ipc.ts` BrowserWindow windo
 the derivation inputs today.
 
 #### Decided: the three calls the map revision was blocked on
+
+The `zOrder`/`stackIndex` and `getDevtoolsTargetId` decisions below are now folded into the map's
+`session-projection.ts` and `getDevtoolsTargetId` entries; this section stays as the reasoning that
+produced them. The third decision, that `key` nulls on settle, closes Open question 2 (§0.1.10) and
+was never a map gap — see "`key` is reported, never repaired" above.
 
 **One order is enough for session restore. `zOrder` and `stackIndex` both become position in
 `order`.** The two orderings genuinely diverge in the old machine, and the divergence is produced,
@@ -733,7 +785,8 @@ the wrong window.
 
 **Mechanical mappings — all to `topmost(state, <predicate>)`:** `tile-ipc.ts`
 `tile:window:get-focused-visible-id`, `tile:window:fullscreen` (default target),
-`tile:window:set-color-scheme` (the `resolvedId === null` branch), `tileResolveWebWindow` and
+`tile:theme:setWindowColorScheme` (the `resolvedId === null` branch, tier 2 of a three-tier chain),
+`tileResolveWebWindow` and
 `tile:window:devtools` (both already post-filter on http/https — fold that into the predicate
 rather than filtering after), `windows.ts` `resolveFocusedWindowIdForClose`, and `entry.ts`'s
 Close Window menu handler (reads `front` only for its detached-devtools guard and can delegate to
@@ -743,9 +796,11 @@ consumer is `seedSessionMirror` → `coord.setFrontWindowIdProvider(...)`, read 
 `enterOverlay` for `session.preOverlayFocusTarget` — the content window session restore should
 return to once the switcher palette takes key.
 
-**Incidental, deletable reads:** `ipc.ts` `wireHybridContentEvents`'s DEBUG blur log,
-`window-os-adapter.ts`'s dispatch log builder (`fmt(before.front) → fmt(after.front)`), and
-`session-projection.ts`'s module-header doc lines — none carry behavior.
+**Incidental, deletable reads:** `ipc.ts`'s window-open modal-blur handler's DEBUG blur log (reads
+`getFrontPageHostId()` — not `wireHybridContentEvents`, which contains no front read at all),
+`window-os-adapter.ts`'s dispatch log builder (`fmt(before.front) → fmt(after.front)`, and also
+`after.stackOrder.join(' ')`), and `session-projection.ts`'s module-header doc lines — none carry
+behavior.
 
 **Any predicate filtering on `visible` needs re-checking** against `hiddenByAppBlur` and the
 `AppActivated` re-show path, which interact with it. The kernel's `order` carries no visibility
