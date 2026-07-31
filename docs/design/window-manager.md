@@ -483,19 +483,21 @@ Every reader in this map wants the topmost content window, never the key window.
   `initHybridOverlay()`'s `registerLoadErrorListener` callback, and the test bridge `activeId()` /
   `runDeferredBlur()` — all want the overlay record's own `overlayFor` field, not an ordering
   query. `overlayForHost(state, hostId)` runs the wrong direction; it takes the host id these
-  callers are trying to find. No exported `hostForOverlay(state, overlayId)` query exists yet —
-  one needs adding, or these callers read the field directly.
+  callers are trying to find. `window-kernel.ts` exports `hostForOverlay(state, overlayId)`,
+  the opposite query these callers need — it reads the overlay record's own `overlayFor` field
+  and returns the host it names, rather than searching for an overlay by host id.
 
 - The driver that decides the attachment — `initHybridOverlay()`'s `subscribeFrontChange` →
-  `retarget()`, and its seed read — is a genuine ordering query. The predicate proposed here,
-  `topmost(state, r => r.kind === 'page-host' && r.visible && r.orderable)`, is wrong as written,
-  in two independent ways (the second is developed below): it has no role clause, so it admits a
-  `quick-view` page-host — every hybrid page-host registers `kind: 'page-host'` via `ipc.ts
-  assembleHybridPageHost`, peeks and slides included, with `role: 'quick-view'` — and the set it
-  admits spans more than one `layer`, which the rule below forbids for any `topmost` predicate.
-  Implemented as written, the chrome would frame a floating peek while a base-layer page sits
-  underneath it. It needs a role clause and a layer clause added, or a layer-aware replacement,
-  before it lands.
+  `retarget()`, and its seed read — is a genuine ordering query. The naive predicate,
+  `topmost(state, r => r.kind === 'page-host' && r.visible && r.orderable)`, would be wrong as
+  written, in two independent ways (the second is developed below): it has no role clause, so it
+  admits a `quick-view` page-host — every hybrid page-host registers `kind: 'page-host'` via
+  `ipc.ts assembleHybridPageHost`, peeks and slides included, with `role: 'quick-view'` — and the
+  set it admits spans more than one `layer`, which the rule below forbids for any `topmost`
+  predicate. Implemented as written, the chrome would frame a floating peek while a base-layer
+  page sits underneath it. `window-kernel.ts` exports `topmostBaseLayerPageHost(state)` with both
+  clauses added — `layer === BASE_LAYER` and a role check against `CONTENT_ROLES` — closing both
+  gaps.
 
 The split matters because `retarget(id)` detaches when `getHybridWindow(id)` is null, the base
 window is destroyed, or the overlay id is not yet minted. In those states the topmost page-host is
@@ -516,15 +518,16 @@ predicate whose admitted set spans bands.
 
 The one predicate that already scans all of `order`, `isContentWindow`, is safe only because it
 collapses to a single band: the HUD and the space border are excluded by `canBecomeKey`, and the
-cmd panel and peeks/slides are excluded by role. The retarget predicate above,
+cmd panel and peeks/slides are excluded by role. The naive retarget predicate above,
 `topmost(state, r => r.kind === 'page-host' && r.visible && r.orderable)`, carries no such clause
 — it admits a page-host in a floating band (behind the cmd panel, a peek, a slide) alongside
 base-layer page-hosts. That set is genuinely cross-band, and for it array position and visual
-stacking can diverge with no error path. This is the layer half of the two-fold defect noted above
-— the predicate must not land without either a `layer` clause or a band-aware replacement. General
-rule — a `topmost` predicate is safe only when the set it admits lies within one layer band; a
-predicate spanning bands must add a `layer` clause or be replaced by a band-aware query. Registering
-any content window above the base layer would silently break `isContentWindow` the same way.
+stacking can diverge with no error path. This is the layer half of the two-fold defect noted above,
+closed the same way the role clause is: `topmostBaseLayerPageHost`'s `layer === BASE_LAYER` clause
+is the layer-aware replacement. General rule — a `topmost` predicate is safe only when the set it
+admits lies within one layer band; a predicate spanning bands must add a `layer` clause or be
+replaced by a band-aware query. Registering any content window above the base layer would silently
+break `isContentWindow` the same way.
 
 **`session-projection.ts` reads `focusSeq` and `stackOrder` directly, not just `front`:**
 
@@ -628,9 +631,10 @@ The three traps hold. Trap 1 is understated rather than wrong: two of the reader
 `topmost(state, isContentWindow)` are ones the map never listed. Trap 2 is clean — no caller has
 grown a rival page-host predicate, and `window-state-singleton.ts getFrontPageHostId` remains the
 only outside one, still in the defective shape this section warns about. Trap 3 holds exactly:
-`deriveWindowSurface()` has zero production callers, and fourteen registration sites (ten
-production, four in the `E2E_TEST`-gated bridge in production source) would need extending, of
-which only the `main.ts` tile-launcher seam and the `ipc.ts` BrowserWindow window-open path hold
+`deriveWindowSurface()` has zero production callers, and fifteen registration sites (ten
+production, five `E2E_TEST`-gated: four in `hybrid-overlay.ts installTestBridge()`, plus
+`test-fixture-glue.ts`, gated by its own docblock rather than living inside that bridge) would need
+extending, of which only the `main.ts` tile-launcher seam and the `ipc.ts` BrowserWindow window-open path hold
 the derivation inputs today.
 
 #### Decided: the three calls the map revision was blocked on
@@ -972,7 +976,7 @@ it is more faithful, because `decide` on a raise command already returns `OsFocu
 event is the only writer of `key`, so the raise path is preserved verbatim while a reorder that
 leaves `key` alone emits nothing; it removes the current rule's reliance on a fragile
 length-equality trick; and it closes the re-raise-of-the-already-topmost-window hole recorded below
-in "Three lossy ports" under `FOCUS_CONTENT`. The existing decision that `react` must emit
+in "Two lossy ports, one closed" under `FOCUS_CONTENT`. The existing decision that `react` must emit
 `RaiseWindow` off a focus report is preserved, not overturned — the emission remains its own fixed
 point, because the OS focus echo names the window `key` already holds and therefore diffs to
 nothing.
@@ -1006,10 +1010,10 @@ false), and quit now no-ops too. One case can still deliver a live WebContents: 
 outliving `QUIT_GUEST_TEARDOWN_BUDGET_MS`, where quit proceeds by design. Port `CLOSE_CONTENT` as
 that bounded-timeout fallback, not as the ordinary quit path.
 
-#### Three lossy ports
+#### Two lossy ports, one closed
 
-Three transitions already ported from the old machine to the kernel drop a sub-behavior the old
-machine had, each with its own consequence.
+Two transitions ported from the old machine to the kernel still drop a sub-behavior the old
+machine had:
 
 - **`RAISE_WINDOW_REQUESTED` → `Command.RaiseWindow`.** `decide` synchronously manufactures an
   `OsFocusGained`, so `key` moves optimistically with no OS confirmation. The old machine moved
@@ -1017,10 +1021,16 @@ machine had, each with its own consequence.
 - **`FULLSCREEN_SETTLE_TIMEOUT`.** The kernel force-settles optimistically (`entering` →
   `fullscreen`, `leaving` → `normal`); the old machine emitted `RECONCILE_FULLSCREEN` and re-asked
   the OS once.
-- **`FOCUS_CONTENT`.** `react` emits `RaiseWindow` only when the top of `order` changes, so a
-  re-raise of the already-topmost window produces an empty diff and no `focusContent` call. That is
-  the shape of the fixed `7c61e917` regression — a restored host raised by its chrome never regains
-  first responder, and Escape has no handler at all.
+
+**`FOCUS_CONTENT` closed.** `react` used to emit `RaiseWindow` only when the top of `order`
+changed, so a re-raise of the already-topmost window produced an empty diff and no `focusContent`
+call — the shape of the fixed `7c61e917` regression (a restored host raised by its chrome never
+regained first responder, and Escape had no handler at all). The kernel now carries
+`State.lastFocusAssert: { id, seq } | null`, a request fact that `decide` and the raw-event path
+both write and that `react` diffs by `seq` (not `ev.type`) to emit `Effect.FocusContent`. A
+re-assert on the already-topmost window still bumps `seq`, so `react` always emits a `RaiseWindow`
+plus, for a content window (`isContentWindow`), a `FocusContent` call. The gap is closed by
+construction, not by a special case for the already-topmost window.
 
 #### Registration facts the kernel needs but no site supplies
 
