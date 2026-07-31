@@ -51,7 +51,7 @@ import { deriveWindowSurface } from './izui-roles.js';
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
 import { saveSessionSnapshot } from './session.js';
-import { shadowKernelWindowClosed } from './window-kernel-shadow.js';
+import { shadowKernelWindowClosed, shadowKernelCloseWindowDirect } from './window-kernel-shadow.js';
 
 // Track app-quit state so the close-debounced save doesn't double-fire
 // alongside the before-quit save. before-quit handler in entry.ts sets
@@ -460,6 +460,10 @@ export async function initialize(): Promise<void> {
         return;
       }
       dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen.
+      shadowKernelCloseWindowDirect(id);
     },
     // keepLive close intercept (tile-launcher's 'close' handler): dispatch the
     // INTENT — the reducer branches on the record's keepLive (hide vs the

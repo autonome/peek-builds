@@ -97,7 +97,7 @@ import {
   type MachineWindowSpec,
 } from './window-state-singleton.js';
 import { isSatelliteRegistration, classifyWindowRegistration } from './window-state.js';
-import { shadowKernelDestroyWindow, shadowKernelCloseContent } from './window-kernel-shadow.js';
+import { shadowKernelDestroyWindow, shadowKernelCloseContent, shadowKernelCloseWindowDirect } from './window-kernel-shadow.js';
 import {
   TRANSIENT_ROLES,
   inferIzuiRole,
@@ -1199,7 +1199,13 @@ function assembleHybridPageHost(
     // machine (WINDOW_CLOSE_REQUESTED → backend guest-safe close; the guest
     // is already gone here, so it takes the synchronous fast path).
     try {
-      if (!baseWin.isDestroyed()) dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id: hostMachineId });
+      if (!baseWin.isDestroyed()) {
+        dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id: hostMachineId });
+        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+        // authoritative over nothing; see that module's doc for why this
+        // can never change what actually happens on screen.
+        shadowKernelCloseWindowDirect(hostMachineId);
+      }
     } catch { /* closing a torn-down host is a no-op */ }
   });
 
@@ -2357,7 +2363,13 @@ export function installHybridNavbarActionRouting(): void {
     if (!r) return;
     try {
       const wmId = getWindowIdFor(r.windowId);
-      if (wmId != null) dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id: wmId });
+      if (wmId != null) {
+        dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id: wmId });
+        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+        // authoritative over nothing; see that module's doc for why this
+        // can never change what actually happens on screen.
+        shadowKernelCloseWindowDirect(wmId);
+      }
     } catch { /* already gone */ }
   });
 
