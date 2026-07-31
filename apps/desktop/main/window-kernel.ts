@@ -598,6 +598,20 @@ export type Event =
    */
   | { type: 'OverlayAttached'; overlayId: WindowId; hostId: WindowId | null }
   /**
+   * A persisted bottom -> top stack order was imported (`decide`'s translation
+   * of `ImportStackOrder`; ported from `window-state.ts
+   * STACK_ORDER_IMPORTED`). A PERMUTATION of `order` and nothing else:
+   * membership cannot change, `key` is untouched (RULE 2), no record field
+   * moves.
+   *
+   * The payload is advisory, not authoritative. Ids it names that are not
+   * registered are ignored and duplicates collapse to their first occurrence —
+   * both are ordinary traffic, because `session.ts restoreSessionSnapshot`
+   * assembles the list through `getWindowIdFor` over windows that may have died
+   * mid-restore.
+   */
+  | { type: 'StackOrderImported'; order: readonly WindowId[] }
+  /**
    * TEARDOWN (§0.1.5) — the four facts below are `decide`'s translations of
    * the teardown commands, and they share one shape: each records that a
    * teardown was asked for (`State.lastTeardown`) and changes NOTHING else.
@@ -707,6 +721,23 @@ export type Command =
    * absent from `order`.
    */
   | { type: 'AttachOverlay'; overlayId: WindowId; hostId: WindowId | null; expectedVersion: number }
+  /**
+   * Restore a persisted bottom -> top stack order (ported from
+   * `window-state.ts STACK_ORDER_IMPORTED`) — the session-restore ordering
+   * pass. Carries no `id`, so `decide` answers it before the generic
+   * unknown-window guard, the same structural reason `RegisterWindow` and
+   * `AttachOverlay` are answered early.
+   *
+   * UNKNOWN IDS ARE NOT REJECTED, deliberately. `session.ts
+   * restoreSessionSnapshot` assembles this payload through `getWindowIdFor`
+   * over windows that may have died mid-restore, so an id naming nothing is
+   * expected traffic, not caller error; it is silently inert. Duplicates
+   * collapse to their first occurrence for the same reason.
+   *
+   * Never activates anything: the import writes `order` and `order` only, and
+   * `react`'s raise rule is based on `key`, which no permutation touches.
+   */
+  | { type: 'ImportStackOrder'; order: readonly WindowId[]; expectedVersion: number }
   /**
    * TEARDOWN (§0.1.5) — the four commands below are the ONLY way a teardown
    * enters the kernel, and they share one property that the rest of this union
@@ -1456,6 +1487,58 @@ export function evolve(state: State, ev: Event): State {
       };
     }
 
+    case 'StackOrderImported': {
+      // MEMBERSHIP IS PRESERVED BY CONSTRUCTION, not by a check. This arm is
+      // total and guard-free like every other, so "the import must not drop or
+      // invent a window" cannot be a rule someone remembers to honor — the
+      // result is assembled out of `state.order`'s OWN records and nothing
+      // else. No record is ever constructed here and none is ever left out: an
+      // id the payload names that is absent from `order` matches no record and
+      // contributes nothing, and a repeated id is collapsed by `seen`.
+      //
+      // WHERE UNNAMED WINDOWS GO — a conscious divergence from the old
+      // machine. `window-state.ts`'s `STACK_ORDER_IMPORTED` arm rebuilds the
+      // list as `[...unnamed, ...imported]`, pushing every member the import
+      // does not name BELOW the entire imported set (pinned by
+      // `window-state.test.ts` "members the import does not name keep their
+      // relative order BELOW the imported set" — that test is deliberately NOT
+      // ported). It cannot carry over, because the two structures hold
+      // different populations: the old `stackOrder` held only stack members,
+      // while RULE 1 makes this kernel's `order` hold EVERY registered window
+      // — command panel, HUD, peeks/slides, the chrome overlay. Demoting all
+      // of them beneath every restored page would corrupt the
+      // `topmost(...)`-based queries built on that total order (overlay
+      // attachment, `isContentWindow` resolution, the Cmd+W target).
+      //
+      // So the import permutes only WITHIN the array slots the named ids
+      // already occupy: every record the payload does not name keeps its
+      // index, and the named records are written back into their own slots in
+      // the payload's relative order.
+      //
+      // An empty or identity payload is the identity permutation, so `react`'s
+      // order-changed rule sees no change and emits nothing. That falls out of
+      // the construction — there is no early return making it true.
+      const seen = new Set<WindowId>();
+      const namedRecords: WindowRecord[] = [];
+      for (const id of ev.order) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const record = state.order.find((w) => w.id === id);
+        if (record !== undefined) namedRecords.push(record);
+      }
+      const namedIds = new Set<WindowId>(namedRecords.map((w) => w.id));
+      // One slot per named record, by construction: `namedIds` is exactly the
+      // set of ids `namedRecords` carries, and an id occurs at most once in
+      // `order` (RULE 1), so the predicate holds for precisely
+      // `namedRecords.length` slots and the cursor cannot run off the end.
+      let cursor = 0;
+      return {
+        ...state,
+        order: state.order.map((w) => (namedIds.has(w.id) ? namedRecords[cursor++] : w)),
+        version: state.version + 1,
+      };
+    }
+
     // TEARDOWN (§0.1.5) — four arms, one shape: record the request on
     // `lastTeardown` (the fact `react` diffs) and change nothing else.
     //
@@ -1872,6 +1955,20 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
       return { rejected: 'no-such-window' };
     }
     return { events: [{ type: 'OverlayAttached', overlayId: cmd.overlayId, hostId: cmd.hostId }] };
+  }
+
+  // ImportStackOrder carries `order`, not `id` — handled here, before the
+  // generic `cmd.id` guard below, same structural reason as the two
+  // special-cases above.
+  //
+  // The stale-version guard at the top of `decide` is the ONLY guard it gets.
+  // Unknown ids are NOT rejected: `session.ts restoreSessionSnapshot` builds
+  // the payload through `getWindowIdFor` over windows that may have died
+  // mid-restore, so an id naming nothing is expected traffic and is inert in
+  // `evolve` rather than fatal here. Nothing else needs guarding — membership
+  // is preserved by the arm's construction, not by validating the payload.
+  if (cmd.type === 'ImportStackOrder') {
+    return { events: [{ type: 'StackOrderImported', order: cmd.order }] };
   }
 
   // TEARDOWN (§0.1.5) — handled BEFORE the existence guard below, and that

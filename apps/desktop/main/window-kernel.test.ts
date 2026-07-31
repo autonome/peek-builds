@@ -3187,3 +3187,257 @@ describe('window-kernel: the focus assert', () => {
     }
   });
 });
+
+// ── The session-restore stack-order import ──────────────────────────────────
+
+describe('window-kernel: the stack-order import', () => {
+  const pageHost = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+
+  const palette = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'cmd',
+    role: 'palette',
+  });
+
+  /** A HUD: a higher band, never key — one of the windows `order` holds that the import never names. */
+  const hud = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER + 1,
+    canBecomeKey: false,
+    acceptsInput: false,
+    class: 'hud',
+    role: 'overlay',
+  });
+
+  /**
+   * Three restored pages plus the two windows a session restore never names:
+   * the command palette (holding key, as it does when the user triggers a
+   * restore) and the HUD. Every window visible and orderable, so the stacking
+   * sweep really fires.
+   *
+   * `order` bottom -> top: [1, 2, 3, 11, 10] — the palette took key last, so
+   * it sits on top.
+   */
+  const restored = (): State =>
+    fold(
+      [
+        pageHost(wid(1)),
+        pageHost(wid(2)),
+        pageHost(wid(3)),
+        palette(wid(10)),
+        hud(wid(11)),
+        ...[wid(1), wid(2), wid(3), wid(10), wid(11)].flatMap(
+          (id): Event[] => [
+            { type: 'WindowShown', id },
+            { type: 'WindowContentOrderable', id },
+          ],
+        ),
+        { type: 'OsFocusGained', id: wid(10) },
+      ],
+      initialState(),
+    );
+
+  const ids = (state: State): WindowId[] => state.order.map((w) => w.id);
+  const sortedIds = (state: State): WindowId[] => [...ids(state)].sort();
+
+  function importOrder(state: State, order: WindowId[]): { state: State; effects: Effect[] } {
+    return foldWithEffects([{ type: 'StackOrderImported', order }], state);
+  }
+
+  // ── Membership is preserved by construction ───────────────────────────────
+
+  const membershipCases: Array<[string, WindowId[]]> = [
+    ['a subset — only some of the registered windows are named', [wid(3), wid(1)]],
+    ['a superset — ids that name no registered window', [wid(404), wid(3), wid(999), wid(1), wid(2)]],
+    ['duplicates — the same id named repeatedly', [wid(3), wid(3), wid(1), wid(1), wid(2)]],
+    ['an empty payload', []],
+    ['every id, reversed', [wid(11), wid(10), wid(3), wid(2), wid(1)]],
+  ];
+
+  for (const [label, payload] of membershipCases) {
+    it(`membership is identical before and after: ${label}`, () => {
+      const before = restored();
+      const after = importOrder(before, payload).state;
+
+      assert.strictEqual(after.order.length, before.order.length, 'no window gained, none lost');
+      assert.deepStrictEqual(sortedIds(after), sortedIds(before), 'the same set of ids, whatever the payload said');
+      // Not merely equal ids: the very same records. Nothing here constructs a
+      // WindowRecord, so a window can neither be replaced by a stub nor lose a
+      // lived field to the import.
+      for (const record of before.order) {
+        assert.ok(after.order.includes(record), `record ${record.id} is the same object, not a rebuilt one`);
+      }
+    });
+  }
+
+  it('an id the payload names but `order` does not hold is silently inert', () => {
+    const before = restored();
+    const after = importOrder(before, [wid(404), wid(3), wid(1), wid(2)]).state;
+    assert.ok(!ids(after).includes(wid(404)), 'the unknown id did not become a member');
+    assert.deepStrictEqual(ids(after), [wid(3), wid(1), wid(2), wid(11), wid(10)]);
+  });
+
+  it('a repeated id is placed once, at its first occurrence', () => {
+    const before = restored();
+    const after = importOrder(before, [wid(3), wid(1), wid(3), wid(2), wid(1)]).state;
+    assert.deepStrictEqual(ids(after), [wid(3), wid(1), wid(2), wid(11), wid(10)]);
+  });
+
+  // ── Where unnamed windows go — the divergence from the old machine ────────
+
+  it('a window the import does not name keeps its index — NOT demoted below the imported set', () => {
+    // The conscious divergence from `window-state.ts`'s `STACK_ORDER_IMPORTED`,
+    // which rebuilds the list as `[...unnamed, ...imported]`. The old behavior
+    // is pinned by `window-state.test.ts` "members the import does not name
+    // keep their relative order BELOW the imported set", and that test is
+    // deliberately not ported: this kernel's `order` holds EVERY registered
+    // window, so demoting the palette and the HUD beneath every restored page
+    // would corrupt the `topmost(...)`-based queries built on it.
+    const before = restored();
+    assert.deepStrictEqual(ids(before), [wid(1), wid(2), wid(3), wid(11), wid(10)]);
+
+    const after = importOrder(before, [wid(3), wid(1), wid(2)]).state;
+
+    // The named records were rewritten into the three slots they already
+    // occupied (0, 1, 2), in the payload's relative order ...
+    assert.deepStrictEqual(ids(after), [wid(3), wid(1), wid(2), wid(11), wid(10)]);
+    // ... and the two the payload never mentions did not move at all.
+    assert.strictEqual(after.order.indexOf(before.order[3]), 3, 'the HUD kept its index');
+    assert.strictEqual(after.order.indexOf(before.order[4]), 4, 'the palette kept its index');
+    // What the old machine would have produced instead, stated so the
+    // divergence is legible rather than implied.
+    assert.notDeepStrictEqual(ids(after), [wid(11), wid(10), wid(3), wid(1), wid(2)]);
+  });
+
+  it('a partial import permutes only the named slots, leaving the gaps between them alone', () => {
+    // ids 1 and 3 sit at slots 0 and 2, with 2 between them. Naming only those
+    // two swaps them across the gap; the window in the gap does not shift.
+    const before = restored();
+    const after = importOrder(before, [wid(3), wid(1)]).state;
+    assert.deepStrictEqual(ids(after), [wid(3), wid(2), wid(1), wid(11), wid(10)]);
+  });
+
+  // ── What the import drives ────────────────────────────────────────────────
+
+  it('an import emits the full bottom -> top stacking sweep and NO RaiseWindow', () => {
+    // An order import must never activate anything (the old machine forbids it
+    // outright). It holds here without the import having to be constrained:
+    // `react`'s raise rule diffs `State.key`, which a permutation never writes.
+    const before = restored();
+    const { state: after, effects } = importOrder(before, [wid(3), wid(1), wid(2)]);
+
+    assert.deepStrictEqual(effects, [
+      { type: 'SetStacking', id: wid(3), layer: BASE_LAYER },
+      { type: 'SetStacking', id: wid(1), layer: BASE_LAYER },
+      { type: 'SetStacking', id: wid(2), layer: BASE_LAYER },
+      { type: 'SetStacking', id: wid(11), layer: BASE_LAYER + 1 },
+      { type: 'SetStacking', id: wid(10), layer: BASE_LAYER },
+    ]);
+    assert.ok(
+      !effects.some((e) => e.type === 'RaiseWindow'),
+      'a pure reorder raises nothing — a raise here would take key from the palette and show whatever it raised',
+    );
+    assert.ok(!effects.some((e) => e.type === 'ShowWindow'), 'and shows nothing either');
+    assert.strictEqual(after.opSeqCounter, before.opSeqCounter, 'no focus-family op, so no token minted');
+  });
+
+  it('an identity import emits nothing — with no guard in evolve making it so', () => {
+    const before = restored();
+    const identity = importOrder(before, [wid(1), wid(2), wid(3)]);
+    assert.deepStrictEqual(identity.effects, [], 'the permutation is the identity, so the order diff is empty');
+    assert.deepStrictEqual(ids(identity.state), ids(before));
+    // The arm is guard-free like every other, so it still bumps `version`;
+    // emitting nothing is a property of `react`'s diff, not an early return.
+    assert.strictEqual(identity.state.version, before.version + 1);
+
+    const empty = importOrder(before, []);
+    assert.deepStrictEqual(empty.effects, []);
+    assert.deepStrictEqual(ids(empty.state), ids(before));
+    assert.strictEqual(empty.state.version, before.version + 1);
+  });
+
+  it('key is untouched by an import', () => {
+    // RULE 2: `OsFocusGained`/`OsFocusLost` are the only writers of `key`.
+    const before = restored();
+    assert.strictEqual(before.key, wid(10));
+    for (const payload of [[wid(3), wid(1), wid(2)], [wid(10), wid(1)], [], [wid(404)]]) {
+      const after = importOrder(before, payload).state;
+      assert.strictEqual(after.key, wid(10), `key moved on payload ${JSON.stringify(payload)}`);
+    }
+  });
+
+  it('no record field moves — the import writes positions and nothing else', () => {
+    const before = restored();
+    const after = importOrder(before, [wid(3), wid(1), wid(2)]).state;
+    for (const record of before.order) {
+      assert.deepStrictEqual(
+        after.order.find((w) => w.id === record.id),
+        record,
+        `record ${record.id} is unchanged`,
+      );
+    }
+  });
+
+  // ── decide holds the one guard it has ─────────────────────────────────────
+
+  it('decide rejects a stale expectedVersion', () => {
+    const state = restored();
+    assert.deepStrictEqual(decide(state, { type: 'ImportStackOrder', order: [wid(1)], expectedVersion: state.version + 1 }), {
+      rejected: 'stale-version',
+    });
+  });
+
+  it('decide does NOT reject unknown ids — they are expected traffic, not caller error', () => {
+    // `session.ts restoreSessionSnapshot` assembles the payload through
+    // `getWindowIdFor` over windows that may have died mid-restore.
+    const state = restored();
+    const decision = decide(state, {
+      type: 'ImportStackOrder',
+      order: [wid(404), wid(3), wid(1)],
+      expectedVersion: state.version,
+    });
+    assert.ok('events' in decision, 'accepted');
+    assert.deepStrictEqual(decision.events, [{ type: 'StackOrderImported', order: [wid(404), wid(3), wid(1)] }]);
+
+    // A payload naming NOTHING that exists is accepted too, and is inert.
+    const allUnknown = decide(state, { type: 'ImportStackOrder', order: [wid(404), wid(999)], expectedVersion: state.version });
+    assert.ok('events' in allUnknown);
+    const applied = foldWithEffects(allUnknown.events, state);
+    assert.deepStrictEqual(ids(applied.state), ids(state));
+    assert.deepStrictEqual(applied.effects, []);
+  });
+
+  // ── evolve stays total ────────────────────────────────────────────────────
+
+  it('evolve does not throw on an import event, from any state', () => {
+    const states: Array<[string, State]> = [
+      ['empty', initialState()],
+      ['a full restore', restored()],
+      ['a dangling key', fold([{ type: 'WindowClosed', id: wid(10) }], restored())],
+    ];
+    for (const [label, state] of states) {
+      let next: State | undefined;
+      assert.doesNotThrow(() => {
+        next = evolve(state, { type: 'StackOrderImported', order: [wid(3), wid(404), wid(1), wid(3)] });
+      }, label);
+      assert.strictEqual(next!.version, state.version + 1, 'every event bumps version');
+      assert.strictEqual(next!.order.length, state.order.length, `${label}: membership survived`);
+    }
+  });
+});
