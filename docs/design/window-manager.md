@@ -700,6 +700,27 @@ emitting: the kernel decides some closes nobody requested, but does not emit the
 round-trip through a caller as commands, which is what keeps `evolve` guard-free and effects a
 pure structural diff.
 
+#### Measured: quit no longer reaches `closeContent` with a live WebContents
+
+`electron-window-backend.ts destroyAllContentGuests` awaits `guest-teardown.ts
+destroyGuestsAndWait`, and `entry.ts runBeforeQuitCleanup` awaits that promise before the re-quit.
+Measured on a visible run with six restored page hosts, quit by a single Cmd+Q: all six guests
+resolved live at teardown entry, each host window closed as its own guest's `'destroyed'` event
+landed, and every `closeContent` call found `destroyed=true` and returned on the guard — zero real
+`wc.close()` calls, `stillAlive=[]` at batch resolution, 80ms spent inside the await. The host
+closes are caused by the teardown rather than racing it; the windows the teardown does not touch
+close after the await, from the re-quit.
+
+Before this change the same run left all six content WebContents alive and `closeContent`'s
+`wc.close()` was what freed them.
+
+The consequence for the port: `CLOSE_CONTENT` is no longer reached with a live WebContents on any
+ordinary path — the two interactive closes already no-op (the guest pass destroyed the WC, and
+finalize is triggered *by* that WC's `'destroyed'` event, so the guard is structurally always
+false), and quit now no-ops too. One case can still deliver a live WebContents: a wedged guest
+outliving `QUIT_GUEST_TEARDOWN_BUDGET_MS`, where quit proceeds by design. Port `CLOSE_CONTENT` as
+that bounded-timeout fallback, not as the ordinary quit path.
+
 #### Three lossy ports
 
 Three transitions already ported from the old machine to the kernel drop a sub-behavior the old
