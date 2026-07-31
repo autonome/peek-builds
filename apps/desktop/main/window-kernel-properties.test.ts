@@ -936,21 +936,26 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
 
 describe('window-kernel: the op-token invariants are not vacuous', () => {
   /**
-   * MEASURED at POOL_SIZE=6 / LOG_LENGTH=30 / 200 seeds: 19 seeds issue an op,
-   * 20 ops in 6000 generated log items. THIN — and deliberately recorded
+   * MEASURED at POOL_SIZE=6 / LOG_LENGTH=30 / 200 seeds: 31 seeds issue an op,
+   * 33 ops in 6000 generated log items. THIN — and deliberately recorded
    * rather than rounded up, because it says where the real coverage lives: an
    * op needs a REGISTERED window that is also currently hidden (a show) or not
-   * currently topmost (a raise), and the unfiltered generator produces that
-   * combination rarely.
+   * currently the key holder (a raise), and the unfiltered generator produces
+   * that combination rarely.
    *
    * THE NUMBER IS TRAJECTORY-SENSITIVE, not proportional to how many variants
-   * exist. It was 27 seeds / 28 ops before the teardown variant (32) was added;
-   * one extra variant in 33 cannot dilute a rate by a third, and it did not —
-   * adding any variant re-rolls every seed's whole log, and this rate rides on
-   * rare id/state coincidences, so it moves for reasons unrelated to the
-   * addition. Re-measure and re-record it after any generator change rather
-   * than reading a drop as a regression. A counter that stopped advancing
-   * would fail ~19 seeds here, which is a signal but not the proof; the
+   * exist. It was 27 seeds / 28 ops before the teardown variant (32) was added,
+   * then 19/20 after; one extra variant in 33 cannot dilute a rate by a third,
+   * and it did not — adding any variant re-rolls every seed's whole log, and
+   * this rate rides on rare id/state coincidences, so it moves for reasons
+   * unrelated to the addition. The jump to 31/33 has a cause that is not a
+   * re-roll, though: the raise rule now diffs `State.key` instead of the top of
+   * `order`, and a focus report takes key from another window far more often
+   * than it reorders a stack (an already-topmost window taking key back from a
+   * palette emits a raise now, and moves nothing). Re-measure and re-record
+   * after any generator or rule change rather than reading a move either way as
+   * a regression. A counter that stopped advancing
+   * would fail ~31 seeds here, which is a signal but not the proof; the
    * example-based coverage
    * (`window-kernel.test.ts` "the op counter advances once per issued op",
    * `window-kernel-executor.test.ts` "drops the late echo of a superseded op")
@@ -979,11 +984,12 @@ describe('window-kernel: the op-token invariants are not vacuous', () => {
       if (count > 0) seedsWithAnOp += 1;
       assert.strictEqual(state.opSeqCounter, emittingTransitions, `seed ${seed}: one token minted per emitting transition`);
     }
-    // Floors sit just under the recorded measurement (19/20), the same margin
-    // the previous pair (20/20 under 27/28) carried — they exist to catch the
-    // invariant going vacuous, not to pin an exact trajectory.
-    assert.ok(seedsWithAnOp >= 15, `only ${seedsWithAnOp}/${SEED_COUNT} seeds issued an op (${issued} ops total)`);
-    assert.ok(issued >= 15, `only ${issued} focus-family ops across ${SEED_COUNT} seeds`);
+    // Floors sit just under the recorded measurement (31/33), the same margin
+    // the previous pairs (15/15 under 19/20, 20/20 under 27/28) carried — they
+    // exist to catch the invariant going vacuous, not to pin an exact
+    // trajectory.
+    assert.ok(seedsWithAnOp >= 25, `only ${seedsWithAnOp}/${SEED_COUNT} seeds issued an op (${issued} ops total)`);
+    assert.ok(issued >= 25, `only ${issued} focus-family ops across ${SEED_COUNT} seeds`);
   });
 
   it('the checker names the violation when the counter goes inert', () => {

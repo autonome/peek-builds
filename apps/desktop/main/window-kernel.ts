@@ -1195,13 +1195,15 @@ export function evolve(state: State, ev: Event): State {
       }
       const record = state.order[idx];
       const withoutRecord = [...state.order.slice(0, idx), ...state.order.slice(idx + 1)];
-      // `lastOpSeq` is stamped only when this genuinely raises the window
-      // (the same condition `react` uses to emit `RaiseWindow`) — a focus
-      // report on the window already on top moves nothing, stamps nothing,
-      // and issues no op, so the counter stays put.
-      const genuinelyRaised = idx !== state.order.length - 1;
-      const opSeq = genuinelyRaised ? state.opSeqCounter + 1 : state.opSeqCounter;
-      const movedRecord = genuinelyRaised ? { ...record, lastOpSeq: opSeq } : record;
+      // `lastOpSeq` is stamped only when this genuinely takes key — the same
+      // condition `react` uses to emit `RaiseWindow`, mirrored here the way
+      // `WindowShown`'s `issuesShow` and `FocusAssertRequested`'s own
+      // `issuesRaise` are. A report re-confirming the window that already
+      // holds key (the echo of the machine's own raise) asserts nothing,
+      // stamps nothing, and issues no op, so the counter stays put.
+      const issuesRaise = state.key !== ev.id;
+      const opSeq = issuesRaise ? state.opSeqCounter + 1 : state.opSeqCounter;
+      const movedRecord = issuesRaise ? { ...record, lastOpSeq: opSeq } : record;
       return {
         ...state,
         order: [...withoutRecord, movedRecord],
@@ -1513,7 +1515,7 @@ export function evolve(state: State, ev: Event): State {
       // self-caused-focus expectation with would be a previous op's. The
       // condition mirrors `react`'s own emission exactly (a registered
       // target), the same way `WindowShown`'s `issuesShow` and
-      // `OsFocusGained`'s `genuinelyRaised` do — one token per transition that
+      // `OsFocusGained`'s own `issuesRaise` do — one token per transition that
       // issues at least one op, and none for a transition that issues none.
       //
       // Total and guard-free like every arm here: an id absent from `order`
@@ -1647,18 +1649,42 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
   }
 
-  // RaiseWindow: a REORDER put a different window on top. Same structural
-  // shape as every rule above — same membership, different topmost id — so it
-  // reads `prev`/`next` only and never asks which event caused the move.
+  // RaiseWindow: `State.key` now names a different window. Same structural
+  // shape as every rule above — one field, diffed between `prev` and `next` —
+  // so it reads `prev`/`next` only and never asks which event caused the move.
   //
-  // A membership change is deliberately NOT a raise. Registration can land a
-  // record on top (no key window to go under), and closing the top window
-  // promotes the one beneath it; in both the set changed rather than a window
-  // taking focus, and asserting key for the promoted window would be exactly
-  // the successor-guessing RULE 2 forbids — worse, the record beneath may be
-  // hidden, and a raise SHOWS what it raises. Length equality is what
-  // excludes both: the only event that reorders without changing membership
-  // is `OsFocusGained`.
+  // WHY `key` AND NOT THE TOP OF `order`. A raise asserts which window is the
+  // one in use, and `key` IS that fact: `OsFocusGained` is its only writer,
+  // and `decide` turns a `RaiseWindow` COMMAND into exactly that event, so the
+  // raise path is preserved verbatim by diffing the field the command's own
+  // event writes. Diffing the top of `order` instead answered the question
+  // only indirectly, and needed a length-equality trick to do it — `order`
+  // moves for reasons that are not a focus change, so the rule had to exclude
+  // every membership change to keep registration and close from raising.
+  //
+  // The two halves that separates, which a top-of-stack diff cannot express:
+  //
+  //  - a pure REORDER (`order` permuted, `key` untouched) raises NOTHING. A
+  //    stack-order import during session restore permutes `order` wholesale;
+  //    an activating raise there would take key from whatever holds it and —
+  //    since a raise SHOWS what it raises — could put a hidden window on
+  //    screen. The old machine forbids it outright (`window-state.ts`
+  //    `STACK_ORDER_IMPORTED`: an order import must never activate anything).
+  //  - a focus report on a window that is ALREADY topmost still raises when it
+  //    takes key from somebody else (after an `OsFocusLost`, or with a palette
+  //    holding key over it). Nothing in `order` moves, so the old rule emitted
+  //    nothing and the model never re-asserted its answer.
+  //
+  // A membership change is still not a raise, now as a consequence rather than
+  // a special case: registration and close do not write `key`. Closing the top
+  // window promotes the one beneath it in `order` and leaves `key` dangling on
+  // the retired id — no diff, no raise, so the promoted window is never guessed
+  // at as a successor (RULE 2).
+  //
+  // `next.key === null` (an `OsFocusLost`) raises nothing: there is no window
+  // to name. So does a `key` naming an id absent from `next.order` — a raise
+  // has to reach a real window, and a dangling key is unobservable by design
+  // (see `keyWindow`).
   //
   // WHY A FOCUS REPORT DRIVES AN OS RAISE AT ALL — this contradicts the old
   // reducer's standing invariant ("no RAISE_WINDOW from OS_FOCUS_GAINED, the
@@ -1678,10 +1704,10 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   //     a command — the two states are identical.
   //
   //  2. The feedback loop the invariant guarded against cannot run: this
-  //     emission is its own fixed point. The raise moves its target to the
-  //     top, so the focus the OS reports back finds it ALREADY topmost —
-  //     `prev` and `next` have the same top, the diff is empty, and the echo
-  //     emits nothing. One correcting write, then silence. (Provenance —
+  //     emission is its own fixed point. The raise makes its target the window
+  //     in use, so the focus the OS echoes back names the window `key` ALREADY
+  //     holds — the diff is empty and the echo emits nothing. One correcting
+  //     write, then silence. (Provenance —
   //     `FocusCause` / `lastOpSeq` / `isStaleSelfEcho` — is NOT what closes
   //     this loop and cannot be: `react` reads no event payload. It solves a
   //     different problem at a different site — a LATE self-echo, arriving
@@ -1698,16 +1724,9 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // Executor obligation: `RaiseWindow` is an ACTIVATING show, so whatever
   // performs it owes the same activation masks a show owes (never activate
   // under headless; a quick-view NSPanel never activates the app).
-  const prevTop = prev.order[prev.order.length - 1];
-  const nextTop = next.order[next.order.length - 1];
-  if (
-    prevTop !== undefined &&
-    nextTop !== undefined &&
-    prevTop.id !== nextTop.id &&
-    prev.order.length === next.order.length &&
-    prev.order.some((w) => w.id === nextTop.id)
-  ) {
-    effects.push({ type: 'RaiseWindow', id: nextTop.id, opSeq: next.opSeqCounter });
+  const nextKey = next.key;
+  if (nextKey !== null && nextKey !== prev.key && next.order.some((w) => w.id === nextKey)) {
+    effects.push({ type: 'RaiseWindow', id: nextKey, opSeq: next.opSeqCounter });
   }
 
   // SetStacking: §0.1.6 — the executor is a re-assert loop, not a diff. Any

@@ -658,6 +658,49 @@ describe('window-kernel: the raise a focus report drives', () => {
     assert.deepStrictEqual(next.order.map((w) => w.id), [wid(1), wid(2)]);
     assert.deepStrictEqual(raises(react(state, ev, next)), []);
   });
+
+  it('a pure REORDER raises nothing — moving a window in the stack is not making it the one in use', () => {
+    // The half of the rule that a top-of-`order` diff cannot express. `key` is
+    // what a raise asserts, so a transition that permutes `order` and leaves
+    // `key` alone has asserted nothing about focus and must reach the OS as
+    // relative stacking only. An activating raise here would take key away
+    // from the window that holds it, and (because a raise SHOWS what it
+    // raises) could put a hidden window on screen.
+    //
+    // `next` is hand-built because no event permutes `order` yet: the one that
+    // will (a stack-order import during session restore) is the reason this is
+    // pinned ahead of it. That is not a hole in the test — this rule is a
+    // structural diff of `prev`/`next` and reads no event at all, so the
+    // transition is exactly the one `react` would be handed.
+    const state = twoWindows(wid(1), wid(2));
+    assert.deepStrictEqual(state.order.map((w) => w.id), [wid(2), wid(1)], 'the background open sits under the key window');
+    assert.strictEqual(state.key, wid(1));
+
+    const permuted: State = { ...state, order: [state.order[1], state.order[0]], version: state.version + 1 };
+    const effects = react(state, { type: 'AppActivated' }, permuted);
+
+    // Non-vacuous: `react` really did see the reorder — it re-asserted the full
+    // stacking — and still declined to raise.
+    assert.ok(effects.some((e) => e.type === 'SetStacking'), 'the reorder reaches the OS as stacking');
+    assert.deepStrictEqual(raises(effects), [], 'and as nothing else');
+    assert.strictEqual(permuted.key, state.key, 'because `key` never moved');
+  });
+
+  it('a focus report on the window already on top DOES raise when it takes key from somebody else', () => {
+    // The other half, and the reason the rule is `key` rather than the top of
+    // `order`: the OS can hand focus to a window that is already topmost —
+    // after an `OsFocusLost`, or with a palette holding key over it — and the
+    // model has to re-assert its own answer. Nothing about `order` moves here,
+    // so a top-of-stack diff would emit nothing at all.
+    const state = evolve(twoWindows(wid(1), wid(2)), { type: 'OsFocusLost', id: wid(1) });
+    assert.strictEqual(state.key, null, 'nobody holds key');
+    assert.strictEqual(state.order[state.order.length - 1].id, wid(1), 'while wid(1) is still on top');
+
+    const ev: Event = { type: 'OsFocusGained', id: wid(1) };
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(next.order.map((w) => w.id), state.order.map((w) => w.id), 'the stack does not move');
+    assert.deepStrictEqual(raises(react(state, ev, next)), [{ type: 'RaiseWindow', id: wid(1), opSeq: next.opSeqCounter }]);
+  });
 });
 
 // ── CloseOrHideWindow — the keepLive branch point ───────────────────────────
@@ -1325,19 +1368,24 @@ describe('window-kernel: focus provenance (cause) and isStaleSelfEcho', () => {
   });
 
   it('lastOpSeq advances only when a focus-family effect is issued for that window', () => {
-    const state = fold(registerTwo(), initialState());
+    const registered = fold(registerTwo(), initialState());
+    // wid(2) takes key first, so the no-op below is the case the raise rule
+    // actually excludes: a report re-confirming the window that ALREADY holds
+    // key (the echo of the machine's own raise). Position is not what decides
+    // it — wid(2) is topmost in both halves of this test.
+    const state = evolve(registered, { type: 'OsFocusGained', id: wid(2) });
+    const stampedByTheFirstReport = state.order.find((w) => w.id === wid(2))?.lastOpSeq;
 
-    // wid(2) is already on top of `order` — an OsFocusGained naming it does
-    // not genuinely raise it, so no RaiseWindow effect is emitted and
-    // lastOpSeq must stay unset.
+    // A second report naming the key holder asserts nothing, so no RaiseWindow
+    // effect is emitted and lastOpSeq must not move.
     const noRaiseEv: Event = { type: 'OsFocusGained', id: wid(2) };
     const afterNoRaise = evolve(state, noRaiseEv);
     const noRaiseEffects = react(state, noRaiseEv, afterNoRaise);
-    assert.ok(!noRaiseEffects.some((e) => e.type === 'RaiseWindow'), 'no RaiseWindow effect for a window already on top');
-    assert.strictEqual(afterNoRaise.order.find((w) => w.id === wid(2))?.lastOpSeq, undefined);
+    assert.ok(!noRaiseEffects.some((e) => e.type === 'RaiseWindow'), 'no RaiseWindow effect for the window that already holds key');
+    assert.strictEqual(afterNoRaise.order.find((w) => w.id === wid(2))?.lastOpSeq, stampedByTheFirstReport);
 
-    // Raising wid(1) genuinely moves it — a RaiseWindow effect is emitted and
-    // lastOpSeq must advance.
+    // wid(1) taking key genuinely raises it — a RaiseWindow effect is emitted
+    // and lastOpSeq must advance.
     const raiseEv: Event = { type: 'OsFocusGained', id: wid(1) };
     const afterRaise = evolve(state, raiseEv);
     const raiseEffects = react(state, raiseEv, afterRaise);
