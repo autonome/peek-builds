@@ -586,6 +586,79 @@ production, four in the `E2E_TEST`-gated bridge in production source) would need
 which only the `main.ts` tile-launcher seam and the `ipc.ts` BrowserWindow window-open path hold
 the derivation inputs today.
 
+#### Decided: the three calls the map revision was blocked on
+
+**One order is enough for session restore. `zOrder` and `stackIndex` both become position in
+`order`.** The two orderings genuinely diverge in the old machine, and the divergence is produced,
+not incidental: `window-state.ts`'s `WINDOW_SHOWN` non-focused branch calls `stackRaise` without
+`bumpFocusSeq`, so a background open sits above the last-focused window in `stackOrder` while
+ranking below it in `focusSeq`. The kernel deletes the producer rather than reconciling the two
+facts — a background open is registered BELOW the key window, and
+`window-kernel-properties.test.ts checkInvariants` enforces `the key window is not topmost in
+order` over every generated log. With that state unreachable, no consumer can observe a
+difference. Concretely: `session-projection.ts serializeSession` takes both `zOrder` and
+`stackIndex` from `order` position, and `serializeSpaceWorkspaces zOrder` likewise;
+`session.ts restoreSessionSnapshot`'s loading order (descending position, feeding the eager/deferred
+split) and its bottom-to-top replay stay reverses of one another, both derived from the one list.
+`STACK_ORDER_IMPORTED` enters the kernel as a reorder-only command that replaces `order` wholesale,
+preserving membership by construction, exactly as `window-state.ts`'s arm does.
+
+Two consequences that are not translations and must be done as rewrites. The pinned divergence
+tests — `session-projection.test.ts` `the saved stacking position is not the focus-recency rank`
+and the round trip `a background open comes back ON TOP of the last-focused window` — assert the
+two orders are reverses for the same pair. They are asserting the producer this design deletes, so
+they get rewritten to pin the kernel's fact (a background open registers below the key window), not
+re-pointed at the new fields. And `renderer/lib/session.js sortWindowsByZOrder` has no callers
+anywhere in the tree; it goes.
+
+Two carry-overs, neither blocking: `orderRestoredWindowsBottomToTop`'s legacy branch for snapshots
+that predate `stackIndex` stays until those profiles age out (`tests/helpers/restore-proof/
+inject-session.sql` is the fixture exercising it), and `features/groups/home.js openGroup` sorts
+descending by the space-workspace `zOrder` to pick open order — under one order that agrees with
+the session reader's descending sort, so it needs no change beyond the field's new provenance.
+
+**`key` is nulled when focus settles away from every Peek window, and this closes open question 2
+below.** The framing that made this look like a behavior change was wrong: the sticky
+"which window was I last working in" fact that must survive an app switch is answered by
+`topmost(state, isContentWindow)`, which is total and indifferent to activation — not by `key`.
+§0.1.5's wiring map already assigns every production reader to that query and none to
+`keyWindow(state)`, so nulling changes no reader's answer. Keeping `key` populated while no window
+holds key in the OS sense would be a repaired value under another name, which is precisely the
+defect this rewrite removes: RULE 2 is that `key` is reported, never repaired.
+
+Two constraints the port must honor. The null is driven from the SETTLE, never from the resign
+edge — `electron-window-backend.ts armBlurSettle` coalesces to one `setImmediate` and checks
+`anyWindowFocused()` before emitting, so it survives the macOS activation dance, and the resign
+edge does not. And the shapes differ: `OS_FOCUS_SETTLED_NULL` carries no id (it reports that focus
+left the whole group) while `OsFocusLost` names a window. The settle therefore emits `OsFocusLost`
+naming the current `key` when one is held, and nothing otherwise — a per-window report, keeping
+RULE 2 intact and needing no group-wide kernel event.
+
+The old machine's arm and its two pins go with the producer. `window-state.ts`'s
+`OS_FOCUS_SETTLED_NULL` no-op, `window-state.test.ts`'s `(b) S2-null focus lag` and
+`DELIBERATE DIVERGENCE: focus leaving the whole group keeps front` all constrain `front`, which the
+key/main split replaces with two facts; each is re-expressed against `topmost`, which still must
+survive the switch.
+
+**`lastHttpUrl` does NOT join the kernel record; the devtools caller scans and filters.** The field
+has exactly one reader in the entire tree, `window-state.ts getDevtoolsTargetId`. The second caller
+the earlier note pairs with it, `tile-ipc.ts tileResolveWebWindow`, never touches the record — it
+reads a live `webContents.getURL()` on a single `front` candidate — so carrying the field would
+serve one caller, not two. The cost is also understated by the `escapeMode` precedent: that field
+is declared at registration and rode a pass-through, whereas `lastHttpUrl` is a lived fact written
+by focus, so it would additionally need a URL payload on `OsFocusGained` and a write inside an arm
+that today rebuilds `order` and touches no record field.
+
+The decisive argument is correctness, not cost. `applyFocusGained` only ever SETS `lastHttpUrl` and
+never clears it, so a window that navigates from https to `peek://` keeps a stale http URL and
+stays a devtools candidate forever. That is a known-stale stored fact, and the kernel exists to
+stop storing facts it can derive. `getDevtoolsTargetId`'s replacement is a filtered scan of `order`
+reading each candidate's live URL at call time, which also retires the staleness. Note the
+replacement is not a behavior-preserving translation in one respect worth stating: the current
+selector scans the whole window Map with no `visible` clause and ranks by `focusSeq`; a scan over
+`order` is inherently stack-ordered and admits a `visible` clause. Adding one is the intended
+behavior, and the devtools target changing for a hidden window is the visible difference.
+
 #### `hostOf(overlay)` and `topmost(state, isContentWindow)` are orthogonal, not aliases
 
 `hostOf(overlay)` (the `overlayFor` relation) and `topmost(state, isContentWindow)` name different
@@ -1319,6 +1392,18 @@ The same set already has no home in §0.1.7's mapping of `isSatelliteRegistratio
 to name.
 
 #### Open question 2: does `key` survive app deactivation?
+
+**ANSWERED — `key` is nulled at the focus settle.** The decision, its two port constraints, and the
+old arm and pins it retires are recorded in §0.1.5, "Decided: the three calls the map revision was
+blocked on". The evidence below is what it was decided on, and is kept for that reason.
+
+The requirement the answer had to satisfy: coming back to Peek shows it exactly as it was left,
+and only an explicit action changes that (an external link opening a new frontmost window being
+the ordinary case). Nulling `key` satisfies it because that requirement is a statement about
+`order` and about the topmost content window, neither of which app deactivation touches. The one
+field the old machine had was serving both this fact and the OS-level one, and could not report
+"no Peek window holds key" without discarding the user-facing fact along with it; the key/main
+split is what lets both be true at once.
 
 When Peek resigns active, no Peek window holds key in the OS sense. The drafted answer is that
 `key` goes `null` on resign and is re-reported on activate — honest, but it means "who was last
