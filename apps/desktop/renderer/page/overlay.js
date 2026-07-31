@@ -228,27 +228,6 @@ function updateOverlayPositions() {
   stackRight(notesEl, true);
   stackRight(entitiesEl, true);
 
-  // Stage B: position the load-error overlay over the content rect so it fills
-  // exactly the "page area" and tracks window resizes. The overlay is fixed and
-  // dynamically created, so we set its geometry here each time positions change.
-  const errorOverlay = document.querySelector('.load-error-overlay');
-  if (errorOverlay) {
-    errorOverlay.style.left = `${left}px`;
-    errorOverlay.style.top = `${top}px`;
-    errorOverlay.style.width = `${w}px`;
-    errorOverlay.style.height = `${h}px`;
-  }
-
-  // Loading card: same content-rect geometry as the error card (dynamically
-  // created, so its bounds are set here each time positions change).
-  const loadingOverlay = document.querySelector('.loading-overlay');
-  if (loadingOverlay) {
-    loadingOverlay.style.left = `${left}px`;
-    loadingOverlay.style.top = `${top}px`;
-    loadingOverlay.style.width = `${w}px`;
-    loadingOverlay.style.height = `${h}px`;
-  }
-
   // Permission prompt: pinned top-center of the content rect (the canvas chrome
   // used window-relative top:16px/left:50%; the overlay frames content + gutters,
   // so anchor to the content instead). CSS translateX(-50%) centers on `left`.
@@ -309,12 +288,6 @@ let activeWindowId = null;
 // or the active URL is not http(s).
 let activeUrl = null;
 
-// The active window's last-known favicon (seeded from the handoff snapshot,
-// updated by page:favicon / page:loading). Painted on the loading card so a
-// restore/open shows the site's icon the instant the load starts — before the
-// live favicon arrives. '' → spinner-only card.
-let activeFavicon = '';
-
 // P1.4b-3: the active host window's current OUTER bounds, seeded from the active
 // handoff and kept in sync as the user resizes/moves through the overlay chrome.
 // The overlay frames the content window's full outer rect, so these ARE the
@@ -325,190 +298,6 @@ let activeBounds = null;
 // affordance). preMaxBounds holds the bounds to restore to on unmaximize.
 let maximized = false;
 let preMaxBounds = null;
-
-// ── Stage B: branded load-error overlay ──────────────────────────────────────
-// One `.load-error-overlay` div is dynamically created / removed per error
-// event, matching the canvas page.js approach (showLoadErrorOverlay /
-// clearLoadErrorOverlay in page.js ~2485-2553). The overlay is:
-//   - Shown/cleared by paintFromSnapshot (on active-window change, reads snap.loadError)
-//   - Shown/cleared by the page:load-error subscriber (live update for the active window)
-//   - Cleared by clearChrome (active → null, or before painting a new window)
-// Position (left/top/width/height) is applied in updateOverlayPositions() so
-// the card stays over the content rect even as the user resizes the window.
-// FSM alignment: per-host state rides the EXISTING deterministic
-// sendActiveHandoff / paintFromSnapshot path; live updates are published from
-// main only for the currently-active window — exactly one code path, no timers.
-
-/** Remove any existing load-error overlay (called on new nav start or success). */
-function clearLoadErrorOverlay() {
-  const existing = document.querySelector('.load-error-overlay');
-  if (existing) existing.remove();
-}
-
-/**
- * Show the branded load-error card over the content rect. Creates the element
- * dynamically (matching canvas); clears any prior instance first (idempotent).
- * Retry publishes `page:reload`; Close publishes `page:close-window`.
- * The overlay is `.interactive` so the click-capture loop turns the overlay
- * pointer-opaque while the user reads the error or clicks a button.
- */
-function showLoadErrorOverlay(failedUrl, errorCode, errorDescription) {
-  // Ignore Chromium's internal error-page navigations (chrome-error://).
-  if (!failedUrl || failedUrl.startsWith('chrome-error://')) return;
-  clearLoadErrorOverlay();
-
-  const overlay = document.createElement('div');
-  overlay.className = 'load-error-overlay interactive';
-
-  const card = document.createElement('div');
-  card.className = 'load-error-card';
-
-  const icon = document.createElement('div');
-  icon.className = 'load-error-icon';
-  icon.textContent = '⚠'; // ⚠
-
-  const title = document.createElement('div');
-  title.className = 'load-error-title';
-  title.textContent = 'This page didn’t load'; // "This page didn't load"
-
-  const reason = document.createElement('div');
-  reason.className = 'load-error-reason';
-  reason.textContent = errorDescription
-    ? `${errorDescription} (${errorCode})`
-    : `Load failed (${errorCode})`;
-
-  const urlEl = document.createElement('div');
-  urlEl.className = 'load-error-url';
-  urlEl.textContent = failedUrl;
-
-  const actions = document.createElement('div');
-  actions.className = 'load-error-actions';
-
-  const retry = document.createElement('button');
-  retry.className = 'load-error-retry';
-  retry.textContent = 'Retry';
-  retry.addEventListener('click', () => {
-    if (activeWindowId == null) return;
-    // Don't optimistically clear the card: main is the single source of truth.
-    // A reload that actually happens clears it via did-start-loading →
-    // page:load-error(null); a Retry that hits the same-URL cap does NOT reload,
-    // and main answers with page:retry-capped so the card stays (and Retry
-    // disables) instead of vanishing into a blank page.
-    api.publish('page:reload', { windowId: activeWindowId });
-  });
-
-  const close = document.createElement('button');
-  close.className = 'load-error-close';
-  close.textContent = 'Close window';
-  close.addEventListener('click', () => {
-    if (activeWindowId == null) return;
-    api.publish('page:close-window', { windowId: activeWindowId });
-  });
-
-  actions.appendChild(retry);
-  actions.appendChild(close);
-  card.appendChild(icon);
-  card.appendChild(title);
-  card.appendChild(reason);
-  card.appendChild(urlEl);
-  card.appendChild(actions);
-  overlay.appendChild(card);
-  document.body.appendChild(overlay);
-
-  // Arm the click-capture loop for the dynamically-created .interactive element
-  // (the querySelectorAll('.interactive') at init time only covers static HTML).
-  overlay.addEventListener('mouseenter', () => setCapture(true));
-  overlay.addEventListener('mouseleave', () => {
-    requestAnimationFrame(() => {
-      const over = document.querySelector('.interactive:hover');
-      if (!over) setCapture(false);
-    });
-  });
-
-  // Position the overlay over the current content rect now that it's in the DOM.
-  updateOverlayPositions();
-}
-
-// ── Loading card (favicon + spinner over the content rect) ───────────────────
-// Kills the "black screen while restoring" the user saw: a deferred-restore or
-// fresh open shows nothing but the content view's un-painted fill until the
-// first frame commits. This card covers the content rect with a theme fill, the
-// site's last-known favicon, and a spinner the instant the load STARTS, and is
-// removed the instant it SETTLES. FSM alignment: driven purely by the existing
-// deterministic `loading` signal (did-start-loading → page:loading:true /
-// did-stop-loading → page:loading:false; snap.loading on retarget) — no timer,
-// no polling. The branded error card SUPERSEDES it (error > loading).
-
-/** Remove any existing loading card. */
-function clearLoadingOverlay() {
-  const existing = document.querySelector('.loading-overlay');
-  if (existing) existing.remove();
-}
-
-/** Update the favicon on a currently-shown loading card (live favicon arrived
- *  while still loading). No-op if no card is shown. */
-function updateLoadingOverlayFavicon(favicon) {
-  const card = document.querySelector('.loading-overlay .loading-card');
-  if (!card) return;
-  let img = card.querySelector('.loading-favicon');
-  if (favicon) {
-    if (!img) {
-      img = document.createElement('img');
-      img.className = 'loading-favicon';
-      img.alt = '';
-      img.onerror = () => { img.remove(); };
-      card.insertBefore(img, card.firstChild);
-    }
-    img.src = favicon;
-  } else if (img) {
-    img.remove();
-  }
-}
-
-/**
- * Show the loading card over the content rect. Idempotent: if a card is already
- * up, just refreshes its favicon (so the spinner animation isn't restarted on a
- * favicon update). The error card wins — never show a loading card over an
- * active error.
- */
-function showLoadingOverlay(favicon) {
-  if (document.querySelector('.load-error-overlay')) return; // error supersedes
-  const existing = document.querySelector('.loading-overlay');
-  if (existing) {
-    updateLoadingOverlayFavicon(favicon);
-    return;
-  }
-
-  const overlay = document.createElement('div');
-  overlay.className = 'loading-overlay';
-
-  const card = document.createElement('div');
-  card.className = 'loading-card';
-
-  if (favicon) {
-    const img = document.createElement('img');
-    img.className = 'loading-favicon';
-    img.alt = '';
-    img.src = favicon;
-    img.onerror = () => { img.remove(); };
-    card.appendChild(img);
-  }
-
-  const spinner = document.createElement('div');
-  spinner.className = 'loading-spinner';
-  card.appendChild(spinner);
-
-  overlay.appendChild(card);
-  document.body.appendChild(overlay);
-
-  // Position over the current content rect now that it's in the DOM.
-  updateOverlayPositions();
-}
-
-/** Hide the loading card (load settled or window went inactive). */
-function hideLoadingOverlay() {
-  clearLoadingOverlay();
-}
 
 /** Reset the navbar to empty (active→null or before painting a new window). */
 function clearChrome() {
@@ -522,9 +311,6 @@ function clearChrome() {
   document.body.classList.remove('panels-visible');
   document.body.classList.add('no-active');
   hideFindBar();
-  clearLoadErrorOverlay();
-  clearLoadingOverlay();
-  activeFavicon = '';
   clearPanels();
   setCapture(false);
 }
@@ -540,24 +326,6 @@ function paintFromSnapshot(snap) {
   // the previous window's title/favicon never bleeds across a retarget.
   navbar.pageTitle = snap.title || '';
   navbar.favicon = snap.favicon || '';
-  activeFavicon = snap.favicon || '';
-  // Stage B: restore the per-host error state for the newly-active window so the
-  // error card shows (or stays gone) instantly on retarget — no flash of the
-  // wrong window's state. Rides the same deterministic handoff path as
-  // navbar.loading — no extra timer or separate IPC.
-  if (snap.loadError) {
-    showLoadErrorOverlay(snap.loadError.failedUrl, snap.loadError.errorCode, snap.loadError.errorDescription);
-    hideLoadingOverlay();
-  } else {
-    clearLoadErrorOverlay();
-    // Show the favicon+spinner loading card if the newly-active window is mid
-    // FIRST load (deferred restore loading on focus, or a fresh open still in
-    // flight) — a never-painted view would otherwise show a blank theme fill.
-    // firstLoad gates out in-page navigations of already-painted windows (they
-    // keep the old page visible). Same deterministic `loading` signal, no timer.
-    if (snap.loading && snap.firstLoad) showLoadingOverlay(activeFavicon);
-    else hideLoadingOverlay();
-  }
 }
 
 // ── main → overlay: active-window handoff ────────────────────────────────────
@@ -629,59 +397,11 @@ api.subscribe('page:favicon', (msg) => {
   if (!isActive(msg)) return;
   // P1.4b-4: surface the favicon in the navbar title chip.
   navbar.favicon = msg.favicon || '';
-  // Keep the loading-card icon fresh if a card is currently up.
-  if (msg.favicon) activeFavicon = msg.favicon;
-  updateLoadingOverlayFavicon(activeFavicon);
 });
 
 api.subscribe('page:loading', (msg) => {
   if (!isActive(msg)) return;
   navbar.loading = !!msg.loading;
-  // A favicon may ride the loading payload (window that started loading while
-  // already active — no re-handoff). Seed it for the card.
-  if (msg.favicon) activeFavicon = msg.favicon;
-  // Show the favicon+spinner card on FIRST load-start (never-painted window),
-  // remove it on settle. firstLoad gates out in-page navigations. The error card
-  // supersedes (showLoadingOverlay early-returns while an error is shown).
-  if (msg.loading && msg.firstLoad) showLoadingOverlay(activeFavicon);
-  else hideLoadingOverlay();
-});
-
-// Stage B: live error update for the currently-active window. Main publishes
-// this only when the active window's load-error state changes (via the
-// registerLoadErrorListener callback in hybrid-overlay.ts). Non-active windows
-// receive their error in the next sendActiveHandoff / paintFromSnapshot.
-// FSM alignment: no timer, no polling — deterministic main-side publish.
-api.subscribe('page:load-error', (msg) => {
-  if (!isActive(msg)) return;
-  if (msg.error) {
-    // Error supersedes the loading card — take it down and show the error card.
-    hideLoadingOverlay();
-    showLoadErrorOverlay(msg.error.failedUrl, msg.error.errorCode, msg.error.errorDescription);
-  } else {
-    clearLoadErrorOverlay();
-  }
-});
-
-// Same-URL Retry cap reached: main refused another reload of the permanently-
-// failing URL. Reflect it on the current error card — disable Retry and tell the
-// user to edit the address or close — instead of leaving a dead button. The card
-// is still up (main didn't reload), so mutate it in place.
-api.subscribe('page:retry-capped', (msg) => {
-  if (!isActive(msg)) return;
-  const card = document.querySelector('.load-error-overlay .load-error-card');
-  if (!card) return;
-  const retry = card.querySelector('.load-error-retry');
-  if (retry) {
-    retry.textContent = 'Too many attempts';
-    retry.disabled = true;
-    retry.style.opacity = '0.5';
-    retry.style.cursor = 'default';
-  }
-  const reason = card.querySelector('.load-error-reason');
-  if (reason) {
-    reason.textContent = 'This page keeps failing. Edit the address or close the window.';
-  }
 });
 
 api.subscribe('page:nav-state', (msg) => {
@@ -1522,7 +1242,7 @@ function renderActivePermissionPrompt() {
   if (!req) {
     // Nothing to show. If the pointer was parked over the just-removed prompt
     // the overlay is still capturing — release unless it's over other chrome
-    // (same deferred `.interactive:hover` check the load-error overlay uses).
+    // (the same deferred `.interactive:hover` check every dynamic surface uses).
     requestAnimationFrame(() => {
       const over = document.querySelector('.interactive:hover');
       if (!over) setCapture(false);
@@ -1625,8 +1345,8 @@ function renderActivePermissionPrompt() {
 
   // Join the click-capture set: the prompt is a transient interactive surface,
   // so pointer enter must flip the overlay pointer-opaque (and leave must
-  // release unless another interactive region is hovered) — the same manual
-  // binding the dynamically-created load-error overlay uses.
+  // release unless another interactive region is hovered) — the manual binding
+  // every dynamically-created interactive surface needs.
   wrap.classList.add('interactive');
   wrap.addEventListener('mouseenter', () => setCapture(true));
   wrap.addEventListener('mouseleave', () => {

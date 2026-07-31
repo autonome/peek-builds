@@ -30,12 +30,6 @@ import {
   registerHybridWindow,
   markHybridPainted,
   hasHybridPainted,
-  HYBRID_SAME_URL_RETRY_CAP,
-  noteHybridLoadFailure,
-  hasHybridOutstandingFailure,
-  noteHybridRetryAttempt,
-  getHybridRetryAttempts,
-  clearHybridRetry,
   unregisterHybridWindow,
 } from './hybrid-page-host-registry.js';
 

@@ -18,7 +18,6 @@ import {
   updateItem,
   updateItemTitle,
   updateItemFavicon,
-  getFaviconForUrl,
   updateItemThumbnail,
   hardDeleteItem,
   trackWindowLoad,
@@ -146,22 +145,8 @@ import {
   getHybridContentWC,
   getHybridWindow,
   claimHybridDeferredLoad,
-  // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
-  setHybridLoadError,
-  getHybridLoadError,
-  getHybridLoadingTimeoutMs,
-  setHybridPendingNavUrl,
-  takeHybridPendingNavUrl,
-  // Loading-card first-paint tracking
+  // First-paint tracking
   markHybridPainted,
-  hasHybridPainted,
-  // Same-URL Retry cap
-  HYBRID_SAME_URL_RETRY_CAP,
-  noteHybridLoadFailure,
-  hasHybridOutstandingFailure,
-  noteHybridRetryAttempt,
-  getHybridRetryAttempts,
-  clearHybridRetry,
 } from './hybrid-page-host-registry.js';
 
 // Transient-sibling autoclose (focus-driven AND app-resign) is GONE from this
@@ -832,13 +817,10 @@ function assembleHybridPageHost(
     // exactly once, null forever after and for non-deferred windows),
     // so repeat focus events can never double-load. Driven by the
     // deterministic BaseWindow 'focus' event only — no timers, no
-    // polling. The pending-nav record mirrors the navbar-navigate
-    // path so did-start-loading can resolve the target URL for the
-    // loading-timeout overlay.
+    // polling.
     try {
       const deferredUrl = claimHybridDeferredLoad(baseWin.id);
       if (deferredUrl && !view.webContents.isDestroyed()) {
-        setHybridPendingNavUrl(baseWin.id, deferredUrl);
         view.webContents.loadURL(deferredUrl).catch((err) => {
           DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] deferred loadURL failed:`, err);
         });
@@ -1251,20 +1233,6 @@ export function wireHybridContentEvents(
   // maximize (via the overlay), detent 3 → toggle fullscreen. See hybrid-window-gesture.ts.
   initHybridWindowGestureHandling();
 
-  // ── Loading-timeout safety net (Stage B) ────────────────────────────────
-  // Armed on `did-start-loading`, cleared on `did-finish-load` / `did-stop-loading`.
-  // Fires for hung loads (server accepts connection but never responds — the
-  // "blank-white-page-forever / endless glow border" class of bug, e.g.
-  // metikmusic.com) that never produce a `did-fail-load` event. Mirrors the
-  // canvas path's DEFAULT_LOADING_TIMEOUT_MS = 30 000 and the same
-  // `window.__loadingTimeoutMs` override mechanism for tests.
-  //
-  // This is the ONE legitimate timer: it sits at the Chromium-boundary where no
-  // deterministic event exists to signal a truly hung load. Guarded with
-  // `contentWC.isDestroyed()` in its body. fsm-pilled rule: do NOT stack any
-  // other timer on this path.
-  let loadingTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
-
   const publishNavState = () => {
     if (contentWC.isDestroyed()) return;
     const url = contentWC.getURL() || initialUrl;
@@ -1276,60 +1244,17 @@ export function wireHybridContentEvents(
     });
   };
 
-  // ── Loading lifecycle → overlay (P1.4 consumes) ──────────────────────────
+  // ── Loading lifecycle → navbar loading state (P1.4 consumes) ─────────────
   contentWC.on('did-start-loading', () => {
     if (contentWC.isDestroyed()) return;
-    // Stage B: new navigation clears any prior error (matches canvas
-    // clearLoadErrorOverlay() call inside loadingLifecycle.startLoading()).
-    setHybridLoadError(hostWindowId, null);
-    // Stage B: arm the loading-timeout safety net. Duration is read live so
-    // the test bridge can lower it without restarting the process.
-    if (loadingTimeoutHandle) clearTimeout(loadingTimeoutHandle);
-    const timeoutMs = getHybridLoadingTimeoutMs();
-    // Capture the navigation target URL. The page:navigate subscriber records
-    // it in the registry BEFORE calling loadURL so it's always available here.
-    // contentWC.getURL() at did-start-loading time returns the last COMMITTED
-    // URL (not the pending target), so a hung load would report the wrong URL
-    // if we relied on getURL() alone. takeHybridPendingNavUrl consumes and
-    // clears the entry so stale values can't bleed into the next navigation.
-    const capturedUrl = takeHybridPendingNavUrl(hostWindowId) || contentWC.getURL() || initialUrl;
-    loadingTimeoutHandle = setTimeout(() => {
-      // Genuine Chromium-boundary timer — the only case where a timer is
-      // correct (hung HTTP connection, no `did-fail-load` ever fires). Guard
-      // isDestroyed() because the WC may be torn down while we wait.
-      if (contentWC.isDestroyed()) return;
-      loadingTimeoutHandle = null;
-      setHybridLoadError(hostWindowId, {
-        failedUrl: capturedUrl,
-        errorCode: 'TIMEOUT',
-        errorDescription: 'The page took too long to load.',
-      });
-      noteHybridLoadFailure(hostWindowId, capturedUrl);
-      try { contentWC.stop(); } catch { /* already stopped */ }
-    }, timeoutMs);
-    // Include the last-known favicon so a window that starts loading while
-    // ALREADY active (no re-handoff) still paints its icon on the loading card.
-    // '' when unknown → spinner-only. Rides the existing page:loading path — no
-    // extra timer or IPC.
-    let favicon = '';
-    try { if (isHttp(capturedUrl)) favicon = getFaviconForUrl(capturedUrl); } catch { /* ds unavailable */ }
     publish(getSystemAddress(), 'page:loading', {
       windowId: hostWindowId,
       loading: true,
-      favicon,
-      // Card shows only for a never-painted window (fresh/restore/deferred).
-      firstLoad: !hasHybridPainted(hostWindowId),
     });
   });
   contentWC.on('did-stop-loading', () => {
     if (contentWC.isDestroyed()) return;
-    // Stage B: stop fired — load settled (success, error page, or abort).
-    // Cancel the loading-timeout safety net so it can't fire after the WC
-    // has already stopped (prevents a stale error overlay on a clean load).
-    if (loadingTimeoutHandle) { clearTimeout(loadingTimeoutHandle); loadingTimeoutHandle = null; }
-    // The view has now painted a frame (page, error page, or abort) — so any
-    // FUTURE load is an in-page navigation that must NOT get the opaque loading
-    // card. Marks this window painted for the firstLoad gate.
+    // The view has now painted a frame (page, error page, or abort).
     markHybridPainted(hostWindowId);
     publish(getSystemAddress(), 'page:loading', { windowId: hostWindowId, loading: false });
 
@@ -1349,41 +1274,8 @@ export function wireHybridContentEvents(
     }
   });
 
-  // ── did-fail-load → branded error overlay (Stage B) ─────────────────────
-  // Record the failure in per-host state so the overlay can show the branded
-  // error card. Mirrors the canvas `did-fail-load` handler in page.js (~2555):
-  //   - Skip non-main-frame failures (subframe errors don't affect the page).
-  //   - Skip ERR_ABORTED (-3): a redirect-chain abort or user-nav-away that
-  //     produces a spurious did-fail-load; canvas suppresses it too.
-  //   - For real failures: cancel the loading-timeout (it won the race), record
-  //     the error, and stop the WC to prevent further blank-page loading.
-  //
-  // The branded overlay COVERS Chromium's native error page (chrome-error://):
-  // the content WC still commits the "This site can't be reached" page beneath
-  // the overlay window, but our card is visible on top — matching canvas.
-  contentWC.on(
-    'did-fail-load',
-    (
-      _event: Electron.Event,
-      errorCode: number,
-      errorDescription: string,
-      validatedURL: string,
-      isMainFrame: boolean,
-    ) => {
-      if (!isMainFrame) return;
-      if (errorCode === -3) return; // ERR_ABORTED — redirect/user-nav-away, canvas suppresses
-      if (contentWC.isDestroyed()) return;
-      if (loadingTimeoutHandle) { clearTimeout(loadingTimeoutHandle); loadingTimeoutHandle = null; }
-      const failedUrl = validatedURL || contentWC.getURL() || initialUrl;
-      setHybridLoadError(hostWindowId, {
-        failedUrl,
-        errorCode: String(errorCode),
-        errorDescription: errorDescription || 'Load failed',
-      });
-      noteHybridLoadFailure(hostWindowId, failedUrl);
-      try { contentWC.stop(); } catch { /* already stopped */ }
-    },
-  );
+  // A failed main-frame load commits Chromium's own error page in the content
+  // view; nothing extra is layered over it.
 
   // ── Title → datastore + chrome state ─────────────────────────────────────
   contentWC.on('page-title-updated', (_event: Electron.Event, title: string) => {
@@ -2182,19 +2074,9 @@ export function wireHybridContentEvents(
   // a main-side publish of page:search-engine-discovered wakes websearch the
   // same as a renderer-side one.
   contentWC.on('did-finish-load', async () => {
-    // Stage B: clear the loading-timeout timer — load settled successfully.
-    if (loadingTimeoutHandle) { clearTimeout(loadingTimeoutHandle); loadingTimeoutHandle = null; }
     if (contentWC.isDestroyed()) return;
     const pageUrl = contentWC.getURL();
     if (!isHttp(pageUrl)) return;
-
-    // Genuine load success — reset the same-URL Retry budget so a URL that later
-    // fails starts fresh (and a recovered URL isn't stuck at the cap). Gate on
-    // there being NO active load-error: a FAILED main-frame load also fires
-    // did-finish-load for the committed error page, and getURL() still returns
-    // the (http) failed URL, so an unguarded clear would wipe the record
-    // did-fail-load just set (which fires first, so the error is already stored).
-    if (!getHybridLoadError(hostWindowId)) clearHybridRetry(hostWindowId);
 
     let opensearchUrl: string | null = null;
     try {
@@ -2280,47 +2162,15 @@ export function installHybridNavbarActionRouting(): void {
     if (!r) return;
     const url = (raw as { url?: string }).url;
     if (!url) return;
-    // Stage B: record the target URL in the registry BEFORE calling loadURL so
-    // did-start-loading (which fires after) can capture it. contentWC.getURL()
-    // at did-start-loading time returns the COMMITTED URL, not the pending one.
-    setHybridPendingNavUrl(r.windowId, url);
     r.wc.loadURL(url).catch((err) => {
       DEBUG && console.log(`[hybrid-page-host:${r.windowId}] navbar navigate failed:`, err);
-      takeHybridPendingNavUrl(r.windowId); // clear on failure too
     });
   });
 
   subscribe(getSystemAddress(), 'page:reload', (raw) => {
     const r = wcFor(raw);
     if (!r) return;
-    // page:reload is multi-purpose — Cmd+R, the error card's Retry button, and
-    // the same-URL-window-reuse auto-reload all publish it. Only Retry-of-a-
-    // failed-URL is capped: gate on there being an OUTSTANDING load failure for
-    // this window (survives the reload's own error-flicker, unlike the load-
-    // error state). A normal reload (no outstanding failure) is never throttled.
-    if (hasHybridOutstandingFailure(r.windowId)) {
-      if (getHybridRetryAttempts(r.windowId) >= HYBRID_SAME_URL_RETRY_CAP) {
-        // Cap reached — refuse to hammer the failing URL. Tell the overlay so it
-        // can disable Retry instead of silently swallowing the click. The error
-        // card stays up (no reload → no did-start-loading to clear it).
-        publish(getSystemAddress(), 'page:retry-capped', { windowId: r.windowId });
-        return;
-      }
-      noteHybridRetryAttempt(r.windowId);
-    }
     try { r.wc.reload(); } catch { /* wc gone */ }
-  });
-
-  // Stage B: close-window action from the error overlay's "Close" button.
-  // Mirrors the canvas path's `window.close()` call in the close button
-  // handler — routed through the machine (guest-safe close).
-  subscribe(getSystemAddress(), 'page:close-window', (raw) => {
-    const r = baseWinFor(raw);
-    if (!r) return;
-    try {
-      const wmId = getWindowIdFor(r.windowId);
-      if (wmId != null) dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id: wmId });
-    } catch { /* already gone */ }
   });
 
   subscribe(getSystemAddress(), 'page:go-back', (raw) => {

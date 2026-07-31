@@ -31,33 +31,10 @@
 
 import type { BaseWindow, WebContents } from 'electron';
 
-// ── Per-host load-error state (Stage B) ─────────────────────────────────────
-// Lives here (not in hybrid-overlay.ts) so BOTH ipc.ts (which sets errors) and
-// hybrid-overlay.ts (which reads them for sendActiveHandoff) can import it
-// without creating a circular dependency (hybrid-overlay.ts → ipc.ts already).
-//
-// FSM alignment: error state per host swaps deterministically via the existing
-// `sendActiveHandoff` / `paintFromSnapshot` handoff. Live updates for the
-// currently-active window are delivered via a registered callback (installed by
-// hybrid-overlay.ts); non-active windows are covered by the next retarget.
-
-/** A load failure recorded for a hybrid page-host. */
-export type HybridLoadError = {
-  failedUrl: string;
-  errorCode: string;
-  errorDescription: string;
-};
-
-const perHostLoadError = new Map<number, HybridLoadError | null>();
-
-// ── First-paint tracking (loading card) ──────────────────────────────────────
-// A hybrid window's content view shows nothing but its theme background fill
-// until its FIRST load settles (fresh open, session restore, deferred-restore
-// on focus) — the "black/blank screen while restoring" the user hit. The overlay
-// paints a favicon+spinner loading card ONLY for that first-load window; once a
-// window has painted a page, an in-page navigation keeps the old page visible,
-// so covering it with a card would be a regression. `did-stop-loading` marks the
-// window painted (first settle). Cleared on teardown.
+// ── First-paint tracking ─────────────────────────────────────────────────────
+// Whether a hybrid window's content view has settled at least one load. Read by
+// session-partition.ts when projecting a host's restore state. `did-stop-loading`
+// marks the window painted (first settle). Cleared on teardown.
 const perHostPainted = new Set<number>();
 
 /** Mark that `windowId` has settled at least one load (its view has painted). */
@@ -65,79 +42,9 @@ export function markHybridPainted(windowId: number): void {
   perHostPainted.add(windowId);
 }
 
-/** True once `windowId` has settled a load — i.e. it has a page to show, so a
- *  subsequent navigation should NOT get the opaque loading card. */
+/** True once `windowId` has settled a load — i.e. it has a page to show. */
 export function hasHybridPainted(windowId: number): boolean {
   return perHostPainted.has(windowId);
-}
-
-// ── Same-URL retry cap (load-error "Retry" hammering) ─────────────────────────
-// Mashing Retry on a permanently-failing URL used to reload it with zero backoff
-// (read as an "infinite loop"). We cap the number of consecutive Retry reloads
-// of the SAME failing URL. The record is intentionally SEPARATE from the
-// load-error state above, which flickers (cleared on did-start-loading, re-set
-// on did-fail-load) — so a fast Retry mash that lands mid-reload can't reset the
-// counter. It is cleared only by a genuine load SUCCESS (did-finish-load) or a
-// DIFFERENT failing URL, and by teardown. fsm-pilled: attempt-count driven off
-// the load lifecycle, no wall-clock timer.
-export const HYBRID_SAME_URL_RETRY_CAP = 3;
-
-type HybridRetryRecord = { failedUrl: string; attempts: number };
-const perHostRetry = new Map<number, HybridRetryRecord>();
-
-/**
- * Record that `failedUrl` failed to load for `windowId` (did-fail-load /
- * loading-timeout). Resets the attempt counter when the failing URL CHANGES;
- * leaves it intact when the SAME url fails again so retries keep accumulating.
- */
-export function noteHybridLoadFailure(windowId: number, failedUrl: string): void {
-  const rec = perHostRetry.get(windowId);
-  if (!rec || rec.failedUrl !== failedUrl) {
-    perHostRetry.set(windowId, { failedUrl, attempts: 0 });
-  }
-}
-
-/** True when `windowId` currently has an outstanding (unresolved) load failure —
- *  i.e. a `page:reload` is a Retry of a failed URL, subject to the cap. */
-export function hasHybridOutstandingFailure(windowId: number): boolean {
-  return perHostRetry.has(windowId);
-}
-
-/** Increment and return the same-URL Retry attempt count for `windowId`. Callers
- *  guard with `hasHybridOutstandingFailure` first (returns 0 if none). */
-export function noteHybridRetryAttempt(windowId: number): number {
-  const rec = perHostRetry.get(windowId);
-  if (!rec) return 0;
-  rec.attempts += 1;
-  return rec.attempts;
-}
-
-/** Current same-URL Retry attempt count (0 if no outstanding failure). */
-export function getHybridRetryAttempts(windowId: number): number {
-  return perHostRetry.get(windowId)?.attempts ?? 0;
-}
-
-/** Clear the retry record — genuine load success, or navigation elsewhere. */
-export function clearHybridRetry(windowId: number): void {
-  perHostRetry.delete(windowId);
-}
-
-// Per-host pending navigation URL. Set by installHybridNavbarActionRouting's
-// page:navigate subscriber BEFORE calling loadURL(url), so wireHybridContentEvents
-// can read the target URL in did-start-loading (where contentWC.getURL() still
-// returns the last COMMITTED URL, not the pending target).
-const perHostPendingNavUrl = new Map<number, string>();
-
-/** Record the URL being navigated to for `windowId`. Called before loadURL. */
-export function setHybridPendingNavUrl(windowId: number, url: string): void {
-  perHostPendingNavUrl.set(windowId, url);
-}
-
-/** Consume and clear the pending nav URL for `windowId`. Returns null if not set. */
-export function takeHybridPendingNavUrl(windowId: number): string | null {
-  const url = perHostPendingNavUrl.get(windowId) ?? null;
-  perHostPendingNavUrl.delete(windowId);
-  return url;
 }
 
 // ── Hybrid window closed-listener seam ──────────────────────────────────────
@@ -147,8 +54,8 @@ export function takeHybridPendingNavUrl(windowId: number): string | null {
 // hybrid-overlay.ts (initHybridOverlay), which routes it into
 // permission-handler's `denyPendingRequestsForWindow` so a hybrid host
 // closing with a permission prompt open denies (and resolves) its deferred
-// Chromium callbacks. Same one-way-dependency shape as the load-error
-// listener below: this pure module never imports the consumer.
+// Chromium callbacks. One-way dependency: this pure module never imports the
+// consumer.
 let windowClosedListener: ((windowId: number) => void) | null = null;
 
 /**
@@ -171,57 +78,6 @@ function notifyWindowClosed(windowId: number): void {
     /* listener must never break teardown */
   }
 }
-
-/** Registered by hybrid-overlay.ts to publish a live `page:load-error` update. */
-let loadErrorListener: ((windowId: number, error: HybridLoadError | null) => void) | null = null;
-
-/**
- * Register a callback that hybrid-overlay.ts uses to forward live load-error
- * changes to the overlay renderer for the currently-active window. Called once
- * from `initHybridOverlay()`. Pass null to unregister (e.g. on teardown).
- */
-export function registerLoadErrorListener(
-  fn: ((windowId: number, error: HybridLoadError | null) => void) | null,
-): void {
-  loadErrorListener = fn;
-}
-
-/**
- * Record (or clear) the load-error state for a hybrid page-host window.
- *
- * Stores the state in the per-host map and calls the live-update listener
- * (registered by hybrid-overlay.ts) so the overlay can react immediately if
- * the window is currently active. Non-active windows receive the error in the
- * next `sendActiveHandoff` snapshot.
- *
- * Pass `null` to clear: new navigation started, load succeeded, WC destroyed.
- */
-export function setHybridLoadError(windowId: number, error: HybridLoadError | null): void {
-  perHostLoadError.set(windowId, error);
-  if (loadErrorListener) loadErrorListener(windowId, error);
-}
-
-/**
- * Read the current load-error state for a hybrid page-host window, or null
- * if no error has been recorded (or it was cleared). Used by `sendActiveHandoff`
- * to include the per-host error in the overlay snapshot.
- */
-export function getHybridLoadError(windowId: number): HybridLoadError | null {
-  return perHostLoadError.get(windowId) ?? null;
-}
-
-// ── Loading-timeout duration (Stage B) ──────────────────────────────────────
-// The duration for the per-navigation loading-timeout safety net (mirrors the
-// canvas DEFAULT_LOADING_TIMEOUT_MS = 30 000). ipc.ts reads this each time
-// `did-start-loading` arms a fresh timer. The test bridge (in hybrid-overlay.ts)
-// lowers it to 1.5 s so the hung-load spec doesn't burn the full test budget.
-let _hybridLoadingTimeoutMs = 30000;
-
-/** Current loading-timeout duration. Read by `wireHybridContentEvents` per navigation. */
-export function getHybridLoadingTimeoutMs(): number { return _hybridLoadingTimeoutMs; }
-
-/** Set a new loading-timeout duration. Test bridge only; production keeps 30 s. */
-export function setHybridLoadingTimeoutMs(ms: number): void { _hybridLoadingTimeoutMs = ms; }
 
 /**
  * One hybrid page-host window: its host `BaseWindow`, the main-owned content
@@ -463,12 +319,8 @@ export function claimHybridDeferredLoad(windowId: number): string | null {
  */
 export function unregisterHybridWindow(windowId: number): void {
   entries.delete(windowId);
-  // Stage B: clean up per-host load-error and pending-nav state.
-  perHostLoadError.delete(windowId);
-  perHostPendingNavUrl.delete(windowId);
-  // Loading-card first-paint + retry-cap per-host state.
+  // Per-host first-paint state.
   perHostPainted.delete(windowId);
-  perHostRetry.delete(windowId);
   // Announce the teardown (e.g. deny pending permission prompts).
   notifyWindowClosed(windowId);
 }
@@ -555,5 +407,4 @@ export function findHybridWindowByKey(key: string): HybridWindowEntry | null {
 export function _resetForTests(): void {
   entries.clear();
   perHostPainted.clear();
-  perHostRetry.clear();
 }
