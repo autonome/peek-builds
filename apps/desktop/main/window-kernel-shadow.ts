@@ -33,7 +33,7 @@
 
 import { DEBUG } from './config.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
-import type { Command, WindowId, WindowKind } from './window-kernel.js';
+import type { Command, Event, WindowId, WindowKind } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
 import type { StackingLevel } from './window-state.js';
 
@@ -167,6 +167,19 @@ function shadowExecute(command: Command): void {
   }
 }
 
+/**
+ * Feed a past-tense fact straight into the shadow kernel (`WindowKernelExecutor.dispatch`,
+ * NOT `execute` — there is no `decide` step to reject, so this is the OS-focus
+ * counterpart of `shadowExecute` above). Never throws.
+ */
+function shadowDispatch(event: Event): void {
+  try {
+    getShadowKernelExecutor().dispatch(event);
+  } catch (err) {
+    DEBUG && console.log('[window-kernel-shadow] event threw:', event.type, err);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registration — every `registerWindowWithMachine(...)` path
 // (`window-state-singleton.ts`).
@@ -207,4 +220,39 @@ export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec): void
     ...(spec.escapeMode === 'ignore' ? { escapeMode: 'ignore' as const } : {}),
     expectedVersion: getShadowKernelExecutor().getState().version,
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OS focus — the second real input this step feeds the kernel (see
+// `docs/design/window-manager.md` "Decided: the three calls the map revision
+// was blocked on"). Both translations below are dispatched as EVENTS, not
+// commands: an OS focus report is a past-tense fact, not a request `decide`
+// can accept or reject, which is why they go through `WindowKernelExecutor
+// .dispatch` rather than `.execute`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate a genuine OS focus gain (`electron-window-backend.ts
+ * attachNativeListeners` — the host window's `'focus'`, and the page-host
+ * content WC's `'focus'` synthesized by an activating raise/show) into the
+ * kernel's `OsFocusGained` event, naming the window that gained focus.
+ */
+export function shadowKernelOsFocusGained(id: WindowId): void {
+  shadowDispatch({ type: 'OsFocusGained', id });
+}
+
+/**
+ * Translate the deferred-blur SETTLE (`electron-window-backend.ts
+ * armBlurSettle`'s `OS_FOCUS_SETTLED_NULL`) into the kernel's `OsFocusLost`,
+ * naming the currently-held `key` — never driven from the raw OS resign edge,
+ * for the same macOS activation-dance reason the old machine's settle isn't.
+ * The shapes deliberately differ from the old event: `OS_FOCUS_SETTLED_NULL`
+ * carries no id (focus left the whole group), while `OsFocusLost` names a
+ * window — so this emits nothing when no key is held, rather than a null-id
+ * event the kernel has no vocabulary for.
+ */
+export function shadowKernelOsFocusSettled(): void {
+  const { key } = getShadowKernelExecutor().getState();
+  if (key === null) return;
+  shadowDispatch({ type: 'OsFocusLost', id: key });
 }

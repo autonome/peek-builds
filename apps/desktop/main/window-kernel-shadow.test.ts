@@ -9,6 +9,8 @@ import * as assert from 'node:assert';
 import {
   _resetShadowKernelForTests,
   getShadowKernelExecutor,
+  shadowKernelOsFocusGained,
+  shadowKernelOsFocusSettled,
   shadowKernelRegisterWindow,
 } from './window-kernel-shadow.js';
 import { BASE_LAYER, type WindowId } from './window-kernel.js';
@@ -68,5 +70,58 @@ describe('window-kernel-shadow: registration feed', () => {
     const order = getShadowKernelExecutor().getState().order;
     assert.ok(order.some((w) => w.id === wid(2)));
     assert.ok(order.some((w) => w.id === wid(3)));
+  });
+});
+
+describe('window-kernel-shadow: OS focus feed', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('a focus gain reaches the shadow kernel as OsFocusGained, naming the window', () => {
+    const id = wid(10);
+    shadowKernelRegisterWindow({
+      id,
+      kind: 'browser',
+      layer: BASE_LAYER,
+      canBecomeKey: true,
+      acceptsInput: true,
+      class: 'primary',
+    });
+
+    shadowKernelOsFocusGained(id);
+
+    assert.strictEqual(getShadowKernelExecutor().getState().key, id);
+  });
+
+  it('the settle emits OsFocusLost naming the currently-held key', () => {
+    const id = wid(11);
+    shadowKernelRegisterWindow({
+      id,
+      kind: 'browser',
+      layer: BASE_LAYER,
+      canBecomeKey: true,
+      acceptsInput: true,
+      class: 'primary',
+    });
+    shadowKernelOsFocusGained(id);
+    assert.strictEqual(getShadowKernelExecutor().getState().key, id, 'precondition: id holds key');
+
+    shadowKernelOsFocusSettled();
+
+    assert.strictEqual(getShadowKernelExecutor().getState().key, null, 'OsFocusLost nulls the held key');
+  });
+
+  it('the settle emits nothing when no key is held', () => {
+    // Fresh shadow kernel: nothing has ever taken key.
+    assert.strictEqual(getShadowKernelExecutor().getState().key, null, 'precondition: no key held');
+    const versionBefore = getShadowKernelExecutor().getState().version;
+
+    shadowKernelOsFocusSettled();
+
+    // No event reached the kernel at all — version is untouched, not merely
+    // key staying null (which an inert OsFocusLost would also leave true).
+    assert.strictEqual(getShadowKernelExecutor().getState().version, versionBefore);
+    assert.strictEqual(getShadowKernelExecutor().getState().key, null);
   });
 });

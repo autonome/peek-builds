@@ -87,6 +87,7 @@ import {
   type TeardownGuest,
 } from './guest-teardown.js';
 import { expandToOverlayFrame } from './overlay-frame.js';
+import { shadowKernelOsFocusGained, shadowKernelOsFocusSettled } from './window-kernel-shadow.js';
 
 /**
  * The one place `webContents.destroy()` is actually called. `guest-teardown.ts`
@@ -595,6 +596,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         lastHttpUrl: this.readHttpUrl(id),
         cause: this.takeFocusCause(id),
       });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
+      // over nothing; see that module's doc for why this can never change what
+      // actually happens on screen.
+      shadowKernelOsFocusGained(id);
     });
     // The ONE deferred-blur settle: blur alone can't tell "focus left Peek" from
     // "focus is moving to the next Peek window" — Electron fires the old window's
@@ -677,6 +682,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
           cause: this.takeFocusCause(id),
         });
         this.emit({ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id, held: true });
+        // Shadow-feed the kernel — see the `win.on('focus')` listener above.
+        shadowKernelOsFocusGained(id);
       });
       // Mirrors the content WC's first-responder status (§5 step 11) — no
       // consumer yet, purely additive.
@@ -1229,6 +1236,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // left the whole group → emit OS_FOCUS_SETTLED_NULL.
       if (this.anyWindowFocused()) return;
       this.emit({ type: 'OS_FOCUS_SETTLED_NULL' });
+      // Shadow-feed the kernel — see `window-kernel-shadow.ts
+      // shadowKernelOsFocusSettled` for the shape mismatch this translates
+      // (this event carries no id; the kernel's `OsFocusLost` names one).
+      shadowKernelOsFocusSettled();
     });
   }
 
