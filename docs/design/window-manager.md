@@ -526,6 +526,66 @@ rule — a `topmost` predicate is safe only when the set it admits lies within o
 predicate spanning bands must add a `layer` clause or be replaced by a band-aware query. Registering
 any content window above the base layer would silently break `isContentWindow` the same way.
 
+#### The map above is incomplete — re-measured against the code
+
+Re-checking every entry against the tree found the map's hazards intact and its call-site inventory
+short by roughly a third. It names readers of `front`; the cutover also deletes `focusSeq` and
+`stackOrder`, and readers of those two were never surveyed. Since §2 forbids splitting the cutover,
+each gap below is a compile error or a red spec inside a commit that cannot be landed in halves.
+
+**`session-projection.ts` reads all three facts, not just `front`.** `serializeSession` emits
+`zOrder` from `WindowRecord.focusSeq` and `stackIndex` from a map built over `snapshot.stackOrder`;
+`serializeSpaceWorkspaces` builds the same map and emits `zOrder` from it. `session.ts`
+`saveSessionSnapshot` / `saveSpaceWorkspaces` feed both, and restore replays `stackIndex` literally
+through `STACK_ORDER_IMPORTED` — which §0.1.5's own inventory files as expected-but-unwritten. Three
+persisted fields and one restore path therefore rest on the two facts the cutover deletes, with no
+recorded mapping onto kernel `order` position and no kernel home for the event that replays it.
+
+**The focus-producer entry is true of the wrong layer.** `electron-window-backend.ts`
+`attachNativeListeners` emits `OS_FOCUS_GAINED` (from the window's `'focus'`, again from the
+page-host renderer's, and a third synthesized on the app-activation path) and `armBlurSettle` emits
+`OS_FOCUS_SETTLED_NULL` — all four into the OLD machine's sink. Nothing translates to kernel
+`OsFocusGained` / `OsFocusLost`, as this section states two paragraphs later. The translation is not
+mechanical: `OS_FOCUS_SETTLED_NULL` is an explicit no-op that KEEPS `front` (the historical-bug
+replay pins this), while `OsFocusLost` NULLS `key`. Reading the entry as "nothing to do here" ships
+either an app switch that nulls key or one that never does, and neither is recorded as intended.
+
+**The devtools fold-in cannot be executed as written.** The map tells both devtools callers to fold
+their http/https post-filter into the predicate. `window-kernel.ts` states the opposite — the
+http/https set needs a URL fact the kernel does not carry (`WindowRecord.lastHttpUrl`), so those
+callers post-filter until it does. Either add the field or keep the filtered scan; a post-filtered
+`topmost` is not `topmost`. Separately `window-state.ts getDevtoolsTargetId` (exported through
+`window-state-singleton.ts`) is a third unsurveyed `focusSeq` reader, and it carries no `visible`
+clause — a live behavior difference from any `topmost` replacement.
+
+**Two test-bridge readers are unlisted, and one depends on deleted behavior.** `entry.ts`
+`__peek_test.getFrontWindowId` is asserted by `session-restore-hybrid-focus.spec.ts` and
+`session-restore-page-host.spec.ts` as "which window did restore focus" — it maps to
+`topmost(state, isContentWindow)`, and `keyWindow` makes it null exactly where those specs assert.
+`hybrid-overlay.ts`'s E2E bridge `setActive` loops up to 100 times because, in its own words, each
+closing assertion promotes and re-raises the MRU successor — it is written against
+`enforceFrontInvariant`'s successor repair, the mechanism "key is reported, never repaired"
+deletes. Re-pointing its `activeId()` is not enough; the bridge contract must be rewritten against
+`hostOf(overlay)`.
+
+**Smaller, but each a compile site.** `window-state-singleton.ts getFocusOrder` reads `focusSeq`
+and has zero callers — dead, and still a compile blocker. The "incidental blur log" is anchored to
+`ipc.ts wireHybridContentEvents`, which contains no front read at all; the log is in the
+window-open modal-blur handler and reads `getFrontPageHostId()`. The color-scheme channel is now
+`tile:theme:setWindowColorScheme` and its front read is tier 2 of a three-tier chain, not a
+one-line swap. `window-os-adapter.ts`'s dispatch log also formats `stackOrder` and reads
+`after.front` twice more. Threading `sourceWindowId` into `openNewPageWindow` first requires
+widening `shortcuts.ts` `LocalShortcutEntry.callback`, which takes no arguments today.
+
+The three traps hold. Trap 1 is understated rather than wrong: two of the readers that most need
+`topmost(state, isContentWindow)` are ones the map never listed. Trap 2 is clean — no caller has
+grown a rival page-host predicate, and `window-state-singleton.ts getFrontPageHostId` remains the
+only outside one, still in the defective shape this section warns about. Trap 3 holds exactly:
+`deriveWindowSurface()` has zero production callers, and fourteen registration sites (ten
+production, four in the `E2E_TEST`-gated bridge in production source) would need extending, of
+which only the `main.ts` tile-launcher seam and the `ipc.ts` BrowserWindow window-open path hold
+the derivation inputs today.
+
 #### `hostOf(overlay)` and `topmost(state, isContentWindow)` are orthogonal, not aliases
 
 `hostOf(overlay)` (the `overlayFor` relation) and `topmost(state, isContentWindow)` name different
