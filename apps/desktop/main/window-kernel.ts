@@ -419,6 +419,34 @@ export interface State {
    * pending".
    */
   readonly lastFocusAssert: FocusAssertRequest | null;
+  /**
+   * THE ARMED COLD-START FOCUS LATCH — the window a later app activation is to
+   * put back in front, or `null` for "nothing armed" (ported from
+   * `window-state.ts AppWindowState.pendingColdStartFocus`).
+   *
+   * WHY IT EXISTS. Session restore raises and activates the saved-focused
+   * descriptor, but the macOS startup activation dance can fire a FINAL resign
+   * AFTER that, re-stranding the app behind the previous one — its menubar, its
+   * key window. The next activation is the moment to put the saved-focused
+   * window back in front, and this field is what remembers which window that
+   * is. There is no timer: arming is the restore's decision (cold start,
+   * non-headless, the window is actually there) and firing is the machine's.
+   *
+   * `null` IS A PAYLOAD, NOT A HOLE. `session.ts restoreSessionSnapshot` arms
+   * `null` as its first statement — clearing a latch a previous restore pass
+   * armed and never spent — and arms a real id later in the same pass. Both are
+   * ordinary traffic, and "clear" has no separate event.
+   *
+   * Written by `ColdStartFocusArmed` and by nothing else, which is also all
+   * this slice carries: SPENDING the latch (the activation arm that consumes
+   * it) is a separate slice, so today a fresh arm is the only thing that
+   * changes the field.
+   *
+   * The id is stored AS GIVEN, including one naming no member of `order`:
+   * arming happens before the named window is guaranteed live, and whether it
+   * is still there is a question for the moment the latch is spent.
+   */
+  readonly pendingColdStartFocus: WindowId | null;
 }
 
 /**
@@ -649,7 +677,22 @@ export type Event =
    * and no record field moves except the focus-op stamp the raise it drives
    * carries.
    */
-  | { type: 'FocusAssertRequested'; id: WindowId };
+  | { type: 'FocusAssertRequested'; id: WindowId }
+  /**
+   * The cold-start focus latch was armed (ported from `window-state.ts
+   * COLD_START_FOCUS_ARMED`) — `decide`'s translation of `ArmColdStartFocus`.
+   * Writes `State.pendingColdStartFocus` and NOTHING else: not `key` (RULE 2 —
+   * arming is not a focus report), not `order` (RULE 1), no record field.
+   *
+   * `id: null` is a real payload — it CLEARS the latch — and not a missing one;
+   * see the field's own doc for the restore pass that arms both a `null` and a
+   * real id.
+   *
+   * Drives no effect, and no rule in `react` exists to make that so: `react` is
+   * a pure structural diff and nothing in it reads `pendingColdStartFocus`, so
+   * a transition that changes only this field projects to nothing.
+   */
+  | { type: 'ColdStartFocusArmed'; id: WindowId | null };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Commands — rejectable requests (§0.1.1, §0.1.2). Every variant carries
@@ -834,7 +877,25 @@ export type Command =
    * So the composition at the call site is: app active, switcher closed, and a
    * target of `topmost(state, isContentWindow)`.
    */
-  | { type: 'AssertFocus'; id: WindowId; expectedVersion: number };
+  | { type: 'AssertFocus'; id: WindowId; expectedVersion: number }
+  /**
+   * Arm — or clear — the cold-start focus latch (see
+   * `State.pendingColdStartFocus`). `id: null` is the clear, and the restore
+   * pass issues both forms.
+   *
+   * Answered BEFORE the generic unknown-`cmd.id` guard, exactly as
+   * `ImportStackOrder` above is, and for the same structural reason: there is
+   * no window here to guard existence against. The stale-version guard is the
+   * only one it carries.
+   *
+   * That is not merely an unnecessary guard but a wrong one, on both payload
+   * shapes. `null` names nothing at all, so an existence check would reject
+   * every clear. And a non-null id is a NOTE to be read at some later
+   * activation rather than a window to act on now — whether it is still live is
+   * a question for the moment the latch is spent, not for this one, so arming
+   * before the named window is registered is legitimate traffic.
+   */
+  | { type: 'ArmColdStartFocus'; id: WindowId | null; expectedVersion: number };
 
 export type Rejection = 'stale-version' | 'no-such-window';
 
@@ -904,6 +965,7 @@ export function initialState(): State {
     pendingAppResignSweep: false,
     lastTeardown: null,
     lastFocusAssert: null,
+    pendingColdStartFocus: null,
   };
 }
 
@@ -1615,6 +1677,26 @@ export function evolve(state: State, ev: Event): State {
       };
     }
 
+    case 'ColdStartFocusArmed': {
+      // Latch only: `State.pendingColdStartFocus` and nothing else. `key` is
+      // untouched (RULE 2 — arming is a note about a future activation, not a
+      // focus report), `order` is untouched (RULE 1), and no record field moves.
+      //
+      // `null` is applied like any other value, because it IS one: it clears a
+      // latch an earlier arm left behind, which is the restore pass's first
+      // statement. There is no separate clear event and no branch here.
+      //
+      // Total and guard-free like every arm in this switch: the id is stored AS
+      // GIVEN, including one naming no member of `order`. Filtering it out would
+      // drop the ordinary case rather than protect against a bad one — arming
+      // runs before the named window is guaranteed live, and a window that has
+      // gone by the time the latch is spent is handled where it is spent.
+      //
+      // Emits nothing, and that needs no rule: nothing in `react` reads this
+      // field, so a transition that changes only it projects to no effect.
+      return { ...state, pendingColdStartFocus: ev.id, version: state.version + 1 };
+    }
+
     default: {
       const _exhaustive: never = ev;
       return _exhaustive;
@@ -1969,6 +2051,18 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
   // is preserved by the arm's construction, not by validating the payload.
   if (cmd.type === 'ImportStackOrder') {
     return { events: [{ type: 'StackOrderImported', order: cmd.order }] };
+  }
+
+  // ArmColdStartFocus carries an id that may be `null` and, when it is not, may
+  // name a window that is not live yet — handled here, before the generic
+  // `cmd.id` guard below, the same structural reason `ImportStackOrder` above
+  // is. The stale-version guard at the top of `decide` is the ONLY guard it
+  // gets, and an existence guard would be wrong rather than redundant: it would
+  // reject every clear (`null` names nothing), and a real id is a note to be
+  // read at a later activation, whose liveness is a question for the moment the
+  // latch is spent. See the command's own doc.
+  if (cmd.type === 'ArmColdStartFocus') {
+    return { events: [{ type: 'ColdStartFocusArmed', id: cmd.id }] };
   }
 
   // TEARDOWN (§0.1.5) — handled BEFORE the existence guard below, and that

@@ -3441,3 +3441,169 @@ describe('window-kernel: the stack-order import', () => {
     }
   });
 });
+
+// ── Arming the cold-start focus latch ───────────────────────────────────────
+//
+// The ARMING half only — what writes `State.pendingColdStartFocus`. SPENDING it
+// (the activation that re-raises the latched window and clears the field) is a
+// separate slice, so nothing below asserts a consumption.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('window-kernel: arming the cold-start focus latch', () => {
+  const contentWindow = (id: WindowId): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+
+  /**
+   * Two restored pages, the second holding key — the shape a restore pass is in
+   * when it arms the latch on the saved-focused descriptor.
+   */
+  const restored = (): State =>
+    fold(
+      [
+        contentWindow(wid(1)),
+        contentWindow(wid(2)),
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'WindowShown', id: wid(2) },
+        { type: 'OsFocusGained', id: wid(2) },
+      ],
+      initialState(),
+    );
+
+  const arm = (state: State, id: WindowId | null): { state: State; effects: Effect[] } =>
+    foldWithEffects([{ type: 'ColdStartFocusArmed', id }], state);
+
+  it('nothing is armed to begin with, so the arms below are of a real change', () => {
+    assert.strictEqual(initialState().pendingColdStartFocus, null);
+    assert.strictEqual(restored().pendingColdStartFocus, null);
+  });
+
+  it('arming stores the id', () => {
+    const before = restored();
+    const after = arm(before, wid(2)).state;
+    assert.strictEqual(after.pendingColdStartFocus, wid(2));
+    assert.strictEqual(after.version, before.version + 1, 'the arm is a transition like any other');
+  });
+
+  it('arming null clears a latch a previous arm left behind', () => {
+    // `session.ts restoreSessionSnapshot` arms `null` as its first statement,
+    // to drop a latch an earlier restore pass armed and never spent, then arms
+    // a real id in its post-loop focus block. Both forms have to work, so
+    // `null` is a value applied like any other — never a no-op payload.
+    const armed = arm(restored(), wid(2)).state;
+    assert.strictEqual(armed.pendingColdStartFocus, wid(2), 'a latch really is held first');
+
+    const cleared = arm(armed, null).state;
+    assert.strictEqual(cleared.pendingColdStartFocus, null, 'arming null cleared the held latch');
+    assert.strictEqual(cleared.version, armed.version + 1);
+  });
+
+  it('arming an id absent from `order` stores it anyway', () => {
+    // `evolve` is guard-free, and this is the case that needs it: arming runs
+    // before the named window is guaranteed live. Whether the window is still
+    // there is a question for the moment the latch is spent, not this one.
+    const before = restored();
+    const after = arm(before, wid(404)).state;
+    assert.ok(!before.order.some((w) => w.id === wid(404)), 'the id names no member of `order`');
+    assert.strictEqual(after.pendingColdStartFocus, wid(404), 'stored as given, not filtered out');
+  });
+
+  it('arming emits no effects — and no rule in `react` makes that true', () => {
+    // Nothing in `react` diffs `pendingColdStartFocus`, so arming is silently
+    // effect-free by construction: there is no guard, no early return and no
+    // `ev.type` branch involved.
+    for (const id of [wid(2), wid(404), null]) {
+      assert.deepStrictEqual(arm(restored(), id).effects, [], `payload ${String(id)} emitted an effect`);
+    }
+    // Including the arm that lands on top of an existing latch.
+    assert.deepStrictEqual(arm(arm(restored(), wid(1)).state, wid(2)).effects, []);
+  });
+
+  it('arming twice keeps the last value — the latch is a slot, not a queue', () => {
+    const before = restored();
+    const once = arm(before, wid(1)).state;
+    const twice = arm(once, wid(2)).state;
+    assert.strictEqual(twice.pendingColdStartFocus, wid(2));
+    assert.strictEqual(twice.version, before.version + 2, 'both arms are transitions');
+  });
+
+  it('key, order and membership are untouched by arming', () => {
+    const before = restored();
+    assert.strictEqual(before.key, wid(2));
+
+    for (const id of [wid(1), wid(404), null]) {
+      const after = arm(before, id).state;
+      // RULE 2: `OsFocusGained`/`OsFocusLost` are the only writers of `key`.
+      assert.strictEqual(after.key, wid(2), `key moved on payload ${String(id)}`);
+      // RULE 1: membership and order are the same structure, and neither moved.
+      assert.deepStrictEqual(after.order.map((w) => w.id), before.order.map((w) => w.id));
+      for (const record of before.order) {
+        assert.ok(after.order.includes(record), `record ${record.id} is the same object, untouched`);
+      }
+      assert.strictEqual(after.opSeqCounter, before.opSeqCounter, 'no focus-family op, so no token minted');
+    }
+  });
+
+  // ── decide holds the one guard it has ─────────────────────────────────────
+
+  it('decide rejects a stale expectedVersion', () => {
+    const state = restored();
+    assert.deepStrictEqual(
+      decide(state, { type: 'ArmColdStartFocus', id: wid(2), expectedVersion: state.version + 1 }),
+      { rejected: 'stale-version' },
+    );
+    assert.deepStrictEqual(
+      decide(state, { type: 'ArmColdStartFocus', id: null, expectedVersion: state.version + 1 }),
+      { rejected: 'stale-version' },
+    );
+  });
+
+  it('decide does NOT reject an id absent from `order`, and accepts null', () => {
+    // The command is answered before the generic unknown-window guard, the same
+    // as `ImportStackOrder`: `null` names nothing at all, and a real id names a
+    // window that need not be live yet.
+    const state = restored();
+
+    const absent = decide(state, { type: 'ArmColdStartFocus', id: wid(404), expectedVersion: state.version });
+    assert.ok('events' in absent, 'an id absent from `order` was rejected');
+    assert.deepStrictEqual(absent.events, [{ type: 'ColdStartFocusArmed', id: wid(404) }]);
+
+    const clear = decide(state, { type: 'ArmColdStartFocus', id: null, expectedVersion: state.version });
+    assert.ok('events' in clear, 'the clear was rejected');
+    assert.deepStrictEqual(clear.events, [{ type: 'ColdStartFocusArmed', id: null }]);
+
+    // And the clear really clears once applied through the command path.
+    const armed = arm(state, wid(2)).state;
+    const decision = decide(armed, { type: 'ArmColdStartFocus', id: null, expectedVersion: armed.version });
+    assert.ok('events' in decision);
+    assert.strictEqual(fold(decision.events, armed).pendingColdStartFocus, null);
+  });
+
+  // ── evolve stays total ────────────────────────────────────────────────────
+
+  it('evolve does not throw on an arm event, from any state', () => {
+    const states: Array<[string, State]> = [
+      ['empty', initialState()],
+      ['a full restore', restored()],
+      ['a dangling key', fold([{ type: 'WindowClosed', id: wid(2) }], restored())],
+      ['already armed', arm(restored(), wid(1)).state],
+    ];
+    for (const [label, state] of states) {
+      for (const id of [wid(1), wid(404), null]) {
+        let next: State | undefined;
+        assert.doesNotThrow(() => {
+          next = evolve(state, { type: 'ColdStartFocusArmed', id });
+        }, `${label} x ${String(id)}`);
+        assert.strictEqual(next!.version, state.version + 1, 'every event bumps version');
+        assert.strictEqual(next!.pendingColdStartFocus, id);
+      }
+    }
+  });
+});
