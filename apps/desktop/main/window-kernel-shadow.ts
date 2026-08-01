@@ -29,13 +29,21 @@
  * Together these mean: the OS is still driven solely by `window-state.ts` +
  * `WindowOsAdapter`, exactly as before this file existed. The kernel runs the
  * same registrations through `decide`/`evolve` for comparison value only.
+ *
+ * DIVERGENCE COMPARATOR. `compareShadowKernelState` (bottom of this file) is
+ * the one place this module reads FROM the kernel for diagnostic value: it
+ * checks the shadow's view against the old machine's current state and
+ * returns every mismatch. Its logging is gated behind
+ * `PEEK_SHADOW_KERNEL_COMPARE=1` — unset (the default), the comparator still
+ * runs but emits nothing, so a normal run pays only for the comparison itself
+ * (a few array scans over a handful of windows), never for a log line.
  */
 
 import { DEBUG } from './config.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
-import type { Command, Event, WindowId, WindowKind } from './window-kernel.js';
+import { isContentWindow, topmost, type Command, type Event, type WindowId, type WindowKind } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
-import type { StackingLevel } from './window-state.js';
+import type { StackingLevel, StateSnapshot } from './window-state.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The no-op effect port
@@ -343,4 +351,88 @@ export function shadowKernelWindowClosed(id: WindowId): void {
  */
 export function shadowKernelImportStackOrder(order: readonly WindowId[]): void {
   shadowExecute({ type: 'ImportStackOrder', order, expectedVersion: getShadowKernelExecutor().getState().version });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Divergence comparator — evidence the shadow kernel's view matches reality
+// before the next commit re-points readers onto it. Compares the three things
+// the cutover's readers actually depend on; see `compareShadowKernelState`'s
+// own doc below for what each check does and does not claim.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One divergence between the old machine and the shadow kernel — see `compareShadowKernelState`. */
+export interface ShadowKernelDivergence {
+  kind: 'membership' | 'front' | 'stackOrder';
+  old: unknown;
+  kernel: unknown;
+}
+
+/**
+ * Compare the shadow kernel's view against the old machine's CURRENT state
+ * (a `window-state.ts snapshot()`), for the three things the cutover's
+ * readers actually depend on:
+ *
+ *   - **membership** — `oldMachine.windows` (the old machine's record set)
+ *     versus the kernel's `order` — same ids present, order aside.
+ *   - **the main/front window** — `oldMachine.front` versus
+ *     `topmost(kernelState, isContentWindow)` (`window-kernel.ts`). These are
+ *     NOT expected to be identical by definition: `front` was trying to be
+ *     AppKit's *main* window while being written from focus events, which is
+ *     exactly the drift this conversion exists to fix. A mismatch here may be
+ *     the OLD machine being wrong — this reports both values rather than
+ *     judging it.
+ *   - **stacking order** — `oldMachine.stackOrder` versus the kernel's
+ *     `order`, each restricted to the ids BOTH machines hold a record for.
+ *     Comparing the raw sequences would also flag every id one machine simply
+ *     doesn't know about yet (already reported by the membership check above)
+ *     as if it were a stacking disagreement, which it isn't.
+ *
+ * `keyWindow(kernelState)` (`window-kernel.ts`) is deliberately NOT compared
+ * against `front` here — `key` is the key window and replaces none of the old
+ * readers `front` and `topmost(state, isContentWindow)` do.
+ *
+ * A PURE READ: never dispatches, never mutates either machine, performs no
+ * effect. The comparison always runs (cheap — a few array scans over a
+ * handful of windows); only the console line per divergence is gated behind
+ * `PEEK_SHADOW_KERNEL_COMPARE=1`, so a caller can call this on every settled
+ * input for its return value alone with no cost when the flag is unset.
+ */
+export function compareShadowKernelState(oldMachine: StateSnapshot): ShadowKernelDivergence[] {
+  const kernelState = getShadowKernelExecutor().getState();
+  const divergences: ShadowKernelDivergence[] = [];
+
+  const oldIds = oldMachine.windows.map((w) => w.id);
+  const oldIdSet = new Set(oldIds);
+  const kernelIds = kernelState.order.map((r) => r.id);
+  const kernelIdSet = new Set(kernelIds);
+  const sameMembership = oldIdSet.size === kernelIdSet.size && oldIds.every((id) => kernelIdSet.has(id));
+  if (!sameMembership) {
+    divergences.push({ kind: 'membership', old: oldIds, kernel: kernelIds });
+  }
+
+  const kernelFront = topmost(kernelState, isContentWindow)?.id ?? null;
+  if (oldMachine.front !== kernelFront) {
+    divergences.push({ kind: 'front', old: oldMachine.front, kernel: kernelFront });
+  }
+
+  // Restrict both sequences to ids present in BOTH record sets, preserving
+  // each machine's own relative order, before comparing.
+  const oldStackRestricted = oldMachine.stackOrder.filter((id) => kernelIdSet.has(id));
+  const kernelOrderRestricted = kernelIds.filter((id) => oldIdSet.has(id));
+  const sameStackOrder =
+    oldStackRestricted.length === kernelOrderRestricted.length &&
+    oldStackRestricted.every((id, i) => id === kernelOrderRestricted[i]);
+  if (!sameStackOrder) {
+    divergences.push({ kind: 'stackOrder', old: oldStackRestricted, kernel: kernelOrderRestricted });
+  }
+
+  if (process.env.PEEK_SHADOW_KERNEL_COMPARE === '1') {
+    for (const d of divergences) {
+      console.log(
+        `[window-kernel-shadow] divergence kind=${d.kind} old=${JSON.stringify(d.old)} kernel=${JSON.stringify(d.kernel)}`,
+      );
+    }
+  }
+
+  return divergences;
 }

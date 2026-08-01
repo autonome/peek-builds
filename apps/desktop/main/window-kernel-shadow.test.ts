@@ -8,6 +8,7 @@ import { describe, it, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
 import {
   _resetShadowKernelForTests,
+  compareShadowKernelState,
   getShadowKernelExecutor,
   shadowKernelCloseContent,
   shadowKernelCloseWindowDirect,
@@ -20,8 +21,35 @@ import {
   shadowKernelWindowClosed,
 } from './window-kernel-shadow.js';
 import { BASE_LAYER, type WindowId } from './window-kernel.js';
+import type { StateSnapshot, WindowRecord } from './window-state.js';
 
 const wid = (n: number): WindowId => `shadow-${n}` as WindowId;
+
+/** Minimal `StateSnapshot` fixture — the comparator reads only `front`, `stackOrder`, and each `windows[].id`. */
+function fakeOldMachine(opts: { front: WindowId | null; stackOrder: WindowId[]; ids: WindowId[] }): StateSnapshot {
+  return {
+    appActive: true,
+    session: 'idle',
+    front: opts.front,
+    stackOrder: opts.stackOrder,
+    switcher: { open: false },
+    windows: opts.ids.map((id) => ({ id }) as unknown as WindowRecord),
+  };
+}
+
+/** Registers a visible content-role window in the shadow kernel — the shape `isContentWindow`/`topmost` admit. */
+function registerVisibleContentWindow(id: WindowId): void {
+  shadowKernelRegisterWindow({
+    id,
+    kind: 'page-host',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+  });
+  getShadowKernelExecutor().dispatch({ type: 'WindowShown', id });
+}
 
 describe('window-kernel-shadow: registration feed', () => {
   beforeEach(() => {
@@ -309,5 +337,78 @@ describe('window-kernel-shadow: stack-order import feed', () => {
     // version still advances rather than the call being rejected.
     assert.strictEqual(getShadowKernelExecutor().getState().version, versionBefore + 1);
     assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0);
+  });
+});
+
+describe('window-kernel-shadow: divergence comparator (peek 7fffa286)', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('reports nothing when membership, front, and stackOrder all agree', () => {
+    const [a, b] = [wid(70), wid(71)];
+    registerVisibleContentWindow(a);
+    registerVisibleContentWindow(b);
+    // `topmost` scans from the END of `order` — b was registered last, so it
+    // is the kernel's front.
+    assert.strictEqual(getShadowKernelExecutor().getState().order.at(-1)?.id, b, 'precondition: b is topmost');
+
+    const oldMachine = fakeOldMachine({ front: b, stackOrder: [a, b], ids: [a, b] });
+
+    assert.deepStrictEqual(compareShadowKernelState(oldMachine), []);
+  });
+
+  it('detects a membership divergence: an id the old machine holds that the kernel does not', () => {
+    const a = wid(80);
+    registerVisibleContentWindow(a);
+    const ghost = wid(81); // never reaches the shadow kernel at all
+
+    const oldMachine = fakeOldMachine({ front: a, stackOrder: [a], ids: [a, ghost] });
+
+    const divergences = compareShadowKernelState(oldMachine);
+    const membership = divergences.find((d) => d.kind === 'membership');
+    assert.ok(membership, 'a membership mismatch must be reported');
+    assert.deepStrictEqual(membership?.old, [a, ghost]);
+    assert.deepStrictEqual(membership?.kernel, [a]);
+  });
+
+  it('detects a front divergence: the old machine names a different main window than topmost(state, isContentWindow)', () => {
+    const [a, b] = [wid(90), wid(91)];
+    registerVisibleContentWindow(a);
+    registerVisibleContentWindow(b);
+    assert.strictEqual(getShadowKernelExecutor().getState().order.at(-1)?.id, b, 'precondition: kernel front is b');
+
+    // Old machine claims `a` is front — the drift this conversion exists to
+    // surface, not to silently reconcile.
+    const oldMachine = fakeOldMachine({ front: a, stackOrder: [a, b], ids: [a, b] });
+
+    const divergences = compareShadowKernelState(oldMachine);
+    const front = divergences.find((d) => d.kind === 'front');
+    assert.ok(front, 'a front mismatch must be reported');
+    assert.strictEqual(front?.old, a);
+    assert.strictEqual(front?.kernel, b);
+  });
+
+  it('detects a stackOrder divergence: same membership, different sequence', () => {
+    const [a, b, c] = [wid(100), wid(101), wid(102)];
+    registerVisibleContentWindow(a);
+    registerVisibleContentWindow(b);
+    registerVisibleContentWindow(c);
+    assert.deepStrictEqual(
+      getShadowKernelExecutor()
+        .getState()
+        .order.map((w) => w.id),
+      [a, b, c],
+      'precondition: kernel order is a, b, c',
+    );
+
+    // Old machine's stackOrder disagrees on the relative order of a and b.
+    const oldMachine = fakeOldMachine({ front: c, stackOrder: [b, a, c], ids: [a, b, c] });
+
+    const divergences = compareShadowKernelState(oldMachine);
+    const stackOrder = divergences.find((d) => d.kind === 'stackOrder');
+    assert.ok(stackOrder, 'a stackOrder mismatch must be reported');
+    assert.deepStrictEqual(stackOrder?.old, [b, a, c]);
+    assert.deepStrictEqual(stackOrder?.kernel, [a, b, c]);
   });
 });

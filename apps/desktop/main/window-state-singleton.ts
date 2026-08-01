@@ -23,7 +23,7 @@ import type { BaseWindow, BrowserWindow, WebContents } from 'electron';
 import { WindowOsAdapter, type RegisterWindowSpec } from './window-os-adapter.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import type { WindowEvent, FsMode, Rectangle, IzuiSession, WindowId, WindowKind, WindowClass, WindowRecord, EscapeMode, StateSnapshot } from './window-state.js';
-import { shadowKernelRegisterWindow } from './window-kernel-shadow.js';
+import { compareShadowKernelState, shadowKernelRegisterWindow } from './window-kernel-shadow.js';
 
 /** Register-spec that accepts real Electron window handles (both kinds satisfy the adapter's structural `NativeWindow`). */
 export interface MachineWindowSpec {
@@ -142,6 +142,11 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
     ...(spec.keepLive !== undefined ? { keepLive: spec.keepLive } : {}),
     ...(spec.escapeMode !== undefined ? { escapeMode: spec.escapeMode } : {}),
   });
+  // Both machines have now processed this registration synchronously, one
+  // after the other, above — the settled point the comparator needs. See
+  // `window-kernel-shadow.ts compareShadowKernelState`'s own doc for what it
+  // checks; its logging is gated behind `PEEK_SHADOW_KERNEL_COMPARE=1`.
+  compareShadowKernelState(getWindowOsAdapter().getOwner().snapshot());
   return id;
 }
 
