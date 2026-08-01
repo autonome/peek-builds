@@ -30,6 +30,7 @@ import { WEB_CORE_ADDRESS } from './config.js';
 import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile, isHeadless } from './config.js';
 import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
+import { shadowKernelImportStackOrder } from './window-kernel-shadow.js';
 
 export type { WindowContext, WindowDescriptor };
 
@@ -1398,6 +1399,9 @@ export async function restoreSessionSnapshot(
           if (machineId != null) savedOrderBottomToTop.push(machineId);
         }
         dispatchWindowEvent({ type: 'STACK_ORDER_IMPORTED', order: savedOrderBottomToTop });
+        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+        // authoritative over nothing.
+        shadowKernelImportStackOrder(savedOrderBottomToTop);
         _restoreStackDriveCount = savedOrderBottomToTop.length;
         // Counter bookkeeping for the cold-start spec: each restored page-host
         // reports first-frame once; the permanent producer (top of file) counts

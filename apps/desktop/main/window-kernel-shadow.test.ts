@@ -13,6 +13,7 @@ import {
   shadowKernelCloseWindowDirect,
   shadowKernelDestroyAllGuests,
   shadowKernelDestroyWindow,
+  shadowKernelImportStackOrder,
   shadowKernelOsFocusGained,
   shadowKernelOsFocusSettled,
   shadowKernelRegisterWindow,
@@ -248,5 +249,65 @@ describe('window-kernel-shadow: close report feed', () => {
     const state = getShadowKernelExecutor().getState();
     assert.strictEqual(state.version, versionBefore + 1);
     assert.strictEqual(state.order.length, 0, 'a dangling close report never adds a member');
+  });
+});
+
+describe('window-kernel-shadow: stack-order import feed', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('an import permutes only the slots the payload names, naming a partial subset with an unknown id and a duplicate (peek 7fffa286)', () => {
+    const [a, b, c, d] = [wid(50), wid(51), wid(52), wid(53)];
+    for (const id of [a, b, c, d]) {
+      shadowKernelRegisterWindow({
+        id,
+        kind: 'browser',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+      });
+    }
+    assert.deepStrictEqual(
+      getShadowKernelExecutor()
+        .getState()
+        .order.map((w) => w.id),
+      [a, b, c, d],
+      'precondition: registration order is a, b, c, d',
+    );
+
+    // Names only 2 of the 4 registered windows (b and c are unnamed), plus an
+    // id that was never registered and a duplicate of `a` — a vacuous
+    // implementation that assembles the result from the payload rather than
+    // from `order` cannot pass this: it has nothing to say about b/c (absent
+    // from the payload entirely), and would place a/d adjacent in payload
+    // order rather than back into their own original slots.
+    shadowKernelImportStackOrder([d, wid(999), a, a]);
+
+    // Correct result: `d` and `a` are the only named ids, so they are written
+    // back into the two slots they already occupied (index 0, originally
+    // `a`'s, and index 3, originally `d`'s) in the payload's relative order
+    // (d then a) — while `b` and `c` keep their own slots untouched.
+    assert.deepStrictEqual(
+      getShadowKernelExecutor()
+        .getState()
+        .order.map((w) => w.id),
+      [d, b, c, a],
+      'named ids permute within their own slots; unnamed ids keep their index',
+    );
+  });
+
+  it('an import naming no known window is absorbed, not thrown into the caller', () => {
+    const danglingId = wid(60); // never registered with the shadow kernel
+    const versionBefore = getShadowKernelExecutor().getState().version;
+
+    assert.doesNotThrow(() => shadowKernelImportStackOrder([danglingId]));
+
+    // `ImportStackOrder` is a command (`decide`), answered before the
+    // unknown-window guard — a dangling id is accepted traffic, so the
+    // version still advances rather than the call being rejected.
+    assert.strictEqual(getShadowKernelExecutor().getState().version, versionBefore + 1);
+    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0);
   });
 });

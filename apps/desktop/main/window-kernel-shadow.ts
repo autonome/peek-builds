@@ -324,3 +324,23 @@ export function shadowKernelDestroyAllGuests(): void {
 export function shadowKernelWindowClosed(id: WindowId): void {
   shadowDispatch({ type: 'WindowClosed', id });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stack-order import — the fifth real input this step feeds the kernel.
+// Translated at the one production site that dispatches the old machine's
+// mirrored `STACK_ORDER_IMPORTED` (`session.ts restoreSessionSnapshot`),
+// alongside that dispatch, never in place of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate a session-restore stack-order import into the kernel's
+ * `ImportStackOrder` command. `decide` answers this command before its
+ * unknown-window guard — `order` may legitimately name ids that died mid-restore
+ * — and `evolve`'s `StackOrderImported` arm is guard-free, assembling the
+ * result out of the kernel's own `order` rather than the payload, so membership
+ * is preserved by construction. None of that reconciliation belongs here;
+ * this function only translates and feeds.
+ */
+export function shadowKernelImportStackOrder(order: readonly WindowId[]): void {
+  shadowExecute({ type: 'ImportStackOrder', order, expectedVersion: getShadowKernelExecutor().getState().version });
+}
