@@ -972,7 +972,7 @@ function installTestBridge(): void {
       }
       if (wid != null) {
         dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
-        shadowKernelWindowShown(wid, getWindowStateSnapshot());
+        shadowKernelWindowShown(wid, getWindowStateSnapshot(), true);
       }
       return true;
     },
@@ -1078,7 +1078,7 @@ function installTestBridge(): void {
         const wid = getWindowIdFor(w);
         if (wid != null) {
           dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
-          shadowKernelWindowShown(wid, getWindowStateSnapshot());
+          shadowKernelWindowShown(wid, getWindowStateSnapshot(), true);
         }
       }
       w.emit('focus');
@@ -1109,7 +1109,7 @@ function installTestBridge(): void {
         const wid = getWindowIdFor(id);
         if (wid != null) {
           dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
-          shadowKernelWindowShown(wid, getWindowStateSnapshot());
+          shadowKernelWindowShown(wid, getWindowStateSnapshot(), true);
         }
       }
       entry.contentWC.emit('focus');
@@ -1199,7 +1199,7 @@ function installTestBridge(): void {
       const wid = getWindowIdFor(elsewhereWin);
       if (wid != null) {
         dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
-        shadowKernelWindowShown(wid, getWindowStateSnapshot());
+        shadowKernelWindowShown(wid, getWindowStateSnapshot(), true);
       }
     },
     runDeferredBlur(_id: number): number | null {

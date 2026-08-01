@@ -341,9 +341,41 @@ export function shadowKernelOsFocusSettled(oldSnapshot: StateSnapshot): void {
 // old-machine dispatch, never in place of it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Translate a completed show report into the kernel's `WindowShown` event. */
-export function shadowKernelWindowShown(id: WindowId, oldSnapshot: StateSnapshot): void {
+/**
+ * Translate a completed show report into the kernel's `WindowShown` event —
+ * and, when the show activated (`focused` true, the caller's `opts.activate`
+ * in `electron-window-backend.ts showWindow` / the `focused:` field every
+ * other `WINDOW_SHOWN` dispatch already carries), ALSO feed the companion
+ * `Event.OsFocusGained` for the same window.
+ *
+ * WHY: `window-kernel.ts`'s `WindowShown` arm never reorders `order` — by
+ * design, `OsFocusGained` is its only reorderer (see that file's RULE 1/2
+ * commentary). But an activating show (`win.show()`, not `showInactive()`) IS
+ * a focus gain in kernel terms, same as the old machine's `WINDOW_SHOWN` arm
+ * calling `applyFocusGained` when `focused` is true. Without this, re-opening
+ * an already-visible window through a reuse path
+ * (`ipc.ts windowOpenHandler`'s four reuse branches, `windows.ts
+ * showWindowHeadlessSafe`) moves the old machine's `front` but leaves the
+ * shadow kernel's `topmost(state, isContentWindow)` on the previous window —
+ * exactly the divergence a headless run measured. This function is the
+ * translation at the shadow's edge; `window-kernel.ts` itself is untouched.
+ *
+ * NOT DOUBLE-COUNTING ON A REAL DISPLAY: there, an activating `win.show()`
+ * also provokes a native `'focus'`, which already feeds `OsFocusGained`
+ * through `shadowKernelOsFocusGained` via the normal focus listener. So the
+ * synthetic feed below can arrive alongside a real echo for the same window —
+ * harmless, because the second `OsFocusGained` names the window `key`
+ * already holds, making its diff against the first empty. Headless masks OS
+ * activation (`performOsShow` never calls `win.show()` there), which is
+ * exactly why this divergence surfaced in a headless run in the first place:
+ * headless has no OS echo to paper over the missing synthetic one.
+ *
+ * `focused` defaults to `false` (today's behavior — no companion focus feed)
+ * for a caller that omits it, rather than guessing.
+ */
+export function shadowKernelWindowShown(id: WindowId, oldSnapshot: StateSnapshot, focused = false): void {
   shadowDispatch({ type: 'WindowShown', id });
+  if (focused) shadowDispatch({ type: 'OsFocusGained', id });
   compareAfterFeed(oldSnapshot);
 }
 

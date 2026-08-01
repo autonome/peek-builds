@@ -680,3 +680,70 @@ describe('window-kernel-shadow: raise feed (peek 7fffa286)', () => {
     assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });
+
+describe('window-kernel-shadow: activating show feed (peek 7fffa286)', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('THE MEASURED DEFECT, pinned: an ACTIVATING show feed on an already-visible, non-topmost window moves topmost(state, isContentWindow) to it', () => {
+    // Same shape as the raise fixture above, but reached the way a reuse-open
+    // actually reaches the kernel: `ipc.ts windowOpenHandler`'s reuse branches
+    // and `windows.ts showWindowHeadlessSafe` dispatch `WINDOW_SHOW_REQUESTED`,
+    // never `RAISE_WINDOW_REQUESTED` — so this is a SHOW feed, not a raise
+    // feed. Two visible content windows, `b` topmost by construction (`b`
+    // registered+shown last). An activating show feed on the LOWER window `a`
+    // must move it to topmost even though `window-kernel.ts`'s `WindowShown`
+    // arm itself never reorders `order` (`OsFocusGained` is its only
+    // reorderer, by design) — this is exactly why `shadowKernelWindowShown`
+    // must translate an activating show into a companion `OsFocusGained`.
+    // This fixture cannot pass vacuously: a single-window fixture, or one that
+    // activating-shows the already-topmost `b`, would pass with no companion
+    // focus feed at all — `topmost` would already read the target window
+    // either way. Only the lower-window case exposes the gap.
+    const [a, b] = [wid(130), wid(131)];
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerVisibleContentWindow(a, oldSnapshot);
+    registerVisibleContentWindow(b, oldSnapshot);
+    assert.strictEqual(
+      topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id,
+      b,
+      'precondition: b is topmost, a is the lower window being re-shown',
+    );
+
+    shadowKernelWindowShown(a, oldSnapshot, true);
+
+    assert.strictEqual(
+      topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id,
+      a,
+      'an activating show feed on the lower window must move it to topmost',
+    );
+  });
+
+  it('a NON-activating show feed leaves topmost(state, isContentWindow) alone', () => {
+    // Sibling of the fixture above with `focused: false` (or omitted, its
+    // default) — the other half of the contract: a show report that did NOT
+    // activate must not synthesize a focus gain, so `b` stays topmost. This
+    // cannot pass vacuously either: `a` is already a real record in `order`
+    // (registered+shown), so if the show feed WERE wrongly feeding
+    // `OsFocusGained` regardless of the flag, this assertion would catch it
+    // exactly the way the activating case above proves the fix is live.
+    const [a, b] = [wid(132), wid(133)];
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerVisibleContentWindow(a, oldSnapshot);
+    registerVisibleContentWindow(b, oldSnapshot);
+    assert.strictEqual(
+      topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id,
+      b,
+      'precondition: b is topmost, a is the lower window being re-shown',
+    );
+
+    shadowKernelWindowShown(a, oldSnapshot, false);
+
+    assert.strictEqual(
+      topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id,
+      b,
+      'a non-activating show feed must not move topmost off b',
+    );
+  });
+});

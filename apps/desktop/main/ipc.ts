@@ -3604,7 +3604,7 @@ export function registerWindowHandlers(): void {
         // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
         // authoritative over nothing; see that module's doc for why this can
         // never change what actually happens on screen.
-        shadowKernelWindowShown(machineWindowId, getWindowStateSnapshot());
+        shadowKernelWindowShown(machineWindowId, getWindowStateSnapshot(), true);
       }
       const coordinator = getIzuiCoordinator();
       coordinator.pushWindow(win.id);

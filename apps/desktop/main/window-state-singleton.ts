@@ -160,7 +160,10 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
   // visible either.
   const registeredRecord = settledSnapshot.windows.find((w) => w.id === id);
   if (registeredRecord?.visible) {
-    shadowKernelWindowShown(id, settledSnapshot);
+    // `pumpShownEvent` (`window-os-adapter.ts registerWindow`) always dispatches
+    // the old machine's `WINDOW_SHOWN` with `focused: true` — this import
+    // mirrors the same fact.
+    shadowKernelWindowShown(id, settledSnapshot, true);
   }
   return id;
 }

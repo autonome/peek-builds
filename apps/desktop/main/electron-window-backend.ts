@@ -636,11 +636,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.armBlurSettle();
     });
     win.on('show', () => {
-      this.emit({ type: 'WINDOW_SHOWN', id, focused: this.isFocused(win) });
+      const focused = this.isFocused(win);
+      this.emit({ type: 'WINDOW_SHOWN', id, focused });
       // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
       // authoritative over nothing; see that module's doc for why this can
       // never change what actually happens on screen.
-      shadowKernelWindowShown(id, this.getSnapshot());
+      shadowKernelWindowShown(id, this.getSnapshot(), focused);
     });
     win.on('hide', () => {
       // OS boundary workaround (macOS, lowest layer — this backend): AppKit
@@ -797,14 +798,14 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         }
       }
       this.emit({ type: 'WINDOW_SHOWN', id, focused: true });
-      shadowKernelWindowShown(id, this.getSnapshot());
+      shadowKernelWindowShown(id, this.getSnapshot(), true);
       return;
     }
     // Browser window: headless-safe show (opacity-0 + inactive under headless),
     // activate + focus only when not headless.
     this.performOsShow(id, win, !isHeadless(), opSeq);
     this.emit({ type: 'WINDOW_SHOWN', id, focused: true });
-    shadowKernelWindowShown(id, this.getSnapshot());
+    shadowKernelWindowShown(id, this.getSnapshot(), true);
     if (!isHeadless()) {
       try {
         this.armSelfCausedFocus(id, opSeq);
@@ -1078,7 +1079,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       !isHeadless();
     this.performOsShow(id, win, osActivate, opts.opSeq);
     this.emit({ type: 'WINDOW_SHOWN', id, focused: opts.activate });
-    shadowKernelWindowShown(id, this.getSnapshot());
+    shadowKernelWindowShown(id, this.getSnapshot(), opts.activate);
   }
 
   /**
