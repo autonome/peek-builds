@@ -1061,6 +1061,64 @@ construction sites falsifies three derivations that would otherwise look correct
 `acceptsInput` is stored and merged but read by nothing in the kernel today — no query, predicate,
 or effect consults it.
 
+#### Measured: a live shadow run against session restore, opens, close, and quit
+
+`window-kernel-shadow.ts` runs a `WindowKernelExecutor` over a no-op backend (`NoopKernelBackend`
+— records effects, performs none) fed every input the old machine receives: registration,
+OS focus and the blur settle, teardown commands, the OS close report, session restore's
+stack-order import, window show/hide with the activate flag, `AppActivated`'s re-show, and
+explicit raise requests. `compareShadowKernelState` diffs the two views after each feed, logged
+under `PEEK_SHADOW_KERNEL_COMPARE=1`. Production behavior is unchanged by any of this — the
+executor's effects have nowhere to land, and the kernel is authoritative over nothing yet.
+Headless runs driving session restore, fresh opens, re-opens of already-open URLs, a close, and a
+graceful quit-and-relaunch measured the following.
+
+**A registration-only feed leaves `topmost(state, isContentWindow)` permanently `null`.**
+`isContentWindow` (`window-kernel.ts`) short-circuits on `!record.visible`; `RegisterWindow`
+creates records with `visible: false`; only `WindowShown` and `AppActivated`'s re-show ever set it
+true. Before visibility was fed, the kernel returned `null` on all 126 comparisons across two
+runs while the old machine's `front` tracked the app correctly. This is why the visibility feed
+(`shadowKernelWindowShown`/`shadowKernelWindowHidden`/`shadowKernelAppActivated`) exists. No unit
+test caught it — the suites construct records directly rather than driving them through
+registration.
+
+**An activating show is a focus gain in kernel terms.** The collapse-onto-existing-window path
+(`ipc.ts windowOpenHandler`'s reuse branches, `windows.ts showWindowHeadlessSafe`) dispatches
+`WINDOW_SHOW_REQUESTED`, never `RAISE_WINDOW_REQUESTED`; the old reducer's `WINDOW_SHOWN` arm
+moves `front` via `applyFocusGained` when `focused` is true. The kernel's `WindowShown` arm never
+reorders `order`, by design, so the shadow needed the activate flag threaded through and
+translated into a companion `OsFocusGained` (`shadowKernelWindowShown`'s `focused` parameter). On
+a real display a native `'focus'` echo follows an activating `show()` anyway; the synthetic feed
+is idempotent with it, because the echo names the window `key` already holds, so its diff is
+empty. Headless masks OS activation, which is why this was only visible headless.
+
+**After that fix, `front` agrees and `stackOrder` diverges — the two traded places.** Every
+re-open now shows the kernel already on the reused window, with the old machine arriving one line
+later (its own `WINDOW_SHOWN` echo drains after the current effect batch), so the next comparison
+is silent on `front`. But the companion focus gain promotes the re-shown window to the top of the
+kernel's `order`, while the old machine's `stackOrder` does not reorder on `WINDOW_SHOWN` at all —
+only its `front` moves. That disagreement persists — still present 31 seconds later, across a
+close. Two instances per run were measured, no third shape.
+
+This is an **open question, not a settled decision**: the reading that favors the kernel is that
+an activating `show()` does raise an already-visible window on a real display, so the kernel's
+`order` matches the OS while the old machine's `stackOrder` is stale — the same two-facts-that-
+disagree drift this design exists to delete. The consequence that makes it load-bearing:
+`session-projection.ts` derives `stackIndex` from `stackOrder`, so restored stacking changes at
+cutover. This has not been confirmed against a real display.
+
+**What agreed.** Membership showed no persistent divergence — one transient line per run at the
+re-entrant overlay registration, cleared by the next comparison. Before the show-feed change
+above, stacking order agreed exactly (106/106 and 116/116 lines) once the ids the old machine
+keeps out of `stackOrder` were stripped — so the `stackOrder` disagreement above is new and
+attributable to the show/focus change, not pre-existing noise.
+
+**A comparator caveat.** The comparison runs at the tail of each feed, and the old machine's
+snapshot can predate its own reaction where its adapter queues an echo rather than draining it
+immediately — re-entrant registration, teardown, and the show path all do this. Divergence
+resolved by the very next comparison is this artifact, not a real disagreement; divergence that
+persists across comparisons, like the `stackOrder` case above, is not.
+
 ### 0.1.6 Layers and realizing the order against Electron
 
 **Layers are a fixed ordered set established by construction, not per-window integers sorted at
