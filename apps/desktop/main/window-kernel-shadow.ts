@@ -462,6 +462,42 @@ export function shadowKernelImportStackOrder(order: readonly WindowId[], oldSnap
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Raise — the sixth real input this step feeds the kernel. Translated at the
+// one production site that dispatches the old machine's mirrored
+// `RAISE_WINDOW_REQUESTED` (`ipc.ts`'s modal-blur re-raise inside the
+// show-settle window), alongside that dispatch, never in place of it.
+//
+// This closes the measured gap: a raise of an ALREADY-VISIBLE window moved the
+// old machine's `front` but nothing fed the kernel a raise at all, so
+// `topmost(state, isContentWindow)` stayed on whichever window was already
+// topmost — observed live as a `front` divergence after re-opening a window
+// that collapsed onto an existing one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate an explicit, user-requested raise into the kernel's `RaiseWindow`
+ * command. Two consequences of `decide`/`react`'s existing shape are
+ * DELIBERATELY not compensated for here:
+ *
+ *   - `decide` on `RaiseWindow` synchronously manufactures `OsFocusGained`, so
+ *     the kernel's `key` moves optimistically, with no OS confirmation —
+ *     unlike the old machine, which only ever moved `front` from the real OS
+ *     echo. A known, recorded lossy port, not a bug this function works around.
+ *   - `react` emits its own `RaiseWindow` effect off a `key` diff, and the OS
+ *     echo that follows (`shadowKernelOsFocusGained`) names the window `key`
+ *     already holds, so that echo's diff is empty and emits nothing. No
+ *     de-duplication is added for it.
+ *
+ * Same shape and containment as `shadowKernelDestroyWindow` et al.: routed
+ * through `shadowExecute` (a rejected stale `expectedVersion` is logged, never
+ * thrown into the caller), ending with the same `compareAfterFeed` tail.
+ */
+export function shadowKernelRaiseWindow(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowExecute({ type: 'RaiseWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
+  compareAfterFeed(oldSnapshot);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Divergence comparator — evidence the shadow kernel's view matches reality
 // before the next commit re-points readers onto it. Compares the three things
 // the cutover's readers actually depend on; see `compareShadowKernelState`'s

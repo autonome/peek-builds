@@ -98,7 +98,7 @@ import {
   type MachineWindowSpec,
 } from './window-state-singleton.js';
 import { isSatelliteRegistration, classifyWindowRegistration } from './window-state.js';
-import { shadowKernelDestroyWindow, shadowKernelCloseContent, shadowKernelCloseWindowDirect, shadowKernelWindowShown } from './window-kernel-shadow.js';
+import { shadowKernelDestroyWindow, shadowKernelCloseContent, shadowKernelCloseWindowDirect, shadowKernelRaiseWindow, shadowKernelWindowShown } from './window-kernel-shadow.js';
 import {
   TRANSIENT_ROLES,
   inferIzuiRole,
@@ -3935,6 +3935,10 @@ export function registerWindowHandlers(): void {
               if (showTime && Date.now() - showTime < 200) {
                 DEBUG && console.log('window-open: blur for modal window suppressed — within show settle window', url);
                 dispatchWindowEvent({ type: 'RAISE_WINDOW_REQUESTED', id: machineWindowId });
+                // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+                // authoritative over nothing; see that module's doc for why this can
+                // never change what actually happens on screen.
+                shadowKernelRaiseWindow(machineWindowId, getWindowStateSnapshot());
                 return;
               }
               // Name the focus thief in the log: which window (or hybrid host)

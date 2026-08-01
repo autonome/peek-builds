@@ -19,6 +19,7 @@ import {
   shadowKernelImportStackOrder,
   shadowKernelOsFocusGained,
   shadowKernelOsFocusSettled,
+  shadowKernelRaiseWindow,
   shadowKernelRegisterWindow,
   shadowKernelWindowClosed,
   shadowKernelWindowHidden,
@@ -635,5 +636,47 @@ describe('window-kernel-shadow: visibility feed (peek 7fffa286)', () => {
 
     assert.strictEqual(record()?.visible, true, 'AppActivated must re-show it');
     assert.strictEqual(record()?.hiddenByAppBlur, false);
+  });
+});
+
+describe('window-kernel-shadow: raise feed (peek 7fffa286)', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('THE MEASURED GAP, pinned: a raise of an ALREADY-VISIBLE, non-topmost window moves topmost(state, isContentWindow) to it', () => {
+    // Two visible content windows, both registered and shown — `b` lands last
+    // and is topmost by construction (`topmost` scans from the end of
+    // `order`), exactly the shape the live trace found: raising `a` (the
+    // LOWER window) while `b` sits on top. A single-window fixture, or one
+    // that raised the already-topmost `b`, would pass with no raise feed at
+    // all — `topmost` would already read the raised window either way. This
+    // fixture cannot pass vacuously: without a raise feed nothing ever moves
+    // `a` back to the top of `order`, so `topmost` stays pinned on `b`.
+    const [a, b] = [wid(120), wid(121)];
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerVisibleContentWindow(a, oldSnapshot);
+    registerVisibleContentWindow(b, oldSnapshot);
+    assert.strictEqual(
+      topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id,
+      b,
+      'precondition: b is topmost, a is the lower window being raised',
+    );
+
+    shadowKernelRaiseWindow(a, oldSnapshot);
+
+    assert.strictEqual(
+      topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id,
+      a,
+      'raising the lower window must move it to topmost',
+    );
+  });
+
+  it('never throws across a raise naming a window with no record', () => {
+    const danglingId = wid(122); // never registered with the shadow kernel
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+
+    assert.doesNotThrow(() => shadowKernelRaiseWindow(danglingId, oldSnapshot));
+    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });
