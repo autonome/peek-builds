@@ -25,7 +25,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { registerProtocolOnSession } from './protocol.js';
 import { installPermissionHandler } from './permission-handler.js';
-import { dispatchWindowEvent, getWindowIdFor } from './window-state-singleton.js';
+import { dispatchWindowEvent, getWindowIdFor, getWindowStateSnapshot } from './window-state-singleton.js';
 import { shadowKernelCloseWindowDirect } from './window-kernel-shadow.js';
 import { toChromeUserAgent } from './user-agent.js';
 import { DEBUG, isTestProfile } from './config.js';
@@ -353,7 +353,7 @@ function closeWindowViaMachine(win: { id: number }): void {
   // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
   // over nothing; see that module's doc for why this can never change what
   // actually happens on screen.
-  shadowKernelCloseWindowDirect(id);
+  shadowKernelCloseWindowDirect(id, getWindowStateSnapshot());
 }
 
 function _registerDownloadHandlerImpl(ses: Session): void {

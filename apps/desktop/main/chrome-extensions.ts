@@ -26,7 +26,12 @@ export { markRuntimeExternalQuitting } from './chrome-api-polyfills/runtime-exte
 import { buildOptionsCommandName, computeUiEntries } from './chrome-extensions-helpers.js';
 import { invokeWindowOpen } from './ipc.js';
 import { DEBUG, isHeadless } from './config.js';
-import { registerWindowWithMachine, dispatchWindowEvent, getWindowIdFor } from './window-state-singleton.js';
+import {
+  registerWindowWithMachine,
+  dispatchWindowEvent,
+  getWindowIdFor,
+  getWindowStateSnapshot,
+} from './window-state-singleton.js';
 import { isSatelliteRegistration } from './window-state.js';
 import { deriveWindowSurface } from './izui-roles.js';
 import { shadowKernelDestroyWindow } from './window-kernel-shadow.js';
@@ -45,7 +50,7 @@ function destroyWindowViaMachine(win: BrowserWindow): void {
   // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
   // over nothing; see that module's doc for why this can never change what
   // actually happens on screen.
-  shadowKernelDestroyWindow(id);
+  shadowKernelDestroyWindow(id, getWindowStateSnapshot());
 }
 
 /**

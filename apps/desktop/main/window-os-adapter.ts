@@ -78,12 +78,25 @@ export class WindowOsAdapter {
     owner: WindowStateOwner = new WindowStateOwner(),
     // Default composition: the Electron backend, wired to this pump. Tests /
     // future platforms inject their own factory; the sink argument is the ONE
-    // channel backend events enter the machine through.
-    createBackend: (emit: BackendEventSink) => WindowBackend & BackendMigrationShims = (emit) =>
-      new ElectronWindowBackend(emit),
+    // channel backend events enter the machine through. `getSnapshot` is a
+    // second, read-only channel — the backend has no state of its own (§3),
+    // but its native listeners feed the shadow kernel (`window-kernel-shadow.ts`
+    // shadowKernelOsFocusGained/shadowKernelOsFocusSettled/shadowKernelWindowClosed)
+    // right after `emit` settles this machine, and the comparator those calls
+    // run needs this machine's just-settled snapshot. Reading it through this
+    // injected closure (rather than the backend importing
+    // `window-state-singleton.ts` directly) keeps the backend from having to
+    // know the singleton exists at all.
+    createBackend: (
+      emit: BackendEventSink,
+      getSnapshot: () => StateSnapshot,
+    ) => WindowBackend & BackendMigrationShims = (emit, getSnapshot) => new ElectronWindowBackend(emit, getSnapshot),
   ) {
     this.owner = owner;
-    this.backend = createBackend((event) => this.pump(event));
+    this.backend = createBackend(
+      (event) => this.pump(event),
+      () => this.owner.snapshot(),
+    );
   }
 
   /** The shared state owner (read-only consumers attach to this). */

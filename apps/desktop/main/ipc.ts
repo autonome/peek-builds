@@ -94,6 +94,7 @@ import {
   getWindowIdFor,
   getNativeWindowFor,
   getMachineWindowRecord,
+  getWindowStateSnapshot,
   type MachineWindowSpec,
 } from './window-state-singleton.js';
 import { isSatelliteRegistration, classifyWindowRegistration } from './window-state.js';
@@ -718,7 +719,7 @@ function destroyUnassembledHybridHost(baseWin: Electron.BaseWindow | null): void
     // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
     // over nothing; see that module's doc for why this can never change what
     // actually happens on screen.
-    shadowKernelDestroyWindow(id);
+    shadowKernelDestroyWindow(id, getWindowStateSnapshot());
   } catch (cleanupErr) {
     // Cleanup must never mask the original failure — a still-leaked window is
     // logged loudly instead.
@@ -1145,7 +1146,7 @@ function assembleHybridPageHost(
       // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
       // authoritative over nothing; see that module's doc for why this can
       // never change what actually happens on screen.
-      shadowKernelCloseContent(hostMachineId);
+      shadowKernelCloseContent(hostMachineId, getWindowStateSnapshot());
     } catch (e) {
       DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] content wc close on finalize failed:`, e);
     }
@@ -1204,7 +1205,7 @@ function assembleHybridPageHost(
         // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
         // authoritative over nothing; see that module's doc for why this
         // can never change what actually happens on screen.
-        shadowKernelCloseWindowDirect(hostMachineId);
+        shadowKernelCloseWindowDirect(hostMachineId, getWindowStateSnapshot());
       }
     } catch { /* closing a torn-down host is a no-op */ }
   });
@@ -2368,7 +2369,7 @@ export function installHybridNavbarActionRouting(): void {
         // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
         // authoritative over nothing; see that module's doc for why this
         // can never change what actually happens on screen.
-        shadowKernelCloseWindowDirect(wmId);
+        shadowKernelCloseWindowDirect(wmId, getWindowStateSnapshot());
       }
     } catch { /* already gone */ }
   });

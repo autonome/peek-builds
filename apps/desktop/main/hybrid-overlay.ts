@@ -98,6 +98,7 @@ import {
   waitForPendingWindowEffects,
   getAppActive,
   subscribeAppActive,
+  getWindowStateSnapshot,
 } from './window-state-singleton.js';
 import { classifyWindowRegistration } from './window-state.js';
 import type { Rectangle, WindowId } from './window-state.js';
@@ -1038,7 +1039,7 @@ function installTestBridge(): void {
       // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
       // authoritative over nothing; see that module's doc for why this can
       // never change what actually happens on screen.
-      shadowKernelDestroyWindow(wid);
+      shadowKernelDestroyWindow(wid, getWindowStateSnapshot());
       fakeHosts.delete(id);
       return true;
     },

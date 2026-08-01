@@ -1401,7 +1401,7 @@ export async function restoreSessionSnapshot(
         dispatchWindowEvent({ type: 'STACK_ORDER_IMPORTED', order: savedOrderBottomToTop });
         // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
         // authoritative over nothing.
-        shadowKernelImportStackOrder(savedOrderBottomToTop);
+        shadowKernelImportStackOrder(savedOrderBottomToTop, getWindowStateSnapshot());
         _restoreStackDriveCount = savedOrderBottomToTop.length;
         // Counter bookkeeping for the cold-start spec: each restored page-host
         // reports first-frame once; the permanent producer (top of file) counts

@@ -161,6 +161,7 @@ export function getShadowKernelExecutor(): WindowKernelExecutor {
 export function _resetShadowKernelForTests(): void {
   shadowExecutorInstance = null;
   effectLog.length = 0;
+  lastDivergences = [];
 }
 
 /** Execute a command against the shadow kernel. Never throws; a rejection is logged, not surfaced. */
@@ -188,6 +189,42 @@ function shadowDispatch(event: Event): void {
   }
 }
 
+/**
+ * Run `compareShadowKernelState` against the old machine's snapshot, for its
+ * diagnostic value alone. Called at the tail of every feed helper below — not
+ * just registration — so any input that can move either machine is covered,
+ * never only the one call site that happened to exist first.
+ *
+ * `oldSnapshot` is supplied by the CALLER rather than read from
+ * `window-state-singleton.ts` here: that module imports this one (for the
+ * feed helpers themselves), and importing it back — even only for its
+ * `getWindowOsAdapter()` accessor — pulls this otherwise-standalone module
+ * into the full main-process graph (`window-state-singleton.ts` →
+ * `izui-state.ts` → … → a value import of `electron`'s `app`), which breaks
+ * `window-kernel-shadow.test.ts` running in isolation under the unit-test
+ * harness. Every call site already holds (or can cheaply obtain) the old
+ * machine's current snapshot, so it is threaded through instead.
+ *
+ * A pure read (see `compareShadowKernelState`'s own doc); wrapped the same
+ * way `shadowExecute`/`shadowDispatch` are so a comparator failure can never
+ * escape into the caller.
+ */
+function compareAfterFeed(oldSnapshot: StateSnapshot): void {
+  try {
+    lastDivergences = compareShadowKernelState(oldSnapshot);
+  } catch (err) {
+    DEBUG && console.log('[window-kernel-shadow] compare threw:', err);
+  }
+}
+
+/** The divergences the most recent `compareAfterFeed` call found — test-only, so a spec can assert the comparator ran from a specific feed helper without depending on `PEEK_SHADOW_KERNEL_COMPARE`'s console output. */
+let lastDivergences: ShadowKernelDivergence[] = [];
+
+/** Test-only read of `lastDivergences`. */
+export function _lastDivergencesForTests(): readonly ShadowKernelDivergence[] {
+  return lastDivergences;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registration — every `registerWindowWithMachine(...)` path
 // (`window-state-singleton.ts`).
@@ -212,8 +249,15 @@ export interface ShadowRegisterWindowSpec {
   escapeMode?: string;
 }
 
-/** Translate a completed registration into the kernel's `RegisterWindow` command. */
-export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec): void {
+/**
+ * Translate a completed registration into the kernel's `RegisterWindow`
+ * command. `oldSnapshot` is the old machine's snapshot taken AFTER it
+ * processed this same registration (`window-state-singleton.ts
+ * registerWindowWithMachine` — the settled point both machines have reached
+ * by the time this is called) — see `compareAfterFeed`'s doc for why the
+ * caller supplies it rather than this module reading it itself.
+ */
+export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec, oldSnapshot: StateSnapshot): void {
   shadowExecute({
     type: 'RegisterWindow',
     id: spec.id,
@@ -228,6 +272,7 @@ export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec): void
     ...(spec.escapeMode === 'ignore' ? { escapeMode: 'ignore' as const } : {}),
     expectedVersion: getShadowKernelExecutor().getState().version,
   });
+  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -244,9 +289,23 @@ export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec): void
  * attachNativeListeners` — the host window's `'focus'`, and the page-host
  * content WC's `'focus'` synthesized by an activating raise/show) into the
  * kernel's `OsFocusGained` event, naming the window that gained focus.
+ *
+ * NOT ALWAYS A SETTLED COMPARISON POINT: `electron-window-backend.ts`'s
+ * `emit(...)` call immediately before this one can be RE-ENTRANT — a
+ * `RAISE_WINDOW`/`SHOW_WINDOW` effect can synchronously provoke the native
+ * `'focus'` this listener reacts to, from inside `WindowOsAdapter.pump`'s own
+ * effect loop (see that method's re-entrancy doc). On that path `pump` only
+ * ENQUEUES the old machine's own echo of this same focus change rather than
+ * draining it, so `oldSnapshot` (read via the backend's `getSnapshot`
+ * immediately after) reflects the state BEFORE this focus change, while the
+ * shadow kernel (whose `dispatch` has no such queue) has already applied it.
+ * A `front`/membership divergence logged from that specific call is expected
+ * and transient — it resolves once the outer pump drains the queued event a
+ * moment later — not evidence the two machines have actually diverged.
  */
-export function shadowKernelOsFocusGained(id: WindowId): void {
+export function shadowKernelOsFocusGained(id: WindowId, oldSnapshot: StateSnapshot): void {
   shadowDispatch({ type: 'OsFocusGained', id });
+  compareAfterFeed(oldSnapshot);
 }
 
 /**
@@ -259,10 +318,10 @@ export function shadowKernelOsFocusGained(id: WindowId): void {
  * window — so this emits nothing when no key is held, rather than a null-id
  * event the kernel has no vocabulary for.
  */
-export function shadowKernelOsFocusSettled(): void {
+export function shadowKernelOsFocusSettled(oldSnapshot: StateSnapshot): void {
   const { key } = getShadowKernelExecutor().getState();
-  if (key === null) return;
-  shadowDispatch({ type: 'OsFocusLost', id: key });
+  if (key !== null) shadowDispatch({ type: 'OsFocusLost', id: key });
+  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -287,23 +346,27 @@ export function shadowKernelOsFocusSettled(): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Translate a forceful native-destroy teardown into the kernel's `DestroyWindow` command. */
-export function shadowKernelDestroyWindow(id: WindowId): void {
+export function shadowKernelDestroyWindow(id: WindowId, oldSnapshot: StateSnapshot): void {
   shadowExecute({ type: 'DestroyWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
+  compareAfterFeed(oldSnapshot);
 }
 
 /** Translate the hybrid finalize's content-surface teardown into the kernel's `CloseContent` command. */
-export function shadowKernelCloseContent(id: WindowId): void {
+export function shadowKernelCloseContent(id: WindowId, oldSnapshot: StateSnapshot): void {
   shadowExecute({ type: 'CloseContent', id, expectedVersion: getShadowKernelExecutor().getState().version });
+  compareAfterFeed(oldSnapshot);
 }
 
 /** Translate a guest-safe direct close (`windows.ts closeHostWindow`) into the kernel's `CloseWindowDirect` command. */
-export function shadowKernelCloseWindowDirect(id: WindowId): void {
+export function shadowKernelCloseWindowDirect(id: WindowId, oldSnapshot: StateSnapshot): void {
   shadowExecute({ type: 'CloseWindowDirect', id, expectedVersion: getShadowKernelExecutor().getState().version });
+  compareAfterFeed(oldSnapshot);
 }
 
 /** Translate the quit-time guest teardown into the kernel's `DestroyAllGuests` command. Names no window. */
-export function shadowKernelDestroyAllGuests(): void {
+export function shadowKernelDestroyAllGuests(oldSnapshot: StateSnapshot): void {
   shadowExecute({ type: 'DestroyAllGuests', expectedVersion: getShadowKernelExecutor().getState().version });
+  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -329,8 +392,9 @@ export function shadowKernelDestroyAllGuests(): void {
  * an event naming an unknown window rather than rejecting it, so no guard is
  * needed here.
  */
-export function shadowKernelWindowClosed(id: WindowId): void {
+export function shadowKernelWindowClosed(id: WindowId, oldSnapshot: StateSnapshot): void {
   shadowDispatch({ type: 'WindowClosed', id });
+  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -349,8 +413,9 @@ export function shadowKernelWindowClosed(id: WindowId): void {
  * is preserved by construction. None of that reconciliation belongs here;
  * this function only translates and feeds.
  */
-export function shadowKernelImportStackOrder(order: readonly WindowId[]): void {
+export function shadowKernelImportStackOrder(order: readonly WindowId[], oldSnapshot: StateSnapshot): void {
   shadowExecute({ type: 'ImportStackOrder', order, expectedVersion: getShadowKernelExecutor().getState().version });
+  compareAfterFeed(oldSnapshot);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

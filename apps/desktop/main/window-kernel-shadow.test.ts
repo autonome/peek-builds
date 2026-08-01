@@ -7,6 +7,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
 import {
+  _lastDivergencesForTests,
   _resetShadowKernelForTests,
   compareShadowKernelState,
   getShadowKernelExecutor,
@@ -38,16 +39,19 @@ function fakeOldMachine(opts: { front: WindowId | null; stackOrder: WindowId[]; 
 }
 
 /** Registers a visible content-role window in the shadow kernel — the shape `isContentWindow`/`topmost` admit. */
-function registerVisibleContentWindow(id: WindowId): void {
-  shadowKernelRegisterWindow({
-    id,
-    kind: 'page-host',
-    layer: BASE_LAYER,
-    canBecomeKey: true,
-    acceptsInput: true,
-    class: 'primary',
-    role: 'content',
-  });
+function registerVisibleContentWindow(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowKernelRegisterWindow(
+    {
+      id,
+      kind: 'page-host',
+      layer: BASE_LAYER,
+      canBecomeKey: true,
+      acceptsInput: true,
+      class: 'primary',
+      role: 'content',
+    },
+    oldSnapshot,
+  );
   getShadowKernelExecutor().dispatch({ type: 'WindowShown', id });
 }
 
@@ -58,15 +62,18 @@ describe('window-kernel-shadow: registration feed', () => {
 
   it('a registration reaches the shadow kernel state (peek 7fffa286)', () => {
     const id = wid(1);
-    shadowKernelRegisterWindow({
-      id,
-      kind: 'browser',
-      layer: BASE_LAYER,
-      canBecomeKey: true,
-      acceptsInput: true,
-      class: 'primary',
-      role: 'main',
-    });
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'browser',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+        role: 'main',
+      },
+      fakeOldMachine({ front: null, stackOrder: [], ids: [] }),
+    );
 
     const record = getShadowKernelExecutor()
       .getState()
@@ -84,22 +91,29 @@ describe('window-kernel-shadow: registration feed', () => {
     // Two registrations in a row exercise the version-carrying path — a bug
     // that pins `expectedVersion` to a stale value would surface here as a
     // silently-dropped second registration.
-    shadowKernelRegisterWindow({
-      id: wid(2),
-      kind: 'page-host',
-      layer: BASE_LAYER,
-      canBecomeKey: true,
-      acceptsInput: true,
-      class: 'primary',
-    });
-    shadowKernelRegisterWindow({
-      id: wid(3),
-      kind: 'page-host',
-      layer: BASE_LAYER,
-      canBecomeKey: true,
-      acceptsInput: true,
-      class: 'primary',
-    });
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelRegisterWindow(
+      {
+        id: wid(2),
+        kind: 'page-host',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+      },
+      oldSnapshot,
+    );
+    shadowKernelRegisterWindow(
+      {
+        id: wid(3),
+        kind: 'page-host',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+      },
+      oldSnapshot,
+    );
 
     const order = getShadowKernelExecutor().getState().order;
     assert.ok(order.some((w) => w.id === wid(2)));
@@ -114,34 +128,42 @@ describe('window-kernel-shadow: OS focus feed', () => {
 
   it('a focus gain reaches the shadow kernel as OsFocusGained, naming the window', () => {
     const id = wid(10);
-    shadowKernelRegisterWindow({
-      id,
-      kind: 'browser',
-      layer: BASE_LAYER,
-      canBecomeKey: true,
-      acceptsInput: true,
-      class: 'primary',
-    });
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'browser',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+      },
+      oldSnapshot,
+    );
 
-    shadowKernelOsFocusGained(id);
+    shadowKernelOsFocusGained(id, oldSnapshot);
 
     assert.strictEqual(getShadowKernelExecutor().getState().key, id);
   });
 
   it('the settle emits OsFocusLost naming the currently-held key', () => {
     const id = wid(11);
-    shadowKernelRegisterWindow({
-      id,
-      kind: 'browser',
-      layer: BASE_LAYER,
-      canBecomeKey: true,
-      acceptsInput: true,
-      class: 'primary',
-    });
-    shadowKernelOsFocusGained(id);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'browser',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+      },
+      oldSnapshot,
+    );
+    shadowKernelOsFocusGained(id, oldSnapshot);
     assert.strictEqual(getShadowKernelExecutor().getState().key, id, 'precondition: id holds key');
 
-    shadowKernelOsFocusSettled();
+    shadowKernelOsFocusSettled(oldSnapshot);
 
     assert.strictEqual(getShadowKernelExecutor().getState().key, null, 'OsFocusLost nulls the held key');
   });
@@ -151,7 +173,7 @@ describe('window-kernel-shadow: OS focus feed', () => {
     assert.strictEqual(getShadowKernelExecutor().getState().key, null, 'precondition: no key held');
     const versionBefore = getShadowKernelExecutor().getState().version;
 
-    shadowKernelOsFocusSettled();
+    shadowKernelOsFocusSettled(fakeOldMachine({ front: null, stackOrder: [], ids: [] }));
 
     // No event reached the kernel at all — version is untouched, not merely
     // key staying null (which an inert OsFocusLost would also leave true).
@@ -168,7 +190,7 @@ describe('window-kernel-shadow: teardown feed', () => {
   const teardownCases: Array<{
     name: string;
     kind: 'destroy-window' | 'close-content' | 'close-window-direct' | 'destroy-all-guests';
-    call: (id: WindowId) => void;
+    call: (id: WindowId, oldSnapshot: StateSnapshot) => void;
     carriesId: boolean;
   }> = [
     { name: 'DestroyWindow', kind: 'destroy-window', call: shadowKernelDestroyWindow, carriesId: true },
@@ -177,7 +199,7 @@ describe('window-kernel-shadow: teardown feed', () => {
     {
       name: 'DestroyAllGuests',
       kind: 'destroy-all-guests',
-      call: () => shadowKernelDestroyAllGuests(),
+      call: (_id, oldSnapshot) => shadowKernelDestroyAllGuests(oldSnapshot),
       carriesId: false,
     },
   ];
@@ -185,17 +207,21 @@ describe('window-kernel-shadow: teardown feed', () => {
   for (const { name, kind, call, carriesId } of teardownCases) {
     it(`${name} reaches the shadow kernel (recorded on lastTeardown) — membership stays untouched (peek 7fffa286)`, () => {
       const id = wid(30);
-      shadowKernelRegisterWindow({
-        id,
-        kind: 'page-host',
-        layer: BASE_LAYER,
-        canBecomeKey: true,
-        acceptsInput: true,
-        class: 'primary',
-      });
+      const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [id], ids: [id] });
+      shadowKernelRegisterWindow(
+        {
+          id,
+          kind: 'page-host',
+          layer: BASE_LAYER,
+          canBecomeKey: true,
+          acceptsInput: true,
+          class: 'primary',
+        },
+        oldSnapshot,
+      );
       const versionBefore = getShadowKernelExecutor().getState().version;
 
-      call(id);
+      call(id, oldSnapshot);
 
       const state = getShadowKernelExecutor().getState();
       const lastTeardown = state.lastTeardown;
@@ -215,12 +241,13 @@ describe('window-kernel-shadow: teardown feed', () => {
 
   it('a teardown naming a window whose record is already gone is absorbed, not thrown or rejected into the caller', () => {
     const danglingId = wid(31); // never registered with the shadow kernel
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     const versionBefore = getShadowKernelExecutor().getState().version;
 
-    assert.doesNotThrow(() => shadowKernelDestroyWindow(danglingId));
-    assert.doesNotThrow(() => shadowKernelCloseContent(danglingId));
-    assert.doesNotThrow(() => shadowKernelCloseWindowDirect(danglingId));
-    assert.doesNotThrow(() => shadowKernelDestroyAllGuests());
+    assert.doesNotThrow(() => shadowKernelDestroyWindow(danglingId, oldSnapshot));
+    assert.doesNotThrow(() => shadowKernelCloseContent(danglingId, oldSnapshot));
+    assert.doesNotThrow(() => shadowKernelCloseWindowDirect(danglingId, oldSnapshot));
+    assert.doesNotThrow(() => shadowKernelDestroyAllGuests(oldSnapshot));
 
     // All four commands are exempt from `decide`'s unknown-window rejection
     // (window-kernel.ts, §0.1.5) — a dangling id is accepted traffic, not a
@@ -240,20 +267,24 @@ describe('window-kernel-shadow: close report feed', () => {
 
   it('a close report removes the window from the shadow kernel order (peek 7fffa286)', () => {
     const id = wid(40);
-    shadowKernelRegisterWindow({
-      id,
-      kind: 'browser',
-      layer: BASE_LAYER,
-      canBecomeKey: true,
-      acceptsInput: true,
-      class: 'primary',
-    });
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [id], ids: [id] });
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'browser',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+      },
+      oldSnapshot,
+    );
     assert.ok(
       getShadowKernelExecutor().getState().order.some((w) => w.id === id),
       'precondition: the window is a member before the close report',
     );
 
-    shadowKernelWindowClosed(id);
+    shadowKernelWindowClosed(id, fakeOldMachine({ front: null, stackOrder: [], ids: [] }));
 
     // RULE 1 (window-kernel.ts): `WindowClosed` is the ONLY event that
     // shrinks `order`. Without this feed the shadow kernel's `order` only
@@ -268,7 +299,7 @@ describe('window-kernel-shadow: close report feed', () => {
     const danglingId = wid(41); // never registered with the shadow kernel
     const versionBefore = getShadowKernelExecutor().getState().version;
 
-    assert.doesNotThrow(() => shadowKernelWindowClosed(danglingId));
+    assert.doesNotThrow(() => shadowKernelWindowClosed(danglingId, fakeOldMachine({ front: null, stackOrder: [], ids: [] })));
 
     // `WindowClosed` is an event (`evolve`, not `decide`) — there is no
     // `decide`-side rejection to exempt here; `evolve`'s unconditional
@@ -277,6 +308,57 @@ describe('window-kernel-shadow: close report feed', () => {
     const state = getShadowKernelExecutor().getState();
     assert.strictEqual(state.version, versionBefore + 1);
     assert.strictEqual(state.order.length, 0, 'a dangling close report never adds a member');
+  });
+
+  it('FAILING-FIRST (peek 7fffa286): a divergence introduced by a close report — not a registration — is caught, because the comparator now runs at THIS feed helper\'s own tail', () => {
+    // `a` lands in the shadow kernel via registration, matched by an
+    // old-machine snapshot that agrees at THAT settled point — nothing
+    // visible has been shown yet, so `topmost` (front) reads null on both
+    // sides, and membership agrees (`ids: [a]` both sides). Zero divergence,
+    // and this is NOT the registration path's comparison this test is about.
+    const a = wid(42);
+    shadowKernelRegisterWindow(
+      {
+        id: a,
+        kind: 'page-host',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+        role: 'content',
+      },
+      fakeOldMachine({ front: null, stackOrder: [a], ids: [a] }),
+    );
+    assert.deepStrictEqual(
+      _lastDivergencesForTests(),
+      [],
+      'precondition: registration alone reports no divergence',
+    );
+
+    // Now feed a close report for `a` — the shadow kernel drops it from
+    // `order` (RULE 1), but the caller's old-machine snapshot is built as if
+    // the old machine had NOT yet retired the record (a legitimate lag: the
+    // old machine's own retirement is a separate dispatch this helper does
+    // not perform). That is exactly a real production shape:
+    // `shadowKernelWindowClosed` is called with whatever `getWindowStateSnapshot()`
+    // returns at the call site, and nothing here guarantees the two
+    // retirements move in lockstep for a manufactured old-machine reading.
+    const staleOldSnapshot = fakeOldMachine({ front: null, stackOrder: [a], ids: [a] });
+    shadowKernelWindowClosed(a, staleOldSnapshot);
+
+    // Under the PRE-FIX wiring (the comparator called only from
+    // `window-state-singleton.ts registerWindowWithMachine`, never from
+    // `shadowKernelWindowClosed` itself), this call could not possibly have
+    // changed `_lastDivergencesForTests()` — nothing here dispatches a
+    // registration, so the assertion below would still see the stale `[]`
+    // from the precondition and fail. It passes now only because
+    // `shadowKernelWindowClosed`'s own tail runs the comparator against the
+    // snapshot THIS call was given.
+    const divergences = _lastDivergencesForTests();
+    const membership = divergences.find((d) => d.kind === 'membership');
+    assert.ok(membership, 'the close report must have driven a membership divergence through its own comparator tail');
+    assert.deepStrictEqual(membership?.old, [a]);
+    assert.deepStrictEqual(membership?.kernel, []);
   });
 });
 
@@ -287,15 +369,19 @@ describe('window-kernel-shadow: stack-order import feed', () => {
 
   it('an import permutes only the slots the payload names, naming a partial subset with an unknown id and a duplicate (peek 7fffa286)', () => {
     const [a, b, c, d] = [wid(50), wid(51), wid(52), wid(53)];
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [a, b, c, d], ids: [a, b, c, d] });
     for (const id of [a, b, c, d]) {
-      shadowKernelRegisterWindow({
-        id,
-        kind: 'browser',
-        layer: BASE_LAYER,
-        canBecomeKey: true,
-        acceptsInput: true,
-        class: 'primary',
-      });
+      shadowKernelRegisterWindow(
+        {
+          id,
+          kind: 'browser',
+          layer: BASE_LAYER,
+          canBecomeKey: true,
+          acceptsInput: true,
+          class: 'primary',
+        },
+        oldSnapshot,
+      );
     }
     assert.deepStrictEqual(
       getShadowKernelExecutor()
@@ -311,7 +397,7 @@ describe('window-kernel-shadow: stack-order import feed', () => {
     // from `order` cannot pass this: it has nothing to say about b/c (absent
     // from the payload entirely), and would place a/d adjacent in payload
     // order rather than back into their own original slots.
-    shadowKernelImportStackOrder([d, wid(999), a, a]);
+    shadowKernelImportStackOrder([d, wid(999), a, a], oldSnapshot);
 
     // Correct result: `d` and `a` are the only named ids, so they are written
     // back into the two slots they already occupied (index 0, originally
@@ -330,7 +416,9 @@ describe('window-kernel-shadow: stack-order import feed', () => {
     const danglingId = wid(60); // never registered with the shadow kernel
     const versionBefore = getShadowKernelExecutor().getState().version;
 
-    assert.doesNotThrow(() => shadowKernelImportStackOrder([danglingId]));
+    assert.doesNotThrow(() =>
+      shadowKernelImportStackOrder([danglingId], fakeOldMachine({ front: null, stackOrder: [], ids: [] })),
+    );
 
     // `ImportStackOrder` is a command (`decide`), answered before the
     // unknown-window guard — a dangling id is accepted traffic, so the
@@ -347,8 +435,9 @@ describe('window-kernel-shadow: divergence comparator (peek 7fffa286)', () => {
 
   it('reports nothing when membership, front, and stackOrder all agree', () => {
     const [a, b] = [wid(70), wid(71)];
-    registerVisibleContentWindow(a);
-    registerVisibleContentWindow(b);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerVisibleContentWindow(a, oldSnapshot);
+    registerVisibleContentWindow(b, oldSnapshot);
     // `topmost` scans from the END of `order` — b was registered last, so it
     // is the kernel's front.
     assert.strictEqual(getShadowKernelExecutor().getState().order.at(-1)?.id, b, 'precondition: b is topmost');
@@ -360,7 +449,7 @@ describe('window-kernel-shadow: divergence comparator (peek 7fffa286)', () => {
 
   it('detects a membership divergence: an id the old machine holds that the kernel does not', () => {
     const a = wid(80);
-    registerVisibleContentWindow(a);
+    registerVisibleContentWindow(a, fakeOldMachine({ front: null, stackOrder: [], ids: [] }));
     const ghost = wid(81); // never reaches the shadow kernel at all
 
     const oldMachine = fakeOldMachine({ front: a, stackOrder: [a], ids: [a, ghost] });
@@ -374,8 +463,9 @@ describe('window-kernel-shadow: divergence comparator (peek 7fffa286)', () => {
 
   it('detects a front divergence: the old machine names a different main window than topmost(state, isContentWindow)', () => {
     const [a, b] = [wid(90), wid(91)];
-    registerVisibleContentWindow(a);
-    registerVisibleContentWindow(b);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerVisibleContentWindow(a, oldSnapshot);
+    registerVisibleContentWindow(b, oldSnapshot);
     assert.strictEqual(getShadowKernelExecutor().getState().order.at(-1)?.id, b, 'precondition: kernel front is b');
 
     // Old machine claims `a` is front — the drift this conversion exists to
@@ -391,9 +481,10 @@ describe('window-kernel-shadow: divergence comparator (peek 7fffa286)', () => {
 
   it('detects a stackOrder divergence: same membership, different sequence', () => {
     const [a, b, c] = [wid(100), wid(101), wid(102)];
-    registerVisibleContentWindow(a);
-    registerVisibleContentWindow(b);
-    registerVisibleContentWindow(c);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerVisibleContentWindow(a, oldSnapshot);
+    registerVisibleContentWindow(b, oldSnapshot);
+    registerVisibleContentWindow(c, oldSnapshot);
     assert.deepStrictEqual(
       getShadowKernelExecutor()
         .getState()

@@ -79,6 +79,7 @@ import {
   type WindowKind,
   type Rectangle,
   type StackingLevel,
+  type StateSnapshot,
 } from './window-state.js';
 import type { BackendEventSink, WindowBackend, WindowSpec } from './window-backend.js';
 import {
@@ -275,6 +276,16 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   /** The single event channel into the executor's dispatch pump. */
   private readonly emit: BackendEventSink;
 
+  /**
+   * Read-only channel back to the executor's owner: the old machine's
+   * snapshot, taken fresh on each call — used ONLY to feed the shadow
+   * kernel's divergence comparator (`window-kernel-shadow.ts
+   * compareShadowKernelState`) right after a native listener's `emit` call
+   * settles this machine. See `window-os-adapter.ts`'s constructor doc for
+   * why this is injected rather than read via `window-state-singleton.ts`.
+   */
+  private readonly getSnapshot: () => StateSnapshot;
+
   /** Native handles + renderer WC per registered WM WindowId (for command execution). */
   private readonly windows = new Map<WindowId, BackendWindow>();
 
@@ -336,8 +347,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     this.emit({ type: 'ESC_PRESSED', landedId: 'global' });
   };
 
-  constructor(emit: BackendEventSink) {
+  constructor(emit: BackendEventSink, getSnapshot: () => StateSnapshot) {
     this.emit = emit;
+    this.getSnapshot = getSnapshot;
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -603,7 +615,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
       // over nothing; see that module's doc for why this can never change what
       // actually happens on screen.
-      shadowKernelOsFocusGained(id);
+      shadowKernelOsFocusGained(id, this.getSnapshot());
     });
     // The ONE deferred-blur settle: blur alone can't tell "focus left Peek" from
     // "focus is moving to the next Peek window" — Electron fires the old window's
@@ -640,7 +652,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       this.emit({ type: 'WINDOW_CLOSED', id });
       // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
       // over nothing; RULE 1 makes this the only event that shrinks its `order`.
-      shadowKernelWindowClosed(id);
+      shadowKernelWindowClosed(id, this.getSnapshot());
     });
     win.on('enter-full-screen', () => {
       this.clearFullscreenSettle(id);
@@ -690,7 +702,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         });
         this.emit({ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id, held: true });
         // Shadow-feed the kernel — see the `win.on('focus')` listener above.
-        shadowKernelOsFocusGained(id);
+        shadowKernelOsFocusGained(id, this.getSnapshot());
       });
       // Mirrors the content WC's first-responder status (§5 step 11) — no
       // consumer yet, purely additive.
@@ -1246,7 +1258,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // Shadow-feed the kernel — see `window-kernel-shadow.ts
       // shadowKernelOsFocusSettled` for the shape mismatch this translates
       // (this event carries no id; the kernel's `OsFocusLost` names one).
-      shadowKernelOsFocusSettled();
+      shadowKernelOsFocusSettled(this.getSnapshot());
     });
   }
 

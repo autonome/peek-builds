@@ -45,6 +45,7 @@ import {
   getNativeWindowFor,
   getMachineWindowRecord,
   listMachineWindowRecords,
+  getWindowStateSnapshot,
 } from './window-state-singleton.js';
 import { isSatelliteRegistration, classifyWindowRegistration } from './window-state.js';
 import { deriveWindowSurface } from './izui-roles.js';
@@ -231,7 +232,7 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
     if (wmId != null) dispatchWindowEvent({ type: 'WINDOW_CLOSED', id: wmId });
     // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
     // over nothing; RULE 1 makes this the only event that shrinks its `order`.
-    if (wmId != null) shadowKernelWindowClosed(wmId);
+    if (wmId != null) shadowKernelWindowClosed(wmId, getWindowStateSnapshot());
   }
   try {
     publish('system', 'window:removed', { id: windowId });
@@ -463,7 +464,7 @@ export async function initialize(): Promise<void> {
       // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
       // authoritative over nothing; see that module's doc for why this can
       // never change what actually happens on screen.
-      shadowKernelCloseWindowDirect(id);
+      shadowKernelCloseWindowDirect(id, getWindowStateSnapshot());
     },
     // keepLive close intercept (tile-launcher's 'close' handler): dispatch the
     // INTENT — the reducer branches on the record's keepLive (hide vs the
@@ -855,7 +856,7 @@ export async function initialize(): Promise<void> {
         try {
           const wmId = getWindowIdFor(windowId);
           if (wmId != null) dispatchWindowEvent({ type: 'WINDOW_CLOSED', id: wmId });
-          if (wmId != null) shadowKernelWindowClosed(wmId);
+          if (wmId != null) shadowKernelWindowClosed(wmId, getWindowStateSnapshot());
         } catch {
           // already in error path; suppress
         }
@@ -1469,7 +1470,7 @@ export function removeWindow(windowId: number): boolean {
   const id = getWindowIdFor(windowId);
   if (id == null || getMachineWindowRecord(id) === undefined) return false;
   dispatchWindowEvent({ type: 'WINDOW_CLOSED', id });
-  shadowKernelWindowClosed(id);
+  shadowKernelWindowClosed(id, getWindowStateSnapshot());
   return true;
 }
 
