@@ -92,6 +92,9 @@ import {
   shadowKernelOsFocusGained,
   shadowKernelOsFocusSettled,
   shadowKernelWindowClosed,
+  shadowKernelWindowShown,
+  shadowKernelWindowHidden,
+  shadowKernelAppActivated,
 } from './window-kernel-shadow.js';
 
 /**
@@ -377,6 +380,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   attachAppListeners(): void {
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
       this.emit({ type: 'APP_ACTIVATED' });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen.
+      shadowKernelAppActivated(this.getSnapshot());
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
       this.emit({ type: 'APP_RESIGNED' });
@@ -630,6 +637,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     });
     win.on('show', () => {
       this.emit({ type: 'WINDOW_SHOWN', id, focused: this.isFocused(win) });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen.
+      shadowKernelWindowShown(id, this.getSnapshot());
     });
     win.on('hide', () => {
       // OS boundary workaround (macOS, lowest layer — this backend): AppKit
@@ -641,6 +652,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // actually not visible echoes WINDOW_HIDDEN.
       if (!win.isDestroyed() && win.isVisible()) return;
       this.emit({ type: 'WINDOW_HIDDEN', id });
+      shadowKernelWindowHidden(id, this.getSnapshot());
     });
     win.on('closed', () => {
       this.clearFullscreenSettle(id);
@@ -785,12 +797,14 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         }
       }
       this.emit({ type: 'WINDOW_SHOWN', id, focused: true });
+      shadowKernelWindowShown(id, this.getSnapshot());
       return;
     }
     // Browser window: headless-safe show (opacity-0 + inactive under headless),
     // activate + focus only when not headless.
     this.performOsShow(id, win, !isHeadless(), opSeq);
     this.emit({ type: 'WINDOW_SHOWN', id, focused: true });
+    shadowKernelWindowShown(id, this.getSnapshot());
     if (!isHeadless()) {
       try {
         this.armSelfCausedFocus(id, opSeq);
@@ -1064,6 +1078,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       !isHeadless();
     this.performOsShow(id, win, osActivate, opts.opSeq);
     this.emit({ type: 'WINDOW_SHOWN', id, focused: opts.activate });
+    shadowKernelWindowShown(id, this.getSnapshot());
   }
 
   /**
@@ -1119,6 +1134,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // successor promotion — sees stale `visible:true` for a tick. The late
     // native event still arrives and re-merges idempotently in the reducer.
     this.emit({ type: 'WINDOW_HIDDEN', id });
+    shadowKernelWindowHidden(id, this.getSnapshot());
   }
 
   /** Pin above regular windows. 'floating' matches the old post-ctor reinforcement (`setAlwaysOnTop(true,'floating')`). */

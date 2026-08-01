@@ -98,7 +98,7 @@ import {
   type MachineWindowSpec,
 } from './window-state-singleton.js';
 import { isSatelliteRegistration, classifyWindowRegistration } from './window-state.js';
-import { shadowKernelDestroyWindow, shadowKernelCloseContent, shadowKernelCloseWindowDirect } from './window-kernel-shadow.js';
+import { shadowKernelDestroyWindow, shadowKernelCloseContent, shadowKernelCloseWindowDirect, shadowKernelWindowShown } from './window-kernel-shadow.js';
 import {
   TRANSIENT_ROLES,
   inferIzuiRole,
@@ -3601,6 +3601,10 @@ export function registerWindowHandlers(): void {
       // other path.
       if (options.show !== false) {
         dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: machineWindowId, focused: true });
+        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+        // authoritative over nothing; see that module's doc for why this can
+        // never change what actually happens on screen.
+        shadowKernelWindowShown(machineWindowId, getWindowStateSnapshot());
       }
       const coordinator = getIzuiCoordinator();
       coordinator.pushWindow(win.id);

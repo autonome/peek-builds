@@ -103,7 +103,7 @@ import {
 import { classifyWindowRegistration } from './window-state.js';
 import type { Rectangle, WindowId } from './window-state.js';
 import { deriveWindowSurface } from './izui-roles.js';
-import { shadowKernelDestroyWindow } from './window-kernel-shadow.js';
+import { shadowKernelDestroyWindow, shadowKernelWindowShown, shadowKernelWindowHidden } from './window-kernel-shadow.js';
 import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, registerWindow } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
@@ -965,9 +965,14 @@ function installTestBridge(): void {
         const front = getFrontPageHostId();
         if (front == null) break;
         dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: front });
+        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+        // authoritative over nothing; see that module's doc for why this can
+        // never change what actually happens on screen.
+        shadowKernelWindowHidden(front, getWindowStateSnapshot());
       }
       if (wid != null) {
         dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
+        shadowKernelWindowShown(wid, getWindowStateSnapshot());
       }
       return true;
     },
@@ -1071,7 +1076,10 @@ function installTestBridge(): void {
       // explicitly, exactly like a real focused show does.
       {
         const wid = getWindowIdFor(w);
-        if (wid != null) dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
+        if (wid != null) {
+          dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
+          shadowKernelWindowShown(wid, getWindowStateSnapshot());
+        }
       }
       w.emit('focus');
       return true;
@@ -1099,7 +1107,10 @@ function installTestBridge(): void {
       // is on screen; without it the emit's OS_FOCUS_GAINED is front-ineligible.
       {
         const wid = getWindowIdFor(id);
-        if (wid != null) dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
+        if (wid != null) {
+          dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
+          shadowKernelWindowShown(wid, getWindowStateSnapshot());
+        }
       }
       entry.contentWC.emit('focus');
       return true;
@@ -1186,7 +1197,10 @@ function installTestBridge(): void {
         });
       }
       const wid = getWindowIdFor(elsewhereWin);
-      if (wid != null) dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
+      if (wid != null) {
+        dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
+        shadowKernelWindowShown(wid, getWindowStateSnapshot());
+      }
     },
     runDeferredBlur(_id: number): number | null {
       // The machine's deferred-blur settle lives in the OS adapter (setImmediate)

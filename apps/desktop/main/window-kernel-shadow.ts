@@ -325,6 +325,49 @@ export function shadowKernelOsFocusSettled(oldSnapshot: StateSnapshot): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Visibility — window-kernel.ts's `topmost(state, isContentWindow)` can only
+// ever return a record whose `visible` is true (`isContentWindow`
+// short-circuits on `!record.visible`, `window-kernel.ts`), and `RegisterWindow`
+// always creates a record `visible: false`. Without this, no shadow record can
+// ever become visible and the comparator's `front` check is comparing the old
+// machine's real front against a permanent `null`. Translated at every
+// production site that reports the old machine's mirrored `WINDOW_SHOWN` /
+// `WINDOW_HIDDEN` (`electron-window-backend.ts`'s native `'show'`/`'hide'`
+// listeners, `raiseWindow`, `showWindow`, `hideWindow`; `window-os-adapter.ts
+// registerWindow`'s already-visible-at-registration import; `ipc.ts`'s
+// headless open-time visibility import; `hybrid-overlay.ts`'s test-bridge
+// `setActive`/`focusHost`/`focusContentWC`/`focusElsewhere`), dispatched as
+// EVENTS (past-tense facts, same as OS focus above), alongside the existing
+// old-machine dispatch, never in place of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Translate a completed show report into the kernel's `WindowShown` event. */
+export function shadowKernelWindowShown(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowDispatch({ type: 'WindowShown', id });
+  compareAfterFeed(oldSnapshot);
+}
+
+/** Translate a completed hide report into the kernel's `WindowHidden` event. */
+export function shadowKernelWindowHidden(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowDispatch({ type: 'WindowHidden', id });
+  compareAfterFeed(oldSnapshot);
+}
+
+/**
+ * Translate the app becoming active (`electron-window-backend.ts
+ * attachAppListeners`'s `did-become-active` → old machine `APP_ACTIVATED`)
+ * into the kernel's `AppActivated` event — the ONE other production input
+ * that affects visibility: it re-shows every record still carrying
+ * `hiddenByAppBlur` (`window-kernel.ts`'s `AppActivated` evolve arm), mirroring
+ * the old machine's own re-show. `AppResigned`/`AppResignSettled` (the hide
+ * half of that same dance) have no shadow feed yet — out of scope here.
+ */
+export function shadowKernelAppActivated(oldSnapshot: StateSnapshot): void {
+  shadowDispatch({ type: 'AppActivated' });
+  compareAfterFeed(oldSnapshot);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Teardown — the third real input this step feeds the kernel (see
 // `docs/design/window-manager.md` "Decided: window teardown enters the kernel
 // as commands and leaves as effects"). The four commands below are the ONLY

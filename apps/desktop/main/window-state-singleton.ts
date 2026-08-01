@@ -23,7 +23,7 @@ import type { BaseWindow, BrowserWindow, WebContents } from 'electron';
 import { WindowOsAdapter, type RegisterWindowSpec } from './window-os-adapter.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import type { WindowEvent, FsMode, Rectangle, IzuiSession, WindowId, WindowKind, WindowClass, WindowRecord, EscapeMode, StateSnapshot } from './window-state.js';
-import { shadowKernelRegisterWindow } from './window-kernel-shadow.js';
+import { shadowKernelRegisterWindow, shadowKernelWindowShown } from './window-kernel-shadow.js';
 
 /** Register-spec that accepts real Electron window handles (both kinds satisfy the adapter's structural `NativeWindow`). */
 export interface MachineWindowSpec {
@@ -130,6 +130,7 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
   // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
   // over nothing; see that module's doc for why this can never change what
   // actually happens on screen.
+  const settledSnapshot = getWindowOsAdapter().getOwner().snapshot();
   shadowKernelRegisterWindow({
     id,
     kind: spec.kind,
@@ -141,12 +142,26 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
     ...(spec.parentId != null ? { parentId: spec.parentId } : {}),
     ...(spec.keepLive !== undefined ? { keepLive: spec.keepLive } : {}),
     ...(spec.escapeMode !== undefined ? { escapeMode: spec.escapeMode } : {}),
-  }, getWindowOsAdapter().getOwner().snapshot());
+  }, settledSnapshot);
   // The divergence comparator now runs INSIDE `shadowKernelRegisterWindow`
   // itself (`window-kernel-shadow.ts`), against the old machine's
   // just-settled snapshot passed in above — see that module's
   // `compareAfterFeed` for why every feed helper takes its own snapshot
   // rather than reading `window-state-singleton.ts` back.
+  //
+  // `getWindowOsAdapter().registerWindow` above already pumped the old
+  // machine's `WINDOW_SHOWN` for a window that was already visible at ctor
+  // time (`window-os-adapter.ts registerWindow`'s `pumpShownEvent` branch —
+  // a ctor-shown window never fires a native `'show'` transition, so this is
+  // the only report that import ever gets) — `settledSnapshot` above already
+  // reflects it. Import the same fact into the shadow: its `RegisterWindow`
+  // command just above always creates the record `visible: false`, so
+  // without this a ctor-shown window's shadow record can never become
+  // visible either.
+  const registeredRecord = settledSnapshot.windows.find((w) => w.id === id);
+  if (registeredRecord?.visible) {
+    shadowKernelWindowShown(id, settledSnapshot);
+  }
   return id;
 }
 

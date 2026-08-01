@@ -11,6 +11,7 @@ import {
   _resetShadowKernelForTests,
   compareShadowKernelState,
   getShadowKernelExecutor,
+  shadowKernelAppActivated,
   shadowKernelCloseContent,
   shadowKernelCloseWindowDirect,
   shadowKernelDestroyAllGuests,
@@ -20,8 +21,10 @@ import {
   shadowKernelOsFocusSettled,
   shadowKernelRegisterWindow,
   shadowKernelWindowClosed,
+  shadowKernelWindowHidden,
+  shadowKernelWindowShown,
 } from './window-kernel-shadow.js';
-import { BASE_LAYER, type WindowId } from './window-kernel.js';
+import { BASE_LAYER, isContentWindow, topmost, type WindowId } from './window-kernel.js';
 import type { StateSnapshot, WindowRecord } from './window-state.js';
 
 const wid = (n: number): WindowId => `shadow-${n}` as WindowId;
@@ -501,5 +504,136 @@ describe('window-kernel-shadow: divergence comparator (peek 7fffa286)', () => {
     assert.ok(stackOrder, 'a stackOrder mismatch must be reported');
     assert.deepStrictEqual(stackOrder?.old, [b, a, c]);
     assert.deepStrictEqual(stackOrder?.kernel, [a, b, c]);
+  });
+});
+
+describe('window-kernel-shadow: visibility feed (peek 7fffa286)', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('THE MEASURED DEFECT, pinned: a registration alone never makes a record visible — topmost(state, isContentWindow) stays null', () => {
+    // `RegisterWindow` always creates a record `visible: false`
+    // (window-kernel.ts) — this is the state every production window sits in
+    // until something feeds a show. Without a `WindowShown` feed, `topmost`
+    // can never return it: this is the live 126/126 divergence the shadow
+    // kernel measured before any visibility input was wired.
+    const id = wid(110);
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'page-host',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+        role: 'content',
+      },
+      fakeOldMachine({ front: null, stackOrder: [], ids: [] }),
+    );
+
+    assert.strictEqual(topmost(getShadowKernelExecutor().getState(), isContentWindow), null);
+  });
+
+  it('a registration followed by a show feed makes topmost(state, isContentWindow) return that window (the fix)', () => {
+    const id = wid(111);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'page-host',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+        role: 'content',
+      },
+      oldSnapshot,
+    );
+    assert.strictEqual(
+      topmost(getShadowKernelExecutor().getState(), isContentWindow),
+      null,
+      'precondition: registration alone is not enough',
+    );
+
+    shadowKernelWindowShown(id, oldSnapshot);
+
+    assert.strictEqual(topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id, id);
+  });
+
+  it('a hide feed reported after a show flips the record back off topmost', () => {
+    const id = wid(112);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'page-host',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+        role: 'content',
+      },
+      oldSnapshot,
+    );
+    shadowKernelWindowShown(id, oldSnapshot);
+    assert.strictEqual(
+      topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id,
+      id,
+      'precondition: the window is topmost after the show feed',
+    );
+
+    shadowKernelWindowHidden(id, oldSnapshot);
+
+    assert.strictEqual(topmost(getShadowKernelExecutor().getState(), isContentWindow), null);
+  });
+
+  it('never throws across a show/hide feed naming a window with no record', () => {
+    const danglingId = wid(113); // never registered with the shadow kernel
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+
+    assert.doesNotThrow(() => shadowKernelWindowShown(danglingId, oldSnapshot));
+    assert.doesNotThrow(() => shadowKernelWindowHidden(danglingId, oldSnapshot));
+    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+  });
+
+  it('AppActivated re-shows a record hiddenByAppBlur and clears the mark, mirroring the old machine (window-kernel.ts AppActivated evolve arm)', () => {
+    // `isAppResignSweepEligible` (the HUD-shaped heads-up surfaces the sweep
+    // hides) requires `!canBecomeKey` — deliberately disjoint from
+    // `isContentWindow`'s `canBecomeKey` requirement, so this case is checked
+    // on the record directly rather than through `topmost(state,
+    // isContentWindow)`, which by design never sees it either way.
+    const id = wid(114);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'page-host',
+        layer: BASE_LAYER + 1,
+        canBecomeKey: false,
+        acceptsInput: false,
+        class: 'primary',
+      },
+      oldSnapshot,
+    );
+    shadowKernelWindowShown(id, oldSnapshot);
+    const record = () => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+    assert.strictEqual(record()?.visible, true, 'precondition: the window is visible after the show feed');
+
+    // Land the record in the exact state the old machine's app-resign sweep
+    // leaves behind: hidden, marked `hiddenByAppBlur`. `AppResigned`/
+    // `AppResignSettled` have no shadow feed yet, so this fixture drives the
+    // kernel there directly, the same way `registerVisibleContentWindow`
+    // above dispatches straight to the executor for a state no feed helper
+    // produces on its own.
+    getShadowKernelExecutor().dispatch({ type: 'AppResigned' });
+    getShadowKernelExecutor().dispatch({ type: 'AppResignSettled' });
+    assert.strictEqual(record()?.visible, false, 'precondition: the sweep hid the eligible window');
+    assert.strictEqual(record()?.hiddenByAppBlur, true);
+
+    shadowKernelAppActivated(oldSnapshot);
+
+    assert.strictEqual(record()?.visible, true, 'AppActivated must re-show it');
+    assert.strictEqual(record()?.hiddenByAppBlur, false);
   });
 });
