@@ -252,18 +252,6 @@ export function computeCrashCount(wasCleanShutdown, previousCrashCount) {
 // ============================================================================
 
 /**
- * Sort window descriptors by z-order for restore sequencing.
- * Higher zOrder = later in stack = opened later.
- * Returns a new sorted array (does not mutate input).
- *
- * @param {WindowDescriptor[]} windows - Window descriptors to sort
- * @returns {WindowDescriptor[]} Sorted descriptors (back-to-front)
- */
-export function sortWindowsByZOrder(windows) {
-  return [...windows].sort((a, b) => b.zOrder - a.zOrder);
-}
-
-/**
  * Compute restore bounds for a window descriptor.
  * Calculates the center point and returns bounds options for window-open.
  * If the center point is off-screen (as determined by the caller's

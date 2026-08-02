@@ -101,8 +101,6 @@ export declare function computeCrashCount(
 // Restore sequencing / ordering
 // ============================================================================
 
-export declare function sortWindowsByZOrder(windows: WindowDescriptor[]): WindowDescriptor[];
-
 export declare function computeRestoreBounds(
   bounds: Rectangle,
   isOnScreen: (x: number, y: number) => boolean
