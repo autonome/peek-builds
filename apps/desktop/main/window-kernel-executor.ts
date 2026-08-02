@@ -388,8 +388,23 @@ export class WindowKernelExecutor {
         // reserved for forceful teardown, never ordinary dismissal (design
         // note: HIDE_WINDOW/CLOSE_WINDOW, never DESTROY_WINDOW). Fire-and-
         // forget, same as every other effect here — the promise is test-bridge
-        // settlement only.
+        // settlement only. The transient-autoclose sweep's own dismissal
+        // effect is the DIFFERENT `DismissWindow` below, which deliberately
+        // DOES go through `closeOrHide` — see that case.
         void this.backend.closeWindow(effect.id);
+        return;
+      }
+      case 'DismissWindow': {
+        // The transient-autoclose sweep's dismissal (`react`'s diff of
+        // `State.lastFocusProvenance`) — unconditionally routed through
+        // `closeOrHide`, never `closeWindow` above. `closeOrHide` is the
+        // existing close/hide seam (`windows.ts closeOrHideWindow`): it
+        // honors keepLive (hides rather than destroys a slide/peek meant to
+        // keep running) and runs the exit-native-fullscreen preamble before
+        // hiding/closing a fullscreen victim, so a dismissed window never
+        // strands a black macOS Space. Fire-and-forget, same as every other
+        // effect here — the promise is test-bridge settlement only.
+        void this.backend.closeOrHide(effect.id);
         return;
       }
       case 'RaiseWindow': {

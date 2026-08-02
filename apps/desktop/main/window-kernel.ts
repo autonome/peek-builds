@@ -420,6 +420,29 @@ export interface State {
    */
   readonly lastFocusAssert: FocusAssertRequest | null;
   /**
+   * THE MOST RECENT `OsFocusGained` PROVENANCE, or `null` before any — the
+   * fact that lets `react` apply transient autoclose (§0: "no dispatch site
+   * can silently skip running it") as a pure structural diff instead of a
+   * branch on `ev.type`.
+   *
+   * WHY IT IS STATE AT ALL, and the shape mirrors `lastTeardown` /
+   * `lastFocusAssert` exactly: `react(prev, ev, next)` may not read `ev`
+   * (§0.1.1), so `selectTransientAutoclose`'s `cause` argument — which today
+   * rides only on `Event.OsFocusGained.cause` — has to become a FACT `react`
+   * can diff before the sweep can be driven off `next` alone.
+   *
+   * `seq` is what makes repetition visible, for the same reason it is on
+   * `TeardownRequest`/`FocusAssertRequest`: the old machine ran the sweep on
+   * EVERY `OS_FOCUS_GAINED` report, including one that re-confirms the window
+   * already holding key (an echo), so a repeated or reset seq would collapse
+   * two reports — and two sweeps — into one.
+   *
+   * Nothing clears the field, for the same reason nothing clears the other
+   * two: a later transition that is not an `OsFocusGained` leaves it
+   * untouched, which diffs to nothing.
+   */
+  readonly lastFocusProvenance: FocusProvenance | null;
+  /**
    * THE ARMED COLD-START FOCUS LATCH — the window a later app activation is to
    * put back in front, or `null` for "nothing armed" (ported from
    * `window-state.ts AppWindowState.pendingColdStartFocus`).
@@ -459,6 +482,18 @@ export interface State {
  */
 export interface FocusAssertRequest {
   id: WindowId;
+  seq: number;
+}
+
+/**
+ * The provenance of the most recent `OsFocusGained` event — see
+ * `State.lastFocusProvenance`. No `id`: the event that writes this record
+ * writes `key` in the SAME transition (`evolve`'s `OsFocusGained` arm), so
+ * `next.key` already names the window this provenance is about and a second
+ * copy of the id would only be able to drift from it, never add information.
+ */
+export interface FocusProvenance {
+  cause: FocusCause;
   seq: number;
 }
 
@@ -915,6 +950,22 @@ export type Effect =
   | { type: 'HideWindow'; id: WindowId }
   /** Drive the OS to close the window (dismiss the non-keepLive branch of `CloseOrHideWindow`) — visibility-only, same as `HideWindow`, carries no `opSeq`. */
   | { type: 'CloseWindow'; id: WindowId }
+  /**
+   * Dismiss a transient sibling the transient-autoclose sweep named
+   * (`selectTransientAutoclose`, emitted by `react` off `State
+   * .lastFocusProvenance`'s `seq` diff) — DISTINCT from `CloseWindow` above,
+   * and deliberately not reused as one. `CloseWindow` is realized as a hard
+   * `backend.closeWindow`, which has no keepLive branch and no
+   * exit-native-fullscreen preamble; the old machine's equivalent sweep
+   * (`window-state.ts pushCloseOrHide`) deliberately pushed an unconditional
+   * `CLOSE_WINDOW` that routed through `backend.closeOrHide` ->
+   * `windows.ts closeOrHideWindow`, so a dismissed `keepLive` slide is hidden
+   * rather than destroyed and a dismissed fullscreen victim exits fullscreen
+   * before it is hidden or closed — a raw close/hide would strand a black
+   * macOS Space. This effect is the port of that same unconditional call, and
+   * the keepLive/fullscreen resolution stays downstream of it, not here.
+   */
+  | { type: 'DismissWindow'; id: WindowId }
   | { type: 'RaiseWindow'; id: WindowId; opSeq: number }
   /** Drive the OS into fullscreen — emitted only when a record freshly transitions INTO `entering`. */
   | { type: 'SetFullscreen'; id: WindowId }
@@ -967,6 +1018,7 @@ export function initialState(): State {
     pendingAppResignSweep: false,
     lastTeardown: null,
     lastFocusAssert: null,
+    lastFocusProvenance: null,
     pendingColdStartFocus: null,
   };
 }
@@ -974,6 +1026,17 @@ export function initialState(): State {
 /** The next `TeardownRequest.seq` — one per teardown event, monotone, never reused. */
 function nextTeardownSeq(state: State): number {
   return (state.lastTeardown?.seq ?? 0) + 1;
+}
+
+/**
+ * The next `FocusProvenance.seq` — one per `OsFocusGained` event, monotone,
+ * never reused. Derived from state rather than a module counter, same as
+ * `nextTeardownSeq`/`nextFocusAssertSeq`: a module counter would make `evolve`
+ * read something other than its two arguments and would break replay
+ * determinism.
+ */
+function nextFocusProvenanceSeq(state: State): number {
+  return (state.lastFocusProvenance?.seq ?? 0) + 1;
 }
 
 /**
@@ -1284,9 +1347,18 @@ export function evolve(state: State, ev: Event): State {
       // window that was not focused does not go on top); a window not
       // currently registered still gets recorded as `key` (it will simply
       // resolve to null via `keyWindow`, same as any other dangling id).
+      //
+      // `lastFocusProvenance` is written alongside `key` in BOTH branches
+      // below, unconditionally — the same total, guard-free shape `key`
+      // itself has. It is not gated on `issuesRaise` the way `lastOpSeq` is:
+      // the old machine ran its transient-autoclose sweep on EVERY
+      // `OS_FOCUS_GAINED` report, including one that re-confirms the window
+      // already holding key, so every report has to leave a fresh, distinct
+      // `seq` for `react` to diff — see `State.lastFocusProvenance`.
+      const provenance: FocusProvenance = { cause: ev.cause ?? { kind: 'world' }, seq: nextFocusProvenanceSeq(state) };
       const idx = state.order.findIndex((w) => w.id === ev.id);
       if (idx === -1) {
-        return { ...state, key: ev.id, version: state.version + 1 };
+        return { ...state, key: ev.id, lastFocusProvenance: provenance, version: state.version + 1 };
       }
       const record = state.order[idx];
       const withoutRecord = [...state.order.slice(0, idx), ...state.order.slice(idx + 1)];
@@ -1304,6 +1376,7 @@ export function evolve(state: State, ev: Event): State {
         order: [...withoutRecord, movedRecord],
         key: ev.id,
         opSeqCounter: opSeq,
+        lastFocusProvenance: provenance,
         version: state.version + 1,
       };
     }
@@ -1949,6 +2022,52 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   const nextKey = next.key;
   if (nextKey !== null && nextKey !== prev.key && next.order.some((w) => w.id === nextKey)) {
     effects.push({ type: 'RaiseWindow', id: nextKey, opSeq: next.opSeqCounter });
+  }
+
+  // Transient autoclose (§0: "the machine applies the rule; no caller does" —
+  // `selectTransientAutoclose` stays a pure QUERY, and `react` is what turns
+  // its answer into effects, so rule application is non-optional). A
+  // structural diff of `State.lastFocusProvenance`, the same shape as the
+  // teardown/focus-assert rules below it in this function: the `seq`
+  // comparison is what makes it a diff rather than a read, so a transition
+  // that did not report a focus gain leaves the field alone and emits
+  // nothing, and two focus reports for the same window — even an echo
+  // re-confirming the window that already holds key — carry different `seq`
+  // values and are each swept independently, mirroring the old machine's
+  // `OS_FOCUS_GAINED` arm running `selectTransientAutoclose` on every report,
+  // not just the ones that moved `front`.
+  //
+  // PLACED HERE, immediately after the `RaiseWindow` rule and before
+  // `SetStacking`: the old machine's fixed effect order was
+  // `[autoclose…, FOCUS_CONTENT]`, sweep before the trailing focus re-assert,
+  // and this mirrors it — the sweep rides right after the raise it is
+  // triggered alongside and before the stacking re-assert an order change
+  // provokes.
+  //
+  // The `next.order.some(...)` guard matches the `RaiseWindow` rule directly
+  // above it, for the same reason: `evolve` writes `key` (and now
+  // `lastFocusProvenance`) even for a focuser absent from `order` (a dangling
+  // id), and a phantom focuser must sweep nothing, exactly as it raises
+  // nothing.
+  //
+  // decide's `RaiseWindow` COMMAND is translated into an `OsFocusGained`
+  // event with no `cause` (absent = `world`), so a machine-issued raise now
+  // sweeps where the old machine's `RAISE_WINDOW_REQUESTED` did not. That is
+  // intended, not a gap: a raise that genuinely takes key IS "some other
+  // window takes key", and the machine-cause ordering floor
+  // `selectTransientAutoclose` already holds (spare anything opened after the
+  // op that caused the focus) is what keeps a machine-driven raise from
+  // sweeping something the user opened after it was issued.
+  const provenance = next.lastFocusProvenance;
+  if (
+    provenance !== null &&
+    provenance.seq !== prev.lastFocusProvenance?.seq &&
+    next.key !== null &&
+    next.order.some((w) => w.id === next.key)
+  ) {
+    for (const id of selectTransientAutoclose(next, next.key, provenance.cause)) {
+      effects.push({ type: 'DismissWindow', id });
+    }
   }
 
   // SetStacking: §0.1.6 — the executor is a re-assert loop, not a diff. Any

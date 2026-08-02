@@ -697,6 +697,24 @@ function checkInvariants(state: State, prev?: State): string[] {
     ) {
       violations.push(`lastFocusAssert.seq decreased: prev=${prev.lastFocusAssert.seq} next=${state.lastFocusAssert.seq}`);
     }
+    // Focus provenance: the same two clauses again, for the same reason —
+    // `react`'s transient-autoclose sweep rests on `lastFocusProvenance.seq`
+    // being what it diffs, and the old machine ran that sweep on EVERY
+    // `OS_FOCUS_GAINED` report (including an echo re-confirming the window
+    // that already holds key), so a repeated or reset seq would collapse two
+    // reports — and two sweeps — into one.
+    if (prev.lastFocusProvenance !== null && state.lastFocusProvenance === null) {
+      violations.push('lastFocusProvenance was cleared back to null');
+    }
+    if (
+      state.lastFocusProvenance !== null &&
+      prev.lastFocusProvenance !== null &&
+      state.lastFocusProvenance.seq < prev.lastFocusProvenance.seq
+    ) {
+      violations.push(
+        `lastFocusProvenance.seq decreased: prev=${prev.lastFocusProvenance.seq} next=${state.lastFocusProvenance.seq}`,
+      );
+    }
     // `orderable` never goes true -> false (§0.1.4: "Never reset once true").
     for (const prevRecord of prev.order) {
       const nextRecord = state.order.find((w) => w.id === prevRecord.id);
@@ -847,6 +865,50 @@ function checkAutocloseInvariants(state: State): string[] {
 }
 
 /**
+ * Extra invariant proving `react` actually APPLIES `selectTransientAutoclose`
+ * for the transition it just ran, rather than a lookalike rule that matches
+ * nothing in practice (this repo's documented failure mode for predicates).
+ * `checkAutocloseInvariants` above only checks the selector's own soundness in
+ * isolation, against every possible focuser — it says nothing about whether
+ * `react`'s emitted `DismissWindow` effects are actually its output for the
+ * ONE real transition that just happened.
+ *
+ * `next.lastFocusProvenance` is the same fact `react` diffs, so this check
+ * reads no event payload either — a genuine `prev`/`next` comparison, not a
+ * restatement of `react`'s own condition.
+ *
+ * Kept per-EVENT (`Step`, same unit `checkOpSeqInvariants` uses above), not
+ * per-log-item: a command can fold into several events, and aggregating their
+ * effects would blur which transition's provenance advance produced which
+ * dismissal.
+ */
+function checkAutocloseWiring(step: Step): string[] {
+  const { prev, next, effects } = step;
+  const violations: string[] = [];
+  const dismissed = new Set(effects.filter((e) => e.type === 'DismissWindow').map((e) => e.id));
+
+  const provenance = next.lastFocusProvenance;
+  const focuser = next.key;
+  const advanced = provenance !== null && provenance.seq !== prev.lastFocusProvenance?.seq;
+  const phantomFocuser = focuser === null || !next.order.some((w) => w.id === focuser);
+
+  if (advanced && !phantomFocuser && provenance !== null && focuser !== null) {
+    const expected = new Set(selectTransientAutoclose(next, focuser, provenance.cause));
+    if (expected.size !== dismissed.size || [...expected].some((id) => !dismissed.has(id))) {
+      violations.push(
+        `react's DismissWindow effects diverged from selectTransientAutoclose: expected=${JSON.stringify([...expected])} actual=${JSON.stringify([...dismissed])}`,
+      );
+    }
+  } else if (dismissed.size > 0) {
+    violations.push(
+      `DismissWindow effect(s) emitted with no focus-provenance advance to a real focuser: ${JSON.stringify([...dismissed])}`,
+    );
+  }
+
+  return violations;
+}
+
+/**
  * Extra invariant on `react`'s output: every emitted effect names a window
  * still in `next.order` — this is what guarantees, among other things, that
  * no `SetBounds` effect (this slice) ever names a window absent from `order`.
@@ -958,6 +1020,10 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
           const opSeqViolations = checkOpSeqInvariants(step);
           if (opSeqViolations.length > 0) {
             throw new Error(reproMessage(seed, log, i, `op-token invariant violation(s): ${opSeqViolations.join('; ')}`));
+          }
+          const wiringViolations = checkAutocloseWiring(step);
+          if (wiringViolations.length > 0) {
+            throw new Error(reproMessage(seed, log, i, `autoclose wiring violation(s): ${wiringViolations.join('; ')}`));
           }
         }
 

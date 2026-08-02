@@ -1930,6 +1930,132 @@ describe('window-kernel: transient autoclose', () => {
   });
 });
 
+// ── react applies transient autoclose (§0: rule application is non-optional) ─
+
+/**
+ * `selectTransientAutoclose` (above) is a pure QUERY — proven sound in
+ * isolation, against every focuser. This block proves the OTHER half of §0's
+ * rule: `react` actually CALLS it and turns the answer into effects for the
+ * transition that just happened, off the `State.lastFocusProvenance` diff.
+ * Before this file's change, no non-test caller ran the selector at all — a
+ * predicate can be "correct in form but match nothing in practice", so these
+ * assert the emission, not just the selector.
+ */
+describe('window-kernel: react applies transient autoclose', () => {
+  const reg = (n: number, role: string | undefined, kind: 'page-host' | 'browser' = 'page-host'): Event => ({
+    type: 'WindowRegistered',
+    id: wid(n),
+    kind,
+    layer: 0,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    ...(role !== undefined ? { role } : {}),
+  });
+  const show = (n: number): Event => ({ type: 'WindowShown', id: wid(n) });
+  const orderable = (n: number): Event => ({ type: 'WindowContentOrderable', id: wid(n) });
+
+  /** wid(1) workspace, wid(2) palette, wid(3) quick-view — all visible and orderable (so SetStacking fires too). */
+  const scene = (): State =>
+    fold(
+      [reg(1, 'workspace'), reg(2, 'palette'), reg(3, 'quick-view'), show(1), show(2), show(3), orderable(1), orderable(2), orderable(3)],
+      initialState(),
+    );
+
+  const dismissed = (effects: Effect[]): WindowId[] => effects.filter((e) => e.type === 'DismissWindow').map((e) => e.id);
+
+  it('a world-caused focus report emits DismissWindow for exactly what the selector names', () => {
+    const state = scene();
+    const ev: Event = { type: 'OsFocusGained', id: wid(1) };
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(
+      dismissed(react(state, ev, next)),
+      selectTransientAutoclose(next, wid(1), { kind: 'world' }),
+      'react must not compute its own answer — it applies the selector verbatim',
+    );
+    assert.deepStrictEqual(dismissed(react(state, ev, next)), [wid(2), wid(3)]);
+  });
+
+  it('DismissWindow is DISTINCT from CloseWindow — the effect union carries both', () => {
+    const state = scene();
+    const ev: Event = { type: 'OsFocusGained', id: wid(1) };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+    assert.ok(effects.some((e) => e.type === 'DismissWindow'), 'the sweep is a DismissWindow, not a CloseWindow');
+    assert.ok(!effects.some((e) => e.type === 'CloseWindow'), 'CloseWindow is a membership diff — nothing closed membership here');
+  });
+
+  it('placement: the sweep rides right after RaiseWindow and before the SetStacking re-assert', () => {
+    const state = scene();
+    const ev: Event = { type: 'OsFocusGained', id: wid(1) };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+    const types = effects.map((e) => e.type);
+    const raiseIdx = types.indexOf('RaiseWindow');
+    const dismissIdx = types.indexOf('DismissWindow');
+    const stackingIdx = types.indexOf('SetStacking');
+    assert.ok(raiseIdx !== -1 && dismissIdx !== -1 && stackingIdx !== -1, 'all three fire for this transition');
+    assert.ok(raiseIdx < dismissIdx, 'RaiseWindow precedes the sweep');
+    assert.ok(dismissIdx < stackingIdx, 'the sweep precedes the stacking re-assert');
+  });
+
+  it('a phantom focuser (unregistered id) sweeps nothing — matches the RaiseWindow rule\'s own guard', () => {
+    const state = scene();
+    const ev: Event = { type: 'OsFocusGained', id: wid(404) };
+    const next = evolve(state, ev);
+    assert.strictEqual(next.key, wid(404), 'the report is recorded as given (RULE 2)');
+    assert.deepStrictEqual(react(state, ev, next), [], 'no dismissal for a focuser that is not really there');
+  });
+
+  it('a self-echo (already key) still re-runs the sweep — the old machine ran it on EVERY report', () => {
+    // wid(1) registers LAST (highest openSeq) so the machine-cause ordering
+    // floor does not spare the two transients — they are OLDER than the
+    // focuser, which is the case the floor still sweeps (see
+    // `selectTransientAutoclose`'s own doc).
+    const base = fold([reg(2, 'palette'), reg(3, 'quick-view'), reg(1, 'workspace'), show(1), show(2), show(3)], initialState());
+    const focused = evolve(base, { type: 'OsFocusGained', id: wid(1) });
+    const echo: Event = { type: 'OsFocusGained', id: wid(1), cause: { kind: 'machine', opSeq: focused.opSeqCounter } };
+    const next = evolve(focused, echo);
+    assert.strictEqual(next.key, focused.key, 'key does not move — this is a re-confirmation');
+    assert.notStrictEqual(next.lastFocusProvenance?.seq, focused.lastFocusProvenance?.seq, 'but the provenance seq still advances');
+    assert.deepStrictEqual(dismissed(react(focused, echo, next)), [wid(2), wid(3)], 'and the sweep still runs — no dedup on the echo');
+  });
+
+  it('a RaiseWindow COMMAND now sweeps too — intended: decide has no other route to key', () => {
+    // §0.1.10: `decide` turns `RaiseWindow` into `OsFocusGained` with no
+    // `cause` (absent = world), so a machine-issued raise reaches `react`'s
+    // sweep rule exactly like a real user focus does. The old reducer's
+    // `RAISE_WINDOW_REQUESTED` never ran the sweep at all — this is a
+    // deliberate consequence of collapsing to one focus route, not a gap.
+    const state = scene();
+    const decision = decide(state, { type: 'RaiseWindow', id: wid(1), expectedVersion: state.version });
+    assert.ok('events' in decision);
+    const ev = decision.events[0];
+    assert.strictEqual((ev as { cause?: unknown }).cause, undefined, 'no cause means world');
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(dismissed(react(state, ev, next)), [wid(2), wid(3)], 'the raise command sweeps like any world-caused focus');
+  });
+
+  it('the machine-cause ordering floor still spares a transient opened AFTER the raise it rides with', () => {
+    // The floor `selectTransientAutoclose` already holds is what keeps a
+    // machine-driven raise (via `react`'s new emission) from sweeping
+    // something the user opened after the op that caused the focus.
+    const older = fold([reg(1, 'quick-view'), show(1)], initialState());
+    const withNewer = evolve(older, reg(2, 'palette'));
+    const shownNewer = evolve(withNewer, show(2));
+    const ev: Event = { type: 'OsFocusGained', id: wid(1), cause: { kind: 'machine', opSeq: 0 } };
+    const next = evolve(shownNewer, ev);
+    assert.deepStrictEqual(dismissed(react(shownNewer, ev, next)), [], 'the newer palette outlives a machine focus on the older slide');
+  });
+
+  it('an exempt focuser (utility/overlay) drives no dismissal effect at all', () => {
+    const state = fold([reg(1, 'utility'), reg(2, 'palette'), show(1), show(2)], initialState());
+    const ev: Event = { type: 'OsFocusGained', id: wid(1) };
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(react(state, ev, next).filter((e) => e.type === 'DismissWindow'), []);
+  });
+});
+
 // ── escapeMode: one live value, absent is meaningful ────────────────────────
 
 describe('window-kernel: escapeMode', () => {
