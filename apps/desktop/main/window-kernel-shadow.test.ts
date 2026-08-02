@@ -12,6 +12,7 @@ import {
   compareShadowKernelState,
   getShadowKernelExecutor,
   shadowKernelAppActivated,
+  shadowKernelAttachOverlay,
   shadowKernelCloseContent,
   shadowKernelCloseWindowDirect,
   shadowKernelDestroyAllGuests,
@@ -40,6 +41,14 @@ function fakeOldMachine(opts: { front: WindowId | null; stackOrder: WindowId[]; 
     switcher: { open: false },
     windows: opts.ids.map((id) => ({ id }) as unknown as WindowRecord),
   };
+}
+
+/** Registers a plain window in the shadow kernel — enough for `AttachOverlay`'s existence checks, nothing more. */
+function registerWindow(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowKernelRegisterWindow(
+    { id, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    oldSnapshot,
+  );
 }
 
 /** Registers a visible content-role window in the shadow kernel — the shape `isContentWindow`/`topmost` admit. */
@@ -745,5 +754,93 @@ describe('window-kernel-shadow: activating show feed (peek 7fffa286)', () => {
       b,
       'a non-activating show feed must not move topmost off b',
     );
+  });
+});
+
+describe('window-kernel-shadow: overlay attach/detach feed (peek 7fffa286)', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('THE MEASURED GAP, pinned: an overlay attach reaches the shadow kernel and sets overlayFor', () => {
+    // `AttachOverlay` has no production dispatcher anywhere until this feed —
+    // without it, `overlayFor` stays undefined forever, even after a genuine
+    // attach. Two real registered records (an overlay-shaped one and a host)
+    // so the assertion cannot pass on a record that was never created.
+    const [overlay, host] = [wid(200), wid(201)];
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(overlay, oldSnapshot);
+    registerWindow(host, oldSnapshot);
+    const before = getShadowKernelExecutor()
+      .getState()
+      .order.find((w) => w.id === overlay);
+    assert.strictEqual(before?.overlayFor, undefined, 'precondition: a freshly registered overlay carries no overlayFor');
+
+    shadowKernelAttachOverlay(overlay, host, oldSnapshot);
+
+    const after = getShadowKernelExecutor()
+      .getState()
+      .order.find((w) => w.id === overlay);
+    assert.strictEqual(after?.overlayFor, host, 'attach must set overlayFor to the host');
+  });
+
+  it('a retarget onto a different host moves overlayFor, never accumulates it', () => {
+    const [overlay, hostA, hostB] = [wid(202), wid(203), wid(204)];
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(overlay, oldSnapshot);
+    registerWindow(hostA, oldSnapshot);
+    registerWindow(hostB, oldSnapshot);
+
+    shadowKernelAttachOverlay(overlay, hostA, oldSnapshot);
+    assert.strictEqual(
+      getShadowKernelExecutor()
+        .getState()
+        .order.find((w) => w.id === overlay)?.overlayFor,
+      hostA,
+      'precondition: overlay is attached to hostA',
+    );
+
+    shadowKernelAttachOverlay(overlay, hostB, oldSnapshot);
+    assert.strictEqual(
+      getShadowKernelExecutor()
+        .getState()
+        .order.find((w) => w.id === overlay)?.overlayFor,
+      hostB,
+      'a retarget must replace overlayFor with the new host, not add to it',
+    );
+  });
+
+  it('a detach (hostId: null) clears overlayFor', () => {
+    const [overlay, host] = [wid(205), wid(206)];
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(overlay, oldSnapshot);
+    registerWindow(host, oldSnapshot);
+    shadowKernelAttachOverlay(overlay, host, oldSnapshot);
+    assert.strictEqual(
+      getShadowKernelExecutor()
+        .getState()
+        .order.find((w) => w.id === overlay)?.overlayFor,
+      host,
+      'precondition: overlay is attached',
+    );
+
+    shadowKernelAttachOverlay(overlay, null, oldSnapshot);
+
+    assert.strictEqual(
+      getShadowKernelExecutor()
+        .getState()
+        .order.find((w) => w.id === overlay)?.overlayFor,
+      undefined,
+      'detach must clear overlayFor',
+    );
+  });
+
+  it('never throws across an attach naming an overlay or host with no record', () => {
+    const danglingOverlay = wid(207); // never registered
+    const danglingHost = wid(208); // never registered
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+
+    assert.doesNotThrow(() => shadowKernelAttachOverlay(danglingOverlay, danglingHost, oldSnapshot));
+    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling attach joins nothing');
   });
 });

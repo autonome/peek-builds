@@ -530,6 +530,40 @@ export function shadowKernelRaiseWindow(id: WindowId, oldSnapshot: StateSnapshot
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Overlay attach/detach (peek 7fffa286) — the seventh real input this step
+// feeds the kernel. Translated at the two production sites that dispatch the
+// old machine's mirrored `OVERLAY_ATTACH_REQUESTED` (`hybrid-overlay.ts`'s
+// `retarget()` — a real `hostId`, attach or retarget — and
+// `detachOverlayFromMachine()` — `hostId: null`, detach), alongside that
+// dispatch, never in place of it.
+//
+// Closes the measured gap this feed was missing: `AttachOverlay` had no
+// production dispatcher anywhere, so `WindowRecord.overlayFor` stayed
+// permanently `undefined` in every real run even while the overlay was
+// genuinely attached in the old machine's state (see `window-kernel.ts`'s doc
+// on `WindowRecord.overlayFor` / the `AttachOverlay` command).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate a completed overlay attach/retarget/detach report into the
+ * kernel's `AttachOverlay` command — `hostId: null` is detach, the same one
+ * transition the old machine's `OVERLAY_ATTACH_REQUESTED` is. Same shape and
+ * containment as `shadowKernelRaiseWindow` et al.: routed through
+ * `shadowExecute` (a rejected stale `expectedVersion`, or a `hostId`/
+ * `overlayId` `decide` doesn't recognize, is logged, never thrown into the
+ * caller), ending with the same `compareAfterFeed` tail.
+ */
+export function shadowKernelAttachOverlay(overlayId: WindowId, hostId: WindowId | null, oldSnapshot: StateSnapshot): void {
+  shadowExecute({
+    type: 'AttachOverlay',
+    overlayId,
+    hostId,
+    expectedVersion: getShadowKernelExecutor().getState().version,
+  });
+  compareAfterFeed(oldSnapshot);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Divergence comparator — evidence the shadow kernel's view matches reality
 // before the next commit re-points readers onto it. Compares the three things
 // the cutover's readers actually depend on; see `compareShadowKernelState`'s

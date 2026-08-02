@@ -103,7 +103,12 @@ import {
 import { classifyWindowRegistration } from './window-state.js';
 import type { Rectangle, WindowId } from './window-state.js';
 import { deriveWindowSurface } from './izui-roles.js';
-import { shadowKernelDestroyWindow, shadowKernelWindowShown, shadowKernelWindowHidden } from './window-kernel-shadow.js';
+import {
+  shadowKernelAttachOverlay,
+  shadowKernelDestroyWindow,
+  shadowKernelWindowShown,
+  shadowKernelWindowHidden,
+} from './window-kernel-shadow.js';
 import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, registerWindow } from './main.js';
 import { getWindowPresentation } from './window-presenter.js';
@@ -658,6 +663,10 @@ function detachOverlayFromMachine(): void {
   sendActiveHandoff(null);
   if (overlayWmId == null) return;
   dispatchWindowEvent({ type: 'OVERLAY_ATTACH_REQUESTED', id: overlayWmId, hostId: null });
+  // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
+  // over nothing; see that module's doc for why this can never change what
+  // actually happens on screen.
+  shadowKernelAttachOverlay(overlayWmId, null, getWindowStateSnapshot());
 }
 
 /**
@@ -719,6 +728,10 @@ function retarget(id: number | null): void {
   }
 
   dispatchWindowEvent({ type: 'OVERLAY_ATTACH_REQUESTED', id: overlayWmId, hostId, frame });
+  // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
+  // over nothing; see that module's doc for why this can never change what
+  // actually happens on screen.
+  shadowKernelAttachOverlay(overlayWmId, hostId, getWindowStateSnapshot());
 
   // Tell the overlay renderer which window is now active + a state snapshot so
   // it fully swaps its navbar for the new window (instant paint, no flash).
