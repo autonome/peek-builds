@@ -158,13 +158,14 @@ machine drop stale intents — the correlation-token pattern already working in 
 as `ASK_RENDERER{seq}` / `ESC_RENDERER_ANSWER{seq}`.
 
 **A transient window is dismissed when some other window, not belonging to it, genuinely takes
-key.** This governs `window-kernel.ts selectTransientAutoclose` and
-`AUTOCLOSE_FOCUSER_EXEMPT_ROLES`.
+key.** This governs `window-kernel.ts selectTransientAutoclose`, implemented against the kernel as
+recorded in §0.1.11. `window-state.ts` — the reducer still driving production — keeps its own,
+older role-based sets (`AUTOCLOSE_EXEMPT_ROLES`, `AUTOCLOSE_FOCUSER_EXEMPT_ROLES`); those are not
+the rule stated here and are not touched by it.
 
-- **Ownership, not role.** `AUTOCLOSE_FOCUSER_EXEMPT_ROLES` (`utility`, `overlay`) exempts by the
-  focusing window's role, which is wrong in both directions: an unrelated overlay taking key
-  dismisses nothing, and a popup's relationship to its parent is expressed as a role name rather
-  than as `parentId`. The exemption is a relation over `overlayFor` and `parentId` — a window
+- **Ownership, not role.** A role-based exemption is wrong in both directions: an unrelated overlay
+  taking key dismisses nothing, and a popup's relationship to its parent is expressed as a role name
+  rather than as `parentId`. The exemption is a relation over `overlayFor` and `parentId` — a window
   attached to the transient is not "some other window." A window the transient merely *creates* is
   not exempt: a command palette that opens a page host is dismissed when that page host takes key,
   because the page host does not belong to it.
@@ -175,9 +176,9 @@ key.** This governs `window-kernel.ts selectTransientAutoclose` and
   transient strictly newer than the focuser survives while an older one is still swept.
 - **The machine applies the rule; no caller does.** `selectTransientAutoclose` and
   `selectAppResignTransients` stay pure selectors — queries, not transitions — but `react` emits
-  the dismissals directly off the `key` diff. That keeps rule application non-optional: the machine
-  remains the only thing that can dismiss a transient, and no dispatch site can silently skip
-  running it.
+  the dismissals off a diff of stored focus provenance, not a branch on the event type. That keeps
+  rule application non-optional: the machine remains the only thing that can dismiss a transient,
+  and no dispatch site can silently skip running it.
 
 ---
 
@@ -1716,6 +1717,92 @@ content query rather than to `key`, and the two reducer tests that read as count
 behavior of `front`, whose role is now split — so they constrain main. That leaves no identified
 reader that needs `key` to survive deactivation. The decision stays open; what the evidence removes
 is the claim that nulling breaks a caller.
+
+---
+
+### 0.1.11 Transient dismissal — implemented against the kernel, unproven at runtime
+
+§0's rule ("a transient window is dismissed when some other window, not belonging to it, genuinely
+takes key") is built. It runs only inside the shadow kernel (§0.1's "Built, not wired" still holds
+— `window-state.ts` and `window-os-adapter.ts` drive production); this records what the
+implementation froze so the rule can be checked against the running app once the kernel is wired in,
+rather than re-derived.
+
+**The rule is implemented.** `window-kernel.ts react()` could not read `ev.cause` directly — `react`
+is a pure structural projection of `(prev, ev, next)` (§0.1.1), so branching on the event's payload
+would make it something other than a diff. Provenance therefore had to become a diffable state fact:
+`State.lastFocusProvenance`, a `{cause, seq}` pair written unconditionally in `evolve`'s
+`OsFocusGained` arm, mirroring `lastTeardown` and `lastFocusAssert`. `react` diffs its `seq` against
+the previous state and, on an advance, calls `selectTransientAutoclose(next, next.key,
+provenance.cause)` and emits one dismissal per victim — placed after the `RaiseWindow` rule and
+before the `SetStacking` re-assert, matching the old reducer's fixed effect order.
+`selectTransientAutoclose` itself is unchanged in kind: a pure selector, not a transition.
+
+**Dismissal is its own effect.** The sweep emits `Effect.DismissWindow`, not `Effect.CloseWindow`.
+`WindowKernelExecutor` routes `DismissWindow` through `backend.closeOrHide`, deliberately distinct
+from the hard `backend.closeWindow` that realizes `CloseWindow`. `CloseWindow` has no keepLive
+branch and no exit-native-fullscreen preamble; routing a dismissal through it would destroy a
+keepLive slide that should only be hidden, and would skip the preamble a fullscreen victim needs
+before it disappears, stranding a black macOS Space. `closeOrHide` was already exposed on the
+backend port, so no new port method was needed.
+
+**A raise command now sweeps.** `decide` translates a `RaiseWindow` command into an `OsFocusGained`
+event carrying no `cause` (absent means world). A raise that genuinely takes key therefore reaches
+`react`'s sweep the same way a real user focus does — the old reducer's `RAISE_WINDOW_REQUESTED`
+never ran the sweep at all. This is intended, not a gap: what keeps a machine-driven raise from
+sweeping a sibling opened after it is the machine-cause ordering floor `selectTransientAutoclose`
+already holds (a transient strictly newer than the focuser survives a machine-caused focus).
+
+**The exemption is now a relation, directional and one-hop.** A focuser exempts only the victim it
+points at: `focuser.parentId === victim.id || focuser.overlayFor === victim.id`. Not symmetric, not
+transitive — which is what keeps a window a transient merely *creates* from being exempt (a command
+palette that opens a page host is still dismissed when that page host takes key). On the victim
+side, `overlayFor !== undefined` replaces the old role check: an attached overlay manages its own
+show/hide through the attachment relation and leaves by detach, never by dismissal.
+`AUTOCLOSE_FOCUSER_EXEMPT_ROLES` and `AUTOCLOSE_EXEMPT_ROLES` are deleted from `window-kernel.ts`
+(`window-state.ts` keeps its own copies — see §0 above).
+
+**Two facts had to be supplied first, because the relation matched nothing without them.**
+`AttachOverlay` had no production dispatcher at all, so `overlayFor` was permanently `undefined` in
+every real run regardless of whether an overlay was genuinely attached. It is now fed from both
+production dispatch sites in `hybrid-overlay.ts` — `retarget()` (attach or retarget onto a real
+host) and `detachOverlayFromMachine()` (`hostId: null`) — alongside their existing dispatch to the
+old machine, never in place of it.
+
+Separately, the chain popup opened by `renderer/cmd/panel.js openChainPopup()` registered with
+`parentId: null`, because `ipc.ts`'s `NON_PARENT_ROLES` excludes the palette that opens it from
+`isRealParent`. It now declares its parent explicitly through a new `declareParent` open option,
+threaded through `ipc.ts` independently of `isRealParent` and consumed only at the legacy
+`BrowserWindow` registration site. `NON_PARENT_ROLES` was not widened to cover this instead: it was
+introduced by a separate fix for a named regression — pressing Escape closed any web page just
+opened from the command palette, because such a page was promoted to `role: 'child-content'` and
+`escPolicy()` closes that role on Escape. Widening `NON_PARENT_ROLES` to also cover the palette
+would have reopened exactly that regression; `declareParent` sets the machine-level `parentId` this
+rule reads without touching `isRealParent` or the role derivation Escape depends on. It does not set
+Electron's native `BrowserWindow.parent`, which `options.parentId` already governs and which no
+caller of this new option wants changed.
+
+**The behavior this froze**, stated as the production windows it changes. Newly sweeping as
+focusers, because none has any `parentId`/`overlayFor` relation and each genuinely is another window
+taking key: the datastore viewer and diagnostic tool (`renderer/index.js` command handlers) and the
+two OAuth windows (`features/wonderwall/services/base.js`, `features/lex/atproto.js`). The windows
+switcher (`features/windows/background.js openWindowsView`) both starts sweeping as a focuser and
+becomes sweepable as a victim — it is `role: 'overlay'` but parented to nothing and attached to
+nothing, so the relation gives it no exemption in either direction. Remaining exempt through the
+relation rather than through a role: the chain popup toward the palette named by its `parentId`, the
+shared chrome overlay toward the host it frames through `overlayFor` (the "address bar dismisses the
+slide" regression this rule exists to keep fixed), and a detached devtools window toward its host,
+also through `parentId`.
+
+**The gap.** Both supplied facts — the overlay-attach feed and the chain popup's `declareParent` —
+are proven today only by unit tests that construct kernel records directly, plus a source-drift test
+pinning that `openChainPopup()` still passes `declareParent: true` and that `ipc.ts` still resolves
+it. Neither kind of test proves the fact ARRIVES at runtime in a running app; a predicate that is
+correct in form but matches nothing in practice is this codebase's documented recurring bug shape,
+and the same shape that made `AttachOverlay` a dead command in the first place. Closing it requires a
+live shadow run with `PEEK_SHADOW_KERNEL_COMPARE=1` comparing the shadow kernel's `overlayFor` and
+`parentId` against the old machine's live state, exercising an overlay attach/detach and a chain
+popup open. This is outstanding and stands before the kernel can be wired into production.
 
 ---
 
