@@ -347,6 +347,13 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     // The grab fires the SAME `ESC_PRESSED` the before-input-event path does —
     // `decideEscape` is the single decision, so a stale grab is harmless
     // (defense by shared decision, not by registration timing, §4.2).
+    //
+    // No `rendererHandled` fact to read here (window-escape-renderer-handled.ts
+    // / peek 7fffa286 companion): `globalShortcut` firing at all means
+    // `before-input-event` did NOT — no window's WebContents ever saw this
+    // keystroke, so no renderer could have consumed it. Absent is the
+    // structurally correct answer at this ONE of the four dispatch sites, not
+    // a gap in the producer.
     this.emit({ type: 'ESC_PRESSED', landedId: 'global' });
   };
 

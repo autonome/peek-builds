@@ -38,6 +38,11 @@ import {
 } from './window-state-singleton.js';
 import type { WindowClass } from './window-state.js';
 import { shadowKernelCloseWindowDirect } from './window-kernel-shadow.js';
+import {
+  initRendererHandledEscapeTracking,
+  rendererHandledEscapeForWc,
+  clearRendererHandledEscapeForWc,
+} from './window-escape-renderer-handled.js';
 
 /**
  * Get the appropriate background color based on system theme
@@ -326,8 +331,14 @@ export function addEscHandler(bw: BrowserWindow): void {
   DEBUG && console.log('adding esc handler to window:', bw.id);
   let lastEscTime = 0;
 
+  // Producer for `window-escape.ts EscapeKeyPress.rendererHandled` (peek
+  // 7fffa286 companion): register the `tile:escape:handled` receiver once
+  // (idempotent) so this window's tile-preload reports land in the cache.
+  initRendererHandledEscapeTracking(ipcMain);
+
   // Helper: attach ESC interception to a WebContents (host or guest)
   const attachEscListener = (wc: Electron.WebContents, source: 'host' | 'webview') => {
+    wc.once('destroyed', () => clearRendererHandledEscapeForWc(wc.id));
     wc.on('before-input-event', async (e, i) => {
       if (i.key === 'Escape' && i.type === 'keyDown') {
         // Intercept ESC on keyDown (not keyUp) so the IPC fires BEFORE DOM keydown handlers.
@@ -348,6 +359,14 @@ export function addEscHandler(bw: BrowserWindow): void {
 
         // Prevent ESC from propagating to the page (blocks DOM keydown dispatch)
         e.preventDefault();
+
+        // The mirrored "renderer already consumed this Escape" fact (this
+        // window's tile-preload's last reported `onEscape` answer), read
+        // synchronously — see window-escape-renderer-handled.ts. Not yet
+        // threaded into `ESC_PRESSED` (window-state.ts's reducer event has no
+        // field for it); real once the interpreter cutover lands.
+        const rendererHandled = rendererHandledEscapeForWc(wc.id);
+        DEBUG && console.log(`[esc] window ${bw.id} source:${source} rendererHandled=${rendererHandled}`);
 
         // Decision moved to the window-state machine: dispatch ESC_PRESSED and
         // let `decideEscape` own the outcome (the landed id is first-responder

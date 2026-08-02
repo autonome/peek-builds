@@ -194,6 +194,11 @@ import {
   clearEditableFocusForWc,
 } from './hybrid-editable-focus.js';
 import { initHybridWindowGestureHandling } from './hybrid-window-gesture.js';
+import {
+  initRendererHandledEscapeTracking,
+  rendererHandledEscapeForWc,
+  clearRendererHandledEscapeForWc,
+} from './window-escape-renderer-handled.js';
 
 import {
   getIzuiCoordinator,
@@ -1272,6 +1277,13 @@ export function wireHybridContentEvents(
   initHybridEditableFocusTracking();
   contentWC.once('destroyed', () => clearEditableFocusForWc(contentWC.id));
 
+  // Producer for `window-escape.ts EscapeKeyPress.rendererHandled` (peek
+  // 7fffa286 companion): register the `tile:escape:handled` receiver once
+  // (idempotent), and drop this content WC's cached answer on teardown so a
+  // recycled webContents id never inherits a stale one.
+  initRendererHandledEscapeTracking(ipcMain);
+  contentWC.once('destroyed', () => clearRendererHandledEscapeForWc(contentWC.id));
+
   // Content-area double/triple-click window gesture (peek d8ce0ddf): register the
   // `page:content-window-gesture` receiver once (idempotent). detent 2 → toggle
   // maximize (via the overlay), detent 3 → toggle fullscreen. See hybrid-window-gesture.ts.
@@ -1517,6 +1529,13 @@ export function wireHybridContentEvents(
       // debounce stay here (input hygiene); the landed id is first-responder
       // noise — `decideEscape` targets `front`.
       event.preventDefault();
+      // The mirrored "renderer already consumed this Escape" fact (this
+      // content WC's tile-preload's last reported `onEscape` answer, if any),
+      // read synchronously — see window-escape-renderer-handled.ts. Not yet
+      // threaded into `ESC_PRESSED` (window-state.ts's reducer event has no
+      // field for it); real once the interpreter cutover lands.
+      const rendererHandled = rendererHandledEscapeForWc(contentWC.id);
+      DEBUG && console.log(`[esc] hybrid content wc ${contentWC.id} rendererHandled=${rendererHandled}`);
       // Resolve the host's WM WindowId at keypress time (registration happened
       // at window creation); an unregistered host degrades to 'global' — the
       // landed id is first-responder noise either way.

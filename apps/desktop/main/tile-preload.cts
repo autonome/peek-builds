@@ -2195,11 +2195,18 @@ function buildAPI(): Record<string, unknown> {
           if (data?.responseChannel) {
             ipcRenderer.send(data.responseChannel, result);
           }
+          // Mirror the answer for the NEXT Escape press (window-escape.ts
+          // EscapeKeyPress.rendererHandled / window-escape-renderer-handled.ts).
+          // The interpreter isn't wired to a decision yet, but the fact this
+          // window's tile most recently reported is now real and cached, not
+          // permanently absent.
+          ipcRenderer.send('tile:escape:handled', (result as { handled?: boolean })?.handled === true);
         } catch (err) {
           console.error('[tile-preload] escape handler threw:', err);
           if (data?.responseChannel) {
             ipcRenderer.send(data.responseChannel, { handled: false });
           }
+          ipcRenderer.send('tile:escape:handled', false);
         }
       });
     },
