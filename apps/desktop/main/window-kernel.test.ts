@@ -1826,9 +1826,9 @@ describe('window-kernel: transient autoclose', () => {
       initialState(),
     );
 
-  it('a world-caused focus sweeps every visible transient but the focuser, the overlay, and the hidden', () => {
+  it('a world-caused focus sweeps every visible transient but the focuser and the hidden — an unattached overlay is no longer role-exempt', () => {
     const state = scene();
-    assert.deepStrictEqual(selectTransientAutoclose(state, wid(1), { kind: 'world' }), [wid(2), wid(3)]);
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(1), { kind: 'world' }), [wid(2), wid(3), wid(4)]);
   });
 
   it('the default cause is world', () => {
@@ -1838,22 +1838,30 @@ describe('window-kernel: transient autoclose', () => {
 
   it('the focuser is never its own victim', () => {
     const state = scene();
-    assert.deepStrictEqual(selectTransientAutoclose(state, wid(2), { kind: 'world' }), [wid(3)]);
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(2), { kind: 'world' }), [wid(3), wid(4)]);
   });
 
-  it('a utility or overlay focuser sweeps nothing; a roleless one sweeps everything', () => {
+  it('an unattached utility or overlay focuser sweeps like any other one now — only a relation exempts, not a role', () => {
     const state = scene();
-    assert.deepStrictEqual(selectTransientAutoclose(state, wid(5)), [], 'utility must not dismiss its transient parent');
-    assert.deepStrictEqual(selectTransientAutoclose(state, wid(4)), [], 'the chrome overlay is not a window switch');
-    assert.deepStrictEqual(selectTransientAutoclose(state, wid(6)), [wid(2), wid(3)], 'no role is in no exempt set');
+    assert.deepStrictEqual(
+      selectTransientAutoclose(state, wid(5)),
+      [wid(2), wid(3), wid(4)],
+      'utility with no parentId/overlayFor is an ordinary focuser now',
+    );
+    assert.deepStrictEqual(
+      selectTransientAutoclose(state, wid(4)),
+      [wid(2), wid(3)],
+      'overlay with no parentId/overlayFor is an ordinary focuser too — it just cannot sweep itself',
+    );
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(6)), [wid(2), wid(3), wid(4)], 'no role was always in no exempt set');
   });
 
   it('an unregistered focuser sweeps every visible transient, whatever the cause', () => {
     const state = scene();
-    assert.deepStrictEqual(selectTransientAutoclose(state, wid(99), { kind: 'world' }), [wid(2), wid(3)]);
+    assert.deepStrictEqual(selectTransientAutoclose(state, wid(99), { kind: 'world' }), [wid(2), wid(3), wid(4)]);
     assert.deepStrictEqual(
       selectTransientAutoclose(state, wid(99), { kind: 'machine', opSeq: 0 }),
-      [wid(2), wid(3)],
+      [wid(2), wid(3), wid(4)],
       'no record means no openSeq to order against — the ordering test cannot arm',
     );
   });
@@ -1891,15 +1899,165 @@ describe('window-kernel: transient autoclose', () => {
     assert.deepStrictEqual(selectTransientAutoclose(state, wid(2), { kind: 'world' }), [wid(1), wid(3)]);
   });
 
-  it('an exempt focuser stays exempt under a machine cause', () => {
-    const state = scene();
-    assert.deepStrictEqual(selectTransientAutoclose(state, wid(5), { kind: 'machine', opSeq: 0 }), []);
-    assert.deepStrictEqual(selectTransientAutoclose(state, wid(4), { kind: 'machine', opSeq: 0 }), []);
+  it('a focuser exempts only the victim it POINTS AT — a chain popup does not sweep its parent palette, even under a machine cause', () => {
+    // renderer/cmd/panel.js openChainPopup() declares `parentId` at the
+    // palette it was opened from — the machine-level relation this exemption
+    // now reads, not a role.
+    const palette = wid(1);
+    const chainPopup = wid(2);
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: palette, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        {
+          type: 'WindowRegistered',
+          id: chainPopup,
+          kind: 'page-host',
+          layer: 0,
+          canBecomeKey: true,
+          acceptsInput: true,
+          class: 'primary',
+          role: 'utility',
+          parentId: palette,
+        },
+        { type: 'WindowShown', id: palette },
+        { type: 'WindowShown', id: chainPopup },
+      ],
+      initialState(),
+    );
+    assert.deepStrictEqual(selectTransientAutoclose(state, chainPopup, { kind: 'world' }), [], 'the popup belongs to the palette named by its parentId');
+    assert.deepStrictEqual(selectTransientAutoclose(state, chainPopup, { kind: 'machine', opSeq: 0 }), [], 'the exemption is unconditional on cause');
+  });
+
+  it('a focuser exempts only the victim it points at — the shared chrome overlay does not sweep the host it frames', () => {
+    // hybrid-overlay.ts ensureOverlay attaches via OverlayAttached; the old
+    // docblock names this the "address bar dismisses the slide" regression.
+    const host = wid(1);
+    const overlay = wid(2);
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: host, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'quick-view' },
+        { type: 'WindowRegistered', id: overlay, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: false, class: 'overlay', role: 'overlay' },
+        { type: 'WindowShown', id: host },
+        { type: 'WindowShown', id: overlay },
+        { type: 'OverlayAttached', overlayId: overlay, hostId: host },
+      ],
+      initialState(),
+    );
+    assert.deepStrictEqual(selectTransientAutoclose(state, overlay, { kind: 'world' }), [], 'the overlay belongs to the host named by its overlayFor');
+  });
+
+  it('a focuser exempts only the victim it points at — detached devtools does not sweep its own host', () => {
+    // main.ts's devtools-opened handler registers parentId: hostId.
+    const host = wid(1);
+    const devtools = wid(2);
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: host, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        {
+          type: 'WindowRegistered',
+          id: devtools,
+          kind: 'browser',
+          layer: 0,
+          canBecomeKey: true,
+          acceptsInput: true,
+          class: 'devtools',
+          role: 'utility',
+          parentId: host,
+        },
+        { type: 'WindowShown', id: host },
+        { type: 'WindowShown', id: devtools },
+      ],
+      initialState(),
+    );
+    assert.deepStrictEqual(selectTransientAutoclose(state, devtools, { kind: 'world' }), [], 'devtools belongs to the palette/peek named by its parentId');
+  });
+
+  it('the relation is directional and one-hop — a window a transient merely creates is not exempt', () => {
+    // A command palette opens a page host with no parentId declared (opening
+    // FROM the palette does not inherit ownership — ipc.ts NON_PARENT_ROLES).
+    // The page host taking key must still sweep the palette that opened it.
+    const palette = wid(1);
+    const pageHost = wid(2);
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: palette, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        { type: 'WindowRegistered', id: pageHost, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowShown', id: palette },
+        { type: 'WindowShown', id: pageHost },
+      ],
+      initialState(),
+    );
+    assert.deepStrictEqual(
+      selectTransientAutoclose(state, pageHost, { kind: 'world' }),
+      [palette],
+      'the page host does not belong to the palette that opened it — focusing it dismisses the palette',
+    );
   });
 
   it('the selector is kind-agnostic — a transient browser window is a victim too', () => {
     const state = fold([reg(1, 'workspace'), reg(2, 'palette', 'browser'), show(1), show(2)], initialState());
     assert.deepStrictEqual(selectTransientAutoclose(state, wid(1)), [wid(2)]);
+  });
+
+  it("the windows switcher (features/windows/background.js openWindowsView) is role:'overlay' but parented to nothing and attached to nothing — it sweeps as a focuser AND is sweepable as a victim", () => {
+    const workspace = wid(1);
+    const palette = wid(2);
+    const switcher = wid(3);
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: workspace, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'workspace' },
+        { type: 'WindowRegistered', id: palette, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        { type: 'WindowRegistered', id: switcher, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'overlay' },
+        { type: 'WindowShown', id: workspace },
+        { type: 'WindowShown', id: palette },
+        { type: 'WindowShown', id: switcher },
+      ],
+      initialState(),
+    );
+    // Direction one: the switcher, once focused, has no relation to the
+    // palette — it sweeps it like any other focuser now.
+    assert.deepStrictEqual(selectTransientAutoclose(state, switcher, { kind: 'world' }), [palette]);
+    // Direction two: the switcher has no overlayFor, so it is not exempt as
+    // a victim either — some other window taking key sweeps it too.
+    assert.deepStrictEqual(selectTransientAutoclose(state, workspace, { kind: 'world' }), [palette, switcher]);
+  });
+
+  it("the datastore viewer and diagnostic tool (renderer/index.js command handlers) are role:'utility' with no relation — they now sweep as focusers", () => {
+    const palette = wid(1);
+    const utilityWindow = wid(2);
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: palette, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        { type: 'WindowRegistered', id: utilityWindow, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'utility' },
+        { type: 'WindowShown', id: palette },
+        { type: 'WindowShown', id: utilityWindow },
+      ],
+      initialState(),
+    );
+    assert.deepStrictEqual(
+      selectTransientAutoclose(state, utilityWindow, { kind: 'world' }),
+      [palette],
+      'the datastore viewer / diagnostic tool genuinely takes key, not belonging to the palette',
+    );
+  });
+
+  it("the OAuth windows (features/wonderwall/services/base.js, features/lex/atproto.js) are role:'utility' with no relation — they now sweep as focusers too", () => {
+    const palette = wid(1);
+    const oauthWindow = wid(2);
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: palette, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
+        { type: 'WindowRegistered', id: oauthWindow, kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'utility' },
+        { type: 'WindowShown', id: palette },
+        { type: 'WindowShown', id: oauthWindow },
+      ],
+      initialState(),
+    );
+    assert.deepStrictEqual(
+      selectTransientAutoclose(state, oauthWindow, { kind: 'world' }),
+      [palette],
+      'the OAuth window declares no parentId — it must survive an app switch to a password manager on its own — so it sweeps like any other window taking key',
+    );
   });
 
   it('selectAppResignTransients takes visible transient page-hosts only', () => {
@@ -1919,9 +2077,18 @@ describe('window-kernel: transient autoclose', () => {
       ],
       initialState(),
     );
-    // wid(1) non-transient, wid(4) overlay-exempt, wid(5) a browser (it
-    // self-closes on app blur), wid(6) never shown.
-    assert.deepStrictEqual(selectAppResignTransients(state), [wid(2), wid(3)]);
+    // wid(1) non-transient, wid(5) a browser (it self-closes on app blur),
+    // wid(6) never shown. wid(4) has no overlayFor — an unattached overlay
+    // sweeps like any other transient page-host now.
+    assert.deepStrictEqual(selectAppResignTransients(state), [wid(2), wid(3), wid(4)]);
+  });
+
+  it('selectAppResignTransients still exempts an ATTACHED overlay — the relation, not the role, decides', () => {
+    const state = fold(
+      [reg(1, 'workspace'), reg(2, 'overlay'), show(1), show(2), { type: 'OverlayAttached', overlayId: wid(2), hostId: wid(1) }],
+      initialState(),
+    );
+    assert.deepStrictEqual(selectAppResignTransients(state), []);
   });
 
   it('selectAppResignTransients has no focuser to exclude and reads no cause', () => {
@@ -2048,11 +2215,32 @@ describe('window-kernel: react applies transient autoclose', () => {
     assert.deepStrictEqual(dismissed(react(shownNewer, ev, next)), [], 'the newer palette outlives a machine focus on the older slide');
   });
 
-  it('an exempt focuser (utility/overlay) drives no dismissal effect at all', () => {
+  it('a focuser exempt via parentId drives no dismissal effect through react', () => {
+    const palette = wid(1);
+    const chainPopup = wid(2);
+    const state = fold(
+      [
+        reg(1, 'palette'),
+        { type: 'WindowRegistered', id: chainPopup, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'utility', parentId: palette },
+        show(1),
+        show(2),
+      ],
+      initialState(),
+    );
+    const ev: Event = { type: 'OsFocusGained', id: chainPopup };
+    const next = evolve(state, ev);
+    assert.deepStrictEqual(
+      react(state, ev, next).filter((e) => e.type === 'DismissWindow'),
+      [],
+      'the focuser belongs to its parent — react applies the relation, not a role',
+    );
+  });
+
+  it('an unattached utility focuser now DRIVES a dismissal through react — the role exemption is gone', () => {
     const state = fold([reg(1, 'utility'), reg(2, 'palette'), show(1), show(2)], initialState());
     const ev: Event = { type: 'OsFocusGained', id: wid(1) };
     const next = evolve(state, ev);
-    assert.deepStrictEqual(react(state, ev, next).filter((e) => e.type === 'DismissWindow'), []);
+    assert.deepStrictEqual(react(state, ev, next).filter((e) => e.type === 'DismissWindow'), [{ type: 'DismissWindow', id: wid(2) }]);
   });
 });
 

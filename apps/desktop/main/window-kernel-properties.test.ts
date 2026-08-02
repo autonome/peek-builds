@@ -769,20 +769,21 @@ function checkSettleTimeoutInvariant(item: LogItem, next: State): string[] {
 
 /**
  * Extra invariants on the two transient-autoclose selectors, checked against
- * every generated state. The role sets are restated here rather than imported
- * — the kernel keeps them private, and an independent restatement is what
- * makes this a check rather than a tautology.
+ * every generated state. The role set is restated here rather than imported
+ * — the kernel keeps it private, and an independent restatement is what makes
+ * this a check rather than a tautology. The exemption itself is NOT a role
+ * set to restate: it's a relation over `overlayFor`/`parentId` (§0,
+ * "Ownership, not role"), so the checks below read that relation directly off
+ * `state` instead of a mirrored constant.
  */
 /**
  * The document-like roles `isContentWindow` admits, restated independently of
- * the kernel's own `CONTENT_ROLES` for the same reason as the sets below: an
+ * the kernel's own `CONTENT_ROLES` for the same reason as the set below: an
  * imported constant would make the soundness check a tautology.
  */
 const CONTENT_ROLES_EXPECTED = new Set(['content', 'child-content', 'workspace']);
 
 const TRANSIENT_ROLES_EXPECTED = new Set(['palette', 'quick-view', 'overlay']);
-const AUTOCLOSE_EXEMPT_ROLES_EXPECTED = new Set(['overlay']);
-const AUTOCLOSE_FOCUSER_EXEMPT_ROLES_EXPECTED = new Set(['utility', 'overlay']);
 
 function checkAutocloseInvariants(state: State): string[] {
   const violations: string[] = [];
@@ -794,7 +795,9 @@ function checkAutocloseInvariants(state: State): string[] {
     if (!rec.visible) return false;
     if (rec.role === undefined) return false;
     if (!TRANSIENT_ROLES_EXPECTED.has(rec.role)) return false;
-    if (AUTOCLOSE_EXEMPT_ROLES_EXPECTED.has(rec.role)) return false;
+    if (rec.overlayFor !== undefined) return false;
+    const focuser = state.order.find((w) => w.id === focusedId);
+    if (focuser?.parentId === rec.id || focuser?.overlayFor === rec.id) return false;
     return true;
   };
 
@@ -828,12 +831,6 @@ function checkAutocloseInvariants(state: State): string[] {
           violations.push(`machine-caused sweep took a window opened after the focuser: ${victim} > ${focusedId}`);
         }
       }
-      // An exempt focuser sweeps nothing, whatever the cause.
-      if (focuser.role !== undefined && AUTOCLOSE_FOCUSER_EXEMPT_ROLES_EXPECTED.has(focuser.role)) {
-        if (world.length > 0 || machine.length > 0) {
-          violations.push(`an exempt focuser (${focuser.role}) swept something: ${JSON.stringify(world)}`);
-        }
-      }
     }
   }
 
@@ -845,7 +842,7 @@ function checkAutocloseInvariants(state: State): string[] {
       !rec.visible ||
       rec.role === undefined ||
       !TRANSIENT_ROLES_EXPECTED.has(rec.role) ||
-      AUTOCLOSE_EXEMPT_ROLES_EXPECTED.has(rec.role)
+      rec.overlayFor !== undefined
     ) {
       violations.push(`selectAppResignTransients named an ineligible window: ${victim}`);
     }

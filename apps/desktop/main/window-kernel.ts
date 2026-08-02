@@ -2594,10 +2594,11 @@ export function topmostBaseLayerPageHost(state: State): WindowRecord | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Transient autoclose — the role sets and the two selectors, ported from
-// `window-state.ts` (`TRANSIENT_ROLES`, `AUTOCLOSE_EXEMPT_ROLES`,
-// `AUTOCLOSE_FOCUSER_EXEMPT_ROLES`, `selectTransientAutoclose`,
-// `selectAppResignTransients`).
+// Transient autoclose — the role set and the two selectors, ported from
+// `window-state.ts` (`TRANSIENT_ROLES`, `selectTransientAutoclose`,
+// `selectAppResignTransients`). The exemption itself is NOT ported: it is a
+// relation over `overlayFor` and `parentId`, not a role set — see §0 of
+// `docs/design/window-manager.md`, "Ownership, not role."
 //
 // They are QUERIES, not transitions: each answers "which windows should be
 // dismissed", and the caller turns each id into a `CloseOrHideWindow` command
@@ -2612,28 +2613,6 @@ export function topmostBaseLayerPageHost(state: State): WindowRecord | null {
  * `window-state.ts`); all three copies must agree.
  */
 export const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay']);
-
-/**
- * Transient roles the autoclose EXEMPTS as a VICTIM. `overlay` is
- * transient-class but manages its own show/hide through the attachment
- * relation (`WindowRecord.overlayFor`), never through a close — so an
- * autoclose must never touch it.
- */
-export const AUTOCLOSE_EXEMPT_ROLES: ReadonlySet<string> = new Set(['overlay']);
-
-/**
- * Roles that, when THEY are the one gaining focus, sweep NOTHING — the
- * focuser-side exemption set, distinct from `AUTOCLOSE_EXEMPT_ROLES`:
- *
- *   - `utility`  a chain popup, child of a transient — it must not dismiss
- *                its own transient parent.
- *   - `overlay`  the shared chrome overlay is app chrome attached to the very
- *                window it would be dismissing, and it is deliberately
- *                focusable (typing a URL in the navbar takes key), so a focus
- *                landing on it is not "the user switched to a different
- *                window".
- */
-export const AUTOCLOSE_FOCUSER_EXEMPT_ROLES: ReadonlySet<string> = new Set(['utility', 'overlay']);
 
 /** Default provenance for a focus report that carries none — see `FocusCause`. */
 const WORLD_CAUSE: FocusCause = { kind: 'world' };
@@ -2651,15 +2630,24 @@ export function roleIn(set: ReadonlySet<string>, role: string | undefined): bool
 }
 
 /**
- * Which transient siblings a newly-focused window dismisses. Semantics ported
- * exactly from `window-state.ts selectTransientAutoclose`:
+ * Which transient siblings a newly-focused window dismisses. A transient is
+ * dismissed when some other window, not belonging to it, genuinely takes key
+ * (`docs/design/window-manager.md` §0). "Belonging to it" is a relation, not
+ * a role:
  *
- *   - a focuser whose role is in `AUTOCLOSE_FOCUSER_EXEMPT_ROLES` closes
- *     NOTHING;
  *   - skip the focuser itself, any non-visible window, any non-transient role;
- *   - `overlay` is exempt as a VICTIM too (`AUTOCLOSE_EXEMPT_ROLES`);
- *   - an UNREGISTERED focuser (no record) has no role, which is in no exempt
- *     set — so it sweeps every visible transient.
+ *   - a victim with `overlayFor` set is exempt — an attached overlay manages
+ *     its own show/hide through the attachment relation
+ *     (`WindowRecord.overlayFor`), never through a close, so an autoclose must
+ *     never touch it;
+ *   - a victim the FOCUSER points at — `focuser.parentId === victim.id` or
+ *     `focuser.overlayFor === victim.id` — is exempt too: the focuser belongs
+ *     to it, so this is not "some other window" taking key. Directional and
+ *     one-hop on purpose: a window the transient merely creates (e.g. a
+ *     command palette opening a page host) is NOT exempt, because that
+ *     relation points the other way;
+ *   - an UNREGISTERED focuser (no record) has no `parentId`/`overlayFor` to
+ *     point anywhere — so it sweeps every visible transient.
  *
  * Kind-agnostic on purpose: BOTH `browser` and `page-host` windows are
  * candidates (the close-on-blur regression, peek 8e5c3174, was hybrid page
@@ -2674,11 +2662,11 @@ export function roleIn(set: ReadonlySet<string>, role: string | undefined): bool
  * raise, and the OS echo of that machine-issued raise swept a palette the user
  * had opened one transition earlier.
  *
- * In both, the missing fact was never "which role" — the roles involved are
- * exactly the ones a legitimate switch must still sweep, which is why this is
- * not a third entry in `AUTOCLOSE_FOCUSER_EXEMPT_ROLES`. The missing fact was
- * WHO asked for this focus and WHEN: `cause` states the first (an executor
- * report, never an inference) and `openSeq` supplies the second.
+ * In both, the missing fact was never "which relation" — the relations
+ * involved are exactly the ones a legitimate switch must still sweep. The
+ * missing fact was WHO asked for this focus and WHEN: `cause` states the
+ * first (an executor report, never an inference) and `openSeq` supplies the
+ * second.
  *
  * So `machine` ARMS AN ORDERING TEST — it never skips the sweep. A palette
  * that the machine legitimately raised over a slide is machine-caused too, and
@@ -2698,7 +2686,6 @@ export function selectTransientAutoclose(
   cause: FocusCause = WORLD_CAUSE,
 ): WindowId[] {
   const focuser = state.order.find((w) => w.id === focusedId);
-  if (focuser !== undefined && roleIn(AUTOCLOSE_FOCUSER_EXEMPT_ROLES, focuser.role)) return [];
   // The ordering floor is armed ONLY by a machine cause on a registered
   // focuser — an unregistered one has no `openSeq` to compare against, so it
   // sweeps everything whatever the cause.
@@ -2708,7 +2695,8 @@ export function selectTransientAutoclose(
     if (rec.id === focusedId) continue;
     if (!rec.visible) continue;
     if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
-    if (roleIn(AUTOCLOSE_EXEMPT_ROLES, rec.role)) continue;
+    if (rec.overlayFor !== undefined) continue;
+    if (focuser?.parentId === rec.id || focuser?.overlayFor === rec.id) continue;
     if (orderingFloor !== null && rec.openSeq > orderingFloor) continue;
     out.push(rec.id);
   }
@@ -2736,7 +2724,7 @@ export function selectAppResignTransients(state: State): WindowId[] {
     if (rec.kind !== 'page-host') continue;
     if (!rec.visible) continue;
     if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
-    if (roleIn(AUTOCLOSE_EXEMPT_ROLES, rec.role)) continue;
+    if (rec.overlayFor !== undefined) continue;
     out.push(rec.id);
   }
   return out;
