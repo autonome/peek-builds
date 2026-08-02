@@ -29,6 +29,9 @@ import * as assert from 'node:assert';
 import {
   initialState,
   evolve,
+  keyWindow,
+  topmost,
+  isContentWindow,
   BASE_LAYER,
   type Event,
   type State,
@@ -133,6 +136,22 @@ describe('window-escape: the landed keystroke and the key window are reconciled'
     const state = paletteOverHost();
     const target = resolveEscapeTarget(press({ landedId: 'global' }), state);
     assert.strictEqual(target.kind === 'window' ? target.record.id : null, palette);
+  });
+
+  it('ESC targets the key window, never main — a quick-view holding key leaves the host as main', () => {
+    // Mechanical rewrite of the old reducer's `ported: resolveHybridEscapeTarget
+    // -> ESC target is always front` › `ESC targets the front quick-view, not
+    // the landed content host`. The old single `front` field answered both
+    // "who gets the keystroke" and "which window is the user's" at once; the
+    // key/main split answers them separately, and both have to be asserted
+    // together or the rewrite would be checking only half of what the old test
+    // did (window-manager.md §0's front-reader wiring map: `keyWindow`
+    // replaces none of the readers that want the content window).
+    const state = fold([regQuickView(quickView), show(quickView), focus(quickView)], loneHost());
+    assert.strictEqual(keyWindow(state)?.id, quickView, 'the quick-view took the keystroke');
+    assert.strictEqual(topmost(state, isContentWindow)?.id, workspaceHost, 'the host is still the window in use');
+    const target = resolveEscapeTarget(press({ landedId: 'global' }), state);
+    assert.strictEqual(target.kind === 'window' ? target.record.id : null, quickView, 'ESC targets key, not main');
   });
 
   it('disagreement — a landing on a window that no longer holds key is dropped as stale', () => {
