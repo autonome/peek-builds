@@ -3090,6 +3090,20 @@ export function registerWindowHandlers(): void {
       !INTERNAL_URL_PREFIXES.some(p => openerUrl.startsWith(p)) &&
       (openerRole === undefined || !NON_PARENT_ROLES.has(openerRole));
 
+    // Narrow escape hatch: an open call can declare its own opener as the
+    // registration's machine-level parent even when the opener's role sits
+    // in `NON_PARENT_ROLES` above (e.g. a popup opened from the cmd
+    // palette). This affects ONLY the machine registration's `parentId`
+    // below — `isRealParent` itself, and everything derived from it
+    // (`inferIzuiRole`'s child-content promotion, `parent-centered`
+    // placement), stay exactly as computed above. Distinct from
+    // `options.parentId` further down, which only sets Electron's native
+    // `BrowserWindow.parent` (OS-level window ownership) — setting THAT
+    // would also change on-screen window behavior (stacking, minimize-
+    // with-parent), which a caller wanting only the machine-level fact
+    // does not want.
+    const declaredParentWindow = options.declareParent === true ? openerWindow : null;
+
     // Derive `Placement` intent from open-time options. The derivation
     // mirrors what's recorded on the registry below — keep these two
     // call sites in sync (they consult the same option flags).
@@ -3487,6 +3501,14 @@ export function registerWindowHandlers(): void {
       // payload below.
       const parentWindowId = parentWindowIdForRole;
 
+      // A caller-declared parent (`options.declareParent`, resolved above)
+      // wins over the `isRealParent` derivation for the REGISTRATION's
+      // `parentId` only — `role`/`placement` (already derived from
+      // `parentWindowIdForRole`) are untouched.
+      const registrationParentWindowId = declaredParentWindow
+        ? declaredParentWindow.id
+        : parentWindowId;
+
       console.log('[izui] Window role:', role, 'for:', url);
 
       // `placement` was derived earlier (in Group B fresh-open
@@ -3540,7 +3562,7 @@ export function registerWindowHandlers(): void {
         contentWC: win.webContents,
         source: msg.source,
         params: windowParams,
-        parentId: parentWindowId != null ? getWindowIdFor(parentWindowId) : null,
+        parentId: registrationParentWindowId != null ? getWindowIdFor(registrationParentWindowId) : null,
         alwaysOnTop: winOptions.alwaysOnTop === true,
         // keepLive rides the registration (first-class on the reducer record)
         // — the machine's WINDOW_CLOSE_OR_HIDE_REQUESTED clause branches on it.

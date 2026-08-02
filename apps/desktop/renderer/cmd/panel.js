@@ -796,6 +796,12 @@ async function openChainPopup(popupUrl, data, mimeType, title) {
     alwaysOnTop: true,
     hasShadow: true,
     resizable: true,
+    // The cmd palette's role is excluded from `isRealParent` (ipc.ts
+    // NON_PARENT_ROLES) so opening a page FROM the palette doesn't inherit
+    // `role: 'child-content'`/ESC-closes-on-palette-ESC — but the chain
+    // popup genuinely IS the palette's child: declare the machine-level
+    // parent explicitly so later transient-dismissal logic can read it.
+    declareParent: true,
   });
 
   chainPopupWindowId = openResult?.id || null;

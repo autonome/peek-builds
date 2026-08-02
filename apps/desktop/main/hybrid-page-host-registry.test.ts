@@ -18,6 +18,8 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { BaseWindow, WebContents } from 'electron';
 import {
   _resetForTests,
@@ -481,3 +483,88 @@ describe('hybrid-page-host-registry: same-URL retry cap', () => {
 // now live on the window-state machine record (§5 step 7B) and are pinned in
 // window-state.test.ts (MAXIMIZE_REQUESTED / UNMAXIMIZE_REQUESTED /
 // MAXIMIZE_RESTORED / MAXIMIZE_EXITED_BY_RESIZE suites).
+
+// ============================================================================
+// window-open registration: an explicit `declareParent` wins over the
+// isRealParent/NON_PARENT_ROLES derivation (ipc.ts window-open handler).
+//
+// `ipc.ts`'s `window:open` handler cannot be exercised directly under
+// `electron --test` (see `tile-window-open.test.ts` — it transitively
+// imports Electron runtime APIs that need a window-producing process), so
+// this suite covers the mechanism two ways: (1) a source-drift check that
+// the real wiring exists in both `renderer/cmd/panel.js` and `main/ipc.ts`,
+// and (2) a pure mirror of the resolution formula itself.
+// ============================================================================
+
+function repoRoot(): string {
+  // The unit suite runs from the repo root via test:unit / test:desktop:electron.
+  return process.cwd();
+}
+
+describe('window-open registration: chain popup declares its opener as machine parent', () => {
+  it('panel.js openChainPopup() passes declareParent: true to api.window.open', () => {
+    const panelPath = path.join(repoRoot(), 'apps', 'desktop', 'renderer', 'cmd', 'panel.js');
+    const src = fs.readFileSync(panelPath, 'utf-8');
+
+    const fnStart = src.indexOf('async function openChainPopup(');
+    assert.ok(fnStart >= 0, 'openChainPopup() must still exist in panel.js');
+    const fnEnd = src.indexOf('\n// ===== Chain Steps UI =====', fnStart);
+    assert.ok(fnEnd > fnStart, 'could not bound openChainPopup() body — panel.js structure moved');
+    const fnBody = src.slice(fnStart, fnEnd);
+
+    assert.match(
+      fnBody, /api\.window\.open\(/,
+      'openChainPopup() must still open the popup via api.window.open',
+    );
+    assert.match(
+      fnBody, /declareParent:\s*true/,
+      'openChainPopup() must declare the palette as the popup\'s machine-level parent ' +
+      '(ipc.ts NON_PARENT_ROLES excludes the palette role from isRealParent, so without ' +
+      'this explicit flag the registration gets parentId: null)',
+    );
+  });
+
+  it('ipc.ts honors an explicit declareParent over the isRealParent derivation at the legacy BrowserWindow registration site', () => {
+    const ipcPath = path.join(repoRoot(), 'apps', 'desktop', 'main', 'ipc.ts');
+    const src = fs.readFileSync(ipcPath, 'utf-8');
+
+    assert.match(
+      src, /const declaredParentWindow = options\.declareParent === true \? openerWindow : null;/,
+      'ipc.ts must resolve an explicit caller-declared parent independent of isRealParent',
+    );
+    assert.match(
+      src, /const registrationParentWindowId = declaredParentWindow[\s\S]{0,80}: parentWindowId;/,
+      'the declared parent must be threaded into the registration parent-id resolution, ' +
+      'preferred over the isRealParent-derived parentWindowId',
+    );
+    assert.match(
+      src, /parentId: registrationParentWindowId != null \? getWindowIdFor\(registrationParentWindowId\) : null,/,
+      'the legacy BrowserWindow registerWindowWithMachine call must register the resolved ' +
+      '(declared-or-derived) parent id, not the raw isRealParent-only parentWindowId',
+    );
+  });
+
+  // Mirrors the resolution formula at the point ipc.ts computes it
+  // (`declaredParentWindow` / `registrationParentWindowId` above) so the
+  // LOGIC — not just its presence — is under test. `openerId` stands in for
+  // the resolved-window id `getWindowIdFor` would mint; irrelevant here.
+  function resolveRegistrationParentId(
+    isRealParent: boolean, openerId: number, declareParent: boolean,
+  ): number | null {
+    const parentWindowId = isRealParent ? openerId : null;
+    const declaredParentWindow = declareParent ? openerId : null;
+    return declaredParentWindow != null ? declaredParentWindow : parentWindowId;
+  }
+
+  it('an explicit declareParent overrides a NON_PARENT_ROLES opener (the chain-popup-from-palette case)', () => {
+    assert.strictEqual(resolveRegistrationParentId(false, 42, true), 42);
+  });
+
+  it('without declareParent, a NON_PARENT_ROLES opener still resolves to null (the pre-fix chain-popup behavior)', () => {
+    assert.strictEqual(resolveRegistrationParentId(false, 42, false), null);
+  });
+
+  it('a genuinely real-parent opener is unaffected by the new flag when absent', () => {
+    assert.strictEqual(resolveRegistrationParentId(true, 42, false), 42);
+  });
+});
