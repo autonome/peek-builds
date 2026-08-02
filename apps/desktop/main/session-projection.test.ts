@@ -740,7 +740,14 @@ describe('session-projection — machine-derived descriptor fields', () => {
     assert.deepStrictEqual(d.bounds, { x: 0, y: 0, width: 1920, height: 1080 });
   });
 
-  it('zOrder is the record focusSeq and focused is the machine front', () => {
+  it('focused is the machine front', () => {
+    // `zOrder`'s own value tracking `WindowRecord.focusSeq` is already pinned,
+    // byte-for-byte, by every `focusSeq`-bearing world in the on-disk-shape
+    // describe above (e.g. "single plain content window", "the saved stacking
+    // position is not the focus-recency rank") — this test drops the
+    // redundant direct assertion so it isn't the one place a future source
+    // change for `zOrder` has to keep matching (§5 step 11 remaining work,
+    // window-manager.md "The one-order consequence").
     const world: World = {
       fixtures: [contentFixture(1, 'w1'), contentFixture(2, 'w2')],
       records: [makeRecord('w1', { focusSeq: 3 }), makeRecord('w2', { focusSeq: 9 })],
@@ -748,23 +755,7 @@ describe('session-projection — machine-derived descriptor fields', () => {
       frontNativeId: 2,
     };
     const out = serializeSession(inputFor(world)).snapshot.windows;
-    assert.deepStrictEqual(out.map((w) => [w.zOrder, w.focused]), [[3, false], [9, true]]);
-  });
-
-  it('stackIndex is the position in the machine stack, and disagrees with zOrder on a background open', () => {
-    // w1 is the last-focused window; w2 was shown WITHOUT being activated, so
-    // the machine raised it in the stack but never bumped its focusSeq. The two
-    // saved ranks must therefore point opposite ways.
-    const world: World = {
-      fixtures: [contentFixture(1, 'w1'), contentFixture(2, 'w2')],
-      records: [makeRecord('w1', { focusSeq: 9 }), makeRecord('w2', { focusSeq: 0 })],
-      stackOrder: ['w1', 'w2'],
-      front: 'w1',
-      frontNativeId: 1,
-    };
-    const out = serializeSession(inputFor(world)).snapshot.windows;
-    assert.deepStrictEqual(out.map((w) => w.stackIndex), [0, 1], 'w2 is on top of the saved stack');
-    assert.deepStrictEqual(out.map((w) => w.zOrder), [9, 0], 'and below w1 by focus recency');
+    assert.deepStrictEqual(out.map((w) => w.focused), [false, true]);
   });
 
   it('a window outside the machine stack gets NO stackIndex key at all', () => {
@@ -944,10 +935,13 @@ describe('session-projection — readStackIndex + orderRestoredWindowsBottomToTo
     );
   });
 
-  it('a PRE-FIELD snapshot falls back to the focus-recency ordering restore used before', () => {
-    // Nothing recorded: the entries are in restore-dispatch order (focused
-    // first, then focus recency descending), so reversing them is exactly the
-    // bottom→top list the old rebuild produced.
+  it('a PRE-FIELD snapshot (every position unrecorded) falls back to reversing dispatch order', () => {
+    // Nothing recorded: every entry's stackIndex is null, so the fallback
+    // reverses the array exactly as given. This absorbs a snapshot written
+    // before the field existed, whatever order its caller dispatched restore
+    // in — the fallback does not name that order "focus recency" (the
+    // one-order decision retires focus recency as a distinct concept from
+    // stack position; see window-manager.md "The one-order consequence").
     assert.deepStrictEqual(
       orderRestoredWindowsBottomToTop([
         { id: 10, stackIndex: null },
@@ -984,15 +978,18 @@ describe('session-projection — readStackIndex + orderRestoredWindowsBottomToTo
     assert.deepStrictEqual(orderRestoredWindowsBottomToTop([]), []);
   });
 
-  it('SAVE → RESTORE round trip: a background open comes back ON TOP of the last-focused window', () => {
-    // w1 is the window the user last focused; w2 was opened behind their back
-    // and sits visually above it. Save records both ranks; restore loads by
-    // recency (w1 first) but must stack by position (w2 on top).
+  it('SAVE → RESTORE round trip: a background open comes back BELOW the last-focused window', () => {
+    // w1 is the window the user last focused; w2 was opened behind their back.
+    // Under the one-order rule (window-manager.md §0.1.10, "a window that was
+    // not focused does not go on top") the saved stack already carries w2
+    // BELOW w1, so save and restore agree instead of ranking it two opposite
+    // ways: restore loads by recency (w1 first) and stacks by the same saved
+    // position (w2 stays below).
     const world: World = {
       fixtures: [contentFixture(1, 'w1', { address: 'https://last-focused.example/' }),
                  contentFixture(2, 'w2', { address: 'https://background-open.example/' })],
       records: [makeRecord('w1', { focusSeq: 9 }), makeRecord('w2', { focusSeq: 0 })],
-      stackOrder: ['w1', 'w2'],
+      stackOrder: ['w2', 'w1'],
       front: 'w1',
       frontNativeId: 1,
     };
@@ -1016,16 +1013,8 @@ describe('session-projection — readStackIndex + orderRestoredWindowsBottomToTo
 
     assert.deepStrictEqual(
       orderRestoredWindowsBottomToTop(entries).map((id) => urlOf.get(id)),
-      ['https://last-focused.example/', 'https://background-open.example/'],
-      'bottom→top: the background open lands on top, as it was on screen',
-    );
-
-    // The pre-change rebuild was the reverse of the dispatch order, which put
-    // the last-focused window on top and buried the background open.
-    assert.deepStrictEqual(
-      [...entries].reverse().map((e) => urlOf.get(e.id)),
       ['https://background-open.example/', 'https://last-focused.example/'],
-      'the inverted stack the focus-recency rebuild produced',
+      'bottom→top: the background open stays below, as it was on screen',
     );
   });
 });
