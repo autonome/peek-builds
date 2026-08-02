@@ -157,6 +157,28 @@ a gap where state can change in between. Carry the epoch the intent assumed and 
 machine drop stale intents — the correlation-token pattern already working in this codebase
 as `ASK_RENDERER{seq}` / `ESC_RENDERER_ANSWER{seq}`.
 
+**A transient window is dismissed when some other window, not belonging to it, genuinely takes
+key.** This governs `window-kernel.ts selectTransientAutoclose` and
+`AUTOCLOSE_FOCUSER_EXEMPT_ROLES`.
+
+- **Ownership, not role.** `AUTOCLOSE_FOCUSER_EXEMPT_ROLES` (`utility`, `overlay`) exempts by the
+  focusing window's role, which is wrong in both directions: an unrelated overlay taking key
+  dismisses nothing, and a popup's relationship to its parent is expressed as a role name rather
+  than as `parentId`. The exemption is a relation over `overlayFor` and `parentId` — a window
+  attached to the transient is not "some other window." A window the transient merely *creates* is
+  not exempt: a command palette that opens a page host is dismissed when that page host takes key,
+  because the page host does not belong to it.
+- **Provenance stays, and is not a second rule.** Whether the machine itself caused the event
+  currently being handled is already stored fact 4 above; `FocusCause` is that fact. "Genuinely" in
+  the rule means the key change came from the world, not from the machine echoing an operation it
+  just requested. A machine-caused focus does not skip the sweep — it arms an ordering test, so a
+  transient strictly newer than the focuser survives while an older one is still swept.
+- **The machine applies the rule; no caller does.** `selectTransientAutoclose` and
+  `selectAppResignTransients` stay pure selectors — queries, not transitions — but `react` emits
+  the dismissals directly off the `key` diff. That keeps rule application non-optional: the machine
+  remains the only thing that can dismiss a transient, and no dispatch site can silently skip
+  running it.
+
 ---
 
 ## 0.1 The rewritten kernel — state shape and structure
@@ -876,11 +898,9 @@ added (`window-kernel.ts` `Effect`, derived in `react` as a structural membershi
 in `window-kernel-executor.ts` `performEffect`). Teardown is not a caller composition outside the
 kernel the way Escape (`window-escape.ts`), the switcher, and spaces policy are.
 
-The kernel never initiates a close on its own. `window-kernel.ts`'s `selectTransientAutoclose` and
-`selectAppResignTransients` are queries, not transitions — each answers which windows should be
-dismissed, and the caller turns each id into a `CloseOrHideWindow` command (the file states this
-directly above both selectors). Every removal of a window therefore enters as a command from
-outside; the kernel does its bookkeeping and emits the effect that performs the teardown.
+A caller-requested removal never originates inside the kernel. `DESTROY_WINDOW`, `CLOSE_CONTENT`,
+`DESTROY_ALL_GUESTS`, and `CLOSE_WINDOW_DIRECT` each enter as a command from outside; the kernel
+does its bookkeeping and emits the effect that performs the teardown.
 
 The precedents that put Escape, the switcher, and spaces policy outside the kernel do not transfer
 to teardown, because none of those three mutate window membership. `order` is membership; teardown
@@ -891,10 +911,13 @@ an out-of-band `backend.destroyWindow` that the kernel learns about only afterwa
 `WindowClosed` OS report. The out-of-band path is a second authority over `order` — the exact
 failure mode §2 exists to prevent.
 
-What survives from the two transient-autoclose selectors is the split between deciding and
-emitting: the kernel decides some closes nobody requested, but does not emit them directly — they
-round-trip through a caller as commands, which is what keeps `evolve` guard-free and effects a
-pure structural diff.
+Transient dismissal is not this case: §0's governing rule — a transient closes when some other
+window, not belonging to it, genuinely takes key — is a rule the machine applies to itself, not a
+request a caller makes, so it is not routed through a command either. `window-kernel.ts`'s
+`selectTransientAutoclose` and `selectAppResignTransients` stay pure selectors — queries, not
+transitions — but `react` turns their answer into effects directly, off the same `key`/`order`
+diff every other effect derives from, so `evolve` stays guard-free and effects remain a pure
+structural diff. See §0 for why this application is the machine's job and not a caller's.
 
 #### Decided: devtools re-assert, cold-start focus, and stack-order import enter the kernel
 
@@ -1092,20 +1115,26 @@ a real display a native `'focus'` echo follows an activating `show()` anyway; th
 is idempotent with it, because the echo names the window `key` already holds, so its diff is
 empty. Headless masks OS activation, which is why this was only visible headless.
 
-**After that fix, `front` agrees and `stackOrder` diverges — the two traded places.** Every
-re-open now shows the kernel already on the reused window, with the old machine arriving one line
-later (its own `WINDOW_SHOWN` echo drains after the current effect batch), so the next comparison
-is silent on `front`. But the companion focus gain promotes the re-shown window to the top of the
-kernel's `order`, while the old machine's `stackOrder` does not reorder on `WINDOW_SHOWN` at all —
-only its `front` moves. That disagreement persists — still present 31 seconds later, across a
+**Headless, `front` agrees and `stackOrder` diverges — the two traded places.** Every re-open now
+shows the kernel already on the reused window, with the old machine arriving one line later (its
+own `WINDOW_SHOWN` echo drains after the current effect batch), so the next comparison is silent on
+`front`. But the companion focus gain promotes the re-shown window to the top of the kernel's
+`order`, while the old machine's `stackOrder` does not reorder on `WINDOW_SHOWN` at all — only its
+`front` moves. Headless, that disagreement persisted — still present 31 seconds later, across a
 close. Two instances per run were measured, no third shape.
 
-This is an **open question, not a settled decision**: the reading that favors the kernel is that
-an activating `show()` does raise an already-visible window on a real display, so the kernel's
-`order` matches the OS while the old machine's `stackOrder` is stale — the same two-facts-that-
-disagree drift this design exists to delete. The consequence that makes it load-bearing:
-`session-projection.ts` derives `stackIndex` from `stackOrder`, so restored stacking changes at
-cutover. This has not been confirmed against a real display.
+**Resolved against a real display: the divergence is a headless artifact, not a real
+disagreement.** A native `'focus'` echo follows an activating `show()` on a real display, so
+`OS_FOCUS_GAINED` fires on the collapse-onto-existing re-open and drives the old machine's own
+stack raise — the same reorder the kernel's companion focus gain performs. Once the ids the old
+machine keeps out of `stackOrder` (satellite windows) are stripped, the two views agree. The live
+run recorded 1611 `OS_FOCUS_GAINED` events; the two headless runs above recorded zero — headless
+masks OS activation (the same fact that motivated the activate-flag feed above), and this is its
+second-order effect on stacking. Consequence: `session-projection.ts`'s `stackIndex` derivation,
+which reads `stackOrder`, is unaffected at cutover, and the synthetic focus feed
+(`shadowKernelWindowShown`'s `focused` parameter) is idempotent with the real OS echo exactly as
+predicted. The headless numbers above stay on record as the evidence trail that motivated checking
+a real display in the first place.
 
 **What agreed.** Membership showed no persistent divergence — one transient line per run at the
 re-entrant overlay registration, cleared by the next comparison. Before the show-feed change
