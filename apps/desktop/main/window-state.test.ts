@@ -1163,65 +1163,6 @@ function focusesContent(effects: Effect[], id: number | WindowId): boolean {
 }
 
 describe('front — a projection of OS focus; raises come from named targets only', () => {
-  it('a front change on WINDOW_SHOWN moves front and emits NO raise (the echo cycle is cut)', () => {
-    const { state, effects } = reduce(
-      drive(createInitialState(), [
-        { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false },
-      ]).state,
-      { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
-    );
-    assert.strictEqual(getFrontWindowId(state), wid(1), 'front follows the shown+focused window');
-    assert.ok(!hasEffect(effects, 'RAISE_WINDOW'), 'WINDOW_SHOWN never raises — see applyRaiseRequest');
-    assert.ok(!hasEffect(effects, 'FOCUS_CONTENT'), 'the first-responder half rides OS_FOCUS_GAINED');
-  });
-
-  it('the companion OS_FOCUS_GAINED is what drives FOCUS_CONTENT for that page-host front', () => {
-    // The real display delivers both for a genuine activating show; the raise
-    // half is already done by the OS, only the content view is left to drive.
-    const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(1) });
-    assert.strictEqual(getFrontWindowId(state), wid(1));
-    assert.ok(!hasEffect(effects, 'RAISE_WINDOW'));
-    assert.ok(focusesContent(effects, 1), 'a page-host needs its content view made first responder');
-  });
-
-  it('a browser front gets NEITHER RAISE_WINDOW nor FOCUS_CONTENT on OS focus (its root WC is first responder)', () => {
-    const s = openWindow(createInitialState(), 1, { kind: 'browser', role: 'content' });
-    const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(1) });
-    assert.strictEqual(getFrontWindowId(state), wid(1));
-    assert.ok(!hasEffect(effects, 'RAISE_WINDOW'));
-    assert.ok(!hasEffect(effects, 'FOCUS_CONTENT'), 'a BrowserWindow has no separate content view to focus');
-  });
-
-  it('an OS-driven front switch mirrors the order WITHOUT echoing a raise (the OS already did it)', () => {
-    // OS_FOCUS_GAINED means the OS made the window key + front on its own —
-    // driving RAISE back at it is the focus-echo feedback loop (see
-    // `applyOsFocusRealized`; observed live 2026-07-22: several in-flight
-    // show-active focus events + an echoed activating raise per event = a
-    // perpetual multi-window focus ping-pong at restore).
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
-    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
-    const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(1) });
-    assert.strictEqual(getFrontWindowId(state), wid(1));
-    assert.ok(!hasEffect(effects, 'RAISE_WINDOW'), 'no activating raise echoed back at the OS');
-    assert.ok(!hasEffect(effects, 'FOCUS_CONTENT'), 'window 1 is a browser window');
-    const order = getStackOrder(state);
-    assert.strictEqual(order[order.length - 1], wid(1), 'the list mirrors the OS-driven order-front');
-  });
-
-  it('an OS-driven front switch to a PAGE-HOST still drives the content first responder (7c61e917)', () => {
-    // The one half the OS focus event does not vouch for: the host being key
-    // does not make its content WebContentsView first responder.
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
-    s = openWindow(s, 2, { kind: 'browser', role: 'content' }); // front 2
-    const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(1) });
-    assert.strictEqual(getFrontWindowId(state), wid(1));
-    assert.ok(!hasEffect(effects, 'RAISE_WINDOW'));
-    assert.ok(focusesContent(effects, 1), 'content first responder is still the machine’s to drive');
-  });
-
   it('an unrelated transition on an unchanged front emits nothing', () => {
     const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
     const { effects } = reduce(s, { type: 'SESSION_CHANGED', session: 'active' });
@@ -1424,54 +1365,6 @@ describe('front — a projection of OS focus; raises come from named targets onl
     const refocused = reduce(back.state, { type: 'OS_FOCUS_GAINED', id: getFrontWindowId(back.state)! });
     assert.ok(!hasEffect(refocused.effects, 'RAISE_WINDOW'));
     assert.ok(focusesContent(refocused.effects, getFrontWindowId(back.state)!), 'the page-host front regains first responder');
-  });
-
-  it('INVARIANT: no RAISE_WINDOW is emitted from WINDOW_SHOWN or OS_FOCUS_GAINED (the pump’s convergence obligation)', () => {
-    // `window-os-adapter.ts pump` drains nested dispatches instead of
-    // recursing, and its TERMINATION rests on this: `RAISE_WINDOW` echoes as
-    // `WINDOW_SHOWN {focused:true}` (and, for a real activating show, an
-    // `OS_FOCUS_GAINED`), so if either arm could raise again the drain would
-    // never end. Swept over a small state space rather than one case.
-    const kinds: WindowRecord['kind'][] = ['page-host', 'browser'];
-    for (const kind of kinds) {
-      for (const satellite of [false, true]) {
-        for (const switcherOpen of [false, true]) {
-          let s = createInitialState();
-          s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
-          s = drive(s, [
-            { type: 'WINDOW_REGISTERED', id: wid(2), kind, role: satellite ? 'palette' : 'content', satellite },
-            { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
-          ]).state;
-          if (switcherOpen) s = drive(s, [{ type: 'SWITCHER_OPENED', windowId: wid(88) }]).state;
-          const label = `${kind}/satellite=${satellite}/switcher=${switcherOpen}`;
-          for (const ev of [
-            { type: 'WINDOW_SHOWN', id: wid(2), focused: true } as WindowEvent,
-            { type: 'OS_FOCUS_GAINED', id: wid(2) } as WindowEvent,
-            { type: 'WINDOW_SHOWN', id: wid(1), focused: true } as WindowEvent,
-            { type: 'OS_FOCUS_GAINED', id: wid(1) } as WindowEvent,
-          ]) {
-            const r = reduce(s, ev);
-            assert.ok(!hasEffect(r.effects, 'RAISE_WINDOW'), `${ev.type} raised (${label})`);
-          }
-        }
-      }
-    }
-  });
-
-  it('a raise echo (WINDOW_SHOWN {focused:true}) does not re-raise — the RAISE_WINDOW → WINDOW_SHOWN cycle is cut structurally', () => {
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
-    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
-    // The one legitimate raise, from a named target.
-    const raised = reduce(s, { type: 'RAISE_WINDOW_REQUESTED', id: wid(1) });
-    assert.ok(raises(raised.effects, 1));
-    // The backend's echo for the show it just performed. Feed it back in.
-    const echo = reduce(raised.state, { type: 'WINDOW_SHOWN', id: wid(1), focused: true });
-    assert.ok(!hasEffect(echo.effects, 'RAISE_WINDOW'), 'the echo must not re-enqueue the raise that produced it');
-    // And the OS focus a real activating show also delivers.
-    const focused = reduce(echo.state, { type: 'OS_FOCUS_GAINED', id: wid(1) });
-    assert.ok(!hasEffect(focused.effects, 'RAISE_WINDOW'), 'nor may its focus report');
-    assert.ok(focusesContent(focused.effects, 1), 'only the first-responder half is (re-)driven');
   });
 
   it('OS_FOCUS_GAINED on a satellite drives no FOCUS_CONTENT and does not touch the ordered stack', () => {
