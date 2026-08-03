@@ -601,17 +601,22 @@ describe('session-projection — on-disk shape is byte-identical to the pre-extr
       frontNativeId: null,
     }],
 
-    // The on-screen stack disagrees with focus recency: w2 was opened in the
-    // background (visually on top, never focused) while w1 is the last-focused
-    // window. Both ranks ride on disk — zOrder for the eager/deferred restore
-    // split, stackIndex for the stack replay.
-    ['the saved stacking position is not the focus-recency rank', {
+    // A background open: w2 was shown without ever being activated, w1 is the
+    // last-focused window. There is ONE order, and a background open enters it
+    // BELOW the window holding key — so the saved stack puts w1 on top, the
+    // same direction focus recency ranks them (window-manager.md "The one-order
+    // consequence"). The stack a window sits in is still its own fact, not a
+    // restatement of its focus rank: this world names a stack that contradicts
+    // record order, so `stackIndex` can only come out right by reading
+    // `StateSnapshot.stackOrder`. Both fields still ride on disk — zOrder for
+    // the eager/deferred restore split, stackIndex for the stack replay.
+    ['a background open is saved BELOW the last-focused window', {
       fixtures: [contentFixture(1, 'w1'), contentFixture(2, 'w2')],
       records: [
         makeRecord('w1', { bounds: { x: 1, y: 1, width: 2, height: 2 }, focusSeq: 9 }),
         makeRecord('w2', { bounds: { x: 3, y: 3, width: 4, height: 4 }, focusSeq: 0 }),
       ],
-      stackOrder: ['w1', 'w2'],
+      stackOrder: ['w2', 'w1'],
       front: 'w1',
       frontNativeId: 1,
     }],
@@ -743,10 +748,10 @@ describe('session-projection — machine-derived descriptor fields', () => {
   it('focused is the machine front', () => {
     // `zOrder`'s own value tracking `WindowRecord.focusSeq` is already pinned,
     // byte-for-byte, by every `focusSeq`-bearing world in the on-disk-shape
-    // describe above (e.g. "single plain content window", "the saved stacking
-    // position is not the focus-recency rank") — this test drops the
-    // redundant direct assertion so it isn't the one place a future source
-    // change for `zOrder` has to keep matching (§5 step 11 remaining work,
+    // describe above (e.g. "single plain content window", "a background open is
+    // saved BELOW the last-focused window") — this test drops the redundant
+    // direct assertion so it isn't the one place a future source change for
+    // `zOrder` has to keep matching (§5 step 11 remaining work,
     // window-manager.md "The one-order consequence").
     const world: World = {
       fixtures: [contentFixture(1, 'w1'), contentFixture(2, 'w2')],
