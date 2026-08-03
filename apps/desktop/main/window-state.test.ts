@@ -1172,23 +1172,9 @@ describe('front — a projection of OS focus; raises come from named targets onl
     assert.ok(raises(closed.effects, 1), 'the explicit raise request fires unconditionally');
   });
 
-  it('duplicate WINDOW_HIDDEN (backend echo + late native hide event) is a no-op re-merge', () => {
-    // Since §6A the backend ECHOES WINDOW_HIDDEN synchronously for every hide
-    // it performs (the native BaseWindow 'hide' event lags a tick on macOS —
-    // peek 71cfde09), so the reducer sees the SAME hide twice: echo first,
-    // native mirror later. The second arrival must change nothing — no front
-    // re-succession, no stack change, no effects.
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
-    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2, 1 still visible
-    const first = reduce(s, { type: 'WINDOW_HIDDEN', id: wid(2) });
-    assert.strictEqual(getFrontWindowId(first.state), wid(1), 'front hands off on the echo');
-    const dup = reduce(first.state, { type: 'WINDOW_HIDDEN', id: wid(2) });
-    assert.strictEqual(getFrontWindowId(dup.state), wid(1), 'late native mirror moves nothing');
-    assert.strictEqual(dup.state.windows.get(wid(2))!.visible, false);
-    assert.deepStrictEqual(dup.state.stackOrder, first.state.stackOrder, 'stack untouched by the duplicate');
-    assert.deepStrictEqual(dup.effects, [], 'no effects from the duplicate');
-  });
+  // Duplicate-WINDOW_HIDDEN idempotence moved to `window-kernel.test.ts`
+  // `window-kernel: CloseOrHideWindow` — kernel-native, no `front` successor
+  // repair to assert.
 
   it('no raise while appActive === false, however many transitions pass', () => {
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });

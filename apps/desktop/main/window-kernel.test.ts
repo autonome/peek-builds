@@ -731,6 +731,33 @@ describe('window-kernel: CloseOrHideWindow', () => {
     assert.strictEqual(next.order.find((w) => w.id === wid(1))?.visible, false);
   });
 
+  it('a duplicate WindowHidden (backend echo + late native hide event) is a no-op re-merge', () => {
+    // Production: the backend echoes `WindowHidden` synchronously for every
+    // hide it performs, and the OS's own native hide event for the same
+    // window lags a tick behind (macOS — peek 71cfde09), so the kernel sees
+    // the SAME hide twice: echo first, native mirror later. `evolve`'s
+    // `WindowHidden` arm only ever writes `visible: false`, and RULE 2
+    // forbids it from touching `key` — so the second arrival should leave
+    // everything, including whatever `key` resolved to after the first hide,
+    // exactly as it was.
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+      { type: 'WindowShown', id: wid(1) },
+      { type: 'OsFocusGained', id: wid(1) },
+      { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+      { type: 'WindowShown', id: wid(2) },
+      { type: 'OsFocusGained', id: wid(2) },
+    ]);
+    const hideEvent: Event = { type: 'WindowHidden', id: wid(2) };
+    const first = evolve(state, hideEvent);
+    const firstKey = keyWindow(first);
+    const dup = evolve(first, hideEvent);
+    assert.deepStrictEqual(react(first, hideEvent, dup), [], 'no effects from the duplicate');
+    assert.strictEqual(dup.order.find((w) => w.id === wid(2))?.visible, false);
+    assert.deepStrictEqual(dup.order, first.order, 'order is byte-identical to after the first hide');
+    assert.deepStrictEqual(keyWindow(dup), firstKey, 'the duplicate does not repair key');
+  });
+
   it('a non-keepLive window is closed and removed from order', () => {
     const state = fold(
       [
