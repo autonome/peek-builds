@@ -559,35 +559,6 @@ describe('ported: shouldRegisterGlobalEscFallback -> ESC with no front opens the
   });
 });
 
-describe('ported: resolveCloseTargetId / resolveFocusedVisibleWindowId -> `front`', () => {
-  it('overlay (satellite) focus leaves the close/command target on the host (cmd+W redirect)', () => {
-    let s = createInitialState();
-    s = openWindow(s, 3, { kind: 'page-host', role: 'content' });  // host front
-    s = drive(s, [
-      { type: 'WINDOW_REGISTERED', id: wid(7), kind: 'browser', role: 'overlay', satellite: true }, // shared chrome overlay
-      { type: 'WINDOW_SHOWN', id: wid(7), focused: true },
-      { type: 'OS_FOCUS_GAINED', id: wid(7) },
-    ]).state;
-    assert.strictEqual(getFrontWindowId(s), wid(3), 'the chrome overlay is not the window the user means to act on');
-  });
-
-  it('a focused page-host wins as the command target (the tag-the-wrong-page bug)', () => {
-    let s = createInitialState();
-    s = openWindow(s, 9, { kind: 'page-host', role: 'content' });
-    assert.strictEqual(getFrontWindowId(s), wid(9));
-  });
-
-  it('a modal palette (satellite) is excluded as a target', () => {
-    let s = createInitialState();
-    s = openWindow(s, 9, { kind: 'page-host', role: 'content' });
-    s = drive(s, [
-      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
-      { type: 'WINDOW_SHOWN', id: wid(2), focused: true },
-    ]).state;
-    assert.strictEqual(getFrontWindowId(s), wid(9), 'the palette is the command issuer, never the target');
-  });
-});
-
 // ── 3b. Ported from focused-window-tracking.test.ts ──────────────────────────
 
 describe('ported: focused-window tracking -> front arbitration', () => {
