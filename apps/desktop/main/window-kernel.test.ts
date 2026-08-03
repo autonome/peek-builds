@@ -4003,6 +4003,83 @@ describe('window-kernel: the stack-order import', () => {
     }
   });
 
+  // ── the key window is never demoted (§0.1.10) ──────────────────────────────
+
+  /** Two content windows, both shown/orderable, key raised onto the second (the upper one). */
+  const twoWindowsKeyOnTop = (): State =>
+    fold(
+      [
+        pageHost(wid(1)),
+        pageHost(wid(2)),
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'WindowShown', id: wid(2) },
+        { type: 'WindowContentOrderable', id: wid(1) },
+        { type: 'WindowContentOrderable', id: wid(2) },
+        { type: 'OsFocusGained', id: wid(2) },
+      ],
+      initialState(),
+    );
+
+  it('an import naming the key window and one below it never demotes the key window', () => {
+    // The hand-verified case `checkInvariants` used to reject: a
+    // slot-preserving permutation naming both ids swaps them, which would
+    // otherwise write the key window's record into the lower slot.
+    const before = twoWindowsKeyOnTop();
+    assert.deepStrictEqual(ids(before), [wid(1), wid(2)]);
+    assert.strictEqual(before.key, wid(2));
+
+    const after = importOrder(before, [wid(2), wid(1)]).state;
+    assert.deepStrictEqual(ids(after), [wid(1), wid(2)], 'the key window is still topmost');
+    assert.strictEqual(after.key, wid(2), 'key is untouched, same as every other import');
+  });
+
+  it('an import that does not name the key window still permutes the others, key stays topmost', () => {
+    const before = fold(
+      [
+        pageHost(wid(1)),
+        pageHost(wid(2)),
+        pageHost(wid(3)),
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'WindowShown', id: wid(2) },
+        { type: 'WindowShown', id: wid(3) },
+        { type: 'WindowContentOrderable', id: wid(1) },
+        { type: 'WindowContentOrderable', id: wid(2) },
+        { type: 'WindowContentOrderable', id: wid(3) },
+        { type: 'OsFocusGained', id: wid(3) },
+      ],
+      initialState(),
+    );
+    assert.deepStrictEqual(ids(before), [wid(1), wid(2), wid(3)]);
+    assert.strictEqual(before.key, wid(3));
+
+    const after = importOrder(before, [wid(2), wid(1)]).state;
+    assert.deepStrictEqual(ids(after), [wid(2), wid(1), wid(3)], 'the two unnamed windows swapped; key stayed on top');
+  });
+
+  it('an import with the key window already topmost is unchanged — identity, no effects', () => {
+    const before = twoWindowsKeyOnTop();
+    const { state: after, effects } = importOrder(before, [wid(2)]);
+    assert.deepStrictEqual(ids(after), ids(before));
+    assert.deepStrictEqual(effects, [], 'the payload was already the identity permutation');
+  });
+
+  it('key null, or naming no live record, permutes exactly as if the lift were not there', () => {
+    const before = fold(
+      [pageHost(wid(1)), pageHost(wid(2)), { type: 'WindowShown', id: wid(1) }, { type: 'WindowShown', id: wid(2) }],
+      initialState(),
+    );
+    assert.strictEqual(before.key, null, 'nothing has taken key yet');
+    const after = importOrder(before, [wid(2), wid(1)]).state;
+    assert.deepStrictEqual(ids(after), [wid(2), wid(1)], 'a plain swap, same as before the lift existed');
+
+    // A dangling key (names a since-closed record) is equally inert for the lift.
+    const dangling = fold([{ type: 'WindowClosed', id: wid(10) }], restored());
+    assert.strictEqual(dangling.key, wid(10));
+    assert.ok(!ids(dangling).includes(wid(10)), 'the key id is no longer a member');
+    const afterDangling = importOrder(dangling, [wid(3), wid(1)]).state;
+    assert.deepStrictEqual(ids(afterDangling), [wid(3), wid(2), wid(1), wid(11)]);
+  });
+
   // ── decide holds the one guard it has ─────────────────────────────────────
 
   it('decide rejects a stale expectedVersion', () => {

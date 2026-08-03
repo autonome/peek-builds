@@ -1807,9 +1807,27 @@ export function evolve(state: State, ev: Event): State {
       // `order` (RULE 1), so the predicate holds for precisely
       // `namedRecords.length` slots and the cursor cannot run off the end.
       let cursor = 0;
+      const permuted = state.order.map((w) => (namedIds.has(w.id) ? namedRecords[cursor++] : w));
+      // THE KEY WINDOW NEVER LEAVES THE TOP. §0.1.10's one-order clause holds
+      // whenever `key` resolves to a record, that record is topmost — and a
+      // slot-preserving permutation can otherwise violate it outright: an
+      // import naming the key window plus a window below it would, by the
+      // rule above, write the key window's record back into that lower slot.
+      // `key` itself is still never written here (an import must never
+      // activate anything, same as every other line in this arm) — only the
+      // key's CURRENT record is lifted, same move `WindowClosed`'s parent
+      // refocus uses to keep the clause intact through its own reorder. When
+      // `key` is null, or names no live record, or already names the topmost
+      // one, `permuted.find` either finds nothing or finds the last element,
+      // and the lift is a no-op — so the identity-payload guarantee above
+      // still holds. This is a lift, not a re-sort: every other record keeps
+      // its resulting relative order from `permuted`; `order` is
+      // movement-ordered, never layer-sorted.
+      const keyRecord = permuted.find((w) => w.id === state.key);
+      const order = keyRecord === undefined ? permuted : [...permuted.filter((w) => w.id !== keyRecord.id), keyRecord];
       return {
         ...state,
-        order: state.order.map((w) => (namedIds.has(w.id) ? namedRecords[cursor++] : w)),
+        order,
         version: state.version + 1,
       };
     }

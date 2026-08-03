@@ -661,19 +661,15 @@ function checkInvariants(state: State, prev?: State): string[] {
   //     id, so `keyWindow` below resolves to null and this clause is skipped
   //     entirely for that transition. The move can never land a parent above
   //     a record that still holds a LIVE key, by construction, not by luck.
-  //   - `StackOrderImported` permutes `order` and genuinely CAN violate this
-  //     clause: an import naming the key window and one record below it
-  //     demotes the key window without ever touching `key` (deliberate — an
-  //     import must never activate anything). Verified by hand on two
+  //   - `StackOrderImported` permutes `order` and, without a further step,
+  //     could violate this clause: a slot-preserving permutation naming the
+  //     key window and one record below it would otherwise demote the key
+  //     window. So the arm lifts the key window's record to the top after
+  //     assembling the permutation, without ever touching `key` itself
+  //     (unconditional — an import must never activate anything): the
+  //     import holds the key window at top. Verified by hand on two
   //     registered windows: key on the upper one, import `[key, other]`, and
-  //     the key window lands at the bottom. The generated seeds below miss it
-  //     only because the permuting imports they draw are too shallow to reach
-  //     it (see "the op-token invariants are not vacuous" further down for
-  //     the measurement). Which side is wrong — the import should hold the
-  //     key window at the top, or this clause should not span a permutation
-  //     — is an open semantics question for the blueprint (also tracked in
-  //     `docs/design/window-manager.md`, commit `kxwlmmzq`), not settled by
-  //     weakening either one here.
+  //     the key window stays topmost.
   //
   // Stated over every generated log — including the nonsense ones — rather
   // than over the hand-written scenes, because the pre-rule kernel
@@ -1156,20 +1152,20 @@ describe('window-kernel: the op-token invariants are not vacuous', () => {
    *     a content window, so `react`'s `FocusContent` half of the assert rule
    *     is generated zero times.
    *
-   * A REACHABLE CONFLICT THIS GENERATION DID NOT HAPPEN TO HIT, recorded so it
-   * is not rediscovered as a mystery failure. The §0.1.10 one-order clause in
+   * A CONFLICT THIS GENERATION DID NOT HAPPEN TO HIT, recorded so it is not
+   * rediscovered as a mystery failure. The §0.1.10 one-order clause in
    * `checkInvariants` ("the key window is not topmost in order") justifies
    * itself with "no other transition touches membership or position" — and
-   * `StackOrderImported` now does. It permutes within the slots the named ids
-   * occupy without touching `key` (deliberately: an import must never
-   * activate anything), so an import naming the key window and one below it
-   * demotes the key window and violates the clause. Verified by hand on two
-   * registered windows: key on the upper one, import `[key, other]`, and the
-   * key window lands at the bottom. The 200 seeds miss it only because those 3
-   * permuting imports were too shallow. Which side is wrong — the import
-   * should hold the key window at the top, or the one-order clause should not
-   * span a permutation — is a semantics question for the blueprint, not
-   * something to settle by weakening either one here.
+   * `StackOrderImported` permutes within the slots the named ids occupy
+   * without touching `key` (deliberately: an import must never activate
+   * anything). Left there, an import naming the key window and one below it
+   * would demote the key window and violate the clause — so the arm lifts
+   * the key window's record to the top after assembling the permutation.
+   * Verified by hand on two registered windows: key on the upper one, import
+   * `[key, other]`, and the key window stays topmost. The 200 seeds never
+   * drew a permuting import that reached this case (only 3 of 170 generated
+   * imports permute at all), which is why it needed a hand check rather than
+   * relying on generation.
    */
   it('the generated logs issue focus-family ops at the measured rate', () => {
     let issued = 0;
