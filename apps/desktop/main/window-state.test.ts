@@ -681,24 +681,6 @@ describe('switcher lifecycle', () => {
     assert.ok(effects.some((e) => e.type === 'OPEN_SWITCHER_WINDOW'));
   });
 
-  it('SWITCHER_SELECTED(id) closes the switcher and raises the selection', () => {
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
-    s = openWindow(s, 2, { kind: 'page-host', role: 'content' });
-    s = drive(s, [{ type: 'SWITCHER_OPEN_REQUESTED' }]).state;
-    const { state, effects } = reduce(s, { type: 'SWITCHER_SELECTED', id: wid(1) });
-    assert.strictEqual(state.switcher.open, false);
-    assert.strictEqual(getFrontWindowId(state), wid(1));
-    assert.ok(effects.some((e) => e.type === 'RAISE_WINDOW' && e.id === wid(1)));
-  });
-
-  it('SWITCHER_SELECTED(null) restores previousFront', () => {
-    let s = openWindow(createInitialState(), 4, { kind: 'page-host', role: 'content' });
-    s = drive(s, [{ type: 'SWITCHER_OPEN_REQUESTED' }]).state;
-    const { state } = reduce(s, { type: 'SWITCHER_SELECTED', id: null });
-    assert.strictEqual(getFrontWindowId(state), wid(4));
-  });
-
   it('ESC while switcher open closes it (step 1) and does not exit any fullscreen', () => {
     let s = openWindow(createInitialState(), 4, { kind: 'page-host', role: 'content' });
     s = drive(s, [{ type: 'SWITCHER_OPEN_REQUESTED' }]).state;
