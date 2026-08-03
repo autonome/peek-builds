@@ -403,6 +403,10 @@ describe('spacesPolicyForRole', () => {
     assert.strictEqual(spacesPolicyForRole('overlay', 'darwin'), 'follow');
   });
 
+  it("returns 'follow' for switcher on darwin", () => {
+    assert.strictEqual(spacesPolicyForRole('switcher', 'darwin'), 'follow');
+  });
+
   it("returns 'anchor' for workspace on darwin", () => {
     assert.strictEqual(spacesPolicyForRole('workspace', 'darwin'), 'anchor');
   });
