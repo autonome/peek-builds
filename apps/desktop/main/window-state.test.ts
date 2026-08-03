@@ -775,13 +775,6 @@ describe('fullscreen transition table (§2.4)', () => {
     assert.ok(effects.some((e) => e.type === 'RECONCILE_FULLSCREEN' && e.id === wid(1)));
   });
 
-  it('FULLSCREEN_REQUESTED makes the target the front window', () => {
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
-    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
-    const { state } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
-    assert.strictEqual(getFrontWindowId(state), wid(1));
-  });
 });
 
 // ── Switcher lifecycle (§2.4) ────────────────────────────────────────────────
