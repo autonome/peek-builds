@@ -396,7 +396,7 @@ export class WindowKernelExecutor {
       }
       case 'DismissWindow': {
         // The transient-autoclose sweep's dismissal (`react`'s diff of
-        // `State.lastFocusProvenance`) — unconditionally routed through
+        // `State.lastAttention`) — unconditionally routed through
         // `closeOrHide`, never `closeWindow` above. `closeOrHide` is the
         // existing close/hide seam (`windows.ts closeOrHideWindow`): it
         // honors keepLive (hides rather than destroys a slide/peek meant to

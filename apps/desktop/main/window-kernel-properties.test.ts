@@ -719,22 +719,22 @@ function checkInvariants(state: State, prev?: State): string[] {
     ) {
       violations.push(`lastFocusAssert.seq decreased: prev=${prev.lastFocusAssert.seq} next=${state.lastFocusAssert.seq}`);
     }
-    // Focus provenance: the same two clauses again, for the same reason —
-    // `react`'s transient-autoclose sweep rests on `lastFocusProvenance.seq`
-    // being what it diffs, and the old machine ran that sweep on EVERY
-    // `OS_FOCUS_GAINED` report (including an echo re-confirming the window
-    // that already holds key), so a repeated or reset seq would collapse two
-    // reports — and two sweeps — into one.
-    if (prev.lastFocusProvenance !== null && state.lastFocusProvenance === null) {
-      violations.push('lastFocusProvenance was cleared back to null');
+    // Attention: the same two clauses again, for the same reason — `react`'s
+    // transient-autoclose sweep rests on `lastAttention.seq` being what it
+    // diffs, and the old machine ran that sweep on EVERY `OS_FOCUS_GAINED`
+    // report (including an echo re-confirming the window that already holds
+    // key), so a repeated or reset seq would collapse two reports — and two
+    // sweeps — into one.
+    if (prev.lastAttention !== null && state.lastAttention === null) {
+      violations.push('lastAttention was cleared back to null');
     }
     if (
-      state.lastFocusProvenance !== null &&
-      prev.lastFocusProvenance !== null &&
-      state.lastFocusProvenance.seq < prev.lastFocusProvenance.seq
+      state.lastAttention !== null &&
+      prev.lastAttention !== null &&
+      state.lastAttention.seq < prev.lastAttention.seq
     ) {
       violations.push(
-        `lastFocusProvenance.seq decreased: prev=${prev.lastFocusProvenance.seq} next=${state.lastFocusProvenance.seq}`,
+        `lastAttention.seq decreased: prev=${prev.lastAttention.seq} next=${state.lastAttention.seq}`,
       );
     }
     // `orderable` never goes true -> false (§0.1.4: "Never reset once true").
@@ -892,13 +892,16 @@ function checkAutocloseInvariants(state: State): string[] {
  * `react`'s emitted `DismissWindow` effects are actually its output for the
  * ONE real transition that just happened.
  *
- * `next.lastFocusProvenance` is the same fact `react` diffs, so this check
- * reads no event payload either — a genuine `prev`/`next` comparison, not a
- * restatement of `react`'s own condition.
+ * `next.lastAttention` is the same fact `react` diffs, so this check reads no
+ * event payload either — a genuine `prev`/`next` comparison, not a
+ * restatement of `react`'s own condition. A non-null `holder` absent from
+ * `next.order` is INDETERMINATE and expects no dismissal, mirroring `react`'s
+ * own guard; a `null` holder is a determinate fact and expects the sweep to
+ * run — see `react`'s own comment for why the two are not symmetric.
  *
  * Kept per-EVENT (`Step`, same unit `checkOpSeqInvariants` uses above), not
  * per-log-item: a command can fold into several events, and aggregating their
- * effects would blur which transition's provenance advance produced which
+ * effects would blur which transition's attention advance produced which
  * dismissal.
  */
 function checkAutocloseWiring(step: Step): string[] {
@@ -906,13 +909,13 @@ function checkAutocloseWiring(step: Step): string[] {
   const violations: string[] = [];
   const dismissed = new Set(effects.filter((e) => e.type === 'DismissWindow').map((e) => e.id));
 
-  const provenance = next.lastFocusProvenance;
-  const focuser = next.key;
-  const advanced = provenance !== null && provenance.seq !== prev.lastFocusProvenance?.seq;
-  const phantomFocuser = focuser === null || !next.order.some((w) => w.id === focuser);
+  const attention = next.lastAttention;
+  const advanced = attention !== null && attention.seq !== prev.lastAttention?.seq;
+  const holder = attention?.holder ?? null;
+  const indeterminate = holder !== null && !next.order.some((w) => w.id === holder);
 
-  if (advanced && !phantomFocuser && provenance !== null && focuser !== null) {
-    const expected = new Set(selectTransientAutoclose(next, focuser, provenance.cause));
+  if (advanced && !indeterminate && attention !== null) {
+    const expected = new Set(selectTransientAutoclose(next, holder, attention.cause));
     if (expected.size !== dismissed.size || [...expected].some((id) => !dismissed.has(id))) {
       violations.push(
         `react's DismissWindow effects diverged from selectTransientAutoclose: expected=${JSON.stringify([...expected])} actual=${JSON.stringify([...dismissed])}`,
@@ -920,7 +923,7 @@ function checkAutocloseWiring(step: Step): string[] {
     }
   } else if (dismissed.size > 0) {
     violations.push(
-      `DismissWindow effect(s) emitted with no focus-provenance advance to a real focuser: ${JSON.stringify([...dismissed])}`,
+      `DismissWindow effect(s) emitted with no attention advance to a determinate holder: ${JSON.stringify([...dismissed])}`,
     );
   }
 

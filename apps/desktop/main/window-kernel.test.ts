@@ -2332,7 +2332,7 @@ describe('window-kernel: transient autoclose', () => {
  * `selectTransientAutoclose` (above) is a pure QUERY — proven sound in
  * isolation, against every focuser. This block proves the OTHER half of §0's
  * rule: `react` actually CALLS it and turns the answer into effects for the
- * transition that just happened, off the `State.lastFocusProvenance` diff.
+ * transition that just happened, off the `State.lastAttention` diff.
  * Before this file's change, no non-test caller ran the selector at all — a
  * predicate can be "correct in form but match nothing in practice", so these
  * assert the emission, not just the selector.
@@ -2413,7 +2413,7 @@ describe('window-kernel: react applies transient autoclose', () => {
     const echo: Event = { type: 'OsFocusGained', id: wid(1), cause: { kind: 'machine', opSeq: focused.opSeqCounter } };
     const next = evolve(focused, echo);
     assert.strictEqual(next.key, focused.key, 'key does not move — this is a re-confirmation');
-    assert.notStrictEqual(next.lastFocusProvenance?.seq, focused.lastFocusProvenance?.seq, 'but the provenance seq still advances');
+    assert.notStrictEqual(next.lastAttention?.seq, focused.lastAttention?.seq, 'but the attention seq still advances');
     assert.deepStrictEqual(dismissed(react(focused, echo, next)), [wid(2), wid(3)], 'and the sweep still runs — no dedup on the echo');
   });
 
@@ -2470,6 +2470,34 @@ describe('window-kernel: react applies transient autoclose', () => {
     const ev: Event = { type: 'OsFocusGained', id: wid(1) };
     const next = evolve(state, ev);
     assert.deepStrictEqual(react(state, ev, next).filter((e) => e.type === 'DismissWindow'), [{ type: 'DismissWindow', id: wid(2) }]);
+  });
+
+  it('a null holder is a DETERMINATE fact, not a guarded one — a real AppResignSettled dismisses a visible unattached transient with no focuser at all', () => {
+    // No OsFocusGained ever runs here, so `key` stays null throughout — the
+    // old `next.key !== null` guard would have blocked this outright. The
+    // dismissal has to come from `lastAttention.holder`, written directly by
+    // the settle, not from `key`.
+    const state = fold([reg(1, 'workspace'), reg(2, 'palette'), show(1), show(2)], initialState());
+    const resigned = evolve(state, { type: 'AppResigned' });
+    const settleEv: Event = { type: 'AppResignSettled' };
+    const settled = evolve(resigned, settleEv);
+    assert.strictEqual(settled.key, null, 'key was never written by this sequence');
+    assert.strictEqual(settled.lastAttention?.holder, null, 'the settle records attention as on nothing of ours');
+    assert.notStrictEqual(settled.lastAttention?.seq, resigned.lastAttention?.seq, 'a fresh seq for react to diff');
+    assert.deepStrictEqual(dismissed(react(resigned, settleEv, settled)), [wid(2)]);
+  });
+
+  it('an ATTACHED transient survives a null holder — the ownership relation exempts it, no focuser needed to do so', () => {
+    const state = fold(
+      [reg(1, 'workspace'), reg(2, 'overlay'), show(1), show(2), { type: 'OverlayAttached', overlayId: wid(2), hostId: wid(1) }],
+      initialState(),
+    );
+    const resigned = evolve(state, { type: 'AppResigned' });
+    const settleEv: Event = { type: 'AppResignSettled' };
+    const settled = evolve(resigned, settleEv);
+    assert.strictEqual(settled.lastAttention?.holder, null, 'the settle records attention as on nothing of ours');
+    assert.notStrictEqual(settled.lastAttention?.seq, resigned.lastAttention?.seq, 'a fresh seq for react to diff — the sweep genuinely ran');
+    assert.deepStrictEqual(dismissed(react(resigned, settleEv, settled)), [], 'attached, so spared even though nothing excludes it by focuser');
   });
 });
 
