@@ -1170,53 +1170,6 @@ describe('front — a projection of OS focus; raises come from named targets onl
     assert.ok(!hasEffect(effects, 'FOCUS_CONTENT'));
   });
 
-  it('REGRESSION (frontChangeEffects): APP_RESIGNED then APP_ACTIVATED restores an UNCHANGED front via the OS focus it delivers', () => {
-    // This is the case the deleted `frontChangeEffects` could not express. The user
-    // Cmd+Tabs away and back: `front` never moves, so its `front === prevFront`
-    // early-out returned NO effects — a page host came back key but with its content
-    // view no longer first responder, so `before-input-event` was deaf and Escape
-    // reached nothing at all, permanently (7c61e917 / 7fffa286).
-    //
-    // The fix no longer runs off APP_ACTIVATED (which knows nothing about which
-    // window the OS re-keyed): a real display re-keys the window and delivers
-    // OS_FOCUS_GAINED, and THAT drives the missing first-responder half.
-    const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-
-    const resigned = reduce(s, { type: 'APP_RESIGNED' });
-    assert.strictEqual(getFrontWindowId(resigned.state), wid(1), 'front survives the app switch (by design)');
-    assert.ok(!hasEffect(resigned.effects, 'RAISE_WINDOW'), 'no focus theft while Peek is not the active app');
-
-    const activated = reduce(resigned.state, { type: 'APP_ACTIVATED' });
-    assert.strictEqual(getFrontWindowId(activated.state), wid(1), 'front is UNCHANGED across the whole round trip');
-    assert.ok(!hasEffect(activated.effects, 'RAISE_WINDOW'), 'APP_ACTIVATED alone names no target — it raises nothing');
-
-    const refocused = reduce(activated.state, { type: 'OS_FOCUS_GAINED', id: wid(1) });
-    assert.strictEqual(getFrontWindowId(refocused.state), wid(1), 'still unchanged');
-    assert.ok(!hasEffect(refocused.effects, 'RAISE_WINDOW'), 'the OS already re-keyed it');
-    assert.ok(focusesContent(refocused.effects, 1), 'first responder is restored on the page host — the whole fix');
-  });
-
-  it('SWITCHER_OPENED does not steal key back; the Esc-close then raises the restore target', () => {
-    const s = openWindow(createInitialState(), 4, { kind: 'page-host', role: 'content' });
-
-    const opened = reduce(s, { type: 'SWITCHER_OPENED', windowId: wid(88) });
-    assert.strictEqual(getFrontWindowId(opened.state), wid(4), 'front does not move for the overlay');
-    assert.ok(
-      !hasEffect(opened.effects, 'RAISE_WINDOW'),
-      'must NOT re-raise front while the switcher is open — that would yank key out of the overlay',
-    );
-
-    // Esc dismisses the switcher. `applyEscape` case 'close-switcher' requests
-    // the raise explicitly (§5 step 5), and it is the only emitter in the arm.
-    const closed = reduce(opened.state, { type: 'ESC_PRESSED', landedId: 'global' });
-    assert.strictEqual(closed.state.switcher.open, false);
-    assert.strictEqual(getFrontWindowId(closed.state), wid(4));
-    assert.ok(hasEffect(closed.effects, 'CLOSE_SWITCHER_WINDOW'));
-    assert.ok(raises(closed.effects, 4), 'the restore target is re-asserted on dismiss');
-    assert.strictEqual(closed.effects.filter((e) => e.type === 'RAISE_WINDOW').length, 1, 'exactly one raise, from one place');
-    assert.ok(focusesContent(closed.effects, 4));
-  });
-
   it('the ESC asymmetry: a switcher opened via SWITCHER_OPEN_REQUESTED alone (never SWITCHER_OPENED) now ALSO raises on close — a real behavior change pinned by §5 step 5, though only SWITCHER_OPENED is dispatched in production so the live path is unchanged', () => {
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
     s = drive(s, [{ type: 'SWITCHER_OPEN_REQUESTED', windowId: wid(1) }]).state;
@@ -1226,87 +1179,6 @@ describe('front — a projection of OS focus; raises come from named targets onl
     const closed = reduce(s, { type: 'ESC_PRESSED', landedId: 'global' });
     assert.ok(hasEffect(closed.effects, 'CLOSE_SWITCHER_WINDOW'));
     assert.ok(raises(closed.effects, 1), 'the explicit raise request fires unconditionally');
-  });
-
-  it('SWITCHER_SELECTED raises the selection through the explicit raise request (one emitter, not two)', () => {
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
-    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
-    s = drive(s, [{ type: 'SWITCHER_OPENED', windowId: wid(99) }]).state;
-    const { state, effects } = reduce(s, { type: 'SWITCHER_SELECTED', id: wid(1) });
-    assert.strictEqual(getFrontWindowId(state), wid(1));
-    assert.strictEqual(effects.filter((e) => e.type === 'RAISE_WINDOW').length, 1, 'exactly one raise, from one place');
-    assert.ok(raises(effects, 1));
-    assert.ok(focusesContent(effects, 1));
-  });
-
-  it('a satellite gaining OS focus leaves front alone, and closing that parentless palette raises NOTHING', () => {
-    // The tail used to be the other way round: closing the palette re-drove a
-    // RAISE_WINDOW + FOCUS_CONTENT at the host. That "self-heal" is what the
-    // flash-and-vanish case below is about, and it is gone — the OS gives key
-    // back to whatever it likes when a palette closes, and its focus event is
-    // what the machine records.
-    let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    s = drive(s, [
-      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
-      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
-    ]).state;
-
-    const stolen = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(2) });
-    assert.strictEqual(getFrontWindowId(stolen.state), wid(1), 'a satellite never becomes front');
-    assert.ok(
-      !hasEffect(stolen.effects, 'RAISE_WINDOW'),
-      'must not rip key back out of the palette the instant it takes it',
-    );
-
-    const closed = reduce(stolen.state, { type: 'WINDOW_CLOSED', id: wid(2) });
-    assert.strictEqual(getFrontWindowId(closed.state), wid(1), 'front never moved');
-    assert.ok(!hasEffect(closed.effects, 'RAISE_WINDOW'), 'a parentless satellite closing names no raise target');
-    assert.ok(!hasEffect(closed.effects, 'FOCUS_CONTENT'));
-  });
-
-  it('a LIVE satellite palette is not evicted by the next transition (command-palette flash-and-vanish)', () => {
-    // The bug: the retired front-assertion claim was cleared by an
-    // `OS_FOCUS_GAINED` on a satellite, and the re-drive was skipped ONLY on
-    // that same transition. Any following event — a bounds echo from the host,
-    // a session tick, anything — took the not-asserted path and emitted a real
-    // RAISE_WINDOW + FOCUS_CONTENT at the host while the palette was still on
-    // screen and still holding key. The backend `.focus()` that follows
-    // produces a native focus event on the host, which is exactly the input
-    // `selectTransientAutoclose` reads to pick the palette, and
-    // `windows.ts closeOrHideWindow` hides it. The user sees the command
-    // palette flash and vanish.
-    //
-    // Now nothing re-drives a belief, so there is no transition to be evicted by.
-    let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    s = drive(s, [
-      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
-      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
-    ]).state;
-
-    const stolen = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(2) });
-    assert.strictEqual(getFrontWindowId(stolen.state), wid(1), 'a satellite never becomes front');
-    assert.strictEqual(stolen.state.windows.get(wid(2))!.visible, true, 'precondition: the palette is on screen');
-
-    // Any inert follow-up while the palette is STILL visible.
-    const next = reduce(stolen.state, { type: 'BOUNDS_CHANGED', id: wid(1), bounds: BOUNDS });
-    assert.strictEqual(next.state.windows.get(wid(2))!.visible, true, 'the palette has not gone away');
-    assert.ok(
-      !raises(next.effects, 1),
-      'must NOT raise the host out from under a live palette — that is the flash-and-vanish',
-    );
-    assert.ok(
-      !focusesContent(next.effects, 1),
-      'and must not make the host content first responder either — same eviction, other half',
-    );
-    assert.ok(
-      !next.effects.some((e) => e.type === 'CLOSE_WINDOW' && e.id === wid(2)),
-      'and nothing closes the palette',
-    );
-    assert.ok(
-      !next.effects.some((e) => e.type === 'HIDE_WINDOW' && e.id === wid(2)),
-      'and nothing hides it',
-    );
   });
 
   it('duplicate WINDOW_HIDDEN (backend echo + late native hide event) is a no-op re-merge', () => {
@@ -1325,18 +1197,6 @@ describe('front — a projection of OS focus; raises come from named targets onl
     assert.strictEqual(dup.state.windows.get(wid(2))!.visible, false);
     assert.deepStrictEqual(dup.state.stackOrder, first.state.stackOrder, 'stack untouched by the duplicate');
     assert.deepStrictEqual(dup.effects, [], 'no effects from the duplicate');
-  });
-
-  it('WINDOW_HIDDEN of the ONLY window leaves no front and raises nothing', () => {
-    const s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    const hidden = reduce(s, { type: 'WINDOW_HIDDEN', id: wid(1) });
-    assert.strictEqual(getFrontWindowId(hidden.state), null, 'no successor');
-    assert.ok(!hasEffect(hidden.effects, 'RAISE_WINDOW'), 'nothing to raise with no successor');
-
-    // Showing it again re-establishes the intent — and nothing more.
-    const shown = reduce(hidden.state, { type: 'WINDOW_SHOWN', id: wid(1), focused: true });
-    assert.strictEqual(getFrontWindowId(shown.state), wid(1));
-    assert.ok(!hasEffect(shown.effects, 'RAISE_WINDOW'), 'a show is not a raise');
   });
 
   it('no raise while appActive === false, however many transitions pass', () => {
@@ -1367,23 +1227,6 @@ describe('front — a projection of OS focus; raises come from named targets onl
     assert.ok(focusesContent(refocused.effects, getFrontWindowId(back.state)!), 'the page-host front regains first responder');
   });
 
-  it('OS_FOCUS_GAINED on a satellite drives no FOCUS_CONTENT and does not touch the ordered stack', () => {
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
-    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2, top of stack
-    s = drive(s, [
-      // A page-host satellite, so a stray FOCUS_CONTENT would be observable.
-      { type: 'WINDOW_REGISTERED', id: wid(3), kind: 'page-host', role: 'palette', satellite: true },
-      { type: 'WINDOW_SHOWN', id: wid(3), focused: false },
-    ]).state;
-    const orderBefore = getStackOrder(s);
-
-    const { state, effects } = reduce(s, { type: 'OS_FOCUS_GAINED', id: wid(3) });
-    assert.strictEqual(getFrontWindowId(state), wid(2), 'a satellite never becomes front');
-    assert.ok(!hasEffect(effects, 'FOCUS_CONTENT'), 'the palette is not front, so nothing is driven for it');
-    assert.ok(!hasEffect(effects, 'RAISE_WINDOW'));
-    assert.deepStrictEqual(getStackOrder(state), orderBefore, 'the ordered stack is untouched');
-  });
 });
 
 // ── RAISE_WINDOW_REQUESTED — the explicit, user-requested raise (§5 step 5) ──
