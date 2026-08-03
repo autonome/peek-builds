@@ -1424,33 +1424,10 @@ describe('deriveEscGrabRegistered — truth table over (appActive, front, conten
     );
   });
 
-  it('REGRESSION (7fffa286/7c61e917): grab state is correct across an APP_RESIGNED -> APP_ACTIVATED cycle', () => {
-    // Live-measured (2026-07): the content WC blurs BEFORE APP_RESIGNED lands,
-    // and stays blurred through APP_ACTIVATED until a fresh live focus report
-    // arrives — so the net correctly arms for exactly the gap where
-    // before-input-event would otherwise be deaf. Under the OLD predicate this
-    // same gap was covered by a machine-side claim of re-assertion, recorded
-    // synchronously; here it is covered by observing the real signal instead.
-    let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    s = drive(s, [{ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id: wid(1), held: true }]).state;
-    assert.strictEqual(deriveEscGrabRegistered(snapshot(s)), false, 'confirmed focused -> net off');
-
-    s = drive(s, [{ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id: wid(1), held: false }]).state;
-    const resigned = reduce(s, { type: 'APP_RESIGNED' });
-    assert.strictEqual(getFrontWindowId(resigned.state), wid(1), 'front survives the app switch (by design)');
-    assert.strictEqual(deriveEscGrabRegistered(snapshot(resigned.state)), false, 'not the active app');
-
-    const activated = reduce(resigned.state, { type: 'APP_ACTIVATED' });
-    assert.strictEqual(getFrontWindowId(activated.state), wid(1), 'front is UNCHANGED across the whole round trip');
-    assert.strictEqual(
-      deriveEscGrabRegistered(snapshot(activated.state)),
-      true,
-      'back in front, but content first responder has not been reconfirmed yet -- the safety net is ON',
-    );
-
-    const refocused = drive(activated.state, [{ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id: wid(1), held: true }]).state;
-    assert.strictEqual(deriveEscGrabRegistered(snapshot(refocused)), false, 'live refocus report lands -> the net drops');
-  });
+  // REGRESSION (7fffa286/7c61e917): the resign -> activate round trip is
+  // covered on the kernel side now — see `window-escape.test.ts`, describe
+  // "the OS Escape grab derivation", the test of the same name. `key` (not
+  // `front`) is what the round trip actually turns on there.
 });
 
 describe('APP_ACTIVATED reconciles ALL in-flight fullscreen transitions (§2.5)', () => {

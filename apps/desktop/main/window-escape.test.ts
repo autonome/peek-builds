@@ -562,4 +562,41 @@ describe('window-escape: the OS Escape grab derivation', () => {
     assert.strictEqual(state.order.find((w) => w.id === workspaceHost)?.contentFocused, false);
     assert.strictEqual(shouldArmEscapeGrab(state), false);
   });
+
+  it('REGRESSION (7fffa286/7c61e917): the grab stays correct across resign -> focus-lost -> activate -> refocus', () => {
+    // Live-measured (2026-07): the OS reports the key holder's focus LOST
+    // around the app resign, well before `AppActivated` — so this round trip
+    // crosses two distinct off arms, not one. `AppResigned` alone covers the
+    // grab with "not the active app"; the settling `OsFocusLost` nulls `key`
+    // underneath that cover; `AppActivated` never restores `key` (RULE 2 —
+    // only `OsFocusGained`/`OsFocusLost` write it), so activation uncovers
+    // the "nobody holds key" arm instead of "app inactive" — this state, not
+    // the resigned one, is the 7fffa286/7c61e917 hole. Only a fresh live
+    // focus report closes it.
+    const state = loneHost();
+    assert.strictEqual(state.key, workspaceHost);
+
+    const resigned = fold([{ type: 'AppResigned' }], state);
+    assert.strictEqual(shouldArmEscapeGrab(resigned), false, 'not the active app');
+
+    const settled = fold([{ type: 'OsFocusLost', id: workspaceHost }], resigned);
+    assert.strictEqual(settled.key, null, 'the focus settle nulls key');
+    assert.strictEqual(
+      shouldArmEscapeGrab(settled),
+      false,
+      'still not the active app -- that arm dominates the now-null key',
+    );
+
+    const activated = fold([{ type: 'AppActivated' }], settled);
+    assert.strictEqual(activated.key, null, 'AppActivated never restores key (RULE 2)');
+    assert.strictEqual(
+      shouldArmEscapeGrab(activated),
+      true,
+      'back active with nobody holding key -- the safety net is ON (the 7fffa286/7c61e917 hole)',
+    );
+
+    const refocused = fold([{ type: 'OsFocusGained', id: workspaceHost }], activated);
+    assert.strictEqual(refocused.key, workspaceHost);
+    assert.strictEqual(shouldArmEscapeGrab(refocused), false, 'live refocus report lands -- the net drops');
+  });
 });
