@@ -1005,6 +1005,24 @@ in "Two lossy ports, one closed" under `FOCUS_CONTENT`. The existing decision th
 point, because the OS focus echo names the window `key` already holds and therefore diffs to
 nothing.
 
+**The three `front — a projection of OS focus; raises come from named targets only` tests that deny
+this rule are deleted, not honored.** `react` emits `RaiseWindow` on any `OsFocusGained` move that
+changes `key`, and `window-state.test.ts`'s `an OS-driven front switch mirrors the order WITHOUT
+echoing a raise (the OS already did it)`, `INVARIANT: no RAISE_WINDOW is emitted from WINDOW_SHOWN
+or OS_FOCUS_GAINED (the pump's convergence obligation)`, and `a raise echo (WINDOW_SHOWN
+{focused:true}) does not re-raise — the RAISE_WINDOW → WINDOW_SHOWN cycle is cut structurally` go.
+The tests exist because the old reducer needed them: a focus report echoing back as a raise built a
+feedback cycle, and `applyOsFocusRealized` cut it by refusing to raise on OS-driven focus at all.
+The kernel needs no such refusal, because the raise is its own fixed point by construction, not by
+a branch the tests pin down — `decide` on a raise command returns `OsFocusGained`, the only writer
+of `key`, so the OS echo names the window `key` already holds, the diff is empty, and the echo
+emits nothing. The cycle is cut by the key diff itself, not by a check on `ev.type` — which `react`
+could not perform anyway, since it is a pure structural projection over `(prev, next)` and never
+inspects the event that produced them. `window-kernel.test.ts`'s `INVARIANT: the raise is its own
+fixed point — the focus report it provokes emits NOTHING`, `a registration that lands on top does
+not raise either`, and `a focus report on the window already on top DOES raise when it takes key
+from somebody else` carry this forward.
+
 **`getDevtoolsTargetId` stays outside the kernel for now.** `WindowRecord` carries no `lastHttpUrl`
 and `State` no `focusSeq`, and `isContentWindow`'s docblock already declares that
 `tile:window:devtools` must post-filter until a URL fact lands. Its single production caller is
@@ -1437,7 +1455,8 @@ Two gaps in the kernel as written, neither yet implemented:
   raise (the OS already did it)`, › `INVARIANT: no RAISE_WINDOW is emitted from WINDOW_SHOWN or
   OS_FOCUS_GAINED (the pump's convergence obligation)`, and › `a raise echo (WINDOW_SHOWN
   {focused:true}) does not re-raise — the RAISE_WINDOW → WINDOW_SHOWN cycle is cut structurally`.
-  The kernel and these tests cannot both be right.
+  Resolved above, in "Decided: devtools re-assert, cold-start focus, and stack-order import enter
+  the kernel" — the kernel is correct and the three tests are deleted, not honored.
 
 Three open policy questions the migration cannot answer by translation alone:
 
