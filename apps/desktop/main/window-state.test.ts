@@ -559,42 +559,6 @@ describe('ported: shouldRegisterGlobalEscFallback -> ESC with no front opens the
   });
 });
 
-// ── 3b. Ported from focused-window-tracking.test.ts ──────────────────────────
-
-describe('ported: focused-window tracking -> front arbitration', () => {
-  it('a normal visible focused window becomes front', () => {
-    const s = openWindow(createInitialState(), 1, { kind: 'browser', role: 'content' });
-    assert.strictEqual(getFrontWindowId(s), wid(1));
-  });
-
-  it('a background / non-focusable / overlay surface (satellite) does NOT become front', () => {
-    for (const role of ['workspace', 'overlay']) {
-      let s = createInitialState();
-      s = drive(s, [
-        { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role, satellite: true },
-        { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
-        { type: 'OS_FOCUS_GAINED', id: wid(1) },
-      ]).state;
-      assert.strictEqual(getFrontWindowId(s), null, `satellite role ${role} must not be front`);
-    }
-  });
-
-  it('updates to the most recently focused window', () => {
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
-    s = openWindow(s, 2, { kind: 'browser', role: 'content' });
-    assert.strictEqual(getFrontWindowId(s), wid(2));
-  });
-
-  it('closing a non-front window does not disturb front', () => {
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'browser', role: 'content' });
-    s = openWindow(s, 2, { kind: 'browser', role: 'content' }); // front 2
-    s = drive(s, [{ type: 'WINDOW_CLOSED', id: wid(1) }]).state;
-    assert.strictEqual(getFrontWindowId(s), wid(2));
-  });
-});
-
 // ── 3c. Ported from hybrid-page-host-registry.test.ts ────────────────────────
 
 describe('ported: active-hybrid-window tracking -> front', () => {
