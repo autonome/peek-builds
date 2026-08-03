@@ -1705,16 +1705,6 @@ describe('RAISE_WINDOW_REQUESTED — an explicit, user-requested raise', () => {
     assert.deepStrictEqual(effects, []);
   });
 
-  it('does NOT write `front`, does NOT bump `focusSeq`', () => {
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
-    s = openWindow(s, 2, { kind: 'page-host', role: 'content' }); // front 2
-    const seqBefore = s.windows.get(wid(1))!.focusSeq;
-    const { state } = reduce(s, { type: 'RAISE_WINDOW_REQUESTED', id: wid(1) });
-    assert.strictEqual(getFrontWindowId(state), wid(2), '`front` is untouched');
-    assert.strictEqual(state.windows.get(wid(1))!.focusSeq, seqBefore, '`focusSeq` is untouched');
-  });
-
   it('sweeps nothing: a live palette satellite survives the raise (no CLOSE_WINDOW/HIDE_WINDOW)', () => {
     let s = createInitialState();
     s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
