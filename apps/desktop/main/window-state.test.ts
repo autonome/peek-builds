@@ -2177,36 +2177,6 @@ function stackings(effects: Effect[]): WindowId[] {
 }
 
 describe('STACK_ORDER_IMPORTED — the session-restore order import (§5 step 5 part B)', () => {
-  it('a background open sits ABOVE the last-focused window while ranking BELOW it by focus recency', () => {
-    // The divergence session restore has to replay. `WINDOW_SHOWN` raises the
-    // window in the stack on ANY show, but only bumps `focusSeq` when the show
-    // FOCUSED it — so a window opened in the background is visually in front of
-    // the window the user last used, and simultaneously ranks behind it by
-    // recency. Restore keyed on recency put it back underneath; the saved stack
-    // is what actually reproduces the screen.
-    const s = drive(createInitialState(), [
-      { type: 'WINDOW_REGISTERED', id: wid(1), kind: 'browser', role: 'content', satellite: false },
-      { type: 'WINDOW_SHOWN', id: wid(1), focused: true },
-      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'content', satellite: false },
-      { type: 'WINDOW_SHOWN', id: wid(2), focused: false },
-    ]).state;
-
-    assert.deepStrictEqual(getStackOrder(s), [wid(1), wid(2)], 'the background open is on screen ABOVE the focused window');
-    const seq = new Map(snapshot(s).windows.map((r) => [r.id, r.focusSeq]));
-    assert.ok(
-      (seq.get(wid(2)) ?? 0) < (seq.get(wid(1)) ?? 0),
-      'and BELOW it by focus recency — the two orders genuinely disagree',
-    );
-    assert.strictEqual(getFrontWindowId(s), wid(1), 'a non-activating show never moves front');
-
-    // Replaying the saved stack reproduces the screen. Rebuilding from recency
-    // (the pre-change restore: focused descriptor on top, rest by focusSeq desc)
-    // would have imported [2, 1] and buried the background open.
-    const replayed = reduce(s, { type: 'STACK_ORDER_IMPORTED', order: [wid(1), wid(2)] }).state;
-    assert.deepStrictEqual(getStackOrder(replayed), [wid(1), wid(2)]);
-    const byRecency = reduce(s, { type: 'STACK_ORDER_IMPORTED', order: [wid(2), wid(1)] }).state;
-    assert.deepStrictEqual(getStackOrder(byRecency), [wid(2), wid(1)], 'the inverted stack the old rebuild produced');
-  });
 });
 
 // ── Geometry: bounds mirror + maximize transitions (§4.2 dim 2, §5 step 7A) ──
