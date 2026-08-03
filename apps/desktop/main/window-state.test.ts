@@ -435,24 +435,15 @@ describe('escUnhandledPolicy (ported verbatim from izui-state.ts)', () => {
 // ── 2. Historical-bug replays (§5.2 a-f) ─────────────────────────────────────
 
 describe('historical-bug replays (§5.2)', () => {
-  it('(a) Space-switch settings clobber: transition-pin keeps front on the fullscreening host', () => {
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'page-host', role: 'content' }); // front = 1
-    s = drive(s, [{ type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'workspace', satellite: false }, { type: 'WINDOW_SHOWN', id: wid(2), focused: false }]).state;
-    assert.strictEqual(getFrontWindowId(s), wid(1), 'host is front after a non-focused settings window shows');
-
-    // Begin fullscreen on the host; a Space-switch focus lands on settings mid-animation.
-    s = drive(s, [
-      { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS },
-      { type: 'OS_FOCUS_GAINED', id: wid(2) }, // Space-switch churn while host is entering-fullscreen
-    ]).state;
-    assert.strictEqual(getWindowMode(s, wid(1)), 'entering-fullscreen');
-    assert.strictEqual(getFrontWindowId(s), wid(1), 'transition pin: settings focus during enter must NOT clobber front');
-
-    s = drive(s, [{ type: 'OS_FULLSCREEN_ENTERED', id: wid(1) }]).state;
-    assert.strictEqual(getFrontWindowId(s), wid(1), 'front stays the fullscreen host, never the settings window');
-    assert.strictEqual(getWindowMode(s, wid(1)), 'fullscreen');
-  });
+  // (a) Space-switch settings clobber: the old reducer's "transition pin" —
+  // which held `front` on the fullscreening host so a mid-animation focus on
+  // settings could not steal it — has no kernel equivalent (the kernel has
+  // no `front`, and a `role: 'workspace'` settings window genuinely takes
+  // `key`/`order` on a real focus). The kernel-native replacement lives in
+  // `window-kernel.test.ts`, describe "fullscreen is orthogonal to key and
+  // order": "(a) Space-switch settings clobber: a fullscreen transition
+  // keeps its fsMode when a Space-switch focus lands on another window
+  // mid-animation".
 
   it('(c) grab-alive-during-fullscreen: ESC_PRESSED(global) yields EXIT_FULLSCREEN, never OPEN_SWITCHER', () => {
     let s = createInitialState();

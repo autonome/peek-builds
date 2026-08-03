@@ -1108,6 +1108,58 @@ describe('window-kernel: fullscreen is orthogonal to key and order', () => {
     assert.strictEqual(settled.key, keyBefore, 'key must be untouched by the OS settle');
   });
 
+  it('(a) Space-switch settings clobber: a fullscreen transition keeps its fsMode when a Space-switch focus lands on another window mid-animation', () => {
+    // Historical bug (§5.2): the deleted reducer answered this with a
+    // "transition pin" that held `front` on the fullscreening host so a
+    // mid-animation focus landing on the settings window could not steal it.
+    // The kernel has no such pin, and does not need one: `key` and `order`
+    // are a report of who has OS focus (RULE 2), and a settings window with
+    // `role: 'workspace'` is genuinely `isContentWindow` (an admitted
+    // content role, `CONTENT_ROLES`), so a real focus landing on it really
+    // does move `key` and the topmost content window to it — see "fullscreen
+    // is orthogonal to key and order" above. What survives is narrower and
+    // still real: `fsMode` is untouched by that focus, and the transition
+    // that was already in flight settles to `fullscreen` on its own OS
+    // report regardless of who holds `key` by then.
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+        { type: 'WindowRegistered', id: wid(2), kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'settings', role: 'workspace' },
+        { type: 'WindowShown', id: wid(1) },
+        { type: 'WindowShown', id: wid(2) },
+        { type: 'OsFocusGained', id: wid(1) },
+      ],
+      initialState(),
+    );
+    assert.strictEqual(state.key, wid(1), 'host holds key before the Space-switch churn');
+    assert.strictEqual(topmost(state, isContentWindow)?.id, wid(1), 'host is the main/command target before the churn');
+
+    // Begin fullscreen on the host.
+    const enterDecision = decide(state, { type: 'SetFullscreen', id: wid(1), desired: true, expectedVersion: state.version });
+    assert.ok('events' in enterDecision);
+    const entering = fold(enterDecision.events, state);
+    assert.strictEqual(entering.order.find((w) => w.id === wid(1))?.fsMode.name, 'entering');
+
+    // A Space-switch focus lands on the settings window mid-animation.
+    const churned = evolve(entering, { type: 'OsFocusGained', id: wid(2) });
+    assert.strictEqual(churned.key, wid(2), 'focus genuinely moved to settings — no pin holds it on the host');
+    assert.strictEqual(
+      topmost(churned, isContentWindow)?.id,
+      wid(2),
+      'the command/main target genuinely follows key to settings — the old "front unchanged" premise is not the kernel\'s answer',
+    );
+    assert.strictEqual(
+      churned.order.find((w) => w.id === wid(1))?.fsMode.name,
+      'entering',
+      'fsMode is orthogonal to key: the mid-transition focus elsewhere leaves the host\'s transition untouched',
+    );
+
+    // The transition settles on its own OS report, independent of who holds key by then.
+    const settled = evolve(churned, { type: 'OsFullscreenEntered', id: wid(1) });
+    assert.strictEqual(settled.order.find((w) => w.id === wid(1))?.fsMode.name, 'fullscreen');
+    assert.strictEqual(settled.key, wid(2), 'key is untouched by the OS settle — it stays wherever the churn left it');
+  });
+
   it('re-requesting the state a window is already in emits no effect', () => {
     const state = fold(registerTwo(), initialState());
 
