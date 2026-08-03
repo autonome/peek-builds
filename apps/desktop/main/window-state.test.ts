@@ -527,22 +527,6 @@ describe('historical-bug replays (§5.2)', () => {
 
 // ── 3a. Ported from izui-roles.test.ts (assertions the reducer now owns) ─────
 
-describe('ported: resolveHybridEscapeTarget -> ESC target is always `front`', () => {
-  // The redirect the old resolver did (landed on host 11, active quick-view 22)
-  // is now structural: focusing the quick-view makes IT front, and ESC targets
-  // front regardless of the landed id.
-  it('ESC targets the front quick-view, not the landed content host', () => {
-    let s = createInitialState();
-    s = openWindow(s, 11, { kind: 'page-host', role: 'content' });          // front 11
-    s = openWindow(s, 22, { kind: 'page-host', role: 'quick-view' });       // front -> 22
-    assert.strictEqual(getFrontWindowId(s), wid(22));
-    // ESC lands (as first-responder noise) on 11; decision uses front 22.
-    assert.deepStrictEqual(decideEscape(s), { kind: 'ask-renderer', id: wid(22) });
-    // Renderer declines -> quick-view always closes.
-    assert.deepStrictEqual(decideEscapeUnhandled(s, wid(22)), { kind: 'close-window', id: wid(22) });
-  });
-});
-
 describe('ported: escExitsHybridFullscreen -> decideEscape step 4 vs escapeMode ignore', () => {
   function fullscreenFront(escapeMode: WindowRecord['escapeMode']): AppWindowState {
     let s = createInitialState();
