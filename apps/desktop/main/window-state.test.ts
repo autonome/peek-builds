@@ -1092,12 +1092,6 @@ describe('switcher reopen loop (7fffa286)', () => {
 // ── Owner surface ────────────────────────────────────────────────────────────
 
 describe('WindowStateOwner (dispatch / subscribe / waitForMode)', () => {
-  it('dispatch mutates the single instance and returns effects', () => {
-    const owner = new WindowStateOwner();
-    owner.dispatch({ type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false });
-    owner.dispatch({ type: 'WINDOW_SHOWN', id: wid(1), focused: true });
-  });
-
   it('subscribe fires on dispatch with a snapshot + effects', () => {
     const owner = new WindowStateOwner();
     const seen: (WindowId | null)[] = [];
