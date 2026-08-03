@@ -1866,15 +1866,14 @@ is the claim that nulling breaks a caller.
 
 ---
 
-### 0.1.11 Transient dismissal — implemented against the kernel, unproven at runtime
+### 0.1.11 Transient dismissal — implemented against the kernel, the ownership relation proven at runtime
 
 §0's rule is built. It runs only inside the shadow kernel (§0.1's "Built, not wired" still holds —
 `window-state.ts` and `window-os-adapter.ts` drive production); this records what the implementation
 froze so the rule can be checked against the running app once the kernel is wired in, rather than
-re-derived. "Unproven at runtime" still stands for the ownership relation itself (see "The gap"
-below, unchanged by the mechanism rewrite this section otherwise records); what the rewrite below
-settles is a narrower question — that the app-resign half of the rule, previously not exercised by
-the shadow kernel at all, now is.
+re-derived. The ownership relation itself — `overlayFor` and `parentId` — is now proven at runtime
+(see "The gap" below); what the rewrite below settles separately is a narrower question — that the
+app-resign half of the rule, previously not exercised by the shadow kernel at all, now is.
 
 **The rule is implemented on one fact, not a pair.** `window-kernel.ts react()` could not read
 `ev.cause`, or where the triggering event says attention went, directly — `react` is a pure
@@ -1919,6 +1918,11 @@ a transient `BrowserWindow` already closes itself on blur through its own listen
 `kind: 'browser'` command palette was never a dismissal candidate on a real app switch, the defect
 this rule exists to fix. `window-kernel.ts selectTransientAutoclose` reads no `kind` at all, so
 nothing analogous to the old restriction is ported forward.
+
+**Live-observed.** In the same run, switching to another application with the command palette open
+left it visible on screen — not dismissed, reproducing exactly the defect the paragraph above
+names: `ipc.ts` registers the command panel with `kind: 'browser'`, so `selectAppResignTransients`'s
+`rec.kind === 'page-host'` clause never named it a candidate on the app-resign path.
 
 **Dismissal is its own effect.** The sweep emits `Effect.DismissWindow`, not `Effect.CloseWindow`.
 `WindowKernelExecutor` routes `DismissWindow` through `backend.closeOrHide`, deliberately distinct
@@ -1976,15 +1980,29 @@ shared chrome overlay toward the host it frames through `overlayFor` (the "addre
 slide" regression this rule exists to keep fixed), and a detached devtools window toward its host,
 also through `parentId`.
 
-**The gap.** Both supplied facts — the overlay-attach feed and the chain popup's `declareParent` —
-are proven today only by unit tests that construct kernel records directly, plus a source-drift test
-pinning that `openChainPopup()` still passes `declareParent: true` and that `ipc.ts` still resolves
-it. Neither kind of test proves the fact ARRIVES at runtime in a running app; a predicate that is
-correct in form but matches nothing in practice is this codebase's documented recurring bug shape,
-and the same shape that made `AttachOverlay` a dead command in the first place. Closing it requires a
-live shadow run with `PEEK_SHADOW_KERNEL_COMPARE=1` comparing the shadow kernel's `overlayFor` and
-`parentId` against the old machine's live state, exercising an overlay attach/detach and a chain
-popup open. This is outstanding and stands before the kernel can be wired into production.
+**Closed: both relation facts arrive at runtime.** Both supplied facts — the overlay-attach feed and
+the chain popup's `declareParent` — were previously proven only by unit tests that construct kernel
+records directly, plus a source-drift test pinning that `openChainPopup()` still passes
+`declareParent: true` and that `ipc.ts` still resolves it; a predicate that is correct in form but
+matches nothing in practice is this codebase's documented recurring bug shape, and the same shape
+that made `AttachOverlay` a dead command in the first place. A live run with
+`PEEK_SHADOW_KERNEL_COMPARE=1` and temporary `[relation-diag]` logging in `window-kernel-shadow.ts`
+(`shadowKernelRegisterWindow` / `shadowKernelAttachOverlay`) closed it: opening a chain popup from
+the command palette logged `register {"id":"wm-29","role":"utility","parentId":"wm-27"}` — a real
+`parentId` naming the palette, not `null` — and the shared chrome overlay logged `attach-overlay
+{"overlayId":"wm-3","hostId":"wm-2"}` against a real page-host id. The directional one-hop exemption
+relation over `overlayFor`/`parentId` therefore rests on facts observed in a live process, not only
+on hand-constructed unit records.
+
+**One caveat left open.** The same run logged an earlier `attach-overlay
+{"overlayId":"wm-3","hostId":null}`, roughly seven seconds before the real attach above. Whether
+that line is a detach expressed as a null-host attach was not determined; it means `overlayFor`
+spends real time as `null`, which is worth recording but was not chased down.
+
+Also measured: registration on the real-tile-launch path logged duplicate `register` lines for the
+same id (`wm-21` and `wm-22`, each logged twice) — corroborating the double-registration §7 already
+documents ("Duplicate registration re-pumps `WINDOW_REGISTERED` on purpose") and the reason the
+re-registration merge must be correct rather than merely defensive.
 
 ---
 
@@ -3105,6 +3123,19 @@ re-drive the OS to match it.
   concretely, the `WINDOW_SHOWN` and `OS_FOCUS_GAINED` arms never call it. A unit test pins
   this: `INVARIANT: no RAISE_WINDOW is emitted from WINDOW_SHOWN or OS_FOCUS_GAINED (the
   pump's convergence obligation)`.
+
+**The machine's own raise echo no longer sweeps the palette it just handed focus back for**
+(commit `83db8186c03c`, "OS_FOCUS_GAINED carries provenance"). `OS_FOCUS_GAINED` gained an
+optional `cause: FocusCause` (`{ kind: 'machine'; opSeq } | { kind: 'world' }`, absent means
+world), stamped from `electron-window-backend.ts`'s `armSelfCausedFocus` immediately before any
+native call that can move focus; `selectTransientAutoclose` applies its `openSeq` ordering test
+only when the focus is machine-caused. Without it, a palette that legitimately sweeps an open
+slide could be swept in turn by the OS's own echo of the raise the machine issues to hand focus
+back to the palette after the slide hides. Headless cannot exercise this at all — no activating
+show ever arms `pendingSelfCausedFocus`, so every focus stays `world` by construction — which is
+why the fix went unverified on a real display until a live run: opening a slide, then opening the
+command palette (closing the slide and handing focus back with a raise), left the palette open.
+The flash-and-vanish failure this guards against did not reproduce.
 
 **Accepted behavior loss:** `APP_ACTIVATED` no longer drives stack order for an unchanged
 `front` — macOS restores the app's own window order on activation, and `stackOrder`
