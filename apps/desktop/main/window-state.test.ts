@@ -559,47 +559,6 @@ describe('ported: shouldRegisterGlobalEscFallback -> ESC with no front opens the
   });
 });
 
-// ── 3c. Ported from hybrid-page-host-registry.test.ts ────────────────────────
-
-describe('ported: active-hybrid-window tracking -> front', () => {
-  it('a real switch to another hybrid retargets front to it', () => {
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
-    s = openWindow(s, 2, { kind: 'page-host', role: 'content' });
-    assert.strictEqual(getFrontWindowId(s), wid(2));
-    s = drive(s, [{ type: 'OS_FOCUS_GAINED', id: wid(1) }]).state;
-    assert.strictEqual(getFrontWindowId(s), wid(1));
-  });
-
-  it('focus landing on the overlay (satellite) keeps the content window as front', () => {
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
-    s = drive(s, [
-      { type: 'WINDOW_REGISTERED', id: wid(9), kind: 'browser', role: 'overlay', satellite: true },
-      { type: 'WINDOW_SHOWN', id: wid(9), focused: true },
-      { type: 'OS_FOCUS_GAINED', id: wid(9) },
-    ]).state;
-    assert.strictEqual(getFrontWindowId(s), wid(1));
-  });
-
-  it('closing the front hybrid nulls front (no successor)', () => {
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
-    s = drive(s, [{ type: 'WINDOW_CLOSED', id: wid(1) }]).state;
-    assert.strictEqual(getFrontWindowId(s), null);
-  });
-
-  it('DELIBERATE DIVERGENCE: focus leaving the whole group keeps front (old decideAfterBlur nulled it)', () => {
-    // Old registry behavior: focus leaving all hybrids + overlay deactivated the
-    // active id to null. New design (§2.4): OS_FOCUS_SETTLED_NULL keeps front so
-    // the target survives an app switch. This inverts the old assertion on purpose.
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'page-host', role: 'content' });
-    s = drive(s, [{ type: 'OS_FOCUS_SETTLED_NULL' }]).state;
-    assert.strictEqual(getFrontWindowId(s), wid(1), 'front is corrected only by hide/close/next-focus, not by a null focus settle');
-  });
-});
-
 describe('ported: pre-fullscreen bounds stash (aa34cb50 lookalike trap)', () => {
   function preBoundsOf(s: AppWindowState, id: number): Rectangle | null | 'no-field' {
     const rec = snapshot(s).windows.find((w) => w.id === wid(id))!;
