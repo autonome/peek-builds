@@ -1126,34 +1126,12 @@ describe('front — a projection of OS focus; raises come from named targets onl
   // `window-kernel: CloseOrHideWindow` — kernel-native, no `front` successor
   // repair to assert.
 
-  it('no raise while appActive === false, however many transitions pass', () => {
-    let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'content' });
-    s = drive(s, [{ type: 'APP_RESIGNED' }]).state;
-    assert.strictEqual(s.appActive, false);
-
-    const inactive: WindowEvent[] = [
-      { type: 'OS_FOCUS_SETTLED_NULL' },
-      { type: 'SESSION_CHANGED', session: 'transient' },
-      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'page-host', role: 'content', satellite: false },
-      { type: 'WINDOW_SHOWN', id: wid(2), focused: true }, // moves front, still must not raise
-      { type: 'OS_FOCUS_GAINED', id: wid(1) },
-    ];
-    for (const ev of inactive) {
-      const r = reduce(s, ev);
-      assert.ok(!hasEffect(r.effects, 'RAISE_WINDOW'), `RAISE_WINDOW while inactive after ${ev.type}`);
-      assert.ok(!hasEffect(r.effects, 'FOCUS_CONTENT'), `FOCUS_CONTENT while inactive after ${ev.type}`);
-      s = r.state;
-    }
-
-    // Coming back does not raise either — APP_ACTIVATED names no target. The
-    // OS focus that follows it is what restores the first responder.
-    const back = reduce(s, { type: 'APP_ACTIVATED' });
-    assert.ok(!hasEffect(back.effects, 'RAISE_WINDOW'));
-    const refocused = reduce(back.state, { type: 'OS_FOCUS_GAINED', id: getFrontWindowId(back.state)! });
-    assert.ok(!hasEffect(refocused.effects, 'RAISE_WINDOW'));
-    assert.ok(focusesContent(refocused.effects, getFrontWindowId(back.state)!), 'the page-host front regains first responder');
-  });
-
+  // Migrated to `window-kernel.test.ts` describe `window-kernel: the focus
+  // assert` — 'a raise fires even while appActive is false — decide/react
+  // hold no such guard' and 'AppActivated by itself still raises nothing,
+  // active or not — ...'. The kernel supersedes the old OS_FOCUS_GAINED
+  // suppression outright (`react`'s RaiseWindow-from-key-diff doc), so only
+  // the AssertFocus/AppActivated half of this test carries forward.
 });
 
 // ── RAISE_WINDOW_REQUESTED — the explicit, user-requested raise (§5 step 5) ──

@@ -3713,6 +3713,44 @@ describe('window-kernel: the focus assert', () => {
     assert.deepStrictEqual(hiddenResult.effects, []);
   });
 
+  // ── appActive is not one of decide's/react's guards ───────────────────────
+  //
+  // The old reducer's `applyRaiseRequest` held two guards its caller
+  // (`ipc.ts`) never had to compose itself: `state.appActive` and
+  // `!state.switcher.open`. Neither lives in `decide`/`react` here — the
+  // `AssertFocus` command's own doc records why: the kernel HAS
+  // `state.appActive`, but the guard "belongs with the switcher condition...
+  // a caller that assembles the request already knows whether the app is
+  // active." `react` itself never reads `appActive` at all — it is a pure
+  // structural diff of `(prev, next)`, and the field plays no part in any of
+  // its rules. No production caller composes `AssertFocus` yet
+  // (`WindowKernelExecutor`'s own module header: "nothing constructs one here
+  // yet"), and the executor's own `planRaise` masks only on `headless`, never
+  // `appActive`. So today the old reducer's background-suppression has no
+  // home anywhere in this stack — a real migration gap, not a bug pinned by
+  // this test.
+
+  it('a raise fires even while appActive is false — decide/react hold no such guard', () => {
+    let state = frontContent();
+    state = fold([{ type: 'AppResigned' }], state);
+    assert.strictEqual(state.appActive, false, 'the app is backgrounded');
+
+    const result = run(state, { type: 'AssertFocus', id: wid(1), expectedVersion: state.version });
+    assert.deepStrictEqual(result.effects, [
+      { type: 'RaiseWindow', id: wid(1), opSeq: result.state.opSeqCounter },
+      { type: 'FocusContent', id: wid(1) },
+    ]);
+  });
+
+  it('AppActivated by itself still raises nothing, active or not — the re-drive comes from the cold-start latch or a later focus report (see `window-kernel: spending the cold-start focus latch` "an activation with NO latch...")', () => {
+    let state = frontContent();
+    state = fold([{ type: 'AppResigned' }], state);
+    assert.strictEqual(state.pendingColdStartFocus, null, 'nothing armed');
+
+    const activated = foldWithEffects([{ type: 'AppActivated' }], state);
+    assert.deepStrictEqual(activated.effects, [], 'the activation itself names no target');
+  });
+
   // ── evolve stays total ────────────────────────────────────────────────────
 
   it('evolve does not throw on a focus-assert event, from any state', () => {
