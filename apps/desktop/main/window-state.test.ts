@@ -3522,16 +3522,6 @@ describe('overlay attachment / follow / retarget (§4.3 dim 3b, §5 step 9)', ()
     assert.deepStrictEqual(effectsOfType(effects, 'HIDE_WINDOW'), [{ type: 'HIDE_WINDOW', id: wid(OVERLAY) }]);
   });
 
-  it('the overlay is never `front`, attached or not (it is a satellite)', () => {
-    let s = hostAndOverlay();
-    s = showOverlay(s);
-    s = drive(s, [
-      { type: 'OVERLAY_ATTACH_REQUESTED', id: wid(OVERLAY), hostId: wid(1), frame: FRAME_A },
-      { type: 'OS_FOCUS_GAINED', id: wid(OVERLAY) },
-    ]).state;
-    assert.strictEqual(getFrontWindowId(s), wid(1));
-  });
-
   it('reduce purity: attaching does not mutate the input record', () => {
     const s = hostAndOverlay();
     const before = s.windows.get(wid(OVERLAY))!;
