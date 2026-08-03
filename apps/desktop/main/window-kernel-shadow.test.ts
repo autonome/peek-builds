@@ -12,6 +12,8 @@ import {
   compareShadowKernelState,
   getShadowKernelExecutor,
   shadowKernelAppActivated,
+  shadowKernelAppResigned,
+  shadowKernelAppResignSettled,
   shadowKernelAttachOverlay,
   shadowKernelCloseContent,
   shadowKernelCloseWindowDirect,
@@ -842,5 +844,62 @@ describe('window-kernel-shadow: overlay attach/detach feed (peek 7fffa286)', () 
 
     assert.doesNotThrow(() => shadowKernelAttachOverlay(danglingOverlay, danglingHost, oldSnapshot));
     assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling attach joins nothing');
+  });
+});
+
+describe('window-kernel-shadow: app-resign feed (peek 7fffa286)', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('AppResigned arms pendingAppResignSweep and clears appActive, mirroring the old machine (window-kernel.ts AppResigned evolve arm)', () => {
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+
+    shadowKernelAppResigned(oldSnapshot);
+
+    const state = getShadowKernelExecutor().getState();
+    assert.strictEqual(state.appActive, false, 'AppResigned must clear appActive');
+    assert.strictEqual(state.pendingAppResignSweep, true, 'AppResigned must arm the sweep');
+  });
+
+  it('AppResignSettled hides a sweep-eligible record and marks lastAttention.holder null, the write react\'s dismissal rule reads (window-kernel.ts AppResignSettled evolve arm)', () => {
+    // Same eligibility shape as the AppActivated re-show test above
+    // (`isAppResignSweepEligible`: visible, !canBecomeKey, layer > BASE_LAYER,
+    // no transient role) — a HUD-shaped surface, not a content window.
+    const id = wid(115);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'page-host',
+        layer: BASE_LAYER + 1,
+        canBecomeKey: false,
+        acceptsInput: false,
+        class: 'primary',
+      },
+      oldSnapshot,
+    );
+    shadowKernelWindowShown(id, oldSnapshot);
+    const record = () => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+    assert.strictEqual(record()?.visible, true, 'precondition: the window is visible after the show feed');
+
+    shadowKernelAppResigned(oldSnapshot);
+    shadowKernelAppResignSettled(oldSnapshot);
+
+    assert.strictEqual(record()?.visible, false, 'AppResignSettled must hide the sweep-eligible window');
+    assert.strictEqual(record()?.hiddenByAppBlur, true);
+    assert.strictEqual(
+      getShadowKernelExecutor().getState().lastAttention?.holder,
+      null,
+      'a resign that settled without an intervening AppActivated must clear lastAttention.holder',
+    );
+  });
+
+  it('never throws across an app-resign feed with nothing registered', () => {
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+
+    assert.doesNotThrow(() => shadowKernelAppResigned(oldSnapshot));
+    assert.doesNotThrow(() => shadowKernelAppResignSettled(oldSnapshot));
+    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'no record to touch');
   });
 });

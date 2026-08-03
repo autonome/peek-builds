@@ -95,6 +95,8 @@ import {
   shadowKernelWindowShown,
   shadowKernelWindowHidden,
   shadowKernelAppActivated,
+  shadowKernelAppResigned,
+  shadowKernelAppResignSettled,
 } from './window-kernel-shadow.js';
 
 /**
@@ -394,6 +396,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
       this.emit({ type: 'APP_RESIGNED' });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen.
+      shadowKernelAppResigned(this.getSnapshot());
       if (this.appResignSettleTimer) clearTimeout(this.appResignSettleTimer);
       this.appResignSettleTimer = setTimeout(() => {
         this.appResignSettleTimer = null;
@@ -412,6 +418,13 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
           return;
         }
         this.emit({ type: 'APP_RESIGN_SETTLED' });
+        // Shadow-feed the kernel — same containment as above. Fed AFTER the
+        // cooldown early return so the kernel observes exactly the edge the
+        // old machine observes; the cooldown read itself stays at the
+        // producer (see `window-kernel-shadow.ts shadowKernelAppResignSettled`
+        // for why a clean comparison here does not prove the hide/re-show
+        // half equivalent).
+        shadowKernelAppResignSettled(this.getSnapshot());
       }, APP_RESIGN_SETTLE_MS);
     });
     this.attachSpaceChangeListener();

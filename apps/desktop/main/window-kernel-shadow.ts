@@ -388,14 +388,59 @@ export function shadowKernelWindowHidden(id: WindowId, oldSnapshot: StateSnapsho
 /**
  * Translate the app becoming active (`electron-window-backend.ts
  * attachAppListeners`'s `did-become-active` → old machine `APP_ACTIVATED`)
- * into the kernel's `AppActivated` event — the ONE other production input
- * that affects visibility: it re-shows every record still carrying
+ * into the kernel's `AppActivated` event — one of the three production inputs
+ * that affect visibility: it re-shows every record still carrying
  * `hiddenByAppBlur` (`window-kernel.ts`'s `AppActivated` evolve arm), mirroring
- * the old machine's own re-show. `AppResigned`/`AppResignSettled` (the hide
- * half of that same dance) have no shadow feed yet — out of scope here.
+ * the old machine's own re-show. The other two are `shadowKernelAppResigned`
+ * and `shadowKernelAppResignSettled` directly below.
  */
 export function shadowKernelAppActivated(oldSnapshot: StateSnapshot): void {
   shadowDispatch({ type: 'AppActivated' });
+  compareAfterFeed(oldSnapshot);
+}
+
+/**
+ * Translate the app resigning active (`electron-window-backend.ts
+ * attachAppListeners`'s `did-resign-active` → old machine `APP_RESIGNED`)
+ * into the kernel's `AppResigned` event — the ARM half of the app-switch
+ * dance (`window-kernel.ts`'s `AppResigned` evolve arm): it sets
+ * `appActive: false` and arms `pendingAppResignSweep`, hiding nothing yet.
+ * Same shape and containment as `shadowKernelAppActivated`: `shadowDispatch`
+ * (an event, not a command — this is a past-tense fact `decide` never sees),
+ * ending with the same `compareAfterFeed` tail.
+ */
+export function shadowKernelAppResigned(oldSnapshot: StateSnapshot): void {
+  shadowDispatch({ type: 'AppResigned' });
+  compareAfterFeed(oldSnapshot);
+}
+
+/**
+ * Translate the deferred app-resign SETTLE (`electron-window-backend.ts
+ * attachAppListeners`'s `APP_RESIGN_SETTLE_MS` timer → old machine
+ * `APP_RESIGN_SETTLED`) into the kernel's `AppResignSettled` event — the
+ * settle half of the same dance (`window-kernel.ts`'s `AppResignSettled`
+ * evolve arm): inert unless `pendingAppResignSweep` is still armed, and when
+ * armed, hides every sweep-eligible record (`isAppResignSweepEligible`) and,
+ * when the app never came back active in between, writes `lastAttention`
+ * `{ holder: null }` — the one write `react`'s transient-dismissal rule reads
+ * (see this module's header / `window-kernel.ts` §0's autoclose exemption
+ * doc). Same shape and containment as `shadowKernelAppResigned`.
+ *
+ * NOT A COMPLETE SHADOW OF THE HIDE/RE-SHOW HALF. The old machine hides these
+ * windows FIRST (its own `did-resign-active` handling runs synchronously,
+ * well before this 500ms settle), so by the time this event reaches the
+ * kernel the records it would mark `hiddenByAppBlur` already read
+ * `visible: false` from the native `'hide'` listener's earlier
+ * `shadowKernelWindowHidden` feed — and `isAppResignSweepEligible` requires
+ * `visible`, so this arm finds nothing to sweep and the kernel's `visible`
+ * mirror never contradicts the old machine's. The comparator does not check
+ * `visible` at all, so a clean shadow run here is evidence the compared
+ * facts (membership/front/stackOrder) hold — NOT evidence the hide/re-show
+ * behavior itself has been proven equivalent. That resolves only at cutover,
+ * when the kernel becomes the one deciding what to hide.
+ */
+export function shadowKernelAppResignSettled(oldSnapshot: StateSnapshot): void {
+  shadowDispatch({ type: 'AppResignSettled' });
   compareAfterFeed(oldSnapshot);
 }
 
