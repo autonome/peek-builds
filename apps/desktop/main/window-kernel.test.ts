@@ -949,6 +949,36 @@ describe('window-kernel: parent refocus on WindowClosed', () => {
     assert.strictEqual(next.opSeqCounter, state.opSeqCounter);
   });
 
+  it('closing a background (non-key) child never puts its parent above the record that actually holds key', () => {
+    // §0.1.10's one-order rule (`window-kernel-properties.test.ts`
+    // `checkInvariants`): whenever `key` resolves to a record, that record
+    // is the topmost one in `order`. A closing child's parent-refocus raise
+    // must not violate that even when the closing child was never key
+    // itself — `other` here holds key throughout; `child` (parented to
+    // `sibling`) closes in the background.
+    const other = wid(1);
+    const sibling = wid(2);
+    const child = wid(3);
+    const state = fold([
+      registerContent(other),
+      registerContent(sibling),
+      registerContent(child, { role: 'child-content', parentId: sibling }),
+      { type: 'WindowShown', id: other },
+      { type: 'WindowShown', id: sibling },
+      { type: 'WindowShown', id: child },
+      { type: 'OsFocusGained', id: other },
+    ]);
+    assert.strictEqual(keyWindow(state)?.id, other);
+    assert.deepStrictEqual(state.order.map((w) => w.id), [sibling, child, other]);
+
+    const next = evolve(state, { type: 'WindowClosed', id: child });
+    const kw = keyWindow(next);
+    const top = next.order[next.order.length - 1];
+    assert.strictEqual(kw?.id, other, 'key is untouched by the close — RULE 2');
+    assert.ok(top !== undefined);
+    assert.strictEqual(top.id, kw?.id, 'the key window must still be topmost — the parent-refocus reorder must not displace it');
+  });
+
   it('closing a registered detached devtools window refocuses its parent via the parent-refocus rule', () => {
     const host = wid(1);
     const devtools = wid(2);

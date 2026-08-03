@@ -1348,17 +1348,46 @@ export function evolve(state: State, ev: Event): State {
       //
       // `key` is deliberately left untouched — RULE 2 reserves that write for
       // `OsFocusGained`; the OS's echo of the raise `react` emits is what
-      // will eventually write it. The parent IS moved to the top of `order`,
-      // mirroring the `OsFocusGained` arm's own raise: §0.1.6 makes use-order
-      // and z-order one order, so a raise not reflected in `order` would have
-      // the trailing `SetStacking` sweep (`react`, driven off `orderChanged`)
-      // re-stack straight over it.
+      // will eventually write it. The parent's `lastOpSeq` IS stamped
+      // unconditionally here whenever the raise fires (matching `react`'s own
+      // unconditional emission below), so `checkOpSeqInvariants`' biconditional
+      // between a focus-family effect and the counter advancing always holds.
+      //
+      // Whether the parent is actually MOVED to the top of `order`, though, is
+      // conditional — and that condition is the fix for a real violation of
+      // §0.1.10's one-order rule (`window-kernel-properties.test.ts`
+      // `checkInvariants`: whenever `key` resolves to a record, that record is
+      // the topmost one). `key` can be untouched by this event and still name
+      // a LIVE record other than the parent (the closed window need not have
+      // held key itself — this handoff is unconditional on that, ported
+      // verbatim from the old `parentWin.focus()` call). Moving the parent
+      // above that record would put a non-key record on top while `key` names
+      // someone else — the exact violation this scene proves
+      // (`window-kernel.test.ts` "closing a background (non-key) child never
+      // puts its parent above the record that actually holds key"). RULE 2
+      // forbids fixing that by writing `key` here instead.
+      //
+      // So the reorder happens ONLY when the closed record itself held `key`:
+      // in that case `key` still names the now-removed id, `keyWindow`
+      // resolves it to null (unobservable, RULE 2), and moving the parent to
+      // the top is exactly the case §0.1.6 cares about — without it, the
+      // trailing `SetStacking` sweep (`react`, driven off `orderChanged`)
+      // would re-stack straight over the parent's own raise, since it replays
+      // `order` as-is. When some OTHER live record holds key, that race is
+      // accepted rather than the invariant: the parent still gets raised (the
+      // `RaiseWindow` effect below fires either way), and the real OS focus
+      // change it causes is what the eventual `OsFocusGained` echo will
+      // reconcile into `order` for real.
       const parent = closedRec?.parentId !== undefined ? filtered.find((w) => w.id === closedRec.parentId) : undefined;
       const raisesParent = parent !== undefined && isContentWindow(parent);
       const opSeq = raisesParent ? state.opSeqCounter + 1 : state.opSeqCounter;
-      const order = raisesParent
-        ? [...filtered.filter((w) => w.id !== parent.id), { ...parent, lastOpSeq: opSeq }]
-        : filtered;
+      const stamped = raisesParent ? { ...parent, lastOpSeq: opSeq } : undefined;
+      const shouldReorder = raisesParent && closedRec?.id === state.key;
+      const order = shouldReorder
+        ? [...filtered.filter((w) => w.id !== stamped!.id), stamped!]
+        : stamped !== undefined
+          ? filtered.map((w) => (w.id === stamped.id ? stamped : w))
+          : filtered;
       return {
         ...state,
         order,
@@ -1908,17 +1937,24 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // and never re-derives the guard from `ev`.
   //
   // PLACED HERE, immediately after `CloseWindow` and well before
-  // `SetStacking`/`DismissWindow` further down: `evolve` moves an eligible
-  // parent to the top of `order` in the SAME transition, so this raise has
+  // `SetStacking`/`DismissWindow` further down: when the closed record held
+  // `key`, `evolve` moves the eligible parent to the top of `order` in the
+  // SAME transition (see the `WindowClosed` arm — that reorder is
+  // conditional, guarding §0.1.10's one-order invariant), so this raise has
   // to reach the executor before the trailing `SetStacking` sweep (driven
   // off the length change this same close already causes) replays that new
   // top-of-order position — emitting it later would still be correct
   // z-order-wise (the array already reflects the raise) but would separate
   // two effects of one logical "hand it back to the parent" from their
-  // natural CloseWindow/RaiseWindow pairing. `DismissWindow` (transient
-  // autoclose) is unaffected either way: it diffs `lastFocusProvenance`,
-  // which a plain `WindowClosed` never touches, so it fires here or later
-  // with identical (empty) result for this transition.
+  // natural CloseWindow/RaiseWindow pairing. When the closed record did NOT
+  // hold key, `evolve` leaves the parent's position alone (moving it would
+  // put a non-key record above whoever does hold key), so this raise still
+  // fires but the trailing `SetStacking` sweep may briefly restack over it —
+  // accepted until the real OS focus change this raise causes echoes back as
+  // `OsFocusGained` and reconciles `order` for real. `DismissWindow`
+  // (transient autoclose) is unaffected either way: it diffs
+  // `lastFocusProvenance`, which a plain `WindowClosed` never touches, so it
+  // fires here or later with identical (empty) result for this transition.
   for (const prevRecord of prev.order) {
     if (next.order.some((w) => w.id === prevRecord.id)) continue;
     if (prevRecord.parentId === undefined) continue;

@@ -650,12 +650,34 @@ function checkInvariants(state: State, prev?: State): string[] {
   }
 
   // §0.1.10 — ONE ORDER: whenever `key` resolves to a record, that record is
-  // the TOPMOST one. Nothing in the kernel may put a window over the one in
-  // use: a fresh registration is inserted BELOW the key window, a focus gain
-  // moves its target to the end, and no other transition touches membership
-  // or position. Stated over every generated log — including the nonsense
-  // ones — rather than over the hand-written scenes, because the pre-rule
-  // kernel (registration appended on top) violated it with two events.
+  // the TOPMOST one. A fresh registration is inserted BELOW the key window
+  // and a focus gain moves its target to the end — those two transitions are
+  // why the clause holds in general. It is NOT true, though, that no other
+  // transition touches membership or position:
+  //
+  //   - `WindowClosed`'s parent-refocus (`evolve`'s `WindowClosed` arm) moves
+  //     an eligible parent to the top of `order`, but ONLY when the closed
+  //     record itself held `key` — `key` then still names the just-removed
+  //     id, so `keyWindow` below resolves to null and this clause is skipped
+  //     entirely for that transition. The move can never land a parent above
+  //     a record that still holds a LIVE key, by construction, not by luck.
+  //   - `StackOrderImported` permutes `order` and genuinely CAN violate this
+  //     clause: an import naming the key window and one record below it
+  //     demotes the key window without ever touching `key` (deliberate — an
+  //     import must never activate anything). Verified by hand on two
+  //     registered windows: key on the upper one, import `[key, other]`, and
+  //     the key window lands at the bottom. The generated seeds below miss it
+  //     only because the permuting imports they draw are too shallow to reach
+  //     it (see "the op-token invariants are not vacuous" further down for
+  //     the measurement). Which side is wrong — the import should hold the
+  //     key window at the top, or this clause should not span a permutation
+  //     — is an open semantics question for the blueprint (also tracked in
+  //     `docs/design/window-manager.md`, commit `kxwlmmzq`), not settled by
+  //     weakening either one here.
+  //
+  // Stated over every generated log — including the nonsense ones — rather
+  // than over the hand-written scenes, because the pre-rule kernel
+  // (registration appended on top) violated it with two events.
   const top = state.order[state.order.length - 1];
   if (kw !== null && top !== undefined && top.id !== kw.id) {
     violations.push(`the key window is not topmost in order: key=${kw.id} top=${top.id}`);
