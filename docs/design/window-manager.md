@@ -169,10 +169,18 @@ machine drop stale intents — the correlation-token pattern already working in 
 as `ASK_RENDERER{seq}` / `ESC_RENDERER_ANSWER{seq}`.
 
 **A transient window is dismissed when some other window, not belonging to it, genuinely takes
-key.** This governs `window-kernel.ts selectTransientAutoclose`, implemented against the kernel as
-recorded in §0.1.11. `window-state.ts` — the reducer still driving production — keeps its own,
-older role-based sets (`AUTOCLOSE_EXEMPT_ROLES`, `AUTOCLOSE_FOCUSER_EXEMPT_ROLES`); those are not
-the rule stated here and are not touched by it.
+key — or when attention leaves the app entirely and settles on nothing of Peek's at all.**
+Attention is one recorded fact with one holder, a window or none (`window-kernel.ts
+State.lastAttention.holder`). Every settled move of that holder — a window taking OS focus, or the
+app losing focus for real — runs the same query, `selectTransientAutoclose`, through the one
+emission site in `react()`; no trigger has a dismissal path of its own. When the holder is `null`,
+the directional one-hop exemption relation over `overlayFor` / `parentId` has nothing to point
+with, so it admits nothing and every visible, unattached transient is dismissed — the same relation
+at its degenerate value, not a second rule. This governs `window-kernel.ts
+selectTransientAutoclose`, implemented against the kernel as recorded in §0.1.11. `window-state.ts`
+— the reducer still driving production — keeps its own, older role-based sets
+(`AUTOCLOSE_EXEMPT_ROLES`, `AUTOCLOSE_FOCUSER_EXEMPT_ROLES`) and its own
+`selectAppResignTransients`; those are not the rule stated here and are not touched by it.
 
 - **Ownership, not role.** A role-based exemption is wrong in both directions: an unrelated overlay
   taking key dismisses nothing, and a popup's relationship to its parent is expressed as a role name
@@ -183,13 +191,23 @@ the rule stated here and are not touched by it.
 - **Provenance stays, and is not a second rule.** Whether the machine itself caused the event
   currently being handled is already stored fact 4 above; `FocusCause` is that fact. "Genuinely" in
   the rule means the key change came from the world, not from the machine echoing an operation it
-  just requested. A machine-caused focus does not skip the sweep — it arms an ordering test, so a
-  transient strictly newer than the focuser survives while an older one is still swept.
-- **The machine applies the rule; no caller does.** `selectTransientAutoclose` and
-  `selectAppResignTransients` stay pure selectors — queries, not transitions — but `react` emits
-  the dismissals off a diff of stored focus provenance, not a branch on the event type. That keeps
-  rule application non-optional: the machine remains the only thing that can dismiss a transient,
-  and no dispatch site can silently skip running it.
+  just requested. A machine-caused focus does not skip dismissal — it arms an ordering test, so a
+  transient strictly newer than the focuser survives while an older one is still dismissed.
+- **The seam is the settled loss, not the raw edge.** The app resigning active fires on ordinary
+  activation churn — entering or leaving an overlay produces it — so keying dismissal to that raw
+  edge would dismiss transients during normal overlay transitions. The settle guard
+  (`pendingAppResignSweep`, armed by `AppResigned`, disarmed by `AppActivated`) and its 500ms delay
+  exist to tell a real loss of focus from a resign the same activation cancels; only a settled,
+  still-armed `AppResignSettled` writes `lastAttention`.
+- **`holder` is a stored fact, never derived from `key`.** An app-resign event never touches `key`
+  (RULE 2), so at the settle `key` may still name whichever window held it before the app resigned
+  — and a selector reading `key` instead of the explicit `holder` would spare exactly that window,
+  typically the palette that should close.
+- **The machine applies the rule; no caller does.** `selectTransientAutoclose` stays a pure
+  selector — a query, not a transition — but `react` emits the dismissals off a diff of
+  `State.lastAttention`'s `seq`, not a branch on the event type. That keeps rule application
+  non-optional: the machine remains the only thing that can dismiss a transient, and no dispatch
+  site can silently skip running it.
 
 ---
 
@@ -1850,21 +1868,57 @@ is the claim that nulling breaks a caller.
 
 ### 0.1.11 Transient dismissal — implemented against the kernel, unproven at runtime
 
-§0's rule ("a transient window is dismissed when some other window, not belonging to it, genuinely
-takes key") is built. It runs only inside the shadow kernel (§0.1's "Built, not wired" still holds
-— `window-state.ts` and `window-os-adapter.ts` drive production); this records what the
-implementation froze so the rule can be checked against the running app once the kernel is wired in,
-rather than re-derived.
+§0's rule is built. It runs only inside the shadow kernel (§0.1's "Built, not wired" still holds —
+`window-state.ts` and `window-os-adapter.ts` drive production); this records what the implementation
+froze so the rule can be checked against the running app once the kernel is wired in, rather than
+re-derived. "Unproven at runtime" still stands for the ownership relation itself (see "The gap"
+below, unchanged by the mechanism rewrite this section otherwise records); what the rewrite below
+settles is a narrower question — that the app-resign half of the rule, previously not exercised by
+the shadow kernel at all, now is.
 
-**The rule is implemented.** `window-kernel.ts react()` could not read `ev.cause` directly — `react`
-is a pure structural projection of `(prev, ev, next)` (§0.1.1), so branching on the event's payload
-would make it something other than a diff. Provenance therefore had to become a diffable state fact:
-`State.lastFocusProvenance`, a `{cause, seq}` pair written unconditionally in `evolve`'s
-`OsFocusGained` arm, mirroring `lastTeardown` and `lastFocusAssert`. `react` diffs its `seq` against
-the previous state and, on an advance, calls `selectTransientAutoclose(next, next.key,
-provenance.cause)` and emits one dismissal per victim — placed after the `RaiseWindow` rule and
-before the `SetStacking` re-assert, matching the old reducer's fixed effect order.
-`selectTransientAutoclose` itself is unchanged in kind: a pure selector, not a transition.
+**The rule is implemented on one fact, not a pair.** `window-kernel.ts react()` could not read
+`ev.cause`, or where the triggering event says attention went, directly — `react` is a pure
+structural projection of `(prev, ev, next)` (§0.1.1), so branching on the event's payload would make
+it something other than a diff. Where attention sits therefore had to become a diffable state fact:
+`State.lastAttention`, an `{ holder, cause, seq }` record (`window-kernel.ts Attention`, formerly
+`FocusProvenance`) written by every event that moves it — `evolve`'s `OsFocusGained` arm (`holder:
+ev.id`) and its `AppResignSettled` arm, on the branch where the resign is real and the app has not
+already come back active (`holder: null`) — mirroring `lastTeardown` and `lastFocusAssert`. `react`
+diffs `lastAttention.seq` against the previous state and, on an advance, calls
+`selectTransientAutoclose(next, attention.holder, attention.cause)` and emits one `DismissWindow` per
+victim — placed after the `RaiseWindow` rule and before the `SetStacking` re-assert, matching the old
+reducer's fixed effect order. `selectTransientAutoclose` itself is unchanged in kind — a pure
+selector, not a transition — now taking a `WindowId | null` holder rather than always naming a
+window. ONE condition, one loop, one emission site: the earlier draft of this section diffed
+`OsFocusGained` alone, gated on a non-null `key` present in `order`, which left the app-losing-focus
+case unhandled by this rule entirely; that split is gone, and every cause that moves attention now
+runs through the same query.
+
+**The app-resign half is fed, not skipped.** `AppResigned` and `AppResignSettled` reach the shadow
+kernel from `electron-window-backend.ts attachAppListeners`'s `did-resign-active` handler and its
+`APP_RESIGN_SETTLE_MS` timer (`window-kernel-shadow.ts shadowKernelAppResigned` /
+`shadowKernelAppResignSettled`) — the same production dispatch sites that already feed the old
+machine, not only a unit-test construction. `holder` could not be read off `key` in place of a
+stored field: an app-resign event never touches `key` (RULE 2), so at the settle `key` may still name
+whichever window held it before the app resigned, and a selector reading `key` would spare exactly
+that window — typically the palette that should close.
+
+**Not proof of the hide/re-show half.** The shadow feed above cannot show that a real app switch
+hides and later re-shows the right windows. The old machine hides, on the raw resign and well before
+the 500ms settle, the windows `isAppResignSweepEligible` selects; its native `'hide'` report reaches
+the kernel first (`shadowKernelWindowHidden`), so by the time the settle arrives those records
+already read `visible: false` and the arm marks nothing. `compareShadowKernelState` does not compare
+`visible` at all, so a clean shadow run is evidence the compared facts — membership, `front`,
+`stackOrder` — hold, not evidence the hide/re-show behavior is equivalent. That resolves only at
+cutover, when the kernel becomes the one deciding what to hide; a clean shadow run before then is not
+evidence this half works.
+
+**`window-state.ts selectAppResignTransients` becomes dead at cutover, and its restriction is not
+carried forward.** The old arm scopes dismissal to `rec.kind === 'page-host'`, on the assumption that
+a transient `BrowserWindow` already closes itself on blur through its own listener — which is why a
+`kind: 'browser'` command palette was never a dismissal candidate on a real app switch, the defect
+this rule exists to fix. `window-kernel.ts selectTransientAutoclose` reads no `kind` at all, so
+nothing analogous to the old restriction is ported forward.
 
 **Dismissal is its own effect.** The sweep emits `Effect.DismissWindow`, not `Effect.CloseWindow`.
 `WindowKernelExecutor` routes `DismissWindow` through `backend.closeOrHide`, deliberately distinct
