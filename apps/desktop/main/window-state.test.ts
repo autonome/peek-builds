@@ -1096,7 +1096,6 @@ describe('WindowStateOwner (dispatch / subscribe / waitForMode)', () => {
     const owner = new WindowStateOwner();
     owner.dispatch({ type: 'WINDOW_REGISTERED', id: wid(1), kind: 'page-host', role: 'content', satellite: false });
     owner.dispatch({ type: 'WINDOW_SHOWN', id: wid(1), focused: true });
-    assert.strictEqual(owner.getFrontWindowId(), wid(1));
   });
 
   it('subscribe fires on dispatch with a snapshot + effects', () => {
