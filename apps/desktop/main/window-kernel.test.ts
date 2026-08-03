@@ -2228,7 +2228,7 @@ describe('window-kernel: transient autoclose', () => {
     assert.deepStrictEqual(selectTransientAutoclose(state, wid(1)), [wid(2)]);
   });
 
-  it("the windows switcher (features/windows/background.js openWindowsView) is role:'overlay' but parented to nothing and attached to nothing — it sweeps as a focuser AND is sweepable as a victim", () => {
+  it("the windows switcher (features/windows/background.js openWindowsView) is role:'switcher' but parented to nothing and attached to nothing — it sweeps as a focuser AND is sweepable as a victim", () => {
     const workspace = wid(1);
     const palette = wid(2);
     const switcher = wid(3);
@@ -2236,7 +2236,7 @@ describe('window-kernel: transient autoclose', () => {
       [
         { type: 'WindowRegistered', id: workspace, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'workspace' },
         { type: 'WindowRegistered', id: palette, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'palette' },
-        { type: 'WindowRegistered', id: switcher, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'overlay' },
+        { type: 'WindowRegistered', id: switcher, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'switcher' },
         { type: 'WindowShown', id: workspace },
         { type: 'WindowShown', id: palette },
         { type: 'WindowShown', id: switcher },

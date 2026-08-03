@@ -985,7 +985,7 @@ function assembleHybridPageHost(
     kind: 'page-host',
     role,
     class: classifyWindowRegistration(role, { alwaysOnTop: alwaysOnTopResolved }),
-    satellite: role === 'overlay' || role === 'palette',
+    satellite: role === 'overlay' || role === 'palette' || role === 'switcher',
     escapeMode: options.escapeMode as MachineWindowSpec['escapeMode'],
     lastHttpUrl: url.startsWith('http://') || url.startsWith('https://') ? url : undefined,
     ...deriveWindowSurface({ alwaysOnTop: alwaysOnTopResolved, focusable: options.focusable === undefined ? undefined : !!options.focusable }),
@@ -3100,7 +3100,7 @@ export function registerWindowHandlers(): void {
     const INTERNAL_URLS = ['peek://app/background.html'];
     const INTERNAL_URL_PREFIXES = ['peek://test/'];
     // Launcher / overlay roles that should never act as a real parent.
-    const NON_PARENT_ROLES = new Set(['palette', 'overlay']);
+    const NON_PARENT_ROLES = new Set(['palette', 'overlay', 'switcher']);
     const openerUrl = openerWindow ? openerWindow.webContents?.getURL() ?? '' : '';
     const openerInfo = openerWindow ? getWindowInfo(openerWindow.id) : null;
     const openerRole = (openerInfo?.params?.role as string | undefined) ?? undefined;

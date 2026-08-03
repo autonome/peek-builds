@@ -214,14 +214,14 @@ export type EscapeOutcome =
 
 /**
  * The role the window switcher registers under. `features/windows/background.js
- * openWindowsView` opens it with `role: 'overlay'`, which
- * `classifyWindowRegistration` turns into `class: 'overlay'` too.
+ * openWindowsView` opens it with `role: 'switcher'`, which
+ * `classifyWindowRegistration` still turns into `class: 'overlay'`.
  *
- * It is a SET rather than a bare string so the wiring commit can give the
- * switcher a role of its own without this file changing shape — see the
- * ambiguity `switcherWindow` has to work around.
+ * It is a SET rather than a bare string, kept around from when the switcher
+ * shared `role: 'overlay'` with the chrome overlay — see the ambiguity
+ * `switcherWindow` has to work around.
  */
-export const SWITCHER_ROLES: ReadonlySet<string> = new Set(['overlay']);
+export const SWITCHER_ROLES: ReadonlySet<string> = new Set(['switcher']);
 
 /**
  * The open switcher window, or null.

@@ -2704,7 +2704,7 @@ export function topmostBaseLayerPageHost(state: State): WindowRecord | null {
  * the workspace. Ported VERBATIM from `izui-roles.ts TRANSIENT_ROLES` (via
  * `window-state.ts`); all three copies must agree.
  */
-export const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay']);
+export const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay', 'switcher']);
 
 /** Default provenance for a focus report that carries none — see `FocusCause`. */
 const WORLD_CAUSE: FocusCause = { kind: 'world' };

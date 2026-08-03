@@ -32,7 +32,7 @@ import { BASE_LAYER } from './window-kernel.js';
  * they follow the user across Spaces instead of anchoring to their
  * creation Space.
  */
-export const TRANSIENT_ROLES = new Set(['palette', 'quick-view', 'overlay']);
+export const TRANSIENT_ROLES = new Set(['palette', 'quick-view', 'overlay', 'switcher']);
 
 /**
  * Inputs used to infer a role when the caller did not pass one explicitly.

@@ -1255,7 +1255,7 @@ export function isSatelliteRegistration(
   opts: { modal?: boolean; focusable?: boolean; windowClass?: WindowClass } = {},
 ): boolean {
   if (opts.windowClass !== undefined && SATELLITE_CLASSES.has(opts.windowClass)) return true;
-  if (role === 'overlay' || role === 'palette') return true;
+  if (role === 'overlay' || role === 'palette' || role === 'switcher') return true;
   if (opts.modal === true) return true;
   if (opts.focusable === false) return true;
   return false;
@@ -1276,7 +1276,7 @@ export function classifyWindowRegistration(
   role: string,
   opts: { alwaysOnTop?: boolean; focusable?: boolean } = {},
 ): WindowClass {
-  if (role === 'overlay') return 'overlay';
+  if (role === 'overlay' || role === 'switcher') return 'overlay';
   if (role === 'palette') return 'palette';
   if (role === 'quick-view') return 'quick-view';
   if (opts.alwaysOnTop === true && opts.focusable === false) return 'hud';
@@ -1784,7 +1784,7 @@ function detachOverlay(state: AppWindowState, overlayId: WindowId, effects: Effe
  * survives the §5 step 9 cutover for its OTHER consumer (the `peek://`
  * devtools/URL gating in `ipc.ts`). The two must agree.
  */
-const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay']);
+const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', 'overlay', 'switcher']);
 
 /**
  * Transient roles that the autoclose EXEMPTS. `overlay` is transient-class but
@@ -1792,7 +1792,7 @@ const TRANSIENT_ROLES: ReadonlySet<string> = new Set(['palette', 'quick-view', '
  * through a close — so an autoclose must never touch it (ported verbatim from
  * `selectTransientSiblingsToClose`'s `if (c.role === 'overlay') continue`).
  */
-const AUTOCLOSE_EXEMPT_ROLES: ReadonlySet<string> = new Set(['overlay']);
+const AUTOCLOSE_EXEMPT_ROLES: ReadonlySet<string> = new Set(['overlay', 'switcher']);
 
 /**
  * Roles that, when THEY are the one gaining focus, must sweep NOTHING —
@@ -1814,7 +1814,7 @@ const AUTOCLOSE_EXEMPT_ROLES: ReadonlySet<string> = new Set(['overlay']);
  *                driven by `OS_FOCUS_GAINED`, which fires for EVERY
  *                machine-registered window's focus — including the overlay's.
  */
-const AUTOCLOSE_FOCUSER_EXEMPT_ROLES: ReadonlySet<string> = new Set(['utility', 'overlay']);
+const AUTOCLOSE_FOCUSER_EXEMPT_ROLES: ReadonlySet<string> = new Set(['utility', 'overlay', 'switcher']);
 
 /**
  * Which transient siblings a newly-focused window dismisses (§4.4 dim 4b) —

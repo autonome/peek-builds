@@ -15,7 +15,7 @@
  *   - command palette  a focusable `browser` window, `role:'palette'`,
  *                      `class:'palette'`, pinned above the stack
  *   - switcher         `features/windows/background.js openWindowsView`:
- *                      `role:'overlay'`, `alwaysOnTop`, focusable, and NEVER
+ *                      `role:'switcher'`, `alwaysOnTop`, focusable, and NEVER
  *                      attached to a host
  *   - chrome overlay   `hybrid-overlay.ts ensureOverlay`: `role:'overlay'`,
  *                      `class:'overlay'`, focusable, ATTACHED to its host
@@ -76,12 +76,12 @@ const regPalette = (id: WindowId): Event => ({
   type: 'WindowRegistered', id, kind: 'browser', layer: FLOATING,
   canBecomeKey: true, acceptsInput: true, class: 'palette', role: 'palette',
 });
-/** `features/windows/background.js`: `role:'overlay'`, alwaysOnTop, focusable, never attached. */
+/** `features/windows/background.js`: `role:'switcher'`, alwaysOnTop, focusable, never attached. */
 const regSwitcher = (id: WindowId): Event => ({
   type: 'WindowRegistered', id, kind: 'browser', layer: FLOATING,
-  canBecomeKey: true, acceptsInput: true, class: 'overlay', role: 'overlay',
+  canBecomeKey: true, acceptsInput: true, class: 'overlay', role: 'switcher',
 });
-/** `hybrid-overlay.ts ensureOverlay`: same role/class as the switcher — told apart by attachment. */
+/** `hybrid-overlay.ts ensureOverlay`: same class as the switcher, own role — told apart by attachment. */
 const regChromeOverlay = (id: WindowId): Event => ({
   type: 'WindowRegistered', id, kind: 'browser', layer: FLOATING,
   canBecomeKey: true, acceptsInput: true, class: 'overlay', role: 'overlay',
@@ -254,7 +254,7 @@ describe('window-escape: Escape reaches the window it landed on', () => {
 // ── The switcher as an ordinary window record ──────────────────────────────
 
 describe('window-escape: the switcher is an ordinary window record', () => {
-  it('a visible unattached role-overlay window is the switcher', () => {
+  it('a visible unattached role-switcher window is the switcher', () => {
     const state = fold([regSwitcher(switcher), show(switcher), focus(switcher)], loneHost());
     assert.strictEqual(switcherWindow(state)?.id, switcher);
   });
