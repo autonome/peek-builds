@@ -847,6 +847,126 @@ describe('window-kernel: closing the key window raises nothing in its place', ()
   });
 });
 
+// ── Parent refocus on WindowClosed (kernel-native port of window-state.ts's
+// WINDOW_CLOSED arm — the deleted main.ts parentWin.focus() block) ──────────
+
+describe('window-kernel: parent refocus on WindowClosed', () => {
+  const registerContent = (id: WindowId, extra: Partial<Event & { type: 'WindowRegistered' }> = {}): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'browser',
+    layer: 0,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+    ...extra,
+  });
+
+  it('closing the focused child hands the raise to its parent, not whatever else sits on top', () => {
+    const parent = wid(1);
+    const child = wid(2);
+    const other = wid(3);
+    const state = fold([
+      registerContent(parent),
+      registerContent(child, { role: 'child-content', parentId: parent }),
+      { type: 'WindowShown', id: parent },
+      { type: 'WindowShown', id: child },
+      registerContent(other),
+      { type: 'WindowShown', id: other },
+      { type: 'OsFocusGained', id: child },
+    ]);
+    assert.strictEqual(keyWindow(state)?.id, child);
+    // `other` was registered and shown AFTER the child, so it sits above the
+    // parent in `order` once the child is removed — a naive "whatever's now
+    // on top" successor would land on it, not the parent.
+    assert.deepStrictEqual(state.order.map((w) => w.id), [parent, other, child]);
+
+    const next = evolve(state, { type: 'WindowClosed', id: child });
+    const effects = react(state, { type: 'WindowClosed', id: child }, next);
+
+    assert.ok(
+      effects.some((e) => e.type === 'RaiseWindow' && e.id === parent),
+      'the parent-handoff raise targets the parent',
+    );
+    assert.strictEqual(next.key, child, 'key is left dangling — RULE 2, unrepaired here');
+    assert.strictEqual(keyWindow(next), null, 'the dangling id resolves to nothing; no successor is guessed');
+    assert.deepStrictEqual(next.order.map((w) => w.id), [other, parent], 'the parent is moved to the top by its own raise');
+  });
+
+  it('re-drives the parent raise even when it already holds key (old focus() parity)', () => {
+    const parent = wid(1);
+    const child = wid(2);
+    const state = fold([
+      registerContent(parent),
+      registerContent(child, { role: 'child-content', parentId: parent }),
+      { type: 'WindowShown', id: parent },
+      { type: 'WindowShown', id: child },
+      { type: 'OsFocusGained', id: parent },
+    ]);
+    assert.strictEqual(keyWindow(state)?.id, parent);
+    const opSeqBefore = state.opSeqCounter;
+
+    const next = evolve(state, { type: 'WindowClosed', id: child });
+    const effects = react(state, { type: 'WindowClosed', id: child }, next);
+
+    assert.ok(
+      effects.some((e) => e.type === 'RaiseWindow' && e.id === parent),
+      'the raise is re-driven even though front is unchanged',
+    );
+    assert.strictEqual(next.opSeqCounter, opSeqBefore + 1, 'a fresh op is minted for the re-drive');
+  });
+
+  it('a hidden parent is ineligible: no raise, and order is untouched beyond the removal', () => {
+    const parent = wid(1);
+    const child = wid(2);
+    const state = fold([
+      registerContent(parent),
+      registerContent(child, { role: 'child-content', parentId: parent }),
+      { type: 'WindowShown', id: parent },
+      { type: 'WindowShown', id: child },
+      { type: 'WindowHidden', id: parent },
+      { type: 'OsFocusGained', id: child },
+    ]);
+
+    const next = evolve(state, { type: 'WindowClosed', id: child });
+    const effects = react(state, { type: 'WindowClosed', id: child }, next);
+
+    assert.strictEqual(effects.some((e) => e.type === 'RaiseWindow'), false, 'a hidden parent cannot take the raise');
+    assert.deepStrictEqual(next.order.map((w) => w.id), [parent], 'parent is simply what remains, unmoved');
+    assert.strictEqual(next.opSeqCounter, state.opSeqCounter, 'no op minted when nothing is raised');
+  });
+
+  it('closing a parentless window drives no parent-refocus raise', () => {
+    const a = wid(1);
+    const b = wid(2);
+    const state = fold([registerContent(a), registerContent(b), { type: 'WindowShown', id: a }, { type: 'WindowShown', id: b }]);
+
+    const next = evolve(state, { type: 'WindowClosed', id: b });
+    const effects = react(state, { type: 'WindowClosed', id: b }, next);
+
+    assert.strictEqual(effects.some((e) => e.type === 'RaiseWindow'), false, 'no parent linkage -> no re-drive');
+    assert.strictEqual(next.opSeqCounter, state.opSeqCounter);
+  });
+
+  it('closing a registered detached devtools window refocuses its parent via the parent-refocus rule', () => {
+    const host = wid(1);
+    const devtools = wid(2);
+    const state = fold([
+      registerContent(host, { kind: 'page-host' }),
+      { type: 'WindowShown', id: host },
+      registerContent(devtools, { class: 'devtools', role: 'utility', parentId: host }),
+      { type: 'WindowShown', id: devtools },
+    ]);
+
+    const next = evolve(state, { type: 'WindowClosed', id: devtools });
+    const effects = react(state, { type: 'WindowClosed', id: devtools }, next);
+
+    assert.ok(effects.some((e) => e.type === 'RaiseWindow' && e.id === host));
+    assert.strictEqual(effects.filter((e) => e.type === 'RaiseWindow').length, 1, 'exactly one raise, from one place');
+  });
+});
+
 // ── Fullscreen: an orthogonal region (§0.1.8) ───────────────────────────────
 
 describe('window-kernel: fullscreen is orthogonal to key and order', () => {

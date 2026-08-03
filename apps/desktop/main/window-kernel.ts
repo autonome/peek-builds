@@ -1332,11 +1332,37 @@ export function evolve(state: State, ev: Event): State {
       // key id is unobservable rather than repaired here. A record whose
       // `overlayFor` names the closed id is detached mechanically in the
       // same pass — an overlay must never keep pointing at a retired host.
+      const closedRec = state.order.find((w) => w.id === ev.id);
+      const filtered = state.order
+        .filter((w) => w.id !== ev.id)
+        .map((w) => (w.overlayFor === ev.id ? { ...w, overlayFor: undefined } : w));
+      // Parent refocus (ported from `window-state.ts`'s `WINDOW_CLOSED` arm —
+      // the deleted `main.ts browser-window-created -> 'closed' ->
+      // parentWin.focus()` block): a closing window whose parent is still
+      // registered and eligible hands the raise to that parent, the same
+      // `react` diffs into a `RaiseWindow` effect below. Eligibility is
+      // `isContentWindow` — this kernel's nearest port of the old
+      // `isEligibleFront` (`visible && !satellite`): both exclude a hidden
+      // parent, and both admit an ordinary page/browser host, which is the
+      // only shape the old test suite exercises this against.
+      //
+      // `key` is deliberately left untouched — RULE 2 reserves that write for
+      // `OsFocusGained`; the OS's echo of the raise `react` emits is what
+      // will eventually write it. The parent IS moved to the top of `order`,
+      // mirroring the `OsFocusGained` arm's own raise: §0.1.6 makes use-order
+      // and z-order one order, so a raise not reflected in `order` would have
+      // the trailing `SetStacking` sweep (`react`, driven off `orderChanged`)
+      // re-stack straight over it.
+      const parent = closedRec?.parentId !== undefined ? filtered.find((w) => w.id === closedRec.parentId) : undefined;
+      const raisesParent = parent !== undefined && isContentWindow(parent);
+      const opSeq = raisesParent ? state.opSeqCounter + 1 : state.opSeqCounter;
+      const order = raisesParent
+        ? [...filtered.filter((w) => w.id !== parent.id), { ...parent, lastOpSeq: opSeq }]
+        : filtered;
       return {
         ...state,
-        order: state.order
-          .filter((w) => w.id !== ev.id)
-          .map((w) => (w.overlayFor === ev.id ? { ...w, overlayFor: undefined } : w)),
+        order,
+        opSeqCounter: opSeq,
         version: state.version + 1,
       };
     }
@@ -1869,6 +1895,36 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   for (const prevRecord of prev.order) {
     if (!next.order.some((w) => w.id === prevRecord.id)) {
       effects.push({ type: 'CloseWindow', id: prevRecord.id });
+    }
+  }
+
+  // Parent refocus (ported from `window-state.ts`'s `WINDOW_CLOSED` arm — the
+  // `main.ts parentWin.focus()` replacement): the SAME membership-shrink diff
+  // as the `CloseWindow` loop just above, read a second time for the removed
+  // record's `parentId` rather than its own id. The parent's eligibility is
+  // judged against its CURRENT (`next`) record, never `prev`'s — `evolve`
+  // stamps `lastOpSeq` on it only when `isContentWindow` already held there
+  // (see the `WindowClosed` arm), so this reads as a pure structural diff
+  // and never re-derives the guard from `ev`.
+  //
+  // PLACED HERE, immediately after `CloseWindow` and well before
+  // `SetStacking`/`DismissWindow` further down: `evolve` moves an eligible
+  // parent to the top of `order` in the SAME transition, so this raise has
+  // to reach the executor before the trailing `SetStacking` sweep (driven
+  // off the length change this same close already causes) replays that new
+  // top-of-order position — emitting it later would still be correct
+  // z-order-wise (the array already reflects the raise) but would separate
+  // two effects of one logical "hand it back to the parent" from their
+  // natural CloseWindow/RaiseWindow pairing. `DismissWindow` (transient
+  // autoclose) is unaffected either way: it diffs `lastFocusProvenance`,
+  // which a plain `WindowClosed` never touches, so it fires here or later
+  // with identical (empty) result for this transition.
+  for (const prevRecord of prev.order) {
+    if (next.order.some((w) => w.id === prevRecord.id)) continue;
+    if (prevRecord.parentId === undefined) continue;
+    const parent = next.order.find((w) => w.id === prevRecord.parentId);
+    if (parent !== undefined && isContentWindow(parent)) {
+      effects.push({ type: 'RaiseWindow', id: parent.id, opSeq: next.opSeqCounter });
     }
   }
 
