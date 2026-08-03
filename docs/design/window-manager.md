@@ -1056,6 +1056,71 @@ re-assert on the already-topmost window still bumps `seq`, so `react` always emi
 plus, for a content window (`isContentWindow`), a `FocusContent` call. The gap is closed by
 construction, not by a special case for the already-topmost window.
 
+#### Decided: `react()`'s key-diff rule has no `FocusContent` gap — the decision moved down a layer
+
+`window-kernel.ts react()`'s general key-diff rule emits only `RaiseWindow`, never
+`FocusContent`, and that is correct: content focus is not missing from `react`, it is decided one
+layer down, at the executor and the backend.
+
+`react` emits `Effect.FocusContent` from exactly one rule — the `lastFocusAssert` seq-diff
+described above — and only when `isContentWindow(record)`. Two `evolve` arms write
+`lastFocusAssert`: `FocusAssertRequested` and `AppActivated`'s consumption of the cold-start
+focus latch. Neither is an ordinary OS focus report; an ordinary `key` change (an `OsFocusGained`
+landing through the raise path) drives `RaiseWindow` alone.
+
+That split mirrors the old reducer's shape rather than dropping half of it. `window-state.ts`
+`applyRaiseRequest` pushed `RAISE_WINDOW` plus `FOCUS_CONTENT` (page-host only) for an explicit
+named-target raise; `applyOsFocusRealized` pushed `FOCUS_CONTENT` alone for a page-host on an
+ordinary `OS_FOCUS_GAINED`, deliberately *without* `RAISE_WINDOW` — its docblock records that
+echoing a raise off an OS focus report is a feedback loop, observed live as a
+`OS_FOCUS_GAINED` → `RAISE_WINDOW` ping-pong. The fact both arms carry forward is that host key
+does not imply content focused (the `7c61e917` raise-by-chrome regression), not that every focus
+change needs a fresh `FOCUS_CONTENT`.
+
+The kernel carries that fact structurally rather than through a second emitter.
+`electron-window-backend.ts raiseWindow()` — the port both the old adapter's `RAISE_WINDOW` and
+the kernel executor's `RaiseWindow` effect resolve to — already performs `performOsShow(...)`,
+`armSelfCausedFocus(...)`, and `rendererWC.focus()` for a page-host when not headless. An
+activating raise makes content first responder as part of raising, so `react` does not need to
+name that half separately for the ordinary case.
+
+`window-kernel-executor.ts planRaise(record, headless)` is the structural replacement for both
+old emitters, in one function: `'activating-raise'` (content focus baked into `raiseWindow`, the
+`applyRaiseRequest` case), `'show-and-focus-content'` (a `quick-view` page-host — a
+non-activating show, so content focus has to be driven separately, the shape `524f7aba` exists to
+protect), and `'inactive-show'` (headless — no focus at all, by design). `planRaise` reads
+`record.kind` / `role` / `headless`, never `ev.type`, so the decision stays a structural fact
+about the window rather than a branch on which command asked for the raise.
+`apps/desktop/CLAUDE.md`'s "show() + contentWC.focus()" obligation for a fresh hybrid host sits
+at exactly this layer — the backend/window boundary, not the reducer.
+
+**Consequence for the test migration.** `window-state.test.ts`'s `focusesContent` assertions
+(describe `front — a projection of OS focus; raises come from named targets only`) pin the
+`FOCUS_CONTENT` split above. They do not migrate to a `react` assertion — `react` has nothing
+further to decide once `lastFocusAssert` is diffed. Their kernel-native home is `planRaise`'s
+three outcomes, already covered by `window-kernel-executor.test.ts`'s `planRaise — the masks a
+raise owes because it is an activating show` describe block. A migration pass that goes looking
+for a `react`-level `FOCUS_CONTENT` equivalent to port these onto is looking for a gap that was
+closed by moving the decision, not by dropping it.
+
+**Headless caveat.** `window-kernel-executor.ts`'s `FocusContent` effect case returns early when
+headless, and `planRaise` under headless always returns `'inactive-show'`. No headless test can
+therefore observe the real `rendererWC.focus()` call this section describes — the finding rests
+on reading `electron-window-backend.ts`, not on running anything, and a regression in the
+`performOsShow` / `armSelfCausedFocus` sequencing is only catchable live.
+
+**Left open: a devtools re-assert on a non-quick-view page-host double-calls focus.** A
+`FocusAssertRequested` on such a window emits `[RaiseWindow, FocusContent]` at the same `opSeq`.
+The executor's `RaiseWindow` case takes the `'activating-raise'` plan and calls
+`backend.raiseWindow()`, which already focuses content; the separate `FocusContent` effect then
+calls `backend.focusContent()`, which focuses it again and re-arms the same self-caused-focus
+token. `wc.focus()` being idempotent likely makes this harmless, but the double call is real, not
+hypothetical, and sits inside the provenance machinery that labels self-caused focus events. It
+belongs with the `planRaise` work that moves the quick-view and headless raise masks fully into
+the backend — a change that needs its own commit and its own gate run, because getting it wrong
+reproduces regression `524f7aba`'s shape (focusing a background quick-view activates the whole
+app).
+
 #### Registration facts the kernel needs but no site supplies
 
 `layer`, `canBecomeKey`, and `acceptsInput` are fields on `WindowRegistered` that no production
