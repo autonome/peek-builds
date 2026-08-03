@@ -1244,6 +1244,23 @@ immediately — re-entrant registration, teardown, and the show path all do this
 resolved by the very next comparison is this artifact, not a real disagreement; divergence that
 persists across comparisons, like the `stackOrder` case above, is not.
 
+**A further live run recorded a persistent, real `front` divergence — not the headless artifact
+above.** A command-palette window (`wm-29`, `peek://cmd/chain-editor.html`, `role: 'utility'`)
+opened and was later closed during the run. `window-state.ts`'s `WINDOW_SHOWN` arm moves `front`
+to whatever window was shown, with no role test; the kernel's `topmost(state, isContentWindow)`
+did not select it, because `isContentWindow`'s `CONTENT_ROLES` allow-list (`content` /
+`child-content` / `workspace`) does not admit `utility`. The two disagreed (old `wm-29`, kernel
+`wm-2`) for the entire ~6.4 seconds the window stayed open — 9 consecutive comparisons, none of
+them clearing on the next tick the way the caveat above describes — and the divergence ended only
+when the window closed. This is a live instance of the defect §0's "Why `front` must stop being
+stored state" already names: a window excluded from a fact to make a policy easy. The kernel is
+correct here; the old machine is the one in error.
+
+The same run recorded no other unexplained divergence: 94 comparisons total — 79 `stackOrder`
+(all reducing to the exclusion already documented above, agreeing exactly once those ids are
+stripped), 6 `membership` (the same transient dispatch lag described above, self-clearing), and
+these 9 `front`.
+
 ### 0.1.6 Layers and realizing the order against Electron
 
 **Layers are a fixed ordered set established by construction, not per-window integers sorted at
