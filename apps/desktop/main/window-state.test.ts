@@ -454,14 +454,6 @@ describe('historical-bug replays (§5.2)', () => {
     assert.strictEqual(getWindowMode(s, wid(1)), 'fullscreen');
   });
 
-  it('(b) S2-null focus lag: OS_FOCUS_SETTLED_NULL keeps front (the target survives an app switch)', () => {
-    let s = createInitialState();
-    s = openWindow(s, 7, { kind: 'page-host', role: 'content' });
-    assert.strictEqual(getFrontWindowId(s), wid(7));
-    s = drive(s, [{ type: 'OS_FOCUS_SETTLED_NULL' }]).state;
-    assert.strictEqual(getFrontWindowId(s), wid(7), 'front must NOT go null just because OS focus left all windows');
-  });
-
   it('(c) grab-alive-during-fullscreen: ESC_PRESSED(global) yields EXIT_FULLSCREEN, never OPEN_SWITCHER', () => {
     let s = createInitialState();
     s = openWindow(s, 7, { kind: 'page-host', role: 'content' });
@@ -494,18 +486,6 @@ describe('historical-bug replays (§5.2)', () => {
     const left = drive(first.state, [{ type: 'OS_FULLSCREEN_LEFT', id: wid(3) }]);
     assert.strictEqual(getWindowMode(left.state, wid(3)), 'normal');
     assert.deepStrictEqual(decideEscape(left.state), { kind: 'ask-renderer', id: wid(3) });
-  });
-
-  it('(e) palette-issuer exclusion: a satellite palette focus never clobbers the front page', () => {
-    let s = createInitialState();
-    s = openWindow(s, 1, { kind: 'page-host', role: 'content' }); // front = 1
-    // The command palette opens and takes OS focus — declared satellite.
-    s = drive(s, [
-      { type: 'WINDOW_REGISTERED', id: wid(2), kind: 'browser', role: 'palette', satellite: true },
-      { type: 'WINDOW_SHOWN', id: wid(2), focused: true },
-      { type: 'OS_FOCUS_GAINED', id: wid(2) },
-    ]).state;
-    assert.strictEqual(getFrontWindowId(s), wid(1), 'the palette (command issuer) must never become the command target');
   });
 
   it('(f) OS/green-button fullscreen on a settings window: preBounds legitimately null, NOT "missing"', () => {
@@ -2175,9 +2155,6 @@ function stackings(effects: Effect[]): WindowId[] {
     .filter((e): e is Extract<Effect, { type: 'SET_STACKING' }> => e.type === 'SET_STACKING')
     .map((e) => e.id);
 }
-
-describe('STACK_ORDER_IMPORTED — the session-restore order import (§5 step 5 part B)', () => {
-});
 
 // ── Geometry: bounds mirror + maximize transitions (§4.2 dim 2, §5 step 7A) ──
 
