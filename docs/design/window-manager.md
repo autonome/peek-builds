@@ -87,6 +87,17 @@ switcher, then `tag <name>` from the palette, and the tag lands on the page that
 away from. The fix exists but has not yet reached `main`; do not reimplement it, and do not
 resurrect the deleted `focus-order.ts` approach (a second focus owner outside the executor).
 
+### Test debt closed 2026-08-02/03
+
+`session-projection.test.ts`'s `zOrder`/`stackIndex` rewrite for the one-order decision (§0.1.9,
+"The one-order consequence") is fully landed. The last pinned focusSeq/stackOrder divergence,
+`the saved stacking position is not the focus-recency rank`, is now `a background open is saved
+BELOW the last-focused window`, with its fixture `stackOrder` flipped from `['w1','w2']` to
+`['w2','w1']` — the old scene encoded a background open ABOVE the key window, a state
+`window-kernel-properties.test.ts checkInvariants` rejects. `session-projection.ts` itself needed
+no source change; the fix was confined to the test fixture. One caveat carries forward to the
+eventual kernel cutover — see §0.1.10, "Decided: one order, and nothing else orders windows."
+
 ### Maintenance directive
 
 **This block is the single source of truth for migration status. Every agent that lands
@@ -682,13 +693,14 @@ split) and its bottom-to-top replay stay reverses of one another, both derived f
 `STACK_ORDER_IMPORTED` enters the kernel as a reorder-only command that replaces `order` wholesale,
 preserving membership by construction, exactly as `window-state.ts`'s arm does.
 
-Two consequences that are not translations and must be done as rewrites. The pinned divergence
-tests — `session-projection.test.ts` `the saved stacking position is not the focus-recency rank`
-and the round trip `a background open comes back ON TOP of the last-focused window` — assert the
-two orders are reverses for the same pair. They are asserting the producer this design deletes, so
-they get rewritten to pin the kernel's fact (a background open registers below the key window), not
-re-pointed at the new fields. And `renderer/lib/session.js sortWindowsByZOrder` has no callers
-anywhere in the tree; it goes.
+Two consequences that were not translations and were done as rewrites, not re-pointings. The
+formerly pinned divergence tests in `session-projection.test.ts` — `the saved stacking position is
+not the focus-recency rank` and the round trip `a background open comes back ON TOP of the
+last-focused window`, which asserted the two orders are reverses for the same pair — are now `a
+background open is saved BELOW the last-focused window` and `SAVE → RESTORE round trip: a
+background open comes back BELOW the last-focused window`, pinning the kernel's fact (a background
+open registers below the key window) instead of the producer this design deletes. And
+`renderer/lib/session.js sortWindowsByZOrder`, which had no callers anywhere in the tree, is gone.
 
 Two carry-overs, neither blocking: `orderRestoredWindowsBottomToTop`'s legacy branch for snapshots
 that predate `stackIndex` stays until those profiles age out (`tests/helpers/restore-proof/
@@ -1585,23 +1597,32 @@ top (§5 step 5)`, and the remainder of `STACK_ORDER_IMPORTED — the session-re
 step 5 part B)` apart from the background-open test above — each treats `stackOrder` as a filtered
 second list; and `stacking purity — reduce never mutates the input stackOrder`.
 
-The same split is written into the on-disk format in `session-projection.test.ts` as `zOrder`
-versus `stackIndex`:
+The same split was written into the on-disk format in `session-projection.test.ts` as `zOrder`
+versus `stackIndex`, and the rewrite is landed:
 
 - `session-projection — machine-derived descriptor fields` › `zOrder is the record focusSeq and
-  focused is the machine front` loses `zOrder`'s source field.
+  focused is the machine front` is now just `focused is the machine front` — the `zOrder`-source
+  assertion is dropped as redundant, since every `focusSeq`-bearing world in the on-disk-shape
+  describe already pins it byte-for-byte.
 - The same describe's › `stackIndex is the position in the machine stack, and disagrees with
-  zOrder on a background open` is deleted outright — its whole thesis is the disagreement one order
-  removes.
+  zOrder on a background open` is deleted outright — its whole thesis was the disagreement one
+  order removes.
 - `session-projection — readStackIndex + orderRestoredWindowsBottomToTop` › `a PRE-FIELD snapshot
-  falls back to the focus-recency ordering restore used before` loses its input.
+  falls back to the focus-recency ordering restore used before` is now `a PRE-FIELD snapshot (every
+  position unrecorded) falls back to reversing dispatch order` — the fallback no longer names that
+  order "focus recency," since the one-order decision retires focus recency as a distinct concept
+  from stack position.
 - The same describe's › `SAVE → RESTORE round trip: a background open comes back ON TOP of the
-  last-focused window` is rewritten to "comes back BELOW"; its restore simulation is the two-list
-  algorithm being deleted — the saved order must already put the focused window on top.
+  last-focused window` is now `... comes back BELOW the last-focused window`; the fixture's
+  `stackOrder` puts the background open below the last-focused window directly, so save and
+  restore agree instead of ranking the pair two opposite ways.
 - `serializeSpaceWorkspaces — hybrid page-hosts + machine-derived fields (§5 step 11 task 9)` ›
-  `zOrder is TRUE STACK POSITION (StateSnapshot.stackOrder index), not WindowRecord.focusSeq` is
+  `zOrder is TRUE STACK POSITION (StateSnapshot.stackOrder index), not WindowRecord.focusSeq` was
   already the right answer and survives unchanged — the strongest existing evidence that the
   single-order decision is correct.
+
+`session-projection.ts` itself needed no change for this; the fix was confined to the test
+fixtures.
 
 #### The relation set (bucket C)
 
@@ -1663,6 +1684,12 @@ What this costs, stated plainly so it is not discovered later:
 - Restore ordering must be re-derived: session restore currently replays saved `stackIndex` and
   separately marks one descriptor focused. Under one order those stop being independent, so the
   saved order must already put the focused window on top.
+- `session-projection.test.ts`'s on-disk-shape world `every skip rule at once` sets `front: 'w7'`
+  with five windows above `w7` in the default stack. That is correct under the current model,
+  where `focused` is `machineId === snapshot.front` — an independently settable fact. Once
+  `focused` becomes `topmost(state, isContentWindow)` at cutover, that scene is self-contradictory
+  (a focused window cannot sit five positions below the top of its own stack) and must be
+  revisited in the same commit that performs the cutover.
 
 **Decided: registration carries the resolved creation intent, not the raw request.** Both
 `ipc.ts` registration sites (`assembleHybridPageHost` and the window-open IPC handler) and
