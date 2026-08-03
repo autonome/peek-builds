@@ -44,7 +44,6 @@ import {
   selectTransientAutoclose,
   selectAppResignTransients,
   snapshot,
-  frontInvariantHolds,
   stackOrderInvariantHolds,
   getStackOrder,
   classifyWindowRegistration,
@@ -91,7 +90,7 @@ function fsOf(name: FsMode['name'], preBounds: Rectangle | null = null): FsMode 
   }
 }
 
-/** Fold a script of events; assert the front invariant after EACH step. */
+/** Fold a script of events; assert the stackOrder invariant after EACH step. */
 function drive(start: AppWindowState, events: WindowEvent[]): { state: AppWindowState; effects: Effect[] } {
   let state = start;
   let effects: Effect[] = [];
@@ -99,10 +98,6 @@ function drive(start: AppWindowState, events: WindowEvent[]): { state: AppWindow
     const r = reduce(state, ev);
     state = r.state;
     effects = r.effects;
-    assert.ok(
-      frontInvariantHolds(state),
-      `front invariant violated after ${ev.type}: front=${state.front}`,
-    );
     assert.ok(
       stackOrderInvariantHolds(state),
       `stackOrder invariant violated after ${ev.type}: [${state.stackOrder.join(', ')}]`,
@@ -147,7 +142,6 @@ describe('totality matrix — every (state-class x event) returns a defined tran
   function buildStateClass(
     fsName: FsMode['name'],
     switcherOpen: boolean,
-    satellite: boolean,
     escapeMode: WindowRecord['escapeMode'],
     role: string,
     session: IzuiSession,
@@ -157,10 +151,10 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       kind: 'page-host',
       role,
       class: 'primary',
-      stackingLevel: satellite ? 'excluded' : 'stacked',
+      stackingLevel: 'stacked',
       orderable: true,
       escapeMode,
-      satellite,
+      satellite: false,
       visible: true,
       fsMode: fsOf(fsName, fsName === 'normal' ? null : BOUNDS),
       maximized: false,
@@ -171,13 +165,12 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       openSeq: 1,
     };
     const windows = new Map<WindowId, WindowRecord>([[wid(1), rec]]);
-    // A satellite can never be front (invariant); otherwise the window is front.
-    const front = satellite ? null : wid(1);
+    const front = wid(1);
     const state: AppWindowState = {
       appActive: true,
       session,
       front,
-      stackOrder: satellite ? [] : [wid(1)],
+      stackOrder: [wid(1)],
       switcher: switcherOpen ? { open: true, windowId: wid(2), previousFront: front } : { open: false },
       windows,
       focusSeqCounter: 1,
@@ -188,7 +181,6 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       pendingAppResignSweep: false,
       pendingColdStartFocus: null,
     };
-    assert.ok(frontInvariantHolds(state), 'built state class must satisfy the invariant');
     return state;
   }
 
@@ -290,39 +282,34 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     { type: 'COLD_START_FOCUS_ARMED', id: wid(99) },
   ];
 
-  it('reduce is total: defined result + front invariant holds for all combinations', () => {
+  it('reduce is total: every (state-class x event) returns a defined transition', () => {
     let combinations = 0;
     const failures: string[] = [];
     for (const fsName of FS_NAMES) {
       for (const switcherOpen of [false, true]) {
-        for (const satellite of [false, true]) {
-          for (const escapeMode of ESC_MODES) {
-            for (const role of ROLES) {
-              // Session varies only lightly to keep the matrix bounded; ESC step 6
-              // gets its own dedicated session sweep below.
-              const state = buildStateClass(fsName, switcherOpen, satellite, escapeMode, role, 'active');
-              for (const ev of events) {
-                combinations++;
-                let result;
-                try {
-                  result = reduce(state, ev);
-                } catch (err) {
-                  failures.push(`${fsName}/${switcherOpen}/${satellite}/${escapeMode}/${role} x ${ev.type}: threw ${String(err)}`);
-                  continue;
-                }
-                if (!result || !result.state) {
-                  failures.push(`${fsName}/.../${role} x ${ev.type}: undefined result`);
-                  continue;
-                }
-                if (!Array.isArray(result.effects)) {
-                  failures.push(`${fsName}/.../${role} x ${ev.type}: effects not an array`);
-                }
-                if (!frontInvariantHolds(result.state)) {
-                  failures.push(`${fsName}/${switcherOpen}/${satellite}/${escapeMode}/${role} x ${ev.type}: front invariant violated (front=${result.state.front})`);
-                }
-                if (!stackOrderInvariantHolds(result.state)) {
-                  failures.push(`${fsName}/${switcherOpen}/${satellite}/${escapeMode}/${role} x ${ev.type}: stackOrder invariant violated ([${result.state.stackOrder.join(', ')}])`);
-                }
+        for (const escapeMode of ESC_MODES) {
+          for (const role of ROLES) {
+            // Session varies only lightly to keep the matrix bounded; ESC step 6
+            // gets its own dedicated session sweep below.
+            const state = buildStateClass(fsName, switcherOpen, escapeMode, role, 'active');
+            for (const ev of events) {
+              combinations++;
+              let result;
+              try {
+                result = reduce(state, ev);
+              } catch (err) {
+                failures.push(`${fsName}/${switcherOpen}/${escapeMode}/${role} x ${ev.type}: threw ${String(err)}`);
+                continue;
+              }
+              if (!result || !result.state) {
+                failures.push(`${fsName}/.../${role} x ${ev.type}: undefined result`);
+                continue;
+              }
+              if (!Array.isArray(result.effects)) {
+                failures.push(`${fsName}/.../${role} x ${ev.type}: effects not an array`);
+              }
+              if (!stackOrderInvariantHolds(result.state)) {
+                failures.push(`${fsName}/${switcherOpen}/${escapeMode}/${role} x ${ev.type}: stackOrder invariant violated ([${result.state.stackOrder.join(', ')}])`);
               }
             }
           }
@@ -330,7 +317,7 @@ describe('totality matrix — every (state-class x event) returns a defined tran
       }
     }
     assert.deepStrictEqual(failures, [], `totality failures:\n${failures.join('\n')}`);
-    assert.ok(combinations >= 4 * 2 * 2 * 5 * 7 * events.length, `expected the full sweep, ran ${combinations}`);
+    assert.ok(combinations >= 4 * 2 * 5 * 7 * events.length, `expected the full sweep, ran ${combinations}`);
   });
 
   it('ESC step-6 session sweep: decideEscapeUnhandled is total over (session x role x escapeMode)', () => {
@@ -338,7 +325,7 @@ describe('totality matrix — every (state-class x event) returns a defined tran
     for (const session of SESSIONS) {
       for (const role of ROLES) {
         for (const escapeMode of ESC_MODES) {
-          const state = buildStateClass('normal', false, false, escapeMode, role, session);
+          const state = buildStateClass('normal', false, escapeMode, role, session);
           const decision = decideEscapeUnhandled(state, wid(1));
           if (!['close-window', 'open-switcher', 'nothing'].includes(decision.kind)) {
             failures.push(`${session}/${role}/${escapeMode}: undefined unhandled decision ${JSON.stringify(decision)}`);
@@ -1090,49 +1077,12 @@ describe('decideWindowRegistration — single owner of the re-registration branc
   });
 });
 
-// ── Front-invariant guard has teeth (design §2.5) ────────────────────────────
-
-describe('front-invariant guard (dev/test throws, prod self-corrects)', () => {
-  // A deliberately-illegal state: `front` points at a satellite. No legitimate
-  // event sequence can produce this (the reducer only ever assigns an eligible
-  // front) — we craft it directly to exercise the guard's throw path.
-  function illegalFrontState(): AppWindowState {
-    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1, openSeq: 1 };
-    return { appActive: true, session: 'active', front: wid(1), stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, openSeqCounter: 1, opSeqCounter: 0, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
-  }
-
-  it('THROWS in dev/test when reduce yields an illegal front (naming the event + front id)', () => {
-    // NODE_ENV is unset under `node --test` -> non-production -> guard active.
-    assert.notStrictEqual(process.env.NODE_ENV, 'production');
-    assert.throws(
-      () => reduce(illegalFrontState(), { type: 'OS_FOCUS_SETTLED_NULL' }),
-      /illegal front=wm-1 after OS_FOCUS_SETTLED_NULL/,
-    );
-  });
-
-  it('self-corrects (no throw) in production', () => {
-    const prev = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
-    try {
-      const { state } = reduce(illegalFrontState(), { type: 'OS_FOCUS_SETTLED_NULL' });
-      // Only a satellite exists, so the MRU successor is null.
-      assert.strictEqual(state.front, null);
-      assert.ok(frontInvariantHolds(state));
-    } finally {
-      if (prev === undefined) delete process.env.NODE_ENV;
-      else process.env.NODE_ENV = prev;
-    }
-  });
-
-  it('FULLSCREEN_REQUESTED on a satellite does NOT install an illegal front (and does not throw)', () => {
-    // The reducer bug the reviewer flagged: front was assigned unconditionally.
-    const rec: WindowRecord = { id: wid(1), kind: 'browser', role: 'palette', class: 'palette', stackingLevel: 'pinned', orderable: true, satellite: true, visible: true, fsMode: { name: 'normal' }, maximized: false, preMaxBounds: null, visibleOnAllSpaces: false, pendingProjectedBounds: null, focusSeq: 1, openSeq: 1 };
-    const s: AppWindowState = { appActive: true, session: 'active', front: null, stackOrder: [], switcher: { open: false }, windows: new Map([[wid(1), rec]]), focusSeqCounter: 1, openSeqCounter: 1, opSeqCounter: 0, escAsk: null, escSeq: 0, pendingAppResignSweep: false, pendingColdStartFocus: null };
-    const { state } = reduce(s, { type: 'FULLSCREEN_REQUESTED', id: wid(1), bounds: BOUNDS });
-    assert.strictEqual(state.front, null, 'a satellite must never become front, even via a fullscreen request');
-    assert.strictEqual(getWindowMode(state, wid(1)), 'entering-fullscreen', 'the fsMode edge still runs (total table)');
-  });
-});
+// The front-invariant guard describe is gone with the invariant itself. The
+// states it crafted as "illegal" — a key id naming a satellite, or naming no
+// record — are ordinary legal states in the kernel, and its production
+// self-correct is the successor repair the kernel forbids outright. See
+// window-kernel.test.ts `key is never repaired` and `a key id naming no record
+// is a LEGAL state — the old model called it unrepresentable`.
 
 // ── Driving `front` onto the OS: who raises, and who merely records ──────────
 //
