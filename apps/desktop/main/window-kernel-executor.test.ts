@@ -128,8 +128,19 @@ class RecordingBackend implements WindowBackend {
   }
 }
 
-/** An executor over a fresh recorder, non-headless unless told otherwise. */
-function makeExecutor(opts: { headless?: boolean; initial?: State } = {}): {
+/**
+ * An executor over a fresh recorder, non-headless unless told otherwise.
+ *
+ * `appActive` is NOT threaded into `initial` — `initialState()` starts
+ * `appActive: false` (a cold, backgrounded kernel), so a test that wants the
+ * ordinary "app is in front" baseline opts in with `{ appActive: true }`,
+ * which dispatches an `AppActivated` event right after construction (a no-op
+ * transition here: no window is marked `hiddenByAppBlur` and no cold-start
+ * latch is armed, so it costs no version bump beyond the flag itself). Tests
+ * that care about `exec.getState()` matching a bare `initialState()` (or that
+ * are specifically exercising the backgrounded gate) leave it unset.
+ */
+function makeExecutor(opts: { headless?: boolean; initial?: State; appActive?: boolean } = {}): {
   exec: WindowKernelExecutor;
   backend: RecordingBackend;
 } {
@@ -138,6 +149,7 @@ function makeExecutor(opts: { headless?: boolean; initial?: State } = {}): {
     headless: opts.headless ?? false,
     ...(opts.initial !== undefined ? { initial: opts.initial } : {}),
   });
+  if (opts.appActive) exec.dispatch({ type: 'AppActivated' });
   return { exec, backend };
 }
 
@@ -296,7 +308,10 @@ describe('the stale self-echo guard at the dispatch site', () => {
    * the backend received it.
    */
   function twoWindowsWithAnIssuedOp(): { exec: WindowKernelExecutor; backend: RecordingBackend } {
-    const made = makeExecutor();
+    // `appActive: true` — these tests are about the stale-echo guard, not
+    // about the app-active raise gate, so the raises they issue need to
+    // actually reach `raiseWindow` for their token assertions to hold.
+    const made = makeExecutor({ appActive: true });
     made.exec.dispatch(register(wid(1)));
     made.exec.dispatch(register(wid(2)));
     made.exec.dispatch({ type: 'WindowShown', id: wid(1) });
@@ -416,7 +431,10 @@ describe('the stale self-echo guard at the dispatch site', () => {
    * this guard exists to prevent.
    */
   it('drops the late echo of a superseded op, with every token minted by ordinary traffic', () => {
-    const { exec, backend } = makeExecutor();
+    // `appActive: true` — this test is about the stale-echo guard, not the
+    // app-active raise gate; the raises it issues need to reach `raiseWindow`
+    // for its token assertions to hold.
+    const { exec, backend } = makeExecutor({ appActive: true });
     exec.dispatch(register(wid(1)));
     exec.dispatch(register(wid(2)));
     exec.dispatch({ type: 'WindowShown', id: wid(1) });
@@ -480,37 +498,69 @@ describe('planRaise — the masks a raise owes because it is an activating show'
       ...over,
     }) as WindowRecord;
 
-  it('never activates under headless', () => {
-    assert.strictEqual(planRaise(record(), true), 'inactive-show');
-    assert.strictEqual(planRaise(record({ kind: 'page-host', role: 'quick-view' }), true), 'inactive-show');
-    assert.strictEqual(planRaise(undefined, true), 'inactive-show');
+  it('never activates under headless, appActive notwithstanding', () => {
+    assert.strictEqual(planRaise(record(), true, true), 'inactive-show');
+    assert.strictEqual(planRaise(record({ kind: 'page-host', role: 'quick-view' }), true, true), 'inactive-show');
+    assert.strictEqual(planRaise(undefined, true, true), 'inactive-show');
+    assert.strictEqual(planRaise(record(), true, false), 'inactive-show', 'both masks apply — still inactive-show');
   });
 
   it('never activates the app for a quick-view page-host (regression 524f7aba)', () => {
     assert.strictEqual(
-      planRaise(record({ kind: 'page-host', role: 'quick-view' }), false),
+      planRaise(record({ kind: 'page-host', role: 'quick-view' }), false, true),
       'show-and-focus-content',
     );
   });
 
   it('activates for an ordinary window', () => {
-    assert.strictEqual(planRaise(record(), false), 'activating-raise');
-    assert.strictEqual(planRaise(record({ kind: 'page-host', role: 'content' }), false), 'activating-raise');
+    assert.strictEqual(planRaise(record(), false, true), 'activating-raise');
+    assert.strictEqual(planRaise(record({ kind: 'page-host', role: 'content' }), false, true), 'activating-raise');
   });
 
   it('keys on the declared role, not on class — class is lookup-only (§0.1.4)', () => {
     // A window whose CLASS shorthand says quick-view but whose declared role
     // does not still activates: nothing may branch on `class`.
     assert.strictEqual(
-      planRaise(record({ kind: 'page-host', class: 'quick-view', role: 'content' }), false),
+      planRaise(record({ kind: 'page-host', class: 'quick-view', role: 'content' }), false, true),
       'activating-raise',
     );
+  });
+
+  // ── the app-active gate (the port of the old reducer's applyRaiseRequest) ──
+
+  it('withholds activation while the app is backgrounded, not headless', () => {
+    assert.strictEqual(planRaise(record(), false, false), 'inactive-show');
+    assert.strictEqual(planRaise(undefined, false, false), 'inactive-show');
+  });
+
+  it('the app-active gate overrides the quick-view mask too — no content focus while backgrounded', () => {
+    // Deliberately stronger than "just don't activate the app": a quick-view
+    // panel's own mask (`'show-and-focus-content'`) never activates the app
+    // either, but the gate still narrows it to `'inactive-show'` while
+    // backgrounded, withholding the content-focus half as well.
+    assert.strictEqual(
+      planRaise(record({ kind: 'page-host', role: 'quick-view' }), false, false),
+      'inactive-show',
+    );
+  });
+
+  it('resolves the ordinary window the way it did before once the app is active again', () => {
+    assert.strictEqual(planRaise(record(), false, true), 'activating-raise');
   });
 });
 
 describe('performing a RaiseWindow effect', () => {
-  function raiseSetup(over: Partial<Extract<Event, { type: 'WindowRegistered' }>>, headless: boolean) {
-    const { exec, backend } = makeExecutor({ headless });
+  /**
+   * `appActive` defaults to `true` — the ordinary "app is in front" baseline
+   * every pre-existing test here assumed before the app-active gate existed —
+   * so the gate's own tests below are the only callers that pass `false`.
+   */
+  function raiseSetup(
+    over: Partial<Extract<Event, { type: 'WindowRegistered' }>>,
+    headless: boolean,
+    appActive = true,
+  ) {
+    const { exec, backend } = makeExecutor({ headless, appActive });
     exec.dispatch(register(wid(1)));
     exec.dispatch(register(wid(2), over));
     exec.dispatch({ type: 'WindowShown', id: wid(1) });
@@ -543,6 +593,47 @@ describe('performing a RaiseWindow effect', () => {
     const shows = backend.of('showWindow');
     assert.strictEqual(shows.length, 1);
     assert.deepStrictEqual((shows[0].args[1] as { activate: boolean }).activate, false);
+  });
+
+  // ── the app-active gate (§: window-kernel-executor.ts planRaise) ───────────
+
+  it('a raise while the app is backgrounded does not activate the app', () => {
+    const backend = raiseSetup({}, false, false);
+    assert.deepStrictEqual(backend.of('raiseWindow'), [], 'no activating raise while backgrounded');
+    assert.deepStrictEqual(backend.of('focusContent'), []);
+  });
+
+  it('the window still orders and shows while backgrounded — the gate withholds activation, not the raise', () => {
+    // The chosen semantics deliberately differ from the old reducer's
+    // `applyRaiseRequest`, which dropped the raise (and its `FOCUS_CONTENT`/
+    // `SET_STACKING` companions) outright. Here the show still happens.
+    const backend = raiseSetup({}, false, false);
+    const shows = backend.of('showWindow');
+    assert.strictEqual(shows.length, 1, 'the window is still shown, not skipped entirely');
+    assert.strictEqual(shows[0].args[0], wid(2));
+    assert.deepStrictEqual((shows[0].args[1] as { activate: boolean }).activate, false);
+  });
+
+  it('the same raise activates once the app is active — appActive is the only thing that changed', () => {
+    const backend = raiseSetup({}, false, true);
+    assert.deepStrictEqual(backend.of('raiseWindow').map((c) => c.args[0]), [wid(2)]);
+  });
+
+  it('headless and backgrounded together still resolve to inactive-show — headless is not double-masked', () => {
+    const backend = raiseSetup({}, true, false);
+    assert.deepStrictEqual(backend.of('raiseWindow'), []);
+    assert.deepStrictEqual(backend.of('focusContent'), []);
+    const shows = backend.of('showWindow');
+    assert.strictEqual(shows.length, 1);
+    assert.deepStrictEqual((shows[0].args[1] as { activate: boolean }).activate, false);
+  });
+
+  it('a backgrounded quick-view gets no content focus either — the gate narrows that mask too', () => {
+    const backend = raiseSetup({ kind: 'page-host', role: 'quick-view', class: 'quick-view' }, false, false);
+    assert.deepStrictEqual(backend.of('raiseWindow'), []);
+    assert.deepStrictEqual(backend.of('focusContent'), [], 'no first-responder handoff while the app is backgrounded');
+    const shows = backend.of('showWindow');
+    assert.strictEqual(shows.length, 1, 'still shown');
   });
 });
 
@@ -705,7 +796,10 @@ describe('effect performance', () => {
   it('AssertFocus drives the raise and the content-focus half through the port', () => {
     // The devtools re-assert: nothing about the window model changes, so the
     // only proof the executor did anything is the pair of port calls.
-    const { exec, backend } = makeExecutor();
+    // `appActive: true` — this test is about the assert mechanism, not the
+    // app-active gate, and the raise it drives needs to actually reach
+    // `raiseWindow` for the port-call assertions below to hold.
+    const { exec, backend } = makeExecutor({ appActive: true });
     exec.dispatch(register(wid(1), { kind: 'page-host', role: 'content' }));
     exec.dispatch({ type: 'WindowShown', id: wid(1) });
     exec.dispatch({ type: 'OsFocusGained', id: wid(1) });

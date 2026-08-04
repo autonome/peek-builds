@@ -3751,12 +3751,15 @@ describe('window-kernel: the focus assert', () => {
   // a caller that assembles the request already knows whether the app is
   // active." `react` itself never reads `appActive` at all — it is a pure
   // structural diff of `(prev, next)`, and the field plays no part in any of
-  // its rules. No production caller composes `AssertFocus` yet
-  // (`WindowKernelExecutor`'s own module header: "nothing constructs one here
-  // yet"), and the executor's own `planRaise` masks only on `headless`, never
-  // `appActive`. So today the old reducer's background-suppression has no
-  // home anywhere in this stack — a real migration gap, not a bug pinned by
-  // this test.
+  // its rules. The port of the old background-suppression now lives in
+  // `window-kernel-executor.ts planRaise`, which reads `state.appActive` off
+  // the kernel `State` it holds and masks a raise down to `'inactive-show'`
+  // while the app is backgrounded — same category of decision as the
+  // headless mask already living there, and deliberately NOT a drop the way
+  // the old reducer's guard was (the window still orders and shows; only the
+  // app activation is withheld). Nothing below tests that: it is a fact about
+  // the executor, not about `decide`/`react`, which — as this describe block
+  // proves — hold no such guard and never will.
 
   it('a raise fires even while appActive is false — decide/react hold no such guard', () => {
     let state = frontContent();
