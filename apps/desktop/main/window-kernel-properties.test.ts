@@ -800,7 +800,11 @@ function checkSettleTimeoutInvariant(item: LogItem, next: State): string[] {
  */
 const CONTENT_ROLES_EXPECTED = new Set(['content', 'child-content', 'workspace']);
 
-const TRANSIENT_ROLES_EXPECTED = new Set(['palette', 'quick-view', 'overlay']);
+// Mirrors `window-kernel.ts TRANSIENT_ROLES` exactly. A role present there but
+// missing here makes `isSweepableVictim` report a false violation the moment the
+// generator emits it. `'switcher'` is in the kernel set and is not currently
+// emitted by `ROLES`, so the disagreement was latent rather than failing.
+const TRANSIENT_ROLES_EXPECTED = new Set(['palette', 'quick-view', 'overlay', 'switcher']);
 
 function checkAutocloseInvariants(state: State): string[] {
   const violations: string[] = [];
