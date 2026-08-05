@@ -64,7 +64,7 @@ interface ModeConditions {
 interface LocalShortcutEntry {
   source: string;
   parsed: ParsedShortcut;
-  callback: () => void;
+  callback: (sourceWindowId?: number) => void;
   modeConditions?: ModeConditions;
 }
 
@@ -263,7 +263,7 @@ export function unregisterGlobalShortcut(shortcut: string): Error | undefined {
 export function registerLocalShortcut(
   shortcut: string,
   source: string,
-  callback: () => void,
+  callback: (sourceWindowId?: number) => void,
   modeConditions?: ModeConditions
 ): void {
   DEBUG && console.log('registerLocalShortcut', shortcut, modeConditions ? `mode:${modeConditions.majorMode}` : '');
@@ -356,7 +356,7 @@ export function handleLocalShortcut(input: InputEvent, focusedWindowId?: number)
             );
 
             if (modeMatches) {
-              entry.callback();
+              entry.callback(focusedWindowId);
               return true;
             }
             // Mode doesn't match - continue to check other entries
@@ -364,7 +364,7 @@ export function handleLocalShortcut(input: InputEvent, focusedWindowId?: number)
           }
         } else {
           // Non-conditional shortcut - execute immediately
-          entry.callback();
+          entry.callback(focusedWindowId);
           return true;
         }
       }

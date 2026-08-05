@@ -176,29 +176,57 @@ function isCommand(item: LogItem): item is Command {
  * non-reproducible: the same seed walks the same state trajectory, so the
  * same seed always produces the same concrete log.
  */
+/**
+ * The intrinsics shared by `WindowRegistered` (case 0) and `RegisterWindow`
+ * (case 8) — pulled out once so the registration-bias branch below can build
+ * either shape without duplicating the field list a third time.
+ */
+function randomRegistrationFields(rng: Rng) {
+  const hasParent = rng() < 0.3;
+  const hasKeepLive = rng() < 0.3;
+  const role = pick(rng, ROLES);
+  const escapeMode = pick(rng, ESCAPE_MODES);
+  return {
+    kind: pick(rng, KINDS),
+    layer: randomInt(rng, 4),
+    canBecomeKey: randomBool(rng),
+    acceptsInput: randomBool(rng),
+    class: pick(rng, CLASSES),
+    ...(role !== undefined ? { role } : {}),
+    ...(hasParent ? { parentId: wid(randomInt(rng, POOL_SIZE)) } : {}),
+    ...(hasKeepLive ? { keepLive: randomBool(rng) } : {}),
+    ...(escapeMode !== undefined ? { escapeMode } : {}),
+  };
+}
+
+/**
+ * Registration bias — MEASURED problem, not a hunch: a flat 36-way split
+ * reaches registration (case 0/8) only ~2/36 of the time, roughly matching
+ * how often a close-worthy variant fires, so `order` sat at 0-1 records deep
+ * almost always (see the coverage comments below `checkOpSeqInvariants`).
+ * That starved every arm needing a payload that names a REGISTERED,
+ * currently-live window: the cold-start latch's raise-emitting half, `react`'s
+ * `FocusContent` half of a focus assert, and the disjointness clause in
+ * `checkAutocloseInvariants`. This constant raises registration's combined
+ * share well above its flat-switch odds without suppressing anything the
+ * switch below still generates — the roll happens BEFORE the 36-way switch,
+ * as an extra source of registration traffic layered on top of it, same
+ * event/command sub-roll shape as case 33/34/35 below.
+ */
+const REGISTRATION_BIAS = 0.3;
+
 function randomLogItem(rng: Rng, state: State): LogItem {
-  const variant = randomInt(rng, 36);
   const id = wid(randomInt(rng, POOL_SIZE));
+  if (rng() < REGISTRATION_BIAS) {
+    const fields = randomRegistrationFields(rng);
+    if (rng() < 0.5) return { type: 'WindowRegistered', id, ...fields };
+    const stale = rng() < 0.2;
+    return { type: 'RegisterWindow', id, ...fields, expectedVersion: stale ? state.version + 1 : state.version };
+  }
+  const variant = randomInt(rng, 36);
   switch (variant) {
-    case 0: {
-      const hasParent = rng() < 0.3;
-      const hasKeepLive = rng() < 0.3;
-      const role = pick(rng, ROLES);
-      const escapeMode = pick(rng, ESCAPE_MODES);
-      return {
-        type: 'WindowRegistered',
-        id,
-        kind: pick(rng, KINDS),
-        layer: randomInt(rng, 4),
-        canBecomeKey: randomBool(rng),
-        acceptsInput: randomBool(rng),
-        class: pick(rng, CLASSES),
-        ...(role !== undefined ? { role } : {}),
-        ...(hasParent ? { parentId: wid(randomInt(rng, POOL_SIZE)) } : {}),
-        ...(hasKeepLive ? { keepLive: randomBool(rng) } : {}),
-        ...(escapeMode !== undefined ? { escapeMode } : {}),
-      };
-    }
+    case 0:
+      return { type: 'WindowRegistered', id, ...randomRegistrationFields(rng) };
     case 1:
       return { type: 'WindowShown', id };
     case 2:
