@@ -106,6 +106,7 @@ const ROLES: readonly (string | undefined)[] = [
   'palette',
   'quick-view',
   'overlay',
+  'switcher',
   'utility',
   'workspace',
   'content',
@@ -170,13 +171,6 @@ function isCommand(item: LogItem): item is Command {
 }
 
 /**
- * `state` is the live state at generation time — used only to produce a
- * mostly-plausible `expectedVersion` for the command variants (sometimes
- * deliberately stale, to exercise rejection). It does not make the log
- * non-reproducible: the same seed walks the same state trajectory, so the
- * same seed always produces the same concrete log.
- */
-/**
  * The intrinsics shared by `WindowRegistered` (case 0) and `RegisterWindow`
  * (case 8) — pulled out once so the registration-bias branch below can build
  * either shape without duplicating the field list a third time.
@@ -215,13 +209,58 @@ function randomRegistrationFields(rng: Rng) {
  */
 const REGISTRATION_BIAS = 0.3;
 
+/**
+ * A second, complementary bias: once registration (above) is no longer the
+ * rare case, the id every OTHER variant names should follow suit — a raw
+ * pool draw still lands on a currently-registered id only at `order`'s own
+ * fill fraction, which is exactly the coincidence the cold-start latch's
+ * raise-emitting half and `react`'s `FocusContent` half need (a window that
+ * is not just registered but SHOWN, so an assert on it can resolve
+ * `isContentWindow`). Drawing from `state.order` itself this often is what
+ * makes those windows commonly NAMED, not just commonly present. Still fully
+ * unfiltered: the complementary share keeps drawing from the raw pool, so a
+ * never-registered or already-closed target stays ordinary generated
+ * traffic, same as before.
+ */
+const EXISTING_WINDOW_BIAS = 0.65;
+
+/**
+ * A third bias, needed for the SAME reason `EXISTING_WINDOW_BIAS` is: a
+ * registered-but-never-shown window is still `visible: false`, and
+ * `isContentWindow` requires `visible` — so `react`'s `FocusContent` half
+ * cannot fire on a window nobody ever showed, no matter how deep `order`
+ * gets or how often a focus assert names a live id. `WindowShown` (case 1)
+ * sits at the same flat ~1/36 odds as registration did, so it needed the same
+ * treatment: a leading roll, at the existing-window-biased `id`, so a show
+ * commonly lands on something already registered rather than on an id that
+ * is not there to become visible. Still fully unfiltered — the complementary
+ * share still reaches the flat switch's own `case 1`, which can and does
+ * name an unregistered id.
+ */
+const SHOWN_BIAS = 0.15;
+
+/**
+ * `state` is the live state at generation time — used both to produce a
+ * mostly-plausible `expectedVersion` for the command variants (sometimes
+ * deliberately stale, to exercise rejection) and, via `EXISTING_WINDOW_BIAS`
+ * above, to occasionally pick `id` off `state.order` itself. Neither reads
+ * make the log non-reproducible: the same seed walks the same state
+ * trajectory, so the same seed always produces the same concrete log.
+ */
 function randomLogItem(rng: Rng, state: State): LogItem {
-  const id = wid(randomInt(rng, POOL_SIZE));
   if (rng() < REGISTRATION_BIAS) {
+    const id = wid(randomInt(rng, POOL_SIZE));
     const fields = randomRegistrationFields(rng);
     if (rng() < 0.5) return { type: 'WindowRegistered', id, ...fields };
     const stale = rng() < 0.2;
     return { type: 'RegisterWindow', id, ...fields, expectedVersion: stale ? state.version + 1 : state.version };
+  }
+  const id =
+    state.order.length > 0 && rng() < EXISTING_WINDOW_BIAS
+      ? pick(rng, state.order).id
+      : wid(randomInt(rng, POOL_SIZE));
+  if (rng() < SHOWN_BIAS) {
+    return { type: 'WindowShown', id };
   }
   const variant = randomInt(rng, 36);
   switch (variant) {
@@ -253,25 +292,8 @@ function randomLogItem(rng: Rng, state: State): LogItem {
     case 7:
       return { type: 'WindowContentOrderable', id };
     case 8: {
-      const hasParent = rng() < 0.3;
-      const hasKeepLive = rng() < 0.3;
       const stale = rng() < 0.2;
-      const role = pick(rng, ROLES);
-      const escapeMode = pick(rng, ESCAPE_MODES);
-      return {
-        type: 'RegisterWindow',
-        id,
-        kind: pick(rng, KINDS),
-        layer: randomInt(rng, 4),
-        canBecomeKey: randomBool(rng),
-        acceptsInput: randomBool(rng),
-        class: pick(rng, CLASSES),
-        ...(role !== undefined ? { role } : {}),
-        ...(hasParent ? { parentId: wid(randomInt(rng, POOL_SIZE)) } : {}),
-        ...(hasKeepLive ? { keepLive: randomBool(rng) } : {}),
-        ...(escapeMode !== undefined ? { escapeMode } : {}),
-        expectedVersion: stale ? state.version + 1 : state.version,
-      };
+      return { type: 'RegisterWindow', id, ...randomRegistrationFields(rng), expectedVersion: stale ? state.version + 1 : state.version };
     }
     case 9: {
       const stale = rng() < 0.2;
@@ -830,8 +852,8 @@ const CONTENT_ROLES_EXPECTED = new Set(['content', 'child-content', 'workspace']
 
 // Mirrors `window-kernel.ts TRANSIENT_ROLES` exactly. A role present there but
 // missing here makes `isSweepableVictim` report a false violation the moment the
-// generator emits it. `'switcher'` is in the kernel set and is not currently
-// emitted by `ROLES`, so the disagreement was latent rather than failing.
+// generator emits it. `'switcher'` is in the kernel set and is now emitted by
+// `ROLES` too, so this set is no longer latent — the generator can reach it.
 const TRANSIENT_ROLES_EXPECTED = new Set(['palette', 'quick-view', 'overlay', 'switcher']);
 
 function checkAutocloseInvariants(state: State): string[] {
@@ -890,6 +912,15 @@ function checkAutocloseInvariants(state: State): string[] {
   // window: `isAppResignSweepEligible` excludes every transient role, while
   // `selectTransientAutoclose` requires one — so the two sets are disjoint by
   // construction, checked here rather than left to that construction alone.
+  // MEASURED at POOL_SIZE=6 / LOG_LENGTH=30 / 200 seeds, same run as the
+  // op-token measurement above: of 5416 reached states, 1670 have at least
+  // one transient-autoclose victim (for some focuser) and 916 have at least
+  // one app-resign-sweep-eligible window, with both kinds of candidate present
+  // in the same state 315 times — none of those co-occurrences trips the
+  // clause below, because it is the SAME window that is forbidden from being
+  // both, not merely the same state holding one of each. The three biases
+  // pushed `order` deep enough that the two candidate sets routinely coexist,
+  // which is exactly the condition this clause needs to be worth checking.
   for (const record of state.order) {
     if (isAppResignSweepEligible(record) && sweptByTransientAutoclose.has(record.id)) {
       violations.push(`a window is both eligible for the app-resign hide sweep and swept by transient autoclose: ${record.id}`);
@@ -1119,58 +1150,58 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
 
 describe('window-kernel: the op-token invariants are not vacuous', () => {
   /**
-   * MEASURED at POOL_SIZE=6 / LOG_LENGTH=30 / 200 seeds: 37 seeds issue an op,
-   * 41 ops in 6000 generated log items. THIN — and deliberately recorded
-   * rather than rounded up, because it says where the real coverage lives: an
-   * op needs a REGISTERED window that is also currently hidden (a show) or not
-   * currently the key holder (a raise), and the unfiltered generator produces
-   * that combination rarely.
+   * MEASURED at POOL_SIZE=6 / LOG_LENGTH=30 / 200 seeds: 190 seeds issue an
+   * op, 524 ops in 6000 generated log items. No longer thin — the three
+   * leading-roll biases above `randomLogItem` (`REGISTRATION_BIAS`,
+   * `EXISTING_WINDOW_BIAS`, `SHOWN_BIAS`) exist specifically to raise the odds
+   * of the combination an op needs: a REGISTERED window that is also
+   * currently hidden (a show) or not currently the key holder (a raise). They
+   * did — an op now fires in the large majority of seeds instead of a fifth
+   * of them.
    *
    * THE NUMBER IS TRAJECTORY-SENSITIVE, not proportional to how many variants
    * exist. It was 27 seeds / 28 ops before the teardown variant (32) was added,
-   * then 19/20 after, then 31/33; one extra variant in 33 cannot dilute a rate
-   * by a third, and it did not — adding any variant re-rolls every seed's whole
-   * log, and this rate rides on rare id/state coincidences, so it moves for
-   * reasons unrelated to the addition. Two of the moves have a cause that is
-   * not a re-roll, though. The jump to 31/33: the raise rule now diffs
-   * `State.key` instead of the top of `order`, and a focus report takes key
-   * from another window far more often than it reorders a stack (an
-   * already-topmost window taking key back from a palette emits a raise now,
-   * and moves nothing). The move to 37/41: variant 35 emits a raw
-   * `FocusAssertRequested`, whose raise is gated only on the target being in
-   * `order` — `react`'s assert rule needs no content window, unlike `decide`'s
-   * `AssertFocus` guard — so the handful of asserts that name a registered
-   * window each mint a token that no other variant would have. Re-measure and
-   * re-record after any generator or rule change rather than reading a move
-   * either way as a regression. A counter that stopped advancing
-   * would fail ~37 seeds here, which is a signal but not the proof; the
-   * example-based coverage
+   * then 19/20 after, then 31/33, then 37/41 once variant 35's raw
+   * `FocusAssertRequested` started minting tokens of its own; one extra
+   * variant cannot dilute or inflate a rate by a third, and it did not —
+   * adding any variant re-rolls every seed's whole log, and this rate rides on
+   * id/state coincidences, so it moves for reasons unrelated to the addition
+   * by itself. The jump to 190/524 has an unambiguous cause, not a re-roll
+   * artifact: `REGISTRATION_BIAS` / `EXISTING_WINDOW_BIAS` / `SHOWN_BIAS` put
+   * a registered, often-visible window in play on most log items instead of
+   * leaving it to a rare id-pool coincidence, so a show or a raise stopped
+   * being the exception and became the common case. Re-measure and re-record
+   * after any generator or rule change rather than reading a move either way
+   * as a regression. A counter that stopped advancing would fail ~190 seeds
+   * here, which is a signal but not the proof; the example-based coverage
    * (`window-kernel.test.ts` "the op counter advances once per issued op",
    * `window-kernel-executor.test.ts` "drops the late echo of a superseded op")
    * is what actually pins this behaviour. Constraining generation to make ops
-   * common is exactly the move that would make the invariant vacuous, so the
-   * generator stays unfiltered and this test just states the measurement.
+   * common is exactly the move that would make the invariant vacuous — the
+   * generator stays unfiltered, and this rate is a side effect of biasing
+   * WHICH window a payload names, not of suppressing anything; this test just
+   * states the measurement.
    *
-   * WHAT THE THREE NEWEST FAMILIES ACTUALLY REACH, measured the same way and
-   * recorded because the shortfall is the useful part. Each is generated ~170
-   * times across the 6000 items, but the arms that carry their invariants are
-   * reached far less often, and for one shared reason: `order` is nearly always
-   * 0-1 records deep at POOL_SIZE=6 (registration is 2 variants in 36 and
-   * closes are as frequent), so a payload drawn from the id pool usually names
-   * nothing live.
+   * WHAT THE THREE NEWEST FAMILIES ACTUALLY REACH, measured the same way. The
+   * same three biases also lifted `order`'s typical depth — averaging 2.86
+   * (out of a POOL_SIZE of 6, n=5416 reached states, max 6) where it used to
+   * sit at 0-1 — so a payload drawn from the id pool now names something live
+   * far more often, and the arms below moved with it:
    *
-   *   - stack-order import: 170 generated, only 3 of them actually PERMUTE
-   *     `order` (the rest name no live window, or name one), and only 2 land
-   *     while `key` resolves. So the membership-preservation clause sees real
-   *     permutations, but barely.
-   *   - cold-start latch: 174 arms, and 30 activations spend a held latch — all
-   *     30 naming a window that is NOT in `order`. The arm's raise-emitting
-   *     half (a latch spent onto a live window) is generated zero times and is
-   *     pinned only by `window-kernel.test.ts`.
-   *   - focus assert: 168 generated, 158 naming a window absent from `order`
-   *     and the remaining 10 naming a registered NON-content window. Zero name
-   *     a content window, so `react`'s `FocusContent` half of the assert rule
-   *     is generated zero times.
+   *   - stack-order import: 92 generated (down from ~170 — the leading rolls
+   *     eat into the flat 36-way switch's own share), 15 of them actually
+   *     PERMUTE `order`, and 3 land while `key` resolves. So the
+   *     membership-preservation clause sees real permutations regularly now,
+   *     not barely.
+   *   - cold-start latch: 107 arms, and 23 activations spend a held latch —
+   *     of those, 7 name a window that IS in `order` and visible, so the
+   *     arm's raise-emitting half (a latch spent onto a live window) is now
+   *     generated rather than reaching only `window-kernel.test.ts`.
+   *   - focus assert: 84 generated, 21 naming a window absent from `order`,
+   *     60 naming a registered NON-content window, and 3 naming a content
+   *     window — so `react`'s `FocusContent` half of the assert rule is now
+   *     generated (3 times) instead of zero, matching the 3 `FocusContent`
+   *     effects `react` actually emitted across the run.
    *
    * A CONFLICT THIS GENERATION DID NOT HAPPEN TO HIT, recorded so it is not
    * rediscovered as a mystery failure. The §0.1.10 one-order clause in
@@ -1182,10 +1213,10 @@ describe('window-kernel: the op-token invariants are not vacuous', () => {
    * would demote the key window and violate the clause — so the arm lifts
    * the key window's record to the top after assembling the permutation.
    * Verified by hand on two registered windows: key on the upper one, import
-   * `[key, other]`, and the key window stays topmost. The 200 seeds never
-   * drew a permuting import that reached this case (only 3 of 170 generated
-   * imports permute at all), which is why it needed a hand check rather than
-   * relying on generation.
+   * `[key, other]`, and the key window stays topmost. Even with the deeper
+   * `order` the biases now produce, only 3 of the 15 permuting imports above
+   * land while `key` resolves, so this case still leans on the hand check
+   * rather than on generation alone.
    */
   it('the generated logs issue focus-family ops at the measured rate', () => {
     let issued = 0;
@@ -1208,12 +1239,13 @@ describe('window-kernel: the op-token invariants are not vacuous', () => {
       if (count > 0) seedsWithAnOp += 1;
       assert.strictEqual(state.opSeqCounter, emittingTransitions, `seed ${seed}: one token minted per emitting transition`);
     }
-    // Floors sit just under the recorded measurement (37/41), the same margin
-    // the previous pairs (15/15 under 19/20, 20/20 under 27/28, 25/25 under
-    // 31/33) carried — they exist to catch the invariant going vacuous, not to
-    // pin an exact trajectory.
-    assert.ok(seedsWithAnOp >= 30, `only ${seedsWithAnOp}/${SEED_COUNT} seeds issued an op (${issued} ops total)`);
-    assert.ok(issued >= 30, `only ${issued} focus-family ops across ${SEED_COUNT} seeds`);
+    // Floors sit just under the recorded measurement (190/524) — a wider
+    // margin than the earlier pairs (15/15 under 19/20, 20/20 under 27/28,
+    // 25/25 under 31/33, 30/30 under 37/41) carried, because the biases moved
+    // the trajectory by an order of magnitude, not by a few counts. They exist
+    // to catch the invariant going vacuous, not to pin an exact trajectory.
+    assert.ok(seedsWithAnOp >= 150, `only ${seedsWithAnOp}/${SEED_COUNT} seeds issued an op (${issued} ops total)`);
+    assert.ok(issued >= 400, `only ${issued} focus-family ops across ${SEED_COUNT} seeds`);
   });
 
   it('the checker names the violation when the counter goes inert', () => {
@@ -1451,7 +1483,8 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
 // and the raw event), but it almost never produces one that fires these two
 // clauses: `lastFocusAssert` is only written by a second assert following a
 // first, and the measurement recorded above shows the generated asserts name a
-// window absent from `order` 158 times in 168. So the two clauses stay pinned
+// window absent from `order` 21 times in 84, a registered non-content window
+// 60 times, and a content window only 3 times. So the two clauses stay pinned
 // here against hand-built states, the same anti-vacuity move the merge clauses
 // above use: a clause nobody has ever seen fail is decoration, and generated
 // coverage that thin is not a substitute for one that has.
