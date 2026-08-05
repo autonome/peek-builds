@@ -31,7 +31,6 @@ import {
   decide,
   keyWindow,
   selectTransientAutoclose,
-  selectAppResignTransients,
   isAppResignSweepEligible,
   isContentWindow,
   hostForOverlay,
@@ -821,6 +820,7 @@ function checkAutocloseInvariants(state: State): string[] {
 
   // Every id in the pool, plus one that is never registered, as the focuser.
   const focusers = [...Array.from({ length: POOL_SIZE }, (_, n) => wid(n)), wid(POOL_SIZE + 100)];
+  const sweptByTransientAutoclose = new Set<WindowId>();
   for (const focusedId of focusers) {
     const world = selectTransientAutoclose(state, focusedId, { kind: 'world' });
     const machine = selectTransientAutoclose(state, focusedId, { kind: 'machine', opSeq: 0 });
@@ -832,6 +832,7 @@ function checkAutocloseInvariants(state: State): string[] {
       if (!isSweepableVictim(victim, focusedId)) {
         violations.push(`selectTransientAutoclose named an ineligible victim ${victim} for focuser ${focusedId}`);
       }
+      sweptByTransientAutoclose.add(victim);
     }
     // A machine cause arms an ORDERING test — it can only ever spare windows
     // relative to a world-caused focus, never sweep extra ones.
@@ -852,27 +853,14 @@ function checkAutocloseInvariants(state: State): string[] {
     }
   }
 
-  for (const victim of selectAppResignTransients(state)) {
-    const rec = state.order.find((w) => w.id === victim);
-    if (
-      rec === undefined ||
-      rec.kind !== 'page-host' ||
-      !rec.visible ||
-      rec.role === undefined ||
-      !TRANSIENT_ROLES_EXPECTED.has(rec.role) ||
-      rec.overlayFor !== undefined
-    ) {
-      violations.push(`selectAppResignTransients named an ineligible window: ${victim}`);
-    }
-  }
-
-  // The two app-resign sweeps answer different questions about the same edge
-  // and may never name the same window: the hide is reversible and undone by
-  // `AppActivated`, the transient dismissal is final.
-  const dismissed = new Set(selectAppResignTransients(state));
+  // The app-resign hide sweep and the transient autoclose sweep answer
+  // different questions about the same edge and may never name the same
+  // window: `isAppResignSweepEligible` excludes every transient role, while
+  // `selectTransientAutoclose` requires one — so the two sets are disjoint by
+  // construction, checked here rather than left to that construction alone.
   for (const record of state.order) {
-    if (isAppResignSweepEligible(record) && dismissed.has(record.id)) {
-      violations.push(`a window is both hidden by the app-resign sweep and dismissed as a transient: ${record.id}`);
+    if (isAppResignSweepEligible(record) && sweptByTransientAutoclose.has(record.id)) {
+      violations.push(`a window is both eligible for the app-resign hide sweep and swept by transient autoclose: ${record.id}`);
     }
   }
 

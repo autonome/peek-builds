@@ -2676,8 +2676,8 @@ export const CONTENT_ROLES: ReadonlySet<string> = new Set(['content', 'child-con
  * no content window is ever hidden by an app switch and no `visible` answer
  * here flickers as the app resigns and re-activates. (A property invariant
  * asserts the disjointness rather than leaving it to this comment.) The
- * separate `selectAppResignTransients` dismissal is also disjoint: it takes
- * only transient roles, none of which are in `CONTENT_ROLES`.
+ * separate `window-state.ts selectAppResignTransients` dismissal is also
+ * disjoint: it takes only transient roles, none of which are in `CONTENT_ROLES`.
  *
  * ONE PREDICATE, NOT THE ONLY ONE. Two upcoming callers want a NARROWER set
  * and must not be served by widening this one: `tile-ipc.ts`
@@ -2735,13 +2735,13 @@ export function topmostBaseLayerPageHost(state: State): WindowRecord | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Transient autoclose — the role set and the two selectors, ported from
-// `window-state.ts` (`TRANSIENT_ROLES`, `selectTransientAutoclose`,
-// `selectAppResignTransients`). The exemption itself is NOT ported: it is a
-// relation over `overlayFor` and `parentId`, not a role set — see §0 of
-// `docs/design/window-manager.md`, "Ownership, not role."
+// Transient autoclose — the role set and the selector, ported from
+// `window-state.ts` (`TRANSIENT_ROLES`, `selectTransientAutoclose`). The
+// exemption itself is NOT ported: it is a relation over `overlayFor` and
+// `parentId`, not a role set — see §0 of `docs/design/window-manager.md`,
+// "Ownership, not role."
 //
-// They are QUERIES, not transitions: each answers "which windows should be
+// It is a QUERY, not a transition: it answers "which windows should be
 // dismissed", and the caller turns each id into a `CloseOrHideWindow` command
 // — which is where the keepLive branch already lives (§0.1, `decide`). That
 // keeps `evolve` guard-free and keeps effects a structural diff, instead of
@@ -2851,33 +2851,6 @@ export function selectTransientAutoclose(
 }
 
 /**
- * Which transient surfaces a REAL app switch dismisses — ported from
- * `window-state.ts selectAppResignTransients`. Same role/visibility rule as
- * the focus-driven selector with no focuser to exclude, and scoped to
- * `page-host` windows: a transient `browser` window already self-closes on
- * app blur through its own per-window path, so sweeping it here would race
- * that.
- *
- * Distinct from what `evolve`'s `AppResignSettled` arm does, and not a second
- * answer to the same question: that arm reversibly HIDES the heads-up surfaces
- * (`isAppResignSweepEligible`) and marks them for `AppActivated` to restore,
- * while these transients are dismissed outright and never come back. The two
- * sets cannot overlap — a transient role is excluded from the hide predicate
- * by construction, so no window is both hidden-for-later and dismissed.
- */
-export function selectAppResignTransients(state: State): WindowId[] {
-  const out: WindowId[] = [];
-  for (const rec of state.order) {
-    if (rec.kind !== 'page-host') continue;
-    if (!rec.visible) continue;
-    if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
-    if (rec.overlayFor !== undefined) continue;
-    out.push(rec.id);
-  }
-  return out;
-}
-
-/**
  * Which windows a REAL app switch hides for the duration — `evolve`'s
  * `AppResignSettled` arm applies exactly this, and `AppActivated` undoes
  * exactly what it marked. Ported from `window-state.ts`'s `class === 'hud' &&
@@ -2892,9 +2865,10 @@ export function selectAppResignTransients(state: State): WindowId[] {
  *   - a non-transient role   the role precedence, kept as a role test because
  *                            it is one: a palette / quick-view / overlay
  *                            declares its own app-resign policy (see
- *                            `selectAppResignTransients`, and the chrome
- *                            overlay's attachment relation), and never
- *                            classified as a HUD however it was constructed;
+ *                            `window-state.ts selectAppResignTransients`, and
+ *                            the chrome overlay's attachment relation), and
+ *                            never classified as a HUD however it was
+ *                            constructed;
  *   - `visible`              nothing hidden for another reason may be marked,
  *                            or the re-show on activation would resurrect it.
  *

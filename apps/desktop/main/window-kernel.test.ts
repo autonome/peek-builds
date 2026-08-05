@@ -28,7 +28,6 @@ import {
   topmostBaseLayerPageHost,
   isStaleSelfEcho,
   selectTransientAutoclose,
-  selectAppResignTransients,
   isAppResignSweepEligible,
   BASE_LAYER,
   type State,
@@ -1977,18 +1976,16 @@ describe('window-kernel: which windows a real app resign hides', () => {
     assert.strictEqual(isAppResignSweepEligible(rec(alreadyHiddenHud)), false, 'already hidden, for a reason of its own');
   });
 
-  it('the hide sweep and the transient dismissal name disjoint windows', () => {
+  it("the hide sweep excludes the quick-view by role — `isAppResignSweepEligible`'s own transient clause", () => {
     const state = scene();
-    const dismissed = selectAppResignTransients(state);
     const hidden = state.order.filter(isAppResignSweepEligible).map((w) => w.id);
 
     // The quick-view is non-focusable AND floating, so only the role clause
-    // keeps it out of the hide set — it is dismissed outright instead, and a
-    // window may never be both (dismissal is final; the hide is undone by
-    // `AppActivated`).
-    assert.deepStrictEqual(dismissed, [quickView]);
+    // keeps it out of the hide set — a transient role owns its own app-resign
+    // policy instead (`window-state.ts selectAppResignTransients`), and a
+    // window may never be both hidden-for-later and dismissed outright.
     assert.deepStrictEqual(hidden, [hud]);
-    assert.deepStrictEqual(hidden.filter((id) => dismissed.includes(id)), []);
+    assert.strictEqual(isAppResignSweepEligible(state.order.find((w) => w.id === quickView)!), false, 'excluded by the non-transient-role clause');
   });
 
   it('the following activation re-shows exactly the HUD the sweep hid', () => {
@@ -2289,41 +2286,6 @@ describe('window-kernel: transient autoclose', () => {
     );
   });
 
-  it('selectAppResignTransients takes visible transient page-hosts only', () => {
-    const state = fold(
-      [
-        reg(1, 'workspace'),
-        reg(2, 'palette'),
-        reg(3, 'quick-view'),
-        reg(4, 'overlay'),
-        reg(5, 'palette', 'browser'),
-        reg(6, 'quick-view'),
-        show(1),
-        show(2),
-        show(3),
-        show(4),
-        show(5),
-      ],
-      initialState(),
-    );
-    // wid(1) non-transient, wid(5) a browser (it self-closes on app blur),
-    // wid(6) never shown. wid(4) has no overlayFor — an unattached overlay
-    // sweeps like any other transient page-host now.
-    assert.deepStrictEqual(selectAppResignTransients(state), [wid(2), wid(3), wid(4)]);
-  });
-
-  it('selectAppResignTransients still exempts an ATTACHED overlay — the relation, not the role, decides', () => {
-    const state = fold(
-      [reg(1, 'workspace'), reg(2, 'overlay'), show(1), show(2), { type: 'OverlayAttached', overlayId: wid(2), hostId: wid(1) }],
-      initialState(),
-    );
-    assert.deepStrictEqual(selectAppResignTransients(state), []);
-  });
-
-  it('selectAppResignTransients has no focuser to exclude and reads no cause', () => {
-    const state = fold([reg(1, 'palette'), reg(2, 'quick-view'), show(1), show(2), { type: 'OsFocusGained', id: wid(1) }], initialState());
-    assert.deepStrictEqual(selectAppResignTransients(state), [wid(2), wid(1)], 'both go, in current order position');
-  });
 });
 
 // ── react applies transient autoclose (§0: rule application is non-optional) ─
@@ -2811,10 +2773,10 @@ describe('window-kernel: which window the user is working in', () => {
     assert.deepStrictEqual(settled.order.filter((w) => w.hiddenByAppBlur === true).map((w) => w.id), [hud]);
   });
 
-  it('the transient dismissal is disjoint from the content set too', () => {
+  it('the transient autoclose sweep is disjoint from the content set too', () => {
     const state = scene();
-    const dismissed = new Set(selectAppResignTransients(state));
-    assert.ok(dismissed.size > 0, 'the slide is dismissed — otherwise this proves nothing');
+    const dismissed = new Set(selectTransientAutoclose(state, pageHost, { kind: 'world' }));
+    assert.ok(dismissed.size > 0, 'the slide and the panel are swept — otherwise this proves nothing');
     assert.deepStrictEqual(contentIds(state).filter((id) => dismissed.has(id)), []);
   });
 });
