@@ -1335,15 +1335,17 @@ the kernel executor's `RaiseWindow` effect resolve to — already performs `perf
 activating raise makes content first responder as part of raising, so `react` does not need to
 name that half separately for the ordinary case.
 
-`window-kernel-executor.ts planRaise(record, headless)` is the structural replacement for both
-old emitters, in one function: `'activating-raise'` (content focus baked into `raiseWindow`, the
-`applyRaiseRequest` case), `'show-and-focus-content'` (a `quick-view` page-host — a
-non-activating show, so content focus has to be driven separately, the shape `524f7aba` exists to
-protect), and `'inactive-show'` (headless — no focus at all, by design). `planRaise` reads
-`record.kind` / `role` / `headless`, never `ev.type`, so the decision stays a structural fact
-about the window rather than a branch on which command asked for the raise.
-`apps/desktop/CLAUDE.md`'s "show() + contentWC.focus()" obligation for a fresh hybrid host sits
-at exactly this layer — the backend/window boundary, not the reducer.
+`window-kernel-executor.ts planRaise(record, headless, appActive)` is the structural replacement
+for both old emitters, in one function: `'activating-raise'` (content focus baked into
+`raiseWindow`, the `applyRaiseRequest` case), `'show-and-focus-content'` (a `quick-view` page-host
+— a non-activating show, so content focus has to be driven separately, the shape `524f7aba` exists
+to protect), and `'inactive-show'` (headless, or `!appActive` — no focus at all, by design in the
+headless case). `planRaise` reads `record.kind` / `role` / `headless` / `appActive`, never
+`ev.type`, so the decision stays a structural fact about the window rather than a branch on which
+command asked for the raise. `apps/desktop/CLAUDE.md`'s "show() + contentWC.focus()" obligation
+for a fresh hybrid host sits at exactly this layer — the backend/window boundary, not the reducer.
+The `!appActive` branch of `'inactive-show'` is not the same design choice as the headless one; see
+"Analysed, not decided" below.
 
 **Consequence for the test migration.** `window-state.test.ts`'s `focusesContent` assertions
 (describe `front — a projection of OS focus; raises come from named targets only`) pin the
@@ -1371,6 +1373,68 @@ belongs with the `planRaise` work that moves the quick-view and headless raise m
 the backend — a change that needs its own commit and its own gate run, because getting it wrong
 reproduces regression `524f7aba`'s shape (focusing a background quick-view activates the whole
 app).
+
+#### Analysed, not decided: the backgrounded raise and the backgrounded overlay
+
+Two behaviors diverge between the old reducer and the kernel when the app is backgrounded, both
+reached through the `appActive` guard `planRaise` inherited from `applyRaiseRequest`. What follows
+is analysis with a recommended resolution; the resolution itself is a cutover-time choice, not one
+taken here.
+
+**The raise gate is wrong under the kernel, not merely unverified.** `window-state.ts
+applyRaiseRequest`'s `if (!state.appActive) return` drops a raise entirely — the request, its
+`FOCUS_CONTENT`, and its `SET_STACKING` all vanish. `planRaise` does not carry that guard forward
+as a suppression; it resolves `!appActive` to `'inactive-show'`, the same outcome headless gets,
+and that outcome still orders and shows the window
+(`backend.showWindow(effect.id, { activate: false, ... })`, i.e. `win.showInactive()`) — it
+withholds only app activation. `showInactive()` is `orderFront:`, which paints a Peek window over
+the user's foreground app, the same visual outcome the `APP_RESIGNED` overlay hide (peek
+`88797f2d`, R6) exists to prevent.
+
+Every trigger that reaches the raise path while `appActive` may be false:
+
+| trigger (old machine) | kernel route | what the user sees under kernel semantics |
+|---|---|---|
+| `RAISE_WINDOW_REQUESTED` — its sole production dispatcher is the modal-blur re-raise in `ipc.ts`, whose own comment names this as the macOS activation dance where `appActive` may still read false | `decide(RaiseWindow)` → `OsFocusGained` → `key` diff → `react` `RaiseWindow` → `planRaise` `'inactive-show'` → `backend.showWindow({ activate: false })` | A modal panel orders itself to the front while another app is frontmost. `planRaise` carries no satellite gate either, so the old machine's second drop — `isEligibleFront` rejecting satellites — is gone as well. |
+| `WINDOW_CLOSED` successor / parent handoff | `react`'s parent-refocus rule emits `RaiseWindow` directly, gated only on `isContentWindow` | Nothing appears on screen at the time, but the window-server order changes unseen; `ba55be19`'s own accepted-loss note — that macOS restores the app's own window order on activation — is the argument this becomes visible later, when returning by Cmd+Tab finds a different window on top. |
+| `WINDOW_HIDDEN` successor raise | **no counterpart at all** — `evolve`'s `WindowHidden` arm touches only `visible`, leaves `key` dangling, and no successor rule fires | The opposite gap: the kernel raises too little here. Outside the `appActive` seam, but the same cutover has to account for it. |
+| `DEVTOOLS_OPENED` / `DEVTOOLS_CLOSED` re-drive of `front` (devtools opens with `activate: false`) | `FocusAssertRequested` → `lastFocusAssert` diff → `[RaiseWindow, FocusContent]`, with **no visibility gate on the assert rule at all** | `showInactive()` of a possibly hidden background window, plus `focusContent` → `wc.focus()` taking first responder while the app is backgrounded — the executor's `FocusContent` case masks only `headless`. |
+| `SWITCHER_SELECTED`, Escape closing the switcher | the switcher is homed outside the kernel | No divergence: the overlay held key, so the app is active by construction. |
+| `APP_ACTIVATED` cold-start latch | `lastFocusAssert` is written in the `AppActivated` arm | No divergence: `appActive` is true in that same transition. |
+
+**Recommended resolution — not adopted here.** `planRaise` gains a suppressing outcome for
+`!appActive` that performs nothing, not even the show, and the raise is latched for replay on
+`AppActivated`. The kernel already owns the machinery for that: generalize
+`pendingColdStartFocus` / `lastFocusAssert` into a one-slot pending raise rather than introducing a
+queue.
+
+Two parts of this are inference rather than observation, and worth a live check before the
+resolution is frozen: that macOS renders a backgrounded app's `orderFront:`ed window above the
+frontmost app's windows (global ordering within a level, not just within-app); and which two call
+sites `applyRaiseRequest`'s "sites 2 and 3" names — commit `05c1abd4` numbers them inconsistently
+between its docblock and its message, though devtools and the close-handoff are the two that fire
+while inactive under either reading.
+
+**The two sibling reads.** `window-state.ts applyOsFocusRealized` defends the `FOCUS_CONTENT`
+mirror; `electron-window-backend.ts focusContent` (`armSelfCausedFocus` plus `wc.focus()`) taking
+first responder for a window the OS made key while the app is backgrounded is a focus grab the old
+machine refused. `planRaise`'s own docblock already states the rule that a backgrounded app gets no
+first-responder handoff either, so carrying an `if (!this.state.appActive) return;` beside the
+headless gate in the executor's `FocusContent` case is consistency with that rule, not new policy —
+today that gate is unmasked, and it is exactly the half the focus-assert rule above emits with no
+guard at all.
+
+`window-state.ts applyOverlayFollow` defends a second rule stated in place: "Never reveal the
+chrome or float it over the foreground app" (peek `71cfde09` item 7, R6), corroborated by
+`hybrid-overlay.ts wireAppActiveGate` and by `apps/desktop/CLAUDE.md`'s "Overlay must `hide()` on
+`did-resign-active` or the chrome lingers on screen when Peek isn't the active app." `react`'s
+overlay-follow rule emits only `SetBounds` off a host-bounds diff, so it is accidentally the
+inactive-safe subset — but the kernel has no resign-hide and no activate-reveal for that role at
+all: `isAppResignSweepEligible` excludes role `overlay`, so §0.1.11's sweep never selects it, and
+nothing pairs an `AppActivated` re-show with it either, so the chrome never leaves the screen when
+the app backgrounds. The pair has to be ported together — `AppResigned` hides attached overlays,
+`AppActivated` re-pins and emits `ShowWindow({ activate: false })` — and the `!appActive` gate then
+belongs on that reveal.
 
 #### Registration facts the kernel needs but no site supplies
 
