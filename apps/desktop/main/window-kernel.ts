@@ -1337,7 +1337,17 @@ export function evolve(state: State, ev: Event): State {
         ...state,
         order: state.order.map((w) => {
           if (w.id !== ev.id) return w;
-          const flushed = withPendingProjectionFlushed({ ...w, visible: true });
+          // Any `WindowShown` — not just the `AppActivated` re-show — makes
+          // the window visible, so any stale sweep mark is cleared here too:
+          // `hiddenByAppBlur` can never be true on a visible window (checked
+          // by `window-kernel-properties.test.ts checkInvariants`). A window
+          // that was never swept keeps the field absent rather than gaining
+          // an explicit `false` it never earned.
+          const flushed = withPendingProjectionFlushed({
+            ...w,
+            visible: true,
+            ...(w.hiddenByAppBlur === true ? { hiddenByAppBlur: false } : {}),
+          });
           return w.visible ? flushed : { ...flushed, lastOpSeq: opSeq };
         }),
         opSeqCounter: opSeq,

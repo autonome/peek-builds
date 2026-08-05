@@ -1868,6 +1868,43 @@ describe('window-kernel: app activation, resignation, and the dance guard', () =
     assert.strictEqual(third.hiddenByAppBlur, undefined);
   });
 
+  it('a plain WindowShown (not AppActivated) on a swept window clears the stale hiddenByAppBlur mark', () => {
+    // Reduction of window-kernel-properties.test.ts seed 44 step 22/30: a
+    // non-key-holding, non-transient, above-base-layer window is swept on
+    // app resign, then re-shown by an ordinary WindowShown (not the
+    // AppActivated re-show path) — the sweep mark must not survive on a
+    // now-visible record (checkInvariants: "it can never be true on a
+    // window that is currently visible").
+    const before = fold(
+      [
+        {
+          type: 'WindowRegistered',
+          id: wid(4),
+          kind: 'page-host',
+          layer: 2,
+          canBecomeKey: false,
+          acceptsInput: false,
+          class: 'child',
+          role: 'child-content',
+        },
+        { type: 'WindowShown', id: wid(4) },
+      ],
+      initialState(),
+    );
+    const resigned = evolve(before, { type: 'AppResigned' });
+    const settled = evolve(resigned, { type: 'AppResignSettled' });
+    // The sweep actually fired — confirm eligibility caught it, or the rest
+    // of this test would pass vacuously.
+    const swept = settled.order.find((w) => w.id === wid(4))!;
+    assert.strictEqual(swept.visible, false);
+    assert.strictEqual(swept.hiddenByAppBlur, true);
+
+    const reshown = evolve(settled, { type: 'WindowShown', id: wid(4) });
+    const record = reshown.order.find((w) => w.id === wid(4))!;
+    assert.strictEqual(record.visible, true);
+    assert.strictEqual(record.hiddenByAppBlur, false);
+  });
+
   it('AppResignSettled arriving when not armed is inert', () => {
     const before = fold(registerPrimaryAndHud(), initialState());
     // Never resigned — pendingAppResignSweep is false from initialState().
