@@ -1461,7 +1461,7 @@ than states, the guards *are* the real state space and the model is too flat.
 ### 0.1.9 The test debt, classified
 
 Every test mentioning `front` was read and sorted by what it actually claims. **118 distinct
-tests** (108 in `window-state.test.ts`, 10 in `session-projection.test.ts`) — larger than the ~69
+tests** (108 in `window-state.test.ts`, 9 in `session-projection.test.ts`) — larger than the ~69
 previously estimated:
 
 | Bucket | Count | Disposition |
@@ -1702,20 +1702,23 @@ the last-focused window. `focusSeq` and `focusSeqCounter` are deleted.
 
 The question was whether one order can carry both z-order and use-order. Every surveyed WM keeps
 two lists — dwm `next` (creation) + `snext` (MRU); i3 `nodes_head` + `focus_head`; sway scene graph
-+ per-seat `focus_stack` — and this app already needs both: `session-projection.test.ts` has a live
-test named *"a background open sits ABOVE the last-focused window while ranking BELOW it by focus
-recency"*, i.e. a background open deliberately placed high in z while staying low in MRU. The
-resolution is to remove the divergence at its source rather than model it: **a window that was not
-focused does not go on top.** One order is then honest, and `topmost(state, P)` answers both
-questions.
++ per-seat `focus_stack` — and this app already needed both: `window-state.test.ts`'s
+`STACK_ORDER_IMPORTED` suite pinned exactly that divergence — a background open placed ABOVE the
+last-focused window in z while ranking BELOW it by focus recency — until commit `8524b31b` retired
+it once this decision landed, i.e. a background open deliberately placed high in z while staying
+low in MRU. The resolution is to remove the divergence at its source rather than model it: **a
+window that was not focused does not go on top.** One order is then honest, and `topmost(state, P)`
+answers both questions; `session-projection.test.ts`'s *"a background open is saved BELOW the
+last-focused window"* and *"SAVE → RESTORE round trip: a background open comes back BELOW the
+last-focused window"* pin the resolved order.
 
 What this costs, stated plainly so it is not discovered later:
 
 - The behavior changes. A background-opened window no longer appears above the window currently
   being worked in. That is arguably the better behavior — it is what Metacity's focus-stealing work
   concluded ("a new window that doesn't get focus should be stacked below the focused window but
-  still mapped") — but it *is* a change, and the session-projection test above must be rewritten,
-  not translated.
+  still mapped") — but it *is* a change, and the `window-state.test.ts` test above must be
+  rewritten, not translated.
 - Restore ordering must be re-derived: session restore currently replays saved `stackIndex` and
   separately marks one descriptor focused. Under one order those stop being independent, so the
   saved order must already put the focused window on top.
