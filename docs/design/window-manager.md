@@ -1902,6 +1902,30 @@ stored field: an app-resign event never touches `key` (RULE 2), so at the settle
 whichever window held it before the app resigned, and a selector reading `key` would spare exactly
 that window — typically the palette that should close.
 
+**The sweep itself fires at the settle, observed in a live process.** A run with
+`PEEK_SHADOW_KERNEL_COMPARE=1` and `E2E_TEST=true` caught the dismissal itself, not only the feed.
+With `E2E_TEST=true`, `ipc.ts`'s per-window blur self-close handler is not installed
+(`windowSelfClosesOnBlur(options) && process.env.E2E_TEST !== 'true'`), so the command palette
+survived to the app-resign settle instead of being hidden roughly 470ms earlier by that handler. At
+the settle the kernel state read `appActive: false`, `pendingAppResignSweep: true`, the palette's
+record `role: 'palette', visible: true`, and `lastAttention` moving from `{ holder: 'wm-28' }` at
+seq 13 to `{ holder: null }` at seq 14. In the same transition the kernel emitted `closeOrHide
+wm-28` for the palette — the rule stated in §0 firing on the degenerate, null-holder value of the
+one-hop exemption relation, the same value §0 describes as admitting nothing and dismissing every
+visible, unattached transient. A run that shows only the feed reaching the kernel, with no
+dismissal to show for it, is starvation by a second owner of the same policy — `ipc.ts`'s own blur
+handler winning the race under ordinary, non-`E2E_TEST` conditions — not a defect in the rule; this
+is the confirming instance of the recorded bug shape, a rule can be starved rather than wrong.
+`E2E_TEST=true` also installs a hidden, non-focusable test-fixture window (`main.ts loadFeatures()`
+→ `test-fixture-glue.ts initTestFixture()`) and the hybrid overlay test bridge (`hybrid-overlay.ts
+initHybridOverlay()`); neither can take focus, so neither confounds an activation observation made
+under it.
+
+One caveat from the same effort: a first attempt produced no evidence at all, because the app had
+already gone inactive during launch focus churn before the gesture ran — `open -a Finder` produced
+no resign edge to observe. A live dismissal check must activate the app before the gesture that
+resigns it.
+
 **Not proof of the hide/re-show half.** The shadow feed above cannot show that a real app switch
 hides and later re-shows the right windows. The old machine hides, on the raw resign and well before
 the 500ms settle, the windows `isAppResignSweepEligible` selects; its native `'hide'` report reaches
