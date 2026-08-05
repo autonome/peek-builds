@@ -594,8 +594,7 @@ break `isContentWindow` the same way.
   `order` wholesale, preserving membership by construction, exactly as `window-state.ts`'s arm
   does. `session-projection.test.ts`'s two pinned-divergence tests get rewritten to pin the
   kernel's fact (a background open registers below the key window), not re-pointed at the new
-  fields, and `renderer/lib/session.js sortWindowsByZOrder`, which has no callers anywhere in the
-  tree, is deleted.
+  fields.
 
 **`window-state.ts getDevtoolsTargetId` (exported through `window-state-singleton.ts`) is a third
 unsurveyed `focusSeq` reader, with no `visible` clause** — a live behavior difference from any
@@ -624,6 +623,71 @@ still a compile blocker. Resolution: delete.
 **`shortcuts.ts LocalShortcutEntry.callback` takes no arguments today.** Threading
 `sourceWindowId` into `openNewPageWindow` (the fix described above for its silent space-mode drop)
 first requires widening this callback's signature to accept the dispatch-site window id.
+
+**Thirty-seven further reader call sites, not narrated above.** A grep of `apps/desktop/`
+production, preload and renderer code finds 52 reader call sites in total; the bullets above name
+15 of them, each verified present and correctly described. Counting unit: a reader call site
+(enclosing symbol × fact read) — the same unit the `hybrid-overlay.ts` bullets above use, whose own
+inventory (`frontPageHostOsId()`, 7 call sites plus 2 bridge readers, all 9 named) is exact. The
+remaining 37, grouped by process:
+
+**Main process (19):**
+
+| file · symbol | what it does with the value | how a wrong translation fails |
+|---|---|---|
+| `windows.ts resolveFocusedWindowIdForClose` | The Cmd+W close target. Converts `front` → native handle → Electron id for `closeOrHideWindow`. Re-exported from `main/index.ts`; called by `closeFocusedWindow`, the menu handler, the non-darwin shortcut, and the hybrid test bridge. | silent — a `keyWindow` mapping closes the chrome overlay, or no-ops after app-resign nulls key. `window-kernel.ts isContentWindow`'s docblock already prescribes the composition; the map never lists the reader. |
+| `entry.ts onReady` (app-menu template, Window ▸ Close Window click) | Reads `front`, resolves the native window, runs the detached-devtools guard (`isDevToolsOpened() && !wc.isFocused()`), then calls `closeFocusedWindow()` | silent — a wrong front makes the devtools guard mis-fire and closes the parent |
+| `tile-ipc.ts` `tile:dialogs:save` handler | Parents the save dialog over the front window; falls back to the sender | silent (falls back) |
+| `tile-ipc.ts` `tile:dialogs:open` handler | Same parenting | silent |
+| `tile-ipc.ts` `tile:window:fullscreen` handler | Default target when no `args.id`; also supplies the pre-fullscreen bounds stash | mixed — null yields `'Window not found'`; a wrong id fullscreens the wrong window silently |
+| `tile-ipc.ts` `tile:window:get-focused-visible-id` handler | The entire renderer-facing "active window" surface; returns `front`'s numeric id | silent, and fans out to the 15 renderer readers below |
+| `tile-ipc.ts` `tile:window:devtools` handler | `getDevtoolsTargetId() ?? getFrontWindowId()` — the map names the selector, not this call site or its `??` fallback | mixed — both-null returns an error string; a wrong id opens devtools on the wrong page silently |
+| `tile-ipc.ts` `tile:theme:setWindowColorScheme` handler | Tier 2 of explicit-id → front → headless "highest-numbered focusable window" | silent — tier 3 masks a wrong or null tier 2 and themes an arbitrary window |
+| `tile-ipc.ts tileResolveWebWindow` | Default target for `tile:nav:back/forward/reload/state`; post-filters on a live `webContents.getURL()` http(s) check | mixed — `'No web page window'` on null, silent wrong-window navigation otherwise |
+| `ipc.ts` window-open modal-blur handler (the `blur` listener inside `wireWindowOpenHandler`) | `getFrontPageHostId()` in a DEBUG log naming the focus thief | compile-loud; behaviorally inert |
+| `window-state-singleton.ts seedSessionMirror` | Installs `coord.setFrontWindowIdProvider(() => front → native id)` — the injection point that hands `front` to izui | silent |
+| `izui-state.ts IzuiCoordinator.enterOverlay` | Calls that provider to seed `session.preOverlayFocusTarget`, the switcher's focus-restore target | silent, and its correctness argument rests on two facts the cutover deletes: its comment states "a satellite can never be `front`" and "`OS_FOCUS_SETTLED_NULL` keeps it: front is the TARGET, not the key window". Under `key`, the switcher — shown and focused before `enterOverlay` runs — can seed itself. |
+| `window-os-adapter.ts logTransition` | Formats `before.front→after.front`, the `contentFocused` delta of `after.front`, and the `stackOrder` delta | compile-loud |
+| `window-kernel-shadow.ts compareShadowKernelState` | Reads `oldMachine.front` and `oldMachine.stackOrder` and compares against `topmost(kernel, isContentWindow)`; runs on every shadow feed (only the console line is env-gated) | compile-loud — but deleting it removes the cutover's only automated divergence oracle, which needs its own decision rather than a fold-in |
+| `session.ts saveSessionSnapshot` | The read phase: `getWindowStateSnapshot()` → `serializeSession` | compile-loud |
+| `session.ts saveSpaceWorkspaces` | Same → `serializeSpaceWorkspaces` | compile-loud |
+| `session.ts restoreSessionSnapshot` | Sorts descriptors by persisted `zOrder` descending (`zOrderSorted`), hoists `focusedDescriptor`, and that ordering drives the eager/deferred staged-restore split and the focus-restore target | silent — one hop out from `serializeSession`'s `zOrder`; changed provenance re-orders which windows load hot |
+| `session-projection.ts readStackIndex` + `orderRestoredWindowsBottomToTop` | Read the persisted `stackIndex` (the deleted `stackOrder` fact) to compute the bottom-to-top replay, with a legacy branch for pre-`stackIndex` snapshots | silent for aged profiles — the legacy branch stacks by a different rule with no error path |
+| `window-state-singleton.ts getFrontPageHostId` + `subscribeFrontChange` | The two intermediary selectors: `getFrontPageHostId` is `front` iff its record is `kind: 'page-host'`; `subscribeFrontChange` re-reads it on every dispatch and edge-dedups | silent — the map assigns the hybrid consumers but never these two. Under `key` the selector goes null whenever the overlay holds key, so the subscriber fires a spurious `retarget(null)` and detaches chrome from a still-visible page. |
+
+**Preload (3):** all in `tile-preload.cts`; all silent pass-throughs that relay a changed answer.
+
+- `api.window.getFocusedVisibleWindowId` — invokes `tile:window:get-focused-visible-id`
+- `api.theme.setWindowColorScheme` — invokes the same channel to compute the `windowId` hint it passes to `tile:theme:setWindowColorScheme`, so the color-scheme chain reads `front` twice, once in preload and once in main
+- `api.izui.getPreOverlayFocusTarget` — relays the `front`-seeded target
+
+**Renderer and features (15):** all downstream of `tile:window:get-focused-visible-id` or of
+`front`-derived persisted fields, and all silent: a wrong id reads or writes another window's
+state, a null id degrades to "No active window".
+
+- `renderer/cmd/panel.js loadCommandContext` — `api.context.get('mode', targetWindowId)`, drives the palette's mode indicator
+- `renderer/cmd/panel.js cycleMode` — `api.context.setMode(…, { windowId })`, a write of per-window mode to the resolved id
+- `renderer/hud/widgets/window.js refreshWindowInfo` — highlights the focused row
+- `renderer/hud/widgets/mode.js refreshMode` — reads that window's `mode` context
+- `features/spaces/background.js updateBorderVisibility` — shows or hides the space border from the focused window's mode row
+- `features/groups/home.js resolveCurrentGroup` — resolves the active group from the focused window's mode metadata
+- `features/groups/home.js openGroup` — sorts open order by the persisted space-workspace `zOrder`, i.e. by `stackOrder` position
+- `features/tags/background.js getActiveWindow` — picks the page to tag or untag; its docblock is written entirely against `front`'s satellite-exclusion rule
+- `features/windows/background.js` — the `center window`, `maximize window`, `unmaximize window` and `fullscreen` commands, four sites, all targeting the resolved id
+- `features/entities/home.js` — the `extract entities` command's `execute` and the `extractBtn` click handler, two sites, picking which page to extract from
+- `features/windows/windows.js init` — uses `getPreOverlayFocusTarget()` to choose the switcher's initially-selected card
+
+Confirmed not readers, so absent from both the bullets above and this table: `window-escape.ts`
+(prose mention only; the live escape decision is `decideEscape` inside `window-state.ts`), `main.ts`
+(its `getWindowStateSnapshot()` calls are shadow feeds), `electron-window-backend.ts` (producer, not
+reader), `izui-roles.ts` (comment only), `window-registry.ts` (type declaration and comment only),
+and every file under `chrome-api-polyfills/`.
+
+The three highest-risk among all 52: `windows.ts resolveFocusedWindowIdForClose` (destructive and
+silent), `izui-state.ts enterOverlay` (its correctness comment cites two deleted facts by name), and
+`window-state-singleton.ts getFrontPageHostId` / `subscribeFrontChange` (a silent chrome detach that
+no named hybrid consumer can see, because the map re-points the consumers and leaves the selector
+beneath them).
 
 #### The map above is incomplete — re-measured against the code
 
@@ -767,6 +831,145 @@ replacement is not a behavior-preserving translation in one respect worth statin
 selector scans the whole window Map with no `visible` clause and ranks by `focusSeq`; a scan over
 `order` is inherently stack-ordered and admits a `visible` clause. Adding one is the intended
 behavior, and the devtools target changing for a hidden window is the visible difference.
+
+#### The cutover checklist: per file, in execution order
+
+Every symbol below is confirmed present in the tree.
+
+**Prerequisite, and a gap.** `window-kernel-executor.ts WindowKernelExecutor.waitForSettledFsMode(id,
+mode, timeoutMs)` exists and returns `FsSettleOutcome = 'settled' | 'vanished' | 'timed-out'`, not
+`void`. **There is no production accessor for the executor.** The only one in the tree is
+`window-kernel-shadow.ts getShadowKernelExecutor()`, which is deliberately incapable of affecting
+production. The three `waitForMode` call sites below (`windows.ts closeOrHideWindow`, the
+`tile-ipc.ts tile:window:hide` handler, `hybrid-overlay.ts installTestBridge driveHostFullscreen`)
+therefore are not the one-line import swaps they might otherwise look like — a production accessor
+for the executor does not exist yet, and building one is itself part of the cutover.
+
+`window-kernel.ts` needs no edits for any of this: `topmost`, `isContentWindow`, `keyWindow`,
+`hostForOverlay`, `topmostBaseLayerPageHost`, `CONTENT_ROLES`, `BASE_LAYER`, and the
+`StackOrderImported` event with its `decide` arm are all present and exported.
+
+1. **`shortcuts.ts` — first, it widens a signature the rest depends on.**
+   `LocalShortcutEntry.callback` — `() => void` becomes `(sourceWindowId?: number) => void`.
+   `handleLocalShortcut(input, focusedWindowId?)` already receives the id; pass it through at both
+   `entry.callback()` invocation sites, in the mode-conditional and the unconditional branch.
+   `registerLocalShortcut` — widen the `callback` parameter to match.
+
+2. **`window-state.ts` — deletions and the one behavior change.** `getDevtoolsTargetId(state)` —
+   today scans `state.windows.values()` for the max `focusSeq` among records with a truthy
+   `lastHttpUrl`, with no `visible` clause. Becomes a filtered live-URL scan of kernel `order` with a
+   `visible` clause. `WindowStateOwner.getDevtoolsTargetId()` — the delegating method — goes with it.
+   `WindowRecord.lastHttpUrl`, the `patchRecord(state, id, { lastHttpUrl })` write inside
+   `applyFocusGained(state, id, lastHttpUrl)`, and the `lastHttpUrl` fields on the `OS_FOCUS_GAINED`
+   event and the registration payload — all delete; the field has no other reader. `evolve`'s
+   `case 'WINDOW_SHOWN'` non-focused branch — the bare `stackRaise(state, event.id)` with no
+   `bumpFocusSeq` is the sole producer of the zOrder/stackIndex divergence; deleting it is what makes
+   "one order is enough" true. `getWindowFocusSeq(state, id)` — goes with `focusSeq`.
+   `getFrontWindowId(state)`, `WindowStateOwner.getFrontWindowId()`,
+   `WindowStateOwner.waitForMode(id, mode)` — the owner surface beneath them retires.
+
+3. **`window-state-singleton.ts` — the shim layer every consumer imports.**
+   `getFrontWindowId()` → `topmost(state, isContentWindow)`, never `keyWindow`.
+   `getFrontPageHostId()` — today `getFrontWindowId()` filtered on `rec.kind === 'page-host'` →
+   `topmostBaseLayerPageHost(state)`. `subscribeFrontChange(cb)` — today diffs
+   `getFrontPageHostId()` on each `owner.subscribe` tick → the same diff over
+   `topmostBaseLayerPageHost(state)` on the kernel executor's `subscribe`. `getDevtoolsTargetId()` —
+   repoint to the new filtered live-URL scan. `waitForMode(id, mode)` — repoint to the kernel waiter
+   (the accessor gap above), or delete and have the three callers import it directly; either way the
+   return type becomes `FsSettleOutcome`. `getFocusOrder(id)` — **delete**; zero callers tree-wide,
+   only its own definition and a doc comment in `ipc.ts`. `getWindowStateSnapshot()`,
+   `getMachineWindowRecord()`, `listMachineWindowRecords()` — the `StateSnapshot`-typed surface they
+   return changes shape; expect compile fallout.
+
+4. **`ipc.ts`.** `openNewPageWindow()` — today `getFrontWindowId()` → `getNativeWindowFor(front)` →
+   `getContextEntry('mode', frontId)` → `options.spaceMode`. Becomes
+   `openNewPageWindow(sourceWindowId?: number)`: use `sourceWindowId` when it carries a mode row,
+   fall back to `topmost(state, isContentWindow)` when it is the overlay or has no row. Mapping this
+   to `keyWindow` is the silent space-mode drop. `wireHybridContentEvents(contentWC, hostWindowId,
+   ...)` — the `else if (handleLocalShortcut(input, hostWindowId))` branch: no change beyond the
+   widened callback type, but it is one of the two dispatch sites now feeding `sourceWindowId`. The
+   import block drops `getFrontWindowId`; the doc comment naming `getFrontWindowId()` /
+   `getDevtoolsTargetId()` / `getFocusOrder()` is stale. The diagnostic in the `tile:network:fetch`
+   region logging `'frontPageHost:', getFrontPageHostId()` follows the singleton repoint.
+
+5. **`main.ts`.** `configure()`'s `app.on('browser-window-created')` →
+   `webContents.on('before-input-event')` handler: `handleLocalShortcut(input, windowId)`, dispatch
+   site 1 for `sourceWindowId`. The Cmd+L overlay special case directly above
+   (`focusedUrl.includes('page/overlay.html')` early return) is why Cmd+N leaks to the overlay;
+   leave it, but it is what the fallback exists for.
+
+6. **`entry.ts`.** `onReady`'s `registerLocalShortcut('CommandOrControl+N', 'system', () => {
+   openNewPageWindow(); })` — thread the callback argument into `openNewPageWindow(sourceWindowId)`.
+   `__peek_test.getFrontWindowId` — `() => getFrontWindowId()` becomes `topmost(state,
+   isContentWindow)`; `keyWindow` is null exactly where `session-restore-hybrid-focus.spec.ts` and
+   `session-restore-page-host.spec.ts` assert. The second `frontId = getFrontWindowId()` read later
+   in the file — same swap.
+
+7. **`hybrid-overlay.ts` — where the real split happens.** Read-back position →
+   `hostForOverlay(state, overlayId)`, five sites: `ensureOverlay()`'s `did-finish-load` handler
+   (`const currentId = frontPageHostOsId(); if (currentId != null) sendActiveHandoff(currentId)`);
+   `wireShowNavbarFocus()` (`if (msg.windowId !== frontPageHostOsId()) return`); `wireExecuteScript()`
+   (`const activeId = frontPageHostOsId(); ... getHybridContentWC(activeId)`);
+   `initHybridOverlay()`'s `registerLoadErrorListener((windowId, error) => ...)` callback (`if
+   (windowId !== frontPageHostOsId()) return`); and the test bridge's `activeId()` and
+   `runDeferredBlur(_id)`, both returning `frontPageHostOsId()`. Driver position →
+   `topmostBaseLayerPageHost(state)`: `initHybridOverlay()`'s `unsubscribeActive =
+   subscribeFrontChange((front) => { ... retarget(win ? win.id : null) })`, and its seed read,
+   `const currentId = frontPageHostOsId(); ... retarget(currentId)`. Then: `frontPageHostOsId()`
+   (module-private) — delete once both positions are split; it is the single name serving both
+   queries, the hazard this design records. `installTestBridge()`'s `setActive(id)` — its `for (let
+   i = 0; i < 100; i++)` hide loop over `getFrontPageHostId()` is written against
+   `enforceFrontInvariant`'s successor repair; the contract must be **rewritten** against
+   `hostForOverlay`, not re-pointed. `installTestBridge()`'s `driveHostFullscreen(id, desired)` —
+   `waitForMode(machineId, desired ? 'fullscreen' : 'normal')` becomes the kernel waiter (the
+   accessor gap above applies here); return type changes from `Promise<void>` to
+   `Promise<FsSettleOutcome>`.
+
+8. **`session-projection.ts`.** `serializeSession(input)` — three reads: `zOrder: rec?.focusSeq ??
+   0`, `stackIndex: stackIndexById.get(w.machineId)` (map built from `input.snapshot.stackOrder`),
+   and `focused: w.machineId === input.snapshot.front`. Both `zOrder` and `stackIndex` come from
+   position in kernel `order`; `focused` becomes `topmost(state, isContentWindow)` — not
+   `keyWindow`, because sessions save exactly when `OsFocusLost` has nulled key.
+   `serializeSpaceWorkspaces(input)` — the same three swaps over the same map.
+   `SerializeSessionInput` / `SerializeSpaceWorkspacesInput` — the `snapshot` field type changes
+   from `StateSnapshot` to the kernel `State`. The module docblock's three mapping lines (`zOrder →
+   WindowRecord.focusSeq`, `stackIndex → StateSnapshot.stackOrder`, `focused →
+   StateSnapshot.front`) — rewrite. `readStackIndex` / `orderRestoredWindowsBottomToTop` —
+   unchanged; they read the on-disk field, which survives.
+
+9. **`session.ts`.** `restoreSessionSnapshot(...)` — the `dispatchWindowEvent({ type:
+   'STACK_ORDER_IMPORTED', order: savedOrderBottomToTop })` plus its adjacent
+   `shadowKernelImportStackOrder(...)` collapse into a single kernel `StackOrderImported` dispatch.
+   `saveSessionSnapshot(reason, opts)` and `saveSpaceWorkspaces()` feed the two projections; update
+   the snapshot they pass.
+
+10. **`windows.ts`.** `closeOrHideWindow(id)`'s hybrid branch — `await waitForMode(machineId,
+    'normal')` becomes the kernel waiter (the accessor gap above applies here). Its `'vanished'`
+    outcome is the hang this port was written to fix. `resolveFocusedWindowIdForClose()` —
+    `getFrontWindowId()` → `topmost(state, isContentWindow)`.
+
+11. **`tile-ipc.ts`.** The `tile:window:hide` handler — `await waitForMode(machineId, 'normal')` →
+    kernel waiter (the accessor gap above applies here). The `tile:window:devtools` handler —
+    `getDevtoolsTargetId() ?? getFrontWindowId()` → the new filtered live-URL scan with
+    `topmost(state, isContentWindow)` as the fallback; this is `getDevtoolsTargetId`'s only
+    production caller. Same-file readers that stop compiling once the shim moves, all →
+    `topmost(state, isContentWindow)`: the `tile:window:focus` handler, the `tile:dialogs:open`
+    handler, the `tile:window:fullscreen` handler (`let machineId: ReturnType<typeof
+    getFrontWindowId>`), the `tile:window:get-focused-visible-id` handler, the
+    `tile:theme:setWindowColorScheme` handler (whose front read is tier 2 of a three-tier chain,
+    not a one-line swap), and the `tile:darkMode:set` region. The import block drops
+    `getFrontWindowId`, `getDevtoolsTargetId`, `waitForMode`.
+
+12. **Tests the same commit must move.** `session-projection.test.ts` — the two pinned-divergence
+    tests `zOrder is TRUE STACK POSITION (StateSnapshot.stackOrder index), not
+    WindowRecord.focusSeq` (in the `serializeSpaceWorkspaces` describe) and `SAVE → RESTORE round
+    trip: a background open comes back BELOW the last-focused window` (its world sets `stackOrder:
+    ['w2','w1']` against `focusSeq: 9/0`) — rewrite them to pin the kernel fact rather than
+    re-pointing at new fields; also `makeRecord`'s `focusSeq` option and the `zOrder:
+    records.get(...)?.focusSeq` line in the expected-shape builder. `window-state.test.ts` — the
+    describes `selectors: getDevtoolsTargetId / getWindowPreBounds` and `WindowStateOwner (dispatch
+    / subscribe / waitForMode)`. `shortcuts.test.ts` — the `handleLocalShortcut` call sites, if the
+    widened callback changes any assertion.
 
 #### `hostOf(overlay)` and `topmost(state, isContentWindow)` are orthogonal, not aliases
 
