@@ -40,8 +40,30 @@ import {
   type Event,
   type Rejection,
   type State,
+  type WindowId,
   type WindowRecord,
 } from './window-kernel.js';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fullscreen settle waiter (peek 7fffa286)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Default bound for `WindowKernelExecutor.waitForSettledFsMode` — mirrors
+ * `electron-window-backend.ts FULLSCREEN_SETTLE_TIMEOUT_MS` (1500ms, the
+ * single place that value lives). Duplicated here as a literal rather than
+ * imported: `electron-window-backend.ts` is "THE ONLY WINDOW-MANAGER MODULE
+ * THAT IMPORTS ELECTRON" (its own header), so a value import from it would
+ * pull that transitively into an executor whose own header promises it holds
+ * no native handles and imports no `electron` module.
+ */
+const DEFAULT_FULLSCREEN_SETTLE_TIMEOUT_MS = 1500;
+
+/**
+ * What `waitForSettledFsMode` resolves to — lets a caller tell a real settle
+ * apart from a bounded give-up or a record that stopped existing mid-await.
+ */
+export type FsSettleOutcome = 'settled' | 'timed-out' | 'vanished';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // layer -> StackingLevel (§0.1.6)
@@ -237,6 +259,76 @@ export class WindowKernelExecutor {
         DEBUG && console.log('[window-kernel] subscriber threw:', err);
       }
     }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Fullscreen settle waiter — ported from `window-state.ts
+  // WindowStateOwner.waitForMode` (peek 7fffa286), a derived waiter built on
+  // `subscribe` rather than a bespoke listener set.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private findRecord(id: WindowId): WindowRecord | undefined {
+    return this.state.order.find((w) => w.id === id);
+  }
+
+  /**
+   * Resolve when window `id` reaches settled fullscreen mode `mode`
+   * (`'normal'` or `'fullscreen'`, never the in-flight `'entering'` /
+   * `'leaving'`). Reads `WindowRecord.fsMode` off `State.order` — the
+   * kernel's one source of truth for a window's fullscreen mode (§0.1.8) —
+   * never a second representation of "is this window fullscreen". Exists to
+   * sequence around the macOS fullscreen animation: hiding or destroying a
+   * fullscreen host mid-AppKit-exit-animation strands a black macOS Space, so
+   * a caller awaits the settle first.
+   *
+   * Two departures from the ported implementation:
+   *   - resolves `'vanished'` (and unsubscribes) the moment `id` names no
+   *     record — at call time, or mid-await if the window closes. The old
+   *     owner's `getWindowMode` returns `null` for an unknown id forever, so
+   *     a window closing mid-await hung the caller (`closeOrHideWindow`'s
+   *     hybrid branch) and leaked the subscriber; a vanished record has
+   *     nothing left to wait for.
+   *   - bounded by `timeoutMs` (default `DEFAULT_FULLSCREEN_SETTLE_TIMEOUT_MS`,
+   *     mirroring `electron-window-backend.ts FULLSCREEN_SETTLE_TIMEOUT_MS`):
+   *     a wrong-way reconcile that never reports a settle can no longer
+   *     strand a caller forever. The `FsSettleOutcome` return makes the
+   *     give-up observable and distinguishable from a real settle.
+   *
+   * Every exit path — the immediate return, the subscribe callback, and the
+   * timeout — unsubscribes before resolving.
+   */
+  waitForSettledFsMode(
+    id: WindowId,
+    mode: 'normal' | 'fullscreen',
+    timeoutMs: number = DEFAULT_FULLSCREEN_SETTLE_TIMEOUT_MS,
+  ): Promise<FsSettleOutcome> {
+    const initial = this.findRecord(id);
+    if (initial === undefined) return Promise.resolve('vanished');
+    if (initial.fsMode.name === mode) return Promise.resolve('settled');
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let unsub: () => void;
+      let timer: ReturnType<typeof setTimeout>;
+
+      const finish = (outcome: FsSettleOutcome) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        unsub();
+        resolve(outcome);
+      };
+
+      unsub = this.subscribe(() => {
+        const record = this.findRecord(id);
+        if (record === undefined) {
+          finish('vanished');
+          return;
+        }
+        if (record.fsMode.name === mode) finish('settled');
+      });
+      timer = setTimeout(() => finish('timed-out'), timeoutMs);
+    });
   }
 
   // ───────────────────────────────────────────────────────────────────────────

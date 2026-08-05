@@ -16,6 +16,7 @@ import {
   WindowKernelExecutor,
   planRaise,
   stackingLevelForLayer,
+  type FsSettleOutcome,
 } from './window-kernel-executor.js';
 import {
   initialState,
@@ -986,5 +987,123 @@ describe('state ownership and entry points', () => {
     // own notify — one pump at a time, in dispatch order.
     assert.deepStrictEqual(seen, ['applied v1', 'echo-queued', 'applied v2', 'applied v3']);
     assert.strictEqual(exec.getState().order[0].orderable, true);
+  });
+});
+
+// ── waitForSettledFsMode (peek 7fffa286) ─────────────────────────────────────
+
+describe('waitForSettledFsMode', () => {
+  /**
+   * Wraps `exec.subscribe` on the instance to count subscribe / unsubscribe
+   * calls made through the PUBLIC surface — the only way to prove "the
+   * subscriber is removed" without reaching into the executor's private
+   * `listeners` set.
+   */
+  function trackSubscriptions(exec: WindowKernelExecutor): { subscribed: () => number; unsubscribed: () => number } {
+    const original = exec.subscribe.bind(exec);
+    let subscribed = 0;
+    let unsubscribed = 0;
+    exec.subscribe = ((listener: (s: State) => void) => {
+      subscribed++;
+      const off = original(listener);
+      let called = false;
+      return () => {
+        if (!called) {
+          called = true;
+          unsubscribed++;
+        }
+        off();
+      };
+    }) as WindowKernelExecutor['subscribe'];
+    return { subscribed: () => subscribed, unsubscribed: () => unsubscribed };
+  }
+
+  /** A registered, shown window — a real registration scene, fsMode 'normal'. */
+  function shownWindow(): { exec: WindowKernelExecutor } {
+    const { exec } = makeExecutor();
+    exec.dispatch(register(wid(1)));
+    exec.dispatch({ type: 'WindowShown', id: wid(1) });
+    return { exec };
+  }
+
+  it('resolves "settled" immediately when the window is already in the target mode', async () => {
+    const { exec } = shownWindow();
+    assert.strictEqual(exec.getState().order[0].fsMode.name, 'normal');
+    const outcome: FsSettleOutcome = await exec.waitForSettledFsMode(wid(1), 'normal');
+    assert.strictEqual(outcome, 'settled');
+  });
+
+  it('resolves "settled" once an in-flight transition reaches the awaited mode, not before', async () => {
+    const { exec } = shownWindow();
+    const track = trackSubscriptions(exec);
+    exec.execute({ type: 'SetFullscreen', id: wid(1), desired: true, expectedVersion: exec.getState().version });
+    assert.strictEqual(exec.getState().order[0].fsMode.name, 'entering', 'the transition is in flight, not settled');
+
+    let resolved: FsSettleOutcome | undefined;
+    void exec.waitForSettledFsMode(wid(1), 'fullscreen').then((o) => (resolved = o));
+
+    // Give any (wrongly) already-resolved promise a turn to settle before
+    // asserting it did not — proves the in-flight mode does not match.
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(resolved, undefined, 'must not resolve while entering/leaving');
+
+    exec.dispatch({ type: 'OsFullscreenEntered', id: wid(1) });
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(resolved, 'settled');
+    assert.strictEqual(track.subscribed(), 1);
+    assert.strictEqual(track.unsubscribed(), 1, 'the subscriber is removed once the wait settles');
+  });
+
+  it('resolves "vanished" when the record disappears mid-await, rather than hanging (defect 1)', async () => {
+    const { exec } = shownWindow();
+    const track = trackSubscriptions(exec);
+    const promise = exec.waitForSettledFsMode(wid(1), 'fullscreen');
+    exec.dispatch({ type: 'WindowClosed', id: wid(1) });
+
+    // Raced against a sentinel so an un-fixed hang fails the assertion below
+    // instead of hanging the test run.
+    const outcome = await Promise.race([
+      promise,
+      new Promise<'TEST-HUNG'>((resolve) => setTimeout(() => resolve('TEST-HUNG'), 200)),
+    ]);
+    assert.strictEqual(outcome, 'vanished');
+    assert.strictEqual(track.subscribed(), 1);
+    assert.strictEqual(track.unsubscribed(), 1, 'the subscriber is removed once the record vanishes');
+  });
+
+  it('resolves "vanished" immediately when `id` never named a record at all', async () => {
+    const { exec } = shownWindow();
+    const track = trackSubscriptions(exec);
+    // Raced against a sentinel so an un-fixed hang fails the assertion below
+    // instead of hanging the test run.
+    const outcome = await Promise.race([
+      exec.waitForSettledFsMode(wid(99), 'fullscreen'),
+      new Promise<'TEST-HUNG'>((resolve) => setTimeout(() => resolve('TEST-HUNG'), 200)),
+    ]);
+    assert.strictEqual(outcome, 'vanished');
+    assert.strictEqual(track.subscribed(), 0, 'an immediate resolve never subscribes at all');
+  });
+
+  it('gives up after timeoutMs, an outcome distinguishable from a real settle (defect 2)', async () => {
+    const { exec } = shownWindow();
+    const track = trackSubscriptions(exec);
+    const promise = exec.waitForSettledFsMode(wid(1), 'fullscreen', 20);
+
+    const outcome = await Promise.race([
+      promise,
+      new Promise<'TEST-HUNG'>((resolve) => setTimeout(() => resolve('TEST-HUNG'), 500)),
+    ]);
+    assert.strictEqual(outcome, 'timed-out');
+    assert.notStrictEqual(outcome, 'settled', 'a give-up must read differently from a real settle');
+    assert.strictEqual(track.subscribed(), 1);
+    assert.strictEqual(track.unsubscribed(), 1, 'the subscriber is removed once the wait times out');
+  });
+
+  it('a settle within the bound resolves "settled", never "timed-out"', async () => {
+    const { exec } = shownWindow();
+    exec.execute({ type: 'SetFullscreen', id: wid(1), desired: true, expectedVersion: exec.getState().version });
+    const promise = exec.waitForSettledFsMode(wid(1), 'fullscreen', 20);
+    exec.dispatch({ type: 'OsFullscreenEntered', id: wid(1) });
+    assert.strictEqual(await promise, 'settled');
   });
 });
