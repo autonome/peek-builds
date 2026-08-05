@@ -32,6 +32,7 @@ import {
   BASE_LAYER,
   decide,
   evolve,
+  FULLSCREEN_SETTLE_TIMEOUT_MS as DEFAULT_FULLSCREEN_SETTLE_TIMEOUT_MS,
   initialState,
   isStaleSelfEcho,
   react,
@@ -47,17 +48,6 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 // Fullscreen settle waiter (peek 7fffa286)
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Default bound for `WindowKernelExecutor.waitForSettledFsMode` — mirrors
- * `electron-window-backend.ts FULLSCREEN_SETTLE_TIMEOUT_MS` (1500ms, the
- * single place that value lives). Duplicated here as a literal rather than
- * imported: `electron-window-backend.ts` is "THE ONLY WINDOW-MANAGER MODULE
- * THAT IMPORTS ELECTRON" (its own header), so a value import from it would
- * pull that transitively into an executor whose own header promises it holds
- * no native handles and imports no `electron` module.
- */
-const DEFAULT_FULLSCREEN_SETTLE_TIMEOUT_MS = 1500;
 
 /**
  * What `waitForSettledFsMode` resolves to — lets a caller tell a real settle
@@ -289,7 +279,8 @@ export class WindowKernelExecutor {
    *     hybrid branch) and leaked the subscriber; a vanished record has
    *     nothing left to wait for.
    *   - bounded by `timeoutMs` (default `DEFAULT_FULLSCREEN_SETTLE_TIMEOUT_MS`,
-   *     mirroring `electron-window-backend.ts FULLSCREEN_SETTLE_TIMEOUT_MS`):
+   *     aliased from `window-kernel.ts FULLSCREEN_SETTLE_TIMEOUT_MS` — the
+   *     same bound `electron-window-backend.ts` uses for its settle timer):
    *     a wrong-way reconcile that never reports a settle can no longer
    *     strand a caller forever. The `FsSettleOutcome` return makes the
    *     give-up observable and distinguishable from a real settle.

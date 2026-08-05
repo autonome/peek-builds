@@ -88,6 +88,7 @@ import {
   type TeardownGuest,
 } from './guest-teardown.js';
 import { expandToOverlayFrame } from './overlay-frame.js';
+import { FULLSCREEN_SETTLE_TIMEOUT_MS } from './window-kernel.js';
 import {
   shadowKernelOsFocusGained,
   shadowKernelOsFocusSettled,
@@ -118,7 +119,9 @@ function requestGuestDestroy(guest: TeardownGuest): void {
 // a destroyed / no-op window (which never emits the settled event) can't strand
 // the machine in `entering`/`leaving` forever — the timer emits
 // FULLSCREEN_SETTLE_TIMEOUT, whose reducer clause emits RECONCILE_FULLSCREEN.
-const FULLSCREEN_SETTLE_TIMEOUT_MS = 1500;
+// The bound itself lives in `window-kernel.ts FULLSCREEN_SETTLE_TIMEOUT_MS`
+// (electron-free, shared with the kernel executor) since this file cannot be
+// imported for its values without pulling `electron` into the executor.
 
 /**
  * How long after a `did-resign-active` we declare the app switch REAL

@@ -74,6 +74,19 @@ export type FsMode =
   | { name: 'leaving'; preBounds: Rectangle | null; pendingDesire?: boolean };
 
 /**
+ * Bounded wait for the native macOS fullscreen enter/leave animation to
+ * settle (AppKit's own animation runs ~600ms; this leaves margin). Used by
+ * both the boundary timer that emits `FULLSCREEN_SETTLE_TIMEOUT`
+ * (`electron-window-backend.ts`) and the kernel executor's
+ * `waitForSettledFsMode` default (`window-kernel-executor.ts`) — one value so
+ * the two settle bounds cannot drift apart. Lives here rather than in
+ * `electron-window-backend.ts` because that module is the only window-manager
+ * module that imports `electron`, and a value import from it would pull
+ * `electron` transitively into the executor.
+ */
+export const FULLSCREEN_SETTLE_TIMEOUT_MS = 1500;
+
+/**
  * Index 0 of §0.1.6's fixed ordered layer array — where every ordinary window
  * sits. A record at a HIGHER index floats above the whole regular stack; that
  * is what Electron's `alwaysOnTop` buys, expressed as a band rather than a
