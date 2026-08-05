@@ -782,7 +782,8 @@ last-focused window`, which asserted the two orders are reverses for the same pa
 background open is saved BELOW the last-focused window` and `SAVE → RESTORE round trip: a
 background open comes back BELOW the last-focused window`, pinning the kernel's fact (a background
 open registers below the key window) instead of the producer this design deletes. And
-`renderer/lib/session.js sortWindowsByZOrder`, which had no callers anywhere in the tree, is gone.
+the z-order sort helper that once lived in `renderer/lib/session.js`, which had no callers anywhere
+in the tree, is gone.
 
 Two carry-overs, neither blocking: `orderRestoredWindowsBottomToTop`'s legacy branch for snapshots
 that predate `stackIndex` stays until those profiles age out (`tests/helpers/restore-proof/
@@ -1728,7 +1729,7 @@ than states, the guards *are* the real state space and the model is too flat.
 ### 0.1.9 The test debt, classified
 
 Every test mentioning `front` was read and sorted by what it actually claims. **118 distinct
-tests** (108 in `window-state.test.ts`, 9 in `session-projection.test.ts`) — larger than the ~69
+tests** (109 in `window-state.test.ts`, 9 in `session-projection.test.ts`) — larger than the ~69
 previously estimated:
 
 | Bucket | Count | Disposition |
