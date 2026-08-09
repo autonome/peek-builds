@@ -72,7 +72,7 @@ let adapter: WindowOsAdapter | null = null;
 let sessionSeeded = false;
 
 /** The single OS-boundary adapter. Constructed on first use. */
-export function getWindowOsAdapter(): WindowOsAdapter {
+function getWindowOsAdapter(): WindowOsAdapter {
   if (!adapter) adapter = new WindowOsAdapter();
   return adapter;
 }
@@ -280,19 +280,9 @@ export function getWindowModeName(id: WindowId): FsMode['name'] | null {
   return getWindowOsAdapter().getOwner().getWindowMode(id);
 }
 
-/** The pre-fullscreen bounds stash for `id` (replaces `preFullScreenBounds`). */
-export function getWindowPreBounds(id: WindowId): Rectangle | null {
-  return getWindowOsAdapter().getOwner().getWindowPreBounds(id);
-}
-
 /** The devtools fallback target: MRU http(s) window (replaces `getLastContentWindowId`). */
 export function getDevtoolsTargetId(): WindowId | null {
   return getWindowOsAdapter().getOwner().getDevtoolsTargetId();
-}
-
-/** A window's MRU focus rank (replaces `focus-order.ts` `getFocusOrder`). 0 if unknown. */
-export function getFocusOrder(id: WindowId): number {
-  return getWindowOsAdapter().getOwner().getWindowFocusSeq(id);
 }
 
 /**

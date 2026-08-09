@@ -235,7 +235,7 @@ import {
 // Focused-window tracking (S1 `lastFocusedVisibleWindowId` / S4 `lastContentWindowId`
 // / `focus-order.ts`) is GONE — the window-state machine's `front` + per-record
 // `focusSeq`/`lastHttpUrl` are the single authority now. Consumers read
-// `getFrontWindowId()` / `getDevtoolsTargetId()` / `getFocusOrder()` from
+// `getFrontWindowId()` / `getDevtoolsTargetId()` from
 // `window-state-singleton.ts`; every window's focus is fed to the machine by the
 // OS adapter's native `focus` listeners (attached at `registerWindowWithMachine`),
 // so there are no `track*` feeds to maintain here.
