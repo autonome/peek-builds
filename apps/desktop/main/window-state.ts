@@ -19,6 +19,12 @@
  * `electron --test` with no display and no window plumbing.
  */
 
+// Type-only: `WindowClass` / `StackingLevel` moved to `izui-roles.ts` (the
+// role-derived registration facts owner). A type-only import cannot create a
+// runtime cycle, so this stays consistent with the zero-value-imports rule
+// above.
+import type { WindowClass, StackingLevel } from './izui-roles.js';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // State shape — illegal states unrepresentable (§2.2)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,60 +56,6 @@ export interface Rectangle {
 }
 
 export type WindowKind = 'page-host' /* BaseWindow + WebContentsView */ | 'browser';
-
-/**
- * Special window classes (design §4.3 dim 8b) — a CLOSED enum. Every window
- * carries exactly one class, declared at registration; the class replaces the
- * 8+ per-module window singletons (`main.ts mainWindow`, `core-glue.ts
- * coreBackgroundWindow`, `test-fixture-glue.ts testFixtureWindow`,
- * `chrome-extensions.ts` bridge/UI maps as class-tagged records, …) and the
- * HUD-sniffing predicate (`isAlwaysOnTop() && !isFocusable()` + the
- * `__hudHidden` expando — both deleted in §5 step 4).
- *
- *   - `primary`      ordinary user-facing content window (page hosts, tiles)
- *   - `quick-view`   peeks/slides — front-eligible transients
- *   - `overlay`      chrome overlay / switcher overlay surfaces
- *   - `palette`      command palette / modal picker surfaces
- *   - `hud`          always-on-top non-focusable heads-up display
- *   - `background`   the hidden core background renderer
- *   - `bridge`       hidden chrome-extension bridge windows
- *   - `offscreen`    hidden chrome.offscreen polyfill document windows
- *   - `extension-ui` chrome-extension popup/options UI windows
- *   - `test-fixture` the Playwright test-fixture renderer
- *   - `devtools`     a detached devtools window
- */
-export type WindowClass =
-  | 'primary'
-  | 'quick-view'
-  | 'overlay'
-  | 'palette'
-  | 'hud'
-  | 'background'
-  | 'bridge'
-  | 'offscreen'
-  | 'extension-ui'
-  | 'test-fixture'
-  | 'devtools';
-
-/**
- * A window's stacking level (§4.3 dim 3, §5 step 5) — how it participates in
- * z-order. Derived ONCE per registration by `deriveStackingLevel` (the single
- * owner of the rule), stored on the record:
- *
- *   - `stacked`  participates in the ordered stack (`AppWindowState.stackOrder`):
- *                primary, quick-view, extension-ui — the windows the user
- *                actually layers.
- *   - `pinned`   floats ABOVE the whole regular stack (hud / overlay / palette).
- *                Their above-ness is realized by the existing `SET_ALWAYS_ON_TOP`
- *                pin (macOS window level 'floating'), NOT by list position —
- *                the ordered stack never contains them, and `SET_STACKING`
- *                (a same-level relative raise) could not express them anyway.
- *   - `excluded` never on the user-visible stack in an orderable sense:
- *                background / bridge / offscreen / test-fixture / devtools plus any other
- *                satellite (modal dialogs, focusable:false surfaces) — their
- *                z-relationship is OS/parent-managed, not machine-ordered.
- */
-export type StackingLevel = 'stacked' | 'pinned' | 'excluded';
 
 /** The window's ESC override. 'ignore' passes ESC straight through to the page. */
 export type EscapeMode = 'auto' | 'close' | 'navigate' | 'ignore';
@@ -1217,71 +1169,10 @@ export function escUnhandledPolicy(sessionState: string, role: string): 'open-sw
 // Front arbitration helpers (§2.4)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * isSatelliteRegistration — the SINGLE owner of the front-ineligibility rule
- * applied when a window is registered. A "satellite" can never become `front`
- * (see WindowRecord.satellite / isEligibleFront). Every registration site
- * (ipc.ts window-open, main.ts tile-launcher hook) computes `satellite` through
- * THIS predicate so the two can't drift.
- *
- * A window is a satellite when it is structurally front-ineligible:
- *   - role 'overlay' / 'palette' — chrome/focus-group surfaces, never a target;
- *   - a close-on-blur modal dialog (judgment call 1);
- *   - `focusable === false` — one that can never be the OS key window, so it
- *     must never be `front`. Otherwise the derived Esc grab is suppressed
- *     (front != null) while the window can't receive `before-input-event`
- *     either → dead ESC (cf ebb10894 / 7c61e917).
- *
- * `focusable` is the RESOLVED focusability (or undefined = Electron's default
- * true); callers normalize before passing.
- *
- * Extended with the window CLASS (§5 step 4, rather than duplicating the rule
- * elsewhere): the infrastructure classes — hud, background, bridge, offscreen,
- * test-fixture, devtools — are structurally front-ineligible regardless of
- * role/focusable. `extension-ui` is deliberately NOT here: an extension popup
- * is a real user-facing window the user works in, so it stays front-eligible.
- */
-const SATELLITE_CLASSES: ReadonlySet<WindowClass> = new Set<WindowClass>([
-  'hud',
-  'background',
-  'bridge',
-  'offscreen',
-  'test-fixture',
-  'devtools',
-]);
-
-export function isSatelliteRegistration(
-  role: string,
-  opts: { modal?: boolean; focusable?: boolean; windowClass?: WindowClass } = {},
-): boolean {
-  if (opts.windowClass !== undefined && SATELLITE_CLASSES.has(opts.windowClass)) return true;
-  if (role === 'overlay' || role === 'palette' || role === 'switcher') return true;
-  if (opts.modal === true) return true;
-  if (opts.focusable === false) return true;
-  return false;
-}
-
-/**
- * classifyWindowRegistration — the SINGLE owner of the "which class is an
- * ordinary window-open?" rule (§4.3 dim 8b). The special infrastructure
- * classes (background / bridge / offscreen / extension-ui / test-fixture / devtools) are
- * never inferred — their glue modules declare them explicitly at registration.
- *
- * The `hud` arm is the DECLARED replacement for the deleted sniffing
- * predicate `isAlwaysOnTop() && !isFocusable()` (main.ts app-blur sweep):
- * the same pair of properties, but judged ONCE from the open params at
- * registration and stored as a class, instead of live-queried per sweep.
- */
-export function classifyWindowRegistration(
-  role: string,
-  opts: { alwaysOnTop?: boolean; focusable?: boolean } = {},
-): WindowClass {
-  if (role === 'overlay' || role === 'switcher') return 'overlay';
-  if (role === 'palette') return 'palette';
-  if (role === 'quick-view') return 'quick-view';
-  if (opts.alwaysOnTop === true && opts.focusable === false) return 'hud';
-  return 'primary';
-}
+// `isSatelliteRegistration` and `classifyWindowRegistration` moved to
+// `izui-roles.ts` (role-derived registration facts). Imported there as
+// type-only `WindowClass`/`StackingLevel` above; this file no longer defines
+// either function.
 
 /**
  * The classes whose windows pin ABOVE the whole regular stack (`StackingLevel

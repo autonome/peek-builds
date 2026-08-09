@@ -36,7 +36,7 @@ import {
   listMachineWindowRecords,
   getWindowStateSnapshot,
 } from './window-state-singleton.js';
-import type { WindowClass } from './window-state.js';
+import type { WindowClass } from './izui-roles.js';
 import { shadowKernelCloseWindowDirect } from './window-kernel-shadow.js';
 import {
   initRendererHandledEscapeTracking,

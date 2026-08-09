@@ -69,16 +69,14 @@ import {
 } from './windows.js';
 import { getGuestsForWindow, getAllGuestWebContentsIds } from './webview-guest-registry.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import { shouldCloseContentWCOnFinalize } from './izui-roles.js';
+import { shouldCloseContentWCOnFinalize, type WindowClass, type StackingLevel } from './izui-roles.js';
 import {
   decideWindowRegistration,
   type WindowRegistrationDecision,
   type FocusCause,
-  type WindowClass,
   type WindowId,
   type WindowKind,
   type Rectangle,
-  type StackingLevel,
   type StateSnapshot,
 } from './window-state.js';
 import type { BackendEventSink, WindowBackend, WindowSpec } from './window-backend.js';

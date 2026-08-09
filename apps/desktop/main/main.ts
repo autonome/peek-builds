@@ -47,8 +47,7 @@ import {
   listMachineWindowRecords,
   getWindowStateSnapshot,
 } from './window-state-singleton.js';
-import { isSatelliteRegistration, classifyWindowRegistration } from './window-state.js';
-import { deriveWindowSurface } from './izui-roles.js';
+import { isSatelliteRegistration, classifyWindowRegistration, deriveWindowSurface } from './izui-roles.js';
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
 import { saveSessionSnapshot } from './session.js';

@@ -27,7 +27,7 @@
 
 import { DEBUG, isHeadless } from './config.js';
 import type { WindowBackend } from './window-backend.js';
-import type { StackingLevel } from './window-state.js';
+import type { StackingLevel } from './izui-roles.js';
 import {
   BASE_LAYER,
   decide,

@@ -26,8 +26,7 @@ import { generateToken } from './tile-tokens.js';
 import { registerTrustedBuiltinWindow } from './tile-launcher.js';
 import { ensureTileIpcHandlers } from './tile-compat.js';
 import { registerWindowWithMachine, getNativeWindowByClass } from './window-state-singleton.js';
-import { isSatelliteRegistration } from './window-state.js';
-import { deriveWindowSurface } from './izui-roles.js';
+import { deriveWindowSurface, isSatelliteRegistration } from './izui-roles.js';
 
 const requireElectron = createRequire(import.meta.url);
 

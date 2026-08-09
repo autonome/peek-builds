@@ -28,6 +28,7 @@ import {
   deriveCanBecomeKey,
   deriveAcceptsInput,
   FLOATING_LAYER,
+  classifyWindowRegistration,
 } from './izui-roles.js';
 import { BASE_LAYER } from './window-kernel.js';
 
@@ -699,5 +700,32 @@ describe('deriveWindowSurface — the clause each real window forces', () => {
 
   it('transparent + unfocusable does not imply click-through — the HUD takes input', () => {
     assert.strictEqual(deriveWindowSurface({ focusable: false, alwaysOnTop: true }).acceptsInput, true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §5 step 4 — special window classes + registry unification
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('classifyWindowRegistration — single owner of the ordinary-window class rule', () => {
+  it('maps the role vocabulary onto classes', () => {
+    assert.strictEqual(classifyWindowRegistration('overlay'), 'overlay');
+    assert.strictEqual(classifyWindowRegistration('palette'), 'palette');
+    assert.strictEqual(classifyWindowRegistration('quick-view'), 'quick-view');
+    assert.strictEqual(classifyWindowRegistration('content'), 'primary');
+    assert.strictEqual(classifyWindowRegistration('workspace'), 'primary');
+    assert.strictEqual(classifyWindowRegistration('child-content'), 'primary');
+  });
+
+  it('alwaysOnTop + focusable:false is hud (the declared form of the deleted sniffing predicate)', () => {
+    assert.strictEqual(classifyWindowRegistration('utility', { alwaysOnTop: true, focusable: false }), 'hud');
+    // Either property alone is NOT a HUD — matches the old predicate's conjunction.
+    assert.strictEqual(classifyWindowRegistration('utility', { alwaysOnTop: true, focusable: true }), 'primary');
+    assert.strictEqual(classifyWindowRegistration('utility', { alwaysOnTop: true }), 'primary', 'focusable undefined = Electron default true');
+    assert.strictEqual(classifyWindowRegistration('utility', { focusable: false }), 'primary');
+  });
+
+  it('role classes win over the hud pair (a non-focusable alwaysOnTop palette is still a palette)', () => {
+    assert.strictEqual(classifyWindowRegistration('palette', { alwaysOnTop: true, focusable: false }), 'palette');
   });
 });

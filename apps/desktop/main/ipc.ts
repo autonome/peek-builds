@@ -97,7 +97,6 @@ import {
   getWindowStateSnapshot,
   type MachineWindowSpec,
 } from './window-state-singleton.js';
-import { isSatelliteRegistration, classifyWindowRegistration } from './window-state.js';
 import { shadowKernelDestroyWindow, shadowKernelCloseContent, shadowKernelCloseWindowDirect, shadowKernelRaiseWindow, shadowKernelWindowShown } from './window-kernel-shadow.js';
 import {
   TRANSIENT_ROLES,
@@ -106,6 +105,8 @@ import {
   shouldCloseContentWCOnFinalize,
   windowSelfClosesOnBlur,
   deriveWindowSurface,
+  isSatelliteRegistration,
+  classifyWindowRegistration,
 } from './izui-roles.js';
 
 

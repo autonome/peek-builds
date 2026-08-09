@@ -43,7 +43,8 @@ import { DEBUG } from './config.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
 import { isContentWindow, topmost, type Command, type Event, type WindowId, type WindowKind } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
-import type { StackingLevel, StateSnapshot } from './window-state.js';
+import type { StateSnapshot } from './window-state.js';
+import type { StackingLevel } from './izui-roles.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The no-op effect port

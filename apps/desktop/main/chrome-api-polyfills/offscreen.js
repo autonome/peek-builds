@@ -19,8 +19,7 @@ import { channel, registerHandler, removeHandler } from './_ipc-bridge.js';
 // relative paths resolve in dist/ (the polyfills are copied next to the
 // compiled main modules by the build's `cp -r` step).
 import { registerWindowWithMachine, dispatchWindowEvent, getWindowIdFor } from '../window-state-singleton.js';
-import { isSatelliteRegistration } from '../window-state.js';
-import { deriveWindowSurface } from '../izui-roles.js';
+import { deriveWindowSurface, isSatelliteRegistration } from '../izui-roles.js';
 
 const API = 'offscreen';
 const DEBUG = !!process.env.DEBUG;

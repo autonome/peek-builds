@@ -22,7 +22,8 @@
 import type { BaseWindow, BrowserWindow, WebContents } from 'electron';
 import { WindowOsAdapter, type RegisterWindowSpec } from './window-os-adapter.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import type { WindowEvent, FsMode, Rectangle, IzuiSession, WindowId, WindowKind, WindowClass, WindowRecord, EscapeMode, StateSnapshot } from './window-state.js';
+import type { WindowEvent, FsMode, Rectangle, IzuiSession, WindowId, WindowKind, WindowRecord, EscapeMode, StateSnapshot } from './window-state.js';
+import type { WindowClass } from './izui-roles.js';
 import { shadowKernelRegisterWindow, shadowKernelWindowShown } from './window-kernel-shadow.js';
 
 /** Register-spec that accepts real Electron window handles (both kinds satisfy the adapter's structural `NativeWindow`). */

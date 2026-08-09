@@ -21,7 +21,8 @@ import { getKernelExecutor, _resetKernelExecutorForTests } from './window-kernel
 import { WindowKernelExecutor } from './window-kernel-executor.js';
 import type { WindowId } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
-import type { StackingLevel, WindowId as BackendWindowId } from './window-state.js';
+import type { WindowId as BackendWindowId } from './window-state.js';
+import type { StackingLevel } from './izui-roles.js';
 
 const wid = (n: number): WindowId => `wks-${n}` as WindowId;
 

@@ -28,7 +28,8 @@ import {
   type WindowRecord,
 } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
-import type { StackingLevel, WindowId as BackendWindowId } from './window-state.js';
+import type { WindowId as BackendWindowId } from './window-state.js';
+import type { StackingLevel } from './izui-roles.js';
 
 /** Craft a WM WindowId for tests — nothing checks the shape, only identity. */
 const wid = (n: number): WindowId => `wk-${n}` as WindowId;
