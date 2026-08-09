@@ -529,19 +529,19 @@ describe('planRaise — the masks a raise owes because it is an activating show'
 
   // ── the app-active gate (the port of the old reducer's applyRaiseRequest) ──
 
-  it('withholds activation while the app is backgrounded, not headless', () => {
-    assert.strictEqual(planRaise(record(), false, false), 'inactive-show');
-    assert.strictEqual(planRaise(undefined, false, false), 'inactive-show');
+  it('suppresses the raise entirely while the app is backgrounded, not headless', () => {
+    assert.strictEqual(planRaise(record(), false, false), 'suppressed');
+    assert.strictEqual(planRaise(undefined, false, false), 'suppressed');
   });
 
   it('the app-active gate overrides the quick-view mask too — no content focus while backgrounded', () => {
     // Deliberately stronger than "just don't activate the app": a quick-view
     // panel's own mask (`'show-and-focus-content'`) never activates the app
-    // either, but the gate still narrows it to `'inactive-show'` while
-    // backgrounded, withholding the content-focus half as well.
+    // either, but the gate still narrows it to `'suppressed'` while
+    // backgrounded, withholding the show and the content-focus half as well.
     assert.strictEqual(
       planRaise(record({ kind: 'page-host', role: 'quick-view' }), false, false),
-      'inactive-show',
+      'suppressed',
     );
   });
 
@@ -604,15 +604,14 @@ describe('performing a RaiseWindow effect', () => {
     assert.deepStrictEqual(backend.of('focusContent'), []);
   });
 
-  it('the window still orders and shows while backgrounded — the gate withholds activation, not the raise', () => {
-    // The chosen semantics deliberately differ from the old reducer's
-    // `applyRaiseRequest`, which dropped the raise (and its `FOCUS_CONTENT`/
-    // `SET_STACKING` companions) outright. Here the show still happens.
+  it('a raise while the app is backgrounded issues no backend call at all — the gate drops the raise, matching the old reducer', () => {
+    // Ported from the old reducer's `applyRaiseRequest` (`if (!state.appActive)
+    // return`), which dropped `RAISE_WINDOW` outright. Nothing is performed:
+    // not the show, not the activate, not the content focus.
     const backend = raiseSetup({}, false, false);
-    const shows = backend.of('showWindow');
-    assert.strictEqual(shows.length, 1, 'the window is still shown, not skipped entirely');
-    assert.strictEqual(shows[0].args[0], wid(2));
-    assert.deepStrictEqual((shows[0].args[1] as { activate: boolean }).activate, false);
+    assert.deepStrictEqual(backend.of('showWindow'), [], 'a suppressed raise shows nothing');
+    assert.deepStrictEqual(backend.of('raiseWindow'), []);
+    assert.deepStrictEqual(backend.of('focusContent'), []);
   });
 
   it('the same raise activates once the app is active — appActive is the only thing that changed', () => {
@@ -629,12 +628,12 @@ describe('performing a RaiseWindow effect', () => {
     assert.deepStrictEqual((shows[0].args[1] as { activate: boolean }).activate, false);
   });
 
-  it('a backgrounded quick-view gets no content focus either — the gate narrows that mask too', () => {
+  it('a backgrounded quick-view gets no content focus either — the gate suppresses that mask too', () => {
     const backend = raiseSetup({ kind: 'page-host', role: 'quick-view', class: 'quick-view' }, false, false);
     assert.deepStrictEqual(backend.of('raiseWindow'), []);
     assert.deepStrictEqual(backend.of('focusContent'), [], 'no first-responder handoff while the app is backgrounded');
     const shows = backend.of('showWindow');
-    assert.strictEqual(shows.length, 1, 'still shown');
+    assert.strictEqual(shows.length, 0, 'not shown either — the raise is suppressed outright');
   });
 });
 

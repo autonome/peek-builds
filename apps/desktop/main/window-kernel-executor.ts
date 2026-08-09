@@ -99,8 +99,14 @@ export function stackingLevelForLayer(layer: number): StackingLevel {
  * raise is an ACTIVATING show, so whoever performs it owes the same masks a
  * show owes.
  *
- *   - `'inactive-show'`         headless, OR the app is backgrounded. Never
- *                               activate, never focus.
+ *   - `'suppressed'`            the app is backgrounded (`!appActive`). Performs
+ *                               NOTHING — no show, no activate, no content focus.
+ *                               Ported from the old reducer's
+ *                               `applyRaiseRequest` chokepoint (`if
+ *                               (!state.appActive) return`), which dropped the
+ *                               raise outright.
+ *   - `'inactive-show'`         headless. Never activate, never focus, but the
+ *                               window still shows.
  *   - `'show-and-focus-content'` a `quick-view` page-host — a `type:'panel'`
  *                               NSWindow. It must NEVER activate the app
  *                               (regression `524f7aba`: focusing a background
@@ -122,7 +128,7 @@ export function stackingLevelForLayer(layer: number): StackingLevel {
  * declared role to read — so it takes the ordinary arm, still masked by
  * headless and `appActive` below.
  */
-export type RaisePlan = 'inactive-show' | 'show-and-focus-content' | 'activating-raise';
+export type RaisePlan = 'suppressed' | 'inactive-show' | 'show-and-focus-content' | 'activating-raise';
 
 /**
  * THE APP-ACTIVE GATE — the port of the old reducer's `applyRaiseRequest`
@@ -132,9 +138,9 @@ export type RaisePlan = 'inactive-show' | 'show-and-focus-content' | 'activating
  * `decide`/`react` stay guard-free by design (see `window-kernel.test.ts`
  * "the focus assert" describe block) — so without this it is live only as a
  * documented gap: `WindowKernelExecutor` has no production caller today, but
- * at cutover a backgrounded window taking a focus report would raise AND
- * activate the app, reproducing the shape of regression `524f7aba` one layer
- * up from where that one was fixed.
+ * at cutover a backgrounded window taking a focus report would paint a Peek
+ * window over whatever app is frontmost, reproducing the shape of regression
+ * `524f7aba` one layer up from where that one was fixed.
  *
  * It lives here rather than in the pure layer for the same reason the
  * headless mask does: this is the environment refusing an activation, not a
@@ -142,25 +148,22 @@ export type RaisePlan = 'inactive-show' | 'show-and-focus-content' | 'activating
  * other activation obligation `react`'s docblock records already gets
  * discharged.
  *
- * DELIBERATELY DIFFERENT SEMANTICS FROM THE OLD REDUCER. The old machine
- * dropped the raise entirely — no show, no stacking, nothing. Here the window
- * still orders and shows; only the APP ACTIVATION is withheld, so a
- * backgrounded raise degrades to `'inactive-show'` rather than being
- * suppressed. Do not "fix" this back to a drop — the port of the old
- * suppression is the plan it resolves to, not whether `planRaise` runs.
+ * SAME SEMANTICS AS THE OLD REDUCER. A backgrounded raise resolves to
+ * `'suppressed'`: no show, no activate, no content focus — the backend is
+ * never called at all. This matches the old machine's outright drop rather
+ * than degrading to a non-activating show.
  *
  * ORDERING AGAINST THE HEADLESS MASK: checked immediately after headless, and
  * — unlike the quick-view arm below — it wins outright rather than narrowing
  * one arm. Headless is checked first only because it is unconditional
  * (no-focus-ever, `appActive` notwithstanding); once past it, an inactive app
- * forces `'inactive-show'` even for a quick-view panel, overriding what would
+ * forces `'suppressed'` even for a quick-view panel, overriding what would
  * otherwise be `'show-and-focus-content'` — a backgrounded app gets no
- * first-responder handoff either, exactly the same "no activation-shaped
- * obligation while backgrounded" rule extended to the content-focus half.
+ * first-responder handoff either, because it gets nothing at all.
  */
 export function planRaise(record: WindowRecord | undefined, headless: boolean, appActive: boolean): RaisePlan {
   if (headless) return 'inactive-show';
-  if (!appActive) return 'inactive-show';
+  if (!appActive) return 'suppressed';
   if (record !== undefined && record.kind === 'page-host' && record.role === 'quick-view') {
     return 'show-and-focus-content';
   }
@@ -528,6 +531,8 @@ export class WindowKernelExecutor {
       case 'RaiseWindow': {
         const record = this.state.order.find((w) => w.id === effect.id);
         switch (planRaise(record, this.headless, this.state.appActive)) {
+          case 'suppressed':
+            return;
           case 'inactive-show':
             this.backend.showWindow(effect.id, { activate: false, opSeq: effect.opSeq });
             return;
