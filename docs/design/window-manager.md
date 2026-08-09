@@ -972,6 +972,60 @@ for the executor does not exist yet, and building one is itself part of the cuto
     / subscribe / waitForMode)`. `shortcuts.test.ts` — the `handleLocalShortcut` call sites, if the
     widened callback changes any assertion.
 
+### Measured: the cutover checklist is a reader swap and the effect runner has eight holes
+
+**`window-os-adapter.ts` cannot be deleted in the same commit as `window-state.ts`.**
+`window-kernel-executor.ts WindowKernelExecutor` is missing eight responsibilities the adapter
+performs:
+
+- `attachAppListeners()` — no equivalent. App activation and resign never reach the kernel pump.
+- `registerWindow(spec)` — the orchestration around the backend's registration decision
+  (conditional `WindowShown` pump, esc-handler attach) exists nowhere in the kernel stack; the pure
+  `RegisterWindow`/`WindowRegistered` pair is not a substitute.
+- `getWindowIdFor` / `getNativeWindowFor` — structurally unreachable, because
+  `WindowKernelExecutor` types its backend as plain `WindowBackend`, without the handle-map shims
+  the adapter carries. The module that replaces `window-state-singleton.ts` should delegate to the
+  backend instance directly rather than reach through the executor.
+- `reconcileEscGrab(snap)` — no `setEscGrab` call anywhere in the kernel stack. `window-kernel.ts`'s
+  own comment on `WindowRecord.contentFocused` already flags this as unbuilt.
+- Effect arms with no kernel counterpart: `RECONCILE_FULLSCREEN`, `ASK_RENDERER` (the
+  renderer-handled-Escape round trip), `OPEN_SWITCHER_WINDOW` and `CLOSE_SWITCHER_WINDOW`
+  (including the overlay-cooldown special-casing).
+- `SET_ALWAYS_ON_TOP` is the one arm genuinely superseded by design — the pinned layer realizes
+  through `setAlwaysOnTop` inside `SetStacking`'s band replay.
+
+Two of the eight are closed. `waitForPendingAsyncEffects()` and `waitForGuestTeardown()` are ported
+onto `WindowKernelExecutor`, and `logTransition` is ported with the prefix `[window-kernel]`.
+`waitForGuestTeardown()` protects the before-quit sequence, which awaits the last `DestroyAllGuests`
+teardown; `waitForPendingAsyncEffects()` protects the E2E escape test bridge.
+
+**A correction to "Wiring map: each current reader of `front`, resolved":** it lists
+`hybrid-overlay.ts initHybridOverlay()`'s `subscribeFrontChange` → `retarget()` driver as a call
+site of `frontPageHostOsId()`. It is not — that driver inlines `getNativeWindowFor(front)` and
+never called the helper. It is a separate reader of `front` still to be repointed.
+
+**`hybrid-overlay.ts` `frontPageHostOsId()` has been split** into `overlayHostOsId()` (the
+read-back, six call sites, becomes `hostForOverlay`) and `attachTargetHostOsId()` (the ordering
+driver, the `initHybridOverlay()` seed read, becomes `topmostBaseLayerPageHost`). Both bodies are
+identical today; the split only separates the names so the cutover is a one-line repoint each.
+
+**`window-state.ts` is no longer the main process's type home.** `WindowClass`, `StackingLevel`,
+`classifyWindowRegistration` and `isSatelliteRegistration` now live in `izui-roles.ts`; `WindowId`,
+`WindowKind`, `Rectangle` and `FocusCause` now resolve to `window-kernel.ts`, which holds the
+single definition of each. `WindowRecord`, `Effect` and `FsMode` still exist in both
+`window-state.ts` and `window-kernel.ts` with different shapes — kernel `FsMode` uses
+`'entering'`/`'leaving'` where the reducer uses `'entering-fullscreen'`/`'leaving-fullscreen'` — so
+any import of those three must be repointed per symbol, never wholesale.
+
+Checklist step 1 is already satisfied: `shortcuts.ts LocalShortcutEntry.callback` already takes
+`(sourceWindowId?: number)`.
+
+`window-kernel-executor.ts planRaise` now resolves `!appActive` to a suppressing plan that performs
+nothing, matching `window-state.ts applyRaiseRequest`'s `if (!state.appActive) return`, so the
+cutover carries no behavior change there. The latched replay on `AppActivated` described under
+"Analysed, not decided: the backgrounded raise and the backgrounded overlay" remains undecided and
+unimplemented.
+
 #### `hostOf(overlay)` and `topmost(state, isContentWindow)` are orthogonal, not aliases
 
 `hostOf(overlay)` (the `overlayFor` relation) and `topmost(state, isContentWindow)` name different
