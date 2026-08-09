@@ -20,7 +20,7 @@
 
 import type { WebContents } from 'electron';
 import { windowFromWebContents } from './window-registry.js';
-import type { WindowId } from './window-state.js';
+import type { WindowId } from './window-kernel.js';
 import {
   getNativeWindowFor,
   getWindowIdFor,

@@ -25,7 +25,7 @@ import { getHybridWindow } from './hybrid-page-host-registry.js';
 import type { HybridWindowEntry } from './hybrid-page-host-registry.js';
 import { getWindowIdFor, getMachineWindowRecord } from './window-state-singleton.js';
 import { restorableBoundsFromRecord } from './session-projection.js';
-import type { WindowId } from './window-state.js';
+import type { WindowId } from './window-kernel.js';
 
 export { resolveWindowAddress };
 

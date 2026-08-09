@@ -22,7 +22,8 @@
 import type { BaseWindow, BrowserWindow, WebContents } from 'electron';
 import { WindowOsAdapter, type RegisterWindowSpec } from './window-os-adapter.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import type { WindowEvent, FsMode, Rectangle, IzuiSession, WindowId, WindowKind, WindowRecord, EscapeMode, StateSnapshot } from './window-state.js';
+import type { WindowEvent, FsMode, IzuiSession, WindowRecord, EscapeMode, StateSnapshot } from './window-state.js';
+import type { Rectangle, WindowId, WindowKind } from './window-kernel.js';
 import type { WindowClass } from './izui-roles.js';
 import { shadowKernelRegisterWindow, shadowKernelWindowShown } from './window-kernel-shadow.js';
 

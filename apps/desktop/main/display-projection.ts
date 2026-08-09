@@ -24,7 +24,7 @@
 
 import { computePlacement, type Placement } from './window-placement.js';
 import { WEB_CORE_ADDRESS } from './config.js';
-import type { WindowId, Rectangle } from './window-state.js';
+import type { WindowId, Rectangle } from './window-kernel.js';
 
 /**
  * The minimum a live window has to answer for a projection pass. The watcher

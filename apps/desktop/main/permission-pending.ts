@@ -16,7 +16,7 @@
 import type { PermissionName } from './permission-policy.js';
 // Type-only import from the pure reducer module — erased at runtime, so this
 // module still loads under plain node with no electron.
-import type { WindowId } from './window-state.js';
+import type { WindowId } from './window-kernel.js';
 
 /** One deferred permission request awaiting a user (or teardown) decision. */
 export interface PendingPermissionRequest {

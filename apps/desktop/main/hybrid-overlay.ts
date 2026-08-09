@@ -100,7 +100,7 @@ import {
   subscribeAppActive,
   getWindowStateSnapshot,
 } from './window-state-singleton.js';
-import type { Rectangle, WindowId } from './window-state.js';
+import type { Rectangle, WindowId } from './window-kernel.js';
 import { deriveWindowSurface, classifyWindowRegistration } from './izui-roles.js';
 import {
   shadowKernelAttachOverlay,

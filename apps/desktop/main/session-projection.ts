@@ -48,7 +48,8 @@
 
 import { shouldSkipWindowForSaveEarly } from './session-save-filter.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
-import type { StateSnapshot, WindowId, WindowRecord } from './window-state.js';
+import type { StateSnapshot, WindowRecord } from './window-state.js';
+import type { WindowId } from './window-kernel.js';
 
 /**
  * The persisted session. `version`/`createdAt`/`reason`/`windows` and their

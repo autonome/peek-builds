@@ -73,12 +73,9 @@ import { shouldCloseContentWCOnFinalize, type WindowClass, type StackingLevel } 
 import {
   decideWindowRegistration,
   type WindowRegistrationDecision,
-  type FocusCause,
-  type WindowId,
-  type WindowKind,
-  type Rectangle,
   type StateSnapshot,
 } from './window-state.js';
+import type { FocusCause, WindowId, WindowKind, Rectangle } from './window-kernel.js';
 import type { BackendEventSink, WindowBackend, WindowSpec } from './window-backend.js';
 import {
   destroyGuestsAndWait,

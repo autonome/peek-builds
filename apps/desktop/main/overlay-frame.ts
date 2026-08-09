@@ -26,7 +26,7 @@
  * result in — see `hybrid-overlay.ts` for the current call site.
  */
 
-import type { Rectangle } from './window-state.js';
+import type { Rectangle } from './window-kernel.js';
 
 const MARGIN = 8;
 const TRIGGER_ZONE = 8;

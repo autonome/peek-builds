@@ -56,9 +56,8 @@ import {
   type StateSnapshot,
   type FsMode,
   type IzuiSession,
-  type Rectangle,
-  type WindowId,
 } from './window-state.js';
+import type { Rectangle, WindowId } from './window-kernel.js';
 
 // ── Test builders ────────────────────────────────────────────────────────────
 

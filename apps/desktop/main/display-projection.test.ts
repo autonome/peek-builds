@@ -29,7 +29,7 @@ import {
 } from './display-projection.js';
 import { WEB_CORE_ADDRESS } from './config.js';
 import type { Placement } from './window-placement.js';
-import type { Rectangle, WindowId } from './window-state.js';
+import type { Rectangle, WindowId } from './window-kernel.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures

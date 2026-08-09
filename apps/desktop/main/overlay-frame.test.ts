@@ -14,7 +14,7 @@ import { describe, it } from 'node:test';
 import * as assert from 'node:assert';
 
 import { expandToOverlayFrame, OVERLAY_GUTTERS } from './overlay-frame.js';
-import type { Rectangle } from './window-state.js';
+import type { Rectangle } from './window-kernel.js';
 
 describe('expandToOverlayFrame — chrome overlay frame geometry', () => {
   it('expands a content rect by the gutters on every side (normal case)', () => {

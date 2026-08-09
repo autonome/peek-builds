@@ -49,8 +49,8 @@ import {
   type Effect,
   type StateSnapshot,
   type WindowEvent,
-  type WindowId,
 } from './window-state.js';
+import type { WindowId } from './window-kernel.js';
 
 // The registration spec (native handles included) is defined next to the shim
 // that consumes it; re-exported here so the singleton's import site survives.

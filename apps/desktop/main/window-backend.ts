@@ -42,17 +42,12 @@
  * deliberately OUTSIDE this interface.
  */
 
-import type {
-  WindowEvent,
-  WindowId,
-  WindowKind,
-  EscapeMode,
-  Rectangle as Rect,
-} from './window-state.js';
+import type { WindowEvent, EscapeMode } from './window-state.js';
+import type { WindowId, WindowKind, Rectangle as Rect } from './window-kernel.js';
 import type { WindowClass, StackingLevel } from './izui-roles.js';
 
 /** The port's plain rect currency — the reducer's own `Rectangle` (§3: no platform `Rectangle` ever crosses). Carried by `setWindowBounds` and the `BOUNDS_CHANGED` emission since the geometry step (§5 step 7A). */
-export type { Rectangle as Rect } from './window-state.js';
+export type { Rectangle as Rect } from './window-kernel.js';
 
 /**
  * The single injected event channel: the backend translates native events into

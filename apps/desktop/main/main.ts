@@ -907,7 +907,7 @@ export async function initialize(): Promise<void> {
   // front assertion (the machine form of the old scattered "re-focus the
   // content window around devtools" handlers).
   app.on('web-contents-created', (_e, wc) => {
-    const hostMachineId = (): import('./window-state.js').WindowId | null => {
+    const hostMachineId = (): import('./window-kernel.js').WindowId | null => {
       try {
         // For hybrid page-host content this resolves the owning BaseWindow
         // (the documented windowFromWebContents TRAP — desired here); both

@@ -53,7 +53,8 @@ import {
   type SessionSavePresentation,
 } from './session-projection.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
-import type { FsMode, Rectangle, StateSnapshot, WindowId, WindowRecord } from './window-state.js';
+import type { FsMode, StateSnapshot, WindowRecord } from './window-state.js';
+import type { Rectangle, WindowId } from './window-kernel.js';
 
 // ============================================================================
 // Fixtures

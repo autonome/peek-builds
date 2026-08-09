@@ -24,38 +24,11 @@
 // runtime cycle, so this stays consistent with the zero-value-imports rule
 // above.
 import type { WindowClass, StackingLevel } from './izui-roles.js';
+import type { WindowId, WindowKind, Rectangle, FocusCause } from './window-kernel.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // State shape — illegal states unrepresentable (§2.2)
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * The WM's own window identity — an opaque branded string (`"wm-1"`, `"wm-2"`),
- * minted ONLY by the WM (the OS adapter's `registerWindow`, from a WM-internal
- * counter). Never an Electron window id, never a webContents id.
- *
- * Why a STRING brand: the failure mode this type exists to kill is numeric
- * indistinguishability — Electron window ids and webContents ids are both small
- * integers, so a mix-up is silent (design §3, "three colliding id spaces"). A
- * number brand only helps at compile time and evaporates over IPC; a string is
- * runtime-distinguishable (`typeof`/prefix check) and log-greppable (`wm-` never
- * collides with a bare number in a trace).
- *
- * The adapter maps `WindowId ↔ platform handle` internally and never leaks the
- * platform id (design §3: "the backend maps WindowId -> platform handle
- * internally").
- */
-export type WindowId = string & { readonly __brand: 'WindowId' };
-
-/** Plain rectangle (mirrors Electron's `Rectangle`, kept local so this file is Electron-free). */
-export interface Rectangle {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-export type WindowKind = 'page-host' /* BaseWindow + WebContentsView */ | 'browser';
 
 /** The window's ESC override. 'ignore' passes ESC straight through to the page. */
 export type EscapeMode = 'auto' | 'close' | 'navigate' | 'ignore';
@@ -296,31 +269,6 @@ export interface WindowRecord {
   /** See `layer` above. */
   acceptsInput?: boolean;
 }
-
-/**
- * WHO caused an OS focus report — the provenance an `OS_FOCUS_GAINED` carries.
- *
- * The defect this exists for (peek 7fffa286, confirmed from a live trace): the
- * event meant BOTH "the user switched windows" and "the OS is echoing an
- * operation the machine itself just requested", and the reducer could not tell
- * them apart. So the echo of a machine-issued handoff raise swept a palette the
- * user had opened one transition earlier.
- *
- *   - `machine`  the report is the echo of a focus-family effect this machine
- *                emitted — `opSeq` is that effect's token (`Effect.opSeq`,
- *                stamped from `AppWindowState.opSeqCounter`). The executor is
- *                the only honest source: it knows which native call it just
- *                made. Because the token is a stamp and not a bare boolean, a
- *                STALE self-echo (an `opSeq` older than the latest op issued for
- *                that window) is identifiable too.
- *   - `world`    everything else: a real user gesture, another app handing focus
- *                back, Mission Control, a click into a page.
- *
- * ABSENT on the event means `world` — see `OS_FOCUS_GAINED`. That default is
- * load-bearing: every producer that has not been taught to report provenance
- * keeps its exact pre-provenance behavior.
- */
-export type FocusCause = { kind: 'machine'; opSeq: number } | { kind: 'world' };
 
 /**
  * The default provenance. A module-level literal rather than an import — this
