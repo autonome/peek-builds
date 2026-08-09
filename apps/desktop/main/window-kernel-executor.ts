@@ -425,8 +425,86 @@ export class WindowKernelExecutor {
     const next = evolve(prev, event);
     const effects = react(prev, event, next);
     this.state = next;
+    this.logTransition(event, prev, next);
     this.runEffects(effects);
     this.notify();
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Transition log — one DEBUG-gated line per transition, ported from
+  // `window-os-adapter.ts logTransition` (that module's permanent trace, the
+  // live-diagnosis tool for window behaviour; see its header for the incident
+  // history this pattern already earned). Same gating, same call point in the
+  // pump (right after the new state is produced, before effects run), same
+  // helper shapes — `eventWindowId` / `eventWindowIdTag` / `fmt` /
+  // `modeDeltas` below — adapted to this kernel's actual fields:
+  //
+  //   - `before.front` -> `after.front`   becomes `before.key` -> `after.key`.
+  //     This kernel has no `front`; `key` (State §"RULE 2") is the field an OS
+  //     focus report writes, so it is the transition log's front-equivalent.
+  //   - the `contentFocused` delta        still keys off `WindowRecord
+  //                                       .contentFocused`, just looked up
+  //                                       against `after.key` instead of
+  //                                       `after.front` — same field, same
+  //                                       window-of-interest substitution.
+  //   - `before.stackOrder` -> `after.stackOrder` (a bare `WindowId[]`)
+  //                                       becomes an `order=[...]` delta over
+  //                                       `State.order` (`WindowRecord[]`,
+  //                                       §0.1.4 RULE 1) mapped to ids — the
+  //                                       kernel keeps membership AND order in
+  //                                       one structure, so there is no
+  //                                       separate stack array to format.
+  //   - `modeDeltas`                      unchanged in shape: both kernels key
+  //                                       a record's fullscreen state off
+  //                                       `fsMode.name`.
+  //   - the old log's trailing `satellite=.. eligible=..` fragment (emitted
+  //     only for `OS_FOCUS_GAINED`) is DROPPED, not adapted: it reads
+  //     `window-state.ts`'s `WindowRecord.satellite` and `isEligibleFront`,
+  //     neither of which this kernel's `WindowRecord` has (no satellite
+  //     concept in this slice, §0.1.4's field list). Nothing to map it onto.
+  //   - the tag vocabulary is simpler than the old log's: this kernel's
+  //     `Event` union carries a window id on the `id` field alone (no
+  //     `ESC_PRESSED`-style `landedId` / switcher-pair `windowId` — those
+  //     surfaces are not part of this kernel's event set), so
+  //     `eventWindowIdTag` needs no per-type special case.
+  //
+  // Prefix: `[window-kernel]`, distinct from the old adapter's `[window-state]`
+  // and matching every other DEBUG line already in this file (the rejection
+  // log in `execute`, the stale-echo drop, the subscriber-threw guard, the
+  // effect-failure log) — one greppable name for the whole module.
+  //
+  // PURE OBSERVATION, never allowed to affect the pump: reads only `before`/
+  // `after`, both already-computed snapshots, and every field access here is
+  // a `.find()` + optional chaining or a `.map()` — nothing that can throw on
+  // an event naming a window absent from `order`, and nothing that mutates
+  // state or feeds back into effect emission.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  private logTransition(event: Event, before: State, after: State): void {
+    if (!DEBUG) return;
+    const tag = eventWindowIdTag(event);
+    let line = `[window-kernel] ${event.type}${tag == null ? '' : ` ${tag}`} key ${fmt(before.key)}→${fmt(after.key)}`;
+    // The key window's content-first-responder delta — the kernel-side
+    // analogue of the old log's front `contentFocused` line, keyed off
+    // `after.key` instead of `after.front`. Logged only when it moved for the
+    // window that holds key AFTER the transition.
+    const beforeFocused = before.order.find((w) => w.id === after.key)?.contentFocused;
+    const afterFocused = after.order.find((w) => w.id === after.key)?.contentFocused;
+    if (after.key != null && beforeFocused !== afterFocused) {
+      line += ` contentFocused ${beforeFocused}→${afterFocused}`;
+    }
+    // `order` delta: whenever the bottom->top id sequence changed, log the
+    // resulting list so a live run can compare it against the real
+    // (CGWindowList) stack — the kernel-side equivalent of the old log's
+    // `stack=[...]` line, sourced from `State.order` (RULE 1) instead of a
+    // separate `stackOrder` array.
+    const beforeOrder = before.order.map((w) => w.id).join(' ');
+    const afterOrder = after.order.map((w) => w.id).join(' ');
+    if (beforeOrder !== afterOrder) {
+      line += ` order=[${afterOrder}]`;
+    }
+    for (const part of modeDeltas(before, after)) line += ` ${part}`;
+    console.log(line);
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -707,4 +785,43 @@ export class WindowKernelExecutor {
       await Promise.allSettled([...this.pendingAsyncEffects]);
     }
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Transition-log helpers — ported from `window-os-adapter.ts` (see
+// `logTransition`'s doc for the field-by-field mapping onto this kernel).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The window id carried by an event's `id` field, if it has one. */
+function eventWindowId(event: Event): WindowId | null {
+  return 'id' in event && typeof event.id === 'string' ? event.id : null;
+}
+
+/**
+ * The transition-log tag for an event's window id. Simpler than the old
+ * adapter's version: this kernel's `Event` union carries a window id on the
+ * `id` field alone — no `ESC_PRESSED`-style secondary id field and no
+ * switcher pair — so there is no per-type tag name to disambiguate.
+ */
+function eventWindowIdTag(event: Event): string | null {
+  const id = eventWindowId(event);
+  return id == null ? null : `id(${id})`;
+}
+
+/** Render a nullable id for the transition log. */
+function fmt(id: WindowId | null): string {
+  return id == null ? 'none' : String(id);
+}
+
+/** `mode(id) x→y` fragments for every window whose fsMode name changed. */
+function modeDeltas(before: State, after: State): string[] {
+  const beforeById = new Map(before.order.map((w) => [w.id, w.fsMode.name]));
+  const parts: string[] = [];
+  for (const w of after.order) {
+    const prev = beforeById.get(w.id);
+    if (prev !== undefined && prev !== w.fsMode.name) {
+      parts.push(`mode(${w.id}) ${prev}→${w.fsMode.name}`);
+    }
+  }
+  return parts;
 }

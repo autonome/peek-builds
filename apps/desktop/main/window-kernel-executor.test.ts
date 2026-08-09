@@ -10,8 +10,9 @@
  * anyway).
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import * as assert from 'node:assert';
+import { setDebug, __resetDebugFlagsForTest } from './debug-flag.js';
 import {
   WindowKernelExecutor,
   planRaise,
@@ -1221,5 +1222,63 @@ describe('waitForGuestTeardown', () => {
 
     const outcome = await withHangSentinel(exec.waitForGuestTeardown());
     assert.notStrictEqual(outcome, 'TEST-HUNG', 'a rejected teardown promise must not wedge the waiter');
+  });
+});
+
+// ── The per-transition trace (ported from window-os-adapter.ts logTransition) ──
+
+describe('the per-transition trace', () => {
+  let originalLog: typeof console.log;
+  let lines: string[];
+
+  beforeEach(() => {
+    __resetDebugFlagsForTest();
+    setDebug(true);
+    lines = [];
+    originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+  });
+
+  afterEach(() => {
+    console.log = originalLog;
+    __resetDebugFlagsForTest();
+  });
+
+  it('does not throw on an event naming a window absent from order', () => {
+    const { exec } = makeExecutor();
+    assert.doesNotThrow(() => exec.dispatch({ type: 'WindowShown', id: wid(99) }));
+    assert.doesNotThrow(() => exec.dispatch({ type: 'OsFocusGained', id: wid(99) }));
+  });
+
+  it('does not throw when key is null both before and after the transition', () => {
+    const { exec } = makeExecutor();
+    // Registration alone never writes `key` (RULE 2) — before and after both
+    // read null.
+    assert.doesNotThrow(() => exec.dispatch(register(wid(1))));
+    assert.strictEqual(exec.getState().key, null);
+  });
+
+  it('formats an ordinary transition: the key delta and the reordered stack', () => {
+    const { exec } = makeExecutor();
+    exec.dispatch(register(wid(1)));
+    exec.dispatch(register(wid(2)));
+    lines.length = 0;
+
+    // wid(1) takes key while wid(2) already sits on top of `order` — a
+    // genuine reorder (§0.1.10), so both `key` and `order` move.
+    exec.dispatch({ type: 'OsFocusGained', id: wid(1) });
+
+    assert.strictEqual(lines.length, 1);
+    assert.strictEqual(lines[0], `[window-kernel] OsFocusGained id(${wid(1)}) key none→${wid(1)} order=[${wid(2)} ${wid(1)}]`);
+  });
+
+  it('logs nothing when DEBUG is off', () => {
+    setDebug(false);
+    const { exec } = makeExecutor();
+    exec.dispatch(register(wid(1)));
+    exec.dispatch({ type: 'OsFocusGained', id: wid(1) });
+    assert.deepStrictEqual(lines, []);
   });
 });
