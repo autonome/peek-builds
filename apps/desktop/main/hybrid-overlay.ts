@@ -117,14 +117,28 @@ import { headlessActivationPolicy } from './headless-policy.js';
 import { registerLocalShortcut, unregisterLocalShortcut } from './shortcuts.js';
 
 /**
- * The front page-host as an ELECTRON window id, or null. The machine's surface
- * speaks WM WindowId only; this module's internals (the hybrid registry it
- * frames over, the pubsub payloads its renderer speaks) are still keyed by
- * Electron window ids, so every read of the front converts here — through the
- * singleton's sanctioned mapping, never a private map. A later migration step
- * re-keys the hybrid registry and deletes this shim.
+ * Which page host the overlay currently belongs to, as an ELECTRON window id
+ * (or null). The machine's surface speaks WM WindowId only; this module's
+ * internals (the hybrid registry it frames over, the pubsub payloads its
+ * renderer speaks) are still keyed by Electron window ids, so every read-back
+ * converts here — through the singleton's sanctioned mapping, never a private
+ * map. Becomes `window-kernel.ts hostForOverlay(state, overlayId)` at cutover.
  */
-function frontPageHostOsId(): number | null {
+function overlayHostOsId(): number | null {
+  const front = getFrontPageHostId();
+  if (front == null) return null;
+  const win = getNativeWindowFor(front);
+  return win ? win.id : null;
+}
+
+/**
+ * Which page host the overlay SHOULD attach to right now, as an ELECTRON
+ * window id (or null) — the ordering driver behind `retarget()`. Same
+ * front→native-id conversion as the read-back today; the two diverge once
+ * each is backed by its own kernel query. Becomes `window-kernel.ts
+ * topmostBaseLayerPageHost(state)` at cutover.
+ */
+function attachTargetHostOsId(): number | null {
   const front = getFrontPageHostId();
   if (front == null) return null;
   const win = getNativeWindowFor(front);
@@ -298,7 +312,7 @@ function ensureOverlay(): BrowserWindow {
   // already published the handoff. Re-send the current active state once the
   // renderer has finished loading (and on every reload) so the navbar paints.
   win.webContents.on('did-finish-load', () => {
-    const currentId = frontPageHostOsId();
+    const currentId = overlayHostOsId();
     if (currentId != null) sendActiveHandoff(currentId);
   });
 
@@ -571,7 +585,7 @@ function wireShowNavbarFocus(): void {
     const msg = raw as { windowId?: number } | null;
     if (!msg || msg.windowId == null) return;
     if (!getAppActive()) return; // never steal focus while backgrounded (R1)
-    if (msg.windowId !== frontPageHostOsId()) return; // active window only
+    if (msg.windowId !== overlayHostOsId()) return; // active window only
     if (!overlayWin || overlayWin.isDestroyed()) return;
     if (overlayWmId == null) return;
     showNavbarFocusCount++;
@@ -595,7 +609,7 @@ function wireExecuteScript(): void {
     // Resolve the page the script should run in: the active hybrid content WC.
     // No active hybrid window → this request isn't for us (canvas path or none) →
     // stay silent so we don't publish a spurious result.
-    const activeId = frontPageHostOsId();
+    const activeId = overlayHostOsId();
     if (activeId == null) return;
     const wc = getHybridContentWC(activeId);
     if (!wc || wc.isDestroyed()) return;
@@ -795,7 +809,7 @@ export function initHybridOverlay(): void {
   // THE CURRENTLY-ACTIVE window. Non-active windows are handled by the next
   // `sendActiveHandoff` snapshot; no extra mechanism needed for them.
   registerLoadErrorListener((windowId, error) => {
-    if (windowId !== frontPageHostOsId()) return;
+    if (windowId !== overlayHostOsId()) return;
     publish(getSystemAddress(), 'page:load-error', { windowId, error });
   });
 
@@ -819,7 +833,7 @@ export function initHybridOverlay(): void {
 
   // Seed off the current active window in case one is already frontmost at
   // init time (e.g. session restore opened a hybrid window before this ran).
-  const currentId = frontPageHostOsId();
+  const currentId = attachTargetHostOsId();
   if (currentId != null) {
     retarget(currentId);
   }
@@ -1219,10 +1233,10 @@ function installTestBridge(): void {
       // and keeps `front` on an app-switch (design divergence #2), so there is no
       // synchronous per-window "decide after blur" hook. Best-effort: report the
       // current front page host.
-      return frontPageHostOsId();
+      return overlayHostOsId();
     },
     activeId(): number | null {
-      return frontPageHostOsId();
+      return overlayHostOsId();
     },
     /**
      * Focus-group verification: replace the registry's overlay-focus provider
