@@ -1107,3 +1107,119 @@ describe('waitForSettledFsMode', () => {
     assert.strictEqual(await promise, 'settled');
   });
 });
+
+// ── Async-effect settlement tracking (ported from window-os-adapter.ts) ─────
+
+/**
+ * A backend whose ONE named method returns a promise this test controls
+ * (`resolve`/`reject`), instead of the recorder's always-resolves stub —
+ * same Proxy-override shape as the "a backend that throws" test above, but
+ * deferred rather than synchronous-throw.
+ */
+function backendWithDeferred(method: 'closeWindow' | 'closeOrHide' | 'destroyAllContentGuests'): {
+  backend: WindowBackend;
+  resolve: () => void;
+  reject: (err: Error) => void;
+} {
+  let resolve!: () => void;
+  let reject!: (err: Error) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  const backend = new Proxy(new RecordingBackend(), {
+    get(target, prop, receiver) {
+      if (prop === method) return () => promise;
+      return Reflect.get(target, prop, receiver) as unknown;
+    },
+  }) as unknown as WindowBackend;
+  return { backend, resolve, reject };
+}
+
+/** Races a promise against a sentinel so an un-fixed hang fails, not hangs. */
+function withHangSentinel<T>(promise: Promise<T>, ms = 200): Promise<T | 'TEST-HUNG'> {
+  return Promise.race([promise, new Promise<'TEST-HUNG'>((resolve) => setTimeout(() => resolve('TEST-HUNG'), ms))]);
+}
+
+describe('waitForPendingAsyncEffects', () => {
+  it('resolves immediately when nothing is in flight', async () => {
+    const { exec } = makeExecutor();
+    const outcome = await withHangSentinel(exec.waitForPendingAsyncEffects());
+    assert.notStrictEqual(outcome, 'TEST-HUNG');
+  });
+
+  it('resolves once a tracked effect promise settles, not before', async () => {
+    const { backend, resolve } = backendWithDeferred('closeWindow');
+    const exec = new WindowKernelExecutor(backend, { headless: false });
+    exec.dispatch(register(wid(1), { kind: 'page-host' }));
+    const out = exec.execute({
+      type: 'CloseWindowDirect',
+      id: wid(1),
+      expectedVersion: exec.getState().version,
+    });
+    assert.ok('applied' in out);
+
+    let settled = false;
+    void exec.waitForPendingAsyncEffects().then(() => (settled = true));
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(settled, false, 'the backend promise has not settled yet');
+
+    resolve();
+    const outcome = await withHangSentinel(exec.waitForPendingAsyncEffects());
+    assert.notStrictEqual(outcome, 'TEST-HUNG');
+    assert.strictEqual(settled, true);
+  });
+
+  it('a rejected effect promise still lets the waiter resolve, rather than hanging', async () => {
+    const { backend, reject } = backendWithDeferred('closeWindow');
+    const exec = new WindowKernelExecutor(backend, { headless: false });
+    exec.dispatch(register(wid(1), { kind: 'page-host' }));
+    const out = exec.execute({
+      type: 'CloseWindowDirect',
+      id: wid(1),
+      expectedVersion: exec.getState().version,
+    });
+    assert.ok('applied' in out);
+    reject(new Error('closeWindow failed'));
+
+    const outcome = await withHangSentinel(exec.waitForPendingAsyncEffects());
+    assert.notStrictEqual(outcome, 'TEST-HUNG', 'a rejected effect promise must not wedge the waiter');
+  });
+});
+
+describe('waitForGuestTeardown', () => {
+  it('resolves immediately when no teardown has been requested', async () => {
+    const { exec } = makeExecutor();
+    const outcome = await withHangSentinel(exec.waitForGuestTeardown());
+    assert.notStrictEqual(outcome, 'TEST-HUNG');
+  });
+
+  it('resolves once the last DestroyAllGuests settles, not before', async () => {
+    const { backend, resolve } = backendWithDeferred('destroyAllContentGuests');
+    const exec = new WindowKernelExecutor(backend, { headless: false });
+    exec.dispatch(register(wid(1), { kind: 'page-host' }));
+    const out = exec.execute({ type: 'DestroyAllGuests', expectedVersion: exec.getState().version });
+    assert.ok('applied' in out);
+
+    let settled = false;
+    void exec.waitForGuestTeardown().then(() => (settled = true));
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(settled, false, 'the backend promise has not settled yet');
+
+    resolve();
+    const outcome = await withHangSentinel(exec.waitForGuestTeardown());
+    assert.notStrictEqual(outcome, 'TEST-HUNG');
+    assert.strictEqual(settled, true);
+  });
+
+  it('a rejected teardown promise still lets the waiter resolve, rather than hanging', async () => {
+    const { backend, reject } = backendWithDeferred('destroyAllContentGuests');
+    const exec = new WindowKernelExecutor(backend, { headless: false });
+    exec.dispatch(register(wid(1), { kind: 'page-host' }));
+    exec.execute({ type: 'DestroyAllGuests', expectedVersion: exec.getState().version });
+    reject(new Error('destroyAllContentGuests failed'));
+
+    const outcome = await withHangSentinel(exec.waitForGuestTeardown());
+    assert.notStrictEqual(outcome, 'TEST-HUNG', 'a rejected teardown promise must not wedge the waiter');
+  });
+});

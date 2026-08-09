@@ -508,11 +508,12 @@ export class WindowKernelExecutor {
         // `destroyWindow` skips beforeunload/close events entirely and is
         // reserved for forceful teardown, never ordinary dismissal (design
         // note: HIDE_WINDOW/CLOSE_WINDOW, never DESTROY_WINDOW). Fire-and-
-        // forget, same as every other effect here — the promise is test-bridge
-        // settlement only. The transient-autoclose sweep's own dismissal
-        // effect is the DIFFERENT `DismissWindow` below, which deliberately
-        // DOES go through `closeOrHide` — see that case.
-        void this.backend.closeWindow(effect.id);
+        // forget for the machine — tracked so the test bridge can await it,
+        // same as `window-os-adapter.ts`'s CLOSE_WINDOW/CLOSE_WINDOW_DIRECT.
+        // The transient-autoclose sweep's own dismissal effect is the
+        // DIFFERENT `DismissWindow` below, which deliberately DOES go through
+        // `closeOrHide` — see that case.
+        this.trackAsyncEffect(this.backend.closeWindow(effect.id));
         return;
       }
       case 'DismissWindow': {
@@ -523,9 +524,10 @@ export class WindowKernelExecutor {
         // honors keepLive (hides rather than destroys a slide/peek meant to
         // keep running) and runs the exit-native-fullscreen preamble before
         // hiding/closing a fullscreen victim, so a dismissed window never
-        // strands a black macOS Space. Fire-and-forget, same as every other
-        // effect here — the promise is test-bridge settlement only.
-        void this.backend.closeOrHide(effect.id);
+        // strands a black macOS Space. Fire-and-forget for the machine —
+        // tracked so the test bridge can await it, same as
+        // `window-os-adapter.ts`'s CLOSE_WINDOW/CLOSE_SWITCHER_WINDOW.
+        this.trackAsyncEffect(this.backend.closeOrHide(effect.id));
         return;
       }
       case 'RaiseWindow': {
@@ -605,10 +607,10 @@ export class WindowKernelExecutor {
       }
       case 'CloseWindowDirect': {
         // Guest-safe: `closeWindow` destroys and AWAITS the window's registered
-        // guests before closing the host. Fire-and-forget here, same as
-        // `CloseWindow` — the promise is test-bridge settlement only. No
-        // keepLive policy is re-applied: the caller's intent was close.
-        void this.backend.closeWindow(effect.id);
+        // guests before closing the host. Fire-and-forget for the machine
+        // here, same as `CloseWindow` — tracked so the test bridge can await
+        // it. No keepLive policy is re-applied: the caller's intent was close.
+        this.trackAsyncEffect(this.backend.closeWindow(effect.id));
         return;
       }
       case 'FocusContent': {
@@ -635,8 +637,13 @@ export class WindowKernelExecutor {
         // still alive — but the await belongs to the quit sequencing that owns
         // the port (`entry.ts runBeforeQuitCleanup` awaits it before the
         // re-quit), not to the pump: an executor that blocked here would stall
-        // every other effect in the batch.
-        void this.backend.destroyAllContentGuests();
+        // every other effect in the batch. Retained in the dedicated
+        // guest-teardown slot (not just `pendingAsyncEffects`) so
+        // `waitForGuestTeardown` can await THIS settlement specifically —
+        // same split as `window-os-adapter.ts`'s DESTROY_ALL_GUESTS.
+        const teardown = this.backend.destroyAllContentGuests();
+        this.guestTeardown = teardown;
+        this.trackAsyncEffect(teardown);
         return;
       }
       default: {
@@ -644,6 +651,60 @@ export class WindowKernelExecutor {
         void exhaustive;
         return;
       }
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Async-effect settlement tracking — ported from `window-os-adapter.ts`
+  // (same names, same two-tier shape). `performEffect` above fires the
+  // async backend calls fire-and-forget for the machine (the pump never
+  // recurses on their settlement); this set exists so callers OUTSIDE the
+  // pump can await "the effects issued so far have settled" — the before-quit
+  // sequence awaiting the last `DestroyAllGuests` teardown, and the E2E test
+  // bridge awaiting in-flight effects before asserting.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /** In-flight async effect promises (delegated closes, guest teardown). */
+  private readonly pendingAsyncEffects = new Set<Promise<unknown>>();
+
+  /**
+   * Settlement of the most recent `DestroyAllGuests`. NOT test-bridge
+   * support: the before-quit sequencing gates the re-quit on it, which is the
+   * whole reason quit-time guest teardown happens before host windows close.
+   * Kept separate from `pendingAsyncEffects` deliberately — that set is an
+   * unbounded "wait for everything" the quit path must not depend on.
+   */
+  private guestTeardown: Promise<void> = Promise.resolve();
+
+  /**
+   * Resolve once the last requested guest teardown has settled (bounded
+   * inside the backend). Resolved already when no teardown has been
+   * requested.
+   */
+  async waitForGuestTeardown(): Promise<void> {
+    try {
+      await this.guestTeardown;
+    } catch {
+      /* the teardown is best-effort; quit proceeds either way */
+    }
+  }
+
+  /** Retain an async effect's promise until it settles (never rethrows). */
+  private trackAsyncEffect(p: Promise<unknown>): void {
+    this.pendingAsyncEffects.add(p);
+    const drop = () => this.pendingAsyncEffects.delete(p);
+    p.then(drop, drop);
+  }
+
+  /**
+   * Test-bridge support: resolve once every currently-pending async effect —
+   * and any async effect those spawn while settling — has settled.
+   * Deterministic: the resolution is the effects' own promises, no timer
+   * loop and no re-derived deadline.
+   */
+  async waitForPendingAsyncEffects(): Promise<void> {
+    while (this.pendingAsyncEffects.size > 0) {
+      await Promise.allSettled([...this.pendingAsyncEffects]);
     }
   }
 }
