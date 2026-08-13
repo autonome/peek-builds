@@ -267,16 +267,24 @@ selectTransientAutoclose`, implemented against the kernel as recorded in §0.1.1
 
 ## 0.1 The rewritten kernel — state shape and structure
 
-**Built, not wired.** `apps/desktop/main/window-kernel.ts` (the kernel — `decide`/`evolve`/`react`,
-queries, selectors), `apps/desktop/main/window-escape.ts` (the Escape interpreter) and
-`apps/desktop/main/window-kernel-executor.ts` (`WindowKernelExecutor`, the impure edge that owns
-state, dispatches, and performs effects) exist and carry test coverage. None is wired into the
-running application: `apps/desktop/main/window-state.ts` and `window-os-adapter.ts` still drive
-production, `window-kernel.ts` is imported only by `window-escape.ts`, `window-kernel-executor.ts`
-and their tests, and `WindowKernelExecutor` is constructed nowhere in production. Derives from §0,
-plus a survey of how other window managers and the state-machine literature solve the same
-problems. Where this disagrees with §3–§5, those are the older design. The goal this answers: make
-the machine as simple as possible; the kernel should be hardened to a diamond.
+**Built, and now wired for queries.** `apps/desktop/main/window-kernel.ts` (the kernel —
+`decide`/`evolve`/`react`, queries, selectors), `apps/desktop/main/window-escape.ts` (the Escape
+interpreter) and `apps/desktop/main/window-kernel-executor.ts` (`WindowKernelExecutor`, the impure
+edge that owns state, dispatches, and performs effects) exist and carry test coverage.
+`apps/desktop/main/window-state.ts` and `window-os-adapter.ts` still own registration and OS
+effects, but a cutover wired the ONE production `WindowKernelExecutor`
+(`window-kernel-singleton.ts`, constructed over the real `ElectronWindowBackend` and reached
+through `window-state-singleton.ts getKernelExecutorForApp`) so both machines drive the same
+backend and the same `WindowId` space. Production reads the kernel's own queries directly for
+"which window is front" now too — `windows.ts resolveFocusedWindowIdForClose`, `ipc.ts`'s
+focus-assert call sites and `hybrid-overlay.ts`'s overlay-attachment target all read
+`isContentWindow` / `isFrontEligibleWindow` / `topmost` / `keyWindow` / `topmostBaseLayerPageHost`
+against that executor's live state, not a copy kept only for shadow comparison. `window-kernel.ts`
+is therefore no longer imported only by `window-escape.ts`, `window-kernel-executor.ts` and their
+tests — it has production readers across the window-manager surface. Derives from §0, plus a
+survey of how other window managers and the state-machine literature solve the same problems.
+Where this disagrees with §3–§5, those are the older design. The goal this answers: make the
+machine as simple as possible; the kernel should be hardened to a diamond.
 
 ### The diagnosis
 

@@ -25,6 +25,7 @@ import {
   overlayForHost,
   hostForOverlay,
   isContentWindow,
+  isFrontEligibleWindow,
   topmostBaseLayerPageHost,
   isStaleSelfEcho,
   selectTransientAutoclose,
@@ -3405,18 +3406,69 @@ describe('window-kernel: which window the user is working in', () => {
     assert.strictEqual(topmost(state, isContentWindow)?.id, pageHost);
   });
 
+  // The tests below mirror `windows.ts resolveFocusedWindowIdForClose` — the
+  // key window when it is ITSELF front-eligible, else the topmost
+  // front-eligible window — over `isFrontEligibleWindow`, not `isContentWindow`.
+  //
+  // NOTE ON WHAT CAN AND CANNOT DISCRIMINATE THIS COMPOSITION FROM A BARE
+  // `topmost(state, pred)` CALL OVER THE SAME PREDICATE: nothing can, for any
+  // `pred`, in any state this kernel can reach. §0.1.10's invariant — "whenever
+  // `key` resolves to a record, that record is topmost in `order`" — is
+  // fuzz-tested over every generated event log
+  // (`window-kernel-properties.test.ts checkInvariants`, "the key window is
+  // not topmost in order") and is held deliberately by every arm that touches
+  // `order` (`WindowRegistered` inserts new records BELOW the key window
+  // rather than appending on top of it; `StackOrderImported` explicitly lifts
+  // the key record back to the top after permuting). So whenever `key`
+  // satisfies `pred`, it IS `topmost(state, pred)` by construction — the two
+  // composition branches can never name different windows for the same
+  // predicate. (An earlier draft of this suite tried to construct such a
+  // state via a fresh `WindowRegistered` + `WindowShown` after the scene's
+  // raise; the fresh registration lands BELOW the key window, not above it,
+  // so the attempt only proved the invariant rather than defeating it.)
+  //
+  // What DOES discriminate this composition — and what actually was the
+  // defect (`quick-view` silently inheriting `isContentWindow`'s exclusion) —
+  // is the CHOICE OF PREDICATE. The peek test below runs the same key/order
+  // state through both `isFrontEligibleWindow` (what the composition now
+  // uses) and `isContentWindow` (what it used to use) and shows they name
+  // different windows.
+
   it('the Cmd+W redirect (`windows.ts resolveFocusedWindowIdForClose`) never reaches PAST a focused extension popup to the page behind it', () => {
-    // The disproof of "always widen to main": a focused extension popup is
-    // itself a content window (`role:'content'`), so the composition — the
-    // key window when it is ITSELF content, else main — must resolve to the
-    // popup, not past it to whatever page is main.
+    // The disproof of "always widen to the topmost": a focused extension popup
+    // is itself front-eligible (`role:'content'`), so the composition — the
+    // key window when it is ITSELF front-eligible, else topmost — must resolve
+    // to the popup, not past it to whatever page is topmost.
     const state = evolve(scene(), { type: 'OsFocusGained', id: extensionPopup });
     assert.strictEqual(keyWindow(state)?.id, extensionPopup, 'the popup takes keystrokes');
-    assert.strictEqual(topmost(state, isContentWindow)?.id, extensionPopup, 'and, freshly raised, is main too');
+    assert.strictEqual(topmost(state, isFrontEligibleWindow)?.id, extensionPopup, 'and, freshly raised, is topmost too');
 
     const key = keyWindow(state);
-    const closeTarget = key !== null && isContentWindow(key) ? key : topmost(state, isContentWindow);
-    assert.strictEqual(closeTarget?.id, extensionPopup, 'never widens to a DIFFERENT main window while a content popup holds key');
+    const closeTarget = key !== null && isFrontEligibleWindow(key) ? key : topmost(state, isFrontEligibleWindow);
+    assert.strictEqual(closeTarget?.id, extensionPopup, 'never widens to a DIFFERENT window while a content popup holds key');
+  });
+
+  it('a focused peek is its own Cmd+W target under isFrontEligibleWindow, but is wrongly skipped under isContentWindow', () => {
+    // The regression this predicate exists to fix: composing over
+    // `isContentWindow`, a focused peek/slide is excluded on both halves
+    // (`role:'quick-view'` is neither content nor key-is-content), so Cmd+W
+    // silently redirects to the page host behind it.
+    const state = evolve(scene(), { type: 'OsFocusGained', id: slide });
+    const rec = state.order.find((w) => w.id === slide)!;
+    assert.strictEqual(keyWindow(state)?.id, slide, 'the peek holds key while focused');
+    assert.strictEqual(isContentWindow(rec), false, "a peek stays excluded from the kernel's own content set");
+    assert.strictEqual(isFrontEligibleWindow(rec), true, 'but is admitted to the set Cmd+W composes over');
+
+    const key = keyWindow(state);
+    const closeTarget = key !== null && isFrontEligibleWindow(key) ? key : topmost(state, isFrontEligibleWindow);
+    assert.strictEqual(closeTarget?.id, slide, 'closes the peek itself, never falls through to the page host behind it');
+
+    // The disproof: the SAME state, composed over the pre-fix predicate,
+    // names the page host BEHIND the peek instead — `key` is excluded from
+    // `isContentWindow`, so the fallback walks past the peek to the next
+    // content window sitting below it in order.
+    const wrongTarget = key !== null && isContentWindow(key) ? key : topmost(state, isContentWindow);
+    assert.strictEqual(wrongTarget?.id, pageHost, 'the pre-fix predicate silently redirects Cmd+W to the page underneath');
   });
 
   it('main follows a raise, because a raise moves the window to the top of order', () => {

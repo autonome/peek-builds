@@ -44,7 +44,7 @@ import {
   shadowKernelCloseOrHideRequested,
   getShadowKernelExecutor,
 } from './window-kernel-shadow.js';
-import { keyWindow, topmost, isContentWindow } from './window-kernel.js';
+import { keyWindow, topmost, isFrontEligibleWindow } from './window-kernel.js';
 import {
   initRendererHandledEscapeTracking,
   rendererHandledEscapeForWc,
@@ -757,25 +757,43 @@ export async function closeOrHideWindow(id: number): Promise<void> {
  * item / Close Window) should target.
  *
  * Destructive if wrong (four callers), so this is a COMPOSITION of two kernel
- * queries, not the mechanical `topmost(state, isContentWindow)` mapping every
- * other reader wants: the key window when the key window is ITSELF a content
- * window, otherwise the topmost content window.
+ * queries, not the mechanical `topmost(state, isFrontEligibleWindow)` mapping
+ * every other reader wants: the key window when the key window is ITSELF
+ * front-eligible, otherwise the topmost front-eligible window.
  *
- * Never widen past a focused content window to some OTHER window it happens
- * to be attached to (its opener, the page a popup floats over, …) — a
- * focused extension popup is the disproof: it is itself a content window
- * (`role: 'content'`), so Cmd+W there must close the popup itself, never
- * reach past it (via its parent/attachment) to the page it popped up from.
+ * `isFrontEligibleWindow`, not `isContentWindow` — deliberately. The kernel's
+ * own content predicate excludes `role: 'quick-view'` (peeks and slides) the
+ * same way it excludes the cmd palette, because neither should become AppKit's
+ * main window while it holds key. But Cmd+W is not "what is main", it is
+ * "what should this close", and a focused peek is exactly the kind of window a
+ * close command must reach — see `isFrontEligibleWindow`'s own doc for why it
+ * admits `quick-view` where `isContentWindow` does not.
+ *
+ * Never widen past a focused front-eligible window to some OTHER window it
+ * happens to be attached to (its opener, the page a popup floats over, the
+ * page host a peek is floating above, …) — two disproofs pin this:
+ *
+ *   - a focused extension popup is itself front-eligible (`role: 'content'`),
+ *     so Cmd+W there must close the popup itself, never reach past it (via its
+ *     parent/attachment) to the page it popped up from.
+ *   - a focused peek (`role: 'quick-view'`) is front-eligible too, so Cmd+W
+ *     there must close the peek itself, never fall through to the page host
+ *     sitting behind it — the defect this composition exists to avoid: with a
+ *     bare `isContentWindow` mapping, the peek is excluded on both halves (it
+ *     is neither `key`-and-content nor `topmost`-and-content), so the close
+ *     reaches the page underneath, or — if the peek is the only visible
+ *     window — resolves to nothing at all.
+ *
  * That is why the composition checks key FIRST and only widens to `topmost`
- * when key is ITSELF not content — the shared chrome overlay case (Cmd+L
- * parks key on the overlay to type a URL; the overlay is not content, so the
- * close target falls through to the topmost content window, i.e. the page it
- * frames).
+ * when key is ITSELF not front-eligible — the shared chrome overlay case
+ * (Cmd+L parks key on the overlay to type a URL; the overlay is a satellite
+ * role, so the close target falls through to the topmost front-eligible
+ * window, i.e. the page it frames).
  */
 export function resolveFocusedWindowIdForClose(): number | null {
   const state = getShadowKernelExecutor().getState();
   const key = keyWindow(state);
-  const target = key !== null && isContentWindow(key) ? key : topmost(state, isContentWindow);
+  const target = key !== null && isFrontEligibleWindow(key) ? key : topmost(state, isFrontEligibleWindow);
   if (target == null) return null;
   // The kernel speaks WM WindowId; the close path (`closeOrHideWindow` and the
   // registries it consults) is still Electron-id-keyed, so resolve the

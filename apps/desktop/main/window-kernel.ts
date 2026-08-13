@@ -5,9 +5,12 @@
  * shape and structure"). Follow that section; this file is a literal, minimal
  * implementation of it, not a redesign.
  *
- * SCOPE: greenfield. NOTHING in the app imports this module yet — it sits
- * alongside the existing reducer (`window-state.ts`), which stays untouched and
- * in charge. This file carries the first two slices of the ~45-event surface
+ * SCOPE: no longer greenfield. A cutover moved production readers of the old
+ * reducer's `front` field onto this file's queries (`isContentWindow`,
+ * `isFrontEligibleWindow`, `topmost`, `keyWindow`) — `windows.ts`, `ipc.ts` and
+ * `hybrid-overlay.ts` among them; `window-state.ts` stays in the tree but is no
+ * longer the sole authority those callers read. This file carries the first
+ * two slices of the ~45-event surface
  * (§0.1.1's "~17 commands, ~20 events" split) — visibility + raise, 5
  * commands/8 events — plus fullscreen (§0.1.8: pulled forward out of the
  * geometry slice because it is orthogonal to `key`/`order` and needs no
@@ -2934,6 +2937,18 @@ export function hostForOverlay(state: State, overlayId: WindowId): WindowRecord 
 export const CONTENT_ROLES: ReadonlySet<string> = new Set(['content', 'child-content', 'workspace']);
 
 /**
+ * The roles that hold key without being what the user thinks of as their
+ * document — chrome, a launcher, a mode switcher. Ported from `ipc.ts`'s
+ * registration predicate (`satellite: role === 'overlay' || role === 'palette'
+ * || role === 'switcher'`), which is where the old reducer's per-window
+ * `satellite` flag was actually decided. See `isFrontEligibleWindow` for the
+ * query this set backs, and its doc for why the membership stops one role
+ * short of `TRANSIENT_ROLES` below (`quick-view` is transient but NOT
+ * satellite).
+ */
+export const SATELLITE_ROLES: ReadonlySet<string> = new Set(['overlay', 'palette', 'switcher']);
+
+/**
  * THE content predicate — `topmost(state, isContentWindow)` is AppKit's *main
  * window* (§0.1.5 "Key vs. main"): the standard window where the user is
  * currently working, and so the semantic target of menus and commands. It is
@@ -3022,16 +3037,58 @@ export const CONTENT_ROLES: ReadonlySet<string> = new Set(['content', 'child-con
  * and must not be served by widening this one: `tile-ipc.ts`
  * `tileResolveWebWindow` and `tile:window:devtools` want http/https content
  * only. That needs a URL fact this kernel does not carry yet (the old
- * `WindowRecord.lastHttpUrl`); until it does, those callers post-filter. The
- * Cmd+W target (`windows.ts resolveFocusedWindowIdForClose`) is a
- * COMPOSITION, not a fourth predicate: the key window when it is itself
- * content, else `topmost(state, isContentWindow)` — which is precisely the
- * overlay-focused redirect that predicate already hand-rolls.
+ * `WindowRecord.lastHttpUrl`); until it does, those callers post-filter.
+ *
+ * A WIDER sibling exists too, and is the one to reach for instead of loosening
+ * this predicate: `isFrontEligibleWindow`, below, admits `quick-view` (a peek
+ * or a slide) where this predicate excludes it. The Cmd+W target
+ * (`windows.ts resolveFocusedWindowIdForClose`) is a COMPOSITION over THAT
+ * predicate, not over this one and not a fourth predicate of its own: the key
+ * window when it is itself front-eligible, else `topmost(state,
+ * isFrontEligibleWindow)`. A composition over `isContentWindow` here would
+ * exclude a focused peek from being its own close target and fall through to
+ * whatever page host sits behind it — see `isFrontEligibleWindow`'s doc for
+ * why the two predicates diverge on that one role.
  */
 export function isContentWindow(record: WindowRecord): boolean {
   if (!record.visible) return false;
   if (!record.canBecomeKey) return false;
   return roleIn(CONTENT_ROLES, record.role);
+}
+
+/**
+ * The old `window-state.ts isEligibleFront` rule (`visible && !satellite &&
+ * live`) preserved as a rule of its own, not folded into `isContentWindow`
+ * above and not a replacement for it. Names the set `isEligibleFront` named:
+ * a window visible, able to take keystrokes, and not one of the
+ * `SATELLITE_ROLES` — the set the user is directly working in, in the sense
+ * of "the window a close/reload/print command should act on if nothing more
+ * specific is focused", rather than in the sense of "the standard document
+ * window" `isContentWindow` answers for the kernel's own ordering and focus
+ * rules (the successor raise, the focus-assert gate, transient dismissal).
+ * `order` membership already stands in for the old rule's `live` clause — a
+ * closed window is never in `order` at all (RULE 1).
+ *
+ * DELIBERATELY ADMITS `quick-view` WHERE `isContentWindow` EXCLUDES IT. A peek
+ * or a slide is not a document the kernel should treat as AppKit's main window
+ * — `isContentWindow`'s own doc explains why key shifting to a panel must not
+ * move main — but it IS a window the user opened and is directly acting on:
+ * typing into it, scrolling it, closing it. `role: 'quick-view'` is in neither
+ * `CONTENT_ROLES` nor `SATELLITE_ROLES`, so it was silently swept into
+ * `isContentWindow`'s exclusion when the Cmd+W target was ported to compose
+ * over that predicate — a peek is a panel for the kernel's OWN purposes, but
+ * it was never a satellite for the old machine's, and Cmd+W inherited the
+ * wrong one of the two exclusions. `isContentWindow`'s docblock justifies
+ * excluding `quick-view` with "Escape now targets key, so nothing is lost by
+ * treating a peek as the panel it is" — that reasoning is specifically about
+ * ESCAPE (which already reads `key`, unaffected by either predicate) and does
+ * not carry to a close command, which has no target at all once both `key`
+ * and `topmost` skip past the focused peek to the page host behind it.
+ */
+export function isFrontEligibleWindow(record: WindowRecord): boolean {
+  if (!record.visible) return false;
+  if (!record.canBecomeKey) return false;
+  return !roleIn(SATELLITE_ROLES, record.role);
 }
 
 /**

@@ -222,10 +222,11 @@ export function desktopMembershipForRole(role: string): 'follow' | 'anchor' {
 
 // The close-target resolver (`resolveCloseTargetId`) and the focused-visible
 // resolver (`resolveFocusedVisibleWindowId`, with its 7-input cascade) are
-// DELETED — both collapse into the window-state machine's single `front`
-// authority (`getFrontWindowId()`), whose satellite rule already excludes the
-// chrome overlay + modal issuers. Their regression assertions are ported to
-// `window-state.test.ts`.
+// DELETED — both collapse into `windows.ts resolveFocusedWindowIdForClose`, a
+// composition over the kernel's `isFrontEligibleWindow` query
+// (`window-kernel.ts`), which excludes the chrome overlay + modal issuers the
+// same way the old `satellite` flag did. Their regression assertions are
+// ported to `window-state.test.ts` and `window-kernel.test.ts`.
 
 /**
  * Decide whether a hybrid page-host's content `WebContents` should be
