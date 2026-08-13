@@ -11,6 +11,38 @@ For cross-cutting rules (git workflow, subagent dispatch, Bash discipline), see 
 
 ---
 
+## Electron is ONE backend, not the design
+
+Peek targets other window backends — `apps/tauri-desktop/` already exists, and more are
+intended. **Electron is an implementation of the window port, never the shape of the thing
+above it.** Anything above that port stays neutral about who implements it:
+
+- **No platform method names, no SDK argument names.** `skipTransformProcessType`,
+  `visibleOnFullScreen`, `setVisibleOnAllSpaces`, `moveTop`, `LSUIElement` — these are Electron
+  and AppKit vocabulary and they belong in `main/electron-window-backend.ts`, not in
+  `main/window-kernel.ts`, `main/window-backend.ts`, or anything that reads them.
+- **No platform's workaround shape.** Where macOS needs an ordered pair of native calls to
+  achieve one intention, that ordering is the Electron backend's business. The machine emits
+  ONE effect for ONE intention and never a platform's steps. A sequence that only makes sense
+  on one OS is not a sequence the core gets to know about.
+- **No assuming a concept exists everywhere.** macOS Spaces, native fullscreen, key-vs-main
+  windows, activation policy — a backend on a platform without the concept answers with
+  nothing, and that is a correct answer rather than a special case for callers to carry.
+- **Apple's words are not our words.** "Space" is Apple's name for a virtual desktop; the port
+  and the machine describe the intention (does this window follow the user across desktops, or
+  belong to the one it was opened on) rather than naming one vendor's feature.
+
+**The two tests, both cheap to apply:** could a second backend implement this signature without
+one of its arguments being meaningless to it, and does a platform lacking the concept get to
+no-op without the caller special-casing it. If either answer is no, the detail is in the wrong
+layer.
+
+**Enforced, not just written:** `scripts/check-platform-leak.mjs` greps the layers above the
+port for Electron/AppKit vocabulary and fails on a new one. Full rule and its rationale:
+`docs/design/window-manager.md` → "0. The governing rule set".
+
+---
+
 ## Testing
 
 > **ALWAYS ASK BEFORE RUNNING THE FULL GATE.** Never launch `yarn test:desktop:electron`

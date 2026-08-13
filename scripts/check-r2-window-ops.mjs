@@ -48,6 +48,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+// The comment/string stripper lives in its own side-effect-free module so
+// `check-platform-leak.mjs` can share it. Importing it from THIS file would
+// run this whole check as an invisible side effect of that import.
+import { stripNonCode } from './lib/strip-non-code.mjs';
 
 // Anchor to the repo root this script lives in (scripts/..), not the cwd —
 // the check must scan the checkout it is part of no matter where it's run from.
@@ -271,96 +275,6 @@ function collectFiles(dir) {
     }
   }
   return out;
-}
-
-/**
- * Can a `/` at this point start a regex literal (vs. be a division operator)?
- * Heuristic: after an operator / opening bracket / separator (or at file
- * start) a regex can start; after an identifier char, `)` or `]` it is
- * division. Known residual blind spot: `return /re/` (prev char is a letter)
- * reads as division, leaving the regex body unstripped.
- */
-function regexCanStart(prevSig) {
-  if (prevSig === '') return true;
-  return '([{=,:;!&|?+-*%^~<>'.includes(prevSig);
-}
-
-/**
- * Blank out comments, string/template contents and regex-literal contents,
- * preserving offsets (replaced chars become spaces) and code inside `${...}`
- * interpolations.
- */
-function stripNonCode(src) {
-  const n = src.length;
-  const out = src.split('');
-  let state = 'code';
-  const braceDepths = []; // one depth counter per nested template interpolation
-  let prevSig = ''; // last significant (non-whitespace) code char, for the regex-vs-division call
-  let inClass = false; // inside a regex [...] character class
-  for (let i = 0; i < n; i++) {
-    const c = src[i];
-    const d = i + 1 < n ? src[i + 1] : '';
-    switch (state) {
-      case 'code':
-        if (c === '/' && d === '/') { state = 'line'; out[i] = ' '; }
-        else if (c === '/' && d === '*') { state = 'block'; out[i] = ' '; }
-        else if (c === '/' && regexCanStart(prevSig)) { state = 'regex'; inClass = false; out[i] = ' '; }
-        else if (c === "'") { state = 'single'; out[i] = ' '; }
-        else if (c === '"') { state = 'double'; out[i] = ' '; }
-        else if (c === '`') { state = 'template'; out[i] = ' '; }
-        else if (c === '{' && braceDepths.length) { braceDepths[braceDepths.length - 1]++; }
-        else if (c === '}' && braceDepths.length) {
-          if (braceDepths[braceDepths.length - 1] === 0) {
-            braceDepths.pop();
-            state = 'template';
-            out[i] = ' ';
-          } else {
-            braceDepths[braceDepths.length - 1]--;
-          }
-        }
-        if (state === 'code' && !/\s/.test(c)) prevSig = c;
-        break;
-      case 'regex':
-        if (c === '\\') { out[i] = ' '; if (d) { out[i + 1] = ' '; i++; } }
-        else if (c === '[') { inClass = true; out[i] = ' '; }
-        else if (c === ']') { inClass = false; out[i] = ' '; }
-        else if (c === '/' && !inClass) { state = 'code'; out[i] = ' '; prevSig = ')'; /* regex value ~ operand */ }
-        else if (c === '\n') { state = 'code'; /* not a regex after all (unterminated) — resync */ }
-        else out[i] = ' ';
-        break;
-      case 'line':
-        if (c === '\n') state = 'code';
-        else out[i] = ' ';
-        break;
-      case 'block':
-        if (c === '*' && d === '/') { state = 'code'; out[i] = ' '; out[i + 1] = ' '; i++; }
-        else if (c !== '\n') out[i] = ' ';
-        break;
-      case 'single':
-        if (c === '\\') { out[i] = ' '; if (d) { out[i + 1] = ' '; i++; } }
-        else if (c === "'") { state = 'code'; out[i] = ' '; }
-        else if (c !== '\n') out[i] = ' ';
-        break;
-      case 'double':
-        if (c === '\\') { out[i] = ' '; if (d) { out[i + 1] = ' '; i++; } }
-        else if (c === '"') { state = 'code'; out[i] = ' '; }
-        else if (c !== '\n') out[i] = ' ';
-        break;
-      case 'template':
-        if (c === '\\') { out[i] = ' '; if (d) { out[i + 1] = ' '; i++; } }
-        else if (c === '$' && d === '{') {
-          braceDepths.push(0);
-          state = 'code';
-          out[i] = ' ';
-          out[i + 1] = ' ';
-          i++;
-        }
-        else if (c === '`') { state = 'code'; out[i] = ' '; }
-        else if (c !== '\n') out[i] = ' ';
-        break;
-    }
-  }
-  return out.join('');
 }
 
 // Longest-first so `showInactive` never half-matches as `show`.
