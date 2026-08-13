@@ -2711,3 +2711,341 @@ describe("MCP Grant Admin Routes Tests", () => {
     assert.deepStrictEqual(grants.resolveMcpGrant(grant.apiKey), { revoked: true });
   });
 });
+
+describe("MCP Item Routes Tests", () => {
+  // Exercises the real mcp-items.js business logic (queryItems/searchItems/
+  // resolveItemId/getItemForRoute) through a Hono app wired the same way
+  // index.js wires the /mcp/* routes: general auth (skips /mcp), then the
+  // grant gate, then thin handlers that read scope/profile/user from the
+  // grant context set on `c` — never from the request. This is the READ
+  // half of design doc §3.3 (GET /mcp/items, /items/search,
+  // /items/:idOrPrefix, /items/resolve, /session).
+  let app;
+  let db;
+  let users;
+  let grants;
+  let mcpItemsMod;
+  let SCOPED_GRANT_KEY;
+  let UNSCOPED_GRANT_KEY;
+  const TEST_USER = "mcpitemsuser";
+  const PROFILE = "profile-a";
+
+  function insertItem(conn, { id, type = "text", content = "", title = "", domain = "", tags = [], syncId = "" }) {
+    const crypto = require("crypto");
+    const now = Date.now();
+    conn.run(
+      `INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt, createdByDevice, title, domain, frecencyScore, starred, archived)
+       VALUES (?, ?, ?, NULL, ?, 0, ?, ?, 0, '', ?, ?, 0, 0, 0)`,
+      [id, type, content, syncId, now, now, title, domain]
+    );
+    for (const tagName of tags) {
+      const existing = conn.get("SELECT id FROM tags WHERE name = ?", [tagName]);
+      const tagId = existing ? existing.id : crypto.randomUUID();
+      if (!existing) {
+        conn.run(
+          "INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt) VALUES (?, ?, 1, ?, 0, ?, ?)",
+          [tagId, tagName, now, now, now]
+        );
+      }
+      conn.run("INSERT OR IGNORE INTO item_tags (itemId, tagId, createdAt) VALUES (?, ?, ?)", [id, tagId, now]);
+    }
+  }
+
+  beforeEach(() => {
+    delete require.cache[require.resolve("./db")];
+    delete require.cache[require.resolve("./users")];
+    delete require.cache[require.resolve("./grants")];
+    delete require.cache[require.resolve("./auth")];
+    delete require.cache[require.resolve("./mcp-items")];
+    cleanTestDir();
+
+    db = require("./db");
+    users = require("./users");
+    grants = require("./grants");
+    mcpItemsMod = require("./mcp-items");
+    const { createAuthMiddleware, createMcpAuthMiddleware } = require("./auth");
+    const { DATASTORE_VERSION } = require("./version");
+
+    users.createUser(TEST_USER);
+    const scopedGrant = grants.createGrant(TEST_USER, "scoped", "work", false, PROFILE);
+    SCOPED_GRANT_KEY = scopedGrant.apiKey;
+    const unscopedGrant = grants.createGrant(TEST_USER, "unscoped", "", false, PROFILE);
+    UNSCOPED_GRANT_KEY = unscopedGrant.apiKey;
+
+    const { Hono } = require("hono");
+    app = new Hono();
+    app.use("*", createAuthMiddleware({ mode: "multi-user" }));
+    app.use("/mcp/*", createMcpAuthMiddleware());
+
+    // Mirrors index.js's GET /mcp/items* wiring — same mcp-items.js calls,
+    // same "scope/profile/user come only from the grant context" rule.
+    app.get("/mcp/items", (c) => {
+      const items = mcpItemsMod.queryItems(c.get("userId"), c.get("profileId"), c.get("scopeTag"), {
+        tags: c.req.query("tags") ? c.req.query("tags").split(",") : undefined,
+        type: c.req.query("type") || undefined,
+        limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+        offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+        sort: c.req.query("sort") || undefined,
+      });
+      return c.json({ items });
+    });
+    app.get("/mcp/items/search", (c) => {
+      const items = mcpItemsMod.searchItems(c.get("userId"), c.get("profileId"), c.get("scopeTag"), {
+        query: c.req.query("q") || "",
+        tags: c.req.query("tags") ? c.req.query("tags").split(",") : undefined,
+        type: c.req.query("type") || undefined,
+        limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+        offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
+      });
+      return c.json({ items });
+    });
+    app.get("/mcp/items/resolve", (c) => {
+      const result = mcpItemsMod.resolveItemId(
+        c.get("userId"),
+        c.get("profileId"),
+        c.get("scopeTag"),
+        c.req.query("prefix") || ""
+      );
+      return c.json(result);
+    });
+    app.get("/mcp/items/:idOrPrefix", (c) => {
+      const result = mcpItemsMod.getItemForRoute(
+        c.get("userId"),
+        c.get("profileId"),
+        c.get("scopeTag"),
+        c.req.param("idOrPrefix"),
+        {
+          maxContentLength: c.req.query("maxContentLength") ? Number(c.req.query("maxContentLength")) : undefined,
+          contentOffset: c.req.query("contentOffset") ? Number(c.req.query("contentOffset")) : undefined,
+          events: c.req.query("events") ? Number(c.req.query("events")) : undefined,
+        }
+      );
+      if (result.status === "ambiguous") {
+        return c.json({ id: null, ambiguous: true, candidates: result.candidates, truncated: result.truncated }, 409);
+      }
+      if (result.status === "not_found") {
+        return c.json({ error: "item not found" }, 404);
+      }
+      return c.json({ item: result.item });
+    });
+    app.get("/mcp/session", (c) => {
+      return c.json({
+        scopeTag: c.get("scopeTag"),
+        readonly: c.get("readonly"),
+        profileId: c.get("profileId"),
+        datastoreVersion: DATASTORE_VERSION,
+        userId: c.get("userId"),
+      });
+    });
+  });
+
+  after(() => {
+    if (db && db.closeAllConnections) db.closeAllConnections();
+    if (users && users.closeSystemDb) users.closeSystemDb();
+    cleanTestDir();
+  });
+
+  function scopedHeaders() {
+    return { Authorization: `Bearer ${SCOPED_GRANT_KEY}` };
+  }
+  function unscopedHeaders() {
+    return { Authorization: `Bearer ${UNSCOPED_GRANT_KEY}` };
+  }
+
+  it("GET /mcp/session reports scope/readonly/profile/user from the grant, ignoring anything on the request", async () => {
+    const res = await app.request("/mcp/session?scopeTag=whatever&userId=someone-else", { headers: scopedHeaders() });
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.strictEqual(json.scopeTag, "work");
+    assert.strictEqual(json.readonly, false);
+    assert.strictEqual(json.profileId, PROFILE);
+    assert.strictEqual(json.userId, TEST_USER);
+    assert.strictEqual(typeof json.datastoreVersion, "number");
+  });
+
+  describe("scope confinement is a WHERE clause, not a post-filter", () => {
+    it("LIMIT/OFFSET count only in-scope rows — a scoped grant cannot page past its scope", async () => {
+      db.saveItem(TEST_USER, "text", "in-scope-1", ["work"], null, null, PROFILE, null, "", "In scope 1");
+      db.saveItem(TEST_USER, "text", "in-scope-2", ["work"], null, null, PROFILE, null, "", "In scope 2");
+      db.saveItem(TEST_USER, "text", "out-of-scope-a", ["personal"], null, null, PROFILE, null, "", "Out A");
+      db.saveItem(TEST_USER, "text", "out-of-scope-b", ["personal"], null, null, PROFILE, null, "", "Out B");
+      db.saveItem(TEST_USER, "text", "out-of-scope-c", [], null, null, PROFILE, null, "", "Out C");
+
+      const page0 = await app.request("/mcp/items?limit=1&offset=0&sort=recent", { headers: scopedHeaders() });
+      const page1 = await app.request("/mcp/items?limit=1&offset=1&sort=recent", { headers: scopedHeaders() });
+      const page2 = await app.request("/mcp/items?limit=1&offset=2&sort=recent", { headers: scopedHeaders() });
+
+      const j0 = await page0.json();
+      const j1 = await page1.json();
+      const j2 = await page2.json();
+
+      assert.strictEqual(j0.items.length, 1);
+      assert.strictEqual(j1.items.length, 1);
+      // Offset 2 is past both in-scope rows: must be empty. If scope were a
+      // post-filter applied after LIMIT/OFFSET, this offset would still
+      // land inside the unfiltered 5-row window and could return a
+      // (wrongly exposed) out-of-scope row instead of nothing.
+      assert.strictEqual(j2.items.length, 0);
+
+      const titles = [j0.items[0].title, j1.items[0].title].sort();
+      assert.deepStrictEqual(titles, ["In scope 1", "In scope 2"]);
+    });
+
+    it("scope also confines the tags-filter branch (GROUP BY … HAVING all-tags-match)", async () => {
+      db.saveItem(TEST_USER, "text", "tagged-in-scope", ["work", "todo"], null, null, PROFILE, null, "", "Tagged in scope");
+      db.saveItem(TEST_USER, "text", "tagged-out-of-scope", ["personal", "todo"], null, null, PROFILE, null, "", "Tagged out of scope");
+
+      const res = await app.request("/mcp/items?tags=todo", { headers: scopedHeaders() });
+      const json = await res.json();
+      assert.strictEqual(json.items.length, 1);
+      assert.strictEqual(json.items[0].title, "Tagged in scope");
+    });
+
+    it("an unscoped grant sees all items, confirming scope is what narrowed the scoped grant's query", async () => {
+      db.saveItem(TEST_USER, "text", "x-item", ["work"], null, null, PROFILE, null, "", "A");
+      db.saveItem(TEST_USER, "text", "y-item", ["personal"], null, null, PROFILE, null, "", "B");
+
+      const res = await app.request("/mcp/items?limit=10", { headers: unscopedHeaders() });
+      const json = await res.json();
+      assert.strictEqual(json.items.length, 2);
+    });
+
+    it("search_items confines candidates by scope before ranking/paging", async () => {
+      db.saveItem(TEST_USER, "text", "widget shopping list one", ["work"], null, null, PROFILE, null, "", "Widget note");
+      db.saveItem(TEST_USER, "text", "widget shopping list two", ["personal"], null, null, PROFILE, null, "", "Widget note");
+
+      const res = await app.request("/mcp/items/search?q=widget", { headers: scopedHeaders() });
+      const json = await res.json();
+      assert.strictEqual(json.items.length, 1);
+      assert.deepStrictEqual(json.items[0].tags, ["work"]);
+    });
+  });
+
+  describe("a prefix matching only out-of-scope items reads as not-found", () => {
+    it("resolve returns {id:null} identically for a truly-missing prefix and an out-of-scope one", async () => {
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      insertItem(conn, { id: "outscope-aaa111", title: "Secret", tags: ["personal"] });
+
+      const missing = await app.request("/mcp/items/resolve?prefix=zzz-nope", { headers: scopedHeaders() });
+      const outOfScope = await app.request("/mcp/items/resolve?prefix=outscope-", { headers: scopedHeaders() });
+
+      assert.deepStrictEqual(await missing.json(), { id: null });
+      assert.deepStrictEqual(await outOfScope.json(), { id: null });
+    });
+
+    it("GET /mcp/items/:id returns 404 for an out-of-scope item's exact id, same as a nonexistent id", async () => {
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      insertItem(conn, { id: "outscope-exact-id", title: "Secret", tags: ["personal"] });
+
+      const outOfScope = await app.request("/mcp/items/outscope-exact-id", { headers: scopedHeaders() });
+      const missing = await app.request("/mcp/items/does-not-exist-at-all", { headers: scopedHeaders() });
+
+      assert.strictEqual(outOfScope.status, 404);
+      assert.strictEqual(missing.status, 404);
+      assert.deepStrictEqual(await outOfScope.json(), await missing.json());
+    });
+
+    it("an unscoped grant CAN resolve the same id (confirms scope, not the id, hides it)", async () => {
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      insertItem(conn, { id: "outscope-visible-unscoped", title: "Secret", tags: ["personal"] });
+
+      const res = await app.request("/mcp/items/resolve?prefix=outscope-visible-unscoped", { headers: unscopedHeaders() });
+      const json = await res.json();
+      assert.strictEqual(json.id, "outscope-visible-unscoped");
+    });
+  });
+
+  describe("ambiguity payload never names an out-of-scope id or title", () => {
+    it("resolve's candidates list is built only from in-scope rows sharing the prefix", async () => {
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      insertItem(conn, { id: "dupe-in-scope-1", title: "In scope A", tags: ["work"] });
+      insertItem(conn, { id: "dupe-in-scope-2", title: "In scope B", tags: ["work"] });
+      insertItem(conn, { id: "dupe-out-of-scope-3", title: "TOP SECRET", tags: ["personal"] });
+
+      const res = await app.request("/mcp/items/resolve?prefix=dupe-", { headers: scopedHeaders() });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.ambiguous, true);
+      const ids = json.candidates.map((c) => c.id).sort();
+      assert.deepStrictEqual(ids, ["dupe-in-scope-1", "dupe-in-scope-2"]);
+      const titles = json.candidates.map((c) => c.title);
+      assert.ok(!titles.includes("TOP SECRET"), "ambiguity payload must never name an out-of-scope title");
+      assert.ok(!json.candidates.some((c) => c.id === "dupe-out-of-scope-3"), "ambiguity payload must never name an out-of-scope id");
+    });
+
+    it("GET /mcp/items/:idOrPrefix surfaces the same scope-confined candidate list as a 409", async () => {
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      insertItem(conn, { id: "amb-in-scope-1", title: "One", tags: ["work"] });
+      insertItem(conn, { id: "amb-in-scope-2", title: "Two", tags: ["work"] });
+      insertItem(conn, { id: "amb-out-of-scope-3", title: "Hidden", tags: ["personal"] });
+
+      const res = await app.request("/mcp/items/amb-", { headers: scopedHeaders() });
+      assert.strictEqual(res.status, 409);
+      const json = await res.json();
+      assert.strictEqual(json.ambiguous, true);
+      assert.ok(!json.candidates.some((c) => c.title === "Hidden" || c.id === "amb-out-of-scope-3"));
+    });
+  });
+
+  describe("id-namespace resolution (design doc §5)", () => {
+    it("resolves an item by its desktop-side syncId, not just its server id", async () => {
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      insertItem(conn, { id: "server-minted-uuid-1", title: "Pushed item", tags: ["work"], syncId: "desktop-local-id-1" });
+
+      const res = await app.request("/mcp/items/resolve?prefix=desktop-local-id-1", { headers: scopedHeaders() });
+      const json = await res.json();
+      assert.strictEqual(json.id, "server-minted-uuid-1");
+    });
+
+    it("every returned item carries localId alongside id", async () => {
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      insertItem(conn, { id: "server-id-2", title: "Pushed 2", tags: ["work"], syncId: "desktop-id-2" });
+
+      const res = await app.request("/mcp/items/server-id-2", { headers: scopedHeaders() });
+      const json = await res.json();
+      assert.strictEqual(json.item.id, "server-id-2");
+      assert.strictEqual(json.item.localId, "desktop-id-2");
+    });
+  });
+
+  describe("get_item content windowing and events", () => {
+    it("windows content by default and reports contentLength/contentTruncated", async () => {
+      const longContent = "x".repeat(5000);
+      const id = db.saveItem(TEST_USER, "text", longContent, ["work"], null, null, PROFILE, null, "", "Long item");
+      const res = await app.request(`/mcp/items/${id}`, { headers: scopedHeaders() });
+      const json = await res.json();
+      assert.strictEqual(json.item.content.length, 4000);
+      assert.strictEqual(json.item.contentLength, 5000);
+      assert.strictEqual(json.item.contentTruncated, true);
+    });
+
+    it("maxContentLength=-1 returns the whole thing", async () => {
+      const longContent = "y".repeat(5000);
+      const id = db.saveItem(TEST_USER, "text", longContent, ["work"], null, null, PROFILE, null, "", "Long item 2");
+      const res = await app.request(`/mcp/items/${id}?maxContentLength=-1`, { headers: scopedHeaders() });
+      const json = await res.json();
+      assert.strictEqual(json.item.content.length, 5000);
+      assert.strictEqual(json.item.contentTruncated, undefined);
+    });
+
+    it("events param attaches the item's event history", async () => {
+      const id = db.saveItem(TEST_USER, "text", "task body", ["work", "todo"], null, null, PROFILE, null, "", "A task");
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      conn.run(
+        `INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt) VALUES (?, ?, 'started', 0, ?, '{}', ?)`,
+        ["evt-1", id, Date.now(), Date.now()]
+      );
+      const res = await app.request(`/mcp/items/${id}?events=20`, { headers: scopedHeaders() });
+      const json = await res.json();
+      assert.strictEqual(json.item.events.length, 1);
+      assert.strictEqual(json.item.events[0].type, "started");
+    });
+
+    it("get_item omits events when the events param is absent", async () => {
+      const id = db.saveItem(TEST_USER, "text", "no events here", ["work"], null, null, PROFILE, null, "", "Plain item");
+      const res = await app.request(`/mcp/items/${id}`, { headers: scopedHeaders() });
+      const json = await res.json();
+      assert.strictEqual(json.item.events, undefined);
+    });
+  });
+});

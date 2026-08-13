@@ -6,6 +6,7 @@ const path = require("path");
 const db = require("./db");
 const users = require("./users");
 const grants = require("./grants");
+const mcpItems = require("./mcp-items");
 const backup = require("./backup");
 const { loadConfig, isSingleUserMode } = require("./config");
 const { createAuthMiddleware, createMcpAuthMiddleware } = require("./auth");
@@ -60,14 +61,116 @@ app.use("*", createAuthMiddleware(config));
 app.use("/mcp/*", createMcpAuthMiddleware());
 
 // GET /mcp/whoami — trivial authenticated probe confirming what the grant
-// middleware resolved. The real /mcp/* data routes are a later step; this
-// exists only so the middleware has something to guard now.
+// middleware resolved.
 app.get("/mcp/whoami", (c) => {
   return c.json({
     userId: c.get("userId"),
     scopeTag: c.get("scopeTag"),
     readonly: c.get("readonly"),
     profileId: c.get("profileId"),
+  });
+});
+
+// === MCP item read routes (design doc §3.3) ===
+//
+// scopeTag/readonly/userId/profileId come ONLY from the grant context the
+// /mcp/* auth middleware set (createMcpAuthMiddleware in auth.js) — never
+// from a query parameter or header. See design doc §4.2 for why: the scope
+// is minted into the credential precisely so a caller sending raw requests
+// (bypassing whatever a client would have filtered) can't widen it.
+//
+// Business logic lives in mcp-items.js; these handlers only parse the
+// request and translate the result into a status code.
+
+// Parse an optional numeric query param, returning undefined (so the
+// callee's own default applies) rather than NaN for missing/invalid input.
+function parseOptionalNumber(raw) {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function parseTagsParam(raw) {
+  if (!raw) return undefined;
+  const list = raw.split(",").map((t) => t.trim()).filter(Boolean);
+  return list.length > 0 ? list : undefined;
+}
+
+// GET /mcp/items — server-side port of db.js queryItems() (list_items).
+app.get("/mcp/items", (c) => {
+  const items = mcpItems.queryItems(c.get("userId"), c.get("profileId"), c.get("scopeTag"), {
+    tags: parseTagsParam(c.req.query("tags")),
+    type: c.req.query("type") || undefined,
+    limit: parseOptionalNumber(c.req.query("limit")),
+    offset: parseOptionalNumber(c.req.query("offset")),
+    sort: c.req.query("sort") || undefined,
+  });
+  return c.json({ items });
+});
+
+// GET /mcp/items/search — server-side port of db.js searchItems()
+// (search_items). Registered ahead of /mcp/items/:idOrPrefix so the literal
+// path always wins over the param route.
+app.get("/mcp/items/search", (c) => {
+  const items = mcpItems.searchItems(c.get("userId"), c.get("profileId"), c.get("scopeTag"), {
+    query: c.req.query("q") || "",
+    tags: parseTagsParam(c.req.query("tags")),
+    type: c.req.query("type") || undefined,
+    limit: parseOptionalNumber(c.req.query("limit")),
+    offset: parseOptionalNumber(c.req.query("offset")),
+  });
+  return c.json({ items });
+});
+
+// GET /mcp/items/resolve — standalone prefix resolver (design doc §5),
+// returning the ResolveResult shape byte-identically to resolveItemId() in
+// sqlite-store.js. Registered ahead of /mcp/items/:idOrPrefix, same reason
+// as /mcp/items/search above.
+app.get("/mcp/items/resolve", (c) => {
+  const result = mcpItems.resolveItemId(
+    c.get("userId"),
+    c.get("profileId"),
+    c.get("scopeTag"),
+    c.req.query("prefix") || ""
+  );
+  return c.json(result);
+});
+
+// GET /mcp/items/:idOrPrefix — resolves a prefix inline (design doc §5) and
+// returns the item (200), a miss (404), or the ambiguity payload (409).
+// Supports the maxContentLength/contentOffset content window and the
+// events param backing get_task_context.
+app.get("/mcp/items/:idOrPrefix", (c) => {
+  const result = mcpItems.getItemForRoute(
+    c.get("userId"),
+    c.get("profileId"),
+    c.get("scopeTag"),
+    c.req.param("idOrPrefix"),
+    {
+      maxContentLength: parseOptionalNumber(c.req.query("maxContentLength")),
+      contentOffset: parseOptionalNumber(c.req.query("contentOffset")),
+      events: parseOptionalNumber(c.req.query("events")),
+    }
+  );
+
+  if (result.status === "ambiguous") {
+    return c.json({ id: null, ambiguous: true, candidates: result.candidates, truncated: result.truncated }, 409);
+  }
+  if (result.status === "not_found") {
+    return c.json({ error: "item not found" }, 404);
+  }
+  return c.json({ item: result.item });
+});
+
+// GET /mcp/session — what the SERVER understands about this grant. Backs
+// PeekStore.describe() and the startup consistency check (design doc §4.3).
+app.get("/mcp/session", (c) => {
+  return c.json({
+    scopeTag: c.get("scopeTag"),
+    readonly: c.get("readonly"),
+    profileId: c.get("profileId"),
+    datastoreVersion: DATASTORE_VERSION,
+    userId: c.get("userId"),
   });
 });
 

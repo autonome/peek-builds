@@ -1,0 +1,455 @@
+/**
+ * Read-side business logic for the `/mcp/*` item routes wired in `index.js`
+ * (docs/mcp-remote-backend-design.md §3.3). Server-side ports of the same
+ * queries `apps/desktop/features/mcp-server/store/sqlite-store.js` runs
+ * against the local datastore — `queryItemsSync()`, `searchItemsSync()`,
+ * `resolveItemIdSync()`, `getItemSync()`/`getTaskContextSync()` and
+ * `shapeItemForResponse()` in `server.js` — duplicated here rather than
+ * shared because they now run against a different SqlAdapter and a
+ * credential-bound scope rather than a captured-at-open-time one. Column-set
+ * and formula parity is a known drift hazard, same note as sqlite-store.js.
+ *
+ * The one behavioral difference from the desktop queries: `scopeTag` is a
+ * parameter threaded in from the caller (the grant's `c.get('scopeTag')` in
+ * index.js), never read from anything the client sends, and it is applied as
+ * a `WHERE`-clause `EXISTS` subquery on every query — never a post-filter —
+ * so `LIMIT`/`OFFSET` count in-scope rows only and an id/prefix matching only
+ * out-of-scope items reads as not-found (design doc §4.1, §5).
+ */
+
+const { getConnection } = require("./db");
+
+// --- Shared helpers ---
+
+function toTimestamp(val) {
+  if (typeof val === "number") return Math.trunc(val);
+  if (typeof val === "string") {
+    if (val.includes("T")) return new Date(val).getTime() || 0;
+    return Math.trunc(Number(val)) || 0;
+  }
+  return 0;
+}
+
+// Escapes literal `%`/`_`/`\` in a LIKE operand so it matches only itself.
+// Mirrors escapeLikePrefix in sqlite-store.js.
+function escapeLikePrefix(prefix) {
+  return prefix.replace(/[\\%_]/g, (ch) => "\\" + ch);
+}
+
+// Scope confinement clause: an EXISTS subquery over item_tags/tags matching
+// the scope tag exactly or a `<scope>:`-namespaced child, mirroring
+// inScope()/tagIsScopeOwned() in server.js and the scope clause in
+// resolveItemIdSync(). Empty scopeTag = unscoped = no restriction (returns
+// an empty clause and no params). `alias` is the outer query's items alias.
+function scopeClause(scopeTag, alias) {
+  if (!scopeTag) return { sql: "", params: [] };
+  return {
+    sql: ` AND EXISTS (
+      SELECT 1 FROM item_tags sit
+      JOIN tags st ON st.id = sit.tagId
+      WHERE sit.itemId = ${alias}.id
+        AND (st.name = ? OR st.name LIKE ? ESCAPE '\\')
+    )`,
+    params: [scopeTag, escapeLikePrefix(scopeTag) + ":%"],
+  };
+}
+
+function fetchTagsForIds(conn, ids) {
+  const byId = new Map();
+  if (ids.length === 0) return byId;
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = conn.all(
+    `SELECT it.itemId, t.name FROM item_tags it JOIN tags t ON t.id = it.tagId WHERE it.itemId IN (${placeholders})`,
+    ids
+  );
+  for (const r of rows) {
+    if (!byId.has(r.itemId)) byId.set(r.itemId, []);
+    byId.get(r.itemId).push(r.name);
+  }
+  return byId;
+}
+
+// Shape a raw `items` row (+ its tags) into the ItemView the design doc
+// specifies (§3.2). `localId` is the desktop-side id (`items.syncId`, ''
+// if the item was never synced) carried alongside the server `id` per §5's
+// id-namespace note.
+function shapeItemRow(row, tags) {
+  return {
+    id: row.id,
+    localId: row.syncId || "",
+    type: row.type,
+    title: row.title || "",
+    content: row.content,
+    domain: row.domain || "",
+    metadata: row.metadata ? JSON.parse(row.metadata) : {},
+    tags: tags || [],
+    createdAt: toTimestamp(row.createdAt),
+    updatedAt: toTimestamp(row.updatedAt),
+    deletedAt: toTimestamp(row.deletedAt || 0),
+    starred: row.starred || 0,
+    archived: row.archived || 0,
+    // Local-only on the desktop, never carried by the server — see design
+    // doc §3.1's "deliberately still absent" list. Present for shape parity.
+    visitCount: 0,
+    frecencyScore: row.frecencyScore || 0,
+  };
+}
+
+// --- list_items: GET /mcp/items ---
+//
+// Server-side port of queryItemsSync(), including its all-tags-match
+// `GROUP BY … HAVING COUNT(DISTINCT t.id) = ?` semantics. The scope clause
+// is inside the WHERE that GROUP BY/LIMIT/OFFSET run over, so paging can
+// never cross into out-of-scope rows.
+function queryItems(userId, profileId, scopeTag, { tags, type, limit = 50, offset = 0, sort = "recent" } = {}) {
+  const conn = getConnection(userId, profileId);
+  const orderCol = sort === "frecency" ? "frecencyScore" : "createdAt";
+
+  let rows;
+  if (tags && tags.length > 0) {
+    const scope = scopeClause(scopeTag, "i");
+    const placeholders = tags.map(() => "?").join(",");
+    const sql = `
+      SELECT i.id, i.type, i.content, i.title, i.domain, i.metadata, i.syncId,
+             i.createdAt, i.updatedAt, i.deletedAt, i.starred, i.archived, i.frecencyScore
+      FROM items i
+      JOIN item_tags it ON i.id = it.itemId
+      JOIN tags t ON it.tagId = t.id
+      WHERE t.name IN (${placeholders}) AND CAST(i.deletedAt AS INTEGER) = 0${scope.sql}
+      GROUP BY i.id
+      HAVING COUNT(DISTINCT t.id) = ?
+      ORDER BY i.${orderCol} DESC
+      LIMIT ? OFFSET ?
+    `;
+    rows = conn.all(sql, [...tags, ...scope.params, tags.length, limit, offset]);
+  } else {
+    const scope = scopeClause(scopeTag, "items");
+    let sql = `
+      SELECT id, type, content, title, domain, metadata, syncId,
+             createdAt, updatedAt, deletedAt, starred, archived, frecencyScore
+      FROM items
+      WHERE CAST(deletedAt AS INTEGER) = 0${scope.sql}
+    `;
+    const params = [...scope.params];
+    if (type) {
+      sql += " AND type = ?";
+      params.push(type);
+    }
+    sql += ` ORDER BY ${orderCol} DESC LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
+    rows = conn.all(sql, params);
+  }
+
+  if (rows.length === 0) return [];
+  const tagsById = fetchTagsForIds(conn, rows.map((r) => r.id));
+  return rows.map((r) => shapeItemRow(r, tagsById.get(r.id)));
+}
+
+// --- search_items: GET /mcp/items/search ---
+//
+// Port of searchItemsSync(): same per-term LIKE pre-filter over
+// title/content/domain/tag-blob with ESCAPE '\', same JS ranking
+// (SEARCH_WEIGHTS, SNIPPET_RADIUS, buildSnippet). The scope clause is part
+// of the SQL candidate filter, so ranking/paging run over an
+// already-scope-confined candidate set — never a superset that gets
+// filtered afterward.
+
+const SEARCH_WEIGHTS = { title: 10, tag: 6, domain: 4, content: 2 };
+const SNIPPET_RADIUS = 40;
+
+function tokenizeQuery(query) {
+  if (typeof query !== "string") return [];
+  return query
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+}
+
+function buildSnippet(text, term) {
+  if (!text) return "";
+  const idx = text.toLowerCase().indexOf(term.toLowerCase());
+  if (idx === -1) return "";
+  const start = Math.max(0, idx - SNIPPET_RADIUS);
+  const end = Math.min(text.length, idx + term.length + SNIPPET_RADIUS);
+  let snip = text.slice(start, end).replace(/\s+/g, " ").trim();
+  if (start > 0) snip = "…" + snip;
+  if (end < text.length) snip = snip + "…";
+  return snip;
+}
+
+function searchItems(userId, profileId, scopeTag, { query, tags, type, limit = 20, offset = 0 } = {}) {
+  const conn = getConnection(userId, profileId);
+  const terms = tokenizeQuery(query);
+  if (terms.length === 0) return [];
+
+  const tagBlobExpr = `(
+    SELECT COALESCE(GROUP_CONCAT(t2.name, ' '), '')
+    FROM item_tags it2 JOIN tags t2 ON t2.id = it2.tagId
+    WHERE it2.itemId = i.id
+  )`;
+
+  const conditions = ["CAST(i.deletedAt AS INTEGER) = 0"];
+  const params = [];
+  for (const term of terms) {
+    const like = "%" + escapeLikePrefix(term) + "%";
+    conditions.push(
+      `(i.title LIKE ? ESCAPE '\\' OR i.content LIKE ? ESCAPE '\\' ` +
+        `OR i.domain LIKE ? ESCAPE '\\' OR ${tagBlobExpr} LIKE ? ESCAPE '\\')`
+    );
+    params.push(like, like, like, like);
+  }
+  if (type) {
+    conditions.push("i.type = ?");
+    params.push(type);
+  }
+
+  const scope = scopeClause(scopeTag, "i");
+
+  let sql;
+  let allParams;
+  if (tags && tags.length > 0) {
+    const placeholders = tags.map(() => "?").join(",");
+    sql = `
+      SELECT i.id, i.type, i.content, i.title, i.domain, i.metadata, i.syncId,
+             i.createdAt, i.updatedAt, i.deletedAt, i.starred, i.archived, i.frecencyScore,
+             ${tagBlobExpr} AS tagBlob
+      FROM items i
+      JOIN item_tags it ON i.id = it.itemId
+      JOIN tags t ON it.tagId = t.id
+      WHERE t.name IN (${placeholders}) AND ${conditions.join(" AND ")}${scope.sql}
+      GROUP BY i.id
+      HAVING COUNT(DISTINCT t.id) = ?
+    `;
+    allParams = [...tags, ...params, ...scope.params, tags.length];
+  } else {
+    sql = `
+      SELECT i.id, i.type, i.content, i.title, i.domain, i.metadata, i.syncId,
+             i.createdAt, i.updatedAt, i.deletedAt, i.starred, i.archived, i.frecencyScore,
+             ${tagBlobExpr} AS tagBlob
+      FROM items i
+      WHERE ${conditions.join(" AND ")}${scope.sql}
+    `;
+    allParams = [...params, ...scope.params];
+  }
+
+  const candidates = conn.all(sql, allParams);
+  if (candidates.length === 0) return [];
+
+  const lowerTerms = terms.map((t) => t.toLowerCase());
+  const scored = candidates.map((r) => {
+    const title = (r.title || "").toLowerCase();
+    const content = (r.content || "").toLowerCase();
+    const domain = (r.domain || "").toLowerCase();
+    const tagBlob = (r.tagBlob || "").toLowerCase();
+
+    let score = 0;
+    let firstSnippetTerm = null;
+    let firstSnippetInContent = false;
+
+    for (const term of lowerTerms) {
+      const inTitle = title.includes(term);
+      const inTag = tagBlob.includes(term);
+      const inDomain = domain.includes(term);
+      const inContent = content.includes(term);
+      if (!inTitle && !inTag && !inDomain && !inContent) continue;
+
+      const hitWeights = [];
+      if (inTitle) hitWeights.push(SEARCH_WEIGHTS.title);
+      if (inTag) hitWeights.push(SEARCH_WEIGHTS.tag);
+      if (inDomain) hitWeights.push(SEARCH_WEIGHTS.domain);
+      if (inContent) hitWeights.push(SEARCH_WEIGHTS.content);
+      const best = Math.max(...hitWeights);
+      score += best + (hitWeights.length - 1);
+
+      if (firstSnippetTerm === null) {
+        firstSnippetTerm = term;
+        firstSnippetInContent = inContent;
+      }
+    }
+
+    let snippet = "";
+    if (firstSnippetTerm !== null) {
+      snippet = firstSnippetInContent
+        ? buildSnippet(r.content, firstSnippetTerm)
+        : buildSnippet(r.title, firstSnippetTerm) || buildSnippet(r.content, firstSnippetTerm);
+    }
+
+    return { row: r, score, snippet };
+  });
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    const fa = a.row.frecencyScore || 0;
+    const fb = b.row.frecencyScore || 0;
+    if (fb !== fa) return fb - fa;
+    return (b.row.updatedAt || 0) - (a.row.updatedAt || 0);
+  });
+
+  const page = scored.slice(offset, offset + limit);
+  if (page.length === 0) return [];
+
+  const tagsById = fetchTagsForIds(conn, page.map((s) => s.row.id));
+  return page.map((s) => {
+    const view = shapeItemRow(s.row, tagsById.get(s.row.id));
+    view.score = s.score;
+    view.snippet = s.snippet;
+    return view;
+  });
+}
+
+// --- Prefix resolution: GET /mcp/items/resolve, and inline for GET
+//     /mcp/items/:idOrPrefix ---
+//
+// Port of resolveItemIdSync(), extended per design doc §5's id-namespace
+// note: server ids and desktop ids differ (a pushed item is stored under a
+// server-minted `id` with the desktop's id in `syncId`), so resolution
+// matches EITHER `items.id` or `items.syncId`, exact-match-first across
+// both. A row matching on both columns is de-duplicated by `id` (a single
+// WHERE clause over one table returns each physical row once, regardless of
+// how many of its predicates matched).
+//
+// Scope-confined on every branch: an exact match on an out-of-scope row is
+// not returned, so a prefix matching only out-of-scope items reads as
+// { id: null } — indistinguishable from a genuine miss — and the ambiguity
+// candidate list is built solely from scope-confined rows, so it can never
+// name an out-of-scope id or title.
+const PREFIX_AMBIGUITY_LIMIT = 10;
+
+function resolveItemId(userId, profileId, scopeTag, prefix) {
+  if (typeof prefix !== "string" || prefix === "") return { id: null };
+  const conn = getConnection(userId, profileId);
+  const scope = scopeClause(scopeTag, "items");
+
+  // 1. Exact match on either column always wins and short-circuits, scope-
+  //    confined — even when it's also a prefix of other items. `items.id` is
+  //    a primary key so at most one row can match it exactly; `syncId` is
+  //    not unique, so a value could in principle exact-match more than one
+  //    row across the two columns. That case is reported as ambiguous rather
+  //    than resolved arbitrarily.
+  const exactRows = conn.all(
+    `SELECT id, title FROM items WHERE (id = ? OR syncId = ?)${scope.sql}`,
+    [prefix, prefix, ...scope.params]
+  );
+  if (exactRows.length === 1) return { id: exactRows[0].id };
+  if (exactRows.length > 1) {
+    return {
+      id: null,
+      ambiguous: true,
+      candidates: exactRows.slice(0, PREFIX_AMBIGUITY_LIMIT).map((r) => ({ id: r.id, title: r.title })),
+      truncated: exactRows.length > PREFIX_AMBIGUITY_LIMIT,
+    };
+  }
+
+  // 2. Prefix-anchored scan over both columns, scope-confined.
+  const pattern = escapeLikePrefix(prefix) + "%";
+  const rows = conn.all(
+    `SELECT id, title FROM items
+     WHERE (id LIKE ? ESCAPE '\\' OR syncId LIKE ? ESCAPE '\\')${scope.sql}
+     ORDER BY id
+     LIMIT ?`,
+    [pattern, pattern, ...scope.params, PREFIX_AMBIGUITY_LIMIT + 1]
+  );
+
+  if (rows.length === 0) return { id: null };
+  if (rows.length === 1) return { id: rows[0].id };
+
+  return {
+    id: null,
+    ambiguous: true,
+    candidates: rows.slice(0, PREFIX_AMBIGUITY_LIMIT).map((r) => ({ id: r.id, title: r.title })),
+    truncated: rows.length > PREFIX_AMBIGUITY_LIMIT,
+  };
+}
+
+// --- get_item / get_task_context: GET /mcp/items/:idOrPrefix ---
+//
+// Content windowing, byte-identical to normalizeContentWindow() +
+// shapeItemForResponse() in server.js (minus the favicon strip — the server
+// has no favicon column).
+const DEFAULT_MAX_CONTENT_LENGTH = 4000;
+
+function windowContent(item, { maxContentLength, contentOffset } = {}) {
+  if (typeof item.content !== "string") return; // null content: nothing to window
+
+  let max = DEFAULT_MAX_CONTENT_LENGTH;
+  if (typeof maxContentLength === "number" && Number.isFinite(maxContentLength)) {
+    if (maxContentLength === -1) max = Infinity;
+    else if (maxContentLength >= 0) max = Math.floor(maxContentLength);
+  }
+  let offset = 0;
+  if (typeof contentOffset === "number" && Number.isFinite(contentOffset) && contentOffset > 0) {
+    offset = Math.floor(contentOffset);
+  }
+
+  const fullLength = item.content.length;
+  item.contentLength = fullLength;
+  const end = max === Infinity ? fullLength : Math.min(fullLength, offset + max);
+  if (offset > 0 || end < fullLength) {
+    item.content = item.content.slice(offset, Math.max(offset, end));
+    item.contentTruncated = true;
+  }
+}
+
+// item_events window backing get_task_context. db.js getTaskContextSync()
+// (desktop) always uses a fixed LIMIT 20 with no per-call option; the
+// `events=<n>` query param is honored as a limit up to that same ceiling, so
+// a caller can ask for fewer events but never more than the local behavior
+// returns.
+function fetchEvents(conn, itemId, requestedLimit) {
+  const parsed = Number(requestedLimit);
+  const limit = Number.isFinite(parsed) && parsed > 0 ? Math.min(20, Math.floor(parsed)) : 20;
+  return conn.all(
+    `SELECT id, content as type, value, occurredAt, metadata
+     FROM item_events WHERE itemId = ? ORDER BY occurredAt DESC LIMIT ?`,
+    [itemId, limit]
+  );
+}
+
+function fetchItemRowById(conn, id, scopeTag) {
+  // Pure lookup by resolved id: does NOT filter deletedAt, matching
+  // getItemSync()'s parity (a soft-deleted item is still reachable by its
+  // exact id/resolved prefix; list_items/search_items are the surfaces that
+  // filter deletedAt). Scope is re-checked here as defense in depth even
+  // though resolveItemId() already confined the id it returned.
+  const scope = scopeClause(scopeTag, "items");
+  return conn.get(
+    `SELECT id, type, content, title, domain, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, frecencyScore
+     FROM items WHERE id = ?${scope.sql}`,
+    [id, ...scope.params]
+  );
+}
+
+/**
+ * Resolve `idOrPrefix` and return the shaped item, or the ambiguity/not-found
+ * outcome for the route handler to translate into 200/404/409.
+ *
+ * @returns {{status:'ok', item:object} | {status:'not_found'} | {status:'ambiguous', candidates:object[], truncated:boolean}}
+ */
+function getItemForRoute(userId, profileId, scopeTag, idOrPrefix, { maxContentLength, contentOffset, events } = {}) {
+  const conn = getConnection(userId, profileId);
+  const resolved = resolveItemId(userId, profileId, scopeTag, idOrPrefix);
+  if (resolved.ambiguous) {
+    return { status: "ambiguous", candidates: resolved.candidates, truncated: resolved.truncated };
+  }
+  if (resolved.id === null) return { status: "not_found" };
+
+  const row = fetchItemRowById(conn, resolved.id, scopeTag);
+  if (!row) return { status: "not_found" }; // defense in depth; scope already applied by resolveItemId
+
+  const tagsById = fetchTagsForIds(conn, [row.id]);
+  const item = shapeItemRow(row, tagsById.get(row.id));
+  windowContent(item, { maxContentLength, contentOffset });
+
+  if (events !== undefined) {
+    item.events = fetchEvents(conn, row.id, events);
+  }
+
+  return { status: "ok", item };
+}
+
+module.exports = {
+  queryItems,
+  searchItems,
+  resolveItemId,
+  getItemForRoute,
+};
