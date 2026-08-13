@@ -177,18 +177,41 @@ function isPackaged(): boolean {
   return val === '1' || val === 'true';
 }
 
-function packagedExecutableRelPath(): string {
+/**
+ * Candidate `--dir` output paths for the packaged executable, most likely first.
+ *
+ * electron-builder names its unpacked output directory after the platform and
+ * appends the arch ONLY when the arch is not x64 — an x64 Linux build lands at
+ * `out/linux-unpacked`, an arm64 one at `out/linux-arm64-unpacked`. Both spellings
+ * are offered because the rule is electron-builder's, not ours, and a wrong guess
+ * here surfaces as "executable does not exist" long after the build succeeded.
+ */
+function packagedExecutableRelPaths(): string[] {
   const arch = process.arch;
+  const suffixes = arch === 'x64' ? ['', `-${arch}`] : [`-${arch}`, ''];
   switch (process.platform) {
     case 'darwin':
-      return `out/mac-${arch}/Peek.app/Contents/MacOS/Peek`;
+      return suffixes.map((s) => `out/mac${s}/Peek.app/Contents/MacOS/Peek`);
     case 'linux':
-      return `out/linux-${arch}-unpacked/peek`;
+      return suffixes.map((s) => `out/linux${s}-unpacked/peek`);
     case 'win32':
-      return `out/win-${arch}-unpacked/Peek.exe`;
+      return suffixes.map((s) => `out/win${s}-unpacked/Peek.exe`);
     default:
       throw new Error(`Unsupported platform for packaged Electron: ${process.platform}`);
   }
+}
+
+function packagedExecutablePath(): string {
+  const candidates = packagedExecutableRelPaths();
+  for (const rel of candidates) {
+    const abs = path.join(REPO_ROOT, rel);
+    if (fs.existsSync(abs)) return abs;
+  }
+  throw new Error(
+    `PACKAGED=1 but no packaged executable found. Looked for:\n` +
+      candidates.map((rel) => `  ${path.join(REPO_ROOT, rel)}`).join('\n') +
+      `\nRun \`electron-builder --dir\` from the repo root first.`
+  );
 }
 
 /**
@@ -237,7 +260,7 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
 
   const launchConfig = packaged
     ? {
-        executablePath: path.join(REPO_ROOT, packagedExecutableRelPath()),
+        executablePath: packagedExecutablePath(),
         args: [...linuxOzoneArgs, `--user-data-dir=${tempDir}`]
       }
     : {

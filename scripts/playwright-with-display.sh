@@ -32,6 +32,24 @@
 set -euo pipefail
 
 if [ "$(uname -s)" = "Linux" ]; then
+  # A missing openbox used to be silent: `openbox &` below printed
+  # "command not found" into the run's noise and the suite carried on with no
+  # window manager, so the maximize-dependent specs measured pre-maximize
+  # geometry and PASSED. A false green is worse than no run, so refuse.
+  if ! command -v openbox >/dev/null 2>&1; then
+    if [ "${PEEK_ALLOW_NO_WM:-}" = "1" ]; then
+      echo "playwright-with-display: openbox missing; PEEK_ALLOW_NO_WM=1 set — running WITHOUT a window manager." >&2
+      echo "playwright-with-display: maximize-dependent specs (page-layout, window-targeting) will pass WRONGLY." >&2
+    else
+      echo "playwright-with-display: openbox is not installed." >&2
+      echo "  Bare Xvfb has no window manager, so _NET_WM_STATE_MAXIMIZED_* never sticks and" >&2
+      echo "  maximize-dependent specs pass for the wrong reason. Install it:" >&2
+      echo "    sudo apt install openbox" >&2
+      echo "  To run anyway, knowing those specs are not trustworthy: PEEK_ALLOW_NO_WM=1" >&2
+      exit 1
+    fi
+  fi
+
   unset HEADLESS PEEK_HEADLESS WAYLAND_DISPLAY WAYLAND_SOCKET
   exec xvfb-run -a -s "-screen 0 1920x1080x24" bash -c '
     openbox &
