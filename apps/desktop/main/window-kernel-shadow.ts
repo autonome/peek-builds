@@ -177,8 +177,42 @@ let installedProvider: (() => WindowKernelExecutor) | null = null;
  * Install the provider the cutover routes through — see the banner above.
  * Once installed, every call to `getShadowKernelExecutor()` (and so every feed
  * helper below) returns `provider()` instead of the noop-backed default.
+ *
+ * THROWS if the noop-backed fallback has already been constructed AND already
+ * has one or more listeners attached (`WindowKernelExecutor.subscriberCount()`).
+ * Installing a provider only changes what every feed helper WRITES to from
+ * this point on — it does nothing for something that already READS from the
+ * fallback via `subscribe`. That listener stays bound to the orphaned noop
+ * instance forever: nothing production drives that object, this module
+ * swallows every exception by design, so the subscription goes silently dead
+ * for the rest of the process. Today the one such subscriber is
+ * `window-state-singleton.ts subscribeFrontChange` (the shared chrome
+ * overlay's retarget), and it only stays alive because the provider happens
+ * to be installed before that subscription is ever made — nothing enforces
+ * that order, so a reorder of boot wiring would kill the retarget with no
+ * exception anywhere to point at it.
+ *
+ * NOT a violation of this module's swallow-everything rule (module header,
+ * invariant 2) — that rule exists so a rejected or thrown KERNEL DECISION can
+ * never change production behavior, because a caller invokes this module for
+ * its diagnostic value alone. This throw is a different kind of failure: boot
+ * wiring caught in a provably wrong order, discovered at the moment the
+ * ordering violation becomes real. That must fail loudly at startup, not
+ * degrade into a fallback executor nobody can ever hear from again.
+ *
+ * Constructing the fallback with NO subscribers — every ordinary feed call
+ * before cutover installs one — is unaffected and keeps working exactly as
+ * before: this only fires once something has actually subscribed to the
+ * instance about to be orphaned.
  */
 export function setKernelExecutorProvider(provider: () => WindowKernelExecutor): void {
+  if (shadowExecutorInstance !== null && shadowExecutorInstance.subscriberCount() > 0) {
+    throw new Error(
+      '[window-kernel-shadow] setKernelExecutorProvider: a listener is already subscribed to the ' +
+        'pre-cutover fallback executor and would never fire again once a provider is installed — ' +
+        'install the provider before anything calls getShadowKernelExecutor().subscribe().',
+    );
+  }
   installedProvider = provider;
 }
 

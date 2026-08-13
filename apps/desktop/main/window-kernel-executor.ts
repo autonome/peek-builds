@@ -242,6 +242,17 @@ export class WindowKernelExecutor {
     };
   }
 
+  /**
+   * How many listeners are currently attached via `subscribe` — a narrow,
+   * count-only accessor for callers that need to know WHETHER something is
+   * listening without ever seeing WHAT (`window-kernel-shadow.ts
+   * setKernelExecutorProvider`'s orphaned-subscriber guard is the one caller
+   * today). Never exposes the listener set itself.
+   */
+  subscriberCount(): number {
+    return this.listeners.size;
+  }
+
   private readonly listeners = new Set<(state: State) => void>();
 
   private notify(): void {

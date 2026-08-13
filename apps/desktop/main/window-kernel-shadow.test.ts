@@ -1514,4 +1514,32 @@ describe('window-kernel-shadow: executor provider seam', () => {
       'after reset the accessor must be back on a fresh default instance, not the cleared provider',
     );
   });
+
+  it('throws when a listener is already subscribed to the noop-backed fallback before a provider is installed', () => {
+    // Subscribing (with no provider installed yet) constructs and binds to
+    // the fallback — the exact shape `initHybridOverlay()` would produce if
+    // it ever ran before `initWindowStateMachine()` installs the provider.
+    const unsub = getShadowKernelExecutor().subscribe(() => {});
+    try {
+      assert.throws(
+        () => setKernelExecutorProvider(() => new WindowKernelExecutor(new InertBackend())),
+        /pre-cutover fallback executor/,
+        'a subscriber orphaned by the swap must fail loudly, not silently go dead',
+      );
+    } finally {
+      unsub();
+    }
+  });
+
+  it('does not throw when the fallback was merely constructed (feeds ran) with no subscriber ever attached', () => {
+    const id = wid(901);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    // Constructs the fallback via the ordinary feed path — nobody subscribes.
+    shadowKernelRegisterWindow(
+      { id, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+      oldSnapshot,
+    );
+
+    assert.doesNotThrow(() => setKernelExecutorProvider(() => new WindowKernelExecutor(new InertBackend())));
+  });
 });
