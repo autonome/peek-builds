@@ -1019,19 +1019,47 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   /**
    * Guest-safe direct close (the absorbed `windows.ts closeHostWindow` /
    * `destroyGuestsThenClose` pair — see `WindowBackend.closeWindow` and the
-   * d1cf0b9a use-after-free history on the old function): destroy the
-   * window's registered page-host guests FIRST, wait for them to actually go
-   * away (bounded), then close the host. Guestless windows take the
-   * synchronous fast path. `PEEK_DISABLE_PAGEHOST_CLOSE_GUARD=1` reverts to
-   * the raw close — the pre-fix behavior, a test/diagnostic seam only.
+   * d1cf0b9a use-after-free history on the old function): exit native
+   * fullscreen FIRST if the window is in it (`exitFullscreenBeforeClose`
+   * below), destroy the window's registered page-host guests, wait for them
+   * to actually go away (bounded), then close the host. Guestless windows
+   * still take the synchronous-native-call fast path, just after the
+   * preamble. `PEEK_DISABLE_PAGEHOST_CLOSE_GUARD=1` reverts to the raw close
+   * (guest pass skipped) — the pre-fix behavior, a test/diagnostic seam only;
+   * the fullscreen preamble still runs even with the guard set, since it
+   * guards a different hazard.
+   *
+   * This is the SOLE terminal-close path both machines drive now: the old
+   * adapter's `CLOSE_WINDOW`/`CLOSE_WINDOW_DIRECT` effects are labelled
+   * no-ops (`window-os-adapter.ts runEffect`), and the kernel's `CloseWindow`
+   * (`react`'s membership-shrink diff) and `CloseWindowDirect`
+   * (`windows.ts closeHostWindow`'s feed) effects both call this method — so
+   * the preamble belongs HERE rather than above the port (design §"Electron
+   * is ONE backend"): every route that terminates a window through this
+   * method gets it, and no caller has to know the workaround exists. Mirrors
+   * `closeOrHide`'s existing `windows.ts closeOrHideWindow` preamble for its
+   * OWN hybrid branch — this one covers the routes that preamble doesn't
+   * reach (a plain `CloseWindow` from the membership-shrink diff, and the
+   * non-hybrid `closeOrHideWindow` branch, neither of which ever ran it).
    */
-  closeWindow(id: WindowId): Promise<void> {
+  async closeWindow(id: WindowId): Promise<void> {
     const win = this.windows.get(id)?.win;
-    if (!win) return Promise.resolve();
+    if (!win) return;
     try {
-      if (win.isDestroyed()) return Promise.resolve();
+      if (win.isDestroyed()) return;
     } catch {
-      return Promise.resolve();
+      return;
+    }
+    // Ordered before the guest pass, matching the preamble's one prior home
+    // (`windows.ts closeOrHideWindow`'s hybrid branch ran it before ANY
+    // other close/hide work): the AppKit exit-fullscreen animation should be
+    // settled before content teardown and the terminal close run, not
+    // interleaved with them.
+    await this.exitFullscreenBeforeClose(win);
+    try {
+      if (win.isDestroyed()) return;
+    } catch {
+      return;
     }
     const guestIds = getGuestsForWindow(id);
     if (guestIds.length === 0 || process.env.PEEK_DISABLE_PAGEHOST_CLOSE_GUARD === '1') {
@@ -1040,9 +1068,63 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       } catch {
         /* closing a torn-down window is a no-op */
       }
+      return;
+    }
+    await this.destroyGuestsThenClose(win, guestIds);
+  }
+
+  /**
+   * Black-window fix (macOS): exit native fullscreen and AWAIT the exit
+   * before the terminal close — closing (or hiding) a window mid the AppKit
+   * exit-fullscreen animation strands an empty Space. Ported intent from the
+   * deleted-here `windows.ts closeOrHideWindow` hybrid preamble, expressed as
+   * a raw native call pair rather than a machine round trip: this backend
+   * already holds the native handle and already owns the ONE `setFullScreen`
+   * call site (§2.4), so there is no reason to route an internal ordering
+   * decision back out through a dispatch. No-op when the window is not
+   * fullscreen (the common case) or is already gone.
+   *
+   * Bounded by the SAME timeout the fullscreen-settle timer uses
+   * (`FULLSCREEN_SETTLE_TIMEOUT_MS`, §2.3) so a destroyed / no-op window that
+   * never fires `leave-full-screen` cannot hang the close forever — it just
+   * proceeds once the bound elapses, same self-correction shape as
+   * `armFullscreenSettle`/`FULLSCREEN_SETTLE_TIMEOUT`.
+   *
+   * Deliberately NOT `this.setFullscreen(id, false)`: that public command
+   * exists to service the kernel's OWN `SetFullscreen`/`ExitFullscreen`
+   * effects (an intentional fullscreen toggle) and arms its own settle timer
+   * that reports back into the machine — engaging it here would race this
+   * wait and double-report the same exit. This is a different concern, an
+   * ordered pair of native calls that only makes sense as one step inside
+   * ONE `closeWindow` intention, so it stays self-contained and reports
+   * nothing itself; the ALREADY-attached `leave-full-screen` listener
+   * (`attachNativeListeners`) still fires and still emits `OS_FULLSCREEN_LEFT`
+   * — this method only waits for that native fact to land.
+   */
+  private exitFullscreenBeforeClose(win: NativeWindow): Promise<void> {
+    let fullscreen: boolean;
+    try {
+      fullscreen = !win.isDestroyed() && win.isFullScreen();
+    } catch {
       return Promise.resolve();
     }
-    return this.destroyGuestsThenClose(win, guestIds);
+    if (!fullscreen) return Promise.resolve();
+    try {
+      win.setFullScreen(false);
+    } catch {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      };
+      win.on('leave-full-screen', finish);
+      const timer = setTimeout(finish, FULLSCREEN_SETTLE_TIMEOUT_MS);
+    });
   }
 
   private async destroyGuestsThenClose(win: NativeWindow, guestIds: number[]): Promise<void> {
