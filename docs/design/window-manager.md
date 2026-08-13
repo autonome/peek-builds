@@ -1533,15 +1533,25 @@ performs nothing, matching `window-state.ts applyRaiseRequest`'s drop. Every sen
 describes `'inactive-show'` as the `!appActive` outcome — including the trigger table's
 `RAISE_WINDOW_REQUESTED` row — describes code that no longer exists, and the visual outcome it
 warns about (a Peek window painted over the foreground app) cannot occur. What remains live from
-this section: the latched replay on `AppActivated` is still undecided and unimplemented, and the
-three further gaps it names — the absent successor raise on `evolve`'s `WindowHidden` arm, the
-absent overlay resign-hide and activate-reveal pair, and the absent visibility gate on the
-focus-assert rule's `[RaiseWindow, FocusContent]` emission — are all still open.
+this section: two of the three further gaps it names are still open — the absent successor raise on `evolve`'s
+`WindowHidden` arm, and the absent visibility gate on the focus-assert rule's `[RaiseWindow,
+FocusContent]` emission. The third, the overlay resign-hide and activate-reveal pair, is now built
+(see the marker below).
 
 **RESOLVED — see "0. The governing rule set", stored fact 5 and the rule stated under it.**
 `appActive` is now declared a stored fact, the app-active test is placed on the write, the
 latched replay is decided against, and `planRaise`'s `'suppressed'` arm is slated for deletion.
 The rest of this heading is the analysis that led there, kept as a record of the reasoning.
+
+**RESOLVED (overlay half only) — see `window-kernel.ts evolve`'s `case 'AppResigned'` / `case
+'AppActivated'`, `appBlurRevealAdmits`, and `WindowRecord.hiddenByAppBlur`'s doc comment.** The
+backgrounded-overlay half of this heading's title is built: `AppResigned` now hides every attached
+overlay on the raw resign edge, and `AppActivated` re-shows exactly what `appBlurRevealAdmits`
+admits and clears the mark on what it re-shows — see "the pair has to be ported together" below for
+the landed shape and where it departs from the pairing as originally stated. The backgrounded-raise
+half of the title is a separate question and stays open: the RESOLVED marker above settles the
+*decision* (drop, not latch) but `planRaise`'s `'suppressed'` arm is still "slated for deletion," not
+deleted, so the raise guard has not moved off the executor and onto the write side yet.
 
 **The placement of the app-active test is itself unresolved, and is the more important half.**
 The rule is that Peek does not reorder its own windows on its own initiative while it is not the
@@ -1622,6 +1632,40 @@ nothing pairs an `AppActivated` re-show with it either, so the chrome never leav
 the app backgrounds. The pair has to be ported together — `AppResigned` hides attached overlays,
 `AppActivated` re-pins and emits `ShowWindow({ activate: false })` — and the `!appActive` gate then
 belongs on that reveal.
+
+**Built, on a narrower gate than `!appActive`, and without the re-pin the pairing above named.**
+`evolve`'s `case 'AppResigned'` hides every record with `overlayFor !== undefined && visible`,
+marking it `hiddenByAppBlur: true`; `case 'AppActivated'` re-shows exactly the records
+`appBlurRevealAdmits(state, w)` admits — the same query gates both the reshow-detection check and
+the actual re-show map — clearing the mark on each record it re-shows. Three decisions are folded
+into that pairing, each recorded on the symbols above:
+
+- **The hide lands on the raw resign edge, not the settle** (`WindowRecord.hiddenByAppBlur`'s doc
+  comment). What waits for the 500ms settle is DISMISSAL (`lastAttention`), because dismissal is
+  destructive — a dismissed palette does not come back, so the macOS activation dance (a resign an
+  `AppActivated` moments later cancels) must never be allowed to trigger it. A hide that
+  `AppActivated` reverses carries no such risk, and an overlay sits above the regular stack — which
+  means above other applications' windows too — so the settle delay would be that long with Peek's
+  chrome floating over the app the user just switched to.
+- **Attachment selects the victims, never role** — the same relation `selectTransientAutoclose`
+  reads, and the reason that query skips overlays outright: an attached overlay's visibility
+  belongs to its attachment, so it is driven by this rule and never dismissed.
+- **The reveal can refuse.** `appBlurRevealAdmits` lets the attachment refuse the re-show when the
+  host entered fullscreen or went off screen while Peek was backgrounded. A refusal leaves the mark
+  set rather than clearing it — the record is still off screen for the reason the mark names — and
+  any genuine `WindowShown` clears the mark regardless, so a stale mark self-heals the moment
+  something legitimately shows the window.
+
+**The re-pin named above did not land, deliberately.** No always-on-top re-assert accompanies the
+reveal. A window's level is a persistent property of the native window — ordering it off screen
+does not clear it — so re-asserting it on every show would be a platform workaround with no observed
+defect behind it, and the kernel carries no always-on-top effect of its own by design: pinning is
+folded entirely into `layer`, realized only through `SetStacking`'s re-assert loop (§0.1.6), which
+this reveal does not trigger (`AppActivated` changes visibility, not `order`'s membership or
+positions, so `react`'s `orderChanged` test reads false and no `SetStacking` follows). If the
+overlay is ever observed returning behind its host on macOS, that ordering belongs behind the window
+port in the backend's show path, never in a rule above it. UNVERIFIED on macOS — no live check has
+been run against this reveal.
 
 #### Registration facts the kernel needs but no site supplies
 
