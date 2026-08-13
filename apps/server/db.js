@@ -256,7 +256,12 @@ function initializeSchema(adapter) {
       createdAt INTEGER NOT NULL,
       updatedAt INTEGER NOT NULL,
       deletedAt INTEGER DEFAULT 0,
-      createdByDevice TEXT DEFAULT ''
+      createdByDevice TEXT DEFAULT '',
+      title TEXT DEFAULT '',
+      domain TEXT DEFAULT '',
+      frecencyScore REAL DEFAULT 0,
+      starred INTEGER DEFAULT 0,
+      archived INTEGER DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
   `);
@@ -301,7 +306,12 @@ function initializeSchema(adapter) {
     createdAt INTEGER NOT NULL,
     updatedAt INTEGER NOT NULL,
     deletedAt INTEGER DEFAULT 0,
-    createdByDevice TEXT DEFAULT ''
+    createdByDevice TEXT DEFAULT '',
+    title TEXT DEFAULT '',
+    domain TEXT DEFAULT '',
+    frecencyScore REAL DEFAULT 0,
+    starred INTEGER DEFAULT 0,
+    archived INTEGER DEFAULT 0
   )`, itemRenames, hasStaleTypeCheck);
 
   // Add columns that may not exist in any form.
@@ -320,6 +330,23 @@ function initializeSchema(adapter) {
   // it from the authenticated token, so it can't be spoofed by the client).
   if (!itemColSet.has("createdByDevice") && !itemColSet.has("created_by_device")) {
     adapter.exec("ALTER TABLE items ADD COLUMN createdByDevice TEXT DEFAULT ''");
+  }
+  // MCP remote-backend columns (storage only — sync.ts does not carry these,
+  // see docs/mcp-remote-backend-design.md §3.1).
+  if (!itemColSet.has("title")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN title TEXT DEFAULT ''");
+  }
+  if (!itemColSet.has("domain")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN domain TEXT DEFAULT ''");
+  }
+  if (!itemColSet.has("frecencyScore")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN frecencyScore REAL DEFAULT 0");
+  }
+  if (!itemColSet.has("starred")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN starred INTEGER DEFAULT 0");
+  }
+  if (!itemColSet.has("archived")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN archived INTEGER DEFAULT 0");
   }
 
   // Convert any TEXT timestamps to INTEGER (Unix ms)
@@ -571,8 +598,11 @@ function getOrCreateTagWithConn(conn, name, timestamp) {
   }
 }
 
-// Unified save function for all item types
-function saveItem(userId, type, content, tags = [], metadata = null, syncId = null, profileId = "default", deletedAt = null, createdByDevice = "") {
+// Unified save function for all item types.
+// title/domain/frecencyScore/starred/archived are storage-only additions for the
+// MCP remote backend (docs/mcp-remote-backend-design.md §3.1) — the sync path never
+// passes them, so they default to null and COALESCE onto the existing row on update.
+function saveItem(userId, type, content, tags = [], metadata = null, syncId = null, profileId = "default", deletedAt = null, createdByDevice = "", title = null, domain = null, frecencyScore = null, starred = null, archived = null) {
   const conn = getConnection(userId, profileId);
   const timestamp = now();
   const metadataJson = metadata ? JSON.stringify(metadata) : null;
@@ -615,8 +645,11 @@ function saveItem(userId, type, content, tags = [], metadata = null, syncId = nu
       } else {
         // Push live content and ensure item is not deleted (undelete case)
         conn.run(
-          "UPDATE items SET type = ?, content = ?, metadata = COALESCE(?, metadata), deletedAt = 0, updatedAt = ? WHERE id = ?",
-          [type, content, metadataJson, timestamp, itemId]
+          `UPDATE items SET type = ?, content = ?, metadata = COALESCE(?, metadata),
+           title = COALESCE(?, title), domain = COALESCE(?, domain),
+           frecencyScore = COALESCE(?, frecencyScore), starred = COALESCE(?, starred),
+           archived = COALESCE(?, archived), deletedAt = 0, updatedAt = ? WHERE id = ?`,
+          [type, content, metadataJson, title, domain, frecencyScore, starred, archived, timestamp, itemId]
         );
         conn.run("DELETE FROM item_tags WHERE itemId = ?", [itemId]);
       }
@@ -633,8 +666,11 @@ function saveItem(userId, type, content, tags = [], metadata = null, syncId = nu
       if (existing) {
         itemId = existing.id;
         conn.run(
-          "UPDATE items SET metadata = COALESCE(?, metadata), updatedAt = ? WHERE id = ?",
-          [metadataJson, timestamp, itemId]
+          `UPDATE items SET metadata = COALESCE(?, metadata),
+           title = COALESCE(?, title), domain = COALESCE(?, domain),
+           frecencyScore = COALESCE(?, frecencyScore), starred = COALESCE(?, starred),
+           archived = COALESCE(?, archived), updatedAt = ? WHERE id = ?`,
+          [metadataJson, title, domain, frecencyScore, starred, archived, timestamp, itemId]
         );
         conn.run("DELETE FROM item_tags WHERE itemId = ?", [itemId]);
       }
@@ -651,8 +687,11 @@ function saveItem(userId, type, content, tags = [], metadata = null, syncId = nu
         if (existingTags === sortedNewTags) {
           itemId = ts.id;
           conn.run(
-            "UPDATE items SET metadata = COALESCE(?, metadata), updatedAt = ? WHERE id = ?",
-            [metadataJson, timestamp, itemId]
+            `UPDATE items SET metadata = COALESCE(?, metadata),
+             title = COALESCE(?, title), domain = COALESCE(?, domain),
+             frecencyScore = COALESCE(?, frecencyScore), starred = COALESCE(?, starred),
+             archived = COALESCE(?, archived), updatedAt = ? WHERE id = ?`,
+            [metadataJson, title, domain, frecencyScore, starred, archived, timestamp, itemId]
           );
           conn.run("DELETE FROM item_tags WHERE itemId = ?", [itemId]);
           break;
@@ -665,8 +704,10 @@ function saveItem(userId, type, content, tags = [], metadata = null, syncId = nu
   if (!itemId) {
     itemId = generateUUID();
     conn.run(
-      "INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt, createdByDevice) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
-      [itemId, type, content, metadataJson, syncId || '', timestamp, timestamp, deletedAt || 0, createdByDevice || '']
+      `INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt, createdByDevice, title, domain, frecencyScore, starred, archived)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [itemId, type, content, metadataJson, syncId || '', timestamp, timestamp, deletedAt || 0, createdByDevice || '',
+       title || '', domain || '', frecencyScore || 0, starred || 0, archived || 0]
     );
   }
 
@@ -697,7 +738,8 @@ function getItems(userId, type = null, profileId = "default", includeDeleted = f
   const conn = getConnection(userId, profileId);
 
   let query = `
-    SELECT id, type, content, metadata, createdAt, updatedAt, deletedAt, createdByDevice
+    SELECT id, type, content, metadata, createdAt, updatedAt, deletedAt, createdByDevice,
+      title, domain, frecencyScore, starred, archived
     FROM items
     WHERE 1=1
   `;
@@ -729,6 +771,11 @@ function getItems(userId, type = null, profileId = "default", includeDeleted = f
       updatedAt: toTimestamp(row.updatedAt),
       deletedAt: toTimestamp(row.deletedAt),
       createdByDevice: row.createdByDevice || "",
+      title: row.title || "",
+      domain: row.domain || "",
+      frecencyScore: row.frecencyScore || 0,
+      starred: row.starred || 0,
+      archived: row.archived || 0,
       tags: conn.all(
         "SELECT t.name FROM tags t JOIN item_tags it ON t.id = it.tagId WHERE it.itemId = ?",
         [row.id]
@@ -1025,7 +1072,8 @@ function getItemsSince(userId, timestamp, type = null, profileId = "default") {
   // CAST handles TEXT-affinity columns from legacy schemas where timestamps
   // are stored as strings (ISO 8601 or stringified numbers)
   let query = `
-    SELECT id, type, content, metadata, createdAt, updatedAt, deletedAt, createdByDevice
+    SELECT id, type, content, metadata, createdAt, updatedAt, deletedAt, createdByDevice,
+      title, domain, frecencyScore, starred, archived
     FROM items
     WHERE CAST(updatedAt AS INTEGER) > ?
   `;
@@ -1051,6 +1099,11 @@ function getItemsSince(userId, timestamp, type = null, profileId = "default") {
       updatedAt: toTimestamp(row.updatedAt),
       deletedAt: toTimestamp(row.deletedAt),
       createdByDevice: row.createdByDevice || "",
+      title: row.title || "",
+      domain: row.domain || "",
+      frecencyScore: row.frecencyScore || 0,
+      starred: row.starred || 0,
+      archived: row.archived || 0,
       tags: conn.all(
         "SELECT t.name FROM tags t JOIN item_tags it ON t.id = it.tagId WHERE it.itemId = ?",
         [row.id]
@@ -1070,7 +1123,9 @@ function getItemById(userId, itemId, profileId = "default") {
   const conn = getConnection(userId, profileId);
 
   const row = conn.get(
-    "SELECT id, type, content, metadata, createdAt, updatedAt, createdByDevice FROM items WHERE id = ? AND CAST(deletedAt AS INTEGER) = 0",
+    `SELECT id, type, content, metadata, createdAt, updatedAt, createdByDevice,
+      title, domain, frecencyScore, starred, archived
+     FROM items WHERE id = ? AND CAST(deletedAt AS INTEGER) = 0`,
     [itemId]
   );
 
@@ -1083,6 +1138,11 @@ function getItemById(userId, itemId, profileId = "default") {
     createdAt: toTimestamp(row.createdAt),
     updatedAt: toTimestamp(row.updatedAt),
     createdByDevice: row.createdByDevice || "",
+    title: row.title || "",
+    domain: row.domain || "",
+    frecencyScore: row.frecencyScore || 0,
+    starred: row.starred || 0,
+    archived: row.archived || 0,
     tags: conn.all(
       "SELECT t.name FROM tags t JOIN item_tags it ON t.id = it.tagId WHERE it.itemId = ?",
       [row.id]
