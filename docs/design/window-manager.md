@@ -928,14 +928,27 @@ and if moving one is hard that is the work, not an exemption.
 
 Every symbol below is confirmed present in the tree.
 
-**Prerequisite, and a gap.** `window-kernel-executor.ts WindowKernelExecutor.waitForSettledFsMode(id,
-mode, timeoutMs)` exists and returns `FsSettleOutcome = 'settled' | 'vanished' | 'timed-out'`, not
-`void`. **There is no production accessor for the executor.** The only one in the tree is
-`window-kernel-shadow.ts getShadowKernelExecutor()`, which is deliberately incapable of affecting
-production. The three `waitForMode` call sites below (`windows.ts closeOrHideWindow`, the
-`tile-ipc.ts tile:window:hide` handler, `hybrid-overlay.ts installTestBridge driveHostFullscreen`)
-therefore are not the one-line import swaps they might otherwise look like — a production accessor
-for the executor does not exist yet, and building one is itself part of the cutover.
+**Prerequisite, and a gap — narrower now than it was.** `window-kernel-executor.ts
+WindowKernelExecutor.waitForSettledFsMode(id, mode, timeoutMs)` exists and returns
+`FsSettleOutcome = 'settled' | 'vanished' | 'timed-out'`, not `void`. **A production-capable
+accessor for the executor now exists** — `window-kernel-singleton.ts getKernelExecutor(backend)`
+built over the real `ElectronWindowBackend`, reached by `window-state-singleton.ts
+getKernelExecutorForApp()` (injects `window-os-adapter.ts getWindowOsAdapter().getBackend()`, the
+same backend every old-machine effect already goes through) — but nothing calls it yet, and it is
+not wired to `window-kernel-shadow.ts getShadowKernelExecutor()` or the ~25 feed helpers built over
+it. That module now exports the injection seam for exactly this: `setKernelExecutorProvider`.
+Installing it — `setKernelExecutorProvider(() => getKernelExecutorForApp())`, called once from
+production wiring — is the cutover; `window-kernel-shadow.ts` itself may not import
+`getKernelExecutorForApp` directly, because that would value-import `window-state-singleton.ts`,
+which pulls `window-os-adapter.ts` → `electron-window-backend.ts`'s value import of the platform
+module (throwing under the `ELECTRON_RUN_AS_NODE=1` unit runner `window-kernel-shadow.test.ts` runs
+under) and closes an import cycle, since `window-state-singleton.ts` already imports
+`window-kernel-shadow.ts` for the feed helpers. The three `waitForMode` call sites below
+(`windows.ts closeOrHideWindow`, the `tile-ipc.ts tile:window:hide` handler, `hybrid-overlay.ts
+installTestBridge driveHostFullscreen`) therefore are still not the one-line import swaps they might
+otherwise look like — repointing them onto `getShadowKernelExecutor().waitForSettledFsMode(...)`
+reaches the real executor only once the provider above is installed, and until then they would
+silently keep reaching the noop-backed default.
 
 `window-kernel.ts` needs no edits for any of this: `topmost`, `isContentWindow`, `keyWindow`,
 `hostForOverlay`, `topmostBaseLayerPageHost`, `CONTENT_ROLES`, `BASE_LAYER`, and the
@@ -1532,11 +1545,14 @@ code.** `window-kernel-executor.ts planRaise` resolves `!appActive` to `'suppres
 performs nothing, matching `window-state.ts applyRaiseRequest`'s drop. Every sentence below that
 describes `'inactive-show'` as the `!appActive` outcome — including the trigger table's
 `RAISE_WINDOW_REQUESTED` row — describes code that no longer exists, and the visual outcome it
-warns about (a Peek window painted over the foreground app) cannot occur. What remains live from
-this section: two of the three further gaps it names are still open — the absent successor raise on `evolve`'s
-`WindowHidden` arm, and the absent visibility gate on the focus-assert rule's `[RaiseWindow,
-FocusContent]` emission. The third, the overlay resign-hide and activate-reveal pair, is now built
-(see the marker below).
+warns about (a Peek window painted over the foreground app) cannot occur. All three further gaps
+this section names are built now: the successor raise on `evolve`'s `WindowHidden` arm and
+`react`'s mirrored loop, the visibility gate on the focus-assert rule's `[RaiseWindow,
+FocusContent]` emission, and the overlay resign-hide/activate-reveal pair — see the three RESOLVED
+markers below. What stays genuinely open is the backgrounded-raise placement question the rest of
+this section analyses (the `!appActive` → `'suppressed'`/`'inactive-show'` choice and where its
+guard belongs) — see "RESOLVED (overlay half only)" below for the line between what landed and
+what didn't.
 
 **RESOLVED — see "0. The governing rule set", stored fact 5 and the rule stated under it.**
 `appActive` is now declared a stored fact, the app-active test is placed on the write, the
@@ -1552,6 +1568,30 @@ the landed shape and where it departs from the pairing as originally stated. The
 half of the title is a separate question and stays open: the RESOLVED marker above settles the
 *decision* (drop, not latch) but `planRaise`'s `'suppressed'` arm is still "slated for deletion," not
 deleted, so the raise guard has not moved off the executor and onto the write side yet.
+
+**RESOLVED — see `window-kernel.ts evolve`'s `case 'WindowHidden'` and the mirrored loop in
+`react` (the "Successor raise on hide" comment).** The window holding `key` going off screen now
+hands the raise to whatever content window is left. `react` rides the `visible` true→false diff on
+the record that equals `prev.key`, gated additionally on `next.appActive === true` and on
+`topmost(next, isContentWindow)` being non-null; `evolve` mints the op token and stamps the
+successor's `lastOpSeq` under the identical, mirrored condition. Neither `key` nor `order` is
+written — the OS echo of the raise moves both, and leaving the hidden record in place is what keeps
+the topmost-key invariant (§0.1.10) untouched, unlike the `WindowClosed` parent-refocus arm, which
+removes a record and so has to reorder to preserve that invariant. A duplicate hide delivery (the
+backend echo plus the lagged native event) is inert because the second delivery has no diff to react
+to.
+
+**RESOLVED — see `window-kernel.ts react`'s focus-assert rule (the last rule in the function,
+"GATED ON `visible`") and the matching stamp conditions in `evolve`'s `case
+'FocusAssertRequested'` (`issuesRaise`) and `case 'AppActivated'` (`assertsFocus`).** The
+`[RaiseWindow, FocusContent]` emission this section named as ungated now requires the target to be
+`visible`; an off-screen target gets neither effect. The gate is plain `visible`, not
+`isContentWindow` — a visible palette is deliberately raised with no `FocusContent` half, a split
+pinned by `window-kernel.test.ts`'s "a non-content target gets no FocusContent — the split is real,
+not decorative". The decision lives in the pure kernel, not the executor: `planRaise`'s surviving
+masks (headless, `!appActive`, discussed below) are the environment refusing an activation, not a
+fact about the window model, and the standing direction is to remove decisions from `planRaise`
+rather than add to it.
 
 **The placement of the app-active test is itself unresolved, and is the more important half.**
 The rule is that Peek does not reorder its own windows on its own initiative while it is not the
@@ -1594,8 +1634,8 @@ Every trigger that reaches the raise path while `appActive` may be false:
 |---|---|---|
 | `RAISE_WINDOW_REQUESTED` — its sole production dispatcher is the modal-blur re-raise in `ipc.ts`, whose own comment names this as the macOS activation dance where `appActive` may still read false | `decide(RaiseWindow)` → `OsFocusGained` → `key` diff → `react` `RaiseWindow` → `planRaise` `'inactive-show'` → `backend.showWindow({ activate: false })` | A modal panel orders itself to the front while another app is frontmost. `planRaise` carries no satellite gate either, so the old machine's second drop — `isEligibleFront` rejecting satellites — is gone as well. |
 | `WINDOW_CLOSED` successor / parent handoff | `react`'s parent-refocus rule emits `RaiseWindow` directly, gated only on `isContentWindow` | Nothing appears on screen at the time, but the window-server order changes unseen; `ba55be19`'s own accepted-loss note — that macOS restores the app's own window order on activation — is the argument this becomes visible later, when returning by Cmd+Tab finds a different window on top. |
-| `WINDOW_HIDDEN` successor raise | **no counterpart at all** — `evolve`'s `WindowHidden` arm touches only `visible`, leaves `key` dangling, and no successor rule fires | The opposite gap: the kernel raises too little here. Outside the `appActive` seam, but the same cutover has to account for it. |
-| `DEVTOOLS_OPENED` / `DEVTOOLS_CLOSED` re-drive of `front` (devtools opens with `activate: false`) | `FocusAssertRequested` → `lastFocusAssert` diff → `[RaiseWindow, FocusContent]`, with **no visibility gate on the assert rule at all** | `showInactive()` of a possibly hidden background window, plus `focusContent` → `wc.focus()` taking first responder while the app is backgrounded — the executor's `FocusContent` case masks only `headless`. |
+| `WINDOW_HIDDEN` successor raise | `evolve`'s `case 'WindowHidden'` mints the op token and stamps the successor's `lastOpSeq`; `react`'s mirrored loop emits `RaiseWindow` for the same successor, gated on `next.appActive === true` and a non-null `topmost(next, isContentWindow)` | Built — see the RESOLVED marker above. |
+| `DEVTOOLS_OPENED` / `DEVTOOLS_CLOSED` re-drive of `front` (devtools opens with `activate: false`) | `FocusAssertRequested` → `lastFocusAssert` diff → `[RaiseWindow, FocusContent]`, now gated on the target's `visible` (`react`'s focus-assert rule; the matching stamp condition lives in `evolve`'s `case 'FocusAssertRequested'` / `case 'AppActivated'`) | Built — see the RESOLVED marker above. |
 | `SWITCHER_SELECTED`, Escape closing the switcher | the switcher is homed outside the kernel | No divergence: the overlay held key, so the app is active by construction. |
 | `APP_ACTIVATED` cold-start latch | `lastFocusAssert` is written in the `AppActivated` arm | No divergence: `appActive` is true in that same transition. |
 

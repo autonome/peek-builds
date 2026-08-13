@@ -404,8 +404,8 @@ per-runner status) — don't read the chained exit code as one runner's.
   **non-null but points at the chrome floating in front of the host**. Fix: overlay-aware close
   resolution. Pure `resolveCloseTargetId(focusedBrowserWindowId, focusedIsHybridOverlay,
   activeHybridWindowId)` in `izui-roles.ts` (focused non-overlay BW wins; else the active hybrid host).
-  The registry gains `setOverlayWindowIdProvider`/`isHybridOverlayWindowId` (one-way provider, SAME
-  pattern as `setOverlayFocusProvider` — the overlay calls IN, the registry never imports the overlay);
+  The registry gains a one-way overlay-window-id provider (SAME pattern as the overlay-focus provider
+  that sat beside it — the overlay calls IN, the registry never imports the overlay);
   `initHybridOverlay` registers a closure reading the live `overlayWin` id. `resolveFocusedWindowIdForClose`
   (`windows.ts`) feeds the predicate; the `entry.ts` handler now routes through `closeFocusedWindow()`
   after the devtools guard instead of closing the raw focused id. Closing the host nulls the active id →
