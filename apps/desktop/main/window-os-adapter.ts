@@ -285,41 +285,50 @@ export class WindowOsAdapter {
 
   private runEffect(effect: Effect): void {
     switch (effect.type) {
-      // ───────────────────────────────────────────────────────────────────────
-      // TRANSFERRED TO THE KERNEL EXECUTOR — every arm below performs nothing.
-      //
-      // The rule (`docs/design/window-manager.md` → "Where the swap draws its
-      // line: by responsibility, not by machine"): anything that shows, hides,
-      // orders, closes or focuses a window is a window operation and belongs to
-      // the window manager. `window-kernel-executor.ts` performs all of these
-      // now, over the SAME `ElectronWindowBackend` this adapter holds — so an
-      // arm left live here would issue every one of them a second time.
-      //
-      // They stay as labelled no-ops rather than being deleted because the
-      // reducer in `window-state.ts` still EMITS them, and the switch is
-      // exhaustive over `Effect`. They go when that file goes.
-      //
-      // `SET_ALWAYS_ON_TOP` has no kernel effect of its own by design: the
-      // kernel folds always-on-top into a window's `layer`, `SetStacking`'s band
-      // replay picks the level through `stackingLevelForLayer`, and the pin
-      // itself is `electron-window-backend.ts setStacking`'s business — one
-      // layer below any rule, which is where a platform's method name belongs.
-      // ───────────────────────────────────────────────────────────────────────
-      case 'SET_FULLSCREEN':
-      case 'RECONCILE_FULLSCREEN':
-      case 'RAISE_WINDOW':
-      case 'SET_STACKING':
-      case 'SET_BOUNDS':
-      case 'FOCUS_CONTENT':
-      case 'CLOSE_WINDOW':
-      case 'CLOSE_WINDOW_DIRECT':
-      case 'DESTROY_WINDOW':
-      case 'CLOSE_CONTENT':
-      case 'SHOW_WINDOW':
-      case 'HIDE_WINDOW':
-      case 'SET_ALWAYS_ON_TOP':
-      case 'SET_VISIBLE_ON_ALL_SPACES':
-      case 'DESTROY_ALL_GUESTS': {
+      case 'SET_FULLSCREEN': {
+        // The SINGLE fullscreen route for BOTH kinds (§2.4 — the raw route in
+        // tile-ipc.ts is deleted in a later seam). The backend drives the
+        // native toggle and arms the bounded settle timer (§2.3).
+        this.backend.setFullscreen(effect.id, effect.on);
+        return;
+      }
+      case 'RECONCILE_FULLSCREEN': {
+        // Command in, event out (§2.5): the backend reads reality ONCE —
+        // behind the port, never here — and emits the settled event so the
+        // reducer snaps `fsMode` to it.
+        this.backend.reconcileFullscreen(effect.id);
+        return;
+      }
+      case 'RAISE_WINDOW': {
+        // `opSeq` rides along so the backend can label the focus this raise
+        // provokes as machine-caused (§ `FocusCause`) — otherwise its own echo
+        // comes back looking like a user gesture and sweeps live transients.
+        this.backend.raiseWindow(effect.id, effect.opSeq);
+        return;
+      }
+      case 'SET_STACKING': {
+        // Relative order only — the moveTop replacement (§4.3 dim 3). No
+        // activation and no first-responder semantics (those are RAISE_WINDOW /
+        // FOCUS_CONTENT), so unlike the show/pin family it needs no headless
+        // gate: a relative raise never takes key, steals focus, or repaints a
+        // frame into visibility.
+        this.backend.setStacking(effect.id, effect.level);
+        return;
+      }
+      case 'SET_BOUNDS': {
+        // Geometry (§5 step 7): position/size through the port. No headless
+        // gate — a bounds write neither activates, takes key, nor shows a
+        // hidden frame (same reasoning as SET_STACKING). The backend's
+        // resize/move listeners echo the settled rect as BOUNDS_CHANGED.
+        this.backend.setWindowBounds(effect.id, effect.bounds);
+        return;
+      }
+      case 'FOCUS_CONTENT': {
+        // Make a page-host's content WC the macOS first responder (the
+        // `shouldFocusHybridContentOnHostFocus` invariant, now standard on any
+        // front-change to a page-host). Focus-free under headless.
+        if (isHeadless()) return;
+        this.backend.focusContent(effect.id, effect.opSeq);
         return;
       }
       case 'ASK_RENDERER': {
@@ -330,6 +339,15 @@ export class WindowOsAdapter {
         // `void`) so the E2E test bridge can await the ask's round trip
         // deterministically — see `waitForPendingAsyncEffects`.
         this.trackAsyncEffect(this.backend.askRendererToHandleEscape(effect.id, effect.seq));
+        return;
+      }
+      case 'CLOSE_WINDOW': {
+        // Route through the existing close/hide seam (honors keepLive, hybrid
+        // vs browser). Fire-and-forget: it is async (its hybrid branch awaits
+        // a fullscreen exit); the machine already recorded intent. Tracked so
+        // the test bridge can await the close settling (test-bridge support
+        // only — nothing in the machine waits on it).
+        this.trackAsyncEffect(this.backend.closeOrHide(effect.id));
         return;
       }
       case 'OPEN_SWITCHER_WINDOW': {
@@ -381,6 +399,76 @@ export class WindowOsAdapter {
         );
         return;
       }
+      case 'CLOSE_WINDOW_DIRECT': {
+        // Guest-safe direct close (the absorbed windows.ts closeHostWindow
+        // path — destroy registered guests first, then close). Fire-and-forget
+        // for the machine; tracked for the test bridge like CLOSE_WINDOW.
+        this.trackAsyncEffect(this.backend.closeWindow(effect.id));
+        return;
+      }
+      case 'DESTROY_WINDOW': {
+        // Forceful destroy of the native WINDOW (extension bridge/UI + quit
+        // teardown). Genuinely synchronous, unlike `webContents.destroy()`:
+        // `BaseWindow.destroy()` tears the window down within the call, so
+        // there is nothing to await here. Do not read across from this to
+        // DESTROY_ALL_GUESTS — a guest WC's destruction lands on a LATER turn.
+        this.backend.destroyWindow(effect.id);
+        return;
+      }
+      case 'CLOSE_CONTENT': {
+        this.backend.closeContent(effect.id);
+        return;
+      }
+      case 'SHOW_WINDOW': {
+        // No executor-side headless gate (§5 step 6A-2): the backend owns the
+        // whole show policy — under headless it zeroes opacity BEFORE showing
+        // and never activates a page-host, so a show can't paint on the real
+        // desktop or steal focus. The old skip predates the seam cutover;
+        // with the windows.ts show seams routed through this effect, skipping
+        // under headless would mean headless runs never show any window.
+        this.backend.showWindow(effect.id, { activate: effect.activate, opSeq: effect.opSeq });
+        return;
+      }
+      case 'HIDE_WINDOW': {
+        this.backend.hideWindow(effect.id);
+        return;
+      }
+      case 'SET_ALWAYS_ON_TOP': {
+        // Headless parity with the old post-ctor reinforcement guard: even at
+        // opacity 0, setAlwaysOnTop triggers a macOS compositor repaint that
+        // can flash a thin window frame.
+        if (isHeadless()) return;
+        this.backend.pinAlwaysOnTop(effect.id, effect.on);
+        return;
+      }
+      case 'SET_VISIBLE_ON_ALL_SPACES': {
+        // Headless parity with the two call sites this replaces: BOTH of
+        // `ipc.ts`'s Spaces blocks (fresh-create and keepLive-reuse) sit
+        // inside `if (!isHeadless())`, because the call touches the real
+        // desktop's Space assignment and — without skipTransformProcessType —
+        // the app's activation policy. An agent/CI run must not move windows
+        // between the user's Spaces. Same executor-side gate as
+        // SET_ALWAYS_ON_TOP.
+        if (isHeadless()) return;
+        this.backend.setVisibleOnAllSpaces(effect.id, effect.on, {
+          visibleOnFullScreen: effect.visibleOnFullScreen,
+          skipTransformProcessType: effect.skipTransformProcessType,
+        });
+        return;
+      }
+      case 'DESTROY_ALL_GUESTS': {
+        // Quit teardown. The command is ASYNC and its settlement is load-bearing
+        // — `webContents.destroy()` returns while the guest is still alive, so
+        // "the destroys were issued" is not "the guests are gone" (measured: all
+        // six still live when their host BaseWindows closed ~1ms later). The
+        // before-quit sequencing awaits `waitForGuestTeardown()` before it lets
+        // the re-quit through; the promise is bounded inside the backend, so
+        // that await cannot hang the quit.
+        const teardown = this.backend.destroyAllContentGuests();
+        this.guestTeardown = teardown;
+        this.trackAsyncEffect(teardown);
+        return;
+      }
       case 'EXIT_FULLSCREEN': {
         // Semantic marker: "ESC was consumed by leaving fullscreen." The actual
         // toggle rides on the companion `SET_FULLSCREEN(id,false)` the reducer
@@ -418,6 +506,27 @@ export class WindowOsAdapter {
 
   /** In-flight async effect promises (renderer ESC asks, delegated closes). */
   private readonly pendingAsyncEffects = new Set<Promise<unknown>>();
+
+  /**
+   * Settlement of the most recent `DESTROY_ALL_GUESTS`. NOT test-bridge
+   * support: the before-quit sequencing gates the re-quit on it, which is the
+   * whole reason quit-time guest teardown now happens before host windows
+   * close. Kept separate from `pendingAsyncEffects` deliberately — that set is
+   * an unbounded "wait for everything" the quit path must not depend on.
+   */
+  private guestTeardown: Promise<void> = Promise.resolve();
+
+  /**
+   * Resolve once the last requested guest teardown has settled (bounded inside
+   * the backend). Resolved already when no teardown has been requested.
+   */
+  async waitForGuestTeardown(): Promise<void> {
+    try {
+      await this.guestTeardown;
+    } catch {
+      /* the teardown is best-effort; quit proceeds either way */
+    }
+  }
 
   /** Retain an async effect's promise until it settles (never rethrows). */
   private trackAsyncEffect(p: Promise<unknown>): void {

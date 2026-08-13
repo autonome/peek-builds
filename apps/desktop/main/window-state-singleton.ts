@@ -27,11 +27,7 @@ import { getIzuiCoordinator } from './izui-state.js';
 import type { WindowEvent, FsMode, IzuiSession, WindowRecord, EscapeMode, StateSnapshot } from './window-state.js';
 import type { Rectangle, WindowId, WindowKind } from './window-kernel.js';
 import type { WindowClass } from './izui-roles.js';
-import {
-  setKernelExecutorProvider,
-  shadowKernelRegisterWindow,
-  shadowKernelWindowShown,
-} from './window-kernel-shadow.js';
+import { shadowKernelRegisterWindow, shadowKernelWindowShown } from './window-kernel-shadow.js';
 
 /** Register-spec that accepts real Electron window handles (both kinds satisfy the adapter's structural `NativeWindow`). */
 export interface MachineWindowSpec {
@@ -111,19 +107,6 @@ export function getKernelExecutorForApp(): WindowKernelExecutor {
  * mirror. Idempotent.
  */
 export function initWindowStateMachine(): void {
-  // THE CUTOVER. Installing this provider is what makes the ~27 feed helpers in
-  // `window-kernel-shadow.ts` land on the production `WindowKernelExecutor`
-  // over the real backend instead of the `NoopKernelBackend` that recorded and
-  // discarded. From here the kernel PERFORMS window operations, which is why
-  // `window-os-adapter.ts runEffect` no longer does — two machines cannot both
-  // hold the backend, or every show, raise, close and stacking write happens
-  // twice.
-  //
-  // INJECTION, NOT IMPORT: the provider is a lazy thunk because
-  // `window-kernel-shadow.ts` must not value-import this module — see that
-  // file's executor-provider banner for the cycle and the
-  // `ELECTRON_RUN_AS_NODE=1` reasons.
-  setKernelExecutorProvider(() => getKernelExecutorForApp());
   getWindowOsAdapter().attachAppListeners();
   seedSessionMirror();
 }
@@ -367,16 +350,8 @@ export function getNativeWindowByClass(cls: WindowClass): BaseWindow | BrowserWi
  * await the ESC round trip deterministically instead of polling on a deadline
  * re-derived from the ask timeout. Nothing in the app may gate behavior on it.
  */
-export async function waitForPendingWindowEffects(): Promise<void> {
-  // BOTH executors, because the responsibilities are split by rule and neither
-  // side sees the other's in-flight work: the adapter still runs the Escape
-  // renderer ask and the two switcher arms, while every window operation now
-  // settles inside the kernel executor. Awaiting one alone would report the ESC
-  // round trip settled while the close it provoked was still in flight.
-  await Promise.all([
-    getWindowOsAdapter().waitForPendingAsyncEffects(),
-    getKernelExecutorForApp().waitForPendingAsyncEffects(),
-  ]);
+export function waitForPendingWindowEffects(): Promise<void> {
+  return getWindowOsAdapter().waitForPendingAsyncEffects();
 }
 
 /**
@@ -387,11 +362,7 @@ export async function waitForPendingWindowEffects(): Promise<void> {
  * over guests that are still alive. Bounded inside the backend.
  */
 export function waitForGuestTeardown(): Promise<void> {
-  // The kernel executor owns this from the cutover on: its `DestroyAllGuests`
-  // arm is what now issues `destroyAllContentGuests()` and stores the promise.
-  // The adapter's copy would resolve immediately — its arm no longer runs — and
-  // the quit would stop waiting for guests, visibly only on a real quit.
-  return getKernelExecutorForApp().waitForGuestTeardown();
+  return getWindowOsAdapter().waitForGuestTeardown();
 }
 
 /** Test-only: reset the singleton (drops the adapter + its owner state). */
