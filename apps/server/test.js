@@ -3454,6 +3454,44 @@ describe("MCP Item Write Routes Tests", () => {
     });
   });
 
+  describe("untag decodes a namespaced tag name in the path segment (the primary path — every status tag is namespaced, e.g. peek:todo)", () => {
+    function tagsOf(id) {
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      return conn
+        .all("SELECT t.name FROM tags t JOIN item_tags it ON t.id = it.tagId WHERE it.itemId = ?", [id])
+        .map((r) => r.name)
+        .sort();
+    }
+
+    it("removes a namespaced tag via a raw (unencoded) colon in the path segment", async () => {
+      // Another in-scope tag ("work") survives the removal, so this is
+      // exercising decoding, not the orphan refusal above.
+      const id = makeItem(["work", "work:todo"]);
+      const res = await app.request(`/mcp/items/${id}/tags/work:todo`, {
+        method: "DELETE",
+        headers: scopedHeaders(),
+      });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.success, true);
+      assert.strictEqual(json.tagName, "work:todo");
+      assert.deepStrictEqual(tagsOf(id), ["work"]);
+    });
+
+    it("removes a namespaced tag via a percent-encoded colon (%3A) in the path segment", async () => {
+      const id = makeItem(["work", "work:todo"]);
+      const res = await app.request(`/mcp/items/${id}/tags/work%3Atodo`, {
+        method: "DELETE",
+        headers: scopedHeaders(),
+      });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.success, true);
+      assert.strictEqual(json.tagName, "work:todo");
+      assert.deepStrictEqual(tagsOf(id), ["work"]);
+    });
+  });
+
   describe("POST /mcp/tasks/:id/complete is one transaction (design doc §3.3/§4.1)", () => {
     it("on success: adds done, removes todo, and records one completion event", async () => {
       const id = makeItem(["work", "todo"]);
