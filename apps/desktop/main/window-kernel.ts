@@ -1334,8 +1334,16 @@ export function evolve(state: State, ev: Event): State {
           // (same shape as `parentId`/`keepLive` below): a producer that never
           // learned to report a role must not silently strip one.
           ...(ev.role !== undefined ? { role: ev.role } : existing.role !== undefined ? { role: existing.role } : {}),
-          ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
-          ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
+          ...(ev.parentId !== undefined
+            ? { parentId: ev.parentId }
+            : existing.parentId !== undefined
+              ? { parentId: existing.parentId }
+              : {}),
+          ...(ev.keepLive !== undefined
+            ? { keepLive: ev.keepLive }
+            : existing.keepLive !== undefined
+              ? { keepLive: existing.keepLive }
+              : {}),
           // Intrinsic, same shape as `role` above: an event that names one
           // overwrites, an event that omits one KEEPS the existing value
           // rather than erasing it. The asymmetry is deliberate — absent on

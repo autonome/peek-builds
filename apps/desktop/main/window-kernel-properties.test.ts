@@ -1401,7 +1401,7 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
   const id = wid(0);
   const host = wid(1);
 
-  const register = (escapeMode?: 'ignore'): Event => ({
+  const register = (escapeMode?: 'ignore', keepLive?: boolean, parentId?: WindowId): Event => ({
     type: 'WindowRegistered',
     id,
     kind: 'page-host',
@@ -1411,12 +1411,14 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     class: 'primary',
     role: 'content',
     ...(escapeMode !== undefined ? { escapeMode } : {}),
+    ...(keepLive !== undefined ? { keepLive } : {}),
+    ...(parentId !== undefined ? { parentId } : {}),
   });
 
   /** A log that writes every lived fact the record can carry, then re-registers. */
   const livedLog = (): LogItem[] => [
     { type: 'WindowRegistered', id: host, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
-    register('ignore'),
+    register('ignore', true, host),
     { type: 'WindowShown', id },
     { type: 'OsFocusGained', id },
     { type: 'WindowContentOrderable', id },
@@ -1453,6 +1455,8 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     assert.notStrictEqual(record.lastOpSeq, undefined);
     assert.strictEqual(record.contentFocused, false);
     assert.strictEqual(record.escapeMode, 'ignore');
+    assert.strictEqual(record.keepLive, true);
+    assert.strictEqual(record.parentId, host);
   });
 
   it('the hiddenByAppBlur mark survives a re-registration mid-sweep', () => {

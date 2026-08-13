@@ -351,6 +351,50 @@ describe('window-kernel: re-registration merges in place', () => {
       'a re-registration naming no role must not strip the one already declared',
     );
   });
+
+  it('a re-registration that omits keepLive KEEPS a previously-set keepLive: true', () => {
+    // The failure this guards: `ipc.ts` registers every real window twice,
+    // and a second pass that never learned about keepLive must not silently
+    // strip it — a keepLive slide would be destroyed on close instead of
+    // hidden.
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', keepLive: true },
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    ]);
+    assert.strictEqual(
+      state.order.find((w) => w.id === wid(1))?.keepLive,
+      true,
+      'a re-registration naming no keepLive must not strip the one already declared',
+    );
+  });
+
+  it('a re-registration that names keepLive: false overwrites it — an explicit value always wins', () => {
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', keepLive: true },
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', keepLive: false },
+    ]);
+    assert.strictEqual(state.order.find((w) => w.id === wid(1))?.keepLive, false, 'a named keepLive overwrites');
+  });
+
+  it('a re-registration that omits parentId KEEPS a previously-set parentId', () => {
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', parentId: wid(2) },
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    ]);
+    assert.strictEqual(
+      state.order.find((w) => w.id === wid(1))?.parentId,
+      wid(2),
+      'a re-registration naming no parentId must not strip the one already declared',
+    );
+  });
+
+  it('a re-registration that names a different parentId overwrites it', () => {
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', parentId: wid(2) },
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', parentId: wid(3) },
+    ]);
+    assert.strictEqual(state.order.find((w) => w.id === wid(1))?.parentId, wid(3), 'a named parentId overwrites');
+  });
 });
 
 // ── raise vs. show ───────────────────────────────────────────────────────────
