@@ -184,6 +184,28 @@ them; class names may remain creation-time shorthand that nothing downstream bra
 Note `focusable: false` is a real fact (the OS genuinely will not give such a window key), so
 "a HUD never holds key" needs no special case — unlike `satellite`, which was an invention.
 
+**The rules and the machine are platform-neutral; every platform workaround lives behind the
+port.** Electron on macOS is one backend, not the design. Tauri and other platforms are
+intended, so nothing above the port may name a platform's method, carry its argument names, or
+encode the shape of its workarounds. The machine says WHAT it intends; the backend for a given
+platform decides what native calls achieve it there, including how many calls that takes.
+
+- **A port method carries an intention, not a call shape.** If a port argument only makes sense
+  to one platform's API, it is in the wrong layer. The test is whether a second backend could
+  implement the method without the argument being meaningless or having to be ignored.
+- **Sequences are implementation.** Where a platform needs two native calls in a particular
+  order to achieve one intention, that ordering belongs to that backend. The machine emits one
+  effect for one intention; it does not emit a platform's steps.
+- **A platform without the concept no-ops.** "Which desktop a window lives on" has no meaning
+  where the OS has no such concept, and the backend answering with nothing is the correct
+  answer, not a special case for the machine to hold.
+- **Known violation, being corrected:** the macOS Spaces effect currently carries
+  `visibleOnFullScreen` and `skipTransformProcessType` — both Electron argument names — and the
+  ordered true-then-false pulse that lands a new window on the user's active Space is expanded
+  into two effects by the reducer rather than by the backend. Both are the platform reaching up
+  through the port. The intention is per-window and there are two of them: the window FOLLOWS
+  the user across desktops, or the window BELONGS to the desktop it was opened on.
+
 **Input interpretation lives OUTSIDE the window manager.** Hotkeys and Escape are not window
 manager concerns. Something outside resolves what the user meant and emits a plain window
 intent; the machine never learns that a key called Escape exists. Escape specifically is a
