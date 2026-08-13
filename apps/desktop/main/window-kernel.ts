@@ -260,12 +260,23 @@ export interface WindowRecord {
   lastOpSeq?: number;
 
   /**
-   * Set while this window was hidden by the `AppResignSettled` sweep (ported
-   * from `window-state.ts WindowRecord.hiddenByAppBlur`) — the structural
-   * replacement for a native-window expando. `AppActivated` re-shows exactly
-   * the windows carrying this flag and clears it; a window hidden for any
-   * other reason (a plain `WindowHidden`, an overlay detach) must not be
+   * Set while this window went off screen BECAUSE the app stopped being active
+   * (ported from `window-state.ts WindowRecord.hiddenByAppBlur`) — the
+   * structural replacement for a native-window expando. `AppActivated` re-shows
+   * exactly the windows carrying this flag and clears it; a window hidden for
+   * any other reason (a plain `WindowHidden`, an overlay detach) must not be
    * re-shown by that re-activation.
+   *
+   * TWO ARMS SET IT, on two different seams, and the difference is a rule:
+   * `AppResigned` hides attached overlays on the RAW edge, `AppResignSettled`
+   * hides the sweep-eligible floating surfaces after the settle delay. Both are
+   * reversible visibility, so both are undone by the same re-show. What waits
+   * for the settle is DISMISSAL (`lastAttention`), because dismissal is
+   * destructive — a dismissed palette does not come back, so the activation
+   * dance must not trigger it. A hide that `AppActivated` will undo carries no
+   * such risk, and the overlay cannot afford the delay: it floats above other
+   * applications' windows, so 500ms of it is 500ms of Peek's chrome hanging
+   * over the app the user just switched to.
    */
   hiddenByAppBlur?: boolean;
 
@@ -1582,12 +1593,41 @@ export function evolve(state: State, ev: Event): State {
     }
 
     case 'AppResigned': {
-      // ARM only — hides nothing yet. See `pendingAppResignSweep`'s doc: this
-      // may be the resign half of a dance an `AppActivated` is about to cancel.
+      // ARMS the sweep — that half hides nothing yet. See
+      // `pendingAppResignSweep`'s doc: this may be the resign half of a dance an
+      // `AppActivated` is about to cancel, and DISMISSAL cannot be taken back.
+      //
+      // ATTACHED OVERLAYS HIDE HERE, ON THE RAW EDGE, and that difference is the
+      // rule rather than an exception to it (`WindowRecord.hiddenByAppBlur`
+      // carries the reasoning). An overlay is not a window the user manages: it
+      // is chrome drawn for its host, it sits above the regular stack, and above
+      // the regular stack means above OTHER applications' windows too. Waiting
+      // out the settle delay would leave Peek's chrome floating over the app the
+      // user just switched to for the whole of it. The hide is reversible and
+      // `AppActivated` reverses it, so the dance costs a flicker at worst where
+      // the sweep would cost a palette.
+      //
+      // ATTACHMENT, NOT ROLE, selects the victims — the same relation
+      // `selectTransientAutoclose` reads, and the reason that query skips
+      // overlays outright: an attached overlay's visibility belongs to its
+      // attachment, so it is driven here and never dismissed. An already-hidden
+      // overlay is left alone, which is what keeps a host in fullscreen (whose
+      // overlay `react`'s follow rule already drove off screen) from having its
+      // chrome revealed by the next activation.
+      //
+      // No `opSeq` is stamped, exactly as the `AppResignSettled` sweep stamps
+      // none: `lastOpSeq` tracks focus-family ops and `HideWindow` carries no
+      // token. Nothing here touches `key` or `order` (RULE 2).
+      const hidesOverlay = state.order.some((w) => w.overlayFor !== undefined && w.visible);
       return {
         ...state,
         appActive: false,
         pendingAppResignSweep: true,
+        order: hidesOverlay
+          ? state.order.map((w) =>
+              w.overlayFor !== undefined && w.visible ? { ...w, visible: false, hiddenByAppBlur: true } : w,
+            )
+          : state.order,
         version: state.version + 1,
       };
     }
@@ -1604,7 +1644,7 @@ export function evolve(state: State, ev: Event): State {
       // that same token. A re-activation that re-shows nothing (the ordinary
       // dance cancel, or a marked window that is somehow already visible)
       // issues no op and does not move the counter.
-      const reshown = state.order.some((w) => w.hiddenByAppBlur === true && !w.visible);
+      const reshown = state.order.some((w) => appBlurRevealAdmits(state, w) && !w.visible);
 
       // SPENDING THE COLD-START FOCUS LATCH. `pendingColdStartFocus` names the
       // window a restore asked a later activation to put back in front (see
@@ -1661,7 +1701,7 @@ export function evolve(state: State, ev: Event): State {
         appActive: true,
         pendingAppResignSweep: false,
         order: state.order.map((w) => {
-          const reshow = w.hiddenByAppBlur === true;
+          const reshow = appBlurRevealAdmits(state, w);
           // One op means one token: a window both re-shown and raised carries
           // that single number once.
           const stamped = (reshow && !w.visible) || (assertsFocus && w.id === latched);
@@ -3049,6 +3089,35 @@ export function selectTransientAutoclose(
  * windows (a cmd panel) that the old sweep deliberately left alone because
  * they have their own blur handling and would blink.
  */
+/**
+ * May an `AppActivated` put this record back on screen?
+ *
+ * `hiddenByAppBlur` records that a window went off screen BECAUSE the app
+ * stopped being active, and the activation undoes exactly those hides. An
+ * ATTACHED OVERLAY is the one case that gets to refuse, because its visibility
+ * belongs to its attachment rather than to the app lifecycle: the host may have
+ * entered fullscreen while Peek was in the background — macOS allows exactly
+ * that, which is why `AppActivated` reconciles fullscreen at all — and chrome
+ * revealed over a fullscreen host is the one thing overlay follow has never
+ * done. A host that went off screen meanwhile refuses for the same reason.
+ *
+ * A refusal LEAVES THE MARK SET rather than clearing it, deliberately: the
+ * record is still off screen for the reason the mark names, and nothing has
+ * happened to make that untrue. Any genuine `WindowShown` clears the mark, so a
+ * stale one self-heals the moment something legitimately shows the window, and
+ * the next resign/activate cycle re-asks this question against the host's mode
+ * at that time.
+ *
+ * A dangling `overlayFor` cannot reach here — `WindowClosed` mechanically
+ * detaches every overlay naming the closed host.
+ */
+function appBlurRevealAdmits(state: State, record: WindowRecord): boolean {
+  if (record.hiddenByAppBlur !== true) return false;
+  if (record.overlayFor === undefined) return true;
+  const host = state.order.find((w) => w.id === record.overlayFor);
+  return host !== undefined && host.visible && host.fsMode.name === 'normal';
+}
+
 export function isAppResignSweepEligible(record: WindowRecord): boolean {
   if (!record.visible) return false;
   if (record.canBecomeKey) return false;
