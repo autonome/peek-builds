@@ -127,6 +127,38 @@ of what edge case arises, not a policy to be renegotiated per case.
 2. **Which window holds key**, as one id or none.
 3. Each window's own lifecycle state, plus its intrinsic properties as created.
 4. Whether the machine itself caused the event currently being handled.
+5. **Whether Peek is the active application**, as one boolean (`window-kernel.ts
+   State.appActive`, written by `evolve`'s `AppActivated` / `AppResigned` arms). The only
+   app-level fact in the set: the other four are per-window or per-event, and this one has no
+   window to hang on. It is a fact and not a query because nothing else in the machine implies
+   it — no arrangement of windows distinguishes "Peek is frontmost" from "Peek is behind
+   another app with the same windows in the same order", and the OS reports it as its own
+   event rather than as a consequence of anything the machine did.
+
+**The rule that fact 5 exists to state: Peek does not reorder its own windows on its own
+initiative while it is not the active application.** A window becoming visible because the
+user asked for it is a different fact and is not covered — the constraint is on the machine
+acting unprompted, not on the user acting through it.
+
+- **The test belongs on the write, not on the effect.** Stated as above it is not a gate at
+  all: while the app is inactive the transition that would change which window holds key is
+  simply not recorded, so `react` has no diff to project and nothing downstream has anything
+  to refuse. Placing it instead at the moment of performing the effect would leave the machine
+  believing in a reordering that never happened. Precedent in the same file: `evolve`'s
+  `AppResignSettled` arm already performs exactly this kind of test on the write, and its own
+  comment gives this reason.
+- **This is not `react` holding a guard.** The written constraint is that `react` holds no
+  guards at all, which the write-side placement satisfies; nothing forbids `react` from
+  reading `state.appActive` as one more structural input, and it does not need to.
+- **Nothing is latched for replay.** A raise the machine wanted while backgrounded is dropped,
+  not remembered: on returning to Peek the user finds the window arrangement they left, and
+  macOS restores the app's own window order on activation. Remembering it would mean storing a
+  pending intention — a sixth fact — to serve a case no gesture asks for.
+- **Consequence for the executor.** `window-kernel-executor.ts planRaise` currently resolves
+  `!appActive` to a `'suppressed'` outcome that performs nothing. Under this rule there is no
+  such raise to suppress, and the arm deletes. That also resolves a standing contradiction in
+  this document, which calls the executor "a dumb re-assert loop with no decisions of its own"
+  while `planRaise` is by construction a four-way decision.
 
 **Everything else is a query over those, computed where the decision is made and never
 stored:** the restore target (topmost window in the order matching a restorable predicate),
@@ -1446,6 +1478,11 @@ this section: the latched replay on `AppActivated` is still undecided and unimpl
 three further gaps it names — the absent successor raise on `evolve`'s `WindowHidden` arm, the
 absent overlay resign-hide and activate-reveal pair, and the absent visibility gate on the
 focus-assert rule's `[RaiseWindow, FocusContent]` emission — are all still open.
+
+**RESOLVED — see "0. The governing rule set", stored fact 5 and the rule stated under it.**
+`appActive` is now declared a stored fact, the app-active test is placed on the write, the
+latched replay is decided against, and `planRaise`'s `'suppressed'` arm is slated for deletion.
+The rest of this heading is the analysis that led there, kept as a record of the reasoning.
 
 **The placement of the app-active test is itself unresolved, and is the more important half.**
 The rule is that Peek does not reorder its own windows on its own initiative while it is not the
