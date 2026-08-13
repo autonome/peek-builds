@@ -768,7 +768,34 @@ describe('ESC renderer round-trip', () => {
     let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'quick-view' });
     const asked = reduce(s, { type: 'ESC_PRESSED', landedId: wid(1) });
     const { effects } = reduce(asked.state, { type: 'ESC_RENDERER_ANSWER', id: wid(1), handled: false, seq: askSeq(asked.effects) });
-    assert.ok(effects.some((e) => e.type === 'CLOSE_WINDOW' && e.id === wid(1)));
+    assert.ok(effects.some((e) => e.type === 'CLOSE_WINDOW_UNHANDLED_ESCAPE' && e.id === wid(1)));
+  });
+
+  it('the Escape-decided close is CLOSE_WINDOW_UNHANDLED_ESCAPE, never the plain CLOSE_WINDOW a transient dismissal uses', () => {
+    // The executor tells an Escape-decided close apart from a transient
+    // dismissal or an explicit close-or-hide request by effect type alone —
+    // see window-os-adapter.ts's CLOSE_WINDOW_UNHANDLED_ESCAPE arm. Pin both
+    // halves of that distinction on the reducer that produces them.
+    let s = openWindow(createInitialState(), 1, { kind: 'page-host', role: 'quick-view' });
+    const asked = reduce(s, { type: 'ESC_PRESSED', landedId: wid(1) });
+    const { effects: escapeEffects } = reduce(asked.state, {
+      type: 'ESC_RENDERER_ANSWER',
+      id: wid(1),
+      handled: false,
+      seq: askSeq(asked.effects),
+    });
+    assert.deepStrictEqual(effectsOfType(escapeEffects, 'CLOSE_WINDOW_UNHANDLED_ESCAPE'), [
+      { type: 'CLOSE_WINDOW_UNHANDLED_ESCAPE', id: wid(1) },
+    ]);
+    assert.deepStrictEqual(effectsOfType(escapeEffects, 'CLOSE_WINDOW'), []);
+
+    // A transient dismissal (an explicit close-or-hide request, same shape as
+    // the "non-keepLive window -> CLOSE_WINDOW" case above) still yields the
+    // plain CLOSE_WINDOW, untouched by the Escape split.
+    const dismissed = openWindow(createInitialState(), 2, {});
+    const { effects: dismissEffects } = reduce(dismissed, { type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: wid(2) });
+    assert.deepStrictEqual(effectsOfType(dismissEffects, 'CLOSE_WINDOW'), [{ type: 'CLOSE_WINDOW', id: wid(2) }]);
+    assert.deepStrictEqual(effectsOfType(dismissEffects, 'CLOSE_WINDOW_UNHANDLED_ESCAPE'), []);
   });
 });
 

@@ -52,6 +52,7 @@ import {
   type WindowEvent,
 } from './window-state.js';
 import type { WindowId } from './window-kernel.js';
+import { shadowKernelCloseOrHideRequested } from './window-kernel-shadow.js';
 
 // The registration spec (native handles included) is defined next to the shim
 // that consumes it; re-exported here so the singleton's import site survives.
@@ -347,6 +348,38 @@ export class WindowOsAdapter {
         // a fullscreen exit); the machine already recorded intent. Tracked so
         // the test bridge can await the close settling (test-bridge support
         // only — nothing in the machine waits on it).
+        this.trackAsyncEffect(this.backend.closeOrHide(effect.id));
+        return;
+      }
+      case 'CLOSE_WINDOW_UNHANDLED_ESCAPE': {
+        // Separate from `CLOSE_WINDOW` for the kernel feed, not for what it
+        // performs (identical `closeOrHide` call below): the rule is one feed
+        // per INTENT, and three sites emit plain `CLOSE_WINDOW` (transient
+        // sibling dismissal, an explicit close-or-hide request, and this
+        // Escape-decided close before the split). Feeding on the shared arm
+        // would double-fire for a keepLive window dismissed as a transient or
+        // by Escape, because `windows.ts closeOrHideWindow()`'s own keepLive
+        // branches already re-dispatch `WINDOW_CLOSE_OR_HIDE_REQUESTED` and
+        // feed there. Naming the
+        // Escape decision at its own effect type lets the executor feed
+        // exactly the intent that produced it.
+        //
+        // Deliberate temporary bridge — dies with `window-state.ts`. At the
+        // swap, the `backend.closeOrHide` line below is removed and the feed
+        // stays; this arm keeps a live responsibility where the other
+        // window-operation arms become labelled no-ops.
+        //
+        // Residual redundancy, left alone rather than guarded against: a
+        // keepLive window closed by Escape still takes a second
+        // `CloseOrHideWindow` command, from `windows.ts closeOrHideWindow()`'s
+        // keepLive branch re-dispatching and feeding there.
+        // It is inert — the record is already hidden by then, so `react`'s
+        // structural diff emits nothing.
+        //
+        // Feed FIRST, then perform: `closeOrHide` may dispatch back into this
+        // machine before its first await, and the helper's contract is that
+        // its snapshot argument is this machine's settled state.
+        shadowKernelCloseOrHideRequested(effect.id, this.owner.snapshot());
         this.trackAsyncEffect(this.backend.closeOrHide(effect.id));
         return;
       }

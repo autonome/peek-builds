@@ -960,6 +960,15 @@ export type Effect =
    */
   | { type: 'ASK_RENDERER'; id: WindowId; seq: number }
   | { type: 'CLOSE_WINDOW'; id: WindowId }
+  /**
+   * Performs exactly what `CLOSE_WINDOW` performs; exists only so the
+   * executor can tell an Escape-decided close apart from a transient
+   * dismissal or an explicit close-or-hide request. Naming the decision that
+   * produced the effect is what keeps the kernel feed on the executor side
+   * firing once per Escape close instead of once per `CLOSE_WINDOW`. Dies
+   * with this module.
+   */
+  | { type: 'CLOSE_WINDOW_UNHANDLED_ESCAPE'; id: WindowId }
   /** Guest-safe direct close (destroy registered guests, then close the host) — the absorbed windows.ts `closeHostWindow` path. No keepLive policy. */
   | { type: 'CLOSE_WINDOW_DIRECT'; id: WindowId }
   /** Forceful native destroy (extension bridge/UI teardown, quit paths). */
@@ -2905,7 +2914,7 @@ function applyEscape(state: AppWindowState, effects: Effect[]): void {
 function applyUnhandledEscape(state: AppWindowState, decision: EscapeUnhandledDecision, effects: Effect[]): void {
   switch (decision.kind) {
     case 'close-window':
-      effects.push({ type: 'CLOSE_WINDOW', id: decision.id });
+      effects.push({ type: 'CLOSE_WINDOW_UNHANDLED_ESCAPE', id: decision.id });
       return;
     case 'open-switcher':
       openSwitcher(state, effects);
