@@ -4,14 +4,16 @@
  * `ElectronWindowBackend`) rather than the `NoopKernelBackend`
  * `window-kernel-shadow.ts` runs over.
  *
- * DO NOT IMPORT `getKernelExecutor` FROM PRODUCTION CODE YET. An executor
- * built over the real backend performs REAL window effects (`show`, `raise`,
- * `close`, stacking, …) the moment anything feeds it a command or event —
- * unlike the shadow executor, which can only ever reach a `NoopKernelBackend`
- * that records and discards. Wiring a production call site onto this
- * accessor IS the cutover (docs/design/window-manager.md §5), a later,
- * separate step; this module only makes the accessor exist so that step has
- * something to call.
+ * ONE PRODUCTION CALL SITE, AND IT IS THE CUTOVER.
+ * `window-state-singleton.ts getKernelExecutorForApp` is that call site: it
+ * passes the adapter's own backend (`window-os-adapter.ts getBackend`), so
+ * the kernel and the old machine drive the same `ElectronWindowBackend` and
+ * speak the same `WindowId` space. An executor built over the real backend
+ * performs REAL window effects (`show`, `raise`, `close`, stacking, …) the
+ * moment anything feeds it a command or event — unlike the shadow executor
+ * (`window-kernel-shadow.ts`), which can only ever reach a
+ * `NoopKernelBackend` that records and discards. Nothing else may build one:
+ * a second executor over a second backend would mint a disjoint id space.
  *
  * INJECTION, NOT IMPORT. This module does not import
  * `electron-window-backend.ts` (or anything that transitively pulls in

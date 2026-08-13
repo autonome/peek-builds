@@ -4,8 +4,7 @@
  * `window-kernel-executor.test.ts` (`node:test` + `node:assert`,
  * `.js`-suffixed import of the compiled output). Coverage: lazy
  * construction, idempotence, and that the injected backend is the one the
- * returned executor actually drives — plus a source-drift pin (see its own
- * describe block below for exactly what that pin does and does not prove).
+ * returned executor actually drives.
  *
  * The fake backend below implements the full `WindowBackend` port with no
  * `electron` import anywhere — same reason `window-kernel-executor.test.ts`'s
@@ -14,9 +13,6 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { getKernelExecutor, _resetKernelExecutorForTests } from './window-kernel-singleton.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
 import type { WindowId } from './window-kernel.js';
@@ -169,55 +165,3 @@ describe('window-kernel-singleton getKernelExecutor', () => {
   });
 });
 
-// ── Source-drift pin ─────────────────────────────────────────────────────────
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Compiled test lives at apps/desktop/dist/main/; source lives at apps/desktop/main/.
-const MAIN_SRC_DIR = path.resolve(__dirname, '../../main');
-
-function* walkSource(dir: string): Generator<string> {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === 'node_modules') continue;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      yield* walkSource(full);
-    } else if (/\.(ts|cts|js|mjs)$/.test(entry.name)) {
-      yield full;
-    }
-  }
-}
-
-describe('source-drift pin — window-kernel-singleton is not wired to production yet', () => {
-  /**
-   * MECHANICAL CHECK, NOT A PROOF OF BEHAVIOR. This is a text grep over
-   * `apps/desktop/main/*.ts`: it proves the import LINE `from
-   * './window-kernel-singleton...'` (or a `require`/dynamic-import
-   * equivalent naming the module) is absent from source outside this test
-   * file and the accessor's own module — nothing more. It cannot see a
-   * re-export chain, a computed specifier, or any other indirection that
-   * reaches `getKernelExecutor` without the literal string landing in a
-   * `.ts` file. The real guardrail is the module doc on
-   * `window-kernel-singleton.ts` plus review at the cutover commit that adds
-   * the first real call site; this pin only keeps THAT commit from arriving
-   * silently via a plain import.
-   */
-  it('no source file under apps/desktop/main imports window-kernel-singleton, outside its own module and test', () => {
-    const offenders: string[] = [];
-    for (const file of walkSource(MAIN_SRC_DIR)) {
-      const base = path.basename(file);
-      if (base.startsWith('window-kernel-singleton.')) continue; // the module itself + this test
-      if (/\.test\.(ts|cts|js|mjs)$/.test(base)) continue; // no other test may reference it either, but keep the check on production source
-
-      const text = fs.readFileSync(file, 'utf8');
-      if (/window-kernel-singleton/.test(text)) {
-        offenders.push(path.relative(MAIN_SRC_DIR, file));
-      }
-    }
-    assert.deepStrictEqual(
-      offenders,
-      [],
-      `window-kernel-singleton.ts must stay unwired until the cutover commit. ` +
-        `Found a reference in: ${offenders.join(', ')}`,
-    );
-  });
-});

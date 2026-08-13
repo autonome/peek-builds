@@ -21,6 +21,8 @@
 
 import type { BaseWindow, BrowserWindow, WebContents } from 'electron';
 import { WindowOsAdapter, type RegisterWindowSpec } from './window-os-adapter.js';
+import { getKernelExecutor } from './window-kernel-singleton.js';
+import type { WindowKernelExecutor } from './window-kernel-executor.js';
 import { getIzuiCoordinator } from './izui-state.js';
 import type { WindowEvent, FsMode, IzuiSession, WindowRecord, EscapeMode, StateSnapshot } from './window-state.js';
 import type { Rectangle, WindowId, WindowKind } from './window-kernel.js';
@@ -77,6 +79,26 @@ let sessionSeeded = false;
 function getWindowOsAdapter(): WindowOsAdapter {
   if (!adapter) adapter = new WindowOsAdapter();
   return adapter;
+}
+
+/**
+ * The single production `WindowKernelExecutor`, built over the adapter's
+ * backend — the same `ElectronWindowBackend` every old-machine effect already
+ * goes through (`window-os-adapter.ts getBackend`).
+ *
+ * This is the accessor `window-kernel-singleton.ts` was written to have and
+ * deliberately left unwired; wiring it is the cutover. The backend is passed
+ * by injection rather than imported there so that module stays loadable under
+ * `ELECTRON_RUN_AS_NODE=1` — see its header.
+ *
+ * ONE BACKEND, ONE ID SPACE. Every `WindowId` the kernel speaks is minted by
+ * this backend's registration, so kernel ids and the ids
+ * `getWindowIdFor`/`getNativeWindowFor` resolve are the same ids. Building the
+ * executor over a second backend instead would silently give the kernel its
+ * own disjoint id space.
+ */
+export function getKernelExecutorForApp(): WindowKernelExecutor {
+  return getKernelExecutor(getWindowOsAdapter().getBackend());
 }
 
 /**

@@ -105,6 +105,23 @@ export class WindowOsAdapter {
   }
 
   /**
+   * The ONE `WindowBackend` for the process — the same instance this module
+   * issues every port command through.
+   *
+   * Exposed for the kernel cutover, which builds its `WindowKernelExecutor`
+   * over THIS backend rather than constructing its own
+   * (`window-state-singleton.ts getKernelExecutorForApp`). A second
+   * `ElectronWindowBackend` would mint a second `idByOsWindowId` map and
+   * attach a second set of native listeners to the same windows, so every
+   * window would carry two unrelated `WindowId`s and report every native
+   * transition twice. There is exactly one backend because there is exactly
+   * one set of native windows.
+   */
+  getBackend(): WindowBackend & BackendMigrationShims {
+    return this.backend;
+  }
+
+  /**
    * Public dispatch entry for the live consumers that feed the machine from
    * outside the backend's native-event paths: the ESC before-input seam
    * (ipc.ts / windows.ts → `ESC_PRESSED`), the fullscreen command
