@@ -928,27 +928,38 @@ and if moving one is hard that is the work, not an exemption.
 
 Every symbol below is confirmed present in the tree.
 
-**Prerequisite, and a gap — narrower now than it was.** `window-kernel-executor.ts
-WindowKernelExecutor.waitForSettledFsMode(id, mode, timeoutMs)` exists and returns
-`FsSettleOutcome = 'settled' | 'vanished' | 'timed-out'`, not `void`. **A production-capable
-accessor for the executor now exists** — `window-kernel-singleton.ts getKernelExecutor(backend)`
-built over the real `ElectronWindowBackend`, reached by `window-state-singleton.ts
-getKernelExecutorForApp()` (injects `window-os-adapter.ts getWindowOsAdapter().getBackend()`, the
-same backend every old-machine effect already goes through) — but nothing calls it yet, and it is
-not wired to `window-kernel-shadow.ts getShadowKernelExecutor()` or the ~25 feed helpers built over
-it. That module now exports the injection seam for exactly this: `setKernelExecutorProvider`.
-Installing it — `setKernelExecutorProvider(() => getKernelExecutorForApp())`, called once from
-production wiring — is the cutover; `window-kernel-shadow.ts` itself may not import
+**Prerequisite, and a gap — INSTALLED.** `window-state-singleton.ts initWindowStateMachine` calls
+`setKernelExecutorProvider(() => getKernelExecutorForApp())`, so the feed helpers land on the
+production executor over the real backend and the kernel performs window operations. The paragraph
+below records why the seam has the shape it does; it is no longer a description of pending work.
+
+`window-kernel-executor.ts WindowKernelExecutor.waitForSettledFsMode(id, mode, timeoutMs)` exists
+and returns `FsSettleOutcome = 'settled' | 'vanished' | 'timed-out'`, not `void`. The accessor is
+`window-kernel-singleton.ts getKernelExecutor(backend)` built over the real
+`ElectronWindowBackend`, reached by `window-state-singleton.ts getKernelExecutorForApp()` (injects
+`window-os-adapter.ts getWindowOsAdapter().getBackend()`, the same backend every old-machine effect
+already goes through). `window-kernel-shadow.ts` itself may not import
 `getKernelExecutorForApp` directly, because that would value-import `window-state-singleton.ts`,
 which pulls `window-os-adapter.ts` → `electron-window-backend.ts`'s value import of the platform
 module (throwing under the `ELECTRON_RUN_AS_NODE=1` unit runner `window-kernel-shadow.test.ts` runs
 under) and closes an import cycle, since `window-state-singleton.ts` already imports
-`window-kernel-shadow.ts` for the feed helpers. The three `waitForMode` call sites below
-(`windows.ts closeOrHideWindow`, the `tile-ipc.ts tile:window:hide` handler, `hybrid-overlay.ts
-installTestBridge driveHostFullscreen`) therefore are still not the one-line import swaps they might
-otherwise look like — repointing them onto `getShadowKernelExecutor().waitForSettledFsMode(...)`
-reaches the real executor only once the provider above is installed, and until then they would
-silently keep reaching the noop-backed default.
+`window-kernel-shadow.ts` for the feed helpers.
+
+The three `waitForMode` call sites below (`windows.ts closeOrHideWindow`, the `tile-ipc.ts
+tile:window:hide` handler, `hybrid-overlay.ts installTestBridge driveHostFullscreen`) still read the
+OLD machine's settled `fsMode` through `window-state-singleton.ts waitForMode`, and that keeps
+working after the swap for a reason worth stating: the backend's fullscreen listeners feed BOTH
+machines, so the settle they wait on still arrives. What changed is who asks for it — the reconcile
+is now issued by the kernel's `ReconcileFullscreen`. Repointing them onto
+`waitForSettledFsMode(...)` is a later step, and it is not the one-line import swap it looks like:
+the return type is an outcome, not `void`.
+
+Two accessors did have to repoint with the swap, both silent if missed.
+`window-state-singleton.ts waitForGuestTeardown` reaches the kernel executor, whose
+`DestroyAllGuests` arm now holds the teardown promise — left on the adapter it resolves immediately
+and the quit stops waiting for guests, observable only on a real quit.
+`waitForPendingWindowEffects` awaits BOTH executors, because the responsibilities are split and
+neither side sees the other's in-flight work.
 
 `window-kernel.ts` needs no edits for any of this: `topmost`, `isContentWindow`, `keyWindow`,
 `hostForOverlay`, `topmostBaseLayerPageHost`, `CONTENT_ROLES`, `BASE_LAYER`, and the
@@ -1092,11 +1103,16 @@ performs:
   backend instance directly rather than reach through the executor.
 - `reconcileEscGrab(snap)` — no `setEscGrab` call anywhere in the kernel stack. `window-kernel.ts`'s
   own comment on `WindowRecord.contentFocused` already flags this as unbuilt.
-- Effect arms with no kernel counterpart: `RECONCILE_FULLSCREEN`, `ASK_RENDERER` (the
-  renderer-handled-Escape round trip), `OPEN_SWITCHER_WINDOW` and `CLOSE_SWITCHER_WINDOW`
-  (including the overlay-cooldown special-casing).
+- Effect arms with no kernel counterpart: `ASK_RENDERER` (the renderer-handled-Escape round trip),
+  `OPEN_SWITCHER_WINDOW` and `CLOSE_SWITCHER_WINDOW` (including the overlay-cooldown
+  special-casing). These three are what stayed in `window-os-adapter.ts runEffect` at the swap.
+  `RECONCILE_FULLSCREEN` was listed here too and does not belong: `window-kernel-executor.ts` has a
+  `ReconcileFullscreen` case calling `backend.reconcileFullscreen`, so it transferred with the rest.
 - `SET_ALWAYS_ON_TOP` is the one arm genuinely superseded by design — the pinned layer realizes
-  through `setAlwaysOnTop` inside `SetStacking`'s band replay.
+  through `setAlwaysOnTop` inside `SetStacking`'s band replay. The band replay lives in
+  `window-kernel-executor.ts reassertStacking`, which picks a level through `stackingLevelForLayer`;
+  the `setAlwaysOnTop(true, 'floating')` call itself is in `electron-window-backend.ts setStacking`,
+  one layer below any rule, which is where a platform's method name belongs.
 
 Two of the eight are closed. `waitForPendingAsyncEffects()` and `waitForGuestTeardown()` are ported
 onto `WindowKernelExecutor`, and `logTransition` is ported with the prefix `[window-kernel]`.
