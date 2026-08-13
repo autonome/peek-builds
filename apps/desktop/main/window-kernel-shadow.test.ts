@@ -35,6 +35,13 @@ import {
   shadowKernelWindowContentOrderable,
   shadowKernelWindowHidden,
   shadowKernelWindowShown,
+  shadowKernelBoundsChanged,
+  shadowKernelDisplayChanged,
+  shadowKernelMaximizeExitedByResize,
+  shadowKernelSetBounds,
+  shadowKernelMaximize,
+  shadowKernelUnmaximize,
+  shadowKernelSetVisibleOnAllSpaces,
 } from './window-kernel-shadow.js';
 import { BASE_LAYER, isContentWindow, topmost, topmostBaseLayerPageHost, type WindowId } from './window-kernel.js';
 import type { StateSnapshot, WindowRecord } from './window-state.js';
@@ -1209,6 +1216,184 @@ describe('window-kernel-shadow: fullscreen feed', () => {
     assert.doesNotThrow(() => shadowKernelOsFullscreenLeft(danglingId, oldSnapshot));
     assert.doesNotThrow(() => shadowKernelFullscreenSettleTimeout(danglingId, oldSnapshot));
     assert.doesNotThrow(() => shadowKernelSetFullscreen(danglingId, true, oldSnapshot));
+    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+  });
+});
+
+describe('window-kernel-shadow: geometry feed', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  const record = (id: WindowId) => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+  const RECT_A = { x: 10, y: 20, width: 300, height: 400 };
+  const RECT_B = { x: 50, y: 60, width: 500, height: 600 };
+
+  it('a bounds change lands on the record\'s bounds', () => {
+    const id = wid(190);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(id, oldSnapshot);
+    assert.strictEqual(record(id)?.bounds, undefined, 'precondition: no rect has ever been reported');
+
+    shadowKernelBoundsChanged(id, RECT_A, oldSnapshot);
+
+    assert.deepStrictEqual(record(id)?.bounds, RECT_A, 'BoundsChanged must be the sole writer of the mirror');
+  });
+
+  it('SetBounds on a record whose fsMode is not normal is refused by decide and leaves bounds untouched', () => {
+    const id = wid(191);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(id, oldSnapshot);
+    shadowKernelBoundsChanged(id, RECT_A, oldSnapshot);
+    shadowKernelSetFullscreen(id, true, oldSnapshot);
+    assert.strictEqual(record(id)?.fsMode.name, 'entering', 'precondition: fsMode is non-normal');
+
+    shadowKernelSetBounds(id, RECT_B, oldSnapshot);
+
+    assert.deepStrictEqual(
+      record(id)?.bounds,
+      RECT_A,
+      'fullscreen owns the display — decide must answer [] and leave the mirror exactly where it was',
+    );
+  });
+
+  it('a display change repositions every named window and leaves unnamed ones alone', () => {
+    const [a, b] = [wid(192), wid(193)];
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(a, oldSnapshot);
+    registerWindow(b, oldSnapshot);
+    shadowKernelBoundsChanged(a, RECT_A, oldSnapshot);
+    shadowKernelBoundsChanged(b, RECT_A, oldSnapshot);
+    // A hidden record's projection is BLOCKED (evolve's DisplayChanged arm
+    // holds it on pendingProjectedBounds instead) — `visible: true` is what
+    // this test needs unblocked, so show both windows first.
+    getShadowKernelExecutor().dispatch({ type: 'WindowShown', id: a });
+    getShadowKernelExecutor().dispatch({ type: 'WindowShown', id: b });
+
+    shadowKernelDisplayChanged([{ id: a, bounds: RECT_B }], oldSnapshot);
+
+    assert.deepStrictEqual(record(a)?.bounds, RECT_B, 'the named window must be repositioned');
+    assert.deepStrictEqual(record(b)?.bounds, RECT_A, 'a window absent from the projection must be left untouched');
+  });
+
+  it('MaximizeExitedByResize clears maximized and preMaxBounds without touching bounds', () => {
+    const id = wid(194);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(id, oldSnapshot);
+    shadowKernelBoundsChanged(id, RECT_A, oldSnapshot);
+    shadowKernelMaximize(id, oldSnapshot);
+    assert.strictEqual(record(id)?.maximized, true, 'precondition: the window is maximized');
+
+    shadowKernelMaximizeExitedByResize(id, oldSnapshot);
+
+    assert.strictEqual(record(id)?.maximized, false, 'a resize gesture must invalidate maximize');
+    assert.strictEqual(record(id)?.preMaxBounds, null, 'the stash must be cleared alongside the flag');
+  });
+
+  it('never throws across a geometry feed naming a window with no record', () => {
+    const danglingId = wid(195); // never registered with the shadow kernel
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+
+    assert.doesNotThrow(() => shadowKernelBoundsChanged(danglingId, RECT_A, oldSnapshot));
+    assert.doesNotThrow(() => shadowKernelDisplayChanged([{ id: danglingId, bounds: RECT_A }], oldSnapshot));
+    assert.doesNotThrow(() => shadowKernelMaximizeExitedByResize(danglingId, oldSnapshot));
+    assert.doesNotThrow(() => shadowKernelSetBounds(danglingId, RECT_A, oldSnapshot));
+    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+  });
+});
+
+describe('window-kernel-shadow: maximize / unmaximize feed', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  const record = (id: WindowId) => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+  const RECT_A = { x: 10, y: 20, width: 300, height: 400 };
+  const WORK_AREA = { x: 0, y: 0, width: 1920, height: 1080 };
+
+  it('maximize then unmaximize round-trips the bounds through the stash', () => {
+    const id = wid(210);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(id, oldSnapshot);
+    shadowKernelBoundsChanged(id, RECT_A, oldSnapshot);
+
+    shadowKernelMaximize(id, oldSnapshot);
+
+    assert.strictEqual(record(id)?.maximized, true, 'Maximize must set the flag');
+    assert.deepStrictEqual(record(id)?.preMaxBounds, RECT_A, 'decide stashes preMaxBounds from the bounds mirror');
+    assert.deepStrictEqual(record(id)?.bounds, RECT_A, 'Maximized itself never writes bounds — the dispatch site snaps it separately');
+
+    // Mirrors the real dispatch site: a separate SetBounds drives the visual snap.
+    shadowKernelSetBounds(id, WORK_AREA, oldSnapshot);
+    assert.deepStrictEqual(record(id)?.bounds, WORK_AREA, 'precondition: the window is snapped to the work area');
+
+    shadowKernelUnmaximize(id, oldSnapshot);
+
+    assert.strictEqual(record(id)?.maximized, false, 'Unmaximize must clear the flag');
+    assert.strictEqual(record(id)?.preMaxBounds, null, 'Unmaximize must clear the stash');
+    assert.deepStrictEqual(record(id)?.bounds, RECT_A, 'the stash must restore bounds back to the pre-maximize rect');
+  });
+
+  it('Maximize on a record whose fsMode is not normal is refused by decide', () => {
+    const id = wid(211);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(id, oldSnapshot);
+    shadowKernelBoundsChanged(id, RECT_A, oldSnapshot);
+    shadowKernelSetFullscreen(id, true, oldSnapshot);
+    assert.strictEqual(record(id)?.fsMode.name, 'entering', 'precondition: fsMode is non-normal');
+
+    shadowKernelMaximize(id, oldSnapshot);
+
+    assert.strictEqual(record(id)?.maximized, false, 'fullscreen owns the display — decide must answer [] ');
+  });
+
+  it('Unmaximize on a not-maximized record is a no-op', () => {
+    const id = wid(212);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(id, oldSnapshot);
+    shadowKernelBoundsChanged(id, RECT_A, oldSnapshot);
+
+    shadowKernelUnmaximize(id, oldSnapshot);
+
+    assert.strictEqual(record(id)?.maximized, false, 'still not maximized');
+    assert.deepStrictEqual(record(id)?.bounds, RECT_A, 'nothing to restore — bounds must stay put');
+  });
+
+  it('never throws across a maximize/unmaximize feed naming a window with no record', () => {
+    const danglingId = wid(213); // never registered with the shadow kernel
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+
+    assert.doesNotThrow(() => shadowKernelMaximize(danglingId, oldSnapshot));
+    assert.doesNotThrow(() => shadowKernelUnmaximize(danglingId, oldSnapshot));
+    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+  });
+});
+
+describe('window-kernel-shadow: visible-on-all-spaces feed', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  const record = (id: WindowId) => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+
+  it('flips the stored field on, then back off', () => {
+    const id = wid(230);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(id, oldSnapshot);
+    assert.strictEqual(record(id)?.visibleOnAllSpaces, false, 'precondition: registration starts false');
+
+    shadowKernelSetVisibleOnAllSpaces(id, true, oldSnapshot);
+    assert.strictEqual(record(id)?.visibleOnAllSpaces, true, 'the raw request must flip the field on');
+
+    shadowKernelSetVisibleOnAllSpaces(id, false, oldSnapshot);
+    assert.strictEqual(record(id)?.visibleOnAllSpaces, false, 'and back off');
+  });
+
+  it('never throws naming a window with no record', () => {
+    const danglingId = wid(231); // never registered with the shadow kernel
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+
+    assert.doesNotThrow(() => shadowKernelSetVisibleOnAllSpaces(danglingId, true, oldSnapshot));
     assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });

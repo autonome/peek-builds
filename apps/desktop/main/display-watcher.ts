@@ -42,7 +42,8 @@ import { getAllHybridWindows, getHybridWindow } from './hybrid-page-host-registr
 import { getWindowInfo } from './main.js';
 import { DEBUG } from './config.js';
 import { collectDisplayProjection, type ProjectionWindow } from './display-projection.js';
-import { dispatchWindowEvent, getWindowIdFor } from './window-state-singleton.js';
+import { dispatchWindowEvent, getWindowIdFor, getWindowStateSnapshot } from './window-state-singleton.js';
+import { shadowKernelDisplayChanged } from './window-kernel-shadow.js';
 
 /**
  * Resolve the bounds of a `parent-centered` placement's parent. The parent may
@@ -148,6 +149,14 @@ function projectAllWindows(reason: string): void {
     type: 'DISPLAY_CHANGED',
     projected: decisions.map(({ id, bounds }) => ({ id, bounds })),
   });
+
+  // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+  // authoritative over nothing; see that module's doc for why this can never
+  // change what actually happens on screen.
+  shadowKernelDisplayChanged(
+    decisions.map(({ id, bounds }) => ({ id, bounds })),
+    getWindowStateSnapshot(),
+  );
 
   console.log(`[display-watcher] Dispatched reprojection for ${decisions.length} window(s)`);
 }

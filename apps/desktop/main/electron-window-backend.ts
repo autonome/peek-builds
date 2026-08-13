@@ -97,6 +97,7 @@ import {
   shadowKernelOsFullscreenEntered,
   shadowKernelOsFullscreenLeft,
   shadowKernelFullscreenSettleTimeout,
+  shadowKernelBoundsChanged,
 } from './window-kernel-shadow.js';
 
 /**
@@ -721,6 +722,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         const overlayFrame =
           kind === 'page-host' ? expandToOverlayFrame(bounds, this.workAreaNearest(bounds)) : undefined;
         this.emit({ type: 'BOUNDS_CHANGED', id, bounds, overlayFrame });
+        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+        // authoritative over nothing; see that module's doc for why this can
+        // never change what actually happens on screen.
+        shadowKernelBoundsChanged(id, bounds, this.getSnapshot());
       } catch {
         /* window gone mid-event */
       }

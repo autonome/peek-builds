@@ -41,7 +41,7 @@
 
 import { DEBUG } from './config.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
-import { isContentWindow, topmost, type Command, type Event, type WindowId, type WindowKind } from './window-kernel.js';
+import { isContentWindow, topmost, type Command, type Event, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
 import type { StateSnapshot } from './window-state.js';
 import type { StackingLevel } from './izui-roles.js';
@@ -782,6 +782,165 @@ export function shadowKernelSetFullscreen(id: WindowId, desired: boolean, oldSna
     type: 'SetFullscreen',
     id,
     desired,
+    expectedVersion: getShadowKernelExecutor().getState().version,
+  });
+  compareAfterFeed(oldSnapshot);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Geometry — the thirteenth real input this step feeds the kernel. Translated
+// at every production site that dispatches the old machine's mirrored
+// `BOUNDS_CHANGED` (`electron-window-backend.ts attachNativeListeners`'s
+// `emitBounds` closure — the sole production writer of native bounds truth),
+// `DISPLAY_CHANGED` (`display-watcher.ts projectAllWindows`),
+// `MAXIMIZE_EXITED_BY_RESIZE` (`ipc.ts exitMaximizeForResize`), and
+// `SET_BOUNDS_REQUESTED` (every dispatch site that computes a target rect and
+// hands it to the reducer — `ipc.ts`'s reuse placement, band-drag resize,
+// `page:set-bounds`, and open-time maximize-as-bounds; `tile-ipc.ts`'s
+// `tile:window:center`, `tile:window:center-all`, and `tile:window:set-bounds`),
+// alongside each existing dispatch, never in place of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate a completed native resize/move report into the kernel's
+ * `BoundsChanged` event — the sole writer of `WindowRecord.bounds` for a
+ * genuine OS report (`decide`'s translations of `SetBounds`/`Maximize`/
+ * `Unmaximize` below reuse this same event shape rather than a second one).
+ * The old machine's `BOUNDS_CHANGED.bounds` and the kernel's own `Rectangle`
+ * are the SAME type (`window-state.ts` imports `Rectangle` from
+ * `window-kernel.ts`), so no conversion is needed at this boundary.
+ */
+export function shadowKernelBoundsChanged(id: WindowId, bounds: Rectangle, oldSnapshot: StateSnapshot): void {
+  shadowDispatch({ type: 'BoundsChanged', id, bounds });
+  compareAfterFeed(oldSnapshot);
+}
+
+/**
+ * Translate a completed display-layout reprojection into the kernel's
+ * `DisplayChanged` event — one already-computed target rect per affected
+ * window, same `{id, bounds}` shape as the old machine's `projected` array.
+ * `evolve`'s arm (`window-kernel.ts`'s `DisplayChanged` case) holds a
+ * blocked window's projection on `pendingProjectedBounds` instead of
+ * applying it (non-`normal` `fsMode` or `visible: false`) and leaves a
+ * window this event does not name untouched. None of that branching is
+ * reproduced here — the event is dispatched and `evolve` decides.
+ */
+export function shadowKernelDisplayChanged(
+  projections: ReadonlyArray<{ id: WindowId; bounds: Rectangle }>,
+  oldSnapshot: StateSnapshot,
+): void {
+  shadowDispatch({ type: 'DisplayChanged', projections });
+  compareAfterFeed(oldSnapshot);
+}
+
+/**
+ * Translate a resize gesture's maximize-invalidation into the kernel's
+ * `MaximizeExitedByResize` event — clears `maximized` + `preMaxBounds`,
+ * drives nothing back at the OS: the gesture itself owns the window's
+ * bounds. Guard-free at the shadow's edge, same as `evolve`'s own arm (a
+ * not-maximized record already holds these values, so this is an idempotent
+ * no-op for it — the old reducer's "not maximized -> nothing to restore"
+ * guard is unnecessary here).
+ */
+export function shadowKernelMaximizeExitedByResize(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowDispatch({ type: 'MaximizeExitedByResize', id });
+  compareAfterFeed(oldSnapshot);
+}
+
+/**
+ * Translate an explicit bounds request into the kernel's `SetBounds`
+ * command. `decide`'s own arm (`window-kernel.ts`'s `SetBounds` case)
+ * answers this before any translation happens here: `fsMode` non-`normal`
+ * -> `[]` (no-op — fullscreen owns the display, the aa34cb50 family), else
+ * `PendingProjectionDiscarded` + `BoundsChanged{bounds: cmd.bounds}` (an
+ * explicit geometry decision supersedes any held `DisplayChanged`
+ * projection, discarding it without flushing). None of that branching is
+ * reproduced here — the command is executed and `decide` decides. Same
+ * shape and containment as `shadowKernelRaiseWindow` et al.: routed through
+ * `shadowExecute` (a rejected stale `expectedVersion` is logged, never
+ * thrown into the caller), ending with the same `compareAfterFeed` tail.
+ */
+export function shadowKernelSetBounds(id: WindowId, bounds: Rectangle, oldSnapshot: StateSnapshot): void {
+  shadowExecute({ type: 'SetBounds', id, bounds, expectedVersion: getShadowKernelExecutor().getState().version });
+  compareAfterFeed(oldSnapshot);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Maximize / unmaximize — the fourteenth real input this step feeds the
+// kernel. Translated at every production site that dispatches the old
+// machine's mirrored `MAXIMIZE_REQUESTED` (`ipc.ts`'s `page:maximize`
+// subscribe, `tile-ipc.ts`'s `tile:window:maximize` handler) and
+// `UNMAXIMIZE_REQUESTED` (`ipc.ts`'s `page:unmaximize` subscribe,
+// `tile-ipc.ts`'s `tile:window:unmaximize` handler), alongside each existing
+// dispatch, never in place of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate a maximize request into the kernel's `Maximize` command. Unlike
+ * the old event, this command carries no work-area rect — `decide`
+ * (`window-kernel.ts`'s `Maximize` case) stashes `preMaxBounds` from the
+ * record's OWN `bounds` mirror, never a live query, so the caller supplies
+ * nothing beyond the id. `decide`'s own branching: `fsMode` non-`normal` ->
+ * `[]` (the aa34cb50 family, same guard as `SetBounds`); already `maximized`
+ * -> `[]` (no new rect to snap to — a no-op rather than a re-snap, the port
+ * of the old reducer's idempotent-remaximize trap); else
+ * `PendingProjectionDiscarded` + `Maximized{preMaxBounds: rec.bounds ?? null}`.
+ * None of that branching is reproduced here. Same shape and containment as
+ * `shadowKernelSetBounds`.
+ */
+export function shadowKernelMaximize(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowExecute({ type: 'Maximize', id, expectedVersion: getShadowKernelExecutor().getState().version });
+  compareAfterFeed(oldSnapshot);
+}
+
+/**
+ * Translate an unmaximize request into the kernel's `Unmaximize` command.
+ * `decide`'s own branching: not `maximized` -> `[]` (nothing to restore);
+ * else `PendingProjectionDiscarded` + `Unmaximized`, PLUS a `BoundsChanged`
+ * restoring the stash when `preMaxBounds` is non-null (a null stash just
+ * clears the flag — nowhere to restore to). None of that branching is
+ * reproduced here. Same shape and containment as `shadowKernelMaximize`.
+ */
+export function shadowKernelUnmaximize(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowExecute({ type: 'Unmaximize', id, expectedVersion: getShadowKernelExecutor().getState().version });
+  compareAfterFeed(oldSnapshot);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Visible on all Spaces — the fifteenth real input this step feeds the
+// kernel. Translated at the one production site that dispatches the old
+// machine's mirrored `SET_VISIBLE_ON_ALL_SPACES_REQUESTED` raw path
+// (`tile-ipc.ts`'s `tile:window:set-visible-on-all-workspaces` handler),
+// alongside that dispatch, never in place of it.
+//
+// NOT FED: the old machine's OTHER Spaces event, `SPACES_POLICY_REQUESTED`
+// (`ipc.ts windowOpenHandler` and its reuse path) — role-derived, and
+// resolving `'follow'`/`'anchor'`/`'none'` into a kernel-level effect IS the
+// reducer's job (`window-state.ts`'s `SPACES_POLICY_REQUESTED` case:
+// `'follow'` sets the flag true in one step, `'anchor'` drives an ORDERED
+// PAIR of true-then-false calls to land the window on the active Space and
+// pin it there, `'none'` does nothing). The kernel's own
+// `SetVisibleOnAllSpaces` command doc says as much: the role-derived policy
+// "stays outside the kernel and is expressed as a caller composing this
+// command" — i.e. a future cutover call site would issue the ordered pair
+// itself. Doing that translation here would mean re-implementing the
+// reducer's policy resolution at the shadow's edge, which no feed helper in
+// this file does anywhere else. A documented remaining gap, not an
+// oversight.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate a raw visible-on-all-Spaces request into the kernel's
+ * `SetVisibleOnAllSpaces` command — `decide`'s arm (`window-kernel.ts`'s
+ * `SetVisibleOnAllSpaces` case) is unconditional, always emitting
+ * `VisibleOnAllSpacesSet{on: cmd.on}`; no branching to reproduce. Same shape
+ * and containment as `shadowKernelMaximize` et al.
+ */
+export function shadowKernelSetVisibleOnAllSpaces(id: WindowId, on: boolean, oldSnapshot: StateSnapshot): void {
+  shadowExecute({
+    type: 'SetVisibleOnAllSpaces',
+    id,
+    on,
     expectedVersion: getShadowKernelExecutor().getState().version,
   });
   compareAfterFeed(oldSnapshot);

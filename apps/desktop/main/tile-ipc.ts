@@ -134,7 +134,13 @@ import {
   getMachineWindowRecord,
   getWindowStateSnapshot,
 } from './window-state-singleton.js';
-import { shadowKernelSetFullscreen } from './window-kernel-shadow.js';
+import {
+  shadowKernelSetFullscreen,
+  shadowKernelSetBounds,
+  shadowKernelMaximize,
+  shadowKernelUnmaximize,
+  shadowKernelSetVisibleOnAllSpaces,
+} from './window-kernel-shadow.js';
 import {
   registerGlobalShortcut,
   unregisterGlobalShortcut,
@@ -3285,6 +3291,10 @@ export function registerTileIpcHandlers(): void {
         const machineId = getWindowIdFor(win);
         if (machineId != null) {
           dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: result.bounds });
+          // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+          // authoritative over nothing; see that module's doc for why this
+          // can never change what actually happens on screen.
+          shadowKernelSetBounds(machineId, result.bounds, getWindowStateSnapshot());
         }
       }
       return { success: true };
@@ -3332,6 +3342,10 @@ export function registerTileIpcHandlers(): void {
           const machineId = getWindowIdFor(win);
           if (machineId != null) {
             dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: result.bounds });
+            // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+            // authoritative over nothing; see that module's doc for why this
+            // can never change what actually happens on screen.
+            shadowKernelSetBounds(machineId, result.bounds, getWindowStateSnapshot());
           }
         }
         centered++;
@@ -3413,6 +3427,12 @@ export function registerTileIpcHandlers(): void {
         id: machineId,
         workArea: { x: workArea.x, y: workArea.y, width: workArea.width, height: workArea.height },
       });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen. The kernel's `Maximize`
+      // command carries no work area (`decide` stashes `preMaxBounds` from its
+      // own bounds mirror), so nothing from `workArea` rides this call.
+      shadowKernelMaximize(machineId, getWindowStateSnapshot());
       // Targeted notification to the window's renderer — a renderer that
       // owns internal layout state subscribes via
       // api.window.onMaximizeRequest to keep its layout in sync without
@@ -3478,6 +3498,10 @@ export function registerTileIpcHandlers(): void {
       } catch { /* logging must never throw */ }
 
       dispatchWindowEvent({ type: 'UNMAXIMIZE_REQUESTED', id: machineId });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen.
+      shadowKernelUnmaximize(machineId, getWindowStateSnapshot());
       // Targeted notification — see comment in tile:window:maximize.
       try { win.webContents.send('tile:window:unmaximize-request'); } catch { /* renderer may be gone */ }
       return { success: true };
@@ -3737,6 +3761,13 @@ export function registerTileIpcHandlers(): void {
         visibleOnFullScreen: args.options?.visibleOnFullScreen,
         skipTransformProcessType: args.options?.skipTransformProcessType,
       });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen. The kernel's command
+      // carries only the raw boolean (no OS-option pair) — see that command's
+      // own doc for why the role-derived SPACES_POLICY_REQUESTED path is not
+      // fed alongside this one.
+      shadowKernelSetVisibleOnAllSpaces(machineId, args.visible === true, getWindowStateSnapshot());
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -3847,6 +3878,10 @@ export function registerTileIpcHandlers(): void {
     const machineId = getWindowIdFor(win);
     if (machineId != null) {
       dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: next });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen.
+      shadowKernelSetBounds(machineId, next, getWindowStateSnapshot());
     }
 
     const info = getWindowInfo(win.id);

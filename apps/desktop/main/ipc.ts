@@ -96,7 +96,18 @@ import {
   getWindowStateSnapshot,
   type MachineWindowSpec,
 } from './window-state-singleton.js';
-import { shadowKernelDestroyWindow, shadowKernelCloseContent, shadowKernelCloseWindowDirect, shadowKernelRaiseWindow, shadowKernelWindowShown, shadowKernelSetFullscreen } from './window-kernel-shadow.js';
+import {
+  shadowKernelDestroyWindow,
+  shadowKernelCloseContent,
+  shadowKernelCloseWindowDirect,
+  shadowKernelRaiseWindow,
+  shadowKernelWindowShown,
+  shadowKernelSetFullscreen,
+  shadowKernelMaximizeExitedByResize,
+  shadowKernelSetBounds,
+  shadowKernelMaximize,
+  shadowKernelUnmaximize,
+} from './window-kernel-shadow.js';
 import {
   TRANSIENT_ROLES,
   inferIzuiRole,
@@ -566,6 +577,10 @@ function applyPlacementOnReuse(
     const machineId = getWindowIdFor(win);
     if (machineId != null) {
       dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: result.bounds });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen.
+      shadowKernelSetBounds(machineId, result.bounds, getWindowStateSnapshot());
     }
   }
 }
@@ -1676,6 +1691,10 @@ export function wireHybridContentEvents(
     if (machineId == null) return;
     if (getMachineWindowRecord(machineId)?.maximized !== true) return;
     dispatchWindowEvent({ type: 'MAXIMIZE_EXITED_BY_RESIZE', id: machineId });
+    // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+    // authoritative over nothing; see that module's doc for why this can
+    // never change what actually happens on screen.
+    shadowKernelMaximizeExitedByResize(machineId, getWindowStateSnapshot());
     try {
       publish(getSystemAddress(), 'page-overlay:maximize-state', {
         windowId: hostWindowId, maximized: false, preMaxBounds: null,
@@ -1789,11 +1808,12 @@ export function wireHybridContentEvents(
     // is the same (false is the Electron default).
     const resizeMachineId = getWindowIdFor(hostWindowId);
     if (resizeMachineId != null) {
-      dispatchWindowEvent({
-        type: 'SET_BOUNDS_REQUESTED',
-        id: resizeMachineId,
-        bounds: { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) },
-      });
+      const resizeBounds = { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+      dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: resizeMachineId, bounds: resizeBounds });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen.
+      shadowKernelSetBounds(resizeMachineId, resizeBounds, getWindowStateSnapshot());
     }
     // Keep the overlay renderer's locally-tracked bounds in sync — it owns the
     // navbar-drag MOVE math + maximize stash, and main (not the renderer) drives
@@ -2301,16 +2321,17 @@ export function installHybridNavbarActionRouting(): void {
     // one SET_BOUNDS path.
     const machineId = getWindowIdFor(r.windowId);
     if (machineId != null) {
-      dispatchWindowEvent({
-        type: 'SET_BOUNDS_REQUESTED',
-        id: machineId,
-        bounds: {
-          x: Math.round(b.x),
-          y: Math.round(b.y),
-          width: Math.round(b.width),
-          height: Math.round(b.height),
-        },
-      });
+      const setBounds = {
+        x: Math.round(b.x),
+        y: Math.round(b.y),
+        width: Math.round(b.width),
+        height: Math.round(b.height),
+      };
+      dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: setBounds });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen.
+      shadowKernelSetBounds(machineId, setBounds, getWindowStateSnapshot());
     }
   });
 
@@ -2365,6 +2386,12 @@ export function installHybridNavbarActionRouting(): void {
         id: machineId,
         workArea: { x: wa.x, y: wa.y, width: wa.width, height: wa.height },
       });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen. The kernel's `Maximize`
+      // command carries no work area (`decide` stashes `preMaxBounds` from its
+      // own bounds mirror), so nothing from `wa` rides this call.
+      shadowKernelMaximize(machineId, getWindowStateSnapshot());
     } catch { /* window gone */ }
   });
 
@@ -2377,6 +2404,10 @@ export function installHybridNavbarActionRouting(): void {
     const machineId = getWindowIdFor(r.windowId);
     if (machineId == null) return;
     dispatchWindowEvent({ type: 'UNMAXIMIZE_REQUESTED', id: machineId });
+    // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+    // authoritative over nothing; see that module's doc for why this can
+    // never change what actually happens on screen.
+    shadowKernelUnmaximize(machineId, getWindowStateSnapshot());
   });
 
   // ── P1.4b-4: find-in-page routing (overlay find bar → content WC) ───────────
@@ -3866,6 +3897,10 @@ export function registerWindowHandlers(): void {
           // the dispatch site; the write is the reducer's SET_BOUNDS effect
           // through the port.
           dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineWindowId, bounds: result.bounds });
+          // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+          // authoritative over nothing; see that module's doc for why this
+          // can never change what actually happens on screen.
+          shadowKernelSetBounds(machineWindowId, result.bounds, getWindowStateSnapshot());
         }
       }
 
