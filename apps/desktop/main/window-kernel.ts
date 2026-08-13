@@ -1709,7 +1709,24 @@ export function evolve(state: State, ev: Event): State {
       // Mirrors `react`'s emission exactly, the same way `FocusAssertRequested`
       // computes its own `issuesRaise`: a token is minted for a transition that
       // issues at least one op, and a latch that raises nothing issues none.
-      const assertsFocus = latched !== null && state.order.some((w) => w.id === latched);
+      //
+      // THE VISIBILITY TESTED HERE IS POST-RE-SHOW, NOT `state`'s. `react` runs
+      // its assert rule against `next`, i.e. AFTER this same transition's
+      // re-show work below, so the latched window's visibility `react` sees is
+      // what the re-show leaves it as — not what `state` (pre-transition)
+      // still says. A latch naming a window this very activation is about to
+      // re-show (`hiddenByAppBlur`, admitted by `appBlurRevealAdmits`) is
+      // therefore raise-eligible even though `state` still has it hidden;
+      // testing only `state`'s `visible` would silently disagree with `react`
+      // and break the one-token-per-op invariant. `record.visible === true` is
+      // the "already visible" case (the ordinary re-activation raise);
+      // `appBlurRevealAdmits(state, record)` is the query the re-show map
+      // below uses to decide `visible: true` — reused rather than restated so
+      // the two can never drift apart.
+      const latchedRecord = latched !== null ? state.order.find((w) => w.id === latched) : undefined;
+      const assertsFocus =
+        latchedRecord !== undefined &&
+        (latchedRecord.visible === true || appBlurRevealAdmits(state, latchedRecord));
 
       // FULLSCREEN RECONCILE SWEEP (ported from `window-state.ts`'s
       // `APP_ACTIVATED` arm, which pushed one reconcile effect per in-flight
@@ -2112,7 +2129,12 @@ export function evolve(state: State, ev: Event): State {
       // Total and guard-free like every arm here: an id absent from `order`
       // still records the request (the field is a record of what was asked)
       // and simply matches no record to stamp.
-      const issuesRaise = state.order.some((w) => w.id === ev.id);
+      //
+      // Mirrors `react`'s emission exactly: `react` only raises a `visible`
+      // target (an off-screen `RaiseWindow` would activate and show it), so
+      // the stamp has to require the same thing or the two would disagree
+      // about whether this transition issued an op at all.
+      const issuesRaise = state.order.some((w) => w.id === ev.id && w.visible);
       const opSeq = issuesRaise ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
         ...state,
@@ -2565,10 +2587,17 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // target that is not there to raise. The two reads of `next.order` are
   // structural, not branches on `ev.type` — the rule holds identically for an
   // assert fed in directly and for one `decide` translated from a command.
+  //
+  // GATED ON `visible`, not merely present in `next.order`. Every other
+  // `RaiseWindow` emitter in this function carries an eligibility predicate;
+  // `backend.raiseWindow` is an activating show, so without this test an
+  // assert naming an off-screen window would pull it onto the screen and
+  // take key. `evolve`'s `FocusAssertRequested` and `AppActivated` arms stamp
+  // `lastOpSeq` under the textually identical condition — see their comments.
   const focusAssert = next.lastFocusAssert;
   if (focusAssert !== null && focusAssert.seq !== prev.lastFocusAssert?.seq) {
     const record = next.order.find((w) => w.id === focusAssert.id);
-    if (record !== undefined) {
+    if (record !== undefined && record.visible) {
       effects.push({ type: 'RaiseWindow', id: focusAssert.id, opSeq: next.opSeqCounter });
       // `isContentWindow` rather than `kind === 'page-host'` (the old arm's
       // own test): this kernel's content predicate is the one that answers

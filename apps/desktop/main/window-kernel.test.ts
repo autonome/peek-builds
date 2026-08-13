@@ -4178,6 +4178,35 @@ describe('window-kernel: the focus assert', () => {
     assert.strictEqual(result.state.lastFocusAssert?.id, wid(404), 'the request is still recorded as asked');
   });
 
+  // ── The visibility gate (an off-screen target must never be activated) ────
+
+  it('a registered but never-shown window: no RaiseWindow, no token — the gap this closes', () => {
+    // `backend.raiseWindow` is an activating show, so a target merely PRESENT
+    // in `order` (the old, insufficient test) would pull an off-screen window
+    // onto the screen and take key. It must be `visible`.
+    const state = fold([paletteWindow(wid(2))], initialState());
+    assert.strictEqual(state.order.find((w) => w.id === wid(2))?.visible, false, 'precondition: registered, never shown');
+
+    const result = foldWithEffects([{ type: 'FocusAssertRequested', id: wid(2) }], state);
+    assert.deepStrictEqual(result.effects, []);
+    assert.strictEqual(result.state.opSeqCounter, state.opSeqCounter, 'no effect, no token');
+  });
+
+  it('a window that was shown and then hidden: no RaiseWindow, no token', () => {
+    const shown = fold([paletteWindow(wid(2)), { type: 'WindowShown', id: wid(2) }], initialState());
+    assert.strictEqual(shown.order.find((w) => w.id === wid(2))?.visible, true, 'precondition: shown');
+    const hidden = fold([{ type: 'WindowHidden', id: wid(2) }], shown);
+    assert.strictEqual(hidden.order.find((w) => w.id === wid(2))?.visible, false, 'precondition: hidden again');
+
+    const result = foldWithEffects([{ type: 'FocusAssertRequested', id: wid(2) }], hidden);
+    assert.deepStrictEqual(result.effects, []);
+    assert.strictEqual(result.state.opSeqCounter, hidden.opSeqCounter, 'no effect, no token');
+  });
+
+  // The visible-palette case (a visible, non-content target raised alone,
+  // with no FocusContent) is already covered by "a non-content target gets
+  // no FocusContent — the split is real, not decorative" above.
+
   // ── Rule order: the assert is LAST ────────────────────────────────────────
 
   it('the assert rule emits after the stacking re-assert', () => {
@@ -4952,6 +4981,71 @@ describe('window-kernel: spending the cold-start focus latch', () => {
       assert.strictEqual(before.key, wid(2));
       assert.strictEqual(activate(before).state.key, wid(2), `key moved on a latch naming ${id}`);
     }
+  });
+
+  it('a latch naming the window THIS activation re-shows: both re-show and raise fire, sharing one token', () => {
+    // THE trap case: `react`'s assert rule runs against `next`, i.e. AFTER
+    // this same transition's re-show, so a latch naming a window the sweep
+    // hid (`hiddenByAppBlur`) must raise it even though `state` (pre-transition)
+    // still has it `visible: false`. A predicate that tested only `state`'s
+    // `visible` would say "no raise" here while `react` says "raise" — the
+    // silent biconditional break this describe's comment warns against.
+    const hud: Event = {
+      type: 'WindowRegistered',
+      id: wid(3),
+      kind: 'page-host',
+      layer: BASE_LAYER + 1,
+      canBecomeKey: false,
+      acceptsInput: false,
+      class: 'hud',
+    };
+    const swept = fold([hud, { type: 'WindowShown', id: wid(3) }, { type: 'AppResigned' }, { type: 'AppResignSettled' }], restored());
+    const before = swept.order.find((w) => w.id === wid(3))!;
+    assert.strictEqual(before.visible, false, 'precondition: the sweep hid it');
+    assert.strictEqual(before.hiddenByAppBlur, true, 'precondition: hidden for the reason the latch relies on');
+
+    const armedOnHud = armed(wid(3), swept);
+    const after = activate(armedOnHud);
+
+    assert.ok(
+      after.effects.some((e) => e.type === 'ShowWindow' && e.id === wid(3)),
+      'the sweep hide is undone',
+    );
+    assert.ok(
+      after.effects.some((e) => e.type === 'RaiseWindow' && e.id === wid(3)),
+      'and the latch still raises it',
+    );
+    const token = after.state.opSeqCounter;
+    assert.strictEqual(token, armedOnHud.opSeqCounter + 1, 'one advance, not one per effect');
+    for (const effect of after.effects) {
+      if (effect.type === 'ShowWindow' || effect.type === 'RaiseWindow') {
+        assert.strictEqual(effect.opSeq, token, `${effect.type} carries the transition's one token`);
+      }
+    }
+    assert.strictEqual(
+      after.state.order.find((w) => w.id === wid(3))?.lastOpSeq,
+      token,
+      'the target is stamped with that same token',
+    );
+  });
+
+  it('a latch naming a window hidden for a reason OTHER than the app-blur sweep: no raise, no token, latch still cleared', () => {
+    // The sweep only re-shows what it hid — a window hidden by some other
+    // path (a plain `WindowHidden`) carries no `hiddenByAppBlur` mark, so
+    // `appBlurRevealAdmits` refuses it and it stays off screen. The latch
+    // must not raise an off-screen window (that is the whole point of the
+    // gate), and it is still spent.
+    const withDevtools = fold([{ type: 'WindowHidden', id: wid(1) }], restored());
+    const before = withDevtools.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(before.visible, false, 'precondition: hidden');
+    assert.notStrictEqual(before.hiddenByAppBlur, true, 'precondition: NOT the app-blur reason');
+
+    const armedOnHidden = armed(wid(1), withDevtools);
+    const after = activate(armedOnHidden);
+
+    assert.deepStrictEqual(after.effects, [], 'no re-show (nothing to undo) and no raise (still off screen)');
+    assert.strictEqual(after.state.opSeqCounter, armedOnHidden.opSeqCounter, 'no op, no token');
+    assert.strictEqual(after.state.pendingColdStartFocus, null, 'the latch is spent regardless');
   });
 
   it('a re-show and the latched raise on one activation share ONE op token', () => {
