@@ -18,8 +18,18 @@
 #
 # Idempotent: safe to run repeatedly on the same bundle.
 #
+# macOS-only by construction: LSUIElement is an Info.plist key and no other
+# platform has an app bundle to patch. The gate scripts chain this step
+# unconditionally, so it exits 0 elsewhere rather than failing a Linux run on a
+# step that has nothing to do there.
+#
 # Usage: patch-test-plist.sh <path-to-app-bundle>
 set -euo pipefail
+
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "patch-test-plist: not macOS ($(uname -s)) — nothing to patch, skipping"
+  exit 0
+fi
 
 APP="${1:?usage: patch-test-plist.sh <path-to-.app>}"
 PLIST="$APP/Contents/Info.plist"
