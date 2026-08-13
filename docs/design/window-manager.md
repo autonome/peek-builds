@@ -964,8 +964,18 @@ neither side sees the other's in-flight work.
 
 #### What the first cutover attempt found
 
+**The cutover is finished completely before it is tested.** It replaces one window machine with
+another, so a half-applied cutover has no reason to be green, and a red suite partway through is
+not evidence that the step was wrong. Red tests are not a stop condition: do not revert to
+restore a green baseline, do not stop to fix a failing test mid-cutover, and do not gate one
+step on the tests passing after the previous one. Testing mid-cutover has one legitimate use,
+diagnosis — run a spec to learn something, never to decide whether to proceed. Once every step
+has landed, the test-and-fix cycle begins and the fixes go forward, never backward.
+
 The provider install and the fifteen no-op arms landed as one commit and were reverted after a
-Playwright A/B against the parent commit showed six regressions. The feed is EVENT-shaped — it
+Playwright A/B against the parent commit showed six regressions. **Reverting was the wrong
+call** — the six failures were correct information about what the cutover still needed, and
+undoing it cost the conversion a session. The feed is EVENT-shaped — it
 records what happened — while four intents existed only as REQUESTS to the old machine, so
 switching the arms off dropped them with nothing to carry them. The kernel commands `ShowWindow`,
 `HideWindow` and `CloseOrHideWindow` had no production dispatcher at all. Feeds for those three
