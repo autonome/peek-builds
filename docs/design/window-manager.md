@@ -865,6 +865,43 @@ selector scans the whole window Map with no `visible` clause and ranks by `focus
 `order` is inherently stack-ordered and admits a `visible` clause. Adding one is the intended
 behavior, and the devtools target changing for a hidden window is the visible difference.
 
+#### Where the swap draws its line: by responsibility, not by machine
+
+The moment the kernel becomes authoritative, the question is not "is the old machine off yet"
+but "which layer owns each thing the old machine was doing". Two facts force the split, and
+neither is negotiable:
+
+- **Two machines cannot both hold the backend.** The kernel executor and `window-os-adapter.ts`
+  issue port commands to the same `ElectronWindowBackend` over the same windows. If both run
+  their effect arms, every show, raise, close and stacking write happens twice. So window
+  operations transfer wholesale, in one step, not one arm at a time.
+- **The kernel deliberately does not own everything the old machine did.** Three
+  responsibilities are outside it BY RULE, not by omission, and switching them off with the
+  rest would delete working behavior with nothing to replace it:
+  - **The Escape renderer round trip** (`ASK_RENDERER`). §0 puts input interpretation outside
+    the window manager. Its replacement is `window-escape.ts` plus
+    `window-escape-renderer-handled.ts`, which turn the round trip into a fact published ahead
+    of the keypress and read synchronously — a different mechanism, not a ported effect.
+  - **Opening and closing the switcher** (`OPEN_SWITCHER_WINDOW` / `CLOSE_SWITCHER_WINDOW`).
+    The kernel models no switcher at all, on the stated ground that inventing one to hold a
+    single guard would put a second model of that surface in the machine. Opening it is a
+    `cmd:execute:windows` publish, which is not a window operation; closing it folds into the
+    existing `CloseOrHideWindow` command once the switcher is just another record.
+  - **The derived Escape grab** (`reconcileEscGrab`). Nothing in the kernel stack calls
+    `setEscGrab`. Under §0 this becomes the Escape subsystem querying machine state, not the
+    machine deciding an OS grab.
+
+So the swap moves the window operations and leaves those three where they are, until each
+gets its own home. That is a boundary drawn where the rules already draw it, not a staging
+convenience — and it is why "delete the old machine in one commit" is the wrong shape: the
+adapter is not only the old machine's executor, it is also the current home of three things
+the kernel was never meant to hold.
+
+**What this does NOT license.** Leaving a window operation on the old machine "for now"
+because moving it is awkward. The three above are outside the kernel because a written rule
+puts them outside it. Anything that shows, hides, orders, closes or focuses a window moves,
+and if moving one is hard that is the work, not an exemption.
+
 #### The cutover checklist: per file, in execution order
 
 Every symbol below is confirmed present in the tree.
