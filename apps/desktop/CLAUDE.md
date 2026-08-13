@@ -81,6 +81,42 @@ yarn test:extension:chrome          # SEPARATE env: Chrome extension UI suite (h
 asar.unpacked path bugs, electron-builder file-inclusion problems, and entire surfaces (unit,
 components, editor).
 
+### Running the suite on Linux
+
+The suite runs on Linux x64 against a packaged build. Four things had to be true, all now
+in the repo except the first:
+
+- **`yarn` comes from corepack**, which is not enabled by default on a fresh box. `corepack
+  enable` yields the 4.13.0 pinned by the root `packageManager` field. Without it every
+  `yarn …` step exits 127, and a step piped into `tail` swallows that — a build that never
+  ran looks like a build that succeeded.
+- **`electron-builder --dir` lands at `out/linux-unpacked/peek`** for x64; the arch suffix
+  appears only for non-x64. `packagedExecutableRelPaths()` in
+  `apps/desktop/tests/fixtures/desktop-app.ts` tries both spellings.
+- **`--no-sandbox` is required and is passed automatically** on Linux by the same fixture.
+  electron-builder ships `chrome-sandbox` without the setuid bit, so the binary aborts before
+  any JS runs and Playwright reports only `Process failed to launch!`. Fixing the helper in
+  place needs root and would have to be redone after every `--dir` build.
+- **`scripts/patch-test-plist.sh` no-ops off macOS.** It sets `LSUIElement` on the test bundle
+  and previously exited non-zero wherever no `Info.plist` exists, killing the gate before any
+  spec ran.
+
+**A Linux run is stricter than macOS-headless in three places**, because
+`scripts/playwright-with-display.sh` unsets `HEADLESS`: the `renderer-log-file.spec.ts`
+DevTools test and the `permission-prompt.spec.ts` geolocation Allow-path tests run for real
+instead of skipping, and `cmd-url-window-reuse.spec.ts` adds a real-focus assertion.
+
+**Known Linux failure, pre-existing on `main`:** `page-layout.spec.ts` "navbar can be revealed
+while the host is maximized" and "double-click navbar triggers maximize" both time out in
+`waitOverlayReady` (`tests/helpers/hybrid-page.ts`) with `moduleReady: true` and
+`activeHandoffApplied: false` — the `page-overlay:active` handoff publishes before the overlay
+renderer subscribes and the `did-finish-load` re-send never lands. Reproduced on unmodified
+`main`, so it is environmental, not a branch regression.
+
+**What Linux cannot verify at all:** native fullscreen, Spaces, key-window and app-activation
+behavior, and every live focus observation. A Linux-green result on a focus- or
+fullscreen-touching change is not evidence. macOS remains the sign-off gate.
+
 **Tauri desktop (`apps/tauri-desktop/`) is off the critical path.** Its full suite is
 `yarn test:desktop:tauri` (frontend + Rust). Do NOT gate desktop work on it; use
 `yarn test:desktop:electron` only. There is intentionally **no bare `yarn test`** — name the
