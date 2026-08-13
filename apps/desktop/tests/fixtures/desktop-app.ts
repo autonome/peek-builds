@@ -244,7 +244,16 @@ async function launchElectron(profile: string, options: LaunchOptions = {}): Pro
   // Force XWayland on Linux. Electron 38+ picks Wayland whenever
   // WAYLAND_DISPLAY is set (Ozone auto-detect) and the window escapes
   // xvfb-run's DISPLAY redirect onto the real compositor.
-  const linuxOzoneArgs = process.platform === 'linux' ? ['--ozone-platform=x11'] : [];
+  //
+  // --no-sandbox is TEST-ONLY and Linux-only. electron-builder ships
+  // `chrome-sandbox` without the setuid bit, so Chromium's SUID sandbox helper
+  // aborts the process before any JS runs — Playwright reports only
+  // "Process failed to launch!". Fixing it in place needs root AND has to be
+  // redone after every `electron-builder --dir`, since that wipes the output
+  // directory. Nothing in this suite measures sandbox behavior, and the
+  // sign-off gate runs on macOS where the sandbox stays on.
+  const linuxOzoneArgs =
+    process.platform === 'linux' ? ['--ozone-platform=x11', '--no-sandbox'] : [];
 
   // TEST-ONLY macOS launch-flash fix (unpackaged path): when the globalSetup
   // (tests/global-setup-electron-accessory.ts) has built a patched
