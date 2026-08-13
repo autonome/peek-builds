@@ -1,22 +1,30 @@
 /**
- * Read-side business logic for the `/mcp/*` item routes wired in `index.js`
+ * Business logic for the `/mcp/*` item routes wired in `index.js`
  * (docs/mcp-remote-backend-design.md §3.3). Server-side ports of the same
  * queries `apps/desktop/features/mcp-server/store/sqlite-store.js` runs
  * against the local datastore — `queryItemsSync()`, `searchItemsSync()`,
- * `resolveItemIdSync()`, `getItemSync()`/`getTaskContextSync()` and
- * `shapeItemForResponse()` in `server.js` — duplicated here rather than
- * shared because they now run against a different SqlAdapter and a
- * credential-bound scope rather than a captured-at-open-time one. Column-set
- * and formula parity is a known drift hazard, same note as sqlite-store.js.
+ * `resolveItemIdSync()`, `getItemSync()`/`getTaskContextSync()`,
+ * `createItemSync()`, `updateItemSync()`, `deleteItemSync()`, `tagItemInTx()`,
+ * `untagItemSync()`, `recordEventSync()`, `completeTaskSync()` — and the scope
+ * rules in `server.js` (`inScope()` / `tagIsScopeOwned()` /
+ * `tagIsForeignNamespace()` / `withScopeTag()` / `validateWriteTags()`) —
+ * duplicated here rather than shared because they now run against a
+ * different SqlAdapter and a credential-bound scope rather than a
+ * captured-at-open-time one. Column-set and formula parity is a known drift
+ * hazard, same note as sqlite-store.js.
  *
  * The one behavioral difference from the desktop queries: `scopeTag` is a
  * parameter threaded in from the caller (the grant's `c.get('scopeTag')` in
  * index.js), never read from anything the client sends, and it is applied as
  * a `WHERE`-clause `EXISTS` subquery on every query — never a post-filter —
  * so `LIMIT`/`OFFSET` count in-scope rows only and an id/prefix matching only
- * out-of-scope items reads as not-found (design doc §4.1, §5).
+ * out-of-scope items reads as not-found (design doc §4.1, §5). The readonly
+ * bit follows the same rule (index.js reads it from `c.get('readonly')`
+ * only) but is checked in the route handler, before any of these functions
+ * run, since it never touches a query.
  */
 
+const crypto = require("crypto");
 const { getConnection } = require("./db");
 
 // --- Shared helpers ---
@@ -52,6 +60,55 @@ function scopeClause(scopeTag, alias) {
     )`,
     params: [scopeTag, escapeLikePrefix(scopeTag) + ":%"],
   };
+}
+
+// --- Write-side scope rules ---
+//
+// Reproduces the rule `apps/desktop/features/mcp-server/server.js` enforces
+// client-side (`tagIsScopeOwned()` / `tagIsForeignNamespace()` /
+// `inScope()` / `withScopeTag()` / `validateWriteTags()`) — not a shared
+// import, since the desktop version closes over a process-local `SCOPE`
+// constant and this one takes the grant's scope as an argument. A tag is
+// scope-owned when it equals the scope tag exactly or is a `<scope>:`-
+// namespaced child; any OTHER tag containing `:` names a foreign namespace
+// and a write carrying it is refused. A bare tag with no colon (`todo`,
+// `done`, `note`) is shared vocabulary and always allowed. Empty scopeTag =
+// unscoped = no restriction anywhere in this section.
+
+function tagIsScopeOwned(tag, scopeTag) {
+  if (!scopeTag) return false;
+  return tag === scopeTag || tag.startsWith(scopeTag + ":");
+}
+
+function tagIsForeignNamespace(tag, scopeTag) {
+  if (!scopeTag) return false;
+  if (tagIsScopeOwned(tag, scopeTag)) return false;
+  return tag.includes(":");
+}
+
+function inScope(tags, scopeTag) {
+  if (!scopeTag) return true;
+  if (!tags || tags.length === 0) return false;
+  return tags.some((t) => tagIsScopeOwned(t, scopeTag));
+}
+
+// Returns the first foreign-namespace tag found, or null when every tag is
+// acceptable. A route handler turns a non-null result into a 400.
+function findForeignNamespaceTag(tags, scopeTag) {
+  if (!scopeTag || !tags) return null;
+  for (const t of tags) {
+    if (tagIsForeignNamespace(t, scopeTag)) return t;
+  }
+  return null;
+}
+
+// Force-adds the scope tag to a write's tag list so an item created (or
+// tagged) through a scoped grant is always itself in that grant's scope.
+function withScopeTag(tags, scopeTag) {
+  if (!scopeTag) return tags || [];
+  const list = Array.isArray(tags) ? [...tags] : [];
+  if (!list.includes(scopeTag)) list.push(scopeTag);
+  return list;
 }
 
 function fetchTagsForIds(conn, ids) {
@@ -447,9 +504,345 @@ function getItemForRoute(userId, profileId, scopeTag, idOrPrefix, { maxContentLe
   return { status: "ok", item };
 }
 
+// --- list_tags: GET /mcp/tags ---
+//
+// Port of listTagsSync(), scope-filtered the same way list_tags/peek://tags
+// are on the desktop (`tagIsScopeOwned()` post-filter in server.js) — when
+// scoped, only tags that ARE the scope tag or a `<scope>:` child are
+// returned, so a bare shared-vocabulary tag like `todo` never appears in a
+// scoped session's tag list even though items carrying it (alongside an
+// in-scope tag) are still visible through the item routes.
+//
+// `color`/`description` are `"sync": false` ("desktop only") in
+// packages/schema/v1.json — the server has no columns for them and phase 1
+// deliberately does not add any (open question 1, design doc §10). They are
+// included here at their schema-default values purely for TagView shape
+// parity, the same treatment ItemView gives `visitCount`.
+function listTags(userId, profileId, scopeTag, { search, limit = 100 } = {}) {
+  const conn = getConnection(userId, profileId);
+  const conditions = [];
+  const params = [];
+  if (search) {
+    conditions.push("t.name LIKE ?");
+    params.push(`%${search}%`);
+  }
+  if (scopeTag) {
+    conditions.push(`(t.name = ? OR t.name LIKE ? ESCAPE '\\')`);
+    params.push(scopeTag, escapeLikePrefix(scopeTag) + ":%");
+  }
+
+  let sql = `
+    SELECT t.id, t.name, t.frecencyScore, COUNT(it.itemId) as itemCount
+    FROM tags t
+    LEFT JOIN item_tags it ON t.id = it.tagId
+    LEFT JOIN items i ON it.itemId = i.id AND CAST(i.deletedAt AS INTEGER) = 0
+  `;
+  if (conditions.length > 0) sql += ` WHERE ${conditions.join(" AND ")}`;
+  sql += ` GROUP BY t.id ORDER BY t.frecencyScore DESC LIMIT ?`;
+  params.push(limit);
+
+  return conn.all(sql, params).map((r) => ({
+    id: r.id,
+    name: r.name,
+    color: "#999999",
+    description: "",
+    itemCount: r.itemCount || 0,
+  }));
+}
+
+// --- Tag write policy ---
+//
+// Reproduces `tagItemInTx()` from
+// apps/desktop/features/mcp-server/store/sqlite-store.js: same
+// ON CONFLICT(name) upsert (closes the read-then-insert race two grants
+// writing the same new tag at once would otherwise hit), same two-step
+// frecency write (initial value in the upsert, then a recompute from the
+// post-increment frequency — the upsert can't reference the row's own
+// pre-update frequency in one statement).
+//
+// Two deliberate divergences from that function, both schema-driven
+// (packages/schema/v1.json, design doc §10 open question 1):
+//   - No `slug` column is written. `tags.slug` is marked `"sync": false`,
+//     "desktop only" — the server's `tags` table has no such column, and
+//     phase 1 does not add one.
+//   - Frecency is computed with THIS file's `calculateTagFrecency()`, which
+//     matches `sqlite-store.js`'s formula (integer, `Math.round`), NOT this
+//     file's neighbor `db.js calculateFrecency()` (float, no rounding).
+//     `tags.frecencyScore` is `"sync": true` — a tag written through
+//     `/mcp/*` and one written on the desktop must compute the identical
+//     value, or every sync merges two different numbers for the same tag.
+function calculateTagFrecency(frequency, lastUsed) {
+  const daysSinceUse = (Date.now() - lastUsed) / (1000 * 60 * 60 * 24);
+  const decayFactor = 1 / (1 + daysSinceUse / 7);
+  return Math.round(frequency * 10 * decayFactor);
+}
+
+// Internal: assumes a transaction is already open (or the caller doesn't
+// need one — a single tag_item call is one statement group either way).
+function tagItemInTx(conn, itemId, tagName, now) {
+  const initialFrecency = calculateTagFrecency(1, now);
+  conn.run(
+    `INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt)
+     VALUES (?, ?, 1, ?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET
+       frequency = frequency + 1,
+       lastUsed = excluded.lastUsed,
+       frecencyScore = ?,
+       updatedAt = excluded.updatedAt`,
+    [crypto.randomUUID(), tagName, now, initialFrecency, now, now, initialFrecency]
+  );
+
+  const tag = conn.get("SELECT id, frequency FROM tags WHERE name = ?", [tagName]);
+  conn.run("UPDATE tags SET frecencyScore = ? WHERE id = ?", [calculateTagFrecency(tag.frequency, now), tag.id]);
+
+  conn.run(
+    "INSERT OR IGNORE INTO item_tags (itemId, tagId, createdAt) VALUES (?, ?, ?)",
+    [itemId, tag.id, now]
+  );
+  return tag.id;
+}
+
+// --- create_item: POST /mcp/items ---
+//
+// Images are explicitly out of scope for the remote MCP backend (design doc
+// §9): the MCP layer has never created images, and wiring multipart upload
+// through this store interface is unrelated work. CREATABLE_ITEM_TYPES
+// mirrors SYNCABLE_ITEM_TYPES in index.js minus 'image'.
+const CREATABLE_ITEM_TYPES = ["url", "text", "tagset", "series", "feed", "entity"];
+
+/**
+ * @returns {{status:'invalid', error:string} | {status:'ok', item:object}}
+ */
+function createItem(userId, profileId, scopeTag, body = {}) {
+  const { type, url, title = "", content = "", metadata = {}, tags = [], extractHashtags = false } = body;
+
+  if (!type) return { status: "invalid", error: "type is required" };
+  if (type === "image") {
+    return { status: "invalid", error: "type 'image' is not supported by the remote MCP backend (design doc §9)." };
+  }
+  if (!CREATABLE_ITEM_TYPES.includes(type)) {
+    return { status: "invalid", error: `type must be one of: ${CREATABLE_ITEM_TYPES.join(", ")}` };
+  }
+
+  const badTag = findForeignNamespaceTag(tags, scopeTag);
+  if (badTag) return { status: "invalid", error: `Tag "${badTag}" is outside scope "${scopeTag}".` };
+
+  const conn = getConnection(userId, profileId);
+  const id = crypto.randomUUID();
+  const now = Date.now();
+
+  let domain = "";
+  let itemContent = content;
+  if (type === "url" && url) {
+    itemContent = url;
+    try { domain = new URL(url).hostname; } catch { /* ignore */ }
+  }
+  const metaStr = typeof metadata === "string" ? metadata : JSON.stringify(metadata);
+
+  conn.transaction(() => {
+    conn.run(
+      `INSERT INTO items (id, type, content, title, domain, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt, createdByDevice, starred, archived, frecencyScore)
+       VALUES (?, ?, ?, ?, ?, ?, '', 0, ?, ?, 0, '', 0, 0, 0)`,
+      [id, type, itemContent, title, domain, metaStr, now, now]
+    );
+
+    // Hashtag auto-extraction is opt-in (same reasoning as createItemSync):
+    // an LLM caller routinely writes "#123" issue refs or "#3)" enumeration
+    // prose, neither of which should silently become tags.
+    const autoTags = extractHashtags && type === "text" ? extractHashtagsFromContent(itemContent) : [];
+    const allTags = [...new Set([...withScopeTag(tags, scopeTag), ...autoTags])];
+    for (const tagName of allTags) tagItemInTx(conn, id, tagName, now);
+  });
+
+  const row = fetchItemRowById(conn, id, scopeTag);
+  const tagsById = fetchTagsForIds(conn, [id]);
+  return { status: "ok", item: shapeItemRow(row, tagsById.get(id)) };
+}
+
+// Hashtag extraction: matches sqlite-store.js's extractHashtagsFromContent(),
+// which itself matches datastore.ts `syncContentHashtags`.
+function extractHashtagsFromContent(content) {
+  if (!content) return [];
+  const matches = content.match(/(?:^|\s)#([^\s#]+)/g);
+  if (!matches) return [];
+  return [...new Set(matches.map((m) => m.trim().slice(1)))];
+}
+
+// --- update_item: PATCH /mcp/items/:id ---
+//
+// No prefix resolution here — mutating routes are always called against a
+// full id the client already resolved via GET /mcp/items/resolve (design
+// doc §5's "mutating tools resolve explicitly" decision).
+function updateItem(userId, profileId, scopeTag, id, patch = {}) {
+  const conn = getConnection(userId, profileId);
+  const existing = fetchItemRowById(conn, id, scopeTag);
+  if (!existing) return { status: "not_found" };
+
+  const { title, content, metadata } = patch;
+  const sets = [];
+  const params = [];
+  if (title !== undefined) { sets.push("title = ?"); params.push(title); }
+  if (content !== undefined) { sets.push("content = ?"); params.push(content); }
+  if (metadata !== undefined) {
+    sets.push("metadata = ?");
+    params.push(typeof metadata === "string" ? metadata : JSON.stringify(metadata));
+  }
+  if (sets.length > 0) {
+    sets.push("updatedAt = ?");
+    params.push(Date.now());
+    params.push(id);
+    conn.run(`UPDATE items SET ${sets.join(", ")} WHERE id = ?`, params);
+  }
+
+  const row = fetchItemRowById(conn, id, scopeTag);
+  const tagsById = fetchTagsForIds(conn, [id]);
+  return { status: "ok", item: shapeItemRow(row, tagsById.get(id)) };
+}
+
+// --- delete_item: DELETE /mcp/items/:id ---
+function deleteItem(userId, profileId, scopeTag, id) {
+  const conn = getConnection(userId, profileId);
+  const existing = fetchItemRowById(conn, id, scopeTag);
+  if (!existing) return { status: "not_found" };
+
+  const now = Date.now();
+  conn.run("UPDATE items SET deletedAt = ?, updatedAt = ? WHERE id = ?", [now, now, id]);
+  return { status: "ok", result: { success: true, id } };
+}
+
+// --- tag_item: POST /mcp/items/:id/tags ---
+//
+// Unlike create_item, a single tag_item call does NOT force-add the scope
+// tag — it adds exactly the one tag named, validated against the foreign-
+// namespace rule (matches server.js's tag_item branch, which calls
+// validateWriteTags([args.tagName]) with no withScopeTag()). Stamps
+// items.updatedAt so the item is picked up by the next incremental pull
+// (design doc §7.2's tag-race mitigation).
+function tagItem(userId, profileId, scopeTag, id, tagName) {
+  if (typeof tagName !== "string" || tagName === "") {
+    return { status: "invalid", error: "name is required" };
+  }
+  const conn = getConnection(userId, profileId);
+  const existing = fetchItemRowById(conn, id, scopeTag);
+  if (!existing) return { status: "not_found" };
+
+  if (tagIsForeignNamespace(tagName, scopeTag)) {
+    return { status: "invalid", error: `Tag "${tagName}" is outside scope "${scopeTag}".` };
+  }
+
+  const now = Date.now();
+  conn.transaction(() => {
+    tagItemInTx(conn, id, tagName, now);
+    conn.run("UPDATE items SET updatedAt = ? WHERE id = ?", [now, id]);
+  });
+  return { status: "ok", result: { success: true, itemId: id, tagName } };
+}
+
+// --- untag_item: DELETE /mcp/items/:id/tags/:name ---
+//
+// The orphan rule (design doc §4.1's last bullet): removing a scope-owned
+// tag that would leave the item with no remaining in-scope tag is refused
+// server-side, because that item would otherwise silently vanish from every
+// query this grant's scope confines. Mirrors the `untag_item` branch of
+// `handleToolCall()` in server.js exactly — the check runs against the
+// item's CURRENT tags (not just whether the named tag is scope-owned), so
+// dropping one of two in-scope tags is fine as long as the other survives.
+function untagItem(userId, profileId, scopeTag, id, tagName) {
+  const conn = getConnection(userId, profileId);
+  const existing = fetchItemRowById(conn, id, scopeTag);
+  if (!existing) return { status: "not_found" };
+
+  if (tagIsScopeOwned(tagName, scopeTag)) {
+    const currentTags = fetchTagsForIds(conn, [id]).get(id) || [];
+    const remaining = currentTags.filter((t) => t !== tagName);
+    if (!inScope(remaining, scopeTag)) {
+      return {
+        status: "orphan",
+        error: `Cannot untag "${tagName}" — it is the only tag keeping this item in scope "${scopeTag}". ` +
+          `Add another ${scopeTag} or ${scopeTag}:* tag first, then retry.`,
+      };
+    }
+  }
+
+  const tag = conn.get("SELECT id FROM tags WHERE name = ?", [tagName]);
+  if (!tag) return { status: "ok", result: { success: false, error: "Tag not found" } };
+
+  const now = Date.now();
+  conn.run("DELETE FROM item_tags WHERE itemId = ? AND tagId = ?", [id, tag.id]);
+  conn.run("UPDATE items SET updatedAt = ? WHERE id = ?", [now, id]);
+  return { status: "ok", result: { success: true, itemId: id, tagName } };
+}
+
+// --- record_event: POST /mcp/items/:id/events ---
+//
+// Writes the exact shape recordEventSync() does: content = type, value = 0,
+// metadata = {notes: value} (or '{}' with no value).
+function recordEvent(userId, profileId, scopeTag, id, eventType, value = "") {
+  if (typeof eventType !== "string" || eventType === "") {
+    return { status: "invalid", error: "type is required" };
+  }
+  const conn = getConnection(userId, profileId);
+  const existing = fetchItemRowById(conn, id, scopeTag);
+  if (!existing) return { status: "not_found" };
+
+  const eventId = crypto.randomUUID();
+  const now = Date.now();
+  const metaStr = value ? JSON.stringify({ notes: value }) : "{}";
+  conn.run(
+    `INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+     VALUES (?, ?, ?, 0, ?, ?, ?)`,
+    [eventId, id, eventType, now, metaStr, now]
+  );
+  return { status: "ok", result: { success: true, id: eventId, itemId: id, type: eventType } };
+}
+
+// --- complete_task: POST /mcp/tasks/:id/complete ---
+//
+// One transaction, matching completeTaskSync() exactly: add `done`, remove
+// `todo`, record the completion event. Wrapped so a mid-way failure (e.g. the
+// event insert) leaves neither tag change applied — an item can never end up
+// carrying both `done` and `todo`, and never loses `todo` without gaining
+// `done`.
+function completeTask(userId, profileId, scopeTag, id, notes = "") {
+  const conn = getConnection(userId, profileId);
+  const existing = fetchItemRowById(conn, id, scopeTag);
+  if (!existing) return { status: "not_found" };
+
+  conn.transaction(() => {
+    const now = Date.now();
+    tagItemInTx(conn, id, "done", now);
+
+    const todo = conn.get("SELECT id FROM tags WHERE name = 'todo'", []);
+    if (todo) {
+      conn.run("DELETE FROM item_tags WHERE itemId = ? AND tagId = ?", [id, todo.id]);
+    }
+
+    const eventMeta = notes ? JSON.stringify({ notes }) : "{}";
+    conn.run(
+      `INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+       VALUES (?, ?, 'completed', 0, ?, ?, ?)`,
+      [crypto.randomUUID(), id, now, eventMeta, now]
+    );
+
+    conn.run("UPDATE items SET updatedAt = ? WHERE id = ?", [now, id]);
+  });
+
+  const row = fetchItemRowById(conn, id, scopeTag);
+  const tagsById = fetchTagsForIds(conn, [id]);
+  return { status: "ok", item: shapeItemRow(row, tagsById.get(id)) };
+}
+
 module.exports = {
   queryItems,
   searchItems,
   resolveItemId,
   getItemForRoute,
+  listTags,
+  createItem,
+  updateItem,
+  deleteItem,
+  tagItem,
+  untagItem,
+  recordEvent,
+  completeTask,
 };

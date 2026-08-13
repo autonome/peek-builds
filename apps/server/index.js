@@ -174,6 +174,107 @@ app.get("/mcp/session", (c) => {
   });
 });
 
+// GET /mcp/tags — server-side port of db.js listTags() (list_tags).
+app.get("/mcp/tags", (c) => {
+  const tags = mcpItems.listTags(c.get("userId"), c.get("profileId"), c.get("scopeTag"), {
+    search: c.req.query("search") || undefined,
+    limit: parseOptionalNumber(c.req.query("limit")),
+  });
+  return c.json({ tags });
+});
+
+// === MCP item/task write routes (design doc §3.3, the remaining eight) ===
+//
+// Every one of these is a mutating route: refused with 403 for a readonly
+// grant, checked FIRST (before parsing the body) and read only from
+// `c.get('readonly')` — the grant, never anything the client sends (design
+// doc §4.1/§4.2). Scope confinement and the foreign-namespace tag rule live
+// in mcp-items.js; these handlers stay thin translation over its {status,…}
+// results.
+function readonlyRefused(c) {
+  return c.get("readonly") ? c.json({ error: "This grant is read-only; mutating routes are refused." }, 403) : null;
+}
+
+// POST /mcp/items — server-side port of db.js createItem() (create_item).
+// No prefix resolution and no syncId matching (design doc §3.3): an
+// explicit create is always a create.
+app.post("/mcp/items", async (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const body = await c.req.json().catch(() => ({}));
+  const result = mcpItems.createItem(c.get("userId"), c.get("profileId"), c.get("scopeTag"), body);
+  if (result.status === "invalid") return c.json({ error: result.error }, 400);
+  return c.json({ item: result.item });
+});
+
+// PATCH /mcp/items/:id — server-side port of db.js updateItem() (update_item).
+// Operates on a full id the client already resolved (design doc §5).
+app.patch("/mcp/items/:id", async (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const body = await c.req.json().catch(() => ({}));
+  const result = mcpItems.updateItem(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body);
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  return c.json({ item: result.item });
+});
+
+// DELETE /mcp/items/:id — server-side port of db.js deleteItem() (delete_item).
+app.delete("/mcp/items/:id", (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const result = mcpItems.deleteItem(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"));
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  return c.json(result.result);
+});
+
+// POST /mcp/items/:id/tags — server-side port of db.js tagItemInTx() (tag_item).
+app.post("/mcp/items/:id/tags", async (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const body = await c.req.json().catch(() => ({}));
+  const result = mcpItems.tagItem(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.name);
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  if (result.status === "invalid") return c.json({ error: result.error }, 400);
+  return c.json(result.result);
+});
+
+// DELETE /mcp/items/:id/tags/:name — server-side port of db.js untagItem()
+// (untag_item), including the orphan refusal (design doc §4.1's last bullet).
+app.delete("/mcp/items/:id/tags/:name", (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const result = mcpItems.untagItem(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), c.req.param("name"));
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  if (result.status === "orphan") return c.json({ error: result.error }, 400);
+  return c.json(result.result);
+});
+
+// POST /mcp/items/:id/events — server-side port of db.js recordEvent()
+// (record_event).
+app.post("/mcp/items/:id/events", async (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const body = await c.req.json().catch(() => ({}));
+  const result = mcpItems.recordEvent(
+    c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.type, body.value
+  );
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  if (result.status === "invalid") return c.json({ error: result.error }, 400);
+  return c.json(result.result);
+});
+
+// POST /mcp/tasks/:id/complete — server-side port of db.js completeTask()
+// (complete_task). One transaction: adds `done`, removes `todo`, records the
+// completion event, or none of the three (design doc §3.3/§4.1).
+app.post("/mcp/tasks/:id/complete", async (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const body = await c.req.json().catch(() => ({}));
+  const result = mcpItems.completeTask(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.notes);
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  return c.json({ item: result.item });
+});
+
 // Version check middleware for sync endpoints
 // Rejects requests with mismatched version headers (HTTP 409)
 // Allows requests with no version headers (backward compat during rollout)

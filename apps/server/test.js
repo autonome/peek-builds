@@ -3049,3 +3049,451 @@ describe("MCP Item Routes Tests", () => {
     });
   });
 });
+
+describe("MCP Item Write Routes Tests", () => {
+  // Exercises the real mcp-items.js write-side business logic (createItem/
+  // updateItem/deleteItem/tagItem/untagItem/recordEvent/completeTask/listTags)
+  // through a Hono app wired the same way index.js wires the /mcp/* write
+  // routes: general auth (skips /mcp), the grant gate, a readonly check read
+  // only from the grant context, then thin handlers translating mcp-items.js
+  // {status,...} results into HTTP. This is the WRITE half of design doc
+  // §3.3, and the five behaviours design doc §4.1 exists to guarantee.
+  let app;
+  let db;
+  let users;
+  let grants;
+  let mcpItemsMod;
+  let SCOPED_KEY;
+  let READONLY_KEY;
+  let UNSCOPED_KEY;
+  const TEST_USER = "mcpwriteuser";
+  const PROFILE = "profile-w";
+
+  beforeEach(() => {
+    delete require.cache[require.resolve("./db")];
+    delete require.cache[require.resolve("./users")];
+    delete require.cache[require.resolve("./grants")];
+    delete require.cache[require.resolve("./auth")];
+    delete require.cache[require.resolve("./mcp-items")];
+    cleanTestDir();
+
+    db = require("./db");
+    users = require("./users");
+    grants = require("./grants");
+    mcpItemsMod = require("./mcp-items");
+    const { createAuthMiddleware, createMcpAuthMiddleware } = require("./auth");
+
+    users.createUser(TEST_USER);
+    SCOPED_KEY = grants.createGrant(TEST_USER, "scoped-write", "work", false, PROFILE).apiKey;
+    READONLY_KEY = grants.createGrant(TEST_USER, "readonly-write", "work", true, PROFILE).apiKey;
+    UNSCOPED_KEY = grants.createGrant(TEST_USER, "unscoped-write", "", false, PROFILE).apiKey;
+
+    const { Hono } = require("hono");
+    app = new Hono();
+    app.use("*", createAuthMiddleware({ mode: "multi-user" }));
+    app.use("/mcp/*", createMcpAuthMiddleware());
+
+    // Mirrors index.js's readonlyRefused() gate and route wiring exactly —
+    // same mcp-items.js calls, same "scope/readonly/profile/user come only
+    // from the grant context" rule.
+    function readonlyRefused(c) {
+      return c.get("readonly") ? c.json({ error: "This grant is read-only; mutating routes are refused." }, 403) : null;
+    }
+
+    app.get("/mcp/tags", (c) => {
+      const tags = mcpItemsMod.listTags(c.get("userId"), c.get("profileId"), c.get("scopeTag"), {
+        search: c.req.query("search") || undefined,
+        limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+      });
+      return c.json({ tags });
+    });
+
+    app.post("/mcp/items", async (c) => {
+      const refused = readonlyRefused(c);
+      if (refused) return refused;
+      const body = await c.req.json().catch(() => ({}));
+      const result = mcpItemsMod.createItem(c.get("userId"), c.get("profileId"), c.get("scopeTag"), body);
+      if (result.status === "invalid") return c.json({ error: result.error }, 400);
+      return c.json({ item: result.item });
+    });
+
+    app.patch("/mcp/items/:id", async (c) => {
+      const refused = readonlyRefused(c);
+      if (refused) return refused;
+      const body = await c.req.json().catch(() => ({}));
+      const result = mcpItemsMod.updateItem(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body);
+      if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+      return c.json({ item: result.item });
+    });
+
+    app.delete("/mcp/items/:id", (c) => {
+      const refused = readonlyRefused(c);
+      if (refused) return refused;
+      const result = mcpItemsMod.deleteItem(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"));
+      if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+      return c.json(result.result);
+    });
+
+    app.post("/mcp/items/:id/tags", async (c) => {
+      const refused = readonlyRefused(c);
+      if (refused) return refused;
+      const body = await c.req.json().catch(() => ({}));
+      const result = mcpItemsMod.tagItem(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.name);
+      if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+      if (result.status === "invalid") return c.json({ error: result.error }, 400);
+      return c.json(result.result);
+    });
+
+    app.delete("/mcp/items/:id/tags/:name", (c) => {
+      const refused = readonlyRefused(c);
+      if (refused) return refused;
+      const result = mcpItemsMod.untagItem(
+        c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), c.req.param("name")
+      );
+      if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+      if (result.status === "orphan") return c.json({ error: result.error }, 400);
+      return c.json(result.result);
+    });
+
+    app.post("/mcp/items/:id/events", async (c) => {
+      const refused = readonlyRefused(c);
+      if (refused) return refused;
+      const body = await c.req.json().catch(() => ({}));
+      const result = mcpItemsMod.recordEvent(
+        c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.type, body.value
+      );
+      if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+      if (result.status === "invalid") return c.json({ error: result.error }, 400);
+      return c.json(result.result);
+    });
+
+    app.post("/mcp/tasks/:id/complete", async (c) => {
+      const refused = readonlyRefused(c);
+      if (refused) return refused;
+      const body = await c.req.json().catch(() => ({}));
+      const result = mcpItemsMod.completeTask(
+        c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.notes
+      );
+      if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+      return c.json({ item: result.item });
+    });
+  });
+
+  after(() => {
+    if (db && db.closeAllConnections) db.closeAllConnections();
+    if (users && users.closeSystemDb) users.closeSystemDb();
+    cleanTestDir();
+  });
+
+  function scopedHeaders() {
+    return { Authorization: `Bearer ${SCOPED_KEY}`, "Content-Type": "application/json" };
+  }
+  function readonlyHeaders() {
+    return { Authorization: `Bearer ${READONLY_KEY}`, "Content-Type": "application/json" };
+  }
+  function unscopedHeaders() {
+    return { Authorization: `Bearer ${UNSCOPED_KEY}`, "Content-Type": "application/json" };
+  }
+
+  function makeItem(tags, title = "Item") {
+    return db.saveItem(TEST_USER, "text", "body", tags, null, null, PROFILE, null, "", title);
+  }
+
+  describe("smoke: each of the eight endpoints does its documented job", () => {
+    it("GET /mcp/tags lists tags with item counts", async () => {
+      makeItem(["work", "todo"], "A");
+      const res = await app.request("/mcp/tags", { headers: scopedHeaders() });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      const workTag = json.tags.find((t) => t.name === "work");
+      assert.ok(workTag, "scope-owned tag should be listed");
+      assert.strictEqual(workTag.itemCount, 1);
+    });
+
+    it("PATCH /mcp/items/:id updates title/content/metadata and stamps updatedAt", async () => {
+      const id = makeItem(["work"], "Before");
+      const res = await app.request(`/mcp/items/${id}`, {
+        method: "PATCH",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ title: "After" }),
+      });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.item.title, "After");
+    });
+
+    it("DELETE /mcp/items/:id soft-deletes", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}`, { method: "DELETE", headers: scopedHeaders() });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.success, true);
+      assert.strictEqual(json.id, id);
+    });
+
+    it("POST /mcp/items/:id/events records an event", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/events`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "started", value: "kicked off" }),
+      });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.success, true);
+      assert.strictEqual(json.type, "started");
+    });
+
+    it("returns 404 for a write against an out-of-scope item, same as a nonexistent one", async () => {
+      const outOfScopeId = makeItem(["personal"]);
+      const res = await app.request(`/mcp/items/${outOfScopeId}`, {
+        method: "PATCH",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ title: "nope" }),
+      });
+      assert.strictEqual(res.status, 404);
+    });
+  });
+
+  describe("the readonly gate (design doc §4.1)", () => {
+    it("refuses every mutating route with 403 for a readonly grant", async () => {
+      const id = makeItem(["work", "todo"]);
+      const calls = [
+        ["POST", "/mcp/items", { type: "text", content: "x" }],
+        ["PATCH", `/mcp/items/${id}`, { title: "nope" }],
+        ["POST", `/mcp/items/${id}/tags`, { name: "extra" }],
+        ["DELETE", `/mcp/items/${id}/tags/todo`, null],
+        ["POST", `/mcp/items/${id}/events`, { type: "note" }],
+        ["POST", `/mcp/tasks/${id}/complete`, { notes: "x" }],
+        ["DELETE", `/mcp/items/${id}`, null],
+      ];
+      for (const [method, path, body] of calls) {
+        const res = await app.request(path, {
+          method,
+          headers: readonlyHeaders(),
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        assert.strictEqual(res.status, 403, `${method} ${path} should be refused for a readonly grant`);
+      }
+    });
+
+    it("the readonly bit comes from the grant, not anything the client sends", async () => {
+      // The readonly grant's own key is used, but the body claims otherwise —
+      // the gate must still refuse, because it reads c.get('readonly') only.
+      const res = await app.request("/mcp/items", {
+        method: "POST",
+        headers: readonlyHeaders(),
+        body: JSON.stringify({ type: "text", content: "x", readonly: false }),
+      });
+      assert.strictEqual(res.status, 403);
+    });
+
+    it("the same routes succeed for a non-readonly grant", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}`, {
+        method: "PATCH",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ title: "allowed" }),
+      });
+      assert.strictEqual(res.status, 200);
+    });
+  });
+
+  describe("writes force-add the scope tag (design doc §4.1)", () => {
+    it("an item created through a scoped grant always carries the scope tag, even when not listed", async () => {
+      const res = await app.request("/mcp/items", {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "text", content: "body", tags: ["misc"] }),
+      });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.deepStrictEqual(json.item.tags.sort(), ["misc", "work"]);
+    });
+
+    it("an item created with no tags at all still carries the scope tag", async () => {
+      const res = await app.request("/mcp/items", {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "text", content: "body" }),
+      });
+      const json = await res.json();
+      assert.deepStrictEqual(json.item.tags, ["work"]);
+    });
+
+    it("an unscoped grant force-adds nothing", async () => {
+      const res = await app.request("/mcp/items", {
+        method: "POST",
+        headers: unscopedHeaders(),
+        body: JSON.stringify({ type: "text", content: "body", tags: ["misc"] }),
+      });
+      const json = await res.json();
+      assert.deepStrictEqual(json.item.tags, ["misc"]);
+    });
+  });
+
+  describe("a tag naming a foreign namespace is rejected with 400 (design doc §4.1)", () => {
+    it("create_item rejects a foreign-namespaced tag", async () => {
+      const res = await app.request("/mcp/items", {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "text", content: "body", tags: ["personal:secret"] }),
+      });
+      assert.strictEqual(res.status, 400);
+      const json = await res.json();
+      assert.match(json.error, /outside scope/);
+    });
+
+    it("create_item allows a bare (colon-free) tag — shared vocabulary is never foreign", async () => {
+      const res = await app.request("/mcp/items", {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "text", content: "body", tags: ["todo"] }),
+      });
+      assert.strictEqual(res.status, 200);
+    });
+
+    it("create_item allows a tag namespaced under the grant's own scope", async () => {
+      const res = await app.request("/mcp/items", {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "text", content: "body", tags: ["work:sub"] }),
+      });
+      assert.strictEqual(res.status, 200);
+    });
+
+    it("tag_item rejects a foreign-namespaced tag on an existing item", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/tags`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ name: "personal:secret" }),
+      });
+      assert.strictEqual(res.status, 400);
+      const json = await res.json();
+      assert.match(json.error, /outside scope/);
+    });
+
+    it("an unscoped grant is never subject to the foreign-namespace rule", async () => {
+      const res = await app.request("/mcp/items", {
+        method: "POST",
+        headers: unscopedHeaders(),
+        body: JSON.stringify({ type: "text", content: "body", tags: ["personal:secret"] }),
+      });
+      assert.strictEqual(res.status, 200);
+    });
+  });
+
+  describe("create_item refuses type 'image' (design doc §9)", () => {
+    it("returns a clear 400, not a silent create", async () => {
+      const res = await app.request("/mcp/items", {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ type: "image", content: "base64" }),
+      });
+      assert.strictEqual(res.status, 400);
+      const json = await res.json();
+      assert.match(json.error, /image/);
+    });
+  });
+
+  describe("untag refuses to orphan (design doc §4.1)", () => {
+    it("refuses to remove the only tag keeping the item in scope", async () => {
+      const id = makeItem(["work"]);
+      const res = await app.request(`/mcp/items/${id}/tags/work`, {
+        method: "DELETE",
+        headers: scopedHeaders(),
+      });
+      assert.strictEqual(res.status, 400);
+      const json = await res.json();
+      assert.match(json.error, /only tag keeping this item in scope/);
+
+      // The item must still carry its scope tag — the refusal must be real,
+      // not just an HTTP status with the mutation applied anyway.
+      const tags = mcpItemsMod.queryItems(TEST_USER, PROFILE, "work", { limit: 50 })
+        .find((i) => i.id === id).tags;
+      assert.deepStrictEqual(tags, ["work"]);
+    });
+
+    it("refuses when the remaining tags are all out of scope", async () => {
+      const id = makeItem(["work", "todo"]);
+      const res = await app.request(`/mcp/items/${id}/tags/work`, {
+        method: "DELETE",
+        headers: scopedHeaders(),
+      });
+      assert.strictEqual(res.status, 400);
+    });
+
+    it("allows removal when another in-scope tag survives", async () => {
+      const id = makeItem(["work", "work:sub"]);
+      const res = await app.request(`/mcp/items/${id}/tags/work`, {
+        method: "DELETE",
+        headers: scopedHeaders(),
+      });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.strictEqual(json.success, true);
+    });
+
+    it("removing a bare, non-scope-owned tag is never subject to the orphan check", async () => {
+      const id = makeItem(["work", "todo"]);
+      const res = await app.request(`/mcp/items/${id}/tags/todo`, {
+        method: "DELETE",
+        headers: scopedHeaders(),
+      });
+      assert.strictEqual(res.status, 200);
+    });
+
+    it("an unscoped grant is never subject to the orphan check", async () => {
+      const id = db.saveItem(TEST_USER, "text", "body", ["solo"], null, null, PROFILE, null, "", "Item");
+      const res = await app.request(`/mcp/items/${id}/tags/solo`, {
+        method: "DELETE",
+        headers: unscopedHeaders(),
+      });
+      assert.strictEqual(res.status, 200);
+    });
+  });
+
+  describe("POST /mcp/tasks/:id/complete is one transaction (design doc §3.3/§4.1)", () => {
+    it("on success: adds done, removes todo, and records one completion event", async () => {
+      const id = makeItem(["work", "todo"]);
+      const res = await app.request(`/mcp/tasks/${id}/complete`, {
+        method: "POST",
+        headers: scopedHeaders(),
+        body: JSON.stringify({ notes: "shipped it" }),
+      });
+      assert.strictEqual(res.status, 200);
+      const json = await res.json();
+      assert.deepStrictEqual(json.item.tags.sort(), ["done", "work"]);
+
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const events = conn.all("SELECT content FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(events.length, 1);
+      assert.strictEqual(events[0].content, "completed");
+    });
+
+    it("a failure recording the event leaves the tag state exactly as it was — no partial completion", () => {
+      const id = makeItem(["work", "todo"]);
+      const conn = db.getConnection(TEST_USER, PROFILE);
+      const originalRun = conn.run.bind(conn);
+      conn.run = (sql, params) => {
+        if (sql.includes("INSERT INTO item_events")) {
+          throw new Error("simulated failure recording the completion event");
+        }
+        return originalRun(sql, params);
+      };
+
+      assert.throws(() => mcpItemsMod.completeTask(TEST_USER, PROFILE, "work", id, "notes"));
+      conn.run = originalRun;
+
+      const tagsAfter = conn
+        .all("SELECT t.name FROM tags t JOIN item_tags it ON t.id = it.tagId WHERE it.itemId = ?", [id])
+        .map((r) => r.name)
+        .sort();
+      assert.deepStrictEqual(tagsAfter, ["todo", "work"], "done must not apply and todo must survive a rolled-back transaction");
+
+      const events = conn.all("SELECT * FROM item_events WHERE itemId = ?", [id]);
+      assert.strictEqual(events.length, 0, "no completion event should exist when the transaction rolled back");
+    });
+  });
+});
