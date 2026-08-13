@@ -6,12 +6,6 @@
         "hooks": [
           { "type": "command", "command": "node .claude/hooks/block-push.mjs" }
         ]
-      },
-      {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": [
-          { "type": "command", "command": "node .claude/hooks/require-jj-new.mjs" }
-        ]
       }
     ]
   }

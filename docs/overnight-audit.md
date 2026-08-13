@@ -66,7 +66,7 @@ in place.
 
 ## What Was Fixed
 
-All changes are committed. jj log:
+All changes are committed. git log:
 
 ```
 a80ca3f8 docs: command audit and placeholder for tile:window:open e2e

@@ -10,9 +10,9 @@
 # data + libapp.a/xcframework artifacts. A normal pool slot would pay the cold-
 # build cost (~2 min Rust + Xcode time) on every spawn since clean-isolated-
 # clone.sh tears down the dir. The mobile slot PERSISTS those artifacts across
-# spawns: spawn-isolated-clone.sh on an existing clone only does `jj new BASE`
-# and re-symlinks node_modules — untracked build outputs in the clone's WC
-# survive untouched.
+# spawns: spawn-isolated-clone.sh on an existing clone only resets the working
+# tree to BASE and re-symlinks node_modules — untracked build outputs in the
+# clone's working tree survive untouched.
 #
 # Usage:
 #   scripts/spawn-mobile-workspace.sh

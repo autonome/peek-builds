@@ -6,7 +6,7 @@ description: The isolated clone pool for agent work in mpeek. Invoke BEFORE spaw
 # Isolated agent workspaces (clone pool)
 
 For parallel background agents (heavy rewrites, electron tests, `yarn start`),
-claim an isolated **true clone** with its own `.jj` and `.git`. Each clone has a
+claim an isolated **true clone** with its own `.git`. Each clone has a
 dedicated Electron profile dir so tests don't race on shared DB / ports / window
 state. The `node_modules` for the app(s) in scope are symlinked from the main
 checkout; no `yarn install` needed.
@@ -23,14 +23,14 @@ scripts/spawn-isolated-clone.sh
 # Inside the clone (you're cd'd into .worktrees/<name>):
 PROFILE=clone-<name> yarn <script>
 
-# After work is done — rebase commits into main checkout's bookmark.
-# Run the MAIN CHECKOUT's copy (cd back to it first): the script derives
-# the main-checkout path from its own $0, so invoking the clone's copy
-# makes it look for the pool-* remote in the clone and fail.
+# After work is done — fast-forward the commits into the main checkout's
+# `main` branch. Run the MAIN CHECKOUT's copy (cd back to it first): the
+# script derives the main-checkout path from its own $0, so invoking the
+# clone's copy makes it look for the pool-* remote in the clone and fail.
 scripts/finalize-isolated-clone.sh
 
 # Only when fully done with the slot:
-scripts/clean-isolated-clone.sh                 # forgets agent bookmark, removes clone dir + profile dir + git remote
+scripts/clean-isolated-clone.sh                 # forgets agent branch, removes clone dir + profile dir + git remote
 ```
 
 Task association (optional, recommended): when `/tmp/mpeek-clone-task` is set,
@@ -39,13 +39,13 @@ clean echoes it on teardown so you can see which task is being reclaimed.
 Recommended naming: `/tmp/mpeek-agent-name` = `<task-id-prefix>-<short-label>`
 (e.g. `71cfde09-chrome-host-gate`) so `ls .worktrees/*` is self-documenting.
 
-Why true clones (not jj workspaces): physically separate `.jj` dirs eliminate
+Why true clones: physically separate `.git` dirs and working trees eliminate
 the concurrent-edit hazard. Integration happens via a registered `pool-<name>`
 git remote in the main checkout — the main checkout's working state never
 changes unexpectedly because an agent is working.
 
-The old `spawn-isolated-agent.sh` family (jj workspaces, retired in Phase 6 of
-the apps/ restructure) is GONE — use the clone pool.
+The old `spawn-isolated-agent.sh` family (retired in Phase 6 of the apps/
+restructure) is GONE — use the clone pool.
 
 ## Scripts: file-name convention for invariant command text
 
@@ -90,38 +90,32 @@ Finalize works the same as any other slot (`scripts/finalize-isolated-clone.sh`)
 
 ## Chaos-defense background (why the chokepoints exist)
 
-After the 2026-05-21 cleanup, structural defenses replaced the previous
-ad-hoc bookmark management:
+After the 2026-05-21 cleanup, two structural defenses replaced the previous
+ad-hoc branch management:
 
 1. **`scripts/finalize-isolated-clone.sh` is fast-forward-or-bust.** It refuses
    to rebase. If the agent's work isn't a strict descendant of current `main`,
    the script tells the agent to rebase IN THE CLONE before retrying. This
    eliminates the divergent-commit-id pattern caused by rebasing remote-tracked
-   refs. It also refuses to finalize if doing so would STRAND non-empty work the
-   main checkout is currently sitting on (peek `0b908fef` — the silent-orphan
-   trap); it points you at `finalize-main-checkout-stack.sh` to land that work
-   first.
+   refs. It also refuses to finalize if doing so would STRAND work the main
+   checkout is currently sitting on (peek `0b908fef` — the silent-orphan trap),
+   which under git means a detached HEAD carrying commits no branch names; give
+   them a branch first.
 
-2. **`scripts/finalize-main-checkout-stack.sh` is the main-checkout analogue.**
-   Work committed directly in the main checkout with `jj commit` advances `@`
-   but NOT the `main` bookmark, so it strands `main` below it. This script
-   fast-forwards `main` to that stack (fast-forward-or-bust, same as above) so
-   nobody hand-moves `main`. It does not push.
-
-3. **`scripts/push-main.sh` is the only sanctioned path to publish `main`.** It
-   verifies local `main` is a strict descendant of `main@tangled`, warns on
-   divergent siblings on the push path, prints the exact commit list, requires
-   `--yes` to proceed, and post-push prunes stale `pool-*` remote-tracking refs
-   so future fetches can't resurrect cleaned-up divergence.
+2. **`scripts/push-main.sh` is the only sanctioned path to publish `main`.** It
+   verifies local `main` is a strict descendant of `tangled/main`, prints the
+   exact commit list, and requires `--yes` to proceed.
 
 The binding rules live in the root `CLAUDE.md` (never manually
-`jj bookmark set main`; `main` moves only via these chokepoint scripts).
+`git branch -f main`; never push `main` by hand; `main` moves only via these
+two chokepoint scripts).
 
 Edit-in-clone discipline: when changing `scripts/*` or any tracked file that's
 part of this machinery, work in a clone instead of the main checkout —
-`jj op restore` inside the main checkout can wipe uncommitted edits, which
-happened repeatedly during the 2026-05-21 session. The clone pool runs through
-the same hardened path (spawn → commit → finalize) and is unaffected.
+a `git reset --hard` or `git checkout` inside the main checkout can wipe
+uncommitted edits, which happened repeatedly during the 2026-05-21 session.
+The clone pool runs through the same hardened path (spawn → commit → finalize)
+and is unaffected.
 
 Related history: the Agent tool's `isolation: "worktree"` parameter (banned in
 root `CLAUDE.md`) left 10 orphan git worktrees in `.claude/worktrees/` (since

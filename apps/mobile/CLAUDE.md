@@ -5,7 +5,7 @@ This is the Tauri-mobile app ("Peek Save") for iOS and Android. Code lives under
 - `src-tauri/` — Rust Tauri backend, Xcode project (`src-tauri/gen/apple/`), Android project
 - `BUILD_NUMBER` — Plain-text integer, incremented by `deploy:sim` script before each sim install
 
-For cross-cutting rules (jj workflow, subagent dispatch, Bash discipline), see the root `CLAUDE.md`.
+For cross-cutting rules (git workflow, subagent dispatch, Bash discipline), see the root `CLAUDE.md`.
 
 ---
 

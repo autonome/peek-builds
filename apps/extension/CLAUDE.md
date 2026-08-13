@@ -11,7 +11,7 @@ Key files:
 - `sync -> ../../sync` — symlink to shared sync code
 - `tests/` — Node.js unit tests + E2E sync test
 
-For cross-cutting rules (jj workflow, subagent dispatch, Bash discipline), see the root `CLAUDE.md`.
+For cross-cutting rules (git workflow, subagent dispatch, Bash discipline), see the root `CLAUDE.md`.
 
 ---
 

@@ -592,7 +592,7 @@ This covers all 146+ scripts automatically, including:
 
 **No manual permission updates needed** when adding new scripts - the wildcards handle it.
 
-Other pre-approved tool patterns: `git:*`, `jj:*`, `node:*`, `cargo:*`, `electron:*`
+Other pre-approved tool patterns: `git:*`, `node:*`, `cargo:*`, `electron:*`
 
 ## Mobile Development (Tauri iOS/Android)
 
@@ -787,7 +787,7 @@ URL: `https://peek-node.up.railway.app`
 
 **Important:** The server uses **npm** (not yarn). Railway's Nixpacks builder auto-detects `package-lock.json` and uses npm. Do not add `yarn.lock` to `backend/server/` — it will cause Nixpacks to use yarn and fail with frozen lockfile errors.
 
-**How it works:** The deploy script (`yarn server:deploy`) uses `git subtree split` to extract `backend/server/` into a standalone `deploy/server` branch, then pushes to GitHub. Railway watches this branch.
+**How it works:** The deploy script (`yarn server:deploy`) builds the `deploy/server` branch in a temporary git worktree, writing out each file under `backend/server/` at its content on `main`, then pushes to GitHub. Railway watches this branch.
 
 ```bash
 # Run tests first
@@ -798,8 +798,8 @@ yarn server:deploy
 ```
 
 This runs `scripts/deploy-server.sh` which:
-1. Exports jj state to git (`jj git export`)
-2. Splits `backend/server/` into branch `deploy/server` via `git subtree split`
+1. Creates a temporary git worktree checked out to the `deploy/server` branch
+2. Writes out `backend/server/`'s contents at the `main` revision into that worktree and commits the result
 3. Removes `yarn.lock` from the deploy branch if present
 4. Pushes `deploy/server` to GitHub (`git push github deploy/server`)
 

@@ -11,7 +11,7 @@ Code lives under `apps/server/`. Key files:
 - `storage/` — blob/image storage abstraction
 - `railway.json` — Railway deployment config
 
-For cross-cutting rules (jj workflow, subagent dispatch, Bash discipline), see the root `CLAUDE.md`.
+For cross-cutting rules (git workflow, subagent dispatch, Bash discipline), see the root `CLAUDE.md`.
 
 ---
 

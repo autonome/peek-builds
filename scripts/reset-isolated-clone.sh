@@ -1,8 +1,8 @@
 #!/bin/bash
 # Reset an isolated clone back to main so it's ready for the next task.
 #
-# Preserves all agent-<name>-* bookmarks as breadcrumbs for archaeology.
-# Does NOT create a new bookmark — that's spawn's job.
+# Preserves all agent-<name>-* branches as breadcrumbs for archaeology.
+# Does NOT create a new branch — that's spawn's job.
 #
 # Usage:
 #   echo <name> > /tmp/mpeek-agent-name
@@ -43,9 +43,14 @@ fi
 cd "$CLONE_DIR"
 
 # Fetch latest state from origin
-jj git fetch >&2
+git fetch origin >&2
 
-# Move working copy to main — leaves all bookmarks intact
-jj new main@origin >&2
+# Detach HEAD onto origin/main and hard-reset the working tree. Detaching
+# (rather than checking out a local branch) is what preserves the existing
+# agent-* branches — checking one of them out here would let the next
+# spawn's `git switch -C` silently overwrite it instead of leaving it as a
+# breadcrumb.
+git switch --detach origin/main >&2
+git reset --hard >&2
 
-echo "Reset clone ${NAME} to main (bookmarks preserved)." >&2
+echo "Reset clone ${NAME} to main (branches preserved)." >&2

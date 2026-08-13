@@ -1,18 +1,18 @@
 ---
 name: review
-description: Review the current uncommitted jj diff via a background agent — correctness, tests, CLAUDE.md-rule compliance, pubsub checks. Use when reviewing local uncommitted changes before commit.
+description: Review the current uncommitted git diff via a background agent — correctness, tests, CLAUDE.md-rule compliance, pubsub checks. Use when reviewing local uncommitted changes before commit.
 ---
 
 When the user invokes /review:
 
 1. Show current change summary:
    ```
-   jj diff --stat
+   git diff --stat
    ```
 
 2. Get the full diff:
    ```
-   jj diff
+   git diff
    ```
 
 3. Spawn a **background agent** (`subagent_type=general-purpose`, `run_in_background=true`) to review all changed files:
@@ -21,7 +21,7 @@ When the user invokes /review:
    - **Correctness**: Logic errors, off-by-one, null/undefined handling
    - **Missing tests**: New functionality without test coverage
    - **Style**: Adherence to existing codebase conventions
-   - **CLAUDE.md rules**: jj not git, yarn scripts, no compound bash, etc.
+   - **CLAUDE.md rules**: yarn scripts, no compound bash, etc.
    - **Incomplete renames**: Stale references to old names
    - **Security**: Exposed secrets, unsafe operations
    - **PubSub**: Missing event publications for data mutations
