@@ -1436,6 +1436,42 @@ reached through the `appActive` guard `planRaise` inherited from `applyRaiseRequ
 is analysis with a recommended resolution; the resolution itself is a cutover-time choice, not one
 taken here.
 
+**Superseded in part — read the rest of this section as a record of the analysis, not of current
+code.** `window-kernel-executor.ts planRaise` resolves `!appActive` to `'suppressed'`, which
+performs nothing, matching `window-state.ts applyRaiseRequest`'s drop. Every sentence below that
+describes `'inactive-show'` as the `!appActive` outcome — including the trigger table's
+`RAISE_WINDOW_REQUESTED` row — describes code that no longer exists, and the visual outcome it
+warns about (a Peek window painted over the foreground app) cannot occur. What remains live from
+this section: the latched replay on `AppActivated` is still undecided and unimplemented, and the
+three further gaps it names — the absent successor raise on `evolve`'s `WindowHidden` arm, the
+absent overlay resign-hide and activate-reveal pair, and the absent visibility gate on the
+focus-assert rule's `[RaiseWindow, FocusContent]` emission — are all still open.
+
+**The placement of the app-active test is itself unresolved, and is the more important half.**
+The rule is that Peek does not reorder its own windows on its own initiative while it is not the
+active app; a window becoming visible because the user asked for it is a different fact and is not
+covered. Stated that way the behavior is not a gate at all: while the app is inactive, the
+transition that would change which window holds key simply is not recorded, `react` has no diff to
+project, and `planRaise`'s `'suppressed'` arm has nothing to refuse and can be deleted. Two facts
+make this the shape to aim for rather than a preference. `evolve`'s `AppResignSettled` arm already
+performs exactly this kind of test on the write side — its own comment states that `attentionLost`
+is a state test rather than an event test, "which is why the guard belongs here, on the write,
+rather than in `react`." And no document or comment anywhere forbids `react` from reading
+`state.appActive`; the constraint actually written is that `react` holds no guards at all, which is
+a different and stronger statement that the state-write placement satisfies.
+
+**`appActive` is a stored fact that was never declared one.** Section "0. The governing rule set"
+names four stored facts and `appActive` is not among them, nor is it a window-level fact covered by
+the third. It carries "is Peek front", is written by `evolve`'s `AppResigned` and `AppActivated`
+arms, and has no docblock at all on `State.appActive` in `apps/desktop/main/window-kernel.ts`.
+Either it is declared as a stored fact in the governing rule set with its rule stated, or the rules
+that depend on it have no authority to cite.
+
+**One contradiction to resolve alongside it.** This document states that the executor is "a dumb
+re-assert loop with no decisions of its own", while `planRaise` is by construction a four-way
+decision, one arm of which suppresses an effect outright. Both cannot stand. The
+`'suppressed'`-arm deletion above resolves it in favor of the stated rule.
+
 **The raise gate is wrong under the kernel, not merely unverified.** `window-state.ts
 applyRaiseRequest`'s `if (!state.appActive) return` drops a raise entirely — the request, its
 `FOCUS_CONTENT`, and its `SET_STACKING` all vanish. `planRaise` does not carry that guard forward
