@@ -376,6 +376,65 @@ describe('window-kernel: re-registration merges in place', () => {
     assert.strictEqual(state.order.find((w) => w.id === wid(1))?.keepLive, false, 'a named keepLive overwrites');
   });
 
+  it('a KeepLiveSet after registration overwrites a registration-time keepLive', () => {
+    // The failure this guards: the runtime keepLive update path
+    // (`main.ts registerWindow()`'s `SetKeepLive` shadow feed) is a no-op, so a
+    // window registered with keepLive:true that later reports keepLive:false
+    // (or the reverse) never learns the change.
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', keepLive: true },
+      { type: 'KeepLiveSet', id: wid(1), keepLive: false },
+    ]);
+    assert.strictEqual(state.order.find((w) => w.id === wid(1))?.keepLive, false);
+  });
+
+  it('a KeepLiveSet sets keepLive on a window registered without one', () => {
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+      { type: 'KeepLiveSet', id: wid(1), keepLive: true },
+    ]);
+    assert.strictEqual(state.order.find((w) => w.id === wid(1))?.keepLive, true);
+  });
+
+  it('a re-registration that omits keepLive PRESERVES a value written by KeepLiveSet, not just one written at registration', () => {
+    // The merge interacting with the new writer: `WindowRegistered`'s merge
+    // arm reads `existing.keepLive`, which must reflect KeepLiveSet's write,
+    // not only the value the FIRST registration declared.
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+      { type: 'KeepLiveSet', id: wid(1), keepLive: true },
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    ]);
+    assert.strictEqual(
+      state.order.find((w) => w.id === wid(1))?.keepLive,
+      true,
+      'a re-registration naming no keepLive must not strip a value KeepLiveSet wrote',
+    );
+  });
+
+  it('a KeepLiveSet{keepLive: false} writes false, and a later re-registration omitting the field keeps false rather than decaying to absent', () => {
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', keepLive: true },
+      { type: 'KeepLiveSet', id: wid(1), keepLive: false },
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    ]);
+    assert.strictEqual(
+      state.order.find((w) => w.id === wid(1))?.keepLive,
+      false,
+      'an explicit false must not decay to absent on re-registration',
+    );
+  });
+
+  it('a KeepLiveSet naming an unregistered id changes nothing and does not throw', () => {
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    ]);
+    assert.doesNotThrow(() => evolve(state, { type: 'KeepLiveSet', id: wid(99), keepLive: true }));
+    const next = evolve(state, { type: 'KeepLiveSet', id: wid(99), keepLive: true });
+    assert.deepStrictEqual(next.order, state.order, 'a dangling id must map over order and change nothing');
+    assert.strictEqual(next.version, state.version + 1, '`evolve` still advances version — a fact was still applied, it just matched nothing');
+  });
+
   it('a re-registration that omits parentId KEEPS a previously-set parentId', () => {
     const state = fold([
       { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', parentId: wid(2) },

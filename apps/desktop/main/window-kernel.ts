@@ -769,6 +769,12 @@ export type Event =
   /** `decide`'s translation of an accepted `SetDesktopMembership` command. */
   | { type: 'DesktopMembershipSet'; id: WindowId; membership: DesktopMembership }
   /**
+   * `decide`'s translation of an accepted `SetKeepLive` command — see that
+   * command's own doc for why a targeted writer exists alongside
+   * `WindowRegistered`'s `keepLive` field.
+   */
+  | { type: 'KeepLiveSet'; id: WindowId; keepLive: boolean }
+  /**
    * `decide`'s translation of an accepted `AttachOverlay` command — attach,
    * retarget, and detach are all this ONE event (`hostId: null` = detach).
    * As an event, it is a fact already decided elsewhere and can never be
@@ -917,6 +923,17 @@ export type Command =
    * backend's business (`window-backend.ts setDesktopMembership`).
    */
   | { type: 'SetDesktopMembership'; id: WindowId; membership: DesktopMembership; expectedVersion: number }
+  /**
+   * App code learned `keepLive` after registration — writes just that field.
+   * Registration is not the only moment a window's keepLive is decided: the
+   * runtime update path (`main.ts registerWindow()`'s `WINDOW_PARAMS_SET`
+   * dispatch to the old machine) can report it later, and re-registering
+   * through `RegisterWindow` to carry one field is not available there — that
+   * call site holds only `windowId`, `source`, `params`, and a resolved
+   * `keepLive`, none of the intrinsic registration facts (`kind`, `layer`,
+   * `canBecomeKey`, `acceptsInput`, `class`) `RegisterWindow` requires.
+   */
+  | { type: 'SetKeepLive'; id: WindowId; keepLive: boolean; expectedVersion: number }
   /**
    * Attach, retarget, or detach the shared chrome overlay — `hostId: null`
    * is detach. One transition, no separate detach command (see the doc on
@@ -1982,6 +1999,14 @@ export function evolve(state: State, ev: Event): State {
       };
     }
 
+    case 'KeepLiveSet': {
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, keepLive: ev.keepLive } : w)),
+        version: state.version + 1,
+      };
+    }
+
     case 'OverlayAttached': {
       // Mechanical write — attach, retarget, and detach are this ONE case.
       // `hostId: null` clears the relation (`overlayFor: undefined`); a
@@ -2805,6 +2830,8 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
     }
     case 'SetDesktopMembership':
       return { events: [{ type: 'DesktopMembershipSet', id: cmd.id, membership: cmd.membership }] };
+    case 'SetKeepLive':
+      return { events: [{ type: 'KeepLiveSet', id: cmd.id, keepLive: cmd.keepLive }] };
     case 'AssertFocus': {
       // Reached only after the unknown-window guard above — this command is
       // NOT exempt from it (see the command's own doc for why the teardown

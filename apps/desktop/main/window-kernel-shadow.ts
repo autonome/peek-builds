@@ -1022,6 +1022,23 @@ export function shadowKernelCloseOrHideRequested(id: WindowId, oldSnapshot: Stat
   compareAfterFeed(oldSnapshot);
 }
 
+/**
+ * Translate a runtime keepLive report into the kernel's `SetKeepLive`
+ * command — `decide`'s arm (`window-kernel.ts`'s `SetKeepLive` case) is
+ * unconditional, always emitting `KeepLiveSet{keepLive: cmd.keepLive}`; no
+ * branching to reproduce. Same shape and containment as
+ * `shadowKernelSetDesktopMembership`.
+ */
+export function shadowKernelSetKeepLive(id: WindowId, keepLive: boolean, oldSnapshot: StateSnapshot): void {
+  shadowExecute({
+    type: 'SetKeepLive',
+    id,
+    keepLive,
+    expectedVersion: getShadowKernelExecutor().getState().version,
+  });
+  compareAfterFeed(oldSnapshot);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Divergence comparator — evidence the shadow kernel's view matches reality
 // before the next commit re-points readers onto it. Compares the three things

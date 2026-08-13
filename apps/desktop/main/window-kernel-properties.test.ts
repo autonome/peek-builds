@@ -810,6 +810,13 @@ function checkInvariants(state: State, prev?: State): string[] {
       if (nextRecord !== undefined && prevRecord.escapeMode !== undefined && nextRecord.escapeMode === undefined) {
         violations.push(`escapeMode was silently stripped from ${prevRecord.id}`);
       }
+      // Same rule for keepLive, for the same reason: once a producer has
+      // reported it (at registration or via KeepLiveSet), "nothing reported"
+      // is no longer true — and it is a DIFFERENT answer from `false` for the
+      // CloseOrHideWindow branch point (§0.1) that reads it.
+      if (nextRecord !== undefined && prevRecord.keepLive !== undefined && nextRecord.keepLive === undefined) {
+        violations.push(`keepLive decayed back to absent for ${prevRecord.id}`);
+      }
     }
   }
 
@@ -1419,6 +1426,11 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
   const livedLog = (): LogItem[] => [
     { type: 'WindowRegistered', id: host, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
     register('ignore', true, host),
+    // Overwrites the registration-time keepLive:true with a value that came
+    // from the NEW writer instead — proves the merge preserves a lived fact
+    // regardless of which event last wrote it, not only one set at
+    // registration.
+    { type: 'KeepLiveSet', id, keepLive: false },
     { type: 'WindowShown', id },
     { type: 'OsFocusGained', id },
     { type: 'WindowContentOrderable', id },
@@ -1439,6 +1451,10 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     // Everything except `version` is identical — the merge overwrote the
     // intrinsics with the same values and touched nothing else.
     assert.deepStrictEqual(nextRecord, prevRecord);
+    // Explicitly: the preserved value is the one KeepLiveSet wrote (false),
+    // not the one registration originally declared (true) — the merge reads
+    // whatever is currently lived, not the record's registration history.
+    assert.strictEqual(nextRecord.keepLive, false);
     assert.deepStrictEqual(checkInvariants(after, before), []);
   });
 
@@ -1455,7 +1471,8 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     assert.notStrictEqual(record.lastOpSeq, undefined);
     assert.strictEqual(record.contentFocused, false);
     assert.strictEqual(record.escapeMode, 'ignore');
-    assert.strictEqual(record.keepLive, true);
+    // The KeepLiveSet in the log overwrites the registration-time `true`.
+    assert.strictEqual(record.keepLive, false);
     assert.strictEqual(record.parentId, host);
   });
 

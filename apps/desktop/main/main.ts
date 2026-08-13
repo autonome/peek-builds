@@ -51,7 +51,13 @@ import { isSatelliteRegistration, classifyWindowRegistration, deriveWindowSurfac
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
 import { saveSessionSnapshot } from './session.js';
-import { shadowKernelWindowClosed, shadowKernelCloseWindowDirect, shadowKernelAssertFocus, shadowKernelCloseOrHideRequested } from './window-kernel-shadow.js';
+import {
+  shadowKernelWindowClosed,
+  shadowKernelCloseWindowDirect,
+  shadowKernelAssertFocus,
+  shadowKernelCloseOrHideRequested,
+  shadowKernelSetKeepLive,
+} from './window-kernel-shadow.js';
 
 // Track app-quit state so the close-debounced save doesn't double-fire
 // alongside the before-quit save. before-quit handler in entry.ts sets
@@ -1403,6 +1409,10 @@ export function registerWindow(windowId: number, source: string, params: Record<
   // merge keeps any registration-time value.
   const keepLive = typeof params.keepLive === 'boolean' ? params.keepLive : undefined;
   dispatchWindowEvent({ type: 'WINDOW_PARAMS_SET', id, source, params, keepLive });
+  // Gated on presence, not a workaround: an absent keepLive means this producer
+  // did not report one, never "clear it" — the same asymmetry the registration
+  // merge already encodes (window-kernel.ts's WindowRegistered evolve arm).
+  if (keepLive !== undefined) shadowKernelSetKeepLive(id, keepLive, getWindowStateSnapshot());
 }
 
 /**
