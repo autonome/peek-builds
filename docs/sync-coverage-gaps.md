@@ -73,6 +73,21 @@ Consequences, in rising order of cost:
 declaring it. The current state — declared, indexed, unimplemented — reads as
 working to anyone who checks the schema instead of the code.
 
+### `starred` and `archived` are the same shape of gap
+
+Both are `"sync": true` on `items` in `packages/schema/v1.json`, and neither appears
+in the body `sync.ts pushSingleItem()` builds or the columns `mergeServerItem()`
+inserts. Until the MCP work added them, the server had no column to receive them
+either.
+
+So a starred item is starred on one laptop only, and archiving something on one
+device leaves it unarchived everywhere else. Lower stakes than the event tables, and
+the same root cause: the schema's `sync` flag describes an intention that the sync
+engine was never made to honour.
+
+**Settled by:** carrying both in `pushSingleItem()` and `mergeServerItem()`. The
+server columns now exist, so this is the smaller half of the change.
+
 ## 3. Tag metadata is local-only
 
 `tags` marks `slug`, `color`, `parentId`, `description`, and `metadata`
