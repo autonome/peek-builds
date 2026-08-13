@@ -94,6 +94,30 @@ then take the next.
    credentials resolve through an environment reference or the `0600` credential file,
    and no token, hostname, or account id is ever written into a project.
 
+### Known gaps, carried forward
+
+- **`apps/server/index.js` route wiring is not directly tested.** Requiring it starts a
+  listening HTTP server as a side effect, so every test in `apps/server/test.js` — the
+  pre-existing device and admin ones as well as the new MCP ones — wires a mirror Hono app
+  around the real middleware and the real handler functions. Business logic and auth are
+  covered for real; the glue in `index.js` (query-param extraction, status-code
+  translation, route registration order) is duplicated rather than exercised.
+
+  One consequence is live now: `GET /mcp/items/search` and `GET /mcp/items/resolve` must
+  stay registered *before* `GET /mcp/items/:idOrPrefix`, or the parameter route swallows
+  them and both silently resolve an item whose prefix is the literal word. The order is
+  correct as landed and nothing tests it.
+
+  The fix is to stop starting the listener on require — guard it with
+  `require.main === module` and export the app — after which routes can be tested through
+  the real `index.js`. That touches how the server boots under Railway, so it is its own
+  reviewed change, not a rider on a feature step.
+
+- **`saveItem()` in `apps/server/db.js` takes fourteen positional parameters.** The MCP
+  create route does not call it (an explicit create is always a create, per the design's
+  section 3.3), so nothing is blocked; it is a cleanup worth doing before the next caller
+  arrives.
+
 ### Key files and symbols
 
 - `docs/mcp-remote-backend-design.md` — the spec. Section numbers above are its.
