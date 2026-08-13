@@ -247,7 +247,7 @@ Claude Code  ⇄  stdio  ⇄  peek-mcp launcher  ⇄  server.js  ⇄  SQLite (Pe
 
 - `peek-mcp` (launcher at `Contents/Resources/peek-mcp`) — Electron-as-Node wrapper so external clients don't need system Node. Dev mode falls through to `node --experimental-sqlite server.js`.
 - `server.js` — stdio JSON-RPC server. Registers tools, dispatches requests, enforces scope, runs drift self-exit pre-message.
-- `db.js` — SQLite helpers (open, query, write). Mirrors policy in `apps/desktop/main/datastore.ts` — see [`project_datastore_policy_owner`](../../../../CLAUDE.md) memory for details.
+- `store/` — the data layer behind an interface. `types.js` is the `PeekStore` typedef (JSDoc only), `sqlite-store.js` is the SQLite implementation (formerly `db.js`, unchanged SQL, now async), and `index.js` is the `openStore()` factory that selects one. `sqlite-store.js` mirrors policy in `apps/desktop/main/datastore.ts` — see [`project_datastore_policy_owner`](../../../../CLAUDE.md) memory for details.
 - `setup.js` — the scaffolder, invoked via `peek-mcp --install …` or its `peek-mcp-init` wrapper.
 - `peek-skill-template.js` — generic skill body bundled in the app, copied into each project by `setup.js`.
 - `background.html` + `manifest.json` — the Peek-side tile that owns Settings → Integrations → MCP UI.
