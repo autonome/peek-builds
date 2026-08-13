@@ -51,7 +51,7 @@ import { isSatelliteRegistration, classifyWindowRegistration, deriveWindowSurfac
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
 import { saveSessionSnapshot } from './session.js';
-import { shadowKernelWindowClosed, shadowKernelCloseWindowDirect, shadowKernelAssertFocus } from './window-kernel-shadow.js';
+import { shadowKernelWindowClosed, shadowKernelCloseWindowDirect, shadowKernelAssertFocus, shadowKernelCloseOrHideRequested } from './window-kernel-shadow.js';
 
 // Track app-quit state so the close-debounced save doesn't double-fire
 // alongside the before-quit save. before-quit handler in entry.ts sets
@@ -476,6 +476,7 @@ export async function initialize(): Promise<void> {
         return;
       }
       dispatchWindowEvent({ type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id });
+      shadowKernelCloseOrHideRequested(id, getWindowStateSnapshot());
     },
     // NOTE: no `addEscHandler` hook — the ESC before-input interceptor is
     // attached by `registerWindowWithMachine` itself now, so registration is the

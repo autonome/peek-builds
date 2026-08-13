@@ -984,6 +984,45 @@ export function shadowKernelSetDesktopMembership(id: WindowId, membership: Deskt
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Show / hide / close-or-hide requests — feeds the kernel's `ShowWindow`,
+// `HideWindow`, and `CloseOrHideWindow` commands.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate a window-show request into the kernel's `ShowWindow` command,
+ * and, when the show also activates, a SECOND `RaiseWindow` command
+ * immediately after. Two commands, not one, because kernel `ShowWindow` is
+ * always non-activating, and the event it produces on the focus-gain side —
+ * `OsFocusGained` — never writes `visible` (`window-kernel.ts`'s evolve arm):
+ * visibility and key are separate stored facts, each written only by its own
+ * event, so neither command alone reproduces an activating show.
+ */
+export function shadowKernelShowRequested(id: WindowId, activate: boolean, oldSnapshot: StateSnapshot): void {
+  shadowExecute({ type: 'ShowWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
+  if (activate) {
+    shadowExecute({ type: 'RaiseWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
+  }
+  compareAfterFeed(oldSnapshot);
+}
+
+/** Translate a window-hide request into the kernel's `HideWindow` command. */
+export function shadowKernelHideRequested(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowExecute({ type: 'HideWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
+  compareAfterFeed(oldSnapshot);
+}
+
+/**
+ * Translate a close-or-hide request into the kernel's `CloseOrHideWindow`
+ * command. The keepLive branch (hide if keepLive, else close) is decided
+ * inside the kernel's own `decide()` arm for this command, not here — the
+ * caller passes no keepLive flag.
+ */
+export function shadowKernelCloseOrHideRequested(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowExecute({ type: 'CloseOrHideWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
+  compareAfterFeed(oldSnapshot);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Divergence comparator — evidence the shadow kernel's view matches reality
 // before the next commit re-points readers onto it. Compares the three things
 // the cutover's readers actually depend on; see `compareShadowKernelState`'s

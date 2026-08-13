@@ -108,6 +108,7 @@ import {
   shadowKernelMaximize,
   shadowKernelUnmaximize,
   shadowKernelSetDesktopMembership,
+  shadowKernelShowRequested,
 } from './window-kernel-shadow.js';
 import {
   TRANSIENT_ROLES,
@@ -2643,7 +2644,10 @@ export function registerWindowHandlers(): void {
           // gone.
           {
             const reusedId = getWindowIdFor(existingHybrid.baseWin);
-            if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: hybridReuseActivate });
+            if (reusedId != null) {
+              dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: hybridReuseActivate });
+              shadowKernelShowRequested(reusedId, hybridReuseActivate, getWindowStateSnapshot());
+            }
           }
           return { success: true, id: existingHybrid.windowId, reused: true };
         }
@@ -2799,7 +2803,10 @@ export function registerWindowHandlers(): void {
           // baseWin.focus() + contentWC.focus() pair is gone.
           {
             const reusedId = getWindowIdFor(existingHybridByUrl.baseWin);
-            if (reusedId != null) dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: true });
+            if (reusedId != null) {
+              dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: reusedId, activate: true });
+              shadowKernelShowRequested(reusedId, true, getWindowStateSnapshot());
+            }
           }
           // Reload so content is fresh (mirrors the canvas path's reload).
           try {

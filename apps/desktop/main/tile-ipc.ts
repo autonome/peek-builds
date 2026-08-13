@@ -140,6 +140,8 @@ import {
   shadowKernelMaximize,
   shadowKernelUnmaximize,
   shadowKernelSetDesktopMembership,
+  shadowKernelShowRequested,
+  shadowKernelHideRequested,
 } from './window-kernel-shadow.js';
 import {
   registerGlobalShortcut,
@@ -3023,6 +3025,7 @@ export function registerTileIpcHandlers(): void {
           const machineId = getWindowIdFor(args.id);
           if (machineId != null) {
             dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: machineId, activate: true });
+            shadowKernelShowRequested(machineId, true, getWindowStateSnapshot());
           }
           return { success: true };
         }
@@ -3084,6 +3087,7 @@ export function registerTileIpcHandlers(): void {
           // acceptance the 6A-3 keepLive cutover made in closeOrHideWindow.
           if (machineId != null) {
             dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id: machineId });
+            shadowKernelHideRequested(machineId, getWindowStateSnapshot());
           }
           return { success: true };
         }
@@ -3094,6 +3098,7 @@ export function registerTileIpcHandlers(): void {
         const machineId = getWindowIdFor(win);
         if (machineId != null) {
           dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id: machineId });
+          shadowKernelHideRequested(machineId, getWindowStateSnapshot());
         }
       }
       return { success: true };
@@ -3144,6 +3149,7 @@ export function registerTileIpcHandlers(): void {
       const machineId = getWindowIdFor(args.id);
       if (machineId != null) {
         dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: machineId, activate: true });
+        shadowKernelShowRequested(machineId, true, getWindowStateSnapshot());
       }
       return { success: true };
     } catch (err) {
@@ -3204,6 +3210,7 @@ export function registerTileIpcHandlers(): void {
         const machineId = getWindowIdFor(win);
         if (machineId != null) {
           dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id: machineId });
+          shadowKernelHideRequested(machineId, getWindowStateSnapshot());
         }
       }
       return { success: true };

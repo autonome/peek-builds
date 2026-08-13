@@ -33,7 +33,7 @@ import {
   getWindowStateSnapshot,
 } from './window-state-singleton.js';
 import { deriveWindowSurface, isSatelliteRegistration } from './izui-roles.js';
-import { shadowKernelDestroyWindow } from './window-kernel-shadow.js';
+import { shadowKernelDestroyWindow, shadowKernelShowRequested } from './window-kernel-shadow.js';
 
 /**
  * Route a bridge/extension-UI window teardown through the window-state
@@ -1059,6 +1059,7 @@ export function openChromeExtensionPage(
     const existingId = getWindowIdFor(existing);
     if (existingId != null) {
       dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: existingId, activate: true });
+      shadowKernelShowRequested(existingId, true, getWindowStateSnapshot());
     }
     return existing;
   }
@@ -1163,7 +1164,10 @@ export function openChromeExtensionPage(
       // above, so the dev autoopen never fires in a headless run).
       try {
         const id = getWindowIdFor(win);
-        if (id != null) dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: false });
+        if (id != null) {
+          dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: false });
+          shadowKernelShowRequested(id, false, getWindowStateSnapshot());
+        }
       } catch { /* ignore */ }
       try { win.webContents.openDevTools({ mode: 'detach', activate: false }); } catch { /* ignore */ }
     });

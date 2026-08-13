@@ -37,7 +37,13 @@ import {
   getWindowStateSnapshot,
 } from './window-state-singleton.js';
 import type { WindowClass } from './izui-roles.js';
-import { shadowKernelCloseWindowDirect, shadowKernelSetFullscreen } from './window-kernel-shadow.js';
+import {
+  shadowKernelCloseWindowDirect,
+  shadowKernelSetFullscreen,
+  shadowKernelShowRequested,
+  shadowKernelHideRequested,
+  shadowKernelCloseOrHideRequested,
+} from './window-kernel-shadow.js';
 import {
   initRendererHandledEscapeTracking,
   rendererHandledEscapeForWc,
@@ -99,6 +105,7 @@ export function showWindowHeadlessSafe(
     return;
   }
   dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: opts?.active === true });
+  shadowKernelShowRequested(id, opts?.active === true, getWindowStateSnapshot());
 }
 
 /**
@@ -217,6 +224,7 @@ export function showHybridHost(
     DEBUG && console.log('[windows] showHybridHost: host not machine-registered — show dropped');
   } else {
     dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id, activate: opts?.inactive !== true });
+    shadowKernelShowRequested(id, opts?.inactive !== true, getWindowStateSnapshot());
   }
   return intent;
 }
@@ -237,6 +245,7 @@ export function modWindow(bw: BrowserWindow, params: { action: string }): void {
       DEBUG && console.log('[windows] modWindow: window not machine-registered — hide dropped');
     } else {
       dispatchWindowEvent({ type: 'WINDOW_HIDE_REQUESTED', id });
+      shadowKernelHideRequested(id, getWindowStateSnapshot());
     }
   }
   if (params.action === 'show') {
@@ -661,6 +670,7 @@ export async function closeOrHideWindow(id: number): Promise<void> {
         if (machineId != null && hybridRec?.keepLive === true) {
           DEBUG && console.log(`keepLive hide via machine for hybrid page-host BaseWindow ${id}`);
           dispatchWindowEvent({ type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: machineId });
+          shadowKernelCloseOrHideRequested(machineId, getWindowStateSnapshot());
           maybeHideApp(id);
           return;
         }
@@ -719,6 +729,7 @@ export async function closeOrHideWindow(id: number): Promise<void> {
     // the intent forever.
     else if (wmId != null && rec?.keepLive === true) {
       dispatchWindowEvent({ type: 'WINDOW_CLOSE_OR_HIDE_REQUESTED', id: wmId });
+      shadowKernelCloseOrHideRequested(wmId, getWindowStateSnapshot());
     } else {
       // close any open windows this window opened
       closeChildWindows(params.address as string);

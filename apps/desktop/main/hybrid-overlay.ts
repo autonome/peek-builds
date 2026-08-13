@@ -100,6 +100,7 @@ import {
   shadowKernelWindowShown,
   shadowKernelWindowHidden,
   shadowKernelSetFullscreen,
+  shadowKernelShowRequested,
 } from './window-kernel-shadow.js';
 import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, registerWindow } from './main.js';
@@ -568,6 +569,7 @@ function wireShowNavbarFocus(): void {
     if (overlayWmId == null) return;
     showNavbarFocusCount++;
     dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: overlayWmId, activate: true });
+    shadowKernelShowRequested(overlayWmId, true, getWindowStateSnapshot());
   });
 }
 
@@ -1002,6 +1004,7 @@ function installTestBridge(): void {
       const wid = getWindowIdFor(w);
       if (wid == null) return false;
       dispatchWindowEvent({ type: 'WINDOW_SHOW_REQUESTED', id: wid, activate: false });
+      shadowKernelShowRequested(wid, false, getWindowStateSnapshot());
       return true;
     },
     /**
