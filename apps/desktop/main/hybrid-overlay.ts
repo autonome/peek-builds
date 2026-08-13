@@ -57,14 +57,6 @@ import {
   getHybridContentWC,
   registerHybridWindow,
   getAllHybridWindows,
-  // Stage B: per-host load-error state + timeout (lives in registry to avoid circular dep)
-  registerLoadErrorListener,
-  getHybridLoadError,
-  hasHybridPainted,
-  hasHybridOutstandingFailure,
-  getHybridRetryAttempts,
-  getHybridLoadingTimeoutMs,
-  setHybridLoadingTimeoutMs as _setHybridLoadingTimeoutMs,
   // Hybrid teardown → deny pending web-permission prompts (see initHybridOverlay)
   registerHybridWindowClosedListener,
 } from './hybrid-page-host-registry.js';
@@ -209,14 +201,6 @@ let __probeShortcutFireCount = 0;
 // test verify the focus INTENT fired exactly when gated correctly (and never
 // when backgrounded / for a foreign window — the R1 interaction guard).
 let showNavbarFocusCount = 0;
-
-// ── Per-host load-error live-update publisher (Stage B) ─────────────────────
-// The per-host load-error STATE lives in hybrid-page-host-registry.ts (shared
-// between ipc.ts and this file without creating a circular import — see the
-// `registerLoadErrorListener` / `setHybridLoadError` exports there). This
-// module's sole job is to publish the LIVE update to the overlay when the
-// registry calls back and the affected window is currently active. The active
-// handoff (`sendActiveHandoff`) carries the state for the non-active case.
 
 /**
  * Lazily create the singleton overlay window and mount the REAL shared chrome
@@ -402,15 +386,15 @@ function sendActiveHandoff(id: number | null): void {
   } catch {
     /* baseWin gone */
   }
-  // Last-known favicon for this URL (from the datastore), so the loading card
-  // can paint the site's icon the instant it's active — before the live
-  // `page-favicon-updated` arrives. '' when unknown (spinner-only card).
+  // Last-known favicon for this URL (from the datastore), so the navbar title
+  // chip paints the site's icon the instant it's active — before the live
+  // `page-favicon-updated` arrives. '' when unknown.
   let favicon = '';
   try {
     const u = entry.url();
     if (u) favicon = getFaviconForUrl(u);
   } catch {
-    /* datastore unavailable / bad url — spinner-only */
+    /* datastore unavailable / bad url — no icon */
   }
   // Maximize state lives on the machine record (§5 step 7B); the registry
   // entry is Electron-id-keyed, so convert through the sanctioned mapping.
@@ -421,15 +405,8 @@ function sendActiveHandoff(id: number | null): void {
     url: entry.url(),
     title: entry.title(),
     favicon,
-    // The overlay shows the favicon+spinner loading card only for a window that
-    // has never painted (fresh/restore/deferred) — see registry perHostPainted.
-    firstLoad: !hasHybridPainted(id),
     canGoBack,
     canGoForward,
-    // Stage B: include per-host load-error so the overlay paints the error card
-    // (or clears it) instantly on active-window switch with no flash. Rides the
-    // SAME deterministic handoff path as `navbar.loading` — no extra timer.
-    loadError: getHybridLoadError(id),
     loading,
     // Maximize-state hand-off: the window-state machine record is the single
     // source of truth for a hybrid window's maximized flag + pre-maximize
@@ -805,14 +782,6 @@ export function initHybridOverlay(): void {
     }
   });
 
-  // Stage B: live-update the overlay when a load error arrives or clears FOR
-  // THE CURRENTLY-ACTIVE window. Non-active windows are handled by the next
-  // `sendActiveHandoff` snapshot; no extra mechanism needed for them.
-  registerLoadErrorListener((windowId, error) => {
-    if (windowId !== overlayHostOsId()) return;
-    publish(getSystemAddress(), 'page:load-error', { windowId, error });
-  });
-
   // Hybrid window teardown → deny any pending web-permission requests for that
   // window. permission-handler's own close-cleanup only knows BrowserWindow
   // hosts (getLiveWindow); hybrid hosts are BaseWindows, so a hybrid close
@@ -1015,15 +984,6 @@ function installTestBridge(): void {
      */
     requestToggleMaximize(id: number): void {
       publish(getSystemAddress(), 'page:request-toggle-maximize', { windowId: id });
-    },
-    /**
-     * Stage B: override the loading-timeout duration for the hung-load spec so
-     * the 30 s production timer doesn't run the full test budget. The new value
-     * is read by `wireHybridContentEvents` each time `did-start-loading` arms a
-     * fresh timer — set this BEFORE navigating to the hung endpoint.
-     */
-    setHybridLoadingTimeoutMs(ms: number): void {
-      _setHybridLoadingTimeoutMs(ms);
     },
     /**
      * Make a fake hybrid host visible WITHOUT stealing OS focus. Lets the
@@ -1349,18 +1309,6 @@ function installTestBridge(): void {
       } catch {
         return null;
       }
-    },
-    /** Test: has this window painted a frame yet (firstLoad gate for the loading card). */
-    hybridHasPainted(id: number): boolean {
-      return hasHybridPainted(id);
-    },
-    /** Test: current same-URL Retry attempt count for the window (retry-cap spec). */
-    hybridRetryAttempts(id: number): number {
-      return getHybridRetryAttempts(id);
-    },
-    /** Test: does the window currently have an outstanding load failure (retry-cap spec). */
-    hybridHasOutstandingFailure(id: number): boolean {
-      return hasHybridOutstandingFailure(id);
     },
     /**
      * P1.4b-3: the work area of the display the given host currently sits on.
