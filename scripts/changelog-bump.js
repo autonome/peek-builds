@@ -2,22 +2,22 @@
 /**
  * changelog-bump.js
  *
- * Reads jj log between the last-bumped marker and the upper-bound revset
+ * Reads git log between the last-bumped marker and the upper-bound ref
  * (default `main`), generates terse one-line bullets clustered by
  * (type, area, day), and merges them into CHANGELOG.md under
  * `## Week of YYYY-MM-DD (Wnn)` / `### YYYY-MM-DD`.
  *
  * Usage:
- *   node scripts/changelog-bump.js [--dry-run] [--since <commit>] [--up-to <revset>]
+ *   node scripts/changelog-bump.js [--dry-run] [--since <commit>] [--up-to <ref>]
  *
- *   --up-to defaults to `main`. Pass a feature bookmark (e.g. `mcp-llm-policy`)
+ *   --up-to defaults to `main`. Pass a feature branch (e.g. `mcp-llm-policy`)
  *   to bump BEFORE finalizing main onto a stack — that way the bump commit
  *   joins the feature stack and a single finalize covers everything. After
  *   main has been advanced onto the stack, the default `main` is correct.
  *
  * Marker:
  *   `<!-- last-bumped: <commit-short-id> -->` — first match in CHANGELOG.md.
- *   On success, the marker is rewritten to the upper-bound revset's HEAD.
+ *   On success, the marker is rewritten to the upper-bound ref's HEAD.
  *
  * Skip rules (commit titles):
  *   - chore(*)
@@ -63,7 +63,7 @@ function findMarker(content) {
 }
 
 function getRevHead(rev) {
-  const out = execSync(`jj log -r ${rev} -T 'commit_id.short()' --no-graph`, {
+  const out = execSync(`git rev-parse --short ${rev}`, {
     encoding: 'utf-8',
   });
   return out.trim();
@@ -71,14 +71,13 @@ function getRevHead(rev) {
 
 function getCommits(sinceCommit, upTo) {
   // Tab-separated: short_id \t ISO timestamp \t description first line
-  const tmpl = String.raw`commit_id.short() ++ "\t" ++ committer.timestamp().format("%Y-%m-%dT%H:%M:%S%z") ++ "\t" ++ description.first_line() ++ "\n"`;
   const range = `${sinceCommit}..${upTo}`;
-  const cmd = `jj log -r '${range}' --no-graph -T '${tmpl}' --reversed`;
+  const cmd = `git log --reverse --pretty=format:'%h%x09%aI%x09%s' ${range}`;
   let out;
   try {
     out = execSync(cmd, { encoding: 'utf-8' });
   } catch (err) {
-    throw new Error(`jj log failed for range ${range}: ${err.message}`);
+    throw new Error(`git log failed for range ${range}: ${err.message}`);
   }
   return out
     .split('\n')

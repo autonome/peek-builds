@@ -1,13 +1,12 @@
 #!/bin/bash
 # Tear down an isolated clone: remove the clone dir, the registered git
-# remote in the main checkout, the agent bookmark safety copy, and the
-# clone's Electron profile dir.
+# remote in the main checkout, and the clone's Electron profile dir.
 #
 # Usage: scripts/clean-isolated-clone.sh <name>
 #
 # Only call this when you want to fully reclaim the slot. For ongoing
 # parallel work, prefer scripts/finalize-isolated-clone.sh which preserves
-# the clone + bookmark for reuse.
+# the clone + branch for reuse.
 
 set -euo pipefail
 
@@ -53,15 +52,6 @@ cd "$MAIN_DIR"
 if git remote get-url "$REMOTE_NAME" >/dev/null 2>&1; then
   git remote remove "$REMOTE_NAME"
   echo "Removed git remote ${REMOTE_NAME}" >&2
-fi
-
-# Drop any agent-<name>-* bookmarks (safety copies) in main.
-BOOKMARKS=$(jj bookmark list -T 'name ++ "\n"' 2>/dev/null | grep "^agent-${NAME}-" || true)
-if [ -n "$BOOKMARKS" ]; then
-  for bm in $BOOKMARKS; do
-    jj bookmark forget "$bm" >&2 || true
-    echo "Forgot bookmark ${bm}" >&2
-  done
 fi
 
 # Report the task association, if one was recorded at spawn time, before it's

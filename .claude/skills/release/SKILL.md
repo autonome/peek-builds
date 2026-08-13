@@ -9,7 +9,7 @@ When the user invokes /release:
 
 1. Get recent commits since last changelog entry:
    ```
-   jj log -r 'main' --no-graph -T 'description.first_line() ++ "\n"' --limit 30
+   git log --oneline -30 main
    ```
 
 2. Read `CHANGELOG.md` to find the latest date heading (format: `## YYYY-MM-DD`).
@@ -29,7 +29,7 @@ When the user invokes /release:
 
 6. Commit both files:
    ```
-   jj commit -m "docs: update changelog and RSS feed for <date>"
+   git commit -am "docs: update changelog and RSS feed for <date>"
    ```
 
 ## Important

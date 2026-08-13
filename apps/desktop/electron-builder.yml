@@ -19,8 +19,6 @@ files:
   - "!out"
   - "!out/**"
   # Exclude version control and tooling
-  - "!.jj"
-  - "!.jj/**"
   - "!.yarn"
   - "!.yarn/**"
   - "!.claude"

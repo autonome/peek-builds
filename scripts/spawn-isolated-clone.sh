@@ -2,19 +2,19 @@
 # Claim an isolated CLONE for a background agent.
 #
 # This is the canonical agent isolation tool. It creates a TRUE INDEPENDENT
-# CLONE with its own .jj/ and .git/, eliminating both concurrent-edit hazards
-# between agents and the orphan-commit hazard of git worktrees.
-# (The old spawn-isolated-agent.sh jj-workspace pool has been retired.)
+# CLONE with its own .git/, eliminating both concurrent-edit hazards between
+# agents and the orphan-commit hazard of git worktrees.
+# (The old spawn-isolated-agent.sh shared-workspace pool has been retired.)
 #
 # Integration back into the main checkout happens via a registered git
-# remote (pool-<name>) — finalize fetches the agent's bookmark and rebases
+# remote (pool-<name>) — finalize fetches the agent's branch and fast-forwards
 # in the main checkout. The main checkout's working state never changes
 # unexpectedly because of an agent.
 #
 # Usage: scripts/spawn-isolated-clone.sh <name> [--base=<branch>]
 #
 # --base defaults to "main". Pass --base=apps-migration (or any other
-# bookmark name) to base the clone's working copy on a different branch.
+# branch name) to base the clone's working copy on a different branch.
 #
 # --scope=apps/desktop limits node_modules symlinking to that one app +
 # root + packages/*. Speeds up spawning for agents that only touch one app.
@@ -102,14 +102,14 @@ fi
 PROFILE="clone-${NAME}"
 PROFILE_DIR="${HOME}/Library/Application Support/Peek/${PROFILE}"
 TIMESTAMP=$(date +%s)
-AGENT_BOOKMARK="agent-${NAME}-${TIMESTAMP}"
+AGENT_BRANCH="agent-${NAME}-${TIMESTAMP}"
 REMOTE_NAME="pool-${NAME}"
 
 cd "$MAIN_DIR"
 
 if [ ! -d "$CLONE_DIR" ]; then
   echo "Creating new clone at ${CLONE_DIR}" >&2
-  jj git clone --colocate "$MAIN_DIR" "$CLONE_DIR" >&2
+  git clone "$MAIN_DIR" "$CLONE_DIR" >&2
   cd "$MAIN_DIR"
   if ! git remote get-url "$REMOTE_NAME" >/dev/null 2>&1; then
     git remote add "$REMOTE_NAME" "${CLONE_DIR}/.git"
@@ -119,13 +119,11 @@ else
   echo "Reusing existing clone at ${CLONE_DIR}" >&2
 fi
 
-# Reset clone to current BASE and create a fresh bookmark.
-# Use BASE@origin since the clone only has remote-tracking refs, not local ones.
-cd "$CLONE_DIR"
-jj git fetch >&2
-jj new "${BASE}@origin" >&2
-jj bookmark create "$AGENT_BOOKMARK" -r @ >&2
-echo "Working copy set to ${BASE}; bookmark ${AGENT_BOOKMARK} created at @" >&2
+# Reset clone to current BASE and create a fresh branch.
+# Use origin/BASE since the clone only has remote-tracking refs, not local ones.
+git -C "$CLONE_DIR" fetch origin >&2
+git -C "$CLONE_DIR" switch -C "$AGENT_BRANCH" "origin/${BASE}" >&2
+echo "Working copy set to ${BASE}; branch ${AGENT_BRANCH} created at HEAD" >&2
 
 # Record the optional task association as local metadata. Never tracked —
 # see the root .gitignore entry for .clone-task.
@@ -133,7 +131,7 @@ if [ -n "$TASK" ]; then
   cat > "${CLONE_DIR}/.clone-task" <<EOF
 task=${TASK}
 name=${NAME}
-bookmark=${AGENT_BOOKMARK}
+branch=${AGENT_BRANCH}
 created=${TIMESTAMP}
 EOF
   echo "Recorded task association: ${TASK} -> ${CLONE_DIR}/.clone-task" >&2
@@ -198,7 +196,6 @@ while IFS= read -r pkg; do
   echo "Symlinked ${rel_dir}/node_modules" >&2
 done < <(find . -name package.json \
   -not -path '*/node_modules/*' \
-  -not -path '*/.jj/*' \
   -not -path '*/.git/*' \
   -not -path '*/tmp/*' \
   -not -path '*/.claude/*' \

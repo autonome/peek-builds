@@ -146,7 +146,7 @@ Small and portable — features built on it could run in other environments with
 
 ## Scale
 
-~3,190 tests across 6 runners, ~10 min wall-clock (including ~1,950 main-process unit tests). 146+ package.json scripts. MIT. Primary remote is Tangled; GitHub is Railway-deploy only. Local workflow is jj (Jujutsu), not git.
+~3,190 tests across 6 runners, ~10 min wall-clock (including ~1,950 main-process unit tests). 146+ package.json scripts. MIT. Primary remote is Tangled; GitHub is Railway-deploy only.
 
 # Three clients, one sync contract
 

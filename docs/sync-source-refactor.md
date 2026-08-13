@@ -267,4 +267,4 @@ ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron packages/integration-tests/s
 
 1. **`item_events` table migration** — `sync-e2e.test.js` creates a fresh DB but the desktop datastore's `validateSyncSchema()` requires all tables from `schema/v1.json` including `item_events`. Either the test setup needs to run migrations, or `initDatabase()` needs to create missing tables.
 2. **`test:sync:e2e` package.json script** — should use `ELECTRON_RUN_AS_NODE=1` instead of bare `node`. All sync test scripts that touch the desktop datastore need this.
-3. **Server deps** — `apps/server/node_modules` may not be installed in jj workspaces. Run `cd apps/server && npm install` if tests fail with `Cannot find module 'hono'`.
+3. **Server deps** — `apps/server/node_modules` may not be installed in agent clones. Run `cd apps/server && npm install` if tests fail with `Cannot find module 'hono'`.

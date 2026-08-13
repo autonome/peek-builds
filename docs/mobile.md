@@ -751,7 +751,7 @@ Verify:
 
 ### Xcode Points at Wrong Workspace
 
-**Symptom:** Build fails with `search path '.../ios-fixes-XXXX/...' not found` or similar, pointing at an old/different jj workspace.
+**Symptom:** Build fails with `search path '.../ios-fixes-XXXX/...' not found` or similar, pointing at a stale/removed clone directory.
 
 **Cause:** Xcode's DerivedData caches `$(PROJECT_DIR)` from whichever workspace the project was first opened from.
 

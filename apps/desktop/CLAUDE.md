@@ -7,7 +7,7 @@ This is the Electron desktop app. Code lives under `apps/desktop/` with subdirec
 - `tests/` — Playwright integration tests
 - `electron-builder.yml` — Packaging config
 
-For cross-cutting rules (jj workflow, subagent dispatch, Bash discipline), see the root `CLAUDE.md`.
+For cross-cutting rules (git workflow, subagent dispatch, Bash discipline), see the root `CLAUDE.md`.
 
 ---
 

@@ -3,22 +3,28 @@
 // for explicit approval instead of letting agents run them silently.
 // Emits the documented `permissionDecision: "ask"` shape so Claude Code
 // shows the standard tool-permission prompt; the user approves or denies.
+//
+// `main` moves only via scripts/finalize-isolated-clone.sh and
+// scripts/push-main.sh — never by hand.
 
 import { readFileSync } from "node:fs";
 
-// `main` matched as a whole bookmark token (not e.g. `main-feature`):
+// `main` matched as a whole branch token (not e.g. `main-feature`):
 // `(?:\s+\S+)*\s+main(?:\s|$)` — any number of preceding args, then `main`
-// at a whitespace boundary.
+// (bare or as a `<src>:main` refspec) at a whitespace boundary.
 const PATTERNS = [
   {
-    re: /^\s*jj\s+bookmark\s+(?:set|move|create|delete|forget|rename|track|untrack)\b(?:\s+\S+)*\s+main(?:\s|$)/,
-    why: "modifies the main bookmark",
+    re: /^\s*git\s+branch\s+(?:-f|--force)\b(?:\s+\S+)*\s+main(?:\s|$)/,
+    why: "force-moves the main branch by hand",
   },
   {
-    re: /^\s*jj\s+op\s+(?:restore|undo|abandon)\b/,
-    why: "rewinds jj operation history (can move main as a side effect)",
+    re: /^\s*git\s+reset\s+--hard\b/,
+    why: "hard-resets the current branch (moves main if it's checked out)",
   },
-  { re: /^\s*jj\s+git\s+push\b/, why: "pushes via jj" },
+  {
+    re: /^\s*git\s+push\b(?:\s+\S+)*\s+(?:\S*:)?main(?:\s|$)/,
+    why: "pushes a ref targeting main by hand",
+  },
   { re: /^\s*git\s+push\b/, why: "bare git push" },
 ];
 
