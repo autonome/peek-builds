@@ -41,7 +41,7 @@
 
 import { DEBUG } from './config.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
-import { isContentWindow, topmost, type Command, type Event, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
+import { isContentWindow, topmost, type Command, type DesktopMembership, type Event, type Rectangle, type WindowId, type WindowKind } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
 import type { StateSnapshot } from './window-state.js';
 import type { StackingLevel } from './izui-roles.js';
@@ -136,12 +136,8 @@ class NoopKernelBackend implements WindowBackend {
   setWindowBounds(id: WindowId, rect: Rect): void {
     recordEffect('setWindowBounds', id, rect);
   }
-  setVisibleOnAllSpaces(
-    id: WindowId,
-    on: boolean,
-    opts?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
-  ): void {
-    recordEffect('setVisibleOnAllSpaces', id, on, opts);
+  setDesktopMembership(id: WindowId, membership: DesktopMembership): void {
+    recordEffect('setDesktopMembership', id, membership);
   }
 }
 
@@ -907,40 +903,41 @@ export function shadowKernelUnmaximize(id: WindowId, oldSnapshot: StateSnapshot)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Visible on all Spaces — the fifteenth real input this step feeds the
-// kernel. Translated at the one production site that dispatches the old
-// machine's mirrored `SET_VISIBLE_ON_ALL_SPACES_REQUESTED` raw path
-// (`tile-ipc.ts`'s `tile:window:set-visible-on-all-workspaces` handler),
-// alongside that dispatch, never in place of it.
+// Desktop membership — the fifteenth real input this step feeds the kernel,
+// now from BOTH production sites that dispatch one of the old machine's two
+// mirrored Spaces events, alongside each dispatch, never in place of it:
 //
-// NOT FED: the old machine's OTHER Spaces event, `SPACES_POLICY_REQUESTED`
-// (`ipc.ts windowOpenHandler` and its reuse path) — role-derived, and
-// resolving `'follow'`/`'anchor'`/`'none'` into a kernel-level effect IS the
-// reducer's job (`window-state.ts`'s `SPACES_POLICY_REQUESTED` case:
-// `'follow'` sets the flag true in one step, `'anchor'` drives an ORDERED
-// PAIR of true-then-false calls to land the window on the active Space and
-// pin it there, `'none'` does nothing). The kernel's own
-// `SetVisibleOnAllSpaces` command doc says as much: the role-derived policy
-// "stays outside the kernel and is expressed as a caller composing this
-// command" — i.e. a future cutover call site would issue the ordered pair
-// itself. Doing that translation here would mean re-implementing the
-// reducer's policy resolution at the shadow's edge, which no feed helper in
-// this file does anywhere else. A documented remaining gap, not an
-// oversight.
+//   - `tile-ipc.ts`'s `tile:window:set-visible-on-all-workspaces` handler
+//     (the raw path, `SET_VISIBLE_ON_ALL_SPACES_REQUESTED`) — the renderer's
+//     boolean is the SAME on/off fact `DesktopMembership` names, so it is
+//     translated directly (`true` -> `'follow'`, `false` -> `'anchor'`)
+//     rather than carried as a second, boolean-shaped command.
+//   - `ipc.ts windowOpenHandler()` and its keepLive-reuse path
+//     (`SPACES_POLICY_REQUESTED`) — role-derived. What used to block this feed
+//     was that the boolean command could not express `'follow'`/`'anchor'`
+//     without re-implementing the reducer's ordered-pair expansion at the
+//     shadow's edge; the kernel's `SetDesktopMembership` command carries the
+//     resolved intention directly; that expansion now lives in
+//     `electron-window-backend.ts setDesktopMembership`, never here or in the
+//     kernel. Both call sites already compute the role's policy for their old
+//     dispatch (`izui-roles.ts spacesPolicyForRole`); feeding this helper is a
+//     direct reuse of that same value, skipping only the platform-derived
+//     `'none'` answer (see `izui-roles.ts desktopMembershipForRole` for why
+//     the kernel never carries that third value at all).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Translate a raw visible-on-all-Spaces request into the kernel's
- * `SetVisibleOnAllSpaces` command — `decide`'s arm (`window-kernel.ts`'s
- * `SetVisibleOnAllSpaces` case) is unconditional, always emitting
- * `VisibleOnAllSpacesSet{on: cmd.on}`; no branching to reproduce. Same shape
- * and containment as `shadowKernelMaximize` et al.
+ * Translate a desktop-membership request into the kernel's
+ * `SetDesktopMembership` command — `decide`'s arm (`window-kernel.ts`'s
+ * `SetDesktopMembership` case) is unconditional, always emitting
+ * `DesktopMembershipSet{membership: cmd.membership}`; no branching to
+ * reproduce. Same shape and containment as `shadowKernelMaximize` et al.
  */
-export function shadowKernelSetVisibleOnAllSpaces(id: WindowId, on: boolean, oldSnapshot: StateSnapshot): void {
+export function shadowKernelSetDesktopMembership(id: WindowId, membership: DesktopMembership, oldSnapshot: StateSnapshot): void {
   shadowExecute({
-    type: 'SetVisibleOnAllSpaces',
+    type: 'SetDesktopMembership',
     id,
-    on,
+    membership,
     expectedVersion: getShadowKernelExecutor().getState().version,
   });
   compareAfterFeed(oldSnapshot);

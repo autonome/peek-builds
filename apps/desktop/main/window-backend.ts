@@ -34,8 +34,11 @@
  * pre-built. Step 4 (special window classes + registry unification) widened
  * it with the close/destroy/show/hide/alwaysOnTop command family; step 5
  * added `setStacking`, step 7 the geometry pair (`setWindowBounds` +
- * `BOUNDS_CHANGED`), step 10 the macOS Spaces command
- * (`setVisibleOnAllSpaces`); later steps add theirs (`loadContent` with its
+ * `BOUNDS_CHANGED`), step 10 the macOS desktop-membership command
+ * (`setDesktopMembership` — the rewritten kernel's platform-neutral
+ * replacement for the raw `setVisibleOnAllSpaces` step 10 originally added,
+ * which now lives outside this port as `electron-window-backend.ts
+ * LegacySpacesShim`); later steps add theirs (`loadContent` with its
  * step). Windows are
  * still joined post-hoc via the backend's migration shims (see
  * `electron-window-backend.ts BackendMigrationShims`), which sit
@@ -43,7 +46,7 @@
  */
 
 import type { WindowEvent, EscapeMode } from './window-state.js';
-import type { WindowId, WindowKind, Rectangle as Rect } from './window-kernel.js';
+import type { WindowId, WindowKind, DesktopMembership, Rectangle as Rect } from './window-kernel.js';
 import type { WindowClass, StackingLevel } from './izui-roles.js';
 
 /** The port's plain rect currency — the reducer's own `Rectangle` (§3: no platform `Rectangle` ever crosses). Carried by `setWindowBounds` and the `BOUNDS_CHANGED` emission since the geometry step (§5 step 7A). */
@@ -321,36 +324,39 @@ export interface WindowBackend {
   setWindowBounds(id: WindowId, rect: Rect): void;
 
   // ── §5 step 10 command (macOS Spaces) ────────────────────────────────────
+  //
+  // The raw path behind `window-state.ts SET_VISIBLE_ON_ALL_SPACES_REQUESTED`
+  // / `SPACES_POLICY_REQUESTED` — called only by `window-os-adapter.ts`
+  // driving that frozen reducer — used to live here as `setVisibleOnAllSpaces`.
+  // It predates the governing platform-neutral rule
+  // (`docs/design/window-manager.md` §0) and its signature carries Electron's
+  // own option names (`visibleOnFullScreen`/`skipTransformProcessType`), which
+  // this file — scanned by `scripts/check-platform-leak.mjs` — may not. It now
+  // lives as `electron-window-backend.ts LegacySpacesShim`, a companion
+  // interface deliberately OUTSIDE this port, the same pattern
+  // `BackendMigrationShims` already uses for the handle-speaking surface:
+  // `window-os-adapter.ts` types its backend as the intersection and keeps
+  // calling it unchanged; this port and the kernel never see it. Deleted
+  // alongside `window-state.ts`.
 
   /**
-   * Pin the window to (or unpin it from) every macOS Space — the
-   * `SET_VISIBLE_ON_ALL_SPACES` effect (§4.2 dim 7b). Named
-   * `setVisibleOnAllSpaces`, deliberately NOT the platform method name
-   * `setVisibleOnAllWorkspaces`: same convention as `setFullscreen` /
-   * `pinAlwaysOnTop` / `setWindowBounds` — the R2 mechanical check
-   * (`scripts/check-r2-window-ops.mjs`) greps the platform call names
-   * verbatim, and the port is a different namespace.
+   * Realize the window's declared desktop membership (the `SetDesktopMembership`
+   * effect, `window-kernel.ts DesktopMembership`) — the platform-neutral
+   * replacement for `setVisibleOnAllSpaces` above. Named off the intention,
+   * deliberately NOT the platform method name `setVisibleOnAllWorkspaces`:
+   * same convention as `setFullscreen` / `pinAlwaysOnTop` / `setWindowBounds`
+   * — the R2 mechanical check (`scripts/check-r2-window-ops.mjs`) greps the
+   * platform call names verbatim, and the port is a different namespace.
    *
-   * `opts` is WIDER than the design table's `(id, on)` because two properties
-   * of the real call sites cannot be expressed without it:
-   *
-   *   - `skipTransformProcessType: true` is required on EVERY call. Without
-   *     it macOS toggles the app's activation policy (Accessory ↔ Foreground)
-   *     mid-call and every OTHER Peek window flashes out for a frame.
-   *   - `visibleOnFullScreen: true` belongs on the `on: true` calls only.
-   *
-   * And the ORDERED PAIR that the `anchor` policy issues — `true` then
-   * `false`, synchronously, right after creation, with DIFFERENT options — is
-   * what makes macOS land a window on the user's ACTIVE Space and pin it
-   * there. The pair is expressed as two effects by the reducer's
-   * `SPACES_POLICY_REQUESTED` clause, so the port only ever performs one call
-   * per invocation, but the two calls must be able to differ in their options.
-   *
-   * Non-darwin platforms have no Spaces: the Electron backend no-ops there.
+   * The signature carries ONLY the intention — no platform option names, no
+   * OS call count. WHICH of `'follow'`/`'anchor'` a role wants is decided
+   * above the port (the caller composing this command); HOW a given backend
+   * satisfies either one — one native call, an ordered pair of them with
+   * different options, or none at all on a platform with no such concept —
+   * is entirely the backend's decision (`electron-window-backend.ts
+   * setDesktopMembership`). A second backend that has no notion of "desktop"
+   * implements this as a no-op and every argument here still means something
+   * to it: there is no platform-specific shape left to misinterpret.
    */
-  setVisibleOnAllSpaces(
-    id: WindowId,
-    on: boolean,
-    opts?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
-  ): void;
+  setDesktopMembership(id: WindowId, membership: DesktopMembership): void;
 }

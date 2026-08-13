@@ -1482,7 +1482,7 @@ describe('window-kernel: geometry', () => {
     const exited = evolve(unmaximized, { type: 'MaximizeExitedByResize', id: wid(1) });
     assert.deepStrictEqual(exited.order.find((w) => w.id === wid(1))?.bounds, rect, 'MaximizeExitedByResize never moves bounds');
 
-    const pinned = evolve(exited, { type: 'VisibleOnAllSpacesSet', id: wid(1), on: true });
+    const pinned = evolve(exited, { type: 'DesktopMembershipSet', id: wid(1), membership: 'follow' });
     assert.deepStrictEqual(pinned.order.find((w) => w.id === wid(1))?.bounds, rect, 'an unrelated field write never moves bounds');
   });
 
@@ -1498,7 +1498,7 @@ describe('window-kernel: geometry', () => {
       { type: 'MaximizeExitedByResize', id: wid(1) },
       { type: 'DisplayChanged', projections: [{ id: wid(1), bounds: { x: 1, y: 1, width: 1, height: 1 } }] },
       { type: 'PendingProjectionDiscarded', id: wid(1) },
-      { type: 'VisibleOnAllSpacesSet', id: wid(1), on: true },
+      { type: 'DesktopMembershipSet', id: wid(1), membership: 'follow' },
     ];
     const after = fold(log, state);
     assert.deepStrictEqual(after.order.map((w) => w.id), orderBefore, 'order untouched by any geometry event');
@@ -1518,6 +1518,62 @@ describe('window-kernel: geometry', () => {
     assert.ok('events' in reDecision);
     const second = foldWithEffects(reDecision.events, first.state);
     assert.deepStrictEqual(second.effects, [], 'a genuine re-request of the current value diffs to nothing');
+  });
+});
+
+// ── Desktop membership: the platform-neutral follow/anchor intention ────────
+// (`docs/design/window-manager.md` §0, "the governing rule set") — the
+// window-manager-wide replacement for the boolean `visibleOnAllSpaces`. See
+// `window-kernel-properties.test.ts`'s pinned "the re-registration merge
+// preserves every lived fact" describe for the merge-preservation coverage.
+
+describe('window-kernel: desktop membership', () => {
+  const registerOne = (): Event[] => [
+    { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+  ];
+
+  it('starts undefined — a window nobody has asked about is not "anchored" by default', () => {
+    const state = fold(registerOne(), initialState());
+    assert.strictEqual(state.order.find((w) => w.id === wid(1))?.desktopMembership, undefined);
+  });
+
+  it('SetDesktopMembership round-trips through decide -> evolve -> state for both intentions', () => {
+    const state = fold(registerOne(), initialState());
+
+    const followDecision = decide(state, { type: 'SetDesktopMembership', id: wid(1), membership: 'follow', expectedVersion: state.version });
+    assert.ok('events' in followDecision);
+    assert.deepStrictEqual(followDecision.events, [{ type: 'DesktopMembershipSet', id: wid(1), membership: 'follow' }]);
+    const followed = fold(followDecision.events, state);
+    assert.strictEqual(followed.order.find((w) => w.id === wid(1))?.desktopMembership, 'follow');
+
+    const anchorDecision = decide(followed, { type: 'SetDesktopMembership', id: wid(1), membership: 'anchor', expectedVersion: followed.version });
+    assert.ok('events' in anchorDecision);
+    assert.deepStrictEqual(anchorDecision.events, [{ type: 'DesktopMembershipSet', id: wid(1), membership: 'anchor' }]);
+    const anchored = fold(anchorDecision.events, followed);
+    assert.strictEqual(anchored.order.find((w) => w.id === wid(1))?.desktopMembership, 'anchor');
+  });
+
+  it('react emits SetDesktopMembership as a structural diff, carrying no platform flags', () => {
+    const state = fold(registerOne(), initialState());
+    const followDecision = decide(state, { type: 'SetDesktopMembership', id: wid(1), membership: 'follow', expectedVersion: state.version });
+    assert.ok('events' in followDecision);
+    const first = foldWithEffects(followDecision.events, state);
+    assert.deepStrictEqual(
+      first.effects.filter((e) => e.type === 'SetDesktopMembership'),
+      [{ type: 'SetDesktopMembership', id: wid(1), membership: 'follow' }],
+    );
+
+    // Re-requesting the SAME intention diffs to nothing.
+    const reDecision = decide(first.state, { type: 'SetDesktopMembership', id: wid(1), membership: 'follow', expectedVersion: first.state.version });
+    assert.ok('events' in reDecision);
+    const second = foldWithEffects(reDecision.events, first.state);
+    assert.deepStrictEqual(second.effects, [], 'a genuine re-request of the current value diffs to nothing');
+  });
+
+  it('SetDesktopMembership against an unregistered window is rejected', () => {
+    const state = initialState();
+    const decision = decide(state, { type: 'SetDesktopMembership', id: wid(1), membership: 'anchor', expectedVersion: state.version });
+    assert.deepStrictEqual(decision, { rejected: 'no-such-window' });
   });
 });
 

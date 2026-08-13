@@ -23,6 +23,7 @@ import {
   initialState,
   evolve,
   BASE_LAYER,
+  type DesktopMembership,
   type Event,
   type State,
   type WindowId,
@@ -122,12 +123,8 @@ class RecordingBackend implements WindowBackend {
   setWindowBounds(id: BackendWindowId, rect: Rect): void {
     this.record('setWindowBounds', id, rect);
   }
-  setVisibleOnAllSpaces(
-    id: BackendWindowId,
-    on: boolean,
-    opts?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
-  ): void {
-    this.record('setVisibleOnAllSpaces', id, on, opts);
+  setDesktopMembership(id: BackendWindowId, membership: DesktopMembership): void {
+    this.record('setDesktopMembership', id, membership);
   }
 }
 
@@ -496,7 +493,6 @@ describe('planRaise — the masks a raise owes because it is an activating show'
       fsMode: { name: 'normal' },
       maximized: false,
       preMaxBounds: null,
-      visibleOnAllSpaces: false,
       pendingProjectedBounds: null,
       ...over,
     }) as WindowRecord;
@@ -702,32 +698,24 @@ describe('effect performance', () => {
     assert.deepStrictEqual(backend.of('setWindowBounds').map((c) => c.args), [[wid(1), rect]]);
   });
 
-  it('pins to all Spaces with skipTransformProcessType always and visibleOnFullScreen only when pinning on', () => {
+  it('realizes desktop membership by passing the intention straight through, no platform flags', () => {
     const { exec, backend } = makeExecutor();
     exec.dispatch(register(wid(1)));
     backend.calls.length = 0;
-    exec.dispatch({ type: 'VisibleOnAllSpacesSet', id: wid(1), on: true });
-    assert.deepStrictEqual(backend.of('setVisibleOnAllSpaces')[0].args, [
-      wid(1),
-      true,
-      { visibleOnFullScreen: true, skipTransformProcessType: true },
-    ]);
+    exec.dispatch({ type: 'DesktopMembershipSet', id: wid(1), membership: 'follow' });
+    assert.deepStrictEqual(backend.of('setDesktopMembership')[0].args, [wid(1), 'follow']);
 
     backend.calls.length = 0;
-    exec.dispatch({ type: 'VisibleOnAllSpacesSet', id: wid(1), on: false });
-    assert.deepStrictEqual(backend.of('setVisibleOnAllSpaces')[0].args, [
-      wid(1),
-      false,
-      { skipTransformProcessType: true },
-    ]);
+    exec.dispatch({ type: 'DesktopMembershipSet', id: wid(1), membership: 'anchor' });
+    assert.deepStrictEqual(backend.of('setDesktopMembership')[0].args, [wid(1), 'anchor']);
   });
 
-  it('skips the Spaces pin under headless — an agent run must not move the user between Spaces', () => {
+  it('skips desktop membership under headless — an agent run must not move the user between desktops', () => {
     const { exec, backend } = makeExecutor({ headless: true });
     exec.dispatch(register(wid(1)));
     backend.calls.length = 0;
-    exec.dispatch({ type: 'VisibleOnAllSpacesSet', id: wid(1), on: true });
-    assert.deepStrictEqual(backend.of('setVisibleOnAllSpaces'), []);
+    exec.dispatch({ type: 'DesktopMembershipSet', id: wid(1), membership: 'follow' });
+    assert.deepStrictEqual(backend.of('setDesktopMembership'), []);
   });
 
   // ── Teardown (§0.1.5) ─────────────────────────────────────────────────────

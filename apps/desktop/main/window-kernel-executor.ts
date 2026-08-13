@@ -647,20 +647,16 @@ export class WindowKernelExecutor {
         this.backend.setWindowBounds(effect.id, effect.bounds);
         return;
       }
-      case 'SetVisibleOnAllSpaces': {
-        // Headless-gated: the call touches the real desktop's Space assignment
-        // and, without `skipTransformProcessType`, the app's activation policy
-        // — an agent/CI run must not move windows between the user's Spaces.
-        // `skipTransformProcessType` is required on EVERY call (without it
-        // macOS flips the activation policy mid-call and every other window
-        // flashes out for a frame); `visibleOnFullScreen` belongs on the
-        // pin-on call only, and an absent flag must stay absent rather than
-        // become `false`.
+      case 'SetDesktopMembership': {
+        // Headless-gated: realizing membership can move the real window
+        // between the user's desktops (or, on the backend that has one,
+        // touch the app's activation policy) — an agent/CI run must not do
+        // either. HOW the intention is realized, on any given platform,
+        // including how many native calls it takes, is entirely the
+        // backend's decision; the executor passes the intention through
+        // unchanged and carries no platform option of its own.
         if (this.headless) return;
-        this.backend.setVisibleOnAllSpaces(effect.id, effect.on, {
-          ...(effect.on ? { visibleOnFullScreen: true } : {}),
-          skipTransformProcessType: true,
-        });
+        this.backend.setDesktopMembership(effect.id, effect.membership);
         return;
       }
       case 'SetStacking': {

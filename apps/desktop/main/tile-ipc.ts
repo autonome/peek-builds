@@ -139,7 +139,7 @@ import {
   shadowKernelSetBounds,
   shadowKernelMaximize,
   shadowKernelUnmaximize,
-  shadowKernelSetVisibleOnAllSpaces,
+  shadowKernelSetDesktopMembership,
 } from './window-kernel-shadow.js';
 import {
   registerGlobalShortcut,
@@ -3763,11 +3763,15 @@ export function registerTileIpcHandlers(): void {
       });
       // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
       // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen. The kernel's command
-      // carries only the raw boolean (no OS-option pair) — see that command's
-      // own doc for why the role-derived SPACES_POLICY_REQUESTED path is not
-      // fed alongside this one.
-      shadowKernelSetVisibleOnAllSpaces(machineId, args.visible === true, getWindowStateSnapshot());
+      // never change what actually happens on screen. The renderer's raw
+      // boolean IS the same on/off fact the kernel's `DesktopMembership`
+      // names, so it is translated directly rather than carried as a second,
+      // boolean-shaped command: `true` -> rides along with the user
+      // (`'follow'`), `false` -> stays on the desktop it was opened on
+      // (`'anchor'`). The caller-supplied platform options (`args.options`)
+      // are NOT fed — they are Electron `setVisibleOnAllWorkspaces` argument
+      // names and have no meaning to the kernel's platform-neutral command.
+      shadowKernelSetDesktopMembership(machineId, args.visible === true ? 'follow' : 'anchor', getWindowStateSnapshot());
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

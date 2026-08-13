@@ -5,6 +5,8 @@
  *   - inferIzuiRole: how api.window.open params map to an IZUI role
  *   - TRANSIENT_ROLES: which roles are transient/overlay-class
  *   - spacesPolicyForRole: how IZUI role maps to macOS Spaces policy
+ *   - desktopMembershipForRole: the platform-neutral half of the same
+ *     derivation, feeding the rewritten kernel
  */
 
 import { describe, it } from 'node:test';
@@ -12,6 +14,7 @@ import * as assert from 'node:assert';
 import {
   inferIzuiRole,
   spacesPolicyForRole,
+  desktopMembershipForRole,
   shouldCloseContentWCOnFinalize,
   planBeforeQuit,
   runDeferredQuitCleanup,
@@ -432,6 +435,31 @@ describe('spacesPolicyForRole', () => {
   it("returns 'none' on win32 for any role", () => {
     assert.strictEqual(spacesPolicyForRole('palette', 'win32'), 'none');
     assert.strictEqual(spacesPolicyForRole('workspace', 'win32'), 'none');
+  });
+});
+
+describe('desktopMembershipForRole', () => {
+  it("returns 'follow' for every transient role, with no platform argument", () => {
+    assert.strictEqual(desktopMembershipForRole('palette'), 'follow');
+    assert.strictEqual(desktopMembershipForRole('quick-view'), 'follow');
+    assert.strictEqual(desktopMembershipForRole('overlay'), 'follow');
+    assert.strictEqual(desktopMembershipForRole('switcher'), 'follow');
+  });
+
+  it("returns 'anchor' for every other role, with no platform argument", () => {
+    assert.strictEqual(desktopMembershipForRole('workspace'), 'anchor');
+    assert.strictEqual(desktopMembershipForRole('content'), 'anchor');
+    assert.strictEqual(desktopMembershipForRole('child-content'), 'anchor');
+    assert.strictEqual(desktopMembershipForRole('utility'), 'anchor');
+  });
+
+  it('never answers a third value — there is no platform-derived "none"', () => {
+    // TypeScript already enforces this (the return type is 'follow' | 'anchor'
+    // with no platform parameter to gate on); this is the runtime witness.
+    const roles = ['palette', 'quick-view', 'overlay', 'switcher', 'workspace', 'content', 'child-content', 'utility'];
+    for (const role of roles) {
+      assert.ok(['follow', 'anchor'].includes(desktopMembershipForRole(role)));
+    }
   });
 });
 

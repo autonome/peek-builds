@@ -107,11 +107,13 @@ import {
   shadowKernelSetBounds,
   shadowKernelMaximize,
   shadowKernelUnmaximize,
+  shadowKernelSetDesktopMembership,
 } from './window-kernel-shadow.js';
 import {
   TRANSIENT_ROLES,
   inferIzuiRole,
   spacesPolicyForRole,
+  desktopMembershipForRole,
   shouldCloseContentWCOnFinalize,
   windowSelfClosesOnBlur,
   deriveWindowSurface,
@@ -2705,6 +2707,13 @@ export function registerWindowHandlers(): void {
             const spacesMachineId = getWindowIdFor(existingWindow.window);
             if (spacesMachineId != null) {
               dispatchWindowEvent({ type: 'SPACES_POLICY_REQUESTED', id: spacesMachineId, policy: reusePolicy });
+              // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+              // authoritative over nothing, alongside the dispatch above.
+              // Only reached for 'follow' (same reasoning as the dispatch:
+              // an anchored window's creation-time pair must NOT be replayed
+              // on reuse), so `reusePolicy` is already the intention the
+              // kernel wants, no translation needed.
+              shadowKernelSetDesktopMembership(spacesMachineId, reusePolicy, getWindowStateSnapshot());
             }
           }
         }
@@ -3489,6 +3498,15 @@ export function registerWindowHandlers(): void {
           id: machineWindowId,
           policy: spacesPolicyForRole(role, process.platform),
         });
+        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+        // authoritative over nothing. Unlike the dispatch above, this feed
+        // carries the platform-neutral intention directly
+        // (`desktopMembershipForRole`, `izui-roles.ts`): every role wants to
+        // either follow the user or stay anchored regardless of platform, so
+        // there is no `'none'` case to skip here — see that function's doc
+        // for why the kernel never sees the platform-derived third value the
+        // dispatch above's `spacesPolicyForRole` can return.
+        shadowKernelSetDesktopMembership(machineWindowId, desktopMembershipForRole(role), getWindowStateSnapshot());
       }
 
       // Feed the machine the OPEN intent (gate fallout of the WindowId

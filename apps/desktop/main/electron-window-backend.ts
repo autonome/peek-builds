@@ -75,7 +75,7 @@ import {
   type WindowRegistrationDecision,
   type StateSnapshot,
 } from './window-state.js';
-import type { FocusCause, WindowId, WindowKind, Rectangle } from './window-kernel.js';
+import type { DesktopMembership, FocusCause, WindowId, WindowKind, Rectangle } from './window-kernel.js';
 import type { BackendEventSink, WindowBackend, WindowSpec } from './window-backend.js';
 import {
   destroyGuestsAndWait,
@@ -258,6 +258,29 @@ export interface BackendMigrationShims {
   getNativeWindowFor(id: WindowId): NativeWindow | null;
 }
 
+/**
+ * LEGACY SPACES SHIM — the raw, Electron-option-carrying macOS Spaces write
+ * (`window-state.ts SET_VISIBLE_ON_ALL_SPACES_REQUESTED` /
+ * `SPACES_POLICY_REQUESTED`) that `window-os-adapter.ts` alone still calls,
+ * driving that frozen reducer's `SET_VISIBLE_ON_ALL_SPACES` effect exactly as
+ * it always worked. Deliberately OUTSIDE `WindowBackend` — a DIFFERENT reason
+ * than `BackendMigrationShims` above (that one is about platform HANDLES; this
+ * one is about platform ARGUMENT NAMES, `visibleOnFullScreen` /
+ * `skipTransformProcessType`, which `window-backend.ts` may not carry once
+ * scanned by `scripts/check-platform-leak.mjs`) but the SAME pattern: the
+ * executor types its backend as the wider intersection
+ * (`WindowBackend & BackendMigrationShims & LegacySpacesShim`,
+ * `window-os-adapter.ts`) and this shim is deleted alongside `window-state.ts`,
+ * not absorbed by a later migration step.
+ */
+export interface LegacySpacesShim {
+  setVisibleOnAllSpaces(
+    id: WindowId,
+    on: boolean,
+    opts?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
+  ): void;
+}
+
 /** What the backend retains per registered window to execute commands against it. */
 interface BackendWindow {
   win: NativeWindow;
@@ -280,7 +303,7 @@ interface BackendWindow {
  * The Electron backend. Holds native handles + the WindowId mint, performs
  * port commands, translates native events into machine events via `emit`.
  */
-export class ElectronWindowBackend implements WindowBackend, BackendMigrationShims {
+export class ElectronWindowBackend implements WindowBackend, BackendMigrationShims, LegacySpacesShim {
   /** The single event channel into the executor's dispatch pump. */
   private readonly emit: BackendEventSink;
 
@@ -1238,8 +1261,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   }
 
   /**
-   * Pin the window to (or unpin it from) every macOS Space (the
-   * `SET_VISIBLE_ON_ALL_SPACES` effect — §5 step 10).
+   * LEGACY (see `LegacySpacesShim` above): pin the window to (or unpin it
+   * from) every macOS Space, exactly as this always worked, for the
+   * `SET_VISIBLE_ON_ALL_SPACES` effect that `window-os-adapter.ts` alone
+   * still issues (§5 step 10, the frozen `window-state.ts` reducer).
+   * `setDesktopMembership` below is the platform-neutral replacement new
+   * callers use.
    *
    * darwin-only: Spaces don't exist elsewhere and the platform call is a
    * no-op there, so the guard is the honest statement of scope rather than a
@@ -1270,6 +1297,59 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (opts?.skipTransformProcessType !== undefined) options.skipTransformProcessType = opts.skipTransformProcessType;
     try {
       if (!win.isDestroyed()) win.setVisibleOnAllWorkspaces(on, options);
+    } catch {
+      /* Spaces write against a torn-down window — the machine already recorded intent */
+    }
+  }
+
+  /**
+   * Realize the window's declared desktop membership (the platform-neutral
+   * `SetDesktopMembership` effect from the rewritten kernel,
+   * `window-kernel.ts DesktopMembership`) as native macOS Spaces calls. Named
+   * off the intention, deliberately NOT the platform method
+   * `setVisibleOnAllWorkspaces`: same convention as `pinAlwaysOnTop` /
+   * `setStacking` / `setWindowBounds` — the R2 mechanical check
+   * (`scripts/check-r2-window-ops.mjs`) greps platform call names verbatim.
+   *
+   * darwin-only, and non-darwin's answer is "zero native calls, done": Spaces
+   * don't exist elsewhere, so satisfying either intention costs nothing
+   * there — a platform fact this backend owns, never one the kernel or the
+   * port sees.
+   *
+   * No `isHeadless()` gate HERE, same convention as `setVisibleOnAllSpaces`
+   * above: the executor owns the headless decision for this family
+   * (`window-kernel-executor.ts` skips the effect under headless).
+   *
+   * `skipTransformProcessType: true` rides EVERY call this method makes:
+   * without it macOS toggles the app's activation policy (Accessory <->
+   * Foreground) mid-call and every OTHER Peek window flashes out for a
+   * frame. `visibleOnFullScreen: true` only ever belongs on an `on:true`
+   * call — a bare unpin never needs it.
+   *
+   * `'follow'` (ride along to whichever Space the user is on) is ONE native
+   * call: `on:true` with both options.
+   *
+   * `'anchor'` (stay on the Space it was opened on) is the ORDERED PAIR —
+   * `true` then `false`, synchronously, with DIFFERENT options — ported
+   * verbatim from the old reducer's `SPACES_POLICY_REQUESTED` `'anchor'` arm
+   * (`window-state.ts`), because the MECHANISM has to survive the port, not
+   * just the intent: a bare `false` call leaves the window on whichever
+   * Space the app happened to be created from, not the user's active one.
+   * The first call (`on:true`, both options) lands the window on the active
+   * Space; the second (`on:false`, `skipTransformProcessType` only) then
+   * pins it there. The two calls carry different options, which is why they
+   * cannot collapse into one.
+   */
+  setDesktopMembership(id: WindowId, membership: DesktopMembership): void {
+    if (process.platform !== 'darwin') return;
+    const win = this.windows.get(id)?.win;
+    if (!win) return;
+    try {
+      if (win.isDestroyed()) return;
+      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+      if (membership === 'anchor' && !win.isDestroyed()) {
+        win.setVisibleOnAllWorkspaces(false, { skipTransformProcessType: true });
+      }
     } catch {
       /* Spaces write against a torn-down window — the machine already recorded intent */
     }

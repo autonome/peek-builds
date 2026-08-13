@@ -41,7 +41,7 @@ import {
   shadowKernelSetBounds,
   shadowKernelMaximize,
   shadowKernelUnmaximize,
-  shadowKernelSetVisibleOnAllSpaces,
+  shadowKernelSetDesktopMembership,
 } from './window-kernel-shadow.js';
 import { BASE_LAYER, isContentWindow, topmost, topmostBaseLayerPageHost, type WindowId } from './window-kernel.js';
 import type { StateSnapshot, WindowRecord } from './window-state.js';
@@ -1369,31 +1369,55 @@ describe('window-kernel-shadow: maximize / unmaximize feed', () => {
   });
 });
 
-describe('window-kernel-shadow: visible-on-all-spaces feed', () => {
+// `shadowKernelSetDesktopMembership` is the one helper behind all THREE
+// production feed sites (`window-kernel-shadow.ts`'s own doc names them):
+// `tile-ipc.ts`'s raw `tile:window:set-visible-on-all-workspaces` handler
+// (boolean translated to an intention before the call), and `ipc.ts`'s
+// `windowOpenHandler()` + its keepLive-reuse path (role-derived, already an
+// intention at the call site). All three move kernel state through this one
+// function, so exercising it here covers what each site actually changes.
+describe('window-kernel-shadow: desktop membership feed', () => {
   beforeEach(() => {
     _resetShadowKernelForTests();
   });
 
   const record = (id: WindowId) => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
 
-  it('flips the stored field on, then back off', () => {
+  it('starts undefined, then moves to the requested intention', () => {
     const id = wid(230);
     const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
     registerWindow(id, oldSnapshot);
-    assert.strictEqual(record(id)?.visibleOnAllSpaces, false, 'precondition: registration starts false');
+    assert.strictEqual(record(id)?.desktopMembership, undefined, 'precondition: nobody has asked yet');
 
-    shadowKernelSetVisibleOnAllSpaces(id, true, oldSnapshot);
-    assert.strictEqual(record(id)?.visibleOnAllSpaces, true, 'the raw request must flip the field on');
+    shadowKernelSetDesktopMembership(id, 'follow', oldSnapshot);
+    assert.strictEqual(record(id)?.desktopMembership, 'follow', 'the tile-ipc raw-boolean feed (true -> follow)');
 
-    shadowKernelSetVisibleOnAllSpaces(id, false, oldSnapshot);
-    assert.strictEqual(record(id)?.visibleOnAllSpaces, false, 'and back off');
+    shadowKernelSetDesktopMembership(id, 'anchor', oldSnapshot);
+    assert.strictEqual(record(id)?.desktopMembership, 'anchor', 'the tile-ipc raw-boolean feed (false -> anchor)');
+  });
+
+  it('moves kernel state for a fresh open (windowOpenHandler feed) and a keepLive reuse (reuse-path feed)', () => {
+    const opened = wid(232);
+    const reused = wid(233);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(opened, oldSnapshot);
+    registerWindow(reused, oldSnapshot);
+
+    // windowOpenHandler(): role-derived, either intention.
+    shadowKernelSetDesktopMembership(opened, 'anchor', oldSnapshot);
+    assert.strictEqual(record(opened)?.desktopMembership, 'anchor');
+
+    // keepLive-reuse path: only ever reached for 'follow' (an anchored
+    // window's creation-time pair must not be replayed on reuse).
+    shadowKernelSetDesktopMembership(reused, 'follow', oldSnapshot);
+    assert.strictEqual(record(reused)?.desktopMembership, 'follow');
   });
 
   it('never throws naming a window with no record', () => {
     const danglingId = wid(231); // never registered with the shadow kernel
     const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
-    assert.doesNotThrow(() => shadowKernelSetVisibleOnAllSpaces(danglingId, true, oldSnapshot));
+    assert.doesNotThrow(() => shadowKernelSetDesktopMembership(danglingId, 'follow', oldSnapshot));
     assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });

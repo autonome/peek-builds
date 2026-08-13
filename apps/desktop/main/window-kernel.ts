@@ -96,6 +96,22 @@ export const FULLSCREEN_SETTLE_TIMEOUT_MS = 1500;
 export const BASE_LAYER = 0;
 
 /**
+ * Which set of desktops a window belongs to, per-window and binary — the
+ * platform-neutral intention (`docs/design/window-manager.md` §0, "the
+ * governing rule set"): every window either FOLLOWS the user from desktop to
+ * desktop, or BELONGS to the desktop it was opened on. Nothing above the
+ * port may ask which OS concept realizes either one, how many native calls
+ * that takes, or whether the current platform has a notion of "desktop" at
+ * all — that is the backend's business (`window-backend.ts
+ * setDesktopMembership`). This kernel and the port therefore never spell
+ * Apple's name for the underlying mechanism.
+ *
+ *   - `follow`  rides along to whichever desktop the user is currently on.
+ *   - `anchor`  stays on the desktop it was opened on.
+ */
+export type DesktopMembership = 'follow' | 'anchor';
+
+/**
  * A registered window's record. §0.1.4: "orthogonal properties, no
  * pre-combined class" — `layer` / `canBecomeKey` / `acceptsInput` are each
  * looked up independently; nothing branches on `class` (a lookup-only field,
@@ -189,8 +205,19 @@ export interface WindowRecord {
    * `FsMode.preBounds`).
    */
   preMaxBounds: Rectangle | null;
-  /** Pinned to every macOS Space or not — ported from `window-state.ts WindowRecord.visibleOnAllSpaces`. */
-  visibleOnAllSpaces: boolean;
+  /**
+   * Which desktops this window belongs to (see `DesktopMembership`) — the
+   * window's declared INTENTION, never an OS flag. `undefined` until the
+   * first `SetDesktopMembership` command: a window nobody has ever asked to
+   * follow or anchor is simply untouched, not "anchored" by default.
+   *
+   * Ported from `window-state.ts WindowRecord.visibleOnAllSpaces`, whose
+   * boolean encoding could not tell an anchored window (which explicitly
+   * settles on `false`) apart from one nobody had ever asked about — both
+   * read `false`. This field's optionality is what removes that conflation:
+   * "anchored" and "never touched" are now different values.
+   */
+  desktopMembership?: DesktopMembership;
   /**
    * A `DisplayChanged` projection computed while this window was BLOCKED from
    * receiving it — blocked meaning `fsMode.name !== 'normal'` or
@@ -728,8 +755,8 @@ export type Event =
    * all three origins identically.
    */
   | { type: 'PendingProjectionDiscarded'; id: WindowId }
-  /** `decide`'s translation of an accepted `SetVisibleOnAllSpaces` command. */
-  | { type: 'VisibleOnAllSpacesSet'; id: WindowId; on: boolean }
+  /** `decide`'s translation of an accepted `SetDesktopMembership` command. */
+  | { type: 'DesktopMembershipSet'; id: WindowId; membership: DesktopMembership }
   /**
    * `decide`'s translation of an accepted `AttachOverlay` command — attach,
    * retarget, and detach are all this ONE event (`hostId: null` = detach).
@@ -867,12 +894,18 @@ export type Command =
    */
   | { type: 'Unmaximize'; id: WindowId; expectedVersion: number }
   /**
-   * App code wants this window pinned to (or unpinned from) every macOS
-   * Space (ported from `window-state.ts SET_VISIBLE_ON_ALL_SPACES_REQUESTED`,
-   * raw path only — the role-derived `SPACES_POLICY_REQUESTED` policy stays
-   * outside the kernel and is expressed as a caller composing this command).
+   * App code wants this window to belong to a particular set of desktops
+   * (see `DesktopMembership`) — ported from `window-state.ts`'s pair of
+   * events over the same OS-level fact, `SET_VISIBLE_ON_ALL_SPACES_REQUESTED`
+   * (raw path) and `SPACES_POLICY_REQUESTED` (role-derived), collapsed into
+   * one command because the kernel only ever needs the resolved intention:
+   * WHICH of `'follow'`/`'anchor'` a given role wants, and WHETHER/HOW a
+   * given backend realizes either one, both stay outside the kernel — the
+   * former decided by the caller composing this command (the role-derivation
+   * the old `SPACES_POLICY_REQUESTED` did inline), the latter entirely the
+   * backend's business (`window-backend.ts setDesktopMembership`).
    */
-  | { type: 'SetVisibleOnAllSpaces'; id: WindowId; on: boolean; expectedVersion: number }
+  | { type: 'SetDesktopMembership'; id: WindowId; membership: DesktopMembership; expectedVersion: number }
   /**
    * Attach, retarget, or detach the shared chrome overlay — `hostId: null`
    * is detach. One transition, no separate detach command (see the doc on
@@ -1060,8 +1093,13 @@ export type Effect =
   | { type: 'ReconcileFullscreen'; id: WindowId }
   /** Move the window's outer bounds — emitted by `react` as a structural diff of `bounds`, never from an event's own payload. */
   | { type: 'SetBounds'; id: WindowId; bounds: Rectangle }
-  /** Pin/unpin the window on every macOS Space — emitted by `react` as a structural diff of `visibleOnAllSpaces`. */
-  | { type: 'SetVisibleOnAllSpaces'; id: WindowId; on: boolean }
+  /**
+   * Realize the window's desktop membership (see `DesktopMembership`) —
+   * emitted by `react` as a structural diff of `desktopMembership`. How many
+   * native calls that takes on a given platform — including zero — is the
+   * backend's decision, never this kernel's.
+   */
+  | { type: 'SetDesktopMembership'; id: WindowId; membership: DesktopMembership }
   /**
    * TEARDOWN (§0.1.5) — the four below are emitted by `react` as a structural
    * diff of `State.lastTeardown`, one per teardown transition, and each may
@@ -1256,9 +1294,13 @@ export function evolve(state: State, ev: Event): State {
           // re-registration merge exactly like `fsMode` above.
           maximized: existing.maximized,
           preMaxBounds: existing.preMaxBounds,
-          visibleOnAllSpaces: existing.visibleOnAllSpaces,
           pendingProjectedBounds: existing.pendingProjectedBounds,
           ...(existing.bounds !== undefined ? { bounds: existing.bounds } : {}),
+          // A lived fact (desktop membership), same reasoning as `overlayFor`
+          // below — re-registration must not forget which desktops the
+          // window was asked to belong to, and must not turn a real answer
+          // back into "never asked" (see the field's own doc).
+          ...(existing.desktopMembership !== undefined ? { desktopMembership: existing.desktopMembership } : {}),
           // A lived fact (attachment), same reasoning as `fsMode` above —
           // re-registration must not sever a live overlay attachment.
           ...(existing.overlayFor !== undefined ? { overlayFor: existing.overlayFor } : {}),
@@ -1320,7 +1362,9 @@ export function evolve(state: State, ev: Event): State {
         // reported, nothing is stashed, nothing pinned, nothing held.
         maximized: false,
         preMaxBounds: null,
-        visibleOnAllSpaces: false,
+        // `desktopMembership` is deliberately NOT seeded — registration is
+        // exactly the moment nobody has asked yet (see the field's doc),
+        // same reasoning as `contentFocused` below.
         pendingProjectedBounds: null,
         ...(ev.role !== undefined ? { role: ev.role } : {}),
         ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
@@ -1839,10 +1883,10 @@ export function evolve(state: State, ev: Event): State {
       };
     }
 
-    case 'VisibleOnAllSpacesSet': {
+    case 'DesktopMembershipSet': {
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, visibleOnAllSpaces: ev.on } : w)),
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, desktopMembership: ev.membership } : w)),
         version: state.version + 1,
       };
     }
@@ -2150,14 +2194,19 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
   }
 
-  // Geometry (this slice): `visibleOnAllSpaces` — same diff pattern.
+  // Desktop membership (see `DesktopMembership`) — same diff pattern as
+  // bounds above. `undefined` is a real state (nobody has asked), so the
+  // guard is not just `!==`: it also excludes the (never-occurring, since
+  // nothing clears the field) defined -> undefined direction, keeping the
+  // effect payload's `membership` non-optional as a type fact rather than a
+  // runtime one.
   for (const nextRecord of next.order) {
     const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
     if (prevRecord === undefined) {
       continue;
     }
-    if (prevRecord.visibleOnAllSpaces !== nextRecord.visibleOnAllSpaces) {
-      effects.push({ type: 'SetVisibleOnAllSpaces', id: nextRecord.id, on: nextRecord.visibleOnAllSpaces });
+    if (prevRecord.desktopMembership !== nextRecord.desktopMembership && nextRecord.desktopMembership !== undefined) {
+      effects.push({ type: 'SetDesktopMembership', id: nextRecord.id, membership: nextRecord.desktopMembership });
     }
   }
 
@@ -2610,8 +2659,8 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
         ],
       };
     }
-    case 'SetVisibleOnAllSpaces':
-      return { events: [{ type: 'VisibleOnAllSpacesSet', id: cmd.id, on: cmd.on }] };
+    case 'SetDesktopMembership':
+      return { events: [{ type: 'DesktopMembershipSet', id: cmd.id, membership: cmd.membership }] };
     case 'AssertFocus': {
       // Reached only after the unknown-window guard above — this command is
       // NOT exempt from it (see the command's own doc for why the teardown

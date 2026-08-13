@@ -33,6 +33,7 @@ import type { BackendEventSink, WindowBackend } from './window-backend.js';
 import {
   ElectronWindowBackend,
   type BackendMigrationShims,
+  type LegacySpacesShim,
   type NativeWindow,
   type RegisterWindowSpec,
 } from './electron-window-backend.js';
@@ -69,10 +70,12 @@ export class WindowOsAdapter {
   /**
    * The backend port — plus, until later migration steps absorb them, the
    * handle-speaking migration shims (`electron-window-backend.ts
-   * BackendMigrationShims`). Every OS window operation this module causes
-   * goes through this reference.
+   * BackendMigrationShims`) and the legacy raw Spaces write
+   * (`electron-window-backend.ts LegacySpacesShim`, deleted alongside
+   * `window-state.ts` rather than absorbed). Every OS window operation this
+   * module causes goes through this reference.
    */
-  private readonly backend: WindowBackend & BackendMigrationShims;
+  private readonly backend: WindowBackend & BackendMigrationShims & LegacySpacesShim;
 
   constructor(
     owner: WindowStateOwner = new WindowStateOwner(),
@@ -90,7 +93,7 @@ export class WindowOsAdapter {
     createBackend: (
       emit: BackendEventSink,
       getSnapshot: () => StateSnapshot,
-    ) => WindowBackend & BackendMigrationShims = (emit, getSnapshot) => new ElectronWindowBackend(emit, getSnapshot),
+    ) => WindowBackend & BackendMigrationShims & LegacySpacesShim = (emit, getSnapshot) => new ElectronWindowBackend(emit, getSnapshot),
   ) {
     this.owner = owner;
     this.backend = createBackend(
@@ -117,7 +120,7 @@ export class WindowOsAdapter {
    * transition twice. There is exactly one backend because there is exactly
    * one set of native windows.
    */
-  getBackend(): WindowBackend & BackendMigrationShims {
+  getBackend(): WindowBackend & BackendMigrationShims & LegacySpacesShim {
     return this.backend;
   }
 

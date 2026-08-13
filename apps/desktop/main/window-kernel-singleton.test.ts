@@ -17,7 +17,7 @@ import { getKernelExecutor, _resetKernelExecutorForTests } from './window-kernel
 import { WindowKernelExecutor } from './window-kernel-executor.js';
 import type { WindowId } from './window-kernel.js';
 import type { Rect, WindowBackend } from './window-backend.js';
-import type { WindowId as BackendWindowId } from './window-kernel.js';
+import type { DesktopMembership, WindowId as BackendWindowId } from './window-kernel.js';
 import type { StackingLevel } from './izui-roles.js';
 
 const wid = (n: number): WindowId => `wks-${n}` as WindowId;
@@ -95,12 +95,8 @@ class FakeBackend implements WindowBackend {
   setWindowBounds(id: BackendWindowId, rect: Rect): void {
     this.record('setWindowBounds', id, rect);
   }
-  setVisibleOnAllSpaces(
-    id: BackendWindowId,
-    on: boolean,
-    opts?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean },
-  ): void {
-    this.record('setVisibleOnAllSpaces', id, on, opts);
+  setDesktopMembership(id: BackendWindowId, membership: DesktopMembership): void {
+    this.record('setDesktopMembership', id, membership);
   }
 }
 

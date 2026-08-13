@@ -195,6 +195,31 @@ export function spacesPolicyForRole(
   return TRANSIENT_ROLES.has(role) ? 'follow' : 'anchor';
 }
 
+/**
+ * Which desktops a role WANTS a window to belong to (`window-kernel.ts
+ * DesktopMembership`) — the platform-neutral half of `spacesPolicyForRole`
+ * above, with the platform question dropped entirely rather than answered.
+ *
+ * `spacesPolicyForRole`'s `'none'` arm is "this platform has no such
+ * concept" — that is an answer about the BACKEND, not about what the window
+ * wants, and under the governing platform-neutral rule
+ * (`docs/design/window-manager.md` §0) it is not a value the machine may
+ * carry: a palette wants to follow the user across desktops whether or not
+ * the current platform can express that. So this function never asks
+ * `platform` and never returns a third value — every role resolves to
+ * exactly one of `'follow'`/`'anchor'`, and it is up to the backend
+ * (`electron-window-backend.ts setDesktopMembership`) whether realizing that
+ * intention takes any native calls at all.
+ *
+ * `spacesPolicyForRole` itself is UNCHANGED and stays the derivation
+ * `window-state.ts`'s frozen `SPACES_POLICY_REQUESTED` dispatch sites use —
+ * this is an additional, separate function for the rewritten kernel's feed
+ * sites, not a replacement.
+ */
+export function desktopMembershipForRole(role: string): 'follow' | 'anchor' {
+  return TRANSIENT_ROLES.has(role) ? 'follow' : 'anchor';
+}
+
 // The close-target resolver (`resolveCloseTargetId`) and the focused-visible
 // resolver (`resolveFocusedVisibleWindowId`, with its 7-input cascade) are
 // DELETED — both collapse into the window-state machine's single `front`

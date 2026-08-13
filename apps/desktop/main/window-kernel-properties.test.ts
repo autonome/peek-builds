@@ -334,9 +334,9 @@ function randomLogItem(rng: Rng, state: State): LogItem {
     case 19: {
       const stale = rng() < 0.2;
       return {
-        type: 'SetVisibleOnAllSpaces',
+        type: 'SetDesktopMembership',
         id,
-        on: randomBool(rng),
+        membership: randomBool(rng) ? 'follow' : 'anchor',
         expectedVersion: stale ? state.version + 1 : state.version,
       };
     }
@@ -366,7 +366,7 @@ function randomLogItem(rng: Rng, state: State): LogItem {
     case 25:
       return { type: 'PendingProjectionDiscarded', id };
     case 26:
-      return { type: 'VisibleOnAllSpacesSet', id, on: randomBool(rng) };
+      return { type: 'DesktopMembershipSet', id, membership: randomBool(rng) ? 'follow' : 'anchor' };
     // Overlay attachment (this slice) — goes through `decide`, same
     // stale-expectedVersion treatment as the other command variants above.
     // hostId is drawn from the raw id pool (possibly unregistered, possibly
@@ -1422,7 +1422,7 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     { type: 'WindowContentOrderable', id },
     { type: 'BoundsChanged', id, bounds: { x: 1, y: 2, width: 3, height: 4 } },
     { type: 'Maximized', id, preMaxBounds: { x: 5, y: 6, width: 7, height: 8 } },
-    { type: 'VisibleOnAllSpacesSet', id, on: true },
+    { type: 'DesktopMembershipSet', id, membership: 'anchor' },
     { type: 'OverlayAttached', overlayId: id, hostId: host },
     { type: 'ContentFirstResponderChanged', id, held: false },
     { type: 'FullscreenTransitionStarted', id, entering: true, preBounds: { x: 9, y: 9, width: 9, height: 9 } },
@@ -1448,7 +1448,7 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     assert.notStrictEqual(record.bounds, undefined);
     assert.strictEqual(record.maximized, true);
     assert.notStrictEqual(record.preMaxBounds, null);
-    assert.strictEqual(record.visibleOnAllSpaces, true);
+    assert.strictEqual(record.desktopMembership, 'anchor');
     assert.strictEqual(record.overlayFor, host);
     assert.notStrictEqual(record.lastOpSeq, undefined);
     assert.strictEqual(record.contentFocused, false);
