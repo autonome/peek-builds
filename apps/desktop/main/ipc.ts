@@ -2414,17 +2414,18 @@ export function installHybridNavbarActionRouting(): void {
         y: cur.y + Math.floor(cur.height / 2),
       });
       const wa = display.workArea;
+      const workAreaRect = { x: wa.x, y: wa.y, width: wa.width, height: wa.height };
       dispatchWindowEvent({
         type: 'MAXIMIZE_REQUESTED',
         id: machineId,
-        workArea: { x: wa.x, y: wa.y, width: wa.width, height: wa.height },
+        workArea: workAreaRect,
       });
       // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
       // authoritative over nothing; see that module's doc for why this can
       // never change what actually happens on screen. The kernel's `Maximize`
-      // command carries no work area (`decide` stashes `preMaxBounds` from its
-      // own bounds mirror), so nothing from `wa` rides this call.
-      shadowKernelMaximize(machineId, getWindowStateSnapshot());
+      // command carries the work area as data (`459ed219` shape — see
+      // `shadowKernelMaximize`'s doc), same rect as the old event above.
+      shadowKernelMaximize(machineId, getWindowStateSnapshot(), workAreaRect);
     } catch { /* window gone */ }
   });
 

@@ -353,6 +353,12 @@ describe('window-kernel: re-registration merges in place', () => {
     );
   });
 
+  // The two cases below cover the re-registration MERGE's handling of a
+  // registration-time keepLive — kept independent of any runtime writer for
+  // the field (no such writer exists; `keepLive` is decided once, at
+  // registration, and never revisited — see the removed `SetKeepLive`/
+  // `KeepLiveSet` pair, git history). The merge hazard is real regardless:
+  // `keepLive` was silently dropped there once already.
   it('a re-registration that omits keepLive KEEPS a previously-set keepLive: true', () => {
     // The failure this guards: `ipc.ts` registers every real window twice,
     // and a second pass that never learned about keepLive must not silently
@@ -375,65 +381,6 @@ describe('window-kernel: re-registration merges in place', () => {
       { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', keepLive: false },
     ]);
     assert.strictEqual(state.order.find((w) => w.id === wid(1))?.keepLive, false, 'a named keepLive overwrites');
-  });
-
-  it('a KeepLiveSet after registration overwrites a registration-time keepLive', () => {
-    // The failure this guards: the runtime keepLive update path
-    // (`main.ts registerWindow()`'s `SetKeepLive` shadow feed) is a no-op, so a
-    // window registered with keepLive:true that later reports keepLive:false
-    // (or the reverse) never learns the change.
-    const state = fold([
-      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', keepLive: true },
-      { type: 'KeepLiveSet', id: wid(1), keepLive: false },
-    ]);
-    assert.strictEqual(state.order.find((w) => w.id === wid(1))?.keepLive, false);
-  });
-
-  it('a KeepLiveSet sets keepLive on a window registered without one', () => {
-    const state = fold([
-      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
-      { type: 'KeepLiveSet', id: wid(1), keepLive: true },
-    ]);
-    assert.strictEqual(state.order.find((w) => w.id === wid(1))?.keepLive, true);
-  });
-
-  it('a re-registration that omits keepLive PRESERVES a value written by KeepLiveSet, not just one written at registration', () => {
-    // The merge interacting with the new writer: `WindowRegistered`'s merge
-    // arm reads `existing.keepLive`, which must reflect KeepLiveSet's write,
-    // not only the value the FIRST registration declared.
-    const state = fold([
-      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
-      { type: 'KeepLiveSet', id: wid(1), keepLive: true },
-      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
-    ]);
-    assert.strictEqual(
-      state.order.find((w) => w.id === wid(1))?.keepLive,
-      true,
-      'a re-registration naming no keepLive must not strip a value KeepLiveSet wrote',
-    );
-  });
-
-  it('a KeepLiveSet{keepLive: false} writes false, and a later re-registration omitting the field keeps false rather than decaying to absent', () => {
-    const state = fold([
-      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', keepLive: true },
-      { type: 'KeepLiveSet', id: wid(1), keepLive: false },
-      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
-    ]);
-    assert.strictEqual(
-      state.order.find((w) => w.id === wid(1))?.keepLive,
-      false,
-      'an explicit false must not decay to absent on re-registration',
-    );
-  });
-
-  it('a KeepLiveSet naming an unregistered id changes nothing and does not throw', () => {
-    const state = fold([
-      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
-    ]);
-    assert.doesNotThrow(() => evolve(state, { type: 'KeepLiveSet', id: wid(99), keepLive: true }));
-    const next = evolve(state, { type: 'KeepLiveSet', id: wid(99), keepLive: true });
-    assert.deepStrictEqual(next.order, state.order, 'a dangling id must map over order and change nothing');
-    assert.strictEqual(next.version, state.version + 1, '`evolve` still advances version — a fact was still applied, it just matched nothing');
   });
 
   it('a re-registration that omits parentId KEEPS a previously-set parentId', () => {
@@ -1649,7 +1596,44 @@ describe('window-kernel: geometry', () => {
     assert.deepStrictEqual(restoredRec.bounds, rect, 'bounds restored from the stash');
   });
 
-  it('Maximize with no bounds ever reported stashes null; Unmaximize then restores nothing', () => {
+  it('Maximize with a workArea snaps bounds to it and stashes the TRUE pre-maximize bounds (not the just-written work area); Unmaximize restores them', () => {
+    // Pins the `459ed219`-shaped fix: `decide` used to flip `maximized`
+    // without ever writing `bounds`, because the command carried no rect —
+    // the window never actually moved. `preMaxBounds` is resolved from
+    // `rec.bounds` INSIDE `decide`, before any of the three returned events
+    // ever reach `evolve`/`fold`, so the stash is provably the pre-maximize
+    // value and not whatever `BoundsChanged` writes moments later — verified
+    // below by asserting the exact event order AND the two final values.
+    const state = fold(registerTwo(), initialState());
+    const original: Rectangle = { x: 0, y: 0, width: 800, height: 600 };
+    const withBounds = evolve(state, { type: 'BoundsChanged', id: wid(1), bounds: original });
+
+    const workArea: Rectangle = { x: 0, y: 0, width: 1920, height: 1080 };
+    const maxDecision = decide(withBounds, { type: 'Maximize', id: wid(1), workArea, expectedVersion: withBounds.version });
+    assert.ok('events' in maxDecision);
+    assert.deepStrictEqual(maxDecision.events, [
+      { type: 'PendingProjectionDiscarded', id: wid(1) },
+      { type: 'Maximized', id: wid(1), preMaxBounds: original },
+      { type: 'BoundsChanged', id: wid(1), bounds: workArea },
+    ]);
+    const maximized = fold(maxDecision.events, withBounds);
+    const maxRec = maximized.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(maxRec.maximized, true);
+    assert.deepStrictEqual(maxRec.preMaxBounds, original, 'stashed the PRE-maximize bounds, never the work area just written');
+    assert.deepStrictEqual(maxRec.bounds, workArea, 'the window actually snaps to the given work area — the regression this pins');
+
+    const unmaxDecision = decide(maximized, { type: 'Unmaximize', id: wid(1), expectedVersion: maximized.version });
+    assert.ok('events' in unmaxDecision);
+    const restored = fold(unmaxDecision.events, maximized);
+    const restoredRec = restored.order.find((w) => w.id === wid(1))!;
+    assert.strictEqual(restoredRec.maximized, false);
+    assert.strictEqual(restoredRec.preMaxBounds, null);
+    assert.deepStrictEqual(restoredRec.bounds, original, 'restored to the pre-maximize rect, not left at the work area');
+  });
+
+  it('Maximize with no workArea supplied stashes null and writes no bounds; Unmaximize then restores nothing', () => {
+    // The caller-optional half of the command (see its own doc for why): a
+    // dispatch site with no rect to hand still gets a valid flag flip.
     const state = fold(registerTwo(), initialState());
     const maxDecision = decide(state, { type: 'Maximize', id: wid(1), expectedVersion: state.version });
     assert.ok('events' in maxDecision);
@@ -1659,8 +1643,8 @@ describe('window-kernel: geometry', () => {
     ]);
     const maximized = fold(maxDecision.events, state);
     const maxRec = maximized.order.find((w) => w.id === wid(1))!;
-    assert.strictEqual(maxRec.preMaxBounds, null, 'no stash was possible');
-    assert.strictEqual(maxRec.bounds, undefined, 'Maximize alone never writes bounds — a separate SetBounds does the snap');
+    assert.strictEqual(maxRec.preMaxBounds, null, 'no stash was possible — no bounds had ever been reported either');
+    assert.strictEqual(maxRec.bounds, undefined, 'no workArea on the command means no paired BoundsChanged');
 
     const unmaxDecision = decide(maximized, { type: 'Unmaximize', id: wid(1), expectedVersion: maximized.version });
     assert.ok('events' in unmaxDecision);

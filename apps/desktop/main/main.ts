@@ -57,7 +57,6 @@ import {
   shadowKernelCloseWindowDirect,
   shadowKernelAssertFocus,
   shadowKernelCloseOrHideRequested,
-  shadowKernelSetKeepLive,
 } from './window-kernel-shadow.js';
 
 // Track app-quit state so the close-debounced save doesn't double-fire
@@ -1416,12 +1415,17 @@ export function registerWindow(windowId: number, source: string, params: Record<
   // reducer's WINDOW_CLOSE_OR_HIDE_REQUESTED clause branches on
   // `WindowRecord.keepLive`, never on params. Absent stays undefined so the
   // merge keeps any registration-time value.
+  //
+  // No kernel shadow feed for this: `keepLive` is decided once, at
+  // registration (`ipc.ts`'s two `registerWindowWithMachine` sites, and the
+  // tile-launcher path through this file's `_registerWindow` hook) and never
+  // revisited — the window-reuse paths never touch it, and the
+  // features-manager keepLive checkbox writes datastore state read back only
+  // at the NEXT open. This call site's own `keepLive` is supplied only by
+  // the `E2E_TEST`-gated hybrid-overlay test bridge, so there is no
+  // production gap for a kernel command to close.
   const keepLive = typeof params.keepLive === 'boolean' ? params.keepLive : undefined;
   dispatchWindowEvent({ type: 'WINDOW_PARAMS_SET', id, source, params, keepLive });
-  // Gated on presence, not a workaround: an absent keepLive means this producer
-  // did not report one, never "clear it" — the same asymmetry the registration
-  // merge already encodes (window-kernel.ts's WindowRegistered evolve arm).
-  if (keepLive !== undefined) shadowKernelSetKeepLive(id, keepLive, getWindowStateSnapshot());
 }
 
 /**

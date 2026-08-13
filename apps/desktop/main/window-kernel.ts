@@ -791,7 +791,10 @@ export type Event =
    * `decide`'s translation of an accepted `Maximize` command into a fact
    * `evolve` can apply mechanically — `preMaxBounds` is resolved by `decide`
    * from the record's CURRENT `bounds` mirror (never a live query), same
-   * pattern as `FullscreenTransitionStarted.preBounds`.
+   * pattern as `FullscreenTransitionStarted.preBounds`. Carries no bounds of
+   * its own: when the accepted command carried a `workArea`, `decide` pairs
+   * this with a `BoundsChanged` event carrying it — that is what actually
+   * snaps the window. Absent, nothing moves.
    */
   | { type: 'Maximized'; id: WindowId; preMaxBounds: Rectangle | null }
   /** `decide`'s translation of an accepted `Unmaximize` command — clears `maximized` + `preMaxBounds`. */
@@ -808,12 +811,6 @@ export type Event =
   | { type: 'PendingProjectionDiscarded'; id: WindowId }
   /** `decide`'s translation of an accepted `SetDesktopMembership` command. */
   | { type: 'DesktopMembershipSet'; id: WindowId; membership: DesktopMembership }
-  /**
-   * `decide`'s translation of an accepted `SetKeepLive` command — see that
-   * command's own doc for why a targeted writer exists alongside
-   * `WindowRegistered`'s `keepLive` field.
-   */
-  | { type: 'KeepLiveSet'; id: WindowId; keepLive: boolean }
   /**
    * `decide`'s translation of an accepted `AttachOverlay` command — attach,
    * retarget, and detach are all this ONE event (`hostId: null` = detach).
@@ -947,12 +944,19 @@ export type Command =
   /**
    * App code wants this window maximized (ported from `window-state.ts
    * MAXIMIZE_REQUESTED`) — a work-area snap, not a platform `maximize()`
-   * call. Unlike the old event, this command carries no work-area rect: the
-   * dispatch site issues a separate `SetBounds` for the actual snap, so this
-   * kernel never needs `screen`. No-op while `fsMode` is non-normal (the
-   * aa34cb50 family) or while already maximized (nothing new to snap to).
+   * call. `workArea` is the target rect: a `screen` work-area read is
+   * platform data this zero-value-import file cannot obtain itself, so it
+   * rides the command as data, computed at the dispatch site the same way
+   * `AttachOverlay.frame` is (see `WindowRecord.overlayFrame`'s doc for why
+   * — the `459ed219` shape). Optional for the same reason `AttachOverlay
+   * .frame` is: `decide` just skips the paired `BoundsChanged` when it is
+   * absent (a flag flip with nothing to snap to, rather than a rejection) —
+   * every production dispatch site (`ipc.ts page:maximize`, `tile-ipc.ts
+   * tile:window:maximize`) always supplies it. No-op while `fsMode` is
+   * non-normal (the aa34cb50 family) or while already maximized (nothing
+   * new to snap to).
    */
-  | { type: 'Maximize'; id: WindowId; expectedVersion: number }
+  | { type: 'Maximize'; id: WindowId; workArea?: Rectangle; expectedVersion: number }
   /**
    * App code wants this window restored from maximized (ported from
    * `window-state.ts UNMAXIMIZE_REQUESTED`): clears `maximized`, restores
@@ -972,17 +976,6 @@ export type Command =
    * backend's business (`window-backend.ts setDesktopMembership`).
    */
   | { type: 'SetDesktopMembership'; id: WindowId; membership: DesktopMembership; expectedVersion: number }
-  /**
-   * App code learned `keepLive` after registration — writes just that field.
-   * Registration is not the only moment a window's keepLive is decided: the
-   * runtime update path (`main.ts registerWindow()`'s `WINDOW_PARAMS_SET`
-   * dispatch to the old machine) can report it later, and re-registering
-   * through `RegisterWindow` to carry one field is not available there — that
-   * call site holds only `windowId`, `source`, `params`, and a resolved
-   * `keepLive`, none of the intrinsic registration facts (`kind`, `layer`,
-   * `canBecomeKey`, `acceptsInput`, `class`) `RegisterWindow` requires.
-   */
-  | { type: 'SetKeepLive'; id: WindowId; keepLive: boolean; expectedVersion: number }
   /**
    * Attach, retarget, or detach the shared chrome overlay — `hostId: null`
    * is detach. One transition, no separate detach command (see the doc on
@@ -2147,14 +2140,6 @@ export function evolve(state: State, ev: Event): State {
       };
     }
 
-    case 'KeepLiveSet': {
-      return {
-        ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, keepLive: ev.keepLive } : w)),
-        version: state.version + 1,
-      };
-    }
-
     case 'OverlayAttached': {
       // Mechanical write — attach, retarget, and detach are this ONE case.
       // `hostId: null` clears the relation (`overlayFor: undefined`); a
@@ -2968,16 +2953,23 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
       const rec = state.order.find((w) => w.id === cmd.id)!;
       // Same aa34cb50 guard as SetBounds.
       if (rec.fsMode.name !== 'normal') return { events: [] };
-      // Already maximized: this command carries no work-area rect (the
-      // dispatch site owns that OS-boundary math), so there is nothing new
-      // to snap to — a no-op rather than a re-snap.
+      // Already maximized: nothing new to snap to (the caller's `workArea`
+      // is discarded) — a no-op rather than a re-snap.
       if (rec.maximized) return { events: [] };
       return {
         events: [
           { type: 'PendingProjectionDiscarded', id: cmd.id },
           // Stash the pre-maximize rect from the machine's own bounds
-          // mirror — never a live query. `null` = no stash was possible.
+          // mirror — never a live query, and read from `rec` (the
+          // pre-transition record) rather than anything the paired
+          // BoundsChanged below writes, so the stash can never see the
+          // post-maximize rect. `null` = no stash was possible.
           { type: 'Maximized', id: cmd.id, preMaxBounds: rec.bounds ?? null },
+          // Drive the actual snap, reusing BoundsChanged (see that event's
+          // doc) — the same event SetBounds/Unmaximize write bounds
+          // through. Skipped when the caller had no rect to hand (see the
+          // command's own doc for why that is a valid, if inert, request).
+          ...(cmd.workArea !== undefined ? ([{ type: 'BoundsChanged', id: cmd.id, bounds: cmd.workArea }] as Event[]) : []),
         ],
       };
     }
@@ -2996,8 +2988,6 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
     }
     case 'SetDesktopMembership':
       return { events: [{ type: 'DesktopMembershipSet', id: cmd.id, membership: cmd.membership }] };
-    case 'SetKeepLive':
-      return { events: [{ type: 'KeepLiveSet', id: cmd.id, keepLive: cmd.keepLive }] };
     case 'AssertFocus': {
       // Reached only after the unknown-window guard above — this command is
       // NOT exempt from it (see the command's own doc for why the teardown

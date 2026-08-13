@@ -961,20 +961,29 @@ export function shadowKernelSetBounds(id: WindowId, bounds: Rectangle, oldSnapsh
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Translate a maximize request into the kernel's `Maximize` command. Unlike
- * the old event, this command carries no work-area rect — `decide`
- * (`window-kernel.ts`'s `Maximize` case) stashes `preMaxBounds` from the
- * record's OWN `bounds` mirror, never a live query, so the caller supplies
- * nothing beyond the id. `decide`'s own branching: `fsMode` non-`normal` ->
- * `[]` (the aa34cb50 family, same guard as `SetBounds`); already `maximized`
- * -> `[]` (no new rect to snap to — a no-op rather than a re-snap, the port
- * of the old reducer's idempotent-remaximize trap); else
- * `PendingProjectionDiscarded` + `Maximized{preMaxBounds: rec.bounds ?? null}`.
- * None of that branching is reproduced here. Same shape and containment as
- * `shadowKernelSetBounds`.
+ * Translate a maximize request into the kernel's `Maximize` command.
+ * `workArea` is the display work-area rect the caller already resolved
+ * (`screen.getDisplayNearestPoint`/`getDisplayMatching`) — platform data
+ * `window-kernel.ts` cannot read under its zero-value-import rule, so it
+ * rides the command as data, the same shape `459ed219` used for
+ * `AttachOverlay.frame`: optional here too, for the same reason (see the
+ * command's own doc) — omitted, `decide` still flips the flag, it just
+ * skips the paired `BoundsChanged`. `decide`'s own branching: `fsMode`
+ * non-`normal` -> `[]` (the aa34cb50 family, same guard as `SetBounds`);
+ * already `maximized` -> `[]` (no new rect to snap to — a no-op rather than
+ * a re-snap, the port of the old reducer's idempotent-remaximize trap);
+ * else `PendingProjectionDiscarded` + `Maximized{preMaxBounds: rec.bounds ??
+ * null}` + (when `workArea` was given) `BoundsChanged{bounds: workArea}` —
+ * the actual snap. None of that branching is reproduced here. Same shape
+ * and containment as `shadowKernelSetBounds`.
  */
-export function shadowKernelMaximize(id: WindowId, oldSnapshot: StateSnapshot): void {
-  shadowExecute({ type: 'Maximize', id, expectedVersion: getShadowKernelExecutor().getState().version });
+export function shadowKernelMaximize(id: WindowId, oldSnapshot: StateSnapshot, workArea?: Rectangle): void {
+  shadowExecute({
+    type: 'Maximize',
+    id,
+    ...(workArea !== undefined ? { workArea } : {}),
+    expectedVersion: getShadowKernelExecutor().getState().version,
+  });
   compareAfterFeed(oldSnapshot);
 }
 
@@ -1068,23 +1077,6 @@ export function shadowKernelHideRequested(id: WindowId, oldSnapshot: StateSnapsh
  */
 export function shadowKernelCloseOrHideRequested(id: WindowId, oldSnapshot: StateSnapshot): void {
   shadowExecute({ type: 'CloseOrHideWindow', id, expectedVersion: getShadowKernelExecutor().getState().version });
-  compareAfterFeed(oldSnapshot);
-}
-
-/**
- * Translate a runtime keepLive report into the kernel's `SetKeepLive`
- * command — `decide`'s arm (`window-kernel.ts`'s `SetKeepLive` case) is
- * unconditional, always emitting `KeepLiveSet{keepLive: cmd.keepLive}`; no
- * branching to reproduce. Same shape and containment as
- * `shadowKernelSetDesktopMembership`.
- */
-export function shadowKernelSetKeepLive(id: WindowId, keepLive: boolean, oldSnapshot: StateSnapshot): void {
-  shadowExecute({
-    type: 'SetKeepLive',
-    id,
-    keepLive,
-    expectedVersion: getShadowKernelExecutor().getState().version,
-  });
   compareAfterFeed(oldSnapshot);
 }
 

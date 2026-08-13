@@ -325,7 +325,13 @@ function randomLogItem(rng: Rng, state: State): LogItem {
     }
     case 17: {
       const stale = rng() < 0.2;
-      return { type: 'Maximize', id, expectedVersion: stale ? state.version + 1 : state.version };
+      const hasWorkArea = rng() < 0.7;
+      return {
+        type: 'Maximize',
+        id,
+        ...(hasWorkArea ? { workArea: randomRectangle(rng) } : {}),
+        expectedVersion: stale ? state.version + 1 : state.version,
+      };
     }
     case 18: {
       const stale = rng() < 0.2;
@@ -810,10 +816,16 @@ function checkInvariants(state: State, prev?: State): string[] {
       if (nextRecord !== undefined && prevRecord.escapeMode !== undefined && nextRecord.escapeMode === undefined) {
         violations.push(`escapeMode was silently stripped from ${prevRecord.id}`);
       }
-      // Same rule for keepLive, for the same reason: once a producer has
-      // reported it (at registration or via KeepLiveSet), "nothing reported"
-      // is no longer true — and it is a DIFFERENT answer from `false` for the
-      // CloseOrHideWindow branch point (§0.1) that reads it.
+      // Same rule for keepLive, for the same reason: once registration has
+      // reported it, "nothing reported" is no longer true — and it is a
+      // DIFFERENT answer from `false` for the CloseOrHideWindow branch point
+      // (§0.1) that reads it. `keepLive` is decided exactly once, at
+      // registration, and never revisited by any other writer (no runtime
+      // command exists for it — see the removed `SetKeepLive`/`KeepLiveSet`
+      // pair, git history), but this invariant stays: it protects the
+      // registration-time field against the re-registration MERGE, which is a
+      // real hazard independent of any runtime writer — `keepLive` was
+      // silently dropped there once already.
       if (nextRecord !== undefined && prevRecord.keepLive !== undefined && nextRecord.keepLive === undefined) {
         violations.push(`keepLive decayed back to absent for ${prevRecord.id}`);
       }
@@ -1433,11 +1445,6 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
   const livedLog = (): LogItem[] => [
     { type: 'WindowRegistered', id: host, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
     register('ignore', true, host),
-    // Overwrites the registration-time keepLive:true with a value that came
-    // from the NEW writer instead — proves the merge preserves a lived fact
-    // regardless of which event last wrote it, not only one set at
-    // registration.
-    { type: 'KeepLiveSet', id, keepLive: false },
     { type: 'WindowShown', id },
     { type: 'OsFocusGained', id },
     { type: 'WindowContentOrderable', id },
@@ -1458,10 +1465,10 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     // Everything except `version` is identical — the merge overwrote the
     // intrinsics with the same values and touched nothing else.
     assert.deepStrictEqual(nextRecord, prevRecord);
-    // Explicitly: the preserved value is the one KeepLiveSet wrote (false),
-    // not the one registration originally declared (true) — the merge reads
-    // whatever is currently lived, not the record's registration history.
-    assert.strictEqual(nextRecord.keepLive, false);
+    // Explicitly: the registration-time keepLive survives a re-registration
+    // that names none — `WindowRegistered`'s merge arm must read
+    // `existing.keepLive`, not overwrite it with the new event's absent field.
+    assert.strictEqual(nextRecord.keepLive, true);
     // Explicitly: the frame `OverlayAttached` wrote survives too — the gap
     // this describe was extended to close.
     assert.deepStrictEqual(nextRecord.overlayFrame, { x: 10, y: 20, width: 30, height: 40 });
@@ -1482,8 +1489,7 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     assert.notStrictEqual(record.lastOpSeq, undefined);
     assert.strictEqual(record.contentFocused, false);
     assert.strictEqual(record.escapeMode, 'ignore');
-    // The KeepLiveSet in the log overwrites the registration-time `true`.
-    assert.strictEqual(record.keepLive, false);
+    assert.strictEqual(record.keepLive, true);
     assert.strictEqual(record.parentId, host);
   });
 

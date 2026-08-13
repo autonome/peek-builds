@@ -3425,6 +3425,7 @@ export function registerTileIpcHandlers(): void {
       // area rides the event (the reducer imports no value modules).
       const currentBounds = win.getBounds();
       const workArea = screen.getDisplayMatching(currentBounds).workArea;
+      const workAreaRect = { x: workArea.x, y: workArea.y, width: workArea.width, height: workArea.height };
       // Pre-dispatch record — the renderer notification below reports the
       // pre-maximize rect, and after the dispatch the record already
       // reflects the maximize.
@@ -3432,14 +3433,14 @@ export function registerTileIpcHandlers(): void {
       dispatchWindowEvent({
         type: 'MAXIMIZE_REQUESTED',
         id: machineId,
-        workArea: { x: workArea.x, y: workArea.y, width: workArea.width, height: workArea.height },
+        workArea: workAreaRect,
       });
       // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
       // authoritative over nothing; see that module's doc for why this can
       // never change what actually happens on screen. The kernel's `Maximize`
-      // command carries no work area (`decide` stashes `preMaxBounds` from its
-      // own bounds mirror), so nothing from `workArea` rides this call.
-      shadowKernelMaximize(machineId, getWindowStateSnapshot());
+      // command carries the work area as data (`459ed219` shape — see
+      // `shadowKernelMaximize`'s doc), same rect as the old event above.
+      shadowKernelMaximize(machineId, getWindowStateSnapshot(), workAreaRect);
       // Targeted notification to the window's renderer — a renderer that
       // owns internal layout state subscribes via
       // api.window.onMaximizeRequest to keep its layout in sync without
