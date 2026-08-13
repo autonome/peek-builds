@@ -166,33 +166,48 @@ tag list (`GET /tags` → `db.js getTagsByFrecency()`). There is no tag filter, 
 per-tag add/remove, no prefix resolution, no item-count-per-tag, no events surface, and no
 concept of scope.
 
-### 3.1 Prerequisite: three missing columns
+### 3.1 Prerequisite: columns the server does not have
 
 `apps/server/db.js initializeSchema()` creates `items` with
 `id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt, createdByDevice`.
 The MCP `ItemView` needs `title`, `domain`, and `frecencyScore` — `search_items` ranks on
 `SEARCH_WEIGHTS.title` (10) and `.domain` (4) and tiebreaks on `frecencyScore`, `list_items`
-accepts `sort: 'frecency'`, and `update_item` writes `title`.
+accepts `sort: 'frecency'`, and `update_item` writes `title`. Without them a remote-backed
+session sees every item untitled and search degrades to content-substring matching.
 
-Worse, those fields are not merely absent from the server schema — they are **not synced at
-all**. `sync.ts pushSingleItem()` builds a body of `{type, content, tags, sync_id, metadata,
-deleted_at}`, and `mergeServerItem()` inserts `(id, type, content, mimeType, metadata, syncId,
-createdAt, updatedAt, deletedAt, syncedAt)`. `packages/schema/v1.json`
-`validation.required_sync_columns.items` likewise omits them. So a remote-backed session today
-would see every item untitled and search would degrade to content-substring matching.
+**This is two separate problems, and only the first one belongs to this design.**
 
-**Decision (prerequisite work, not optional):**
+**Storage — phase 1 work.** The columns must exist on the server so `/mcp/*` routes can read and
+write them. That is a schema addition and nothing more: an item created or retitled through
+`POST /mcp/items` or `PATCH /mcp/items/:id` sets the column directly, with no involvement from
+the sync engine.
 
-1. Add `title TEXT DEFAULT ''`, `domain TEXT DEFAULT ''`, `frecencyScore REAL DEFAULT 0`,
-   `starred INTEGER DEFAULT 0`, `archived INTEGER DEFAULT 0`, `visitCount INTEGER DEFAULT 0` to
-   the `items` table in `apps/server/db.js initializeSchema()`, using the existing additive
-   `ALTER TABLE … ADD COLUMN` guard pattern already used there for `syncId`/`createdByDevice`.
-2. Carry them in `saveItem()`, `getItems()`, `getItemsSince()`, and `getItemById()`.
-3. Extend `sync.ts pushSingleItem()` to send them and `mergeServerItem()` to store them, and add
-   them to `required_sync_columns.items` in `packages/schema/v1.json`.
+- Add `title TEXT DEFAULT ''`, `domain TEXT DEFAULT ''`, `frecencyScore REAL DEFAULT 0`,
+  `starred INTEGER DEFAULT 0`, `archived INTEGER DEFAULT 0` to the `items` table in
+  `apps/server/db.js initializeSchema()`, using the additive `ALTER TABLE … ADD COLUMN` guard
+  pattern already there for `syncId`/`createdByDevice`. (`starred` and `archived` are already
+  `"sync": true` in `packages/schema/v1.json` and missing from the server anyway.)
+- Carry them in `saveItem()`, `getItems()`, `getItemsSince()`, and `getItemById()`.
+- Mirror the addition into `apps/server/schema.json`, which is a **second, already-divergent copy**
+  of `packages/schema/v1.json` — changing one and not the other is how the two drifted apart in
+  the first place.
+
+**Sync — deliberately out of scope.** Whether `sync.ts` carries these fields between devices is a
+standing schema decision, not an oversight: `packages/schema/v1.json` marks `title` and `domain`
+`"sync": false` with the rationale "cached locally", and `frecencyScore` `"sync": false` as a
+"local calculation". `pushSingleItem()` and `mergeServerItem()` implement that decision faithfully,
+and `validation.required_sync_columns.items` agrees with it.
+
+Reversing it is a `datastore.ts`-owned policy call with its own consequences — `frecencyScore` is
+computed per device, so syncing it means deciding whether the value stays per-device or becomes
+shared — and it belongs to a broader question about what a server restore returns. That question,
+and the rest of the local-only inventory, is recorded in `docs/sync-coverage-gaps.md`. It is
+tracked as open question 3 in §10 and does not block phase 1: an item written through the MCP API
+carries its title regardless of what the sync engine does with the local copy.
 
 Deliberately still absent from the server: `favicon` (already stripped at the MCP layer by
-`shapeItemForResponse()`), `lastVisitAt`, `mimeType` beyond what sync already carries.
+`shapeItemForResponse()`), `visitCount` and `lastVisitAt` (local-only with no MCP consumer),
+`mimeType` beyond what sync already carries.
 
 ### 3.2 Shapes
 
@@ -249,7 +264,7 @@ fails fast with 409 rather than silently misreading shapes.
 | `update_item` | ✗ — `POST /items` is upsert-by-syncId, not a field patch | `PATCH /mcp/items/:id` | Body `{title?, content?, metadata?}`, absent keys untouched, `updatedAt` stamped. Returns the updated `ItemView`. |
 | `delete_item` | ✓ — `DELETE /items/:id` | `DELETE /mcp/items/:id` | New route rather than reusing the old one, because it must apply the scope check and return `{success, id}` with the resolved id echoed. |
 | `list_tags` | partial — `GET /tags` has no item counts, no search filter, no limit | `GET /mcp/tags?search=&limit=` | Port of `db.js listTags()` including the `LEFT JOIN … deletedAt = 0` count. Returns `{tags: TagView[]}`. |
-| `tag_item` | ✗ — `PATCH /items/:id/tags` replaces the whole set | `POST /mcp/items/:id/tags` | Body `{name}`. Adds one tag, creating it if needed. Must reproduce `db.js tagItemInTx()`: slug via `slugifyTagName()`, `ON CONFLICT(name)` upsert, and the frecency recompute — `apps/server/db.js getOrCreateTagWithConn()` is close but has no slug column and a `float` frecency, so the two policies must be reconciled (§11). |
+| `tag_item` | ✗ — `PATCH /items/:id/tags` replaces the whole set | `POST /mcp/items/:id/tags` | Body `{name}`. Adds one tag, creating it if needed. Must reproduce `db.js tagItemInTx()`: slug via `slugifyTagName()`, `ON CONFLICT(name)` upsert, and the frecency recompute — `apps/server/db.js getOrCreateTagWithConn()` is close but has no slug column and a `float` frecency, so the two policies must be reconciled (§10). |
 | `untag_item` | ✗ — same reason | `DELETE /mcp/items/:id/tags/:name` | Removes one tag. Returns `{success, itemId, tagName}` or `{success:false, error:'Tag not found'}`. |
 | `record_event` | ✗ — server has an `item_events` table (created in `initializeSchema()`) but no route, and `sync.ts` never syncs events | `POST /mcp/items/:id/events` | Body `{type, value}` → row in `item_events` with `content = type`, `value = 0`, `metadata = {notes}` — the exact shape `db.js recordEvent()` writes. |
 | `list_tasks` | ✗ | *(none)* | Composes to `GET /mcp/items?tags=todo,<project>&sort=recent`, mirroring `db.js listTasks()` delegating to `queryItems()`. No endpoint. |
@@ -578,9 +593,12 @@ Remote mode is a new flag, `--remote <url>`, plus these changes:
   with a clear error. `apps/server` has an image path (`saveImage()`, the `storage/` adapter)
   but the MCP layer has never created images, and wiring multipart upload through the store
   interface is unrelated work.
-- **Field parity beyond §3.1.** `favicon`, `lastVisitAt`, and the visit-tracking fields stay
-  local-only. `starred`/`archived`/`visitCount` are carried as columns for shape parity but
-  nothing writes them remotely.
+- **Field parity beyond §3.1.** `favicon`, `visitCount`, and `lastVisitAt` stay local-only.
+  `starred` and `archived` are carried as columns for shape parity but nothing writes them
+  remotely.
+- **Changing any `"sync": false` decision.** §3.1 adds server columns; it does not alter what
+  `sync.ts` carries. The local-only inventory and what each gap would cost is recorded in
+  `docs/sync-coverage-gaps.md`.
 - **FTS5.** The existing `PLAN.md` decision stands: search stays the `LIKE` pre-filter plus JS
   ranking, now executed server-side. If it becomes slow at server scale that is a
   `datastore.ts`-led change, unchanged from the reasoning already recorded there.
@@ -606,7 +624,15 @@ Remote mode is a new flag, `--remote <url>`, plus these changes:
    (`apps/desktop/features/mcp-server/schema-drift.test.js`) is the natural place to pin
    whichever answer wins.
 
-2. **Whether `search_items` ranking stays honest at server scale.** The JS ranking in
+2. **Whether `title` and `domain` should sync between devices.** §3.1 gives phase 1 the columns
+   it needs without touching this, but the two answers interact: while the fields stay
+   `"sync": false`, a title set through the MCP API lives only on the server and a title set on
+   the desktop lives only on the laptop, so the same item reads differently depending on which
+   client is asked. Phase 1 is correct either way; the divergence is a user-visible oddity, not a
+   correctness bug. **Settled by:** the `datastore.ts` policy call recorded in
+   `docs/sync-coverage-gaps.md` §1.
+
+3. **Whether `search_items` ranking stays honest at server scale.** The JS ranking in
    `searchItems()` is justified in `PLAN.md` by "the dataset is a personal store; the candidate
    set is small." That holds per-user on the server too, since every query is already
    user-and-profile-scoped by `getConnection(userId, profileId)`. It stops holding if a single
