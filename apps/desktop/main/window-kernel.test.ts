@@ -2200,6 +2200,200 @@ describe('window-kernel: which windows a real app resign hides', () => {
   });
 });
 
+// ── AppResigned hiding an attached overlay, and AppActivated's conditional
+// re-show of it (`appBlurRevealAdmits`) ─────────────────────────────────────
+
+describe('window-kernel: AppResigned hides an attached overlay on the raw edge; AppActivated reveals it only when its host admits', () => {
+  const FLOATING = BASE_LAYER + 1;
+
+  const host = wid(1);
+  const overlay = wid(2);
+  const other = wid(3);
+  const detachedOverlay = wid(4);
+
+  /** Host + attached, shown overlay + an ordinary visible window with no overlayFor. */
+  const attachedVisibleScene = (): State =>
+    fold(
+      [
+        { type: 'WindowRegistered', id: host, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowRegistered', id: overlay, kind: 'browser', layer: FLOATING, canBecomeKey: false, acceptsInput: false, class: 'overlay' },
+        { type: 'WindowRegistered', id: other, kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+        { type: 'WindowShown', id: host },
+        { type: 'WindowShown', id: other },
+        { type: 'OverlayAttached', overlayId: overlay, hostId: host },
+        { type: 'WindowShown', id: overlay },
+        { type: 'OsFocusGained', id: host },
+      ],
+      initialState(),
+    );
+
+  it('an attached, visible overlay is hidden and marked by AppResigned, and react projects a HideWindow effect for it', () => {
+    const state = attachedVisibleScene();
+    assert.strictEqual(state.order.find((w) => w.id === overlay)?.visible, true, 'precondition: overlay is genuinely shown');
+
+    const ev: Event = { type: 'AppResigned' };
+    const resigned = evolve(state, ev);
+    const effects = react(state, ev, resigned);
+
+    const overlayAfter = resigned.order.find((w) => w.id === overlay)!;
+    assert.strictEqual(overlayAfter.visible, false);
+    assert.strictEqual(overlayAfter.hiddenByAppBlur, true);
+    assert.ok(effects.some((e) => e.type === 'HideWindow' && e.id === overlay));
+  });
+
+  it("the overlay's host is not hidden by the same transition, and neither is an ordinary visible window with no overlayFor", () => {
+    const state = attachedVisibleScene();
+    assert.strictEqual(state.order.find((w) => w.id === host)?.visible, true, 'precondition');
+    assert.strictEqual(state.order.find((w) => w.id === other)?.visible, true, 'precondition');
+
+    const resigned = evolve(state, { type: 'AppResigned' });
+
+    const hostAfter = resigned.order.find((w) => w.id === host)!;
+    assert.strictEqual(hostAfter.visible, true);
+    assert.strictEqual(hostAfter.hiddenByAppBlur, undefined);
+
+    const otherAfter = resigned.order.find((w) => w.id === other)!;
+    assert.strictEqual(otherAfter.visible, true);
+    assert.strictEqual(otherAfter.hiddenByAppBlur, undefined);
+  });
+
+  it('an overlay already visible: false at resign time is left completely untouched — it does not acquire hiddenByAppBlur', () => {
+    const state = attachedVisibleScene();
+    const hiddenFirst = evolve(state, { type: 'WindowHidden', id: overlay });
+    const overlayBefore = hiddenFirst.order.find((w) => w.id === overlay)!;
+    assert.strictEqual(overlayBefore.visible, false, 'precondition: overlay is off screen ahead of the resign');
+    assert.strictEqual(overlayBefore.hiddenByAppBlur, undefined);
+
+    const resigned = evolve(hiddenFirst, { type: 'AppResigned' });
+    const overlayAfter = resigned.order.find((w) => w.id === overlay)!;
+    // Same reference, not just the same fields: the record was never touched
+    // by the map, which is what keeps a fullscreen host's already-hidden
+    // chrome from being revealed by the next activation.
+    assert.strictEqual(overlayAfter, overlayBefore);
+  });
+
+  it('a detached overlay (overlayFor undefined) is untouched by AppResigned', () => {
+    const state = fold(
+      [
+        { type: 'WindowRegistered', id: detachedOverlay, kind: 'browser', layer: FLOATING, canBecomeKey: false, acceptsInput: false, class: 'overlay' },
+        { type: 'WindowShown', id: detachedOverlay },
+      ],
+      initialState(),
+    );
+    const before = state.order.find((w) => w.id === detachedOverlay)!;
+    assert.strictEqual(before.visible, true, 'precondition');
+    assert.strictEqual(before.overlayFor, undefined, 'precondition: genuinely detached');
+
+    const resigned = evolve(state, { type: 'AppResigned' });
+    const after = resigned.order.find((w) => w.id === detachedOverlay)!;
+    assert.strictEqual(after.visible, true);
+    assert.strictEqual(after.hiddenByAppBlur, undefined);
+  });
+
+  it('AppResigned writes no key change and mints no op token, even when it hides an overlay', () => {
+    const state = attachedVisibleScene();
+    assert.strictEqual(state.order.find((w) => w.id === overlay)?.visible, true, 'precondition');
+    const keyBefore = state.key;
+    const opBefore = state.opSeqCounter;
+
+    const resigned = evolve(state, { type: 'AppResigned' });
+    assert.ok(resigned.order.some((w) => w.hiddenByAppBlur === true), 'sanity: the overlay really was hidden by this transition');
+    assert.strictEqual(resigned.key, keyBefore);
+    assert.strictEqual(resigned.opSeqCounter, opBefore);
+  });
+
+  it('round trip: AppResigned then AppActivated restores the overlay to visible with the mark cleared, and react projects a ShowWindow carrying the op token', () => {
+    const state = attachedVisibleScene();
+    assert.strictEqual(state.order.find((w) => w.id === overlay)?.visible, true, 'precondition');
+
+    const resigned = evolve(state, { type: 'AppResigned' });
+    assert.strictEqual(resigned.order.find((w) => w.id === overlay)?.visible, false, 'sanity: the resign actually hid it');
+
+    const activateEv: Event = { type: 'AppActivated' };
+    const activated = evolve(resigned, activateEv);
+    const effects = react(resigned, activateEv, activated);
+
+    const overlayAfter = activated.order.find((w) => w.id === overlay)!;
+    assert.strictEqual(overlayAfter.visible, true);
+    assert.strictEqual(overlayAfter.hiddenByAppBlur, false);
+    assert.deepStrictEqual(
+      effects.filter((e) => e.type === 'ShowWindow'),
+      [{ type: 'ShowWindow', id: overlay, opSeq: activated.opSeqCounter }],
+    );
+  });
+
+  it('the fullscreen refusal: a host that is fullscreen at AppActivated time keeps its overlay hidden and marked, and emits no ShowWindow for it', () => {
+    const state = attachedVisibleScene();
+    const resigned = evolve(state, { type: 'AppResigned' });
+    assert.strictEqual(resigned.order.find((w) => w.id === overlay)?.visible, false, 'sanity: the overlay is hidden going in');
+
+    const hostFullscreen = evolve(resigned, { type: 'OsFullscreenEntered', id: host });
+    const hostRec = hostFullscreen.order.find((w) => w.id === host)!;
+    assert.deepStrictEqual(hostRec.fsMode, { name: 'fullscreen', preBounds: null }, 'precondition: host is genuinely fullscreen');
+    assert.strictEqual(hostRec.visible, true, 'precondition: the host itself is still on screen, only its mode changed');
+
+    const activateEv: Event = { type: 'AppActivated' };
+    const activated = evolve(hostFullscreen, activateEv);
+    const effects = react(hostFullscreen, activateEv, activated);
+
+    const overlayAfter = activated.order.find((w) => w.id === overlay)!;
+    assert.strictEqual(overlayAfter.visible, false, 'refused — not re-shown');
+    assert.strictEqual(overlayAfter.hiddenByAppBlur, true, 'the mark survives a refusal, it is not cleared');
+    assert.ok(!effects.some((e) => e.type === 'ShowWindow' && e.id === overlay));
+  });
+
+  it('the off-screen-host refusal: a host that is hidden at AppActivated time keeps its overlay hidden and marked, and emits no ShowWindow for it', () => {
+    const state = attachedVisibleScene();
+    const resigned = evolve(state, { type: 'AppResigned' });
+    const hostHidden = evolve(resigned, { type: 'WindowHidden', id: host });
+    assert.strictEqual(hostHidden.order.find((w) => w.id === host)?.visible, false, 'precondition: the host itself is off screen');
+
+    const activateEv: Event = { type: 'AppActivated' };
+    const activated = evolve(hostHidden, activateEv);
+    const effects = react(hostHidden, activateEv, activated);
+
+    const overlayAfter = activated.order.find((w) => w.id === overlay)!;
+    assert.strictEqual(overlayAfter.visible, false);
+    assert.strictEqual(overlayAfter.hiddenByAppBlur, true);
+    assert.ok(!effects.some((e) => e.type === 'ShowWindow' && e.id === overlay));
+  });
+
+  it('the self-heal: after a refused re-show, a genuine WindowShown for the overlay clears hiddenByAppBlur (the WindowShown arm already does this — pinned here in the overlay-refusal context)', () => {
+    const state = attachedVisibleScene();
+    const resigned = evolve(state, { type: 'AppResigned' });
+    const hostHidden = evolve(resigned, { type: 'WindowHidden', id: host });
+    const activated = evolve(hostHidden, { type: 'AppActivated' });
+    const refused = activated.order.find((w) => w.id === overlay)!;
+    assert.strictEqual(refused.visible, false, 'sanity: still refused going in');
+    assert.strictEqual(refused.hiddenByAppBlur, true, 'sanity: mark still set going in');
+
+    const shown = evolve(activated, { type: 'WindowShown', id: overlay });
+    const healed = shown.order.find((w) => w.id === overlay)!;
+    assert.strictEqual(healed.visible, true);
+    assert.strictEqual(healed.hiddenByAppBlur, false);
+  });
+
+  // A non-overlay window carrying `hiddenByAppBlur` from the ordinary
+  // AppResignSettled sweep is still re-shown by AppActivated — the new query
+  // did not narrow that pre-existing path. Already pinned exactly by
+  // "window-kernel: app activation, resignation, and the dance guard" >
+  // "a later activation re-shows exactly the windows the sweep hid and
+  // clears the mark, leaving other-cause hides alone" — not duplicated here.
+
+  it('the dance: AppResigned immediately followed by AppActivated with no settle in between leaves the overlay visible again and pendingAppResignSweep false', () => {
+    const state = attachedVisibleScene();
+    assert.strictEqual(state.order.find((w) => w.id === overlay)?.visible, true, 'precondition');
+
+    const resigned = evolve(state, { type: 'AppResigned' });
+    assert.strictEqual(resigned.pendingAppResignSweep, true, 'sanity: armed');
+    const activated = evolve(resigned, { type: 'AppActivated' });
+
+    assert.strictEqual(activated.order.find((w) => w.id === overlay)?.visible, true);
+    assert.strictEqual(activated.order.find((w) => w.id === overlay)?.hiddenByAppBlur, false);
+    assert.strictEqual(activated.pendingAppResignSweep, false);
+  });
+});
+
 // ── Transient autoclose (the two selectors) ─────────────────────────────────
 
 describe('window-kernel: transient autoclose', () => {
