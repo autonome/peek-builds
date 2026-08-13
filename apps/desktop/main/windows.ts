@@ -37,7 +37,7 @@ import {
   getWindowStateSnapshot,
 } from './window-state-singleton.js';
 import type { WindowClass } from './izui-roles.js';
-import { shadowKernelCloseWindowDirect } from './window-kernel-shadow.js';
+import { shadowKernelCloseWindowDirect, shadowKernelSetFullscreen } from './window-kernel-shadow.js';
 import {
   initRendererHandledEscapeTracking,
   rendererHandledEscapeForWc,
@@ -630,6 +630,10 @@ export async function closeOrHideWindow(id: number): Promise<void> {
         const fsMode = machineId != null ? getWindowModeName(machineId) : null;
         if (machineId != null && fsMode != null && fsMode !== 'normal') {
           dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, desired: false });
+          // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+          // authoritative over nothing; see that module's doc for why this
+          // can never change what actually happens on screen.
+          shadowKernelSetFullscreen(machineId, false, getWindowStateSnapshot());
           await waitForMode(machineId, 'normal');
         }
         if (hybrid.baseWin.isDestroyed()) return;

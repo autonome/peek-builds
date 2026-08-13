@@ -96,7 +96,7 @@ import {
   getWindowStateSnapshot,
   type MachineWindowSpec,
 } from './window-state-singleton.js';
-import { shadowKernelDestroyWindow, shadowKernelCloseContent, shadowKernelCloseWindowDirect, shadowKernelRaiseWindow, shadowKernelWindowShown } from './window-kernel-shadow.js';
+import { shadowKernelDestroyWindow, shadowKernelCloseContent, shadowKernelCloseWindowDirect, shadowKernelRaiseWindow, shadowKernelWindowShown, shadowKernelSetFullscreen } from './window-kernel-shadow.js';
 import {
   TRANSIENT_ROLES,
   inferIzuiRole,
@@ -1085,6 +1085,10 @@ function assembleHybridPageHost(
         // setFullScreen owner (the adapter's SET_FULLSCREEN effect runs
         // synchronously; we don't await the ~600ms settle — quit can't block).
         dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: hostMachineId, desired: false });
+        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+        // authoritative over nothing; see that module's doc for why this can
+        // never change what actually happens on screen.
+        shadowKernelSetFullscreen(hostMachineId, false, getWindowStateSnapshot());
       }
     } catch { /* host gone mid-quit — nothing to exit */ }
     finalizeWindowClose(baseWin.id, {

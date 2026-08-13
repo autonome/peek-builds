@@ -94,6 +94,9 @@ import {
   shadowKernelAppResigned,
   shadowKernelAppResignSettled,
   shadowKernelContentFirstResponderChanged,
+  shadowKernelOsFullscreenEntered,
+  shadowKernelOsFullscreenLeft,
+  shadowKernelFullscreenSettleTimeout,
 } from './window-kernel-shadow.js';
 
 /**
@@ -689,10 +692,15 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     win.on('enter-full-screen', () => {
       this.clearFullscreenSettle(id);
       this.emit({ type: 'OS_FULLSCREEN_ENTERED', id });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen.
+      shadowKernelOsFullscreenEntered(id, this.getSnapshot());
     });
     win.on('leave-full-screen', () => {
       this.clearFullscreenSettle(id);
       this.emit({ type: 'OS_FULLSCREEN_LEFT', id });
+      shadowKernelOsFullscreenLeft(id, this.getSnapshot());
     });
     // Geometry mirror (§5 step 7): every native resize/move lands in the
     // machine as BOUNDS_CHANGED — the SOLE writer of the record's `bounds`.
@@ -874,11 +882,16 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   reconcileFullscreen(id: WindowId): void {
     const w = this.windows.get(id)?.win;
     if (!w || w.isDestroyed()) return;
-    this.emit(
-      w.isFullScreen()
-        ? { type: 'OS_FULLSCREEN_ENTERED', id }
-        : { type: 'OS_FULLSCREEN_LEFT', id },
-    );
+    const entered = w.isFullScreen();
+    this.emit(entered ? { type: 'OS_FULLSCREEN_ENTERED', id } : { type: 'OS_FULLSCREEN_LEFT', id });
+    // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+    // authoritative over nothing; see that module's doc for why this can
+    // never change what actually happens on screen.
+    if (entered) {
+      shadowKernelOsFullscreenEntered(id, this.getSnapshot());
+    } else {
+      shadowKernelOsFullscreenLeft(id, this.getSnapshot());
+    }
   }
 
   /**
@@ -1374,6 +1387,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       setTimeout(() => {
         this.fullscreenSettleTimers.delete(id);
         this.emit({ type: 'FULLSCREEN_SETTLE_TIMEOUT', id });
+        shadowKernelFullscreenSettleTimeout(id, this.getSnapshot());
       }, FULLSCREEN_SETTLE_TIMEOUT_MS),
     );
   }

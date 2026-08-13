@@ -714,6 +714,80 @@ export function shadowKernelAssertFocus(id: WindowId, oldSnapshot: StateSnapshot
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Fullscreen — the twelfth real input this step feeds the kernel. Translated
+// at every production site that dispatches the old machine's mirrored
+// `OS_FULLSCREEN_ENTERED` / `OS_FULLSCREEN_LEFT` / `FULLSCREEN_SETTLE_TIMEOUT`
+// (`electron-window-backend.ts`'s native `'enter-full-screen'`/
+// `'leave-full-screen'` listeners, `reconcileFullscreen`'s sanctioned
+// `isFullScreen()` read, and `armFullscreenSettle`'s bounded timer) and
+// `FULLSCREEN_REQUESTED` (`hybrid-overlay.ts`'s test-bridge
+// `driveHostFullscreen`, `ipc.ts runHybridFinalize`, `windows.ts
+// closeOrHideWindow`, and `tile-ipc.ts`'s `tile:window:hide` /
+// `tile:window:fullscreen` handlers), alongside each existing dispatch,
+// never in place of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate a completed native fullscreen-entered report into the kernel's
+ * `OsFullscreenEntered` event — settles `entering` -> `fullscreen`, or
+ * straight through to `leaving` on a coalesced cancel (`nextFsModeForOsEntered`,
+ * `window-kernel.ts`).
+ */
+export function shadowKernelOsFullscreenEntered(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowDispatch({ type: 'OsFullscreenEntered', id });
+  compareAfterFeed(oldSnapshot);
+}
+
+/**
+ * Translate a completed native fullscreen-left report into the kernel's
+ * `OsFullscreenLeft` event — settles `leaving` -> `normal`, or straight
+ * through to `entering` on a coalesced re-enter (`nextFsModeForOsLeft`,
+ * `window-kernel.ts`).
+ */
+export function shadowKernelOsFullscreenLeft(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowDispatch({ type: 'OsFullscreenLeft', id });
+  compareAfterFeed(oldSnapshot);
+}
+
+/**
+ * Translate the bounded fullscreen settle timeout into the kernel's
+ * `FullscreenSettleTimeout` event. Does NOT force-settle `fsMode` itself —
+ * `evolve`'s arm never guesses; it only records the ask (`lastFsReconcile`,
+ * answered by `react`'s own `ReconcileFullscreen` effect) for a record still
+ * genuinely in flight, leaving every `fsMode` exactly where it was
+ * (`window-kernel.ts`'s `FullscreenSettleTimeout` arm doc: a wrong guess
+ * strands `preBounds` or leaves a black macOS Space behind — the machine
+ * asks the OS rather than guessing).
+ */
+export function shadowKernelFullscreenSettleTimeout(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowDispatch({ type: 'FullscreenSettleTimeout', id });
+  compareAfterFeed(oldSnapshot);
+}
+
+/**
+ * Translate a fullscreen request into the kernel's `SetFullscreen` command.
+ * `decide`'s own arm resolves what happens next from the window's CURRENT
+ * `fsMode` (`window-kernel.ts`'s `SetFullscreen` case): idle ->
+ * `FullscreenTransitionStarted`, already in flight (`entering`/`leaving`) ->
+ * `FullscreenDesireRecorded` (coalesced, no second transition started),
+ * already at the requested state -> `[]` (no-op, no OS call). None of that
+ * branching is reproduced here — the command is executed and `decide`
+ * decides. Same shape and containment as `shadowKernelRaiseWindow` et al.:
+ * routed through `shadowExecute` (a rejected stale `expectedVersion`, or a
+ * target absent from `order`, is logged, never thrown into the caller),
+ * ending with the same `compareAfterFeed` tail.
+ */
+export function shadowKernelSetFullscreen(id: WindowId, desired: boolean, oldSnapshot: StateSnapshot): void {
+  shadowExecute({
+    type: 'SetFullscreen',
+    id,
+    desired,
+    expectedVersion: getShadowKernelExecutor().getState().version,
+  });
+  compareAfterFeed(oldSnapshot);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Divergence comparator — evidence the shadow kernel's view matches reality
 // before the next commit re-points readers onto it. Compares the three things
 // the cutover's readers actually depend on; see `compareShadowKernelState`'s

@@ -99,6 +99,7 @@ import {
   shadowKernelDestroyWindow,
   shadowKernelWindowShown,
   shadowKernelWindowHidden,
+  shadowKernelSetFullscreen,
 } from './window-kernel-shadow.js';
 import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, registerWindow } from './main.js';
@@ -2893,6 +2894,10 @@ function installTestBridge(): void {
       const machineId = getWindowIdFor(id);
       if (machineId == null) return Promise.resolve();
       dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, desired, bounds });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen.
+      shadowKernelSetFullscreen(machineId, desired, getWindowStateSnapshot());
       return waitForMode(machineId, desired ? 'fullscreen' : 'normal');
     },
   };

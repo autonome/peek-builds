@@ -22,11 +22,15 @@ import {
   shadowKernelContentFirstResponderChanged,
   shadowKernelDestroyAllGuests,
   shadowKernelDestroyWindow,
+  shadowKernelFullscreenSettleTimeout,
   shadowKernelImportStackOrder,
   shadowKernelOsFocusGained,
   shadowKernelOsFocusSettled,
+  shadowKernelOsFullscreenEntered,
+  shadowKernelOsFullscreenLeft,
   shadowKernelRaiseWindow,
   shadowKernelRegisterWindow,
+  shadowKernelSetFullscreen,
   shadowKernelWindowClosed,
   shadowKernelWindowContentOrderable,
   shadowKernelWindowHidden,
@@ -1109,5 +1113,102 @@ describe('window-kernel-shadow: focus assert feed', () => {
     // commands, a dangling target is a genuine rejection, so version must
     // stay pinned.
     assert.strictEqual(getShadowKernelExecutor().getState().version, versionBefore);
+  });
+});
+
+describe('window-kernel-shadow: fullscreen feed', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  const record = (id: WindowId) => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+
+  it('SetFullscreen(true) on an idle window starts entering, and the following OsFullscreenEntered settles it to fullscreen', () => {
+    const id = wid(180);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(id, oldSnapshot);
+    assert.strictEqual(record(id)?.fsMode.name, 'normal', 'precondition: a freshly registered window starts normal');
+
+    shadowKernelSetFullscreen(id, true, oldSnapshot);
+
+    assert.strictEqual(record(id)?.fsMode.name, 'entering', 'SetFullscreen(true) on an idle window must start entering');
+
+    shadowKernelOsFullscreenEntered(id, oldSnapshot);
+
+    assert.strictEqual(record(id)?.fsMode.name, 'fullscreen', 'OsFullscreenEntered must settle entering -> fullscreen');
+  });
+
+  it('SetFullscreen(false) on a fullscreen window starts leaving, and the following OsFullscreenLeft settles it back to normal', () => {
+    const id = wid(181);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(id, oldSnapshot);
+    shadowKernelSetFullscreen(id, true, oldSnapshot);
+    shadowKernelOsFullscreenEntered(id, oldSnapshot);
+    assert.strictEqual(record(id)?.fsMode.name, 'fullscreen', 'precondition: the window is fullscreen');
+
+    shadowKernelSetFullscreen(id, false, oldSnapshot);
+
+    assert.strictEqual(record(id)?.fsMode.name, 'leaving', 'SetFullscreen(false) on a fullscreen window must start leaving');
+
+    shadowKernelOsFullscreenLeft(id, oldSnapshot);
+
+    assert.strictEqual(record(id)?.fsMode.name, 'normal', 'OsFullscreenLeft must settle leaving -> normal');
+  });
+
+  it('a SetFullscreen arriving mid-transition records the desire rather than restarting the transition', () => {
+    const id = wid(182);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(id, oldSnapshot);
+    shadowKernelSetFullscreen(id, true, oldSnapshot);
+    assert.strictEqual(record(id)?.fsMode.name, 'entering', 'precondition: the window is entering');
+
+    shadowKernelSetFullscreen(id, false, oldSnapshot);
+
+    const mode = record(id)?.fsMode;
+    assert.strictEqual(
+      mode?.name,
+      'entering',
+      'a request arriving mid-transition must not restart or advance the transition',
+    );
+    if (mode?.name !== 'entering') throw new Error('unreachable — asserted above');
+    assert.strictEqual(mode.pendingDesire, false, 'the coalesced desire is recorded on the still-in-flight mode');
+  });
+
+  it('a settle timeout on an in-flight window writes a fresh lastFsReconcile naming it and leaves fsMode transitional (8152196c: the machine asks the OS rather than guessing)', () => {
+    const id = wid(183);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerWindow(id, oldSnapshot);
+    shadowKernelSetFullscreen(id, true, oldSnapshot);
+    assert.strictEqual(record(id)?.fsMode.name, 'entering', 'precondition: the window is entering');
+    assert.strictEqual(
+      getShadowKernelExecutor().getState().lastFsReconcile,
+      null,
+      'precondition: nothing has asked for a reconcile yet',
+    );
+
+    shadowKernelFullscreenSettleTimeout(id, oldSnapshot);
+
+    const state = getShadowKernelExecutor().getState();
+    assert.deepStrictEqual(
+      state.lastFsReconcile,
+      { ids: [id], seq: 1 },
+      'the settle timeout must record a fresh reconcile ask naming the in-flight window',
+    );
+    assert.strictEqual(
+      record(id)?.fsMode.name,
+      'entering',
+      'fsMode must be left exactly where it was — a wrong guess would strand preBounds or leave a black Space',
+    );
+  });
+
+  it('never throws across a fullscreen feed naming a window with no record', () => {
+    const danglingId = wid(184); // never registered with the shadow kernel
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+
+    assert.doesNotThrow(() => shadowKernelOsFullscreenEntered(danglingId, oldSnapshot));
+    assert.doesNotThrow(() => shadowKernelOsFullscreenLeft(danglingId, oldSnapshot));
+    assert.doesNotThrow(() => shadowKernelFullscreenSettleTimeout(danglingId, oldSnapshot));
+    assert.doesNotThrow(() => shadowKernelSetFullscreen(danglingId, true, oldSnapshot));
+    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });

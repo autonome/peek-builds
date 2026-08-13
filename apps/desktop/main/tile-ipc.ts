@@ -132,7 +132,9 @@ import {
   getWindowIdFor,
   getNativeWindowFor,
   getMachineWindowRecord,
+  getWindowStateSnapshot,
 } from './window-state-singleton.js';
+import { shadowKernelSetFullscreen } from './window-kernel-shadow.js';
 import {
   registerGlobalShortcut,
   unregisterGlobalShortcut,
@@ -3061,6 +3063,10 @@ export function registerTileIpcHandlers(): void {
           const fsMode = machineId != null ? getWindowModeName(machineId) : null;
           if (machineId != null && fsMode != null && fsMode !== 'normal') {
             dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, desired: false });
+            // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+            // authoritative over nothing; see that module's doc for why this
+            // can never change what actually happens on screen.
+            shadowKernelSetFullscreen(machineId, false, getWindowStateSnapshot());
             await waitForMode(machineId, 'normal');
           }
           if (hybrid.baseWin.isDestroyed()) return { success: true };
@@ -3530,7 +3536,23 @@ export function registerTileIpcHandlers(): void {
       try {
         if (boundsWin && !boundsWin.isDestroyed()) bounds = boundsWin.getBounds();
       } catch { /* window gone mid-request */ }
+      // No `desired` on this dispatch — the old machine's own reducer toggles
+      // off its CURRENT fsMode (window-state.ts `desiredFullscreen`). Mirror
+      // that same toggle here so the shadow kernel's `SetFullscreen` carries
+      // an explicit boolean rather than one this module invents: `normal` and
+      // `leaving-fullscreen` both want fullscreen next, `fullscreen` and
+      // `entering-fullscreen` both want out. Skipped when the machine holds
+      // no record for this id — the same case the reducer's own `if (!rec)
+      // break;` no-ops on.
+      const oldMode = getWindowModeName(machineId);
       dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, bounds });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; see that module's doc for why this can
+      // never change what actually happens on screen.
+      if (oldMode !== null) {
+        const desired = oldMode === 'normal' || oldMode === 'leaving-fullscreen';
+        shadowKernelSetFullscreen(machineId, desired, getWindowStateSnapshot());
+      }
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
