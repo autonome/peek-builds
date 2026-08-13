@@ -10,6 +10,17 @@
  *   PEEK_DB_PATH — path to Peek's datastore.sqlite
  *     If unset, defaults to the platform default-profile location
  *     (macOS: ~/Library/Application Support/Peek/default/datastore.sqlite).
+ *     Unused when PEEK_MCP_REMOTE_URL is set.
+ *   PEEK_MCP_REMOTE_URL — targets a remote Peek sync server instead of the
+ *     local datastore (docs/mcp-remote-backend-design.md §2.1, §6). Selects
+ *     store/remote-store.js in place of store/sqlite-store.js.
+ *   PEEK_MCP_TOKEN — bearer credential for remote mode, usually a ${VAR}
+ *     reference Claude Code expands from the launching shell's environment.
+ *   PEEK_MCP_CREDENTIAL — alternative to PEEK_MCP_TOKEN for interactive
+ *     desktop use: a lookup key ("<url>#<scope>") into the 0600 credential
+ *     file peek-mcp-init --store-token writes at
+ *     ~/.config/peek/mcp-credentials.json (§6). Takes priority over
+ *     PEEK_MCP_TOKEN when both are set.
  *   PEEK_MCP_READONLY=1 — hides mutating tools (create/update/delete/tag/etc.)
  *   PEEK_MCP_SCOPE_TAG — confines this session to items tagged <scope> or
  *     matching <scope>:*. Reads filter to in-scope only; writes are force-
@@ -20,6 +31,7 @@ import { createInterface } from 'node:readline';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { openStore } from './store/index.js';
 
 // Set once main() opens it; every handler below reads through this.
@@ -94,8 +106,11 @@ function requireItemId(args) {
 // matters most for mutating tools: we must never mutate a guessed item.
 //
 // `resolveItemIdFromArgs` returns the resolved id, or null when the prefix
-// matches nothing (read tools turn that into their existing null/not-found
-// response). Ambiguity throws regardless of read-vs-write.
+// matches nothing. Ambiguity throws regardless of read-vs-write. Used only by
+// the mutating path now (resolveItemIdForMutation, below) — get_item and
+// get_task_context resolve inline through the store's own getItem()/
+// getTaskContext() (design doc §5), which throw the identically-formatted
+// ambiguity error themselves rather than going through this function.
 function formatAmbiguous(prefix, candidates, truncated) {
   const lines = candidates.map((c) => `  ${c.id}  ${c.title || '(untitled)'}`);
   let msg =
@@ -403,9 +418,13 @@ async function handleToolCall(name, args) {
       return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
     }
     case 'get_item': {
-      const itemId = await resolveItemIdFromArgs(args);
-      if (itemId === null) return null;
-      const item = await store.getItem(itemId);
+      // Inline resolution (design doc §5): the store resolves the id-or-
+      // prefix and fetches the item in one call — not-found returns null,
+      // ambiguity throws formatted the same way resolveItemIdFromArgs()
+      // does. Read tools stay at one store round trip; mutating tools keep
+      // the explicit resolve-then-mutate shape below.
+      const raw = requireItemId(args);
+      const item = await store.getItem(raw);
       if (!item) return null;
       if (SCOPE && !inScope(item.tags)) return null;
       return shapeItemForResponse(item, args);
@@ -472,9 +491,9 @@ async function handleToolCall(name, args) {
       return store.completeTask(itemId, args.notes);
     }
     case 'get_task_context': {
-      const itemId = await resolveItemIdFromArgs(args);
-      if (itemId === null) return null;
-      const ctx = await store.getTaskContext(itemId);
+      // Same inline-resolution shape as get_item above.
+      const raw = requireItemId(args);
+      const ctx = await store.getTaskContext(raw);
       if (!ctx) return null;
       if (SCOPE && !inScope(ctx.tags)) return null;
       return shapeItemForResponse(ctx, args);
@@ -664,9 +683,22 @@ function entryEnvMatchesCurrent(entry) {
   const env = entry.env || {};
   const onScope = (env.PEEK_MCP_SCOPE_TAG || '').trim();
   const onReadonly = env.PEEK_MCP_READONLY === '1';
-  const onDb = env.PEEK_DB_PATH || '';
+  const onRemoteUrl = env.PEEK_MCP_REMOTE_URL || '';
+  const onCredential = env.PEEK_MCP_CREDENTIAL || '';
   const curScope = (process.env.PEEK_MCP_SCOPE_TAG || '').trim();
   const curReadonly = process.env.PEEK_MCP_READONLY === '1';
+  const curRemoteUrl = process.env.PEEK_MCP_REMOTE_URL || '';
+  const curCredential = process.env.PEEK_MCP_CREDENTIAL || '';
+
+  if (curRemoteUrl || onRemoteUrl) {
+    // Remote mode has no local datastore, so PEEK_DB_PATH drops out of the
+    // comparison entirely (design doc §4.3); the remote url and credential
+    // lookup key take its place.
+    return onScope === curScope && onReadonly === curReadonly &&
+      onRemoteUrl === curRemoteUrl && onCredential === curCredential;
+  }
+
+  const onDb = env.PEEK_DB_PATH || '';
   const curDb = process.env.PEEK_DB_PATH || '';
   return onScope === curScope && onReadonly === curReadonly && onDb === curDb;
 }
@@ -715,6 +747,47 @@ function defaultDbPath() {
   );
 }
 
+// --- Remote store configuration (docs/mcp-remote-backend-design.md §6) ---
+//
+// The credential arrives one of two ways: PEEK_MCP_TOKEN carries it directly
+// (typically a ${VAR} reference Claude Code expands from the launching
+// shell), or PEEK_MCP_CREDENTIAL names a lookup key into the 0600 credential
+// file peek-mcp-init --store-token writes — see setup.js
+// writeCredentialFile()/credentialFilePath() for the exact path and shape.
+// Never logged, never included in an error message or a thrown stack.
+
+function credentialFilePath() {
+  return path.join(os.homedir(), '.config', 'peek', 'mcp-credentials.json');
+}
+
+function resolveCredentialFromFile(key) {
+  const filePath = credentialFilePath();
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch (err) {
+    throw new Error(`Could not read Peek MCP credential file ${filePath}: ${err.code || 'invalid JSON'}`);
+  }
+  const entry = data && data.credentials && data.credentials[key];
+  if (!entry || typeof entry.token !== 'string') {
+    throw new Error(`No credential found for key "${key}" in ${filePath}.`);
+  }
+  return entry.token;
+}
+
+// Returns { remoteUrl, credential } when PEEK_MCP_REMOTE_URL is set (selects
+// store/remote-store.js — see store/index.js openStore()), or null to fall
+// back to today's local sqlite behaviour.
+function remoteStoreConfig() {
+  const remoteUrl = (process.env.PEEK_MCP_REMOTE_URL || '').trim();
+  if (!remoteUrl) return null;
+  const credentialKey = process.env.PEEK_MCP_CREDENTIAL;
+  const credential = credentialKey
+    ? resolveCredentialFromFile(credentialKey)
+    : process.env.PEEK_MCP_TOKEN;
+  return { remoteUrl, credential };
+}
+
 // A single incoming line's worth of work: drift check, parse, dispatch,
 // respond. Split out so the `rl.on('line')` handler (necessarily sync) can
 // chain calls to it through a tail promise instead of awaiting directly.
@@ -738,20 +811,69 @@ async function handleLine(line) {
   }
 }
 
+// Pure decision for the startup consistency check (§4.3): compares what the
+// store believes about its own scope (`store.describe()`) against what the
+// local configuration claims (SCOPE, from PEEK_MCP_SCOPE_TAG). Returns null
+// when they agree, or the stderr message to write before exiting when they
+// don't. Kept pure and exported so it's testable with a fake `describe()`
+// result — no real store, no network. `main()` is the only caller with the
+// actual side effects (stderr + exit).
+function scopeConsistencyError(info, configuredScope) {
+  if (info.scopeTag === configuredScope) return null;
+  return `Peek MCP scope mismatch — store reports scope "${info.scopeTag}", ` +
+    `local configuration claims "${configuredScope}". Exiting so client respawns with fresh env.\n`;
+}
+
 async function main() {
+  // Remote mode (PEEK_MCP_REMOTE_URL set) selects store/remote-store.js over
+  // store/sqlite-store.js in openStore() (§2.1) — no local datastore lookup.
+  // Local behaviour (below) is unchanged when it is absent.
+  let remote;
+  try {
+    remote = remoteStoreConfig();
+  } catch (err) {
+    process.stderr.write(`Error resolving Peek MCP credential: ${err.message}\n`);
+    process.exit(1);
+  }
+
   // Resolve DB path — falls back to platform default-profile location so
   // the settings.json snippet can omit env entirely for the common case.
-  const dbPath = process.env.PEEK_DB_PATH || defaultDbPath();
+  // Unused in remote mode.
+  const dbPath = remote ? null : (process.env.PEEK_DB_PATH || defaultDbPath());
 
   try {
-    store = await openStore({ dbPath, scopeTag: SCOPE, readonly: READONLY });
+    store = remote
+      ? await openStore({ ...remote, scopeTag: SCOPE, readonly: READONLY })
+      : await openStore({ dbPath, scopeTag: SCOPE, readonly: READONLY });
   } catch (err) {
     process.stderr.write(`Error opening database: ${err.message}\n`);
     process.exit(1);
   }
 
+  // Startup consistency check (§4.3): the store's own idea of its scope must
+  // agree with what the local configuration (PEEK_MCP_SCOPE_TAG) claims —
+  // otherwise we'd serve a session whose advertised scope is a lie. Same
+  // recovery path checkConfigDrift() uses: write both values and exit(0) so
+  // the client respawns.
+  let info;
+  try {
+    info = await store.describe();
+  } catch (err) {
+    process.stderr.write(`Error checking Peek MCP session: ${err.message}\n`);
+    process.exit(1);
+  }
+  const mismatch = scopeConsistencyError(info, SCOPE);
+  if (mismatch) {
+    process.stderr.write(mismatch);
+    process.exit(0);
+  }
+
   process.stderr.write(`Peek MCP Server v${SERVER_VERSION} started\n`);
-  process.stderr.write(`Database: ${dbPath}\n`);
+  if (remote) {
+    process.stderr.write(`Remote: ${remote.remoteUrl}\n`);
+  } else {
+    process.stderr.write(`Database: ${dbPath}\n`);
+  }
   if (SCOPE) process.stderr.write(`Scope: ${SCOPE} (and ${SCOPE}:*)\n`);
   if (READONLY) process.stderr.write(`Read-only mode\n`);
 
@@ -777,4 +899,12 @@ async function main() {
   });
 }
 
-main();
+// Only self-invoke when this file is run directly (`node server.js`), not
+// when imported as a module — server.test.js's "remote store selection" and
+// "startup consistency check" suites import the pure functions below
+// directly, no subprocess or network involved.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
+
+export { remoteStoreConfig, credentialFilePath, resolveCredentialFromFile, entryEnvMatchesCurrent, scopeConsistencyError };

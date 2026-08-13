@@ -11,11 +11,15 @@ import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
+import {
+  remoteStoreConfig, credentialFilePath, resolveCredentialFromFile,
+  entryEnvMatchesCurrent, scopeConsistencyError,
+} from './server.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1457,5 +1461,180 @@ describe('MCP Server config drift detection', () => {
     ]);
     assert.equal(outcome, 'still-running');
     proc.kill();
+  });
+});
+
+// --- Remote store selection, credential resolution, startup consistency ---
+//
+// Pure-function coverage for main()'s remote/local branch (design doc §6)
+// and the startup scope check (§4.3) — no subprocess, no network. server.js
+// only self-invokes main() when run directly (the import.meta.url guard at
+// the bottom of the file), so importing its exports here is side-effect-free.
+
+// Sets `process.env[key]` for each key in `vars` (deleting it when the value
+// is `undefined`), runs `fn`, then restores every touched key to its prior
+// value/absence — even if `fn` throws.
+function withEnv(vars, fn) {
+  const keys = Object.keys(vars);
+  const prev = {};
+  for (const k of keys) prev[k] = process.env[k];
+  for (const k of keys) {
+    if (vars[k] === undefined) delete process.env[k];
+    else process.env[k] = vars[k];
+  }
+  try {
+    return fn();
+  } finally {
+    for (const k of keys) {
+      if (prev[k] === undefined) delete process.env[k];
+      else process.env[k] = prev[k];
+    }
+  }
+}
+
+const FAKE_REMOTE_URL = 'https://sync.example.test';
+
+describe('remoteStoreConfig() — remote/local selection (design doc §6)', () => {
+  it('returns null (local fallback) when PEEK_MCP_REMOTE_URL is unset', () => {
+    withEnv({ PEEK_MCP_REMOTE_URL: undefined, PEEK_MCP_TOKEN: undefined, PEEK_MCP_CREDENTIAL: undefined }, () => {
+      assert.equal(remoteStoreConfig(), null);
+    });
+  });
+
+  it('carries PEEK_MCP_TOKEN through as the credential when PEEK_MCP_CREDENTIAL is unset', () => {
+    withEnv({
+      PEEK_MCP_REMOTE_URL: FAKE_REMOTE_URL,
+      PEEK_MCP_TOKEN: 'fake-direct-token-do-not-use',
+      PEEK_MCP_CREDENTIAL: undefined,
+    }, () => {
+      assert.deepEqual(remoteStoreConfig(), {
+        remoteUrl: FAKE_REMOTE_URL,
+        credential: 'fake-direct-token-do-not-use',
+      });
+    });
+  });
+
+  it('PEEK_MCP_CREDENTIAL resolves the token from the credential file, taking priority over PEEK_MCP_TOKEN', () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'peek-mcp-cred-'));
+    const credDir = join(tmpHome, '.config', 'peek');
+    mkdirSync(credDir, { recursive: true });
+    const key = `${FAKE_REMOTE_URL}#peek`;
+    writeFileSync(join(credDir, 'mcp-credentials.json'), JSON.stringify({
+      credentials: { [key]: { token: 'fake-file-token-do-not-use', label: 'test' } },
+    }));
+
+    withEnv({
+      HOME: tmpHome,
+      PEEK_MCP_REMOTE_URL: FAKE_REMOTE_URL,
+      PEEK_MCP_TOKEN: 'fake-should-be-ignored',
+      PEEK_MCP_CREDENTIAL: key,
+    }, () => {
+      assert.equal(credentialFilePath(), join(tmpHome, '.config', 'peek', 'mcp-credentials.json'));
+      assert.deepEqual(remoteStoreConfig(), {
+        remoteUrl: FAKE_REMOTE_URL,
+        credential: 'fake-file-token-do-not-use',
+      });
+    });
+  });
+
+  it('errors clearly (naming the key, not any secret) when the key is not in the credential file', () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'peek-mcp-cred-'));
+    mkdirSync(join(tmpHome, '.config', 'peek'), { recursive: true });
+    writeFileSync(join(tmpHome, '.config', 'peek', 'mcp-credentials.json'), JSON.stringify({ credentials: {} }));
+
+    withEnv({ HOME: tmpHome }, () => {
+      assert.throws(
+        () => resolveCredentialFromFile(`${FAKE_REMOTE_URL}#missing`),
+        /No credential found for key/,
+      );
+    });
+  });
+
+  it('errors clearly when the credential file does not exist', () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'peek-mcp-cred-'));
+    withEnv({ HOME: tmpHome }, () => {
+      assert.throws(
+        () => resolveCredentialFromFile(`${FAKE_REMOTE_URL}#peek`),
+        /Could not read Peek MCP credential file/,
+      );
+    });
+  });
+});
+
+describe('scopeConsistencyError() — startup consistency check (design doc §4.3)', () => {
+  it('returns null when the store scope agrees with the local configuration', () => {
+    assert.equal(scopeConsistencyError({ scopeTag: 'peek' }, 'peek'), null);
+  });
+
+  it('returns null when both are unscoped', () => {
+    assert.equal(scopeConsistencyError({ scopeTag: '' }, ''), null);
+  });
+
+  it('names both values when they disagree, without silently serving the mismatched session', () => {
+    const msg = scopeConsistencyError({ scopeTag: 'remote-scope' }, 'local-scope');
+    assert.match(msg, /remote-scope/);
+    assert.match(msg, /local-scope/);
+    assert.match(msg, /mismatch/i);
+  });
+});
+
+describe('entryEnvMatchesCurrent() — remote keys (design doc §4.3)', () => {
+  it('matches when scope/readonly/remoteUrl/credential all agree, ignoring PEEK_DB_PATH', () => {
+    withEnv({
+      PEEK_MCP_SCOPE_TAG: 'peek',
+      PEEK_MCP_READONLY: undefined,
+      PEEK_MCP_REMOTE_URL: FAKE_REMOTE_URL,
+      PEEK_MCP_CREDENTIAL: `${FAKE_REMOTE_URL}#peek`,
+      PEEK_DB_PATH: undefined,
+    }, () => {
+      const entry = {
+        env: {
+          PEEK_MCP_SCOPE_TAG: 'peek',
+          PEEK_MCP_REMOTE_URL: FAKE_REMOTE_URL,
+          PEEK_MCP_CREDENTIAL: `${FAKE_REMOTE_URL}#peek`,
+        },
+      };
+      assert.equal(entryEnvMatchesCurrent(entry), true);
+    });
+  });
+
+  it('does not match when the on-disk remote url/credential differ', () => {
+    withEnv({
+      PEEK_MCP_SCOPE_TAG: 'peek',
+      PEEK_MCP_REMOTE_URL: FAKE_REMOTE_URL,
+      PEEK_MCP_CREDENTIAL: `${FAKE_REMOTE_URL}#peek`,
+    }, () => {
+      const entry = {
+        env: {
+          PEEK_MCP_SCOPE_TAG: 'peek',
+          PEEK_MCP_REMOTE_URL: 'https://sync.other.test',
+          PEEK_MCP_CREDENTIAL: 'https://sync.other.test#peek',
+        },
+      };
+      assert.equal(entryEnvMatchesCurrent(entry), false);
+    });
+  });
+
+  it('treats a remote current session against a local-mode on-disk entry as a mismatch', () => {
+    withEnv({
+      PEEK_MCP_SCOPE_TAG: 'peek',
+      PEEK_MCP_REMOTE_URL: FAKE_REMOTE_URL,
+      PEEK_MCP_CREDENTIAL: `${FAKE_REMOTE_URL}#peek`,
+    }, () => {
+      const entry = { env: { PEEK_MCP_SCOPE_TAG: 'peek', PEEK_DB_PATH: '/some/path/datastore.sqlite' } };
+      assert.equal(entryEnvMatchesCurrent(entry), false);
+    });
+  });
+
+  it('local mode still compares PEEK_DB_PATH exactly as before', () => {
+    withEnv({
+      PEEK_MCP_SCOPE_TAG: undefined,
+      PEEK_MCP_REMOTE_URL: undefined,
+      PEEK_MCP_CREDENTIAL: undefined,
+      PEEK_DB_PATH: '/a/datastore.sqlite',
+    }, () => {
+      assert.equal(entryEnvMatchesCurrent({ env: { PEEK_DB_PATH: '/a/datastore.sqlite' } }), true);
+      assert.equal(entryEnvMatchesCurrent({ env: { PEEK_DB_PATH: '/b/datastore.sqlite' } }), false);
+    });
   });
 });

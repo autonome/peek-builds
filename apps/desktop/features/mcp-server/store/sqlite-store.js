@@ -540,6 +540,35 @@ function resolveItemIdSync(prefix, scopeTag) {
   };
 }
 
+/**
+ * Format the same "ambiguous item id" error text server.js's
+ * formatAmbiguous() and remote-store.js's ambiguousError() produce, so a
+ * caller sees identical wording regardless of which store answered. Kept as
+ * an independent copy rather than an import — see remote-store.js's header
+ * comment for why the store layer doesn't reach into server.js.
+ */
+function ambiguousItemIdError(prefix, candidates, truncated) {
+  const lines = (candidates || []).map((c) => `  ${c.id}  ${c.title || '(untitled)'}`);
+  return new Error(
+    `Ambiguous item id prefix "${prefix}" matches ${candidates.length}${truncated ? '+' : ''} items:\n` +
+    lines.join('\n') +
+    `\nPass more of the id (or the full id) to disambiguate.`
+  );
+}
+
+// Resolves a raw id-or-prefix and fetches the item in a single call — the
+// inline resolution design doc §5 specifies for read tools (get_item,
+// get_task_context): one store call instead of server.js's separate
+// resolveItemId() + getItem() pair. Not-found returns null; ambiguity
+// throws (never guesses).
+function resolveAndGetItemSync(idOrPrefix, scopeTag) {
+  if (typeof idOrPrefix !== 'string' || idOrPrefix === '') return null;
+  const resolved = resolveItemIdSync(idOrPrefix, scopeTag);
+  if (resolved.ambiguous) throw ambiguousItemIdError(idOrPrefix, resolved.candidates, resolved.truncated);
+  if (resolved.id === null) return null;
+  return getItemSync(resolved.id);
+}
+
 function getItemTagsSync(itemId) {
   const d = requireDb();
   return d.prepare(`
@@ -710,8 +739,8 @@ function completeTaskSync(id, notes = '') {
   return getItemSync(id);
 }
 
-function getTaskContextSync(id) {
-  const item = getItemSync(id);
+function getTaskContextSync(idOrPrefix, scopeTag) {
+  const item = resolveAndGetItemSync(idOrPrefix, scopeTag);
   if (!item) return null;
 
   const events = requireDb().prepare(`
@@ -720,7 +749,7 @@ function getTaskContextSync(id) {
     WHERE itemId = ?
     ORDER BY occurredAt DESC
     LIMIT 20
-  `).all(id);
+  `).all(item.id);
 
   return { ...item, events };
 }
@@ -737,7 +766,7 @@ export async function openSqliteStore({ dbPath, scopeTag = '', readonly = false 
   return {
     async queryItems(q) { return queryItemsSync(q); },
     async searchItems(q) { return searchItemsSync(q); },
-    async getItem(id, _opts) { return getItemSync(id); },
+    async getItem(idOrPrefix, _opts) { return resolveAndGetItemSync(idOrPrefix, scopeTag); },
     async getItemTags(id) { return getItemTagsSync(id); },
     async resolveItemId(prefix) { return resolveItemIdSync(prefix, scopeTag); },
     async createItem(input) { return createItemSync(input); },
@@ -749,7 +778,7 @@ export async function openSqliteStore({ dbPath, scopeTag = '', readonly = false 
     async recordEvent(id, type, value) { return recordEventSync(id, type, value); },
     async listTasks(q) { return listTasksSync(q); },
     async completeTask(id, notes) { return completeTaskSync(id, notes); },
-    async getTaskContext(id) { return getTaskContextSync(id); },
+    async getTaskContext(idOrPrefix) { return getTaskContextSync(idOrPrefix, scopeTag); },
     async describe() {
       let datastoreVersion = 0;
       try {
