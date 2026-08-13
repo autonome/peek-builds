@@ -817,6 +817,13 @@ function checkInvariants(state: State, prev?: State): string[] {
       if (nextRecord !== undefined && prevRecord.keepLive !== undefined && nextRecord.keepLive === undefined) {
         violations.push(`keepLive decayed back to absent for ${prevRecord.id}`);
       }
+      // Same rule for `overlayFrame`, for the same reason: it is a lived fact
+      // (the frame the overlay was last asked to occupy — see the field's
+      // doc), and a re-registration merge dropping it is the same bug class
+      // that once dropped `keepLive` and `parentId`.
+      if (nextRecord !== undefined && prevRecord.overlayFrame !== undefined && nextRecord.overlayFrame === undefined) {
+        violations.push(`overlayFrame decayed back to absent for ${prevRecord.id}`);
+      }
     }
   }
 
@@ -1437,7 +1444,7 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     { type: 'BoundsChanged', id, bounds: { x: 1, y: 2, width: 3, height: 4 } },
     { type: 'Maximized', id, preMaxBounds: { x: 5, y: 6, width: 7, height: 8 } },
     { type: 'DesktopMembershipSet', id, membership: 'anchor' },
-    { type: 'OverlayAttached', overlayId: id, hostId: host },
+    { type: 'OverlayAttached', overlayId: id, hostId: host, frame: { x: 10, y: 20, width: 30, height: 40 } },
     { type: 'ContentFirstResponderChanged', id, held: false },
     { type: 'FullscreenTransitionStarted', id, entering: true, preBounds: { x: 9, y: 9, width: 9, height: 9 } },
   ];
@@ -1455,6 +1462,9 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     // not the one registration originally declared (true) — the merge reads
     // whatever is currently lived, not the record's registration history.
     assert.strictEqual(nextRecord.keepLive, false);
+    // Explicitly: the frame `OverlayAttached` wrote survives too — the gap
+    // this describe was extended to close.
+    assert.deepStrictEqual(nextRecord.overlayFrame, { x: 10, y: 20, width: 30, height: 40 });
     assert.deepStrictEqual(checkInvariants(after, before), []);
   });
 
@@ -1468,6 +1478,7 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     assert.notStrictEqual(record.preMaxBounds, null);
     assert.strictEqual(record.desktopMembership, 'anchor');
     assert.strictEqual(record.overlayFor, host);
+    assert.notStrictEqual(record.overlayFrame, undefined);
     assert.notStrictEqual(record.lastOpSeq, undefined);
     assert.strictEqual(record.contentFocused, false);
     assert.strictEqual(record.escapeMode, 'ignore');

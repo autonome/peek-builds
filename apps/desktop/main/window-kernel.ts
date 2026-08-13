@@ -1420,6 +1420,14 @@ export function evolve(state: State, ev: Event): State {
           // A lived fact (attachment), same reasoning as `fsMode` above —
           // re-registration must not sever a live overlay attachment.
           ...(existing.overlayFor !== undefined ? { overlayFor: existing.overlayFor } : {}),
+          // A lived fact (the frame the overlay was last asked to occupy),
+          // same reasoning as `overlayFor` above — re-registration must not
+          // un-frame an overlay that has already been placed. Judged
+          // low-risk in practice (the shared overlay singleton is never
+          // re-registered in production, only ever attached/retargeted), but
+          // the merge must not decay it regardless — this is what the
+          // property suite below checks for.
+          ...(existing.overlayFrame !== undefined ? { overlayFrame: existing.overlayFrame } : {}),
           // A lived fact (focus provenance), same reasoning — re-registration
           // must not erase the newest op issued for this window.
           ...(existing.lastOpSeq !== undefined ? { lastOpSeq: existing.lastOpSeq } : {}),
