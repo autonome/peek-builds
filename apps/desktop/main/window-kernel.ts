@@ -2234,6 +2234,26 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // `evolve`'s `WindowHidden` arm — which stamps `lastOpSeq` on that same
   // successor under this identical condition — so this reads as a pure
   // structural diff and never re-derives the guard from `ev`.
+  //
+  // WHY THE `appActive` TEST IS LOAD-BEARING HERE, AND WHAT HOLDS IT UP. This
+  // rule cannot tell which event flipped the visibility — that is the whole
+  // point of a structural diff — so it must not fire on the OTHER two arms
+  // that clear `visible` on a record `key` may name. `AppResigned` is safe
+  // locally: it writes `appActive: false` in the same transition, so the test
+  // below excludes it. `AppResignSettled` is NOT safe locally — it hides
+  // sweep-eligible windows without consulting `appActive`, deliberately, so
+  // that the defensive path still runs its reversible hide. Its safety is
+  // NON-LOCAL: it rests on `appActive: true` and `pendingAppResignSweep: true`
+  // never holding together, since `AppActivated` is the only writer of the
+  // former and clears the latter in the same object. That is not an argument
+  // left in a comment — `window-kernel-properties.test.ts checkInvariants`
+  // asserts it under "App activation dance". Were it ever to regress, this
+  // loop would emit a `RaiseWindow` that `evolve` minted no token for, and the
+  // op-seq biconditional would break rather than anything visible going wrong.
+  //
+  // A record REMOVED from `order` is never visited: this walks `next.order`
+  // and looks each id up in `prev`, and `WindowClosed` is the only arm that
+  // shrinks the order.
   for (const nextRecord of next.order) {
     const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
     if (prevRecord === undefined) continue;
