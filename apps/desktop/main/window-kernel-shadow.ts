@@ -668,12 +668,19 @@ export function shadowKernelRaiseWindow(id: WindowId, oldSnapshot: StateSnapshot
  * `shadowExecute` (a rejected stale `expectedVersion`, or a `hostId`/
  * `overlayId` `decide` doesn't recognize, is logged, never thrown into the
  * caller), ending with the same `compareAfterFeed` tail.
+ *
+ * `frame` is the freshly expanded overlay frame for `hostId`, computed at the
+ * caller's dispatch site the same way `OVERLAY_ATTACH_REQUESTED.frame` is
+ * (`hybrid-overlay.ts retarget()`) — see `window-kernel.ts
+ * WindowRecord.overlayFrame`'s doc for why the kernel takes this as data
+ * rather than computing it. Omitted on a detach.
  */
-export function shadowKernelAttachOverlay(overlayId: WindowId, hostId: WindowId | null, oldSnapshot: StateSnapshot): void {
+export function shadowKernelAttachOverlay(overlayId: WindowId, hostId: WindowId | null, oldSnapshot: StateSnapshot, frame?: Rectangle): void {
   shadowExecute({
     type: 'AttachOverlay',
     overlayId,
     hostId,
+    ...(frame !== undefined ? { frame } : {}),
     expectedVersion: getShadowKernelExecutor().getState().version,
   });
   compareAfterFeed(oldSnapshot);
@@ -879,9 +886,17 @@ export function shadowKernelSetFullscreen(id: WindowId, desired: boolean, oldSna
  * The old machine's `BOUNDS_CHANGED.bounds` and the kernel's own `Rectangle`
  * are the SAME type (`window-state.ts` imports `Rectangle` from
  * `window-kernel.ts`), so no conversion is needed at this boundary.
+ *
+ * `overlayFrame` mirrors `BOUNDS_CHANGED.overlayFrame` — the freshly
+ * expanded overlay frame for `id`, when `id` is hosting the shared chrome
+ * overlay (`electron-window-backend.ts attachNativeListeners`'s `emitBounds`
+ * closure already computes this for every page-host's bounds report for the
+ * old machine's own dispatch; it needs threading through to THIS call too).
+ * See `window-kernel.ts WindowRecord.overlayFrame`'s doc for why the frame
+ * rides here as data rather than being computed inside the kernel.
  */
-export function shadowKernelBoundsChanged(id: WindowId, bounds: Rectangle, oldSnapshot: StateSnapshot): void {
-  shadowDispatch({ type: 'BoundsChanged', id, bounds });
+export function shadowKernelBoundsChanged(id: WindowId, bounds: Rectangle, oldSnapshot: StateSnapshot, overlayFrame?: Rectangle): void {
+  shadowDispatch({ type: 'BoundsChanged', id, bounds, ...(overlayFrame !== undefined ? { overlayFrame } : {}) });
   compareAfterFeed(oldSnapshot);
 }
 

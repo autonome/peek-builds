@@ -249,6 +249,31 @@ export interface WindowRecord {
   overlayFor?: WindowId;
 
   /**
+   * ATTACHED-OVERLAY TARGET FRAME. Set on an OVERLAY record alongside
+   * `overlayFor`: the frame the overlay should currently occupy, taken
+   * verbatim from whichever call supplied one (`AttachOverlay.frame`,
+   * `BoundsChanged.overlayFrame`) — the kernel never computes this itself.
+   * `expandToOverlayFrame` (`overlay-frame.ts`) needs a work-area read
+   * (`screen.getDisplayNearestPoint`), which is platform data this
+   * zero-value-import file cannot ask for, so the frame rides on the
+   * command/event as data, computed at the dispatch site that already knows
+   * the work area — the same design `window-state.ts
+   * OVERLAY_ATTACH_REQUESTED.frame` / `BOUNDS_CHANGED.overlayFrame` used.
+   *
+   * DISTINCT FROM `bounds`, deliberately: `bounds` is a window's own
+   * OS-mirrored rect, written only by a genuine `BoundsChanged` naming THAT
+   * window. `overlayFrame` is a TARGET this window (the overlay) has not
+   * necessarily reached on screen yet — which is exactly what makes it a
+   * STORED FACT `react` can diff into a `SetBounds` effect (see `react`'s
+   * "Overlay follow — frame" rule) without reading `ev.type`: the fact
+   * exists so `react` never has to ask which event produced it, only
+   * whether it moved. `undefined` until the first frame is ever given, and
+   * untouched by a hide (a fullscreen-hidden overlay keeps its last frame,
+   * so re-revealing it needs no new `SetBounds`).
+   */
+  overlayFrame?: Rectangle;
+
+  /**
    * The newest `opSeq` stamped on a focus-family effect (`ShowWindow` /
    * `RaiseWindow`) issued for this window — what `isStaleSelfEcho` compares
    * an incoming `machine`-caused `OsFocusGained` against. Written in `evolve`
@@ -731,8 +756,20 @@ export type Event =
    * `Maximize` / `Unmaximize` below reuse this same event shape rather than
    * inventing a second bounds-writing fact, under the dispatch-is-synchronous
    * contract described on the field.
+   *
+   * `overlayFrame` is the freshly expanded overlay frame for THIS window,
+   * when it is hosting the shared chrome overlay — ported from
+   * `window-state.ts BOUNDS_CHANGED.overlayFrame`. Computed at the dispatch
+   * site the same way `AttachOverlay.frame` is (see
+   * `WindowRecord.overlayFrame`'s doc for why): the backend already computes
+   * it for every page-host's bounds report and only needs to stop dropping
+   * it at the kernel's edge (`window-kernel-shadow.ts
+   * shadowKernelBoundsChanged`). Absent when this window has no overlay
+   * attached, or the dispatch site could not read a work area — `evolve`
+   * treats an absent frame as "nothing new to reframe to", same as
+   * `AttachOverlay` with no `frame`.
    */
-  | { type: 'BoundsChanged'; id: WindowId; bounds: Rectangle }
+  | { type: 'BoundsChanged'; id: WindowId; bounds: Rectangle; overlayFrame?: Rectangle }
   /**
    * The display layout changed (ported from `window-state.ts
    * DISPLAY_CHANGED`) — one already-computed target rect per affected
@@ -783,11 +820,20 @@ export type Event =
    * As an event, it is a fact already decided elsewhere and can never be
    * rejected here: `evolve` normalizes a `hostId` that isn't registered, or
    * that names the overlay itself, into a detach rather than storing it —
-   * see `evolve`'s `OverlayAttached` case. The follow itself is `react`'s
-   * job, driven off the host's next `BoundsChanged`, never a live query at
-   * this event's own dispatch time.
+   * see `evolve`'s `OverlayAttached` case. The follow (reveal, hide, reframe)
+   * is decided IN `evolve`, from the host's CURRENT `fsMode` and
+   * `state.appActive` — never a live query at some later point, and never a
+   * branch `react` has to make: `evolve` writes the result onto the overlay's
+   * `visible`/`overlayFrame` fields, and `react` only diffs them.
+   *
+   * `frame` is the freshly expanded overlay frame for the NEW host, computed
+   * at the dispatch site the same way `BoundsChanged.overlayFrame` is (see
+   * `WindowRecord.overlayFrame`'s doc) — ported from `window-state.ts
+   * OVERLAY_ATTACH_REQUESTED.frame`. Absent on a detach, or when the
+   * dispatch site could not read the host's bounds between the retarget
+   * signal and this call.
    */
-  | { type: 'OverlayAttached'; overlayId: WindowId; hostId: WindowId | null }
+  | { type: 'OverlayAttached'; overlayId: WindowId; hostId: WindowId | null; frame?: Rectangle }
   /**
    * A persisted bottom -> top stack order was imported (`decide`'s translation
    * of `ImportStackOrder`; ported from `window-state.ts
@@ -942,8 +988,13 @@ export type Command =
    * is detach. One transition, no separate detach command (see the doc on
    * `WindowRecord.overlayFor`). `decide` rejects if either named window is
    * absent from `order`.
+   *
+   * `frame` carries the newly expanded overlay frame for `hostId`, computed
+   * at the caller's dispatch site — see `WindowRecord.overlayFrame`'s doc for
+   * why the kernel takes this as data rather than computing it. Meaningless
+   * on a detach (`hostId: null`), and safely ignored there.
    */
-  | { type: 'AttachOverlay'; overlayId: WindowId; hostId: WindowId | null; expectedVersion: number }
+  | { type: 'AttachOverlay'; overlayId: WindowId; hostId: WindowId | null; frame?: Rectangle; expectedVersion: number }
   /**
    * Restore a persisted bottom -> top stack order (ported from
    * `window-state.ts STACK_ORDER_IMPORTED`) — the session-restore ordering
@@ -1287,6 +1338,40 @@ function withPendingProjectionFlushed(record: WindowRecord): WindowRecord {
   if (record.pendingProjectedBounds === null) return record;
   if (record.fsMode.name !== 'normal' || !record.visible) return record;
   return { ...record, bounds: record.pendingProjectedBounds, pendingProjectedBounds: null };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Overlay follow (§ WindowRecord.overlayFor/overlayFrame) — the decision half
+// of `window-state.ts applyOverlayFollow`, ported WITHOUT its effects: it
+// returns the record patch an evolve arm merges onto an attached overlay,
+// rather than pushing effects itself (effects are `react`'s job, from the
+// diff those patches leave behind). Shared by every evolve arm that can move
+// an attached overlay's visibility or frame (`OverlayAttached`,
+// `BoundsChanged`, `OsFullscreenEntered`, `OsFullscreenLeft`) so the rule —
+// a non-normal host always hides; a normal host takes the given frame and
+// reveals while the app is active — lives in exactly one place. Total and
+// reads only the values it is given, same as every other evolve helper.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The record patch `overlayFollowPatch` can produce — see that function. */
+type OverlayFollowPatch = Partial<Pick<WindowRecord, 'overlayFrame' | 'visible' | 'hiddenByAppBlur'>>;
+
+function overlayFollowPatch(overlay: WindowRecord, hostNormal: boolean, appActive: boolean, frame: Rectangle | undefined): OverlayFollowPatch {
+  if (!hostNormal) {
+    // Ported verbatim: a non-normal host hides and returns — no frame write,
+    // even when one was given, and no reveal.
+    return overlay.visible ? { visible: false } : {};
+  }
+  const patch: OverlayFollowPatch = {};
+  if (frame !== undefined) patch.overlayFrame = frame;
+  if (appActive && !overlay.visible) {
+    patch.visible = true;
+    // `hiddenByAppBlur` can never be true on a visible window (checked by
+    // `window-kernel-properties.test.ts checkInvariants`) — cleared here the
+    // same way `WindowShown`'s arm clears it on any genuine show.
+    if (overlay.hiddenByAppBlur === true) patch.hiddenByAppBlur = false;
+  }
+  return patch;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1666,8 +1751,9 @@ export function evolve(state: State, ev: Event): State {
       // overlays outright: an attached overlay's visibility belongs to its
       // attachment, so it is driven here and never dismissed. An already-hidden
       // overlay is left alone, which is what keeps a host in fullscreen (whose
-      // overlay `react`'s follow rule already drove off screen) from having its
-      // chrome revealed by the next activation.
+      // overlay the `OsFullscreenEntered` evolve arm already drove off screen,
+      // via `overlayFollowPatch`) from having its chrome revealed by the next
+      // activation.
       //
       // No `opSeq` is stamped, exactly as the `AppResignSettled` sweep stamps
       // none: `lastOpSeq` tracks focus-family ops and `HideWindow` carries no
@@ -1886,9 +1972,21 @@ export function evolve(state: State, ev: Event): State {
     }
 
     case 'OsFullscreenEntered': {
+      // OVERLAY FOLLOW (ported from `window-state.ts applyOverlayFollow`'s
+      // fullscreen branch): `nextFsModeForOsEntered` never settles a host
+      // back to `normal` (every one of its arms lands on `entering`,
+      // `leaving`, or `fullscreen` — see that function), so a host entering
+      // fullscreen always takes its attached overlay off screen. No opSeq
+      // stamp: a hide is never a focus-family effect.
+      const overlay = overlayForHost(state, ev.id);
+      const patch = overlay !== null ? overlayFollowPatch(overlay, false, state.appActive, undefined) : null;
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, fsMode: nextFsModeForOsEntered(w.fsMode) } : w)),
+        order: state.order.map((w) => {
+          if (w.id === ev.id) return { ...w, fsMode: nextFsModeForOsEntered(w.fsMode) };
+          if (patch !== null && overlay !== null && w.id === overlay.id) return { ...w, ...patch };
+          return w;
+        }),
         version: state.version + 1,
       };
     }
@@ -1896,11 +1994,31 @@ export function evolve(state: State, ev: Event): State {
     case 'OsFullscreenLeft': {
       // Can newly clear the fsMode axis of a held DisplayChanged projection
       // (several of its arms settle onto 'normal') — flush if visible too.
+      //
+      // OVERLAY FOLLOW: the reverse of `OsFullscreenEntered` above — settling
+      // back to `normal` re-reveals the attached overlay while the app is
+      // active, at its LAST frame (no `frame` is given here, mirroring
+      // `window-state.ts applyOverlayFollow`'s "never moved while hidden, so
+      // no rect needed" case). `settlesNormal` reads the host's PRIOR
+      // (`state`) record, since this arm computes the settle itself rather
+      // than reading it back off `next` — `evolve` may read only its own two
+      // arguments.
+      const hostBefore = state.order.find((w) => w.id === ev.id);
+      const settlesNormal = hostBefore !== undefined && nextFsModeForOsLeft(hostBefore.fsMode).name === 'normal';
+      const overlay = overlayForHost(state, ev.id);
+      const patch = overlay !== null ? overlayFollowPatch(overlay, settlesNormal, state.appActive, undefined) : null;
+      const issuesShow = patch !== null && patch.visible === true;
+      const opSeq = issuesShow ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
         ...state,
-        order: state.order.map((w) =>
-          w.id === ev.id ? withPendingProjectionFlushed({ ...w, fsMode: nextFsModeForOsLeft(w.fsMode) }) : w,
-        ),
+        order: state.order.map((w) => {
+          if (w.id === ev.id) return withPendingProjectionFlushed({ ...w, fsMode: nextFsModeForOsLeft(w.fsMode) });
+          if (patch !== null && overlay !== null && w.id === overlay.id) {
+            return { ...w, ...patch, ...(issuesShow ? { lastOpSeq: opSeq } : {}) };
+          }
+          return w;
+        }),
+        opSeqCounter: opSeq,
         version: state.version + 1,
       };
     }
@@ -1939,9 +2057,28 @@ export function evolve(state: State, ev: Event): State {
       // `decide`'s translation of SetBounds/Maximize/Unmaximize (see the
       // event doc). Mirror only — no other field, no effects computed here
       // (effects are `react`'s job, from the diff).
+      //
+      // OVERLAY FOLLOW (ported from `window-state.ts applyOverlayFollow`,
+      // §5 step 9's "follow driven by boundsChanged"): the host's own bounds
+      // write above is untouched by this — only its ATTACHED overlay (if
+      // any) reframes, off `ev.overlayFrame` (the dispatch site's freshly
+      // expanded frame, computed alongside the raw bounds — see the event's
+      // own doc), and reveals when the host is normal and the app is active.
+      const host = state.order.find((w) => w.id === ev.id);
+      const overlay = overlayForHost(state, ev.id);
+      const patch = overlay !== null && host !== undefined ? overlayFollowPatch(overlay, host.fsMode.name === 'normal', state.appActive, ev.overlayFrame) : null;
+      const issuesShow = patch !== null && patch.visible === true;
+      const opSeq = issuesShow ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, bounds: ev.bounds } : w)),
+        order: state.order.map((w) => {
+          if (w.id === ev.id) return { ...w, bounds: ev.bounds };
+          if (patch !== null && overlay !== null && w.id === overlay.id) {
+            return { ...w, ...patch, ...(issuesShow ? { lastOpSeq: opSeq } : {}) };
+          }
+          return w;
+        }),
+        opSeqCounter: opSeq,
         version: state.version + 1,
       };
     }
@@ -2023,9 +2160,24 @@ export function evolve(state: State, ev: Event): State {
       // a valid host.
       const resolvedHostId: WindowId | undefined =
         ev.hostId !== null && ev.hostId !== ev.overlayId && state.order.some((w) => w.id === ev.hostId) ? ev.hostId : undefined;
+      // OVERLAY FOLLOW (ported from `window-state.ts applyOverlayFollow`, via
+      // `overlayFollowPatch`): attach and retarget drive the SAME
+      // reveal/reframe decision the bounds- and fullscreen-driven follow
+      // rules elsewhere in this switch drive. Detach (`host === undefined`)
+      // touches only the relation above; `react`'s structural `overlayFor`
+      // diff (its "Overlay detach" rule) is what drives it off screen, same
+      // as before this change.
+      const host = resolvedHostId !== undefined ? state.order.find((w) => w.id === resolvedHostId) : undefined;
+      const overlay = state.order.find((w) => w.id === ev.overlayId);
+      const patch = host !== undefined && overlay !== undefined ? overlayFollowPatch(overlay, host.fsMode.name === 'normal', state.appActive, ev.frame) : {};
+      const issuesShow = patch.visible === true;
+      const opSeq = issuesShow ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.overlayId ? { ...w, overlayFor: resolvedHostId } : w)),
+        order: state.order.map((w) =>
+          w.id === ev.overlayId ? { ...w, overlayFor: resolvedHostId, ...patch, ...(issuesShow ? { lastOpSeq: opSeq } : {}) } : w,
+        ),
+        opSeqCounter: opSeq,
         version: state.version + 1,
       };
     }
@@ -2220,6 +2372,21 @@ export function evolve(state: State, ev: Event): State {
 export function react(prev: State, ev: Event, next: State): Effect[] {
   const effects: Effect[] = [];
 
+  // Overlay follow — FRAME (§ WindowRecord.overlayFrame): a structural diff
+  // of the stored target frame `evolve` writes (`OverlayAttached`,
+  // `BoundsChanged`, `OsFullscreenLeft` — see `overlayFollowPatch`), reading
+  // only `prev`/`next` and never `ev.type`. PLACED FIRST, ahead of the
+  // visibility loop just below, so a reveal never paints the overlay at a
+  // stale frame — the kernel's structural-diff form of `window-state.ts
+  // applyOverlayFollow`'s `SET_BOUNDS`-before-`SHOW_WINDOW` ordering.
+  for (const nextRecord of next.order) {
+    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
+    if (prevRecord === undefined) continue;
+    if (nextRecord.overlayFrame !== undefined && !boundsEqual(prevRecord.overlayFrame, nextRecord.overlayFrame)) {
+      effects.push({ type: 'SetBounds', id: nextRecord.id, bounds: nextRecord.overlayFrame });
+    }
+  }
+
   // Visibility: a record present in both states whose `visible` flipped.
   // (A closed window vanishes from `next.order` entirely — no HideWindow;
   // its dismissal is the CloseWindow diff below instead.)
@@ -2372,20 +2539,6 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
     if (prevRecord.desktopMembership !== nextRecord.desktopMembership && nextRecord.desktopMembership !== undefined) {
       effects.push({ type: 'SetDesktopMembership', id: nextRecord.id, membership: nextRecord.desktopMembership });
-    }
-  }
-
-  // Overlay follow (§ WindowRecord.overlayFor): an attached overlay's bounds
-  // effect mirrors its HOST's bounds diff — never a live query, never a
-  // branch on `ev.type`. A detached overlay (`overlayFor` undefined) has no
-  // host to diff against and is skipped.
-  for (const nextRecord of next.order) {
-    if (nextRecord.overlayFor === undefined) continue;
-    const prevHost = prev.order.find((w) => w.id === nextRecord.overlayFor);
-    const nextHost = next.order.find((w) => w.id === nextRecord.overlayFor);
-    if (nextHost === undefined) continue;
-    if (nextHost.bounds !== undefined && !boundsEqual(prevHost?.bounds, nextHost.bounds)) {
-      effects.push({ type: 'SetBounds', id: nextRecord.id, bounds: nextHost.bounds });
     }
   }
 
@@ -2693,7 +2846,9 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
     if (cmd.hostId !== null && !state.order.some((w) => w.id === cmd.hostId)) {
       return { rejected: 'no-such-window' };
     }
-    return { events: [{ type: 'OverlayAttached', overlayId: cmd.overlayId, hostId: cmd.hostId }] };
+    return {
+      events: [{ type: 'OverlayAttached', overlayId: cmd.overlayId, hostId: cmd.hostId, ...(cmd.frame !== undefined ? { frame: cmd.frame } : {}) }],
+    };
   }
 
   // ImportStackOrder carries `order`, not `id` — handled here, before the
@@ -3098,25 +3253,45 @@ export function isFrontEligibleWindow(record: WindowRecord): boolean {
  * `layer` (see `topmost`'s own doc); this predicate holds that contract with
  * two clauses, neither of which is optional:
  *
- *   - a role in `CONTENT_ROLES`   `kind: 'page-host'` alone is not enough to
- *                                  mean "a base-layer page". `ipc.ts
- *                                  assembleHybridPageHost` registers EVERY
- *                                  hybrid page host with `kind: 'page-host'`,
- *                                  including peeks and slides, which register
- *                                  `role: 'quick-view'`. Without this clause
- *                                  the predicate admits a floating quick-view,
- *                                  and the overlay frames a peek while the
- *                                  base-layer page underneath it sits
- *                                  chrome-less.
- *   - `layer === BASE_LAYER`      a page-host is not confined to the base
- *                                  layer — one can sit in a floating band
- *                                  behind the cmd panel, a peek, or a slide,
- *                                  alongside base-layer page-hosts. `order` is
- *                                  insertion- and movement-ordered, never
- *                                  layer-sorted, so without this clause array
- *                                  position and visual stacking diverge with
- *                                  no error path — the topmost `order` entry
- *                                  need not be the topmost on screen.
+ *   - a role in `CONTENT_ROLES`,
+ *     or `'quick-view'`             `kind: 'page-host'` alone is not enough to
+ *                                   mean "a base-layer page" — `ipc.ts
+ *                                   assembleHybridPageHost` registers EVERY
+ *                                   hybrid page host with `kind: 'page-host'`,
+ *                                   including peeks and slides, which
+ *                                   register `role: 'quick-view'`.
+ *
+ *                                   `'quick-view'` is ADMITTED, not excluded.
+ *                                   Peeks and slides are explicitly built to
+ *                                   use the shared overlay's address bar —
+ *                                   `features/peeks/background.js` and
+ *                                   `features/slides/background.js` both open
+ *                                   with `pageHost: true` under the comment
+ *                                   "page-host shell with address bar (task
+ *                                   ff3b18ba)", and neither ships a navbar of
+ *                                   its own. Excluding the role left a
+ *                                   frontmost peek framed by nothing: with
+ *                                   another page underneath, the chrome
+ *                                   painted around that page instead — the
+ *                                   window the user is NOT working in — and
+ *                                   with the peek alone on screen, there was
+ *                                   no address bar at all. A frontmost peek IS
+ *                                   the window the user is working in, so this
+ *                                   predicate has to name it, not whatever
+ *                                   ordinary page happens to sit behind it.
+ *   - `layer === BASE_LAYER`       a page-host is not confined to the base
+ *                                   layer — one can sit in a floating band
+ *                                   behind the cmd panel, a peek, or a slide,
+ *                                   alongside base-layer page-hosts. `order`
+ *                                   is insertion- and movement-ordered, never
+ *                                   layer-sorted, so without this clause array
+ *                                   position and visual stacking diverge with
+ *                                   no error path — the topmost `order` entry
+ *                                   need not be the topmost on screen. Real
+ *                                   peeks/slides land at `BASE_LAYER` too
+ *                                   (`izui-roles.ts deriveWindowLayer`: they
+ *                                   declare no `alwaysOnTop`), so this clause
+ *                                   never excludes them on its own.
  *
  * `visible` and `orderable` are carried over from the same reasoning
  * `isContentWindow` and the `SetStacking` emission (`react`) already apply: a
@@ -3126,7 +3301,7 @@ export function isFrontEligibleWindow(record: WindowRecord): boolean {
 export function topmostBaseLayerPageHost(state: State): WindowRecord | null {
   return topmost(
     state,
-    (r) => r.kind === 'page-host' && r.visible && r.orderable && r.layer === BASE_LAYER && roleIn(CONTENT_ROLES, r.role),
+    (r) => r.kind === 'page-host' && r.visible && r.orderable && r.layer === BASE_LAYER && (roleIn(CONTENT_ROLES, r.role) || r.role === 'quick-view'),
   );
 }
 

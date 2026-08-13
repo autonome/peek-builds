@@ -736,8 +736,11 @@ function retarget(id: number | null): void {
   dispatchWindowEvent({ type: 'OVERLAY_ATTACH_REQUESTED', id: overlayWmId, hostId, frame });
   // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
   // over nothing; see that module's doc for why this can never change what
-  // actually happens on screen.
-  shadowKernelAttachOverlay(overlayWmId, hostId, getWindowStateSnapshot());
+  // actually happens on screen. The SAME `frame` computed above for the old
+  // machine's event rides this feed too (`window-kernel.ts
+  // WindowRecord.overlayFrame`'s doc), so the kernel's attach/retarget
+  // reframes exactly as the old machine's does.
+  shadowKernelAttachOverlay(overlayWmId, hostId, getWindowStateSnapshot(), frame);
 
   // Tell the overlay renderer which window is now active + a state snapshot so
   // it fully swaps its navbar for the new window (instant paint, no flash).

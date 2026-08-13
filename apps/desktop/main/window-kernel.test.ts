@@ -1892,31 +1892,52 @@ describe('window-kernel: overlay attachment', () => {
     assert.strictEqual(overlayForHost(s, hostB), null);
   });
 
-  it('an attached overlay follows its host BoundsChanged; a detached one does not', () => {
+  it('an attached overlay follows its host to the freshly EXPANDED overlay frame, never the raw host rect; a detached one does not follow at all', () => {
     const registered = fold(registerHostsAndOverlay(), initialState());
     const attached = fold(
       [{ type: 'OverlayAttached', overlayId, hostId: hostA }],
       registered,
     );
 
+    // `overlayFrame` stands in for `expandToOverlayFrame(bounds, workArea)` —
+    // deliberately NOT equal to `bounds`, so the assertion below can tell the
+    // two apart. The dispatch site (`electron-window-backend.ts emitBounds`)
+    // computes it; the kernel only stores what it is given.
     const bounds: Rectangle = { x: 10, y: 20, width: 300, height: 400 };
-    const boundsEv: Event = { type: 'BoundsChanged', id: hostA, bounds };
+    const overlayFrame: Rectangle = { x: -8, y: -44, width: 316, height: 452 };
+    const boundsEv: Event = { type: 'BoundsChanged', id: hostA, bounds, overlayFrame };
     const nextAttached = evolve(attached, boundsEv);
     const attachedEffects = react(attached, boundsEv, nextAttached);
     assert.ok(
-      attachedEffects.some((e) => e.type === 'SetBounds' && e.id === overlayId && JSON.stringify(e.bounds) === JSON.stringify(bounds)),
-      'an attached overlay must follow its host bounds change',
+      attachedEffects.some((e) => e.type === 'SetBounds' && e.id === overlayId && JSON.stringify(e.bounds) === JSON.stringify(overlayFrame)),
+      'an attached overlay must follow its host to the EXPANDED overlay frame',
+    );
+    assert.ok(
+      !attachedEffects.some((e) => e.type === 'SetBounds' && e.id === overlayId && JSON.stringify(e.bounds) === JSON.stringify(bounds)),
+      'the raw host rect must never be handed to the overlay directly — that was the gutter/trigger-zone-losing bug',
     );
 
-    // Detach, then move hostA's bounds again — no follow this time.
+    // A BoundsChanged naming no `overlayFrame` — the dispatch site could not
+    // read a work area, or this window has no overlay attached — reframes
+    // nothing: there is no new frame to follow to.
+    const noFrameEv: Event = { type: 'BoundsChanged', id: hostA, bounds };
+    const noFrameNext = evolve(attached, noFrameEv);
+    const noFrameEffects = react(attached, noFrameEv, noFrameNext);
+    assert.ok(
+      !noFrameEffects.some((e) => e.type === 'SetBounds' && e.id === overlayId),
+      'no overlayFrame on the event means nothing new to reframe to',
+    );
+
+    // Detach, then move hostA's bounds again, WITH a frame — still no follow.
     const detached = evolve(attached, { type: 'OverlayAttached', overlayId, hostId: null });
     const bounds2: Rectangle = { x: 1, y: 2, width: 3, height: 4 };
-    const boundsEv2: Event = { type: 'BoundsChanged', id: hostA, bounds: bounds2 };
+    const overlayFrame2: Rectangle = { x: -7, y: -42, width: 19, height: 46 };
+    const boundsEv2: Event = { type: 'BoundsChanged', id: hostA, bounds: bounds2, overlayFrame: overlayFrame2 };
     const nextDetached = evolve(detached, boundsEv2);
     const detachedEffects = react(detached, boundsEv2, nextDetached);
     assert.ok(
       !detachedEffects.some((e) => e.type === 'SetBounds' && e.id === overlayId),
-      'a detached overlay must not follow bounds changes',
+      'a detached overlay must not follow bounds changes even when a frame is given',
     );
   });
 
@@ -1979,6 +2000,181 @@ describe('window-kernel: overlay attachment', () => {
       undefined,
       'an overlay naming itself as host must not be stored',
     );
+  });
+});
+
+// ── Overlay follow: visibility and frame ────────────────────────────────────
+//
+// Ports `window-state.ts applyOverlayFollow`'s full rule set (via
+// `overlayFollowPatch`, `window-kernel.ts`): a non-normal host always hides
+// its attached overlay; a normal host takes the given frame and reveals the
+// overlay while the app is active. `WindowShown` is fired for neither host in
+// these scenes on purpose — a hand-written scene omitting it would leave
+// `visible` false and silently exclude the window from content predicates,
+// but the overlay-follow rule reads a host's `fsMode`/registration facts, not
+// its own visibility, so the hosts here are deliberately left unshown to keep
+// each scene to the minimum that exercises the rule under test.
+
+describe('window-kernel: overlay follow — visibility and frame', () => {
+  const registerHostsAndOverlay = (): Event[] => [
+    { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    { type: 'WindowRegistered', id: wid(3), kind: 'browser', layer: 1, canBecomeKey: false, acceptsInput: false, class: 'overlay' },
+  ];
+  const overlayId = wid(3);
+  const hostA = wid(1);
+  const hostB = wid(2);
+  /** Stand-ins for `expandToOverlayFrame(bounds, workArea)` — deliberately NOT
+   *  equal to any raw host bounds used alongside them, so an assertion can
+   *  tell "the expanded frame" apart from "the raw host rect". */
+  const frameA: Rectangle = { x: -8, y: -44, width: 316, height: 452 };
+  const frameB: Rectangle = { x: 92, y: 56, width: 336, height: 468 };
+
+  /** The app active, both hosts + the overlay registered, nothing attached yet. */
+  const active = (): State => fold([...registerHostsAndOverlay(), { type: 'AppActivated' }], initialState());
+
+  it('attach shows the overlay when the host is normal and the app is active — the frame lands before the reveal', () => {
+    const state = active();
+    assert.strictEqual(state.order.find((w) => w.id === overlayId)?.visible, false, 'precondition: not yet shown');
+
+    const ev: Event = { type: 'OverlayAttached', overlayId, hostId: hostA, frame: frameA };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+
+    const overlay = next.order.find((w) => w.id === overlayId)!;
+    assert.strictEqual(overlay.visible, true);
+    assert.strictEqual(overlay.overlayFor, hostA);
+    assert.deepStrictEqual(overlay.overlayFrame, frameA);
+    assert.ok(next.opSeqCounter > state.opSeqCounter, 'a genuine show mints a token');
+    assert.strictEqual(overlay.lastOpSeq, next.opSeqCounter);
+
+    const boundsIdx = effects.findIndex(
+      (e) => e.type === 'SetBounds' && e.id === overlayId && JSON.stringify(e.bounds) === JSON.stringify(frameA),
+    );
+    const showIdx = effects.findIndex((e) => e.type === 'ShowWindow' && e.id === overlayId && e.opSeq === next.opSeqCounter);
+    assert.notStrictEqual(boundsIdx, -1, 'the overlay is framed');
+    assert.notStrictEqual(showIdx, -1, 'the overlay is shown, carrying the op token evolve stamped');
+    assert.ok(boundsIdx < showIdx, 'the frame lands before the reveal, so it never paints at a stale rect');
+  });
+
+  it('retarget re-frames the ALREADY-visible overlay onto the new host — no second ShowWindow, no new op token', () => {
+    const attached = fold([{ type: 'OverlayAttached', overlayId, hostId: hostA, frame: frameA }], active());
+    assert.strictEqual(attached.order.find((w) => w.id === overlayId)?.visible, true, 'precondition: shown on hostA');
+
+    const ev: Event = { type: 'OverlayAttached', overlayId, hostId: hostB, frame: frameB };
+    const next = evolve(attached, ev);
+    const effects = react(attached, ev, next);
+
+    const overlay = next.order.find((w) => w.id === overlayId)!;
+    assert.strictEqual(overlay.overlayFor, hostB);
+    assert.deepStrictEqual(overlay.overlayFrame, frameB);
+    assert.strictEqual(overlay.visible, true, 'still shown — a retarget is not a fresh reveal');
+    assert.strictEqual(next.opSeqCounter, attached.opSeqCounter, 'no focus-family effect — nothing to stamp a token for');
+
+    assert.ok(
+      effects.some((e) => e.type === 'SetBounds' && e.id === overlayId && JSON.stringify(e.bounds) === JSON.stringify(frameB)),
+      'the overlay follows onto the new host at its frame',
+    );
+    assert.ok(!effects.some((e) => e.type === 'ShowWindow' && e.id === overlayId), 'already visible — no re-show');
+  });
+
+  it('detach hides the overlay', () => {
+    const attached = fold([{ type: 'OverlayAttached', overlayId, hostId: hostA, frame: frameA }], active());
+    assert.strictEqual(attached.order.find((w) => w.id === overlayId)?.visible, true, 'precondition: shown');
+
+    const ev: Event = { type: 'OverlayAttached', overlayId, hostId: null };
+    const next = evolve(attached, ev);
+    const effects = react(attached, ev, next);
+
+    assert.strictEqual(next.order.find((w) => w.id === overlayId)?.overlayFor, undefined);
+    assert.ok(effects.some((e) => e.type === 'HideWindow' && e.id === overlayId));
+  });
+
+  it('a host entering fullscreen hides its attached overlay, without severing the attachment', () => {
+    const attached = fold([{ type: 'OverlayAttached', overlayId, hostId: hostA, frame: frameA }], active());
+    assert.strictEqual(attached.order.find((w) => w.id === overlayId)?.visible, true, 'precondition: shown');
+
+    const ev: Event = { type: 'OsFullscreenEntered', id: hostA };
+    const next = evolve(attached, ev);
+    const effects = react(attached, ev, next);
+
+    const overlay = next.order.find((w) => w.id === overlayId)!;
+    assert.strictEqual(overlay.visible, false);
+    assert.strictEqual(overlay.overlayFor, hostA, 'still attached — only visibility moved, the same shape a fullscreen-hidden overlay had before this rule existed');
+    assert.ok(effects.some((e) => e.type === 'HideWindow' && e.id === overlayId));
+    assert.ok(!effects.some((e) => e.type === 'SetBounds' && e.id === overlayId), 'a fullscreen hide never touches the frame');
+    assert.strictEqual(next.opSeqCounter, attached.opSeqCounter, 'a hide is never a focus-family effect');
+  });
+
+  it('a host bounds change re-frames its attached, ALREADY-visible overlay — no extra ShowWindow', () => {
+    const attached = fold([{ type: 'OverlayAttached', overlayId, hostId: hostA, frame: frameA }], active());
+    assert.strictEqual(attached.order.find((w) => w.id === overlayId)?.visible, true, 'precondition: shown');
+
+    const movedBounds: Rectangle = { x: 50, y: 60, width: 300, height: 400 };
+    const movedFrame: Rectangle = { x: 42, y: 16, width: 316, height: 452 };
+    const ev: Event = { type: 'BoundsChanged', id: hostA, bounds: movedBounds, overlayFrame: movedFrame };
+    const next = evolve(attached, ev);
+    const effects = react(attached, ev, next);
+
+    const overlay = next.order.find((w) => w.id === overlayId)!;
+    assert.deepStrictEqual(overlay.overlayFrame, movedFrame);
+    assert.strictEqual(overlay.visible, true, 'still visible — a reframe is not a re-show');
+    assert.ok(
+      effects.some((e) => e.type === 'SetBounds' && e.id === overlayId && JSON.stringify(e.bounds) === JSON.stringify(movedFrame)),
+      'the overlay follows to the freshly expanded frame',
+    );
+    assert.ok(!effects.some((e) => e.type === 'ShowWindow' && e.id === overlayId), 'already visible — no re-show');
+    assert.strictEqual(next.opSeqCounter, attached.opSeqCounter, 'a reframe alone mints no op token');
+  });
+
+  it('leaving fullscreen re-reveals the overlay at its LAST frame — no SetBounds, only a ShowWindow carrying a fresh op token', () => {
+    const hidden = fold(
+      [
+        { type: 'OverlayAttached', overlayId, hostId: hostA, frame: frameA },
+        { type: 'OsFullscreenEntered', id: hostA },
+      ],
+      active(),
+    );
+    assert.strictEqual(hidden.order.find((w) => w.id === overlayId)?.visible, false, 'precondition: hidden by fullscreen');
+
+    const ev: Event = { type: 'OsFullscreenLeft', id: hostA };
+    const next = evolve(hidden, ev);
+    const effects = react(hidden, ev, next);
+
+    const overlay = next.order.find((w) => w.id === overlayId)!;
+    assert.strictEqual(overlay.visible, true);
+    assert.deepStrictEqual(overlay.overlayFrame, frameA, 'never moved while hidden — the same frame as before the hide');
+    assert.ok(next.opSeqCounter > hidden.opSeqCounter, 'a genuine show mints a token');
+    assert.strictEqual(overlay.lastOpSeq, next.opSeqCounter);
+
+    assert.ok(
+      effects.some((e) => e.type === 'ShowWindow' && e.id === overlayId && e.opSeq === next.opSeqCounter),
+      'the overlay is re-shown, carrying the op token evolve stamped',
+    );
+    assert.ok(!effects.some((e) => e.type === 'SetBounds' && e.id === overlayId), 'no rect write — the overlay was never moved while hidden');
+  });
+
+  it('a non-normal host at attach time hides rather than reveals, even though a frame and an active app are both given', () => {
+    // The mid-transition case: a retarget landing while the new host is
+    // already `entering`/`leaving`/`fullscreen` must not paint chrome over
+    // it, regardless of `frame`/`appActive` — ported from
+    // `applyOverlayFollow`'s early return before its `SET_BOUNDS` line.
+    const midTransition = fold(
+      [...registerHostsAndOverlay(), { type: 'AppActivated' }, { type: 'OsFullscreenEntered', id: hostA }],
+      initialState(),
+    );
+    assert.notStrictEqual(midTransition.order.find((w) => w.id === hostA)?.fsMode.name, 'normal', 'precondition: hostA is fullscreen');
+
+    const ev: Event = { type: 'OverlayAttached', overlayId, hostId: hostA, frame: frameA };
+    const next = evolve(midTransition, ev);
+    const effects = react(midTransition, ev, next);
+
+    const overlay = next.order.find((w) => w.id === overlayId)!;
+    assert.strictEqual(overlay.overlayFor, hostA, 'the attachment is still recorded');
+    assert.strictEqual(overlay.visible, false);
+    assert.strictEqual(overlay.overlayFrame, undefined, 'no frame is stored — the early return never reaches the frame write');
+    assert.ok(!effects.some((e) => e.type === 'ShowWindow' && e.id === overlayId));
+    assert.ok(!effects.some((e) => e.type === 'SetBounds' && e.id === overlayId));
   });
 });
 
@@ -3574,21 +3770,23 @@ describe('window-kernel: topmostBaseLayerPageHost', () => {
     { type: 'WindowContentOrderable', id },
   ];
 
-  it('a floating quick-view above a base-layer page host does not shadow it — the chrome frames the page, not the peek', () => {
+  it('a topmost quick-view IS the attach target — the chrome frames the peek, not the base-layer page beneath it', () => {
     const base = wid(1);
     const quickView = wid(2);
     const state = fold([
       registerPageHost(base),
       ...shown(base),
-      // Registered later, in the floating band — a peek opened over the page.
-      registerPageHost(quickView, { layer: FLOATING, role: 'quick-view' }),
+      // Registered later, at the SAME base layer — real peeks/slides declare
+      // no `alwaysOnTop` (`izui-roles.ts deriveWindowLayer`), so they land at
+      // `BASE_LAYER` like any ordinary page, never in a floating band.
+      registerPageHost(quickView, { role: 'quick-view' }),
       ...shown(quickView),
     ]);
     assert.deepStrictEqual(state.order.map((w) => w.id), [base, quickView], 'the quick-view sits above `base` in `order`');
     assert.strictEqual(
       topmostBaseLayerPageHost(state)?.id,
-      base,
-      'kind alone admits the peek too — the role clause is what excludes it',
+      quickView,
+      'a frontmost peek is the window the user is working in — peeks/slides use the shared overlay for their address bar (task ff3b18ba) and ship no navbar of their own',
     );
   });
 
@@ -3596,6 +3794,12 @@ describe('window-kernel: topmostBaseLayerPageHost', () => {
     const floatingHost = wid(1);
     const state = fold([registerPageHost(floatingHost, { layer: FLOATING }), ...shown(floatingHost)]);
     assert.strictEqual(topmostBaseLayerPageHost(state), null, 'array position alone would have found it — the layer clause is what excludes it');
+  });
+
+  it('the layer clause still excludes a quick-view outside the base layer, even though the role is now admitted', () => {
+    const floatingQuickView = wid(1);
+    const state = fold([registerPageHost(floatingQuickView, { layer: FLOATING, role: 'quick-view' }), ...shown(floatingQuickView)]);
+    assert.strictEqual(topmostBaseLayerPageHost(state), null, 'admitting the role did not also drop the layer requirement');
   });
 
   it('no eligible page-host reads null, even with other windows on screen', () => {
