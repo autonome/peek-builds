@@ -115,7 +115,8 @@ import {
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer } from './session.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import { getFrontWindowId, getWindowIdFor, getNativeWindowFor, dispatchWindowEvent } from './window-state-singleton.js';
+import { getFrontWindowId, getWindowIdFor, getNativeWindowFor, dispatchWindowEvent, getWindowStateSnapshot } from './window-state-singleton.js';
+import { shadowKernelAppActivated, shadowKernelAppResigned } from './window-kernel-shadow.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
 import { getTileWebPreferencesForWebviewUrl } from './tile-launcher.js';
@@ -210,6 +211,16 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
     (getIzuiCoordinator() as unknown as { _setAppFocusOverride(v: boolean | null): void })
       ._setAppFocusOverride(focused);
     dispatchWindowEvent({ type: focused ? 'APP_ACTIVATED' : 'APP_RESIGNED' });
+    // Shadow-feed the kernel (window-kernel-shadow.ts) the same edge the old
+    // machine just saw — this test bridge is the ONLY app-activation input on
+    // a headless/Linux run (`did-become-active`/`did-resign-active` never fire
+    // under Xvfb), so without this the kernel's `appActive` mirror stays false
+    // for the whole run and every executor raise reads as suppressed.
+    if (focused) {
+      shadowKernelAppActivated(getWindowStateSnapshot());
+    } else {
+      shadowKernelAppResigned(getWindowStateSnapshot());
+    }
   },
   /**
    * Release the coordinator override and hand both mirrors back to the OS.
