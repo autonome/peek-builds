@@ -15,11 +15,13 @@
  * --writes to enable mutating tools.
  *
  * Remote mode (--remote <url>) targets a Peek sync server instead of a local
- * datastore — no PEEK_DB_PATH, no local database lookup. The credential is
- * never written into the project: by default the entry references
- * $PEEK_MCP_TOKEN from the launching shell's environment; --store-token
- * reads a minted grant token from stdin instead and stores it in a 0600
- * file outside the repo, referenced from the entry by lookup key.
+ * datastore — no PEEK_DB_PATH, no local database lookup. Neither the host
+ * nor the credential is ever written into the project: the entry's
+ * PEEK_MCP_REMOTE_URL is a $PEEK_SYNC_URL reference the caller's shell must
+ * export to the actual value; by default the credential is likewise a
+ * $PEEK_MCP_TOKEN reference, and --store-token reads a minted grant token
+ * from stdin instead and stores it in a 0600 file outside the repo,
+ * referenced from the entry by lookup key.
  *
  * Usage:
  *   node setup.js --scope <tag>                       # user scope (~/.claude.json)
@@ -125,22 +127,32 @@ function allowList({ writes }) {
 
 // --- Snippet builders ---
 
+// Unresolved on purpose, both of these: Claude Code expands "${VAR}" entries
+// from the launching shell's environment. A server URL carries a hostname,
+// so it gets the same treatment as the token — never the literal value the
+// caller passed to --remote, only a reference to a shell variable. If either
+// is unset, the literal "${...}" text passes through instead of a resolved
+// value, which is what lets a startup guard downstream fail loudly rather
+// than dial an empty host or send an unexpanded string as a bearer token.
+const REMOTE_URL_REF = '${PEEK_SYNC_URL}';
+const TOKEN_REF = '${PEEK_MCP_TOKEN}';
+
 function buildEnv(dbPath, { scope, readonly, remote, credential }) {
   if (remote) {
     // No datastore in remote mode — PEEK_DB_PATH is omitted entirely.
     // PEEK_MCP_SCOPE_TAG is still written: not the enforcement mechanism
     // (the grant is), but it lets the child fail fast and gives
     // checkConfigDrift() something to compare.
-    const env = { PEEK_MCP_REMOTE_URL: remote, PEEK_MCP_SCOPE_TAG: scope };
+    const env = { PEEK_MCP_REMOTE_URL: REMOTE_URL_REF, PEEK_MCP_SCOPE_TAG: scope };
     if (credential) {
-      // A lookup key into the 0600 credential file — not a secret.
-      env.PEEK_MCP_CREDENTIAL = credential;
+      // A lookup key into the 0600 credential file — not a secret — but it's
+      // still built from the reference form so the host never lands here
+      // literally either. It expands to the same "<url>#<scope>" key the
+      // credential file was written under, once Claude Code resolves
+      // PEEK_SYNC_URL from the shell.
+      env.PEEK_MCP_CREDENTIAL = `${REMOTE_URL_REF}#${scope}`;
     } else {
-      // Unresolved on purpose: Claude Code expands this from the launching
-      // shell's environment. If it's unset, the literal "${...}" text
-      // passes through instead, which is what lets the remote store's
-      // startup guard fail loudly rather than send it as a bearer token.
-      env.PEEK_MCP_TOKEN = '${PEEK_MCP_TOKEN}';
+      env.PEEK_MCP_TOKEN = TOKEN_REF;
     }
     if (readonly) env.PEEK_MCP_READONLY = '1';
     return env;
@@ -389,8 +401,11 @@ Options:
   --no-gitignore    Skip adding the scaffolded files to .gitignore
   --print           Print the snippet to stdout, do not write
   --remote <url>    Target a remote Peek server instead of a local datastore.
-                     No PEEK_DB_PATH; the entry references $PEEK_MCP_TOKEN
-                     from the launching shell by default.
+                     No PEEK_DB_PATH. The url you pass here is used only to
+                     derive the credential-file key and print guidance — the
+                     entry itself carries a $PEEK_SYNC_URL reference (export
+                     it to this value), never the literal host, and by
+                     default a $PEEK_MCP_TOKEN reference for the credential.
   --store-token     With --remote: read a minted grant token from stdin and
                      store it in ~/.config/peek/mcp-credentials.json (mode
                      0600, outside the repo) instead of an env reference.
@@ -480,6 +495,13 @@ function main() {
 
   let credential = null;
   if (opts.remote && opts.storeToken) {
+    // A refreshed install only recovers the $PEEK_SYNC_URL reference (the
+    // real host is deliberately not in the project to recover it from) —
+    // --store-token needs the concrete url to key the credential file.
+    if (opts.remote.startsWith('${')) {
+      process.stderr.write('Error: --store-token needs the concrete server URL — pass --remote <url> explicitly.\n');
+      process.exit(2);
+    }
     const token = readTokenFromStdin();
     if (!token) {
       process.stderr.write('Error: --store-token requires a minted grant token on stdin (none received).\n');
@@ -512,7 +534,7 @@ function main() {
   process.stderr.write(`  Scope:    ${opts.scope} (and ${opts.scope}:*)\n`);
   process.stderr.write(`  Writes:   ${opts.writes ? 'enabled' : 'OFF (read-only)'}\n`);
   if (opts.remote) {
-    process.stderr.write(`  Remote:   ${opts.remote}\n`);
+    process.stderr.write(`  Remote:   ${opts.remote} — export PEEK_SYNC_URL to this value in the launching shell; the entry only ever carries a $PEEK_SYNC_URL reference.\n`);
     process.stderr.write(`  Credential: ${credential
       ? `stored in ${credentialFilePath()} (0600)`
       : 'via $PEEK_MCP_TOKEN in the launching shell\'s environment'}\n`);
