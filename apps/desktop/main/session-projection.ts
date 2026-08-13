@@ -136,10 +136,18 @@ export interface SerializeSessionInput {
   /** The `_forceForTest` save opt — bypasses the visibility skip. */
   forceForTest?: boolean;
   /**
-   * The kernel's single window order (`State.order`), bottom → top, as ids.
-   * `zOrder` and `stackIndex` are both a position in THIS list — the kernel
-   * has one order and nothing else orders windows, so there is no second
-   * order for either field to disagree with.
+   * The kernel's single window order (`State.order`), bottom → top, as ids —
+   * FILTERED at the call site (`session.ts readKernelOrderFacts`) to the same
+   * membership the old `StateSnapshot.stackOrder` carried
+   * (`stackingLevel === 'stacked' && visible`, i.e. `isFrontEligibleWindow` in
+   * kernel terms), NOT the kernel's raw `State.order` (which is every
+   * registered window, including an invisible one or a palette/HUD). This
+   * module stays pure and trusts the caller's filter rather than re-deriving
+   * it — reproducing it here would need role/class facts this module has no
+   * other reason to import.
+   * `zOrder` and `stackIndex` are both a position in THIS (already-filtered)
+   * list — the kernel has one order and nothing else orders windows, so there
+   * is no second order for either field to disagree with.
    */
   kernelOrder: readonly WindowId[];
   /**

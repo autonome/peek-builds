@@ -39,10 +39,32 @@
  * frozen and on their way out. `zOrder`, `stackIndex` and `focused` now come
  * from the kernel's single order (`SerializeSessionInput.kernelOrder`) and its
  * topmost content window (`.topmostContentWindowId`), threaded into fixtures
- * via `World.stackOrder`/`front` below (see `inputFor`) rather than off
+ * via `World.kernelOrder`/`front` below (see `inputFor`) rather than off
  * `StateSnapshot` — that struct is still built (`makeStateSnapshot`) because
  * `serializeSession` still reads its other fields (`windows`), but its own
  * `front`/`stackOrder` are dead weight the projection no longer reads.
+ * `World.stackOrder`/`.legacyFront` feed exactly those two dead fields and
+ * default to matching `kernelOrder`/`front` — a world names them explicitly
+ * only to hand them a value that DISAGREES, which is what lets a test tell
+ * which of the two the implementation actually read (see `inputFor`).
+ *
+ * ORACLE LIMIT FOR `zOrder`/`stackIndex`/`focused`: these three fields are,
+ * post-cutover, definitionally "a position in `kernelOrder`" / "equals
+ * `topmostContentWindowId`" — there is no second, independently derivable
+ * notion of correctness for `legacySerialize` to restate that isn't the same
+ * one-line lookup written a second time. `legacySerialize` still computes them
+ * (off `kernelOrderOf`/`front`, the SAME facts `serializeSession` reads) so the
+ * on-disk-shape sweep below can still exercise every OTHER field on a world
+ * that happens to carry an order/focus fact too — but that computation proves
+ * NOTHING about `zOrder`/`stackIndex`/`focused` on its own; a bug confined to
+ * those three fields would reproduce identically on both sides and the sweep
+ * would stay green. What DOES prove something for those three: the disagreeing
+ * `kernelOrder`/`stackOrder` and `front`/`legacyFront` pairs above, checked by
+ * dedicated tests against HAND-WRITTEN literal values, never a restatement of
+ * the lookup — see the standalone pin after the on-disk-shape describe block,
+ * `'focused is the kernel's topmost content window, not the dead snapshot.front
+ * field'`, the SAVE → RESTORE round trip, and their `serializeSpaceWorkspaces`
+ * counterparts.
  */
 
 import { describe, it } from 'node:test';
@@ -121,11 +143,27 @@ function defaultStackOrder(windows: WindowRecord[]): WindowId[] {
 }
 
 /**
- * The world's order, shared by the oracle and the real projection — both
- * `StateSnapshot.stackOrder` (still on the fixture, unread by the projection)
- * and `kernelOrder` (read by it) are built from this same list.
+ * The order fed to `SerializeSessionInput.kernelOrder` — the fact `zOrder`
+ * and `stackIndex` are read from (both the real implementation's and
+ * `legacySerialize`'s, which deliberately reads the same fact — see the
+ * module header's ORACLE LIMIT note). Falls back to `defaultStackOrder` when
+ * a world names neither order knob.
  */
-function stackOrderOf(world: World): WindowId[] {
+function kernelOrderOf(world: World): WindowId[] {
+  if (world.kernelOrder) return world.kernelOrder.map(wid);
+  return defaultStackOrder(world.records);
+}
+
+/**
+ * The order fed to `StateSnapshot.stackOrder` — the OLD machine's own field.
+ * `serializeSession` never reads it (module header, "KERNEL CUTOVER"). Exists
+ * on the fixture ONLY so a world can hand it a value that CONTRADICTS
+ * `kernelOrderOf`, which is what lets a test prove the implementation reads
+ * the kernel fact and not this dead one. Falls back to the same default as
+ * `kernelOrderOf` when a world names neither, so an ordinary world still gets
+ * one consistent order on both.
+ */
+function legacyStackOrderOf(world: World): WindowId[] {
   if (world.stackOrder) return world.stackOrder.map(wid);
   return defaultStackOrder(world.records);
 }
@@ -162,9 +200,24 @@ interface World {
    * stack members; name it explicitly when the world needs an order that
    * disagrees with record order.
    */
+  kernelOrder?: string[];
+  /**
+   * `StateSnapshot.stackOrder` — the OLD machine's own field, unread by
+   * `serializeSession`. Defaults to the same value `kernelOrder` defaults to;
+   * name it explicitly ONLY to hand it a value that DISAGREES with
+   * `kernelOrder`, proving a test reads the right one — see `kernelOrderOf` /
+   * `legacyStackOrderOf`.
+   */
   stackOrder?: string[];
   /** The kernel's topmost content window — feeds `SerializeSessionInput.topmostContentWindowId`, THE `focused` target. */
   front?: string | null;
+  /**
+   * `StateSnapshot.front` — the OLD machine's own field, unread by
+   * `serializeSession`. Defaults to `front`; name it explicitly ONLY to hand
+   * it a DIFFERENT window than `front`, proving `focused` follows the kernel
+   * fact and not this dead one.
+   */
+  legacyFront?: string | null;
   /** What `getNativeWindowFor(front)?.id` answered — the oracle's `lastFocusedId`. */
   frontNativeId?: number | null;
   registeredTileIds?: string[];
@@ -222,7 +275,7 @@ function legacySerialize(world: World): { snapshot: unknown; windowCount: number
   // that is not in it. `zOrder` and `stackIndex` are BOTH this same lookup —
   // one order, and nothing else orders windows (§5 step 11 kernel cutover).
   const kernelOrderIndexById = new Map<string, number>();
-  stackOrderOf(world).forEach((id, index) => kernelOrderIndexById.set(String(id), index));
+  kernelOrderOf(world).forEach((id, index) => kernelOrderIndexById.set(String(id), index));
   const windowDescriptors: WindowDescriptor[] = [];
 
   for (const f of world.fixtures) {
@@ -372,11 +425,12 @@ function inputFor(world: World): SerializeSessionInput {
     destroyed: f.destroyed === true,
     url: f.destroyed === true ? '' : f.rawUrl,
   }));
+  const legacyFrontRaw = world.legacyFront !== undefined ? world.legacyFront : world.front;
   return {
     snapshot: makeStateSnapshot(
       world.records,
-      world.front == null ? null : wid(world.front),
-      stackOrderOf(world),
+      legacyFrontRaw == null ? null : wid(legacyFrontRaw),
+      legacyStackOrderOf(world),
     ),
     windows,
     getPresentation: (nativeId) => {
@@ -388,7 +442,7 @@ function inputFor(world: World): SerializeSessionInput {
     reason: world.reason ?? 'before-quit',
     createdAt: CREATED_AT,
     forceForTest: world.forceForTest,
-    kernelOrder: stackOrderOf(world),
+    kernelOrder: kernelOrderOf(world),
     topmostContentWindowId: world.front == null ? null : wid(world.front),
   };
 }
@@ -452,7 +506,11 @@ const BACKGROUND_OPEN_WORLD: World = {
     makeRecord('w1', { bounds: { x: 1, y: 1, width: 2, height: 2 } }),
     makeRecord('w2', { bounds: { x: 3, y: 3, width: 4, height: 4 } }),
   ],
-  stackOrder: ['w2', 'w1'],
+  kernelOrder: ['w2', 'w1'],
+  // Deliberately the OPPOSITE order, on the OLD machine's dead `stackOrder`
+  // field — the standalone pin below asserts LITERAL positions that only
+  // match `kernelOrder`, so reading this field instead would fail it.
+  stackOrder: ['w1', 'w2'],
   front: 'w1',
   frontNativeId: 1,
 };
@@ -662,23 +720,21 @@ describe('session-projection — on-disk shape is byte-identical to the pre-extr
 
   // The kernel fact `BACKGROUND_OPEN_WORLD` pins: a window shown without being
   // activated (w2) registers BELOW the key window (w1) in the kernel's single
-  // order. Under the old machine this was two axes that could disagree
-  // (`WindowRecord.focusSeq` for `zOrder`, `StateSnapshot.stackOrder` for
-  // `stackIndex`) — a fixture could name a stack that contradicted focus rank,
-  // which is exactly what this world used to pin. One order removes the
-  // second axis entirely: `zOrder` and `stackIndex` are now the SAME lookup,
-  // so there is nothing left for them to disagree about.
+  // order. `BACKGROUND_OPEN_WORLD.stackOrder` names the OPPOSITE order on the
+  // OLD machine's dead field, so the LITERAL positions asserted below only
+  // come out right if `serializeSession` reads `kernelOrder` — reading the
+  // dead field instead would swap w1 and w2's positions.
   it('a background open registers below the key window in the kernel\'s single order', () => {
     const out = serializeSession(inputFor(BACKGROUND_OPEN_WORLD)).snapshot.windows;
     const [w1, w2] = out;
     assert.strictEqual(w1.focused, true, 'w1 holds key');
     assert.strictEqual(w2.focused, false);
-    assert.ok(
-      (w2.stackIndex as number) < (w1.stackIndex as number),
-      'the background open (w2) sits below the key window (w1) in the saved stack',
-    );
-    assert.strictEqual(w1.zOrder, w1.stackIndex, 'zOrder and stackIndex are the same kernel-order lookup for w1');
-    assert.strictEqual(w2.zOrder, w2.stackIndex, 'zOrder and stackIndex are the same kernel-order lookup for w2');
+    // kernelOrder = ['w2', 'w1']: w2 is the bottom entry (index 0), w1 the
+    // top (index 1) — literal values, not a restatement of the lookup.
+    assert.strictEqual(w2.stackIndex, 0, 'the background open (w2) sits at the bottom of the kernel order');
+    assert.strictEqual(w1.stackIndex, 1, 'the key window (w1) sits on top of the kernel order');
+    assert.strictEqual(w2.zOrder, 0);
+    assert.strictEqual(w1.zOrder, 1);
   });
 });
 
@@ -792,7 +848,7 @@ describe('session-projection — machine-derived descriptor fields', () => {
     assert.deepStrictEqual(d.bounds, { x: 0, y: 0, width: 1920, height: 1080 });
   });
 
-  it('focused is the kernel\'s topmost content window', () => {
+  it('focused is the kernel\'s topmost content window, not the dead snapshot.front field', () => {
     // `zOrder`'s own value — a position in the kernel's single order — is
     // already pinned, byte-for-byte, by every kernel-order-bearing world in
     // the on-disk-shape describe above (e.g. "single plain content window",
@@ -804,6 +860,10 @@ describe('session-projection — machine-derived descriptor fields', () => {
       fixtures: [contentFixture(1, 'w1'), contentFixture(2, 'w2')],
       records: [makeRecord('w1'), makeRecord('w2')],
       front: 'w2',
+      // Deliberately the OTHER window on the OLD machine's dead `front`
+      // field — proves `focused` follows `topmostContentWindowId` (`front`
+      // above), not `StateSnapshot.front` (this).
+      legacyFront: 'w1',
       frontNativeId: 2,
     };
     const out = serializeSession(inputFor(world)).snapshot.windows;
@@ -832,7 +892,7 @@ describe('session-projection — machine-derived descriptor fields', () => {
         contentFixture(3, 'w3'),
       ],
       records: [makeRecord('w1'), makeRecord('w2'), makeRecord('w3')],
-      stackOrder: ['w1', 'w2', 'w3'],
+      kernelOrder: ['w1', 'w2', 'w3'],
     };
     const out = serializeSession(inputFor(world)).snapshot.windows;
     assert.deepStrictEqual(out.map((w) => w.stackIndex), [0, 2]);
@@ -1040,8 +1100,11 @@ describe('session-projection — readStackIndex + orderRestoredWindowsBottomToTo
     const world: World = {
       fixtures: [contentFixture(1, 'w1', { address: 'https://last-focused.example/' }),
                  contentFixture(2, 'w2', { address: 'https://background-open.example/' })],
-      records: [makeRecord('w1', { focusSeq: 9 }), makeRecord('w2', { focusSeq: 0 })],
-      stackOrder: ['w2', 'w1'],
+      records: [makeRecord('w1'), makeRecord('w2')],
+      kernelOrder: ['w2', 'w1'],
+      // Deliberately the opposite order on the OLD machine's dead field —
+      // proves the round trip below is driven by `kernelOrder`, not this.
+      stackOrder: ['w1', 'w2'],
       front: 'w1',
       frontNativeId: 1,
     };
@@ -1229,10 +1292,10 @@ describe('serializeSpaceWorkspaces — hybrid page-hosts + machine-derived field
     // w2 was shown without ever being activated; w1 is the key window. The
     // kernel has one order and nothing else orders windows, so `zOrder` here
     // is the same position `stackIndex` reads for the main session snapshot
-    // (`serializeSession`) — under the old machine these were two axes
-    // (`WindowRecord.focusSeq` vs `StateSnapshot.stackOrder`) that a fixture
-    // could set to disagree; one order removes the second axis, so there is
-    // nothing left for them to disagree about.
+    // (`serializeSession`). `stackOrder` below names the OPPOSITE order on
+    // the OLD machine's dead field — the literal values asserted below only
+    // come out right if `zOrder` reads `kernelOrder`, proving there is
+    // nothing left for the two facts to disagree about.
     const world: World = {
       fixtures: [
         contentFixture(1, 'w1', {
@@ -1244,7 +1307,8 @@ describe('serializeSpaceWorkspaces — hybrid page-hosts + machine-derived field
         }),
       ],
       records: [makeRecord('w1'), makeRecord('w2')],
-      stackOrder: ['w2', 'w1'],
+      kernelOrder: ['w2', 'w1'],
+      stackOrder: ['w1', 'w2'],
     };
     const windows = serializeSpaceWorkspaces(spaceInputFor(world)).get('space-1')!.windows;
     const w1 = windows.find((w) => w.url === 'https://example.com/')!;
@@ -1253,7 +1317,7 @@ describe('serializeSpaceWorkspaces — hybrid page-hosts + machine-derived field
     assert.strictEqual(w2.zOrder, 0, 'w2 (background open) sits below it in the same single order');
   });
 
-  it('focused follows the kernel\'s topmost content window, not OS/live focus', () => {
+  it('focused follows the kernel\'s topmost content window, not OS/live focus or the dead snapshot.front field', () => {
     const world: World = {
       fixtures: [
         contentFixture(1, 'w1', { context: SPACE_CONTEXT('space-1') }),
@@ -1264,6 +1328,10 @@ describe('serializeSpaceWorkspaces — hybrid page-hosts + machine-derived field
       ],
       records: [makeRecord('w1'), makeRecord('w2')],
       front: 'w2',
+      // Deliberately the OTHER window on the OLD machine's dead `front`
+      // field — proves `focused` follows `topmostContentWindowId`, not
+      // `StateSnapshot.front`.
+      legacyFront: 'w1',
       frontNativeId: 2,
     };
     const windows = serializeSpaceWorkspaces(spaceInputFor(world)).get('space-1')!.windows;

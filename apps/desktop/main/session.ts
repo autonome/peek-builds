@@ -15,7 +15,7 @@ import { getLiveWindow } from './window-registry.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
 import { getWindowIdFor, getAppActive, getWindowStateSnapshot, dispatchWindowEvent } from './window-state-singleton.js';
 import type { WindowId } from './window-kernel.js';
-import { topmost, isContentWindow } from './window-kernel.js';
+import { topmost, isContentWindow, isFrontEligibleWindow } from './window-kernel.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
 import type { ClosedWindowEntry } from './main.js';
@@ -42,14 +42,15 @@ export type { WindowContext, WindowDescriptor };
 export type { SessionSnapshot } from './session-projection.js';
 export { mirrorPlacementIntent } from './session-projection.js';
 
-// Staged session restore: the first N windows (by focus-recency = zOrder desc,
-// with the saved-focused window hoisted to the front) restore EAGERLY — their
-// <webview> navigates and loads content immediately, as before. Every window
-// beyond N restores DEFERRED: the canvas page-host + window are created (so the
-// window is present and save-safe), but the <webview> is NOT navigated. The
-// deferred host shows a cheap static placeholder (title + URL + favicon) and
-// does zero content compositing until the user first focuses it, at which point
-// it navigates to the real URL (navigate-on-focus, wired in ipc.ts).
+// Staged session restore: the first N windows (by stack position = zOrder
+// desc, with the saved-focused window hoisted to the front) restore EAGERLY —
+// their <webview> navigates and loads content immediately, as before. Every
+// window beyond N restores DEFERRED: the canvas page-host + window are
+// created (so the window is present and save-safe), but the <webview> is NOT
+// navigated. The deferred host shows a cheap static placeholder (title + URL
+// + favicon) and does zero content compositing until the user first focuses
+// it, at which point it navigates to the real URL (navigate-on-focus, wired
+// in ipc.ts).
 //
 // Why: sustained restore GPU/WindowServer load is dominated by COMPOSITING the
 // loaded content of many full-screen webviews — window/canvas creation itself
@@ -57,12 +58,18 @@ export { mirrorPlacementIntent } from './session-projection.js';
 // keeping every window in place. Measured on the cpu-perf harness.
 //
 // Tuneable at the code layer only (no UI/pref): bump this constant to keep more
-// windows hot at boot. Recency signal is the existing zOrder sort, which holds a
-// focus-recency rank (the machine's `WindowRecord.focusSeq`) rather than
-// creation/stacking order — and it stays that way deliberately: "load what you
-// were last using first" is the right staging even when the visual stack differs
-// from focus recency. The FINAL on-screen order is a separate question and is
-// answered by the descriptors' `stackIndex` in the post-loop import below.
+// windows hot at boot. `zOrder` used to be a focus-recency rank (the old
+// machine's `WindowRecord.focusSeq`) rather than stacking order — "load what
+// you were last using first" even when the visual stack differed from focus
+// recency. The kernel cutover deleted that fact (`focusSeq`/`focusSeqCounter`
+// are gone, along with the second order they tracked): `zOrder` is now the
+// SAME position `stackIndex` reads, so the eager set is simply the TOP of the
+// saved stack — stack position is the only ordering fact the kernel has left
+// to stage restore by, not a deliberate re-endorsement of "topmost = most
+// recently used". The FINAL on-screen order is a separate question and is
+// answered by the descriptors' `stackIndex` in the post-loop import below —
+// the same numbers, read the same way, for a different purpose (staging load
+// order here vs. rebuilding the on-screen stack there).
 const SESSION_EAGER_RESTORE_COUNT = 5;
 
 // ============================================================================
@@ -423,11 +430,28 @@ function buildSessionSaveWindows(
  * .kernelOrder` / `.topmostContentWindowId` (and the space-workspace mirrors of
  * both). Fetched once per save call so the two facts a projection call sees are
  * a single kernel-state read apart, never two.
+ *
+ * `kernelState.order` is the kernel's FULL order — every registered window,
+ * including an invisible one or a palette/HUD. The old machine's
+ * `StateSnapshot.stackOrder` was never that: its membership was exactly
+ * `stackingLevel === 'stacked' && visible` (`window-state.ts isStackMember`),
+ * which — by that module's own construction note — is the SAME set as
+ * `isEligibleFront` (`visible && !satellite`). The kernel's direct port of
+ * that rule is `isFrontEligibleWindow` (`window-kernel.ts`: `visible &&
+ * canBecomeKey && !roleIn(SATELLITE_ROLES, role)`), so filtering to it here
+ * reproduces the old `stackOrder` membership rather than handing
+ * `serializeSession` every registered window. Filtered HERE, at the seam —
+ * `session-projection.ts` stays pure and receives already-filtered data — so
+ * the on-disk meaning of `stackIndex` is unchanged: it stays ABSENT for a
+ * window the kernel never stacked, which is what keeps `readStackIndex`'s
+ * "no recorded position" migration branch reachable for an aged profile
+ * instead of retiring it (every registered window would otherwise almost
+ * always have SOME position).
  */
 function readKernelOrderFacts(): { kernelOrder: WindowId[]; topmostContentWindowId: WindowId | null } {
   const kernelState = getShadowKernelExecutor().getState();
   return {
-    kernelOrder: kernelState.order.map((rec) => rec.id),
+    kernelOrder: kernelState.order.filter(isFrontEligibleWindow).map((rec) => rec.id),
     topmostContentWindowId: topmost(kernelState, isContentWindow)?.id ?? null,
   };
 }
@@ -987,17 +1011,18 @@ export async function restoreSessionSnapshot(
     return result;
   }
 
-  // Sort windows by zOrder (higher zOrder = more recently focused; see
-  // focus-order.ts). Then hoist the focused window (if any) to position 0 so
-  // it dispatches first and gets to spawn in low contention — the rest follow
-  // after a short head-start window so the user-visible focused window
-  // reaches interactive significantly faster than the rest. See
-  // FOCUSED_HEAD_START_MS handling further down.
+  // Sort windows by zOrder (higher zOrder = higher in the saved stack — see
+  // `SESSION_EAGER_RESTORE_COUNT`'s doc for why stack position, not focus
+  // recency, is what this sorts by). Then hoist the focused window (if any)
+  // to position 0 so it dispatches first and gets to spawn in low contention
+  // — the rest follow after a short head-start window so the user-visible
+  // focused window reaches interactive significantly faster than the rest.
+  // See FOCUSED_HEAD_START_MS handling further down.
   //
   // This is the LOADING order only. The final on-screen stack is the saved one
   // replayed from `stackIndex` after the loop, so a window that was visually in
-  // front but not recently focused still loads late and still comes back in
-  // front.
+  // front but low in the loading order still loads late and still comes back
+  // in front.
   const zOrderSorted = [...validWindows].sort((a, b) => b.zOrder - a.zOrder);
   const focusedDescriptor = zOrderSorted.find((w) => w.focused) ?? null;
   const orderedWindows = focusedDescriptor
@@ -1099,9 +1124,10 @@ export async function restoreSessionSnapshot(
       // window's persistent state. Also strips them from snapshots saved
       // before this filter was added on the save side.
       // restoreBlank: the eager/deferred split is re-derived per restore from
-      // the window's position in the recency order (`i >= eagerCount` below).
-      // A stale restoreBlank baked into an older snapshot's params must not
-      // override that — it would pin the window to deferred restore forever.
+      // the window's position in the zOrder-sorted loading order (`i >=
+      // eagerCount` below). A stale restoreBlank baked into an older
+      // snapshot's params must not override that — it would pin the window to
+      // deferred restore forever.
       const stripKeys = new Set(['x', 'y', 'width', 'height', 'address', 'transient', 'parentWindowId', 'skipTracking', 'openDevTools', 'detachedDevTools', 'restoreBlank']);
       for (const [key, value] of Object.entries(descriptor.params)) {
         if (!stripKeys.has(key)) {
@@ -1410,10 +1436,13 @@ export async function restoreSessionSnapshot(
         //
         // §5 step 5 part B: the machine owns ordering now. Import the saved stack
         // BOTTOM→TOP, ordered by the position each descriptor recorded
-        // (`stackIndex`, the machine's own `stackOrder` at save time), so the
-        // windows come back in the order that was literally on screen. A snapshot
-        // written before descriptors carried positions falls back to the old
-        // focus-recency rebuild — see `orderRestoredWindowsBottomToTop`. The
+        // (`stackIndex`, its position in the kernel's single order at save
+        // time — see `session-projection.ts`), so the windows come back in
+        // the order that was literally on screen. A snapshot written before
+        // descriptors carried positions falls back to the old focus-recency
+        // rebuild — a fact the kernel no longer tracks at all, which is why
+        // this fallback can only replay dispatch order rather than genuinely
+        // reconstruct recency — see `orderRestoredWindowsBottomToTop`. The
         // reducer replaces its `stackOrder` with this order and emits SET_STACKING
         // per window bottom→top — relative raises only, no activation, no focus
         // steal; only the focused window (activated LAST, below) becomes
