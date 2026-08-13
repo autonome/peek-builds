@@ -9,7 +9,8 @@
 
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, execSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -21,6 +22,29 @@ const __dirname = dirname(__filename);
 const SERVER_PATH = join(__dirname, 'server.js');
 
 // --- Test helpers ---
+
+// Runs one or more ';'-separated statements against a fresh (or existing)
+// database file, then closes the connection. Used to build fixtures the same
+// way piping a schema file into the CLI used to.
+function execSql(dbPath, sql) {
+  const conn = new DatabaseSync(dbPath);
+  try {
+    conn.exec(sql);
+  } finally {
+    conn.close();
+  }
+}
+
+// Runs a single SELECT and returns the rows as plain objects, the same shape
+// the CLI's JSON output mode used to hand back after a JSON.parse.
+function querySql(dbPath, sql) {
+  const conn = new DatabaseSync(dbPath);
+  try {
+    return conn.prepare(sql).all();
+  } finally {
+    conn.close();
+  }
+}
 
 function createTestDb() {
   const tmpDir = mkdtempSync(join(tmpdir(), 'peek-mcp-test-'));
@@ -83,7 +107,7 @@ function createTestDb() {
     );
   `;
 
-  execSync(`sqlite3 "${dbPath}"`, { input: schema, encoding: 'utf-8' });
+  execSql(dbPath, schema);
 
   // Seed test data
   const now = Date.now();
@@ -116,7 +140,7 @@ function createTestDb() {
       ('it-3', 'item-2', 'tag-2', ${now});
   `;
 
-  execSync(`sqlite3 "${dbPath}"`, { input: seed, encoding: 'utf-8' });
+  execSql(dbPath, seed);
 
   return dbPath;
 }
@@ -894,21 +918,13 @@ describe('MCP Server', () => {
     it('sets slug on new tags (lowercase, hyphens for whitespace)', async () => {
       await client.callTool('tag_item', { itemId: 'item-1', tagName: 'Big Project' });
       // Inspect the raw row — list_tags doesn't expose slug.
-      const dbInspect = execSync(`sqlite3 -json "${client.dbPath}"`, {
-        input: `SELECT name, slug FROM tags WHERE name = 'Big Project';`,
-        encoding: 'utf-8',
-      });
-      const rows = JSON.parse(dbInspect.trim());
+      const rows = querySql(client.dbPath, `SELECT name, slug FROM tags WHERE name = 'Big Project';`);
       assert.equal(rows[0].slug, 'big-project');
     });
 
     it('writes non-zero frecencyScore when tagging', async () => {
       await client.callTool('tag_item', { itemId: 'item-1', tagName: 'fresh-tag' });
-      const dbInspect = execSync(`sqlite3 -json "${client.dbPath}"`, {
-        input: `SELECT frequency, frecencyScore FROM tags WHERE name = 'fresh-tag';`,
-        encoding: 'utf-8',
-      });
-      const rows = JSON.parse(dbInspect.trim());
+      const rows = querySql(client.dbPath, `SELECT frequency, frecencyScore FROM tags WHERE name = 'fresh-tag';`);
       // calculateTagFrecency(1, now) with daysSinceUse≈0 ≈ 10 * 1 = 10
       assert.equal(rows[0].frequency, 1);
       assert.equal(rows[0].frecencyScore, 10);
@@ -917,11 +933,7 @@ describe('MCP Server', () => {
     it('bumps frecencyScore on subsequent tag uses', async () => {
       await client.callTool('tag_item', { itemId: 'item-1', tagName: 'reuse-tag' });
       await client.callTool('tag_item', { itemId: 'item-3', tagName: 'reuse-tag' });
-      const dbInspect = execSync(`sqlite3 -json "${client.dbPath}"`, {
-        input: `SELECT frequency, frecencyScore FROM tags WHERE name = 'reuse-tag';`,
-        encoding: 'utf-8',
-      });
-      const rows = JSON.parse(dbInspect.trim());
+      const rows = querySql(client.dbPath, `SELECT frequency, frecencyScore FROM tags WHERE name = 'reuse-tag';`);
       assert.equal(rows[0].frequency, 2);
       assert.equal(rows[0].frecencyScore, 20);
     });
@@ -997,7 +1009,7 @@ function createScopedTestDb() {
       content TEXT, value REAL, occurredAt INTEGER NOT NULL,
       metadata TEXT DEFAULT '{}', createdAt INTEGER NOT NULL);
   `;
-  execSync(`sqlite3 "${dbPath}"`, { input: schema, encoding: 'utf-8' });
+  execSql(dbPath, schema);
 
   const now = Date.now();
   // Prefix-collision fixtures (ids sharing the `shared-` / `amb-` prefix
@@ -1041,7 +1053,7 @@ function createScopedTestDb() {
       ('it-11', 'amb-c', 't-u', ${now}),
       ('it-12', 'oos-1', 't-u', ${now});
   `;
-  execSync(`sqlite3 "${dbPath}"`, { input: seed, encoding: 'utf-8' });
+  execSql(dbPath, seed);
   return dbPath;
 }
 
