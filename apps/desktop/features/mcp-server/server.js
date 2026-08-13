@@ -20,9 +20,10 @@ import { createInterface } from 'node:readline';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { openDb, queryItems, searchItems, getItem, createItem, updateItem, deleteItem,
-         listTags, tagItem, untagItem, recordEvent, listTasks, completeTask,
-         getTaskContext, getItemTags, resolveItemId } from './db.js';
+import { openStore } from './store/index.js';
+
+// Set once main() opens it; every handler below reads through this.
+let store = null;
 
 const SERVER_NAME = 'peek-mcp';
 const SERVER_VERSION = '1.0.0';
@@ -68,9 +69,9 @@ function tagIsForeignNamespace(tag) {
   return tag.includes(':');
 }
 
-function assertItemInScope(id) {
+async function assertItemInScope(id) {
   if (!SCOPE) return;
-  const tags = getItemTags(id);
+  const tags = await store.getItemTags(id);
   if (!inScope(tags)) {
     throw new Error(`Item ${id} is not in scope "${SCOPE}".`);
   }
@@ -104,13 +105,14 @@ function formatAmbiguous(prefix, candidates, truncated) {
   return msg;
 }
 
-function resolveItemIdFromArgs(args) {
+async function resolveItemIdFromArgs(args) {
   const raw = requireItemId(args);
-  // Pass SCOPE down so resolution is confined to in-scope items: an exact id
-  // or prefix matching only out-of-scope items reads as not-found, ambiguity
-  // is computed over in-scope candidates only, and the candidate list never
-  // leaks out-of-scope id/title. SCOPE='' (unscoped) = whole-table behavior.
-  const res = resolveItemId(raw, { scopeTag: SCOPE });
+  // Scope confinement is now captured by the store at open time (see
+  // docs/mcp-remote-backend-design.md §2.1) rather than passed per call: an
+  // exact id or prefix matching only out-of-scope items reads as not-found,
+  // ambiguity is computed over in-scope candidates only, and the candidate
+  // list never leaks out-of-scope id/title.
+  const res = await store.resolveItemId(raw);
   if (res.ambiguous) {
     throw new Error(formatAmbiguous(raw, res.candidates, res.truncated));
   }
@@ -119,9 +121,9 @@ function resolveItemIdFromArgs(args) {
 
 // For mutating tools: resolution must yield exactly one item. Not-found and
 // ambiguity both hard-error (never mutate a guessed/missing item).
-function resolveItemIdForMutation(args) {
+async function resolveItemIdForMutation(args) {
   const raw = args.itemId;
-  const id = resolveItemIdFromArgs(args);
+  const id = await resolveItemIdFromArgs(args);
   if (id === null) {
     throw new Error(`No item found with id (or id prefix) "${raw}".`);
   }
@@ -152,8 +154,8 @@ function withScopeTag(tags) {
 // [contentOffset, contentOffset + maxContentLength), plus `contentLength`
 // (full original length, whenever content is a string) and
 // `contentTruncated: true` whenever any of it was cut. `favicon` (possibly a
-// base64 data: URI) is stripped here at the MCP layer — db.js keeps selecting
-// it for its other callers.
+// base64 data: URI) is stripped here at the MCP layer — the store keeps
+// selecting it for its other callers.
 
 const DEFAULT_MAX_CONTENT_LENGTH = 4000;
 
@@ -390,61 +392,62 @@ const RESOURCE_TEMPLATES = [
 
 // --- Tool handlers ---
 
-function handleToolCall(name, args) {
+async function handleToolCall(name, args) {
   switch (name) {
     case 'list_items': {
-      const rows = queryItems(args || {});
+      const rows = await store.queryItems(args || {});
       return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
     }
     case 'search_items': {
-      const rows = searchItems(args || {});
+      const rows = await store.searchItems(args || {});
       return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
     }
     case 'get_item': {
-      const itemId = resolveItemIdFromArgs(args);
+      const itemId = await resolveItemIdFromArgs(args);
       if (itemId === null) return null;
-      const item = getItem(itemId);
+      const item = await store.getItem(itemId);
       if (!item) return null;
       if (SCOPE && !inScope(item.tags)) return null;
       return shapeItemForResponse(item, args);
     }
     case 'create_item': {
       validateWriteTags(args.tags);
-      return createItem({ ...args, tags: withScopeTag(args.tags) });
+      return store.createItem({ ...args, tags: withScopeTag(args.tags) });
     }
     case 'update_item': {
-      const itemId = resolveItemIdForMutation(args);
+      const itemId = await resolveItemIdForMutation(args);
       const { itemId: _omit, ...rest } = args;
-      assertItemInScope(itemId);
-      return updateItem(itemId, rest);
+      await assertItemInScope(itemId);
+      return store.updateItem(itemId, rest);
     }
     case 'delete_item': {
       // Conservative: exact match OR unambiguous prefix only (mutation
       // resolver hard-errors on both not-found and ambiguity). The resolved
       // full id is surfaced in deleteItem's result so the caller sees exactly
       // what got deleted.
-      const itemId = resolveItemIdForMutation(args);
-      assertItemInScope(itemId);
-      return deleteItem(itemId);
+      const itemId = await resolveItemIdForMutation(args);
+      await assertItemInScope(itemId);
+      return store.deleteItem(itemId);
     }
     case 'list_tags': {
-      const rows = listTags(args || {});
+      const rows = await store.listTags(args || {});
       return SCOPE ? rows.filter((t) => tagIsScopeOwned(t.name)) : rows;
     }
     case 'tag_item': {
-      const itemId = resolveItemIdForMutation(args);
-      assertItemInScope(itemId);
+      const itemId = await resolveItemIdForMutation(args);
+      await assertItemInScope(itemId);
       validateWriteTags([args.tagName]);
-      return tagItem(itemId, args.tagName);
+      return store.tagItem(itemId, args.tagName);
     }
     case 'untag_item': {
-      const itemId = resolveItemIdForMutation(args);
-      assertItemInScope(itemId);
+      const itemId = await resolveItemIdForMutation(args);
+      await assertItemInScope(itemId);
       // Only refuse a scope-owned untag if it would actually orphan the item.
       // If other in-scope tags remain (e.g. bare `peek` plus `peek:todo` →
       // dropping `peek:todo` leaves bare `peek`), the untag is safe.
       if (SCOPE && tagIsScopeOwned(args.tagName)) {
-        const remaining = getItemTags(itemId).filter((t) => t !== args.tagName);
+        const currentTags = await store.getItemTags(itemId);
+        const remaining = currentTags.filter((t) => t !== args.tagName);
         if (!inScope(remaining)) {
           throw new Error(
             `Cannot untag "${args.tagName}" — it is the only tag keeping this item in scope "${SCOPE}". ` +
@@ -452,26 +455,26 @@ function handleToolCall(name, args) {
           );
         }
       }
-      return untagItem(itemId, args.tagName);
+      return store.untagItem(itemId, args.tagName);
     }
     case 'record_event': {
-      const itemId = resolveItemIdForMutation(args);
-      assertItemInScope(itemId);
-      return recordEvent(itemId, args.type, args.value);
+      const itemId = await resolveItemIdForMutation(args);
+      await assertItemInScope(itemId);
+      return store.recordEvent(itemId, args.type, args.value);
     }
     case 'list_tasks': {
-      const rows = listTasks(args || {});
+      const rows = await store.listTasks(args || {});
       return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
     }
     case 'complete_task': {
-      const itemId = resolveItemIdForMutation(args);
-      assertItemInScope(itemId);
-      return completeTask(itemId, args.notes);
+      const itemId = await resolveItemIdForMutation(args);
+      await assertItemInScope(itemId);
+      return store.completeTask(itemId, args.notes);
     }
     case 'get_task_context': {
-      const itemId = resolveItemIdFromArgs(args);
+      const itemId = await resolveItemIdFromArgs(args);
       if (itemId === null) return null;
-      const ctx = getTaskContext(itemId);
+      const ctx = await store.getTaskContext(itemId);
       if (!ctx) return null;
       if (SCOPE && !inScope(ctx.tags)) return null;
       return shapeItemForResponse(ctx, args);
@@ -483,14 +486,14 @@ function handleToolCall(name, args) {
 
 // --- Resource handlers ---
 
-function handleResourceRead(uri) {
+async function handleResourceRead(uri) {
   const scopeFilter = (rows) => SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
   const scopeTagFilter = (rows) => SCOPE ? rows.filter((t) => tagIsScopeOwned(t.name)) : rows;
   if (uri === 'peek://tasks') {
-    return JSON.stringify(scopeFilter(listTasks()), null, 2);
+    return JSON.stringify(scopeFilter(await store.listTasks()), null, 2);
   }
   if (uri === 'peek://tags') {
-    return JSON.stringify(scopeTagFilter(listTags()), null, 2);
+    return JSON.stringify(scopeTagFilter(await store.listTags()), null, 2);
   }
   // peek://tasks/{tag}
   const taskMatch = uri.match(/^peek:\/\/tasks\/(.+)$/);
@@ -499,7 +502,7 @@ function handleResourceRead(uri) {
     if (SCOPE && tagIsForeignNamespace(tag)) {
       throw new Error(`Tag "${tag}" is outside scope "${SCOPE}".`);
     }
-    return JSON.stringify(scopeFilter(listTasks({ tags: ['todo'], project: tag })), null, 2);
+    return JSON.stringify(scopeFilter(await store.listTasks({ tags: ['todo'], project: tag })), null, 2);
   }
   throw new Error(`Unknown resource: ${uri}`);
 }
@@ -514,7 +517,7 @@ function makeError(id, code, message) {
   return { jsonrpc: '2.0', id, error: { code, message } };
 }
 
-function handleMessage(msg) {
+async function handleMessage(msg) {
   const { id, method, params } = msg;
 
   switch (method) {
@@ -552,7 +555,7 @@ function handleMessage(msg) {
         });
       }
       try {
-        const result = handleToolCall(name, args || {});
+        const result = await handleToolCall(name, args || {});
         return makeResponse(id, {
           content: [
             {
@@ -582,7 +585,7 @@ function handleMessage(msg) {
     case 'resources/read': {
       const { uri } = params;
       try {
-        const text = handleResourceRead(uri);
+        const text = await handleResourceRead(uri);
         return makeResponse(id, {
           contents: [
             {
@@ -712,13 +715,36 @@ function defaultDbPath() {
   );
 }
 
-function main() {
+// A single incoming line's worth of work: drift check, parse, dispatch,
+// respond. Split out so the `rl.on('line')` handler (necessarily sync) can
+// chain calls to it through a tail promise instead of awaiting directly.
+async function handleLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return;
+
+  checkConfigDrift();
+
+  let msg;
+  try {
+    msg = JSON.parse(trimmed);
+  } catch {
+    process.stderr.write(`Invalid JSON: ${trimmed}\n`);
+    return;
+  }
+
+  const response = await handleMessage(msg);
+  if (response) {
+    process.stdout.write(JSON.stringify(response) + '\n');
+  }
+}
+
+async function main() {
   // Resolve DB path — falls back to platform default-profile location so
   // the settings.json snippet can omit env entirely for the common case.
   const dbPath = process.env.PEEK_DB_PATH || defaultDbPath();
 
   try {
-    openDb(dbPath);
+    store = await openStore({ dbPath, scopeTag: SCOPE, readonly: READONLY });
   } catch (err) {
     process.stderr.write(`Error opening database: ${err.message}\n`);
     process.exit(1);
@@ -732,24 +758,17 @@ function main() {
   // Read JSON-RPC messages from stdin (newline-delimited)
   const rl = createInterface({ input: process.stdin });
 
+  // The store interface is async (HTTP-ready, see docs/mcp-remote-backend-
+  // design.md §2.2), but this handler is a sync callback. Serialize incoming
+  // lines through a tail promise so requests are still handled strictly in
+  // arrival order — JSON-RPC allows out-of-order responses, but pipelining
+  // buys nothing for a single-user session, and unordered concurrency would
+  // let two mutating tools interleave against the same item.
+  let queue = Promise.resolve();
   rl.on('line', (line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-
-    checkConfigDrift();
-
-    let msg;
-    try {
-      msg = JSON.parse(trimmed);
-    } catch {
-      process.stderr.write(`Invalid JSON: ${trimmed}\n`);
-      return;
-    }
-
-    const response = handleMessage(msg);
-    if (response) {
-      process.stdout.write(JSON.stringify(response) + '\n');
-    }
+    queue = queue.then(() => handleLine(line)).catch((err) => {
+      process.stderr.write(`Fatal in message handler: ${err.stack}\n`);
+    });
   });
 
   rl.on('close', () => {
