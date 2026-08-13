@@ -144,19 +144,59 @@ class NoopKernelBackend implements WindowBackend {
 // ─────────────────────────────────────────────────────────────────────────────
 // The single shadow executor — lazily constructed, same pattern as
 // `window-state-singleton.ts getWindowOsAdapter()`.
+//
+// EXECUTOR PROVIDER — the injection seam the cutover installs into, INJECTION
+// NOT IMPORT, same shape as `izui-state.ts setFrontWindowIdProvider` /
+// `hybrid-page-host-registry.ts registerHybridWindowClosedListener`: this
+// module exposes a setter the production wiring calls IN, and never imports
+// the production accessor itself. It cannot: the production executor
+// (`window-kernel-singleton.ts getKernelExecutor`) is reached through
+// `window-state-singleton.ts getKernelExecutorForApp()`, and value-importing
+// that module here would (a) pull in `window-os-adapter.ts` →
+// `electron-window-backend.ts`'s value `import { app } from 'electron'`, which
+// throws under the `ELECTRON_RUN_AS_NODE=1` unit runner this module's own
+// `.test.ts` suite runs under, and (b) close an import cycle —
+// `window-state-singleton.ts` already value-imports THIS module for the feed
+// helpers below, so importing it back would make the two modules mutually
+// dependent.
+//
+// `getShadowKernelExecutor()` returns `installedProvider()` when one is
+// installed, otherwise falls back to the lazily-constructed
+// `NoopKernelBackend`-over instance below — the fallback is the PRE-CUTOVER
+// DEFAULT, not a permanent second mode: nothing installs a provider yet, so
+// every one of this file's ~25 call sites keeps landing on the noop-backed
+// executor exactly as before this seam existed. The cutover is the single act
+// of calling `setKernelExecutorProvider(() => getKernelExecutorForApp())` from
+// production wiring; nothing else about this file changes at that point.
 // ─────────────────────────────────────────────────────────────────────────────
 
 let shadowExecutorInstance: WindowKernelExecutor | null = null;
+let installedProvider: (() => WindowKernelExecutor) | null = null;
 
-/** The single shadow `WindowKernelExecutor`. Constructed on first use. */
+/**
+ * Install the provider the cutover routes through — see the banner above.
+ * Once installed, every call to `getShadowKernelExecutor()` (and so every feed
+ * helper below) returns `provider()` instead of the noop-backed default.
+ */
+export function setKernelExecutorProvider(provider: () => WindowKernelExecutor): void {
+  installedProvider = provider;
+}
+
+/**
+ * The single shadow `WindowKernelExecutor` — `installedProvider()` if one is
+ * installed, else the lazily-constructed noop-backed default. Constructed on
+ * first use.
+ */
 export function getShadowKernelExecutor(): WindowKernelExecutor {
+  if (installedProvider) return installedProvider();
   if (!shadowExecutorInstance) shadowExecutorInstance = new WindowKernelExecutor(new NoopKernelBackend());
   return shadowExecutorInstance;
 }
 
-/** Test-only: reset the shadow singleton (drops the executor + its state). */
+/** Test-only: reset the shadow singleton (drops the executor + its state) and clears any installed provider. */
 export function _resetShadowKernelForTests(): void {
   shadowExecutorInstance = null;
+  installedProvider = null;
   effectLog.length = 0;
   lastDivergences = [];
 }

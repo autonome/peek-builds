@@ -11,6 +11,7 @@ import {
   _resetShadowKernelForTests,
   compareShadowKernelState,
   getShadowKernelExecutor,
+  setKernelExecutorProvider,
   shadowKernelAppActivated,
   shadowKernelAppResigned,
   shadowKernelAppResignSettled,
@@ -43,8 +44,11 @@ import {
   shadowKernelUnmaximize,
   shadowKernelSetDesktopMembership,
 } from './window-kernel-shadow.js';
+import { WindowKernelExecutor } from './window-kernel-executor.js';
 import { BASE_LAYER, isContentWindow, topmost, topmostBaseLayerPageHost, type WindowId } from './window-kernel.js';
 import type { StateSnapshot, WindowRecord } from './window-state.js';
+import type { Rect, WindowBackend } from './window-backend.js';
+import type { StackingLevel } from './izui-roles.js';
 
 const wid = (n: number): WindowId => `shadow-${n}` as WindowId;
 
@@ -58,6 +62,42 @@ function fakeOldMachine(opts: { front: WindowId | null; stackOrder: WindowId[]; 
     switcher: { open: false },
     windows: opts.ids.map((id) => ({ id }) as unknown as WindowRecord),
   };
+}
+
+/**
+ * A `WindowBackend` that performs nothing and records nothing — implements the
+ * whole port (so a new port method cannot be silently unimplemented here) for
+ * the executor-provider tests below, which only ever assert on kernel STATE,
+ * never on a backend call.
+ */
+class InertBackend implements WindowBackend {
+  attachAppListeners(): void {}
+  raiseWindow(): void {}
+  focusContent(): void {}
+  setFullscreen(): void {}
+  reconcileFullscreen(): void {}
+  closeOrHide(): Promise<void> {
+    return Promise.resolve();
+  }
+  askRendererToHandleEscape(): Promise<void> {
+    return Promise.resolve();
+  }
+  attachEscHandler(): void {}
+  setEscGrab(): void {}
+  closeWindow(): Promise<void> {
+    return Promise.resolve();
+  }
+  destroyWindow(): void {}
+  closeContent(): void {}
+  showWindow(): void {}
+  hideWindow(): void {}
+  pinAlwaysOnTop(): void {}
+  destroyAllContentGuests(): Promise<void> {
+    return Promise.resolve();
+  }
+  setStacking(_id: WindowId, _level: StackingLevel): void {}
+  setWindowBounds(_id: WindowId, _rect: Rect): void {}
+  setDesktopMembership(): void {}
 }
 
 /** Registers a plain window in the shadow kernel — enough for `AttachOverlay`'s existence checks, nothing more. */
@@ -1419,5 +1459,59 @@ describe('window-kernel-shadow: desktop membership feed', () => {
 
     assert.doesNotThrow(() => shadowKernelSetDesktopMembership(danglingId, 'follow', oldSnapshot));
     assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+  });
+});
+
+describe('window-kernel-shadow: executor provider seam', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('with no provider installed, returns the same (default, noop-backed) instance across calls', () => {
+    const first = getShadowKernelExecutor();
+    const second = getShadowKernelExecutor();
+    assert.strictEqual(first, second, "today's memoized behavior — unchanged by the seam's presence");
+  });
+
+  it('a feed helper lands on the installed provider\'s executor, not the default one', () => {
+    // Obtain (and memoize) the default instance BEFORE installing a provider,
+    // so the test can prove the feed below does NOT reach it.
+    const defaultExecutor = getShadowKernelExecutor();
+
+    const injectedExecutor = new WindowKernelExecutor(new InertBackend());
+    setKernelExecutorProvider(() => injectedExecutor);
+    assert.strictEqual(
+      getShadowKernelExecutor(),
+      injectedExecutor,
+      'the accessor must return the installed provider\'s executor',
+    );
+
+    const id = wid(900);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelRegisterWindow(
+      { id, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+      oldSnapshot,
+    );
+
+    const onInjected = injectedExecutor.getState().order.find((w) => w.id === id);
+    assert.ok(onInjected !== undefined, "shadowKernelRegisterWindow's dispatch must land on the injected executor");
+
+    const onDefault = defaultExecutor.getState().order.find((w) => w.id === id);
+    assert.strictEqual(onDefault, undefined, 'the default noop-backed executor must never see this registration');
+  });
+
+  it('_resetShadowKernelForTests clears the installed provider', () => {
+    const injectedExecutor = new WindowKernelExecutor(new InertBackend());
+    setKernelExecutorProvider(() => injectedExecutor);
+    assert.strictEqual(getShadowKernelExecutor(), injectedExecutor);
+
+    _resetShadowKernelForTests();
+
+    const backToDefault = getShadowKernelExecutor();
+    assert.notStrictEqual(
+      backToDefault,
+      injectedExecutor,
+      'after reset the accessor must be back on a fresh default instance, not the cleared provider',
+    );
   });
 });
