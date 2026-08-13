@@ -902,6 +902,121 @@ describe('window-kernel: orderable gate on SetStacking', () => {
   });
 });
 
+// ── a window becoming visible re-asserts the pin (§0.1.6) ───────────────────
+//
+// The macOS ctor-time always-on-top flag is unreliable on its own, which is
+// why the old machine re-asserted it after construction. The kernel folds
+// always-on-top into `layer` and realizes it only through `SetStacking`
+// (`stackingLevelForLayer` in the executor), so a window that becomes visible
+// without reordering `order` — a NON-ACTIVATING show: session restore, the
+// inactive show path in `windows.ts`, an extension window — must still
+// re-trigger the full stacking re-assert, or a pinned window shown that way
+// never gets its level reinforced.
+
+describe('window-kernel: a window becoming visible re-asserts stacking, not just an order change', () => {
+  it('a non-activating WindowShown alone re-asserts stacking for an always-on-top window', () => {
+    // `kind: 'browser'` starts orderable, so a plain show is the only event
+    // needed — no `OsFocusGained`, no reorder, nothing "activating" about it.
+    const state = fold(
+      [{ type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: BASE_LAYER + 1, canBecomeKey: false, acceptsInput: false, class: 'hud' }],
+      initialState(),
+    );
+    assert.strictEqual(state.order[0].visible, false, 'precondition: registered, not yet shown');
+    assert.strictEqual(state.order[0].orderable, true, 'precondition: a browser-kind window starts orderable');
+
+    const ev: Event = { type: 'WindowShown', id: wid(1) };
+    const shown = evolve(state, ev);
+    const effects = react(state, ev, shown);
+
+    assert.deepStrictEqual(
+      effects.filter((e) => e.type === 'SetStacking'),
+      [{ type: 'SetStacking', id: wid(1), layer: BASE_LAYER + 1 }],
+      'the show alone must reinforce the pin — no raise, no reorder, nothing else in this transition would',
+    );
+  });
+
+  it('an AppActivated re-show (a visibility flip with no reorder) also re-asserts stacking for what it reveals', () => {
+    // The other production path this closes: `evolve`'s `AppActivated` arm
+    // patches `visible` in place on already-hidden records — same array
+    // positions, so `orderChanged` alone (the pre-existing gate) reads false.
+    const hud: Event = {
+      type: 'WindowRegistered',
+      id: wid(1),
+      kind: 'browser',
+      layer: BASE_LAYER + 1,
+      canBecomeKey: false,
+      acceptsInput: false,
+      class: 'hud',
+    };
+    const swept = fold([hud, { type: 'WindowShown', id: wid(1) }, { type: 'AppResigned' }, { type: 'AppResignSettled' }], initialState());
+    assert.strictEqual(swept.order[0].visible, false, 'precondition: the sweep hid it');
+
+    const activateEv: Event = { type: 'AppActivated' };
+    const activated = evolve(swept, activateEv);
+    const effects = react(swept, activateEv, activated);
+
+    assert.ok(
+      effects.some((e) => e.type === 'SetStacking' && e.id === wid(1)),
+      'the reveal must reinforce the pin, exactly as a fresh show does',
+    );
+  });
+
+  it('a plain WindowShown on a BASE_LAYER (non-pinned) window still re-asserts stacking — the trigger is visibility, not layer', () => {
+    // The gate is deliberately blind to WHY a window became visible or what
+    // its layer is — `react` never reads `role`/`class`, and restricting the
+    // trigger to pinned windows would be exactly that kind of decision. The
+    // full-stack replay this loop already performs on any order change is
+    // unaffected either way.
+    const state = fold(
+      [{ type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary' }],
+      initialState(),
+    );
+    const ev: Event = { type: 'WindowShown', id: wid(1) };
+    const shown = evolve(state, ev);
+    const effects = react(state, ev, shown);
+
+    assert.deepStrictEqual(
+      effects.filter((e) => e.type === 'SetStacking'),
+      [{ type: 'SetStacking', id: wid(1), layer: BASE_LAYER }],
+    );
+  });
+
+  it('a window becoming visible before it is orderable does not trigger the re-assert — nothing could be positioned yet', () => {
+    const state = fold(
+      [{ type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: BASE_LAYER + 1, canBecomeKey: false, acceptsInput: false, class: 'hud' }],
+      initialState(),
+    );
+    assert.strictEqual(state.order[0].orderable, false, 'precondition: a fresh page-host starts non-orderable');
+
+    const ev: Event = { type: 'WindowShown', id: wid(1) };
+    const shown = evolve(state, ev);
+    const effects = react(state, ev, shown);
+
+    assert.deepStrictEqual(effects.filter((e) => e.type === 'SetStacking'), []);
+  });
+
+  it('does not disturb the op-token biconditional — SetStacking carries no opSeq and is not part of it', () => {
+    // `window-kernel-properties.test.ts checkOpSeqInvariants`: opSeqCounter
+    // advances by exactly 1 iff the transition emits a ShowWindow/RaiseWindow.
+    // This show emits exactly one ShowWindow (the pre-existing visibility
+    // diff) plus the new SetStacking this describe pins — one token, not two.
+    const state = fold(
+      [{ type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: BASE_LAYER + 1, canBecomeKey: false, acceptsInput: false, class: 'hud' }],
+      initialState(),
+    );
+    const ev: Event = { type: 'WindowShown', id: wid(1) };
+    const shown = evolve(state, ev);
+    const effects = react(state, ev, shown);
+
+    const showWindowEffects = effects.filter((e) => e.type === 'ShowWindow');
+    const setStackingEffects = effects.filter((e) => e.type === 'SetStacking');
+    assert.strictEqual(showWindowEffects.length, 1, 'sanity: the show still emits exactly one ShowWindow');
+    assert.strictEqual(setStackingEffects.length, 1, 'sanity: and exactly one SetStacking alongside it');
+    assert.ok(!('opSeq' in setStackingEffects[0]), 'SetStacking carries no opSeq — it is not focus-family');
+    assert.strictEqual(shown.opSeqCounter, state.opSeqCounter + 1, 'one advance, for the ShowWindow alone');
+  });
+});
+
 // ── closing the key window ──────────────────────────────────────────────────
 
 describe('window-kernel: closing the key window raises nothing in its place', () => {
@@ -2410,26 +2525,38 @@ describe('window-kernel: app activation, resignation, and the dance guard', () =
     { type: 'OsFocusGained', id: wid(1) },
   ];
 
-  it('resign then activate with no settle in between hides nothing and leaves nothing armed (the dance case)', () => {
+  it('resign then activate with no settle in between (the dance case) flickers the HUD but leaves it visible again', () => {
     const before = fold(registerPrimaryAndHud(), initialState());
     const resigned = evolve(before, { type: 'AppResigned' });
     assert.strictEqual(resigned.pendingAppResignSweep, true);
+    // The HUD hides on the raw edge — it is reversible visibility, not a
+    // destructive dismissal, so unlike a transient it does not wait for the
+    // settle to find out whether this resign is real or the dance cancels it.
+    assert.strictEqual(resigned.order.find((w) => w.id === wid(2))?.visible, false);
+    assert.strictEqual(resigned.order.find((w) => w.id === wid(2))?.hiddenByAppBlur, true);
+    // The key-holding window is never sweep-eligible — untouched going in.
+    assert.strictEqual(resigned.order.find((w) => w.id === wid(1))?.visible, true);
+
     const activated = evolve(resigned, { type: 'AppActivated' });
 
     assert.strictEqual(activated.pendingAppResignSweep, false);
     assert.strictEqual(activated.appActive, true);
-    // Nothing was hidden, so nothing carries the mark, and both windows are
-    // exactly as visible as they started.
-    for (const w of activated.order) {
-      assert.strictEqual(w.hiddenByAppBlur, undefined);
-    }
+    // The dance reverses the hide: both windows end up exactly as visible as
+    // they started. Only the HUD ever carried the mark, so only its mark is
+    // cleared — the primary window's stays absent, never having been set.
+    assert.strictEqual(activated.order.find((w) => w.id === wid(1))?.hiddenByAppBlur, undefined);
+    assert.strictEqual(activated.order.find((w) => w.id === wid(2))?.hiddenByAppBlur, false);
     assert.strictEqual(activated.order.find((w) => w.id === wid(1))?.visible, true);
     assert.strictEqual(activated.order.find((w) => w.id === wid(2))?.visible, true);
   });
 
-  it('resign then settle hides the sweep-eligible (non-key-holding) window and marks it hiddenByAppBlur', () => {
+  it('the sweep-eligible (non-key-holding) window is still hidden and marked once resign and settle have both run', () => {
     const before = fold(registerPrimaryAndHud(), initialState());
     const resigned = evolve(before, { type: 'AppResigned' });
+    // The raw edge already did the hiding — settle is a backstop here, not
+    // the primary mechanism (see `evolve`'s `AppResigned`/`AppResignSettled`
+    // arms).
+    assert.strictEqual(resigned.order.find((w) => w.id === wid(2))?.visible, false);
     const settled = evolve(resigned, { type: 'AppResignSettled' });
 
     assert.strictEqual(settled.pendingAppResignSweep, false);
@@ -2607,6 +2734,28 @@ describe('window-kernel: which windows a real app resign hides', () => {
     assert.strictEqual(settled.order.find((w) => w.id === alreadyHiddenHud)?.hiddenByAppBlur, undefined);
   });
 
+  it('the HUD hides on the RAW resign edge, before any settle — it does not linger over the app the user switched to', () => {
+    // The old reducer hid `class === 'hud'` immediately on APP_RESIGNED.
+    // Waiting for the 500ms settle (as the settled-only sweep used to)
+    // leaves a HUD floating over whatever app the user just switched to for
+    // the whole of that delay — the same cost an attached overlay would pay,
+    // which is why both are hidden here, on the same edge, for the same
+    // reason: `layer > BASE_LAYER` puts either kind of window above OTHER
+    // applications' windows too, not just above Peek's own stack.
+    const resigned = evolve(scene(), { type: 'AppResigned' });
+    const swept = sweptBy(resigned);
+
+    assert.deepStrictEqual(swept, [hud]);
+    assert.strictEqual(resigned.order.find((w) => w.id === hud)?.visible, false);
+    assert.strictEqual(resigned.order.find((w) => w.id === hud)?.hiddenByAppBlur, true);
+
+    // Nothing else moved — same exclusions as the settled sweep, checked
+    // directly on the raw edge rather than after settle folds in behind it.
+    for (const id of [workspace, spaceBorder, testFixture, cmdPanel, quickView]) {
+      assert.strictEqual(resigned.order.find((w) => w.id === id)?.visible, true, `${id} must not be hidden by the raw-edge hide`);
+    }
+  });
+
   it('both halves of the HUD pair are load-bearing — neither alone selects the HUD', () => {
     const state = scene();
     const rec = (id: WindowId) => state.order.find((w) => w.id === id)!;
@@ -2641,15 +2790,26 @@ describe('window-kernel: which windows a real app resign hides', () => {
     assert.deepStrictEqual(sweptBy(activated), []);
   });
 
-  it('the sweep emits a HideWindow effect for exactly the windows it hid', () => {
-    const resigned = evolve(scene(), { type: 'AppResigned' });
-    const settleEv: Event = { type: 'AppResignSettled' };
-    const settled = evolve(resigned, settleEv);
-    const effects = react(resigned, settleEv, settled);
+  it('the raw resign edge emits a HideWindow effect for exactly the windows it hides — the settle that follows emits nothing, since react has no diff left to project', () => {
+    const before = scene();
+    const resignEv: Event = { type: 'AppResigned' };
+    const resigned = evolve(before, resignEv);
+    const resignEffects = react(before, resignEv, resigned);
 
     assert.deepStrictEqual(
-      effects.filter((e) => e.type === 'HideWindow').map((e) => e.id),
+      resignEffects.filter((e) => e.type === 'HideWindow').map((e) => e.id),
       [hud],
+    );
+
+    // The settle step that follows finds `hud` already `visible: false`, so
+    // its own re-application of `isAppResignSweepEligible` is a no-op and
+    // `react`'s structural diff has nothing to project a second time.
+    const settleEv: Event = { type: 'AppResignSettled' };
+    const settled = evolve(resigned, settleEv);
+    const settleEffects = react(resigned, settleEv, settled);
+    assert.deepStrictEqual(
+      settleEffects.filter((e) => e.type === 'HideWindow'),
+      [],
     );
   });
 });

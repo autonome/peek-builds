@@ -213,10 +213,20 @@ describe('the stacking re-assert loop', () => {
       [wid(1), wid(2)],
     );
 
-    // A show does not reorder (§0.1.10), so it re-asserts nothing.
+    // A show does not reorder `order` (§0.1.10), but it DOES re-trigger the
+    // full re-assert: a window becoming visible is itself a reason to replay
+    // every visible window's level, because the native always-on-top ctor
+    // flag is unreliable on its own and a window is registered `visible:
+    // false` — before that flag can be trusted to have stuck — so the show is
+    // the first point this kernel can reinforce it (`window-kernel.ts
+    // react`'s `justBecameVisible`).
     backend.calls.length = 0;
     exec.dispatch({ type: 'WindowShown', id: wid(3) });
-    assert.deepStrictEqual(backend.of('setStacking'), []);
+    assert.deepStrictEqual(
+      backend.of('setStacking').map((c) => c.args[0]),
+      [wid(1), wid(2), wid(3)],
+      'the show reinforces the pin, not just an order change',
+    );
 
     // The next order change replays all three, bottom -> top.
     backend.calls.length = 0;

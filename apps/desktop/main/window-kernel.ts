@@ -295,16 +295,18 @@ export interface WindowRecord {
    * any other reason (a plain `WindowHidden`, an overlay detach) must not be
    * re-shown by that re-activation.
    *
-   * TWO ARMS SET IT, on two different seams, and the difference is a rule:
-   * `AppResigned` hides attached overlays on the RAW edge, `AppResignSettled`
-   * hides the sweep-eligible floating surfaces after the settle delay. Both are
-   * reversible visibility, so both are undone by the same re-show. What waits
-   * for the settle is DISMISSAL (`lastAttention`), because dismissal is
-   * destructive — a dismissed palette does not come back, so the activation
-   * dance must not trigger it. A hide that `AppActivated` will undo carries no
-   * such risk, and the overlay cannot afford the delay: it floats above other
-   * applications' windows, so 500ms of it is 500ms of Peek's chrome hanging
-   * over the app the user just switched to.
+   * SET ON THE RAW `AppResigned` EDGE, not the settle, for both attached
+   * overlays and `isAppResignSweepEligible` floaters (the two share
+   * `layer > BASE_LAYER` — floating above the regular stack means floating
+   * above OTHER applications' windows too). `AppResignSettled` re-runs the
+   * same sweep only as a backstop for a window that became eligible in the
+   * gap between the two events. Both are reversible visibility, so both are
+   * undone by the same re-show. What waits for the settle is DISMISSAL
+   * (`lastAttention`), because dismissal is destructive — a dismissed palette
+   * does not come back, so the activation dance must not trigger it. A hide
+   * that `AppActivated` will undo carries no such risk, and a floating window
+   * cannot afford the delay: 500ms of it is 500ms of Peek's chrome or HUD
+   * hanging over the app the user just switched to.
    */
   hiddenByAppBlur?: boolean;
 
@@ -1737,37 +1739,46 @@ export function evolve(state: State, ev: Event): State {
       // `pendingAppResignSweep`'s doc: this may be the resign half of a dance an
       // `AppActivated` is about to cancel, and DISMISSAL cannot be taken back.
       //
-      // ATTACHED OVERLAYS HIDE HERE, ON THE RAW EDGE, and that difference is the
-      // rule rather than an exception to it (`WindowRecord.hiddenByAppBlur`
-      // carries the reasoning). An overlay is not a window the user manages: it
-      // is chrome drawn for its host, it sits above the regular stack, and above
-      // the regular stack means above OTHER applications' windows too. Waiting
-      // out the settle delay would leave Peek's chrome floating over the app the
-      // user just switched to for the whole of it. The hide is reversible and
-      // `AppActivated` reverses it, so the dance costs a flicker at worst where
-      // the sweep would cost a palette.
+      // ATTACHED OVERLAYS AND SWEEP-ELIGIBLE FLOATERS HIDE HERE, ON THE RAW
+      // EDGE, and that difference from the settled sweep is the rule rather
+      // than an exception to it (`WindowRecord.hiddenByAppBlur` carries the
+      // reasoning). Both share the one structural fact that puts them here:
+      // `layer > BASE_LAYER` (an attached overlay is chrome drawn above its
+      // host; `isAppResignSweepEligible` tests the same clause directly) means
+      // a window sits above the regular stack, and above the regular stack
+      // means above OTHER applications' windows too. Waiting out the settle
+      // delay would leave it floating over the app the user just switched to
+      // for the whole of it. The hide is reversible and `AppActivated`
+      // reverses it, so the dance costs a flicker at worst where a dismissal
+      // would cost a palette outright — the same trade `isAppResignSweepEligible`
+      // already accepted for the HUD once the settle delay used to gate it too.
       //
-      // ATTACHMENT, NOT ROLE, selects the victims — the same relation
-      // `selectTransientAutoclose` reads, and the reason that query skips
-      // overlays outright: an attached overlay's visibility belongs to its
-      // attachment, so it is driven here and never dismissed. An already-hidden
-      // overlay is left alone, which is what keeps a host in fullscreen (whose
-      // overlay the `OsFullscreenEntered` evolve arm already drove off screen,
-      // via `overlayFollowPatch`) from having its chrome revealed by the next
+      // ATTACHMENT AND `layer`, NEVER ROLE, select the victims. Attachment is
+      // the same relation `selectTransientAutoclose` reads, and the reason
+      // that query skips overlays outright: an attached overlay's visibility
+      // belongs to its attachment, so it is driven here and never dismissed.
+      // `isAppResignSweepEligible` layers on `!canBecomeKey` and excludes the
+      // transient roles for the same reason (each of those already owns its
+      // own app-resign policy) — the role clause is a defensive exclusion so
+      // this rule never doubles up with a different subsystem's, not the
+      // selector itself. An already-hidden window of either kind is left
+      // alone, which is what keeps a host in fullscreen (whose overlay the
+      // `OsFullscreenEntered` evolve arm already drove off screen, via
+      // `overlayFollowPatch`) from having its chrome revealed by the next
       // activation.
       //
       // No `opSeq` is stamped, exactly as the `AppResignSettled` sweep stamps
       // none: `lastOpSeq` tracks focus-family ops and `HideWindow` carries no
       // token. Nothing here touches `key` or `order` (RULE 2).
-      const hidesOverlay = state.order.some((w) => w.overlayFor !== undefined && w.visible);
+      const hidesImmediately = (w: WindowRecord): boolean =>
+        w.visible && (w.overlayFor !== undefined || isAppResignSweepEligible(w));
+      const hidesSomething = state.order.some(hidesImmediately);
       return {
         ...state,
         appActive: false,
         pendingAppResignSweep: true,
-        order: hidesOverlay
-          ? state.order.map((w) =>
-              w.overlayFor !== undefined && w.visible ? { ...w, visible: false, hiddenByAppBlur: true } : w,
-            )
+        order: hidesSomething
+          ? state.order.map((w) => (hidesImmediately(w) ? { ...w, visible: false, hiddenByAppBlur: true } : w))
           : state.order,
         version: state.version + 1,
       };
@@ -1890,10 +1901,17 @@ export function evolve(state: State, ev: Event): State {
 
     case 'AppResignSettled': {
       // Inert unless still armed — an AppActivated in between (the dance)
-      // already disarmed this. When armed, the resign was real: hide every
-      // sweep-eligible window (`isAppResignSweepEligible` — the two orthogonal
-      // properties that made a window the old reducer's `hud` class) and mark
-      // them so AppActivated knows to undo exactly this sweep.
+      // already disarmed this. When armed, the resign was real.
+      //
+      // THE SWEEP-ELIGIBLE HIDE ITSELF ALREADY RAN, on the raw `AppResigned`
+      // edge above — see that arm's doc for why floaters moved there with the
+      // attached overlays. Re-running `isAppResignSweepEligible` here is a
+      // backstop, not the primary mechanism: it only catches a window that
+      // BECAME sweep-eligible after the raw edge and before this settle (e.g.
+      // one registered and shown while Peek was already backgrounded), which
+      // the raw edge had no chance to see. For everything visible at the raw
+      // edge this map is a no-op — already hidden, already excluded by its own
+      // `visible` clause.
       if (!state.pendingAppResignSweep) {
         return { ...state, version: state.version + 1 };
       }
@@ -1901,8 +1919,8 @@ export function evolve(state: State, ev: Event): State {
       // the app came back active without an `AppActivated` reaching the
       // machine. Belief-vs-reality here is `appActive`'s job, and a visible
       // surface must never be dismissed while the app is front — so this
-      // settle still disarms and still runs the reversible HUD hide above,
-      // but does NOT record attention as having left. `attentionLost` is a
+      // settle still disarms and still runs the backstop hide above, but does
+      // NOT record attention as having left. `attentionLost` is a
       // STATE test (`state.appActive`), not an event test, which is why the
       // guard belongs here, on the write, rather than in `react`.
       const attentionLost = !state.appActive;
@@ -2681,7 +2699,10 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
   // bottom -> top stacking over visible, ORDERABLE windows, one SetStacking
   // per window. A window that is not yet orderable (a fresh page-host before
   // its first composited frame) cannot be positioned by the OS, so it is
-  // omitted from the emission entirely.
+  // omitted from the emission entirely. Always-on-top is folded into `layer`
+  // and realized ONLY here (`stackingLevelForLayer` in the executor) — there
+  // is no separate pin effect — so this loop is also where a pin gets
+  // reinforced, not just where order gets replayed.
   const orderChanged =
     prev.order.length !== next.order.length || prev.order.some((w, i) => w.id !== next.order[i]?.id);
 
@@ -2694,7 +2715,29 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     prev.order.find((w) => w.id === ev.id)?.orderable !== true &&
     next.order.find((w) => w.id === ev.id)?.orderable === true;
 
-  if (orderChanged || justBecameOrderable) {
+  // A record becoming visible must trigger the same full re-emission, on the
+  // same reasoning: the native ctor-time always-on-top flag is unreliable on
+  // its own (the reason the old machine re-asserted it after construction),
+  // and a window is registered `visible: false` — before that flag can be
+  // trusted to have stuck — so the first opportunity this kernel has to
+  // reinforce it is the show. `orderChanged` alone misses this for a
+  // NON-ACTIVATING show (session restore, an inactive `windows.ts` show, an
+  // extension window): none of those reorder `order`, so without this clause
+  // a pinned window shown that way never gets its level reinforced.
+  //
+  // STRUCTURAL, like every other trigger in this function — a `visible` diff
+  // over `prev`/`next`, never a read of `ev.type` (`justBecameOrderable`
+  // above is the one exception already in this file; this clause does not
+  // add a second). `orderable` is carried over from the base gate for the
+  // same reason it gates the emission loop itself: a not-yet-orderable window
+  // cannot be positioned by the OS yet, so becoming visible before its first
+  // composited frame is not yet a reason to replay anything.
+  const justBecameVisible = next.order.some((w) => {
+    const prevRecord = prev.order.find((p) => p.id === w.id);
+    return prevRecord !== undefined && !prevRecord.visible && w.visible && w.orderable;
+  });
+
+  if (orderChanged || justBecameOrderable || justBecameVisible) {
     for (const w of next.order) {
       if (w.visible && w.orderable) {
         effects.push({ type: 'SetStacking', id: w.id, layer: w.layer });
@@ -3421,8 +3464,11 @@ export function selectTransientAutoclose(
 
 /**
  * Which windows a REAL app switch hides for the duration — `evolve`'s
- * `AppResignSettled` arm applies exactly this, and `AppActivated` undoes
- * exactly what it marked. Ported from `window-state.ts`'s `class === 'hud' &&
+ * `AppResigned` arm applies exactly this on the raw resign edge (alongside the
+ * attached-overlay hide), and `AppResignSettled` re-applies it only as a
+ * backstop for a window that became eligible in the gap before the settle;
+ * `AppActivated` undoes exactly what either marked. Ported from
+ * `window-state.ts`'s `class === 'hud' &&
  * visible` sweep, decomposed into the orthogonal facts that MADE a window that
  * class (`classifyWindowRegistration`: `alwaysOnTop && focusable === false`,
  * with the role classes taking precedence):
