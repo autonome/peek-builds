@@ -15,6 +15,7 @@ import { getLiveWindow } from './window-registry.js';
 import type { WindowContext, WindowDescriptor } from './window-registry.js';
 import { getWindowIdFor, getAppActive, getWindowStateSnapshot, dispatchWindowEvent } from './window-state-singleton.js';
 import type { WindowId } from './window-kernel.js';
+import { topmost, isContentWindow } from './window-kernel.js';
 import { getDb, getContextEntry, addContextEntry } from './datastore.js';
 import { getAllWindows, getBackgroundWindow, pushClosedWindow, suppressClosedWindowPush } from './main.js';
 import type { ClosedWindowEntry } from './main.js';
@@ -30,7 +31,7 @@ import { WEB_CORE_ADDRESS } from './config.js';
 import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile, isHeadless } from './config.js';
 import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
-import { shadowKernelImportStackOrder, shadowKernelWindowContentOrderable, shadowKernelArmColdStartFocus } from './window-kernel-shadow.js';
+import { shadowKernelImportStackOrder, shadowKernelWindowContentOrderable, shadowKernelArmColdStartFocus, getShadowKernelExecutor } from './window-kernel-shadow.js';
 
 export type { WindowContext, WindowDescriptor };
 
@@ -418,6 +419,20 @@ function buildSessionSaveWindows(
 }
 
 /**
+ * Read phase shared by both save paths, the kernel half: `SerializeSessionInput
+ * .kernelOrder` / `.topmostContentWindowId` (and the space-workspace mirrors of
+ * both). Fetched once per save call so the two facts a projection call sees are
+ * a single kernel-state read apart, never two.
+ */
+function readKernelOrderFacts(): { kernelOrder: WindowId[]; topmostContentWindowId: WindowId | null } {
+  const kernelState = getShadowKernelExecutor().getState();
+  return {
+    kernelOrder: kernelState.order.map((rec) => rec.id),
+    topmostContentWindowId: topmost(kernelState, isContentWindow)?.id ?? null,
+  };
+}
+
+/**
  * Read a window's saved context row (mode, spaceId/spaceName, …) for the save
  * projections. Shared by `serializeSession`'s `getContext` and
  * `serializeSpaceWorkspaces`'s `getContext` — same lookup, same "no row / read
@@ -477,15 +492,17 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
   // ── Read ────────────────────────────────────────────────────────────────
   // Gather ONLY what the window-state machine does not hold: per window, is
   // the native handle gone, and what raw URL does the early-skip filter match
-  // `background.html` against. Everything else the snapshot needs about a
-  // window — visibility, geometry, maximize state, focus recency, which one
-  // was focused — is read off the machine snapshot inside `serializeSession`.
+  // `background.html` against. Visibility/geometry/maximize state are read off
+  // the machine snapshot inside `serializeSession`; stack position and which
+  // window was focused come from the kernel, not the machine — see
+  // `readKernelOrderFacts`.
   const machineSnapshot = getWindowStateSnapshot();
   const saveWindows = buildSessionSaveWindows(registeredWindows);
+  const { kernelOrder, topmostContentWindowId } = readKernelOrderFacts();
 
   // ── Project ─────────────────────────────────────────────────────────────
   // The pure projection owns every window decision: the skip rules, the
-  // restorable rect, maximize + its flat preMax bag, focus recency, the
+  // restorable rect, maximize + its flat preMax bag, stack position, the
   // focused descriptor, and the empty-URL guard.
   const projection = serializeSession({
     snapshot: machineSnapshot,
@@ -496,6 +513,8 @@ export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { 
     reason,
     createdAt: Date.now(),
     forceForTest: opts?._forceForTest,
+    kernelOrder,
+    topmostContentWindowId,
   });
 
   // The projection decided what to log; this replays it at the levels the
@@ -1594,24 +1613,29 @@ export function saveSpaceWorkspaces(): void {
   // ── Read ────────────────────────────────────────────────────────────────
   // Same read phase as `saveSessionSnapshot`: the machine snapshot for every
   // window-management fact, plus per-window liveness/raw-URL (the two things
-  // the machine does not hold). This is what fixes the hybrid blind spot —
+  // the machine does not hold), plus the kernel's order/focus facts (see
+  // `readKernelOrderFacts`). This is what fixes the hybrid blind spot —
   // `buildSessionSaveWindows` resolves a hybrid page-host's URL from the
   // hybrid registry instead of the `getLiveWindow`-only guard this loop used
   // to have, so a hybrid window reaches the projection below at all.
   const registeredWindows = getAllWindows();
   const machineSnapshot = getWindowStateSnapshot();
   const saveWindows = buildSessionSaveWindows(registeredWindows);
+  const { kernelOrder, topmostContentWindowId } = readKernelOrderFacts();
 
   // ── Project ─────────────────────────────────────────────────────────────
   // The pure projection owns the space-grouping decision: which windows are
   // in space mode, the restorable rect, TRUE STACK POSITION (not focus
-  // recency), and `focused` off the machine's `front` (not OS focus).
+  // recency), and `focused` off the kernel's topmost content window (not OS
+  // focus).
   const spaceSnapshots = serializeSpaceWorkspaces({
     snapshot: machineSnapshot,
     windows: saveWindows,
     getPresentation: (nativeId) => getWindowPresentation(nativeId),
     getContext: readSaveContext,
     createdAt: Date.now(),
+    kernelOrder,
+    topmostContentWindowId,
   });
 
   // ── Write ───────────────────────────────────────────────────────────────

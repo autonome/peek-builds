@@ -9,7 +9,10 @@
  * left with read → project → write.
  *
  * Every window-management fact in the projected snapshot is read off the
- * machine `StateSnapshot` that arrives as a parameter:
+ * machine `StateSnapshot` that arrives as a parameter, except ORDER and FOCUS,
+ * which the old machine's `front`/`stackOrder`/`WindowRecord.focusSeq` used to
+ * supply and the kernel now does — see `SerializeSessionInput.kernelOrder` /
+ * `.topmostContentWindowId`:
  *   - `visible` (the early-skip axis)  → `WindowRecord.visible`
  *   - `bounds`                         → THE restorable-geometry rule
  *                                        (`restorableBoundsFromRecord`, which
@@ -17,11 +20,14 @@
  *                                        now delegates to — one implementation,
  *                                        not two)
  *   - `maximized` / pre-maximize rect  → `WindowRecord.maximized` / `.preMaxBounds`
- *   - `zOrder`                         → `WindowRecord.focusSeq`
- *   - `stackIndex`                     → position in `StateSnapshot.stackOrder`
- *   - `focused`                        → `StateSnapshot.front`
- * What genuinely is NOT machine state arrives per window from the caller: the
- * window's URL and title, its saved context row, and the opaque open-params bag.
+ *   - `zOrder`                         → position in `kernelOrder`
+ *   - `stackIndex`                     → position in `kernelOrder`
+ *   - `focused`                        → `topmostContentWindowId`
+ * `zOrder` and `stackIndex` are deliberately the SAME lookup now — the kernel
+ * has one order and nothing else orders windows, so there is no second axis
+ * for them to diverge over. What genuinely is NOT machine state arrives per
+ * window from the caller: the window's URL and title, its saved context row,
+ * and the opaque open-params bag.
  *
  * Purity, in the same sense as `display-projection.ts` and
  * `session-save-filter.ts`: no `electron` import, no BrowserWindow/screen, no
@@ -129,6 +135,21 @@ export interface SerializeSessionInput {
   createdAt: number;
   /** The `_forceForTest` save opt — bypasses the visibility skip. */
   forceForTest?: boolean;
+  /**
+   * The kernel's single window order (`State.order`), bottom → top, as ids.
+   * `zOrder` and `stackIndex` are both a position in THIS list — the kernel
+   * has one order and nothing else orders windows, so there is no second
+   * order for either field to disagree with.
+   */
+  kernelOrder: readonly WindowId[];
+  /**
+   * The kernel's topmost content window (`topmost(state, isContentWindow)`),
+   * or null. THE `focused` target — not `keyWindow`: key is nulled the
+   * instant the app loses OS focus and a satellite (e.g. the chrome overlay)
+   * can hold it, and save runs exactly when the app is losing focus, so a
+   * `keyWindow` read here would mark every saved descriptor `focused: false`.
+   */
+  topmostContentWindowId: WindowId | null;
 }
 
 export interface SessionProjection {
@@ -207,7 +228,7 @@ export function readPreMaxBounds(params: Record<string, unknown>): Electron.Rect
  * Read a saved descriptor's stacking position back out.
  *
  * Written by `serializeSession` as `stackIndex` — the window's index in the
- * machine's bottom→top `stackOrder` at save time. Returns null when the key is
+ * kernel's bottom→top order at save time. Returns null when the key is
  * absent or not a finite number, which is also what a snapshot written before
  * the field existed produces for every one of its descriptors.
  */
@@ -346,11 +367,11 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
   const recordsById = new Map<WindowId, WindowRecord>();
   for (const rec of input.snapshot.windows) recordsById.set(rec.id, rec);
 
-  // The machine's ordered stack, bottom → top, as a lookup. This is the literal
-  // on-screen order; `focusSeq` is not (a window shown without being activated
-  // is raised in the stack but keeps its old focus rank).
-  const stackIndexById = new Map<WindowId, number>();
-  input.snapshot.stackOrder.forEach((id, index) => stackIndexById.set(id, index));
+  // The kernel's single order, bottom → top, as a lookup. `zOrder` and
+  // `stackIndex` both read this same map below — see `SerializeSessionInput
+  // .kernelOrder`.
+  const kernelOrderIndexById = new Map<WindowId, number>();
+  input.kernelOrder.forEach((id, index) => kernelOrderIndexById.set(id, index));
 
   // (No overlay carve-out on the visibility rule — see
   // `session-save-filter.ts`. The switcher stopped hiding other windows in
@@ -487,22 +508,21 @@ export function serializeSession(input: SerializeSessionInput): SessionProjectio
       bounds: windowBounds,
       source: w.source,
       params: sanitized,
-      // Focus recency straight off the record (the machine absorbed
-      // focus-order.ts). Unregistered windows rank 0, same as the machine's
-      // own "never focused" answer.
-      zOrder: rec?.focusSeq ?? 0,
-      // Where the window actually sat in the stack, bottom → top. Restore
-      // replays this literally instead of rebuilding the stack from `zOrder`,
-      // which inverts any window that was shown without being activated. Left
-      // ABSENT (not null) for a window the machine has no stack position for —
-      // JSON.stringify drops an undefined value, and restore reads an absent
-      // position as "not recorded".
-      stackIndex: w.machineId != null ? stackIndexById.get(w.machineId) : undefined,
-      // The saved-focused descriptor drives restore's head-start. `front` is
-      // the machine's target window: it excludes modals/overlays/background
-      // (satellites) and survives focus shifts to other apps, which is why
-      // save never asked `win.isFocused()` here.
-      focused: w.machineId != null && w.machineId === input.snapshot.front,
+      // Position in the kernel's single order. Unregistered windows rank 0,
+      // same as `stackIndex`'s own "no recorded position" answer below — the
+      // two fields are deliberately the SAME lookup (see the module header):
+      // one order, so nothing here restores a divergence between them.
+      zOrder: w.machineId != null ? (kernelOrderIndexById.get(w.machineId) ?? 0) : 0,
+      // Where the window actually sat in the kernel's order, bottom → top —
+      // the exact same position `zOrder` reads above. Left ABSENT (not null)
+      // for a window the kernel has no position for — JSON.stringify drops an
+      // undefined value, and restore reads an absent position as "not
+      // recorded".
+      stackIndex: w.machineId != null ? kernelOrderIndexById.get(w.machineId) : undefined,
+      // The saved-focused descriptor drives restore's head-start:
+      // `topmostContentWindowId`, not `keyWindow` — see `SerializeSessionInput
+      // .topmostContentWindowId`.
+      focused: w.machineId != null && w.machineId === input.topmostContentWindowId,
       context: windowContext,
     });
   }
@@ -569,15 +589,15 @@ export interface SpaceWorkspaceWindowEntry {
   url: string;
   bounds: Electron.Rectangle;
   /**
-   * TRUE STACK POSITION — the window's index in `StateSnapshot.stackOrder`
+   * TRUE STACK POSITION — the window's index in the kernel's single order
    * (bottom → top), the exact source `serializeSession` reads for
-   * `stackIndex` above. Deliberately NOT `WindowRecord.focusSeq` (focus
-   * recency): `features/groups/home.js` sorts its layout on this field, and
-   * stack position — not "which window was used most recently" — is what a
-   * layout sort means by z-order. 0 for a window the machine has no stack
-   * position for, mirroring the pre-projection `zOrderMap.get(id) ?? 0`
-   * default (this field, unlike `stackIndex`, has always been a required
-   * number in the row, never absent).
+   * `stackIndex` above. Deliberately not focus recency: `features/groups
+   * /home.js` sorts its layout on this field, and stack position — not
+   * "which window was used most recently" — is what a layout sort means by
+   * z-order. 0 for a window the kernel has no position for, mirroring the
+   * pre-projection `zOrderMap.get(id) ?? 0` default (this field, unlike
+   * `stackIndex`, has always been a required number in the row, never
+   * absent).
    */
   zOrder: number;
   focused: boolean;
@@ -609,6 +629,10 @@ export interface SerializeSpaceWorkspacesInput {
   getContext: (nativeId: number) => WindowContext | undefined;
   /** Injected clock (`Date.now()` at the call site) — one stamp for the whole call. */
   createdAt: number;
+  /** Same kernel order `serializeSession` reads — see `SerializeSessionInput.kernelOrder`. */
+  kernelOrder: readonly WindowId[];
+  /** Same topmost-content-window fact `serializeSession` reads — see `SerializeSessionInput.topmostContentWindowId`. */
+  topmostContentWindowId: WindowId | null;
 }
 
 /**
@@ -621,17 +645,17 @@ export interface SerializeSpaceWorkspacesInput {
  *   - `visible`  → `WindowRecord.visible`, same NO-RECORD FALLBACK = true rule
  *                  as `serializeSession`, not a second OS read
  *   - `bounds`   → `restorableBoundsFromRecord`, not the live presenter rect
- *   - `zOrder`   → TRUE STACK POSITION (`StateSnapshot.stackOrder` index), not
- *                  a `getAllLiveWindows()` enumeration approximation
- *   - `focused`  → `StateSnapshot.front`, not `win.isFocused()`
+ *   - `zOrder`   → TRUE STACK POSITION (position in `kernelOrder`), not a
+ *                  `getAllLiveWindows()` enumeration approximation
+ *   - `focused`  → `topmostContentWindowId`, not `win.isFocused()`
  */
 export function serializeSpaceWorkspaces(input: SerializeSpaceWorkspacesInput): Map<string, SpaceWorkspaceSnapshot> {
   const recordsById = new Map<WindowId, WindowRecord>();
   for (const rec of input.snapshot.windows) recordsById.set(rec.id, rec);
 
-  // Same bottom→top stack lookup `serializeSession` builds for `stackIndex`.
-  const stackIndexById = new Map<WindowId, number>();
-  input.snapshot.stackOrder.forEach((id, index) => stackIndexById.set(id, index));
+  // Same kernel-order lookup `serializeSession` builds for `stackIndex`/`zOrder`.
+  const kernelOrderIndexById = new Map<WindowId, number>();
+  input.kernelOrder.forEach((id, index) => kernelOrderIndexById.set(id, index));
 
   const spaceWindows = new Map<string, { spaceName: string; windows: SpaceWorkspaceWindowEntry[] }>();
 
@@ -671,8 +695,8 @@ export function serializeSpaceWorkspaces(input: SerializeSpaceWorkspacesInput): 
     spaceWindows.get(spaceId)!.windows.push({
       url: presentation.address,
       bounds: restorableBoundsFromRecord(rec) ?? presentation.bounds,
-      zOrder: w.machineId != null ? (stackIndexById.get(w.machineId) ?? 0) : 0,
-      focused: w.machineId != null && w.machineId === input.snapshot.front,
+      zOrder: w.machineId != null ? (kernelOrderIndexById.get(w.machineId) ?? 0) : 0,
+      focused: w.machineId != null && w.machineId === input.topmostContentWindowId,
     });
   }
 

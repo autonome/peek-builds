@@ -26,13 +26,23 @@
  * every autosave, so one save cycle converts a profile.
  *
  * DELIBERATE SHAPE CHANGE (§5 step 11 task 7): a descriptor now also carries
- * `stackIndex` — its position in the machine's bottom→top `stackOrder` at save
+ * `stackIndex` — its position in the machine's bottom→top order at save
  * time — so restore replays the stack that was literally on screen instead of
  * rebuilding it from focus recency. Same migration strategy: the oracle was
  * updated WITH the change (it pins the shape save is supposed to write), the key
  * is ABSENT for a window with no stack position, and a snapshot written before
  * the field falls back to the old focus-recency ordering
  * (`orderRestoredWindowsBottomToTop`, tested below).
+ *
+ * KERNEL CUTOVER (window-manager.md "The one-order consequence"): `front`,
+ * `stackOrder` and `WindowRecord.focusSeq` are the OLD machine's fields —
+ * frozen and on their way out. `zOrder`, `stackIndex` and `focused` now come
+ * from the kernel's single order (`SerializeSessionInput.kernelOrder`) and its
+ * topmost content window (`.topmostContentWindowId`), threaded into fixtures
+ * via `World.stackOrder`/`front` below (see `inputFor`) rather than off
+ * `StateSnapshot` — that struct is still built (`makeStateSnapshot`) because
+ * `serializeSession` still reads its other fields (`windows`), but its own
+ * `front`/`stackOrder` are dead weight the projection no longer reads.
  */
 
 import { describe, it } from 'node:test';
@@ -110,7 +120,11 @@ function defaultStackOrder(windows: WindowRecord[]): WindowId[] {
   return windows.filter((w) => w.stackingLevel === 'stacked' && w.visible).map((w) => w.id);
 }
 
-/** The world's stack, shared by the oracle and the real projection. */
+/**
+ * The world's order, shared by the oracle and the real projection — both
+ * `StateSnapshot.stackOrder` (still on the fixture, unread by the projection)
+ * and `kernelOrder` (read by it) are built from this same list.
+ */
 function stackOrderOf(world: World): WindowId[] {
   if (world.stackOrder) return world.stackOrder.map(wid);
   return defaultStackOrder(world.records);
@@ -141,11 +155,15 @@ interface World {
   fixtures: Fixture[];
   records: WindowRecord[];
   /**
-   * The machine's ordered stack, BOTTOM → TOP, as machine ids. Defaults to
-   * record order filtered to stack members; name it explicitly when the world
-   * needs a stack that differs from focus recency.
+   * The kernel's single order, BOTTOM → TOP, as machine ids — feeds
+   * `SerializeSessionInput.kernelOrder`, the one lookup `zOrder` and
+   * `stackIndex` both read (§5 step 11 kernel cutover — one order, and
+   * nothing else orders windows). Defaults to record order filtered to
+   * stack members; name it explicitly when the world needs an order that
+   * disagrees with record order.
    */
   stackOrder?: string[];
+  /** The kernel's topmost content window — feeds `SerializeSessionInput.topmostContentWindowId`, THE `focused` target. */
   front?: string | null;
   /** What `getNativeWindowFor(front)?.id` answered — the oracle's `lastFocusedId`. */
   frontNativeId?: number | null;
@@ -200,10 +218,11 @@ function legacySerialize(world: World): { snapshot: unknown; windowCount: number
   // — so the oracle drops it too, deliberately, rather than pinning a rule the
   // shipped code no longer has.)
   const lastFocusedId = world.frontNativeId ?? null;
-  // §5 step 11 task 7: the descriptor's saved stacking position. Bottom→top
-  // index in the machine's stack; absent for a window that is not in it.
-  const stackIndexById = new Map<string, number>();
-  stackOrderOf(world).forEach((id, index) => stackIndexById.set(String(id), index));
+  // Position in the kernel's single order, bottom→top; absent for a window
+  // that is not in it. `zOrder` and `stackIndex` are BOTH this same lookup —
+  // one order, and nothing else orders windows (§5 step 11 kernel cutover).
+  const kernelOrderIndexById = new Map<string, number>();
+  stackOrderOf(world).forEach((id, index) => kernelOrderIndexById.set(String(id), index));
   const windowDescriptors: WindowDescriptor[] = [];
 
   for (const f of world.fixtures) {
@@ -266,8 +285,8 @@ function legacySerialize(world: World): { snapshot: unknown; windowCount: number
       bounds: windowBounds,
       source: f.source,
       params: sanitized,
-      zOrder: f.machineId != null ? (records.get(f.machineId)?.focusSeq ?? 0) : 0,
-      stackIndex: f.machineId != null ? stackIndexById.get(f.machineId) : undefined,
+      zOrder: f.machineId != null ? (kernelOrderIndexById.get(f.machineId) ?? 0) : 0,
+      stackIndex: f.machineId != null ? kernelOrderIndexById.get(f.machineId) : undefined,
       focused: lastFocusedId != null && id === lastFocusedId,
       context: windowContext,
     });
@@ -369,6 +388,8 @@ function inputFor(world: World): SerializeSessionInput {
     reason: world.reason ?? 'before-quit',
     createdAt: CREATED_AT,
     forceForTest: world.forceForTest,
+    kernelOrder: stackOrderOf(world),
+    topmostContentWindowId: world.front == null ? null : wid(world.front),
   };
 }
 
@@ -379,8 +400,8 @@ function inputFor(world: World): SerializeSessionInput {
  * below) exercises the real save-path row shape rather than a bespoke one.
  */
 function spaceInputFor(world: World, createdAt = CREATED_AT): SerializeSpaceWorkspacesInput {
-  const { snapshot, windows, getPresentation, getContext } = inputFor(world);
-  return { snapshot, windows, getPresentation, getContext, createdAt };
+  const { snapshot, windows, getPresentation, getContext, kernelOrder, topmostContentWindowId } = inputFor(world);
+  return { snapshot, windows, getPresentation, getContext, createdAt, kernelOrder, topmostContentWindowId };
 }
 
 function assertSameOnDiskShape(world: World, label: string): void {
@@ -419,6 +440,22 @@ function contentFixture(nativeId: number, machineId: string, over: Partial<Fixtu
 }
 
 const FULLSCREEN_MODE: FsMode = { name: 'fullscreen', preBounds: { x: 10, y: 20, width: 300, height: 400 } };
+
+/**
+ * w2 was shown without ever being activated; w1 is the last-focused (key)
+ * window. Shared by the on-disk-shape entry below and the standalone kernel
+ * pin that follows it, so both read the exact same world.
+ */
+const BACKGROUND_OPEN_WORLD: World = {
+  fixtures: [contentFixture(1, 'w1'), contentFixture(2, 'w2')],
+  records: [
+    makeRecord('w1', { bounds: { x: 1, y: 1, width: 2, height: 2 } }),
+    makeRecord('w2', { bounds: { x: 3, y: 3, width: 4, height: 4 } }),
+  ],
+  stackOrder: ['w2', 'w1'],
+  front: 'w1',
+  frontNativeId: 1,
+};
 
 describe('session-projection — on-disk shape is byte-identical to the pre-extraction save path', () => {
   const worlds: Array<[string, World]> = [
@@ -603,24 +640,12 @@ describe('session-projection — on-disk shape is byte-identical to the pre-extr
     }],
 
     // A background open: w2 was shown without ever being activated, w1 is the
-    // last-focused window. There is ONE order, and a background open enters it
-    // BELOW the window holding key — so the saved stack puts w1 on top, the
-    // same direction focus recency ranks them (window-manager.md "The one-order
-    // consequence"). The stack a window sits in is still its own fact, not a
-    // restatement of its focus rank: this world names a stack that contradicts
-    // record order, so `stackIndex` can only come out right by reading
-    // `StateSnapshot.stackOrder`. Both fields still ride on disk — zOrder for
-    // the eager/deferred restore split, stackIndex for the stack replay.
-    ['a background open is saved BELOW the last-focused window', {
-      fixtures: [contentFixture(1, 'w1'), contentFixture(2, 'w2')],
-      records: [
-        makeRecord('w1', { bounds: { x: 1, y: 1, width: 2, height: 2 }, focusSeq: 9 }),
-        makeRecord('w2', { bounds: { x: 3, y: 3, width: 4, height: 4 }, focusSeq: 0 }),
-      ],
-      stackOrder: ['w2', 'w1'],
-      front: 'w1',
-      frontNativeId: 1,
-    }],
+    // last-focused (key) window. There is ONE order, and a background open
+    // enters it BELOW the window holding key — see the standalone pin right
+    // after this describe block for the direct assertion; this entry only
+    // carries the world through the same byte-identity sweep every other
+    // world here gets.
+    ['a background open is saved BELOW the last-focused window', BACKGROUND_OPEN_WORLD],
 
     // A window save keeps but the machine's stack does not hold (here: a
     // window the machine has no record for at all) leaves the key ABSENT, not
@@ -634,6 +659,27 @@ describe('session-projection — on-disk shape is byte-identical to the pre-extr
   for (const [label, world] of worlds) {
     it(label, () => assertSameOnDiskShape(world, label));
   }
+
+  // The kernel fact `BACKGROUND_OPEN_WORLD` pins: a window shown without being
+  // activated (w2) registers BELOW the key window (w1) in the kernel's single
+  // order. Under the old machine this was two axes that could disagree
+  // (`WindowRecord.focusSeq` for `zOrder`, `StateSnapshot.stackOrder` for
+  // `stackIndex`) — a fixture could name a stack that contradicted focus rank,
+  // which is exactly what this world used to pin. One order removes the
+  // second axis entirely: `zOrder` and `stackIndex` are now the SAME lookup,
+  // so there is nothing left for them to disagree about.
+  it('a background open registers below the key window in the kernel\'s single order', () => {
+    const out = serializeSession(inputFor(BACKGROUND_OPEN_WORLD)).snapshot.windows;
+    const [w1, w2] = out;
+    assert.strictEqual(w1.focused, true, 'w1 holds key');
+    assert.strictEqual(w2.focused, false);
+    assert.ok(
+      (w2.stackIndex as number) < (w1.stackIndex as number),
+      'the background open (w2) sits below the key window (w1) in the saved stack',
+    );
+    assert.strictEqual(w1.zOrder, w1.stackIndex, 'zOrder and stackIndex are the same kernel-order lookup for w1');
+    assert.strictEqual(w2.zOrder, w2.stackIndex, 'zOrder and stackIndex are the same kernel-order lookup for w2');
+  });
 });
 
 describe('session-projection — skip rules', () => {
@@ -746,17 +792,17 @@ describe('session-projection — machine-derived descriptor fields', () => {
     assert.deepStrictEqual(d.bounds, { x: 0, y: 0, width: 1920, height: 1080 });
   });
 
-  it('focused is the machine front', () => {
-    // `zOrder`'s own value tracking `WindowRecord.focusSeq` is already pinned,
-    // byte-for-byte, by every `focusSeq`-bearing world in the on-disk-shape
-    // describe above (e.g. "single plain content window", "a background open is
-    // saved BELOW the last-focused window") — this test drops the redundant
-    // direct assertion so it isn't the one place a future source change for
-    // `zOrder` has to keep matching (§5 step 11 remaining work,
-    // window-manager.md "The one-order consequence").
+  it('focused is the kernel\'s topmost content window', () => {
+    // `zOrder`'s own value — a position in the kernel's single order — is
+    // already pinned, byte-for-byte, by every kernel-order-bearing world in
+    // the on-disk-shape describe above (e.g. "single plain content window",
+    // "a background open is saved BELOW the last-focused window") — this test
+    // drops the redundant direct assertion so it isn't the one place a future
+    // source change for `zOrder` has to keep matching (window-manager.md
+    // "The one-order consequence").
     const world: World = {
       fixtures: [contentFixture(1, 'w1'), contentFixture(2, 'w2')],
-      records: [makeRecord('w1', { focusSeq: 3 }), makeRecord('w2', { focusSeq: 9 })],
+      records: [makeRecord('w1'), makeRecord('w2')],
       front: 'w2',
       frontNativeId: 2,
     };
@@ -1179,9 +1225,14 @@ describe('serializeSpaceWorkspaces — hybrid page-hosts + machine-derived field
     assert.strictEqual(serializeSpaceWorkspaces(spaceInputFor(world)).size, 0);
   });
 
-  it('zOrder is TRUE STACK POSITION (StateSnapshot.stackOrder index), not WindowRecord.focusSeq', () => {
-    // w2 was focused most recently (higher focusSeq) but sits BELOW w1 in the
-    // actual on-screen stack — stackOrder is bottom→top, w1 last = topmost.
+  it('zOrder is a position in the kernel\'s single order — a background open sits below the key window', () => {
+    // w2 was shown without ever being activated; w1 is the key window. The
+    // kernel has one order and nothing else orders windows, so `zOrder` here
+    // is the same position `stackIndex` reads for the main session snapshot
+    // (`serializeSession`) — under the old machine these were two axes
+    // (`WindowRecord.focusSeq` vs `StateSnapshot.stackOrder`) that a fixture
+    // could set to disagree; one order removes the second axis, so there is
+    // nothing left for them to disagree about.
     const world: World = {
       fixtures: [
         contentFixture(1, 'w1', {
@@ -1192,17 +1243,17 @@ describe('serializeSpaceWorkspaces — hybrid page-hosts + machine-derived field
           rawUrl: 'https://example.com/w2', address: 'https://example.com/w2',
         }),
       ],
-      records: [makeRecord('w1', { focusSeq: 1 }), makeRecord('w2', { focusSeq: 9 })],
+      records: [makeRecord('w1'), makeRecord('w2')],
       stackOrder: ['w2', 'w1'],
     };
     const windows = serializeSpaceWorkspaces(spaceInputFor(world)).get('space-1')!.windows;
     const w1 = windows.find((w) => w.url === 'https://example.com/')!;
     const w2 = windows.find((w) => w.url === 'https://example.com/w2')!;
-    assert.strictEqual(w1.zOrder, 1, 'w1 sits on top of the saved stack');
-    assert.strictEqual(w2.zOrder, 0, 'w2 sits below it despite the higher focusSeq');
+    assert.strictEqual(w1.zOrder, 1, 'w1 (key window) sits on top of the saved stack');
+    assert.strictEqual(w2.zOrder, 0, 'w2 (background open) sits below it in the same single order');
   });
 
-  it('focused follows StateSnapshot.front, not OS/live focus', () => {
+  it('focused follows the kernel\'s topmost content window, not OS/live focus', () => {
     const world: World = {
       fixtures: [
         contentFixture(1, 'w1', { context: SPACE_CONTEXT('space-1') }),
