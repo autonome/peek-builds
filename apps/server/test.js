@@ -1574,6 +1574,137 @@ describe("Devices Module Tests", () => {
   });
 });
 
+describe("MCP Grants Module Tests", () => {
+  let users;
+  let grants;
+
+  beforeEach(() => {
+    delete require.cache[require.resolve("./users")];
+    delete require.cache[require.resolve("./grants")];
+    cleanTestDir();
+    users = require("./users");
+    grants = require("./grants");
+    users.createUser("owner");
+  });
+
+  after(() => {
+    if (users && users.closeSystemDb) {
+      users.closeSystemDb();
+    }
+  });
+
+  describe("createGrant", () => {
+    it("should mint a grant key bound to the user, scope, and profile", () => {
+      const g = grants.createGrant("owner", "nightly agent", "work", false, "profile-a");
+      assert.ok(g.grantId, "should return a grantId");
+      assert.strictEqual(g.userId, "owner");
+      assert.strictEqual(g.label, "nightly agent");
+      assert.strictEqual(g.scopeTag, "work");
+      assert.strictEqual(g.readonly, false);
+      assert.strictEqual(g.profileId, "profile-a");
+      assert.strictEqual(g.apiKey.length, 64, "key should be 64 hex chars");
+
+      const cred = grants.resolveMcpGrant(g.apiKey);
+      assert.strictEqual(cred.userId, "owner");
+      assert.strictEqual(cred.grantId, g.grantId);
+      assert.strictEqual(cred.scopeTag, "work");
+      assert.strictEqual(cred.readonly, false);
+      assert.strictEqual(cred.profileId, "profile-a");
+    });
+
+    it("should permit an unscoped grant (scopeTag '')", () => {
+      const g = grants.createGrant("owner", "whole-store agent", "", true, "profile-a");
+      assert.strictEqual(g.scopeTag, "");
+      const cred = grants.resolveMcpGrant(g.apiKey);
+      assert.strictEqual(cred.scopeTag, "");
+      assert.strictEqual(cred.readonly, true);
+    });
+
+    it("should give each grant a distinct key", () => {
+      const a = grants.createGrant("owner", "one", "x", false, "p");
+      const b = grants.createGrant("owner", "two", "y", false, "p");
+      assert.notStrictEqual(a.apiKey, b.apiKey);
+      assert.notStrictEqual(a.grantId, b.grantId);
+    });
+
+    it("should reject an unknown user", () => {
+      assert.throws(() => grants.createGrant("nobody", "x", "tag", false, "p"), /does not exist/);
+    });
+
+    it("should reject an empty label", () => {
+      assert.throws(() => grants.createGrant("owner", "", "tag", false, "p"), /label is required/);
+    });
+
+    it("should reject a missing profileId", () => {
+      assert.throws(() => grants.createGrant("owner", "x", "tag", false, ""), /profileId is required/);
+    });
+  });
+
+  describe("resolveMcpGrant", () => {
+    it("should return null for an unknown key", () => {
+      assert.strictEqual(grants.resolveMcpGrant("nope"), null);
+      assert.strictEqual(grants.resolveMcpGrant(""), null);
+      assert.strictEqual(grants.resolveMcpGrant(null), null);
+    });
+
+    it("should bump last_seen_at on a successful resolve", () => {
+      const g = grants.createGrant("owner", "watch", "tag", false, "p");
+      grants.resolveMcpGrant(g.apiKey);
+      const [row] = grants.listGrants("owner").filter((x) => x.id === g.grantId);
+      assert.ok(row.last_seen_at, "last_seen_at should be set after a resolve");
+    });
+
+    it("must never resolve a device key (separation from the sync credential namespace)", () => {
+      const device = users.createDevice("owner", "phone");
+      assert.strictEqual(grants.resolveMcpGrant(device.apiKey), null);
+    });
+  });
+
+  describe("revokeGrant", () => {
+    it("should reject a revoked grant key without affecting others", () => {
+      const a = grants.createGrant("owner", "rogue", "tag", false, "p");
+      const b = grants.createGrant("owner", "keeper", "tag", false, "p");
+
+      const revoked = grants.revokeGrant("owner", a.grantId);
+      assert.strictEqual(revoked, true);
+
+      assert.deepStrictEqual(grants.resolveMcpGrant(a.apiKey), { revoked: true });
+      assert.strictEqual(grants.resolveMcpGrant(b.apiKey).grantId, b.grantId);
+    });
+
+    it("should be idempotent", () => {
+      const g = grants.createGrant("owner", "x", "tag", false, "p");
+      assert.strictEqual(grants.revokeGrant("owner", g.grantId), true);
+      assert.strictEqual(grants.revokeGrant("owner", g.grantId), false);
+    });
+
+    it("should reject revoking another user's / unknown grant", () => {
+      assert.throws(() => grants.revokeGrant("owner", "no-such-grant"), /not found/);
+    });
+  });
+
+  describe("listGrants", () => {
+    it("should list grants without key material, including revoked", () => {
+      const a = grants.createGrant("owner", "one", "tag", false, "p");
+      grants.revokeGrant("owner", a.grantId);
+      const b = grants.createGrant("owner", "two", "tag2", true, "p2");
+
+      const list = grants.listGrants("owner");
+      assert.strictEqual(list.length, 2);
+      for (const row of list) {
+        assert.strictEqual(row.apiKey, undefined);
+        assert.strictEqual(row.key_hash, undefined);
+      }
+      const revokedRow = list.find((r) => r.id === a.grantId);
+      assert.ok(revokedRow.revoked_at, "revoked grant should still be listed");
+      const readonlyRow = list.find((r) => r.id === b.grantId);
+      assert.strictEqual(readonlyRow.readonly, true);
+      assert.strictEqual(readonlyRow.scopeTag, "tag2");
+      assert.strictEqual(readonlyRow.profileId, "p2");
+    });
+  });
+});
+
 describe("Write Attribution Tests", () => {
   let db;
   let users;
@@ -2310,5 +2441,273 @@ describe("Profile Isolation (data-leak regression)", () => {
     assert.notStrictEqual(workId, defaultId, "'work' slug must not share default's bucket");
     // Stable on re-resolve.
     assert.strictEqual(users.resolveProfileId(TEST_USER, "work"), workId);
+  });
+});
+
+describe("MCP Grant Auth Middleware Tests", () => {
+  // Exercises the real production middleware (auth.js createAuthMiddleware /
+  // createMcpAuthMiddleware) wired the same way index.js wires them: the
+  // general auth gate first, then the /mcp/* grant gate layered on top. This
+  // is what proves the two separation rules from design doc §4.1 — a device
+  // key must be refused on /mcp/*, and a grant key must be refused on the
+  // sync routes — hold for the actual auth code, not a re-implementation of it.
+  let app;
+  let users;
+  let grants;
+  let TEST_DEVICE_KEY;
+  let TEST_GRANT_KEY;
+  let TEST_READONLY_GRANT_KEY;
+  const TEST_USER = "mcpauthuser";
+
+  beforeEach(() => {
+    delete require.cache[require.resolve("./users")];
+    delete require.cache[require.resolve("./grants")];
+    delete require.cache[require.resolve("./auth")];
+    cleanTestDir();
+
+    users = require("./users");
+    grants = require("./grants");
+    const { createAuthMiddleware, createMcpAuthMiddleware } = require("./auth");
+
+    users.createUser(TEST_USER);
+    const device = users.createDevice(TEST_USER, "test-device");
+    TEST_DEVICE_KEY = device.apiKey;
+
+    const grant = grants.createGrant(TEST_USER, "test-grant", "work", false, "profile-a");
+    TEST_GRANT_KEY = grant.apiKey;
+
+    const roGrant = grants.createGrant(TEST_USER, "readonly-grant", "", true, "profile-a");
+    TEST_READONLY_GRANT_KEY = roGrant.apiKey;
+
+    const { Hono } = require("hono");
+    app = new Hono();
+
+    // Mirrors index.js: the general auth middleware runs on every path (and
+    // skips /mcp itself), then the grant gate is layered on /mcp/*.
+    app.use("*", createAuthMiddleware({ mode: "multi-user" }));
+    app.use("/mcp/*", createMcpAuthMiddleware());
+
+    // Stand-in for a sync route (e.g. GET /items).
+    app.get("/items", (c) => c.json({ userId: c.get("userId") }));
+
+    // Mirrors index.js's GET /mcp/whoami probe.
+    app.get("/mcp/whoami", (c) => c.json({
+      userId: c.get("userId"),
+      scopeTag: c.get("scopeTag"),
+      readonly: c.get("readonly"),
+      profileId: c.get("profileId"),
+    }));
+  });
+
+  after(() => {
+    if (users && users.closeSystemDb) users.closeSystemDb();
+    cleanTestDir();
+  });
+
+  it("resolves a grant key on /mcp/* with its scope, readonly bit, and profile", async () => {
+    const res = await app.request("/mcp/whoami", {
+      headers: { Authorization: `Bearer ${TEST_GRANT_KEY}` },
+    });
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.strictEqual(json.userId, TEST_USER);
+    assert.strictEqual(json.scopeTag, "work");
+    assert.strictEqual(json.readonly, false);
+    assert.strictEqual(json.profileId, "profile-a");
+  });
+
+  it("reflects an unscoped, readonly grant", async () => {
+    const res = await app.request("/mcp/whoami", {
+      headers: { Authorization: `Bearer ${TEST_READONLY_GRANT_KEY}` },
+    });
+    const json = await res.json();
+    assert.strictEqual(json.scopeTag, "");
+    assert.strictEqual(json.readonly, true);
+  });
+
+  it("a device key must be refused on /mcp/* (separation rule)", async () => {
+    const res = await app.request("/mcp/whoami", {
+      headers: { Authorization: `Bearer ${TEST_DEVICE_KEY}` },
+    });
+    assert.strictEqual(res.status, 401);
+  });
+
+  it("a grant key must be refused on the sync routes (separation rule)", async () => {
+    const res = await app.request("/items", {
+      headers: { Authorization: `Bearer ${TEST_GRANT_KEY}` },
+    });
+    assert.strictEqual(res.status, 401);
+  });
+
+  it("a device key still authenticates the sync routes", async () => {
+    const res = await app.request("/items", {
+      headers: { Authorization: `Bearer ${TEST_DEVICE_KEY}` },
+    });
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.strictEqual(json.userId, TEST_USER);
+  });
+
+  it("rejects a revoked grant on /mcp/*", async () => {
+    const g = grants.createGrant(TEST_USER, "throwaway", "x", false, "p");
+    grants.revokeGrant(TEST_USER, g.grantId);
+    const res = await app.request("/mcp/whoami", {
+      headers: { Authorization: `Bearer ${g.apiKey}` },
+    });
+    assert.strictEqual(res.status, 401);
+  });
+
+  it("rejects /mcp/* with no Authorization header", async () => {
+    const res = await app.request("/mcp/whoami");
+    assert.strictEqual(res.status, 401);
+  });
+
+  it("rejects /mcp/* with an unknown key", async () => {
+    const res = await app.request("/mcp/whoami", {
+      headers: { Authorization: "Bearer not-a-real-key" },
+    });
+    assert.strictEqual(res.status, 401);
+  });
+});
+
+describe("MCP Grant Admin Routes Tests", () => {
+  // Exercises the real /admin/mcp-grants routes, wired the same way index.js
+  // wires them (ADMIN_TOKEN gate, then the route handlers calling grants.js).
+  let app;
+  let users;
+  let grants;
+  const ADMIN_TOKEN = "test-admin-token-fixture";
+  const TEST_USER = "mcpadminuser";
+
+  beforeEach(() => {
+    delete require.cache[require.resolve("./users")];
+    delete require.cache[require.resolve("./grants")];
+    cleanTestDir();
+
+    users = require("./users");
+    grants = require("./grants");
+    users.createUser(TEST_USER);
+
+    const { Hono } = require("hono");
+    const crypto = require("crypto");
+    app = new Hono();
+
+    // Mirrors index.js's adminTokenMatches gate.
+    app.use("/admin/*", async (c, next) => {
+      const auth = c.req.header("Authorization") || "";
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      const a = Buffer.from(token);
+      const b = Buffer.from(ADMIN_TOKEN);
+      const matches = a.length === b.length && crypto.timingSafeEqual(a, b);
+      if (!matches) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+      return next();
+    });
+
+    app.post("/admin/mcp-grants", async (c) => {
+      const body = await c.req.json().catch(() => ({}));
+      const { userId, label, scopeTag, readonly, profileId } = body;
+      if (!userId || !label || typeof scopeTag !== "string" || !profileId) {
+        return c.json({ error: "userId, label, scopeTag, and profileId are required" }, 400);
+      }
+      try {
+        const grant = grants.createGrant(userId, label, scopeTag, !!readonly, profileId);
+        return c.json({ grant });
+      } catch (e) {
+        return c.json({ error: e.message }, 400);
+      }
+    });
+
+    app.get("/admin/mcp-grants", (c) => {
+      const userId = c.req.query("userId");
+      if (!userId) {
+        return c.json({ error: "userId query param is required" }, 400);
+      }
+      return c.json({ grants: grants.listGrants(userId) });
+    });
+
+    app.delete("/admin/mcp-grants/:grantId", (c) => {
+      const userId = c.req.query("userId");
+      const grantId = c.req.param("grantId");
+      if (!userId) {
+        return c.json({ error: "userId query param is required" }, 400);
+      }
+      try {
+        const revoked = grants.revokeGrant(userId, grantId);
+        return c.json({ revoked });
+      } catch (e) {
+        return c.json({ error: e.message }, 400);
+      }
+    });
+  });
+
+  after(() => {
+    if (users && users.closeSystemDb) users.closeSystemDb();
+    cleanTestDir();
+  });
+
+  function adminHeaders() {
+    return { Authorization: `Bearer ${ADMIN_TOKEN}` };
+  }
+
+  it("rejects an unauthenticated mint", async () => {
+    const res = await app.request("/admin/mcp-grants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: TEST_USER, label: "x", scopeTag: "work", readonly: false, profileId: "p" }),
+    });
+    assert.strictEqual(res.status, 401);
+  });
+
+  it("mints a grant and returns the raw key exactly once", async () => {
+    const res = await app.request("/admin/mcp-grants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ userId: TEST_USER, label: "nightly agent", scopeTag: "work", readonly: false, profileId: "profile-a" }),
+    });
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.ok(json.grant.apiKey, "mint response should carry the raw key");
+    assert.strictEqual(json.grant.scopeTag, "work");
+    assert.strictEqual(json.grant.readonly, false);
+    assert.strictEqual(json.grant.profileId, "profile-a");
+  });
+
+  it("never returns a raw key from the list route", async () => {
+    await app.request("/admin/mcp-grants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ userId: TEST_USER, label: "a", scopeTag: "work", readonly: false, profileId: "p" }),
+    });
+
+    const res = await app.request(`/admin/mcp-grants?userId=${TEST_USER}`, {
+      headers: adminHeaders(),
+    });
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.strictEqual(json.grants.length, 1);
+    assert.strictEqual(json.grants[0].apiKey, undefined);
+    assert.strictEqual(json.grants[0].key_hash, undefined);
+    assert.strictEqual(json.grants[0].keyHash, undefined);
+  });
+
+  it("revokes a grant so it stops resolving", async () => {
+    const mintRes = await app.request("/admin/mcp-grants", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ userId: TEST_USER, label: "a", scopeTag: "work", readonly: false, profileId: "p" }),
+    });
+    const { grant } = await mintRes.json();
+
+    const delRes = await app.request(`/admin/mcp-grants/${grant.grantId}?userId=${TEST_USER}`, {
+      method: "DELETE",
+      headers: adminHeaders(),
+    });
+    assert.strictEqual(delRes.status, 200);
+    const delJson = await delRes.json();
+    assert.strictEqual(delJson.revoked, true);
+
+    assert.deepStrictEqual(grants.resolveMcpGrant(grant.apiKey), { revoked: true });
   });
 });

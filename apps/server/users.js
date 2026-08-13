@@ -718,7 +718,8 @@ module.exports = {
   updateProfileLastUsed,
   deleteProfile,
   migrateProfileFoldersToUuid,
-  // Exposed for testing
+  // Exposed for testing, and reused by grants.js for a matching key format
   hashApiKey,
+  generateApiKey,
   getSystemDb,
 };

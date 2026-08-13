@@ -5,9 +5,10 @@ const fs = require("fs");
 const path = require("path");
 const db = require("./db");
 const users = require("./users");
+const grants = require("./grants");
 const backup = require("./backup");
 const { loadConfig, isSingleUserMode } = require("./config");
-const { createAuthMiddleware } = require("./auth");
+const { createAuthMiddleware, createMcpAuthMiddleware } = require("./auth");
 const { DATASTORE_VERSION, PROTOCOL_VERSION } = require("./version");
 
 // Every item type the server will accept and store. The client decides WHICH of
@@ -53,6 +54,22 @@ app.use("*", async (c, next) => {
 
 // Auth middleware - uses factory based on config
 app.use("*", createAuthMiddleware(config));
+
+// /mcp/* authenticates with a grant credential, never a device/user one — see
+// createMcpAuthMiddleware() and the /mcp path skip inside createAuthMiddleware().
+app.use("/mcp/*", createMcpAuthMiddleware());
+
+// GET /mcp/whoami — trivial authenticated probe confirming what the grant
+// middleware resolved. The real /mcp/* data routes are a later step; this
+// exists only so the middleware has something to guard now.
+app.get("/mcp/whoami", (c) => {
+  return c.json({
+    userId: c.get("userId"),
+    scopeTag: c.get("scopeTag"),
+    readonly: c.get("readonly"),
+    profileId: c.get("profileId"),
+  });
+});
 
 // Version check middleware for sync endpoints
 // Rejects requests with mismatched version headers (HTTP 409)
@@ -646,6 +663,55 @@ app.delete("/admin/devices/:deviceId", (c) => {
   }
   try {
     const revoked = users.revokeDevice(userId, deviceId);
+    return c.json({ revoked });
+  } catch (e) {
+    return c.json({ error: e.message }, 400);
+  }
+});
+
+// === Admin endpoints (MCP grant management) ===
+//
+// Same ADMIN_TOKEN gate as /admin/devices above. A grant is a distinct
+// credential namespace from a device (see grants.js) — minting one here is
+// the only way to hand out a scoped/readonly /mcp/* key.
+
+// POST /admin/mcp-grants  { userId, label, scopeTag, readonly, profileId }
+// -> mint a new grant key. The raw apiKey is returned ONCE and is never
+// recoverable. scopeTag may be '' for an unscoped (whole-store) grant — see
+// design doc §4.4; that is a deliberate, hand-minted escape hatch, not what
+// the scaffolder writes by default.
+app.post("/admin/mcp-grants", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { userId, label, scopeTag, readonly, profileId } = body;
+  if (!userId || !label || typeof scopeTag !== "string" || !profileId) {
+    return c.json({ error: "userId, label, scopeTag, and profileId are required" }, 400);
+  }
+  try {
+    const grant = grants.createGrant(userId, label, scopeTag, !!readonly, profileId);
+    return c.json({ grant });
+  } catch (e) {
+    return c.json({ error: e.message }, 400);
+  }
+});
+
+// GET /admin/mcp-grants?userId=...  -> list a user's grants (no key material).
+app.get("/admin/mcp-grants", (c) => {
+  const userId = c.req.query("userId");
+  if (!userId) {
+    return c.json({ error: "userId query param is required" }, 400);
+  }
+  return c.json({ grants: grants.listGrants(userId) });
+});
+
+// DELETE /admin/mcp-grants/:grantId?userId=...  -> revoke a grant individually.
+app.delete("/admin/mcp-grants/:grantId", (c) => {
+  const userId = c.req.query("userId");
+  const grantId = c.req.param("grantId");
+  if (!userId) {
+    return c.json({ error: "userId query param is required" }, 400);
+  }
+  try {
+    const revoked = grants.revokeGrant(userId, grantId);
     return c.json({ revoked });
   } catch (e) {
     return c.json({ error: e.message }, 400);
