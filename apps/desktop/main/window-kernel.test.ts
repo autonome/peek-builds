@@ -1023,6 +1023,176 @@ describe('window-kernel: parent refocus on WindowClosed', () => {
   });
 });
 
+// ── Successor raise on WindowHidden (kernel-native port of window-state.ts's
+// WINDOW_HIDDEN arm — the sibling of the parent-refocus rule above, read off
+// the visibility diff rather than the membership diff) ─────────────────────
+
+describe('window-kernel: successor raise on WindowHidden', () => {
+  const registerContent = (id: WindowId, extra: Partial<Extract<Event, { type: 'WindowRegistered' }>> = {}): Event => ({
+    type: 'WindowRegistered',
+    id,
+    kind: 'browser',
+    layer: BASE_LAYER,
+    canBecomeKey: true,
+    acceptsInput: true,
+    class: 'primary',
+    role: 'content',
+    ...extra,
+  });
+
+  const raises = (effects: Effect[]): Effect[] => effects.filter((e) => e.type === 'RaiseWindow');
+
+  /** `key` (A) and a shown successor (B), app active, A on top. */
+  const keyAndSuccessor = (): State => {
+    const A = wid(1);
+    const B = wid(2);
+    return fold([
+      registerContent(A),
+      registerContent(B),
+      { type: 'WindowShown', id: A },
+      { type: 'WindowShown', id: B },
+      { type: 'OsFocusGained', id: A },
+      { type: 'AppActivated' },
+    ]);
+  };
+
+  it('the key window hides and the topmost remaining content window is raised, carrying the transition token, which is stamped on the successor', () => {
+    const A = wid(1);
+    const B = wid(2);
+    const state = keyAndSuccessor();
+    assert.strictEqual(keyWindow(state)?.id, A, 'precondition: A holds key');
+    assert.strictEqual(state.appActive, true, 'precondition: app is active');
+    assert.strictEqual(state.order.find((w) => w.id === B)?.visible, true, 'precondition: B is genuinely shown');
+
+    const ev: Event = { type: 'WindowHidden', id: A };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+
+    assert.deepStrictEqual(raises(effects), [{ type: 'RaiseWindow', id: B, opSeq: next.opSeqCounter }]);
+    const raise = effects.find((e) => e.type === 'RaiseWindow');
+    assert.strictEqual(raise?.opSeq, next.opSeqCounter, 'the token is what makes the OS echo of this raise recognisable as machine-caused');
+    assert.strictEqual(next.order.find((w) => w.id === B)?.lastOpSeq, next.opSeqCounter, "evolve's stamp equals react's effect token");
+  });
+
+  it('key is not written by the transition, and order is not reordered', () => {
+    const A = wid(1);
+    const state = keyAndSuccessor();
+
+    const ev: Event = { type: 'WindowHidden', id: A };
+    const next = evolve(state, ev);
+
+    assert.strictEqual(next.key, A, 'RULE 2 reserves the key write for OsFocusGained — the hidden id still dangles here');
+    assert.deepStrictEqual(next.order.map((w) => w.id), state.order.map((w) => w.id), 'the hidden record is left where it sits');
+  });
+
+  it('a NON-key window hiding raises nothing and mints no token', () => {
+    const A = wid(1);
+    const C = wid(2);
+    const state = fold([
+      registerContent(A),
+      registerContent(C),
+      { type: 'WindowShown', id: A },
+      { type: 'WindowShown', id: C },
+      { type: 'OsFocusGained', id: A },
+      { type: 'AppActivated' },
+    ]);
+    assert.strictEqual(keyWindow(state)?.id, A, 'precondition: A, not C, holds key');
+    assert.strictEqual(state.order.find((w) => w.id === C)?.visible, true, 'precondition: C is genuinely shown');
+
+    const ev: Event = { type: 'WindowHidden', id: C };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+
+    assert.deepStrictEqual(raises(effects), []);
+    assert.strictEqual(next.opSeqCounter, state.opSeqCounter, 'no op minted when nothing is raised');
+  });
+
+  it('the key window hides with no eligible successor (the only other window is registered but never shown): no raise, no token', () => {
+    const A = wid(1);
+    const B = wid(2);
+    const state = fold([
+      registerContent(A),
+      registerContent(B),
+      { type: 'WindowShown', id: A },
+      { type: 'OsFocusGained', id: A },
+      { type: 'AppActivated' },
+    ]);
+    assert.strictEqual(keyWindow(state)?.id, A, 'precondition: A holds key');
+    assert.strictEqual(state.order.find((w) => w.id === B)?.visible, false, 'precondition: B was registered but never shown');
+
+    const ev: Event = { type: 'WindowHidden', id: A };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+
+    assert.deepStrictEqual(raises(effects), []);
+    assert.strictEqual(next.opSeqCounter, state.opSeqCounter, 'no op minted — no content window is left to raise');
+  });
+
+  it('a successor that is not a content window is skipped in favour of one that is', () => {
+    // B (content) sits below U (a utility popup — visible, focusable, but not
+    // in CONTENT_ROLES) which sits below A (key). Hiding A leaves U topmost by
+    // position, but `isContentWindow` excludes it, so the successor is B.
+    const B = wid(1);
+    const U = wid(2);
+    const A = wid(3);
+    const state = fold([
+      registerContent(B),
+      registerContent(U, { class: 'popup', role: 'utility' }),
+      registerContent(A),
+      { type: 'WindowShown', id: B },
+      { type: 'WindowShown', id: U },
+      { type: 'WindowShown', id: A },
+      { type: 'OsFocusGained', id: A },
+      { type: 'AppActivated' },
+    ]);
+    assert.deepStrictEqual(state.order.map((w) => w.id), [B, U, A], 'precondition: U sits above B, A on top');
+    assert.strictEqual(isContentWindow(state.order.find((w) => w.id === U)!), false, 'precondition: U is not a content window');
+    assert.strictEqual(keyWindow(state)?.id, A, 'precondition: A holds key');
+
+    const ev: Event = { type: 'WindowHidden', id: A };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+
+    assert.deepStrictEqual(raises(effects), [{ type: 'RaiseWindow', id: B, opSeq: next.opSeqCounter }], 'U is skipped, B is raised');
+  });
+
+  it('while appActive is false, the same hide raises nothing and mints no token', () => {
+    const A = wid(1);
+    const B = wid(2);
+    const state = fold([
+      registerContent(A),
+      registerContent(B),
+      { type: 'WindowShown', id: A },
+      { type: 'WindowShown', id: B },
+      { type: 'OsFocusGained', id: A },
+      // No AppActivated — the app is not active.
+    ]);
+    assert.strictEqual(state.appActive, false, 'precondition: app is not active');
+    assert.strictEqual(keyWindow(state)?.id, A, 'precondition: A holds key');
+
+    const ev: Event = { type: 'WindowHidden', id: A };
+    const next = evolve(state, ev);
+    const effects = react(state, ev, next);
+
+    assert.deepStrictEqual(raises(effects), []);
+    assert.strictEqual(next.opSeqCounter, state.opSeqCounter, 'no op minted while the app is backgrounded');
+  });
+
+  it('the duplicate hide (backend echo + late native hide event) emits nothing the second time', () => {
+    const A = wid(1);
+    const state = keyAndSuccessor();
+
+    const ev: Event = { type: 'WindowHidden', id: A };
+    const first = evolve(state, ev);
+    assert.ok(react(state, ev, first).some((e) => e.type === 'RaiseWindow'), 'sanity: the first hide really does raise a successor');
+
+    const dup = evolve(first, ev);
+    assert.deepStrictEqual(react(first, ev, dup), [], 'no effects — including no second raise — from the duplicate');
+    assert.deepStrictEqual(dup.order, first.order, 'order is byte-identical to after the first hide');
+    assert.strictEqual(dup.opSeqCounter, first.opSeqCounter, 'no second token minted');
+  });
+});
+
 // ── Fullscreen: an orthogonal region (§0.1.8) ───────────────────────────────
 
 describe('window-kernel: fullscreen is orthogonal to key and order', () => {

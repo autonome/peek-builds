@@ -1462,9 +1462,35 @@ export function evolve(state: State, ev: Event): State {
     }
 
     case 'WindowHidden': {
+      // Successor raise (ported from `window-state.ts`'s `WINDOW_HIDDEN` arm):
+      // when the window going off screen is the one holding key, hiding it
+      // must not leave nothing focused. `key` is deliberately left untouched —
+      // RULE 2 reserves that write for `OsFocusGained`; the OS's echo of the
+      // raise `react` emits is what will eventually write it. `order` is
+      // deliberately NOT reordered: leaving the hidden record where it sits
+      // keeps "key window is topmost" untouched (unlike the `WindowClosed`
+      // parent-refocus arm, which removes a record and so has to reorder to
+      // preserve that invariant) — and `isContentWindow` short-circuits on
+      // `!visible`, so the successor query below already skips the record
+      // being hidden without an explicit exclusion.
+      //
+      // GENUINE-HIDE ONLY: a duplicate hide (the backend echo plus the lagged
+      // native event, see the "duplicate WindowHidden" test) must stay inert.
+      // `hidesGenuinely` gates the whole rule on the record existing and
+      // currently `visible === true`, mirroring the `issuesShow` gate
+      // `WindowShown` uses above for the same reason.
+      const target = state.order.find((w) => w.id === ev.id);
+      const hidesGenuinely = target !== undefined && target.visible === true;
+      const order = state.order.map((w) => (w.id === ev.id ? { ...w, visible: false } : w));
+      const successor =
+        hidesGenuinely && state.key === ev.id && state.appActive === true
+          ? topmost({ ...state, order }, isContentWindow)
+          : null;
+      const opSeq = successor !== null ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
         ...state,
-        order: state.order.map((w) => (w.id === ev.id ? { ...w, visible: false } : w)),
+        order: successor !== null ? order.map((w) => (w.id === successor.id ? { ...w, lastOpSeq: opSeq } : w)) : order,
+        opSeqCounter: opSeq,
         version: state.version + 1,
       };
     }
@@ -2196,6 +2222,27 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     const parent = next.order.find((w) => w.id === prevRecord.parentId);
     if (parent !== undefined && isContentWindow(parent)) {
       effects.push({ type: 'RaiseWindow', id: parent.id, opSeq: next.opSeqCounter });
+    }
+  }
+
+  // Successor raise on hide (ported from `window-state.ts`'s `WINDOW_HIDDEN`
+  // arm — the sibling of the parent-refocus rule just above, read off the
+  // SAME visibility diff the `ShowWindow`/`HideWindow` loop at the top of
+  // this function computes, rather than the membership diff those two loops
+  // read). A record that went `visible: true` -> `false` and held `prev.key`
+  // hands the raise to whatever content window is left, exactly mirroring
+  // `evolve`'s `WindowHidden` arm — which stamps `lastOpSeq` on that same
+  // successor under this identical condition — so this reads as a pure
+  // structural diff and never re-derives the guard from `ev`.
+  for (const nextRecord of next.order) {
+    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
+    if (prevRecord === undefined) continue;
+    if (!prevRecord.visible || nextRecord.visible) continue;
+    if (prevRecord.id !== prev.key) continue;
+    if (next.appActive !== true) continue;
+    const successor = topmost(next, isContentWindow);
+    if (successor !== null) {
+      effects.push({ type: 'RaiseWindow', id: successor.id, opSeq: next.opSeqCounter });
     }
   }
 
