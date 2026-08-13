@@ -124,7 +124,7 @@ import {
 import { getWindowPresentation } from './window-presenter.js';
 import { getAllHybridWindows, getHybridWindow } from './hybrid-page-host-registry.js';
 import {
-  getFrontWindowId,
+  getTopmostContentWindowId,
   getDevtoolsTargetId,
   getWindowModeName,
   waitForMode,
@@ -1109,7 +1109,7 @@ export function registerTileIpcHandlers(): void {
       // unparented) and returns the chrome overlay when the address bar is
       // focused (dialog would parent over the chrome, not the page). dialog
       // parenting accepts a BaseWindow, so a hybrid front parents directly.
-      const frontId = getFrontWindowId();
+      const frontId = getTopmostContentWindowId();
       const frontWin = frontId != null ? getNativeWindowFor(frontId) : null;
       const parentWindow = frontWin && !frontWin.isDestroyed()
         ? frontWin
@@ -1148,7 +1148,7 @@ export function registerTileIpcHandlers(): void {
       const senderWindow = windowFromWebContents(ev.sender);
       // Same front-based parenting as tile:dialogs:save above (machine front,
       // not getFocusedWindow() — see that handler's comment).
-      const frontId = getFrontWindowId();
+      const frontId = getTopmostContentWindowId();
       const frontWin = frontId != null ? getNativeWindowFor(frontId) : null;
       const parentWindow = frontWin && !frontWin.isDestroyed()
         ? frontWin
@@ -3548,13 +3548,13 @@ export function registerTileIpcHandlers(): void {
       // is an ELECTRON window id (the tile IPC surface stays numeric until the
       // id-space collapse lands); no id means "the front window", which the
       // machine hands back as a WM WindowId.
-      let machineId: ReturnType<typeof getFrontWindowId> = null;
+      let machineId: ReturnType<typeof getTopmostContentWindowId> = null;
       let boundsWin: ReturnType<typeof getLiveWindow> | BaseWindow | null = null;
       if (typeof args.id === 'number') {
         machineId = getWindowIdFor(args.id);
         boundsWin = getLiveWindow(args.id) ?? getHybridWindow(args.id)?.baseWin ?? null;
       } else {
-        machineId = getFrontWindowId();
+        machineId = getTopmostContentWindowId();
         boundsWin = machineId != null ? getNativeWindowFor(machineId) : null;
       }
       if (machineId == null) {
@@ -3623,7 +3623,7 @@ export function registerTileIpcHandlers(): void {
       // The renderer-facing id surface stays ELECTRON-numeric until the
       // id-space collapse lands, so resolve the machine's front back to its
       // native window's id at this seam.
-      const front = getFrontWindowId();
+      const front = getTopmostContentWindowId();
       const frontWin = front != null ? getNativeWindowFor(front) : null;
       return { success: true, data: frontWin ? frontWin.id : null };
     } catch (err) {
@@ -3662,7 +3662,7 @@ export function registerTileIpcHandlers(): void {
       // (the renderer-facing surface stays numeric until the id-space collapse).
       let targetId: number | null = typeof args.id === 'number' ? args.id : null;
       if (targetId == null) {
-        const machineId = getDevtoolsTargetId() ?? getFrontWindowId();
+        const machineId = getDevtoolsTargetId() ?? getTopmostContentWindowId();
         const nativeWin = machineId != null ? getNativeWindowFor(machineId) : null;
         targetId = nativeWin ? nativeWin.id : null;
       }
@@ -4387,7 +4387,7 @@ export function registerTileIpcHandlers(): void {
     }
 
     if (resolvedId === null) {
-      const front = getFrontWindowId();
+      const front = getTopmostContentWindowId();
       const frontWin = front != null ? getNativeWindowFor(front) : null;
       if (frontWin) {
         const trackedWin = getLiveWindow(frontWin.id);
@@ -6920,7 +6920,7 @@ export function registerTileIpcHandlers(): void {
     // front is a WM WindowId — resolve it to the native window's id first.
     let id: number | null = typeof windowId === 'number' ? windowId : null;
     if (id == null) {
-      const front = getFrontWindowId();
+      const front = getTopmostContentWindowId();
       const frontWin = front != null ? getNativeWindowFor(front) : null;
       id = frontWin ? frontWin.id : null;
     }

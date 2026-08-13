@@ -87,7 +87,6 @@ import {
 import {
   registerWindowWithMachine,
   dispatchWindowEvent,
-  getFrontWindowId,
   getFrontPageHostId,
   getWindowModeName,
   getWindowIdFor,
@@ -109,7 +108,9 @@ import {
   shadowKernelUnmaximize,
   shadowKernelSetDesktopMembership,
   shadowKernelShowRequested,
+  getShadowKernelExecutor,
 } from './window-kernel-shadow.js';
+import { topmost, isContentWindow } from './window-kernel.js';
 import {
   TRANSIENT_ROLES,
   inferIzuiRole,
@@ -235,7 +236,7 @@ import {
 // Focused-window tracking (S1 `lastFocusedVisibleWindowId` / S4 `lastContentWindowId`
 // / `focus-order.ts`) is GONE — the window-state machine's `front` + per-record
 // `focusSeq`/`lastHttpUrl` are the single authority now. Consumers read
-// `getFrontWindowId()` / `getDevtoolsTargetId()` from
+// `getTopmostContentWindowId()` / `getDevtoolsTargetId()` from
 // `window-state-singleton.ts`; every window's focus is fed to the machine by the
 // OS adapter's native `focus` listeners (attached at `registerWindowWithMachine`),
 // so there are no `track*` feeds to maintain here.
@@ -495,35 +496,55 @@ export function reopenLastClosedWindow(): { success: boolean; url?: string; erro
 /**
  * Open a new empty page host window.
  * Called from the Cmd+N / Ctrl+N keyboard shortcut.
- * Inherits space mode from the last focused visible window (if any).
+ * Inherits space mode from the opener window (if any).
  * Shows the navbar with URL bar focused so the user can immediately type a URL.
+ *
+ * `sourceWindowId` is the Electron id of the window that had focus when the
+ * shortcut fired — threaded in by the dispatch site
+ * (`shortcuts.ts registerLocalShortcut` / `handleLocalShortcut` already carry
+ * a `sourceWindowId?: number` through to every local-shortcut callback)
+ * rather than re-derived here by guessing at "the front window". Guessing
+ * used to mean `key`/`front`, and the shared chrome overlay routinely holds
+ * key at Cmd+N time — Cmd+L focuses it so the user can type a URL — and the
+ * overlay has no mode row, so space mode dropped with no error path (the
+ * `try` below swallows, and the `if (modeEntry && …)` falls through).
+ *
+ * Falls back to the topmost content window (`window-kernel.ts topmost(state,
+ * isContentWindow)`) when there is no source id at all, when the source is
+ * the chrome overlay, or when the source carries no mode row of its own.
+ *
+ * Pre-existing asymmetry, left alone here: opener-lineage in
+ * `windowOpenHandler` inherits both `'space'` and `'group'` mode; this
+ * function inherits only `'space'`.
  */
-export function openNewPageWindow(): void {
+export function openNewPageWindow(sourceWindowId?: number): void {
   const options: Record<string, unknown> = {
     trackingSource: 'new-window',
     trackingSourceId: 'shortcut',
   };
 
-  // Inherit space mode from the front (last focused visible) window. The
-  // machine speaks WM WindowId; the context store is still keyed by Electron
-  // window ids, so join through the front's native handle.
-  const front = getFrontWindowId();
-  const frontWin = front != null ? getNativeWindowFor(front) : null;
-  const frontId = frontWin ? frontWin.id : null;
-  if (frontId != null) {
-    try {
-      const modeEntry = getContextEntry('mode', frontId);
-      if (modeEntry && modeEntry.value === 'space' && modeEntry.metadata) {
-        options.spaceMode = {
-          spaceId: modeEntry.metadata.spaceId as string,
-          spaceName: modeEntry.metadata.spaceName as string,
-          color: modeEntry.metadata.color as string | undefined,
-        };
-        DEBUG && console.log('[new-window] Inheriting space mode:', modeEntry.metadata.spaceName);
-      }
-    } catch (e) {
-      DEBUG && console.log('[new-window] Failed to read space mode:', e);
-    }
+  const state = getShadowKernelExecutor().getState();
+  const sourceWmId = sourceWindowId != null ? getWindowIdFor(sourceWindowId) : null;
+  const sourceRecord = sourceWmId != null ? state.order.find((w) => w.id === sourceWmId) : undefined;
+  const sourceIsOverlay = sourceRecord !== undefined && !isContentWindow(sourceRecord);
+
+  let frontId: number | null = sourceWindowId != null && !sourceIsOverlay ? sourceWindowId : null;
+  let modeEntry = frontId != null ? getContextEntrySafe(frontId) : null;
+
+  if (frontId == null || !modeEntry) {
+    const topmostContent = topmost(state, isContentWindow);
+    const topmostWin = topmostContent ? getNativeWindowFor(topmostContent.id) : null;
+    frontId = topmostWin ? topmostWin.id : null;
+    modeEntry = frontId != null ? getContextEntrySafe(frontId) : null;
+  }
+
+  if (modeEntry && modeEntry.value === 'space' && modeEntry.metadata) {
+    options.spaceMode = {
+      spaceId: modeEntry.metadata.spaceId as string,
+      spaceName: modeEntry.metadata.spaceName as string,
+      color: modeEntry.metadata.color as string | undefined,
+    };
+    DEBUG && console.log('[new-window] Inheriting space mode:', modeEntry.metadata.spaceName);
   }
 
   // Publish event for the background window to open the URL
@@ -531,6 +552,16 @@ export function openNewPageWindow(): void {
     url: 'peek://app/new-tab/index.html',
     options,
   });
+}
+
+/** `getContextEntry('mode', id)`, swallowed to null — mirrors the original inline try/catch. */
+function getContextEntrySafe(windowId: number): ReturnType<typeof getContextEntry> {
+  try {
+    return getContextEntry('mode', windowId);
+  } catch (e) {
+    DEBUG && console.log('[new-window] Failed to read space mode:', e);
+    return null;
+  }
 }
 
 /**

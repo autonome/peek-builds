@@ -46,6 +46,7 @@ import {
   getMachineWindowRecord,
   listMachineWindowRecords,
   getWindowStateSnapshot,
+  getTopmostContentWindowId,
 } from './window-state-singleton.js';
 import { isSatelliteRegistration, classifyWindowRegistration, deriveWindowSurface } from './izui-roles.js';
 import type { Placement } from './window-placement.js';
@@ -954,9 +955,14 @@ export async function initialize(): Promise<void> {
         // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
         // authoritative over nothing. The old machine's shared arm re-raises
         // `state.front`, not the devtools host itself (window-state.ts
-        // DEVTOOLS_OPENED/DEVTOOLS_CLOSED case) — this names the same target.
+        // DEVTOOLS_OPENED/DEVTOOLS_CLOSED case) — this names the same
+        // target, but the id fed to the kernel comes from the kernel's own
+        // topmost-content-window query, not the old machine's `front`.
+        // `snap` is still the old machine's just-settled snapshot, passed
+        // through only as the divergence comparator.
         const snap = getWindowStateSnapshot();
-        if (snap.front != null) shadowKernelAssertFocus(snap.front, snap);
+        const topmostContentId = getTopmostContentWindowId();
+        if (topmostContentId != null) shadowKernelAssertFocus(topmostContentId, snap);
       }
     });
     wc.on('devtools-closed', () => {
@@ -965,9 +971,12 @@ export async function initialize(): Promise<void> {
         dispatchWindowEvent({ type: 'DEVTOOLS_CLOSED', id: hostId });
         // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
         // authoritative over nothing. Same re-raise target as devtools-opened
-        // above: the old machine's shared arm re-raises `state.front`.
+        // above: the kernel's topmost-content-window id, with `snap` (the old
+        // machine's just-settled snapshot) passed through only as the
+        // divergence comparator.
         const snap = getWindowStateSnapshot();
-        if (snap.front != null) shadowKernelAssertFocus(snap.front, snap);
+        const topmostContentId = getTopmostContentWindowId();
+        if (topmostContentId != null) shadowKernelAssertFocus(topmostContentId, snap);
       }
     });
 

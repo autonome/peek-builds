@@ -26,7 +26,6 @@ import {
 import { registerGuest } from './webview-guest-registry.js';
 import { getHybridWindow } from './hybrid-page-host-registry.js';
 import {
-  getFrontWindowId,
   getWindowModeName,
   waitForMode,
   dispatchWindowEvent,
@@ -43,7 +42,9 @@ import {
   shadowKernelShowRequested,
   shadowKernelHideRequested,
   shadowKernelCloseOrHideRequested,
+  getShadowKernelExecutor,
 } from './window-kernel-shadow.js';
+import { keyWindow, topmost, isContentWindow } from './window-kernel.js';
 import {
   initRendererHandledEscapeTracking,
   rendererHandledEscapeForWc,
@@ -755,36 +756,32 @@ export async function closeOrHideWindow(id: number): Promise<void> {
  * Resolve the window id that a "close the current window" command (cmd+W menu
  * item / Close Window) should target.
  *
- * Two hybrid-era cases (the decision itself is the pure `resolveCloseTargetId`
- * in izui-roles.ts; this wrapper just feeds it live window state):
+ * Destructive if wrong (four callers), so this is a COMPOSITION of two kernel
+ * queries, not the mechanical `topmost(state, isContentWindow)` mapping every
+ * other reader wants: the key window when the key window is ITSELF a content
+ * window, otherwise the topmost content window.
  *
- *   1. R1 (peek ca4ee5e6): the frontmost window may be a hybrid page-host, a
- *      `BaseWindow` that `getFocusedWindow()` never returns (null). Fall back to
- *      the registry's active-hybrid id.
- *   2. The shared chrome OVERLAY is a focusable BrowserWindow floating over the
- *      active host; Cmd+L focuses it, so `getFocusedWindow()` returns the OVERLAY
- *      and closing it alone just dismisses the address bar/widgets and leaves the
- *      page visible. When the focused window is the overlay, target the active
- *      hybrid host instead.
- *
- * A focused BrowserWindow that is NOT the overlay wins (settings, modals, canvas
- * page-hosts); otherwise the active hybrid host. Null when neither resolves, so
- * canvas-path / no-window behavior is unchanged.
+ * Never widen past a focused content window to some OTHER window it happens
+ * to be attached to (its opener, the page a popup floats over, …) — a
+ * focused extension popup is the disproof: it is itself a content window
+ * (`role: 'content'`), so Cmd+W there must close the popup itself, never
+ * reach past it (via its parent/attachment) to the page it popped up from.
+ * That is why the composition checks key FIRST and only widens to `topmost`
+ * when key is ITSELF not content — the shared chrome overlay case (Cmd+L
+ * parks key on the overlay to type a URL; the overlay is not content, so the
+ * close target falls through to the topmost content window, i.e. the page it
+ * frames).
  */
 export function resolveFocusedWindowIdForClose(): number | null {
-  // The machine's `front` IS the close target: the satellite rule already
-  // excludes the chrome overlay + palette (they can never be front), and a
-  // focused hybrid page-host (a BaseWindow that `getFocusedWindow()` returns
-  // null for) is front too. This replaces the pure `resolveCloseTargetId`
-  // overlay/hybrid resolution — the whole point of the single front authority.
-  //
-  // The machine speaks WM WindowId; the close path (`closeOrHideWindow` and the
-  // registries it consults) is still Electron-id-keyed, so resolve the front's
-  // native handle and hand back ITS id. A later migration step re-keys the
-  // close path itself.
-  const front = getFrontWindowId();
-  if (front == null) return null;
-  const win = getNativeWindowFor(front);
+  const state = getShadowKernelExecutor().getState();
+  const key = keyWindow(state);
+  const target = key !== null && isContentWindow(key) ? key : topmost(state, isContentWindow);
+  if (target == null) return null;
+  // The kernel speaks WM WindowId; the close path (`closeOrHideWindow` and the
+  // registries it consults) is still Electron-id-keyed, so resolve the
+  // target's native handle and hand back ITS id. A later migration step
+  // re-keys the close path itself.
+  const win = getNativeWindowFor(target.id);
   return win ? win.id : null;
 }
 

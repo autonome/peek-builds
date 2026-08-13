@@ -3405,6 +3405,20 @@ describe('window-kernel: which window the user is working in', () => {
     assert.strictEqual(topmost(state, isContentWindow)?.id, pageHost);
   });
 
+  it('the Cmd+W redirect (`windows.ts resolveFocusedWindowIdForClose`) never reaches PAST a focused extension popup to the page behind it', () => {
+    // The disproof of "always widen to main": a focused extension popup is
+    // itself a content window (`role:'content'`), so the composition — the
+    // key window when it is ITSELF content, else main — must resolve to the
+    // popup, not past it to whatever page is main.
+    const state = evolve(scene(), { type: 'OsFocusGained', id: extensionPopup });
+    assert.strictEqual(keyWindow(state)?.id, extensionPopup, 'the popup takes keystrokes');
+    assert.strictEqual(topmost(state, isContentWindow)?.id, extensionPopup, 'and, freshly raised, is main too');
+
+    const key = keyWindow(state);
+    const closeTarget = key !== null && isContentWindow(key) ? key : topmost(state, isContentWindow);
+    assert.strictEqual(closeTarget?.id, extensionPopup, 'never widens to a DIFFERENT main window while a content popup holds key');
+  });
+
   it('main follows a raise, because a raise moves the window to the top of order', () => {
     const state = evolve(scene(), { type: 'OsFocusGained', id: settings });
     assert.strictEqual(topmost(state, isContentWindow)?.id, settings);

@@ -7,7 +7,7 @@
  * module holds the single adapter instance and exposes the machine to the rest
  * of main (ipc.ts / tile-ipc.ts / windows.ts / main.ts / hybrid-overlay.ts /
  * tile-launcher.ts). It replaces the deleted scattered authorities:
- *   - `getFrontWindowId()`      ← ipc.ts `getLastFocusedVisibleWindowId`
+ *   - `getTopmostContentWindowId()` ← ipc.ts `getLastFocusedVisibleWindowId`
  *   - `getFrontPageHostId()`    ← registry `getActiveHybridWindowId`
  *   - `subscribeFrontChange()`  ← registry `onActiveHybridWindowChange`
  *   - `getDevtoolsTargetId()`   ← ipc.ts `getLastContentWindowId`
@@ -27,7 +27,8 @@ import { getIzuiCoordinator } from './izui-state.js';
 import type { WindowEvent, FsMode, IzuiSession, WindowRecord, EscapeMode, StateSnapshot } from './window-state.js';
 import type { Rectangle, WindowId, WindowKind } from './window-kernel.js';
 import type { WindowClass } from './izui-roles.js';
-import { shadowKernelRegisterWindow, shadowKernelWindowShown } from './window-kernel-shadow.js';
+import { shadowKernelRegisterWindow, shadowKernelWindowShown, getShadowKernelExecutor } from './window-kernel-shadow.js';
+import { topmost, isContentWindow } from './window-kernel.js';
 
 /** Register-spec that accepts real Electron window handles (both kinds satisfy the adapter's structural `NativeWindow`). */
 export interface MachineWindowSpec {
@@ -124,7 +125,7 @@ function seedSessionMirror(): void {
   // renderer read surface in tile-ipc.ts) speaks. Injected — the coordinator
   // must not value-import this module (cycle + electron in the unit run).
   coord.setFrontWindowIdProvider(() => {
-    const front = getFrontWindowId();
+    const front = getTopmostContentWindowId();
     if (front == null) return null;
     const native = getNativeWindowFor(front);
     return native ? native.id : null;
@@ -221,9 +222,19 @@ export function dispatchWindowEvent(event: WindowEvent): void {
   getWindowOsAdapter().dispatch(event);
 }
 
-/** THE target window id (command / close / Esc / session-save focused descriptor). */
-export function getFrontWindowId(): WindowId | null {
-  return getWindowOsAdapter().getOwner().getFrontWindowId();
+/**
+ * The topmost content window: visible, able to take keystrokes, and carrying
+ * a content role (`window-kernel.ts topmost(state, isContentWindow)`). THE
+ * target window id for command / close / Esc / session-save focused
+ * descriptor reads.
+ *
+ * `keyWindow` (`window-kernel.ts`) is NOT the replacement for the retired
+ * `front` field this function used to return — key is nulled the moment the
+ * app loses OS focus, and a satellite such as the shared chrome overlay can
+ * hold it, so a naive `key` read silently answers with the wrong window.
+ */
+export function getTopmostContentWindowId(): WindowId | null {
+  return topmost(getShadowKernelExecutor().getState(), isContentWindow)?.id ?? null;
 }
 
 /**

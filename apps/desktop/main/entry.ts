@@ -115,7 +115,7 @@ import {
 } from './session-partition.js';
 import { saveSessionSnapshot, restoreSessionSnapshot, readSessionCrashState, markSessionDirty, startAutosaveTimer, stopAutosaveTimer, updateAutosaveInterval, getRestoreFocusCounters, setRestoreCompleteForTest, installFirstFrameOrderableProducer } from './session.js';
 import { getIzuiCoordinator } from './izui-state.js';
-import { getFrontWindowId, getWindowIdFor, getNativeWindowFor, dispatchWindowEvent, getWindowStateSnapshot } from './window-state-singleton.js';
+import { getTopmostContentWindowId, getWindowIdFor, getNativeWindowFor, dispatchWindowEvent, getWindowStateSnapshot } from './window-state-singleton.js';
 import { shadowKernelAppActivated, shadowKernelAppResigned } from './window-kernel-shadow.js';
 import { getHybridWindow, getHybridContentWC } from './hybrid-page-host-registry.js';
 import { initDisplayWatcher, cleanupDisplayWatcher } from './display-watcher.js';
@@ -307,10 +307,12 @@ const DESKTOP_DIR = path.join(ROOT_DIR, 'apps', 'desktop');
     return !!(wc && !wc.isDestroyed());
   },
   /**
-   * Test-only: the window-state machine's `front` — a branded machine
-   * WindowId string like "wm-1", NOT a numeric Electron id — or null.
+   * Test-only: the topmost content window (`window-kernel.ts topmost(state,
+   * isContentWindow)`) — a branded machine WindowId string like "wm-1", NOT a
+   * numeric Electron id — or null. Property name kept for spec compatibility;
+   * the value now comes from the kernel, not the retired machine `front`.
    */
-  getFrontWindowId: (): string | null => getFrontWindowId(),
+  getFrontWindowId: (): string | null => getTopmostContentWindowId(),
   /**
    * Test-only: the machine WindowId (branded string) for a numeric Electron
    * window id, or null if the window is not registered with the machine.
@@ -1169,12 +1171,12 @@ const onReady = async () => {
         label: 'Window',
         submenu: [
           { label: 'Close Window', accelerator: 'CommandOrControl+W', click: () => {
-              // "Current window" = the window-state machine's front (the sole
-              // focus authority), not BrowserWindow.getFocusedWindow() — the
-              // OS query returns null for hybrid BaseWindow hosts and can
-              // return the chrome overlay when the address bar is focused;
-              // the machine front has neither failure mode.
-              const frontId = getFrontWindowId();
+              // "Current window" = the topmost content window (the kernel
+              // query, not BrowserWindow.getFocusedWindow()) — the OS query
+              // returns null for hybrid BaseWindow hosts and can return the
+              // chrome overlay when the address bar is focused; the topmost
+              // content window has neither failure mode.
+              const frontId = getTopmostContentWindowId();
               const frontWin = frontId != null ? getNativeWindowFor(frontId) : null;
               if (frontWin instanceof BrowserWindow && !frontWin.isDestroyed()) {
                 // Devtools (detached) isn't a BrowserWindow — it's a child of
@@ -1583,9 +1585,11 @@ const onReady = async () => {
   });
 
   // Register new-window shortcut (Cmd+N / Ctrl+N)
-  // Opens a new page host window with navbar focused for immediate URL entry
-  registerLocalShortcut('CommandOrControl+N', 'system', () => {
-    openNewPageWindow();
+  // Opens a new page host window with navbar focused for immediate URL entry.
+  // Threads the opener id through so `openNewPageWindow` can inherit its
+  // space mode without guessing at "the front window" (see its docblock).
+  registerLocalShortcut('CommandOrControl+N', 'system', (sourceWindowId?: number) => {
+    openNewPageWindow(sourceWindowId);
   });
 
   // Close-window shortcut. The macOS application menu (set above) already
