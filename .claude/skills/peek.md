@@ -146,6 +146,28 @@ Rule of thumb: if you can write a clear "done looks like…" in the content, it'
 `peek:ready`. If the body is "explore X" or a one-phrase musing, it's
 `peek:triage`.
 
+#### `peek:ready` is a contract, not an impression
+
+An item is `peek:ready` only when its body carries both of these sections:
+
+```markdown
+## Done looks like
+<observable end state — what is true afterward that is not true now>
+
+## Verify
+<a command that exists in package.json, plus what passing output looks like>
+```
+
+Without them the item is `peek:triage`, whatever else is true about it. The
+reason is mechanical: a background agent that finds no acceptance criteria
+invents its own, and a reviewer with none to check against falls back to
+"looks fine". The intersection `peek:todo` + `peek:ready` is what the
+`dispatch` skill claims from unattended, so the two sections are the difference
+between queued work and work an agent can be trusted to finish alone.
+
+Writing them is the `triage-pass` skill's job. Anything it cannot write with
+confidence stays `peek:triage` and surfaces as a question rather than a guess.
+
 When a task leaves `peek:todo`, clear its quality marker in the same breath —
 don't strand `peek:ready` on a done item.
 
