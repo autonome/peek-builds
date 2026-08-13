@@ -928,10 +928,11 @@ and if moving one is hard that is the work, not an exemption.
 
 Every symbol below is confirmed present in the tree.
 
-**Prerequisite, and a gap — INSTALLED.** `window-state-singleton.ts initWindowStateMachine` calls
-`setKernelExecutorProvider(() => getKernelExecutorForApp())`, so the feed helpers land on the
-production executor over the real backend and the kernel performs window operations. The paragraph
-below records why the seam has the shape it does; it is no longer a description of pending work.
+**Prerequisite, and a gap — ATTEMPTED AND REVERTED.** The cutover is
+`window-state-singleton.ts initWindowStateMachine` calling
+`setKernelExecutorProvider(() => getKernelExecutorForApp())`. It was installed and reverted, and
+what the attempt proved is recorded under "What the first cutover attempt found" below. The
+paragraph after this one records why the seam has the shape it does.
 
 `window-kernel-executor.ts WindowKernelExecutor.waitForSettledFsMode(id, mode, timeoutMs)` exists
 and returns `FsSettleOutcome = 'settled' | 'vanished' | 'timed-out'`, not `void`. The accessor is
@@ -954,12 +955,42 @@ is now issued by the kernel's `ReconcileFullscreen`. Repointing them onto
 `waitForSettledFsMode(...)` is a later step, and it is not the one-line import swap it looks like:
 the return type is an outcome, not `void`.
 
-Two accessors did have to repoint with the swap, both silent if missed.
-`window-state-singleton.ts waitForGuestTeardown` reaches the kernel executor, whose
-`DestroyAllGuests` arm now holds the teardown promise — left on the adapter it resolves immediately
+Two accessors have to repoint with the swap, both silent if missed.
+`window-state-singleton.ts waitForGuestTeardown` must reach the kernel executor, whose
+`DestroyAllGuests` arm holds the teardown promise — left on the adapter it resolves immediately
 and the quit stops waiting for guests, observable only on a real quit.
-`waitForPendingWindowEffects` awaits BOTH executors, because the responsibilities are split and
+`waitForPendingWindowEffects` must await BOTH executors, because the responsibilities are split and
 neither side sees the other's in-flight work.
+
+#### What the first cutover attempt found
+
+The provider install and the fifteen no-op arms landed as one commit and were reverted after a
+Playwright A/B against the parent commit showed six regressions. The feed is EVENT-shaped — it
+records what happened — while four intents existed only as REQUESTS to the old machine, so
+switching the arms off dropped them with nothing to carry them. The kernel commands `ShowWindow`,
+`HideWindow` and `CloseOrHideWindow` had no production dispatcher at all. Feeds for those three
+have since landed and are additive and safe while the old machine still performs.
+
+Four prerequisites remain, each proven by that attempt rather than predicted:
+
+- **Runtime keepLive has no kernel path.** `WindowRegistered` is the kernel's only writer of
+  `keepLive`, and the runtime update is `main.ts registerWindow` dispatching `WINDOW_PARAMS_SET`,
+  which is old-machine-only. Re-registering instead is not available: that call site holds only
+  `source`, `params` and `keepLive`, and `RegisterWindow` requires `kind`, `layer`, `canBecomeKey`,
+  `acceptsInput` and `class`. This needs a kernel event that writes `keepLive`.
+- **The swap freezes the old machine's `front`.** It moved only through the backend's show echo
+  carrying `focused: activate` (`electron-window-backend.ts showWindow` emitting `WINDOW_SHOWN`),
+  and the kernel executor always calls `showWindow({ activate: false })`. Every reader in "Wiring
+  map: each current reader of `front`, resolved" therefore goes stale AT the swap, which makes the
+  reader repoint part of the cutover rather than a follow-up.
+- **The Escape-driven close has no feed.** `applyEscape` never emits `CLOSE_WINDOW`; it comes one
+  dispatch later from `ESC_RENDERER_ANSWER` → `applyUnhandledEscape`, gated by an epoch check
+  against reducer-private `escAsk`. The resolved target is not available at any dispatch site, so
+  the feed belongs at the dropped `CLOSE_WINDOW` arm — a temporary bridge that dies with
+  `window-state.ts`. `escPolicy` and `escUnhandledPolicy` are pure and exported.
+- **`appActive` had no feed on any headless run** — fixed, but the lesson holds: with
+  `appActive: false`, `planRaise` suppresses every raise and issues no backend call, so ordering
+  behavior reads as verified while nothing was performed.
 
 `window-kernel.ts` needs no edits for any of this: `topmost`, `isContentWindow`, `keyWindow`,
 `hostForOverlay`, `topmostBaseLayerPageHost`, `CONTENT_ROLES`, `BASE_LAYER`, and the
