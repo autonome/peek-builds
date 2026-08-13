@@ -446,6 +446,32 @@ describe('historical-bug replays (§5.2)', () => {
     assert.ok(!hasEffect(effects, 'OPEN_SWITCHER_WINDOW'), 'must NOT open the switcher over a fullscreen window');
   });
 
+  it('ESC exit-fullscreen emits SET_FULLSCREEN_ESCAPE_EXIT, never the bare SET_FULLSCREEN', () => {
+    // The kernel feed for this leaving edge lives on the executor's
+    // SET_FULLSCREEN_ESCAPE_EXIT arm (see window-os-adapter.ts runEffect) —
+    // the shared SET_FULLSCREEN arm is a no-op there because every OTHER
+    // emitter sits beside its own FULLSCREEN_REQUESTED dispatch, which feeds
+    // the kernel at the call site instead. If Escape's leaving edge ever
+    // regressed back to the bare SET_FULLSCREEN, that feed would silently
+    // stop firing and the window would wedge in `leaving-fullscreen` forever
+    // (the OS is never told to leave, so no settle ever lands).
+    let s = createInitialState();
+    s = openWindow(s, 7, { kind: 'page-host', role: 'content' });
+    s = drive(s, [
+      { type: 'FULLSCREEN_REQUESTED', id: wid(7), bounds: BOUNDS },
+      { type: 'OS_FULLSCREEN_ENTERED', id: wid(7) },
+    ]).state;
+    assert.strictEqual(getWindowMode(s, wid(7)), 'fullscreen');
+
+    const { state, effects } = drive(s, [{ type: 'ESC_PRESSED', landedId: wid(7) }]);
+    assert.strictEqual(getWindowMode(state, wid(7)), 'leaving-fullscreen');
+    assert.ok(
+      effects.some((e) => e.type === 'SET_FULLSCREEN_ESCAPE_EXIT' && e.id === wid(7)),
+      'Escape-decided exit must carry its own kernel-feed effect',
+    );
+    assert.ok(!hasEffect(effects, 'SET_FULLSCREEN'), 'must NOT also emit the shared, un-fed SET_FULLSCREEN');
+  });
+
   it('(d) switcher-over-fullscreen: step 4 precedes the switcher in the landed-ESC path too', () => {
     let s = createInitialState();
     s = openWindow(s, 3, { kind: 'page-host', role: 'content' });

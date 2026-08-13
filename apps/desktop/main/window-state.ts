@@ -912,6 +912,19 @@ interface OpToken {
 
 export type Effect =
   | { type: 'SET_FULLSCREEN'; id: WindowId; on: boolean }
+  /**
+   * Performs exactly what `SET_FULLSCREEN{on:false}` performs; exists only so
+   * the executor can tell an Escape-decided fullscreen exit apart from a
+   * requested one. Same rule as `CLOSE_WINDOW_UNHANDLED_ESCAPE`: naming the
+   * decision that produced the effect is what lets the executor's arm carry
+   * the kernel feed for exactly this intent, rather than the shared
+   * `SET_FULLSCREEN` arm firing (or not) once per shared effect. Emitted by
+   * `applyEscape`'s `'exit-fullscreen'` case, whose target is resolved
+   * entirely inside the reducer — no dispatch site is asking for this exit,
+   * the same "a request, not a record" shape `CLOSE_WINDOW_UNHANDLED_ESCAPE`
+   * covers. Dies with this module.
+   */
+  | { type: 'SET_FULLSCREEN_ESCAPE_EXIT'; id: WindowId }
   /** The single sanctioned OS poll: adapter reads `isFullScreen()` once and re-dispatches OS_FULLSCREEN_ENTERED/LEFT. */
   | { type: 'RECONCILE_FULLSCREEN'; id: WindowId }
   | { type: 'OPEN_SWITCHER_WINDOW'; previousFront: WindowId | null }
@@ -1822,6 +1835,12 @@ function applyFullscreenRequest(
   desired: boolean | undefined,
   bounds: Rectangle | null | undefined,
   effects: Effect[],
+  // Set only by `applyEscape`'s `'exit-fullscreen'` case: the settled ->
+  // leaving edge below emits `SET_FULLSCREEN_ESCAPE_EXIT` instead of the
+  // shared `SET_FULLSCREEN`, so the executor can feed the kernel for this
+  // decision alone. Every other caller leaves it `false` and gets the plain
+  // effect, unchanged.
+  viaEscape = false,
 ): void {
   const rec = state.windows.get(id);
   if (!rec) return;
@@ -1838,7 +1857,7 @@ function applyFullscreenRequest(
     case 'fullscreen': {
       if (want) return; // already fullscreen -> no-op
       patchRecord(state, id, { fsMode: { name: 'leaving-fullscreen', preBounds: mode.preBounds } });
-      effects.push({ type: 'SET_FULLSCREEN', id, on: false });
+      effects.push(viaEscape ? { type: 'SET_FULLSCREEN_ESCAPE_EXIT', id } : { type: 'SET_FULLSCREEN', id, on: false });
       return;
     }
     case 'entering-fullscreen': {
@@ -2896,8 +2915,11 @@ function applyEscape(state: AppWindowState, effects: Effect[]): void {
     }
     case 'exit-fullscreen': {
       effects.push({ type: 'EXIT_FULLSCREEN', id: decision.id });
-      // Drive the leaving edge in the same step (SET_FULLSCREEN(id,false) etc.).
-      applyFullscreenRequest(state, decision.id, false, undefined, effects);
+      // Drive the leaving edge in the same step. `viaEscape:true` swaps the
+      // settled-fullscreen branch's emission to `SET_FULLSCREEN_ESCAPE_EXIT`
+      // — this decision has no dispatch site to feed the kernel from, so the
+      // executor's arm for that effect carries the feed instead.
+      applyFullscreenRequest(state, decision.id, false, undefined, effects, true);
       return;
     }
     case 'ask-renderer': {

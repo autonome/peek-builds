@@ -52,7 +52,7 @@ import {
   type WindowEvent,
 } from './window-state.js';
 import type { WindowId } from './window-kernel.js';
-import { shadowKernelCloseOrHideRequested } from './window-kernel-shadow.js';
+import { shadowKernelCloseOrHideRequested, shadowKernelSetFullscreen } from './window-kernel-shadow.js';
 
 // The registration spec (native handles included) is defined next to the shim
 // that consumes it; re-exported here so the singleton's import site survives.
@@ -360,6 +360,29 @@ export class WindowOsAdapter {
         // from that same re-dispatch. It is inert — the record is already
         // hidden by then, so `react`'s structural diff emits nothing.
         shadowKernelCloseOrHideRequested(effect.id, this.owner.snapshot());
+        return;
+      }
+      case 'SET_FULLSCREEN_ESCAPE_EXIT': {
+        // The Escape-decided fullscreen exit, and (like
+        // `CLOSE_WINDOW_UNHANDLED_ESCAPE` above) the other window-operation
+        // arm that is NOT a bare no-op: it still carries the kernel feed.
+        //
+        // Why it exists at all, separate from `SET_FULLSCREEN`: the rule is
+        // one feed per INTENT, and the shared `SET_FULLSCREEN` arm stays a
+        // no-op because every OTHER emitter sits beside its own
+        // `FULLSCREEN_REQUESTED` dispatch, which already feeds
+        // `shadowKernelSetFullscreen` at the call site (`windows.ts`,
+        // `ipc.ts`, `hybrid-overlay.ts`, `tile-ipc.ts` x2). This decision has
+        // no such dispatch site — `applyEscape`'s `'exit-fullscreen'` case
+        // resolves it entirely inside the reducer — so feeding the shared arm
+        // would never fire for it, and naming the decision at its own effect
+        // type is what lets THIS arm feed exactly that intent.
+        //
+        // Does NOT call the backend: the kernel now performs window
+        // operations (see the TRANSFERRED TO THE KERNEL EXECUTOR block
+        // above), so this arm's only job is telling the kernel what happened,
+        // never toggling fullscreen itself.
+        shadowKernelSetFullscreen(effect.id, false, this.owner.snapshot());
         return;
       }
       case 'OPEN_SWITCHER_WINDOW': {
