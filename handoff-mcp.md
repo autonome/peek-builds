@@ -1,27 +1,15 @@
 # MCP remote backend — phase 1
 
-## Work only in this worktree
+## Phase 1 is complete and landed on `main`
 
-This file lives in `.worktrees/mcp-phase1/`. Every edit, every command, every commit
-belongs here.
+This file now records what exists, what is unproven, and what comes next. It is no
+longer a worktree brief — the seven implementation steps it used to list are all on
+`main`, and the worktrees they ran in are gone.
 
-- **Never edit `/home/dev/workspace/peek` itself.** The primary checkout holds `main`
-  and stays clean; it is where merges happen, not where work happens.
-- **Never edit any other `.worktrees/*` directory.** `.worktrees/fsm-window-kernel`
-  has another agent working in it on `wip/window-kernel-executor`. Touching it
-  corrupts someone else's in-flight work.
-- **Never `git checkout` another branch here.** This worktree is pinned to
-  `agent/mcp-phase1`.
-- **Do not merge, do not push, do not run `git worktree add`.** Commit on
-  `agent/mcp-phase1` and stop. Landing is a separate reviewed step.
-- Run every command with this directory as the working directory, or pass
-  `-C /home/dev/workspace/peek/.worktrees/mcp-phase1` explicitly. A bare `yarn …`
-  from the wrong cwd runs against the primary checkout.
-- `yarn install` here before running anything — a worktree is its own checkout and
-  its resolution state does not arrive with the files.
-
-Note also `handoff.md` in the primary checkout belongs to the other initiative. This
-file — `handoff-mcp.md` — is the only one for this work.
+Any further work still gets its own worktree under `.worktrees/`, based on `main`,
+per `~/.claude/docs/worktrees.md`. `.worktrees/fsm-window-kernel` belongs to an
+unrelated initiative; `handoff.md` in the repo root is that initiative's file, not
+this one.
 
 ---
 
@@ -35,14 +23,26 @@ This unblocks running the dispatch loop somewhere other than one laptop.
 
 ### Current state
 
-Design is done, reviewed, and landed on `main` as `docs/mcp-remote-backend-design.md`.
-It is the specification for this work — read it before writing code. No implementation
-exists yet; this worktree is empty of changes.
+Phase 1 of `docs/mcp-remote-backend-design.md` is implemented and on `main`: the store
+interface and its two implementations, the thirteen `/mcp/*` endpoints, the grant
+credential and its middleware, remote-mode scaffolding, and the wiring that makes
+`main()` in `server.js` select a backend from the environment.
 
-The design's own summary: keep the stdio child owning the MCP protocol, put a
-`PeekStore` interface where `apps/desktop/features/mcp-server/db.js` sits, and add a
-scoped `/mcp/*` API to `apps/server`. Serving MCP over HTTP directly is phase 2 and is
-not in scope here.
+Test counts as landed, each from a run in the primary checkout:
+
+| Command | Count |
+|---|---|
+| `yarn server:test` | 202 |
+| `node --test apps/desktop/features/mcp-server/server.test.js` | 109 |
+| `node --test apps/desktop/features/mcp-server/store/remote-store.test.js` | 30 |
+| `node --test apps/desktop/features/mcp-server/setup.test.js` | 23 |
+| `node --test apps/desktop/features/mcp-server/schema-drift.test.js` | 43 |
+
+**What is not proven: the two halves have never talked to each other over a real
+socket.** Every test stubs one side — the server tests exercise the routes through a
+mirror app, and the remote store's tests stub `fetch`. An end-to-end run needs a
+deployed server, a minted grant, and a project scaffolded with `peek-mcp-init --remote`.
+Until that happens, "green" means each half behaves as specified in isolation.
 
 A related survey, `docs/sync-coverage-gaps.md`, records what the sync engine does not
 carry between devices. **It is deliberately out of scope for this work.** Nothing in
@@ -51,48 +51,27 @@ is a signal to stop and report, not to widen the change.
 
 ### Next steps
 
-Each is a separate commit, reviewable on its own, in this order. Do one, verify it,
-then take the next.
+**First, the end-to-end run — it needs a human and nothing else can substitute for
+it.** Deploy the server, mint a grant through `POST /admin/mcp-grants`, scaffold a
+throwaway project with `peek-mcp-init --remote <url> --store-token`, restart Claude
+Code there, and confirm a scoped session lists and writes items. That exercise is the
+first time the two halves meet. Expect the first failure to be in the seam nothing
+tested: credential resolution, header shape, or an error body that does not map back to
+the text `formatAmbiguous()` produces.
 
-1. **Server columns** — `docs/mcp-remote-backend-design.md` §3.1, storage half only.
-   Add `title`, `domain`, `frecencyScore`, `starred`, `archived` to the `items` table
-   in `apps/server/db.js initializeSchema()` via the additive `ALTER TABLE … ADD COLUMN`
-   guard already used there for `syncId`/`createdByDevice`; carry them through
-   `saveItem()`, `getItems()`, `getItemsSince()`, `getItemById()`; mirror the shape into
-   `apps/server/schema.json`. Do not touch `apps/desktop/main/sync.ts` — see §3.1's sync
-   half for why.
+Then, in no particular order:
 
-2. **The store seam** — §2.1. New `apps/desktop/features/mcp-server/store/` holding
-   `types.js` (the `PeekStore` typedef, no runtime code, modelled on
-   `apps/server/sql/types.js`), `sqlite-store.js` (the existing `db.js` body with every
-   method `async`), and `index.js` (`openStore()`, modelled on the `SQL_ADAPTER` switch in
-   `apps/server/sql/index.js`). Behaviour must not change; `server.test.js` is the proof.
-
-3. **Async dispatch** — §2.2. `handleToolCall()`, `handleResourceRead()` and
-   `handleMessage()` in `server.js` become async, with the `rl.on('line')` handler
-   serializing through a tail promise so requests stay strictly in arrival order.
-   `checkConfigDrift()` stays at the head of the line handler.
-
-4. **Grants and the `/mcp/*` auth middleware** — §4.1. The `mcp_grants` table in
-   `system.db`, the three `ADMIN_TOKEN`-gated admin routes, and the middleware that
-   resolves a bearer token into `scopeTag` / `readonly` / `userId` / `profileId`. Model on
-   `apps/server/users.js` `createDevice()` / `resolveDevice()` and
-   `apps/server/auth.js createAuthMiddleware()`. A device key must not work on `/mcp/*`
-   and a grant key must not work on the sync routes.
-
-5. **The `/mcp/*` routes** — §3.3, thirteen endpoints. Scope enforcement is a `WHERE`
-   clause on every query, never a post-filter, so `LIMIT`/`OFFSET` count in-scope rows
-   only. `POST /mcp/tasks/:id/complete` must stay one transaction, matching
-   `db.js completeTask()`.
-
-6. **`remote-store.js`** — §2.1 and §5. HTTP client against those routes, plus the
-   unexpanded-`${VAR}` startup guard from §6 and the hard-failure behaviour from §7.1.
-   No offline cache, no write queue — a network failure is a tool error naming the
-   unreachable server.
-
-7. **`peek-mcp-init --remote`** — §8. `buildEnv()` branches, `findDbPath()` is skipped,
-   credentials resolve through an environment reference or the `0600` credential file,
-   and no token, hostname, or account id is ever written into a project.
+- **Make `apps/server/index.js` testable** — guard the listener with
+  `require.main === module` and export the app, so routes can be tested through the real
+  file rather than a mirror. Rationale and what it nearly cost are under Known gaps.
+- **Phase 2, MCP over HTTP from `apps/server`** — design §1. A `POST /mcp/rpc` route
+  reusing the same dispatch, with the grant as bearer. This is what reaches a phone or a
+  cloud agent with no local process, and it was deliberately sequenced after phase 1
+  because phase 1 built everything it needs.
+- **Settle the open questions in §10** — whether `title` and `domain` sync between
+  devices, and whether the `LIKE` pre-filter holds at server scale. The first is
+  entangled with `docs/sync-coverage-gaps.md`; the second wants a measurement against a
+  real profile before phase 2 adds concurrent callers.
 
 ### Known gaps, carried forward
 
