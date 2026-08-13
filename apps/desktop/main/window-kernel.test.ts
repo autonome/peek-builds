@@ -1080,12 +1080,14 @@ describe('window-kernel: fullscreen is orthogonal to key and order', () => {
     assert.strictEqual(s.order.find((w) => w.id === wid(1))?.fsMode.name, 'leaving');
   });
 
-  it('FullscreenSettleTimeout never leaves a record in a transitional state', () => {
+  it('FullscreenSettleTimeout no longer guesses a settled fsMode — it leaves the record in flight and asks the OS instead', () => {
+    // See "window-kernel: fullscreen settle timeout asks instead of guessing"
+    // below for the full coverage of the reconcile request this now produces.
     const state = fold(registerTwo(), initialState());
 
     const entering = fold([{ type: 'FullscreenTransitionStarted', id: wid(1), entering: true, preBounds: null }], state);
-    const settledFromEntering = evolve(entering, { type: 'FullscreenSettleTimeout', id: wid(1) });
-    assert.strictEqual(settledFromEntering.order.find((w) => w.id === wid(1))?.fsMode.name, 'fullscreen');
+    const afterEntering = evolve(entering, { type: 'FullscreenSettleTimeout', id: wid(1) });
+    assert.strictEqual(afterEntering.order.find((w) => w.id === wid(1))?.fsMode.name, 'entering');
 
     const leaving = fold(
       [
@@ -1096,8 +1098,8 @@ describe('window-kernel: fullscreen is orthogonal to key and order', () => {
       state,
     );
     assert.strictEqual(leaving.order.find((w) => w.id === wid(1))?.fsMode.name, 'leaving');
-    const settledFromLeaving = evolve(leaving, { type: 'FullscreenSettleTimeout', id: wid(1) });
-    assert.strictEqual(settledFromLeaving.order.find((w) => w.id === wid(1))?.fsMode.name, 'normal');
+    const afterLeaving = evolve(leaving, { type: 'FullscreenSettleTimeout', id: wid(1) });
+    assert.strictEqual(afterLeaving.order.find((w) => w.id === wid(1))?.fsMode.name, 'leaving');
   });
 
   it('preBounds: null survives a round trip and is distinguishable from "no stash concept"', () => {
@@ -1214,6 +1216,100 @@ describe('window-kernel: fullscreen is orthogonal to key and order', () => {
     const effects = foldWithEffects(alreadyFullscreen.events, fullscreen).effects;
     assert.strictEqual(next, fullscreen, 'no events -> no state change');
     assert.deepStrictEqual(effects, [], 'no effect for a no-op re-request');
+  });
+});
+
+describe('window-kernel: fullscreen settle timeout asks instead of guessing', () => {
+  const registerTwo = (): Event[] => [
+    { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+    { type: 'WindowRegistered', id: wid(2), kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary' },
+  ];
+
+  it('a settle timeout on a window in `entering` emits exactly one ReconcileFullscreen naming it, and does not change its fsMode', () => {
+    const state = fold(registerTwo(), initialState());
+    const entering = evolve(state, { type: 'FullscreenTransitionStarted', id: wid(1), entering: true, preBounds: null });
+    assert.strictEqual(entering.order.find((w) => w.id === wid(1))?.fsMode.name, 'entering');
+
+    const timeout: Event = { type: 'FullscreenSettleTimeout', id: wid(1) };
+    const next = evolve(entering, timeout);
+    assert.strictEqual(next.order.find((w) => w.id === wid(1))?.fsMode.name, 'entering', 'fsMode is untouched — the machine asks, it does not guess');
+
+    const effects = react(entering, timeout, next);
+    assert.deepStrictEqual(effects, [{ type: 'ReconcileFullscreen', id: wid(1) }]);
+  });
+
+  it('a settle timeout on a window already normal or fullscreen emits nothing and does not bump the reconcile seq', () => {
+    const state = fold(registerTwo(), initialState());
+
+    // wid(1) is 'normal' straight from registration.
+    const normalTimeout: Event = { type: 'FullscreenSettleTimeout', id: wid(1) };
+    const afterNormal = evolve(state, normalTimeout);
+    assert.strictEqual(afterNormal.lastFsReconcile, state.lastFsReconcile, 'nothing to ask — the field is untouched, not re-seq\'d');
+    assert.deepStrictEqual(react(state, normalTimeout, afterNormal), []);
+
+    // Drive wid(2) to settled fullscreen, then time out on it too.
+    const fullscreen = evolve(state, { type: 'OsFullscreenEntered', id: wid(2) });
+    assert.strictEqual(fullscreen.order.find((w) => w.id === wid(2))?.fsMode.name, 'fullscreen');
+    const fsTimeout: Event = { type: 'FullscreenSettleTimeout', id: wid(2) };
+    const afterFullscreen = evolve(fullscreen, fsTimeout);
+    assert.strictEqual(afterFullscreen.lastFsReconcile, fullscreen.lastFsReconcile);
+    assert.deepStrictEqual(react(fullscreen, fsTimeout, afterFullscreen), []);
+  });
+
+  it('a settle timeout naming an unknown window emits nothing and does not throw', () => {
+    const state = fold(registerTwo(), initialState());
+    const timeout: Event = { type: 'FullscreenSettleTimeout', id: wid(99) };
+    assert.doesNotThrow(() => evolve(state, timeout));
+    const next = evolve(state, timeout);
+    assert.strictEqual(next.lastFsReconcile, state.lastFsReconcile);
+    assert.deepStrictEqual(react(state, timeout, next), []);
+  });
+
+  it('two consecutive timeouts for the same still-in-flight window emit two effects', () => {
+    const state = fold(registerTwo(), initialState());
+    const entering = evolve(state, { type: 'FullscreenTransitionStarted', id: wid(1), entering: true, preBounds: null });
+
+    const firstTimeout: Event = { type: 'FullscreenSettleTimeout', id: wid(1) };
+    const afterFirst = evolve(entering, firstTimeout);
+    assert.deepStrictEqual(react(entering, firstTimeout, afterFirst), [{ type: 'ReconcileFullscreen', id: wid(1) }]);
+    assert.strictEqual(afterFirst.lastFsReconcile?.seq, 1);
+
+    const secondTimeout: Event = { type: 'FullscreenSettleTimeout', id: wid(1) };
+    const afterSecond = evolve(afterFirst, secondTimeout);
+    assert.deepStrictEqual(react(afterFirst, secondTimeout, afterSecond), [{ type: 'ReconcileFullscreen', id: wid(1) }]);
+    assert.strictEqual(afterSecond.lastFsReconcile?.seq, 2, 'a second question, not a repeat of the first');
+  });
+
+  it('AppActivated with two windows in flight (one entering, one leaving) emits two ReconcileFullscreen effects, one per window', () => {
+    const before = fold(
+      [
+        ...registerTwo(),
+        { type: 'FullscreenTransitionStarted', id: wid(1), entering: true, preBounds: null },
+        { type: 'FullscreenTransitionStarted', id: wid(2), entering: false, preBounds: null },
+      ],
+      initialState(),
+    );
+    assert.strictEqual(before.order.find((w) => w.id === wid(1))?.fsMode.name, 'entering');
+    assert.strictEqual(before.order.find((w) => w.id === wid(2))?.fsMode.name, 'leaving');
+
+    const activation: Event = { type: 'AppActivated' };
+    const activated = evolve(before, activation);
+    const reconciles = react(before, activation, activated).filter(
+      (e): e is Extract<Effect, { type: 'ReconcileFullscreen' }> => e.type === 'ReconcileFullscreen',
+    );
+    assert.deepStrictEqual(
+      reconciles.map((e) => e.id).sort(),
+      [wid(1), wid(2)].sort(),
+    );
+  });
+
+  it('AppActivated with nothing in flight emits no ReconcileFullscreen', () => {
+    const before = fold(registerTwo(), initialState());
+    const activation: Event = { type: 'AppActivated' };
+    const activated = evolve(before, activation);
+    const effects = react(before, activation, activated);
+    assert.strictEqual(effects.some((e) => e.type === 'ReconcileFullscreen'), false);
+    assert.strictEqual(activated.lastFsReconcile, before.lastFsReconcile);
   });
 });
 

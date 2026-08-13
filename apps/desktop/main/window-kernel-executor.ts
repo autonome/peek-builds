@@ -634,6 +634,12 @@ export class WindowKernelExecutor {
         this.backend.setFullscreen(effect.id, false);
         return;
       }
+      case 'ReconcileFullscreen': {
+        // No headless gate — this is a read (`isFullScreen()`), not a window
+        // write: it neither shows, activates, nor moves anything.
+        this.backend.reconcileFullscreen(effect.id);
+        return;
+      }
       case 'SetBounds': {
         // No headless gate — a bounds write neither activates, takes key, nor
         // brings a hidden window on screen (the same reasoning the old

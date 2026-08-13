@@ -433,6 +433,46 @@ export interface State {
    */
   readonly lastFocusAssert: FocusAssertRequest | null;
   /**
+   * The most recent FULLSCREEN RECONCILE request, or `null` before any — "the
+   * machine no longer trusts its own `fsMode` for these windows; go read the
+   * OS and report back".
+   *
+   * WHY THE MACHINE CANNOT JUST DECIDE. `fsMode` is a belief about a
+   * transition the OS performs asynchronously, and two situations leave that
+   * belief unverifiable from inside: the settle timeout has expired with no
+   * native report, and the app has just come back active (macOS can enter or
+   * leave fullscreen while Peek is in the background, so an in-flight
+   * transition may have completed unobserved). Guessing is not a substitute.
+   * A window guessed into `fullscreen` that is really `normal` strands its
+   * `preBounds`, and a window guessed into `normal` that is really fullscreen
+   * leaves a black macOS Space behind. `electron-window-backend.ts
+   * reconcileFullscreen` holds the one sanctioned `isFullScreen()` read, and
+   * its answer arrives as an ordinary `OsFullscreenEntered`/`OsFullscreenLeft`
+   * event — command in, event out, the same shape every other OS truth enters
+   * through.
+   *
+   * WHY IT IS STATE AT ALL, and it is the same reason `lastTeardown` and
+   * `lastFocusAssert` above are: asking is not itself a state change. The
+   * records stay exactly where they were — still `entering`, still `leaving` —
+   * so `prev` and `next` are identical everywhere else, and `react` is a pure
+   * structural projection that may not branch on `ev.type`. The request has to
+   * become a FACT `react` can diff, and this field is that fact.
+   *
+   * `ids` is a LIST because one transition can need many: an app activation
+   * reconciles every window caught mid-transition, which the old machine did
+   * by pushing one effect per record from inside its `APP_ACTIVATED` arm. A
+   * settle timeout names exactly one.
+   *
+   * `seq` is what makes repetition visible, for the same reason it is on
+   * `TeardownRequest`: a second timeout for the same still-in-flight window is
+   * a second question, and comparing payloads would collapse the two.
+   *
+   * Nothing clears the field. The value means "the last reconcile asked for
+   * was this one", not "a reconcile is pending" — the answer arrives as its
+   * own event and settles `fsMode` there.
+   */
+  readonly lastFsReconcile: FsReconcileRequest | null;
+  /**
    * THE MOST RECENT ATTENTION REPORT, or `null` before any — the fact that
    * lets `react` apply transient autoclose (§0: "no dispatch site can
    * silently skip running it") as a pure structural diff instead of a branch
@@ -509,6 +549,19 @@ export interface State {
 export interface FocusAssertRequest {
   id: WindowId;
   seq: number;
+}
+
+/**
+ * A fullscreen reconcile the kernel was asked to perform — see
+ * `State.lastFsReconcile` for why asking is a fact at all. `ids` is a LIST,
+ * unlike `FocusAssertRequest`'s single target: an app activation can catch
+ * many windows mid-transition at once, while a settle timeout names exactly
+ * one. Same shape family as `TeardownRequest`/`FocusAssertRequest` otherwise
+ * — a `seq` that makes repetition visible.
+ */
+export interface FsReconcileRequest {
+  readonly ids: readonly WindowId[];
+  readonly seq: number;
 }
 
 /**
@@ -997,6 +1050,14 @@ export type Effect =
   | { type: 'SetFullscreen'; id: WindowId }
   /** Drive the OS out of fullscreen — emitted only when a record freshly transitions INTO `leaving`. */
   | { type: 'ExitFullscreen'; id: WindowId }
+  /**
+   * Drive the port's one sanctioned native `isFullScreen()` read (§0.1.8: the
+   * machine no longer trusts its own `fsMode` for this window). Its answer
+   * comes back as an ordinary `OsFullscreenEntered`/`OsFullscreenLeft` event —
+   * command in, event out, same as every other OS truth — rather than being
+   * decided here.
+   */
+  | { type: 'ReconcileFullscreen'; id: WindowId }
   /** Move the window's outer bounds — emitted by `react` as a structural diff of `bounds`, never from an event's own payload. */
   | { type: 'SetBounds'; id: WindowId; bounds: Rectangle }
   /** Pin/unpin the window on every macOS Space — emitted by `react` as a structural diff of `visibleOnAllSpaces`. */
@@ -1044,6 +1105,7 @@ export function initialState(): State {
     pendingAppResignSweep: false,
     lastTeardown: null,
     lastFocusAssert: null,
+    lastFsReconcile: null,
     lastAttention: null,
     pendingColdStartFocus: null,
   };
@@ -1074,6 +1136,17 @@ function nextAttentionSeq(state: State): number {
  */
 function nextFocusAssertSeq(state: State): number {
   return (state.lastFocusAssert?.seq ?? 0) + 1;
+}
+
+/**
+ * The next `FsReconcileRequest.seq` — one per reconcile event, monotone,
+ * never reused. Derived from state rather than from a module counter, same
+ * as `nextTeardownSeq`/`nextFocusAssertSeq` above: a module counter would
+ * make `evolve` read something other than its two arguments and would break
+ * replay determinism.
+ */
+function nextFsReconcileSeq(state: State): number {
+  return (state.lastFsReconcile?.seq ?? 0) + 1;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1118,28 +1191,6 @@ function nextFsModeForOsLeft(mode: FsMode): FsMode {
       // recorded here is dropped, not honored.
       return { name: 'normal' };
     case 'normal':
-      return mode;
-  }
-}
-
-/**
- * `FullscreenSettleTimeout` — the OS never reported a settle for this
- * transition. Unlike the two settle functions above, this ALWAYS lands on a
- * settled bucket (`normal`/`fullscreen`), never chains into the other
- * transitional state, even when a `pendingDesire` was recorded — chaining
- * would just trade one stuck transition for another, and "never leave the
- * record transitional after a timeout" is the whole point of this event. A
- * `pendingDesire` that was still pending when the timeout fired is dropped;
- * the caller re-requests once settled, if it's still wanted.
- */
-function nextFsModeForSettleTimeout(mode: FsMode): FsMode {
-  switch (mode.name) {
-    case 'entering':
-      return { name: 'fullscreen', preBounds: mode.preBounds };
-    case 'leaving':
-      return { name: 'normal' };
-    case 'normal':
-    case 'fullscreen':
       return mode;
   }
 }
@@ -1550,6 +1601,16 @@ export function evolve(state: State, ev: Event): State {
       // issues at least one op, and a latch that raises nothing issues none.
       const assertsFocus = latched !== null && state.order.some((w) => w.id === latched);
 
+      // FULLSCREEN RECONCILE SWEEP (ported from `window-state.ts`'s
+      // `APP_ACTIVATED` arm, which pushed one reconcile effect per in-flight
+      // record from inside this same handler). macOS can enter or leave
+      // fullscreen while Peek is backgrounded, so a transition still marked
+      // `entering`/`leaving` here may have completed unobserved — every such
+      // record is named on one reconcile request rather than trusted as-is.
+      const inFlightIds = state.order
+        .filter((w) => w.fsMode.name === 'entering' || w.fsMode.name === 'leaving')
+        .map((w) => w.id);
+
       const opSeq = reshown || assertsFocus ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
         ...state,
@@ -1576,6 +1637,11 @@ export function evolve(state: State, ev: Event): State {
         // activation would project to a spurious raise.
         lastFocusAssert:
           latched !== null ? { id: latched, seq: nextFocusAssertSeq(state) } : state.lastFocusAssert,
+        // Untouched when nothing is in flight — an activation with no
+        // straggling transition must not bump the reconcile `seq`, same
+        // reasoning as `lastFocusAssert` just above.
+        lastFsReconcile:
+          inFlightIds.length > 0 ? { ids: inFlightIds, seq: nextFsReconcileSeq(state) } : state.lastFsReconcile,
         version: state.version + 1,
       };
     }
@@ -1685,12 +1751,28 @@ export function evolve(state: State, ev: Event): State {
     }
 
     case 'FullscreenSettleTimeout': {
-      // Same reasoning as OsFullscreenLeft: the 'leaving' arm can settle onto 'normal'.
+      // Does NOT force-settle `fsMode` — the old machine's
+      // `window-state.ts FULLSCREEN_SETTLE_TIMEOUT` arm never guessed either;
+      // it only ever asked the OS and settled on whatever answer came back.
+      // Force-settling here was a divergence introduced by this port, and a
+      // wrong guess is not a harmless one: guessing `fullscreen` on a window
+      // that is really `normal` strands its `preBounds`, and guessing
+      // `normal` on a window that is really fullscreen leaves a black macOS
+      // Space behind. So every record's `fsMode` is left exactly where it
+      // was, and this becomes a REQUEST instead — recorded on
+      // `lastFsReconcile` for `react` to turn into a `ReconcileFullscreen`
+      // effect — for a named record still genuinely in flight
+      // (`entering`/`leaving`). A record that has already settled, or that
+      // names nothing in `order`, has nothing to ask about: the field is left
+      // untouched (`state.lastFsReconcile`, not a fresh one), which diffs to
+      // no effect.
+      const record = state.order.find((w) => w.id === ev.id);
+      const inFlight = record !== undefined && (record.fsMode.name === 'entering' || record.fsMode.name === 'leaving');
       return {
         ...state,
-        order: state.order.map((w) =>
-          w.id === ev.id ? withPendingProjectionFlushed({ ...w, fsMode: nextFsModeForSettleTimeout(w.fsMode) }) : w,
-        ),
+        lastFsReconcile: inFlight
+          ? { ids: [ev.id], seq: nextFsReconcileSeq(state) }
+          : state.lastFsReconcile,
         version: state.version + 1,
       };
     }
@@ -2287,6 +2369,20 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
       case 'destroy-all-guests':
         effects.push({ type: 'DestroyAllGuests' });
         break;
+    }
+  }
+
+  // Fullscreen reconcile: a structural diff of `State.lastFsReconcile`, same
+  // shape as the teardown rule just above — one `ReconcileFullscreen` per id
+  // on the request, never a branch on `ev.type`. The `seq` comparison is what
+  // makes it a diff rather than a read: a transition that asked nothing
+  // leaves the field alone and emits nothing, and two timeouts for the same
+  // still-in-flight window carry different `seq` values, so the second is a
+  // second question, not a repeat of the first.
+  const recon = next.lastFsReconcile;
+  if (recon !== null && recon.seq !== prev.lastFsReconcile?.seq) {
+    for (const id of recon.ids) {
+      effects.push({ type: 'ReconcileFullscreen', id });
     }
   }
 

@@ -821,15 +821,32 @@ function checkInvariants(state: State, prev?: State): string[] {
  * (§0.1.8): a window named by a `FullscreenSettleTimeout` must never sit in
  * `entering`/`leaving` afterward — that's the entire point of the event.
  */
-function checkSettleTimeoutInvariant(item: LogItem, next: State): string[] {
+function checkSettleTimeoutInvariant(item: LogItem, prev: State, next: State): string[] {
   const violations: string[] = [];
-  if (item.type === 'FullscreenSettleTimeout') {
-    const record = next.order.find((w) => w.id === item.id);
-    if (record !== undefined && (record.fsMode.name === 'entering' || record.fsMode.name === 'leaving')) {
-      violations.push(
-        `FullscreenSettleTimeout left ${item.id} in a transitional fsMode: ${JSON.stringify(record.fsMode)}`,
-      );
-    }
+  if (item.type !== 'FullscreenSettleTimeout') return violations;
+
+  const record = next.order.find((w) => w.id === item.id);
+  if (record === undefined) return violations; // named a window that is not there — nothing to settle and nothing to ask about
+  if (record.fsMode.name !== 'entering' && record.fsMode.name !== 'leaving') return violations;
+
+  // The record is still in flight, which is CORRECT and is the whole contract:
+  // the machine cannot know from the inside whether the OS completed the
+  // transition, so a settle timeout asks rather than decides (§0, `fsMode`
+  // reconcile). What it may never do is drop the question — a timeout that
+  // leaves a window transitional AND asks nothing has stranded it, because no
+  // later event will settle `fsMode` on its own.
+  //
+  // This replaced an earlier invariant asserting the opposite — that a settle
+  // timeout must leave no record transitional. That held only while `evolve`
+  // force-settled `fsMode` from its own belief, which the old reducer never
+  // did and which could strand `preBounds` or leave a black macOS Space when
+  // the guess was wrong.
+  const recon = next.lastFsReconcile;
+  const asked = recon !== null && recon.seq !== prev.lastFsReconcile?.seq && recon.ids.includes(item.id);
+  if (!asked) {
+    violations.push(
+      `FullscreenSettleTimeout left ${item.id} in ${JSON.stringify(record.fsMode)} without a fresh lastFsReconcile naming it`,
+    );
   }
   return violations;
 }
@@ -1118,7 +1135,7 @@ describe('window-kernel: property-based model tests (§0.1.8 item 1)', () => {
           throw new Error(reproMessage(seed, log, i, `autoclose invariant violation(s): ${autocloseViolations.join('; ')}`));
         }
 
-        const settleViolations = checkSettleTimeoutInvariant(item, next);
+        const settleViolations = checkSettleTimeoutInvariant(item, state, next);
         if (settleViolations.length > 0) {
           throw new Error(reproMessage(seed, log, i, `settle-timeout invariant violation(s): ${settleViolations.join('; ')}`));
         }
@@ -1524,5 +1541,58 @@ describe('window-kernel: the lastFocusAssert invariants name the violation', () 
     assert.deepStrictEqual(checkInvariants({ ...next, lastFocusAssert: { id, seq: 0 } }, prev), [
       'lastFocusAssert.seq decreased: prev=1 next=0',
     ]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The settle-timeout invariant, proven non-vacuous. It replaced one asserting
+// the OPPOSITE (that no record stays transitional through a timeout), so a
+// silent pass here would mean the check had simply stopped looking rather than
+// started checking the new contract.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('window-kernel: the settle-timeout invariant names the violation', () => {
+  const id = wid(0);
+
+  /** One window mid-entry, then the settle timeout that asks about it. */
+  const timedOut = (): { prev: State; next: State; item: LogItem } => {
+    const prev = fold([
+      { type: 'WindowRegistered', id, kind: 'page-host', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowShown', id },
+      { type: 'FullscreenTransitionStarted', id, entering: true, preBounds: null },
+    ]);
+    const item: LogItem = { type: 'FullscreenSettleTimeout', id };
+    return { prev, next: evolve(prev, item), item };
+  };
+
+  it('the scene really is in flight and really does ask, so the mutilations below are of a real fact', () => {
+    const { prev, next, item } = timedOut();
+    assert.strictEqual(prev.order[0]?.fsMode.name, 'entering', 'the window must be mid-transition or this proves nothing');
+    assert.strictEqual(next.order[0]?.fsMode.name, 'entering', 'the timeout leaves it in flight — it asks rather than decides');
+    assert.deepStrictEqual(next.lastFsReconcile?.ids, [id]);
+    assert.deepStrictEqual(checkSettleTimeoutInvariant(item, prev, next), []);
+  });
+
+  it('a timeout that asks nothing at all is named — the stranded-window shape', () => {
+    const { prev, next, item } = timedOut();
+    assert.deepStrictEqual(checkSettleTimeoutInvariant(item, prev, { ...next, lastFsReconcile: null }), [
+      `FullscreenSettleTimeout left ${id} in {"name":"entering","preBounds":null} without a fresh lastFsReconcile naming it`,
+    ]);
+  });
+
+  it('a reused seq is named — the shape that collapses two questions into one', () => {
+    const { prev, next, item } = timedOut();
+    assert.deepStrictEqual(
+      checkSettleTimeoutInvariant(item, { ...prev, lastFsReconcile: { ids: [id], seq: 1 } }, next),
+      [`FullscreenSettleTimeout left ${id} in {"name":"entering","preBounds":null} without a fresh lastFsReconcile naming it`],
+    );
+  });
+
+  it('a fresh request naming some OTHER window is named — asking about the wrong one is not asking', () => {
+    const { prev, next, item } = timedOut();
+    assert.deepStrictEqual(
+      checkSettleTimeoutInvariant(item, prev, { ...next, lastFsReconcile: { ids: [wid(9)], seq: 7 } }),
+      [`FullscreenSettleTimeout left ${id} in {"name":"entering","preBounds":null} without a fresh lastFsReconcile naming it`],
+    );
   });
 });
