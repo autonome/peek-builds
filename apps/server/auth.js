@@ -52,8 +52,10 @@ function singleUserMiddleware(singleUser) {
 
     // /mcp/* has its own grant-credential gate (see createMcpAuthMiddleware)
     // — a device/user credential does not carry a scope or a readonly bit, so
-    // it must never authenticate an MCP route.
-    if (c.req.path.startsWith("/mcp")) {
+    // it must never authenticate an MCP route. The trailing slash matters: the
+    // skip must cover exactly what `app.use("/mcp/*", …)` covers, or a future
+    // path like /mcp-admin would skip this gate without gaining another.
+    if (c.req.path.startsWith("/mcp/")) {
       return next();
     }
 
@@ -100,8 +102,11 @@ function multiUserMiddleware() {
 
     // /mcp/* has its own grant-credential gate (see createMcpAuthMiddleware)
     // — a device key is unscoped by nature, and letting it authenticate here
-    // would make every phone install a whole-store MCP key.
-    if (c.req.path.startsWith("/mcp")) {
+    // would make every phone install a whole-store MCP key. The trailing slash
+    // matters: the skip must cover exactly what `app.use("/mcp/*", …)` covers,
+    // or a future path like /mcp-admin would skip this gate without gaining
+    // another.
+    if (c.req.path.startsWith("/mcp/")) {
       return next();
     }
 
