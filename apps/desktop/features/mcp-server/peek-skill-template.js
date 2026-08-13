@@ -7,6 +7,17 @@
 export const BODY_BEGIN = '<!-- PEEK_SKILL_BODY_BEGIN -->';
 export const BODY_END = '<!-- PEEK_SKILL_BODY_END -->';
 
+// Spliced into the managed body, ahead of "## Tag model", only when
+// peek-mcp-init scaffolds a remote-mode entry (--remote). Stays inside
+// BODY_BEGIN/END so it's refreshed on every re-run like the rest of the body.
+export const REMOTE_PARAGRAPH = `
+**This session talks to a remote Peek server, not a local datastore.** Item
+ids are server ids; each item also carries \`localId\`, the id shown in the
+desktop UI (empty if the item hasn't synced there yet). There is no offline
+mode — a tool call fails loudly, naming the unreachable server, rather than
+degrading to a stale or empty result.
+`;
+
 // Frontmatter + auto-managed body. {SCOPE} gets substituted at scaffold time.
 export const TEMPLATE_BODY = `---
 name: peek
