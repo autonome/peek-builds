@@ -14,9 +14,12 @@ import {
   shadowKernelAppActivated,
   shadowKernelAppResigned,
   shadowKernelAppResignSettled,
+  shadowKernelArmColdStartFocus,
+  shadowKernelAssertFocus,
   shadowKernelAttachOverlay,
   shadowKernelCloseContent,
   shadowKernelCloseWindowDirect,
+  shadowKernelContentFirstResponderChanged,
   shadowKernelDestroyAllGuests,
   shadowKernelDestroyWindow,
   shadowKernelImportStackOrder,
@@ -25,10 +28,11 @@ import {
   shadowKernelRaiseWindow,
   shadowKernelRegisterWindow,
   shadowKernelWindowClosed,
+  shadowKernelWindowContentOrderable,
   shadowKernelWindowHidden,
   shadowKernelWindowShown,
 } from './window-kernel-shadow.js';
-import { BASE_LAYER, isContentWindow, topmost, type WindowId } from './window-kernel.js';
+import { BASE_LAYER, isContentWindow, topmost, topmostBaseLayerPageHost, type WindowId } from './window-kernel.js';
 import type { StateSnapshot, WindowRecord } from './window-state.js';
 
 const wid = (n: number): WindowId => `shadow-${n}` as WindowId;
@@ -901,5 +905,209 @@ describe('window-kernel-shadow: app-resign feed (peek 7fffa286)', () => {
     assert.doesNotThrow(() => shadowKernelAppResigned(oldSnapshot));
     assert.doesNotThrow(() => shadowKernelAppResignSettled(oldSnapshot));
     assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'no record to touch');
+  });
+});
+
+describe('window-kernel-shadow: content orderable feed', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('THE MEASURED DEFECT, pinned: without the feed a shown page-host stays permanently non-orderable and topmostBaseLayerPageHost reads null', () => {
+    const id = wid(140);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'page-host',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+        role: 'content',
+      },
+      oldSnapshot,
+    );
+    shadowKernelWindowShown(id, oldSnapshot);
+
+    assert.strictEqual(
+      topmostBaseLayerPageHost(getShadowKernelExecutor().getState()),
+      null,
+      'visible alone is not enough — orderable is still false',
+    );
+  });
+
+  it('a first-composited-frame feed flips orderable to true, and topmostBaseLayerPageHost returns the record (the fix)', () => {
+    const id = wid(141);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'page-host',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+        role: 'content',
+      },
+      oldSnapshot,
+    );
+    shadowKernelWindowShown(id, oldSnapshot);
+    assert.strictEqual(
+      topmostBaseLayerPageHost(getShadowKernelExecutor().getState()),
+      null,
+      'precondition: not orderable yet',
+    );
+
+    shadowKernelWindowContentOrderable(id, oldSnapshot);
+
+    const record = getShadowKernelExecutor()
+      .getState()
+      .order.find((w) => w.id === id);
+    assert.strictEqual(record?.orderable, true, 'the feed must flip orderable to true');
+    assert.strictEqual(
+      topmostBaseLayerPageHost(getShadowKernelExecutor().getState())?.id,
+      id,
+      'topmostBaseLayerPageHost must now return the record',
+    );
+  });
+
+  it('never throws across a content-orderable feed naming a window with no record', () => {
+    const danglingId = wid(142); // never registered with the shadow kernel
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+
+    assert.doesNotThrow(() => shadowKernelWindowContentOrderable(danglingId, oldSnapshot));
+    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+  });
+});
+
+describe('window-kernel-shadow: content first responder feed', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('a held report reaches the shadow kernel as contentFocused: true, naming the window', () => {
+    const id = wid(150);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'page-host',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+      },
+      oldSnapshot,
+    );
+
+    shadowKernelContentFirstResponderChanged(id, true, oldSnapshot);
+
+    const record = getShadowKernelExecutor()
+      .getState()
+      .order.find((w) => w.id === id);
+    assert.strictEqual(record?.contentFocused, true);
+  });
+
+  it('a released report flips it back to false', () => {
+    const id = wid(151);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'page-host',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+      },
+      oldSnapshot,
+    );
+    shadowKernelContentFirstResponderChanged(id, true, oldSnapshot);
+    const record = () => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+    assert.strictEqual(record()?.contentFocused, true, 'precondition: held');
+
+    shadowKernelContentFirstResponderChanged(id, false, oldSnapshot);
+
+    assert.strictEqual(record()?.contentFocused, false);
+  });
+
+  it('never throws across a content-first-responder feed naming a window with no record', () => {
+    const danglingId = wid(152); // never registered with the shadow kernel
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+
+    assert.doesNotThrow(() => shadowKernelContentFirstResponderChanged(danglingId, true, oldSnapshot));
+    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+  });
+});
+
+describe('window-kernel-shadow: cold-start focus latch feed', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('arming with a real id writes pendingColdStartFocus', () => {
+    const id = wid(160);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+
+    shadowKernelArmColdStartFocus(id, oldSnapshot);
+
+    assert.strictEqual(getShadowKernelExecutor().getState().pendingColdStartFocus, id);
+  });
+
+  it('arming with null clears a previously-armed latch', () => {
+    const id = wid(161);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelArmColdStartFocus(id, oldSnapshot);
+    assert.strictEqual(
+      getShadowKernelExecutor().getState().pendingColdStartFocus,
+      id,
+      'precondition: latch armed',
+    );
+
+    shadowKernelArmColdStartFocus(null, oldSnapshot);
+
+    assert.strictEqual(getShadowKernelExecutor().getState().pendingColdStartFocus, null);
+  });
+
+  it('never throws arming a latch with an id naming no registered window', () => {
+    const danglingId = wid(162); // never registered with the shadow kernel
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+
+    assert.doesNotThrow(() => shadowKernelArmColdStartFocus(danglingId, oldSnapshot));
+    // Not exempt from being recorded — ArmColdStartFocus answers before the
+    // unknown-window guard, so an id naming nothing is legitimate traffic,
+    // not a rejection (window-kernel.ts decide's ArmColdStartFocus arm).
+    assert.strictEqual(getShadowKernelExecutor().getState().pendingColdStartFocus, danglingId);
+  });
+});
+
+describe('window-kernel-shadow: focus assert feed', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('asserting focus on a registered content window records lastFocusAssert', () => {
+    const id = wid(170);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    registerVisibleContentWindow(id, oldSnapshot);
+
+    shadowKernelAssertFocus(id, oldSnapshot);
+
+    assert.strictEqual(getShadowKernelExecutor().getState().lastFocusAssert?.id, id);
+  });
+
+  it('a target with no record is rejected (logged, never thrown into the caller) and advances nothing', () => {
+    const danglingId = wid(171); // never registered with the shadow kernel
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    const versionBefore = getShadowKernelExecutor().getState().version;
+
+    assert.doesNotThrow(() => shadowKernelAssertFocus(danglingId, oldSnapshot));
+
+    // AssertFocus is NOT exempt from decide's unknown-window rejection
+    // (window-kernel.ts, AssertFocus's own doc) — unlike the four teardown
+    // commands, a dangling target is a genuine rejection, so version must
+    // stay pinned.
+    assert.strictEqual(getShadowKernelExecutor().getState().version, versionBefore);
   });
 });

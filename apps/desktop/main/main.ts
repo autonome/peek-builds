@@ -51,7 +51,7 @@ import { isSatelliteRegistration, classifyWindowRegistration, deriveWindowSurfac
 import type { Placement } from './window-placement.js';
 import { getWindowPresentation, getRestorableBounds } from './window-presenter.js';
 import { saveSessionSnapshot } from './session.js';
-import { shadowKernelWindowClosed, shadowKernelCloseWindowDirect } from './window-kernel-shadow.js';
+import { shadowKernelWindowClosed, shadowKernelCloseWindowDirect, shadowKernelAssertFocus } from './window-kernel-shadow.js';
 
 // Track app-quit state so the close-debounced save doesn't double-fire
 // alongside the before-quit save. before-quit handler in entry.ts sets
@@ -942,11 +942,26 @@ export async function initialize(): Promise<void> {
       } catch {
         /* detached devtools window not resolvable — attached mode, or races teardown */
       }
-      if (hostId != null) dispatchWindowEvent({ type: 'DEVTOOLS_OPENED', id: hostId });
+      if (hostId != null) {
+        dispatchWindowEvent({ type: 'DEVTOOLS_OPENED', id: hostId });
+        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+        // authoritative over nothing. The old machine's shared arm re-raises
+        // `state.front`, not the devtools host itself (window-state.ts
+        // DEVTOOLS_OPENED/DEVTOOLS_CLOSED case) — this names the same target.
+        const snap = getWindowStateSnapshot();
+        if (snap.front != null) shadowKernelAssertFocus(snap.front, snap);
+      }
     });
     wc.on('devtools-closed', () => {
       const hostId = hostMachineId();
-      if (hostId != null) dispatchWindowEvent({ type: 'DEVTOOLS_CLOSED', id: hostId });
+      if (hostId != null) {
+        dispatchWindowEvent({ type: 'DEVTOOLS_CLOSED', id: hostId });
+        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+        // authoritative over nothing. Same re-raise target as devtools-opened
+        // above: the old machine's shared arm re-raises `state.front`.
+        const snap = getWindowStateSnapshot();
+        if (snap.front != null) shadowKernelAssertFocus(snap.front, snap);
+      }
     });
 
     // Registration tripwire, hook 2: BaseWindow coverage. Electron has no

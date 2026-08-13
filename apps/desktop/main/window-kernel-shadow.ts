@@ -610,6 +610,110 @@ export function shadowKernelAttachOverlay(overlayId: WindowId, hostId: WindowId 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Content orderable — the eighth real input this step feeds the kernel.
+// Translated at the one production site that dispatches the old machine's
+// mirrored `WINDOW_CONTENT_ORDERABLE` (`session.ts
+// installFirstFrameOrderableProducer`'s `ipcMain.on('hybrid:first-frame', ...)`
+// handler), alongside that dispatch, never in place of it.
+//
+// THE HIGHEST-STAKES GAP OF THE FOUR THIS STEP CLOSES. `RegisterWindow` always
+// creates a record `orderable: false` (window-kernel.ts), and
+// `WindowContentOrderable` is the ONLY writer that ever flips it. Without this
+// feed no shadow record can ever become orderable, and `topmostBaseLayerPageHost`
+// (window-kernel.ts), whose predicate requires `orderable` alongside `visible`,
+// returns null forever — not a transient divergence but a structural one, wrong
+// from the very first composited frame of the very first window.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate a page-host's first-composited-frame report into the kernel's
+ * `WindowContentOrderable` event — the sole writer of `orderable` (see the
+ * banner above for why this is the highest-stakes of the four feeds this step
+ * adds). `evolve`'s arm never resets `orderable` back to false and no-ops on
+ * an unregistered id, so no guard is needed here.
+ */
+export function shadowKernelWindowContentOrderable(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowDispatch({ type: 'WindowContentOrderable', id });
+  compareAfterFeed(oldSnapshot);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Content first responder — the ninth real input this step feeds the kernel.
+// Translated at the two production sites that dispatch the old machine's
+// mirrored `CONTENT_FIRST_RESPONDER_CHANGED` (`electron-window-backend.ts
+// attachNativeListeners`'s page-host content WC `'focus'`/`'blur'` listeners),
+// alongside each existing dispatch, never in place of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate a page-host content WC's first-responder change into the kernel's
+ * `ContentFirstResponderChanged` event — a mechanical mirror write
+ * (window-kernel.ts's evolve arm), the sole writer of `contentFocused`. `held`
+ * is stored as reported, same as the old machine: the kernel never infers
+ * first-responder status, only records what the OS said.
+ */
+export function shadowKernelContentFirstResponderChanged(id: WindowId, held: boolean, oldSnapshot: StateSnapshot): void {
+  shadowDispatch({ type: 'ContentFirstResponderChanged', id, held });
+  compareAfterFeed(oldSnapshot);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cold-start focus latch — the tenth real input this step feeds the kernel.
+// Translated at the two production sites that dispatch the old machine's
+// mirrored `COLD_START_FOCUS_ARMED` (`session.ts restoreSessionSnapshot` — the
+// clearing dispatch at the top of every restore pass, and the arming dispatch
+// inside the cold-start activation block), alongside each existing dispatch,
+// never in place of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate an arm-or-clear of the cold-start focus latch into the kernel's
+ * `ArmColdStartFocus` command — `id: null` is the clear, the same one payload
+ * shape `ColdStartFocusArmed`/`State.pendingColdStartFocus` carries (see that
+ * event's own doc in `window-kernel.ts`). Answered before the generic
+ * unknown-window guard, exactly as `decide` itself does — there is no window
+ * here to guard existence against on either payload shape, so a `null` clear
+ * and a real id naming a window not yet registered are both legitimate
+ * traffic. Same shape and containment as `shadowKernelAttachOverlay` et al.:
+ * routed through `shadowExecute`, ending with the same `compareAfterFeed` tail.
+ */
+export function shadowKernelArmColdStartFocus(id: WindowId | null, oldSnapshot: StateSnapshot): void {
+  shadowExecute({ type: 'ArmColdStartFocus', id, expectedVersion: getShadowKernelExecutor().getState().version });
+  compareAfterFeed(oldSnapshot);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Focus assert — the eleventh real input this step feeds the kernel.
+// Translated at the two production sites that dispatch the old machine's
+// shared `DEVTOOLS_OPENED`/`DEVTOOLS_CLOSED` arm (`main.ts configure`'s
+// `wc.on('devtools-opened')`/`wc.on('devtools-closed')` handlers), alongside
+// each existing dispatch, never in place of it.
+//
+// THE OLD ARM'S TARGET IS NOT THE DEVTOOLS WINDOW. `window-state.ts`'s shared
+// `DEVTOOLS_OPENED`/`DEVTOOLS_CLOSED` case deliberately leaves `event.id` (the
+// devtools host id) unused and instead re-raises `state.front` — the window
+// that actually lost key when devtools took it. The kernel's `AssertFocus` is
+// answered against `topmost(state, isContentWindow)` in the general case (see
+// that command's own doc), but at THIS call site the caller supplies whatever
+// the old machine's settled snapshot names as `front`, mirroring the old arm's
+// own target rather than assuming it is the devtools window.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Translate a re-raise-the-content-window request into the kernel's
+ * `AssertFocus` command, naming the window the caller resolved as the target
+ * (see the banner above for why that is never the devtools window itself).
+ * NOT exempt from `decide`'s unknown-window rejection (`AssertFocus`'s own doc
+ * in `window-kernel.ts`) — a target absent from the shadow kernel's `order` is
+ * logged by `shadowExecute` as a rejection, never thrown into the caller. Same
+ * shape and containment as `shadowKernelRaiseWindow` et al.
+ */
+export function shadowKernelAssertFocus(id: WindowId, oldSnapshot: StateSnapshot): void {
+  shadowExecute({ type: 'AssertFocus', id, expectedVersion: getShadowKernelExecutor().getState().version });
+  compareAfterFeed(oldSnapshot);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Divergence comparator — evidence the shadow kernel's view matches reality
 // before the next commit re-points readers onto it. Compares the three things
 // the cutover's readers actually depend on; see `compareShadowKernelState`'s

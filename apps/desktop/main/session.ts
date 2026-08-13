@@ -30,7 +30,7 @@ import { WEB_CORE_ADDRESS } from './config.js';
 import { publish, getSystemAddress } from './pubsub.js';
 import { DEBUG, isTestProfile, isHeadless } from './config.js';
 import { showWindowHeadlessSafe, showHybridHost } from './windows.js';
-import { shadowKernelImportStackOrder } from './window-kernel-shadow.js';
+import { shadowKernelImportStackOrder, shadowKernelWindowContentOrderable, shadowKernelArmColdStartFocus } from './window-kernel-shadow.js';
 
 export type { WindowContext, WindowDescriptor };
 
@@ -244,6 +244,10 @@ export function installFirstFrameOrderableProducer(): void {
     const machineId = getWindowIdFor(entry.windowId);
     if (machineId != null) {
       dispatchWindowEvent({ type: 'WINDOW_CONTENT_ORDERABLE', id: machineId });
+      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+      // authoritative over nothing; the sole writer of `orderable`, without
+      // which `topmostBaseLayerPageHost` returns null forever.
+      shadowKernelWindowContentOrderable(machineId, getWindowStateSnapshot());
     }
     // Restore-spec bookkeeping only (see the counter block above).
     if (_restorePendingFirstFrameIds.delete(entry.windowId)) {
@@ -825,6 +829,9 @@ export async function restoreSessionSnapshot(
   // Clear any stale cold-start re-raise latch from a prior restore; this pass
   // re-arms it only if it activates the focused descriptor at cold start.
   dispatchWindowEvent({ type: 'COLD_START_FOCUS_ARMED', id: null });
+  // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
+  // over nothing.
+  shadowKernelArmColdStartFocus(null, getWindowStateSnapshot());
 
   // Skip restore in test environments unless _forceForTest is set (used by
   // session-restore Playwright specs that drive save+restore directly).
@@ -1369,6 +1376,9 @@ export async function restoreSessionSnapshot(
         const coldStartMachineId = getWindowIdFor(focusedWindowId);
         if (coldStartMachineId != null) {
           dispatchWindowEvent({ type: 'COLD_START_FOCUS_ARMED', id: coldStartMachineId });
+          // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+          // authoritative over nothing.
+          shadowKernelArmColdStartFocus(coldStartMachineId, getWindowStateSnapshot());
         }
       }
 

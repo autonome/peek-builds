@@ -93,6 +93,7 @@ import {
   shadowKernelAppActivated,
   shadowKernelAppResigned,
   shadowKernelAppResignSettled,
+  shadowKernelContentFirstResponderChanged,
 } from './window-kernel-shadow.js';
 
 /**
@@ -734,11 +735,17 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         this.emit({ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id, held: true });
         // Shadow-feed the kernel — see the `win.on('focus')` listener above.
         shadowKernelOsFocusGained(id, this.getSnapshot());
+        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+        // authoritative over nothing; the sole writer of `contentFocused`.
+        shadowKernelContentFirstResponderChanged(id, true, this.getSnapshot());
       });
       // Mirrors the content WC's first-responder status (§5 step 11) — no
       // consumer yet, purely additive.
       rendererWC.on('blur', () => {
         this.emit({ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id, held: false });
+        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
+        // authoritative over nothing; the sole writer of `contentFocused`.
+        shadowKernelContentFirstResponderChanged(id, false, this.getSnapshot());
       });
     }
   }
