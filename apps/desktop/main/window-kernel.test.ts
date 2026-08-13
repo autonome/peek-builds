@@ -2886,7 +2886,20 @@ describe('window-kernel: AppResigned hides an attached overlay on the raw edge; 
     assert.strictEqual(overlayAfter, overlayBefore);
   });
 
-  it('a detached overlay (overlayFor undefined) is untouched by AppResigned', () => {
+  it('an unattached floating window that cannot take keys still hides — attachment is not the only admission', () => {
+    // Attachment selects the victims among windows that HAVE a host; it was
+    // never the only way onto the raw resign edge. This window is unattached,
+    // but it is above the base layer and cannot take keystrokes — structurally
+    // a HUD, and `isAppResignSweepEligible` admits it on exactly those facts.
+    // Above the regular stack means above OTHER applications' windows too, so
+    // leaving it up floats it over whatever the user switched to.
+    //
+    // Hiding is reversible, which is what lets it pay the raw edge; DISMISSAL
+    // waits for the settle because it is destructive and the activation dance
+    // cannot undo it.
+    //
+    // The real chrome overlay is not this window: it takes keys (the address
+    // bar is focusable), so it reaches the edge through attachment instead.
     const state = fold(
       [
         { type: 'WindowRegistered', id: detachedOverlay, kind: 'browser', layer: FLOATING, canBecomeKey: false, acceptsInput: false, class: 'overlay' },
@@ -2896,12 +2909,12 @@ describe('window-kernel: AppResigned hides an attached overlay on the raw edge; 
     );
     const before = state.order.find((w) => w.id === detachedOverlay)!;
     assert.strictEqual(before.visible, true, 'precondition');
-    assert.strictEqual(before.overlayFor, undefined, 'precondition: genuinely detached');
+    assert.strictEqual(before.overlayFor, undefined, 'precondition: genuinely unattached');
 
     const resigned = evolve(state, { type: 'AppResigned' });
     const after = resigned.order.find((w) => w.id === detachedOverlay)!;
-    assert.strictEqual(after.visible, true);
-    assert.strictEqual(after.hiddenByAppBlur, undefined);
+    assert.strictEqual(after.visible, false, 'hidden on the raw edge, via the sweep predicate rather than attachment');
+    assert.strictEqual(after.hiddenByAppBlur, true, 'marked so the next activation can reveal it again');
   });
 
   it('AppResigned writes no key change and mints no op token, even when it hides an overlay', () => {
