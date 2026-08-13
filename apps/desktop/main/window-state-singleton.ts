@@ -287,11 +287,25 @@ export function getFrontPageHostId(): WindowId | null {
  * Cmd+L, flickering the chrome. Fires with the new id (or null) only when it
  * actually changes. Exactly one subscriber (`hybrid-overlay.ts
  * initHybridOverlay`'s retarget driver). Returns an unsubscribe function.
+ *
+ * TRIGGERED BY THE KERNEL, NOT THE OLD MACHINE. This used to subscribe to
+ * `getWindowOsAdapter().getOwner().subscribe(...)` while reading off the
+ * kernel — two different machines. Every shadow feed site dispatches the old
+ * event and THEN feeds the kernel (`shadowKernelX(...)`), and the old
+ * machine's `dispatch` notifies its subscribers SYNCHRONOUSLY, before that
+ * shadow feed ever runs — so a subscriber wired to the old machine always
+ * read kernel state from before the event that woke it, and the write the
+ * kernel had just recorded went unnoticed until some unrelated old-machine
+ * dispatch arrived later. Subscribing to `getShadowKernelExecutor().subscribe`
+ * instead means the trigger and the read come from the same machine: that
+ * `subscribe` notifies at the tail of `WindowKernelExecutor.apply`, after
+ * `evolve` has produced the new state and `react`'s effects have been run —
+ * so `read()` below always sees the state the notifying transition produced.
  */
 export function subscribeFrontChange(cb: (attachTargetHostId: WindowId | null) => void): () => void {
   const read = () => topmostBaseLayerPageHost(getShadowKernelExecutor().getState())?.id ?? null;
   let last = read();
-  return getWindowOsAdapter().getOwner().subscribe(() => {
+  return getShadowKernelExecutor().subscribe(() => {
     const now = read();
     if (now !== last) {
       last = now;
