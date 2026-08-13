@@ -28,7 +28,7 @@ import type { WindowEvent, FsMode, IzuiSession, WindowRecord, EscapeMode, StateS
 import type { Rectangle, WindowId, WindowKind } from './window-kernel.js';
 import type { WindowClass } from './izui-roles.js';
 import { shadowKernelRegisterWindow, shadowKernelWindowShown, getShadowKernelExecutor } from './window-kernel-shadow.js';
-import { topmost, isContentWindow } from './window-kernel.js';
+import { topmost, isContentWindow, topmostBaseLayerPageHost } from './window-kernel.js';
 
 /** Register-spec that accepts real Electron window handles (both kinds satisfy the adapter's structural `NativeWindow`). */
 export interface MachineWindowSpec {
@@ -238,9 +238,19 @@ export function getTopmostContentWindowId(): WindowId | null {
 }
 
 /**
- * The front window iff its record is a page-host, else null (replaces
- * `getActiveHybridWindowId`): "the frontmost hybrid page host the shared chrome
- * overlay frames itself over".
+ * The old machine's front window iff its record is a page-host, else null.
+ * Its two production consumers (`hybrid-overlay.ts overlayHostOsId` /
+ * `attachTargetHostOsId`) wanted different queries once the kernel cut over —
+ * the attachment relation (`window-kernel.ts hostForOverlay`) for one, the
+ * ordering query (`topmostBaseLayerPageHost`) for the other — so this shared
+ * selector has no single correct kernel mapping and both were repointed off
+ * it directly. The only remaining caller is the `__peekHybridOverlayTest`
+ * bridge's `setActive` (its up-to-100-iteration drain loop was written
+ * against the OLD machine's front-successor repair and needs re-deriving
+ * against the kernel separately — see the comment on `setActive` — so this
+ * selector stays exactly as it always read, off the old machine, until that
+ * happens). Do not add a new production caller: use `hostForOverlay` or
+ * `topmostBaseLayerPageHost` directly instead.
  */
 export function getFrontPageHostId(): WindowId | null {
   const owner = getWindowOsAdapter().getOwner();
@@ -251,14 +261,20 @@ export function getFrontPageHostId(): WindowId | null {
 }
 
 /**
- * Subscribe to changes in the front page-host (replaces
- * `onActiveHybridWindowChange`). Fires with the new front page-host id (or null)
- * only when it actually changes. Returns an unsubscribe function.
+ * Subscribe to changes in the topmost base-layer page-host
+ * (`window-kernel.ts topmostBaseLayerPageHost`) — the overlay attach-target
+ * ordering query, not `keyWindow`: under `key` the selector would go null
+ * whenever the overlay itself holds key (firing a spurious `retarget(null)`
+ * that detaches chrome from a still-visible page) and re-attach on every
+ * Cmd+L, flickering the chrome. Fires with the new id (or null) only when it
+ * actually changes. Exactly one subscriber (`hybrid-overlay.ts
+ * initHybridOverlay`'s retarget driver). Returns an unsubscribe function.
  */
-export function subscribeFrontChange(cb: (frontPageHostId: WindowId | null) => void): () => void {
-  let last = getFrontPageHostId();
+export function subscribeFrontChange(cb: (attachTargetHostId: WindowId | null) => void): () => void {
+  const read = () => topmostBaseLayerPageHost(getShadowKernelExecutor().getState())?.id ?? null;
+  let last = read();
   return getWindowOsAdapter().getOwner().subscribe(() => {
-    const now = getFrontPageHostId();
+    const now = read();
     if (now !== last) {
       last = now;
       cb(now);

@@ -87,7 +87,6 @@ import {
 import {
   registerWindowWithMachine,
   dispatchWindowEvent,
-  getFrontPageHostId,
   getWindowModeName,
   getWindowIdFor,
   getNativeWindowFor,
@@ -3924,7 +3923,6 @@ export function registerWindowHandlers(): void {
               DEBUG && console.log(
                 'window-open: blur for modal window', url,
                 '— focus went to:', focused && !focused.isDestroyed() ? `bw ${focused.id} (${getWindowInfo(focused.id)?.params?.address ?? '?'})` : 'no BrowserWindow',
-                'frontPageHost:', getFrontPageHostId(),
               );
               // Fire-and-forget (async, never rejects) — blur dismissal.
               void closeOrHideWindow(win.id);

@@ -93,6 +93,7 @@ import {
   getWindowStateSnapshot,
 } from './window-state-singleton.js';
 import type { Rectangle, WindowId } from './window-kernel.js';
+import { hostForOverlay, topmostBaseLayerPageHost } from './window-kernel.js';
 import { deriveWindowSurface, classifyWindowRegistration } from './izui-roles.js';
 import {
   shadowKernelAttachOverlay,
@@ -101,6 +102,7 @@ import {
   shadowKernelWindowHidden,
   shadowKernelSetFullscreen,
   shadowKernelShowRequested,
+  getShadowKernelExecutor,
 } from './window-kernel-shadow.js';
 import { getFaviconForUrl } from './datastore.js';
 import { getWindowInfo, registerWindow } from './main.js';
@@ -112,30 +114,41 @@ import { registerLocalShortcut, unregisterLocalShortcut } from './shortcuts.js';
 
 /**
  * Which page host the overlay currently belongs to, as an ELECTRON window id
- * (or null). The machine's surface speaks WM WindowId only; this module's
- * internals (the hybrid registry it frames over, the pubsub payloads its
- * renderer speaks) are still keyed by Electron window ids, so every read-back
- * converts here — through the singleton's sanctioned mapping, never a private
- * map. Becomes `window-kernel.ts hostForOverlay(state, overlayId)` at cutover.
+ * (or null) — the ATTACHMENT relation (`window-kernel.ts hostForOverlay(state,
+ * overlayId)`), not an ordering query. `retarget(id)` detaches the overlay
+ * (host destroyed, hybrid window gone, overlay id not yet minted) in states
+ * where the topmost page-host is still non-null, so answering a read-back
+ * with an ordering query would paint chrome over a window it isn't attached
+ * to and run extension script against a page that isn't visible. Needs the
+ * overlay's OWN kernel `WindowId` — `overlayWmId` below, minted in
+ * `ensureOverlay()`'s `registerWindowWithMachine` call and cleared alongside
+ * `overlayWin` in the window's `'closed'` handler, so a null read here before
+ * the overlay exists is honest ("nothing to be attached yet"). The machine's
+ * surface speaks WM WindowId only; this module's internals (the hybrid
+ * registry it frames over, the pubsub payloads its renderer speaks) are still
+ * keyed by Electron window ids, so every read-back converts here — through
+ * the singleton's sanctioned mapping, never a private map.
  */
 function overlayHostOsId(): number | null {
-  const front = getFrontPageHostId();
-  if (front == null) return null;
-  const win = getNativeWindowFor(front);
+  if (overlayWmId == null) return null;
+  const host = hostForOverlay(getShadowKernelExecutor().getState(), overlayWmId);
+  if (host == null) return null;
+  const win = getNativeWindowFor(host.id);
   return win ? win.id : null;
 }
 
 /**
  * Which page host the overlay SHOULD attach to right now, as an ELECTRON
- * window id (or null) — the ordering driver behind `retarget()`. Same
- * front→native-id conversion as the read-back today; the two diverge once
- * each is backed by its own kernel query. Becomes `window-kernel.ts
- * topmostBaseLayerPageHost(state)` at cutover.
+ * window id (or null) — the ordering driver behind `retarget()`
+ * (`window-kernel.ts topmostBaseLayerPageHost(state)`). Diverges from
+ * `overlayHostOsId()` above exactly where the overlay is detached but a
+ * base-layer page-host is still topmost — that gap is the reason this is a
+ * SEPARATE query rather than a re-derivation of the read-back.
  */
 function attachTargetHostOsId(): number | null {
-  const front = getFrontPageHostId();
-  if (front == null) return null;
-  const win = getNativeWindowFor(front);
+  const host = topmostBaseLayerPageHost(getShadowKernelExecutor().getState());
+  if (host == null) return null;
+  const win = getNativeWindowFor(host.id);
   return win ? win.id : null;
 }
 
@@ -766,20 +779,23 @@ export function initHybridOverlay(): void {
   wireShowNavbarFocus();
 
   // cmd+W overlay redirect is now structural: the overlay registers as a
-  // satellite (see ensureOverlay), so it can never be `front` and the close
-  // resolver (`resolveFocusedWindowIdForClose` → `getFrontWindowId`) always
-  // targets the content host — no `setOverlayWindowIdProvider` needed.
+  // satellite (see ensureOverlay), so it can never be the content window
+  // `resolveFocusedWindowIdForClose` (windows.ts) resolves — no
+  // `setOverlayWindowIdProvider` needed.
 
   // Run extension page-script execution against the active hybrid content WC
   // (the overlay host has webview:null and cannot service it; see above).
   wireExecuteScript();
 
-  unsubscribeActive = subscribeFrontChange((front) => {
+  unsubscribeActive = subscribeFrontChange(() => {
     try {
-      // The machine hands back a WM WindowId; retarget (and the hybrid
-      // registry behind it) still speaks Electron ids — convert at the seam.
-      const win = front != null ? getNativeWindowFor(front) : null;
-      retarget(win ? win.id : null);
+      // subscribeFrontChange fires on any change to the ordering query behind
+      // `attachTargetHostOsId()` (window-state-singleton.ts subscribeFrontChange
+      // dedups on `topmostBaseLayerPageHost`) — re-read through that same
+      // helper the seed read below uses rather than trust the pushed value, so
+      // this driver and the seed always agree on which query answers "which
+      // host should the overlay attach to right now".
+      retarget(attachTargetHostOsId());
     } catch (err) {
       DEBUG && console.log('[hybrid-overlay] retarget failed:', err);
     }
@@ -957,6 +973,15 @@ function installTestBridge(): void {
       // page-host is front — repeatedly, since the closing assertion promotes
       // (and re-raises) the MRU successor each time. Bounded; each pass hides
       // one machine-visible page-host, so it terminates.
+      //
+      // This loop's premise is the OLD machine's successor repair (hide the
+      // front page-host, the next-MRU one becomes front, repeat until none is
+      // front). The kernel has no such repair — key is reported, never
+      // repaired — so the loop cannot simply be repointed onto a kernel query
+      // the way `overlayHostOsId`/`attachTargetHostOsId` were. It needs
+      // re-deriving against the attachment relation (`hostForOverlay` /
+      // `topmostBaseLayerPageHost`) once the kernel is load-bearing here;
+      // until then it stays on the old machine's `front`.
       const wid = id == null ? null : getWindowIdFor(id);
       if (id != null && wid == null) return false;
       for (let i = 0; i < 100; i++) {
