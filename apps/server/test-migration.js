@@ -15,7 +15,7 @@ const { describe, it, before, after, beforeEach, afterEach } = require("node:tes
 const assert = require("node:assert");
 const fs = require("fs");
 const path = require("path");
-const Database = require("better-sqlite3");
+const { DatabaseSync } = require("node:sqlite");
 
 // Use isolated test directory
 const TEST_DATA_DIR = path.join(__dirname, "test-data-migration");
@@ -31,8 +31,8 @@ function createLegacyDb(userId, profileId = "default") {
   const dir = path.join(TEST_DATA_DIR, userId, "profiles", profileId);
   fs.mkdirSync(dir, { recursive: true });
   const dbPath = path.join(dir, "datastore.sqlite");
-  const db = new Database(dbPath);
-  db.pragma("journal_mode = WAL");
+  const db = new DatabaseSync(dbPath);
+  db.exec("PRAGMA journal_mode = WAL");
   return db;
 }
 

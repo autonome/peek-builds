@@ -661,11 +661,11 @@ describe("Database Tests", () => {
   describe("Snake-case Migration", () => {
     it("should migrate snake_case item_tags columns to camelCase", () => {
       // Simulate a legacy database with snake_case columns
-      const Database = require("better-sqlite3");
+      const { DatabaseSync } = require("node:sqlite");
       const legacyDir = path.join(TEST_DATA_DIR, "legacy-user", "profiles", "default");
       fs.mkdirSync(legacyDir, { recursive: true });
-      const legacyDb = new Database(path.join(legacyDir, "datastore.sqlite"));
-      legacyDb.pragma("journal_mode = WAL");
+      const legacyDb = new DatabaseSync(path.join(legacyDir, "datastore.sqlite"));
+      legacyDb.exec("PRAGMA journal_mode = WAL");
 
       // Create legacy schema with snake_case columns
       legacyDb.exec(`
@@ -744,11 +744,11 @@ describe("Database Tests", () => {
       // - item_tags.tag_id: INTEGER (not TEXT)
       // - All timestamps: TEXT (not INTEGER)
       // - items.deleted_at: NULL means not deleted (not 0)
-      const Database = require("better-sqlite3");
+      const { DatabaseSync } = require("node:sqlite");
       const rbDir = path.join(TEST_DATA_DIR, "rebuild-user", "profiles", "default");
       fs.mkdirSync(rbDir, { recursive: true });
-      const rbDb = new Database(path.join(rbDir, "datastore.sqlite"));
-      rbDb.pragma("journal_mode = WAL");
+      const rbDb = new DatabaseSync(path.join(rbDir, "datastore.sqlite"));
+      rbDb.exec("PRAGMA journal_mode = WAL");
 
       rbDb.exec(`
         CREATE TABLE items (
@@ -848,11 +848,11 @@ describe("Database Tests", () => {
       // The prod-bucket state that 500'd: items already camelCase (no column
       // renames pending), but the type column still carries the OLD 4-value CHECK.
       // Only the dedicated stale-CHECK detection (not the rename path) rebuilds it.
-      const Database = require("better-sqlite3");
+      const { DatabaseSync } = require("node:sqlite");
       const ecDir = path.join(TEST_DATA_DIR, "entity-check-user", "profiles", "default");
       fs.mkdirSync(ecDir, { recursive: true });
-      const ecDb = new Database(path.join(ecDir, "datastore.sqlite"));
-      ecDb.pragma("journal_mode = WAL");
+      const ecDb = new DatabaseSync(path.join(ecDir, "datastore.sqlite"));
+      ecDb.exec("PRAGMA journal_mode = WAL");
       ecDb.exec(`
         CREATE TABLE items (
           id TEXT PRIMARY KEY,
@@ -899,11 +899,11 @@ describe("Database Tests", () => {
     it("should add missing columns when tags table has incomplete schema", () => {
       // Simulate a legacy DB where tags table was created without some columns
       // (e.g., an older version of the code that didn't have frecencyScore or lastUsed)
-      const Database = require("better-sqlite3");
+      const { DatabaseSync } = require("node:sqlite");
       const mcDir = path.join(TEST_DATA_DIR, "missing-cols-user", "profiles", "default");
       fs.mkdirSync(mcDir, { recursive: true });
-      const mcDb = new Database(path.join(mcDir, "datastore.sqlite"));
-      mcDb.pragma("journal_mode = WAL");
+      const mcDb = new DatabaseSync(path.join(mcDir, "datastore.sqlite"));
+      mcDb.exec("PRAGMA journal_mode = WAL");
 
       // Minimal tags table — missing lastUsed, frecencyScore, createdAt, updatedAt
       mcDb.exec(`
@@ -966,11 +966,11 @@ describe("Database Tests", () => {
 
   describe("TEXT Timestamp Migration", () => {
     it("should convert ISO string and stringified number timestamps to integers", () => {
-      const Database = require("better-sqlite3");
+      const { DatabaseSync } = require("node:sqlite");
       const tsDir = path.join(TEST_DATA_DIR, "ts-user", "profiles", "default");
       fs.mkdirSync(tsDir, { recursive: true });
-      const tsDb = new Database(path.join(tsDir, "datastore.sqlite"));
-      tsDb.pragma("journal_mode = WAL");
+      const tsDb = new DatabaseSync(path.join(tsDir, "datastore.sqlite"));
+      tsDb.exec("PRAGMA journal_mode = WAL");
 
       // Create schema with TEXT affinity columns (simulates production)
       tsDb.exec(`
@@ -1062,11 +1062,11 @@ describe("Database Tests", () => {
     it("should handle legacy DB with snake_case columns AND TEXT timestamps end-to-end", () => {
       // This is the actual production state that caused the crash:
       // snake_case columns with TEXT-affinity timestamps
-      const Database = require("better-sqlite3");
+      const { DatabaseSync } = require("node:sqlite");
       const prodDir = path.join(TEST_DATA_DIR, "prod-user", "profiles", "default");
       fs.mkdirSync(prodDir, { recursive: true });
-      const prodDb = new Database(path.join(prodDir, "datastore.sqlite"));
-      prodDb.pragma("journal_mode = WAL");
+      const prodDb = new DatabaseSync(path.join(prodDir, "datastore.sqlite"));
+      prodDb.exec("PRAGMA journal_mode = WAL");
 
       // Create legacy schema: snake_case columns with TEXT affinity
       prodDb.exec(`

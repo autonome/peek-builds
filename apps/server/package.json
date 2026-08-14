@@ -25,7 +25,6 @@
   "dependencies": {
     "@hono/node-server": "^1.19.6",
     "archiver": "^7.0.1",
-    "better-sqlite3": "^12.5.0",
     "hono": "^4.10.7"
   }
 }

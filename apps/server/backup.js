@@ -74,9 +74,13 @@ function getTableCounts(conn) {
 async function createBackup(userId) {
   console.log(`Creating backup for user: ${userId}`);
 
-  // Check if database exists BEFORE calling getConnection (which would create it)
-  const userDir = path.join(DATA_DIR, userId);
-  const dbPath = path.join(userDir, "peek.db");
+  // Check if database exists BEFORE calling getConnection (which would create it).
+  // Path mirrors db.js's own getProfileDir()/getConnection() convention
+  // (DATA_DIR/{userId}/profiles/default/datastore.sqlite) — this used to check a
+  // stale pre-multi-profile path ("{userId}/peek.db", the legacy layout index.js's
+  // one-time migration moves data FROM, see its oldDbPath), which meant createBackup
+  // silently no-op'd for every current-layout user.
+  const dbPath = path.join(db.getProfileDir(userId, "default"), "datastore.sqlite");
 
   if (!fs.existsSync(dbPath)) {
     console.log(`No database found for user ${userId}, skipping backup`);
@@ -98,7 +102,7 @@ async function createBackup(userId) {
 
   try {
     // Use VACUUM INTO for consistent snapshot (non-blocking)
-    // Note: This only works with better-sqlite3 adapter.
+    // Note: plain SQL — works with any adapter backed by real SQLite (node:sqlite today).
     // TODO: For DO SQLite, implement JSON export to R2 instead.
     conn.exec(`VACUUM INTO '${tempDbPath}'`);
 

@@ -1238,6 +1238,7 @@ function deduplicateItems(userId, profileId = "default") {
 
 module.exports = {
   getConnection,
+  getProfileDir,
   closeAllConnections,
   closeConnection,
   getStorageAdapter,

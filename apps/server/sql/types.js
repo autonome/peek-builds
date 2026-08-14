@@ -2,7 +2,7 @@
  * SQL Abstraction Layer Types
  *
  * Abstracts database operations to support multiple backends:
- * - better-sqlite3 (Node.js, current)
+ * - node:sqlite (Node.js, current)
  * - Cloudflare Durable Objects SQLite (future)
  *
  * @typedef {Object} RunResult

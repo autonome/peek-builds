@@ -29,31 +29,19 @@ npm run test:api:local      # Test against local server (requires PEEK_LOCAL_KEY
 npm run test:api:prod       # Test against production (requires PEEK_PROD_KEY + PEEK_PROD_URL)
 ```
 
-### ⚠️ Native-module ABI: NEVER `npm rebuild better-sqlite3` at the repo root
+### No native-module ABI concern here — the server runs on `node:sqlite`
 
-The root `node_modules/better-sqlite3` is a **shared native module built for
-Electron's ABI** (via the root `postinstall: electron-rebuild -f -w better-sqlite3`).
-The desktop app (`apps/desktop`) loads it inside Electron. The server runs under
-**system Node**, whose ABI differs from Electron's — so the same binary can't
-serve both.
-
-- To run server tests under system Node, give the server its **own** copy:
-  `npm install --prefix apps/server` (creates `apps/server/node_modules/better-sqlite3`
-  built for system Node). `require("better-sqlite3")` from `apps/server` resolves
-  there first, so the server never needs the root copy. `yarn server:test` then
-  works regardless of the root binary's ABI.
-- **Do NOT run `npm rebuild better-sqlite3` (or plain `npm rebuild`) at the repo
-  root** to "fix" a server-side ABI error — it clobbers the Electron build and
-  **breaks every Electron/desktop test** (`ERR_DLOPEN_FAILED`,
-  `NODE_MODULE_VERSION` mismatch). This caused a desktop-test outage on
-  2026-06-24.
-- If the root copy ever gets clobbered, restore it with the canonical command:
-  `node_modules/.bin/electron-rebuild -f -w better-sqlite3` (run from repo root),
-  then verify with `node scripts/check-native-modules.js`
-  (prints "better-sqlite3 loads in Electron — skip rebuild" when correct).
-- `.nvmrc` pins Node 22, but the machine default may be newer (e.g. v24). The
-  server's own `better-sqlite3` just needs to match whichever Node actually runs
-  the tests — install it with that Node.
+The server's SQL layer (`sql/node-sqlite-adapter.js`) is backed by Node's
+built-in `node:sqlite` (`DatabaseSync`), not the native `better-sqlite3`
+module — so there is no compiled binary to match against whatever Node runs
+the tests, and no dependency on the root `node_modules/better-sqlite3` build
+(that native module still exists at the repo root for the desktop app under
+Electron's ABI — see `apps/desktop/CLAUDE.md` — but the server never touches
+it). A fresh checkout just needs `apps/server`'s plain JS dependencies
+(`yarn server:install` / `npm install --prefix apps/server`, for `hono` /
+`archiver` / `@hono/node-server`) — no rebuild, no ABI matching, and running
+`npm rebuild` at the repo root (still forbidden — see the desktop guide) has
+no effect on the server either way.
 
 ---
 
@@ -124,7 +112,7 @@ For test scripts, copy `apps/server/.env.example` to `.env` and fill in:
 
 ## Architecture Notes
 
-The server uses abstraction layers so it can run on different SQLite backends (currently better-sqlite3) and different storage backends (currently filesystem). See `apps/server/ARCHITECTURE.md` for the full interface contracts.
+The server uses abstraction layers so it can run on different SQLite backends (currently node:sqlite) and different storage backends (currently filesystem). See `apps/server/ARCHITECTURE.md` for the full interface contracts.
 
 `SINGLE_USER_MODE=true yarn server:test` exercises the single-user deployment path.
 

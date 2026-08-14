@@ -23,7 +23,7 @@ yarn server:test     # Run the test suite
 ## Architecture
 
 - **index.js** - Hono HTTP server with API endpoints
-- **db.js** - SQLite database module (better-sqlite3)
+- **db.js** - SQLite database module (node:sqlite)
 - **users.js** - Multi-user authentication with API keys
 
 ### API Endpoints
