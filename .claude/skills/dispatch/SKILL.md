@@ -151,10 +151,16 @@ makes the initiative survive a stalled agent, a dispatcher restart, and a
 session boundary — it is the per-initiative version of the single-repo handoff
 loop, and it is the reason more than one initiative can run at once.
 
-Spawn with `run_in_background: true`, `subagent_type: routine-coder` for
-specified mechanical work and `general-purpose` only when the task needs
-judgment, labelled with the slot name. The brief must name the worktree path —
-that is also what satisfies the second-writer spawn guard.
+Spawn with `run_in_background: true`, labelled with the slot name. The brief must
+name the worktree path — that is also what satisfies the second-writer spawn
+guard.
+
+**A dispatchable task is a routable one: use `routine-coder`.** An item only
+reaches this step by carrying a done-condition and a verify command, which means
+the work is already written down — and written-down work belongs to
+`routine-coder`, however large it is. The catch-all agent exists for work nobody
+could specify, which by definition never survives the claim step. Reaching for it
+here is the absence of a routing decision, and the spawn guard rejects it.
 
 ### Brief template
 

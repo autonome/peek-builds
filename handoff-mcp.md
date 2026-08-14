@@ -92,6 +92,18 @@ Then, in no particular order:
   the real `index.js`. That touches how the server boots under Railway, so it is its own
   reviewed change, not a rider on a feature step.
 
+- **`getItem()` and `getTaskContext()` in `sqlite-store.js` now resolve an id prefix
+  themselves.** They previously took a resolved id, because `server.js` resolved first
+  and called the store second. Collapsing the read path to one round trip moved that
+  resolution into both store implementations, so the local backend's behaviour at the
+  store layer changed even though the tool-level behaviour did not. Anything calling
+  these directly should expect a prefix to work and an ambiguous one to throw.
+
+- **`main()` in `server.js` only self-invokes when the file is run directly**, guarded
+  on `import.meta.url`, so its pure functions can be tested without spawning a
+  subprocess. The 109 tests in `server.test.js` spawn the real server as a child
+  process, which is what proves the guard did not break the spawn path.
+
 - **`saveItem()` in `apps/server/db.js` takes fourteen positional parameters.** The MCP
   create route does not call it (an explicit create is always a create, per the design's
   section 3.3), so nothing is blocked; it is a cleanup worth doing before the next caller
