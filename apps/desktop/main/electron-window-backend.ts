@@ -415,16 +415,14 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
   attachAppListeners(): void {
     (app as unknown as { on(e: string, l: () => void): void }).on('did-become-active', () => {
       this.emit({ type: 'APP_ACTIVATED' });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen.
+      // Feeds the kernel (window-kernel-shadow.ts), which drives the real
+      // window operations post-cutover — see that module's header.
       shadowKernelAppActivated(this.getSnapshot());
     });
     (app as unknown as { on(e: string, l: () => void): void }).on('did-resign-active', () => {
       this.emit({ type: 'APP_RESIGNED' });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen.
+      // Feeds the kernel (window-kernel-shadow.ts), which drives the real
+      // window operations post-cutover — see that module's header.
       shadowKernelAppResigned(this.getSnapshot());
       if (this.appResignSettleTimer) clearTimeout(this.appResignSettleTimer);
       this.appResignSettleTimer = setTimeout(() => {
@@ -444,12 +442,12 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
           return;
         }
         this.emit({ type: 'APP_RESIGN_SETTLED' });
-        // Shadow-feed the kernel — same containment as above. Fed AFTER the
+        // Feeds the kernel — same containment as above. Fed AFTER the
         // cooldown early return so the kernel observes exactly the edge the
         // old machine observes; the cooldown read itself stays at the
         // producer (see `window-kernel-shadow.ts shadowKernelAppResignSettled`
-        // for why a clean comparison here does not prove the hide/re-show
-        // half equivalent).
+        // for the backstop this settle now performs — the primary hide already
+        // ran on the raw `AppResigned` edge).
         shadowKernelAppResignSettled(this.getSnapshot());
       }, APP_RESIGN_SETTLE_MS);
     });
@@ -665,9 +663,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         lastHttpUrl: this.readHttpUrl(id),
         cause: this.takeFocusCause(id),
       });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
-      // over nothing; see that module's doc for why this can never change what
-      // actually happens on screen.
+      // Feeds the kernel (window-kernel-shadow.ts), which drives the real
+      // window operations post-cutover — see that module's header.
       shadowKernelOsFocusGained(id, this.getSnapshot());
     });
     // The ONE deferred-blur settle: blur alone can't tell "focus left Peek" from
@@ -684,9 +681,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     win.on('show', () => {
       const focused = this.isFocused(win);
       this.emit({ type: 'WINDOW_SHOWN', id, focused });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen.
+      // Feeds the kernel (window-kernel-shadow.ts), which drives the real
+      // window operations post-cutover — see that module's header.
       shadowKernelWindowShown(id, this.getSnapshot(), focused);
     });
     win.on('hide', () => {
@@ -709,16 +705,15 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // throw on the already-destroyed native window.
       this.idByOsWindowId.delete(osWindowId);
       this.emit({ type: 'WINDOW_CLOSED', id });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
-      // over nothing; RULE 1 makes this the only event that shrinks its `order`.
+      // Feeds the kernel (window-kernel-shadow.ts) — RULE 1 makes this the
+      // only event that shrinks its `order`.
       shadowKernelWindowClosed(id, this.getSnapshot());
     });
     win.on('enter-full-screen', () => {
       this.clearFullscreenSettle(id);
       this.emit({ type: 'OS_FULLSCREEN_ENTERED', id });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen.
+      // Feeds the kernel (window-kernel-shadow.ts), which drives the real
+      // window operations post-cutover — see that module's header.
       shadowKernelOsFullscreenEntered(id, this.getSnapshot());
     });
     win.on('leave-full-screen', () => {
@@ -745,9 +740,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
         const overlayFrame =
           kind === 'page-host' ? expandToOverlayFrame(bounds, this.workAreaNearest(bounds)) : undefined;
         this.emit({ type: 'BOUNDS_CHANGED', id, bounds, overlayFrame });
-        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-        // authoritative over nothing; see that module's doc for why this can
-        // never change what actually happens on screen.
+        // Feeds the kernel (window-kernel-shadow.ts), which drives the real
+        // window operations post-cutover — see that module's header.
         shadowKernelBoundsChanged(id, bounds, this.getSnapshot(), overlayFrame);
       } catch {
         /* window gone mid-event */
@@ -769,18 +763,17 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
           cause: this.takeFocusCause(id),
         });
         this.emit({ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id, held: true });
-        // Shadow-feed the kernel — see the `win.on('focus')` listener above.
+        // Feeds the kernel — see the `win.on('focus')` listener above.
         shadowKernelOsFocusGained(id, this.getSnapshot());
-        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-        // authoritative over nothing; the sole writer of `contentFocused`.
+        // Feeds the kernel (window-kernel-shadow.ts) — the sole writer of its
+        // `contentFocused`.
         shadowKernelContentFirstResponderChanged(id, true, this.getSnapshot());
       });
-      // Mirrors the content WC's first-responder status (§5 step 11) — no
-      // consumer yet, purely additive.
+      // Mirrors the content WC's first-responder status (§5 step 11).
       rendererWC.on('blur', () => {
         this.emit({ type: 'CONTENT_FIRST_RESPONDER_CHANGED', id, held: false });
-        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-        // authoritative over nothing; the sole writer of `contentFocused`.
+        // Feeds the kernel (window-kernel-shadow.ts) — the sole writer of its
+        // `contentFocused`.
         shadowKernelContentFirstResponderChanged(id, false, this.getSnapshot());
       });
     }
@@ -912,9 +905,8 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (!w || w.isDestroyed()) return;
     const entered = w.isFullScreen();
     this.emit(entered ? { type: 'OS_FULLSCREEN_ENTERED', id } : { type: 'OS_FULLSCREEN_LEFT', id });
-    // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-    // authoritative over nothing; see that module's doc for why this can
-    // never change what actually happens on screen.
+    // Feeds the kernel (window-kernel-shadow.ts), which drives the real
+    // window operations post-cutover — see that module's header.
     if (entered) {
       shadowKernelOsFullscreenEntered(id, this.getSnapshot());
     } else {

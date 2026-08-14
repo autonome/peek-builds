@@ -9,12 +9,16 @@
  * today — `window-state.ts` (pure) + `window-os-adapter.ts` (executor) — and
  * modelled on it deliberately rather than inventing a second shape.
  *
- * SCOPE: greenfield, additive, and NOT wired to anything. Nothing constructs
- * this class in production: the backend is a required constructor argument and
- * no default `ElectronWindowBackend` is built here, so importing this module
- * causes no window operation and no listener attach. The old reducer and its
- * adapter stay in charge of the running app; routing production call sites over
- * is a later step.
+ * SCOPE: the backend is a required constructor argument, so importing this
+ * module alone causes no window operation and no listener attach — but
+ * production DOES construct one: `window-kernel-singleton.ts getKernelExecutor`
+ * is called with the real `ElectronWindowBackend` from `window-state-singleton.ts
+ * getKernelExecutorForApp`, wired in at boot
+ * (`window-state-singleton.ts initWindowStateMachine`). From that point this
+ * executor performs every window operation the app makes; the old reducer
+ * (`window-state.ts`) and its adapter (`window-os-adapter.ts`) keep running
+ * alongside it but no longer perform one (see that adapter's header for the
+ * handful of responsibilities it retains).
  *
  * WHY IT MAY IMPORT PLATFORM-FACING CODE. The kernel's zero-value-import rule
  * exists so the pure triple stays loadable with no display and no window

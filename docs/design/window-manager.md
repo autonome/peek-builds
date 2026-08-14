@@ -697,7 +697,7 @@ remaining 37, grouped by process:
 
 | file · symbol | what it does with the value | how a wrong translation fails |
 |---|---|---|
-| `windows.ts resolveFocusedWindowIdForClose` | The Cmd+W close target. Converts `front` → native handle → Electron id for `closeOrHideWindow`. Re-exported from `main/index.ts`; called by `closeFocusedWindow`, the menu handler, the non-darwin shortcut, and the hybrid test bridge. | silent — a `keyWindow` mapping closes the chrome overlay, or no-ops after app-resign nulls key. `window-kernel.ts isContentWindow`'s docblock already prescribes the composition; the map never lists the reader. |
+| `windows.ts resolveFocusedWindowIdForClose` | The Cmd+W close target. Converts `front` → native handle → Electron id for `closeOrHideWindow`. Re-exported from `main/index.ts`; called by `closeFocusedWindow`, the menu handler, the non-darwin shortcut, and the hybrid test bridge. | silent — a `keyWindow` mapping closes the chrome overlay, or no-ops after app-resign nulls key. `window-kernel.ts isFrontEligibleWindow`'s docblock prescribes the composition (key when itself front-eligible, else `topmost(state, isFrontEligibleWindow)`) — not `isContentWindow`, whose role allow-list excludes `role: 'quick-view'` and so would close the page host behind a focused peek instead of the peek itself; the map never lists the reader. |
 | `entry.ts onReady` (app-menu template, Window ▸ Close Window click) | Reads `front`, resolves the native window, runs the detached-devtools guard (`isDevToolsOpened() && !wc.isFocused()`), then calls `closeFocusedWindow()` | silent — a wrong front makes the devtools guard mis-fire and closes the parent |
 | `tile-ipc.ts` `tile:dialogs:save` handler | Parents the save dialog over the front window; falls back to the sender | silent (falls back) |
 | `tile-ipc.ts` `tile:dialogs:open` handler | Same parenting | silent |
@@ -716,6 +716,19 @@ remaining 37, grouped by process:
 | `session.ts restoreSessionSnapshot` | Sorts descriptors by persisted `zOrder` descending (`zOrderSorted`), hoists `focusedDescriptor`, and that ordering drives the eager/deferred staged-restore split and the focus-restore target | silent — one hop out from `serializeSession`'s `zOrder`; changed provenance re-orders which windows load hot |
 | `session-projection.ts readStackIndex` + `orderRestoredWindowsBottomToTop` | Read the persisted `stackIndex` (the deleted `stackOrder` fact) to compute the bottom-to-top replay, with a legacy branch for pre-`stackIndex` snapshots | silent for aged profiles — the legacy branch stacks by a different rule with no error path |
 | `window-state-singleton.ts getFrontPageHostId` + `subscribeFrontChange` | The two intermediary selectors: `getFrontPageHostId` is `front` iff its record is `kind: 'page-host'`; `subscribeFrontChange` re-reads it on every dispatch and edge-dedups | silent — the map assigns the hybrid consumers but never these two. Under `key` the selector goes null whenever the overlay holds key, so the subscriber fires a spurious `retarget(null)` and detaches chrome from a still-visible page. |
+
+**The `resolveFocusedWindowIdForClose` composition is provably redundant, not just readable.**
+Key-when-itself-eligible-else-topmost equals a bare `topmost(state, isFrontEligibleWindow)` in
+every reachable state: `evolve`'s `WindowRegistered` arm inserts a new record below the key
+window's index, `StackOrderImported` re-lifts the key window to the top of `order`, and
+`window-kernel-properties.test.ts checkInvariants` asserts the key window is last in `order` over
+every generated log. So whenever the key window is itself front-eligible it is also already the
+topmost front-eligible record, for any predicate that admits it — the `key` branch never actually
+changes the answer the `topmost` branch would give. The composition stays written out because it
+names the INTENT (prefer the key window, the one actually taking keystrokes) rather than relying on
+an invariant a reader would have to trace three files to rediscover — not because a reachable state
+exists where the two forms disagree. No test should be written trying to discriminate them; none
+can.
 
 **Preload (3):** all in `tile-preload.cts`; all silent pass-throughs that relay a changed answer.
 
@@ -1111,7 +1124,9 @@ Four prerequisites remain, each proven by that attempt rather than predicted:
 10. **`windows.ts`.** `closeOrHideWindow(id)`'s hybrid branch — `await waitForMode(machineId,
     'normal')` becomes the kernel waiter (the accessor gap above applies here). Its `'vanished'`
     outcome is the hang this port was written to fix. `resolveFocusedWindowIdForClose()` —
-    `getFrontWindowId()` → `topmost(state, isContentWindow)`.
+    `getFrontWindowId()` → the key-when-eligible-else-topmost composition over
+    `isFrontEligibleWindow` (see the "Wiring map" entry for why not a bare `topmost(state,
+    isContentWindow)`).
 
 11. **`tile-ipc.ts`.** The `tile:window:hide` handler — `await waitForMode(machineId, 'normal')` →
     kernel waiter (the accessor gap above applies here). The `tile:window:devtools` handler —
@@ -1248,8 +1263,9 @@ splitting it into the read-back (`hostOf(overlay)`) and the driver (a layer-awar
 still to be built — see the correction above) removes the hazard. Making the two agree does not.
 
 Per caller, which relation is correct: the read-back call sites listed above want attachment,
-always. `windows.ts` `resolveFocusedWindowIdForClose` wants `keyWindow` when it is itself a content
-window, else `topmost(state, isContentWindow)` — never attachment; a focused extension popup is
+always. `windows.ts` `resolveFocusedWindowIdForClose` wants `keyWindow` when it is itself
+front-eligible, else `topmost(state, isFrontEligibleWindow)` (see the "Wiring map" entry above for
+why `isFrontEligibleWindow`, not `isContentWindow`) — never attachment; a focused extension popup is
 the disproof, since attachment is null there while Cmd+W plainly must close the popup. `tile-ipc.ts`
 `tile:dialogs:save` / `tile:dialogs:open` want neither, as the next paragraph covers — the opener's
 own window, resolved from `ev.sender` — and attachment would be actively wrong there: it would
@@ -1272,9 +1288,10 @@ the wrong window.
 `tile:theme:setWindowColorScheme` (the `resolvedId === null` branch, tier 2 of a three-tier chain),
 `tileResolveWebWindow` and
 `tile:window:devtools` (both already post-filter on http/https — fold that into the predicate
-rather than filtering after), `windows.ts` `resolveFocusedWindowIdForClose`, and `entry.ts`'s
-Close Window menu handler (reads `front` only for its detached-devtools guard and can delegate to
-`resolveFocusedWindowIdForClose` instead). `window-state-singleton.ts` `getFrontWindowId` becomes a
+rather than filtering after), and `entry.ts`'s Close Window menu handler (reads `front` only for
+its detached-devtools guard and can delegate to `resolveFocusedWindowIdForClose` instead — that
+function itself is NOT a bare `topmost` mapping; see the "Wiring map" entry for its
+key-when-eligible-else-topmost composition). `window-state-singleton.ts` `getFrontWindowId` becomes a
 thin wrapper over the same query, or is deleted in favor of per-caller predicates; its one injected
 consumer is `seedSessionMirror` → `coord.setFrontWindowIdProvider(...)`, read by `izui-state.ts`
 `enterOverlay` for `session.preOverlayFocusTarget` — the content window session restore should
@@ -2474,12 +2491,14 @@ is the claim that nulling breaks a caller.
 
 ### 0.1.11 Transient dismissal — implemented against the kernel, the ownership relation proven at runtime
 
-§0's rule is built. It runs only inside the shadow kernel (§0.1's "Built, not wired" still holds —
-`window-state.ts` and `window-os-adapter.ts` drive production); this records what the implementation
-froze so the rule can be checked against the running app once the kernel is wired in, rather than
-re-derived. The ownership relation itself — `overlayFor` and `parentId` — is now proven at runtime
-(see "The gap" below); what the rewrite below settles separately is a narrower question — that the
-app-resign half of the rule, previously not exercised by the shadow kernel at all, now is.
+§0's rule is built and, since the cutover, wired: `window-kernel-executor.ts` performs the
+dismissals `react` emits over the production `WindowBackend`, the same backend
+`window-state.ts`/`window-os-adapter.ts` used to drive alone (see §0.1's "Built, and now wired for
+queries" and `window-kernel-shadow.ts`'s header for how production reaches this executor). This
+records what the implementation froze so the rule can be checked against the running app, rather
+than re-derived. The ownership relation itself — `overlayFor` and `parentId` — is now proven at
+runtime (see "The gap" below); what the rewrite below settles separately is a narrower question —
+that the app-resign half of the rule, previously not exercised at all, now is.
 
 **The rule is implemented on one fact, not a pair.** `window-kernel.ts react()` could not read
 `ev.cause`, or where the triggering event says attention went, directly — `react` is a pure
@@ -2532,15 +2551,18 @@ already gone inactive during launch focus churn before the gesture ran — `open
 no resign edge to observe. A live dismissal check must activate the app before the gesture that
 resigns it.
 
-**Not proof of the hide/re-show half.** The shadow feed above cannot show that a real app switch
-hides and later re-shows the right windows. The old machine hides, on the raw resign and well before
-the 500ms settle, the windows `isAppResignSweepEligible` selects; its native `'hide'` report reaches
-the kernel first (`shadowKernelWindowHidden`), so by the time the settle arrives those records
-already read `visible: false` and the arm marks nothing. `compareShadowKernelState` does not compare
-`visible` at all, so a clean shadow run is evidence the compared facts — membership, `front`,
-`stackOrder` — hold, not evidence the hide/re-show behavior is equivalent. That resolves only at
-cutover, when the kernel becomes the one deciding what to hide; a clean shadow run before then is not
-evidence this half works.
+**At the time of this run, not proof of the hide/re-show half.** The shadow feed alone could not show
+that a real app switch hides and later re-shows the right windows: the old machine hid, on the raw
+resign and well before the 500ms settle, the windows `isAppResignSweepEligible` selects; its native
+`'hide'` report reached the kernel first (`shadowKernelWindowHidden`), so by the time the settle
+arrived those records already read `visible: false` and the arm marked nothing.
+`compareShadowKernelState` does not compare `visible` at all, so a clean shadow run was evidence the
+compared facts — membership, `front`, `stackOrder` — held, not evidence the hide/re-show behavior was
+equivalent. That resolved at cutover: `window-os-adapter.ts`'s `HIDE_WINDOW` arm is a no-op
+post-cutover, and the kernel's own `AppResigned` arm now performs the attached-overlay and
+sweep-eligible hide directly — on the raw edge, over the real backend — so this is production
+behavior now, not a question a later cutover still owes (see `window-kernel-shadow.ts
+shadowKernelAppResigned`'s doc, and §0.1.11 above).
 
 **`window-state.ts selectAppResignTransients` becomes dead at cutover, and its restriction is not
 carried forward.** The old arm scopes dismissal to `rec.kind === 'page-host'`, on the assumption that

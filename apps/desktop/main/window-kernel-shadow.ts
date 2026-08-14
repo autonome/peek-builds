@@ -1,42 +1,53 @@
 /**
- * window-kernel-shadow.ts — the one `WindowKernelExecutor` running in SHADOW
- * alongside the production `WindowOsAdapter` (`window-state-singleton.ts`).
+ * window-kernel-shadow.ts — the one `WindowKernelExecutor` for the app, fed
+ * from the old machine's production call sites and read by the production
+ * code that needs a real answer.
  *
  * Blueprint: `docs/design/window-manager.md`. This module owns the single
- * `WindowKernelExecutor` for the app and translates registration — the one
- * real input this step feeds it — into the kernel's own command vocabulary,
- * at the call site that produces it today (`window-state-singleton.ts
- * registerWindowWithMachine`). Nothing reads FROM the kernel here: this is
- * feed-only, one direction, and authoritative over nothing. Later steps feed
- * it OS focus, teardown, and stack-order import; none of that exists yet.
+ * `WindowKernelExecutor` for the app and translates every real input the old
+ * machine sees — registration, OS focus, visibility, app activation, close
+ * reports, teardown, stack-order import, raise, overlay attach — into the
+ * kernel's own command/event vocabulary, at the call site that produces each
+ * one today. The name and the "shadow" vocabulary throughout this file
+ * (`compareShadowKernelState`, `NoopKernelBackend`, …) are load-bearing
+ * history, not the current shape: this module was built to run the kernel in
+ * SHADOW, feed-only, alongside the old machine, so its divergence comparator
+ * could be trusted before anything depended on the kernel's decisions. That
+ * period is over. `window-state-singleton.ts initWindowStateMachine` installs
+ * a provider (`setKernelExecutorProvider`) that points `getShadowKernelExecutor()`
+ * at the production kernel built over the real `ElectronWindowBackend`
+ * (`window-kernel-singleton.ts`, `window-state-singleton.ts
+ * getKernelExecutorForApp`) — from boot onward, every feed helper below drives
+ * that executor, whose effects reach the OS for real. Production code also
+ * now READS through this module's `getShadowKernelExecutor()` for decisions
+ * that matter: the Cmd+W close target (`windows.ts
+ * resolveFocusedWindowIdForClose`) and the saved session's window order
+ * (`session.ts readKernelOrderFacts`) both resolve against the kernel's live
+ * state, not the old machine's.
  *
- * WHY THIS CANNOT CHANGE PRODUCTION BEHAVIOR — two invariants, both load-bearing:
+ * WHAT STILL MAKES THIS SAFE TO CALL BLINDLY — one invariant survives cutover:
+ * no exception from the kernel path escapes into the caller.
+ * `shadowKernelRegisterWindow` and its siblings wrap their `execute`/`dispatch`
+ * calls in try/catch and swallow (DEBUG-gated log only); a rejected command
+ * (`decide` rejects on a stale `expectedVersion`) is likewise recorded, never
+ * thrown. A feed caller can still invoke these without a try/catch of its own.
  *
- *   1. **The effect port is a no-op.** `NoopKernelBackend` below implements
- *      the whole `WindowBackend` surface, and every method just records the
- *      call (a bounded ring, `_shadowEffectLogForTests`) and returns — no
- *      native call, no promise resolving against real work. So even a kernel
- *      decision that diverges from the old machine's never reaches the OS:
- *      the executor's effects have nowhere to land.
- *   2. **No exception from the kernel path escapes into the caller.**
- *      `shadowKernelRegisterWindow` wraps its `execute` call in try/catch and
- *      swallows (DEBUG-gated log only); a rejected command (`decide` rejects
- *      on a stale `expectedVersion`) is likewise recorded, never thrown. A
- *      caller invokes it for its diagnostic value alone — it must behave
- *      exactly as if the call were never made, whatever the kernel does
- *      internally.
- *
- * Together these mean: the OS is still driven solely by `window-state.ts` +
- * `WindowOsAdapter`, exactly as before this file existed. The kernel runs the
- * same registrations through `decide`/`evolve` for comparison value only.
+ * THE NOOP BACKEND IS A PRE-CUTOVER FALLBACK, NOT WHAT PRODUCTION LANDS ON.
+ * `NoopKernelBackend` below implements the whole `WindowBackend` surface
+ * doing nothing but recording the call (a bounded ring,
+ * `_shadowEffectLogForTests`) — that is what every feed helper drove before a
+ * provider was installed, and it is still what a test gets when it never
+ * installs one. `getShadowKernelExecutor()` only falls back to it when
+ * `setKernelExecutorProvider` has not been called; production always calls it
+ * at boot, so a production run never reaches this fallback.
  *
  * DIVERGENCE COMPARATOR. `compareShadowKernelState` (bottom of this file) is
- * the one place this module reads FROM the kernel for diagnostic value: it
- * checks the shadow's view against the old machine's current state and
- * returns every mismatch. Its logging is gated behind
- * `PEEK_SHADOW_KERNEL_COMPARE=1` — unset (the default), the comparator still
- * runs but emits nothing, so a normal run pays only for the comparison itself
- * (a few array scans over a handful of windows), never for a log line.
+ * a diagnostic read left over from the shadow period: it checks the kernel's
+ * view against the old machine's current state and returns every mismatch.
+ * Its logging is gated behind `PEEK_SHADOW_KERNEL_COMPARE=1` — unset (the
+ * default), the comparator still runs but emits nothing, so a normal run pays
+ * only for the comparison itself (a few array scans over a handful of
+ * windows), never for a log line.
  */
 
 import { DEBUG } from './config.js';
@@ -71,11 +82,15 @@ export function _shadowEffectLogForTests(): readonly ShadowEffectLogEntry[] {
 }
 
 /**
- * The shadow's `WindowBackend` — implements the whole port so a new port
- * method cannot be silently unimplemented here, and every method performs
- * NOTHING beyond recording that it was asked for. This is what makes shadow
- * mode safe: the kernel can decide anything it likes and nothing it decides
- * ever reaches a real window.
+ * The pre-cutover fallback `WindowBackend` — implements the whole port so a
+ * new port method cannot be silently unimplemented here, and every method
+ * performs NOTHING beyond recording that it was asked for. This is what made
+ * shadow mode safe before cutover: the kernel could decide anything it liked
+ * and nothing it decided reached a real window. `getShadowKernelExecutor()`
+ * only builds an executor over this backend when no provider has been
+ * installed (`installedProvider`) — production installs one at boot
+ * (`window-state-singleton.ts initWindowStateMachine`), so this class backs
+ * only tests and any executor use before that boot step runs.
  */
 class NoopKernelBackend implements WindowBackend {
   attachAppListeners(): void {
@@ -475,10 +490,14 @@ export function shadowKernelAppActivated(oldSnapshot: StateSnapshot): void {
  * attachAppListeners`'s `did-resign-active` → old machine `APP_RESIGNED`)
  * into the kernel's `AppResigned` event — the ARM half of the app-switch
  * dance (`window-kernel.ts`'s `AppResigned` evolve arm): it sets
- * `appActive: false` and arms `pendingAppResignSweep`, hiding nothing yet.
- * Same shape and containment as `shadowKernelAppActivated`: `shadowDispatch`
- * (an event, not a command — this is a past-tense fact `decide` never sees),
- * ending with the same `compareAfterFeed` tail.
+ * `appActive: false`, arms `pendingAppResignSweep`, AND — on this same raw
+ * edge, not deferred to the settle — hides every attached overlay and every
+ * `isAppResignSweepEligible` floater still visible (see that evolve arm's own
+ * doc for why those two victim sets hide immediately rather than waiting out
+ * the settle delay `shadowKernelAppResignSettled` handles below). Same shape
+ * and containment as `shadowKernelAppActivated`: `shadowDispatch` (an event,
+ * not a command — this is a past-tense fact `decide` never sees), ending with
+ * the same `compareAfterFeed` tail.
  */
 export function shadowKernelAppResigned(oldSnapshot: StateSnapshot): void {
   shadowDispatch({ type: 'AppResigned' });
@@ -497,18 +516,17 @@ export function shadowKernelAppResigned(oldSnapshot: StateSnapshot): void {
  * (see this module's header / `window-kernel.ts` §0's autoclose exemption
  * doc). Same shape and containment as `shadowKernelAppResigned`.
  *
- * NOT A COMPLETE SHADOW OF THE HIDE/RE-SHOW HALF. The old machine hides these
- * windows FIRST (its own `did-resign-active` handling runs synchronously,
- * well before this 500ms settle), so by the time this event reaches the
- * kernel the records it would mark `hiddenByAppBlur` already read
- * `visible: false` from the native `'hide'` listener's earlier
- * `shadowKernelWindowHidden` feed — and `isAppResignSweepEligible` requires
- * `visible`, so this arm finds nothing to sweep and the kernel's `visible`
- * mirror never contradicts the old machine's. The comparator does not check
- * `visible` at all, so a clean shadow run here is evidence the compared
- * facts (membership/front/stackOrder) hold — NOT evidence the hide/re-show
- * behavior itself has been proven equivalent. That resolves only at cutover,
- * when the kernel becomes the one deciding what to hide.
+ * A BACKSTOP, NOT THE PRIMARY HIDE. `shadowKernelAppResigned` above already
+ * hid every attached overlay and sweep-eligible floater on the raw
+ * `AppResigned` edge — the kernel is what performs that hide now, over the
+ * real backend, not the old machine (`window-os-adapter.ts runEffect`'s
+ * `HIDE_WINDOW` arm is a no-op post-cutover). So by the time this settle
+ * reaches the kernel, everything visible at the raw edge already reads
+ * `visible: false`, and this arm's `isAppResignSweepEligible` sweep only
+ * catches a record that became eligible in the window between the raw edge
+ * and this 500ms settle (e.g. one registered and shown while Peek was already
+ * backgrounded) — the same backstop `window-kernel.ts`'s `AppResignSettled`
+ * arm documents on its own.
  */
 export function shadowKernelAppResignSettled(oldSnapshot: StateSnapshot): void {
   shadowDispatch({ type: 'AppResignSettled' });
@@ -1081,10 +1099,12 @@ export function shadowKernelCloseOrHideRequested(id: WindowId, oldSnapshot: Stat
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Divergence comparator — evidence the shadow kernel's view matches reality
-// before the next commit re-points readers onto it. Compares the three things
-// the cutover's readers actually depend on; see `compareShadowKernelState`'s
-// own doc below for what each check does and does not claim.
+// Divergence comparator — a diagnostic left running post-cutover: it still
+// checks the kernel's view against the old machine's on every settled input,
+// for the three things the cutover's readers (`windows.ts
+// resolveFocusedWindowIdForClose`, `session.ts readKernelOrderFacts`, …)
+// actually depend on. See `compareShadowKernelState`'s own doc below for what
+// each check does and does not claim.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** One divergence between the old machine and the shadow kernel — see `compareShadowKernelState`. */

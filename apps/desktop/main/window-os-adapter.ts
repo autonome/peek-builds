@@ -1,24 +1,35 @@
 /**
- * window-os-adapter.ts — the executor of the deterministic window state
- * machine (design §2.6, rule R2).
+ * window-os-adapter.ts — the pump for the old deterministic window state
+ * machine (design §2.6), now stripped down to the handful of responsibilities
+ * the kernel cutover left behind.
  *
- * Blueprint: `docs/design/window-manager.md`. `window-state.ts` is the pure,
- * platform-free reducer/owner (rule R1). THIS module is the ONE executor
- * (rule R2) and the sole caller of the `WindowBackend` port (rule R3): it
- * runs the dispatch pump (one path for every event, native or app-level),
- * executes the effects the reducer returns by issuing PORT COMMANDS
- * (`window-backend.ts`), and reconciles the derived Escape grab on every
- * transition. It holds NO native handles and imports NO platform module —
- * `electron-window-backend.ts` is the only window-manager file that touches
- * Electron, and it feeds native reality back into this module's pump through
- * the single event sink injected at construction. (The one non-port import of
- * that file here is the DEFAULT backend construction in the constructor —
- * composition, not a window op.)
+ * Blueprint: `docs/design/window-manager.md`. `window-kernel-executor.ts` is
+ * the executor now (over `window-kernel.ts`'s pure triple) and the sole
+ * caller of the `WindowBackend` port — see its header and
+ * `window-kernel-shadow.ts`'s for how production wires onto it. THIS module
+ * still runs the dispatch pump for `window-state.ts` (one path for every
+ * event, native or app-level) and reconciles the derived Escape grab on every
+ * transition, but `runEffect` below performs an OS window operation for only
+ * four of its arms — the Escape renderer round trip (`ASK_RENDERER`), opening
+ * and closing the switcher, and the two Escape-decided arms
+ * (`CLOSE_WINDOW_UNHANDLED_ESCAPE` / `SET_FULLSCREEN_ESCAPE_EXIT`), which are
+ * FEEDS that tell the kernel what Escape decided rather than performing
+ * anything themselves. Every other arm is a labelled no-op (see the block
+ * comment inside `runEffect`). This module holds NO native handles and
+ * imports NO platform module — `electron-window-backend.ts` is the only
+ * window-manager file that touches Electron, and it feeds native reality back
+ * into this module's pump through the single event sink injected at
+ * construction. (The one non-port import of that file here is the DEFAULT
+ * backend construction in the constructor — composition, not a window op.)
+ * This module dies alongside `window-state.ts` once those four
+ * responsibilities move to their permanent home.
  *
  * The two OS/Chromium boundary workarounds (the deferred-blur settle §4.4 and
  * the bounded fullscreen settle §2.3) live in the BACKEND with the handles
- * they read — the lowest layer. This module has no timers and performs no
- * native reads; the reducer has neither timers nor effects of its own.
+ * they read — the lowest layer, shared with the kernel executor since both
+ * machines drive the same backend instance. This module has no timers and
+ * performs no native reads; the reducer has neither timers nor effects of its
+ * own.
  */
 
 import { isHeadless, DEBUG } from './config.js';
@@ -73,8 +84,11 @@ export class WindowOsAdapter {
    * handle-speaking migration shims (`electron-window-backend.ts
    * BackendMigrationShims`) and the legacy raw Spaces write
    * (`electron-window-backend.ts LegacySpacesShim`, deleted alongside
-   * `window-state.ts` rather than absorbed). Every OS window operation this
-   * module causes goes through this reference.
+   * `window-state.ts` rather than absorbed). This is the SAME backend
+   * instance `window-kernel-executor.ts` performs every window operation
+   * over (`getBackend()` below is how it gets there) — this module itself
+   * issues no window operation through this reference anymore beyond the four
+   * arms named in the file header.
    */
   private readonly backend: WindowBackend & BackendMigrationShims & LegacySpacesShim;
 

@@ -48,9 +48,8 @@ let executorInstance: WindowKernelExecutor | null = null;
 
 /**
  * The single production `WindowKernelExecutor`, constructed on first call
- * over `backend`. See the module header — until the cutover step wires a
- * production call site onto this function, nothing may call it outside a
- * test.
+ * over `backend`. See the module header — `window-state-singleton.ts
+ * getKernelExecutorForApp` is the one production caller.
  */
 export function getKernelExecutor(backend: WindowBackend): WindowKernelExecutor {
   if (!executorInstance) executorInstance = new WindowKernelExecutor(backend);
