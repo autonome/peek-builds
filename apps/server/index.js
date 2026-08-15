@@ -609,10 +609,14 @@ app.post("/items", async (c) => {
   const deviceId = c.get("deviceId") || "";
   const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
   const body = await c.req.json();
-  const { type, content, tags = [], metadata = null, sync_id = null, syncId = null, deletedAt } = body;
+  const {
+    type, content, tags = [], metadata = null, sync_id = null, syncId = null,
+    deletedAt = null, deleted_at = null, starred = null, archived = null,
+  } = body;
   const effectiveSyncId = syncId || sync_id; // Support both camelCase and snake_case during transition
+  const effectiveDeletedAt = deletedAt || deleted_at; // Support both camelCase and snake_case during transition
 
-  if (deletedAt) console.log(`[sync] Received tombstone push: syncId=${effectiveSyncId} deletedAt=${deletedAt}`);
+  if (effectiveDeletedAt) console.log(`[sync] Received tombstone push: syncId=${effectiveSyncId} deletedAt=${effectiveDeletedAt}`);
 
   // Sync logging for e2e test verification
   console.log("=== Sync Item Received ===");
@@ -662,7 +666,10 @@ app.post("/items", async (c) => {
     }
   }
 
-  const id = db.saveItem(userId, type, content || null, tags, metadata, effectiveSyncId, profileId, deletedAt, deviceId);
+  const id = db.saveItem(
+    userId, type, content || null, tags, metadata, effectiveSyncId, profileId, effectiveDeletedAt, deviceId,
+    null, null, null, starred, archived
+  );
   return c.json({ id, type, created: true });
 });
 
@@ -1096,41 +1103,49 @@ function deduplicateAllUsers() {
   }
 }
 
-// Multi-user mode: run migrations and user-based operations
-if (!isSingleUserMode(config)) {
-  migrateFromLegacyApiKey();
-  migrateUserDataToProfiles();
-  users.migrateProfileFoldersToUuid();
-  users.migrateLegacyKeysToDevices();
-  deduplicateAllUsers();
+// Startup side effects (migrations, backups, and listening) only run when this file
+// is executed directly (`node index.js` / `npm start`) — never on `require("./index")`,
+// which lets tests import the real `app` (and hit the real routes) without binding a
+// port or replaying migrations against whatever DATA_DIR the test happens to have set.
+if (require.main === module) {
+  // Multi-user mode: run migrations and user-based operations
+  if (!isSingleUserMode(config)) {
+    migrateFromLegacyApiKey();
+    migrateUserDataToProfiles();
+    users.migrateProfileFoldersToUuid();
+    users.migrateLegacyKeysToDevices();
+    deduplicateAllUsers();
 
-  // Force backup of all users on every deploy/restart (before serving requests)
-  backup.createAllBackups().then(() => {
-    console.log("Pre-deploy backup complete");
-  }).catch((err) => {
-    console.error("Pre-deploy backup failed:", err);
-  });
+    // Force backup of all users on every deploy/restart (before serving requests)
+    backup.createAllBackups().then(() => {
+      console.log("Pre-deploy backup complete");
+    }).catch((err) => {
+      console.error("Pre-deploy backup failed:", err);
+    });
 
-  // Set up hourly backup check (runs if >24h since last backup)
-  setInterval(() => backup.checkAndRunDailyBackups(), 60 * 60 * 1000);
-} else {
-  console.log("[config] Running in single-user mode");
-  console.log(`[config] User ID: ${config.singleUser.userId}`);
-  console.log(`[config] Token auth: ${config.singleUser.token ? "enabled" : "disabled"}`);
+    // Set up hourly backup check (runs if >24h since last backup)
+    setInterval(() => backup.checkAndRunDailyBackups(), 60 * 60 * 1000);
+  } else {
+    console.log("[config] Running in single-user mode");
+    console.log(`[config] User ID: ${config.singleUser.userId}`);
+    console.log(`[config] Token auth: ${config.singleUser.token ? "enabled" : "disabled"}`);
 
-  // Ensure single-user mode user exists in the database
-  try {
-    const existingUsers = users.listUsers();
-    const userExists = existingUsers.some(u => u.id === config.singleUser.userId);
-    if (!userExists) {
-      console.log(`[config] Creating user '${config.singleUser.userId}' for single-user mode`);
-      users.createUser(config.singleUser.userId);
+    // Ensure single-user mode user exists in the database
+    try {
+      const existingUsers = users.listUsers();
+      const userExists = existingUsers.some(u => u.id === config.singleUser.userId);
+      if (!userExists) {
+        console.log(`[config] Creating user '${config.singleUser.userId}' for single-user mode`);
+        users.createUser(config.singleUser.userId);
+      }
+    } catch (e) {
+      console.error("[config] Error ensuring single-user mode user exists:", e.message);
     }
-  } catch (e) {
-    console.error("[config] Error ensuring single-user mode user exists:", e.message);
   }
+
+  serve({ fetch: app.fetch, port }, (info) => {
+    console.log(`Server running on http://localhost:${info.port}`);
+  });
 }
 
-serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`Server running on http://localhost:${info.port}`);
-});
+module.exports = { app };

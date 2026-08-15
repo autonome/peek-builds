@@ -428,8 +428,8 @@ function mergeServerItem(serverItem: ServerItem): 'pulled' | 'conflict' | 'skipp
     const metadataJson = serverItem.metadata ? JSON.stringify(serverItem.metadata) : '{}';
 
     db.prepare(`
-      INSERT INTO items (id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, syncedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+      INSERT INTO items (id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, syncedAt, starred, archived)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
     `).run(
       localId,
       serverItem.type,
@@ -439,7 +439,9 @@ function mergeServerItem(serverItem: ServerItem): 'pulled' | 'conflict' | 'skipp
       serverItem.id,
       serverItem.createdAt,
       serverUpdatedAt,
-      now
+      now,
+      serverItem.starred,
+      serverItem.archived
     );
 
     // Add tags
@@ -477,9 +479,9 @@ function mergeServerItem(serverItem: ServerItem): 'pulled' | 'conflict' | 'skipp
     const metadataJson = serverItem.metadata ? JSON.stringify(serverItem.metadata) : '{}';
     db.prepare(`
       UPDATE items
-      SET content = ?, metadata = ?, updatedAt = ?, syncedAt = ?
+      SET content = ?, metadata = ?, updatedAt = ?, syncedAt = ?, starred = ?, archived = ?
       WHERE id = ?
-    `).run(serverItem.content || null, metadataJson, serverUpdatedAt, now, localItem.id);
+    `).run(serverItem.content || null, metadataJson, serverUpdatedAt, now, serverItem.starred, serverItem.archived, localItem.id);
 
     // Update tags
     syncTagsToItem(localItem.id, serverItem.tags);
@@ -639,12 +641,16 @@ async function pushSingleItem(
     tags: string[];
     metadata?: Record<string, unknown>;
     sync_id?: string;
-    deleted_at?: number;
+    deletedAt?: number;
+    starred: number;
+    archived: number;
   } = {
     type: item.type,
     content: item.content,
     tags: tagNames,
     sync_id: item.syncId || item.id,  // Use existing syncId or local id
+    starred: item.starred,
+    archived: item.archived,
   };
 
   if (metadata) {
@@ -652,7 +658,7 @@ async function pushSingleItem(
   }
 
   if (item.deletedAt > 0) {
-    body.deleted_at = item.deletedAt;
+    body.deletedAt = item.deletedAt;
   }
 
   // POST to server with profile parameter

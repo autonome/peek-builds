@@ -347,6 +347,8 @@ export interface ServerItem {
   createdAt: number;
   updatedAt: number;
   deletedAt?: number;
+  starred: number;
+  archived: number;
 }
 
 // ==================== Backup Types ====================

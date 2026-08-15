@@ -2282,6 +2282,112 @@ describe("API Tests", () => {
   });
 });
 
+// Regression suite for the dropped-tombstone bug: the desktop client's
+// pushSingleItem() sent `deleted_at` (snake_case) while this route destructured
+// only `deletedAt` (camelCase), so every desktop deletion pushed successfully
+// (200 OK) but was silently never applied. Exercises the real production app
+// (`require("./index").app`, not a hand-rolled mirror) so the assertions hold
+// for the actual route body-parsing, not a copy of it that could drift.
+// Also covers Fix 2 (starred/archived pass-through) on the same route.
+describe("POST /items — real route (dropped-tombstone regression)", () => {
+  let app;
+  let users;
+  let apiKey;
+  const TEST_USER = "realrouteuser";
+
+  beforeEach(() => {
+    // Clear every module in index.js's require closure so the fresh `app` below
+    // is wired to fresh db/users/auth instances, not ones cached by an earlier
+    // describe block's own db/users require-and-clear cycle. db.js is required
+    // (uncached) here first, purely so index.js's own `require("./db")` picks up
+    // this same fresh instance instead of requiring yet another one.
+    for (const mod of ["./db", "./users", "./grants", "./mcp-items", "./backup", "./auth", "./index"]) {
+      delete require.cache[require.resolve(mod)];
+    }
+    cleanTestDir();
+
+    require("./db");
+    users = require("./users");
+    ({ app } = require("./index"));
+
+    const result = users.createUser(TEST_USER);
+    apiKey = result.apiKey;
+  });
+
+  function authHeaders() {
+    return { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+  }
+
+  // Reads back through GET /items (the same route-resolved profile bucket the
+  // POST used) rather than calling db.getItems() directly — resolveProfileId()
+  // maps the "default" query param to a per-user profile UUID, so a direct
+  // db.getItems(userId) call (which defaults profileId to the literal string
+  // "default") would silently miss the row and defeat the assertion.
+  async function fetchItems(includeDeleted) {
+    const path = includeDeleted ? "/items?includeDeleted=true" : "/items";
+    const res = await app.request(path, { headers: authHeaders() });
+    const json = await res.json();
+    return json.items;
+  }
+
+  it("applies a tombstone push sent as deleted_at (snake_case) — the desktop wire spelling", async () => {
+    const syncId = "desktop-tomb-snake";
+    const create = await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "url", content: "https://example.com", sync_id: syncId }),
+    });
+    assert.strictEqual(create.status, 200);
+    assert.strictEqual((await fetchItems(false)).length, 1);
+
+    const del = await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "url", content: "https://example.com", sync_id: syncId, deleted_at: Date.now() }),
+    });
+    assert.strictEqual(del.status, 200);
+
+    assert.strictEqual((await fetchItems(false)).length, 0, "the item must be soft-deleted, not left alive");
+    const allItems = await fetchItems(true);
+    assert.strictEqual(allItems.length, 1);
+    assert.ok(allItems[0].deletedAt > 0, "deletedAt must be set from the deleted_at body field");
+  });
+
+  it("applies a tombstone push sent as deletedAt (camelCase)", async () => {
+    const syncId = "desktop-tomb-camel";
+    await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "url", content: "https://example.com", sync_id: syncId }),
+    });
+    assert.strictEqual((await fetchItems(false)).length, 1);
+
+    await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "url", content: "https://example.com", sync_id: syncId, deletedAt: Date.now() }),
+    });
+
+    assert.strictEqual((await fetchItems(false)).length, 0);
+    const allItems = await fetchItems(true);
+    assert.ok(allItems[0].deletedAt > 0);
+  });
+
+  it("passes starred and archived through to the stored item", async () => {
+    const res = await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "text", content: "starred note", starred: 1, archived: 1 }),
+    });
+    assert.strictEqual(res.status, 200);
+
+    const items = await fetchItems(false);
+    assert.strictEqual(items.length, 1);
+    assert.strictEqual(items[0].starred, 1);
+    assert.strictEqual(items[0].archived, 1);
+  });
+});
+
 // Regression suite for the cross-profile data-leak bug.
 //
 // The bug: resolveProfileId() used to SILENTLY fall back to the "default"

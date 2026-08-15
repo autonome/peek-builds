@@ -599,9 +599,12 @@ function getOrCreateTagWithConn(conn, name, timestamp) {
 }
 
 // Unified save function for all item types.
-// title/domain/frecencyScore/starred/archived are storage-only additions for the
-// MCP remote backend (docs/mcp-remote-backend-design.md §3.1) — the sync path never
-// passes them, so they default to null and COALESCE onto the existing row on update.
+// title/domain/frecencyScore are storage-only additions for the MCP remote backend
+// (docs/mcp-remote-backend-design.md §3.1) — the sync path never passes them, so they
+// default to null and COALESCE onto the existing row on update. starred/archived are
+// also declared sync:true in the schema (packages/schema/v1.json) and the sync path
+// does pass them (POST /items in index.js); they default to null here only for the
+// MCP/non-sync callers that don't have an opinion, and COALESCE the same way.
 function saveItem(userId, type, content, tags = [], metadata = null, syncId = null, profileId = "default", deletedAt = null, createdByDevice = "", title = null, domain = null, frecencyScore = null, starred = null, archived = null) {
   const conn = getConnection(userId, profileId);
   const timestamp = now();
