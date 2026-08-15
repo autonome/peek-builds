@@ -27,6 +27,12 @@ files:
   # Exclude agent workspaces (CRITICAL - these are full project copies)
   - "!tmp"
   - "!tmp/**"
+  # Git worktrees live at .worktrees/<task-name> by project convention, and each
+  # is a full checkout. Packaging globbed into them and failed outright on a
+  # half-built one (ENOENT on another worktree's dist/*.d.ts.map), so a build
+  # here could be broken by an unrelated initiative's working state.
+  - "!.worktrees"
+  - "!.worktrees/**"
   # Exclude backend directories not needed for Electron
   - "!backend"
   - "!backend/**"
