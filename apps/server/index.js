@@ -749,6 +749,67 @@ app.get("/items/:id", (c) => {
   return c.json({ item });
 });
 
+// === Event sync endpoints ===
+//
+// item_events are append-only immutable facts (series/feed observations), unlike
+// items — there is no content to merge, no last-write-wins, and no per-row
+// syncedAt/syncId column (see db.js saveEvents()/getEventsSince() and
+// desktop sync.ts pushEventsToServer()/pullEventsFromServer()). Identity is the
+// event's own id, shared verbatim between client and server; push is idempotent
+// purely because the server INSERT OR IGNOREs on that primary key. `itemId` in
+// both directions is always the SERVER's item id — the desktop client translates
+// its local item id through that item's syncId before pushing, and back on pull.
+
+// Bulk push matters here: a single series/feed item can carry hundreds of
+// events, and one HTTP request per event would not do. Capped well above any
+// realistic single sync batch so a runaway client can't post an unbounded body.
+const MAX_EVENTS_PER_PUSH = 1000;
+
+app.post("/events", async (c) => {
+  const userId = c.get("userId");
+  const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
+  const body = await c.req.json();
+  const events = Array.isArray(body.events) ? body.events : [];
+
+  if (events.length === 0) {
+    return c.json({ error: "events array is required" }, 400);
+  }
+  if (events.length > MAX_EVENTS_PER_PUSH) {
+    return c.json({ error: `at most ${MAX_EVENTS_PER_PUSH} events per push` }, 400);
+  }
+  const bad = events.find(
+    (e) => !e.id || !e.itemId || typeof e.occurredAt !== "number" || typeof e.createdAt !== "number"
+  );
+  if (bad) {
+    return c.json({ error: "each event requires id, itemId, occurredAt, and createdAt" }, 400);
+  }
+
+  const { saved, total } = db.saveEvents(userId, profileId, events);
+  return c.json({ received: total, saved });
+});
+
+// Get events created since a timestamp (for incremental sync)
+app.get("/events/since/:timestamp", (c) => {
+  const userId = c.get("userId");
+  const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
+  const rawTimestamp = c.req.param("timestamp");
+
+  // Accept ISO 8601 string or Unix ms integer, convert to Unix ms for DB query
+  let unixMs;
+  if (/^\d+$/.test(rawTimestamp)) {
+    unixMs = parseInt(rawTimestamp, 10);
+  } else {
+    const date = new Date(rawTimestamp);
+    if (isNaN(date.getTime())) {
+      return c.json({ error: "Invalid timestamp format. Use ISO 8601 or Unix ms." }, 400);
+    }
+    unixMs = date.getTime();
+  }
+
+  const events = db.getEventsSince(userId, profileId, unixMs);
+  return c.json({ events, since: rawTimestamp });
+});
+
 // === Backup endpoints ===
 
 // GET /backups - List backups for authenticated user

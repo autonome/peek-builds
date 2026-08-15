@@ -1178,6 +1178,70 @@ function getItemsSince(userId, timestamp, type = null, profileId = "default") {
 }
 
 /**
+ * Bulk-save events pushed from a client (sync push).
+ *
+ * item_events are append-only immutable facts, unlike items — there is no
+ * content to merge and no last-write-wins to resolve. Identity is the event's
+ * own id, shared verbatim with the client (no syncId indirection): INSERT OR
+ * IGNORE keyed on that primary key makes re-pushing the same event a no-op,
+ * so a sync run can safely re-send events from a run that failed partway
+ * through without duplicating anything already saved.
+ *
+ * `itemId` on every event MUST already be the SERVER's item id — the caller
+ * (desktop sync.ts pushEventsToServer()) is responsible for translating its
+ * local item id through that item's syncId before calling this route, since
+ * the server has no notion of a client's local ids.
+ *
+ * @param {string} userId
+ * @param {string} profileId
+ * @param {Array<{id: string, itemId: string, content?: string|null, value?: number|null, occurredAt: number, metadata?: object|string|null, createdAt: number}>} events
+ * @returns {{saved: number, total: number}}
+ */
+function saveEvents(userId, profileId, events) {
+  const conn = getConnection(userId, profileId);
+  let saved = 0;
+  conn.transaction(() => {
+    for (const evt of events) {
+      const metadataJson = evt.metadata
+        ? (typeof evt.metadata === "string" ? evt.metadata : JSON.stringify(evt.metadata))
+        : "{}";
+      const result = conn.run(
+        `INSERT OR IGNORE INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [evt.id, evt.itemId, evt.content ?? null, evt.value ?? null, evt.occurredAt, metadataJson, evt.createdAt]
+      );
+      if (result.changes > 0) saved++;
+    }
+  });
+  return { saved, total: events.length };
+}
+
+/**
+ * Events created since a given timestamp (for incremental sync pull).
+ * Ordered by createdAt so a client can advance a simple high-water mark, same
+ * shape as getItemsSince() for items. `itemId` on every returned row is the
+ * SERVER's item id — the caller translates it back to a local item via that
+ * item's syncId (see desktop sync.ts mergeServerEvent()).
+ */
+function getEventsSince(userId, profileId, timestamp) {
+  const conn = getConnection(userId, profileId);
+  const rows = conn.all(
+    `SELECT id, itemId, content, value, occurredAt, metadata, createdAt
+     FROM item_events WHERE CAST(createdAt AS INTEGER) > ? ORDER BY createdAt ASC`,
+    [timestamp]
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    itemId: row.itemId,
+    content: row.content,
+    value: row.value,
+    occurredAt: toTimestamp(row.occurredAt),
+    metadata: row.metadata ? JSON.parse(row.metadata) : {},
+    createdAt: toTimestamp(row.createdAt),
+  }));
+}
+
+/**
  * Get a single item by ID
  */
 function getItemById(userId, itemId, profileId = "default") {
@@ -1314,6 +1378,9 @@ module.exports = {
   getItemById,
   deleteItem,
   updateItemTags,
+  // Event sync
+  saveEvents,
+  getEventsSince,
   // Type-specific helpers
   saveText,
   saveTagset,

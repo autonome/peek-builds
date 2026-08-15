@@ -358,6 +358,18 @@ export interface ServerItem {
   mimeType: string;
 }
 
+// Server item_events format. `itemId` is always the SERVER's item id (never a
+// client-local one) — see sync.ts pushEventsToServer()/mergeServerEvent().
+export interface ServerEvent {
+  id: string;
+  itemId: string;
+  content: string | null;
+  value: number | null;
+  occurredAt: number;
+  metadata?: Record<string, unknown> | null;
+  createdAt: number;
+}
+
 // ==================== Backup Types ====================
 
 export interface BackupConfig {

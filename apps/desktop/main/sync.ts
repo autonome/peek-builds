@@ -16,6 +16,7 @@ import type {
   SyncConfig,
   SyncResult,
   ServerItem,
+  ServerEvent,
   Tag,
 } from '../types/index.js';
 import {
@@ -710,6 +711,290 @@ async function pushSingleItem(
   DEBUG && console.log(`[sync] Pushed item ${item.id} → ${response.id}`);
 }
 
+// ==================== Event Sync (item_events: series/feed observations) ====================
+//
+// item_events are append-only immutable facts, unlike items — there is no
+// content to merge and no last-write-wins conflict to resolve, so there is no
+// per-row syncedAt/syncId column here. There is still no per-row column: push
+// tracks its OWN watermark (feature_settings key 'lastEventPushAt', alongside
+// the existing 'lastSyncServerUrl' / 'lastSyncProfileId' / 'lastSyncDatastoreVersion'
+// keys), separate from the profile's shared item watermark (`lastSyncAt`) —
+// see getEventPushWatermark()/saveEventPushWatermark() below for why sharing
+// it is unsafe. packages/schema/v1.json's required_sync_columns for
+// item_events omits both syncId and syncedAt, so this still adds no datastore
+// schema column, and no bump across the backends the fidelity test gates.
+//
+// Identity is the event's own id, shared verbatim with the server (no syncId
+// indirection): a push is idempotent purely because the server INSERT OR
+// IGNOREs on that primary key (db.js saveEvents()), and a pull's merge is the
+// same insert-if-absent on the local table (mergeServerEvent() below) — so a
+// sync run can never duplicate an event, and merging a batch does not depend
+// on what order it arrives in.
+//
+// `itemId` on the wire is always the SERVER's item id, translated from/to the
+// local item id via that item's `syncId` column — which is why event push/pull
+// run AFTER item push/pull in syncAll(): an item needs its syncId set (whether
+// from this run's own push, or an earlier pull) before its events can be
+// addressed.
+//
+// Deletion is NOT synced: a locally hard-deleted event
+// (tile:datastore:delete-item-event) will reappear on the next pull if the
+// server still has it. Adding a tombstone column was rejected as premature —
+// item_events has no deletedAt in packages/schema/v1.json and none of the
+// required_sync_columns backends carry one; this is a named, accepted gap for
+// this phase, not an oversight.
+
+// Cap per push request well under the server's own MAX_EVENTS_PER_PUSH so a
+// large batch chunks into multiple requests instead of one oversized body.
+const MAX_EVENTS_PER_PUSH = 500;
+
+interface EventPushResult {
+  pushed: number;
+}
+
+interface EventPullResult {
+  pulled: number;
+}
+
+/**
+ * Read the event-push watermark: events with createdAt at or below this value
+ * are either already durably pushed, or were deliberately left out of the
+ * "already pushed" bucket because their parent item still has no syncId (see
+ * saveEventPushWatermark() for why that second case matters). Tracked
+ * separately from the profile's `lastSyncAt` (the shared item watermark) in
+ * `feature_settings`, alongside 'lastSyncServerUrl' / 'lastSyncProfileId' /
+ * 'lastSyncDatastoreVersion'.
+ *
+ * It CANNOT share `lastSyncAt`: that watermark advances to `Date.now()` at
+ * the end of every syncAll() run that doesn't throw — including a run where
+ * one item's push failed but pushToServer()'s own per-item try/catch let the
+ * run finish anyway (this is normal, expected behavior for items, which track
+ * their own per-row `syncedAt` and so don't care that the shared watermark
+ * moved on). Events have no such per-row marker; if push read the shared
+ * watermark, the failed item's events would be excluded from that run (its
+ * syncId is still empty) and then, on every later run, ALSO excluded by a
+ * watermark now sitting past their createdAt — stranding them permanently the
+ * moment the item's own push finally does succeed.
+ */
+function getEventPushWatermark(): number {
+  const db = getDb();
+  try {
+    const row = db.prepare(`
+      SELECT value FROM feature_settings
+      WHERE featureId = 'sync' AND key = 'lastEventPushAt'
+    `).get() as { value: string } | undefined;
+    if (row && row.value) {
+      const parsed = JSON.parse(row.value);
+      if (typeof parsed === 'number' && Number.isFinite(parsed)) return parsed;
+    }
+  } catch {
+    // fall through to default
+  }
+  return 0;
+}
+
+/**
+ * Persist the event-push watermark. See getEventPushWatermark() for what it
+ * means; pushEventsToServer() is the only caller, and computes it so it never
+ * advances past an event that was not actually delivered this run.
+ */
+function saveEventPushWatermark(timestamp: number): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+    VALUES (?, 'sync', 'lastEventPushAt', ?, ?)
+  `).run('sync-lastEventPushAt', JSON.stringify(timestamp), Date.now());
+}
+
+/**
+ * Push local item_events whose parent item has already been synced (has a
+ * non-empty syncId — see module comment above) and that haven't been pushed
+ * yet, per the dedicated event-push watermark (getEventPushWatermark()).
+ *
+ * Events whose parent item isn't synced yet are excluded from THIS run's
+ * batch, but — unlike a naive shared-watermark design — the watermark this
+ * function saves afterward never advances past the oldest of them, so they
+ * remain eligible on every future run until their item's own push finally
+ * succeeds (see getEventPushWatermark()'s doc comment for the failure mode
+ * this avoids). Re-pushing an already-delivered event is a no-op (the server
+ * INSERT OR IGNOREs on id), so erring toward sending more than strictly
+ * necessary is always safe here; erring toward sending less is not.
+ */
+export async function pushEventsToServer(
+  serverUrl: string,
+  apiKey: string
+): Promise<EventPushResult> {
+  const db = getDb();
+  const activeProfile = getActiveProfile();
+  const profileSyncConfig = getProfileSyncConfig(activeProfile.id);
+
+  if (!profileSyncConfig) {
+    throw new Error('Sync not configured for active profile');
+  }
+
+  const watermark = getEventPushWatermark();
+
+  // Captured BEFORE the SELECT below runs, not after the push completes: an
+  // event created during this function's own network round-trip (after the
+  // SELECT already ran, so it can't be in this run's batch) must still stay
+  // eligible for the NEXT run rather than being skipped by a watermark that
+  // advanced past it despite it never actually being sent.
+  const captureTime = Date.now();
+
+  const rows = db.prepare(`
+    SELECT e.id as id, e.content as content, e.value as value, e.occurredAt as occurredAt,
+      e.metadata as metadata, e.createdAt as createdAt, i.syncId as itemSyncId
+    FROM item_events e
+    JOIN items i ON e.itemId = i.id
+    WHERE i.syncId != '' AND e.createdAt > ?
+    ORDER BY e.createdAt ASC
+  `).all(watermark) as Array<{
+    id: string;
+    content: string | null;
+    value: number | null;
+    occurredAt: number;
+    metadata: string;
+    createdAt: number;
+    itemSyncId: string;
+  }>;
+
+  DEBUG && console.log(`[sync] Found ${rows.length} events to push`);
+
+  let pushed = 0;
+  for (let i = 0; i < rows.length; i += MAX_EVENTS_PER_PUSH) {
+    const batch = rows.slice(i, i + MAX_EVENTS_PER_PUSH);
+    const events = batch.map((row) => {
+      let metadata: Record<string, unknown> | undefined;
+      if (row.metadata && row.metadata !== '{}') {
+        try {
+          metadata = JSON.parse(row.metadata);
+        } catch {
+          // Invalid JSON, omit metadata
+        }
+      }
+      return {
+        id: row.id,
+        itemId: row.itemSyncId,
+        content: row.content,
+        value: row.value,
+        occurredAt: row.occurredAt,
+        createdAt: row.createdAt,
+        ...(metadata ? { metadata } : {}),
+      };
+    });
+
+    const path = `/events?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
+    const response = await serverFetch<{ received: number; saved: number }>(
+      serverUrl,
+      apiKey,
+      path,
+      { method: 'POST', body: { events } }
+    );
+    pushed += response.saved;
+  }
+
+  // Events whose parent item still has no syncId were excluded from the
+  // query above and were NOT pushed — no time bound here, deliberately: this
+  // must catch events blocked from an earlier run too (e.g. right after a
+  // server/datastore-version reset clears every item's syncId at once), not
+  // just ones newer than the watermark this run started with. The watermark
+  // must never advance past the oldest of them.
+  const blocked = db.prepare(`
+    SELECT MIN(e.createdAt) as minCreatedAt
+    FROM item_events e
+    JOIN items i ON e.itemId = i.id
+    WHERE i.syncId = ''
+  `).get() as { minCreatedAt: number | null };
+
+  // `- 1`: the query above (and next run's) is a strict `createdAt > watermark`,
+  // so the watermark itself must sit BEFORE captureTime, not AT it — otherwise
+  // an event whose createdAt lands on the exact same millisecond as
+  // captureTime (very possible: captureTime is read microseconds before this
+  // point, well under the 1ms Date.now() resolution) would fail the next
+  // run's `>` check despite never having been sent, the same stranding this
+  // watermark exists to prevent. Symmetric with the blocked-event term below.
+  let newWatermark = captureTime - 1;
+  if (blocked.minCreatedAt !== null && blocked.minCreatedAt !== undefined) {
+    newWatermark = Math.min(newWatermark, blocked.minCreatedAt - 1);
+  }
+  saveEventPushWatermark(newWatermark);
+
+  DEBUG && console.log(`[sync] Event push complete: ${pushed} saved, watermark -> ${newWatermark}`);
+
+  return { pushed };
+}
+
+/**
+ * Pull events the server has recorded since `since`, merging each into the
+ * local item_events table. See module comment: merge is a pure
+ * insert-if-absent keyed on the event's own id, so it is safe regardless of
+ * arrival order.
+ */
+export async function pullEventsFromServer(
+  serverUrl: string,
+  apiKey: string,
+  since?: number
+): Promise<EventPullResult> {
+  const activeProfile = getActiveProfile();
+  const profileSyncConfig = getProfileSyncConfig(activeProfile.id);
+
+  if (!profileSyncConfig) {
+    throw new Error('Sync not configured for active profile');
+  }
+
+  const timestamp = since && since > 0 ? since : 0;
+  let path = `/events/since/${timestamp}`;
+  path += `?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
+
+  const response = await serverFetch<{ events: ServerEvent[] }>(serverUrl, apiKey, path);
+  const serverEvents = response.events;
+
+  DEBUG && console.log(`[sync] Received ${serverEvents.length} events from server`);
+
+  let pulled = 0;
+  for (const serverEvent of serverEvents) {
+    if (mergeServerEvent(serverEvent)) pulled++;
+  }
+
+  DEBUG && console.log(`[sync] Event pull complete: ${pulled} pulled`);
+
+  return { pulled };
+}
+
+/**
+ * Merge one server event into the local item_events table. Returns true if a
+ * new row was inserted, false if it was already present locally or its
+ * parent item hasn't been synced locally yet (that event will merge on a
+ * later run once the parent item exists locally with a matching syncId).
+ */
+function mergeServerEvent(serverEvent: ServerEvent): boolean {
+  const db = getDb();
+
+  const localItem = db.prepare('SELECT id FROM items WHERE syncId = ?').get(serverEvent.itemId) as
+    | { id: string }
+    | undefined;
+  if (!localItem) {
+    DEBUG && console.log(`[sync] Skipping event ${serverEvent.id}: parent item ${serverEvent.itemId} not found locally`);
+    return false;
+  }
+
+  const metadataJson = serverEvent.metadata ? JSON.stringify(serverEvent.metadata) : '{}';
+  const result = db.prepare(`
+    INSERT OR IGNORE INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    serverEvent.id,
+    localItem.id,
+    serverEvent.content,
+    serverEvent.value,
+    serverEvent.occurredAt,
+    metadataJson,
+    serverEvent.createdAt
+  );
+
+  return result.changes > 0;
+}
+
 // ==================== Server Change Detection ====================
 
 /**
@@ -724,6 +1009,18 @@ function resetPerItemSyncState(profileId: string): void {
     UPDATE items SET syncedAt = 0, syncId = '' WHERE deletedAt = 0
   `).run();
   updateLastSyncTime(profileId, 0);
+
+  // Clearing every item's syncId above means pushEventsToServer()'s own
+  // "blocked" scan (WHERE i.syncId = '') would — for exactly one run —
+  // see every item as newly blocked and pull the event watermark back to
+  // cover them. But that scan only protects events whose parent is STILL
+  // blocked at the moment it runs; an item that regains its syncId from
+  // THIS SAME run's own item push (pushToServer always runs immediately
+  // before pushEventsToServer) looks already-resolved by the time the scan
+  // runs, so events excluded by an already-advanced watermark from BEFORE
+  // this reset would never be rescued. Reset the event watermark to 0
+  // explicitly, the same "start over" the item watermark above gets.
+  saveEventPushWatermark(0);
 }
 
 /**
@@ -906,9 +1203,23 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
     pulled = pullResult.pulled;
     conflicts = pullResult.conflicts;
 
+    // Event pull runs AFTER item pull: it resolves each event's server itemId
+    // against a local item's syncId, so any item newly pulled above must
+    // already exist locally before its events can be addressed.
+    const eventPullResult = await pullEventsFromServer(serverUrl, apiKey, config.lastSyncTime);
+    pulled += eventPullResult.pulled;
+
     // Then push local changes
     const pushResult = await pushToServer(serverUrl, apiKey, config.lastSyncTime);
     pushed = pushResult.pushed;
+
+    // Event push runs AFTER item push for the same reason: a locally-created
+    // item needs the syncId its own push just assigned before its events can
+    // be pushed. Unlike items, it does not take config.lastSyncTime — it
+    // tracks its own watermark (see pushEventsToServer()'s doc comment for
+    // why the shared one is unsafe for events).
+    const eventPushResult = await pushEventsToServer(serverUrl, apiKey);
+    pushed += eventPushResult.pushed;
 
     // Update last sync time AFTER push completes — using Date.now() ensures
     // the high-water mark is after any server-side timestamps set during push,
