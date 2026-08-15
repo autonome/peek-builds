@@ -370,6 +370,23 @@ export interface ServerEvent {
   createdAt: number;
 }
 
+// Server tag metadata format. Identity is the tag's own `name` (never a syncId —
+// see sync.ts pushTagsToServer()/pullTagsFromServer()/mergeServerTag()).
+// `parentName` is the parent tag's NAME, never any id: tag identity on the wire
+// is the name, so the parent reference travels the same way, resolved back to a
+// local tag id on pull.
+export interface ServerTag {
+  id: string;
+  name: string;
+  slug?: string | null;
+  color?: string | null;
+  parentName?: string | null;
+  description?: string | null;
+  metadata?: Record<string, unknown> | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // ==================== Backup Types ====================
 
 export interface BackupConfig {

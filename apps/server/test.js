@@ -191,6 +191,77 @@ describe("Database Tests", () => {
     });
   });
 
+  describe("Tag Metadata Sync (saveTags/getTagsSince)", () => {
+    it("upserts a new tag's color, description, and metadata by name", () => {
+      const { saved, total } = db.saveTags(TEST_USER_ID, "default", [
+        { name: "work", color: "#ff0000", description: "Work stuff", metadata: { icon: "briefcase" }, createdAt: 1000, updatedAt: 1000 },
+      ]);
+      assert.strictEqual(total, 1);
+      assert.strictEqual(saved, 1);
+
+      const tags = db.getTagsSince(TEST_USER_ID, "default", 0);
+      assert.strictEqual(tags.length, 1);
+      assert.strictEqual(tags[0].name, "work");
+      assert.strictEqual(tags[0].color, "#ff0000");
+      assert.strictEqual(tags[0].description, "Work stuff");
+      assert.deepStrictEqual(tags[0].metadata, { icon: "briefcase" });
+    });
+
+    it("carries parentName as a plain string, not any id", () => {
+      db.saveTags(TEST_USER_ID, "default", [
+        { name: "parent", createdAt: 1000, updatedAt: 1000 },
+        { name: "child", parentName: "parent", createdAt: 1000, updatedAt: 1000 },
+      ]);
+      const tags = db.getTagsSince(TEST_USER_ID, "default", 0);
+      const child = tags.find((t) => t.name === "child");
+      assert.strictEqual(child.parentName, "parent");
+    });
+
+    it("last-write-wins: an older push does not overwrite a newer existing tag", () => {
+      db.saveTags(TEST_USER_ID, "default", [
+        { name: "notes", color: "#00ff00", createdAt: 1000, updatedAt: 5000 },
+      ]);
+      const { saved } = db.saveTags(TEST_USER_ID, "default", [
+        { name: "notes", color: "#ff0000", createdAt: 1000, updatedAt: 2000 },
+      ]);
+      assert.strictEqual(saved, 0, "an older updatedAt must not be counted as saved");
+
+      const tags = db.getTagsSince(TEST_USER_ID, "default", 0);
+      assert.strictEqual(tags.find((t) => t.name === "notes").color, "#00ff00");
+    });
+
+    it("getTagsSince returns only tags updated after the given timestamp", () => {
+      db.saveTags(TEST_USER_ID, "default", [
+        { name: "old", createdAt: 1000, updatedAt: 1000 },
+        { name: "new", createdAt: 5000, updatedAt: 5000 },
+      ]);
+      const sinceMid = db.getTagsSince(TEST_USER_ID, "default", 3000);
+      assert.strictEqual(sinceMid.length, 1);
+      assert.strictEqual(sinceMid[0].name, "new");
+    });
+
+    it("an item push that derives a tag row does not wipe metadata already on that row", () => {
+      db.saveTags(TEST_USER_ID, "default", [
+        { name: "project", color: "#123456", description: "A real description", metadata: { hierarchy: "root" }, createdAt: 1000, updatedAt: 1000 },
+      ]);
+
+      // saveUrl tags the item with the same name, exercising getOrCreateTagWithConn()
+      // on a row that already carries metadata — this is the main way this feature
+      // could lose data.
+      db.saveUrl(TEST_USER_ID, "https://example.com", ["project"]);
+
+      const tags = db.getTagsSince(TEST_USER_ID, "default", 0);
+      const tag = tags.find((t) => t.name === "project");
+      assert.strictEqual(tag.color, "#123456", "color must survive an item push referencing this tag");
+      assert.strictEqual(tag.description, "A real description");
+      assert.deepStrictEqual(tag.metadata, { hierarchy: "root" });
+
+      // The item push still did its own job — frequency incremented.
+      const byFrecency = db.getTagsByFrecency(TEST_USER_ID, "default");
+      assert.strictEqual(byFrecency.find((t) => t.name === "project").frequency, 1);
+    });
+  });
+
   describe("Settings", () => {
     it("should save and retrieve settings", () => {
       db.setSetting(TEST_USER_ID, "test_key", "test_value");
@@ -2545,6 +2616,109 @@ describe("Event Sync Routes (POST /events, GET /events/since/:timestamp)", () =>
 
   it("rejects an event missing required fields", async () => {
     const res = await pushEvents([{ id: "incomplete" }]);
+    assert.strictEqual(res.status, 400);
+  });
+});
+
+describe("Tag Sync Routes (POST /tags, GET /tags/since/:timestamp)", () => {
+  let app;
+  let users;
+  let apiKey;
+  const TEST_USER = "tagsyncuser";
+
+  beforeEach(() => {
+    for (const mod of ["./db", "./users", "./grants", "./mcp-items", "./backup", "./auth", "./index"]) {
+      delete require.cache[require.resolve(mod)];
+    }
+    cleanTestDir();
+
+    require("./db");
+    users = require("./users");
+    ({ app } = require("./index"));
+
+    const result = users.createUser(TEST_USER);
+    apiKey = result.apiKey;
+  });
+
+  function authHeaders() {
+    return { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+  }
+
+  async function pushTags(tags) {
+    return app.request("/tags", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ tags }),
+    });
+  }
+
+  async function tagsSince(timestamp) {
+    const res = await app.request(`/tags/since/${timestamp}`, { headers: authHeaders() });
+    return res.json();
+  }
+
+  it("a tag pushes its color, description, and metadata, and a pull applies them", async () => {
+    const pushRes = await pushTags([
+      { name: "reading", color: "#00aaff", description: "Books and articles", metadata: { icon: "book" }, createdAt: 1000, updatedAt: 1000 },
+    ]);
+    assert.strictEqual(pushRes.status, 200);
+    const pushJson = await pushRes.json();
+    assert.strictEqual(pushJson.saved, 1);
+
+    const { tags } = await tagsSince(0);
+    assert.strictEqual(tags.length, 1);
+    assert.strictEqual(tags[0].name, "reading");
+    assert.strictEqual(tags[0].color, "#00aaff");
+    assert.strictEqual(tags[0].description, "Books and articles");
+    assert.deepStrictEqual(tags[0].metadata, { icon: "book" });
+  });
+
+  it("a parent arriving after its child in the same push still resolves by name on pull", async () => {
+    await pushTags([
+      { name: "child", parentName: "parent", createdAt: 1000, updatedAt: 1000 },
+      { name: "parent", createdAt: 1000, updatedAt: 1000 },
+    ]);
+
+    const { tags } = await tagsSince(0);
+    const child = tags.find((t) => t.name === "child");
+    assert.strictEqual(child.parentName, "parent");
+    assert.ok(tags.some((t) => t.name === "parent"), "the parent tag itself must also come back");
+  });
+
+  it("incremental pull returns only tags updated after the given timestamp", async () => {
+    await pushTags([
+      { name: "old-tag", createdAt: 1000, updatedAt: 1000 },
+      { name: "new-tag", createdAt: 5000, updatedAt: 5000 },
+    ]);
+
+    const { tags: sinceMid } = await tagsSince(3000);
+    assert.strictEqual(sinceMid.length, 1);
+    assert.strictEqual(sinceMid[0].name, "new-tag");
+  });
+
+  it("a failed push does not save any tag past the point of failure — retried tags are idempotent", async () => {
+    // The route itself doesn't partially fail mid-array (saveTags runs in one
+    // transaction), but a re-push of the same tag must still be a no-op that
+    // doesn't double count, the same guarantee events rely on for retry safety.
+    const tag = { name: "retry-me", color: "#111111", createdAt: 1000, updatedAt: 1000 };
+    const first = await pushTags([tag]);
+    assert.strictEqual((await first.json()).saved, 1);
+
+    const second = await pushTags([tag]);
+    const secondJson = await second.json();
+    assert.strictEqual(secondJson.saved, 0, "an unchanged updatedAt must not be re-saved");
+
+    const { tags } = await tagsSince(0);
+    assert.strictEqual(tags.filter((t) => t.name === "retry-me").length, 1);
+  });
+
+  it("rejects an empty tags array", async () => {
+    const res = await pushTags([]);
+    assert.strictEqual(res.status, 400);
+  });
+
+  it("rejects a tag missing required fields", async () => {
+    const res = await pushTags([{ color: "#000000" }]);
     assert.strictEqual(res.status, 400);
   });
 });

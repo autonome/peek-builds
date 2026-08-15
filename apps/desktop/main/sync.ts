@@ -17,6 +17,7 @@ import type {
   SyncResult,
   ServerItem,
   ServerEvent,
+  ServerTag,
   Tag,
 } from '../types/index.js';
 import {
@@ -995,6 +996,396 @@ function mergeServerEvent(serverEvent: ServerEvent): boolean {
   return result.changes > 0;
 }
 
+// ==================== Tag Sync (tag metadata: slug/color/parentId/description/metadata) ====================
+//
+// Tag ROWS themselves are not what this section syncs — a tag row is created
+// implicitly by pushSingleItem()'s `tags` array, the same way it always has been
+// (the server upserts one by name in getOrCreateTagWithConn()). What never made
+// it across before is the metadata on that row: slug, color, parentId,
+// description, metadata. Those are still no per-row syncedAt/syncId column on the
+// local `tags` table (packages/schema/v1.json's required_sync_columns for tags
+// does list them now, but as sync:true columns already present on the table, not
+// a new one) — push tracks its OWN watermark, the same pattern item_events uses
+// and for the same reason (see getEventPushWatermark()'s doc comment above): the
+// shared `lastSyncAt` watermark advances even when one item's push failed
+// (pushToServer()'s own per-item try/catch lets the run finish anyway), and tags
+// have no per-row marker to fall back on the way items do with their own
+// `syncedAt`. A dedicated 'lastTagPushAt' feature-settings key avoids the same
+// stranding failure mode events would have hit.
+//
+// Identity on the wire is the tag's own `name`, not a syncId — introducing a
+// second identity would give the same server row two sources of truth that must
+// reconcile, and the server already treats name as canonical for tag rows
+// derived from item pushes. Consequence accepted, not fixed: renaming a tag on
+// one device creates a second tag rather than renaming the first (see
+// docs/sync-coverage-gaps.md §3).
+//
+// `parentId` never travels as an id — it travels as `parentName`, the parent
+// tag's name, since name is the identity. A pull resolves `parentName` back to
+// a local tag id in a SECOND pass over the pulled batch (resolveTagParent()),
+// after every tag in the batch has already been upserted in the first pass
+// (mergeServerTag()) — so a parent arriving after its child in the same pull
+// still ends up linked; a single-pass merge would depend on arrival order.
+//
+// Unlike item_events, there is no "parent not synced yet" blocking condition to
+// track here: a tag isn't gated on any other entity's sync state the way an
+// event is gated on its parent item's syncId, so pushTagsToServer()'s watermark
+// logic is the simpler half of the event pattern — no separate "blocked" scan.
+
+// Cap per push request well under the server's own MAX_TAGS_PER_PUSH so a large
+// tag set chunks into multiple requests instead of one oversized body.
+const MAX_TAGS_PER_PUSH = 500;
+
+interface TagPushResult {
+  pushed: number;
+}
+
+interface TagPullResult {
+  pulled: number;
+}
+
+/**
+ * Read the tag-push watermark: tags with updatedAt at or below this value are
+ * already durably pushed. Tracked separately from the profile's `lastSyncAt`
+ * (the shared item watermark) in `feature_settings`, alongside
+ * 'lastEventPushAt' / 'lastSyncServerUrl' / 'lastSyncProfileId' /
+ * 'lastSyncDatastoreVersion' — see the module comment above for why sharing
+ * `lastSyncAt` is unsafe for a table with no per-row syncedAt of its own.
+ */
+function getTagPushWatermark(): number {
+  const db = getDb();
+  try {
+    const row = db.prepare(`
+      SELECT value FROM feature_settings
+      WHERE featureId = 'sync' AND key = 'lastTagPushAt'
+    `).get() as { value: string } | undefined;
+    if (row && row.value) {
+      const parsed = JSON.parse(row.value);
+      if (typeof parsed === 'number' && Number.isFinite(parsed)) return parsed;
+    }
+  } catch {
+    // fall through to default
+  }
+  return 0;
+}
+
+/**
+ * Persist the tag-push watermark. See getTagPushWatermark() for what it means;
+ * pushTagsToServer() is the only caller, and only calls this after every tag in
+ * the batch has been confirmed pushed — see pushTagsToServer()'s doc comment.
+ */
+function saveTagPushWatermark(timestamp: number): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+    VALUES (?, 'sync', 'lastTagPushAt', ?, ?)
+  `).run('sync-lastTagPushAt', JSON.stringify(timestamp), Date.now());
+}
+
+/**
+ * Push local tags whose metadata (slug/color/parentId/description/metadata)
+ * changed since the last tag push, per the dedicated tag-push watermark
+ * (getTagPushWatermark()). `parentId` — a local tag id — is resolved to the
+ * parent's `name` before it goes on the wire, since name is the identity (see
+ * module comment above).
+ *
+ * The watermark only advances once every chunk in this run has been confirmed
+ * pushed: if any `serverFetch` call throws, this function throws too, and
+ * saveTagPushWatermark() below is never reached — the watermark stays exactly
+ * where it was, so every tag from this run (including ones a prior chunk in the
+ * same run already delivered) is retried on the next push. Re-pushing a tag is
+ * idempotent (the server upserts by name — db.js saveTags()), so retrying a
+ * tag that already landed is harmless; leaving a genuinely-failed one stranded
+ * past a watermark that moved on anyway is not.
+ */
+export async function pushTagsToServer(
+  serverUrl: string,
+  apiKey: string
+): Promise<TagPushResult> {
+  const db = getDb();
+  const activeProfile = getActiveProfile();
+  const profileSyncConfig = getProfileSyncConfig(activeProfile.id);
+
+  if (!profileSyncConfig) {
+    throw new Error('Sync not configured for active profile');
+  }
+
+  const watermark = getTagPushWatermark();
+
+  // Captured BEFORE the SELECT below runs, not after the push completes — same
+  // reasoning as pushEventsToServer()'s captureTime: a tag edited during this
+  // function's own network round-trip must stay eligible for the NEXT run
+  // rather than being skipped by a watermark that advanced past it despite it
+  // never actually being sent.
+  const captureTime = Date.now();
+
+  const rows = db.prepare(`
+    SELECT id, name, slug, color, parentId, description, metadata, createdAt, updatedAt
+    FROM tags
+    WHERE updatedAt > ?
+    ORDER BY updatedAt ASC
+  `).all(watermark) as Array<{
+    id: string;
+    name: string;
+    slug: string | null;
+    color: string | null;
+    parentId: string;
+    description: string | null;
+    metadata: string;
+    createdAt: number;
+    updatedAt: number;
+  }>;
+
+  DEBUG && console.log(`[sync] Found ${rows.length} tags to push`);
+
+  let pushed = 0;
+  for (let i = 0; i < rows.length; i += MAX_TAGS_PER_PUSH) {
+    const batch = rows.slice(i, i + MAX_TAGS_PER_PUSH);
+    const tags = batch.map((row) => {
+      // parentId is a local tag id — resolve it to the parent's name, the
+      // identity the wire format uses (module comment above).
+      let parentName: string | null = null;
+      if (row.parentId) {
+        const parent = db.prepare('SELECT name FROM tags WHERE id = ?').get(row.parentId) as
+          | { name: string }
+          | undefined;
+        parentName = parent ? parent.name : null;
+      }
+
+      let metadata: Record<string, unknown> | undefined;
+      if (row.metadata && row.metadata !== '{}') {
+        try {
+          metadata = JSON.parse(row.metadata);
+        } catch {
+          // Invalid JSON, omit metadata
+        }
+      }
+
+      return {
+        name: row.name,
+        slug: row.slug || '',
+        color: row.color || '',
+        parentName,
+        description: row.description || '',
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        ...(metadata ? { metadata } : {}),
+      };
+    });
+
+    const path = `/tags?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
+    const response = await serverFetch<{ received: number; saved: number }>(
+      serverUrl,
+      apiKey,
+      path,
+      { method: 'POST', body: { tags } }
+    );
+    pushed += response.saved;
+  }
+
+  // Reached only if every chunk above succeeded — see this function's doc
+  // comment. `- 1`: symmetric with pushEventsToServer()'s newWatermark — the
+  // next run's query is a strict `updatedAt > watermark`, so the watermark
+  // must sit BEFORE captureTime, not AT it.
+  const newWatermark = captureTime - 1;
+  saveTagPushWatermark(newWatermark);
+
+  DEBUG && console.log(`[sync] Tag push complete: ${pushed} saved, watermark -> ${newWatermark}`);
+
+  return { pushed };
+}
+
+/**
+ * Pull tag metadata the server has recorded since `since`, merging each into
+ * the local `tags` table. Two passes over the pulled batch, per the module
+ * comment above:
+ *
+ * 1. mergeServerTag() upserts every incoming tag by name with `parentId` left
+ *    untouched (a brand-new local row gets '').
+ * 2. resolveTagParent() resolves each incoming tag's `parentName` to a local
+ *    tag id and sets `parentId` — but only for tags pass 1 actually applied
+ *    (new, or server-newer), so last-write-wins governs the parent link the
+ *    same way it governs the rest of the row.
+ *
+ * Splitting into two passes means a parent arriving after its child in the
+ * same pull still ends up linked; a single-pass merge would depend on arrival
+ * order. After both passes, breakTagParentCycles() walks the ancestor chain of
+ * every tag this pull touched and deterministically breaks any cycle it finds.
+ */
+export async function pullTagsFromServer(
+  serverUrl: string,
+  apiKey: string,
+  since?: number
+): Promise<TagPullResult> {
+  const activeProfile = getActiveProfile();
+  const profileSyncConfig = getProfileSyncConfig(activeProfile.id);
+
+  if (!profileSyncConfig) {
+    throw new Error('Sync not configured for active profile');
+  }
+
+  const timestamp = since && since > 0 ? since : 0;
+  let path = `/tags/since/${timestamp}`;
+  path += `?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
+
+  const response = await serverFetch<{ tags: ServerTag[] }>(serverUrl, apiKey, path);
+  const serverTags = response.tags;
+
+  DEBUG && console.log(`[sync] Received ${serverTags.length} tags from server`);
+
+  let pulled = 0;
+  const applied: ServerTag[] = [];
+  for (const serverTag of serverTags) {
+    if (mergeServerTag(serverTag)) {
+      pulled++;
+      applied.push(serverTag);
+    }
+  }
+
+  for (const serverTag of applied) {
+    resolveTagParent(serverTag);
+  }
+
+  breakTagParentCycles(applied.map((t) => t.name));
+
+  DEBUG && console.log(`[sync] Tag pull complete: ${pulled} pulled`);
+
+  return { pulled };
+}
+
+/**
+ * Pass 1 of pullTagsFromServer(): upsert one server tag into the local `tags`
+ * table by name, last-write-wins on `updatedAt` (matching mergeServerItem()) —
+ * server newer applies, local newer keeps local, equal skips. `parentId` is
+ * deliberately left alone here (untouched on update, '' on insert); pass 2
+ * (resolveTagParent()) sets it once every tag in the batch is guaranteed to
+ * exist locally. Returns true if the server version was applied (inserted or
+ * updated), false if the local row was kept.
+ */
+function mergeServerTag(serverTag: ServerTag): boolean {
+  const db = getDb();
+
+  const local = db.prepare('SELECT * FROM tags WHERE name = ?').get(serverTag.name) as Tag | undefined;
+  const metadataJson = serverTag.metadata ? JSON.stringify(serverTag.metadata) : '{}';
+
+  if (!local) {
+    const tagId = generateId('tag');
+    db.prepare(`
+      INSERT INTO tags (id, name, slug, color, parentId, description, metadata, createdAt, updatedAt, frequency, lastUsed, frecencyScore)
+      VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 0, 0, 0)
+    `).run(
+      tagId,
+      serverTag.name,
+      serverTag.slug || '',
+      serverTag.color || '#999999',
+      serverTag.description || '',
+      metadataJson,
+      serverTag.createdAt,
+      serverTag.updatedAt
+    );
+    return true;
+  }
+
+  if (serverTag.updatedAt > local.updatedAt) {
+    db.prepare(`
+      UPDATE tags SET slug = ?, color = ?, description = ?, metadata = ?, updatedAt = ? WHERE id = ?
+    `).run(
+      serverTag.slug || '',
+      serverTag.color || '#999999',
+      serverTag.description || '',
+      metadataJson,
+      serverTag.updatedAt,
+      local.id
+    );
+    return true;
+  }
+
+  // local.updatedAt >= serverTag.updatedAt: local wins on newer, and ties skip.
+  return false;
+}
+
+/**
+ * Pass 2 of pullTagsFromServer(): resolve one server tag's `parentName` to a
+ * local tag id and set `parentId` on the (already-upserted, by pass 1) local
+ * row of the same name. A `parentName` the local database doesn't recognize
+ * (not part of this pull, and never synced before) leaves `parentId`
+ * untouched rather than silently dropping the link — it will resolve on a
+ * later pull once that parent tag exists locally.
+ */
+function resolveTagParent(serverTag: ServerTag): void {
+  const db = getDb();
+
+  const local = db.prepare('SELECT id, parentId FROM tags WHERE name = ?').get(serverTag.name) as
+    | { id: string; parentId: string }
+    | undefined;
+  if (!local) return; // pass 1 just upserted this — should not happen
+
+  if (!serverTag.parentName) {
+    if (local.parentId !== '') {
+      db.prepare('UPDATE tags SET parentId = ? WHERE id = ?').run('', local.id);
+    }
+    return;
+  }
+
+  const parent = db.prepare('SELECT id FROM tags WHERE name = ?').get(serverTag.parentName) as
+    | { id: string }
+    | undefined;
+  if (!parent) return;
+
+  if (local.parentId !== parent.id) {
+    db.prepare('UPDATE tags SET parentId = ? WHERE id = ?').run(parent.id, local.id);
+  }
+}
+
+/**
+ * Walk the ancestor chain of each named tag (post pass-2, so `parentId` is
+ * current) and deterministically break any cycle found: the tag IN the cycle
+ * with the newest `updatedAt` has its `parentId` cleared, ties broken by lower
+ * `id` — a pure function of data already on every device, so two devices that
+ * pull the same cycle-forming input break the same link, not whichever one
+ * happened to walk it first.
+ */
+function breakTagParentCycles(touchedNames: string[]): void {
+  const db = getDb();
+
+  for (const name of touchedNames) {
+    const start = db.prepare('SELECT id FROM tags WHERE name = ?').get(name) as { id: string } | undefined;
+    if (!start) continue;
+
+    const path: string[] = [];
+    let currentId: string | null = start.id;
+
+    while (currentId) {
+      if (path.includes(currentId)) {
+        const cycleIds = path.slice(path.indexOf(currentId));
+        breakCycle(db, cycleIds);
+        break;
+      }
+      path.push(currentId);
+      const row = db.prepare('SELECT parentId FROM tags WHERE id = ?').get(currentId) as
+        | { parentId: string }
+        | undefined;
+      currentId = row && row.parentId ? row.parentId : null;
+    }
+  }
+}
+
+function breakCycle(db: ReturnType<typeof getDb>, cycleIds: string[]): void {
+  const candidates = cycleIds.map((id) =>
+    db.prepare('SELECT id, name, updatedAt FROM tags WHERE id = ?').get(id) as {
+      id: string;
+      name: string;
+      updatedAt: number;
+    }
+  );
+  // Newest updatedAt is selected for the break; ties go to the lower id, so
+  // every device picks the same tag regardless of which order it walked in.
+  candidates.sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const toBreak = candidates[0];
+  db.prepare('UPDATE tags SET parentId = ? WHERE id = ?').run('', toBreak.id);
+  DEBUG && console.log(`[sync] Broke tag parent cycle: cleared parentId on '${toBreak.name}' (${toBreak.id})`);
+}
+
 // ==================== Server Change Detection ====================
 
 /**
@@ -1021,6 +1412,14 @@ function resetPerItemSyncState(profileId: string): void {
   // this reset would never be rescued. Reset the event watermark to 0
   // explicitly, the same "start over" the item watermark above gets.
   saveEventPushWatermark(0);
+
+  // Tags have no such "blocked" window — a tag isn't gated on any other
+  // entity's sync state the way an event is gated on its parent item's syncId
+  // — but the same "start over" applies for the same underlying reason: the
+  // tag-push query only re-sends rows changed since the last tag push, so
+  // without this reset every tag already on the server would keep whatever
+  // metadata shape the OLD version last sent, forever.
+  saveTagPushWatermark(0);
 }
 
 /**
@@ -1198,9 +1597,16 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
   let conflicts = 0;
 
   try {
-    // Pull first (to get any server changes)
+    // Tag pull runs BEFORE item pull: an incoming item that references a tag
+    // (by name, via its `tags` array) must find that tag already shaped
+    // locally — slug/color/parentId/description/metadata — rather than only
+    // the bare row getOrCreateTag() would otherwise create on demand.
+    const tagPullResult = await pullTagsFromServer(serverUrl, apiKey, config.lastSyncTime);
+    pulled = tagPullResult.pulled;
+
+    // Pull items (to get any server changes)
     const pullResult = await pullFromServer(serverUrl, apiKey, config.lastSyncTime);
-    pulled = pullResult.pulled;
+    pulled += pullResult.pulled;
     conflicts = pullResult.conflicts;
 
     // Event pull runs AFTER item pull: it resolves each event's server itemId
@@ -1209,9 +1615,17 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
     const eventPullResult = await pullEventsFromServer(serverUrl, apiKey, config.lastSyncTime);
     pulled += eventPullResult.pulled;
 
-    // Then push local changes
+    // Tag push runs BEFORE item push for the same reason pull runs it first:
+    // pushSingleItem() sends tag NAMES only, so ordering doesn't create a
+    // dependency the way events depend on their parent item's syncId — this
+    // is about the server shaping tag rows correctly (metadata attached)
+    // before whichever device the tags travel to actually pulls them back.
+    const tagPushResult = await pushTagsToServer(serverUrl, apiKey);
+    pushed = tagPushResult.pushed;
+
+    // Then push local item changes
     const pushResult = await pushToServer(serverUrl, apiKey, config.lastSyncTime);
-    pushed = pushResult.pushed;
+    pushed += pushResult.pushed;
 
     // Event push runs AFTER item push for the same reason: a locally-created
     // item needs the syncId its own push just assigned before its events can

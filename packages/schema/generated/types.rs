@@ -75,16 +75,16 @@ pub struct SchemaTags {
     #[serde(rename = "updatedAt")]
     /// Last update timestamp (Unix ms)
     pub updated_at: i64,
-    /// URL-safe slug (desktop only)
+    /// URL-safe slug
     pub slug: Option<String>,
-    /// Display color (desktop only)
+    /// Display color
     pub color: String,
     #[serde(rename = "parentId")]
-    /// Parent tag for hierarchy (desktop only)
+    /// Parent tag for hierarchy. Travels on the wire as the parent's name (parentName), not this id — tag identity is the name, so the reference is too. Resolved back to a local tag id on pull.
     pub parent_id: String,
-    /// Tag description (desktop only)
+    /// Tag description
     pub description: String,
-    /// JSON metadata (desktop only)
+    /// JSON metadata
     pub metadata: String,
 }
 

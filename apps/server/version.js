@@ -17,8 +17,14 @@
  * docs/sync-coverage-gaps.md §1). Must stay in lockstep with
  * apps/desktop/version.ts DATASTORE_VERSION — see that file for how the desktop
  * client also uses this number to force a one-time full re-push.
+ *
+ * DATASTORE_VERSION 3 (2026-08): tags gained slug/color/parentName/description/
+ * metadata as synced columns (packages/schema/v1.json + apps/server/schema.json,
+ * docs/sync-coverage-gaps.md §3). The server column is `parentName` (the parent
+ * tag's name), not `parentId` — tag identity on the wire is the name, so the
+ * parent reference travels the same way.
  */
-const DATASTORE_VERSION = 2;
+const DATASTORE_VERSION = 3;
 const PROTOCOL_VERSION = 1;
 
 module.exports = { DATASTORE_VERSION, PROTOCOL_VERSION };

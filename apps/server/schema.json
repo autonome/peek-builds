@@ -180,39 +180,37 @@
         "slug": {
           "type": "text",
           "nullable": true,
-          "sync": false,
-          "description": "URL-safe slug (desktop only)"
+          "sync": true,
+          "description": "URL-safe slug"
         },
         "color": {
           "type": "text",
           "default": "'#999999'",
-          "sync": false,
-          "description": "Display color (desktop only)"
+          "sync": true,
+          "description": "Display color"
         },
-        "parentId": {
+        "parentName": {
           "type": "text",
           "default": "''",
-          "sync": false,
-          "description": "Parent tag for hierarchy (desktop only)"
+          "sync": true,
+          "description": "Parent tag's NAME (not a server row id) — tag identity on the wire is the name, so the parent reference is too"
         },
         "description": {
           "type": "text",
           "default": "''",
-          "sync": false,
-          "description": "Tag description (desktop only)"
+          "sync": true,
+          "description": "Tag description"
         },
         "metadata": {
           "type": "text",
           "default": "'{}'",
-          "sync": false,
-          "description": "JSON metadata (desktop only)"
+          "sync": true,
+          "description": "JSON metadata"
         }
       },
       "indexes": [
         { "name": "idx_tags_name", "columns": ["name"], "sync": true },
-        { "name": "idx_tags_frecency", "columns": ["frecencyScore"], "order": "DESC", "sync": true },
-        { "name": "idx_tags_slug", "columns": ["slug"], "sync": false },
-        { "name": "idx_tags_parentId", "columns": ["parentId"], "sync": false }
+        { "name": "idx_tags_frecency", "columns": ["frecencyScore"], "order": "DESC", "sync": true }
       ]
     },
 
@@ -259,7 +257,7 @@
     "id_type": "text",
     "required_sync_columns": {
       "items": ["id", "type", "content", "syncId", "syncedAt", "createdAt", "updatedAt", "deletedAt"],
-      "tags": ["id", "name", "frequency", "lastUsed", "frecencyScore", "createdAt", "updatedAt"],
+      "tags": ["id", "name", "frequency", "lastUsed", "frecencyScore", "createdAt", "updatedAt", "slug", "color", "parentName", "description", "metadata"],
       "item_tags": ["itemId", "tagId", "createdAt"]
     }
   }

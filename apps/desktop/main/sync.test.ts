@@ -1,5 +1,7 @@
 /**
- * Unit tests for the event-sync watermark in sync.ts.
+ * Unit tests for the event-sync watermark in sync.ts, and (second describe
+ * block below) for tag metadata sync (pushTagsToServer/pullTagsFromServer/
+ * mergeServerTag).
  *
  * Drives the REAL production sync functions (pushEventsToServer,
  * pushToServer, syncAll) against the REAL server app (apps/server/index.js —
@@ -238,5 +240,245 @@ describe('Event push watermark — cross-run stranding regression', () => {
       'an event created while a push is in flight must not be permanently skipped by ' +
       'the watermark that same push advances to afterward'
     );
+  });
+});
+
+describe('Tag metadata sync — push/pull/merge', () => {
+  before(async () => {
+    ({ app: serverApp } = require(path.join(SERVER_DIR, 'index.js')));
+    users = require(path.join(SERVER_DIR, 'users.js'));
+    datastore = await import('./datastore.js');
+    profiles = await import('./profiles.js');
+    sync = await import('./sync.js');
+    originalFetch = globalThis.fetch;
+  });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  });
+
+  function authHeaders(apiKey: string) {
+    return { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
+  }
+
+  /** Same shape as the event-sync describe block's setup() above, but the
+   * failure marker (if given) intercepts POST /tags instead of POST /items —
+   * tag push has its own watermark and its own retry-safety guarantee to
+   * verify (getTagPushWatermark()'s doc comment in sync.ts). */
+  function setup(name: string, opts: { failFirstTagPushMarker?: string } = {}) {
+    const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-tags-${name}-`));
+    datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
+    profiles.initProfilesDb(desktopDir);
+    profiles.ensureDefaultProfile();
+    const activeProfile = profiles.getActiveProfile();
+
+    const userId = `tagwm-${name}-${crypto.randomUUID()}`;
+    const { apiKey } = users.createUser(userId);
+    profiles.enableSync(activeProfile.id, apiKey, 'default');
+
+    let failedOnce = false;
+    globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+      const url = typeof input === 'string' ? input : String(input);
+      const reqPath = url.replace(FAKE_SERVER_URL, '');
+      const method = init.method || 'GET';
+      const bodyText = typeof init.body === 'string' ? init.body : '';
+
+      if (
+        opts.failFirstTagPushMarker &&
+        !failedOnce &&
+        method === 'POST' &&
+        reqPath.startsWith('/tags') &&
+        bodyText.includes(opts.failFirstTagPushMarker)
+      ) {
+        failedOnce = true;
+        return new Response(JSON.stringify({ error: 'simulated network failure' }), { status: 500 });
+      }
+
+      return serverApp.request(reqPath, { method, headers: init.headers, body: init.body });
+    }) as typeof fetch;
+
+    return { apiKey };
+  }
+
+  async function fetchServerTags(apiKey: string): Promise<Array<{
+    name: string;
+    color?: string;
+    description?: string;
+    metadata?: Record<string, unknown>;
+    parentName?: string;
+  }>> {
+    const res = await serverApp.request('/tags/since/0', { headers: authHeaders(apiKey) });
+    const json = (await res.json()) as { tags: Array<Record<string, unknown>> };
+    return json.tags as never;
+  }
+
+  /** Seeds a tag directly on the server (bypassing desktop push) so a test can
+   * control pull inputs precisely — the same "seed server, then exercise the
+   * client's pull path" shape the event tests use via POST /items. */
+  async function pushServerTag(apiKey: string, tag: Record<string, unknown>): Promise<void> {
+    await serverApp.request('/tags', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ tags: [tag] }),
+    });
+  }
+
+  function insertLocalTag(fields: {
+    id: string;
+    name: string;
+    color?: string;
+    description?: string;
+    metadata?: string;
+    createdAt: number;
+    updatedAt: number;
+  }): void {
+    const db = datastore.getDb();
+    db.prepare(`
+      INSERT INTO tags (id, name, slug, color, parentId, description, metadata, createdAt, updatedAt, frequency, lastUsed, frecencyScore)
+      VALUES (?, ?, '', ?, '', ?, ?, ?, ?, 0, 0, 0)
+    `).run(
+      fields.id, fields.name, fields.color || '#999999',
+      fields.description || '', fields.metadata || '{}', fields.createdAt, fields.updatedAt
+    );
+  }
+
+  it('a tag pushes its color, description, and metadata to the server', async () => {
+    const { apiKey } = setup('push-metadata');
+    const now = Date.now();
+    insertLocalTag({
+      id: 'local-tag-reading', name: 'reading', color: '#00aaff',
+      description: 'Books and articles', metadata: JSON.stringify({ icon: 'book' }),
+      createdAt: now, updatedAt: now,
+    });
+
+    await sync.pushTagsToServer(FAKE_SERVER_URL, apiKey);
+
+    const serverTags = await fetchServerTags(apiKey);
+    const reading = serverTags.find((t) => t.name === 'reading');
+    assert.ok(reading, 'the tag must have reached the server');
+    assert.strictEqual(reading!.color, '#00aaff');
+    assert.strictEqual(reading!.description, 'Books and articles');
+    assert.deepStrictEqual(reading!.metadata, { icon: 'book' });
+  });
+
+  it('a pull applies a server tag\'s color, description, and metadata locally', async () => {
+    const { apiKey } = setup('pull-metadata');
+    const now = Date.now();
+    await pushServerTag(apiKey, {
+      name: 'travel', color: '#ff00aa', description: 'Trips',
+      metadata: { icon: 'plane' }, createdAt: now, updatedAt: now,
+    });
+
+    await sync.pullTagsFromServer(FAKE_SERVER_URL, apiKey);
+
+    const db = datastore.getDb();
+    const local = db.prepare('SELECT * FROM tags WHERE name = ?').get('travel') as {
+      color: string; description: string; metadata: string;
+    } | undefined;
+    assert.ok(local, 'the tag must exist locally after pull');
+    assert.strictEqual(local!.color, '#ff00aa');
+    assert.strictEqual(local!.description, 'Trips');
+    assert.deepStrictEqual(JSON.parse(local!.metadata), { icon: 'plane' });
+  });
+
+  it('a parent arriving after its child in the same pull still ends up linked', async () => {
+    const { apiKey } = setup('parent-after-child');
+    const now = Date.now();
+    // /tags/since orders by updatedAt ASC, so giving the child the earlier
+    // updatedAt reproduces "child before parent" in the pulled batch — the
+    // case a single-pass merge would fail (the parent doesn't exist locally
+    // yet when the child is processed).
+    await pushServerTag(apiKey, { name: 'child-tag', parentName: 'parent-tag', createdAt: now, updatedAt: now });
+    await pushServerTag(apiKey, { name: 'parent-tag', createdAt: now, updatedAt: now + 1 });
+
+    await sync.pullTagsFromServer(FAKE_SERVER_URL, apiKey);
+
+    const db = datastore.getDb();
+    const child = db.prepare('SELECT * FROM tags WHERE name = ?').get('child-tag') as { parentId: string } | undefined;
+    const parent = db.prepare('SELECT * FROM tags WHERE name = ?').get('parent-tag') as { id: string } | undefined;
+    assert.ok(child && parent);
+    assert.strictEqual(child!.parentId, parent!.id);
+  });
+
+  it('a cycle in incoming parentName links is broken deterministically, and a second, independent pull of the same input breaks the same link', async () => {
+    const { apiKey } = setup('cycle-break-1');
+    const now = Date.now();
+    // cycle-a -> cycle-b -> cycle-a, with distinct updatedAt so the "newest
+    // updatedAt loses its parent link" rule has an unambiguous winner
+    // (cycle-b), independent of the id tie-break.
+    await pushServerTag(apiKey, { name: 'cycle-a', parentName: 'cycle-b', createdAt: now, updatedAt: now });
+    await pushServerTag(apiKey, { name: 'cycle-b', parentName: 'cycle-a', createdAt: now, updatedAt: now + 1000 });
+
+    await sync.pullTagsFromServer(FAKE_SERVER_URL, apiKey);
+
+    const db = datastore.getDb();
+    const a = db.prepare('SELECT * FROM tags WHERE name = ?').get('cycle-a') as { id: string; parentId: string };
+    const b = db.prepare('SELECT * FROM tags WHERE name = ?').get('cycle-b') as { id: string; parentId: string };
+    assert.strictEqual(b.parentId, '', 'the newer tag in the cycle must have its parent link cleared');
+    assert.strictEqual(a.parentId, b.id, 'the older tag keeps its link to the now-parentless newer one');
+
+    // A second, independent device pulling the exact same server data must
+    // break the exact same link: the tie-break is a pure function of the
+    // pulled data, not of walk/iteration order.
+    const { apiKey: apiKey2 } = setup('cycle-break-2');
+    await pushServerTag(apiKey2, { name: 'cycle-a', parentName: 'cycle-b', createdAt: now, updatedAt: now });
+    await pushServerTag(apiKey2, { name: 'cycle-b', parentName: 'cycle-a', createdAt: now, updatedAt: now + 1000 });
+    await sync.pullTagsFromServer(FAKE_SERVER_URL, apiKey2);
+
+    const db2 = datastore.getDb();
+    const b2 = db2.prepare('SELECT * FROM tags WHERE name = ?').get('cycle-b') as { parentId: string };
+    assert.strictEqual(b2.parentId, '', 'a second, independent pull of the same input must break the same link');
+  });
+
+  it('a failed tag push does not advance the watermark, and the next push retries that tag', async () => {
+    const FLAKY_MARKER = 'flaky-tag-marker-7c2e';
+    const { apiKey } = setup('flaky-tag-push', { failFirstTagPushMarker: FLAKY_MARKER });
+    const now = Date.now();
+    insertLocalTag({ id: 'local-flaky-tag', name: FLAKY_MARKER, createdAt: now, updatedAt: now });
+
+    // Run 1: the push is rejected (simulated failure) — pushTagsToServer()
+    // throws (see its doc comment), so saveTagPushWatermark() is never
+    // reached and the watermark stays exactly where it was.
+    await assert.rejects(() => sync.pushTagsToServer(FAKE_SERVER_URL, apiKey));
+
+    assert.deepStrictEqual(
+      await fetchServerTags(apiKey),
+      [],
+      'run 1: nothing should have reached the server'
+    );
+
+    // Run 2: the same push now succeeds (the fetch stub only fails once).
+    await sync.pushTagsToServer(FAKE_SERVER_URL, apiKey);
+
+    const serverTags = await fetchServerTags(apiKey);
+    assert.strictEqual(
+      serverTags.length, 1,
+      'run 2: the tag must now have reached the server — the failed run must not have stranded it'
+    );
+    assert.strictEqual(serverTags[0].name, FLAKY_MARKER);
+  });
+
+  it('an older server tag does not overwrite a newer local one on pull', async () => {
+    const { apiKey } = setup('lww-pull');
+    const now = Date.now();
+    insertLocalTag({
+      id: 'local-lww-tag', name: 'shared-name', color: '#111111',
+      description: 'Local description', createdAt: now, updatedAt: now + 5000,
+    });
+
+    await pushServerTag(apiKey, {
+      name: 'shared-name', color: '#999999', description: 'Stale server description',
+      createdAt: now, updatedAt: now + 1000,
+    });
+
+    await sync.pullTagsFromServer(FAKE_SERVER_URL, apiKey);
+
+    const db = datastore.getDb();
+    const local = db.prepare('SELECT * FROM tags WHERE name = ?').get('shared-name') as {
+      color: string; description: string;
+    };
+    assert.strictEqual(local.color, '#111111', 'the older server value must not overwrite the newer local one');
+    assert.strictEqual(local.description, 'Local description');
   });
 });

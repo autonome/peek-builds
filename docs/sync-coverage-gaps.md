@@ -8,14 +8,15 @@ Nothing here is scheduled work. Each gap names what settles it.
 
 Sources: `packages/schema/v1.json` (the canonical schema, `sync` flag per column),
 `apps/desktop/main/sync.ts` (`pushSingleItem()`, `mergeServerItem()`,
-`pullFromServer()`, `pushToServer()`, `syncTagsToItem()`), and
-`apps/server/db.js` (`initializeSchema()`, `saveItem()`).
+`pullFromServer()`, `pushToServer()`, `syncTagsToItem()`, `pushTagsToServer()`,
+`pullTagsFromServer()`, `mergeServerTag()`), and `apps/server/db.js`
+(`initializeSchema()`, `saveItem()`, `saveTags()`, `getTagsSince()`).
 
 ## Short answer
 
-A restore returns items, their tags, and tag frecency. It does not return item
-titles, domains, visit history, any item event, tag hierarchy, tag colors or
-descriptions, or user-created rules.
+A restore returns items, their tags, tag frecency, and tag metadata (color,
+description, hierarchy). It does not return item titles, domains, visit history,
+any item event, or user-created rules.
 
 For a library built mostly of saved URLs, the visible result is a set of untitled
 entries — the title is what a person recognizes an item by, and it is cached
@@ -88,18 +89,32 @@ engine was never made to honour.
 **Settled by:** carrying both in `pushSingleItem()` and `mergeServerItem()`. The
 server columns now exist, so this is the smaller half of the change.
 
-## 3. Tag metadata is local-only
+## 3. Tag metadata now syncs; tag identity and deletion are the remaining gaps
 
-`tags` marks `slug`, `color`, `parentId`, `description`, and `metadata`
-`"sync": false`, each described "desktop only".
+`slug`, `color`, `parentId`, `description`, and `metadata` on `tags` are `"sync":
+true` as of DATASTORE_VERSION 3. `sync.ts pushTagsToServer()` /
+`pullTagsFromServer()` / `mergeServerTag()` carry them, keyed by the tag's `name` —
+the same identity `apps/server/db.js getOrCreateTagWithConn()` already used for tag
+rows an item push derives. `parentId` travels on the wire as `parentName` (the
+parent's name, not any id), resolved back to a local tag id on pull in a second
+pass so a parent arriving after its child in the same pull still links correctly;
+an incoming cycle of `parentName` links is broken deterministically (newest
+`updatedAt` loses its parent link, ties going to the lower `id`) so every device
+that pulls the same cycle breaks the same link.
 
-`slug` is derivable. The rest are authored by a person and unrecoverable —
-`parentId` in particular carries the tag hierarchy, so a restore returns a flat tag
-list.
+Two gaps remain, accepted rather than fixed:
 
-**Settled by:** the same policy call as §1, applied to tags. `color` and
-`description` are cheap to carry; `parentId` needs an ordering rule so a hierarchy
-merges rather than clobbers.
+- **Renaming a tag on one device creates a second tag rather than renaming the
+  first.** Identity on the wire is the name; a syncId would give the same row two
+  sources of truth to reconcile, and the push/pull code was built to avoid that
+  rather than build rename support.
+- **Tag deletion does not propagate.** There is no tombstone column on `tags` — a
+  tag deleted on one device still exists, and can still be pulled back, on every
+  other device.
+
+**Settled by:** a real tag identity beyond name (needed for rename to sync) and a
+`deletedAt` column plus tombstone push/pull (needed for delete to propagate) — both
+separate, unscheduled work.
 
 ## 4. Rules are entirely local
 

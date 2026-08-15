@@ -60,15 +60,15 @@ export interface SchemaTags {
   createdAt: number;
   /** Last update timestamp (Unix ms) */
   updatedAt: number;
-  /** URL-safe slug (desktop only) */
+  /** URL-safe slug */
   slug: string | null;
-  /** Display color (desktop only) */
+  /** Display color */
   color: string;
-  /** Parent tag for hierarchy (desktop only) */
+  /** Parent tag for hierarchy. Travels on the wire as the parent's name (parentName), not this id — tag identity is the name, so the reference is too. Resolved back to a local tag id on pull. */
   parentId: string;
-  /** Tag description (desktop only) */
+  /** Tag description */
   description: string;
-  /** JSON metadata (desktop only) */
+  /** JSON metadata */
   metadata: string;
 }
 
@@ -136,7 +136,7 @@ export type SchemaSyncTableName = 'items' | 'tags' | 'item_tags' | 'rules' | 'it
 /** Required sync columns by table */
 export const REQUIRED_SYNC_COLUMNS: Record<SchemaSyncTableName, string[]> = {
   items: ["id","type","content","syncId","syncedAt","createdAt","updatedAt","deletedAt","title","domain","favicon","visitCount","lastVisitAt","frecencyScore"],
-  tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt"],
+  tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt","slug","color","parentId","description","metadata"],
   item_tags: ["itemId","tagId","createdAt"],
   item_events: ["id","itemId","content","value","occurredAt","metadata","createdAt"],
   rules: [],

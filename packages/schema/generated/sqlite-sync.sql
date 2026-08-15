@@ -38,7 +38,12 @@ CREATE TABLE IF NOT EXISTS tags (
   lastUsed INTEGER NOT NULL,
   frecencyScore REAL DEFAULT 0.0,
   createdAt INTEGER NOT NULL,
-  updatedAt INTEGER NOT NULL
+  updatedAt INTEGER NOT NULL,
+  slug TEXT,
+  color TEXT DEFAULT '#999999',
+  parentId TEXT DEFAULT '',
+  description TEXT DEFAULT '',
+  metadata TEXT DEFAULT '{}'
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_name_unique ON tags(name);

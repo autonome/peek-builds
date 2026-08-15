@@ -180,32 +180,32 @@
         "slug": {
           "type": "text",
           "nullable": true,
-          "sync": false,
-          "description": "URL-safe slug (desktop only)"
+          "sync": true,
+          "description": "URL-safe slug"
         },
         "color": {
           "type": "text",
           "default": "'#999999'",
-          "sync": false,
-          "description": "Display color (desktop only)"
+          "sync": true,
+          "description": "Display color"
         },
         "parentId": {
           "type": "text",
           "default": "''",
-          "sync": false,
-          "description": "Parent tag for hierarchy (desktop only)"
+          "sync": true,
+          "description": "Parent tag for hierarchy. Travels on the wire as the parent's name (parentName), not this id — tag identity is the name, so the reference is too. Resolved back to a local tag id on pull."
         },
         "description": {
           "type": "text",
           "default": "''",
-          "sync": false,
-          "description": "Tag description (desktop only)"
+          "sync": true,
+          "description": "Tag description"
         },
         "metadata": {
           "type": "text",
           "default": "'{}'",
-          "sync": false,
-          "description": "JSON metadata (desktop only)"
+          "sync": true,
+          "description": "JSON metadata"
         }
       },
       "indexes": [
@@ -398,7 +398,7 @@
     "id_type": "text",
     "required_sync_columns": {
       "items": ["id", "type", "content", "syncId", "syncedAt", "createdAt", "updatedAt", "deletedAt", "title", "domain", "favicon", "visitCount", "lastVisitAt", "frecencyScore"],
-      "tags": ["id", "name", "frequency", "lastUsed", "frecencyScore", "createdAt", "updatedAt"],
+      "tags": ["id", "name", "frequency", "lastUsed", "frecencyScore", "createdAt", "updatedAt", "slug", "color", "parentId", "description", "metadata"],
       "item_tags": ["itemId", "tagId", "createdAt"],
       "item_events": ["id", "itemId", "content", "value", "occurredAt", "metadata", "createdAt"],
       "rules": []

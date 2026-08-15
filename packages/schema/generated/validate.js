@@ -15,7 +15,7 @@
 export function validateSyncSchema(getColumns) {
   const required = {
     items: ["id","type","content","syncId","syncedAt","createdAt","updatedAt","deletedAt","title","domain","favicon","visitCount","lastVisitAt","frecencyScore"],
-    tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt"],
+    tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt","slug","color","parentId","description","metadata"],
     item_tags: ["itemId","tagId","createdAt"],
     item_events: ["id","itemId","content","value","occurredAt","metadata","createdAt"],
     rules: [],
@@ -59,7 +59,7 @@ export const SCHEMA_VERSION = 1;
 /** Required sync columns by table */
 export const REQUIRED_SYNC_COLUMNS = {
   items: ["id","type","content","syncId","syncedAt","createdAt","updatedAt","deletedAt","title","domain","favicon","visitCount","lastVisitAt","frecencyScore"],
-  tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt"],
+  tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt","slug","color","parentId","description","metadata"],
   item_tags: ["itemId","tagId","createdAt"],
   item_events: ["id","itemId","content","value","occurredAt","metadata","createdAt"],
   rules: [],

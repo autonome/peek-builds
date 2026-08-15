@@ -810,6 +810,67 @@ app.get("/events/since/:timestamp", (c) => {
   return c.json({ events, since: rawTimestamp });
 });
 
+// === Tag metadata sync endpoints ===
+//
+// Tag ROWS themselves are still created implicitly by item pushes (saveItem() ->
+// getOrCreateTagWithConn(), by name). These endpoints sync the metadata columns
+// that item pushes never touch: slug, color, parentName, description, metadata.
+// Identity on the wire is the tag's name, shared verbatim with the client — the
+// same identity getOrCreateTagWithConn() already uses, so a push here upserts by
+// name rather than introducing a second identity (a syncId) that would need
+// reconciling against the first. `parentName` is the parent tag's NAME, never a
+// server row id: the desktop client resolves it to/from a local tag id (see
+// desktop sync.ts pushTagsToServer()/pullTagsFromServer()/mergeServerTag()).
+
+// Bulk push matters here for the same reason it does for events: a profile can
+// carry hundreds of tags, and one HTTP request per tag would not do. Capped well
+// above any realistic single sync batch so a runaway client can't post an
+// unbounded body.
+const MAX_TAGS_PER_PUSH = 1000;
+
+app.post("/tags", async (c) => {
+  const userId = c.get("userId");
+  const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
+  const body = await c.req.json();
+  const tags = Array.isArray(body.tags) ? body.tags : [];
+
+  if (tags.length === 0) {
+    return c.json({ error: "tags array is required" }, 400);
+  }
+  if (tags.length > MAX_TAGS_PER_PUSH) {
+    return c.json({ error: `at most ${MAX_TAGS_PER_PUSH} tags per push` }, 400);
+  }
+  const bad = tags.find((t) => !t.name || typeof t.updatedAt !== "number");
+  if (bad) {
+    return c.json({ error: "each tag requires name and updatedAt" }, 400);
+  }
+
+  const { saved, total } = db.saveTags(userId, profileId, tags);
+  return c.json({ received: total, saved });
+});
+
+// Get tag metadata changed since a timestamp (for incremental sync)
+app.get("/tags/since/:timestamp", (c) => {
+  const userId = c.get("userId");
+  const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
+  const rawTimestamp = c.req.param("timestamp");
+
+  // Accept ISO 8601 string or Unix ms integer, convert to Unix ms for DB query
+  let unixMs;
+  if (/^\d+$/.test(rawTimestamp)) {
+    unixMs = parseInt(rawTimestamp, 10);
+  } else {
+    const date = new Date(rawTimestamp);
+    if (isNaN(date.getTime())) {
+      return c.json({ error: "Invalid timestamp format. Use ISO 8601 or Unix ms." }, 400);
+    }
+    unixMs = date.getTime();
+  }
+
+  const tags = db.getTagsSince(userId, profileId, unixMs);
+  return c.json({ tags, since: rawTimestamp });
+});
+
 // === Backup endpoints ===
 
 // GET /backups - List backups for authenticated user
