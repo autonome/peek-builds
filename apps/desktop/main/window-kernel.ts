@@ -1626,11 +1626,17 @@ export function evolve(state: State, ev: Event): State {
       // names this id, is left untouched — see `keyWindow` for why a dangling
       // key id is unobservable rather than repaired here. A record whose
       // `overlayFor` names the closed id is detached mechanically in the
-      // same pass — an overlay must never keep pointing at a retired host.
+      // same pass — an overlay must never keep pointing at a retired host —
+      // and, when that record currently reads `visible: true`, this write
+      // also clears it: any transition that detaches a visible overlay
+      // writes the visibility fact itself, the same treatment the
+      // `OverlayAttached` arm's own detach path gives it, rather than
+      // leaving a stale `visible: true` for a queued sweep to act on before
+      // the backend's native-hide echo can correct it.
       const closedRec = state.order.find((w) => w.id === ev.id);
       const filtered = state.order
         .filter((w) => w.id !== ev.id)
-        .map((w) => (w.overlayFor === ev.id ? { ...w, overlayFor: undefined } : w));
+        .map((w) => (w.overlayFor === ev.id ? { ...w, overlayFor: undefined, ...(w.visible ? { visible: false } : {}) } : w));
       // Parent refocus (ported from `window-state.ts`'s `WINDOW_CLOSED` arm —
       // the deleted `main.ts browser-window-created -> 'closed' ->
       // parentWin.focus()` block): a closing window whose parent is still
@@ -2185,12 +2191,25 @@ export function evolve(state: State, ev: Event): State {
       // `overlayFollowPatch`): attach and retarget drive the SAME
       // reveal/reframe decision the bounds- and fullscreen-driven follow
       // rules elsewhere in this switch drive. Detach (`host === undefined`)
-      // touches only the relation above; `react`'s structural `overlayFor`
-      // diff (its "Overlay detach" rule) is what drives it off screen, same
-      // as before this change.
+      // writes `visible: false` directly, same as the reveal side writes
+      // `visible: true` — the overlay's visibility is a stored fact this
+      // arm owns on BOTH sides of the relation, not something left for the
+      // backend's native-hide echo to report back later. Leaving it to that
+      // echo let a record still read `visible: true` after the machine had
+      // already decided to hide it — long enough for a transient-autoclose
+      // sweep queued ahead of the echo to read the stale fact and dismiss
+      // the overlay's singleton window (see the `OverlayAttached` field doc
+      // above this switch). `react`'s visibility diff is what turns this
+      // stored fact into the `HideWindow` effect, same loop that turns the
+      // reveal side's `visible: true` into `ShowWindow`.
       const host = resolvedHostId !== undefined ? state.order.find((w) => w.id === resolvedHostId) : undefined;
       const overlay = state.order.find((w) => w.id === ev.overlayId);
-      const patch = host !== undefined && overlay !== undefined ? overlayFollowPatch(overlay, host.fsMode.name === 'normal', state.appActive, ev.frame) : {};
+      const patch =
+        host !== undefined && overlay !== undefined
+          ? overlayFollowPatch(overlay, host.fsMode.name === 'normal', state.appActive, ev.frame)
+          : resolvedHostId === undefined && overlay?.visible === true
+            ? { visible: false }
+            : {};
       const issuesShow = patch.visible === true;
       const opSeq = issuesShow ? state.opSeqCounter + 1 : state.opSeqCounter;
       return {
@@ -2410,7 +2429,12 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
 
   // Visibility: a record present in both states whose `visible` flipped.
   // (A closed window vanishes from `next.order` entirely — no HideWindow;
-  // its dismissal is the CloseWindow diff below instead.)
+  // its dismissal is the CloseWindow diff below instead.) This is also the
+  // ONLY rule that drives a visible overlay off screen when it detaches —
+  // any transition that detaches a visible overlay (`OverlayAttached`'s own
+  // detach path, `WindowClosed`'s mechanical clear of a record's
+  // `overlayFor`) writes `visible: false` on that record in `evolve` itself,
+  // so there is no overlay-specific case here to diff `overlayFor` against.
   for (const nextRecord of next.order) {
     const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
     if (prevRecord === undefined) {
@@ -2560,18 +2584,6 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
     if (prevRecord.desktopMembership !== nextRecord.desktopMembership && nextRecord.desktopMembership !== undefined) {
       effects.push({ type: 'SetDesktopMembership', id: nextRecord.id, membership: nextRecord.desktopMembership });
-    }
-  }
-
-  // Overlay detach (an AttachOverlay retarget/detach, or the host closing):
-  // a structural diff of `overlayFor` going from set -> unset. `evolve`
-  // never flips `visible` for this, so a still-visible overlay must be
-  // driven off screen explicitly here.
-  for (const nextRecord of next.order) {
-    const prevRecord = prev.order.find((w) => w.id === nextRecord.id);
-    if (prevRecord === undefined) continue;
-    if (prevRecord.overlayFor !== undefined && nextRecord.overlayFor === undefined && nextRecord.visible) {
-      effects.push({ type: 'HideWindow', id: nextRecord.id });
     }
   }
 
