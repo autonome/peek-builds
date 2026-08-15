@@ -814,13 +814,14 @@ app.get("/events/since/:timestamp", (c) => {
 //
 // Tag ROWS themselves are still created implicitly by item pushes (saveItem() ->
 // getOrCreateTagWithConn(), by name). These endpoints sync the metadata columns
-// that item pushes never touch: slug, color, parentName, description, metadata.
+// that item pushes never touch: slug, color, parentId, description, metadata.
 // Identity on the wire is the tag's name, shared verbatim with the client — the
 // same identity getOrCreateTagWithConn() already uses, so a push here upserts by
 // name rather than introducing a second identity (a syncId) that would need
-// reconciling against the first. `parentName` is the parent tag's NAME, never a
-// server row id: the desktop client resolves it to/from a local tag id (see
-// desktop sync.ts pushTagsToServer()/pullTagsFromServer()/mergeServerTag()).
+// reconciling against the first. `parentId` is the parent tag's NAME, never a
+// server row id — don't "fix" it into a foreign key: the desktop client
+// resolves it to/from a local tag id (see desktop sync.ts
+// pushTagsToServer()/pullTagsFromServer()/mergeServerTag()).
 
 // Bulk push matters here for the same reason it does for events: a profile can
 // carry hundreds of tags, and one HTTP request per tag would not do. Capped well

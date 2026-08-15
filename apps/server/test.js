@@ -207,14 +207,14 @@ describe("Database Tests", () => {
       assert.deepStrictEqual(tags[0].metadata, { icon: "briefcase" });
     });
 
-    it("carries parentName as a plain string, not any id", () => {
+    it("carries parentId as a plain string (the parent's name), not any id", () => {
       db.saveTags(TEST_USER_ID, "default", [
         { name: "parent", createdAt: 1000, updatedAt: 1000 },
-        { name: "child", parentName: "parent", createdAt: 1000, updatedAt: 1000 },
+        { name: "child", parentId: "parent", createdAt: 1000, updatedAt: 1000 },
       ]);
       const tags = db.getTagsSince(TEST_USER_ID, "default", 0);
       const child = tags.find((t) => t.name === "child");
-      assert.strictEqual(child.parentName, "parent");
+      assert.strictEqual(child.parentId, "parent");
     });
 
     it("last-write-wins: an older push does not overwrite a newer existing tag", () => {
@@ -2675,13 +2675,13 @@ describe("Tag Sync Routes (POST /tags, GET /tags/since/:timestamp)", () => {
 
   it("a parent arriving after its child in the same push still resolves by name on pull", async () => {
     await pushTags([
-      { name: "child", parentName: "parent", createdAt: 1000, updatedAt: 1000 },
+      { name: "child", parentId: "parent", createdAt: 1000, updatedAt: 1000 },
       { name: "parent", createdAt: 1000, updatedAt: 1000 },
     ]);
 
     const { tags } = await tagsSince(0);
     const child = tags.find((t) => t.name === "child");
-    assert.strictEqual(child.parentName, "parent");
+    assert.strictEqual(child.parentId, "parent");
     assert.ok(tags.some((t) => t.name === "parent"), "the parent tag itself must also come back");
   });
 

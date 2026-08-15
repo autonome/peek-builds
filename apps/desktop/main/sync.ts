@@ -1020,8 +1020,10 @@ function mergeServerEvent(serverEvent: ServerEvent): boolean {
 // one device creates a second tag rather than renaming the first (see
 // docs/sync-coverage-gaps.md §3).
 //
-// `parentId` never travels as an id — it travels as `parentName`, the parent
-// tag's name, since name is the identity. A pull resolves `parentName` back to
+// The local `parentId` column (a local tag id) never travels as an id — on the
+// wire it travels under the same field name, `parentId`, but holding the
+// parent tag's NAME instead, since name is the identity (don't mistake the
+// wire field for a foreign key). A pull resolves the wire `parentId` back to
 // a local tag id in a SECOND pass over the pulled batch (resolveTagParent()),
 // after every tag in the batch has already been upserted in the first pass
 // (mergeServerTag()) — so a parent arriving after its child in the same pull
@@ -1085,9 +1087,10 @@ function saveTagPushWatermark(timestamp: number): void {
 /**
  * Push local tags whose metadata (slug/color/parentId/description/metadata)
  * changed since the last tag push, per the dedicated tag-push watermark
- * (getTagPushWatermark()). `parentId` — a local tag id — is resolved to the
- * parent's `name` before it goes on the wire, since name is the identity (see
- * module comment above).
+ * (getTagPushWatermark()). The local `parentId` — a local tag id — is resolved
+ * to the parent's `name` before it goes on the wire (still under the key
+ * `parentId`, but holding a name), since name is the identity (see module
+ * comment above).
  *
  * The watermark only advances once every chunk in this run has been confirmed
  * pushed: if any `serverFetch` call throws, this function throws too, and
@@ -1142,8 +1145,10 @@ export async function pushTagsToServer(
   for (let i = 0; i < rows.length; i += MAX_TAGS_PER_PUSH) {
     const batch = rows.slice(i, i + MAX_TAGS_PER_PUSH);
     const tags = batch.map((row) => {
-      // parentId is a local tag id — resolve it to the parent's name, the
-      // identity the wire format uses (module comment above).
+      // row.parentId is a local tag id — resolve it to the parent's name, the
+      // identity the wire format uses (module comment above). The resolved
+      // name still goes out under the wire key `parentId`, matching the
+      // server column of the same name (also a name, not a row id).
       let parentName: string | null = null;
       if (row.parentId) {
         const parent = db.prepare('SELECT name FROM tags WHERE id = ?').get(row.parentId) as
@@ -1165,7 +1170,7 @@ export async function pushTagsToServer(
         name: row.name,
         slug: row.slug || '',
         color: row.color || '',
-        parentName,
+        parentId: parentName,
         description: row.description || '',
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
@@ -1200,12 +1205,12 @@ export async function pushTagsToServer(
  * the local `tags` table. Two passes over the pulled batch, per the module
  * comment above:
  *
- * 1. mergeServerTag() upserts every incoming tag by name with `parentId` left
- *    untouched (a brand-new local row gets '').
- * 2. resolveTagParent() resolves each incoming tag's `parentName` to a local
- *    tag id and sets `parentId` — but only for tags pass 1 actually applied
- *    (new, or server-newer), so last-write-wins governs the parent link the
- *    same way it governs the rest of the row.
+ * 1. mergeServerTag() upserts every incoming tag by name with local `parentId`
+ *    left untouched (a brand-new local row gets '').
+ * 2. resolveTagParent() resolves each incoming tag's wire `parentId` (a NAME,
+ *    not a row id) to a local tag id and sets local `parentId` — but only for
+ *    tags pass 1 actually applied (new, or server-newer), so last-write-wins
+ *    governs the parent link the same way it governs the rest of the row.
  *
  * Splitting into two passes means a parent arriving after its child in the
  * same pull still ends up linked; a single-pass merge would depend on arrival
@@ -1305,12 +1310,13 @@ function mergeServerTag(serverTag: ServerTag): boolean {
 }
 
 /**
- * Pass 2 of pullTagsFromServer(): resolve one server tag's `parentName` to a
- * local tag id and set `parentId` on the (already-upserted, by pass 1) local
- * row of the same name. A `parentName` the local database doesn't recognize
- * (not part of this pull, and never synced before) leaves `parentId`
- * untouched rather than silently dropping the link — it will resolve on a
- * later pull once that parent tag exists locally.
+ * Pass 2 of pullTagsFromServer(): resolve one server tag's wire `parentId`
+ * (a NAME, not a row id) to a local tag id and set local `parentId` on the
+ * (already-upserted, by pass 1) local row of the same name. A wire `parentId`
+ * the local database doesn't recognize (not part of this pull, and never
+ * synced before) leaves local `parentId` untouched rather than silently
+ * dropping the link — it will resolve on a later pull once that parent tag
+ * exists locally.
  */
 function resolveTagParent(serverTag: ServerTag): void {
   const db = getDb();
@@ -1320,14 +1326,14 @@ function resolveTagParent(serverTag: ServerTag): void {
     | undefined;
   if (!local) return; // pass 1 just upserted this — should not happen
 
-  if (!serverTag.parentName) {
+  if (!serverTag.parentId) {
     if (local.parentId !== '') {
       db.prepare('UPDATE tags SET parentId = ? WHERE id = ?').run('', local.id);
     }
     return;
   }
 
-  const parent = db.prepare('SELECT id FROM tags WHERE name = ?').get(serverTag.parentName) as
+  const parent = db.prepare('SELECT id FROM tags WHERE name = ?').get(serverTag.parentId) as
     | { id: string }
     | undefined;
   if (!parent) return;

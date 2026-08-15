@@ -306,7 +306,7 @@ describe('Tag metadata sync — push/pull/merge', () => {
     color?: string;
     description?: string;
     metadata?: Record<string, unknown>;
-    parentName?: string;
+    parentId?: string;
   }>> {
     const res = await serverApp.request('/tags/since/0', { headers: authHeaders(apiKey) });
     const json = (await res.json()) as { tags: Array<Record<string, unknown>> };
@@ -389,7 +389,7 @@ describe('Tag metadata sync — push/pull/merge', () => {
     // updatedAt reproduces "child before parent" in the pulled batch — the
     // case a single-pass merge would fail (the parent doesn't exist locally
     // yet when the child is processed).
-    await pushServerTag(apiKey, { name: 'child-tag', parentName: 'parent-tag', createdAt: now, updatedAt: now });
+    await pushServerTag(apiKey, { name: 'child-tag', parentId: 'parent-tag', createdAt: now, updatedAt: now });
     await pushServerTag(apiKey, { name: 'parent-tag', createdAt: now, updatedAt: now + 1 });
 
     await sync.pullTagsFromServer(FAKE_SERVER_URL, apiKey);
@@ -401,14 +401,14 @@ describe('Tag metadata sync — push/pull/merge', () => {
     assert.strictEqual(child!.parentId, parent!.id);
   });
 
-  it('a cycle in incoming parentName links is broken deterministically, and a second, independent pull of the same input breaks the same link', async () => {
+  it('a cycle in incoming parentId links is broken deterministically, and a second, independent pull of the same input breaks the same link', async () => {
     const { apiKey } = setup('cycle-break-1');
     const now = Date.now();
     // cycle-a -> cycle-b -> cycle-a, with distinct updatedAt so the "newest
     // updatedAt loses its parent link" rule has an unambiguous winner
     // (cycle-b), independent of the id tie-break.
-    await pushServerTag(apiKey, { name: 'cycle-a', parentName: 'cycle-b', createdAt: now, updatedAt: now });
-    await pushServerTag(apiKey, { name: 'cycle-b', parentName: 'cycle-a', createdAt: now, updatedAt: now + 1000 });
+    await pushServerTag(apiKey, { name: 'cycle-a', parentId: 'cycle-b', createdAt: now, updatedAt: now });
+    await pushServerTag(apiKey, { name: 'cycle-b', parentId: 'cycle-a', createdAt: now, updatedAt: now + 1000 });
 
     await sync.pullTagsFromServer(FAKE_SERVER_URL, apiKey);
 
@@ -422,8 +422,8 @@ describe('Tag metadata sync — push/pull/merge', () => {
     // break the exact same link: the tie-break is a pure function of the
     // pulled data, not of walk/iteration order.
     const { apiKey: apiKey2 } = setup('cycle-break-2');
-    await pushServerTag(apiKey2, { name: 'cycle-a', parentName: 'cycle-b', createdAt: now, updatedAt: now });
-    await pushServerTag(apiKey2, { name: 'cycle-b', parentName: 'cycle-a', createdAt: now, updatedAt: now + 1000 });
+    await pushServerTag(apiKey2, { name: 'cycle-a', parentId: 'cycle-b', createdAt: now, updatedAt: now });
+    await pushServerTag(apiKey2, { name: 'cycle-b', parentId: 'cycle-a', createdAt: now, updatedAt: now + 1000 });
     await sync.pullTagsFromServer(FAKE_SERVER_URL, apiKey2);
 
     const db2 = datastore.getDb();

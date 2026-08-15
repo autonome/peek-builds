@@ -64,7 +64,7 @@ export interface SchemaTags {
   slug: string | null;
   /** Display color */
   color: string;
-  /** Parent tag for hierarchy. Travels on the wire as the parent's name (parentName), not this id — tag identity is the name, so the reference is too. Resolved back to a local tag id on pull. */
+  /** Parent tag for hierarchy. Travels on the wire under the same field name, `parentId`, but holding the parent's name, not this id — tag identity is the name, so the reference is too. Resolved back to a local tag id on pull. On the server, the `parentId` column itself stores that name, never a row id — don't mistake it for a foreign key. */
   parentId: string;
   /** Tag description */
   description: string;

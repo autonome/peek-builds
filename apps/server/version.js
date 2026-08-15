@@ -18,11 +18,11 @@
  * apps/desktop/version.ts DATASTORE_VERSION — see that file for how the desktop
  * client also uses this number to force a one-time full re-push.
  *
- * DATASTORE_VERSION 3 (2026-08): tags gained slug/color/parentName/description/
+ * DATASTORE_VERSION 3 (2026-08): tags gained slug/color/parentId/description/
  * metadata as synced columns (packages/schema/v1.json + apps/server/schema.json,
- * docs/sync-coverage-gaps.md §3). The server column is `parentName` (the parent
- * tag's name), not `parentId` — tag identity on the wire is the name, so the
- * parent reference travels the same way.
+ * docs/sync-coverage-gaps.md §3). The server column `parentId` stores the parent
+ * tag's NAME, not a row id — tag identity on the wire is the name, so the
+ * parent reference travels the same way. Don't "fix" it into a foreign key.
  */
 const DATASTORE_VERSION = 3;
 const PROTOCOL_VERSION = 1;

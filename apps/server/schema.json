@@ -189,11 +189,11 @@
           "sync": true,
           "description": "Display color"
         },
-        "parentName": {
+        "parentId": {
           "type": "text",
           "default": "''",
           "sync": true,
-          "description": "Parent tag's NAME (not a server row id) — tag identity on the wire is the name, so the parent reference is too"
+          "description": "Parent tag's NAME, not a row id — tag identity on the wire is the name, so the parent reference travels the same way. Don't mistake this for a foreign key."
         },
         "description": {
           "type": "text",
@@ -257,7 +257,7 @@
     "id_type": "text",
     "required_sync_columns": {
       "items": ["id", "type", "content", "syncId", "syncedAt", "createdAt", "updatedAt", "deletedAt"],
-      "tags": ["id", "name", "frequency", "lastUsed", "frecencyScore", "createdAt", "updatedAt", "slug", "color", "parentName", "description", "metadata"],
+      "tags": ["id", "name", "frequency", "lastUsed", "frecencyScore", "createdAt", "updatedAt", "slug", "color", "parentId", "description", "metadata"],
       "item_tags": ["itemId", "tagId", "createdAt"]
     }
   }

@@ -386,6 +386,9 @@ function initializeSchema(adapter) {
     adapter.exec("CREATE INDEX IF NOT EXISTS idx_items_deletedAt ON items(deletedAt)");
   }
 
+  // tags.parentId stores the parent tag's NAME, not a row id — tag identity on
+  // the wire is the name, so the parent reference travels the same way (see
+  // saveTags()/getTagsSince()). Don't "fix" this into a foreign key.
   adapter.exec(`
     CREATE TABLE IF NOT EXISTS tags (
       id TEXT PRIMARY KEY,
@@ -397,7 +400,7 @@ function initializeSchema(adapter) {
       updatedAt INTEGER NOT NULL,
       slug TEXT DEFAULT '',
       color TEXT DEFAULT '#999999',
-      parentName TEXT DEFAULT '',
+      parentId TEXT DEFAULT '',
       description TEXT DEFAULT '',
       metadata TEXT DEFAULT '{}'
     );
@@ -436,7 +439,7 @@ function initializeSchema(adapter) {
     updatedAt INTEGER NOT NULL,
     slug TEXT DEFAULT '',
     color TEXT DEFAULT '#999999',
-    parentName TEXT DEFAULT '',
+    parentId TEXT DEFAULT '',
     description TEXT DEFAULT '',
     metadata TEXT DEFAULT '{}'
   )`, tagRenames, needsIdTypeRebuild);
@@ -465,9 +468,10 @@ function initializeSchema(adapter) {
   }
   // Tag metadata columns (packages/schema/v1.json, DATASTORE_VERSION 3) — carried
   // from the desktop's local-only tag columns the same way title/domain/frecencyScore
-  // were carried for items above. parentId travels as parentName here: identity on
-  // the wire is the tag's name, so the parent reference is the parent's name, not a
-  // server row id (see index.js "=== Tag sync endpoints ===").
+  // were carried for items above. parentId stores the parent's NAME here, not a
+  // row id: identity on the wire is the tag's name, so the parent reference is
+  // the parent's name too (see index.js "=== Tag sync endpoints ==="). Don't
+  // "fix" this into a foreign key — it is deliberate.
   if (!tagColSet.has("slug")) {
     console.log("[schema] Adding missing column tags.slug");
     adapter.exec("ALTER TABLE tags ADD COLUMN slug TEXT DEFAULT ''");
@@ -476,9 +480,9 @@ function initializeSchema(adapter) {
     console.log("[schema] Adding missing column tags.color");
     adapter.exec("ALTER TABLE tags ADD COLUMN color TEXT DEFAULT '#999999'");
   }
-  if (!tagColSet.has("parentName")) {
-    console.log("[schema] Adding missing column tags.parentName");
-    adapter.exec("ALTER TABLE tags ADD COLUMN parentName TEXT DEFAULT ''");
+  if (!tagColSet.has("parentId")) {
+    console.log("[schema] Adding missing column tags.parentId");
+    adapter.exec("ALTER TABLE tags ADD COLUMN parentId TEXT DEFAULT ''");
   }
   if (!tagColSet.has("description")) {
     console.log("[schema] Adding missing column tags.description");
@@ -503,7 +507,7 @@ function initializeSchema(adapter) {
       updatedAt INTEGER NOT NULL,
       slug TEXT DEFAULT '',
       color TEXT DEFAULT '#999999',
-      parentName TEXT DEFAULT '',
+      parentId TEXT DEFAULT '',
       description TEXT DEFAULT '',
       metadata TEXT DEFAULT '{}'
     )`, tagRenames);
@@ -639,7 +643,7 @@ function calculateFrecency(frequency, lastUsed) {
 
 // Internal helper - needs conn passed directly
 //
-// Deliberately never touches slug/color/parentName/description/metadata: those are
+// Deliberately never touches slug/color/parentId/description/metadata: those are
 // owned by the tag-metadata sync path (saveTags()/getTagsSince(), POST /tags), and
 // this function runs on every item push that carries a tag name, including for tags
 // that already have metadata set. The UPDATE branch below only ever writes
@@ -1295,8 +1299,10 @@ function getEventsSince(userId, profileId, timestamp) {
  * Tag identity on the wire is the tag's NAME, not a syncId — the same identity
  * `getOrCreateTagWithConn()` already uses for tag rows derived from item pushes,
  * so a push here upserts by name instead of introducing a second identity that
- * would need reconciling against the first. `parentName` is the parent tag's
- * name (never a server row id); the desktop client resolves it back to a local
+ * would need reconciling against the first. `parentId` stores the parent tag's
+ * NAME, never a server row id — despite the column name, matching the local
+ * `parentId` column it round-trips (that one IS a foreign key; this one is the
+ * name it was resolved from); the desktop client resolves it back to a local
  * tag id on pull (see sync.ts pullTagsFromServer()).
  *
  * Last-write-wins on `updatedAt`, matching saveItem()'s conflict resolution: a
@@ -1309,7 +1315,7 @@ function getEventsSince(userId, profileId, timestamp) {
  *
  * @param {string} userId
  * @param {string} profileId
- * @param {Array<{name: string, slug?: string|null, color?: string|null, parentName?: string|null, description?: string|null, metadata?: object|string|null, createdAt: number, updatedAt: number}>} tags
+ * @param {Array<{name: string, slug?: string|null, color?: string|null, parentId?: string|null, description?: string|null, metadata?: object|string|null, createdAt: number, updatedAt: number}>} tags
  * @returns {{saved: number, total: number}}
  */
 function saveTags(userId, profileId, tags) {
@@ -1325,18 +1331,18 @@ function saveTags(userId, profileId, tags) {
       if (existing) {
         if (tag.updatedAt <= toTimestamp(existing.updatedAt)) continue;
         conn.run(
-          `UPDATE tags SET slug = ?, color = ?, parentName = ?, description = ?, metadata = ?, updatedAt = ?
+          `UPDATE tags SET slug = ?, color = ?, parentId = ?, description = ?, metadata = ?, updatedAt = ?
            WHERE id = ?`,
-          [tag.slug || "", tag.color || "#999999", tag.parentName || "", tag.description || "", metadataJson, tag.updatedAt, existing.id]
+          [tag.slug || "", tag.color || "#999999", tag.parentId || "", tag.description || "", metadataJson, tag.updatedAt, existing.id]
         );
         saved++;
       } else {
         const tagId = generateUUID();
         conn.run(
-          `INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt, slug, color, parentName, description, metadata)
+          `INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt, slug, color, parentId, description, metadata)
            VALUES (?, ?, 0, ?, 0.0, ?, ?, ?, ?, ?, ?, ?)`,
           [tagId, tag.name, tag.updatedAt, tag.createdAt || tag.updatedAt, tag.updatedAt,
-           tag.slug || "", tag.color || "#999999", tag.parentName || "", tag.description || "", metadataJson]
+           tag.slug || "", tag.color || "#999999", tag.parentId || "", tag.description || "", metadataJson]
         );
         saved++;
       }
@@ -1353,7 +1359,7 @@ function saveTags(userId, profileId, tags) {
 function getTagsSince(userId, profileId, timestamp) {
   const conn = getConnection(userId, profileId);
   const rows = conn.all(
-    `SELECT id, name, slug, color, parentName, description, metadata, createdAt, updatedAt
+    `SELECT id, name, slug, color, parentId, description, metadata, createdAt, updatedAt
      FROM tags WHERE CAST(updatedAt AS INTEGER) > ? ORDER BY updatedAt ASC`,
     [timestamp]
   );
@@ -1362,7 +1368,7 @@ function getTagsSince(userId, profileId, timestamp) {
     name: row.name,
     slug: row.slug || "",
     color: row.color || "#999999",
-    parentName: row.parentName || "",
+    parentId: row.parentId || "",
     description: row.description || "",
     metadata: row.metadata ? JSON.parse(row.metadata) : {},
     createdAt: toTimestamp(row.createdAt),
