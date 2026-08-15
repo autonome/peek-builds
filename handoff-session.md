@@ -109,22 +109,19 @@ reasoned through and not test-covered.**
 
 Ordered by consequence.
 
-1. **Deploy the server — built, not shipped.** The tombstone fix, the new item columns,
-   the `/events` and `/tags` routes and the backup path fix are all inert until the
-   server has them. The live deployment is from 2026-06-25, reports datastore version
-   1, and predates every `/mcp/*` route — `POST /admin/mcp-grants` returns 404 to a
-   valid admin token. Because the server is on version 1 and every client is now on 3,
-   `checkVersionHeaders()` currently 409s all sync traffic on `/items`.
+1. **Confirm event sync end to end.** The server is deployed and reports datastore
+   version 3, so `/events` and `/tags` are live and `checkVersionHeaders()` no longer
+   409s desktop traffic. The migration added all five `tags` columns by `ALTER TABLE`
+   and the data came through intact — 11,121 items, 480 tags, 14,617 item-tag links.
 
-   `yarn server:deploy` builds the subtree correctly but its push cannot succeed: this
-   repository's remote is tangled, and the GitHub push is rejected 403. Deploys are
-   manual against Railway. `docs/server-backup-and-deploy.md` carries the procedure.
+   `item_events` on the server is still 0, because events have never had a route to
+   reach it. The next desktop sync should push that history; verifying it actually
+   lands is the cheapest proof that the whole chain works.
 
-   A verified pre-deploy backup exists outside the repo at `~/peek-backups/`
-   (`peek-prod-predeploy-20260815.tar.gz`, sha256 `bf6a05c8…`), holding consistent
-   snapshots of all ten databases plus blobs — 11,121 items, 480 tags, 14,617 item-tag
-   links. It was taken by hand because the server's own backup has never produced a
-   file; see the same doc for the three separate faults behind that.
+   A verified pre-deploy backup sits outside the repo under a `peek-backups` directory
+   in the operator's home (`peek-prod-predeploy-20260815.tar.gz`, sha256 `bf6a05c8…`),
+   holding consistent snapshots of all ten databases plus blobs. It was taken by hand
+   because the server's own backup does not cover real data — see step 3.
 
 2. **Prove the credential reference against a real client.** Every remote-backend
    check so far expanded `${PEEK_SYNC_URL}` by hand. What is untested is whether

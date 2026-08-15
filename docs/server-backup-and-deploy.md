@@ -12,26 +12,29 @@ it to a `deploy/server` branch on GitHub, expecting Railway to auto-build from t
 `github.com/autonome/peek` is rejected with 403 even from an account the API reports as having
 push rights. Deploys are performed manually against Railway instead.
 
-The manual path uploads a directory and builds it:
+The manual path uploads a directory and builds it. Run from the repository root:
 
 ```
-railway up <dir> --service peek-node
+railway up ./apps/server --path-as-root --service peek-node --detach -m "<what changed>"
 ```
 
-`<dir>` must have the server at its root — the same projection `scripts/deploy-server.sh` builds,
-since Nixpacks looks for `package.json` at the top level. Produce it from committed content rather
-than the working tree so a dirty checkout cannot ship:
+**`--path-as-root` is required.** Without it the CLI fails with `prefix not found`, because it
+treats the path argument as a subdirectory of the project rather than as the archive root, and
+Nixpacks needs `package.json` at the top level. Passing an absolute path to a directory outside
+the repository fails the same way even with explicit `--project` and `--environment` ids.
 
-```
-git archive --format=tar --prefix=server/ main:apps/server | tar x -C <tmpdir>
-```
+`railway.json` in `apps/server/` supplies the builder and start command. Deployment metadata
+records the CLI message, so `railway status --json` shows what a running deployment was.
 
-Two constraints carried over from the old path and still true:
+Two constraints on the upload:
 
 - **No `yarn.lock` may reach the uploaded directory.** Nixpacks detects it, switches to yarn, and
   the build fails. `apps/server/` has `package-lock.json` only.
-- `node_modules/` exists in `apps/server/` locally and must not be uploaded. `git archive`
-  excludes it.
+- `apps/server/.yarn/install-state.gz` is a committed stray with no runtime purpose. It does not
+  trigger yarn detection, which keys on `yarn.lock`, but it does not belong in the image.
+
+`--detach` returns immediately. Poll with `railway deployment list --json`, and confirm the result
+against `GET /` on the public host, which reports `datastore_version` without auth.
 
 `scripts/deploy-server.sh` and the deploy section of `apps/server/CLAUDE.md` still describe the
 GitHub route. Both are stale; this file is the accurate one.
@@ -57,8 +60,9 @@ Three independent faults, in the order they bite:
 
 2. **Only one profile is ever backed up.** `createBackup()` hardcodes profile `default`. The live
    volume holds eight profiles under a single user, and the `default` one is an empty stub — all
-   real content (over 11,000 items) lives in a UUID-named profile. Fixing fault 1 alone would
-   produce a valid backup of an empty database.
+   real content (over 11,000 items) lives in a UUID-named profile. Fixing fault 1 alone produces a
+   valid backup of an empty database: the first deploy carrying the path fix logged
+   `Backup created: peek-backup-default-….zip (1.6 KB)` against a profile holding 13 MB.
 
 3. **A failed backup reports success.** `createBackup()` returns `{success: false, error}` on
    failure, but `POST /backups` returns that object as HTTP 200 regardless, and
