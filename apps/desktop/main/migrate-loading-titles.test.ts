@@ -8,11 +8,11 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
-import Database from 'better-sqlite3';
-import { migrateLoadingTitles } from './datastore.js';
+import { DatabaseSync } from 'node:sqlite';
+import { migrateLoadingTitles, wrapDb } from './datastore.js';
 
-function makeFixtureDb(): Database.Database {
-  const db = new Database(':memory:');
+function makeFixtureDb(): DatabaseSync {
+  const db = new DatabaseSync(':memory:');
   // Note: the `migrations` table is not created — this backfill is
   // explicitly NOT marker-gated (runs every boot to handle re-stick
   // from cross-backend sync), so no migrations row is ever read or
@@ -31,7 +31,7 @@ function makeFixtureDb(): Database.Database {
   return db;
 }
 
-function insertItem(db: Database.Database, row: {
+function insertItem(db: DatabaseSync, row: {
   id: string; type: string; content?: string | null; domain?: string;
   title?: string | null; deletedAt?: number; updatedAt?: number;
 }): void {
@@ -49,18 +49,18 @@ function insertItem(db: Database.Database, row: {
   );
 }
 
-function getTitle(db: Database.Database, id: string): string | null {
+function getTitle(db: DatabaseSync, id: string): string | null {
   const r = db.prepare('SELECT title FROM items WHERE id = ?').get(id) as { title: string | null } | undefined;
   return r?.title ?? null;
 }
 
-function getUpdatedAt(db: Database.Database, id: string): number | null {
+function getUpdatedAt(db: DatabaseSync, id: string): number | null {
   const r = db.prepare('SELECT updatedAt FROM items WHERE id = ?').get(id) as { updatedAt: number } | undefined;
   return r?.updatedAt ?? null;
 }
 
 describe('migrateLoadingTitles', () => {
-  let db: Database.Database;
+  let db: DatabaseSync;
 
   beforeEach(() => {
     db = makeFixtureDb();
@@ -68,49 +68,49 @@ describe('migrateLoadingTitles', () => {
 
   it('replaces "Loading..." with row.domain when present', () => {
     insertItem(db, { id: '1', type: 'url', content: 'https://example.com/x', domain: 'example.com', title: 'Loading...' });
-    migrateLoadingTitles(db);
+    migrateLoadingTitles(wrapDb(db));
     assert.strictEqual(getTitle(db, '1'), 'example.com');
   });
 
   it('extracts hostname from content URL when domain is empty', () => {
     insertItem(db, { id: '2', type: 'url', content: 'https://foo.bar/page', domain: '', title: 'Loading...' });
-    migrateLoadingTitles(db);
+    migrateLoadingTitles(wrapDb(db));
     assert.strictEqual(getTitle(db, '2'), 'foo.bar');
   });
 
   it('backfills NULL titles too', () => {
     insertItem(db, { id: '3', type: 'url', content: 'https://qux.io/p', domain: 'qux.io', title: null });
-    migrateLoadingTitles(db);
+    migrateLoadingTitles(wrapDb(db));
     assert.strictEqual(getTitle(db, '3'), 'qux.io');
   });
 
   it('backfills empty-string titles too', () => {
     insertItem(db, { id: '4', type: 'url', content: 'https://baz.io/p', domain: 'baz.io', title: '' });
-    migrateLoadingTitles(db);
+    migrateLoadingTitles(wrapDb(db));
     assert.strictEqual(getTitle(db, '4'), 'baz.io');
   });
 
   it('leaves real titles alone', () => {
     insertItem(db, { id: '5', type: 'url', content: 'https://example.com/x', domain: 'example.com', title: 'Real Title' });
-    migrateLoadingTitles(db);
+    migrateLoadingTitles(wrapDb(db));
     assert.strictEqual(getTitle(db, '5'), 'Real Title');
   });
 
   it('skips non-url types even if their title is "Loading..."', () => {
     insertItem(db, { id: '6', type: 'text', content: 'note body', domain: '', title: 'Loading...' });
-    migrateLoadingTitles(db);
+    migrateLoadingTitles(wrapDb(db));
     assert.strictEqual(getTitle(db, '6'), 'Loading...');
   });
 
   it('skips soft-deleted rows', () => {
     insertItem(db, { id: '7', type: 'url', content: 'https://gone.example/x', domain: 'gone.example', title: 'Loading...', deletedAt: Date.now() });
-    migrateLoadingTitles(db);
+    migrateLoadingTitles(wrapDb(db));
     assert.strictEqual(getTitle(db, '7'), 'Loading...');
   });
 
   it('leaves rows alone when no usable hostname can be derived', () => {
     insertItem(db, { id: '8', type: 'url', content: 'not a url', domain: '', title: 'Loading...' });
-    migrateLoadingTitles(db);
+    migrateLoadingTitles(wrapDb(db));
     assert.strictEqual(getTitle(db, '8'), 'Loading...');
   });
 
@@ -127,7 +127,7 @@ describe('migrateLoadingTitles', () => {
       title: 'Loading...',
       updatedAt: originalUpdatedAt,
     });
-    migrateLoadingTitles(db);
+    migrateLoadingTitles(wrapDb(db));
     assert.strictEqual(getTitle(db, 'no-bump'), 'example.com');
     assert.strictEqual(getUpdatedAt(db, 'no-bump'), originalUpdatedAt);
   });
@@ -138,13 +138,13 @@ describe('migrateLoadingTitles', () => {
     // we've already fixed it. Without a migrations marker, the next
     // boot re-applies the fix.
     insertItem(db, { id: 're-stick', type: 'url', content: 'https://example.com/x', domain: 'example.com', title: 'Loading...' });
-    migrateLoadingTitles(db);
+    migrateLoadingTitles(wrapDb(db));
     assert.strictEqual(getTitle(db, 're-stick'), 'example.com');
 
     // Simulate sync re-pushing "Loading..." from another backend.
     db.prepare('UPDATE items SET title = ? WHERE id = ?').run('Loading...', 're-stick');
 
-    migrateLoadingTitles(db);
+    migrateLoadingTitles(wrapDb(db));
     assert.strictEqual(getTitle(db, 're-stick'), 'example.com');
   });
 
@@ -153,7 +153,7 @@ describe('migrateLoadingTitles', () => {
     // it is unchanged after the run.
     const ts = Date.now() - 500_000;
     insertItem(db, { id: 'real', type: 'url', content: 'https://example.com/x', domain: 'example.com', title: 'Real Title', updatedAt: ts });
-    migrateLoadingTitles(db);
+    migrateLoadingTitles(wrapDb(db));
     assert.strictEqual(getTitle(db, 'real'), 'Real Title');
     assert.strictEqual(getUpdatedAt(db, 'real'), ts);
   });

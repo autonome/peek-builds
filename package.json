@@ -20,14 +20,12 @@
     "extends": "apps/desktop/electron-builder.yml"
   },
   "scripts": {
-    "postinstall": "electron-rebuild -f -w better-sqlite3",
     "//-- Development (BACKEND=electron|tauri, defaults to electron) --//": "",
     "dev": "[ \"${BACKEND:-}\" = \"tauri\" ] && yarn dev:tauri || yarn dev:electron",
     "dev:electron": "yarn workspace @peek/desktop run dev",
     "dev:tauri": "./scripts/timed.sh sh -c 'cd apps/tauri-desktop/src-tauri && cargo run'",
     "dev:hot": "yarn workspace @peek/desktop run dev:hot",
     "//-- Production --//": "",
-    "check:native": "yarn workspace @peek/desktop run check:native",
     "start": "[ \"${BACKEND:-}\" = \"tauri\" ] && yarn start:tauri || yarn start:electron",
     "start:electron": "yarn workspace @peek/desktop run start",
     "start:tauri": "./scripts/timed.sh sh -c 'cd apps/tauri-desktop/src-tauri && cargo run --release'",
@@ -220,7 +218,6 @@
     "@ipld/dag-cbor": "^10.0.1",
     "@replit/codemirror-vim": "^6.3.0",
     "archiver": "^7.0.0",
-    "better-sqlite3": "^12.11.1",
     "cross-fetch": "^4.1.0",
     "electron-unhandled": "^5.0.0",
     "lit": "^3.3.2"
@@ -229,7 +226,6 @@
     "@electron/rebuild": "^4.1.0",
     "@playwright/test": "^1.57.0",
     "@types/archiver": "^6.0.0",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.0.3",
     "electron": "^43.0.0",
     "electron-builder": "^26.15.3",

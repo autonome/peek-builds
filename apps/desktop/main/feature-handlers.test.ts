@@ -23,8 +23,9 @@
  * The capability GATE itself is the real function, not a replay — a grant
  * lacking the action is genuinely rejected by product code.
  *
- * Runs under Electron's Node host (ELECTRON_RUN_AS_NODE=1 electron --test):
- * better-sqlite3 needs the Electron ABI.
+ * Runs under Electron's Node host (ELECTRON_RUN_AS_NODE=1 electron --test),
+ * the standard runner1 test host — node:sqlite is a Node built-in with no
+ * ABI to match, unlike the former better-sqlite3.
  *
  * Handlers covered here:
  *   - tile:features:history            (read gate + featureId source-filter + DB query)

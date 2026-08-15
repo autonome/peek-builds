@@ -9,7 +9,7 @@
  * Profile metadata is stored in profiles.db in the userData directory.
  */
 
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -35,7 +35,7 @@ export interface SyncConfig {
   serverProfileId: string;
 }
 
-let profilesDb: Database.Database | null = null;
+let profilesDb: DatabaseSync | null = null;
 let userDataPath: string | null = null;
 
 /**
@@ -43,12 +43,12 @@ let userDataPath: string | null = null;
  * @param dataPath - Base userData directory
  * @param filename - Database filename (default: 'profiles.db', dev: '.dev-profiles.db')
  */
-export function initProfilesDb(dataPath: string, filename: string = 'profiles.db'): Database.Database {
+export function initProfilesDb(dataPath: string, filename: string = 'profiles.db'): DatabaseSync {
   userDataPath = dataPath;
   const profilesDbPath = path.join(dataPath, filename);
 
-  profilesDb = new Database(profilesDbPath);
-  profilesDb.pragma('journal_mode = WAL');
+  profilesDb = new DatabaseSync(profilesDbPath);
+  profilesDb.exec('PRAGMA journal_mode = WAL');
 
   // Create profiles table
   profilesDb.exec(`
@@ -79,7 +79,7 @@ export function initProfilesDb(dataPath: string, filename: string = 'profiles.db
 /**
  * Get the profiles database (must be initialized first)
  */
-function getProfilesDb(): Database.Database {
+function getProfilesDb(): DatabaseSync {
   if (!profilesDb) {
     throw new Error('Profiles database not initialized. Call initProfilesDb first.');
   }

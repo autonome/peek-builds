@@ -2,7 +2,7 @@
  * Session Snapshot — Save/Restore window state
  *
  * Captures all visible user windows and writes to feature_settings using
- * synchronous better-sqlite3 APIs (safe for before-quit handler). On startup,
+ * synchronous node:sqlite APIs (safe for before-quit handler). On startup,
  * reads the snapshot and recreates windows. Periodic autosave timer + manual
  * save/restore commands; crash recovery dialog with snapshot validation.
  *
@@ -437,7 +437,7 @@ function readSaveContext(nativeId: number): WindowContext | undefined {
  * Save a snapshot of all visible user windows to the datastore.
  *
  * MUST be synchronous — runs in the before-quit handler before closeDatabase().
- * Uses better-sqlite3 synchronous APIs via getDb().
+ * Uses node:sqlite synchronous APIs via getDb().
  */
 export function saveSessionSnapshot(reason: SessionSnapshot['reason'], opts?: { cleanShutdown?: boolean; _forceForTest?: boolean }): void {
   // Skip save in test environments unless _forceForTest is set (used by

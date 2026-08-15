@@ -2,14 +2,14 @@
  * Unit tests for rules.ts — the rule registry storage layer (Stage 1
  * of peek MCP plan 3d7d9239).
  *
- * Mirrors permission-store.test.ts: in-memory better-sqlite3 with the
+ * Mirrors permission-store.test.ts: in-memory node:sqlite database with the
  * `rules` table shape from datastore.ts. Runs under Electron-as-node
  * via ELECTRON_RUN_AS_NODE.
  */
 
 import { describe, it, before, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 
 import {
   computeManifestRuleId,
@@ -26,10 +26,10 @@ import {
   type RulesDb,
 } from './rules.js';
 
-let db: Database.Database;
+let db: DatabaseSync;
 
-function makeDb(): Database.Database {
-  const d = new Database(':memory:');
+function makeDb(): DatabaseSync {
+  const d = new DatabaseSync(':memory:');
   d.exec(`
     CREATE TABLE rules (
       id TEXT PRIMARY KEY NOT NULL,
@@ -53,7 +53,7 @@ function makeDb(): Database.Database {
   return d;
 }
 
-function asRulesDb(d: Database.Database): RulesDb {
+function asRulesDb(d: DatabaseSync): RulesDb {
   return d as unknown as RulesDb;
 }
 

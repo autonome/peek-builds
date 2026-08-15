@@ -1,7 +1,7 @@
 /**
  * Integration tests for session save/restore
  *
- * These tests use a REAL better-sqlite3 database with the same schema
+ * These tests use a REAL node:sqlite database with the same schema
  * as the production feature_settings table. They test the actual SQL
  * operations, data structures, and logic flows from session.ts.
  *
@@ -16,7 +16,7 @@
 
 import { describe, it, before, after, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 // Electron-free, so safe to import the REAL implementation here (no
 // replication drift): the session-save early-skip decision shared by
 // `saveSessionSnapshot`'s loop.
@@ -249,8 +249,8 @@ function collapseToPrimaryDisplay(
 // Database helper functions (replicate the SQL from session.ts exactly)
 // ============================================================================
 
-function createTestDb(): InstanceType<typeof Database> {
-  const db = new Database(':memory:');
+function createTestDb(): DatabaseSync {
+  const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE IF NOT EXISTS feature_settings (
       id TEXT PRIMARY KEY,
@@ -269,7 +269,7 @@ function createTestDb(): InstanceType<typeof Database> {
  * Save session snapshot — replicates the SQL from session.ts saveSessionSnapshot.
  * This is the exact same SQL, just with db passed as a parameter.
  */
-function saveSnapshot(db: InstanceType<typeof Database>, snapshot: SessionSnapshot, reason: string): void {
+function saveSnapshot(db: DatabaseSync, snapshot: SessionSnapshot, reason: string): void {
   db.prepare(`
     INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
     VALUES (?, 'session', 'snapshot', ?, ?)
@@ -306,7 +306,7 @@ function saveSnapshot(db: InstanceType<typeof Database>, snapshot: SessionSnapsh
 /**
  * Read crash state — replicates session.ts readSessionCrashState.
  */
-function readCrashState(db: InstanceType<typeof Database>): { cleanShutdown: boolean; crashCount: number } {
+function readCrashState(db: DatabaseSync): { cleanShutdown: boolean; crashCount: number } {
   try {
     const metaRow = db.prepare(
       `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
@@ -327,7 +327,7 @@ function readCrashState(db: InstanceType<typeof Database>): { cleanShutdown: boo
 /**
  * Mark session dirty — replicates session.ts markSessionDirty.
  */
-function markDirty(db: InstanceType<typeof Database>): void {
+function markDirty(db: DatabaseSync): void {
   const metaRow = db.prepare(
     `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'metadata'`
   ).get() as { value: string } | undefined;
@@ -354,7 +354,7 @@ function markDirty(db: InstanceType<typeof Database>): void {
 /**
  * Read snapshot — replicates session.ts snapshot read in restoreSessionSnapshot.
  */
-function readSnapshot(db: InstanceType<typeof Database>): SessionSnapshot | null {
+function readSnapshot(db: DatabaseSync): SessionSnapshot | null {
   const row = db.prepare(
     `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'snapshot'`
   ).get() as { value: string } | undefined;
@@ -365,7 +365,7 @@ function readSnapshot(db: InstanceType<typeof Database>): SessionSnapshot | null
 /**
  * Get snapshot info — replicates session.ts getSessionSnapshotInfo.
  */
-function getSnapshotInfo(db: InstanceType<typeof Database>): { windowCount: number; savedAt: number; reason: string } | null {
+function getSnapshotInfo(db: DatabaseSync): { windowCount: number; savedAt: number; reason: string } | null {
   const row = db.prepare(
     `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'snapshot'`
   ).get() as { value: string } | undefined;
@@ -407,7 +407,7 @@ function makeDescriptor(overrides: Partial<WindowDescriptor> = {}): WindowDescri
 // ============================================================================
 
 describe('Session Integration Tests', () => {
-  let db: InstanceType<typeof Database>;
+  let db: DatabaseSync;
 
   beforeEach(() => {
     // Fresh in-memory database for each test — complete isolation
@@ -1756,7 +1756,7 @@ describe('Session Integration Tests', () => {
   describe('SIGINT save path', () => {
     it('synchronous save writes data immediately (no async needed)', () => {
       // BUG #1: SIGINT handler must save synchronously because process.exit()
-      // follows immediately. better-sqlite3 is sync, which is why it works.
+      // follows immediately. node:sqlite is sync, which is why it works.
       // This test verifies that a single synchronous call persists the data.
       const snapshot: SessionSnapshot = {
         version: 1,
@@ -1771,7 +1771,7 @@ describe('Session Integration Tests', () => {
       // This simulates what the SIGINT handler does: one synchronous save
       saveSnapshot(db, snapshot, 'before-quit');
 
-      // Immediately readable (no flush/commit needed — better-sqlite3 is sync)
+      // Immediately readable (no flush/commit needed — node:sqlite is sync)
       const loaded = readSnapshot(db);
       assert.ok(loaded, 'Snapshot must be readable immediately after sync save');
       assert.strictEqual(loaded!.windows.length, 2);
@@ -2269,7 +2269,7 @@ describe('feature_settings migration (extension_settings -> feature_settings)', 
    */
 
   it('copies data from extension_settings to feature_settings and drops old table', () => {
-    const migrationDb = new Database(':memory:');
+    const migrationDb = new DatabaseSync(':memory:');
 
     // Create the old table with data
     migrationDb.exec(`
@@ -2329,7 +2329,7 @@ describe('feature_settings migration (extension_settings -> feature_settings)', 
   });
 
   it('is a no-op when extension_settings does not exist', () => {
-    const migrationDb = new Database(':memory:');
+    const migrationDb = new DatabaseSync(':memory:');
 
     // Only the new table exists
     migrationDb.exec(`
@@ -2377,7 +2377,7 @@ interface ClosedWindowEntry {
 /**
  * Save closed window stack to DB — replicates main.ts saveClosedWindowStack.
  */
-function saveClosedStack(db: InstanceType<typeof Database>, stack: ClosedWindowEntry[]): void {
+function saveClosedStack(db: DatabaseSync, stack: ClosedWindowEntry[]): void {
   const data = JSON.stringify(stack);
   db.prepare(`
     INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
@@ -2388,7 +2388,7 @@ function saveClosedStack(db: InstanceType<typeof Database>, stack: ClosedWindowE
 /**
  * Load closed window stack from DB — replicates main.ts loadClosedWindowStack.
  */
-function loadClosedStack(db: InstanceType<typeof Database>): ClosedWindowEntry[] {
+function loadClosedStack(db: DatabaseSync): ClosedWindowEntry[] {
   const row = db.prepare(
     `SELECT value FROM feature_settings WHERE featureId = 'session' AND key = 'closed-window-stack'`
   ).get() as { value: string } | undefined;

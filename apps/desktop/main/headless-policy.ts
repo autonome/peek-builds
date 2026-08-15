@@ -5,7 +5,7 @@
  * briefly activates / grabs OS focus before any of our code can set the
  * activation policy. ES modules run ALL imports before the importing module's
  * body, so a setActivationPolicy() call in entry.ts's body is delayed behind
- * ~120 heavy imports (better-sqlite3, feature loaders, …). Putting it in its own
+ * ~120 heavy imports (node:sqlite, feature loaders, …). Putting it in its own
  * module and importing it as the very first statement runs it as early as JS
  * allows — before those side-effectful imports — to shrink the launch-time
  * focus flash as much as possible.

@@ -4,7 +4,7 @@
  *
  * Two layers are exercised here, both WITHOUT Electron / timers:
  *
- *   1. Datastore (real better-sqlite3 against a temp DB file, the same
+ *   1. Datastore (real node:sqlite against a temp DB file, the same
  *      pattern as datastore.test.ts): `setWakeShortcuts` snapshot
  *      (replace-all) semantics + `getWakeShortcuts` / `getAllWakeShortcuts`.
  *

@@ -14,7 +14,7 @@ import { getAllLiveWindows, getLiveWindow } from './window-registry.js';
 import { initHybridOverlay } from './hybrid-overlay.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import unhandled from 'electron-unhandled';
 
 // Import from local backend modules
@@ -1025,7 +1025,7 @@ app.on('before-quit', (event) => {
 
 // Handle SIGINT/SIGTERM (e.g. Ctrl+C in terminal).
 // app.quit() is async and won't complete before yarn kills the process,
-// so we save synchronously (better-sqlite3) then exit immediately.
+// so we save synchronously (node:sqlite) then exit immediately.
 // Both signals are treated as clean shutdowns because they are intentional:
 // - SIGINT = user pressed Ctrl+C (deliberate quit)
 // - SIGTERM = system shutdown or process manager stop (graceful termination)
@@ -1591,7 +1591,7 @@ let _darkModeSetting = 'system'; // default
 const dbPath = path.join(profileDataPath, 'datastore.sqlite');
 if (fs.existsSync(dbPath)) {
   try {
-    const earlyDb = new Database(dbPath, { readonly: true, fileMustExist: true });
+    const earlyDb = new DatabaseSync(dbPath, { readOnly: true });
     const row = earlyDb.prepare(
       "SELECT value FROM feature_settings WHERE featureId = 'core' AND key = 'darkMode'"
     ).get() as { value: string } | undefined;
