@@ -92,7 +92,13 @@ import {
   getWindowStateSnapshot,
 } from './window-state-singleton.js';
 import type { Rectangle, WindowId } from './window-kernel.js';
-import { hostForOverlay, isBaseLayerPageHost, topmostBaseLayerPageHost } from './window-kernel.js';
+import {
+  hostForOverlay,
+  isBaseLayerPageHost,
+  topmostBaseLayerPageHost,
+  roleIn,
+  SATELLITE_ROLES,
+} from './window-kernel.js';
 import { deriveWindowSurface, classifyWindowRegistration } from './izui-roles.js';
 import {
   shadowKernelAttachOverlay,
@@ -2925,11 +2931,32 @@ function installTestBridge(): void {
      * `keepLive: true` (the music-slide case) or `false` and then drive a close
      * path that must hide-vs-destroy on that flag. Returns false if the id is
      * not a live fake hybrid host.
+     *
+     * `registerWindow` above only reaches the OLD `main.ts` registry — the
+     * close path's kernel branch decides hide-vs-close off the KERNEL's own
+     * record, which `makeFakeHybridWindow`'s `registerFakeHostWithMachine`
+     * registered as `role: 'content'` with no `keepLive`. So also re-register
+     * with the machine, carrying the role/keepLive this call was just told:
+     * `WindowRegistered`'s re-registration merge (window-kernel.ts) overwrites
+     * declared facts (role, keepLive) while preserving every LIVED one
+     * (visible, orderable, …) — the sanctioned way to correct a declared fact
+     * after the fact, since there is deliberately no `SetKeepLive` command.
      */
     registerHybridWindowParams(id: number, params: Record<string, unknown>): boolean {
       const entry = getHybridWindow(id);
       if (!entry || entry.baseWin.isDestroyed()) return false;
       registerWindow(id, params.source ? String(params.source) : 'page', params);
+      const role = typeof params.role === 'string' ? params.role : 'content';
+      registerWindowWithMachine({
+        kind: 'page-host',
+        role,
+        class: classifyWindowRegistration(role),
+        satellite: roleIn(SATELLITE_ROLES, role),
+        ...deriveWindowSurface({}),
+        win: entry.baseWin,
+        contentWC: entry.contentWC,
+        keepLive: params.keepLive === true,
+      });
       return true;
     },
     /**
@@ -2940,11 +2967,18 @@ function installTestBridge(): void {
      * BaseWindow stays live, just `isVisible() === false`); a keepLive:false one
      * must be CLOSED (BaseWindow destroyed, dropped from the registry). The test
      * reads the outcome via `hybridWindowExists(id)` / `hostVisibility(id)`.
+     *
+     * `closeOrHideWindow` itself only awaits a fullscreen-exit preamble (a
+     * no-op for a non-fullscreen window) — the actual hide/close is realized by
+     * the kernel's asynchronous effect, which `window-kernel-executor.ts` only
+     * TRACKS (`trackAsyncEffect`); `closeOrHideWindow` returns without waiting
+     * on it. So await `waitForPendingWindowEffects()` afterward too — it covers
+     * that tracked effect (see its own doc) — so the promise this returns
+     * really does cover the full close, not just the dispatch that started it.
      */
-    closeOrHideHybrid(id: number): Promise<void> {
-      // Async now (hybrid branch awaits a fullscreen exit before the terminal
-      // hide/close). Return the promise so a test can await the full close.
-      return closeOrHideWindow(id);
+    async closeOrHideHybrid(id: number): Promise<void> {
+      await closeOrHideWindow(id);
+      await waitForPendingWindowEffects();
     },
     /**
      * Drive a hybrid host's native fullscreen through the SINGLE production owner

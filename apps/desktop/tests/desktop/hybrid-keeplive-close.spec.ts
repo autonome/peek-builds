@@ -64,8 +64,12 @@ test.describe('Hybrid page-host keepLive on close path @desktop', () => {
       const visibleBefore = b.hostVisibility(id)?.visible;
       const existedBefore = b.hybridWindowExists(id);
       // Drive the exact close path app-switch / focus-autoclose funnel a hybrid
-      // peek/slide through.
-      b.closeOrHideHybrid(id);
+      // peek/slide through. Awaited: the destroy path's terminal `win.close()`
+      // is reached only after at least one microtask hop inside
+      // `electron-window-backend.ts closeWindow`, so a synchronous read would
+      // race it (the keepLive:true hide happens to be synchronous, which is
+      // why only this case would mask the race).
+      await b.closeOrHideHybrid(id);
       const existsAfter = b.hybridWindowExists(id);
       const visibleAfter = b.hostVisibility(id)?.visible;
       return { id, existedBefore, visibleBefore, existsAfter, visibleAfter };
@@ -97,7 +101,11 @@ test.describe('Hybrid page-host keepLive on close path @desktop', () => {
       });
       b.showFakeHybridWindowInactive(id);
       const existedBefore = b.hybridWindowExists(id);
-      b.closeOrHideHybrid(id);
+      // Awaited: the destroy path's terminal `win.close()` is reached only
+      // after at least one microtask hop inside `electron-window-backend.ts
+      // closeWindow`, so a synchronous read here would observe the window
+      // still alive.
+      await b.closeOrHideHybrid(id);
       const existsAfter = b.hybridWindowExists(id);
       return { id, existedBefore, existsAfter };
     });
