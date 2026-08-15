@@ -135,8 +135,8 @@ once the id-uniqueness and tombstone constraints above are met.
 
 `apps/server/schema.json` is generated from `packages/schema/v1.json` by
 `packages/schema/codegen.js generateServerSchema()`, and the generated file is
-checked in. Generation is necessary because `scripts/deploy-server.sh`
-subtree-splits `apps/server/` into its own deployed repo, so server code can never
+checked in. Generation is necessary because deploys upload `apps/server/` alone
+(see `docs/server-backup-and-deploy.md`), so server code can never
 `import` from `packages/schema` at runtime — it needs its own copy of whatever it
 reads.
 

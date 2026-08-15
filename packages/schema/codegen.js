@@ -264,7 +264,7 @@ export function generateValidator(schema) {
   return lines.join('\n');
 }
 
-// apps/server/ is subtree-split into its own deployed repo (scripts/deploy-server.sh),
+// Deploys upload apps/server/ alone (see docs/server-backup-and-deploy.md),
 // so it can never import from packages/schema — it needs its own copy of the schema
 // data it reads. apps/server/db.js only ever reads validation.required_sync_columns
 // (see validateSchema() there), so that's all this generates, rather than the full

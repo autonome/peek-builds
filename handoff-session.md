@@ -45,10 +45,10 @@ the real constants instead of restating literals, which is why it did not catch 
 
 **`apps/server/schema.json` is generated**, not hand-maintained — `packages/schema/codegen.js
 generateServerSchema()` emits it from `v1.json` as a projection of the tables the server
-actually has, and `check-freshness.js` covers it. It is checked in because
-`scripts/deploy-server.sh` splits `apps/server/` alone, so server code cannot import from
-`packages/`. `check-freshness.js` itself was fixed — it compared against a second, drifted
-copy of the generator and reported every freshly generated file as stale.
+actually has, and `check-freshness.js` covers it. It is checked in because the Railway upload
+carries `apps/server/` alone (see `docs/server-backup-and-deploy.md`), so server code cannot
+import from `packages/`. `check-freshness.js` itself was fixed — it compared against a second,
+drifted copy of the generator and reported every freshly generated file as stale.
 
 **An unknown item type now fails on the local MCP store.** `sqlite-store.js
 createItemSync()` validates before writing. `image` stays accepted locally and refused

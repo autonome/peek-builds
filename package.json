@@ -93,7 +93,6 @@
     "server:test:api": "cd apps/server && npm run test:api",
     "server:install": "cd apps/server && npm install",
     "server:healthcheck": "cd apps/server && npm run healthcheck",
-    "server:deploy": "./scripts/deploy-server.sh",
     "//-- Schema Codegen --//": "",
     "schema:codegen": "node packages/schema/codegen.js",
     "schema:test": "node --test packages/schema/fidelity.test.js",

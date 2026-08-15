@@ -2,7 +2,7 @@
 node_modules
 
 # Yarn
-.yarn/install-state.gz
+**/.yarn/install-state.gz
 .yarn/releases/
 
 # Build output

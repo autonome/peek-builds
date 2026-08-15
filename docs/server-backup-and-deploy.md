@@ -5,12 +5,9 @@ Railway volume directly, because several documented mechanisms do not do what th
 
 ## Deploying
 
-`yarn server:deploy` (`scripts/deploy-server.sh`) subtree-splits `apps/server/` and force-pushes
-it to a `deploy/server` branch on GitHub, expecting Railway to auto-build from there.
-
-**That path does not work.** The repository's remote is tangled, not GitHub, and a push to
-`github.com/autonome/peek` is rejected with 403 even from an account the API reports as having
-push rights. Deploys are performed manually against Railway instead.
+Deploys are manual, uploaded straight to Railway from a local checkout. There is no GitHub-based
+path: this repository's remote is tangled, not GitHub, and a push to `github.com/autonome/peek`
+is rejected with 403 even from an account the API reports as having push rights.
 
 The manual path uploads a directory and builds it. Run from the repository root:
 
@@ -35,9 +32,6 @@ Two constraints on the upload:
 
 `--detach` returns immediately. Poll with `railway deployment list --json`, and confirm the result
 against `GET /` on the public host, which reports `datastore_version` without auth.
-
-`scripts/deploy-server.sh` and the deploy section of `apps/server/CLAUDE.md` still describe the
-GitHub route. Both are stale; this file is the accurate one.
 
 ## Backups do not run in production
 

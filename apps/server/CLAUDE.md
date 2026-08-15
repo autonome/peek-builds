@@ -50,11 +50,6 @@ no effect on the server either way.
 Deploys are manual, against Railway directly. See `docs/server-backup-and-deploy.md` for the
 procedure and its constraints.
 
-`yarn server:deploy` (`scripts/deploy-server.sh`) force-pushes a subtree to a `deploy/server`
-branch on GitHub. **That route is dead** — this repository's remote is tangled, and the GitHub
-push is rejected with 403. The script still builds the subtree correctly, but its final push
-cannot succeed.
-
 **Important:** Railway uses Nixpacks with npm. **Do not add `yarn.lock` to `apps/server/`** — Nixpacks will detect it and switch to yarn, which breaks the build.
 
 ### Railway Setup
@@ -88,10 +83,10 @@ railway restart --service peek-node
 railway variables --service peek-node --set KEY=value
 ```
 
-**Deploy is NOT a Railway-CLI op.** `yarn server:deploy` force-pushes a subtree
-to GitHub `deploy/server`, which Railway auto-builds. That's a push to an
-external remote → it needs explicit user authorization (never push unprompted).
-"I can't deploy" is correct; "I can't read logs" is not.
+**Deploy is a manual `railway up` upload**, not one of the read-only commands above — see
+`docs/server-backup-and-deploy.md` for the invocation. It mutates production, so it needs
+explicit user authorization like the other state-changing commands. "I can't deploy without
+asking" is correct; "I can't read logs" is not.
 
 ---
 
@@ -121,4 +116,3 @@ The server uses abstraction layers so it can run on different SQLite backends (c
 
 - This server is a simple webhook receiver, **not** the portable.agency service. The portable-agency-ops skill is about a different project (Bluesky OAuth). Do not apply its Railway/OAuth patterns here unless specifically instructed.
 - Never commit `yarn.lock` to `apps/server/` — it breaks Railway Nixpacks.
-- The `deploy/server` git branch lives on GitHub (`github.com/autonome/peek`), not the primary tangled.sh remote. `yarn server:deploy` handles the push automatically.
