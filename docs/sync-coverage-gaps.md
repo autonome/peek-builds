@@ -9,85 +9,64 @@ Nothing here is scheduled work. Each gap names what settles it.
 Sources: `packages/schema/v1.json` (the canonical schema, `sync` flag per column),
 `apps/desktop/main/sync.ts` (`pushSingleItem()`, `mergeServerItem()`,
 `pullFromServer()`, `pushToServer()`, `syncTagsToItem()`, `pushTagsToServer()`,
-`pullTagsFromServer()`, `mergeServerTag()`), and `apps/server/db.js`
-(`initializeSchema()`, `saveItem()`, `saveTags()`, `getTagsSince()`).
+`pullTagsFromServer()`, `mergeServerTag()`, `pushEventsToServer()`,
+`pullEventsFromServer()`, `mergeServerEvent()`), `apps/desktop/main/rules.ts` and
+`rule-engine.ts`, and `apps/server/db.js` (`initializeSchema()`, `saveItem()`,
+`saveTags()`, `getTagsSince()`).
 
 ## Short answer
 
-A restore returns items, their tags, tag frecency, and tag metadata (color,
-description, hierarchy). It does not return item titles, domains, visit history,
-any item event, or user-created rules.
+A restore returns items with all their fields — title, domain, favicon, visit
+history, frecency, starred/archived state, deletion tombstones — their tags, tag
+frecency, tag metadata, and now item events (the observations behind series and
+feed items). It does not return user-created rules, because none exist yet: there
+is no rule editor and no code path that creates a `source: 'user'` rule.
 
-For a library built mostly of saved URLs, the visible result is a set of untitled
-entries — the title is what a person recognizes an item by, and it is cached
-locally by design.
+The remaining gaps are narrower than they once were: tag rename and tag deletion
+don't propagate, event deletion doesn't propagate, and a push with no `tags` field
+is a latent (not live) hazard. See below for each.
 
-## 1. Item fields marked local-only
+## 1. Item fields — all now sync
 
-`packages/schema/v1.json` marks these `"sync": false` on `items`, each with a
-rationale in its own description:
+`title`, `domain`, `favicon`, `visitCount`, `lastVisitAt`, and `frecencyScore` are
+`"sync": true` on `items` in `packages/schema/v1.json`, carried by `sync.ts
+pushSingleItem()` / `mergeServerItem()`, and stored by `apps/server/db.js
+saveItem()`. So are `mimeType`, `starred`, `archived`, and `deletedAt`.
 
-| Column | Stated rationale | Reconstructable? |
-|---|---|---|
-| `title` | "cached locally for URL items" | Only by refetching every URL, and not at all for dead links |
-| `domain` | "cached locally" | Yes — derivable from content for `type: 'url'` |
-| `favicon` | "cached locally" | Yes — refetchable, cosmetic |
-| `frecencyScore` | "local calculation" | Recomputes, but only from visit history, which is also local-only |
-| `visitCount` | "local tracking" | No — it is history |
-| `lastVisitAt` | "local tracking" | No — it is history |
+`createdAt` is client-authoritative: `pushSingleItem()` sends the item's original
+local `createdAt`, and `apps/server/db.js saveItem()` honors it only on INSERT, so
+an item's original creation date survives a restore. `updatedAt` stays
+server-stamped on every write instead — `mergeServerItem()`'s conflict resolution
+(last-write-wins) compares on it, so it can't also carry client-supplied values
+without breaking that comparison.
 
-The framing "cached locally" fits a browser-history model, where the record is a
-visit and the title is a convenience copy of something the network can return
-again. It does not fit a knowledge store, where the item is the record and the
-title is often the only human-readable handle on it.
-
-`frecencyScore` is a genuine policy question rather than an oversight: it is
-computed per device from that device's visits, so syncing it means deciding
-whether a value stays per-device or becomes shared. `title` and `domain` carry no
-such conflict.
-
-**Settled by:** deciding whether `title` is authoritative data or a cache.
-`apps/desktop/main/datastore.ts` is the policy owner. If authoritative, the change
-spans three places — the column in `apps/server/db.js initializeSchema()`, the
-push/merge bodies in `sync.ts pushSingleItem()` and `mergeServerItem()`, and
-`validation.required_sync_columns.items` in the schema.
-
-## 2. `item_events` is declared syncable and is not synced
-
-The sharpest gap, because it is a contract violation rather than a decision.
+## 2. `item_events` now syncs, on its own watermark
 
 `packages/schema/v1.json` marks every `item_events` column `"sync": true` and lists
-the table in `validation.required_sync_columns`. `apps/server/db.js
-initializeSchema()` creates the table. But `sync.ts` never reads or writes it —
-there is no event push, no event pull, and no event merge. Nothing populates the
-server-side table.
+the table in `validation.required_sync_columns`. `sync.ts pushEventsToServer()` /
+`pullEventsFromServer()` / `mergeServerEvent()` carry it, and `apps/server/db.js`
+stores it. `series` and `feed` items — whose entire payload lives in `item_events`
+rows rather than in the item itself — restore with their observations intact.
 
-Consequences, in rising order of cost:
+Push tracks its own watermark (`feature_settings` key `lastEventPushAt`), separate
+from the item watermark (`lastSyncAt`). This split is load-bearing, not
+incidental: an event's `itemId` on the wire is the *server's* item id, resolved
+from the local item's `syncId` — so an event whose parent item has no `syncId` yet
+(not pushed, or still mid-push) has to be skipped for this run. A shared watermark
+would still advance to "now" at the end of a run that skipped some events (because
+items track their own per-row `syncedAt` and tolerate that), which would push the
+watermark past those skipped events' `createdAt` and strand them permanently — the
+next run's `> watermark` filter would exclude them even after their item finally
+gets a `syncId`. The dedicated watermark only advances up to the oldest still-blocked
+event, so a blocked event stays eligible on every future run until its item's push
+succeeds.
 
-- Item event history — everything `record_event` writes — exists only on the
-  laptop. That includes any task status trail.
-- `series` and `feed` items are *shells* without it. Those types are in the schema's
-  type CHECK and they sync, but their entire payload is rows in `item_events`. A
-  restore returns the series with none of its observations.
+Deletion does not propagate: a locally hard-deleted event reappears on the next
+pull if the server still has it. There is no `deletedAt` (or any tombstone) column
+for `item_events` in any backend's schema.
 
-**Settled by:** either implementing event sync or changing the schema to stop
-declaring it. The current state — declared, indexed, unimplemented — reads as
-working to anyone who checks the schema instead of the code.
-
-### `starred` and `archived` are the same shape of gap
-
-Both are `"sync": true` on `items` in `packages/schema/v1.json`, and neither appears
-in the body `sync.ts pushSingleItem()` builds or the columns `mergeServerItem()`
-inserts. Until the MCP work added them, the server had no column to receive them
-either.
-
-So a starred item is starred on one laptop only, and archiving something on one
-device leaves it unarchived everywhere else. Lower stakes than the event tables, and
-the same root cause: the schema's `sync` flag describes an intention that the sync
-engine was never made to honour.
-
-**Settled by:** carrying both in `pushSingleItem()` and `mergeServerItem()`. The
-server columns now exist, so this is the smaller half of the change.
+**Settled by:** a tombstone column for `item_events`, plus push/pull handling for
+it — unscheduled work, and the one piece of §2 still open.
 
 ## 3. Tag metadata now syncs; tag identity and deletion are the remaining gaps
 
@@ -117,39 +96,64 @@ Two gaps remain, accepted rather than fixed:
 `deletedAt` column plus tombstone push/pull (needed for delete to propagate) — both
 separate, unscheduled work.
 
-## 4. Rules are entirely local
+## 4. Rules are entirely local — deferred, not rejected
 
-The `rules` table is `"sync": false` in every column. Rules with
-`source: 'manifest'` regenerate from feature manifests. Rules with
-`source: 'user'` — authored in the rule editor — do not exist anywhere else.
+The `rules` table is `"sync": false` in every column. A survey of the code finds
+zero rows with `source: 'user'`, and no path that produces one: there is a
+`tile:rules:register` IPC handler (`api.rules.register`), but it always writes
+`source: 'runtime'`, never `'user'`, and there is no rule editor UI. The only rules
+that exist are `source: 'manifest'` (4 of them, across `entities` and
+`tag-actions`), reconciled from feature manifests by `rules.ts
+syncManifestRules()` on every load — so manifest rules regenerate themselves and
+should not sync.
 
-**Settled by:** deciding whether user-authored rules are content (sync them,
-filtering to `source = 'user'`) or configuration (leave them, and say so in the
-rule editor).
+Rule sync isn't rejected, just blocked on a rule editor that doesn't exist yet.
+Whoever builds one has to satisfy two constraints first for sync to be possible:
 
-## 5. Two divergent copies of the canonical schema
+- **User-rule ids must be globally unique across devices.** The id is the only
+  viable sync identity for a user rule. Manifest rules can't use plain ids for
+  this because `rules.ts computeManifestRuleId()` derives theirs from a content
+  hash of the rule's fields — a user rule minted the same way would collide by
+  design the moment two devices declare similar-looking rules.
+- **Rule deletion needs a tombstone.** `rules.ts deleteRule()` is a hard `DELETE
+  FROM rules WHERE id = ?`, and there is no `deletedAt` (or equivalent) column on
+  `rules` in any backend's schema. Syncing rules as-is would resurrect a deleted
+  rule on every other device that still has it.
 
-`apps/server/schema.json` is a stale copy of `packages/schema/v1.json`. Observed
-differences: the older item-type CHECK (no `series`, `feed`, `entity`, `event`), no
-`rules` table, no `item_events` table, a non-unique tag-name index, and a
-`required_sync_columns` block missing `item_events` and `rules`.
+Separately, and true regardless of whether rules ever sync: `rule-engine.ts
+fireRule()` resolves a rule's `scriptId` by publishing to
+`scripts:execute:<scriptId>` — a plain pubsub topic. If no script on that device
+subscribes to that topic (because the script doesn't exist there), the publish has
+no listener, the rule silently never fires, and nothing logs it. A synced rule
+naming a script the receiving device lacks would hit exactly this.
 
-Any schema change made by following one file leaves the other behind, and a drift
-test pinned to one copy passes while the other rots.
+**Settled by:** building a rule editor (giving `source: 'user'` a real origin),
+then deciding whether user-authored rules sync — filtered to `source = 'user'`,
+once the id-uniqueness and tombstone constraints above are met.
 
-**Settled by:** deleting the copy and importing `packages/schema/v1.json`, or
-generating one from the other. Whichever survives, the server should fail to boot
-against a schema it disagrees with rather than diverging silently.
+## 5. The two copies of the canonical schema are no longer divergent
 
-## 6. The server's `items` table is missing columns the schema declares
+`apps/server/schema.json` is generated from `packages/schema/v1.json` by
+`packages/schema/codegen.js generateServerSchema()`, and the generated file is
+checked in. Generation is necessary because `scripts/deploy-server.sh`
+subtree-splits `apps/server/` into its own deployed repo, so server code can never
+`import` from `packages/schema` at runtime — it needs its own copy of whatever it
+reads.
 
-`apps/server/db.js initializeSchema()` creates `items` with
-`id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt,
-createdByDevice`. `title`, `domain`, and `frecencyScore` are absent entirely.
+The generated file is a narrow projection, not a mirror: `SERVER_TABLES` in
+`codegen.js` lists only the tables the server physically creates (`items`, `tags`,
+`item_tags`, `item_events` — `rules` is desktop-only and deliberately dropped),
+and for each it carries only `validation.required_sync_columns`, because that's
+the only part `apps/server/db.js validateSchema()` reads at boot. Freshness is
+covered by `packages/schema/check-freshness.js`, which regenerates and diffs
+against the checked-in copy.
 
-This is downstream of §1 — nothing syncs them, so nothing needed a column — but it
-is worth stating separately, because it is the piece that blocks any consumer
-reading items *from* the server rather than through a local datastore. See
+## 6. The server's `items` table columns — resolved
+
+`apps/server/db.js initializeSchema()` creates `items` with `title`, `domain`,
+`favicon`, `frecencyScore`, `visitCount`, `lastVisitAt`, and `mimeType` alongside
+the original columns. This was downstream of §1: once those fields started
+syncing, the server needed columns to receive them. See
 `docs/mcp-remote-backend-design.md` §3.1.
 
 ## 7. A push with no `tags` field wipes the item's existing tag links
@@ -175,12 +179,14 @@ treatment as every other column — unscheduled work, since no current client hi
 
 ```
 grep -n '"sync": false' packages/schema/v1.json
-grep -n 'item_events' apps/desktop/main/sync.ts        # returns nothing
-diff apps/server/schema.json packages/schema/v1.json
+grep -rn "source: 'user'" apps/desktop/main --include='*.ts' --exclude='*.test.ts'   # returns nothing
+yarn schema:check
 ```
 
-The first is the local-only inventory. The second is the contract violation in §2 —
-an empty result is the finding. The third is §5.
+The first is the local-only inventory — now just `rules` and the two accepted tag
+gaps. The second is the §4 finding: no code path produces a user-authored rule.
+The third regenerates `apps/server/schema.json` from `packages/schema/v1.json` and
+diffs against the checked-in copy — a clean exit is §5 holding.
 
 ## Not covered by this note
 
