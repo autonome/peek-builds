@@ -1,10 +1,16 @@
 /**
- * Regression guard: db.js ensureTagsUniqueIndex() migration.
+ * Regression guard: sqlite-store.js ensureTagsUniqueIndex() migration.
  *
- * Verifies that openDb() creates idx_tags_name_unique on an existing database
- * that lacks it — including when duplicate tags.name rows are present. This
- * mirrors the real-world scenario where a database was created before commit
- * 01392807 added the UNIQUE index to the DDL.
+ * Verifies that openSqliteStore() creates idx_tags_name_unique on an existing
+ * database that lacks it — including when duplicate tags.name rows are
+ * present. This mirrors the real-world scenario where a database was created
+ * before commit 01392807 added the UNIQUE index to the DDL.
+ *
+ * db.js was refactored into features/mcp-server/store/ (commit c39c2110);
+ * ensureTagsUniqueIndex() and the raw openDb()/closeDb()/tagItem() exports it
+ * used are now internal to sqlite-store.js, folded into openSqliteStore()
+ * (runs the migration on open) and the returned store's async tagItem()/
+ * close() methods.
  */
 
 import { describe, it, before, after } from 'node:test';
@@ -19,8 +25,8 @@ import { dirname } from 'node:path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Path to db.js under test.
-const DB_JS_PATH = join(__dirname, '..', '..', 'features', 'mcp-server', 'db.js');
+// Path to sqlite-store.js under test.
+const SQLITE_STORE_PATH = join(__dirname, '..', '..', 'features', 'mcp-server', 'store', 'sqlite-store.js');
 
 // Minimal schema that mirrors the real one but WITHOUT the UNIQUE index on
 // tags.name — this is what older databases looked like before the fix.
@@ -113,13 +119,13 @@ function getItemTagPairs(dbPath) {
   return rows;
 }
 
-describe('mcp db.js: ensureTagsUniqueIndex', () => {
+describe('mcp sqlite-store.js: ensureTagsUniqueIndex', () => {
   let tmpDir;
-  let dbModule;
+  let openSqliteStore;
 
   before(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'peek-mcp-tag-idx-test-'));
-    dbModule = await import(DB_JS_PATH);
+    ({ openSqliteStore } = await import(SQLITE_STORE_PATH));
   });
 
   after(() => {
@@ -142,12 +148,12 @@ describe('mcp db.js: ensureTagsUniqueIndex', () => {
     assert.ok(!before.includes('idx_tags_name_unique'), 'unique index should not exist before');
     assert.ok(before.includes('idx_tags_name'), 'legacy plain index should exist before');
 
-    dbModule.openDb(dbPath);
-    dbModule.closeDb();
+    const store = await openSqliteStore({ dbPath });
+    await store.close();
 
     const indexes = getIndexes(dbPath);
-    assert.ok(indexes.includes('idx_tags_name_unique'), 'idx_tags_name_unique should exist after openDb');
-    assert.ok(!indexes.includes('idx_tags_name'), 'legacy plain idx_tags_name should be dropped after openDb');
+    assert.ok(indexes.includes('idx_tags_name_unique'), 'idx_tags_name_unique should exist after openSqliteStore');
+    assert.ok(!indexes.includes('idx_tags_name'), 'legacy plain idx_tags_name should be dropped after openSqliteStore');
   });
 
   it('creates idx_tags_name_unique on a legacy DB with duplicate tag names', async () => {
@@ -173,12 +179,12 @@ describe('mcp db.js: ensureTagsUniqueIndex', () => {
              ('it-3', 'item-2', 'tag-b', ${now});
     `);
 
-    dbModule.openDb(dbPath);
-    dbModule.closeDb();
+    const store = await openSqliteStore({ dbPath });
+    await store.close();
 
     // Index must now exist.
     const indexes = getIndexes(dbPath);
-    assert.ok(indexes.includes('idx_tags_name_unique'), 'idx_tags_name_unique should exist after openDb');
+    assert.ok(indexes.includes('idx_tags_name_unique'), 'idx_tags_name_unique should exist after openSqliteStore');
 
     // 'todo' should appear exactly once.
     const names = getTagNames(dbPath);
@@ -192,7 +198,7 @@ describe('mcp db.js: ensureTagsUniqueIndex', () => {
     assert.equal(item2Tags.filter(t => t === 'todo').length, 1, 'todo should appear exactly once for item-2');
   });
 
-  it('is idempotent — calling openDb twice does not break the index', async () => {
+  it('is idempotent — calling openSqliteStore twice does not break the index', async () => {
     const dbPath = join(tmpDir, 'idempotent.sqlite');
     const now = Date.now();
     createLegacyDb(dbPath, `
@@ -200,12 +206,12 @@ describe('mcp db.js: ensureTagsUniqueIndex', () => {
       VALUES ('tag-1', 'hello', 1, ${now}, 0, ${now}, ${now});
     `);
 
-    dbModule.openDb(dbPath);
-    dbModule.closeDb();
+    let store = await openSqliteStore({ dbPath });
+    await store.close();
 
     // Second open must not throw.
-    dbModule.openDb(dbPath);
-    dbModule.closeDb();
+    store = await openSqliteStore({ dbPath });
+    await store.close();
 
     const indexes = getIndexes(dbPath);
     assert.ok(indexes.includes('idx_tags_name_unique'), 'index should still exist after second open');
@@ -220,18 +226,20 @@ describe('mcp db.js: ensureTagsUniqueIndex', () => {
       VALUES ('item-1', 'text', 'test', ${now}, ${now});
     `);
 
-    dbModule.openDb(dbPath);
+    const store = await openSqliteStore({ dbPath });
 
     // This should not throw — the ON CONFLICT(name) upsert requires the UNIQUE index.
-    assert.doesNotThrow(() => {
-      dbModule.tagItem('item-1', 'newtag');
-    }, 'tagItem should succeed after ensureTagsUniqueIndex runs');
+    await assert.doesNotReject(
+      store.tagItem('item-1', 'newtag'),
+      'tagItem should succeed after ensureTagsUniqueIndex runs'
+    );
 
     // Calling again (idempotent via INSERT OR IGNORE on item_tags).
-    assert.doesNotThrow(() => {
-      dbModule.tagItem('item-1', 'newtag');
-    }, 'second tagItem call should also succeed');
+    await assert.doesNotReject(
+      store.tagItem('item-1', 'newtag'),
+      'second tagItem call should also succeed'
+    );
 
-    dbModule.closeDb();
+    await store.close();
   });
 });
