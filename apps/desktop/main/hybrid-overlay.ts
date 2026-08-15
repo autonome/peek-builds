@@ -321,6 +321,15 @@ function ensureOverlay(): BrowserWindow {
       overlayWmId = null;
     }
   });
+  // HAZARD: nulling these means the NEXT `ensureOverlay()` call re-mints the
+  // window from scratch — and that call could come from `retarget()`, i.e.
+  // from inside a `subscribeFrontChange` dispatch. A mint that happens mid-
+  // dispatch registers too late for that same dispatch's `AttachOverlay` to
+  // see it, so the attach is rejected (no-such-window) invisibly — the exact
+  // defect `initHybridOverlay`'s startup `ensureOverlay()` call exists to
+  // avoid. Do not paper over a runtime overlay close with a guard or retry
+  // here; if this ever needs handling, the re-mint has to be moved back out
+  // of dispatch, the same way the startup call is.
 
   // Register the chrome overlay with the window-state machine as a SATELLITE: it
   // can hold OS focus (Cmd+L into the navbar) but must never become `front`.
@@ -789,6 +798,21 @@ export function initHybridOverlay(): void {
   // Run extension page-script execution against the active hybrid content WC
   // (the overlay host has webview:null and cannot service it; see above).
   wireExecuteScript();
+
+  // Mint the overlay window and register it with the window-state machine
+  // HERE, before the subscription below can fire a `retarget()`. The
+  // overlay's EXISTENCE is app infrastructure — like the bg/cmd/hud
+  // renderers, it is created once at startup and is not a consequence of any
+  // window event; only its ATTACHMENT to a host is event-driven. Minting it
+  // from inside a `retarget()` call put its `WindowRegistered` registration
+  // mid-dispatch (queued behind the very dispatch that triggered the mint),
+  // so the immediately-following `AttachOverlay` was decided against a
+  // window-manager state that did not yet contain it and was rejected as
+  // no-such-window — the overlay stayed permanently unattached. Calling
+  // `ensureOverlay()` here, ahead of the subscription, means registration
+  // always lands between dispatches; `retarget()`'s own call is idempotent
+  // and becomes a no-op re-entry.
+  ensureOverlay();
 
   unsubscribeActive = subscribeFrontChange(() => {
     try {
