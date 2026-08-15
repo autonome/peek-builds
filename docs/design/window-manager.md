@@ -1244,7 +1244,10 @@ content query. `isAppResignSweepEligible` requires `!canBecomeKey` and `isConten
 switch; the overlay itself is excluded from the sweep by role and hidden by `hybrid-overlay.ts`
 `wireAppActiveGate` without dropping `overlayFor`, so attachment survives an app switch correctly.
 And `evolve`'s `WindowClosed` arm clears `overlayFor` in the same pass that removes the record, so
-a retired host is never named by attachment.
+a retired host is never named by attachment — writing `visible: false` alongside it, since any
+transition that detaches a visible overlay owns the visibility fact rather than leaving it for the
+backend's native-hide echo. `react` turns that stored fact into the hide through its ordinary
+visibility diff; it carries no overlay-specific detach rule.
 
 No kernel invariant should force the two to agree. Such an invariant would be false in every
 divergence above, and enforcing it would mean either constraining order to follow attachment — a
