@@ -387,17 +387,27 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * with, because it never asked for focus at all.
    *
    * Lifecycle, all four edges deliberate:
-   *   - ARMED by `setStacking`, immediately before the native z-raise, and only
-   *     where that primitive actually takes focus.
-   *   - CONSUMED (one shot) in the window's `'focus'` listener, which suppresses
-   *     the event unless `pendingSelfCausedFocus` also armed it — a focus-family
-   *     command genuinely asked for that one, so it still reports.
+   *   - ARMED per window by `setStacking`, immediately before the native
+   *     z-raise, and only where that primitive actually takes focus.
+   *   - CONSUMED in the window's `'focus'` listener, which suppresses the event
+   *     unless `pendingSelfCausedFocus` also armed it — a focus-family command
+   *     genuinely asked for that one, so it still reports. The WHOLE set is then
+   *     dropped, by the first native `'focus'` on ANY window and whether or not
+   *     that focus was suppressed: a stacking batch re-asserts the order by
+   *     calling `setStacking` for every window in it, but the platform provokes
+   *     AT MOST ONE focus for the batch, so once any focus has arrived the
+   *     remaining armings are stale. Leaving them would swallow the next genuine
+   *     focus on each of those windows.
    *   - DROPPED on the window's own `blur` and `closed`, for the same reason
    *     `pendingSelfCausedFocus` is: focus went elsewhere, so whatever arrives
    *     next is a new event and not our side effect.
    *   - DROPPED by `armSelfCausedFocus`: a real focus-family command supersedes
    *     an outstanding stacking arming, so a never-consumed one cannot swallow
    *     the focus that command is about to provoke.
+   *
+   * Residual risk, stated plainly: if the platform provokes NO focus at all for
+   * a batch, the armings survive until the next focus of ANY kind, and that one
+   * focus is suppressed even if it was genuine.
    */
   private readonly pendingStackingFocus = new Set<WindowId>();
 
@@ -700,6 +710,10 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       // true however the focus got here.
       this.cancelBlurSettle();
       const stackingProvoked = this.pendingStackingFocus.delete(id);
+      // A stacking batch arms every window it reorders, but the platform
+      // provokes at most ONE focus for the batch — so this focus, suppressed or
+      // not, voids the rest. See `pendingStackingFocus`.
+      this.pendingStackingFocus.clear();
       const cause = this.takeFocusCause(id);
       const suppressed = stackingProvoked && cause.kind !== 'machine';
       // A focus provoked by `setStacking` is this backend's own side effect on
