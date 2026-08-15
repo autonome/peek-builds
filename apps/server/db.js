@@ -7,7 +7,11 @@ const fs = require("fs");
 const { DATASTORE_VERSION } = require("./version");
 
 // Load canonical schema for validation
-// Note: schema.json is copied from schema/v1.json during deploy
+// Note: schema.json is a generated, checked-in projection of
+// packages/schema/v1.json (see packages/schema/codegen.js) — apps/server/
+// is subtree-split and deployed standalone, so it can't import packages/
+// at runtime and carries its own copy instead. Regenerate with
+// `yarn schema:codegen`, never hand-edit.
 const SCHEMA = JSON.parse(
   fs.readFileSync(path.join(__dirname, "schema.json"), "utf-8")
 );

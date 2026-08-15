@@ -22,12 +22,14 @@ import {
   generateTypescript,
   generateRust,
   generateValidator,
+  generateServerSchema,
 } from './codegen.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const GENERATED_DIR = join(__dirname, 'generated');
+const SERVER_DIR = join(__dirname, '..', '..', 'apps', 'server');
 
 const schemaPath = join(__dirname, 'v1.json');
 const schema = JSON.parse(readFileSync(schemaPath, 'utf-8'));
@@ -43,6 +45,7 @@ const FILES = [
   { label: 'types.ts', path: join(GENERATED_DIR, 'types.ts'), generate: () => generateTypescript(schema, false) },
   { label: 'types.rs', path: join(GENERATED_DIR, 'types.rs'), generate: () => generateRust(schema, false) },
   { label: 'validate.js', path: join(GENERATED_DIR, 'validate.js'), generate: () => generateValidator(schema) },
+  { label: 'apps/server/schema.json', path: join(SERVER_DIR, 'schema.json'), generate: () => generateServerSchema(schema) },
 ];
 
 function main() {
