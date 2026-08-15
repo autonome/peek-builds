@@ -83,38 +83,38 @@
         "visitCount": {
           "type": "integer",
           "default": "0",
-          "sync": false,
-          "description": "Number of visits (local tracking)"
+          "sync": true,
+          "description": "Number of visits"
         },
         "lastVisitAt": {
           "type": "integer",
           "default": "0",
-          "sync": false,
-          "description": "Last visit timestamp (local tracking)"
+          "sync": true,
+          "description": "Last visit timestamp"
         },
         "frecencyScore": {
           "type": "integer",
           "default": "0",
-          "sync": false,
-          "description": "Frecency score for ranking (local calculation)"
+          "sync": true,
+          "description": "Frecency score for ranking"
         },
         "title": {
           "type": "text",
           "default": "''",
-          "sync": false,
-          "description": "Page title (cached locally for URL items)"
+          "sync": true,
+          "description": "Page title"
         },
         "domain": {
           "type": "text",
           "default": "''",
-          "sync": false,
-          "description": "Domain extracted from URL (cached locally)"
+          "sync": true,
+          "description": "Domain extracted from URL"
         },
         "favicon": {
           "type": "text",
           "default": "''",
-          "sync": false,
-          "description": "Favicon URL (cached locally)"
+          "sync": true,
+          "description": "Favicon URL"
         }
       },
       "indexes": [
@@ -397,7 +397,7 @@
     "timestamp_unit": "milliseconds",
     "id_type": "text",
     "required_sync_columns": {
-      "items": ["id", "type", "content", "syncId", "syncedAt", "createdAt", "updatedAt", "deletedAt"],
+      "items": ["id", "type", "content", "syncId", "syncedAt", "createdAt", "updatedAt", "deletedAt", "title", "domain", "favicon", "visitCount", "lastVisitAt", "frecencyScore"],
       "tags": ["id", "name", "frequency", "lastUsed", "frecencyScore", "createdAt", "updatedAt"],
       "item_tags": ["itemId", "tagId", "createdAt"],
       "item_events": ["id", "itemId", "content", "value", "occurredAt", "metadata", "createdAt"],

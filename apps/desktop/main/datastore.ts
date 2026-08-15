@@ -201,7 +201,11 @@ const createTableStatements = `
     starred INTEGER DEFAULT 0,
     archived INTEGER DEFAULT 0,
     visitCount INTEGER DEFAULT 0,
-    lastVisitAt INTEGER DEFAULT 0
+    lastVisitAt INTEGER DEFAULT 0,
+    frecencyScore INTEGER DEFAULT 0,
+    title TEXT DEFAULT '',
+    domain TEXT DEFAULT '',
+    favicon TEXT DEFAULT ''
   );
   CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
   CREATE INDEX IF NOT EXISTS idx_items_syncId ON items(syncId);
@@ -1159,7 +1163,8 @@ function migrateDeduplicateItems(): void {
 
 /**
  * Add frecencyScore, title, domain, favicon columns to items table for URL history unification.
- * These columns are local-only (not synced) and support frecency-based sorting.
+ * Support frecency-based sorting; carried to the sync server since packages/schema/v1.json
+ * marked them sync:true (docs/sync-coverage-gaps.md §1).
  */
 function migrateItemFrecencyColumns(): void {
   if (!db) return;

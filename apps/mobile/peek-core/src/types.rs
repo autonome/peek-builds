@@ -170,6 +170,14 @@ pub struct ServerItem {
     pub updated_at: i64,
     #[serde(default, deserialize_with = "deserialize_optional_flexible_timestamp")]
     pub deleted_at: i64,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub domain: String,
+    #[serde(default)]
+    pub favicon: String,
+    #[serde(default)]
+    pub frecency_score: i64,
 }
 
 // Server response for GET /items

@@ -38,19 +38,19 @@ pub struct SchemaItems {
     /// Archived flag (0/1)
     pub archived: i64,
     #[serde(rename = "visitCount")]
-    /// Number of visits (local tracking)
+    /// Number of visits
     pub visit_count: i64,
     #[serde(rename = "lastVisitAt")]
-    /// Last visit timestamp (local tracking)
+    /// Last visit timestamp
     pub last_visit_at: i64,
     #[serde(rename = "frecencyScore")]
-    /// Frecency score for ranking (local calculation)
+    /// Frecency score for ranking
     pub frecency_score: i64,
-    /// Page title (cached locally for URL items)
+    /// Page title
     pub title: String,
-    /// Domain extracted from URL (cached locally)
+    /// Domain extracted from URL
     pub domain: String,
-    /// Favicon URL (cached locally)
+    /// Favicon URL
     pub favicon: String,
 }
 

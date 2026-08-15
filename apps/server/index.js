@@ -612,6 +612,9 @@ app.post("/items", async (c) => {
   const {
     type, content, tags = [], metadata = null, sync_id = null, syncId = null,
     deletedAt = null, deleted_at = null, starred = null, archived = null,
+    title = null, domain = null, frecencyScore = null,
+    favicon = null, visitCount = null, lastVisitAt = null, mimeType = null,
+    createdAt = null,
   } = body;
   const effectiveSyncId = syncId || sync_id; // Support both camelCase and snake_case during transition
   const effectiveDeletedAt = deletedAt || deleted_at; // Support both camelCase and snake_case during transition
@@ -668,7 +671,8 @@ app.post("/items", async (c) => {
 
   const id = db.saveItem(
     userId, type, content || null, tags, metadata, effectiveSyncId, profileId, effectiveDeletedAt, deviceId,
-    null, null, null, starred, archived
+    title, domain, frecencyScore, starred, archived,
+    { favicon, visitCount, lastVisitAt, mimeType, createdAt }
   );
   return c.json({ id, type, created: true });
 });
