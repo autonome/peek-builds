@@ -78,7 +78,6 @@ import { publish, subscribe, unsubscribe, getSystemAddress } from './pubsub.js';
 // this is a one-way (acyclic) dependency.
 import { wireHybridContentEvents } from './ipc.js';
 import {
-  getFrontPageHostId,
   subscribeFrontChange,
   dispatchWindowEvent,
   waitForMode,
@@ -102,6 +101,7 @@ import {
   shadowKernelWindowHidden,
   shadowKernelSetFullscreen,
   shadowKernelShowRequested,
+  shadowKernelWindowContentOrderable,
   getShadowKernelExecutor,
 } from './window-kernel-shadow.js';
 import { getFaviconForUrl } from './datastore.js';
@@ -897,6 +897,23 @@ function installTestBridge(): void {
       /* property non-configurable in some envs */
     }
   };
+  // Register a fake host with the window manager the way its real construction
+  // site does. A real page-host becomes ORDERABLE when its content reports its
+  // first composited frame — the private `hybrid:first-frame` IPC that
+  // `session.ts installFirstFrameOrderableProducer` turns into
+  // `WINDOW_CONTENT_ORDERABLE`, emitted from the runtime-external preload. A
+  // fake host carries no preload and is never really painted, so nothing would
+  // ever flip that fact and `window-kernel.ts topmostBaseLayerPageHost` — which
+  // requires `orderable` — would answer null for the process lifetime, leaving
+  // the overlay unable to bind to any fake host at all. The bridge synthesizes
+  // the fact here, exactly as it synthesizes show, hide and focus elsewhere.
+  const registerFakeHostWithMachine = (baseWin: BaseWindow, view: WebContentsView): void => {
+    registerWindowWithMachine({ kind: 'page-host', role: 'content', class: classifyWindowRegistration('content'), satellite: false, ...deriveWindowSurface({}), win: baseWin, contentWC: view.webContents });
+    const wid = getWindowIdFor(baseWin.id);
+    if (wid == null) return;
+    dispatchWindowEvent({ type: 'WINDOW_CONTENT_ORDERABLE', id: wid });
+    shadowKernelWindowContentOrderable(wid, getWindowStateSnapshot());
+  };
   (globalThis as Record<string, unknown>).__peekHybridOverlayTest = {
     makeFakeHybridWindow(bounds: { x: number; y: number; width: number; height: number }): number {
       const baseWin = new BaseWindowCtor({
@@ -927,7 +944,7 @@ function installTestBridge(): void {
       // then never binds (gate fallout of the WindowId cutover — the old
       // bridge drove the registry's synthetic active id, which needed no
       // registration). Mirrors `makeWiredHybridHost` below.
-      registerWindowWithMachine({ kind: 'page-host', role: 'content', class: classifyWindowRegistration('content'), satellite: false, ...deriveWindowSurface({}), win: baseWin, contentWC: view.webContents });
+      registerFakeHostWithMachine(baseWin, view);
       fakeHosts.set(baseWin.id, baseWin);
       return baseWin.id;
     },
@@ -955,7 +972,7 @@ function installTestBridge(): void {
         view.setBounds({ x: 0, y: 0, width: w, height: h });
       } catch { /* getContentSize unsupported in some envs */ }
       registerHybridWindow(baseWin.id, { baseWin, contentWC: view.webContents });
-      registerWindowWithMachine({ kind: 'page-host', role: 'content', class: classifyWindowRegistration('content'), satellite: false, ...deriveWindowSurface({}), win: baseWin, contentWC: view.webContents });
+      registerFakeHostWithMachine(baseWin, view);
       fakeHosts.set(baseWin.id, baseWin);
       // Install the REAL content→overlay event forwarding (incl. the idle
       // top-band reveal path under test).
@@ -969,32 +986,22 @@ function installTestBridge(): void {
       // makeWiredHybridHost above.
       // The old bridge kept a SINGLE active-id slot: activating one host (or
       // null) meant no other host was active. The machine has no such slot —
-      // `front` falls to the MRU successor on WINDOW_HIDDEN, and synthetically
-      // activated fakes stay machine-visible forever (they are never OS-shown,
-      // so no native 'hide' can fire). To keep the bridge's contract, EVERY
-      // setActive first drives the page-host front to null by hiding whatever
-      // page-host is front — repeatedly, since the closing assertion promotes
-      // (and re-raises) the MRU successor each time. Bounded; each pass hides
-      // one machine-visible page-host, so it terminates.
-      //
-      // This loop's premise is the OLD machine's successor repair (hide the
-      // front page-host, the next-MRU one becomes front, repeat until none is
-      // front). The kernel has no such repair — key is reported, never
-      // repaired — so the loop cannot simply be repointed onto a kernel query
-      // the way `overlayHostOsId`/`attachTargetHostOsId` were. It needs
-      // re-deriving against the attachment relation (`hostForOverlay` /
-      // `topmostBaseLayerPageHost`) once the kernel is load-bearing here;
-      // until then it stays on the old machine's `front`.
+      // it has ONE order, and the overlay's attach target is whichever visible
+      // page-host is topmost in it (`window-kernel.ts
+      // topmostBaseLayerPageHost`, the same query `attachTargetHostOsId()`
+      // reads). Synthetically activated fakes stay machine-visible forever
+      // (they are never OS-shown, so no native 'hide' can fire), so to keep the
+      // bridge's contract EVERY setActive first drains that query to null by
+      // hiding whichever host currently answers it. Each pass hides one
+      // machine-visible page-host and the query admits only machine-visible
+      // ones, so it terminates; the bound is a backstop, not the mechanism.
       const wid = id == null ? null : getWindowIdFor(id);
       if (id != null && wid == null) return false;
       for (let i = 0; i < 100; i++) {
-        const front = getFrontPageHostId();
-        if (front == null) break;
-        dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: front });
-        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-        // authoritative over nothing; see that module's doc for why this can
-        // never change what actually happens on screen.
-        shadowKernelWindowHidden(front, getWindowStateSnapshot());
+        const target = topmostBaseLayerPageHost(getShadowKernelExecutor().getState());
+        if (target == null) break;
+        dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: target.id });
+        shadowKernelWindowHidden(target.id, getWindowStateSnapshot());
       }
       if (wid != null) {
         dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });
