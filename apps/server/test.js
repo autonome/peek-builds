@@ -2388,6 +2388,167 @@ describe("POST /items — real route (dropped-tombstone regression)", () => {
   });
 });
 
+// Coverage for item_events sync: append-only observations backing series/feed
+// items. Exercises the real production app (`require("./index").app`), same
+// convention as the POST /items real-route suite above.
+describe("Event Sync Routes (POST /events, GET /events/since/:timestamp)", () => {
+  let app;
+  let users;
+  let apiKey;
+  const TEST_USER = "eventsyncuser";
+
+  beforeEach(() => {
+    for (const mod of ["./db", "./users", "./grants", "./mcp-items", "./backup", "./auth", "./index"]) {
+      delete require.cache[require.resolve(mod)];
+    }
+    cleanTestDir();
+
+    require("./db");
+    users = require("./users");
+    ({ app } = require("./index"));
+
+    const result = users.createUser(TEST_USER);
+    apiKey = result.apiKey;
+  });
+
+  function authHeaders() {
+    return { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+  }
+
+  // Creates a 'series' item through the real route and returns the server's
+  // assigned id — events always reference the SERVER item id, never a
+  // client-local one (see index.js's "=== Event sync endpoints ===" comment).
+  async function createSeriesItem() {
+    const res = await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "series", metadata: { title: "Daily weight" } }),
+    });
+    const json = await res.json();
+    return json.id;
+  }
+
+  async function pushEvents(events) {
+    return app.request("/events", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ events }),
+    });
+  }
+
+  async function eventsSince(timestamp) {
+    const res = await app.request(`/events/since/${timestamp}`, { headers: authHeaders() });
+    return res.json();
+  }
+
+  it("bulk push round-trips: all pushed events come back from a full pull", async () => {
+    const itemId = await createSeriesItem();
+    const events = [
+      { id: "evt-1", itemId, content: null, value: 180, occurredAt: 1000, createdAt: 1000, metadata: { unit: "lb" } },
+      { id: "evt-2", itemId, content: null, value: 179, occurredAt: 2000, createdAt: 2000, metadata: { unit: "lb" } },
+      { id: "evt-3", itemId, content: null, value: 178, occurredAt: 3000, createdAt: 3000, metadata: { unit: "lb" } },
+    ];
+
+    const pushRes = await pushEvents(events);
+    assert.strictEqual(pushRes.status, 200);
+    const pushJson = await pushRes.json();
+    assert.strictEqual(pushJson.received, 3);
+    assert.strictEqual(pushJson.saved, 3);
+
+    const { events: pulled } = await eventsSince(0);
+    assert.strictEqual(pulled.length, 3);
+    const byId = Object.fromEntries(pulled.map((e) => [e.id, e]));
+    assert.strictEqual(byId["evt-1"].value, 180);
+    assert.strictEqual(byId["evt-1"].itemId, itemId);
+    assert.deepStrictEqual(byId["evt-1"].metadata, { unit: "lb" });
+    assert.strictEqual(byId["evt-3"].value, 178);
+  });
+
+  it("incremental pull returns only events created after the given timestamp", async () => {
+    const itemId = await createSeriesItem();
+    await pushEvents([
+      { id: "old-evt", itemId, value: 1, occurredAt: 1000, createdAt: 1000 },
+      { id: "new-evt", itemId, value: 2, occurredAt: 5000, createdAt: 5000 },
+    ]);
+
+    const { events: sinceMid } = await eventsSince(3000);
+    assert.strictEqual(sinceMid.length, 1);
+    assert.strictEqual(sinceMid[0].id, "new-evt");
+
+    const { events: sinceAll } = await eventsSince(0);
+    assert.strictEqual(sinceAll.length, 2);
+
+    const { events: sinceFuture } = await eventsSince(9999);
+    assert.strictEqual(sinceFuture.length, 0);
+  });
+
+  it("re-pushing the same event id is idempotent — never duplicates", async () => {
+    const itemId = await createSeriesItem();
+    const event = { id: "dupe-evt", itemId, value: 42, occurredAt: 1000, createdAt: 1000 };
+
+    const first = await pushEvents([event]);
+    assert.strictEqual((await first.json()).saved, 1);
+
+    // Re-push the identical event, as a retried/overlapping sync run would.
+    const second = await pushEvents([event]);
+    const secondJson = await second.json();
+    assert.strictEqual(secondJson.received, 1);
+    assert.strictEqual(secondJson.saved, 0, "a duplicate id must not be counted as newly saved");
+
+    const { events } = await eventsSince(0);
+    assert.strictEqual(events.length, 1, "the store must still hold exactly one row for this id");
+  });
+
+  it("a series item restores WITH its events (not just as an empty shell)", async () => {
+    const itemId = await createSeriesItem();
+    await pushEvents([
+      { id: "obs-1", itemId, value: 100, occurredAt: 1000, createdAt: 1000 },
+      { id: "obs-2", itemId, value: 101, occurredAt: 2000, createdAt: 2000 },
+    ]);
+
+    // Simulate a fresh device restoring from the server: pull the item, then
+    // pull its events and confirm they reference the item that came back.
+    const itemsRes = await app.request("/items", { headers: authHeaders() });
+    const { items } = await itemsRes.json();
+    const series = items.find((i) => i.id === itemId);
+    assert.ok(series, "the series item itself must come back");
+    assert.strictEqual(series.type, "series");
+
+    const { events } = await eventsSince(0);
+    const seriesEvents = events.filter((e) => e.itemId === series.id);
+    assert.strictEqual(seriesEvents.length, 2, "restoring the series item must bring its observations with it");
+  });
+
+  it("merge is order-independent: pushing events out of chronological order still yields a complete, correctly-ordered pull", async () => {
+    const itemId = await createSeriesItem();
+
+    // Push the newest event FIRST, then backfill older ones in a second,
+    // separate request — mirrors two out-of-order sync runs (or a retry that
+    // interleaves with a newer push) landing in the opposite order they
+    // occurred.
+    await pushEvents([{ id: "late-arriving-old", itemId, value: 1, occurredAt: 1000, createdAt: 1000 }]);
+    await pushEvents([
+      { id: "newest", itemId, value: 3, occurredAt: 3000, createdAt: 3000 },
+      { id: "middle", itemId, value: 2, occurredAt: 2000, createdAt: 2000 },
+    ]);
+
+    const { events } = await eventsSince(0);
+    assert.strictEqual(events.length, 3);
+    // getEventsSince() orders by createdAt regardless of push order.
+    assert.deepStrictEqual(events.map((e) => e.id), ["late-arriving-old", "middle", "newest"]);
+  });
+
+  it("rejects an empty events array", async () => {
+    const res = await pushEvents([]);
+    assert.strictEqual(res.status, 400);
+  });
+
+  it("rejects an event missing required fields", async () => {
+    const res = await pushEvents([{ id: "incomplete" }]);
+    assert.strictEqual(res.status, 400);
+  });
+});
+
 // Regression suite for the cross-profile data-leak bug.
 //
 // The bug: resolveProfileId() used to SILENTLY fall back to the "default"
