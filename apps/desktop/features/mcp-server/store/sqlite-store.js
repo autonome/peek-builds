@@ -578,7 +578,21 @@ function getItemTagsSync(itemId) {
   `).all(itemId).map(r => r.name);
 }
 
+// Creatable item types on this store. Mirrors CREATABLE_ITEM_TYPES in
+// apps/server/mcp-items.js createItem() plus 'image': the remote MCP backend
+// refuses 'image' (docs/mcp-remote-backend-design.md §9 — the MCP layer has
+// never created images there, and wiring multipart upload through the store
+// interface is unrelated work), but the local store has no such limitation
+// and has always accepted image items. That one-type gap from the remote
+// list is deliberate, not drift — do not "align" the two lists.
+const CREATABLE_ITEM_TYPES = ['url', 'text', 'tagset', 'image', 'series', 'feed', 'entity'];
+
 function createItemSync({ type, url, title = '', content = '', metadata = {}, tags = [], extractHashtags = false }) {
+  if (!type) throw new Error('type is required');
+  if (!CREATABLE_ITEM_TYPES.includes(type)) {
+    throw new Error(`type must be one of: ${CREATABLE_ITEM_TYPES.join(', ')}`);
+  }
+
   const id = randomUUID();
   const now = Date.now();
   const metaStr = typeof metadata === 'string' ? metadata : JSON.stringify(metadata);
