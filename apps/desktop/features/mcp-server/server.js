@@ -846,7 +846,12 @@ async function main() {
       ? await openStore({ ...remote, scopeTag: SCOPE, readonly: READONLY })
       : await openStore({ dbPath, scopeTag: SCOPE, readonly: READONLY });
   } catch (err) {
-    process.stderr.write(`Error opening database: ${err.message}\n`);
+    // Remote mode has no database to open — the failures here are an
+    // unexpanded ${VAR} or a missing remote url, and naming a database sends
+    // the reader looking for a file that was never involved.
+    process.stderr.write(remote
+      ? `Error opening Peek remote store: ${err.message}\n`
+      : `Error opening database: ${err.message}\n`);
     process.exit(1);
   }
 
