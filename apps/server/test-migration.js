@@ -245,7 +245,12 @@ describe("syncSource Migration Tests", () => {
       legacyDb.exec(`
         CREATE TABLE items (
           id TEXT PRIMARY KEY,
-          type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image')),
+          -- Current 7-value CHECK on purpose: a 4-value CHECK trips hasStaleTypeCheck
+          -- in db.js, which forces a table rebuild and drops syncSource — destroying
+          -- the orphaned-column premise this scenario exists to test. The stale-CHECK
+          -- rebuild path is covered separately in test.js ("should drop a stale
+          -- 4-type CHECK so entity/series/feed can be stored").
+          type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')),
           content TEXT,
           metadata TEXT,
           syncId TEXT DEFAULT '',
@@ -527,7 +532,9 @@ describe("syncSource Migration Tests", () => {
       legacyDb.exec(`
         CREATE TABLE items (
           id TEXT PRIMARY KEY,
-          type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image')),
+          -- Current 7-value CHECK so the "no rebuild" in this test's name is true:
+          -- a 4-value CHECK trips hasStaleTypeCheck and forces a rebuild anyway.
+          type TEXT NOT NULL CHECK(type IN ('url', 'text', 'tagset', 'image', 'series', 'feed', 'entity')),
           content TEXT,
           metadata TEXT,
           syncId TEXT DEFAULT '',
