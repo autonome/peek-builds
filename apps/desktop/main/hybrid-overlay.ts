@@ -92,7 +92,7 @@ import {
   getWindowStateSnapshot,
 } from './window-state-singleton.js';
 import type { Rectangle, WindowId } from './window-kernel.js';
-import { hostForOverlay, topmostBaseLayerPageHost } from './window-kernel.js';
+import { hostForOverlay, isBaseLayerPageHost, topmostBaseLayerPageHost } from './window-kernel.js';
 import { deriveWindowSurface, classifyWindowRegistration } from './izui-roles.js';
 import {
   shadowKernelAttachOverlay,
@@ -1016,16 +1016,23 @@ function installTestBridge(): void {
       // reads). Synthetically activated fakes stay machine-visible forever
       // (they are never OS-shown, so no native 'hide' can fire), so to keep the
       // bridge's contract EVERY setActive first drains that query to null by
-      // hiding whichever host currently answers it. Each pass hides one
-      // machine-visible page-host and the query admits only machine-visible
-      // ones, so it terminates; the bound is a backstop, not the mechanism.
+      // hiding whichever host currently answers it.
+      //
+      // The drain is one act over one snapshot, not a re-query loop: hiding a
+      // host runs the machine's successor-raise rule, which promotes another
+      // base-layer page-host into the `topmostBaseLayerPageHost` answer, so
+      // re-reading the query between hides turns one intention ("no page-host
+      // answers this query") into a churn of repeated real window operations —
+      // one per promotion, not one per drain. A single pass over one snapshot
+      // is both correct and sufficient: whatever a hide promotes is itself a
+      // visible base-layer page-host (`isBaseLayerPageHost`), so it is already
+      // present in the snapshot taken before any hide fired.
       const wid = id == null ? null : getWindowIdFor(id);
       if (id != null && wid == null) return false;
-      for (let i = 0; i < 100; i++) {
-        const target = topmostBaseLayerPageHost(getShadowKernelExecutor().getState());
-        if (target == null) break;
-        dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: target.id });
-        shadowKernelWindowHidden(target.id, getWindowStateSnapshot());
+      const drained = getShadowKernelExecutor().getState().order.filter(isBaseLayerPageHost);
+      for (const record of drained) {
+        dispatchWindowEvent({ type: 'WINDOW_HIDDEN', id: record.id });
+        shadowKernelWindowHidden(record.id, getWindowStateSnapshot());
       }
       if (wid != null) {
         dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: wid, focused: true });

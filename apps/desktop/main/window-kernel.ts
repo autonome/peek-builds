@@ -3298,11 +3298,8 @@ export function isFrontEligibleWindow(record: WindowRecord): boolean {
 }
 
 /**
- * The page-host the shared chrome overlay should attach to: the topmost
- * `kind: 'page-host'` window sitting in the base layer. `topmost(state,
- * pred)` is trustworthy only when every record `pred` admits shares one
- * `layer` (see `topmost`'s own doc); this predicate holds that contract with
- * two clauses, neither of which is optional:
+ * A window record that counts as a base-layer page-host, with two clauses,
+ * neither of which is optional:
  *
  *   - a role in `CONTENT_ROLES`,
  *     or `'quick-view'`             `kind: 'page-host'` alone is not enough to
@@ -3349,11 +3346,19 @@ export function isFrontEligibleWindow(record: WindowRecord): boolean {
  * hidden window is not on screen to frame, and a page-host the OS cannot yet
  * z-order (before its first composited frame) cannot be the overlay's target.
  */
+export function isBaseLayerPageHost(r: WindowRecord): boolean {
+  return r.kind === 'page-host' && r.visible && r.orderable && r.layer === BASE_LAYER && (roleIn(CONTENT_ROLES, r.role) || r.role === 'quick-view');
+}
+
+/**
+ * The page-host the shared chrome overlay should attach to: the topmost
+ * base-layer page-host in `order` (`isBaseLayerPageHost`, above).
+ * `topmost(state, pred)` is trustworthy only when every record `pred` admits
+ * shares one `layer` (see `topmost`'s own doc); `isBaseLayerPageHost`'s
+ * `layer === BASE_LAYER` clause holds that contract.
+ */
 export function topmostBaseLayerPageHost(state: State): WindowRecord | null {
-  return topmost(
-    state,
-    (r) => r.kind === 'page-host' && r.visible && r.orderable && r.layer === BASE_LAYER && (roleIn(CONTENT_ROLES, r.role) || r.role === 'quick-view'),
-  );
+  return topmost(state, isBaseLayerPageHost);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
