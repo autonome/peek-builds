@@ -1,26 +1,28 @@
 /**
- * better-sqlite3 Storage Adapter
+ * node:sqlite Storage Adapter
  *
- * Implements the StorageAdapter interface using a better-sqlite3 Database instance.
- * Works with the canonical camelCase schema.
+ * Implements the StorageAdapter interface using a `DatabaseSync`-shaped
+ * instance (Node's built-in `node:sqlite`, or anything exposing the same
+ * `exec` / `prepare().run/get/all` surface). Works with the canonical
+ * camelCase schema.
  *
  * Usage:
- *   import Database from 'better-sqlite3';
- *   import { createBetterSqliteAdapter } from './adapters/better-sqlite3.js';
+ *   import { DatabaseSync } from 'node:sqlite';
+ *   import { createNodeSqliteAdapter } from './adapters/node-sqlite.js';
  *
- *   const db = new Database(':memory:');
- *   const adapter = createBetterSqliteAdapter(db);
+ *   const db = new DatabaseSync(':memory:');
+ *   const adapter = createNodeSqliteAdapter(db);
  *   await adapter.open();
  */
 
 /**
- * Create a better-sqlite3 adapter wrapping an existing Database instance.
+ * Create a node:sqlite adapter wrapping an existing DatabaseSync instance.
  * The caller owns the database lifecycle (opening, closing the file).
  *
- * @param {import('better-sqlite3').Database} db
+ * @param {import('node:sqlite').DatabaseSync} db
  * @returns {import('./interface.js').StorageAdapter}
  */
-export function createBetterSqliteAdapter(db) {
+export function createNodeSqliteAdapter(db) {
   let stmts = {};
 
   function ensureSchema() {

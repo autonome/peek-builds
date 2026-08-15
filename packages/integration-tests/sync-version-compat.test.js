@@ -17,14 +17,10 @@ import { mkdtemp, rm, writeFile, mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-// Use server's better-sqlite3 (compatible with regular Node.js)
-// The root node_modules better-sqlite3 is compiled for Electron and won't work here
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const Database = require('../../apps/server/node_modules/better-sqlite3');
+import { DatabaseSync } from 'node:sqlite';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SERVER_PATH = join(__dirname, '..', 'server');
+const SERVER_PATH = join(__dirname, '..', '..', 'apps', 'server');
 const TEST_PORT = 3460;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 
@@ -371,9 +367,9 @@ async function test8_bothNoHeaders() {
 // ==================== Tests: Database Version ====================
 //
 // These tests verify the version check logic that runs in both desktop (datastore.ts)
-// and server (db.js). Since the root better-sqlite3 is compiled for Electron and
-// can't be imported in regular Node.js, we use the server's better-sqlite3 and
-// replicate the version check/write logic inline.
+// and server (db.js), replicated inline against a node:sqlite DatabaseSync so this
+// file has no dependency on better-sqlite3 (which desktop still needs, but compiled
+// for Electron's Node version — not importable from plain Node here).
 //
 // The code under test (in datastore.ts) does:
 //   1. Read datastore_version from feature_settings
@@ -384,8 +380,8 @@ async function test8_bothNoHeaders() {
 const CODE_DATASTORE_VERSION = 1; // Matches apps/desktop/version.ts
 
 function createTestDesktopDb(dbPath) {
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
+  const db = new DatabaseSync(dbPath);
+  db.exec('PRAGMA journal_mode = WAL');
 
   // Create the feature_settings table (same as desktop schema)
   db.exec(`
@@ -563,8 +559,8 @@ async function testServerDBVersion() {
 
   // Use the server's db module to create a connection
   // Since db.js uses DATA_DIR and userId, we simulate by creating the DB directly
-  const serverDb = new Database(dbPath);
-  serverDb.pragma('journal_mode = WAL');
+  const serverDb = new DatabaseSync(dbPath);
+  serverDb.exec('PRAGMA journal_mode = WAL');
 
   // Create settings table (as server does)
   serverDb.exec(`

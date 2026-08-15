@@ -24,7 +24,7 @@ export { SyncEngine } from './sync.js';
 export { calculateFrecency } from './frecency.js';
 export { DATASTORE_VERSION, PROTOCOL_VERSION } from './version.js';
 export { createMemoryAdapter } from './adapters/memory.js';
-export { createBetterSqliteAdapter } from './adapters/better-sqlite3.js';
+export { createNodeSqliteAdapter } from './adapters/node-sqlite.js';
 
 /**
  * Create a fully wired engine from an adapter.
