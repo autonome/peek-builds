@@ -64,7 +64,42 @@ function getTableCounts(conn) {
 }
 
 /**
+ * The directory that holds every profile folder for a user, derived from
+ * db.getProfileDir() rather than rebuilt by hand — a second copy of that path
+ * convention drifting from the original is what caused createBackup() to check
+ * a stale path in the first place (see docs/server-backup-and-deploy.md).
+ * The profileId argument is discarded by path.dirname(), so any placeholder
+ * value works; it exists only because getProfileDir() requires one.
+ */
+function getProfilesParentDir(userId) {
+  return path.dirname(db.getProfileDir(userId, "__scan__"));
+}
+
+/**
+ * List every profile directory that exists on disk for a user, straight from
+ * the filesystem rather than the profiles registry table — this is what lets
+ * a backup capture a profile the registry never learned about. Returns [] if
+ * the user has no profiles directory at all.
+ */
+function listProfileDirs(userId) {
+  const profilesParentDir = getProfilesParentDir(userId);
+  if (!fs.existsSync(profilesParentDir)) {
+    return [];
+  }
+  return fs.readdirSync(profilesParentDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+}
+
+/**
  * Create a backup for a single user
+ *
+ * Backs up every profile directory found on disk under the user, not just
+ * "default" — the live volume holds real content in UUID-named profiles that
+ * a single hardcoded "default" backup silently skipped (see
+ * docs/server-backup-and-deploy.md, "Only one profile is ever backed up").
+ * One archive per user (not one per profile) so retention
+ * (cleanOldBackups(userId, DEFAULT_RETENTION)) keeps whole snapshots.
  *
  * TODO: DO SQLite backup - VACUUM INTO is not available in Cloudflare Durable Objects SQLite.
  * When deploying to DO, implement an alternative backup strategy:
@@ -74,15 +109,17 @@ function getTableCounts(conn) {
 async function createBackup(userId) {
   console.log(`Creating backup for user: ${userId}`);
 
-  // Check if database exists BEFORE calling getConnection (which would create it).
-  // Path mirrors db.js's own getProfileDir()/getConnection() convention
-  // (DATA_DIR/{userId}/profiles/default/datastore.sqlite) — this used to check a
-  // stale pre-multi-profile path ("{userId}/peek.db", the legacy layout index.js's
-  // one-time migration moves data FROM, see its oldDbPath), which meant createBackup
-  // silently no-op'd for every current-layout user.
-  const dbPath = path.join(db.getProfileDir(userId, "default"), "datastore.sqlite");
+  const profileIds = listProfileDirs(userId);
 
-  if (!fs.existsSync(dbPath)) {
+  // A profile directory with no datastore.sqlite is skipped, not an error —
+  // it may hold only stray files, or be mid-creation. Filtered up front so an
+  // empty-but-real database (a genuine stub, like the "default" profile on
+  // the live volume) still gets backed up and shows up in the manifest.
+  const candidateProfiles = profileIds.filter((profileId) =>
+    fs.existsSync(path.join(db.getProfileDir(userId, profileId), "datastore.sqlite"))
+  );
+
+  if (candidateProfiles.length === 0) {
     console.log(`No database found for user ${userId}, skipping backup`);
     return { success: false, error: "No database found" };
   }
@@ -93,32 +130,62 @@ async function createBackup(userId) {
     fs.mkdirSync(userBackupDir, { recursive: true });
   }
 
-  // Get database connection (SqlAdapter)
-  const conn = db.getConnection(userId);
-
   const backupFilename = generateBackupFilename(userId);
   const backupPath = path.join(userBackupDir, backupFilename);
-  const tempDbPath = path.join(userBackupDir, `temp-${userId}.db`);
+
+  // Snapshot every profile's database with VACUUM INTO before touching the
+  // archive. VACUUM INTO is what folds an un-checkpointed WAL into a
+  // consistent single-file snapshot — most profile databases on the live
+  // volume are small stubs whose real content sits in the WAL, so a plain
+  // file copy of datastore.sqlite alone loses data. A profile that fails is
+  // recorded but does not stop the rest of the user's profiles from backing up.
+  const profileResults = {};
+  const snapshots = [];
+  let anyFailed = false;
+
+  for (const profileId of candidateProfiles) {
+    const profileDir = db.getProfileDir(userId, profileId);
+    const tempDbPath = path.join(userBackupDir, `temp-${userId}-${profileId}.db`);
+
+    try {
+      const conn = db.getConnection(userId, profileId);
+      // Note: plain SQL — works with any adapter backed by real SQLite (node:sqlite today).
+      // TODO: For DO SQLite, implement JSON export to R2 instead.
+      conn.exec(`VACUUM INTO '${tempDbPath}'`);
+
+      const tableCounts = getTableCounts(conn);
+      profileResults[profileId] = { success: true, tableCounts };
+      snapshots.push({
+        profileId,
+        tempDbPath,
+        imagesDir: path.join(profileDir, "images"),
+      });
+    } catch (error) {
+      console.error(`Backup failed for user ${userId} profile ${profileId}:`, error.message);
+      profileResults[profileId] = { success: false, error: error.message };
+      anyFailed = true;
+      if (fs.existsSync(tempDbPath)) {
+        fs.unlinkSync(tempDbPath);
+      }
+    }
+  }
+
+  // Manifest lists every profile with its own row counts — a backup that
+  // captured nothing (the production bug: a 4 KB "default" stub reported as
+  // a healthy backup) is visible here without unzipping and opening a database.
+  const manifest = {
+    version: "2.0",
+    timestamp: new Date().toISOString(),
+    userId: userId,
+    backupType: "daily-snapshot",
+    profiles: profileResults,
+  };
 
   try {
-    // Use VACUUM INTO for consistent snapshot (non-blocking)
-    // Note: plain SQL — works with any adapter backed by real SQLite (node:sqlite today).
-    // TODO: For DO SQLite, implement JSON export to R2 instead.
-    conn.exec(`VACUUM INTO '${tempDbPath}'`);
-
-    // Get table counts for manifest
-    const tableCounts = getTableCounts(conn);
-
-    // Create manifest
-    const manifest = {
-      version: "1.0",
-      timestamp: new Date().toISOString(),
-      userId: userId,
-      tableCounts: tableCounts,
-      backupType: "daily-snapshot"
-    };
-
-    // Create ZIP archive
+    // Create ZIP archive — one directory per profile id, so a profile stays
+    // identifiable on restore. Images are archived alongside each profile's
+    // database: blobs are part of the data, and a backup that restores rows
+    // but loses images is still a partial backup.
     await new Promise((resolve, reject) => {
       const output = fs.createWriteStream(backupPath);
       const archive = archiver("zip", { zlib: { level: 9 } });
@@ -127,48 +194,67 @@ async function createBackup(userId) {
       archive.on("error", reject);
 
       archive.pipe(output);
-      archive.file(tempDbPath, { name: "peek.db" });
+      for (const snapshot of snapshots) {
+        archive.file(snapshot.tempDbPath, { name: `profiles/${snapshot.profileId}/datastore.sqlite` });
+        if (fs.existsSync(snapshot.imagesDir)) {
+          archive.directory(snapshot.imagesDir, `profiles/${snapshot.profileId}/images`);
+        }
+      }
       archive.append(JSON.stringify(manifest, null, 2), { name: "manifest.json" });
       archive.finalize();
     });
-
-    // Clean up temp file
-    if (fs.existsSync(tempDbPath)) {
-      fs.unlinkSync(tempDbPath);
+  } finally {
+    // Clean up temp files regardless of archive outcome
+    for (const snapshot of snapshots) {
+      if (fs.existsSync(snapshot.tempDbPath)) {
+        fs.unlinkSync(snapshot.tempDbPath);
+      }
     }
-
-    // Update last backup time
-    const now = Date.now();
-    setLastBackupTime(userId, now);
-
-    // Clean old backups
-    await cleanOldBackups(userId);
-
-    const stats = fs.statSync(backupPath);
-    console.log(`Backup created: ${backupFilename} (${(stats.size / 1024).toFixed(1)} KB)`);
-
-    return {
-      success: true,
-      filename: backupFilename,
-      path: backupPath,
-      size: stats.size,
-      timestamp: new Date().toISOString(),
-      tableCounts: tableCounts
-    };
-  } catch (error) {
-    console.error(`Backup failed for user ${userId}:`, error.message);
-
-    // Clean up temp file on error
-    if (fs.existsSync(tempDbPath)) {
-      fs.unlinkSync(tempDbPath);
-    }
-
-    return { success: false, error: error.message };
   }
+
+  // Only advance lastBackupTime on a fully clean run — a partial failure
+  // should keep tripping needsBackup() so the next scheduled check retries,
+  // rather than going quiet for 24h with a broken profile inside.
+  if (!anyFailed) {
+    setLastBackupTime(userId, Date.now());
+  }
+
+  // The archive was still written (it documents which profiles failed), so
+  // still rotate old backups.
+  await cleanOldBackups(userId);
+
+  const stats = fs.statSync(backupPath);
+
+  if (anyFailed) {
+    const failedProfiles = Object.entries(profileResults)
+      .filter(([, result]) => !result.success)
+      .map(([profileId]) => profileId);
+    console.error(
+      `Backup for user ${userId} partially failed — profile(s) failed: ${failedProfiles.join(", ")}`
+    );
+  } else {
+    console.log(`Backup created: ${backupFilename} (${(stats.size / 1024).toFixed(1)} KB)`);
+  }
+
+  return {
+    success: !anyFailed,
+    ...(anyFailed ? { error: "One or more profiles failed to back up" } : {}),
+    filename: backupFilename,
+    path: backupPath,
+    size: stats.size,
+    timestamp: new Date().toISOString(),
+    profiles: profileResults,
+  };
 }
 
 /**
- * Create backups for all users
+ * Create backups for all users.
+ *
+ * Returns the per-user results array (unchanged shape, so existing callers
+ * keep working), with a `hasFailures` property attached to the array itself
+ * (arrays are objects, so this doesn't show up in `.map`/`for...of`, only in
+ * `results.hasFailures`) so a caller can tell at a glance that some user's
+ * backup failed without scanning every entry itself.
  */
 async function createAllBackups() {
   const allUsers = users.listUsers();
@@ -179,6 +265,15 @@ async function createAllBackups() {
     results.push({ userId: user.id, ...result });
   }
 
+  const failed = results.filter((r) => !r.success);
+  if (failed.length > 0) {
+    console.error(
+      `Backup run completed with ${failed.length} failure(s): ${failed.map((r) => r.userId).join(", ")}`
+    );
+  }
+  console.log(`Backup run completed: ${results.length - failed.length}/${results.length} user(s) succeeded`);
+
+  results.hasFailures = failed.length > 0;
   return results;
 }
 

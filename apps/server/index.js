@@ -885,7 +885,9 @@ app.get("/backups", (c) => {
 app.post("/backups", async (c) => {
   const userId = c.get("userId");
   const result = await backup.createBackup(userId);
-  return c.json(result);
+  // A failed (or partially failed) backup must not read as a 200 — that is
+  // exactly how the empty-"default"-profile backup went unnoticed in production.
+  return c.json(result, result.success ? 200 : 500);
 });
 
 // === Profile endpoints ===
@@ -1244,8 +1246,14 @@ if (require.main === module) {
     deduplicateAllUsers();
 
     // Force backup of all users on every deploy/restart (before serving requests)
-    backup.createAllBackups().then(() => {
-      console.log("Pre-deploy backup complete");
+    backup.createAllBackups().then((results) => {
+      if (results.hasFailures) {
+        console.error(
+          `Pre-deploy backup completed with failures: ${results.filter((r) => !r.success).map((r) => r.userId).join(", ")}`
+        );
+      } else {
+        console.log("Pre-deploy backup complete");
+      }
     }).catch((err) => {
       console.error("Pre-deploy backup failed:", err);
     });
