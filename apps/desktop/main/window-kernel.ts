@@ -1215,7 +1215,17 @@ export function initialState(): State {
     key: null,
     version: 0,
     opSeqCounter: 0,
-    appActive: false,
+    // Launching an app activates it — that is true of every platform this
+    // targets, so it is the honest belief to start from rather than an
+    // invented event. The alternative, starting inactive and waiting for the
+    // first activation report, is not merely conservative: a backend on a
+    // platform that reports no activation edges at all leaves the machine
+    // believing forever that Peek is in the background, which suppresses every
+    // raise and keeps attached chrome off screen for the process lifetime. The
+    // rule this fact serves — Peek does not reorder its own windows on its own
+    // initiative while it is not the active app — is about what the app does
+    // AFTER the user leaves it, and a just-launched app has not been left.
+    appActive: true,
     openSeqCounter: 0,
     pendingAppResignSweep: false,
     lastTeardown: null,

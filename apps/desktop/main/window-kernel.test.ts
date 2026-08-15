@@ -1331,7 +1331,12 @@ describe('window-kernel: successor raise on WindowHidden', () => {
       { type: 'WindowShown', id: A },
       { type: 'WindowShown', id: B },
       { type: 'OsFocusGained', id: A },
-      // No AppActivated — the app is not active.
+      // The app starts ACTIVE (a launch is an activation — see
+      // `initialState`), so reaching the inactive state this case is about
+      // takes a resign; its absence no longer stands for it. Neither window is
+      // sweep-eligible (both are content at the base layer), so the resign
+      // changes nothing here but `appActive`.
+      { type: 'AppResigned' },
     ]);
     assert.strictEqual(state.appActive, false, 'precondition: app is not active');
     assert.strictEqual(keyWindow(state)?.id, A, 'precondition: A holds key');

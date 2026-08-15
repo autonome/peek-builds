@@ -131,14 +131,15 @@ class RecordingBackend implements WindowBackend {
 /**
  * An executor over a fresh recorder, non-headless unless told otherwise.
  *
- * `appActive` is NOT threaded into `initial` — `initialState()` starts
- * `appActive: false` (a cold, backgrounded kernel), so a test that wants the
- * ordinary "app is in front" baseline opts in with `{ appActive: true }`,
- * which dispatches an `AppActivated` event right after construction (a no-op
- * transition here: no window is marked `hiddenByAppBlur` and no cold-start
- * latch is armed, so it costs no version bump beyond the flag itself). Tests
- * that care about `exec.getState()` matching a bare `initialState()` (or that
- * are specifically exercising the backgrounded gate) leave it unset.
+ * `appActive` is NOT threaded into `initial` — it is reached the only way the
+ * kernel ever reaches it, by an event. `initialState()` starts ACTIVE (a
+ * launch is an activation), which is the ordinary "app is in front" baseline,
+ * so a test exercising the backgrounded gate opts OUT with
+ * `{ appActive: false }` and gets an `AppResigned` dispatched right after
+ * construction. Either edge is a no-op transition at this point beyond the
+ * flag itself: no window exists yet to mark `hiddenByAppBlur` and no
+ * cold-start latch is armed. Tests that care about `exec.getState()` matching
+ * a bare `initialState()` leave it unset.
  */
 function makeExecutor(opts: { headless?: boolean; initial?: State; appActive?: boolean } = {}): {
   exec: WindowKernelExecutor;
@@ -149,7 +150,7 @@ function makeExecutor(opts: { headless?: boolean; initial?: State; appActive?: b
     headless: opts.headless ?? false,
     ...(opts.initial !== undefined ? { initial: opts.initial } : {}),
   });
-  if (opts.appActive) exec.dispatch({ type: 'AppActivated' });
+  if (opts.appActive === false) exec.dispatch({ type: 'AppResigned' });
   return { exec, backend };
 }
 
