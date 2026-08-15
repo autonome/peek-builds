@@ -173,9 +173,9 @@ export function getAllGuestWebContentsIds(): number[] {
 export function destroyAllPageHostGuests(): Promise<void> {
   try {
     dispatchWindowEvent({ type: 'GUEST_TEARDOWN_REQUESTED' });
-    // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-    // authoritative over nothing; see that module's doc for why this can
-    // never change what actually happens on screen.
+    // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+    // window manager; the dispatch above only reaches the old machine, whose
+    // matching effect arm is a no-op.
     shadowKernelDestroyAllGuests(getWindowStateSnapshot());
   } catch {
     /* best-effort during shutdown — nothing was requested, nothing to await */

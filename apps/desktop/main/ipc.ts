@@ -610,9 +610,9 @@ function applyPlacementOnReuse(
     const machineId = getWindowIdFor(win);
     if (machineId != null) {
       dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: result.bounds });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen.
+      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // window manager; the dispatch above only reaches the old machine,
+      // whose matching effect arm is a no-op.
       shadowKernelSetBounds(machineId, result.bounds, getWindowStateSnapshot());
     }
   }
@@ -755,9 +755,9 @@ function destroyUnassembledHybridHost(baseWin: Electron.BaseWindow | null): void
       });
     }
     dispatchWindowEvent({ type: 'WINDOW_DESTROY_REQUESTED', id });
-    // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
-    // over nothing; see that module's doc for why this can never change what
-    // actually happens on screen.
+    // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+    // window manager; the dispatch above only reaches the old machine,
+    // whose matching effect arm is a no-op.
     shadowKernelDestroyWindow(id, getWindowStateSnapshot());
   } catch (cleanupErr) {
     // Cleanup must never mask the original failure — a still-leaked window is
@@ -1133,9 +1133,9 @@ function assembleHybridPageHost(
         // setFullScreen owner (the adapter's SET_FULLSCREEN effect runs
         // synchronously; we don't await the ~600ms settle — quit can't block).
         dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: hostMachineId, desired: false });
-        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-        // authoritative over nothing; see that module's doc for why this can
-        // never change what actually happens on screen.
+        // Feed the kernel (window-kernel-shadow.ts) — this is what drives
+        // the window manager; the dispatch above only reaches the old
+        // machine, whose matching effect arm is a no-op.
         shadowKernelSetFullscreen(hostMachineId, false, getWindowStateSnapshot());
       }
     } catch { /* host gone mid-quit — nothing to exit */ }
@@ -1183,9 +1183,9 @@ function assembleHybridPageHost(
       // is already gone). The backend retains the content WC per WindowId,
       // so this works after the machine record was retired above.
       dispatchWindowEvent({ type: 'WINDOW_CONTENT_CLOSE_REQUESTED', id: hostMachineId });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen.
+      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // window manager; the dispatch above only reaches the old machine,
+      // whose matching effect arm is a no-op.
       shadowKernelCloseContent(hostMachineId, getWindowStateSnapshot());
     } catch (e) {
       DEBUG && console.log(`[hybrid-page-host:${baseWin.id}] content wc close on finalize failed:`, e);
@@ -1242,9 +1242,9 @@ function assembleHybridPageHost(
     try {
       if (!baseWin.isDestroyed()) {
         dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id: hostMachineId });
-        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-        // authoritative over nothing; see that module's doc for why this
-        // can never change what actually happens on screen.
+        // Feed the kernel (window-kernel-shadow.ts) — this is what drives
+        // the window manager; the dispatch above only reaches the old
+        // machine, whose matching effect arm is a no-op.
         shadowKernelCloseWindowDirect(hostMachineId, getWindowStateSnapshot());
       }
     } catch { /* closing a torn-down host is a no-op */ }
@@ -1724,9 +1724,9 @@ export function wireHybridContentEvents(
     if (machineId == null) return;
     if (getMachineWindowRecord(machineId)?.maximized !== true) return;
     dispatchWindowEvent({ type: 'MAXIMIZE_EXITED_BY_RESIZE', id: machineId });
-    // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-    // authoritative over nothing; see that module's doc for why this can
-    // never change what actually happens on screen.
+    // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+    // window manager; the dispatch above only reaches the old machine,
+    // whose matching effect arm is a no-op.
     shadowKernelMaximizeExitedByResize(machineId, getWindowStateSnapshot());
     try {
       publish(getSystemAddress(), 'page-overlay:maximize-state', {
@@ -1843,9 +1843,9 @@ export function wireHybridContentEvents(
     if (resizeMachineId != null) {
       const resizeBounds = { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
       dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: resizeMachineId, bounds: resizeBounds });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen.
+      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // window manager; the dispatch above only reaches the old machine,
+      // whose matching effect arm is a no-op.
       shadowKernelSetBounds(resizeMachineId, resizeBounds, getWindowStateSnapshot());
     }
     // Keep the overlay renderer's locally-tracked bounds in sync — it owns the
@@ -2361,9 +2361,9 @@ export function installHybridNavbarActionRouting(): void {
         height: Math.round(b.height),
       };
       dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: setBounds });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen.
+      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // window manager; the dispatch above only reaches the old machine,
+      // whose matching effect arm is a no-op.
       shadowKernelSetBounds(machineId, setBounds, getWindowStateSnapshot());
     }
   });
@@ -2420,9 +2420,9 @@ export function installHybridNavbarActionRouting(): void {
         id: machineId,
         workArea: workAreaRect,
       });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen. The kernel's `Maximize`
+      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // window manager; the dispatch above only reaches the old machine,
+      // whose matching effect arm is a no-op. The kernel's `Maximize`
       // command carries the work area as data (`459ed219` shape — see
       // `shadowKernelMaximize`'s doc), same rect as the old event above.
       shadowKernelMaximize(machineId, getWindowStateSnapshot(), workAreaRect);
@@ -2438,9 +2438,9 @@ export function installHybridNavbarActionRouting(): void {
     const machineId = getWindowIdFor(r.windowId);
     if (machineId == null) return;
     dispatchWindowEvent({ type: 'UNMAXIMIZE_REQUESTED', id: machineId });
-    // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-    // authoritative over nothing; see that module's doc for why this can
-    // never change what actually happens on screen.
+    // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+    // window manager; the dispatch above only reaches the old machine,
+    // whose matching effect arm is a no-op.
     shadowKernelUnmaximize(machineId, getWindowStateSnapshot());
   });
 
@@ -2742,8 +2742,9 @@ export function registerWindowHandlers(): void {
             const spacesMachineId = getWindowIdFor(existingWindow.window);
             if (spacesMachineId != null) {
               dispatchWindowEvent({ type: 'SPACES_POLICY_REQUESTED', id: spacesMachineId, policy: reusePolicy });
-              // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-              // authoritative over nothing, alongside the dispatch above.
+              // Feed the kernel (window-kernel-shadow.ts) — this is what
+              // drives the window manager, alongside the dispatch above,
+              // whose matching effect arm is a no-op.
               // Only reached for 'follow' (same reasoning as the dispatch:
               // an anchored window's creation-time pair must NOT be replayed
               // on reuse), so `reusePolicy` is already the intention the
@@ -3536,8 +3537,8 @@ export function registerWindowHandlers(): void {
           id: machineWindowId,
           policy: spacesPolicyForRole(role, process.platform),
         });
-        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-        // authoritative over nothing. Unlike the dispatch above, this feed
+        // Feed the kernel (window-kernel-shadow.ts) — this is what drives
+        // the window manager. Unlike the dispatch above, this feed
         // carries the platform-neutral intention directly
         // (`desktopMembershipForRole`, `izui-roles.ts`): every role wants to
         // either follow the user or stay anchored regardless of platform, so
@@ -3578,9 +3579,9 @@ export function registerWindowHandlers(): void {
       // other path.
       if (options.show !== false) {
         dispatchWindowEvent({ type: 'WINDOW_SHOWN', id: machineWindowId, focused: true });
-        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-        // authoritative over nothing; see that module's doc for why this can
-        // never change what actually happens on screen.
+        // Feed the kernel (window-kernel-shadow.ts) — this is what drives
+        // the window manager; the dispatch above only reaches the old
+        // machine, whose matching effect arm is a no-op.
         shadowKernelWindowShown(machineWindowId, getWindowStateSnapshot(), true);
       }
       const coordinator = getIzuiCoordinator();
@@ -3912,9 +3913,9 @@ export function registerWindowHandlers(): void {
               if (showTime && Date.now() - showTime < 200) {
                 DEBUG && console.log('window-open: blur for modal window suppressed — within show settle window', url);
                 dispatchWindowEvent({ type: 'RAISE_WINDOW_REQUESTED', id: machineWindowId });
-                // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-                // authoritative over nothing; see that module's doc for why this can
-                // never change what actually happens on screen.
+                // Feed the kernel (window-kernel-shadow.ts) — this is what
+                // drives the window manager; the dispatch above only reaches
+                // the old machine, whose matching effect arm is a no-op.
                 shadowKernelRaiseWindow(machineWindowId, getWindowStateSnapshot());
                 return;
               }
@@ -3952,9 +3953,9 @@ export function registerWindowHandlers(): void {
           // the dispatch site; the write is the reducer's SET_BOUNDS effect
           // through the port.
           dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineWindowId, bounds: result.bounds });
-          // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-          // authoritative over nothing; see that module's doc for why this
-          // can never change what actually happens on screen.
+          // Feed the kernel (window-kernel-shadow.ts) — this is what drives
+          // the window manager; the dispatch above only reaches the old
+          // machine, whose matching effect arm is a no-op.
           shadowKernelSetBounds(machineWindowId, result.bounds, getWindowStateSnapshot());
         }
       }

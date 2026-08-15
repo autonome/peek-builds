@@ -252,9 +252,9 @@ export function installFirstFrameOrderableProducer(): void {
     const machineId = getWindowIdFor(entry.windowId);
     if (machineId != null) {
       dispatchWindowEvent({ type: 'WINDOW_CONTENT_ORDERABLE', id: machineId });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; the sole writer of `orderable`, without
-      // which `topmostBaseLayerPageHost` returns null forever.
+      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // window manager; the sole writer of `orderable`, without which
+      // `topmostBaseLayerPageHost` returns null forever.
       shadowKernelWindowContentOrderable(machineId, getWindowStateSnapshot());
     }
     // Restore-spec bookkeeping only (see the counter block above).
@@ -872,8 +872,8 @@ export async function restoreSessionSnapshot(
   // Clear any stale cold-start re-raise latch from a prior restore; this pass
   // re-arms it only if it activates the focused descriptor at cold start.
   dispatchWindowEvent({ type: 'COLD_START_FOCUS_ARMED', id: null });
-  // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
-  // over nothing.
+  // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+  // window manager.
   shadowKernelArmColdStartFocus(null, getWindowStateSnapshot());
 
   // Skip restore in test environments unless _forceForTest is set (used by
@@ -1421,8 +1421,8 @@ export async function restoreSessionSnapshot(
         const coldStartMachineId = getWindowIdFor(focusedWindowId);
         if (coldStartMachineId != null) {
           dispatchWindowEvent({ type: 'COLD_START_FOCUS_ARMED', id: coldStartMachineId });
-          // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-          // authoritative over nothing.
+          // Feed the kernel (window-kernel-shadow.ts) — this is what drives
+          // the window manager.
           shadowKernelArmColdStartFocus(coldStartMachineId, getWindowStateSnapshot());
         }
       }
@@ -1457,8 +1457,8 @@ export async function restoreSessionSnapshot(
           if (machineId != null) savedOrderBottomToTop.push(machineId);
         }
         dispatchWindowEvent({ type: 'STACK_ORDER_IMPORTED', order: savedOrderBottomToTop });
-        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-        // authoritative over nothing.
+        // Feed the kernel (window-kernel-shadow.ts) — this is what drives
+        // the window manager.
         shadowKernelImportStackOrder(savedOrderBottomToTop, getWindowStateSnapshot());
         _restoreStackDriveCount = savedOrderBottomToTop.length;
         // Counter bookkeeping for the cold-start spec: each restored page-host

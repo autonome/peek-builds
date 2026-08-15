@@ -350,9 +350,9 @@ function closeWindowViaMachine(win: { id: number }): void {
     return;
   }
   dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id });
-  // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
-  // over nothing; see that module's doc for why this can never change what
-  // actually happens on screen.
+  // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+  // window manager; the dispatch above only reaches the old machine, whose
+  // matching effect arm is a no-op.
   shadowKernelCloseWindowDirect(id, getWindowStateSnapshot());
 }
 

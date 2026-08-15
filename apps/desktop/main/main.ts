@@ -235,8 +235,8 @@ export function finalizeWindowClose(windowId: number, captured: CapturedClosePre
   {
     const wmId = getWindowIdFor(windowId);
     if (wmId != null) dispatchWindowEvent({ type: 'WINDOW_CLOSED', id: wmId });
-    // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
-    // over nothing; RULE 1 makes this the only event that shrinks its `order`.
+    // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+    // window manager; RULE 1 makes this the only event that shrinks its `order`.
     if (wmId != null) shadowKernelWindowClosed(wmId, getWindowStateSnapshot());
   }
   try {
@@ -466,9 +466,9 @@ export async function initialize(): Promise<void> {
         return;
       }
       dispatchWindowEvent({ type: 'WINDOW_CLOSE_REQUESTED', id });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen.
+      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // window manager; the dispatch above only reaches the old machine,
+      // whose matching effect arm is a no-op.
       shadowKernelCloseWindowDirect(id, getWindowStateSnapshot());
     },
     // keepLive close intercept (tile-launcher's 'close' handler): dispatch the
@@ -951,8 +951,8 @@ export async function initialize(): Promise<void> {
       }
       if (hostId != null) {
         dispatchWindowEvent({ type: 'DEVTOOLS_OPENED', id: hostId });
-        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-        // authoritative over nothing. The old machine's shared arm re-raises
+        // Feed the kernel (window-kernel-shadow.ts) — this is what drives
+        // the window manager. The old machine's shared arm re-raises
         // `state.front`, not the devtools host itself (window-state.ts
         // DEVTOOLS_OPENED/DEVTOOLS_CLOSED case) — this names the same
         // target, but the id fed to the kernel comes from the kernel's own
@@ -968,8 +968,8 @@ export async function initialize(): Promise<void> {
       const hostId = hostMachineId();
       if (hostId != null) {
         dispatchWindowEvent({ type: 'DEVTOOLS_CLOSED', id: hostId });
-        // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-        // authoritative over nothing. Same re-raise target as devtools-opened
+        // Feed the kernel (window-kernel-shadow.ts) — this is what drives
+        // the window manager. Same re-raise target as devtools-opened
         // above: the kernel's topmost-content-window id, with `snap` (the old
         // machine's just-settled snapshot) passed through only as the
         // divergence comparator.

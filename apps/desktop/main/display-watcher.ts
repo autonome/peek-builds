@@ -150,9 +150,9 @@ function projectAllWindows(reason: string): void {
     projected: decisions.map(({ id, bounds }) => ({ id, bounds })),
   });
 
-  // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-  // authoritative over nothing; see that module's doc for why this can never
-  // change what actually happens on screen.
+  // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+  // window manager; the dispatch above only reaches the old machine, whose
+  // matching effect arm is a no-op.
   shadowKernelDisplayChanged(
     decisions.map(({ id, bounds }) => ({ id, bounds })),
     getWindowStateSnapshot(),

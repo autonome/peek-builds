@@ -3072,9 +3072,9 @@ export function registerTileIpcHandlers(): void {
           const fsMode = machineId != null ? getWindowModeName(machineId) : null;
           if (machineId != null && fsMode != null && fsMode !== 'normal') {
             dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, desired: false });
-            // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-            // authoritative over nothing; see that module's doc for why this
-            // can never change what actually happens on screen.
+            // Feed the kernel (window-kernel-shadow.ts) — this is what
+            // drives the window manager; the dispatch above only reaches
+            // the old machine, whose matching effect arm is a no-op.
             shadowKernelSetFullscreen(machineId, false, getWindowStateSnapshot());
             await waitForMode(machineId, 'normal');
           }
@@ -3298,9 +3298,9 @@ export function registerTileIpcHandlers(): void {
         const machineId = getWindowIdFor(win);
         if (machineId != null) {
           dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: result.bounds });
-          // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-          // authoritative over nothing; see that module's doc for why this
-          // can never change what actually happens on screen.
+          // Feed the kernel (window-kernel-shadow.ts) — this is what drives
+          // the window manager; the dispatch above only reaches the old
+          // machine, whose matching effect arm is a no-op.
           shadowKernelSetBounds(machineId, result.bounds, getWindowStateSnapshot());
         }
       }
@@ -3349,9 +3349,9 @@ export function registerTileIpcHandlers(): void {
           const machineId = getWindowIdFor(win);
           if (machineId != null) {
             dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: result.bounds });
-            // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-            // authoritative over nothing; see that module's doc for why this
-            // can never change what actually happens on screen.
+            // Feed the kernel (window-kernel-shadow.ts) — this is what
+            // drives the window manager; the dispatch above only reaches
+            // the old machine, whose matching effect arm is a no-op.
             shadowKernelSetBounds(machineId, result.bounds, getWindowStateSnapshot());
           }
         }
@@ -3435,9 +3435,9 @@ export function registerTileIpcHandlers(): void {
         id: machineId,
         workArea: workAreaRect,
       });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen. The kernel's `Maximize`
+      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // window manager; the dispatch above only reaches the old machine,
+      // whose matching effect arm is a no-op. The kernel's `Maximize`
       // command carries the work area as data (`459ed219` shape — see
       // `shadowKernelMaximize`'s doc), same rect as the old event above.
       shadowKernelMaximize(machineId, getWindowStateSnapshot(), workAreaRect);
@@ -3506,9 +3506,9 @@ export function registerTileIpcHandlers(): void {
       } catch { /* logging must never throw */ }
 
       dispatchWindowEvent({ type: 'UNMAXIMIZE_REQUESTED', id: machineId });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen.
+      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // window manager; the dispatch above only reaches the old machine,
+      // whose matching effect arm is a no-op.
       shadowKernelUnmaximize(machineId, getWindowStateSnapshot());
       // Targeted notification — see comment in tile:window:maximize.
       try { win.webContents.send('tile:window:unmaximize-request'); } catch { /* renderer may be gone */ }
@@ -3578,9 +3578,9 @@ export function registerTileIpcHandlers(): void {
       // break;` no-ops on.
       const oldMode = getWindowModeName(machineId);
       dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, bounds });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen.
+      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // window manager; the dispatch above only reaches the old machine,
+      // whose matching effect arm is a no-op.
       if (oldMode !== null) {
         const desired = oldMode === 'normal' || oldMode === 'leaving-fullscreen';
         shadowKernelSetFullscreen(machineId, desired, getWindowStateSnapshot());
@@ -3769,9 +3769,9 @@ export function registerTileIpcHandlers(): void {
         visibleOnFullScreen: args.options?.visibleOnFullScreen,
         skipTransformProcessType: args.options?.skipTransformProcessType,
       });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen. The renderer's raw
+      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // window manager; the dispatch above only reaches the old machine,
+      // whose matching effect arm is a no-op. The renderer's raw
       // boolean IS the same on/off fact the kernel's `DesktopMembership`
       // names, so it is translated directly rather than carried as a second,
       // boolean-shaped command: `true` -> rides along with the user
@@ -3890,9 +3890,9 @@ export function registerTileIpcHandlers(): void {
     const machineId = getWindowIdFor(win);
     if (machineId != null) {
       dispatchWindowEvent({ type: 'SET_BOUNDS_REQUESTED', id: machineId, bounds: next });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen.
+      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // window manager; the dispatch above only reaches the old machine,
+      // whose matching effect arm is a no-op.
       shadowKernelSetBounds(machineId, next, getWindowStateSnapshot());
     }
 

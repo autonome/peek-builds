@@ -170,9 +170,9 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
   // `NativeWindow`; the electron typed-overload `on` isn't assignable to the
   // loose `on` shape, so bridge with a single cast here (not at every call site).
   const id = getWindowOsAdapter().registerWindow(spec as unknown as RegisterWindowSpec);
-  // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
-  // over nothing; see that module's doc for why this can never change what
-  // actually happens on screen.
+  // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+  // window manager; the dispatch above only reaches the old machine, whose
+  // matching effect arm is a no-op.
   const settledSnapshot = getWindowOsAdapter().getOwner().snapshot();
   shadowKernelRegisterWindow({
     id,

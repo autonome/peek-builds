@@ -678,9 +678,9 @@ function detachOverlayFromMachine(): void {
   sendActiveHandoff(null);
   if (overlayWmId == null) return;
   dispatchWindowEvent({ type: 'OVERLAY_ATTACH_REQUESTED', id: overlayWmId, hostId: null });
-  // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
-  // over nothing; see that module's doc for why this can never change what
-  // actually happens on screen.
+  // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+  // window manager; the dispatch above only reaches the old machine, whose
+  // matching effect arm is a no-op.
   shadowKernelAttachOverlay(overlayWmId, null, getWindowStateSnapshot());
 }
 
@@ -743,10 +743,10 @@ function retarget(id: number | null): void {
   }
 
   dispatchWindowEvent({ type: 'OVERLAY_ATTACH_REQUESTED', id: overlayWmId, hostId, frame });
-  // Shadow-feed the kernel (window-kernel-shadow.ts) — additive, authoritative
-  // over nothing; see that module's doc for why this can never change what
-  // actually happens on screen. The SAME `frame` computed above for the old
-  // machine's event rides this feed too (`window-kernel.ts
+  // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+  // window manager; the dispatch above only reaches the old machine, whose
+  // matching effect arm is a no-op. The SAME `frame` computed above for the
+  // old machine's event rides this feed too (`window-kernel.ts
   // WindowRecord.overlayFrame`'s doc), so the kernel's attach/retarget
   // reframes exactly as the old machine's does.
   shadowKernelAttachOverlay(overlayWmId, hostId, getWindowStateSnapshot(), frame);
@@ -1090,9 +1090,9 @@ function installTestBridge(): void {
         );
       }
       dispatchWindowEvent({ type: 'WINDOW_DESTROY_REQUESTED', id: wid });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen.
+      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // window manager; the dispatch above only reaches the old machine,
+      // whose matching effect arm is a no-op.
       shadowKernelDestroyWindow(wid, getWindowStateSnapshot());
       fakeHosts.delete(id);
       return true;
@@ -2956,9 +2956,9 @@ function installTestBridge(): void {
       const machineId = getWindowIdFor(id);
       if (machineId == null) return Promise.resolve();
       dispatchWindowEvent({ type: 'FULLSCREEN_REQUESTED', id: machineId, desired, bounds });
-      // Shadow-feed the kernel (window-kernel-shadow.ts) — additive,
-      // authoritative over nothing; see that module's doc for why this can
-      // never change what actually happens on screen.
+      // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
+      // window manager; the dispatch above only reaches the old machine,
+      // whose matching effect arm is a no-op.
       shadowKernelSetFullscreen(machineId, desired, getWindowStateSnapshot());
       return waitForMode(machineId, desired ? 'fullscreen' : 'normal');
     },
