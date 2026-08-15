@@ -349,6 +349,13 @@ export interface ServerItem {
   deletedAt?: number;
   starred: number;
   archived: number;
+  title: string;
+  domain: string;
+  favicon: string;
+  visitCount: number;
+  lastVisitAt: number;
+  frecencyScore: number;
+  mimeType: string;
 }
 
 // ==================== Backup Types ====================

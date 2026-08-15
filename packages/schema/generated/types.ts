@@ -30,17 +30,17 @@ export interface SchemaItems {
   starred: number;
   /** Archived flag (0/1) */
   archived: number;
-  /** Number of visits (local tracking) */
+  /** Number of visits */
   visitCount: number;
-  /** Last visit timestamp (local tracking) */
+  /** Last visit timestamp */
   lastVisitAt: number;
-  /** Frecency score for ranking (local calculation) */
+  /** Frecency score for ranking */
   frecencyScore: number;
-  /** Page title (cached locally for URL items) */
+  /** Page title */
   title: string;
-  /** Domain extracted from URL (cached locally) */
+  /** Domain extracted from URL */
   domain: string;
-  /** Favicon URL (cached locally) */
+  /** Favicon URL */
   favicon: string;
 }
 
@@ -135,7 +135,7 @@ export type SchemaSyncTableName = 'items' | 'tags' | 'item_tags' | 'rules' | 'it
 
 /** Required sync columns by table */
 export const REQUIRED_SYNC_COLUMNS: Record<SchemaSyncTableName, string[]> = {
-  items: ["id","type","content","syncId","syncedAt","createdAt","updatedAt","deletedAt"],
+  items: ["id","type","content","syncId","syncedAt","createdAt","updatedAt","deletedAt","title","domain","favicon","visitCount","lastVisitAt","frecencyScore"],
   tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt"],
   item_tags: ["itemId","tagId","createdAt"],
   item_events: ["id","itemId","content","value","occurredAt","metadata","createdAt"],

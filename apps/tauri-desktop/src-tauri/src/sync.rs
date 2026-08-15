@@ -76,6 +76,14 @@ pub struct ServerItem {
     pub updated_at: i64,
     #[serde(default)]
     pub deleted_at: i64,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub domain: String,
+    #[serde(default)]
+    pub favicon: String,
+    #[serde(default)]
+    pub frecency_score: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,6 +110,10 @@ struct PushBody {
     sync_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     deleted_at: Option<i64>,
+    title: String,
+    domain: String,
+    favicon: String,
+    frecency_score: i64,
 }
 
 /// Data extracted from an item for pushing (avoids holding Connection across await)
@@ -458,7 +470,7 @@ fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<Stri
     // Find local item by syncId matching server id (include deleted items)
     let local_item: Option<Item> = conn
         .query_row(
-            "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items WHERE syncId = ?1",
+            "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt, frecencyScore, title, domain, favicon FROM items WHERE syncId = ?1",
             params![server_item.id],
             |row| {
                 Ok(Item {
@@ -477,6 +489,10 @@ fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<Stri
                     synced_at: row.get(12)?,
                     visit_count: row.get(13)?,
                     last_visit_at: row.get(14)?,
+                    frecency_score: row.get(15)?,
+                    title: row.get(16)?,
+                    domain: row.get(17)?,
+                    favicon: row.get(18)?,
                 })
             },
         )
@@ -527,11 +543,20 @@ fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<Stri
         let local_id = datastore::add_item(conn, &server_item.item_type, &options)
             .map_err(|e| format!("Failed to add item: {}", e))?;
 
-        // Update timestamps to match server
+        // Update timestamps and frecency fields to match server
         let now_ts = datastore::now();
         conn.execute(
-            "UPDATE items SET createdAt = ?1, updatedAt = ?2, syncedAt = ?3 WHERE id = ?4",
-            params![server_item.created_at, server_updated_at, now_ts, local_id],
+            "UPDATE items SET createdAt = ?1, updatedAt = ?2, syncedAt = ?3, title = ?4, domain = ?5, favicon = ?6, frecencyScore = ?7 WHERE id = ?8",
+            params![
+                server_item.created_at,
+                server_updated_at,
+                now_ts,
+                server_item.title,
+                server_item.domain,
+                server_item.favicon,
+                server_item.frecency_score,
+                local_id
+            ],
         )
         .map_err(|e| format!("Failed to update timestamps: {}", e))?;
 
@@ -553,12 +578,16 @@ fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<Stri
                 .as_ref()
                 .map(|m| serde_json::to_string(m).unwrap_or_else(|_| "{}".to_string()));
             conn.execute(
-                "UPDATE items SET deletedAt = 0, content = ?1, metadata = COALESCE(?2, metadata), updatedAt = ?3, syncedAt = ?4 WHERE id = ?5",
+                "UPDATE items SET deletedAt = 0, content = ?1, metadata = COALESCE(?2, metadata), updatedAt = ?3, syncedAt = ?4, title = ?5, domain = ?6, favicon = ?7, frecencyScore = ?8 WHERE id = ?9",
                 params![
                     server_item.content,
                     metadata_str,
                     server_updated_at,
                     now_ts,
+                    server_item.title,
+                    server_item.domain,
+                    server_item.favicon,
+                    server_item.frecency_score,
                     local.id
                 ],
             )
@@ -589,11 +618,19 @@ fn merge_server_item(conn: &Connection, server_item: &ServerItem) -> Result<Stri
         datastore::update_item(conn, &local.id, &options)
             .map_err(|e| format!("Failed to update item: {}", e))?;
 
-        // Update timestamps
+        // Update timestamps and frecency fields
         let now_ts = datastore::now();
         conn.execute(
-            "UPDATE items SET updatedAt = ?1, syncedAt = ?2 WHERE id = ?3",
-            params![server_updated_at, now_ts, local.id],
+            "UPDATE items SET updatedAt = ?1, syncedAt = ?2, title = ?3, domain = ?4, favicon = ?5, frecencyScore = ?6 WHERE id = ?7",
+            params![
+                server_updated_at,
+                now_ts,
+                server_item.title,
+                server_item.domain,
+                server_item.favicon,
+                server_item.frecency_score,
+                local.id
+            ],
         )
         .map_err(|e| format!("Failed to update timestamps: {}", e))?;
 
@@ -633,7 +670,7 @@ fn query_items_to_push(conn: &Connection, last_sync_time: i64) -> Result<Vec<Ite
         // Incremental: items modified locally after their last sync, or never synced
         let mut stmt = conn
             .prepare(
-                "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items WHERE (deletedAt = 0 AND (syncedAt = 0 OR (syncedAt > 0 AND updatedAt > syncedAt))) OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)",
+                "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt, frecencyScore, title, domain, favicon FROM items WHERE (deletedAt = 0 AND (syncedAt = 0 OR (syncedAt > 0 AND updatedAt > syncedAt))) OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)",
             )
             .map_err(|e| format!("Query error: {}", e))?;
         let result: Vec<Item> = stmt
@@ -654,6 +691,10 @@ fn query_items_to_push(conn: &Connection, last_sync_time: i64) -> Result<Vec<Ite
                     synced_at: row.get(12)?,
                     visit_count: row.get(13)?,
                     last_visit_at: row.get(14)?,
+                    frecency_score: row.get(15)?,
+                    title: row.get(16)?,
+                    domain: row.get(17)?,
+                    favicon: row.get(18)?,
                 })
             })
             .map_err(|e| format!("Query error: {}", e))?
@@ -664,7 +705,7 @@ fn query_items_to_push(conn: &Connection, last_sync_time: i64) -> Result<Vec<Ite
         // Full: all items that haven't been synced
         let mut stmt = conn
             .prepare(
-                "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items WHERE (deletedAt = 0 AND syncedAt = 0) OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)",
+                "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt, frecencyScore, title, domain, favicon FROM items WHERE (deletedAt = 0 AND syncedAt = 0) OR (deletedAt > 0 AND syncId != '' AND syncedAt > 0 AND updatedAt > syncedAt)",
             )
             .map_err(|e| format!("Query error: {}", e))?;
         let result: Vec<Item> = stmt
@@ -685,6 +726,10 @@ fn query_items_to_push(conn: &Connection, last_sync_time: i64) -> Result<Vec<Ite
                     synced_at: row.get(12)?,
                     visit_count: row.get(13)?,
                     last_visit_at: row.get(14)?,
+                    frecency_score: row.get(15)?,
+                    title: row.get(16)?,
+                    domain: row.get(17)?,
+                    favicon: row.get(18)?,
                 })
             })
             .map_err(|e| format!("Query error: {}", e))?
@@ -720,6 +765,10 @@ fn query_items_to_push(conn: &Connection, last_sync_time: i64) -> Result<Vec<Ite
                     item.sync_id.clone()
                 },
                 deleted_at: if item.deleted_at > 0 { Some(item.deleted_at) } else { None },
+                title: item.title.clone(),
+                domain: item.domain.clone(),
+                favicon: item.favicon.clone(),
+                frecency_score: item.frecency_score,
             },
         });
     }

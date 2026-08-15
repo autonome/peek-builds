@@ -19,6 +19,10 @@ pub struct PushItem {
     pub updated_at: String,
     pub sync_id: String,
     pub deleted_at: Option<String>,
+    pub title: String,
+    pub domain: String,
+    pub favicon: String,
+    pub frecency_score: i64,
 }
 
 /// Helper to convert ISO string to chrono DateTime<Utc>.
@@ -146,7 +150,8 @@ pub fn get_items_to_push(conn: &Connection, target_profile_id: &str) -> Result<V
     let (where_clause, bind) = pending_for_bucket(&synced_types, target_profile_id);
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT id, type, url, content, COALESCE(metadata, ''), updated_at, COALESCE(sync_id, ''), deleted_at FROM items
+            "SELECT id, type, url, content, COALESCE(metadata, ''), updated_at, COALESCE(sync_id, ''), deleted_at, \
+             COALESCE(title, ''), COALESCE(domain, ''), COALESCE(favicon, ''), COALESCE(frecency_score, 0) FROM items
              WHERE {}",
             where_clause
         ))
@@ -163,6 +168,10 @@ pub fn get_items_to_push(conn: &Connection, target_profile_id: &str) -> Result<V
                 updated_at: row.get(5)?,
                 sync_id: row.get(6)?,
                 deleted_at: row.get(7)?,
+                title: row.get(8)?,
+                domain: row.get(9)?,
+                favicon: row.get(10)?,
+                frecency_score: row.get(11)?,
             })
         })
         .map_err(|e| format!("Failed to query items: {}", e))?
@@ -376,8 +385,13 @@ pub fn merge_server_item(conn: &Connection, server_item: &ServerItem, synced_pro
                     };
 
                     conn.execute(
-                        "UPDATE items SET deleted_at = NULL, type = ?, url = ?, content = ?, metadata = ?, updated_at = ?, synced_at = ?, synced_profile_id = ? WHERE id = ?",
-                        params![item_type, url_val, content_val, &metadata_json, &unix_ms_to_iso(server_item.updated_at), &now, synced_profile_id, local_id],
+                        "UPDATE items SET deleted_at = NULL, type = ?, url = ?, content = ?, metadata = ?, updated_at = ?, synced_at = ?, synced_profile_id = ?, title = ?, domain = ?, favicon = ?, frecency_score = ? WHERE id = ?",
+                        params![
+                            item_type, url_val, content_val, &metadata_json,
+                            &unix_ms_to_iso(server_item.updated_at), &now, synced_profile_id,
+                            &server_item.title, &server_item.domain, &server_item.favicon, server_item.frecency_score,
+                            local_id
+                        ],
                     ).map_err(|e| format!("Failed to undelete item: {}", e))?;
 
                     update_item_tags_from_server(conn, local_id, &server_item.tags)?;
@@ -411,8 +425,13 @@ pub fn merge_server_item(conn: &Connection, server_item: &ServerItem, synced_pro
                 };
 
                 conn.execute(
-                    "UPDATE items SET type = ?, url = ?, content = ?, metadata = ?, updated_at = ?, synced_at = ?, synced_profile_id = ? WHERE id = ?",
-                    params![item_type, url_val, content_val, &metadata_json, &unix_ms_to_iso(server_item.updated_at), &now, synced_profile_id, &local_id],
+                    "UPDATE items SET type = ?, url = ?, content = ?, metadata = ?, updated_at = ?, synced_at = ?, synced_profile_id = ?, title = ?, domain = ?, favicon = ?, frecency_score = ? WHERE id = ?",
+                    params![
+                        item_type, url_val, content_val, &metadata_json,
+                        &unix_ms_to_iso(server_item.updated_at), &now, synced_profile_id,
+                        &server_item.title, &server_item.domain, &server_item.favicon, server_item.frecency_score,
+                        &local_id
+                    ],
                 )
                 .map_err(|e| format!("Failed to update item: {}", e))?;
 
@@ -445,8 +464,8 @@ pub fn merge_server_item(conn: &Connection, server_item: &ServerItem, synced_pro
     };
 
     conn.execute(
-        "INSERT INTO items (id, type, url, content, metadata, sync_id, synced_at, synced_profile_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO items (id, type, url, content, metadata, sync_id, synced_at, synced_profile_id, created_at, updated_at, title, domain, favicon, frecency_score)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             &new_id,
             item_type,
@@ -457,7 +476,11 @@ pub fn merge_server_item(conn: &Connection, server_item: &ServerItem, synced_pro
             &now,
             synced_profile_id,
             &unix_ms_to_iso(server_item.created_at),
-            &unix_ms_to_iso(server_item.updated_at)
+            &unix_ms_to_iso(server_item.updated_at),
+            &server_item.title,
+            &server_item.domain,
+            &server_item.favicon,
+            server_item.frecency_score
         ],
     )
     .map_err(|e| format!("Failed to insert item: {}", e))?;
@@ -598,6 +621,10 @@ mod tests {
             created_at: 1700000000000,
             updated_at: 1700000000000,
             deleted_at: 0,
+            title: String::new(),
+            domain: String::new(),
+            favicon: String::new(),
+            frecency_score: 0,
         };
 
         let result = merge_server_item(&conn, &server_item, "bucket-a").unwrap();
@@ -653,6 +680,10 @@ mod tests {
             created_at: 1700000000000,
             updated_at: 1700000000000,
             deleted_at: 1700000001000,
+            title: String::new(),
+            domain: String::new(),
+            favicon: String::new(),
+            frecency_score: 0,
         };
 
         let result = merge_server_item(&conn, &server_item, "bucket-a").unwrap();
@@ -880,6 +911,10 @@ mod tests {
             created_at: 1700000000000,
             updated_at: 1700000000000,
             deleted_at: 0,
+            title: String::new(),
+            domain: String::new(),
+            favicon: String::new(),
+            frecency_score: 0,
         };
         // Default synced types exclude 'entity' -> skipped, nothing inserted.
         assert_eq!(merge_server_item(&conn, &entity, "bucket-a").unwrap(), "skipped");
@@ -896,6 +931,10 @@ mod tests {
             created_at: 1700000000000,
             updated_at: 1700000000000,
             deleted_at: 0,
+            title: String::new(),
+            domain: String::new(),
+            favicon: String::new(),
+            frecency_score: 0,
         };
         assert_eq!(merge_server_item(&conn, &url, "bucket-a").unwrap(), "pulled");
         let n2: i64 = conn.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0)).unwrap();

@@ -3384,6 +3384,10 @@ async fn push_to_server() -> Result<BidirectionalSyncResult, String> {
             "tags": tags,
             "metadata": metadata,
             "syncId": sync_id_to_send,
+            "title": item.title,
+            "domain": item.domain,
+            "favicon": item.favicon,
+            "frecencyScore": item.frecency_score,
         });
 
         // Include deletedAt if the item was soft-deleted locally

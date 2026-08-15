@@ -428,20 +428,26 @@ function mergeServerItem(serverItem: ServerItem): 'pulled' | 'conflict' | 'skipp
     const metadataJson = serverItem.metadata ? JSON.stringify(serverItem.metadata) : '{}';
 
     db.prepare(`
-      INSERT INTO items (id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, syncedAt, starred, archived)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+      INSERT INTO items (id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, syncedAt, starred, archived, title, domain, favicon, visitCount, lastVisitAt, frecencyScore)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       localId,
       serverItem.type,
       serverItem.content || null,
-      'text/html', // default mimeType for synced items
+      serverItem.mimeType || '',
       metadataJson,
       serverItem.id,
       serverItem.createdAt,
       serverUpdatedAt,
       now,
       serverItem.starred,
-      serverItem.archived
+      serverItem.archived,
+      serverItem.title || '',
+      serverItem.domain || '',
+      serverItem.favicon || '',
+      serverItem.visitCount || 0,
+      serverItem.lastVisitAt || 0,
+      serverItem.frecencyScore || 0
     );
 
     // Add tags
@@ -479,9 +485,15 @@ function mergeServerItem(serverItem: ServerItem): 'pulled' | 'conflict' | 'skipp
     const metadataJson = serverItem.metadata ? JSON.stringify(serverItem.metadata) : '{}';
     db.prepare(`
       UPDATE items
-      SET content = ?, metadata = ?, updatedAt = ?, syncedAt = ?, starred = ?, archived = ?
+      SET content = ?, metadata = ?, updatedAt = ?, syncedAt = ?, starred = ?, archived = ?,
+        title = ?, domain = ?, favicon = ?, visitCount = ?, lastVisitAt = ?, frecencyScore = ?, mimeType = ?
       WHERE id = ?
-    `).run(serverItem.content || null, metadataJson, serverUpdatedAt, now, serverItem.starred, serverItem.archived, localItem.id);
+    `).run(
+      serverItem.content || null, metadataJson, serverUpdatedAt, now, serverItem.starred, serverItem.archived,
+      serverItem.title || '', serverItem.domain || '', serverItem.favicon || '',
+      serverItem.visitCount || 0, serverItem.lastVisitAt || 0, serverItem.frecencyScore || 0,
+      serverItem.mimeType || '', localItem.id
+    );
 
     // Update tags
     syncTagsToItem(localItem.id, serverItem.tags);
@@ -644,6 +656,14 @@ async function pushSingleItem(
     deletedAt?: number;
     starred: number;
     archived: number;
+    title: string;
+    domain: string;
+    favicon: string;
+    visitCount: number;
+    lastVisitAt: number;
+    frecencyScore: number;
+    mimeType: string;
+    createdAt: number;
   } = {
     type: item.type,
     content: item.content,
@@ -651,6 +671,16 @@ async function pushSingleItem(
     sync_id: item.syncId || item.id,  // Use existing syncId or local id
     starred: item.starred,
     archived: item.archived,
+    title: item.title,
+    domain: item.domain,
+    favicon: item.favicon,
+    visitCount: item.visitCount,
+    lastVisitAt: item.lastVisitAt,
+    frecencyScore: item.frecencyScore,
+    mimeType: item.mimeType,
+    // Honored by the server on INSERT only — preserves the item's original creation
+    // date. updatedAt stays server-stamped (see mergeServerItem() conflict resolution).
+    createdAt: item.createdAt,
   };
 
   if (metadata) {
@@ -681,6 +711,20 @@ async function pushSingleItem(
 }
 
 // ==================== Server Change Detection ====================
+
+/**
+ * Clear per-item sync markers so the next push resends every live item, and reset the
+ * profile's high-water mark so the next pull re-fetches everything the server has.
+ * Shared by resetSyncStateIfServerChanged() and resetSyncStateIfDatastoreVersionChanged()
+ * — same recovery, different trigger.
+ */
+function resetPerItemSyncState(profileId: string): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE items SET syncedAt = 0, syncId = '' WHERE deletedAt = 0
+  `).run();
+  updateLastSyncTime(profileId, 0);
+}
 
 /**
  * Detect if the sync server config has changed and reset per-item sync markers if so.
@@ -721,14 +765,78 @@ function resetSyncStateIfServerChanged(serverUrl: string): boolean {
 
   if (urlChanged || profileChanged) {
     DEBUG && console.log(`[sync] Server changed (url: '${storedUrl}' -> '${serverUrl}', profile: '${storedProfileId}' -> '${currentProfileId}') — resetting per-item sync state`);
-    db.prepare(`
-      UPDATE items SET syncedAt = 0, syncId = '' WHERE deletedAt = 0
-    `).run();
-    updateLastSyncTime(activeProfile.id, 0);
+    resetPerItemSyncState(activeProfile.id);
     return true;
   }
 
   return false;
+}
+
+/**
+ * Detect if this client is syncing for the first time since DATASTORE_VERSION last
+ * changed, and reset per-item sync markers if so.
+ *
+ * pushToServer() only ever selects rows where syncedAt = 0 or updatedAt > syncedAt —
+ * an item already synced under the old schema stays out of that set forever, so it
+ * would never re-push the columns a DATASTORE_VERSION bump just added (the re-push
+ * problem: see docs/sync-coverage-gaps.md §1, and the required_sync_columns addition
+ * in packages/schema/v1.json this version bump accompanies). This reuses the exact
+ * recovery resetSyncStateIfServerChanged() already has for "start over" — it just
+ * triggers off a different signal: the client's OWN previously-recorded
+ * DATASTORE_VERSION, not the server's. It runs independent of (and before)
+ * serverFetch()'s header check, which only refuses sync outright on a live mismatch
+ * against the server's reported version — it can't retroactively resend items that
+ * synced before this code existed.
+ */
+function resetSyncStateIfDatastoreVersionChanged(): boolean {
+  const db = getDb();
+  const activeProfile = getActiveProfile();
+
+  let storedVersion = 0;
+  let hasSyncedBefore = false;
+  try {
+    const versionRow = db.prepare(`
+      SELECT value FROM feature_settings
+      WHERE featureId = 'sync' AND key = 'lastSyncDatastoreVersion'
+    `).get() as { value: string } | undefined;
+    if (versionRow?.value) storedVersion = JSON.parse(versionRow.value);
+  } catch { /* never recorded */ }
+
+  try {
+    const urlRow = db.prepare(`
+      SELECT value FROM feature_settings
+      WHERE featureId = 'sync' AND key = 'lastSyncServerUrl'
+    `).get() as { value: string } | undefined;
+    hasSyncedBefore = !!urlRow?.value;
+  } catch { /* never synced */ }
+
+  // No stored version and no sync history — a brand-new profile has nothing pushed
+  // yet to miss the new columns. Just start tracking from here.
+  if (storedVersion === 0 && !hasSyncedBefore) {
+    saveSyncDatastoreVersion();
+    return false;
+  }
+
+  if (storedVersion !== DATASTORE_VERSION) {
+    DEBUG && console.log(`[sync] Datastore version changed (${storedVersion || '(untracked)'} -> ${DATASTORE_VERSION}) — resetting per-item sync state`);
+    resetPerItemSyncState(activeProfile.id);
+    saveSyncDatastoreVersion();
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Save the current DATASTORE_VERSION so resetSyncStateIfDatastoreVersionChanged() can
+ * detect the next bump.
+ */
+function saveSyncDatastoreVersion(): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT OR REPLACE INTO feature_settings (id, featureId, key, value, updatedAt)
+    VALUES (?, 'sync', 'lastSyncDatastoreVersion', ?, ?)
+  `).run('sync-lastSyncDatastoreVersion', JSON.stringify(DATASTORE_VERSION), Date.now());
 }
 
 /**
@@ -774,10 +882,14 @@ export async function syncAll(serverUrl: string, apiKey: string): Promise<SyncRe
     return { pulled: 0, pushed: 0, conflicts: 0, lastSyncTime: 0 };
   }
 
-  // Check if server config changed — reset per-item sync markers if so
-  const wasReset = resetSyncStateIfServerChanged(serverUrl);
+  // Check if server config or DATASTORE_VERSION changed — reset per-item sync markers
+  // if so. Both run unconditionally (not short-circuited) since each also persists its
+  // own tracked value regardless of whether it triggered a reset.
+  const serverChanged = resetSyncStateIfServerChanged(serverUrl);
+  const versionChanged = resetSyncStateIfDatastoreVersionChanged();
+  const wasReset = serverChanged || versionChanged;
   if (wasReset) {
-    DEBUG && console.log('[sync] Sync state reset due to server config change — all items will be synced');
+    DEBUG && console.log('[sync] Sync state reset due to server or datastore version change — all items will be synced');
   }
 
   const config = getSyncConfig();

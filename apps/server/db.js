@@ -259,7 +259,11 @@ function initializeSchema(adapter) {
       createdByDevice TEXT DEFAULT '',
       title TEXT DEFAULT '',
       domain TEXT DEFAULT '',
+      favicon TEXT DEFAULT '',
       frecencyScore REAL DEFAULT 0,
+      visitCount INTEGER DEFAULT 0,
+      lastVisitAt INTEGER DEFAULT 0,
+      mimeType TEXT DEFAULT '',
       starred INTEGER DEFAULT 0,
       archived INTEGER DEFAULT 0
     );
@@ -309,7 +313,11 @@ function initializeSchema(adapter) {
     createdByDevice TEXT DEFAULT '',
     title TEXT DEFAULT '',
     domain TEXT DEFAULT '',
+    favicon TEXT DEFAULT '',
     frecencyScore REAL DEFAULT 0,
+    visitCount INTEGER DEFAULT 0,
+    lastVisitAt INTEGER DEFAULT 0,
+    mimeType TEXT DEFAULT '',
     starred INTEGER DEFAULT 0,
     archived INTEGER DEFAULT 0
   )`, itemRenames, hasStaleTypeCheck);
@@ -347,6 +355,20 @@ function initializeSchema(adapter) {
   }
   if (!itemColSet.has("archived")) {
     adapter.exec("ALTER TABLE items ADD COLUMN archived INTEGER DEFAULT 0");
+  }
+  // Carried from the desktop's local-only item columns (docs/sync-coverage-gaps.md §1) —
+  // sync.ts now pushes/merges these, so the server needs somewhere to put them.
+  if (!itemColSet.has("favicon")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN favicon TEXT DEFAULT ''");
+  }
+  if (!itemColSet.has("visitCount")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN visitCount INTEGER DEFAULT 0");
+  }
+  if (!itemColSet.has("lastVisitAt")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN lastVisitAt INTEGER DEFAULT 0");
+  }
+  if (!itemColSet.has("mimeType")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN mimeType TEXT DEFAULT ''");
   }
 
   // Convert any TEXT timestamps to INTEGER (Unix ms)
@@ -605,7 +627,18 @@ function getOrCreateTagWithConn(conn, name, timestamp) {
 // also declared sync:true in the schema (packages/schema/v1.json) and the sync path
 // does pass them (POST /items in index.js); they default to null here only for the
 // MCP/non-sync callers that don't have an opinion, and COALESCE the same way.
-function saveItem(userId, type, content, tags = [], metadata = null, syncId = null, profileId = "default", deletedAt = null, createdByDevice = "", title = null, domain = null, frecencyScore = null, starred = null, archived = null) {
+//
+// `extra` carries the remaining columns added for full item sync coverage
+// (docs/sync-coverage-gaps.md §1: favicon, visitCount, lastVisitAt, mimeType, plus the
+// client's original createdAt) — grouped in a trailing options object rather than growing
+// the positional list further, since every existing call site is unaffected by an
+// omitted `extra`. Each field defaults to null and COALESCEs onto the existing row on
+// update, same as title/domain/frecencyScore. `createdAt` is the exception: it is honored
+// ONLY on INSERT (preserves the item's original creation date); updatedAt stays
+// server-stamped on every write, including updates, so last-write-wins conflict
+// resolution keeps working (see sync.ts mergeServerItem()).
+function saveItem(userId, type, content, tags = [], metadata = null, syncId = null, profileId = "default", deletedAt = null, createdByDevice = "", title = null, domain = null, frecencyScore = null, starred = null, archived = null, extra = {}) {
+  const { favicon = null, visitCount = null, lastVisitAt = null, mimeType = null, createdAt = null } = extra;
   const conn = getConnection(userId, profileId);
   const timestamp = now();
   const metadataJson = metadata ? JSON.stringify(metadata) : null;
@@ -651,8 +684,12 @@ function saveItem(userId, type, content, tags = [], metadata = null, syncId = nu
           `UPDATE items SET type = ?, content = ?, metadata = COALESCE(?, metadata),
            title = COALESCE(?, title), domain = COALESCE(?, domain),
            frecencyScore = COALESCE(?, frecencyScore), starred = COALESCE(?, starred),
-           archived = COALESCE(?, archived), deletedAt = 0, updatedAt = ? WHERE id = ?`,
-          [type, content, metadataJson, title, domain, frecencyScore, starred, archived, timestamp, itemId]
+           archived = COALESCE(?, archived), favicon = COALESCE(?, favicon),
+           visitCount = COALESCE(?, visitCount), lastVisitAt = COALESCE(?, lastVisitAt),
+           mimeType = COALESCE(?, mimeType),
+           deletedAt = 0, updatedAt = ? WHERE id = ?`,
+          [type, content, metadataJson, title, domain, frecencyScore, starred, archived,
+           favicon, visitCount, lastVisitAt, mimeType, timestamp, itemId]
         );
         conn.run("DELETE FROM item_tags WHERE itemId = ?", [itemId]);
       }
@@ -672,8 +709,12 @@ function saveItem(userId, type, content, tags = [], metadata = null, syncId = nu
           `UPDATE items SET metadata = COALESCE(?, metadata),
            title = COALESCE(?, title), domain = COALESCE(?, domain),
            frecencyScore = COALESCE(?, frecencyScore), starred = COALESCE(?, starred),
-           archived = COALESCE(?, archived), updatedAt = ? WHERE id = ?`,
-          [metadataJson, title, domain, frecencyScore, starred, archived, timestamp, itemId]
+           archived = COALESCE(?, archived), favicon = COALESCE(?, favicon),
+           visitCount = COALESCE(?, visitCount), lastVisitAt = COALESCE(?, lastVisitAt),
+           mimeType = COALESCE(?, mimeType),
+           updatedAt = ? WHERE id = ?`,
+          [metadataJson, title, domain, frecencyScore, starred, archived,
+           favicon, visitCount, lastVisitAt, mimeType, timestamp, itemId]
         );
         conn.run("DELETE FROM item_tags WHERE itemId = ?", [itemId]);
       }
@@ -693,8 +734,12 @@ function saveItem(userId, type, content, tags = [], metadata = null, syncId = nu
             `UPDATE items SET metadata = COALESCE(?, metadata),
              title = COALESCE(?, title), domain = COALESCE(?, domain),
              frecencyScore = COALESCE(?, frecencyScore), starred = COALESCE(?, starred),
-             archived = COALESCE(?, archived), updatedAt = ? WHERE id = ?`,
-            [metadataJson, title, domain, frecencyScore, starred, archived, timestamp, itemId]
+             archived = COALESCE(?, archived), favicon = COALESCE(?, favicon),
+             visitCount = COALESCE(?, visitCount), lastVisitAt = COALESCE(?, lastVisitAt),
+             mimeType = COALESCE(?, mimeType),
+             updatedAt = ? WHERE id = ?`,
+            [metadataJson, title, domain, frecencyScore, starred, archived,
+             favicon, visitCount, lastVisitAt, mimeType, timestamp, itemId]
           );
           conn.run("DELETE FROM item_tags WHERE itemId = ?", [itemId]);
           break;
@@ -706,11 +751,16 @@ function saveItem(userId, type, content, tags = [], metadata = null, syncId = nu
   // Create new item if no match found
   if (!itemId) {
     itemId = generateUUID();
+    // createdAt is honored from the client ONLY here, on insert — it preserves the item's
+    // original creation date. updatedAt always gets the server's own clock, on insert and
+    // every later update, so last-write-wins conflict resolution has one clock to compare.
+    const insertCreatedAt = createdAt || timestamp;
     conn.run(
-      `INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt, createdByDevice, title, domain, frecencyScore, starred, archived)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [itemId, type, content, metadataJson, syncId || '', timestamp, timestamp, deletedAt || 0, createdByDevice || '',
-       title || '', domain || '', frecencyScore || 0, starred || 0, archived || 0]
+      `INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt, createdByDevice, title, domain, frecencyScore, starred, archived, favicon, visitCount, lastVisitAt, mimeType)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [itemId, type, content, metadataJson, syncId || '', insertCreatedAt, timestamp, deletedAt || 0, createdByDevice || '',
+       title || '', domain || '', frecencyScore || 0, starred || 0, archived || 0,
+       favicon || '', visitCount || 0, lastVisitAt || 0, mimeType || '']
     );
   }
 
@@ -742,7 +792,7 @@ function getItems(userId, type = null, profileId = "default", includeDeleted = f
 
   let query = `
     SELECT id, type, content, metadata, createdAt, updatedAt, deletedAt, createdByDevice,
-      title, domain, frecencyScore, starred, archived
+      title, domain, frecencyScore, starred, archived, favicon, visitCount, lastVisitAt, mimeType
     FROM items
     WHERE 1=1
   `;
@@ -779,6 +829,10 @@ function getItems(userId, type = null, profileId = "default", includeDeleted = f
       frecencyScore: row.frecencyScore || 0,
       starred: row.starred || 0,
       archived: row.archived || 0,
+      favicon: row.favicon || "",
+      visitCount: row.visitCount || 0,
+      lastVisitAt: row.lastVisitAt || 0,
+      mimeType: row.mimeType || "",
       tags: conn.all(
         "SELECT t.name FROM tags t JOIN item_tags it ON t.id = it.tagId WHERE it.itemId = ?",
         [row.id]
@@ -1076,7 +1130,7 @@ function getItemsSince(userId, timestamp, type = null, profileId = "default") {
   // are stored as strings (ISO 8601 or stringified numbers)
   let query = `
     SELECT id, type, content, metadata, createdAt, updatedAt, deletedAt, createdByDevice,
-      title, domain, frecencyScore, starred, archived
+      title, domain, frecencyScore, starred, archived, favicon, visitCount, lastVisitAt, mimeType
     FROM items
     WHERE CAST(updatedAt AS INTEGER) > ?
   `;
@@ -1107,6 +1161,10 @@ function getItemsSince(userId, timestamp, type = null, profileId = "default") {
       frecencyScore: row.frecencyScore || 0,
       starred: row.starred || 0,
       archived: row.archived || 0,
+      favicon: row.favicon || "",
+      visitCount: row.visitCount || 0,
+      lastVisitAt: row.lastVisitAt || 0,
+      mimeType: row.mimeType || "",
       tags: conn.all(
         "SELECT t.name FROM tags t JOIN item_tags it ON t.id = it.tagId WHERE it.itemId = ?",
         [row.id]
@@ -1127,7 +1185,7 @@ function getItemById(userId, itemId, profileId = "default") {
 
   const row = conn.get(
     `SELECT id, type, content, metadata, createdAt, updatedAt, createdByDevice,
-      title, domain, frecencyScore, starred, archived
+      title, domain, frecencyScore, starred, archived, favicon, visitCount, lastVisitAt, mimeType
      FROM items WHERE id = ? AND CAST(deletedAt AS INTEGER) = 0`,
     [itemId]
   );
@@ -1146,6 +1204,10 @@ function getItemById(userId, itemId, profileId = "default") {
     frecencyScore: row.frecencyScore || 0,
     starred: row.starred || 0,
     archived: row.archived || 0,
+    favicon: row.favicon || "",
+    visitCount: row.visitCount || 0,
+    lastVisitAt: row.lastVisitAt || 0,
+    mimeType: row.mimeType || "",
     tags: conn.all(
       "SELECT t.name FROM tags t JOIN item_tags it ON t.id = it.tagId WHERE it.itemId = ?",
       [row.id]

@@ -53,7 +53,14 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
                     sync_error TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    deleted_at TEXT
+                    deleted_at TEXT,
+                    title TEXT DEFAULT '',
+                    domain TEXT DEFAULT '',
+                    favicon TEXT DEFAULT '',
+                    mime_type TEXT DEFAULT '',
+                    visit_count INTEGER DEFAULT 0,
+                    last_visit_at TEXT,
+                    frecency_score INTEGER DEFAULT 0
                 );
 
                 -- Migrate data from urls to items
@@ -105,7 +112,14 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
                     sync_error TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    deleted_at TEXT
+                    deleted_at TEXT,
+                    title TEXT DEFAULT '',
+                    domain TEXT DEFAULT '',
+                    favicon TEXT DEFAULT '',
+                    mime_type TEXT DEFAULT '',
+                    visit_count INTEGER DEFAULT 0,
+                    last_visit_at TEXT,
+                    frecency_score INTEGER DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS tags (
@@ -262,6 +276,31 @@ pub fn ensure_database_initialized(conn: &Connection) -> Result<String, String> 
     if !has_sync_error {
         println!("[peek-core] Adding sync_error column to items table...");
         let _ = conn.execute("ALTER TABLE items ADD COLUMN sync_error TEXT", []);
+    }
+
+    // Add title/domain/favicon/mime_type/visit_count/last_visit_at/frecency_score columns
+    // if they don't exist (for existing installs). These carry the device-local item
+    // fields (frecency-sorted URL history) into sync, so losing a device doesn't lose
+    // them (docs/sync-coverage-gaps.md §1). last_visit_at follows this table's existing
+    // TEXT-timestamp convention (see created_at/synced_at above), not the canonical
+    // schema's INTEGER — converted via unix_ms_to_iso() same as created_at on merge.
+    let has_title: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('items') WHERE name='title'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0) > 0;
+
+    if !has_title {
+        println!("[peek-core] Adding title/domain/favicon/mimeType/visit/frecency columns to items table...");
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN title TEXT DEFAULT ''", []);
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN domain TEXT DEFAULT ''", []);
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN favicon TEXT DEFAULT ''", []);
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN mime_type TEXT DEFAULT ''", []);
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN visit_count INTEGER DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN last_visit_at TEXT", []);
+        let _ = conn.execute("ALTER TABLE items ADD COLUMN frecency_score INTEGER DEFAULT 0", []);
     }
 
     // Migrate 'page' type items to 'url' (for existing installs with old type name)
