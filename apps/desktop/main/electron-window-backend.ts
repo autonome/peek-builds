@@ -143,6 +143,22 @@ function requestGuestDestroy(guest: TeardownGuest): void {
 const APP_RESIGN_SETTLE_MS = 500;
 
 /**
+ * Whether this platform's z-raise primitive also moves OS focus.
+ *
+ * A stacking call declares NO intention about focus — `setStacking` asks for
+ * relative z order and nothing else. But off darwin the primitives that realize
+ * it (`moveTop()`, `setAlwaysOnTop(true, 'floating')`) activate the window as a
+ * side effect, and that focus is THIS BACKEND'S OWN doing, not evidence about
+ * the world — so it must not be fed back to the machine as an OS focus event
+ * (see `raiseWindow`'s docblock for the principle, and the `'focus'` listener
+ * for the suppression).
+ *
+ * On macOS `moveTop()` genuinely reorders without activating or taking key, so
+ * the suppression is inert there and this stays `false`.
+ */
+const STACKING_TAKES_FOCUS = process.platform !== 'darwin';
+
+/**
  * The structural minimum of a native window this backend drives. Both
  * `BaseWindow` (page-host) and `BrowserWindow` (browser) satisfy it — a
  * BaseWindow is NOT a BrowserWindow (no root `.webContents`), so we keep the
@@ -360,6 +376,30 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    *     a token safer than a bare boolean.
    */
   private readonly pendingSelfCausedFocus = new Map<WindowId, number>();
+
+  /**
+   * Windows whose next native `'focus'` is the side effect of a stacking call
+   * this backend just made, on a platform where the z-raise primitive takes
+   * focus (`STACKING_TAKES_FOCUS`). Such a focus is not evidence about the
+   * world and is DROPPED rather than translated into an event.
+   *
+   * A Set, not a Map: a stacking call carries no op token to label the focus
+   * with, because it never asked for focus at all.
+   *
+   * Lifecycle, all four edges deliberate:
+   *   - ARMED by `setStacking`, immediately before the native z-raise, and only
+   *     where that primitive actually takes focus.
+   *   - CONSUMED (one shot) in the window's `'focus'` listener, which suppresses
+   *     the event unless `pendingSelfCausedFocus` also armed it — a focus-family
+   *     command genuinely asked for that one, so it still reports.
+   *   - DROPPED on the window's own `blur` and `closed`, for the same reason
+   *     `pendingSelfCausedFocus` is: focus went elsewhere, so whatever arrives
+   *     next is a new event and not our side effect.
+   *   - DROPPED by `armSelfCausedFocus`: a real focus-family command supersedes
+   *     an outstanding stacking arming, so a never-consumed one cannot swallow
+   *     the focus that command is about to provoke.
+   */
+  private readonly pendingStackingFocus = new Set<WindowId>();
 
   /** Per-window bounded fullscreen settle timers (§2.3). */
   private readonly fullscreenSettleTimers = new Map<WindowId, ReturnType<typeof setTimeout>>();
@@ -656,12 +696,26 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     rendererWC: NativeWebContents | null,
   ): void {
     win.on('focus', () => {
+      // Unconditional: focus landed in-app, so the app did not resign — that is
+      // true however the focus got here.
       this.cancelBlurSettle();
+      const stackingProvoked = this.pendingStackingFocus.delete(id);
+      const cause = this.takeFocusCause(id);
+      const suppressed = stackingProvoked && cause.kind !== 'machine';
+      // A focus provoked by `setStacking` is this backend's own side effect on
+      // platforms whose z-raise primitive activates: the machine asked for z
+      // order, never for focus. Reporting it would feed a machine-initiated
+      // operation back in as fresh OS evidence — the principle `raiseWindow`
+      // states and honors by echoing `WINDOW_SHOWN` instead — and here it
+      // closes a cycle (stacking → focus → raise → stacking) that sustains
+      // itself. A machine-armed focus still reports: a focus-family command
+      // genuinely asked for that one.
+      if (suppressed) return;
       this.emit({
         type: 'OS_FOCUS_GAINED',
         id,
         lastHttpUrl: this.readHttpUrl(id),
-        cause: this.takeFocusCause(id),
+        cause,
       });
       // Feeds the kernel (window-kernel-shadow.ts), which drives the real
       // window operations post-cutover — see that module's header.
@@ -674,8 +728,9 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     win.on('blur', () => {
       // Focus left this window, so any self-caused-focus arming for it is void —
       // whatever focuses it next is a fresh event, not our echo (see
-      // `pendingSelfCausedFocus`).
+      // `pendingSelfCausedFocus`, `pendingStackingFocus`).
       this.pendingSelfCausedFocus.delete(id);
+      this.pendingStackingFocus.delete(id);
       this.armBlurSettle();
     });
     win.on('show', () => {
@@ -700,6 +755,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     win.on('closed', () => {
       this.clearFullscreenSettle(id);
       this.pendingSelfCausedFocus.delete(id);
+      this.pendingStackingFocus.delete(id);
       this.windows.delete(id);
       // `osWindowId` was captured at registration — reading `win.id` here would
       // throw on the already-destroyed native window.
@@ -792,9 +848,15 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * call really can take focus: an activating `performOsShow`, `raiseWindow`'s
    * content focus, `focusContent`. A `showInactive()` takes no focus and arms
    * nothing — arming it would leave a token nothing consumes.
+   *
+   * A command from this family also VOIDS any outstanding stacking arming for
+   * the window: that arming exists to swallow a focus nobody asked for, and a
+   * stale one (the z-raise took no focus after all) would otherwise swallow the
+   * focus this command is about to provoke.
    */
   private armSelfCausedFocus(id: WindowId, opSeq: number): void {
     this.pendingSelfCausedFocus.set(id, opSeq);
+    this.pendingStackingFocus.delete(id);
   }
 
   /**
@@ -1311,6 +1373,7 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     if (!win) return;
     try {
       if (win.isDestroyed()) return;
+      if (STACKING_TAKES_FOCUS) this.pendingStackingFocus.add(id);
       if (level === 'pinned') win.setAlwaysOnTop(true, 'floating');
       else win.moveTop();
     } catch {
