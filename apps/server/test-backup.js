@@ -2,7 +2,17 @@ const { describe, it, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert");
 const fs = require("fs");
 const path = require("path");
-const zlib = require("zlib");
+
+// apps/server's own dependencies are just hono/archiver/@hono/node-server
+// (see apps/server/CLAUDE.md — a fresh `npm install --prefix apps/server`
+// pulls nothing else). Reaching for an unzip package would only resolve here
+// because the workspace root happens to hoist one; a plain `npm install` in
+// apps/server alone would not have it. readZipEntries/extractZipEntry/
+// unzipToDir (zip-read.js) read the archiver-produced zip (store or deflate
+// entries, no zip64) with only `fs`/`zlib`, and this is the test that must
+// actually open what createBackup() wrote, per the production bug this whole
+// suite exists to catch.
+const { unzipToDir } = require("./zip-read");
 
 // Use test directory for all databases
 const TEST_DATA_DIR = path.join(__dirname, "test-data-backup");
@@ -18,81 +28,6 @@ function cleanTestDir() {
 }
 
 cleanTestDir();
-
-// --- Minimal ZIP reader, used only by these tests ---
-//
-// apps/server's own dependencies are just hono/archiver/@hono/node-server
-// (see apps/server/CLAUDE.md — a fresh `npm install --prefix apps/server`
-// pulls nothing else). Reaching for an unzip package would only resolve here
-// because the workspace root happens to hoist one; a plain `npm install` in
-// apps/server alone would not have it. Reading back the archiver-produced
-// zip (store or deflate entries, no zip64) with only `fs`/`zlib` avoids that
-// trap — and this is the test that must actually open what createBackup()
-// wrote, per the production bug this whole suite exists to catch.
-function readZipEntries(zipPath) {
-  const buf = fs.readFileSync(zipPath);
-  const EOCD_SIG = 0x06054b50;
-  let eocdOffset = -1;
-  for (let i = buf.length - 22; i >= 0; i--) {
-    if (buf.readUInt32LE(i) === EOCD_SIG) {
-      eocdOffset = i;
-      break;
-    }
-  }
-  if (eocdOffset < 0) {
-    throw new Error(`Not a valid zip (no end-of-central-directory record): ${zipPath}`);
-  }
-
-  const entryCount = buf.readUInt16LE(eocdOffset + 10);
-  const cdOffset = buf.readUInt32LE(eocdOffset + 16);
-
-  const entries = [];
-  let offset = cdOffset;
-  for (let i = 0; i < entryCount; i++) {
-    if (buf.readUInt32LE(offset) !== 0x02014b50) {
-      throw new Error(`Bad central directory entry at offset ${offset} in ${zipPath}`);
-    }
-    const method = buf.readUInt16LE(offset + 10);
-    const compSize = buf.readUInt32LE(offset + 20);
-    const nameLen = buf.readUInt16LE(offset + 28);
-    const extraLen = buf.readUInt16LE(offset + 30);
-    const commentLen = buf.readUInt16LE(offset + 32);
-    const localHeaderOffset = buf.readUInt32LE(offset + 42);
-    const name = buf.toString("utf8", offset + 46, offset + 46 + nameLen);
-    entries.push({ name, method, compSize, localHeaderOffset });
-    offset += 46 + nameLen + extraLen + commentLen;
-  }
-  return { buf, entries };
-}
-
-function extractZipEntry(buf, entry) {
-  const LOCAL_SIG = 0x04034b50;
-  const off = entry.localHeaderOffset;
-  if (buf.readUInt32LE(off) !== LOCAL_SIG) {
-    throw new Error(`Bad local file header for ${entry.name}`);
-  }
-  const nameLen = buf.readUInt16LE(off + 26);
-  const extraLen = buf.readUInt16LE(off + 28);
-  const dataStart = off + 30 + nameLen + extraLen;
-  const compData = buf.subarray(dataStart, dataStart + entry.compSize);
-
-  if (entry.method === 0) return Buffer.from(compData);
-  if (entry.method === 8) return zlib.inflateRawSync(compData);
-  throw new Error(`Unsupported zip compression method ${entry.method} for ${entry.name}`);
-}
-
-// Unzips an archiver-produced zip onto disk, mirroring what an operator doing
-// a real restore would do (see docs/server-backup-and-deploy.md's by-hand
-// procedure).
-function unzipToDir(zipPath, destDir) {
-  const { buf, entries } = readZipEntries(zipPath);
-  for (const entry of entries) {
-    if (entry.name.endsWith("/")) continue; // directory entry, nothing to write
-    const outPath = path.join(destDir, entry.name);
-    fs.mkdirSync(path.dirname(outPath), { recursive: true });
-    fs.writeFileSync(outPath, extractZipEntry(buf, entry));
-  }
-}
 
 describe("Backup Module Tests", () => {
   let db;

@@ -83,20 +83,68 @@ archive instead of trusting the return value:
   for every user before `createAllBackups()` runs, and `getConnection()` calls
   `initializeSchema()`. Migration has therefore already happened by the time anything is archived.
 - **Backups still land on the same volume as the live database** (`DATA_DIR/backups/{userId}/`),
-  with no download route and a 7-deep retention purge per user. They do not protect against volume
-  loss.
-- **There is still no restore code.** `ARCHITECTURE.md` labels the area "Backup/restore
-  functionality", but only backup exists — no route, no script. Restoring means placing
-  `datastore.sqlite` back on the volume by hand.
+  with a 7-deep retention purge per user. `GET /backups/:filename` (below) is what gets a copy off
+  that volume; the archive still has to reach it in the first place.
 - **`POST /backups` still covers only the calling user**, so it is not a whole-server backup on a
   multi-user deployment.
 
+## Restoring an archive
+
+`POST /admin/restore` (`apps/server/restore.js` `restoreBackup()`) writes a backup archive's
+profile snapshots back onto the live volume, overwriting whatever is there. It sits under
+`/admin`, gated by `ADMIN_TOKEN` rather than a user's own device key, because it can discard live
+data a user-scoped credential should never be able to trigger by itself. Body:
+
+```
+{ "userId": "...", "filename": "peek-backup-<userId>-<iso>.zip", "force"?: false, "dryRun"?: false }
+```
+
+`filename` is whatever `POST /backups` or `GET /backups` returned; the archive is resolved under
+that user's own backup directory, never trusted to carry the userId itself (a userId can contain
+dashes, so it can't be parsed back out of the filename). The manifest inside the archive is what's
+compared against `userId` instead — a mismatch fails the request unless `force: true` is passed,
+for the disaster-recovery case of restoring someone's backup onto a freshly created account.
+
+**`dryRun: true` touches nothing.** It reports, per profile, the manifest's expected row counts,
+whether the archive holds any images for it, and whether a live datastore already exists at the
+target path — enough to decide whether to proceed without writing a single byte.
+
+**A real restore never deletes the previous database.** Before a profile's snapshot is extracted,
+the extraction is written to a temp file and opened read-only to confirm it's actually a readable
+SQLite database — a corrupt archive (bit rot in the zip's deflate stream, a truncated upload, an
+extracted file that isn't a database at all) is caught there, before the live `datastore.sqlite` is
+touched at all. Only once that check passes is the existing datastore renamed aside to
+`datastore.sqlite.pre-restore-<timestamp>`, and its `-wal`/`-shm` sidecars, if present, are renamed
+alongside it with the same suffix rather than deleted — a profile connection this server doesn't
+currently hold open (the process was killed mid-redeploy and restarted before that profile was ever
+reopened) can leave committed transactions sitting only in that WAL, and deleting it would be
+destroying data that exists nowhere else. Pre-restore copies are themselves retention-bounded
+(`PRE_RESTORE_RETENTION`, next to `DEFAULT_RETENTION` in shape): each is a full database copy on a
+fixed-size volume, so only the newest few per profile are kept and older ones are deleted the same
+way `cleanOldBackups()` rotates archives.
+
+**An archive with nothing restorable in it fails loudly.** If every profile the manifest lists is
+missing or was already marked `success: false` at backup time, the request returns
+`success: false` with an error naming the reason, for both a real restore and a dry run — not a
+200 with an empty `restored: {}`, which during disaster recovery reads as "restore completed."
+
+**A restored profile is always a post-migration artifact.** Every restored profile is reopened and
+its table counts compared against the manifest's recorded counts as the last step; a mismatch is
+reported, not thrown, because `getConnection()` runs schema migration on first open the same as it
+would for any other database — an archive taken before a schema change comes back on the *current*
+schema, not frozen at the version it was backed up under.
+
+`GET /backups/:filename` downloads one of the calling user's own archives — user-authed, not
+`/admin`, since it only ever reads that user's own backup directory. The response is streamed from
+disk rather than read into heap first, the same way the 10 MB cap on `/images/:id` is what makes
+reading that route's file whole acceptable and not reading this one's.
+
 ## Taking a backup by hand
 
-The server's own backup writes archives to the same volume as the live database and has no
-download route (see "Related limits" above), so getting a copy off the box, or taking one that
-survives losing that volume, is still a manual procedure. It does not depend on any server code
-path, and it is safe against the live WAL.
+Restoring through the server (above) is the primary path once an archive already exists. Getting
+one off the box in the first place, or reconstructing one when the automated backup itself is
+suspect, is still a manual procedure independent of any server code path, and safe against the live
+WAL.
 
 Most profile databases on the volume are 4 KB stubs whose real content sits in an
 un-checkpointed WAL of several hundred KB. **Copying the `.sqlite` files alone loses that data.**
@@ -118,18 +166,27 @@ Note that `railway ssh` prints its key banner to stderr, so a raw binary stream 
 
 ## Test coverage worth naming
 
-`apps/server/test-backup.js` is 29 tests, up from 21. The additions include a round trip that
-unzips a produced archive and compares row counts against the source database, and a test that
-writes rows without checkpointing the WAL and verifies they still reach the archive. The original
-21 tests never opened an archive at all — they only checked the return value of `createBackup()` —
-which is exactly why a backup containing nothing could report success in production. Any future
-test that only inspects the result object and never unzips the file it points to is repeating that
-gap.
+`apps/server/test-backup.js` is 29 tests. The additions include a round trip that unzips a
+produced archive and compares row counts against the source database, and a test that writes rows
+without checkpointing the WAL and verifies they still reach the archive. The original 21 tests
+never opened an archive at all — they only checked the return value of `createBackup()` — which is
+exactly why a backup containing nothing could report success in production. Any future test that
+only inspects the result object and never unzips the file it points to is repeating that gap.
+
+`apps/server/test-restore.js` is 23 tests, backing the restore path described above, including a
+round trip through the real `POST /admin/restore` route. Several exist specifically to reproduce a
+fault before proving the fix: a corrupted deflate stream that used to be able to leave the live
+database missing entirely (extraction now happens to a temp file, verified openable, before the
+existing database is touched at all); a hot, un-checkpointed WAL that used to be deleted outright
+instead of renamed alongside its pre-restore copy; and an archive with nothing restorable in it
+that used to report success. The traversal-guard tests build their crafted entry names by patching
+the central directory bytes of an otherwise-valid archive directly, rather than asking `archiver` to
+write the escape attempt — `archiver` normalizes `../../evil` to `evil` and similar on the way in,
+so a zip built through it can never actually carry the name the guard is checking for.
 
 ## What settles this
 
-What remains is the restore path: nothing puts an archive back on the volume, and no test
-exercises backup-then-restore-then-verify. A backup is now proven as an archive — the round-trip
-test and the production verification above both open one and check its contents — but unproven as
-a recovery mechanism. Getting a copy off the volume is still manual (see "Taking a backup by
-hand").
+A backup is proven both as an archive (round-trip test, production verification above) and as a
+recovery mechanism (restore round-trip test, `POST /admin/restore` against a live route). What
+remains manual is getting the very first copy off a volume that has none yet, or reconstructing one
+by hand when the automated path itself is suspect — see "Taking a backup by hand".

@@ -380,6 +380,12 @@ module.exports = {
   checkAndRunDailyBackups,
   getLastBackupTime,
   setLastBackupTime,
+  // Shared with restore.js, which needs the exact same path convention and
+  // counting logic it verifies a restored profile against — a second copy of
+  // either would be the same kind of drift getProfilesParentDir() exists to
+  // avoid (see comment above it).
+  getUserBackupDir,
+  getTableCounts,
   // Exposed for testing
   BACKUP_DIR,
   DEFAULT_RETENTION,

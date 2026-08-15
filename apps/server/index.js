@@ -3,11 +3,13 @@ const { serve } = require("@hono/node-server");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { Readable } = require("stream");
 const db = require("./db");
 const users = require("./users");
 const grants = require("./grants");
 const mcpItems = require("./mcp-items");
 const backup = require("./backup");
+const restore = require("./restore");
 const { loadConfig, isSingleUserMode } = require("./config");
 const { createAuthMiddleware, createMcpAuthMiddleware } = require("./auth");
 const { DATASTORE_VERSION, PROTOCOL_VERSION } = require("./version");
@@ -890,6 +892,37 @@ app.post("/backups", async (c) => {
   return c.json(result, result.success ? 200 : 500);
 });
 
+// GET /backups/:filename - Download an archive for the authenticated user.
+// Backups with no way to leave the volume don't protect against losing the
+// volume itself (see docs/server-backup-and-deploy.md) — this is that way
+// out. Stays on the user-authed group, not /admin, since it only ever reads
+// that user's own backup directory. Same filename filter listBackups() uses
+// (restore.js's isValidBackupFilename) — the existing traversal guard.
+app.get("/backups/:filename", (c) => {
+  const userId = c.get("userId");
+  const filename = c.req.param("filename");
+  if (!restore.isValidBackupFilename(filename)) {
+    return c.json({ error: "Invalid backup filename" }, 400);
+  }
+  const archivePath = path.join(backup.getUserBackupDir(userId), filename);
+  if (!fs.existsSync(archivePath)) {
+    return c.json({ error: "Backup not found" }, 404);
+  }
+  // Streamed rather than fs.readFileSync() — an archive has no size cap (the
+  // way the /images/:id route's 10 MB limit lets it read the whole file at
+  // once), so reading it whole would block the event loop and hold the
+  // entire archive in heap for the duration of the response.
+  const size = fs.statSync(archivePath).size;
+  const stream = Readable.toWeb(fs.createReadStream(archivePath));
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/zip",
+      "Content-Length": size.toString(),
+      "Content-Disposition": `attachment; filename="${filename}"`,
+    },
+  });
+});
+
 // === Profile endpoints ===
 
 // GET /profiles - List profiles for authenticated user
@@ -1004,6 +1037,32 @@ app.delete("/admin/devices/:deviceId", (c) => {
   try {
     const revoked = users.revokeDevice(userId, deviceId);
     return c.json({ revoked });
+  } catch (e) {
+    return c.json({ error: e.message }, 400);
+  }
+});
+
+// POST /admin/restore  { userId, filename, force?, dryRun? } -> restore a
+// user's backup archive over their live profile directories.
+//
+// Lives under /admin, not the user-authed /backups group: restore overwrites
+// live data, and the admin token is the stronger gate. Both auth middlewares
+// skip /admin entirely (see createAuthMiddleware in auth.js), so there is no
+// c.get("userId") here — userId comes from the body instead, same as
+// POST /admin/devices above.
+app.post("/admin/restore", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { userId, filename, force, dryRun } = body;
+  if (!userId || !filename) {
+    return c.json({ error: "userId and filename are required" }, 400);
+  }
+  try {
+    const result = await restore.restoreBackup(userId, filename, { force: !!force, dryRun: !!dryRun });
+    // A missing archive (result.notFound) is a 404-shaped failure — the
+    // archive itself doesn't exist, unlike a profile-level restore failure,
+    // which is a 500 the same way a partially-failed POST /backups is.
+    const status = result.success ? 200 : result.notFound ? 404 : 500;
+    return c.json(result, status);
   } catch (e) {
     return c.json({ error: e.message }, 400);
   }

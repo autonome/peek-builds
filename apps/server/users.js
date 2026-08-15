@@ -160,6 +160,18 @@ function listUsers() {
 }
 
 /**
+ * Whether a user id names a real, registered user. restore.js checks this
+ * before joining userId unsanitized into a filesystem path (getUserBackupDir,
+ * db.getProfileDir) — the same shape of check createUser()/regenerateApiKey()
+ * already do inline, pulled out here so a caller that only needs the
+ * yes/no doesn't have to duplicate the query.
+ */
+function userExists(userId) {
+  const db = getSystemDb();
+  return !!db.get("SELECT id FROM users WHERE id = ?", [userId]);
+}
+
+/**
  * Regenerate API key for existing user.
  * Returns new API key (only time it's available).
  */
@@ -699,6 +711,7 @@ module.exports = {
   getUserIdFromApiKey,
   deleteUser,
   listUsers,
+  userExists,
   regenerateApiKey,
   closeSystemDb,
   // Device management
