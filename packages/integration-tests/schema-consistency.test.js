@@ -38,6 +38,10 @@ const PLATFORM_SOURCES = {
   'electron': 'apps/desktop/main/datastore.ts',
 };
 
+// apps/tauri-desktop is paused as a project (see apps/tauri-desktop/CLAUDE.md).
+// Its schema is not checked for consistency until the project resumes.
+const PAUSED_PLATFORMS = ['desktop-tauri'];
+
 /**
  * Extract column names from a CREATE TABLE statement
  */
@@ -97,6 +101,12 @@ function runTests() {
     console.log(`\n--- Checking ${tableName} table ---`);
 
     for (const [platform, sourcePath] of Object.entries(PLATFORM_SOURCES)) {
+      // Skip platforms whose project is paused
+      if (PAUSED_PLATFORMS.includes(platform)) {
+        console.log(`  ${platform}: SKIPPED (project paused, not enforced)`);
+        continue;
+      }
+
       // Skip platforms explicitly excluded for this table
       if (schema.skipPlatforms?.includes(platform)) {
         console.log(`  ${platform}: SKIPPED (known inconsistency)`);
