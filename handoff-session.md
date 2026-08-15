@@ -17,7 +17,7 @@ tables that still do not sync, and proving the remote backend against a real cli
 
 ### Current state
 
-`main` is clean. `dcc1d28a` through `c29e8f81`.
+`main` is clean. `dcc1d28a` through `ba3a67c5`.
 
 **Sync coverage — items, events and tags are complete; `rules` is deferred.**
 
@@ -85,6 +85,33 @@ server-side rather than by the client. `.mcp.json` leaks no hostname. The text
 reason rather than enforced. `apps/tauri-desktop/CLAUDE.md` records what to re-run
 before unpausing. Its Rust column additions are kept, so resuming is cheaper.
 
+**The server is deployed and live, twice over.** The live server reports
+`datastore_version` 3: `/events` and `/tags` are live, and `checkVersionHeaders()`
+no longer 409s desktop traffic. The migration added all five `tags` columns by
+`ALTER TABLE` with no table rebuild, and the data came through intact — 11,121
+items, 480 tags, 14,617 item-tag links.
+
+Deploys are a manual `railway up` upload. The GitHub route is gone —
+`scripts/deploy-server.sh` and the `server:deploy` script are deleted, because
+this repository's remote is tangled and the GitHub push was rejected 403.
+`docs/server-backup-and-deploy.md` carries the invocation, and the
+`--path-as-root` flag is required or the CLI fails with `prefix not found`.
+
+The server backup now covers real data. `apps/server/backup.js createBackup()`
+enumerates every profile directory on disk (derived from `db.getProfileDir()`,
+not a rebuilt path convention) and writes one per-user archive laid out as
+`profiles/{profileId}/datastore.sqlite`, including each profile's `images/`.
+`manifest.json` is version 2.0 and carries per-profile row counts, so an empty
+backup is visible without unzipping. A failed profile no longer blocks the
+others, `POST /backups` returns 500 instead of 200 on failure, and
+`lastBackupTime` only advances on a fully clean run so a partial failure
+retries rather than going quiet for 24 hours.
+
+Verified against production rather than assumed: the archive went from 1.6 KB
+covering one empty profile to 4.0 MB covering all eight, and downloading it,
+unzipping it and opening the snapshot returns the same 11,121 items / 480 tags
+/ 14,617 item-tag links as the live database.
+
 ### The event watermark — read this before touching event sync
 
 Events borrow nothing from the item watermark. They have their own,
@@ -121,7 +148,8 @@ Ordered by consequence.
    A verified pre-deploy backup sits outside the repo under a `peek-backups` directory
    in the operator's home (`peek-prod-predeploy-20260815.tar.gz`, sha256 `bf6a05c8…`),
    holding consistent snapshots of all ten databases plus blobs. It was taken by hand
-   because the server's own backup does not cover real data — see step 3.
+   before the server's own backup fix deployed, since restoring from either one still
+   has no tested path — see step 4.
 
 2. **Prove the credential reference against a real client.** Every remote-backend
    check so far expanded `${PEEK_SYNC_URL}` by hand. What is untested is whether
@@ -131,14 +159,21 @@ Ordered by consequence.
    every real user, and no test on either side would catch it. Needs a real client
    restarted in a scaffolded directory.
 
-3. **Fix the backup so it covers real data.** Deploying corrects the path
-   `backup.js createBackup()` checks, but two faults remain: it hardcodes profile
-   `default`, which on the live volume is an empty stub while all content sits in a
-   UUID-named profile, and a failed backup still returns HTTP 200 with no louder log.
-   There is also no restore path at all — no route, no script, no round-trip test.
-   `docs/server-backup-and-deploy.md` has the detail and the manual procedure.
+3. **Run the full desktop Electron gate.** `yarn test:desktop:electron` has not been
+   run this session. It pins the CPU for ten minutes and opens windows, so it needs
+   explicit authorization. Nothing this session touched the overlay or window code
+   that dominates its known failures, but that is reasoning rather than a run.
+   Judging it means diffing the failing spec set against a baseline, not reading the
+   count — the "The gate cannot go green on this machine" section under Reference
+   explains why.
 
-4. **Sync `rules` — deferred until something can write a user rule.** Tag metadata now
+4. **Give the server a restore path.** Backups are now trustworthy and proven
+   readable, but nothing restores them — no route, no script, and no test that puts
+   an archive back. Restoring means placing `datastore.sqlite` onto the volume by
+   hand. Until a test exercises backup-then-restore-then-verify, a backup is unproven
+   as a recovery mechanism even though it is now proven as an archive.
+
+5. **Sync `rules` — deferred until something can write a user rule.** Tag metadata now
    syncs. `rules` does not, and building it would be speculative: there are zero
    `source='user'` rows and no code path that creates one. `tile:rules:register` exists
    but hardcodes `source: 'runtime'`; there is no rule editor. All four existing rules
@@ -152,15 +187,16 @@ Ordered by consequence.
    resolution fails silently — a synced rule naming a script the other device lacks
    never fires and logs nothing.
 
-5. **Close the four remaining schema fidelity failures.** All four are the same gap:
+6. **Close the four remaining schema fidelity failures.** All four are the same gap:
    the canonical schema declares a `rules` table the server does not have, and the
-   server's `items.type` CHECK omits `event`. Downstream of step 4.
+   server's `items.type` CHECK omits `event`. Downstream of step 5.
 
-6. **Bootstrap the dispatch loop.** It cannot run until the Peek MCP is wired into
+7. **Bootstrap the dispatch loop.** It cannot run until the Peek MCP is wired into
    this repo. No Peek datastore exists on this machine, so it must ride on the remote
-   backend, which makes it downstream of steps 1 and 2.
-   `.claude/skills/dispatch/operating.md` covers the loop wiring and the autonomy
-   ladder.
+   backend, which makes it downstream of steps 1 and 2. `POST /admin/mcp-grants`
+   previously 404'd because the live server predated those routes; the server is now
+   current, so that is worth retrying. `.claude/skills/dispatch/operating.md` covers
+   the loop wiring and the autonomy ladder.
 
 ### Known gaps carried forward
 
@@ -179,15 +215,14 @@ Ordered by consequence.
   phantom field is a design call.
 - **Tauri desktop never sends `createdAt`, `visitCount`, `lastVisitAt` or
   `mimeType`.** Those columns exist locally with no wire fields — present but dead.
-- **The production backup has never produced a file.** `apps/server/backup.js
-  createBackup()` checks a path that `apps/server/index.js
-  migrateUserDataToProfiles()` renames away at every startup, before the backup
-  runs. Deploying corrects that path, but two faults remain: `createBackup()`
-  hardcodes profile `default`, which on the live volume is an empty stub while all
-  real content sits in a UUID-named profile, and a failed backup still returns
-  HTTP 200 with only a success-shaped log. There is no restore path at all — no
-  route, no script — and `test-backup.js` never unzips an archive or verifies a
-  round trip. `docs/server-backup-and-deploy.md` has the detail.
+- **The production backup has no restore path.** The path fault (`createBackup()`
+  checking a location `migrateUserDataToProfiles()` renamed away at every startup)
+  and the single-profile fault (backing up only `default`, an empty stub, while real
+  content lives in UUID-named profiles) are both fixed and deployed. What remains:
+  there is no restore code at all — no route, no script — and backups still live on
+  the same Railway volume as the live database, with no download route and a
+  7-deep retention purge, so they do not protect against volume loss.
+  `docs/server-backup-and-deploy.md` has the detail.
 - **The mobile and extension version bump is review-verified only.**
   `packages/sync/version.js` and `apps/mobile/peek-core/src/types.rs` were raised
   to `DATASTORE_VERSION` 3, with a matching test literal in
@@ -199,7 +234,7 @@ Ordered by consequence.
 
 ```
 yarn server:test                                                    # 225
-node --test apps/server/test-backup.js                              # 21
+node --test apps/server/test-backup.js                              # 29
 node --test apps/server/test-migration.js                           # 9
 node --test packages/schema/fidelity.test.js                        # 29 pass, 4 fail, 10 skip
 node --test packages/sync/test.js                                   # 96
@@ -212,7 +247,7 @@ yarn build && node --test apps/desktop/dist/main/sync.test.js       # 8
 ```
 
 The four remaining fidelity failures are all one gap — the `rules` table has no server
-support, and the server's `items.type` CHECK omits `event`. Step 5 closes them.
+support, and the server's `items.type` CHECK omits `event`. Step 6 closes them.
 
 `yarn test:desktop:electron` is the full gate and needs an explicit go-ahead — it
 pins the CPU for ten minutes and opens windows.
@@ -263,7 +298,8 @@ desktop 400 pass / 30 fail, desktop-serial 39/1, components 64, editor 91.
 - The Railway CLI is installed and authenticated, and the repo is linked to project
   `amusing-courtesy`, service `peek-node`. Read-only commands need no confirmation;
   `railway variables` exposes `ADMIN_TOKEN` and `API_KEY`, so treat that output as
-  secret. Deploy is not a Railway CLI operation — it is a force-push to GitHub.
+  secret. Deploy is a manual `railway up` upload, not a GitHub push — see
+  `docs/server-backup-and-deploy.md`.
 - `npm install --prefix apps/server` is still needed in a fresh worktree, now only
   for plain JS dependencies. It compiles nothing.
 - `electron-builder` excludes `.worktrees` as of `e4974513`. Before that, packaging
