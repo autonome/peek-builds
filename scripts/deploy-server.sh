@@ -2,6 +2,12 @@
 # Deploy server to Railway by updating the deploy/server branch
 # with apps/server/ contents at the root.
 #
+# NOTE: the final push in this script cannot succeed. This repository's
+# remote is tangled, not GitHub, and pushing to github.com/autonome/peek
+# is rejected with 403. Deploys are manual against Railway instead —
+# see docs/server-backup-and-deploy.md. The subtree projection this
+# script builds is still correct and useful as an input to that.
+#
 # Railway uses npm (not yarn). The deploy branch must not contain
 # yarn.lock, otherwise Nixpacks will use yarn and fail.
 set -e

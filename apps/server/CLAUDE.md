@@ -47,20 +47,19 @@ no effect on the server either way.
 
 ## Deployment
 
-Railway auto-deploys from the `deploy/server` branch on GitHub (`github.com/autonome/peek`). Deploy by running from the repo root:
+Deploys are manual, against Railway directly. See `docs/server-backup-and-deploy.md` for the
+procedure and its constraints.
 
-```bash
-yarn server:deploy
-```
+`yarn server:deploy` (`scripts/deploy-server.sh`) force-pushes a subtree to a `deploy/server`
+branch on GitHub. **That route is dead** — this repository's remote is tangled, and the GitHub
+push is rejected with 403. The script still builds the subtree correctly, but its final push
+cannot succeed.
 
-This script (`scripts/deploy-server.sh`) subtree-splits `apps/server/` and force-pushes to the `deploy/server` git branch on GitHub.
-
-**Important:** Railway uses Nixpacks with npm. **Do not add `yarn.lock` to `apps/server/`** — Nixpacks will detect it and switch to yarn, which breaks the build. The deploy script strips `yarn.lock` automatically.
+**Important:** Railway uses Nixpacks with npm. **Do not add `yarn.lock` to `apps/server/`** — Nixpacks will detect it and switch to yarn, which breaks the build.
 
 ### Railway Setup
-1. Connect Railway project to the `deploy/server` branch on GitHub
-2. Attach a volume, set `DATA_DIR` to the mount path
-3. Create users via admin commands (see `apps/server/README.md`)
+1. Attach a volume, set `DATA_DIR` to the mount path
+2. Create users via admin commands (see `apps/server/README.md`)
 
 ---
 

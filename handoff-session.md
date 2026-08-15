@@ -17,9 +17,42 @@ tables that still do not sync, and proving the remote backend against a real cli
 
 ### Current state
 
-`main` is clean. Thirteen commits landed, `dcc1d28a` through `2c2507e9`.
+`main` is clean. `dcc1d28a` through `c29e8f81`.
 
-**Sync coverage — items are complete, three tables remain.**
+**Sync coverage — items, events and tags are complete; `rules` is deferred.**
+
+Tag metadata (`slug`, `color`, `parentId`, `description`, `metadata`) syncs via `POST
+/tags` and `GET /tags/since/:timestamp`. Tag identity on the wire is the **name**, not
+an id, because the server already creates tag rows by name from item pushes and a
+second identity would give one row two sources of truth. `parentId` therefore travels
+as the parent's name. A pull merges in two passes — every tag first, parent links
+second — so a parent arriving after its child still links, and a cycle is broken at the
+most-recently-updated tag in it, deterministically on every device. Push uses its own
+watermark (`feature_settings` key `lastTagPushAt`) that only advances when every tag in
+the batch succeeded. Accepted gaps: renaming a tag creates a duplicate rather than
+renaming, and tag deletion does not propagate.
+
+**Every sync client is on `DATASTORE_VERSION` 3** — desktop, server, `packages/sync`
+(the extension's engine, symlinked as `apps/extension/sync`) and `apps/mobile/peek-core`.
+They had silently diverged: desktop and server moved to 2 while the other two stayed at
+1, and `checkVersionHeaders()` 409s any client whose version is not an exact match, so
+the extension and mobile were locked out of `/items` — and once the server ships 3, the
+skew would have moved rather than closed. Raising the laggards is safe because every
+newer column in `db.js saveItem()` binds through `COALESCE(?, existingColumn)` and
+`POST /items` defaults absent fields to null, so a client that omits them preserves
+what is stored. `packages/integration-tests/sync-version-compat.test.js` now imports
+the real constants instead of restating literals, which is why it did not catch this.
+
+**`apps/server/schema.json` is generated**, not hand-maintained — `packages/schema/codegen.js
+generateServerSchema()` emits it from `v1.json` as a projection of the tables the server
+actually has, and `check-freshness.js` covers it. It is checked in because
+`scripts/deploy-server.sh` splits `apps/server/` alone, so server code cannot import from
+`packages/`. `check-freshness.js` itself was fixed — it compared against a second, drifted
+copy of the generator and reported every freshly generated file as stale.
+
+**An unknown item type now fails on the local MCP store.** `sqlite-store.js
+createItemSync()` validates before writing. `image` stays accepted locally and refused
+remotely, deliberately, per design §9.
 
 Every `items` column now syncs: `title`, `domain`, `favicon`, `visitCount`,
 `lastVisitAt`, `frecencyScore`, `mimeType`, `starred`, `archived`, and `deletedAt`.
@@ -76,11 +109,22 @@ reasoned through and not test-covered.**
 
 Ordered by consequence.
 
-1. **Deploy the server.** The tombstone fix, the new item columns and the `/events`
-   routes are all inert until the server has them. The live deployment is from
-   2026-06-28 and predates every `/mcp/*` route — `POST /admin/mcp-grants` returns
-   404 to a valid admin token. `yarn server:deploy` force-pushes a subtree to the
-   GitHub `deploy/server` branch, which needs explicit authorization each time.
+1. **Deploy the server — built, not shipped.** The tombstone fix, the new item columns,
+   the `/events` and `/tags` routes and the backup path fix are all inert until the
+   server has them. The live deployment is from 2026-06-25, reports datastore version
+   1, and predates every `/mcp/*` route — `POST /admin/mcp-grants` returns 404 to a
+   valid admin token. Because the server is on version 1 and every client is now on 3,
+   `checkVersionHeaders()` currently 409s all sync traffic on `/items`.
+
+   `yarn server:deploy` builds the subtree correctly but its push cannot succeed: this
+   repository's remote is tangled, and the GitHub push is rejected 403. Deploys are
+   manual against Railway. `docs/server-backup-and-deploy.md` carries the procedure.
+
+   A verified pre-deploy backup exists outside the repo at `~/peek-backups/`
+   (`peek-prod-predeploy-20260815.tar.gz`, sha256 `bf6a05c8…`), holding consistent
+   snapshots of all ten databases plus blobs — 11,121 items, 480 tags, 14,617 item-tag
+   links. It was taken by hand because the server's own backup has never produced a
+   file; see the same doc for the three separate faults behind that.
 
 2. **Prove the credential reference against a real client.** Every remote-backend
    check so far expanded `${PEEK_SYNC_URL}` by hand. What is untested is whether
@@ -90,28 +134,30 @@ Ordered by consequence.
    every real user, and no test on either side would catch it. Needs a real client
    restarted in a scaffolded directory.
 
-3. **Sync the three remaining tables.** `tags` metadata (`slug`, `color`, `parentId`,
-   `description`, `metadata`) — note there is no tag-row sync path at all today; tags
-   travel as name strings inside the item payload and the server re-derives
-   everything, so `parentId` needs an ordering rule or a hierarchy merge will
-   clobber. Then `rules`, filtered to `source = 'user'` since manifest rules
-   regenerate. `docs/sync-coverage-gaps.md` is the survey; its §1 and §6 are now
-   stale.
+3. **Fix the backup so it covers real data.** Deploying corrects the path
+   `backup.js createBackup()` checks, but two faults remain: it hardcodes profile
+   `default`, which on the live volume is an empty stub while all content sits in a
+   UUID-named profile, and a failed backup still returns HTTP 200 with no louder log.
+   There is also no restore path at all — no route, no script, no round-trip test.
+   `docs/server-backup-and-deploy.md` has the detail and the manual procedure.
 
-4. **Resolve the divergent schema copies.** `apps/server/schema.json` is a stale
-   hand-maintained copy of `packages/schema/v1.json` and it is load-bearing —
-   `apps/server/db.js` reads it at startup and `validateSchema()` throws on a missing
-   column, gating every `getConnection()`. Its `required_sync_columns` omits
-   `item_events` entirely, so the server does not enforce what the canonical schema
-   declares. A plain cross-package import will break the Railway deploy, because
-   `scripts/deploy-server.sh` subtree-splits `apps/server/` alone — the copy has to
-   be generated into `apps/server/` at build time.
+4. **Sync `rules` — deferred until something can write a user rule.** Tag metadata now
+   syncs. `rules` does not, and building it would be speculative: there are zero
+   `source='user'` rows and no code path that creates one. `tile:rules:register` exists
+   but hardcodes `source: 'runtime'`; there is no rule editor. All four existing rules
+   are `source='manifest'` and regenerate, so they must not sync.
 
-5. **Decide the item-type validation split.** Creating an item with an unknown type
-   succeeds locally and returns 400 remotely: `store/sqlite-store.js createItemSync()`
-   validates nothing, `apps/server/mcp-items.js createItem()` enforces
-   `CREATABLE_ITEM_TYPES`. Tightening the local store to match is the smaller change
-   and makes a typo fail loudly; the `image` divergence is deliberate per design §9.
+   Two constraints the rule editor has to satisfy before rule sync is possible:
+   user-rule ids must be globally unique across devices, since the id is the only
+   viable sync identity and manifest rules use a content hash that would collide by
+   design; and rule deletion is a hard `DELETE` with no tombstone column, so sync would
+   resurrect deleted rules until `rules` gains `deletedAt`. Separately, `scriptId`
+   resolution fails silently — a synced rule naming a script the other device lacks
+   never fires and logs nothing.
+
+5. **Close the four remaining schema fidelity failures.** All four are the same gap:
+   the canonical schema declares a `rules` table the server does not have, and the
+   server's `items.type` CHECK omits `event`. Downstream of step 4.
 
 6. **Bootstrap the dispatch loop.** It cannot run until the Peek MCP is wired into
    this repo. No Peek datastore exists on this machine, so it must ride on the remote
@@ -136,28 +182,40 @@ Ordered by consequence.
   phantom field is a design call.
 - **Tauri desktop never sends `createdAt`, `visitCount`, `lastVisitAt` or
   `mimeType`.** Those columns exist locally with no wire fields — present but dead.
-- **`check-freshness.js` reports STALE on freshly generated files.** Its internal
-  generator emits a `-- Generated: TIMESTAMP` line the real codegen never produces,
-  and the strip regex leaves a blank line behind, so the hash never matches. It
-  misfires on any regeneration, so that staleness gate cannot currently be trusted.
+- **The production backup has never produced a file.** `apps/server/backup.js
+  createBackup()` checks a path that `apps/server/index.js
+  migrateUserDataToProfiles()` renames away at every startup, before the backup
+  runs. Deploying corrects that path, but two faults remain: `createBackup()`
+  hardcodes profile `default`, which on the live volume is an empty stub while all
+  real content sits in a UUID-named profile, and a failed backup still returns
+  HTTP 200 with only a success-shaped log. There is no restore path at all — no
+  route, no script — and `test-backup.js` never unzips an archive or verifies a
+  round trip. `docs/server-backup-and-deploy.md` has the detail.
+- **The mobile and extension version bump is review-verified only.**
+  `packages/sync/version.js` and `apps/mobile/peek-core/src/types.rs` were raised
+  to `DATASTORE_VERSION` 3, with a matching test literal in
+  `apps/mobile/peek-core/src/lib.rs`, but the mobile Rust does not compile on this
+  machine, so that change has not been built or run. The extension side is plain
+  JS, exercised by `packages/sync/test.js`.
 
 ### How to verify
 
 ```
-yarn server:test                                                    # 212
+yarn server:test                                                    # 225
 node --test apps/server/test-backup.js                              # 21
 node --test apps/server/test-migration.js                           # 9
-node --test packages/schema/fidelity.test.js                        # 43: 28 pass, 5 fail, 10 skip
+node --test packages/schema/fidelity.test.js                        # 29 pass, 4 fail, 10 skip
 node --test packages/sync/test.js                                   # 96
 node --test packages/integration-tests/migration-regression.test.js # 6
+node --test packages/integration-tests/sync-version-compat.test.js  # 16 assertions
+node packages/schema/check-freshness.js                             # 6 files, all fresh
+NODE_ENV=test node --test apps/desktop/tests/unit/*.test.js         # 743
 npx tsc -p apps/desktop/tsconfig.json --noEmit                      # clean
-yarn build && node --test apps/desktop/dist/main/sync.test.js       # 2
+yarn build && node --test apps/desktop/dist/main/sync.test.js       # 8
 ```
 
-The five remaining fidelity failures are pre-existing and all Server/Electron: the
-`rules` table has no server support, the `items.type` CHECK disagrees between
-`v1.json` and the server, and three Electron/Server consistency gaps. Steps 3 and 4
-close them.
+The four remaining fidelity failures are all one gap — the `rules` table has no server
+support, and the server's `items.type` CHECK omits `event`. Step 5 closes them.
 
 `yarn test:desktop:electron` is the full gate and needs an explicit go-ahead — it
 pins the CPU for ten minutes and opens windows.
