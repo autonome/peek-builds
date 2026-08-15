@@ -299,7 +299,11 @@ export type TableName =
   | 'item_groups'
   | 'item_group_members'
   | 'settings'
-  | 'features_history';
+  | 'features_history'
+  | 'manifest_cache'
+  | 'rules'
+  | 'lazy_wake_shortcuts'
+  | 'lazy_wake_declared';
 
 export const tableNames: TableName[] = [
   'content',
@@ -318,7 +322,11 @@ export const tableNames: TableName[] = [
   'item_groups',
   'item_group_members',
   'settings',
-  'features_history'
+  'features_history',
+  'manifest_cache',
+  'rules',
+  'lazy_wake_shortcuts',
+  'lazy_wake_declared'
 ];
 
 // ==================== Sync Types ====================
