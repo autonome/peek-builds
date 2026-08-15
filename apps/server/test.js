@@ -2457,6 +2457,71 @@ describe("POST /items — real route (dropped-tombstone regression)", () => {
     assert.strictEqual(items[0].starred, 1);
     assert.strictEqual(items[0].archived, 1);
   });
+
+  // Every field saveItem() writes through COALESCE(?, existingColumn) is what
+  // lets a client declare DATASTORE_VERSION 3 without actually carrying the
+  // newer columns (packages/sync/version.js, apps/mobile/peek-core/src/types.rs):
+  // POST /items defaults an absent field to null, and COALESCE leaves the
+  // stored value untouched rather than nulling it out. This is the guard rail
+  // for every older client re-pushing an item it doesn't know the full shape of.
+  it("a partial push preserves title/domain/starred it does not send (the COALESCE guarantee older clients rely on)", async () => {
+    const syncId = "partial-push-coalesce";
+    const create = await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        type: "url", content: "https://example.com", sync_id: syncId,
+        title: "Example Domain", domain: "example.com", starred: 1,
+      }),
+    });
+    assert.strictEqual(create.status, 200);
+
+    // Re-push the same item as an older client would: content/type/syncId only,
+    // no title/domain/starred in the body at all.
+    const rePush = await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "url", content: "https://example.com", sync_id: syncId }),
+    });
+    assert.strictEqual(rePush.status, 200);
+
+    const items = await fetchItems(false);
+    assert.strictEqual(items.length, 1);
+    assert.strictEqual(items[0].title, "Example Domain", "title must survive a push that omits it");
+    assert.strictEqual(items[0].domain, "example.com", "domain must survive a push that omits it");
+    assert.strictEqual(items[0].starred, 1, "starred must survive a push that omits it");
+  });
+
+  // DOCUMENTED HAZARD, not desirable behavior — see docs/sync-coverage-gaps.md.
+  // Unlike every other column, saveItem() unconditionally DELETEs item_tags and
+  // rebuilds it from the pushed `tags` array, and POST /items defaults an absent
+  // `tags` field to []. So an omitted `tags` field wipes the item's tag links,
+  // where an omitted title/domain/starred/etc. leaves them untouched. Every
+  // current client always sends a full tag list, so this is latent, not live —
+  // this test pins the current behavior so a future partial-tag-push client
+  // doesn't discover it by losing data.
+  it("a push with no tags field wipes the item's existing tags (latent hazard, not desirable)", async () => {
+    const syncId = "partial-push-tag-wipe";
+    const create = await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "url", content: "https://example.com", sync_id: syncId, tags: ["a", "b"] }),
+    });
+    assert.strictEqual(create.status, 200);
+    assert.deepStrictEqual((await fetchItems(false))[0].tags.sort(), ["a", "b"]);
+
+    // Re-push with no `tags` field at all — POST /items defaults it to [].
+    const rePush = await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "url", content: "https://example.com", sync_id: syncId }),
+    });
+    assert.strictEqual(rePush.status, 200);
+
+    const items = await fetchItems(false);
+    assert.strictEqual(items.length, 1);
+    assert.deepStrictEqual(items[0].tags, [], "current behavior: an omitted tags field clears existing tag links");
+  });
 });
 
 // Coverage for item_events sync: append-only observations backing series/feed

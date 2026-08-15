@@ -95,12 +95,13 @@ server columns now exist, so this is the smaller half of the change.
 true` as of DATASTORE_VERSION 3. `sync.ts pushTagsToServer()` /
 `pullTagsFromServer()` / `mergeServerTag()` carry them, keyed by the tag's `name` —
 the same identity `apps/server/db.js getOrCreateTagWithConn()` already used for tag
-rows an item push derives. `parentId` travels on the wire as `parentName` (the
-parent's name, not any id), resolved back to a local tag id on pull in a second
-pass so a parent arriving after its child in the same pull still links correctly;
-an incoming cycle of `parentName` links is broken deterministically (newest
-`updatedAt` loses its parent link, ties going to the lower `id`) so every device
-that pulls the same cycle breaks the same link.
+rows an item push derives. `parentId` travels on the wire under that same field
+name but holds the parent's name, not any id — the server column of the same name
+stores that name too, not a row id — resolved back to a local tag id on pull in a
+second pass so a parent arriving after its child in the same pull still links
+correctly; an incoming cycle of `parentId` (name) links is broken deterministically
+(newest `updatedAt` loses its parent link, ties going to the lower `id`) so every
+device that pulls the same cycle breaks the same link.
 
 Two gaps remain, accepted rather than fixed:
 
@@ -150,6 +151,25 @@ This is downstream of §1 — nothing syncs them, so nothing needed a column —
 is worth stating separately, because it is the piece that blocks any consumer
 reading items *from* the server rather than through a local datastore. See
 `docs/mcp-remote-backend-design.md` §3.1.
+
+## 7. A push with no `tags` field wipes the item's existing tag links
+
+Every other item column `apps/server/db.js saveItem()` writes goes through
+`COALESCE(?, existingColumn)`, so a client that omits a field on a re-push (e.g.
+an older client that doesn't carry `title`/`domain`/`starred`/etc.) leaves the
+stored value untouched. `tags` is the one exception: `saveItem()` unconditionally
+runs `DELETE FROM item_tags WHERE itemId = ?` and rebuilds the links from the
+pushed `tags` array, and `POST /items` defaults an absent `tags` field to `[]`. A
+push with no `tags` field at all therefore clears the item's tags, where the same
+omission on any other field is a no-op.
+
+This is latent, not live: every current client (desktop, mobile, extension) always
+sends a full `tags` array on every item push. Pinned by
+`apps/server/test.js` "a push with no tags field wipes the item's existing tags
+(latent hazard, not desirable)".
+
+**Settled by:** giving `tags` the same COALESCE-style omitted-means-unchanged
+treatment as every other column — unscheduled work, since no current client hits it.
 
 ## Verifying any of this
 

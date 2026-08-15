@@ -101,7 +101,7 @@ describe('Version Constants', () => {
   it('should export version constants', () => {
     assert.strictEqual(typeof DATASTORE_VERSION, 'number');
     assert.strictEqual(typeof PROTOCOL_VERSION, 'number');
-    assert.strictEqual(DATASTORE_VERSION, 1);
+    assert.strictEqual(DATASTORE_VERSION, 3);
     assert.strictEqual(PROTOCOL_VERSION, 1);
   });
 });
