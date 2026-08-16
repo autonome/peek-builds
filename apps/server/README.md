@@ -23,7 +23,7 @@ yarn server:test     # Run the test suite
 ## Architecture
 
 - **index.js** - Hono HTTP server with API endpoints
-- **db.js** - SQLite database module (better-sqlite3)
+- **db.js** - SQLite database module (node:sqlite)
 - **users.js** - Multi-user authentication with API keys
 
 ### API Endpoints
@@ -90,17 +90,12 @@ API keys are hashed with SHA-256 and stored in the system database.
 
 Configured for Railway (`railway.json`) using Nixpacks builder with npm. **Do not add `yarn.lock`** to this directory — Nixpacks will switch to yarn and fail.
 
-Deploy from the project root:
-```bash
-yarn server:deploy    # Subtree-splits apps/server/ and pushes to GitHub
-```
-
-Railway auto-deploys from the `deploy/server` branch on GitHub.
+Deploys are manual, uploaded straight to Railway. See `docs/server-backup-and-deploy.md` at the
+repository root for the procedure and its constraints.
 
 **Quick setup:**
-1. Connect Railway to the `deploy/server` branch on GitHub
-2. Attach a volume and set `DATA_DIR` to the mount path for persistent storage
-3. Create users and their API keys (see AGENTS.md for commands)
+1. Attach a volume and set `DATA_DIR` to the mount path for persistent storage
+2. Create users and their API keys (see AGENTS.md for commands)
 
 ## Testing
 

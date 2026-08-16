@@ -8,7 +8,6 @@ Peek is a web user agent application that provides alternative ways to interact 
 
 **Remotes:**
 - Tangled: `git@tangled.sh:burrito.space/peek` (primary)
-- GitHub: `git@github.com:autonome/peek` (Railway deploy only — not for general use)
 
 **Documentation:**
 - [docs/architecture.md](docs/architecture.md) — tile model, state machines, comparison to webtil.es / DASL Tiles spec. **Start here if you're new.**
@@ -787,23 +786,13 @@ URL: `https://peek-node.up.railway.app`
 
 **Important:** The server uses **npm** (not yarn). Railway's Nixpacks builder auto-detects `package-lock.json` and uses npm. Do not add `yarn.lock` to `backend/server/` — it will cause Nixpacks to use yarn and fail with frozen lockfile errors.
 
-**How it works:** The deploy script (`yarn server:deploy`) builds the `deploy/server` branch in a temporary git worktree, writing out each file under `backend/server/` at its content on `main`, then pushes to GitHub. Railway watches this branch.
+**Deploys are manual**, uploaded straight to Railway from a local checkout — see
+`docs/server-backup-and-deploy.md` for the procedure and its constraints.
 
 ```bash
 # Run tests first
 yarn server:test
-
-# Deploy (from repo root)
-yarn server:deploy
 ```
-
-This runs `scripts/deploy-server.sh` which:
-1. Creates a temporary git worktree checked out to the `deploy/server` branch
-2. Writes out `backend/server/`'s contents at the `main` revision into that worktree and commits the result
-3. Removes `yarn.lock` from the deploy branch if present
-4. Pushes `deploy/server` to GitHub (`git push github deploy/server`)
-
-Railway auto-deploys from the `deploy/server` branch on GitHub (`git@github.com:autonome/peek`).
 
 **Manual Railway commands** (run `railway link -p amusing-courtesy` once first):
 ```bash
@@ -814,9 +803,8 @@ curl https://peek-node.up.railway.app/                   # Health check
 ```
 
 **Initial Setup:**
-1. Connect Railway to GitHub repo, `deploy/server` branch
-2. Attach a persistent volume, set `DATA_DIR` env var to mount path
-3. Create users via the `users.js` module
+1. Attach a persistent volume, set `DATA_DIR` env var to mount path
+2. Create users via the `users.js` module
 
 **Deployment Order (Server + Mobile):**
 1. **Server first** - stateless, has auto-migrations that run on first request

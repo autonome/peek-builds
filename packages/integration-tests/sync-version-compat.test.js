@@ -17,14 +17,18 @@ import { mkdtemp, rm, writeFile, mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-// Use server's better-sqlite3 (compatible with regular Node.js)
-// The root node_modules better-sqlite3 is compiled for Electron and won't work here
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const Database = require('../../apps/server/node_modules/better-sqlite3');
+import { DatabaseSync } from 'node:sqlite';
+import {
+  DATASTORE_VERSION as DESKTOP_DATASTORE_VERSION,
+  PROTOCOL_VERSION as DESKTOP_PROTOCOL_VERSION,
+} from '../../apps/desktop/version.ts';
+import {
+  DATASTORE_VERSION as SERVER_DATASTORE_VERSION,
+  PROTOCOL_VERSION as SERVER_PROTOCOL_VERSION,
+} from '../../apps/server/version.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SERVER_PATH = join(__dirname, '..', 'server');
+const SERVER_PATH = join(__dirname, '..', '..', 'apps', 'server');
 const TEST_PORT = 3460;
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 
@@ -115,8 +119,8 @@ async function versionedRequest(opts) {
     apiKey: key,
     port = TEST_PORT,
     body = null,
-    datastoreVersion = 1,
-    protocolVersion = 1,
+    datastoreVersion = DESKTOP_DATASTORE_VERSION,
+    protocolVersion = DESKTOP_PROTOCOL_VERSION,
     client = 'desktop',
   } = opts;
 
@@ -199,7 +203,7 @@ async function seedServerItems(key, port = TEST_PORT) {
 
 // ==================== Tests: Version Headers (Desktop <-> Server) ====================
 
-// Test 1: Both at v1 — sync succeeds
+// Test 1: Both at the current version — sync succeeds
 async function test1_bothV1() {
   // Push an item
   const pushRes = await versionedRequest({
@@ -207,8 +211,8 @@ async function test1_bothV1() {
     path: '/items?profile=default',
     apiKey,
     body: { type: 'url', content: 'https://test1-both-v1.example.com', tags: ['v1'] },
-    datastoreVersion: 1,
-    protocolVersion: 1,
+    datastoreVersion: DESKTOP_DATASTORE_VERSION,
+    protocolVersion: DESKTOP_PROTOCOL_VERSION,
   });
   assert(pushRes.status === 200, `Expected 200, got ${pushRes.status}`);
   assert(pushRes.data.created === true, 'Item should be created');
@@ -218,107 +222,112 @@ async function test1_bothV1() {
     method: 'GET',
     path: '/items?profile=default',
     apiKey,
-    datastoreVersion: 1,
-    protocolVersion: 1,
+    datastoreVersion: DESKTOP_DATASTORE_VERSION,
+    protocolVersion: DESKTOP_PROTOCOL_VERSION,
   });
   assert(pullRes.status === 200, `Expected 200, got ${pullRes.status}`);
   assert(Array.isArray(pullRes.data.items), 'Response should have items array');
   assert(pullRes.data.items.length > 0, 'Should have items');
 
   // Verify response headers
-  assert(pullRes.headers['x-peek-datastore-version'] === '1', 'Response should include datastore version header');
-  assert(pullRes.headers['x-peek-protocol-version'] === '1', 'Response should include protocol version header');
+  assert(pullRes.headers['x-peek-datastore-version'] === String(SERVER_DATASTORE_VERSION), 'Response should include datastore version header');
+  assert(pullRes.headers['x-peek-protocol-version'] === String(SERVER_PROTOCOL_VERSION), 'Response should include protocol version header');
 }
 
-// Test 2: Desktop DS mismatch (client=2, server=1) → server returns 409
+// Test 2: Desktop DS mismatch (client one past the server's version) → server returns 409.
+// Client version is built as serverVersion + 1 rather than a hardcoded literal so this
+// test stays a genuine mismatch across future version bumps.
 async function test2_desktopDSMismatch() {
+  const mismatchedVersion = SERVER_DATASTORE_VERSION + 1;
   const res = await versionedRequest({
     method: 'POST',
     path: '/items?profile=default',
     apiKey,
     body: { type: 'url', content: 'https://should-not-save.example.com', tags: [] },
-    datastoreVersion: 2,
-    protocolVersion: 1,
+    datastoreVersion: mismatchedVersion,
+    protocolVersion: DESKTOP_PROTOCOL_VERSION,
   });
   assert(res.status === 409, `Expected 409, got ${res.status}`);
   assert(res.data.type === 'datastore_version_mismatch', `Expected datastore_version_mismatch, got ${res.data.type}`);
   assert(res.data.message.includes('Datastore version mismatch'), 'Error should mention datastore version');
-  assert(res.data.client_version === 2, `Expected client_version=2, got ${res.data.client_version}`);
-  assert(res.data.server_version === 1, `Expected server_version=1, got ${res.data.server_version}`);
+  assert(res.data.client_version === mismatchedVersion, `Expected client_version=${mismatchedVersion}, got ${res.data.client_version}`);
+  assert(res.data.server_version === SERVER_DATASTORE_VERSION, `Expected server_version=${SERVER_DATASTORE_VERSION}, got ${res.data.server_version}`);
 
   // Verify no data was transferred
   const items = await versionedRequest({
     method: 'GET',
     path: '/items?profile=default',
     apiKey,
-    datastoreVersion: 1,
-    protocolVersion: 1,
+    datastoreVersion: DESKTOP_DATASTORE_VERSION,
+    protocolVersion: DESKTOP_PROTOCOL_VERSION,
   });
   const badItem = items.data.items.find(i => i.content === 'https://should-not-save.example.com');
   assert(!badItem, 'Item should NOT have been saved on version mismatch');
 }
 
-// Test 3: Desktop PROTO mismatch (client proto=2, server proto=1) → server returns 409
+// Test 3: Desktop PROTO mismatch (client one past the server's protocol version) → server returns 409
 async function test3_desktopProtoMismatch() {
+  const mismatchedVersion = SERVER_PROTOCOL_VERSION + 1;
   const res = await versionedRequest({
     method: 'POST',
     path: '/items?profile=default',
     apiKey,
     body: { type: 'url', content: 'https://proto-mismatch.example.com', tags: [] },
-    datastoreVersion: 1,
-    protocolVersion: 2,
+    datastoreVersion: DESKTOP_DATASTORE_VERSION,
+    protocolVersion: mismatchedVersion,
   });
   assert(res.status === 409, `Expected 409, got ${res.status}`);
   assert(res.data.type === 'protocol_version_mismatch', `Expected protocol_version_mismatch, got ${res.data.type}`);
   assert(res.data.message.includes('Protocol version mismatch'), 'Error should mention protocol version');
 }
 
-// Test 4: Server DS mismatch (server returns DS=2 in headers, client expects DS=1)
+// Test 4: Server DS mismatch (server returns a DS one past what the client expects)
 // Desktop detects mismatch in response headers
 async function test4_serverDSMismatch() {
   // We simulate this by checking the response headers manually
   // since we can't change the running server's version.
-  // Instead, verify the desktop logic: if server returns DS=2, client should reject.
+  // Instead, verify the desktop logic: if the server's DS header doesn't match
+  // the client's, the client should reject.
   const pullRes = await versionedRequest({
     method: 'GET',
     path: '/items?profile=default',
     apiKey,
-    datastoreVersion: 1,
-    protocolVersion: 1,
+    datastoreVersion: DESKTOP_DATASTORE_VERSION,
+    protocolVersion: DESKTOP_PROTOCOL_VERSION,
   });
 
-  // Server returns DS=1, so client should be fine
+  // Server returns its own version, so a matching client should be fine
   assert(pullRes.status === 200, 'Normal request should succeed');
 
   // Simulate what desktop code does: check response headers
   const serverDS = pullRes.headers['x-peek-datastore-version'];
-  assert(serverDS === '1', `Server should return DS=1, got ${serverDS}`);
+  assert(serverDS === String(SERVER_DATASTORE_VERSION), `Server should return DS=${SERVER_DATASTORE_VERSION}, got ${serverDS}`);
 
-  // Verify that if server returned DS=2, the client logic would catch it
+  // Verify that a server DS one past the client's would be caught
   // (Testing the comparison logic — the actual code in sync.ts does this check)
-  const simulatedServerDS = 2;
-  const clientDS = 1;
+  const simulatedServerDS = SERVER_DATASTORE_VERSION + 1;
+  const clientDS = SERVER_DATASTORE_VERSION;
   assert(simulatedServerDS !== clientDS, 'Mismatch should be detected');
   // The real implementation throws an error in serverFetch() when headers mismatch
 }
 
-// Test 5: Server PROTO mismatch (server returns PROTO=2 in headers, client expects PROTO=1)
+// Test 5: Server PROTO mismatch (server returns a PROTO one past what the client expects)
 async function test5_serverProtoMismatch() {
   // Same approach as test 4 — verify the logic path
   const pullRes = await versionedRequest({
     method: 'GET',
     path: '/items?profile=default',
     apiKey,
-    datastoreVersion: 1,
-    protocolVersion: 1,
+    datastoreVersion: DESKTOP_DATASTORE_VERSION,
+    protocolVersion: DESKTOP_PROTOCOL_VERSION,
   });
 
   const serverProto = pullRes.headers['x-peek-protocol-version'];
-  assert(serverProto === '1', `Server should return PROTO=1, got ${serverProto}`);
+  assert(serverProto === String(SERVER_PROTOCOL_VERSION), `Server should return PROTO=${SERVER_PROTOCOL_VERSION}, got ${serverProto}`);
 
   // Verify mismatch detection logic
-  const simulatedServerProto = 2;
-  const clientProto = 1;
+  const simulatedServerProto = SERVER_PROTOCOL_VERSION + 1;
+  const clientProto = SERVER_PROTOCOL_VERSION;
   assert(simulatedServerProto !== clientProto, 'Protocol mismatch should be detected');
 }
 
@@ -337,8 +346,8 @@ async function test6_legacyDesktop() {
   assert(res.data.created === true, 'Legacy client should be able to create items');
 
   // Verify server still returns version headers
-  assert(res.headers['x-peek-datastore-version'] === '1', 'Server should still return version headers');
-  assert(res.headers['x-peek-protocol-version'] === '1', 'Server should still return version headers');
+  assert(res.headers['x-peek-datastore-version'] === String(SERVER_DATASTORE_VERSION), 'Server should still return version headers');
+  assert(res.headers['x-peek-protocol-version'] === String(SERVER_PROTOCOL_VERSION), 'Server should still return version headers');
 }
 
 // Test 7: Legacy server (no version headers in response) → desktop allows
@@ -371,9 +380,9 @@ async function test8_bothNoHeaders() {
 // ==================== Tests: Database Version ====================
 //
 // These tests verify the version check logic that runs in both desktop (datastore.ts)
-// and server (db.js). Since the root better-sqlite3 is compiled for Electron and
-// can't be imported in regular Node.js, we use the server's better-sqlite3 and
-// replicate the version check/write logic inline.
+// and server (db.js), replicated inline against a node:sqlite DatabaseSync so this
+// file has no dependency on better-sqlite3 (which desktop still needs, but compiled
+// for Electron's Node version — not importable from plain Node here).
 //
 // The code under test (in datastore.ts) does:
 //   1. Read datastore_version from feature_settings
@@ -381,11 +390,11 @@ async function test8_bothNoHeaders() {
 //   3. If stored < code: update stored version (upgrade)
 //   4. Write current version to feature_settings
 
-const CODE_DATASTORE_VERSION = 1; // Matches apps/desktop/version.ts
+const CODE_DATASTORE_VERSION = DESKTOP_DATASTORE_VERSION; // Matches apps/desktop/version.ts
 
 function createTestDesktopDb(dbPath) {
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
+  const db = new DatabaseSync(dbPath);
+  db.exec('PRAGMA journal_mode = WAL');
 
   // Create the feature_settings table (same as desktop schema)
   db.exec(`
@@ -458,7 +467,7 @@ async function test9_initWritesVersion() {
   } catch {
     storedVersion = parseInt(row.value, 10);
   }
-  assert(storedVersion === 1, `Stored version should be 1, got ${storedVersion}`);
+  assert(storedVersion === CODE_DATASTORE_VERSION, `Stored version should be ${CODE_DATASTORE_VERSION}, got ${storedVersion}`);
   assert(result.syncDisabled === false, 'Sync should not be disabled on fresh init');
 
   db.close();
@@ -472,11 +481,11 @@ async function test10_versionMatch() {
 
   const db = createTestDesktopDb(dbPath);
 
-  // Write version 1 (simulating a previous run)
-  checkAndWriteDatastoreVersion(db, 1);
+  // Write the code version (simulating a previous run)
+  checkAndWriteDatastoreVersion(db, CODE_DATASTORE_VERSION);
 
   // Check again (simulating app restart with same version)
-  const result = checkAndWriteDatastoreVersion(db, 1);
+  const result = checkAndWriteDatastoreVersion(db, CODE_DATASTORE_VERSION);
   assert(result.syncDisabled === false, 'Sync should NOT be disabled when versions match');
 
   db.close();
@@ -496,9 +505,10 @@ async function test11_downgradeDetected() {
     VALUES (?, 'system', 'datastore_version', ?, ?)
   `).run('system-datastore_version', JSON.stringify(99), Date.now());
 
-  // Now run the check with code version 1 (downgrade scenario)
-  const result = checkAndWriteDatastoreVersion(db, 1);
-  assert(result.syncDisabled === true, 'Sync should be disabled when stored version (99) > code version (1)');
+  // Now run the check with the code version (downgrade scenario — 99 stays well
+  // above any realistic code version)
+  const result = checkAndWriteDatastoreVersion(db, CODE_DATASTORE_VERSION);
+  assert(result.syncDisabled === true, `Sync should be disabled when stored version (99) > code version (${CODE_DATASTORE_VERSION})`);
 
   // Verify the stored version was NOT overwritten
   const row = db.prepare(`
@@ -530,8 +540,8 @@ async function test12_upgradeDetected() {
     VALUES (?, 'system', 'datastore_version', ?, ?)
   `).run('system-datastore_version', JSON.stringify(0), Date.now());
 
-  // Now run the check with code version 1 (upgrade scenario)
-  const result = checkAndWriteDatastoreVersion(db, 1);
+  // Now run the check with the code version (upgrade scenario)
+  const result = checkAndWriteDatastoreVersion(db, CODE_DATASTORE_VERSION);
   assert(result.syncDisabled === false, 'Sync should NOT be disabled after upgrade');
 
   // Verify version was updated
@@ -545,7 +555,7 @@ async function test12_upgradeDetected() {
   } catch {
     storedVersion = parseInt(row.value, 10);
   }
-  assert(storedVersion === 1, `Version should be updated to 1, got ${storedVersion}`);
+  assert(storedVersion === CODE_DATASTORE_VERSION, `Version should be updated to ${CODE_DATASTORE_VERSION}, got ${storedVersion}`);
 
   db.close();
   await rm(tempDir, { recursive: true, force: true });
@@ -563,8 +573,8 @@ async function testServerDBVersion() {
 
   // Use the server's db module to create a connection
   // Since db.js uses DATA_DIR and userId, we simulate by creating the DB directly
-  const serverDb = new Database(dbPath);
-  serverDb.pragma('journal_mode = WAL');
+  const serverDb = new DatabaseSync(dbPath);
+  serverDb.exec('PRAGMA journal_mode = WAL');
 
   // Create settings table (as server does)
   serverDb.exec(`
@@ -577,16 +587,34 @@ async function testServerDBVersion() {
   // Write version (as server does in initializeSchema)
   serverDb.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(
     "datastore_version",
-    String(1)
+    String(SERVER_DATASTORE_VERSION)
   );
 
   // Verify
   const row = serverDb.prepare("SELECT value FROM settings WHERE key = 'datastore_version'").get();
   assert(row, 'Server should write datastore_version to settings');
-  assert(row.value === '1', `Server datastore_version should be "1", got "${row.value}"`);
+  assert(row.value === String(SERVER_DATASTORE_VERSION), `Server datastore_version should be "${SERVER_DATASTORE_VERSION}", got "${row.value}"`);
 
   serverDb.close();
   await rm(tempDir, { recursive: true, force: true });
+}
+
+// ==================== Desktop/Server Version Lockstep ====================
+
+// Every sync client is required to declare the server's exact DATASTORE_VERSION
+// (checkVersionHeaders() in apps/server/index.js rejects anything else), so the
+// desktop client and the server must never drift apart. This is the test that
+// should have caught the tags/parentId-era skew: it imports the real constants
+// rather than restating a literal that can rot independently of either file.
+async function testDesktopServerVersionsInSync() {
+  assert(
+    DESKTOP_DATASTORE_VERSION === SERVER_DATASTORE_VERSION,
+    `apps/desktop/version.ts DATASTORE_VERSION (${DESKTOP_DATASTORE_VERSION}) must match apps/server/version.js DATASTORE_VERSION (${SERVER_DATASTORE_VERSION})`
+  );
+  assert(
+    DESKTOP_PROTOCOL_VERSION === SERVER_PROTOCOL_VERSION,
+    `apps/desktop/version.ts PROTOCOL_VERSION (${DESKTOP_PROTOCOL_VERSION}) must match apps/server/version.js PROTOCOL_VERSION (${SERVER_PROTOCOL_VERSION})`
+  );
 }
 
 // ==================== Health Check ====================
@@ -596,12 +624,12 @@ async function testHealthCheck() {
   const data = await res.json();
 
   assert(res.ok, 'Health check should return 200');
-  assert(data.datastore_version === 1, `Health check should include datastore_version=1, got ${data.datastore_version}`);
-  assert(data.protocol_version === 1, `Health check should include protocol_version=1, got ${data.protocol_version}`);
+  assert(data.datastore_version === SERVER_DATASTORE_VERSION, `Health check should include datastore_version=${SERVER_DATASTORE_VERSION}, got ${data.datastore_version}`);
+  assert(data.protocol_version === SERVER_PROTOCOL_VERSION, `Health check should include protocol_version=${SERVER_PROTOCOL_VERSION}, got ${data.protocol_version}`);
 
   // Health check should also have version headers
-  assert(res.headers.get('x-peek-datastore-version') === '1', 'Health check should have version headers');
-  assert(res.headers.get('x-peek-protocol-version') === '1', 'Health check should have version headers');
+  assert(res.headers.get('x-peek-datastore-version') === String(SERVER_DATASTORE_VERSION), 'Health check should have version headers');
+  assert(res.headers.get('x-peek-protocol-version') === String(SERVER_PROTOCOL_VERSION), 'Health check should have version headers');
 }
 
 // ==================== Server Version in Settings ====================
@@ -614,8 +642,8 @@ async function testIncrementalSyncVersionCheck() {
     method: 'GET',
     path: `/items/since/${new Date().toISOString()}?profile=default`,
     apiKey,
-    datastoreVersion: 2,  // Mismatch
-    protocolVersion: 1,
+    datastoreVersion: SERVER_DATASTORE_VERSION + 1,  // Mismatch
+    protocolVersion: DESKTOP_PROTOCOL_VERSION,
   });
   assert(res.status === 409, `Incremental sync should also reject mismatched versions, got ${res.status}`);
 }
@@ -626,6 +654,10 @@ async function main() {
   console.log('\n=== Version Compatibility Tests ===\n');
 
   try {
+    console.log('--- Desktop/Server Version Lockstep ---');
+    await runTest('Desktop and server DATASTORE_VERSION/PROTOCOL_VERSION agree', testDesktopServerVersionsInSync);
+    console.log('');
+
     // Start server
     console.log('Starting server...');
     const server = await startServer();

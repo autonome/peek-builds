@@ -10,6 +10,17 @@
  *   PEEK_DB_PATH — path to Peek's datastore.sqlite
  *     If unset, defaults to the platform default-profile location
  *     (macOS: ~/Library/Application Support/Peek/default/datastore.sqlite).
+ *     Unused when PEEK_MCP_REMOTE_URL is set.
+ *   PEEK_MCP_REMOTE_URL — targets a remote Peek sync server instead of the
+ *     local datastore (docs/mcp-remote-backend-design.md §2.1, §6). Selects
+ *     store/remote-store.js in place of store/sqlite-store.js.
+ *   PEEK_MCP_TOKEN — bearer credential for remote mode, usually a ${VAR}
+ *     reference Claude Code expands from the launching shell's environment.
+ *   PEEK_MCP_CREDENTIAL — alternative to PEEK_MCP_TOKEN for interactive
+ *     desktop use: a lookup key ("<url>#<scope>") into the 0600 credential
+ *     file peek-mcp-init --store-token writes at
+ *     ~/.config/peek/mcp-credentials.json (§6). Takes priority over
+ *     PEEK_MCP_TOKEN when both are set.
  *   PEEK_MCP_READONLY=1 — hides mutating tools (create/update/delete/tag/etc.)
  *   PEEK_MCP_SCOPE_TAG — confines this session to items tagged <scope> or
  *     matching <scope>:*. Reads filter to in-scope only; writes are force-
@@ -20,9 +31,11 @@ import { createInterface } from 'node:readline';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { openDb, queryItems, searchItems, getItem, createItem, updateItem, deleteItem,
-         listTags, tagItem, untagItem, recordEvent, listTasks, completeTask,
-         getTaskContext, getItemTags, resolveItemId } from './db.js';
+import { pathToFileURL } from 'node:url';
+import { openStore } from './store/index.js';
+
+// Set once main() opens it; every handler below reads through this.
+let store = null;
 
 const SERVER_NAME = 'peek-mcp';
 const SERVER_VERSION = '1.0.0';
@@ -68,9 +81,9 @@ function tagIsForeignNamespace(tag) {
   return tag.includes(':');
 }
 
-function assertItemInScope(id) {
+async function assertItemInScope(id) {
   if (!SCOPE) return;
-  const tags = getItemTags(id);
+  const tags = await store.getItemTags(id);
   if (!inScope(tags)) {
     throw new Error(`Item ${id} is not in scope "${SCOPE}".`);
   }
@@ -93,8 +106,11 @@ function requireItemId(args) {
 // matters most for mutating tools: we must never mutate a guessed item.
 //
 // `resolveItemIdFromArgs` returns the resolved id, or null when the prefix
-// matches nothing (read tools turn that into their existing null/not-found
-// response). Ambiguity throws regardless of read-vs-write.
+// matches nothing. Ambiguity throws regardless of read-vs-write. Used only by
+// the mutating path now (resolveItemIdForMutation, below) — get_item and
+// get_task_context resolve inline through the store's own getItem()/
+// getTaskContext() (design doc §5), which throw the identically-formatted
+// ambiguity error themselves rather than going through this function.
 function formatAmbiguous(prefix, candidates, truncated) {
   const lines = candidates.map((c) => `  ${c.id}  ${c.title || '(untitled)'}`);
   let msg =
@@ -104,13 +120,14 @@ function formatAmbiguous(prefix, candidates, truncated) {
   return msg;
 }
 
-function resolveItemIdFromArgs(args) {
+async function resolveItemIdFromArgs(args) {
   const raw = requireItemId(args);
-  // Pass SCOPE down so resolution is confined to in-scope items: an exact id
-  // or prefix matching only out-of-scope items reads as not-found, ambiguity
-  // is computed over in-scope candidates only, and the candidate list never
-  // leaks out-of-scope id/title. SCOPE='' (unscoped) = whole-table behavior.
-  const res = resolveItemId(raw, { scopeTag: SCOPE });
+  // Scope confinement is now captured by the store at open time (see
+  // docs/mcp-remote-backend-design.md §2.1) rather than passed per call: an
+  // exact id or prefix matching only out-of-scope items reads as not-found,
+  // ambiguity is computed over in-scope candidates only, and the candidate
+  // list never leaks out-of-scope id/title.
+  const res = await store.resolveItemId(raw);
   if (res.ambiguous) {
     throw new Error(formatAmbiguous(raw, res.candidates, res.truncated));
   }
@@ -119,9 +136,9 @@ function resolveItemIdFromArgs(args) {
 
 // For mutating tools: resolution must yield exactly one item. Not-found and
 // ambiguity both hard-error (never mutate a guessed/missing item).
-function resolveItemIdForMutation(args) {
+async function resolveItemIdForMutation(args) {
   const raw = args.itemId;
-  const id = resolveItemIdFromArgs(args);
+  const id = await resolveItemIdFromArgs(args);
   if (id === null) {
     throw new Error(`No item found with id (or id prefix) "${raw}".`);
   }
@@ -152,8 +169,8 @@ function withScopeTag(tags) {
 // [contentOffset, contentOffset + maxContentLength), plus `contentLength`
 // (full original length, whenever content is a string) and
 // `contentTruncated: true` whenever any of it was cut. `favicon` (possibly a
-// base64 data: URI) is stripped here at the MCP layer — db.js keeps selecting
-// it for its other callers.
+// base64 data: URI) is stripped here at the MCP layer — the store keeps
+// selecting it for its other callers.
 
 const DEFAULT_MAX_CONTENT_LENGTH = 4000;
 
@@ -390,61 +407,66 @@ const RESOURCE_TEMPLATES = [
 
 // --- Tool handlers ---
 
-function handleToolCall(name, args) {
+async function handleToolCall(name, args) {
   switch (name) {
     case 'list_items': {
-      const rows = queryItems(args || {});
+      const rows = await store.queryItems(args || {});
       return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
     }
     case 'search_items': {
-      const rows = searchItems(args || {});
+      const rows = await store.searchItems(args || {});
       return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
     }
     case 'get_item': {
-      const itemId = resolveItemIdFromArgs(args);
-      if (itemId === null) return null;
-      const item = getItem(itemId);
+      // Inline resolution (design doc §5): the store resolves the id-or-
+      // prefix and fetches the item in one call — not-found returns null,
+      // ambiguity throws formatted the same way resolveItemIdFromArgs()
+      // does. Read tools stay at one store round trip; mutating tools keep
+      // the explicit resolve-then-mutate shape below.
+      const raw = requireItemId(args);
+      const item = await store.getItem(raw);
       if (!item) return null;
       if (SCOPE && !inScope(item.tags)) return null;
       return shapeItemForResponse(item, args);
     }
     case 'create_item': {
       validateWriteTags(args.tags);
-      return createItem({ ...args, tags: withScopeTag(args.tags) });
+      return store.createItem({ ...args, tags: withScopeTag(args.tags) });
     }
     case 'update_item': {
-      const itemId = resolveItemIdForMutation(args);
+      const itemId = await resolveItemIdForMutation(args);
       const { itemId: _omit, ...rest } = args;
-      assertItemInScope(itemId);
-      return updateItem(itemId, rest);
+      await assertItemInScope(itemId);
+      return store.updateItem(itemId, rest);
     }
     case 'delete_item': {
       // Conservative: exact match OR unambiguous prefix only (mutation
       // resolver hard-errors on both not-found and ambiguity). The resolved
       // full id is surfaced in deleteItem's result so the caller sees exactly
       // what got deleted.
-      const itemId = resolveItemIdForMutation(args);
-      assertItemInScope(itemId);
-      return deleteItem(itemId);
+      const itemId = await resolveItemIdForMutation(args);
+      await assertItemInScope(itemId);
+      return store.deleteItem(itemId);
     }
     case 'list_tags': {
-      const rows = listTags(args || {});
+      const rows = await store.listTags(args || {});
       return SCOPE ? rows.filter((t) => tagIsScopeOwned(t.name)) : rows;
     }
     case 'tag_item': {
-      const itemId = resolveItemIdForMutation(args);
-      assertItemInScope(itemId);
+      const itemId = await resolveItemIdForMutation(args);
+      await assertItemInScope(itemId);
       validateWriteTags([args.tagName]);
-      return tagItem(itemId, args.tagName);
+      return store.tagItem(itemId, args.tagName);
     }
     case 'untag_item': {
-      const itemId = resolveItemIdForMutation(args);
-      assertItemInScope(itemId);
+      const itemId = await resolveItemIdForMutation(args);
+      await assertItemInScope(itemId);
       // Only refuse a scope-owned untag if it would actually orphan the item.
       // If other in-scope tags remain (e.g. bare `peek` plus `peek:todo` →
       // dropping `peek:todo` leaves bare `peek`), the untag is safe.
       if (SCOPE && tagIsScopeOwned(args.tagName)) {
-        const remaining = getItemTags(itemId).filter((t) => t !== args.tagName);
+        const currentTags = await store.getItemTags(itemId);
+        const remaining = currentTags.filter((t) => t !== args.tagName);
         if (!inScope(remaining)) {
           throw new Error(
             `Cannot untag "${args.tagName}" — it is the only tag keeping this item in scope "${SCOPE}". ` +
@@ -452,26 +474,26 @@ function handleToolCall(name, args) {
           );
         }
       }
-      return untagItem(itemId, args.tagName);
+      return store.untagItem(itemId, args.tagName);
     }
     case 'record_event': {
-      const itemId = resolveItemIdForMutation(args);
-      assertItemInScope(itemId);
-      return recordEvent(itemId, args.type, args.value);
+      const itemId = await resolveItemIdForMutation(args);
+      await assertItemInScope(itemId);
+      return store.recordEvent(itemId, args.type, args.value);
     }
     case 'list_tasks': {
-      const rows = listTasks(args || {});
+      const rows = await store.listTasks(args || {});
       return SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
     }
     case 'complete_task': {
-      const itemId = resolveItemIdForMutation(args);
-      assertItemInScope(itemId);
-      return completeTask(itemId, args.notes);
+      const itemId = await resolveItemIdForMutation(args);
+      await assertItemInScope(itemId);
+      return store.completeTask(itemId, args.notes);
     }
     case 'get_task_context': {
-      const itemId = resolveItemIdFromArgs(args);
-      if (itemId === null) return null;
-      const ctx = getTaskContext(itemId);
+      // Same inline-resolution shape as get_item above.
+      const raw = requireItemId(args);
+      const ctx = await store.getTaskContext(raw);
       if (!ctx) return null;
       if (SCOPE && !inScope(ctx.tags)) return null;
       return shapeItemForResponse(ctx, args);
@@ -483,14 +505,14 @@ function handleToolCall(name, args) {
 
 // --- Resource handlers ---
 
-function handleResourceRead(uri) {
+async function handleResourceRead(uri) {
   const scopeFilter = (rows) => SCOPE ? rows.filter((r) => inScope(r.tags)) : rows;
   const scopeTagFilter = (rows) => SCOPE ? rows.filter((t) => tagIsScopeOwned(t.name)) : rows;
   if (uri === 'peek://tasks') {
-    return JSON.stringify(scopeFilter(listTasks()), null, 2);
+    return JSON.stringify(scopeFilter(await store.listTasks()), null, 2);
   }
   if (uri === 'peek://tags') {
-    return JSON.stringify(scopeTagFilter(listTags()), null, 2);
+    return JSON.stringify(scopeTagFilter(await store.listTags()), null, 2);
   }
   // peek://tasks/{tag}
   const taskMatch = uri.match(/^peek:\/\/tasks\/(.+)$/);
@@ -499,7 +521,7 @@ function handleResourceRead(uri) {
     if (SCOPE && tagIsForeignNamespace(tag)) {
       throw new Error(`Tag "${tag}" is outside scope "${SCOPE}".`);
     }
-    return JSON.stringify(scopeFilter(listTasks({ tags: ['todo'], project: tag })), null, 2);
+    return JSON.stringify(scopeFilter(await store.listTasks({ tags: ['todo'], project: tag })), null, 2);
   }
   throw new Error(`Unknown resource: ${uri}`);
 }
@@ -514,7 +536,7 @@ function makeError(id, code, message) {
   return { jsonrpc: '2.0', id, error: { code, message } };
 }
 
-function handleMessage(msg) {
+async function handleMessage(msg) {
   const { id, method, params } = msg;
 
   switch (method) {
@@ -552,7 +574,7 @@ function handleMessage(msg) {
         });
       }
       try {
-        const result = handleToolCall(name, args || {});
+        const result = await handleToolCall(name, args || {});
         return makeResponse(id, {
           content: [
             {
@@ -582,7 +604,7 @@ function handleMessage(msg) {
     case 'resources/read': {
       const { uri } = params;
       try {
-        const text = handleResourceRead(uri);
+        const text = await handleResourceRead(uri);
         return makeResponse(id, {
           contents: [
             {
@@ -661,9 +683,22 @@ function entryEnvMatchesCurrent(entry) {
   const env = entry.env || {};
   const onScope = (env.PEEK_MCP_SCOPE_TAG || '').trim();
   const onReadonly = env.PEEK_MCP_READONLY === '1';
-  const onDb = env.PEEK_DB_PATH || '';
+  const onRemoteUrl = env.PEEK_MCP_REMOTE_URL || '';
+  const onCredential = env.PEEK_MCP_CREDENTIAL || '';
   const curScope = (process.env.PEEK_MCP_SCOPE_TAG || '').trim();
   const curReadonly = process.env.PEEK_MCP_READONLY === '1';
+  const curRemoteUrl = process.env.PEEK_MCP_REMOTE_URL || '';
+  const curCredential = process.env.PEEK_MCP_CREDENTIAL || '';
+
+  if (curRemoteUrl || onRemoteUrl) {
+    // Remote mode has no local datastore, so PEEK_DB_PATH drops out of the
+    // comparison entirely (design doc §4.3); the remote url and credential
+    // lookup key take its place.
+    return onScope === curScope && onReadonly === curReadonly &&
+      onRemoteUrl === curRemoteUrl && onCredential === curCredential;
+  }
+
+  const onDb = env.PEEK_DB_PATH || '';
   const curDb = process.env.PEEK_DB_PATH || '';
   return onScope === curScope && onReadonly === curReadonly && onDb === curDb;
 }
@@ -712,44 +747,155 @@ function defaultDbPath() {
   );
 }
 
-function main() {
-  // Resolve DB path — falls back to platform default-profile location so
-  // the settings.json snippet can omit env entirely for the common case.
-  const dbPath = process.env.PEEK_DB_PATH || defaultDbPath();
+// --- Remote store configuration (docs/mcp-remote-backend-design.md §6) ---
+//
+// The credential arrives one of two ways: PEEK_MCP_TOKEN carries it directly
+// (typically a ${VAR} reference Claude Code expands from the launching
+// shell), or PEEK_MCP_CREDENTIAL names a lookup key into the 0600 credential
+// file peek-mcp-init --store-token writes — see setup.js
+// writeCredentialFile()/credentialFilePath() for the exact path and shape.
+// Never logged, never included in an error message or a thrown stack.
 
+function credentialFilePath() {
+  return path.join(os.homedir(), '.config', 'peek', 'mcp-credentials.json');
+}
+
+function resolveCredentialFromFile(key) {
+  const filePath = credentialFilePath();
+  let data;
   try {
-    openDb(dbPath);
+    data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
   } catch (err) {
-    process.stderr.write(`Error opening database: ${err.message}\n`);
+    throw new Error(`Could not read Peek MCP credential file ${filePath}: ${err.code || 'invalid JSON'}`);
+  }
+  const entry = data && data.credentials && data.credentials[key];
+  if (!entry || typeof entry.token !== 'string') {
+    throw new Error(`No credential found for key "${key}" in ${filePath}.`);
+  }
+  return entry.token;
+}
+
+// Returns { remoteUrl, credential } when PEEK_MCP_REMOTE_URL is set (selects
+// store/remote-store.js — see store/index.js openStore()), or null to fall
+// back to today's local sqlite behaviour.
+function remoteStoreConfig() {
+  const remoteUrl = (process.env.PEEK_MCP_REMOTE_URL || '').trim();
+  if (!remoteUrl) return null;
+  const credentialKey = process.env.PEEK_MCP_CREDENTIAL;
+  const credential = credentialKey
+    ? resolveCredentialFromFile(credentialKey)
+    : process.env.PEEK_MCP_TOKEN;
+  return { remoteUrl, credential };
+}
+
+// A single incoming line's worth of work: drift check, parse, dispatch,
+// respond. Split out so the `rl.on('line')` handler (necessarily sync) can
+// chain calls to it through a tail promise instead of awaiting directly.
+async function handleLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return;
+
+  checkConfigDrift();
+
+  let msg;
+  try {
+    msg = JSON.parse(trimmed);
+  } catch {
+    process.stderr.write(`Invalid JSON: ${trimmed}\n`);
+    return;
+  }
+
+  const response = await handleMessage(msg);
+  if (response) {
+    process.stdout.write(JSON.stringify(response) + '\n');
+  }
+}
+
+// Pure decision for the startup consistency check (§4.3): compares what the
+// store believes about its own scope (`store.describe()`) against what the
+// local configuration claims (SCOPE, from PEEK_MCP_SCOPE_TAG). Returns null
+// when they agree, or the stderr message to write before exiting when they
+// don't. Kept pure and exported so it's testable with a fake `describe()`
+// result — no real store, no network. `main()` is the only caller with the
+// actual side effects (stderr + exit).
+function scopeConsistencyError(info, configuredScope) {
+  if (info.scopeTag === configuredScope) return null;
+  return `Peek MCP scope mismatch — store reports scope "${info.scopeTag}", ` +
+    `local configuration claims "${configuredScope}". Exiting so client respawns with fresh env.\n`;
+}
+
+async function main() {
+  // Remote mode (PEEK_MCP_REMOTE_URL set) selects store/remote-store.js over
+  // store/sqlite-store.js in openStore() (§2.1) — no local datastore lookup.
+  // Local behaviour (below) is unchanged when it is absent.
+  let remote;
+  try {
+    remote = remoteStoreConfig();
+  } catch (err) {
+    process.stderr.write(`Error resolving Peek MCP credential: ${err.message}\n`);
     process.exit(1);
   }
 
+  // Resolve DB path — falls back to platform default-profile location so
+  // the settings.json snippet can omit env entirely for the common case.
+  // Unused in remote mode.
+  const dbPath = remote ? null : (process.env.PEEK_DB_PATH || defaultDbPath());
+
+  try {
+    store = remote
+      ? await openStore({ ...remote, scopeTag: SCOPE, readonly: READONLY })
+      : await openStore({ dbPath, scopeTag: SCOPE, readonly: READONLY });
+  } catch (err) {
+    // Remote mode has no database to open — the failures here are an
+    // unexpanded ${VAR} or a missing remote url, and naming a database sends
+    // the reader looking for a file that was never involved.
+    process.stderr.write(remote
+      ? `Error opening Peek remote store: ${err.message}\n`
+      : `Error opening database: ${err.message}\n`);
+    process.exit(1);
+  }
+
+  // Startup consistency check (§4.3): the store's own idea of its scope must
+  // agree with what the local configuration (PEEK_MCP_SCOPE_TAG) claims —
+  // otherwise we'd serve a session whose advertised scope is a lie. Same
+  // recovery path checkConfigDrift() uses: write both values and exit(0) so
+  // the client respawns.
+  let info;
+  try {
+    info = await store.describe();
+  } catch (err) {
+    process.stderr.write(`Error checking Peek MCP session: ${err.message}\n`);
+    process.exit(1);
+  }
+  const mismatch = scopeConsistencyError(info, SCOPE);
+  if (mismatch) {
+    process.stderr.write(mismatch);
+    process.exit(0);
+  }
+
   process.stderr.write(`Peek MCP Server v${SERVER_VERSION} started\n`);
-  process.stderr.write(`Database: ${dbPath}\n`);
+  if (remote) {
+    process.stderr.write(`Remote: ${remote.remoteUrl}\n`);
+  } else {
+    process.stderr.write(`Database: ${dbPath}\n`);
+  }
   if (SCOPE) process.stderr.write(`Scope: ${SCOPE} (and ${SCOPE}:*)\n`);
   if (READONLY) process.stderr.write(`Read-only mode\n`);
 
   // Read JSON-RPC messages from stdin (newline-delimited)
   const rl = createInterface({ input: process.stdin });
 
+  // The store interface is async (HTTP-ready, see docs/mcp-remote-backend-
+  // design.md §2.2), but this handler is a sync callback. Serialize incoming
+  // lines through a tail promise so requests are still handled strictly in
+  // arrival order — JSON-RPC allows out-of-order responses, but pipelining
+  // buys nothing for a single-user session, and unordered concurrency would
+  // let two mutating tools interleave against the same item.
+  let queue = Promise.resolve();
   rl.on('line', (line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-
-    checkConfigDrift();
-
-    let msg;
-    try {
-      msg = JSON.parse(trimmed);
-    } catch {
-      process.stderr.write(`Invalid JSON: ${trimmed}\n`);
-      return;
-    }
-
-    const response = handleMessage(msg);
-    if (response) {
-      process.stdout.write(JSON.stringify(response) + '\n');
-    }
+    queue = queue.then(() => handleLine(line)).catch((err) => {
+      process.stderr.write(`Fatal in message handler: ${err.stack}\n`);
+    });
   });
 
   rl.on('close', () => {
@@ -758,4 +904,12 @@ function main() {
   });
 }
 
-main();
+// Only self-invoke when this file is run directly (`node server.js`), not
+// when imported as a module — server.test.js's "remote store selection" and
+// "startup consistency check" suites import the pure functions below
+// directly, no subprocess or network involved.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
+
+export { remoteStoreConfig, credentialFilePath, resolveCredentialFromFile, entryEnvMatchesCurrent, scopeConsistencyError };

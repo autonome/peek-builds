@@ -4,7 +4,15 @@ use serde::{Deserialize, Serialize};
 // Bump DATASTORE_VERSION when schema changes break sync.
 // Bump PROTOCOL_VERSION when request/response shape changes.
 // Exact match required — server returns 409 on mismatch.
-pub const DATASTORE_VERSION: u32 = 1;
+//
+// Raised to 3 to match apps/desktop/version.ts and apps/server/version.js (item
+// and tag columns added there). This client does not send any of those newer
+// columns, and that's safe: apps/server/db.js saveItem() binds every newer
+// column through COALESCE(?, existingColumn), and POST /items defaults absent
+// fields to null, so an item pushed without title/domain/favicon/visitCount/
+// lastVisitAt/frecencyScore/mimeType/starred/archived leaves the stored values
+// untouched rather than nulling them.
+pub const DATASTORE_VERSION: u32 = 3;
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Schema version for tracking compatibility between Rust main app and Swift Share Extension.
@@ -170,6 +178,14 @@ pub struct ServerItem {
     pub updated_at: i64,
     #[serde(default, deserialize_with = "deserialize_optional_flexible_timestamp")]
     pub deleted_at: i64,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub domain: String,
+    #[serde(default)]
+    pub favicon: String,
+    #[serde(default)]
+    pub frecency_score: i64,
 }
 
 // Server response for GET /items

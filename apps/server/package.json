@@ -13,6 +13,7 @@
     "dev:stop": "[ -f server.pid ] && kill $(cat server.pid) 2>/dev/null && rm server.pid && echo 'Server stopped' || echo 'No server running'",
     "test": "node --test test.js",
     "test:backup": "node --test test-backup.js",
+    "test:restore": "node --test test-restore.js",
     "test:api": "node --test test-api.js",
     "test:api:local": "node --env-file=.env --test test-api.js -- --local",
     "test:api:prod": "node --env-file=.env --test test-api.js -- --prod",
@@ -25,7 +26,6 @@
   "dependencies": {
     "@hono/node-server": "^1.19.6",
     "archiver": "^7.0.1",
-    "better-sqlite3": "^12.5.0",
     "hono": "^4.10.7"
   }
 }

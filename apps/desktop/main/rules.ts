@@ -8,7 +8,7 @@
  * packages/schema/v1.json).
  *
  * Pure SQL wrapper — no Electron imports — so the module is
- * unit-testable under plain node via an in-memory better-sqlite3, the
+ * unit-testable under plain node via an in-memory node:sqlite database, the
  * same shape as permission-store.ts.
  */
 
@@ -46,8 +46,8 @@ export interface ManifestRule {
   ordering?: number;
 }
 
-/** Subset of better-sqlite3 used here — keeps the type local so tests
- *  can pass an in-memory db without importing the full Database type. */
+/** Subset of node:sqlite's DatabaseSync used here — keeps the type local
+ *  so tests can pass an in-memory db without importing the full type. */
 export interface RulesDb {
   prepare(sql: string): {
     get(...params: unknown[]): unknown;

@@ -2,14 +2,14 @@
  * Unit tests for permission-store.ts — the persistence layer for the web
  * permission handler (Phase 3).
  *
- * Uses an in-memory better-sqlite3 with the same `feature_settings` schema
- * shape as production. Runs under Electron-as-node via the standard
+ * Uses an in-memory node:sqlite database with the same `feature_settings`
+ * schema shape as production. Runs under Electron-as-node via the standard
  * dist-compile + ELECTRON_RUN_AS_NODE pipeline.
  */
 
 import { describe, it, before, beforeEach } from 'node:test';
 import * as assert from 'node:assert';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 
 import {
   getDecision,
@@ -20,10 +20,10 @@ import {
   type PermissionDb,
 } from './permission-store.js';
 
-let db: Database.Database;
+let db: DatabaseSync;
 
-function makeDb(): Database.Database {
-  const d = new Database(':memory:');
+function makeDb(): DatabaseSync {
+  const d = new DatabaseSync(':memory:');
   d.exec(`
     CREATE TABLE feature_settings (
       id TEXT PRIMARY KEY,

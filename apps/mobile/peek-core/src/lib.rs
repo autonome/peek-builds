@@ -439,7 +439,7 @@ mod tests {
 
     #[test]
     fn test_types_accessible() {
-        assert_eq!(DATASTORE_VERSION, 1);
+        assert_eq!(DATASTORE_VERSION, 3);
         assert_eq!(PROTOCOL_VERSION, 1);
         assert_eq!(SCHEMA_VERSION, "2");
     }

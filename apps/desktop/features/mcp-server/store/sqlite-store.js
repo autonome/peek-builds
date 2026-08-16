@@ -1,5 +1,5 @@
 /**
- * Database helper for Peek MCP Server.
+ * SQLite implementation of the PeekStore interface (see `./types.js`).
  *
  * Uses node:sqlite (built-in since Node 22.5) with a single persistent
  * connection. Prepared statements, parameter binding, WAL-aware busy_timeout,
@@ -7,11 +7,19 @@
  * `execSync('sqlite3 …')` shell-out which forked a CLI per statement and
  * collapsed under multi-agent concurrency (no busy_timeout, no retries,
  * SQLITE_BUSY surfaced as tool errors).
+ *
+ * This is `db.js`'s former body: the query functions below are unchanged
+ * synchronous SQL against `node:sqlite`. `openSqliteStore()` is the only new
+ * surface — it opens the connection, captures the scope tag for
+ * `resolveItemId()` (which no longer takes a per-call `{scopeTag}` option,
+ * see docs/mcp-remote-backend-design.md §2.1), and returns a `PeekStore`
+ * whose methods are `async` wrappers with no behavior change.
  */
 
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
 
 let db = null;
 
@@ -45,7 +53,7 @@ function extractHashtagsFromContent(content) {
   return [...new Set(matches.map(m => m.trim().slice(1)))];
 }
 
-export function openDb(path) {
+function openConnection(path) {
   if (!existsSync(path)) {
     throw new Error(`Database not found: ${path}`);
   }
@@ -124,7 +132,7 @@ function ensureTagsUniqueIndex() {
   db.exec(`DROP INDEX IF EXISTS idx_tags_name`);
 }
 
-export function closeDb() {
+function closeConnection() {
   if (db) {
     db.close();
     db = null;
@@ -132,7 +140,7 @@ export function closeDb() {
 }
 
 function requireDb() {
-  if (!db) throw new Error('Database not opened. Call openDb() first.');
+  if (!db) throw new Error('Database not opened. Call openSqliteStore() first.');
   return db;
 }
 
@@ -158,7 +166,7 @@ function parseMetadata(item) {
 
 // --- Queries ---
 
-export function queryItems({ tags, type, limit = 50, offset = 0, sort = 'recent' } = {}) {
+function queryItemsSync({ tags, type, limit = 50, offset = 0, sort = 'recent' } = {}) {
   const d = requireDb();
   const orderCol = sort === 'frecency' ? 'frecencyScore' : 'createdAt';
 
@@ -280,7 +288,7 @@ function buildSnippet(text, term) {
   return snip;
 }
 
-export function searchItems({ query, tags, type, limit = 20, offset = 0 } = {}) {
+function searchItemsSync({ query, tags, type, limit = 20, offset = 0 } = {}) {
   const d = requireDb();
   const terms = tokenizeQuery(query);
 
@@ -434,7 +442,7 @@ export function searchItems({ query, tags, type, limit = 20, offset = 0 } = {}) 
   });
 }
 
-export function getItem(id) {
+function getItemSync(id) {
   if (typeof id !== 'string' || id === '') return null;
   const d = requireDb();
   const item = d.prepare(`
@@ -444,7 +452,7 @@ export function getItem(id) {
     FROM items WHERE id = ?
   `).get(id);
   if (!item) return null;
-  item.tags = getItemTags(id);
+  item.tags = getItemTagsSync(id);
   return parseMetadata(item);
 }
 
@@ -472,6 +480,9 @@ export function getItem(id) {
  * escaped for LIKE the same way the prefix is, so `_`/`%` in a scope tag can't
  * act as wildcards. No scopeTag = unscoped = whole-table resolution.
  *
+ * scopeTag is captured once by `openSqliteStore()` (not per call — see
+ * docs/mcp-remote-backend-design.md §2.1) and threaded in here.
+ *
  * Pure lookup: does NOT honor deletedAt — callers (getItem etc.) apply their
  * own deleted/scope policy on the resolved id, matching the exact-id path.
  */
@@ -481,7 +492,7 @@ function escapeLikePrefix(prefix) {
 
 const PREFIX_AMBIGUITY_LIMIT = 10;
 
-export function resolveItemId(prefix, { scopeTag = '' } = {}) {
+function resolveItemIdSync(prefix, scopeTag) {
   if (typeof prefix !== 'string' || prefix === '') return { id: null };
   const d = requireDb();
 
@@ -529,7 +540,36 @@ export function resolveItemId(prefix, { scopeTag = '' } = {}) {
   };
 }
 
-export function getItemTags(itemId) {
+/**
+ * Format the same "ambiguous item id" error text server.js's
+ * formatAmbiguous() and remote-store.js's ambiguousError() produce, so a
+ * caller sees identical wording regardless of which store answered. Kept as
+ * an independent copy rather than an import — see remote-store.js's header
+ * comment for why the store layer doesn't reach into server.js.
+ */
+function ambiguousItemIdError(prefix, candidates, truncated) {
+  const lines = (candidates || []).map((c) => `  ${c.id}  ${c.title || '(untitled)'}`);
+  return new Error(
+    `Ambiguous item id prefix "${prefix}" matches ${candidates.length}${truncated ? '+' : ''} items:\n` +
+    lines.join('\n') +
+    `\nPass more of the id (or the full id) to disambiguate.`
+  );
+}
+
+// Resolves a raw id-or-prefix and fetches the item in a single call — the
+// inline resolution design doc §5 specifies for read tools (get_item,
+// get_task_context): one store call instead of server.js's separate
+// resolveItemId() + getItem() pair. Not-found returns null; ambiguity
+// throws (never guesses).
+function resolveAndGetItemSync(idOrPrefix, scopeTag) {
+  if (typeof idOrPrefix !== 'string' || idOrPrefix === '') return null;
+  const resolved = resolveItemIdSync(idOrPrefix, scopeTag);
+  if (resolved.ambiguous) throw ambiguousItemIdError(idOrPrefix, resolved.candidates, resolved.truncated);
+  if (resolved.id === null) return null;
+  return getItemSync(resolved.id);
+}
+
+function getItemTagsSync(itemId) {
   const d = requireDb();
   return d.prepare(`
     SELECT t.name FROM tags t
@@ -538,7 +578,21 @@ export function getItemTags(itemId) {
   `).all(itemId).map(r => r.name);
 }
 
-export function createItem({ type, url, title = '', content = '', metadata = {}, tags = [], extractHashtags = false }) {
+// Creatable item types on this store. Mirrors CREATABLE_ITEM_TYPES in
+// apps/server/mcp-items.js createItem() plus 'image': the remote MCP backend
+// refuses 'image' (docs/mcp-remote-backend-design.md §9 — the MCP layer has
+// never created images there, and wiring multipart upload through the store
+// interface is unrelated work), but the local store has no such limitation
+// and has always accepted image items. That one-type gap from the remote
+// list is deliberate, not drift — do not "align" the two lists.
+const CREATABLE_ITEM_TYPES = ['url', 'text', 'tagset', 'image', 'series', 'feed', 'entity'];
+
+function createItemSync({ type, url, title = '', content = '', metadata = {}, tags = [], extractHashtags = false }) {
+  if (!type) throw new Error('type is required');
+  if (!CREATABLE_ITEM_TYPES.includes(type)) {
+    throw new Error(`type must be one of: ${CREATABLE_ITEM_TYPES.join(', ')}`);
+  }
+
   const id = randomUUID();
   const now = Date.now();
   const metaStr = typeof metadata === 'string' ? metadata : JSON.stringify(metadata);
@@ -570,10 +624,10 @@ export function createItem({ type, url, title = '', content = '', metadata = {},
     }
   });
 
-  return getItem(id);
+  return getItemSync(id);
 }
 
-export function updateItem(id, { title, content, metadata } = {}) {
+function updateItemSync(id, { title, content, metadata } = {}) {
   const sets = [];
   const params = [];
   if (title !== undefined) { sets.push('title = ?'); params.push(title); }
@@ -582,22 +636,22 @@ export function updateItem(id, { title, content, metadata } = {}) {
     sets.push('metadata = ?');
     params.push(typeof metadata === 'string' ? metadata : JSON.stringify(metadata));
   }
-  if (sets.length === 0) return getItem(id);
+  if (sets.length === 0) return getItemSync(id);
 
   sets.push('updatedAt = ?');
   params.push(Date.now());
   params.push(id);
 
   requireDb().prepare(`UPDATE items SET ${sets.join(', ')} WHERE id = ?`).run(...params);
-  return getItem(id);
+  return getItemSync(id);
 }
 
-export function deleteItem(id) {
+function deleteItemSync(id) {
   requireDb().prepare(`UPDATE items SET deletedAt = ? WHERE id = ?`).run(Date.now(), id);
   return { success: true, id };
 }
 
-export function listTags({ search, limit = 100 } = {}) {
+function listTagsSync({ search, limit = 100 } = {}) {
   const d = requireDb();
   let sql = `
     SELECT t.id, t.name, t.color, t.description, COUNT(it.id) as itemCount
@@ -647,12 +701,12 @@ function tagItemInTx(itemId, tagName, now) {
   `).run(randomUUID(), itemId, tag.id, now);
 }
 
-export function tagItem(itemId, tagName) {
+function tagItemSync(itemId, tagName) {
   transaction(() => tagItemInTx(itemId, tagName, Date.now()));
   return { success: true, itemId, tagName };
 }
 
-export function untagItem(itemId, tagName) {
+function untagItemSync(itemId, tagName) {
   const d = requireDb();
   const tag = d.prepare(`SELECT id FROM tags WHERE name = ?`).get(tagName);
   if (!tag) return { success: false, error: 'Tag not found' };
@@ -660,7 +714,7 @@ export function untagItem(itemId, tagName) {
   return { success: true, itemId, tagName };
 }
 
-export function recordEvent(itemId, type, value = '') {
+function recordEventSync(itemId, type, value = '') {
   const id = randomUUID();
   const now = Date.now();
   const metaStr = value ? JSON.stringify({ notes: value }) : '{}';
@@ -671,13 +725,13 @@ export function recordEvent(itemId, type, value = '') {
   return { success: true, id, itemId, type };
 }
 
-export function listTasks({ tags = ['todo'], project } = {}) {
+function listTasksSync({ tags = ['todo'], project } = {}) {
   const allTags = [...tags];
   if (project) allTags.push(project);
-  return queryItems({ tags: allTags, sort: 'recent' });
+  return queryItemsSync({ tags: allTags, sort: 'recent' });
 }
 
-export function completeTask(id, notes = '') {
+function completeTaskSync(id, notes = '') {
   // Wrap the three-step operation so an item can't end up with both
   // `todo` and `done` if a step fails mid-way.
   transaction(() => {
@@ -696,11 +750,11 @@ export function completeTask(id, notes = '') {
       VALUES (?, ?, 'completed', 0, ?, ?, ?)
     `).run(randomUUID(), id, now, eventMeta, now);
   });
-  return getItem(id);
+  return getItemSync(id);
 }
 
-export function getTaskContext(id) {
-  const item = getItem(id);
+function getTaskContextSync(idOrPrefix, scopeTag) {
+  const item = resolveAndGetItemSync(idOrPrefix, scopeTag);
   if (!item) return null;
 
   const events = requireDb().prepare(`
@@ -709,7 +763,49 @@ export function getTaskContext(id) {
     WHERE itemId = ?
     ORDER BY occurredAt DESC
     LIMIT 20
-  `).all(id);
+  `).all(item.id);
 
   return { ...item, events };
+}
+
+/**
+ * Open a `PeekStore` backed by a local SQLite datastore.
+ *
+ * @param {import('./types').StoreConfig} config
+ * @returns {Promise<import('./types').PeekStore>}
+ */
+export async function openSqliteStore({ dbPath, scopeTag = '', readonly = false } = {}) {
+  openConnection(dbPath);
+
+  return {
+    async queryItems(q) { return queryItemsSync(q); },
+    async searchItems(q) { return searchItemsSync(q); },
+    async getItem(idOrPrefix, _opts) { return resolveAndGetItemSync(idOrPrefix, scopeTag); },
+    async getItemTags(id) { return getItemTagsSync(id); },
+    async resolveItemId(prefix) { return resolveItemIdSync(prefix, scopeTag); },
+    async createItem(input) { return createItemSync(input); },
+    async updateItem(id, patch) { return updateItemSync(id, patch); },
+    async deleteItem(id) { return deleteItemSync(id); },
+    async listTags(q) { return listTagsSync(q); },
+    async tagItem(id, tagName) { return tagItemSync(id, tagName); },
+    async untagItem(id, tagName) { return untagItemSync(id, tagName); },
+    async recordEvent(id, type, value) { return recordEventSync(id, type, value); },
+    async listTasks(q) { return listTasksSync(q); },
+    async completeTask(id, notes) { return completeTaskSync(id, notes); },
+    async getTaskContext(idOrPrefix) { return getTaskContextSync(idOrPrefix, scopeTag); },
+    async describe() {
+      let datastoreVersion = 0;
+      try {
+        datastoreVersion = requireDb().prepare('PRAGMA user_version').get()?.user_version ?? 0;
+      } catch { /* best-effort only */ }
+      return {
+        scopeTag,
+        readonly,
+        profileId: dbPath ? basename(dirname(dbPath)) : '',
+        datastoreVersion,
+        backend: 'sqlite',
+      };
+    },
+    async close() { closeConnection(); },
+  };
 }

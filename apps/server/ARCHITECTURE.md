@@ -13,7 +13,7 @@ Abstracts database operations to support different SQLite backends:
 ```
 sql/
 ├── types.js          # SqlAdapter and SqlAdapterFactory interfaces
-├── better-sqlite3-adapter.js  # Default adapter for Node.js
+├── node-sqlite-adapter.js  # Default adapter for Node.js (node:sqlite, built in)
 └── index.js          # Factory that selects adapter based on SQL_ADAPTER env
 ```
 
@@ -114,7 +114,7 @@ SINGLE_USER_ID=default               # Optional, defaults to 'default'
 |----------|---------|-------------|
 | `PORT` | 3000 | Server port |
 | `DATA_DIR` | `./data` | Data directory |
-| `SQL_ADAPTER` | `better-sqlite3` | SQL adapter to use |
+| `SQL_ADAPTER` | `node-sqlite` | SQL adapter to use |
 | `STORAGE_BACKEND` | `filesystem` | Storage backend to use |
 | `SINGLE_USER_MODE` | `false` | Enable single-user mode |
 | `SINGLE_USER_TOKEN` | (none) | Bearer token for single-user auth |

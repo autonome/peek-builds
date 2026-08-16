@@ -8,12 +8,12 @@
  * This test creates in-memory databases simulating legacy states and
  * verifies the migration logic handles all cases correctly.
  *
- * Run with: ELECTRON_RUN_AS_NODE=1 npx electron --test packages/integration-tests/migration-regression.test.js
+ * Run with: node --test packages/integration-tests/migration-regression.test.js
  */
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 
 /**
  * Simulates the migrateTinyBaseData() logic from datastore.ts.
@@ -159,7 +159,7 @@ function createTinybaseTable(db, data) {
 describe('migrateTinyBaseData regression', () => {
 
   it('BUG REPRODUCTION: buggy version crashes when tinybase exists but addresses does not', () => {
-    const db = new Database(':memory:');
+    const db = new DatabaseSync(':memory:');
 
     // Create tinybase table with some data, but NO addresses table
     const tinybaseData = [
@@ -180,7 +180,7 @@ describe('migrateTinyBaseData regression', () => {
   });
 
   it('FIXED: handles tinybase exists but addresses table does not', () => {
-    const db = new Database(':memory:');
+    const db = new DatabaseSync(':memory:');
 
     // Create tinybase table with some data, but NO addresses table
     const tinybaseData = [
@@ -196,7 +196,7 @@ describe('migrateTinyBaseData regression', () => {
   });
 
   it('returns early when no tinybase table exists', () => {
-    const db = new Database(':memory:');
+    const db = new DatabaseSync(':memory:');
 
     const result = migrateTinyBaseDataFixed(db);
     assert.strictEqual(result.status, 'no-tinybase');
@@ -205,7 +205,7 @@ describe('migrateTinyBaseData regression', () => {
   });
 
   it('returns already-migrated when addresses table has data', () => {
-    const db = new Database(':memory:');
+    const db = new DatabaseSync(':memory:');
 
     createLegacySchema(db);
     createTinybaseTable(db, [{ addresses: {} }]);
@@ -222,7 +222,7 @@ describe('migrateTinyBaseData regression', () => {
   });
 
   it('successfully migrates tinybase data into legacy tables', () => {
-    const db = new Database(':memory:');
+    const db = new DatabaseSync(':memory:');
 
     createLegacySchema(db);
 
@@ -265,7 +265,7 @@ describe('migrateTinyBaseData regression', () => {
   });
 
   it('handles empty tinybase row gracefully', () => {
-    const db = new Database(':memory:');
+    const db = new DatabaseSync(':memory:');
 
     createLegacySchema(db);
     db.exec(`CREATE TABLE IF NOT EXISTS tinybase (id TEXT PRIMARY KEY, data TEXT)`);

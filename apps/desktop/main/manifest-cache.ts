@@ -20,7 +20,7 @@
  * the Features Manager gets each feature's description and declared
  * commands without a per-feature manifest re-parse.
  *
- * Desktop-only (better-sqlite3 is main-process). Authoritative state
+ * Desktop-only (node:sqlite is main-process). Authoritative state
  * lives here; renderer-side consumers get snapshots via strict
  * `tile:features:*` IPC.
  *

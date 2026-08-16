@@ -216,7 +216,11 @@ const CREATE_TABLE_STATEMENTS: &str = r#"
     archived INTEGER DEFAULT 0,
     syncedAt INTEGER DEFAULT 0,
     visitCount INTEGER DEFAULT 0,
-    lastVisitAt INTEGER DEFAULT 0
+    lastVisitAt INTEGER DEFAULT 0,
+    frecencyScore INTEGER DEFAULT 0,
+    title TEXT DEFAULT '',
+    domain TEXT DEFAULT '',
+    favicon TEXT DEFAULT ''
   );
   CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
   CREATE INDEX IF NOT EXISTS idx_items_syncId ON items(syncId);
@@ -405,6 +409,10 @@ pub struct Item {
     pub synced_at: i64,
     pub visit_count: i64,
     pub last_visit_at: i64,
+    pub frecency_score: i64,
+    pub title: String,
+    pub domain: String,
+    pub favicon: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -564,6 +572,33 @@ fn migrate_item_visit_columns(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate items table to add frecencyScore, title, domain, favicon columns if missing.
+/// Carried to the sync server since packages/schema/v1.json marked them sync:true.
+fn migrate_item_frecency_columns(conn: &Connection) -> Result<()> {
+    if !column_exists(conn, "items", "frecencyScore") {
+        println!("[tauri:migration] Adding frecencyScore column to items");
+        conn.execute_batch("ALTER TABLE items ADD COLUMN frecencyScore INTEGER DEFAULT 0")?;
+    }
+    if !column_exists(conn, "items", "title") {
+        println!("[tauri:migration] Adding title column to items");
+        conn.execute_batch("ALTER TABLE items ADD COLUMN title TEXT DEFAULT ''")?;
+    }
+    if !column_exists(conn, "items", "domain") {
+        println!("[tauri:migration] Adding domain column to items");
+        conn.execute_batch("ALTER TABLE items ADD COLUMN domain TEXT DEFAULT ''")?;
+    }
+    if !column_exists(conn, "items", "favicon") {
+        println!("[tauri:migration] Adding favicon column to items");
+        conn.execute_batch("ALTER TABLE items ADD COLUMN favicon TEXT DEFAULT ''")?;
+    }
+    // Create indexes if they don't exist (safe to run even if already present)
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_items_frecencyScore ON items(frecencyScore DESC);
+         CREATE INDEX IF NOT EXISTS idx_items_domain ON items(domain);"
+    )?;
+    Ok(())
+}
+
 /// Migrate items table CHECK constraint from ('note', 'tagset', 'image') to ('url', 'text', 'tagset', 'image').
 /// Uses the same approach as Electron: detect old constraint, create items_new, copy data, swap tables.
 fn migrate_item_types(conn: &Connection) -> Result<()> {
@@ -605,7 +640,11 @@ fn migrate_item_types(conn: &Connection) -> Result<()> {
             archived INTEGER DEFAULT 0,
             syncedAt INTEGER DEFAULT 0,
             visitCount INTEGER DEFAULT 0,
-            lastVisitAt INTEGER DEFAULT 0
+            lastVisitAt INTEGER DEFAULT 0,
+            frecencyScore INTEGER DEFAULT 0,
+            title TEXT DEFAULT '',
+            domain TEXT DEFAULT '',
+            favicon TEXT DEFAULT ''
         )
     "#)?;
 
@@ -623,7 +662,11 @@ fn migrate_item_types(conn: &Connection) -> Result<()> {
                createdAt, updatedAt, deletedAt, starred, archived,
                COALESCE(syncedAt, 0),
                COALESCE(visitCount, 0),
-               COALESCE(lastVisitAt, 0)
+               COALESCE(lastVisitAt, 0),
+               COALESCE(frecencyScore, 0),
+               COALESCE(title, ''),
+               COALESCE(domain, ''),
+               COALESCE(favicon, '')
         FROM items
     "#)?;
 
@@ -639,6 +682,8 @@ fn migrate_item_types(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_items_starred ON items(starred);
         CREATE INDEX IF NOT EXISTS idx_items_lastVisitAt ON items(lastVisitAt);
         CREATE INDEX IF NOT EXISTS idx_items_visitCount ON items(visitCount);
+        CREATE INDEX IF NOT EXISTS idx_items_frecencyScore ON items(frecencyScore DESC);
+        CREATE INDEX IF NOT EXISTS idx_items_domain ON items(domain);
     "#)?;
 
     conn.execute_batch("COMMIT")?;
@@ -685,6 +730,7 @@ fn check_and_write_datastore_version(conn: &Connection) -> Result<()> {
 fn run_migrations(conn: &Connection) -> Result<()> {
     migrate_item_sync_columns(conn)?;
     migrate_item_visit_columns(conn)?;
+    migrate_item_frecency_columns(conn)?;
     migrate_item_types(conn)?;
     check_and_write_datastore_version(conn)?;
     Ok(())
@@ -1460,7 +1506,7 @@ pub fn add_item(conn: &Connection, item_type: &str, options: &ItemOptions) -> Re
 
 pub fn get_item(conn: &Connection, id: &str) -> Result<Option<Item>> {
     let mut stmt = conn.prepare(
-        "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items WHERE id = ?1 AND deletedAt = 0",
+        "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt, frecencyScore, title, domain, favicon FROM items WHERE id = ?1 AND deletedAt = 0",
     )?;
 
     let mut rows = stmt.query(params![id])?;
@@ -1481,6 +1527,10 @@ pub fn get_item(conn: &Connection, id: &str) -> Result<Option<Item>> {
             synced_at: row.get(12)?,
             visit_count: row.get(13)?,
             last_visit_at: row.get(14)?,
+            frecency_score: row.get(15)?,
+            title: row.get(16)?,
+            domain: row.get(17)?,
+            favicon: row.get(18)?,
         })),
         None => Ok(None),
     }
@@ -1602,7 +1652,7 @@ pub fn query_items(conn: &Connection, filter: &ItemFilter) -> Result<Vec<Item>> 
         .unwrap_or_default();
 
     let sql = format!(
-        "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt FROM items {} ORDER BY {} {}",
+        "SELECT id, type, content, mimeType, metadata, syncId, createdAt, updatedAt, deletedAt, starred, archived, syncedAt, visitCount, lastVisitAt, frecencyScore, title, domain, favicon FROM items {} ORDER BY {} {}",
         where_clause, order_by, limit_clause
     );
 
@@ -1625,6 +1675,10 @@ pub fn query_items(conn: &Connection, filter: &ItemFilter) -> Result<Vec<Item>> 
             synced_at: row.get(12)?,
             visit_count: row.get(13)?,
             last_visit_at: row.get(14)?,
+            frecency_score: row.get(15)?,
+            title: row.get(16)?,
+            domain: row.get(17)?,
+            favicon: row.get(18)?,
         })
     })?;
 

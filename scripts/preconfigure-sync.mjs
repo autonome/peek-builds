@@ -1,8 +1,13 @@
 /**
  * Pre-configure sync settings and run initial sync for test profile
  *
- * This script must be run with Electron (not Node) because better-sqlite3
- * is compiled for Electron's Node version.
+ * This script must still be run with Electron (not Node): it loads
+ * apps/desktop/dist/main/datastore.js and profiles.js, which open the
+ * desktop's datastore with better-sqlite3 compiled for Electron's Node
+ * version. The sync package's own adapter (packages/sync/adapters/node-sqlite.js)
+ * no longer needs better-sqlite3 — it runs on node:sqlite — but that doesn't
+ * remove the constraint here, since it's the desktop datastore/profiles
+ * modules driving it under the hood.
  *
  * Usage: electron scripts/preconfigure-sync.mjs
  *
@@ -35,7 +40,7 @@ app.whenReady().then(async () => {
   const profiles = await import('../apps/desktop/dist/main/profiles.js');
 
   // Import sync engine
-  const { createEngine, createBetterSqliteAdapter } = await import('../packages/sync/index.js');
+  const { createEngine, createNodeSqliteAdapter } = await import('../packages/sync/index.js');
 
   // Paths
   const userDataPath = join(homedir(), 'Library', 'Application Support', 'Peek');
@@ -85,8 +90,10 @@ app.whenReady().then(async () => {
   const activeProfile = profiles.getActiveProfile();
   profiles.enableSync(activeProfile.id, API_KEY, process.env.SERVER_PROFILE_ID || 'default');
 
-  // Create sync engine with better-sqlite3 adapter on the same db instance
-  const adapter = createBetterSqliteAdapter(dbInstance);
+  // Create sync engine wrapping the same db instance (still a better-sqlite3
+  // handle from the desktop datastore — the adapter itself just needs
+  // exec/prepare().run/get/all, which both drivers provide)
+  const adapter = createNodeSqliteAdapter(dbInstance);
   await adapter.open();
 
   const { sync } = createEngine(adapter, {

@@ -38,19 +38,19 @@ pub struct SchemaItems {
     /// Archived flag (0/1)
     pub archived: i64,
     #[serde(rename = "visitCount")]
-    /// Number of visits (local tracking)
+    /// Number of visits
     pub visit_count: i64,
     #[serde(rename = "lastVisitAt")]
-    /// Last visit timestamp (local tracking)
+    /// Last visit timestamp
     pub last_visit_at: i64,
     #[serde(rename = "frecencyScore")]
-    /// Frecency score for ranking (local calculation)
+    /// Frecency score for ranking
     pub frecency_score: i64,
-    /// Page title (cached locally for URL items)
+    /// Page title
     pub title: String,
-    /// Domain extracted from URL (cached locally)
+    /// Domain extracted from URL
     pub domain: String,
-    /// Favicon URL (cached locally)
+    /// Favicon URL
     pub favicon: String,
 }
 
@@ -75,16 +75,16 @@ pub struct SchemaTags {
     #[serde(rename = "updatedAt")]
     /// Last update timestamp (Unix ms)
     pub updated_at: i64,
-    /// URL-safe slug (desktop only)
+    /// URL-safe slug
     pub slug: Option<String>,
-    /// Display color (desktop only)
+    /// Display color
     pub color: String,
     #[serde(rename = "parentId")]
-    /// Parent tag for hierarchy (desktop only)
+    /// Parent tag for hierarchy. Travels on the wire under the same field name, `parentId`, but holding the parent's name, not this id — tag identity is the name, so the reference is too. Resolved back to a local tag id on pull. On the server, the `parentId` column itself stores that name, never a row id — don't mistake it for a foreign key.
     pub parent_id: String,
-    /// Tag description (desktop only)
+    /// Tag description
     pub description: String,
-    /// JSON metadata (desktop only)
+    /// JSON metadata
     pub metadata: String,
 }
 

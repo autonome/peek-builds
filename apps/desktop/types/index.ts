@@ -299,7 +299,11 @@ export type TableName =
   | 'item_groups'
   | 'item_group_members'
   | 'settings'
-  | 'features_history';
+  | 'features_history'
+  | 'manifest_cache'
+  | 'rules'
+  | 'lazy_wake_shortcuts'
+  | 'lazy_wake_declared';
 
 export const tableNames: TableName[] = [
   'content',
@@ -318,7 +322,11 @@ export const tableNames: TableName[] = [
   'item_groups',
   'item_group_members',
   'settings',
-  'features_history'
+  'features_history',
+  'manifest_cache',
+  'rules',
+  'lazy_wake_shortcuts',
+  'lazy_wake_declared'
 ];
 
 // ==================== Sync Types ====================
@@ -347,6 +355,45 @@ export interface ServerItem {
   createdAt: number;
   updatedAt: number;
   deletedAt?: number;
+  starred: number;
+  archived: number;
+  title: string;
+  domain: string;
+  favicon: string;
+  visitCount: number;
+  lastVisitAt: number;
+  frecencyScore: number;
+  mimeType: string;
+}
+
+// Server item_events format. `itemId` is always the SERVER's item id (never a
+// client-local one) — see sync.ts pushEventsToServer()/mergeServerEvent().
+export interface ServerEvent {
+  id: string;
+  itemId: string;
+  content: string | null;
+  value: number | null;
+  occurredAt: number;
+  metadata?: Record<string, unknown> | null;
+  createdAt: number;
+}
+
+// Server tag metadata format. Identity is the tag's own `name` (never a syncId —
+// see sync.ts pushTagsToServer()/pullTagsFromServer()/mergeServerTag()).
+// `parentId` is the parent tag's NAME, never any id — despite the field name,
+// matching the server column it round-trips: tag identity on the wire is the
+// name, so the parent reference travels the same way, resolved back to a local
+// tag id on pull.
+export interface ServerTag {
+  id: string;
+  name: string;
+  slug?: string | null;
+  color?: string | null;
+  parentId?: string | null;
+  description?: string | null;
+  metadata?: Record<string, unknown> | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 // ==================== Backup Types ====================

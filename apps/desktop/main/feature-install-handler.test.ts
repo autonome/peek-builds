@@ -29,7 +29,7 @@
  * the handler's exact order, asserting each load-bearing side effect.
  *
  * Runs under Electron's Node host (ELECTRON_RUN_AS_NODE=1 electron --test).
- * `fetch` is stubbed on the global by the fixture helper; `better-sqlite3`
+ * `fetch` is stubbed on the global by the fixture helper; `node:sqlite`
  * runs in-process against a temp DB file.
  */
 

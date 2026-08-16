@@ -7,7 +7,11 @@ const fs = require("fs");
 const { DATASTORE_VERSION } = require("./version");
 
 // Load canonical schema for validation
-// Note: schema.json is copied from schema/v1.json during deploy
+// Note: schema.json is a generated, checked-in projection of
+// packages/schema/v1.json (see packages/schema/codegen.js) — apps/server/
+// is subtree-split and deployed standalone, so it can't import packages/
+// at runtime and carries its own copy instead. Regenerate with
+// `yarn schema:codegen`, never hand-edit.
 const SCHEMA = JSON.parse(
   fs.readFileSync(path.join(__dirname, "schema.json"), "utf-8")
 );
@@ -256,7 +260,16 @@ function initializeSchema(adapter) {
       createdAt INTEGER NOT NULL,
       updatedAt INTEGER NOT NULL,
       deletedAt INTEGER DEFAULT 0,
-      createdByDevice TEXT DEFAULT ''
+      createdByDevice TEXT DEFAULT '',
+      title TEXT DEFAULT '',
+      domain TEXT DEFAULT '',
+      favicon TEXT DEFAULT '',
+      frecencyScore REAL DEFAULT 0,
+      visitCount INTEGER DEFAULT 0,
+      lastVisitAt INTEGER DEFAULT 0,
+      mimeType TEXT DEFAULT '',
+      starred INTEGER DEFAULT 0,
+      archived INTEGER DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
   `);
@@ -301,7 +314,16 @@ function initializeSchema(adapter) {
     createdAt INTEGER NOT NULL,
     updatedAt INTEGER NOT NULL,
     deletedAt INTEGER DEFAULT 0,
-    createdByDevice TEXT DEFAULT ''
+    createdByDevice TEXT DEFAULT '',
+    title TEXT DEFAULT '',
+    domain TEXT DEFAULT '',
+    favicon TEXT DEFAULT '',
+    frecencyScore REAL DEFAULT 0,
+    visitCount INTEGER DEFAULT 0,
+    lastVisitAt INTEGER DEFAULT 0,
+    mimeType TEXT DEFAULT '',
+    starred INTEGER DEFAULT 0,
+    archived INTEGER DEFAULT 0
   )`, itemRenames, hasStaleTypeCheck);
 
   // Add columns that may not exist in any form.
@@ -321,6 +343,37 @@ function initializeSchema(adapter) {
   if (!itemColSet.has("createdByDevice") && !itemColSet.has("created_by_device")) {
     adapter.exec("ALTER TABLE items ADD COLUMN createdByDevice TEXT DEFAULT ''");
   }
+  // MCP remote-backend columns (storage only — sync.ts does not carry these,
+  // see docs/mcp-remote-backend-design.md §3.1).
+  if (!itemColSet.has("title")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN title TEXT DEFAULT ''");
+  }
+  if (!itemColSet.has("domain")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN domain TEXT DEFAULT ''");
+  }
+  if (!itemColSet.has("frecencyScore")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN frecencyScore REAL DEFAULT 0");
+  }
+  if (!itemColSet.has("starred")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN starred INTEGER DEFAULT 0");
+  }
+  if (!itemColSet.has("archived")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN archived INTEGER DEFAULT 0");
+  }
+  // Carried from the desktop's local-only item columns (docs/sync-coverage-gaps.md §1) —
+  // sync.ts now pushes/merges these, so the server needs somewhere to put them.
+  if (!itemColSet.has("favicon")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN favicon TEXT DEFAULT ''");
+  }
+  if (!itemColSet.has("visitCount")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN visitCount INTEGER DEFAULT 0");
+  }
+  if (!itemColSet.has("lastVisitAt")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN lastVisitAt INTEGER DEFAULT 0");
+  }
+  if (!itemColSet.has("mimeType")) {
+    adapter.exec("ALTER TABLE items ADD COLUMN mimeType TEXT DEFAULT ''");
+  }
 
   // Convert any TEXT timestamps to INTEGER (Unix ms)
   migrateTimestamps(adapter, "items", ["createdAt", "updatedAt", "syncedAt", "deletedAt"]);
@@ -337,6 +390,9 @@ function initializeSchema(adapter) {
     adapter.exec("CREATE INDEX IF NOT EXISTS idx_items_deletedAt ON items(deletedAt)");
   }
 
+  // tags.parentId stores the parent tag's NAME, not a row id — tag identity on
+  // the wire is the name, so the parent reference travels the same way (see
+  // saveTags()/getTagsSince()). Don't "fix" this into a foreign key.
   adapter.exec(`
     CREATE TABLE IF NOT EXISTS tags (
       id TEXT PRIMARY KEY,
@@ -345,7 +401,12 @@ function initializeSchema(adapter) {
       lastUsed INTEGER NOT NULL,
       frecencyScore REAL DEFAULT 0.0,
       createdAt INTEGER NOT NULL,
-      updatedAt INTEGER NOT NULL
+      updatedAt INTEGER NOT NULL,
+      slug TEXT DEFAULT '',
+      color TEXT DEFAULT '#999999',
+      parentId TEXT DEFAULT '',
+      description TEXT DEFAULT '',
+      metadata TEXT DEFAULT '{}'
     );
   `);
 
@@ -379,7 +440,12 @@ function initializeSchema(adapter) {
     lastUsed INTEGER NOT NULL,
     frecencyScore REAL DEFAULT 0.0,
     createdAt INTEGER NOT NULL,
-    updatedAt INTEGER NOT NULL
+    updatedAt INTEGER NOT NULL,
+    slug TEXT DEFAULT '',
+    color TEXT DEFAULT '#999999',
+    parentId TEXT DEFAULT '',
+    description TEXT DEFAULT '',
+    metadata TEXT DEFAULT '{}'
   )`, tagRenames, needsIdTypeRebuild);
 
   // Safety net: add any missing columns (handles unknown legacy schemas)
@@ -404,6 +470,32 @@ function initializeSchema(adapter) {
     console.log("[schema] Adding missing column tags.frequency");
     adapter.exec("ALTER TABLE tags ADD COLUMN frequency INTEGER DEFAULT 1");
   }
+  // Tag metadata columns (packages/schema/v1.json, DATASTORE_VERSION 3) — carried
+  // from the desktop's local-only tag columns the same way title/domain/frecencyScore
+  // were carried for items above. parentId stores the parent's NAME here, not a
+  // row id: identity on the wire is the tag's name, so the parent reference is
+  // the parent's name too (see index.js "=== Tag sync endpoints ==="). Don't
+  // "fix" this into a foreign key — it is deliberate.
+  if (!tagColSet.has("slug")) {
+    console.log("[schema] Adding missing column tags.slug");
+    adapter.exec("ALTER TABLE tags ADD COLUMN slug TEXT DEFAULT ''");
+  }
+  if (!tagColSet.has("color")) {
+    console.log("[schema] Adding missing column tags.color");
+    adapter.exec("ALTER TABLE tags ADD COLUMN color TEXT DEFAULT '#999999'");
+  }
+  if (!tagColSet.has("parentId")) {
+    console.log("[schema] Adding missing column tags.parentId");
+    adapter.exec("ALTER TABLE tags ADD COLUMN parentId TEXT DEFAULT ''");
+  }
+  if (!tagColSet.has("description")) {
+    console.log("[schema] Adding missing column tags.description");
+    adapter.exec("ALTER TABLE tags ADD COLUMN description TEXT DEFAULT ''");
+  }
+  if (!tagColSet.has("metadata")) {
+    console.log("[schema] Adding missing column tags.metadata");
+    adapter.exec("ALTER TABLE tags ADD COLUMN metadata TEXT DEFAULT '{}'");
+  }
 
   // Re-run rename/rebuild after ADD COLUMN (columns may now exist with snake_case from ADD)
   const tagColsAfterAdd = new Set(adapter.all("PRAGMA table_info(tags)").map(c => c.name));
@@ -416,7 +508,12 @@ function initializeSchema(adapter) {
       lastUsed INTEGER NOT NULL,
       frecencyScore REAL DEFAULT 0.0,
       createdAt INTEGER NOT NULL,
-      updatedAt INTEGER NOT NULL
+      updatedAt INTEGER NOT NULL,
+      slug TEXT DEFAULT '',
+      color TEXT DEFAULT '#999999',
+      parentId TEXT DEFAULT '',
+      description TEXT DEFAULT '',
+      metadata TEXT DEFAULT '{}'
     )`, tagRenames);
   }
 
@@ -549,6 +646,14 @@ function calculateFrecency(frequency, lastUsed) {
 }
 
 // Internal helper - needs conn passed directly
+//
+// Deliberately never touches slug/color/parentId/description/metadata: those are
+// owned by the tag-metadata sync path (saveTags()/getTagsSince(), POST /tags), and
+// this function runs on every item push that carries a tag name, including for tags
+// that already have metadata set. The UPDATE branch below only ever writes
+// frequency/lastUsed/frecencyScore/updatedAt; the INSERT branch relies on the
+// columns' own table defaults for a brand-new row. Either way, an item push must
+// never clobber metadata a tag-metadata push already landed.
 function getOrCreateTagWithConn(conn, name, timestamp) {
   const existing = conn.get("SELECT id, frequency FROM tags WHERE name = ?", [name]);
 
@@ -571,8 +676,25 @@ function getOrCreateTagWithConn(conn, name, timestamp) {
   }
 }
 
-// Unified save function for all item types
-function saveItem(userId, type, content, tags = [], metadata = null, syncId = null, profileId = "default", deletedAt = null, createdByDevice = "") {
+// Unified save function for all item types.
+// title/domain/frecencyScore are storage-only additions for the MCP remote backend
+// (docs/mcp-remote-backend-design.md §3.1) — the sync path never passes them, so they
+// default to null and COALESCE onto the existing row on update. starred/archived are
+// also declared sync:true in the schema (packages/schema/v1.json) and the sync path
+// does pass them (POST /items in index.js); they default to null here only for the
+// MCP/non-sync callers that don't have an opinion, and COALESCE the same way.
+//
+// `extra` carries the remaining columns added for full item sync coverage
+// (docs/sync-coverage-gaps.md §1: favicon, visitCount, lastVisitAt, mimeType, plus the
+// client's original createdAt) — grouped in a trailing options object rather than growing
+// the positional list further, since every existing call site is unaffected by an
+// omitted `extra`. Each field defaults to null and COALESCEs onto the existing row on
+// update, same as title/domain/frecencyScore. `createdAt` is the exception: it is honored
+// ONLY on INSERT (preserves the item's original creation date); updatedAt stays
+// server-stamped on every write, including updates, so last-write-wins conflict
+// resolution keeps working (see sync.ts mergeServerItem()).
+function saveItem(userId, type, content, tags = [], metadata = null, syncId = null, profileId = "default", deletedAt = null, createdByDevice = "", title = null, domain = null, frecencyScore = null, starred = null, archived = null, extra = {}) {
+  const { favicon = null, visitCount = null, lastVisitAt = null, mimeType = null, createdAt = null } = extra;
   const conn = getConnection(userId, profileId);
   const timestamp = now();
   const metadataJson = metadata ? JSON.stringify(metadata) : null;
@@ -615,8 +737,15 @@ function saveItem(userId, type, content, tags = [], metadata = null, syncId = nu
       } else {
         // Push live content and ensure item is not deleted (undelete case)
         conn.run(
-          "UPDATE items SET type = ?, content = ?, metadata = COALESCE(?, metadata), deletedAt = 0, updatedAt = ? WHERE id = ?",
-          [type, content, metadataJson, timestamp, itemId]
+          `UPDATE items SET type = ?, content = ?, metadata = COALESCE(?, metadata),
+           title = COALESCE(?, title), domain = COALESCE(?, domain),
+           frecencyScore = COALESCE(?, frecencyScore), starred = COALESCE(?, starred),
+           archived = COALESCE(?, archived), favicon = COALESCE(?, favicon),
+           visitCount = COALESCE(?, visitCount), lastVisitAt = COALESCE(?, lastVisitAt),
+           mimeType = COALESCE(?, mimeType),
+           deletedAt = 0, updatedAt = ? WHERE id = ?`,
+          [type, content, metadataJson, title, domain, frecencyScore, starred, archived,
+           favicon, visitCount, lastVisitAt, mimeType, timestamp, itemId]
         );
         conn.run("DELETE FROM item_tags WHERE itemId = ?", [itemId]);
       }
@@ -633,8 +762,15 @@ function saveItem(userId, type, content, tags = [], metadata = null, syncId = nu
       if (existing) {
         itemId = existing.id;
         conn.run(
-          "UPDATE items SET metadata = COALESCE(?, metadata), updatedAt = ? WHERE id = ?",
-          [metadataJson, timestamp, itemId]
+          `UPDATE items SET metadata = COALESCE(?, metadata),
+           title = COALESCE(?, title), domain = COALESCE(?, domain),
+           frecencyScore = COALESCE(?, frecencyScore), starred = COALESCE(?, starred),
+           archived = COALESCE(?, archived), favicon = COALESCE(?, favicon),
+           visitCount = COALESCE(?, visitCount), lastVisitAt = COALESCE(?, lastVisitAt),
+           mimeType = COALESCE(?, mimeType),
+           updatedAt = ? WHERE id = ?`,
+          [metadataJson, title, domain, frecencyScore, starred, archived,
+           favicon, visitCount, lastVisitAt, mimeType, timestamp, itemId]
         );
         conn.run("DELETE FROM item_tags WHERE itemId = ?", [itemId]);
       }
@@ -651,8 +787,15 @@ function saveItem(userId, type, content, tags = [], metadata = null, syncId = nu
         if (existingTags === sortedNewTags) {
           itemId = ts.id;
           conn.run(
-            "UPDATE items SET metadata = COALESCE(?, metadata), updatedAt = ? WHERE id = ?",
-            [metadataJson, timestamp, itemId]
+            `UPDATE items SET metadata = COALESCE(?, metadata),
+             title = COALESCE(?, title), domain = COALESCE(?, domain),
+             frecencyScore = COALESCE(?, frecencyScore), starred = COALESCE(?, starred),
+             archived = COALESCE(?, archived), favicon = COALESCE(?, favicon),
+             visitCount = COALESCE(?, visitCount), lastVisitAt = COALESCE(?, lastVisitAt),
+             mimeType = COALESCE(?, mimeType),
+             updatedAt = ? WHERE id = ?`,
+            [metadataJson, title, domain, frecencyScore, starred, archived,
+             favicon, visitCount, lastVisitAt, mimeType, timestamp, itemId]
           );
           conn.run("DELETE FROM item_tags WHERE itemId = ?", [itemId]);
           break;
@@ -664,9 +807,16 @@ function saveItem(userId, type, content, tags = [], metadata = null, syncId = nu
   // Create new item if no match found
   if (!itemId) {
     itemId = generateUUID();
+    // createdAt is honored from the client ONLY here, on insert — it preserves the item's
+    // original creation date. updatedAt always gets the server's own clock, on insert and
+    // every later update, so last-write-wins conflict resolution has one clock to compare.
+    const insertCreatedAt = createdAt || timestamp;
     conn.run(
-      "INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt, createdByDevice) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
-      [itemId, type, content, metadataJson, syncId || '', timestamp, timestamp, deletedAt || 0, createdByDevice || '']
+      `INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt, createdByDevice, title, domain, frecencyScore, starred, archived, favicon, visitCount, lastVisitAt, mimeType)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [itemId, type, content, metadataJson, syncId || '', insertCreatedAt, timestamp, deletedAt || 0, createdByDevice || '',
+       title || '', domain || '', frecencyScore || 0, starred || 0, archived || 0,
+       favicon || '', visitCount || 0, lastVisitAt || 0, mimeType || '']
     );
   }
 
@@ -697,7 +847,8 @@ function getItems(userId, type = null, profileId = "default", includeDeleted = f
   const conn = getConnection(userId, profileId);
 
   let query = `
-    SELECT id, type, content, metadata, createdAt, updatedAt, deletedAt, createdByDevice
+    SELECT id, type, content, metadata, createdAt, updatedAt, deletedAt, createdByDevice,
+      title, domain, frecencyScore, starred, archived, favicon, visitCount, lastVisitAt, mimeType
     FROM items
     WHERE 1=1
   `;
@@ -729,6 +880,15 @@ function getItems(userId, type = null, profileId = "default", includeDeleted = f
       updatedAt: toTimestamp(row.updatedAt),
       deletedAt: toTimestamp(row.deletedAt),
       createdByDevice: row.createdByDevice || "",
+      title: row.title || "",
+      domain: row.domain || "",
+      frecencyScore: row.frecencyScore || 0,
+      starred: row.starred || 0,
+      archived: row.archived || 0,
+      favicon: row.favicon || "",
+      visitCount: row.visitCount || 0,
+      lastVisitAt: row.lastVisitAt || 0,
+      mimeType: row.mimeType || "",
       tags: conn.all(
         "SELECT t.name FROM tags t JOIN item_tags it ON t.id = it.tagId WHERE it.itemId = ?",
         [row.id]
@@ -1025,7 +1185,8 @@ function getItemsSince(userId, timestamp, type = null, profileId = "default") {
   // CAST handles TEXT-affinity columns from legacy schemas where timestamps
   // are stored as strings (ISO 8601 or stringified numbers)
   let query = `
-    SELECT id, type, content, metadata, createdAt, updatedAt, deletedAt, createdByDevice
+    SELECT id, type, content, metadata, createdAt, updatedAt, deletedAt, createdByDevice,
+      title, domain, frecencyScore, starred, archived, favicon, visitCount, lastVisitAt, mimeType
     FROM items
     WHERE CAST(updatedAt AS INTEGER) > ?
   `;
@@ -1051,6 +1212,15 @@ function getItemsSince(userId, timestamp, type = null, profileId = "default") {
       updatedAt: toTimestamp(row.updatedAt),
       deletedAt: toTimestamp(row.deletedAt),
       createdByDevice: row.createdByDevice || "",
+      title: row.title || "",
+      domain: row.domain || "",
+      frecencyScore: row.frecencyScore || 0,
+      starred: row.starred || 0,
+      archived: row.archived || 0,
+      favicon: row.favicon || "",
+      visitCount: row.visitCount || 0,
+      lastVisitAt: row.lastVisitAt || 0,
+      mimeType: row.mimeType || "",
       tags: conn.all(
         "SELECT t.name FROM tags t JOIN item_tags it ON t.id = it.tagId WHERE it.itemId = ?",
         [row.id]
@@ -1064,13 +1234,162 @@ function getItemsSince(userId, timestamp, type = null, profileId = "default") {
 }
 
 /**
+ * Bulk-save events pushed from a client (sync push).
+ *
+ * item_events are append-only immutable facts, unlike items — there is no
+ * content to merge and no last-write-wins to resolve. Identity is the event's
+ * own id, shared verbatim with the client (no syncId indirection): INSERT OR
+ * IGNORE keyed on that primary key makes re-pushing the same event a no-op,
+ * so a sync run can safely re-send events from a run that failed partway
+ * through without duplicating anything already saved.
+ *
+ * `itemId` on every event MUST already be the SERVER's item id — the caller
+ * (desktop sync.ts pushEventsToServer()) is responsible for translating its
+ * local item id through that item's syncId before calling this route, since
+ * the server has no notion of a client's local ids.
+ *
+ * @param {string} userId
+ * @param {string} profileId
+ * @param {Array<{id: string, itemId: string, content?: string|null, value?: number|null, occurredAt: number, metadata?: object|string|null, createdAt: number}>} events
+ * @returns {{saved: number, total: number}}
+ */
+function saveEvents(userId, profileId, events) {
+  const conn = getConnection(userId, profileId);
+  let saved = 0;
+  conn.transaction(() => {
+    for (const evt of events) {
+      const metadataJson = evt.metadata
+        ? (typeof evt.metadata === "string" ? evt.metadata : JSON.stringify(evt.metadata))
+        : "{}";
+      const result = conn.run(
+        `INSERT OR IGNORE INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [evt.id, evt.itemId, evt.content ?? null, evt.value ?? null, evt.occurredAt, metadataJson, evt.createdAt]
+      );
+      if (result.changes > 0) saved++;
+    }
+  });
+  return { saved, total: events.length };
+}
+
+/**
+ * Events created since a given timestamp (for incremental sync pull).
+ * Ordered by createdAt so a client can advance a simple high-water mark, same
+ * shape as getItemsSince() for items. `itemId` on every returned row is the
+ * SERVER's item id — the caller translates it back to a local item via that
+ * item's syncId (see desktop sync.ts mergeServerEvent()).
+ */
+function getEventsSince(userId, profileId, timestamp) {
+  const conn = getConnection(userId, profileId);
+  const rows = conn.all(
+    `SELECT id, itemId, content, value, occurredAt, metadata, createdAt
+     FROM item_events WHERE CAST(createdAt AS INTEGER) > ? ORDER BY createdAt ASC`,
+    [timestamp]
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    itemId: row.itemId,
+    content: row.content,
+    value: row.value,
+    occurredAt: toTimestamp(row.occurredAt),
+    metadata: row.metadata ? JSON.parse(row.metadata) : {},
+    createdAt: toTimestamp(row.createdAt),
+  }));
+}
+
+/**
+ * Bulk-upsert tag metadata pushed from a client (sync push).
+ *
+ * Tag identity on the wire is the tag's NAME, not a syncId — the same identity
+ * `getOrCreateTagWithConn()` already uses for tag rows derived from item pushes,
+ * so a push here upserts by name instead of introducing a second identity that
+ * would need reconciling against the first. `parentId` stores the parent tag's
+ * NAME, never a server row id — despite the column name, matching the local
+ * `parentId` column it round-trips (that one IS a foreign key; this one is the
+ * name it was resolved from); the desktop client resolves it back to a local
+ * tag id on pull (see sync.ts pullTagsFromServer()).
+ *
+ * Last-write-wins on `updatedAt`, matching saveItem()'s conflict resolution: a
+ * pushed tag whose `updatedAt` is not strictly newer than the existing row's is
+ * skipped rather than overwriting it, so a stale retry can never clobber a
+ * newer value. A tag that doesn't exist yet is inserted with
+ * frequency/lastUsed/frecencyScore left at their defaults — those columns are
+ * owned by item-derived tagging (getOrCreateTagWithConn()), not by this
+ * metadata push.
+ *
+ * @param {string} userId
+ * @param {string} profileId
+ * @param {Array<{name: string, slug?: string|null, color?: string|null, parentId?: string|null, description?: string|null, metadata?: object|string|null, createdAt: number, updatedAt: number}>} tags
+ * @returns {{saved: number, total: number}}
+ */
+function saveTags(userId, profileId, tags) {
+  const conn = getConnection(userId, profileId);
+  let saved = 0;
+  conn.transaction(() => {
+    for (const tag of tags) {
+      const metadataJson = tag.metadata
+        ? (typeof tag.metadata === "string" ? tag.metadata : JSON.stringify(tag.metadata))
+        : "{}";
+      const existing = conn.get("SELECT id, updatedAt FROM tags WHERE name = ?", [tag.name]);
+
+      if (existing) {
+        if (tag.updatedAt <= toTimestamp(existing.updatedAt)) continue;
+        conn.run(
+          `UPDATE tags SET slug = ?, color = ?, parentId = ?, description = ?, metadata = ?, updatedAt = ?
+           WHERE id = ?`,
+          [tag.slug || "", tag.color || "#999999", tag.parentId || "", tag.description || "", metadataJson, tag.updatedAt, existing.id]
+        );
+        saved++;
+      } else {
+        const tagId = generateUUID();
+        conn.run(
+          `INSERT INTO tags (id, name, frequency, lastUsed, frecencyScore, createdAt, updatedAt, slug, color, parentId, description, metadata)
+           VALUES (?, ?, 0, ?, 0.0, ?, ?, ?, ?, ?, ?, ?)`,
+          [tagId, tag.name, tag.updatedAt, tag.createdAt || tag.updatedAt, tag.updatedAt,
+           tag.slug || "", tag.color || "#999999", tag.parentId || "", tag.description || "", metadataJson]
+        );
+        saved++;
+      }
+    }
+  });
+  return { saved, total: tags.length };
+}
+
+/**
+ * Tag metadata changed since a given timestamp (for incremental sync pull). Ordered
+ * by updatedAt so a client can advance a simple high-water mark, same shape as
+ * getEventsSince() for events.
+ */
+function getTagsSince(userId, profileId, timestamp) {
+  const conn = getConnection(userId, profileId);
+  const rows = conn.all(
+    `SELECT id, name, slug, color, parentId, description, metadata, createdAt, updatedAt
+     FROM tags WHERE CAST(updatedAt AS INTEGER) > ? ORDER BY updatedAt ASC`,
+    [timestamp]
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    slug: row.slug || "",
+    color: row.color || "#999999",
+    parentId: row.parentId || "",
+    description: row.description || "",
+    metadata: row.metadata ? JSON.parse(row.metadata) : {},
+    createdAt: toTimestamp(row.createdAt),
+    updatedAt: toTimestamp(row.updatedAt),
+  }));
+}
+
+/**
  * Get a single item by ID
  */
 function getItemById(userId, itemId, profileId = "default") {
   const conn = getConnection(userId, profileId);
 
   const row = conn.get(
-    "SELECT id, type, content, metadata, createdAt, updatedAt, createdByDevice FROM items WHERE id = ? AND CAST(deletedAt AS INTEGER) = 0",
+    `SELECT id, type, content, metadata, createdAt, updatedAt, createdByDevice,
+      title, domain, frecencyScore, starred, archived, favicon, visitCount, lastVisitAt, mimeType
+     FROM items WHERE id = ? AND CAST(deletedAt AS INTEGER) = 0`,
     [itemId]
   );
 
@@ -1083,6 +1402,15 @@ function getItemById(userId, itemId, profileId = "default") {
     createdAt: toTimestamp(row.createdAt),
     updatedAt: toTimestamp(row.updatedAt),
     createdByDevice: row.createdByDevice || "",
+    title: row.title || "",
+    domain: row.domain || "",
+    frecencyScore: row.frecencyScore || 0,
+    starred: row.starred || 0,
+    archived: row.archived || 0,
+    favicon: row.favicon || "",
+    visitCount: row.visitCount || 0,
+    lastVisitAt: row.lastVisitAt || 0,
+    mimeType: row.mimeType || "",
     tags: conn.all(
       "SELECT t.name FROM tags t JOIN item_tags it ON t.id = it.tagId WHERE it.itemId = ?",
       [row.id]
@@ -1178,6 +1506,7 @@ function deduplicateItems(userId, profileId = "default") {
 
 module.exports = {
   getConnection,
+  getProfileDir,
   closeAllConnections,
   closeConnection,
   getStorageAdapter,
@@ -1188,6 +1517,12 @@ module.exports = {
   getItemById,
   deleteItem,
   updateItemTags,
+  // Event sync
+  saveEvents,
+  getEventsSince,
+  // Tag metadata sync
+  saveTags,
+  getTagsSince,
   // Type-specific helpers
   saveText,
   saveTagset,

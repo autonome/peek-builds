@@ -12,7 +12,14 @@ dispatcher.
 
 **Read-only against the repo. Writes only to Peek.** No edits, no commits, no
 worktrees, no spawning. Repo access exists so a verify command can be written
-from the real test scripts rather than guessed.
+from the real test scripts rather than guessed. Reading happens in the primary
+checkout, which holds `main` and stays clean — this pass never needs a worktree.
+
+**Prerequisite:** the Peek MCP is not wired into this repo yet (no `.mcp.json`),
+so `mcp__peek__*` is absent and this pass cannot run. Wire it with
+`peek-mcp-init peek --writes` from the repo root, then restart Claude Code
+fully — see `dispatch/operating.md`. Tools missing → say so and stop; never
+substitute a local file queue.
 
 The tag model, the quality markers and the `peek:ready` contract are owned by
 the `peek` skill. This pass applies them; it does not redefine them.

@@ -4,6 +4,14 @@ Read on demand — `SKILL.md` is read every tick and stays short. This file
 covers how the loop is driven, how to stop it, and the ways it is known to
 fail.
 
+## Before either loop can run
+
+The Peek MCP is not wired into this repo — there is no `.mcp.json`, so
+`mcp__peek__*` does not exist here and both skills are inert. Wire it from the
+repo root with `peek-mcp-init peek --writes` and restart Claude Code fully
+(see the `peek-mcp-scope` skill). Nothing else in this file matters until that
+is done.
+
 ## Driving it
 
 Two loops, in idle terminal sessions opened in the repo root:
@@ -70,6 +78,17 @@ it would reliably turn the suite red, and not before.
 - **Silent skips.** An item claimed but never spawned, or a worktree reclaimed
   without a note, disappears. Every reclaim writes a `record_event` and every
   tick reports, so the trail is in Peek rather than in a terminal scrollback.
+- **A permission prompt with nobody there to answer it.** An agent that trips an
+  interactive approval does not fail — it waits, indefinitely, looking exactly
+  like an agent that is thinking. This is the failure mode that costs a whole
+  night rather than a tick. The permission surface an unattended agent needs is
+  wider than the one an attended agent needs, because a human at the keyboard
+  silently absorbs every prompt. Before a long unattended run, allowlist what the
+  work will touch outside the repo — the tool-time hook auto-allows file writes
+  only under the session's own directory, so temporary directories, config paths
+  under `$HOME`, and any install command are the usual offenders. Reconcile
+  treats a frozen agent as stalled after two ticks, which converts an overnight
+  hang into a fifteen-minute one, but only after the fact.
 
 ## Related machinery that is out of date
 

@@ -11,8 +11,20 @@
  * - Versions are simple integers, only increment
  * - Exact match required — if versions differ, sync is refused (HTTP 409)
  * - Clients sending no version headers are accepted during rollout
+ *
+ * DATASTORE_VERSION 2 (2026-08): items gained title/domain/favicon/visitCount/
+ * lastVisitAt/frecencyScore/mimeType as synced columns (packages/schema/v1.json,
+ * docs/sync-coverage-gaps.md §1). Must stay in lockstep with
+ * apps/desktop/version.ts DATASTORE_VERSION — see that file for how the desktop
+ * client also uses this number to force a one-time full re-push.
+ *
+ * DATASTORE_VERSION 3 (2026-08): tags gained slug/color/parentId/description/
+ * metadata as synced columns (packages/schema/v1.json + apps/server/schema.json,
+ * docs/sync-coverage-gaps.md §3). The server column `parentId` stores the parent
+ * tag's NAME, not a row id — tag identity on the wire is the name, so the
+ * parent reference travels the same way. Don't "fix" it into a foreign key.
  */
-const DATASTORE_VERSION = 1;
+const DATASTORE_VERSION = 3;
 const PROTOCOL_VERSION = 1;
 
 module.exports = { DATASTORE_VERSION, PROTOCOL_VERSION };

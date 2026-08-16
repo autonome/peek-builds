@@ -7,6 +7,7 @@
  */
 
 const users = require("./users");
+const grants = require("./grants");
 
 /**
  * @typedef {import('./config').ServerConfig} ServerConfig
@@ -46,6 +47,15 @@ function singleUserMiddleware(singleUser) {
     // /admin/* has its own ADMIN_TOKEN gate (see adminMiddleware) — never
     // authenticate it with a user/device credential.
     if (c.req.path.startsWith("/admin")) {
+      return next();
+    }
+
+    // /mcp/* has its own grant-credential gate (see createMcpAuthMiddleware)
+    // — a device/user credential does not carry a scope or a readonly bit, so
+    // it must never authenticate an MCP route. The trailing slash matters: the
+    // skip must cover exactly what `app.use("/mcp/*", …)` covers, or a future
+    // path like /mcp-admin would skip this gate without gaining another.
+    if (c.req.path.startsWith("/mcp/")) {
       return next();
     }
 
@@ -90,6 +100,16 @@ function multiUserMiddleware() {
       return next();
     }
 
+    // /mcp/* has its own grant-credential gate (see createMcpAuthMiddleware)
+    // — a device key is unscoped by nature, and letting it authenticate here
+    // would make every phone install a whole-store MCP key. The trailing slash
+    // matters: the skip must cover exactly what `app.use("/mcp/*", …)` covers,
+    // or a future path like /mcp-admin would skip this gate without gaining
+    // another.
+    if (c.req.path.startsWith("/mcp/")) {
+      return next();
+    }
+
     // Skip auth in e2e test mode (use 'default' user)
     if (process.env.E2E_TEST === 'true') {
       c.set("userId", "default");
@@ -120,4 +140,42 @@ function multiUserMiddleware() {
   };
 }
 
-module.exports = { createAuthMiddleware };
+/**
+ * MCP grant authentication middleware, mounted on /mcp/*.
+ *
+ * Resolves the bearer token through grants.resolveMcpGrant() — a distinct
+ * credential namespace from users.resolveDevice() (see grants.js), so a
+ * device key can never authenticate here and a grant key can never
+ * authenticate the sync routes. Scope and the readonly bit are properties of
+ * the credential, not the client: they are set on the context here, once,
+ * and every downstream /mcp/* handler enforces them server-side (design doc
+ * §4.1–§4.2) rather than trusting the caller to have filtered itself.
+ *
+ * @returns {function}
+ */
+function createMcpAuthMiddleware() {
+  return async (c, next) => {
+    const auth = c.req.header("Authorization");
+    if (!auth || !auth.startsWith("Bearer ")) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const apiKey = auth.slice(7); // Remove "Bearer " prefix
+
+    // Resolve the key to a grant credential. A revoked grant is rejected here
+    // even though its key is otherwise well-formed, matching resolveDevice.
+    const grant = grants.resolveMcpGrant(apiKey);
+    if (!grant || grant.revoked || !grant.userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    c.set("userId", grant.userId);
+    c.set("scopeTag", grant.scopeTag);
+    c.set("readonly", grant.readonly);
+    c.set("profileId", grant.profileId);
+    c.set("grantId", grant.grantId);
+    return next();
+  };
+}
+
+module.exports = { createAuthMiddleware, createMcpAuthMiddleware };

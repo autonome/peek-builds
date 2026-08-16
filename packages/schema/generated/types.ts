@@ -30,17 +30,17 @@ export interface SchemaItems {
   starred: number;
   /** Archived flag (0/1) */
   archived: number;
-  /** Number of visits (local tracking) */
+  /** Number of visits */
   visitCount: number;
-  /** Last visit timestamp (local tracking) */
+  /** Last visit timestamp */
   lastVisitAt: number;
-  /** Frecency score for ranking (local calculation) */
+  /** Frecency score for ranking */
   frecencyScore: number;
-  /** Page title (cached locally for URL items) */
+  /** Page title */
   title: string;
-  /** Domain extracted from URL (cached locally) */
+  /** Domain extracted from URL */
   domain: string;
-  /** Favicon URL (cached locally) */
+  /** Favicon URL */
   favicon: string;
 }
 
@@ -60,15 +60,15 @@ export interface SchemaTags {
   createdAt: number;
   /** Last update timestamp (Unix ms) */
   updatedAt: number;
-  /** URL-safe slug (desktop only) */
+  /** URL-safe slug */
   slug: string | null;
-  /** Display color (desktop only) */
+  /** Display color */
   color: string;
-  /** Parent tag for hierarchy (desktop only) */
+  /** Parent tag for hierarchy. Travels on the wire under the same field name, `parentId`, but holding the parent's name, not this id — tag identity is the name, so the reference is too. Resolved back to a local tag id on pull. On the server, the `parentId` column itself stores that name, never a row id — don't mistake it for a foreign key. */
   parentId: string;
-  /** Tag description (desktop only) */
+  /** Tag description */
   description: string;
-  /** JSON metadata (desktop only) */
+  /** JSON metadata */
   metadata: string;
 }
 
@@ -135,8 +135,8 @@ export type SchemaSyncTableName = 'items' | 'tags' | 'item_tags' | 'rules' | 'it
 
 /** Required sync columns by table */
 export const REQUIRED_SYNC_COLUMNS: Record<SchemaSyncTableName, string[]> = {
-  items: ["id","type","content","syncId","syncedAt","createdAt","updatedAt","deletedAt"],
-  tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt"],
+  items: ["id","type","content","syncId","syncedAt","createdAt","updatedAt","deletedAt","title","domain","favicon","visitCount","lastVisitAt","frecencyScore"],
+  tags: ["id","name","frequency","lastUsed","frecencyScore","createdAt","updatedAt","slug","color","parentId","description","metadata"],
   item_tags: ["itemId","tagId","createdAt"],
   item_events: ["id","itemId","content","value","occurredAt","metadata","createdAt"],
   rules: [],

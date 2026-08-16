@@ -14,19 +14,30 @@
  * items tagged <scope> or <scope>:*. Writes default to OFF; pass
  * --writes to enable mutating tools.
  *
+ * Remote mode (--remote <url>) targets a Peek sync server instead of a local
+ * datastore — no PEEK_DB_PATH, no local database lookup. Neither the host
+ * nor the credential is ever written into the project: the entry's
+ * PEEK_MCP_REMOTE_URL is a $PEEK_SYNC_URL reference the caller's shell must
+ * export to the actual value; by default the credential is likewise a
+ * $PEEK_MCP_TOKEN reference, and --store-token reads a minted grant token
+ * from stdin instead and stores it in a 0600 file outside the repo,
+ * referenced from the entry by lookup key.
+ *
  * Usage:
  *   node setup.js --scope <tag>                       # user scope (~/.claude.json)
  *   node setup.js --scope <tag> --mcp-json            # <cwd>/.mcp.json (project scope)
  *   node setup.js --scope <tag> --writes              # opt into mutating tools
  *   node setup.js --scope <tag> --profile <name>      # non-default Peek profile
  *   node setup.js --scope <tag> --print               # print snippet, don't write
+ *   node setup.js --scope <tag> --remote <url>        # remote server, no local datastore
+ *   node setup.js --scope <tag> --remote <url> --store-token   # token piped on stdin
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, chmodSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { TEMPLATE_BODY, BODY_BEGIN, BODY_END } from './peek-skill-template.js';
+import { TEMPLATE_BODY, BODY_BEGIN, BODY_END, REMOTE_PARAGRAPH } from './peek-skill-template.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -70,6 +81,38 @@ function findDbPath(profile = 'default') {
   return null;
 }
 
+// --- Remote credential file ---
+// Never in the project: the minted grant token lives here, mode 0600,
+// outside the repo. .mcp.json carries only a lookup key into this file
+// (or a ${VAR} reference), never the token itself.
+
+function credentialFilePath() {
+  return join(homedir(), '.config', 'peek', 'mcp-credentials.json');
+}
+
+// Store a minted grant token under the `<url>#<scope>` key. Returns the key
+// so the caller can put it in PEEK_MCP_CREDENTIAL without the token ever
+// touching a project file.
+function writeCredentialFile(url, scope, token, label) {
+  const path = credentialFilePath();
+  const data = readJsonFile(path);
+  if (!data.credentials) data.credentials = {};
+  const key = `${url}#${scope}`;
+  data.credentials[key] = { token, label };
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = path + '.peek-tmp';
+  writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  chmodSync(tmp, 0o600);
+  renameSync(tmp, path);
+  return { path, key };
+}
+
+// Read a minted token piped on stdin for --store-token. Stdin only — never
+// an argv value, never echoed to stdout or stderr, never logged.
+function readTokenFromStdin() {
+  return readFileSync(0, 'utf-8').trim();
+}
+
 // --- Tool sets (must mirror server.js TOOLS array) ---
 
 // Read-only tools: safe to always allow.
@@ -84,7 +127,36 @@ function allowList({ writes }) {
 
 // --- Snippet builders ---
 
-function buildEnv(dbPath, { scope, readonly }) {
+// Unresolved on purpose, both of these: Claude Code expands "${VAR}" entries
+// from the launching shell's environment. A server URL carries a hostname,
+// so it gets the same treatment as the token — never the literal value the
+// caller passed to --remote, only a reference to a shell variable. If either
+// is unset, the literal "${...}" text passes through instead of a resolved
+// value, which is what lets a startup guard downstream fail loudly rather
+// than dial an empty host or send an unexpanded string as a bearer token.
+const REMOTE_URL_REF = '${PEEK_SYNC_URL}';
+const TOKEN_REF = '${PEEK_MCP_TOKEN}';
+
+function buildEnv(dbPath, { scope, readonly, remote, credential }) {
+  if (remote) {
+    // No datastore in remote mode — PEEK_DB_PATH is omitted entirely.
+    // PEEK_MCP_SCOPE_TAG is still written: not the enforcement mechanism
+    // (the grant is), but it lets the child fail fast and gives
+    // checkConfigDrift() something to compare.
+    const env = { PEEK_MCP_REMOTE_URL: REMOTE_URL_REF, PEEK_MCP_SCOPE_TAG: scope };
+    if (credential) {
+      // A lookup key into the 0600 credential file — not a secret — but it's
+      // still built from the reference form so the host never lands here
+      // literally either. It expands to the same "<url>#<scope>" key the
+      // credential file was written under, once Claude Code resolves
+      // PEEK_SYNC_URL from the shell.
+      env.PEEK_MCP_CREDENTIAL = `${REMOTE_URL_REF}#${scope}`;
+    } else {
+      env.PEEK_MCP_TOKEN = TOKEN_REF;
+    }
+    if (readonly) env.PEEK_MCP_READONLY = '1';
+    return env;
+  }
   const env = { PEEK_DB_PATH: dbPath, PEEK_MCP_SCOPE_TAG: scope };
   if (readonly) env.PEEK_MCP_READONLY = '1';
   return env;
@@ -95,9 +167,11 @@ function bundledSnippet(launcherPath, dbPath, opts) {
 }
 
 function devSnippet(serverPath, dbPath, opts) {
+  // Remote mode never touches node:sqlite, so the flag that enables it drops.
+  const args = opts.remote ? [serverPath] : ['--experimental-sqlite', serverPath];
   return {
     command: 'node',
-    args: ['--experimental-sqlite', serverPath],
+    args,
     env: buildEnv(dbPath, opts),
   };
 }
@@ -131,18 +205,25 @@ function allowSettingsPath(mainPath, isMcpJson) {
   return join(dirname(mainPath), 'settings.local.json');
 }
 
-// Render the skill body with scope substitution.
-function renderSkillBody(scope) {
-  return TEMPLATE_BODY.replace(/\{SCOPE\}/g, scope);
+// Render the skill body with scope substitution. In remote mode, splices
+// REMOTE_PARAGRAPH in ahead of the Tag model section (still inside the
+// BODY_BEGIN/END managed span, so it's refreshed on every re-run).
+function renderSkillBody(scope, { remote } = {}) {
+  const body = TEMPLATE_BODY.replace(/\{SCOPE\}/g, scope);
+  if (!remote) return body;
+  const anchor = '\n## Tag model';
+  const idx = body.indexOf(anchor);
+  if (idx === -1) return body;
+  return body.slice(0, idx) + '\n' + REMOTE_PARAGRAPH.trim() + '\n' + body.slice(idx);
 }
 
 // Scaffold or refresh <cwd>/.claude/skills/peek.md. Returns { path, action }
 // where action is 'created' | 'refreshed' | 'unchanged'. The auto-managed
 // section is bracketed by BODY_BEGIN/END markers; anything after BODY_END is
 // preserved across re-runs so per-project conventions survive.
-function writeSkillFile(cwd, scope) {
+function writeSkillFile(cwd, scope, { remote } = {}) {
   const path = join(cwd, '.claude', 'skills', 'peek.md');
-  const rendered = renderSkillBody(scope);
+  const rendered = renderSkillBody(scope, { remote });
 
   if (!existsSync(path)) {
     mkdirSync(dirname(path), { recursive: true });
@@ -185,6 +266,7 @@ function writeGitignoreBlock(cwd) {
   const block = [
     GITIGNORE_BEGIN,
     '# Per-developer Peek MCP wiring — machine/scope-specific, do not commit.',
+    '# Remote-mode credentials live outside the project, in ~/.config/peek/mcp-credentials.json.',
     '.mcp.json',
     '.claude/settings.local.json',
     '.claude/skills/peek.md',
@@ -223,7 +305,9 @@ function writeGitignoreBlock(cwd) {
 // re-specifying params. Checks project .mcp.json first (the recommended
 // layout), then the user-scope ~/.claude.json (the default/global refresh
 // case). Returns { found, scope, writes, profile, dest } where dest is
-// 'mcp-json' | 'global'.
+// 'mcp-json' | 'global' — or, for a remote install, { found, scope, writes,
+// remote, dest } with no profile (there's no local datastore to attribute
+// one to).
 function detectExistingInstall(cwd) {
   const candidates = [
     { path: join(cwd, '.mcp.json'), dest: 'mcp-json' },
@@ -238,6 +322,9 @@ function detectExistingInstall(cwd) {
     const scope = (env.PEEK_MCP_SCOPE_TAG || '').trim();
     if (!scope) continue;
     const writes = env.PEEK_MCP_READONLY !== '1';
+    if (env.PEEK_MCP_REMOTE_URL) {
+      return { found: true, scope, writes, remote: env.PEEK_MCP_REMOTE_URL, dest };
+    }
     let profile = 'default';
     const dbPath = env.PEEK_DB_PATH || '';
     const m = dbPath.match(/\/Peek\/([^/]+)\/datastore\.sqlite$/);
@@ -272,7 +359,8 @@ function mergeAllowEntries(path, entries) {
 function parseArgs(argv) {
   const opts = { scope: '', profile: 'default', writes: false,
                  print: false, mcpJson: false, allow: true,
-                 skill: true, gitignore: true, help: false };
+                 skill: true, gitignore: true, help: false,
+                 remote: '', storeToken: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
@@ -284,6 +372,8 @@ function parseArgs(argv) {
       case '--no-allow': opts.allow = false; break;
       case '--no-skill': opts.skill = false; break;
       case '--no-gitignore': opts.gitignore = false; break;
+      case '--remote':  opts.remote = argv[++i] || ''; break;
+      case '--store-token': opts.storeToken = true; break;
       case '--help':
       case '-h':        opts.help = true; break;
       default:
@@ -310,6 +400,15 @@ Options:
   --no-skill        Skip scaffolding the per-project peek skill
   --no-gitignore    Skip adding the scaffolded files to .gitignore
   --print           Print the snippet to stdout, do not write
+  --remote <url>    Target a remote Peek server instead of a local datastore.
+                     No PEEK_DB_PATH. The url you pass here is used only to
+                     derive the credential-file key and print guidance — the
+                     entry itself carries a $PEEK_SYNC_URL reference (export
+                     it to this value), never the literal host, and by
+                     default a $PEEK_MCP_TOKEN reference for the credential.
+  --store-token     With --remote: read a minted grant token from stdin and
+                     store it in ~/.config/peek/mcp-credentials.json (mode
+                     0600, outside the repo) instead of an env reference.
 
 By default also:
   - appends mcp__peek__* tool names to permissions.allow in settings.local.json
@@ -344,7 +443,11 @@ function main() {
     if (existing.found) {
       opts.scope = existing.scope;
       opts.writes = existing.writes;
-      opts.profile = existing.profile;
+      if (existing.remote) {
+        opts.remote = existing.remote;
+      } else {
+        opts.profile = existing.profile;
+      }
       if (existing.dest === 'mcp-json') opts.mcpJson = true;
       refreshing = true;
     }
@@ -357,28 +460,57 @@ function main() {
     process.exit(2);
   }
 
-  const dbPath = findDbPath(opts.profile);
-  if (!dbPath) {
-    process.stderr.write(`Could not find Peek database for profile "${opts.profile}".\n`);
-    process.stderr.write('Looked in:\n');
-    process.stderr.write(`  ~/Library/Application Support/Peek/${opts.profile}/datastore.sqlite\n`);
-    process.stderr.write(`  ~/.config/Peek/${opts.profile}/datastore.sqlite\n`);
-    process.stderr.write(`  ~/.local/share/Peek/${opts.profile}/datastore.sqlite\n`);
-    process.stderr.write('\nSet PEEK_DB_PATH to override.\n');
-    process.exit(1);
+  // Remote mode has no local datastore to look for; skip the lookup and its
+  // fatal-exit branch entirely.
+  let dbPath = null;
+  if (!opts.remote) {
+    dbPath = findDbPath(opts.profile);
+    if (!dbPath) {
+      process.stderr.write(`Could not find Peek database for profile "${opts.profile}".\n`);
+      process.stderr.write('Looked in:\n');
+      process.stderr.write(`  ~/Library/Application Support/Peek/${opts.profile}/datastore.sqlite\n`);
+      process.stderr.write(`  ~/.config/Peek/${opts.profile}/datastore.sqlite\n`);
+      process.stderr.write(`  ~/.local/share/Peek/${opts.profile}/datastore.sqlite\n`);
+      process.stderr.write('\nSet PEEK_DB_PATH to override.\n');
+      process.exit(1);
+    }
   }
 
   const launcher = detectBundledLauncher();
-  const snippetOpts = { scope: opts.scope, readonly: !opts.writes };
-  const snippet = launcher
-    ? bundledSnippet(launcher, dbPath, snippetOpts)
-    : devSnippet(resolve(__dirname, 'server.js'), dbPath, snippetOpts);
   const mode = launcher ? 'bundled' : 'dev';
+  function buildSnippet(credential) {
+    const snippetOpts = { scope: opts.scope, readonly: !opts.writes, remote: opts.remote, credential };
+    return launcher
+      ? bundledSnippet(launcher, dbPath, snippetOpts)
+      : devSnippet(resolve(__dirname, 'server.js'), dbPath, snippetOpts);
+  }
 
   if (opts.print) {
+    // Dry run: never touches stdin or the credential file, and always shows
+    // the env-reference form — --store-token is a real-install-only step.
+    const snippet = buildSnippet(null);
     process.stdout.write(JSON.stringify({ mcpServers: { peek: snippet } }, null, 2) + '\n');
     return;
   }
+
+  let credential = null;
+  if (opts.remote && opts.storeToken) {
+    // A refreshed install only recovers the $PEEK_SYNC_URL reference (the
+    // real host is deliberately not in the project to recover it from) —
+    // --store-token needs the concrete url to key the credential file.
+    if (opts.remote.startsWith('${')) {
+      process.stderr.write('Error: --store-token needs the concrete server URL — pass --remote <url> explicitly.\n');
+      process.exit(2);
+    }
+    const token = readTokenFromStdin();
+    if (!token) {
+      process.stderr.write('Error: --store-token requires a minted grant token on stdin (none received).\n');
+      process.exit(2);
+    }
+    const { key } = writeCredentialFile(opts.remote, opts.scope, token, `peek-mcp-init: ${opts.scope}`);
+    credential = key;
+  }
+  const snippet = buildSnippet(credential);
 
   let settingsPath;
   let isMcpJson = false;
@@ -394,13 +526,22 @@ function main() {
   }
 
   if (refreshing) {
-    process.stderr.write('Refreshing existing install — recovered scope, writes, and profile from this directory.\n');
+    process.stderr.write(opts.remote
+      ? 'Refreshing existing install — recovered scope, writes, and remote URL from this directory.\n'
+      : 'Refreshing existing install — recovered scope, writes, and profile from this directory.\n');
   }
   process.stderr.write(`Peek MCP Setup (${mode})\n`);
   process.stderr.write(`  Scope:    ${opts.scope} (and ${opts.scope}:*)\n`);
   process.stderr.write(`  Writes:   ${opts.writes ? 'enabled' : 'OFF (read-only)'}\n`);
-  process.stderr.write(`  Profile:  ${opts.profile}\n`);
-  process.stderr.write(`  Database: ${dbPath}\n`);
+  if (opts.remote) {
+    process.stderr.write(`  Remote:   ${opts.remote} — export PEEK_SYNC_URL to this value in the launching shell; the entry only ever carries a $PEEK_SYNC_URL reference.\n`);
+    process.stderr.write(`  Credential: ${credential
+      ? `stored in ${credentialFilePath()} (0600)`
+      : 'via $PEEK_MCP_TOKEN in the launching shell\'s environment'}\n`);
+  } else {
+    process.stderr.write(`  Profile:  ${opts.profile}\n`);
+    process.stderr.write(`  Database: ${dbPath}\n`);
+  }
   if (launcher) {
     process.stderr.write(`  Launcher: ${launcher}\n`);
   } else {
@@ -435,7 +576,7 @@ function main() {
   // Global (user-scope) mode has no project context to scaffold into.
   const projectMode = opts.mcpJson;
   if (opts.skill && projectMode) {
-    const result = writeSkillFile(process.cwd(), opts.scope);
+    const result = writeSkillFile(process.cwd(), opts.scope, { remote: opts.remote });
     if (result.action === 'created') {
       process.stderr.write(`Scaffolded skill at ${result.path}.\n`);
     } else if (result.action === 'refreshed') {

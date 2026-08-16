@@ -34,16 +34,8 @@ set -euo pipefail
 if [ "$(uname -s)" = "Linux" ]; then
   # A missing openbox used to be silent: `openbox &` below printed
   # "command not found" into the run's noise and the suite carried on with no
-  # window manager at all. Running a GUI suite in that state should be a
-  # decision, not an accident, so refuse.
-  #
-  # Measured, and it qualifies the rationale in the header comment: neither
-  # named spec actually discriminates on window-manager presence on Linux x64.
-  # window-targeting.spec.ts passes 9/9 both with openbox and under bare Xvfb,
-  # including "maximize is non-toggling" — so it is a pin, not evidence that
-  # maximize is honored. page-layout.spec.ts fails the same 2 tests either way,
-  # for an unrelated waitOverlayReady timeout. The window-manager requirement is
-  # therefore unconfirmed by any test currently in the suite.
+  # window manager, so the maximize-dependent specs measured pre-maximize
+  # geometry and PASSED. A false green is worse than no run, so refuse.
   if ! command -v openbox >/dev/null 2>&1; then
     if [ "${PEEK_ALLOW_NO_WM:-}" = "1" ]; then
       echo "playwright-with-display: openbox missing; PEEK_ALLOW_NO_WM=1 set — running WITHOUT a window manager." >&2

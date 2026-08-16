@@ -29,15 +29,39 @@ The `agent-review` skill's *judgment* half is current; its finalize and
 clone-pool commands describe retired machinery. Landing steps below supersede
 them.
 
+## Prerequisite: the Peek MCP must be wired into this repo
+
+The queue lives in Peek, reached through `mcp__peek__*`. This repo has no
+`.mcp.json`, so those tools are absent and every tick is a no-op until it is
+wired, from the repo root:
+
+```
+/Applications/Peek.app/Contents/Resources/peek-mcp-init peek --writes
+```
+
+Then fully quit and reopen Claude Code here — the MCP server is a child process
+whose env is frozen at spawn, and re-approving the `/mcp` prompt does not
+respawn it. See the `peek-mcp-scope` skill.
+
+Tools missing → report that and end the tick. Do not substitute a local file
+queue, a built-in todo list, or a guess at what the queue contains.
+
+## Where work happens
+
+The **primary checkout holds `main`, stays clean, and is never a work slot.**
+It is where merges and the test gate run. Every unit of work gets its own
+worktree under `.worktrees/<slot>` on its own `agent/<slot>` branch. No agent —
+dispatched or hand-spawned — edits the primary checkout.
+
 ## Rails
 
 - **No code edits in a tick.** A dispatcher that starts writing code stops
   dispatching.
 - **At most one spawn per tick.** Without this a loop fills the pool inside an
   hour and the failure is discovered at rate-limit time.
-- **Cap: 4 task worktrees**, not counting the worktree that holds `main`. The
-  real ceiling is lower anyway — `yarn test:desktop:electron` runs ~10 minutes
-  and only one landing can hold `main` at a time.
+- **Cap: 4 task worktrees.** The real ceiling is lower anyway —
+  `yarn test:desktop:electron` runs ~10 minutes in the primary checkout and
+  landings serialize behind it.
 - **`/tmp/mpeek-dispatch-off` exists → the tick is a no-op.** Report nothing,
   end.
 - **`peek:hold` on an item makes it invisible to claiming.** Per-item pause.
@@ -51,9 +75,11 @@ them.
 git worktree list
 ```
 
-One worktree holds `main` — that is the landing worktree, not a slot. Task
-slots are the remainder, named `<task-id-prefix>-<short-label>` (e.g.
-`71cfde09-chrome-host-gate`) so the listing is self-describing.
+The primary checkout is listed first and holds `main`; it is not a slot. Task
+slots are the `.worktrees/*` entries, named `<task-id-prefix>-<short-label>`
+(e.g. `71cfde09-chrome-host-gate`) so the listing is self-describing. A
+long-lived worktree carrying a `wip/*` branch is a human-driven initiative —
+count it against the cap, never reconcile or reclaim it.
 
 If `/tmp/mpeek-dispatch-off` is present, stop here.
 
@@ -125,10 +151,16 @@ makes the initiative survive a stalled agent, a dispatcher restart, and a
 session boundary — it is the per-initiative version of the single-repo handoff
 loop, and it is the reason more than one initiative can run at once.
 
-Spawn with `run_in_background: true`, `subagent_type: routine-coder` for
-specified mechanical work and `general-purpose` only when the task needs
-judgment, labelled with the slot name. The brief must name the worktree path —
-that is also what satisfies the second-writer spawn guard.
+Spawn with `run_in_background: true`, labelled with the slot name. The brief must
+name the worktree path — that is also what satisfies the second-writer spawn
+guard.
+
+**A dispatchable task is a routable one: use `routine-coder`.** An item only
+reaches this step by carrying a done-condition and a verify command, which means
+the work is already written down — and written-down work belongs to
+`routine-coder`, however large it is. The catch-all agent exists for work nobody
+could specify, which by definition never survives the claim step. Reaching for it
+here is the absence of a routing decision, and the spawn guard rejects it.
 
 ### Brief template
 
@@ -161,14 +193,14 @@ Only after `agent-review` returns a pass. In dependency order if several are
 waiting:
 
 ```bash
-git -C .worktrees/<main-holding-worktree> merge --ff-only agent/<slot>
+git -C /home/dev/workspace/peek merge --ff-only agent/<slot>
 ```
 
 Not a fast-forward → rebase **in the task worktree** (`git -C
-.worktrees/<slot> rebase main`), then retry. Never rebase in the worktree
-holding `main`.
+.worktrees/<slot> rebase main`), then retry. Never rebase in the primary
+checkout.
 
-Then the gate, from the worktree holding `main`, backgrounded:
+Then the gate, from the primary checkout, backgrounded:
 
 ```bash
 yarn test:desktop:electron

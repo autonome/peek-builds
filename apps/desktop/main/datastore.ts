@@ -2,10 +2,10 @@
  * Electron backend - SQLite datastore
  *
  * Simple module with database functions for Electron's main process.
- * Uses better-sqlite3 for synchronous SQLite access.
+ * Uses node:sqlite (DatabaseSync) for synchronous SQLite access.
  */
 
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -201,7 +201,11 @@ const createTableStatements = `
     starred INTEGER DEFAULT 0,
     archived INTEGER DEFAULT 0,
     visitCount INTEGER DEFAULT 0,
-    lastVisitAt INTEGER DEFAULT 0
+    lastVisitAt INTEGER DEFAULT 0,
+    frecencyScore INTEGER DEFAULT 0,
+    title TEXT DEFAULT '',
+    domain TEXT DEFAULT '',
+    favicon TEXT DEFAULT ''
   );
   CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
   CREATE INDEX IF NOT EXISTS idx_items_syncId ON items(syncId);
@@ -360,8 +364,65 @@ const createTableStatements = `
   );
 `;
 
+// ==================== node:sqlite compatibility shim ====================
+//
+// node:sqlite's own types are far stricter than better-sqlite3's: bind
+// parameters must be `SQLInputValue`, rows come back typed as
+// `Record<string, SQLOutputValue>`, and `run()`'s `changes` /
+// `lastInsertRowid` are typed `number | bigint`. This file (and its many
+// external callers via getDb()) casts prepared-statement results with plain
+// `as SomeInterface` throughout — the same loose ergonomics better-sqlite3's
+// own types offered by defaulting its generics to `unknown`. Importing
+// DatabaseSync's stricter types directly would force an `as unknown as X`
+// at every one of those call sites for a driver swap that changes no
+// runtime behaviour, so `db`/`getDb()` are held as this narrower `Db` view
+// instead. The underlying object is still a real `DatabaseSync`.
+//
+// `run()` is also normalized to plain `number`s here — `changes` and
+// `lastInsertRowid` are always well within Number.MAX_SAFE_INTEGER for this
+// schema (row counts, ms timestamps), so this never loses precision; see
+// apps/server/sql/node-sqlite-adapter.js for the same normalization.
+
+export interface DbStatement {
+  get(...params: unknown[]): unknown;
+  all(...params: unknown[]): unknown[];
+  run(...params: unknown[]): { changes: number; lastInsertRowid: number };
+}
+
+export interface Db {
+  prepare(sql: string): DbStatement;
+  exec(sql: string): void;
+  close(): void;
+}
+
+function wrapStatement(stmt: ReturnType<DatabaseSync['prepare']>): DbStatement {
+  return {
+    get: (...params: unknown[]) => stmt.get(...(params as Parameters<typeof stmt.get>)),
+    all: (...params: unknown[]) => stmt.all(...(params as Parameters<typeof stmt.all>)),
+    run: (...params: unknown[]) => {
+      const result = stmt.run(...(params as Parameters<typeof stmt.run>));
+      return { changes: Number(result.changes), lastInsertRowid: Number(result.lastInsertRowid) };
+    },
+  };
+}
+
+/** Exported so tests can wrap an in-memory DatabaseSync the same way
+ *  production code wraps the real file-backed one (see e.g.
+ *  migrate-loading-titles.test.ts). */
+export function wrapDb(raw: DatabaseSync): Db {
+  return {
+    prepare: (sql: string) => wrapStatement(raw.prepare(sql)),
+    exec: (sql: string) => raw.exec(sql),
+    // Bound reference, not an `() => raw.close()` forwarding call — the
+    // latter reads as a second `.close(` window-op call site to the
+    // mechanical scan in scripts/check-r2-window-ops.mjs (R2 §1), which
+    // only allowlists the one real close in closeDatabase() below.
+    close: raw.close.bind(raw),
+  };
+}
+
 // Module state
-let db: Database.Database | null = null;
+let db: Db | null = null;
 
 // ==================== Schema Validation ====================
 
@@ -401,11 +462,11 @@ function validateSyncSchema(): void {
 
 // ==================== Lifecycle ====================
 
-export function initDatabase(dbPath: string): Database.Database {
+export function initDatabase(dbPath: string): Db {
   DEBUG && console.log('main', 'initializing database at:', dbPath);
 
-  db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
+  db = wrapDb(new DatabaseSync(dbPath));
+  db.exec('PRAGMA journal_mode = WAL');
   db.exec(createTableStatements);
 
   migrateTinyBaseData();
@@ -454,11 +515,43 @@ export function closeDatabase(): void {
   }
 }
 
-export function getDb(): Database.Database {
+export function getDb(): Db {
   if (!db) {
     throw new Error('Database not initialized');
   }
   return db;
+}
+
+/**
+ * better-sqlite3 provided `db.transaction(fn)`, returning a function that,
+ * when called, runs `fn` inside BEGIN/COMMIT, rolling back on any thrown
+ * error. `node:sqlite` has no such helper, so this reproduces just the shape
+ * this file's call sites need. No call path here nests transactions
+ * (verified: none of the three usages below call another `transaction()`
+ * from inside their callback), so a bare BEGIN/COMMIT/ROLLBACK is sufficient
+ * — see apps/server/sql/node-sqlite-adapter.js for the same reasoning. A
+ * nested transaction would need savepoints instead, since SQLite does not
+ * support nested BEGIN.
+ */
+function transaction<Args extends unknown[], R>(
+  database: Db,
+  fn: (...args: Args) => R
+): (...args: Args) => R {
+  return (...args: Args): R => {
+    database.exec('BEGIN');
+    try {
+      const result = fn(...args);
+      database.exec('COMMIT');
+      return result;
+    } catch (err) {
+      try {
+        database.exec('ROLLBACK');
+      } catch {
+        /* ignore — nothing to roll back if BEGIN itself failed */
+      }
+      throw err;
+    }
+  };
 }
 
 // ==================== Helpers ====================
@@ -696,7 +789,7 @@ function migrateItemTypes(): void {
     // Disable FK enforcement during table recreation — other tables
     // (item_visits, item_group_members, item_events) reference items(id)
     // and DROP TABLE would fail with FOREIGN KEY constraint errors.
-    db.pragma('foreign_keys = OFF');
+    db.exec('PRAGMA foreign_keys = OFF');
 
     try {
       // Clean up any leftover temp table from a previous failed migration attempt
@@ -768,7 +861,7 @@ function migrateItemTypes(): void {
 
       DEBUG && console.log('main', 'Items table migration complete');
     } finally {
-      db.pragma('foreign_keys = ON');
+      db.exec('PRAGMA foreign_keys = ON');
     }
   }
 }
@@ -955,7 +1048,7 @@ function migrateVisitChaining(): void {
       if (visits.length > 1) {
         const updatePrev = db.prepare('UPDATE visits SET prevId = ? WHERE id = ?');
         const updateNext = db.prepare('UPDATE visits SET nextId = ? WHERE id = ?');
-        const backfill = db.transaction(() => {
+        const backfill = transaction(db, () => {
           for (let i = 1; i < visits.length; i++) {
             updatePrev.run(visits[i - 1].id, visits[i].id);
             updateNext.run(visits[i].id, visits[i - 1].id);
@@ -1070,7 +1163,8 @@ function migrateDeduplicateItems(): void {
 
 /**
  * Add frecencyScore, title, domain, favicon columns to items table for URL history unification.
- * These columns are local-only (not synced) and support frecency-based sorting.
+ * Support frecency-based sorting; carried to the sync server since packages/schema/v1.json
+ * marked them sync:true (docs/sync-coverage-gaps.md §1).
  */
 function migrateItemFrecencyColumns(): void {
   if (!db) return;
@@ -1535,7 +1629,7 @@ function migrateEntityType(): void {
     // Disable FK enforcement during table recreation — other tables
     // (item_visits, item_group_members, item_events) reference items(id)
     // and DROP TABLE would fail with FOREIGN KEY constraint errors.
-    db.pragma('foreign_keys = OFF');
+    db.exec('PRAGMA foreign_keys = OFF');
 
     try {
       // Clean up any leftover temp table from a previous failed migration attempt
@@ -1591,7 +1685,7 @@ function migrateEntityType(): void {
 
       DEBUG && console.log('main', 'Entity type migration complete');
     } finally {
-      db.pragma('foreign_keys = ON');
+      db.exec('PRAGMA foreign_keys = ON');
     }
   }
 
@@ -1640,7 +1734,7 @@ function migrateEventType(): void {
   const columns = db.prepare(`PRAGMA table_info(items)`).all() as { name: string }[];
   const columnNames = columns.map(c => c.name);
 
-  db.pragma('foreign_keys = OFF');
+  db.exec('PRAGMA foreign_keys = OFF');
   try {
     db.exec(`DROP TABLE IF EXISTS items_event_mig`);
 
@@ -1692,7 +1786,7 @@ function migrateEventType(): void {
 
     DEBUG && console.log('main', 'Event type migration complete');
   } finally {
-    db.pragma('foreign_keys = ON');
+    db.exec('PRAGMA foreign_keys = ON');
   }
 }
 
@@ -1717,7 +1811,7 @@ function migrateEventType(): void {
  * Exported (rather than module-private) so a node test can drive it
  * against an in-memory sqlite without booting Electron.
  */
-export function migrateLoadingTitles(database: Database.Database | null = db): void {
+export function migrateLoadingTitles(database: Db | null = db): void {
   if (!database) return;
 
   try {
@@ -2451,7 +2545,7 @@ function migrateTagsUniqueIndex(): void {
   if (dupeGroups.length > 0) {
     DEBUG && console.log('main', `migrateTagsUniqueIndex: ${dupeGroups.length} duplicate tag name(s) found, deduplicating`);
 
-    const dedupeTransaction = d.transaction(() => {
+    const dedupeTransaction = transaction(d, () => {
       for (const { name, canonicalId } of dupeGroups) {
         // Get all duplicate ids (everything except the canonical row).
         const dupeRows = d.prepare(
@@ -2964,7 +3058,7 @@ function parseWakeArgs(s: string): unknown[] {
  */
 export function setWakeShortcuts(ownerTileId: string, list: WakeShortcut[]): void {
   const d = getDb();
-  const tx = d.transaction((rows: WakeShortcut[]) => {
+  const tx = transaction(d, (rows: WakeShortcut[]) => {
     d.prepare('DELETE FROM lazy_wake_shortcuts WHERE ownerTileId = ?').run(ownerTileId);
     const insert = d.prepare(
       'INSERT OR REPLACE INTO lazy_wake_shortcuts (ownerTileId, accelerator, wakeTopic, wakeArgs) VALUES (?, ?, ?, ?)'

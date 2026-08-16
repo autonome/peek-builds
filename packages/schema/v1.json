@@ -83,38 +83,38 @@
         "visitCount": {
           "type": "integer",
           "default": "0",
-          "sync": false,
-          "description": "Number of visits (local tracking)"
+          "sync": true,
+          "description": "Number of visits"
         },
         "lastVisitAt": {
           "type": "integer",
           "default": "0",
-          "sync": false,
-          "description": "Last visit timestamp (local tracking)"
+          "sync": true,
+          "description": "Last visit timestamp"
         },
         "frecencyScore": {
           "type": "integer",
           "default": "0",
-          "sync": false,
-          "description": "Frecency score for ranking (local calculation)"
+          "sync": true,
+          "description": "Frecency score for ranking"
         },
         "title": {
           "type": "text",
           "default": "''",
-          "sync": false,
-          "description": "Page title (cached locally for URL items)"
+          "sync": true,
+          "description": "Page title"
         },
         "domain": {
           "type": "text",
           "default": "''",
-          "sync": false,
-          "description": "Domain extracted from URL (cached locally)"
+          "sync": true,
+          "description": "Domain extracted from URL"
         },
         "favicon": {
           "type": "text",
           "default": "''",
-          "sync": false,
-          "description": "Favicon URL (cached locally)"
+          "sync": true,
+          "description": "Favicon URL"
         }
       },
       "indexes": [
@@ -180,32 +180,32 @@
         "slug": {
           "type": "text",
           "nullable": true,
-          "sync": false,
-          "description": "URL-safe slug (desktop only)"
+          "sync": true,
+          "description": "URL-safe slug"
         },
         "color": {
           "type": "text",
           "default": "'#999999'",
-          "sync": false,
-          "description": "Display color (desktop only)"
+          "sync": true,
+          "description": "Display color"
         },
         "parentId": {
           "type": "text",
           "default": "''",
-          "sync": false,
-          "description": "Parent tag for hierarchy (desktop only)"
+          "sync": true,
+          "description": "Parent tag for hierarchy. Travels on the wire under the same field name, `parentId`, but holding the parent's name, not this id — tag identity is the name, so the reference is too. Resolved back to a local tag id on pull. On the server, the `parentId` column itself stores that name, never a row id — don't mistake it for a foreign key."
         },
         "description": {
           "type": "text",
           "default": "''",
-          "sync": false,
-          "description": "Tag description (desktop only)"
+          "sync": true,
+          "description": "Tag description"
         },
         "metadata": {
           "type": "text",
           "default": "'{}'",
-          "sync": false,
-          "description": "JSON metadata (desktop only)"
+          "sync": true,
+          "description": "JSON metadata"
         }
       },
       "indexes": [
@@ -397,8 +397,8 @@
     "timestamp_unit": "milliseconds",
     "id_type": "text",
     "required_sync_columns": {
-      "items": ["id", "type", "content", "syncId", "syncedAt", "createdAt", "updatedAt", "deletedAt"],
-      "tags": ["id", "name", "frequency", "lastUsed", "frecencyScore", "createdAt", "updatedAt"],
+      "items": ["id", "type", "content", "syncId", "syncedAt", "createdAt", "updatedAt", "deletedAt", "title", "domain", "favicon", "visitCount", "lastVisitAt", "frecencyScore"],
+      "tags": ["id", "name", "frequency", "lastUsed", "frecencyScore", "createdAt", "updatedAt", "slug", "color", "parentId", "description", "metadata"],
       "item_tags": ["itemId", "tagId", "createdAt"],
       "item_events": ["id", "itemId", "content", "value", "occurredAt", "metadata", "createdAt"],
       "rules": []

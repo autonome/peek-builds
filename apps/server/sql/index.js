@@ -2,22 +2,22 @@
  * SQL Adapter Factory
  *
  * Selects the appropriate SQL adapter based on environment configuration.
- * Currently only supports better-sqlite3; future adapters can be added here.
+ * Currently only supports node:sqlite; future adapters can be added here.
  */
 
-const { factory: betterSqlite3Factory } = require("./better-sqlite3-adapter");
+const { factory: nodeSqliteFactory } = require("./node-sqlite-adapter");
 
 // Environment variable to select SQL adapter (future use)
-const SQL_ADAPTER = process.env.SQL_ADAPTER || "better-sqlite3";
+const SQL_ADAPTER = process.env.SQL_ADAPTER || "node-sqlite";
 
 function getFactory() {
   switch (SQL_ADAPTER) {
-    case "better-sqlite3":
-      return betterSqlite3Factory;
+    case "node-sqlite":
+      return nodeSqliteFactory;
     // Future: case "do-sqlite": return doSqliteFactory;
     default:
-      console.warn(`Unknown SQL_ADAPTER "${SQL_ADAPTER}", falling back to better-sqlite3`);
-      return betterSqlite3Factory;
+      console.warn(`Unknown SQL_ADAPTER "${SQL_ADAPTER}", falling back to node-sqlite`);
+      return nodeSqliteFactory;
   }
 }
 

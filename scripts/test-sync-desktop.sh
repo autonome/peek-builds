@@ -112,7 +112,9 @@ curl -s -X POST "$SERVER_URL/items" \
 
 echo "  Seeded 3 test items"
 
-# Pre-configure sync and run initial sync (must use electron, not node, for better-sqlite3)
+# Pre-configure sync and run initial sync (must use electron, not node — the
+# desktop datastore/profiles modules it loads still open better-sqlite3
+# compiled for Electron's Node version)
 echo ""
 echo "Pre-configuring sync and running initial sync..."
 cd "$ROOT_DIR"

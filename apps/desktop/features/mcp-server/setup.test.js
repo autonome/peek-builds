@@ -7,7 +7,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, statSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -349,5 +349,222 @@ describe('setup.js .gitignore managed block', () => {
       );
     }
     // If the file doesn't exist at all, that's also fine — the test passes.
+  });
+});
+
+describe('setup.js --remote', () => {
+  let tmpDirs = [];
+
+  after(() => {
+    for (const dir of tmpDirs) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  const FAKE_URL = 'https://sync.example.invalid';
+
+  // Remote runs never need a datastore — no PEEK_DB_PATH, no db file at all,
+  // and a fresh, isolated HOME so a real ~/.config/peek/mcp-credentials.json
+  // is never touched.
+  function makeRemoteProject() {
+    const projDir = mkdtempSync(join(tmpdir(), 'peek-setup-remote-'));
+    const home = mkdtempSync(join(tmpdir(), 'peek-setup-remote-home-'));
+    return { projDir, home };
+  }
+
+  function runRemoteSetup(projDir, home, extraArgs, input) {
+    const args = [SETUP_JS, '--scope', 'remotescope', '--mcp-json', '--remote', FAKE_URL, ...extraArgs];
+    const opts = { cwd: projDir, env: { ...process.env, HOME: home } };
+    delete opts.env.PEEK_DB_PATH;
+    if (input !== undefined) opts.input = input;
+    try {
+      return execFileSync(process.execPath, args, opts);
+    } catch (err) {
+      const msg = err.stderr ? err.stderr.toString() : String(err);
+      throw new Error('setup.js exited non-zero. stderr: ' + msg);
+    }
+  }
+
+  function readMcpJson(projDir) {
+    return JSON.parse(readFileSync(join(projDir, '.mcp.json'), 'utf-8'));
+  }
+
+  // All regular files under dir, recursively — used to sweep an entire
+  // scaffolded project for a value that must never land in it.
+  function walkFiles(dir) {
+    let out = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, entry.name);
+      if (entry.isDirectory()) out = out.concat(walkFiles(p));
+      else out.push(p);
+    }
+    return out;
+  }
+
+  it('omits PEEK_DB_PATH and never looks for a local datastore', () => {
+    const { projDir, home } = makeRemoteProject();
+    tmpDirs.push(projDir, home);
+
+    // No PEEK_DB_PATH, no datastore.sqlite anywhere under this isolated HOME —
+    // the local-mode fatal exit would trigger here if remote mode still ran
+    // findDbPath().
+    runRemoteSetup(projDir, home, []);
+
+    const parsed = readMcpJson(projDir);
+    const env = parsed.mcpServers.peek.env;
+    assert.strictEqual(env.PEEK_DB_PATH, undefined, 'PEEK_DB_PATH must be omitted in remote mode');
+    // The url passed to --remote is never written literally — a server URL
+    // carries a hostname, so the entry only ever carries an unresolved
+    // $PEEK_SYNC_URL reference the caller's shell must export.
+    assert.strictEqual(env.PEEK_MCP_REMOTE_URL, '${PEEK_SYNC_URL}');
+    assert.strictEqual(env.PEEK_MCP_SCOPE_TAG, 'remotescope');
+  });
+
+  it('drops --experimental-sqlite from the dev launcher fallback', () => {
+    const { projDir, home } = makeRemoteProject();
+    tmpDirs.push(projDir, home);
+
+    runRemoteSetup(projDir, home, []);
+
+    const parsed = readMcpJson(projDir);
+    const peek = parsed.mcpServers.peek;
+    assert.strictEqual(peek.command, 'node');
+    assert.ok(!peek.args.includes('--experimental-sqlite'),
+      'remote mode must not pass --experimental-sqlite (nothing loads node:sqlite)');
+  });
+
+  it('without --store-token, references $PEEK_MCP_TOKEN unexpanded rather than a literal secret', () => {
+    const { projDir, home } = makeRemoteProject();
+    tmpDirs.push(projDir, home);
+
+    runRemoteSetup(projDir, home, []);
+
+    const parsed = readMcpJson(projDir);
+    const env = parsed.mcpServers.peek.env;
+    // The literal, unresolved reference is the point: Claude Code expands it
+    // from the launching shell. If the shell never set it, Claude Code passes
+    // the literal "${...}" text through unexpanded — which is what lets a
+    // startup guard downstream detect the leading "${" and fail loudly
+    // instead of sending it as a bearer token.
+    assert.strictEqual(env.PEEK_MCP_TOKEN, '${PEEK_MCP_TOKEN}');
+    assert.strictEqual(env.PEEK_MCP_CREDENTIAL, undefined);
+  });
+
+  it('--store-token reads the token from stdin only, never argv, stdout, or stderr', () => {
+    const { projDir, home } = makeRemoteProject();
+    tmpDirs.push(projDir, home);
+
+    const fakeToken = 'fake-minted-token-do-not-use-1234567890';
+    const stderr = runRemoteSetup(projDir, home, ['--store-token'], fakeToken + '\n');
+
+    assert.ok(!stderr.toString().includes(fakeToken), 'token must never be echoed to stderr');
+
+    const parsed = readMcpJson(projDir);
+    const env = parsed.mcpServers.peek.env;
+    assert.strictEqual(env.PEEK_MCP_TOKEN, undefined, '--store-token must not also emit the env reference');
+    // The lookup key is itself a $PEEK_SYNC_URL reference — the host never
+    // lands in the project, only in the 0600 credential file it points into.
+    assert.strictEqual(env.PEEK_MCP_CREDENTIAL, '${PEEK_SYNC_URL}#remotescope');
+
+    // The token — and the concrete host — live only in the 0600 credential
+    // file outside the project, keyed by the real url#scope pair.
+    const credPath = join(home, '.config', 'peek', 'mcp-credentials.json');
+    assert.ok(existsSync(credPath), 'credential file should be written');
+    const mode = statSync(credPath).mode & 0o777;
+    assert.strictEqual(mode, 0o600, 'credential file must be mode 0600');
+
+    const credData = JSON.parse(readFileSync(credPath, 'utf-8'));
+    const entry = credData.credentials[`${FAKE_URL}#remotescope`];
+    assert.ok(entry, 'credential file should have an entry keyed by the real url#scope pair');
+    assert.strictEqual(entry.token, fakeToken);
+
+    // And the token must never appear anywhere in the project.
+    const mcpJsonRaw = readFileSync(join(projDir, '.mcp.json'), 'utf-8');
+    assert.ok(!mcpJsonRaw.includes(fakeToken), 'token must never be written into a project file');
+  });
+
+  it('--print with --store-token never touches stdin or writes the credential file', () => {
+    const { projDir, home } = makeRemoteProject();
+    tmpDirs.push(projDir, home);
+
+    // No `input` supplied — if setup.js tried to read stdin here it would
+    // either hang or read EOF; either way the credential file must not appear.
+    const args = [SETUP_JS, '--scope', 'remotescope', '--remote', FAKE_URL, '--store-token', '--print'];
+    const stdout = execFileSync(process.execPath, args, {
+      cwd: projDir,
+      env: { ...process.env, HOME: home },
+      input: '',
+    });
+
+    const printed = JSON.parse(stdout.toString());
+    assert.strictEqual(printed.mcpServers.peek.env.PEEK_MCP_REMOTE_URL, '${PEEK_SYNC_URL}');
+    assert.strictEqual(printed.mcpServers.peek.env.PEEK_MCP_TOKEN, '${PEEK_MCP_TOKEN}');
+    assert.strictEqual(printed.mcpServers.peek.env.PEEK_MCP_CREDENTIAL, undefined);
+
+    const credPath = join(home, '.config', 'peek', 'mcp-credentials.json');
+    assert.ok(!existsSync(credPath), '--print must not write the credential file');
+  });
+
+  it('detectExistingInstall recognises a remote entry on refresh', () => {
+    const { projDir, home } = makeRemoteProject();
+    tmpDirs.push(projDir, home);
+
+    runRemoteSetup(projDir, home, ['--writes']);
+
+    // Bare re-run: no --scope, no --remote.
+    execFileSync(process.execPath, [SETUP_JS], {
+      cwd: projDir,
+      env: { ...process.env, HOME: home },
+    });
+
+    const parsed = readMcpJson(projDir);
+    const env = parsed.mcpServers.peek.env;
+    assert.strictEqual(env.PEEK_MCP_REMOTE_URL, '${PEEK_SYNC_URL}', 'remote mode should be recovered on refresh');
+    assert.strictEqual(env.PEEK_MCP_SCOPE_TAG, 'remotescope');
+    assert.strictEqual(env.PEEK_MCP_READONLY, undefined, 'writes should be preserved on refresh');
+    assert.strictEqual(env.PEEK_DB_PATH, undefined, 'refresh of a remote install must not reintroduce PEEK_DB_PATH');
+  });
+
+  it('the host passed to --remote never appears anywhere inside the scaffolded project', () => {
+    const { projDir, home } = makeRemoteProject();
+    tmpDirs.push(projDir, home);
+
+    // Exercise every file the scaffolder writes under the project — .mcp.json,
+    // settings.local.json, the skill, .gitignore — with --store-token too, so
+    // the credential-file key path is covered as well as the plain entry.
+    const fakeToken = 'fake-minted-token-do-not-use-project-scan';
+    runRemoteSetup(projDir, home, ['--store-token'], fakeToken + '\n');
+
+    const host = new URL(FAKE_URL).host;
+    const files = walkFiles(projDir);
+    assert.ok(files.length > 0, 'sanity: the project should have scaffolded files');
+    for (const file of files) {
+      const content = readFileSync(file, 'utf-8');
+      assert.ok(!content.includes(host), `${file} must not contain the remote host ${host}`);
+      assert.ok(!content.includes(FAKE_URL), `${file} must not contain the full remote URL`);
+    }
+  });
+
+  it('scaffolds the skill with a remote paragraph inside the managed section', () => {
+    const { projDir, home } = makeRemoteProject();
+    tmpDirs.push(projDir, home);
+
+    runRemoteSetup(projDir, home, []);
+
+    const skill = readFileSync(join(projDir, '.claude', 'skills', 'peek.md'), 'utf-8');
+    const begin = skill.indexOf('<!-- PEEK_SKILL_BODY_BEGIN -->');
+    const end = skill.indexOf('<!-- PEEK_SKILL_BODY_END -->');
+    const body = skill.slice(begin, end);
+
+    assert.ok(/localId/.test(body), 'remote paragraph should mention localId');
+    assert.ok(/no\s+offline\s+mode/i.test(body), 'remote paragraph should state there is no offline mode');
+  });
+
+  it('local (non-remote) scaffold has no remote paragraph — unaffected by this feature', () => {
+    const { projDir, dbPath } = scaffoldProject(['--scope', 'localonly']);
+    tmpDirs.push(projDir);
+
+    const skill = readFileSync(join(projDir, '.claude', 'skills', 'peek.md'), 'utf-8');
+    assert.ok(!/localId/.test(skill), 'local scaffold must not carry the remote paragraph');
   });
 });

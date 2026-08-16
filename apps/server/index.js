@@ -3,11 +3,15 @@ const { serve } = require("@hono/node-server");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { Readable } = require("stream");
 const db = require("./db");
 const users = require("./users");
+const grants = require("./grants");
+const mcpItems = require("./mcp-items");
 const backup = require("./backup");
+const restore = require("./restore");
 const { loadConfig, isSingleUserMode } = require("./config");
-const { createAuthMiddleware } = require("./auth");
+const { createAuthMiddleware, createMcpAuthMiddleware } = require("./auth");
 const { DATASTORE_VERSION, PROTOCOL_VERSION } = require("./version");
 
 // Every item type the server will accept and store. The client decides WHICH of
@@ -53,6 +57,225 @@ app.use("*", async (c, next) => {
 
 // Auth middleware - uses factory based on config
 app.use("*", createAuthMiddleware(config));
+
+// /mcp/* authenticates with a grant credential, never a device/user one — see
+// createMcpAuthMiddleware() and the /mcp path skip inside createAuthMiddleware().
+app.use("/mcp/*", createMcpAuthMiddleware());
+
+// GET /mcp/whoami — trivial authenticated probe confirming what the grant
+// middleware resolved.
+app.get("/mcp/whoami", (c) => {
+  return c.json({
+    userId: c.get("userId"),
+    scopeTag: c.get("scopeTag"),
+    readonly: c.get("readonly"),
+    profileId: c.get("profileId"),
+  });
+});
+
+// === MCP item read routes (design doc §3.3) ===
+//
+// scopeTag/readonly/userId/profileId come ONLY from the grant context the
+// /mcp/* auth middleware set (createMcpAuthMiddleware in auth.js) — never
+// from a query parameter or header. See design doc §4.2 for why: the scope
+// is minted into the credential precisely so a caller sending raw requests
+// (bypassing whatever a client would have filtered) can't widen it.
+//
+// Business logic lives in mcp-items.js; these handlers only parse the
+// request and translate the result into a status code.
+
+// Parse an optional numeric query param, returning undefined (so the
+// callee's own default applies) rather than NaN for missing/invalid input.
+function parseOptionalNumber(raw) {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function parseTagsParam(raw) {
+  if (!raw) return undefined;
+  const list = raw.split(",").map((t) => t.trim()).filter(Boolean);
+  return list.length > 0 ? list : undefined;
+}
+
+// GET /mcp/items — server-side port of db.js queryItems() (list_items).
+app.get("/mcp/items", (c) => {
+  const items = mcpItems.queryItems(c.get("userId"), c.get("profileId"), c.get("scopeTag"), {
+    tags: parseTagsParam(c.req.query("tags")),
+    type: c.req.query("type") || undefined,
+    limit: parseOptionalNumber(c.req.query("limit")),
+    offset: parseOptionalNumber(c.req.query("offset")),
+    sort: c.req.query("sort") || undefined,
+  });
+  return c.json({ items });
+});
+
+// GET /mcp/items/search — server-side port of db.js searchItems()
+// (search_items). Registered ahead of /mcp/items/:idOrPrefix so the literal
+// path always wins over the param route.
+app.get("/mcp/items/search", (c) => {
+  const items = mcpItems.searchItems(c.get("userId"), c.get("profileId"), c.get("scopeTag"), {
+    query: c.req.query("q") || "",
+    tags: parseTagsParam(c.req.query("tags")),
+    type: c.req.query("type") || undefined,
+    limit: parseOptionalNumber(c.req.query("limit")),
+    offset: parseOptionalNumber(c.req.query("offset")),
+  });
+  return c.json({ items });
+});
+
+// GET /mcp/items/resolve — standalone prefix resolver (design doc §5),
+// returning the ResolveResult shape byte-identically to resolveItemId() in
+// sqlite-store.js. Registered ahead of /mcp/items/:idOrPrefix, same reason
+// as /mcp/items/search above.
+app.get("/mcp/items/resolve", (c) => {
+  const result = mcpItems.resolveItemId(
+    c.get("userId"),
+    c.get("profileId"),
+    c.get("scopeTag"),
+    c.req.query("prefix") || ""
+  );
+  return c.json(result);
+});
+
+// GET /mcp/items/:idOrPrefix — resolves a prefix inline (design doc §5) and
+// returns the item (200), a miss (404), or the ambiguity payload (409).
+// Supports the maxContentLength/contentOffset content window and the
+// events param backing get_task_context.
+app.get("/mcp/items/:idOrPrefix", (c) => {
+  const result = mcpItems.getItemForRoute(
+    c.get("userId"),
+    c.get("profileId"),
+    c.get("scopeTag"),
+    c.req.param("idOrPrefix"),
+    {
+      maxContentLength: parseOptionalNumber(c.req.query("maxContentLength")),
+      contentOffset: parseOptionalNumber(c.req.query("contentOffset")),
+      events: parseOptionalNumber(c.req.query("events")),
+    }
+  );
+
+  if (result.status === "ambiguous") {
+    return c.json({ id: null, ambiguous: true, candidates: result.candidates, truncated: result.truncated }, 409);
+  }
+  if (result.status === "not_found") {
+    return c.json({ error: "item not found" }, 404);
+  }
+  return c.json({ item: result.item });
+});
+
+// GET /mcp/session — what the SERVER understands about this grant. Backs
+// PeekStore.describe() and the startup consistency check (design doc §4.3).
+app.get("/mcp/session", (c) => {
+  return c.json({
+    scopeTag: c.get("scopeTag"),
+    readonly: c.get("readonly"),
+    profileId: c.get("profileId"),
+    datastoreVersion: DATASTORE_VERSION,
+    userId: c.get("userId"),
+  });
+});
+
+// GET /mcp/tags — server-side port of db.js listTags() (list_tags).
+app.get("/mcp/tags", (c) => {
+  const tags = mcpItems.listTags(c.get("userId"), c.get("profileId"), c.get("scopeTag"), {
+    search: c.req.query("search") || undefined,
+    limit: parseOptionalNumber(c.req.query("limit")),
+  });
+  return c.json({ tags });
+});
+
+// === MCP item/task write routes (design doc §3.3, the remaining eight) ===
+//
+// Every one of these is a mutating route: refused with 403 for a readonly
+// grant, checked FIRST (before parsing the body) and read only from
+// `c.get('readonly')` — the grant, never anything the client sends (design
+// doc §4.1/§4.2). Scope confinement and the foreign-namespace tag rule live
+// in mcp-items.js; these handlers stay thin translation over its {status,…}
+// results.
+function readonlyRefused(c) {
+  return c.get("readonly") ? c.json({ error: "This grant is read-only; mutating routes are refused." }, 403) : null;
+}
+
+// POST /mcp/items — server-side port of db.js createItem() (create_item).
+// No prefix resolution and no syncId matching (design doc §3.3): an
+// explicit create is always a create.
+app.post("/mcp/items", async (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const body = await c.req.json().catch(() => ({}));
+  const result = mcpItems.createItem(c.get("userId"), c.get("profileId"), c.get("scopeTag"), body);
+  if (result.status === "invalid") return c.json({ error: result.error }, 400);
+  return c.json({ item: result.item });
+});
+
+// PATCH /mcp/items/:id — server-side port of db.js updateItem() (update_item).
+// Operates on a full id the client already resolved (design doc §5).
+app.patch("/mcp/items/:id", async (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const body = await c.req.json().catch(() => ({}));
+  const result = mcpItems.updateItem(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body);
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  return c.json({ item: result.item });
+});
+
+// DELETE /mcp/items/:id — server-side port of db.js deleteItem() (delete_item).
+app.delete("/mcp/items/:id", (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const result = mcpItems.deleteItem(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"));
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  return c.json(result.result);
+});
+
+// POST /mcp/items/:id/tags — server-side port of db.js tagItemInTx() (tag_item).
+app.post("/mcp/items/:id/tags", async (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const body = await c.req.json().catch(() => ({}));
+  const result = mcpItems.tagItem(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.name);
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  if (result.status === "invalid") return c.json({ error: result.error }, 400);
+  return c.json(result.result);
+});
+
+// DELETE /mcp/items/:id/tags/:name — server-side port of db.js untagItem()
+// (untag_item), including the orphan refusal (design doc §4.1's last bullet).
+app.delete("/mcp/items/:id/tags/:name", (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const result = mcpItems.untagItem(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), c.req.param("name"));
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  if (result.status === "orphan") return c.json({ error: result.error }, 400);
+  return c.json(result.result);
+});
+
+// POST /mcp/items/:id/events — server-side port of db.js recordEvent()
+// (record_event).
+app.post("/mcp/items/:id/events", async (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const body = await c.req.json().catch(() => ({}));
+  const result = mcpItems.recordEvent(
+    c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.type, body.value
+  );
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  if (result.status === "invalid") return c.json({ error: result.error }, 400);
+  return c.json(result.result);
+});
+
+// POST /mcp/tasks/:id/complete — server-side port of db.js completeTask()
+// (complete_task). One transaction: adds `done`, removes `todo`, records the
+// completion event, or none of the three (design doc §3.3/§4.1).
+app.post("/mcp/tasks/:id/complete", async (c) => {
+  const refused = readonlyRefused(c);
+  if (refused) return refused;
+  const body = await c.req.json().catch(() => ({}));
+  const result = mcpItems.completeTask(c.get("userId"), c.get("profileId"), c.get("scopeTag"), c.req.param("id"), body.notes);
+  if (result.status === "not_found") return c.json({ error: "item not found" }, 404);
+  return c.json({ item: result.item });
+});
 
 // Version check middleware for sync endpoints
 // Rejects requests with mismatched version headers (HTTP 409)
@@ -388,10 +611,17 @@ app.post("/items", async (c) => {
   const deviceId = c.get("deviceId") || "";
   const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
   const body = await c.req.json();
-  const { type, content, tags = [], metadata = null, sync_id = null, syncId = null, deletedAt } = body;
+  const {
+    type, content, tags = [], metadata = null, sync_id = null, syncId = null,
+    deletedAt = null, deleted_at = null, starred = null, archived = null,
+    title = null, domain = null, frecencyScore = null,
+    favicon = null, visitCount = null, lastVisitAt = null, mimeType = null,
+    createdAt = null,
+  } = body;
   const effectiveSyncId = syncId || sync_id; // Support both camelCase and snake_case during transition
+  const effectiveDeletedAt = deletedAt || deleted_at; // Support both camelCase and snake_case during transition
 
-  if (deletedAt) console.log(`[sync] Received tombstone push: syncId=${effectiveSyncId} deletedAt=${deletedAt}`);
+  if (effectiveDeletedAt) console.log(`[sync] Received tombstone push: syncId=${effectiveSyncId} deletedAt=${effectiveDeletedAt}`);
 
   // Sync logging for e2e test verification
   console.log("=== Sync Item Received ===");
@@ -441,7 +671,11 @@ app.post("/items", async (c) => {
     }
   }
 
-  const id = db.saveItem(userId, type, content || null, tags, metadata, effectiveSyncId, profileId, deletedAt, deviceId);
+  const id = db.saveItem(
+    userId, type, content || null, tags, metadata, effectiveSyncId, profileId, effectiveDeletedAt, deviceId,
+    title, domain, frecencyScore, starred, archived,
+    { favicon, visitCount, lastVisitAt, mimeType, createdAt }
+  );
   return c.json({ id, type, created: true });
 });
 
@@ -517,6 +751,129 @@ app.get("/items/:id", (c) => {
   return c.json({ item });
 });
 
+// === Event sync endpoints ===
+//
+// item_events are append-only immutable facts (series/feed observations), unlike
+// items — there is no content to merge, no last-write-wins, and no per-row
+// syncedAt/syncId column (see db.js saveEvents()/getEventsSince() and
+// desktop sync.ts pushEventsToServer()/pullEventsFromServer()). Identity is the
+// event's own id, shared verbatim between client and server; push is idempotent
+// purely because the server INSERT OR IGNOREs on that primary key. `itemId` in
+// both directions is always the SERVER's item id — the desktop client translates
+// its local item id through that item's syncId before pushing, and back on pull.
+
+// Bulk push matters here: a single series/feed item can carry hundreds of
+// events, and one HTTP request per event would not do. Capped well above any
+// realistic single sync batch so a runaway client can't post an unbounded body.
+const MAX_EVENTS_PER_PUSH = 1000;
+
+app.post("/events", async (c) => {
+  const userId = c.get("userId");
+  const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
+  const body = await c.req.json();
+  const events = Array.isArray(body.events) ? body.events : [];
+
+  if (events.length === 0) {
+    return c.json({ error: "events array is required" }, 400);
+  }
+  if (events.length > MAX_EVENTS_PER_PUSH) {
+    return c.json({ error: `at most ${MAX_EVENTS_PER_PUSH} events per push` }, 400);
+  }
+  const bad = events.find(
+    (e) => !e.id || !e.itemId || typeof e.occurredAt !== "number" || typeof e.createdAt !== "number"
+  );
+  if (bad) {
+    return c.json({ error: "each event requires id, itemId, occurredAt, and createdAt" }, 400);
+  }
+
+  const { saved, total } = db.saveEvents(userId, profileId, events);
+  return c.json({ received: total, saved });
+});
+
+// Get events created since a timestamp (for incremental sync)
+app.get("/events/since/:timestamp", (c) => {
+  const userId = c.get("userId");
+  const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
+  const rawTimestamp = c.req.param("timestamp");
+
+  // Accept ISO 8601 string or Unix ms integer, convert to Unix ms for DB query
+  let unixMs;
+  if (/^\d+$/.test(rawTimestamp)) {
+    unixMs = parseInt(rawTimestamp, 10);
+  } else {
+    const date = new Date(rawTimestamp);
+    if (isNaN(date.getTime())) {
+      return c.json({ error: "Invalid timestamp format. Use ISO 8601 or Unix ms." }, 400);
+    }
+    unixMs = date.getTime();
+  }
+
+  const events = db.getEventsSince(userId, profileId, unixMs);
+  return c.json({ events, since: rawTimestamp });
+});
+
+// === Tag metadata sync endpoints ===
+//
+// Tag ROWS themselves are still created implicitly by item pushes (saveItem() ->
+// getOrCreateTagWithConn(), by name). These endpoints sync the metadata columns
+// that item pushes never touch: slug, color, parentId, description, metadata.
+// Identity on the wire is the tag's name, shared verbatim with the client — the
+// same identity getOrCreateTagWithConn() already uses, so a push here upserts by
+// name rather than introducing a second identity (a syncId) that would need
+// reconciling against the first. `parentId` is the parent tag's NAME, never a
+// server row id — don't "fix" it into a foreign key: the desktop client
+// resolves it to/from a local tag id (see desktop sync.ts
+// pushTagsToServer()/pullTagsFromServer()/mergeServerTag()).
+
+// Bulk push matters here for the same reason it does for events: a profile can
+// carry hundreds of tags, and one HTTP request per tag would not do. Capped well
+// above any realistic single sync batch so a runaway client can't post an
+// unbounded body.
+const MAX_TAGS_PER_PUSH = 1000;
+
+app.post("/tags", async (c) => {
+  const userId = c.get("userId");
+  const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
+  const body = await c.req.json();
+  const tags = Array.isArray(body.tags) ? body.tags : [];
+
+  if (tags.length === 0) {
+    return c.json({ error: "tags array is required" }, 400);
+  }
+  if (tags.length > MAX_TAGS_PER_PUSH) {
+    return c.json({ error: `at most ${MAX_TAGS_PER_PUSH} tags per push` }, 400);
+  }
+  const bad = tags.find((t) => !t.name || typeof t.updatedAt !== "number");
+  if (bad) {
+    return c.json({ error: "each tag requires name and updatedAt" }, 400);
+  }
+
+  const { saved, total } = db.saveTags(userId, profileId, tags);
+  return c.json({ received: total, saved });
+});
+
+// Get tag metadata changed since a timestamp (for incremental sync)
+app.get("/tags/since/:timestamp", (c) => {
+  const userId = c.get("userId");
+  const profileId = users.resolveProfileId(userId, c.req.query("profile") || "default");
+  const rawTimestamp = c.req.param("timestamp");
+
+  // Accept ISO 8601 string or Unix ms integer, convert to Unix ms for DB query
+  let unixMs;
+  if (/^\d+$/.test(rawTimestamp)) {
+    unixMs = parseInt(rawTimestamp, 10);
+  } else {
+    const date = new Date(rawTimestamp);
+    if (isNaN(date.getTime())) {
+      return c.json({ error: "Invalid timestamp format. Use ISO 8601 or Unix ms." }, 400);
+    }
+    unixMs = date.getTime();
+  }
+
+  const tags = db.getTagsSince(userId, profileId, unixMs);
+  return c.json({ tags, since: rawTimestamp });
+});
+
 // === Backup endpoints ===
 
 // GET /backups - List backups for authenticated user
@@ -530,7 +887,40 @@ app.get("/backups", (c) => {
 app.post("/backups", async (c) => {
   const userId = c.get("userId");
   const result = await backup.createBackup(userId);
-  return c.json(result);
+  // A failed (or partially failed) backup must not read as a 200 — that is
+  // exactly how the empty-"default"-profile backup went unnoticed in production.
+  return c.json(result, result.success ? 200 : 500);
+});
+
+// GET /backups/:filename - Download an archive for the authenticated user.
+// Backups with no way to leave the volume don't protect against losing the
+// volume itself (see docs/server-backup-and-deploy.md) — this is that way
+// out. Stays on the user-authed group, not /admin, since it only ever reads
+// that user's own backup directory. Same filename filter listBackups() uses
+// (restore.js's isValidBackupFilename) — the existing traversal guard.
+app.get("/backups/:filename", (c) => {
+  const userId = c.get("userId");
+  const filename = c.req.param("filename");
+  if (!restore.isValidBackupFilename(filename)) {
+    return c.json({ error: "Invalid backup filename" }, 400);
+  }
+  const archivePath = path.join(backup.getUserBackupDir(userId), filename);
+  if (!fs.existsSync(archivePath)) {
+    return c.json({ error: "Backup not found" }, 404);
+  }
+  // Streamed rather than fs.readFileSync() — an archive has no size cap (the
+  // way the /images/:id route's 10 MB limit lets it read the whole file at
+  // once), so reading it whole would block the event loop and hold the
+  // entire archive in heap for the duration of the response.
+  const size = fs.statSync(archivePath).size;
+  const stream = Readable.toWeb(fs.createReadStream(archivePath));
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/zip",
+      "Content-Length": size.toString(),
+      "Content-Disposition": `attachment; filename="${filename}"`,
+    },
+  });
 });
 
 // === Profile endpoints ===
@@ -646,6 +1036,81 @@ app.delete("/admin/devices/:deviceId", (c) => {
   }
   try {
     const revoked = users.revokeDevice(userId, deviceId);
+    return c.json({ revoked });
+  } catch (e) {
+    return c.json({ error: e.message }, 400);
+  }
+});
+
+// POST /admin/restore  { userId, filename, force?, dryRun? } -> restore a
+// user's backup archive over their live profile directories.
+//
+// Lives under /admin, not the user-authed /backups group: restore overwrites
+// live data, and the admin token is the stronger gate. Both auth middlewares
+// skip /admin entirely (see createAuthMiddleware in auth.js), so there is no
+// c.get("userId") here — userId comes from the body instead, same as
+// POST /admin/devices above.
+app.post("/admin/restore", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { userId, filename, force, dryRun } = body;
+  if (!userId || !filename) {
+    return c.json({ error: "userId and filename are required" }, 400);
+  }
+  try {
+    const result = await restore.restoreBackup(userId, filename, { force: !!force, dryRun: !!dryRun });
+    // A missing archive (result.notFound) is a 404-shaped failure — the
+    // archive itself doesn't exist, unlike a profile-level restore failure,
+    // which is a 500 the same way a partially-failed POST /backups is.
+    const status = result.success ? 200 : result.notFound ? 404 : 500;
+    return c.json(result, status);
+  } catch (e) {
+    return c.json({ error: e.message }, 400);
+  }
+});
+
+// === Admin endpoints (MCP grant management) ===
+//
+// Same ADMIN_TOKEN gate as /admin/devices above. A grant is a distinct
+// credential namespace from a device (see grants.js) — minting one here is
+// the only way to hand out a scoped/readonly /mcp/* key.
+
+// POST /admin/mcp-grants  { userId, label, scopeTag, readonly, profileId }
+// -> mint a new grant key. The raw apiKey is returned ONCE and is never
+// recoverable. scopeTag may be '' for an unscoped (whole-store) grant — see
+// design doc §4.4; that is a deliberate, hand-minted escape hatch, not what
+// the scaffolder writes by default.
+app.post("/admin/mcp-grants", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const { userId, label, scopeTag, readonly, profileId } = body;
+  if (!userId || !label || typeof scopeTag !== "string" || !profileId) {
+    return c.json({ error: "userId, label, scopeTag, and profileId are required" }, 400);
+  }
+  try {
+    const grant = grants.createGrant(userId, label, scopeTag, !!readonly, profileId);
+    return c.json({ grant });
+  } catch (e) {
+    return c.json({ error: e.message }, 400);
+  }
+});
+
+// GET /admin/mcp-grants?userId=...  -> list a user's grants (no key material).
+app.get("/admin/mcp-grants", (c) => {
+  const userId = c.req.query("userId");
+  if (!userId) {
+    return c.json({ error: "userId query param is required" }, 400);
+  }
+  return c.json({ grants: grants.listGrants(userId) });
+});
+
+// DELETE /admin/mcp-grants/:grantId?userId=...  -> revoke a grant individually.
+app.delete("/admin/mcp-grants/:grantId", (c) => {
+  const userId = c.req.query("userId");
+  const grantId = c.req.param("grantId");
+  if (!userId) {
+    return c.json({ error: "userId query param is required" }, 400);
+  }
+  try {
+    const revoked = grants.revokeGrant(userId, grantId);
     return c.json({ revoked });
   } catch (e) {
     return c.json({ error: e.message }, 400);
@@ -826,41 +1291,55 @@ function deduplicateAllUsers() {
   }
 }
 
-// Multi-user mode: run migrations and user-based operations
-if (!isSingleUserMode(config)) {
-  migrateFromLegacyApiKey();
-  migrateUserDataToProfiles();
-  users.migrateProfileFoldersToUuid();
-  users.migrateLegacyKeysToDevices();
-  deduplicateAllUsers();
+// Startup side effects (migrations, backups, and listening) only run when this file
+// is executed directly (`node index.js` / `npm start`) — never on `require("./index")`,
+// which lets tests import the real `app` (and hit the real routes) without binding a
+// port or replaying migrations against whatever DATA_DIR the test happens to have set.
+if (require.main === module) {
+  // Multi-user mode: run migrations and user-based operations
+  if (!isSingleUserMode(config)) {
+    migrateFromLegacyApiKey();
+    migrateUserDataToProfiles();
+    users.migrateProfileFoldersToUuid();
+    users.migrateLegacyKeysToDevices();
+    deduplicateAllUsers();
 
-  // Force backup of all users on every deploy/restart (before serving requests)
-  backup.createAllBackups().then(() => {
-    console.log("Pre-deploy backup complete");
-  }).catch((err) => {
-    console.error("Pre-deploy backup failed:", err);
-  });
+    // Force backup of all users on every deploy/restart (before serving requests)
+    backup.createAllBackups().then((results) => {
+      if (results.hasFailures) {
+        console.error(
+          `Pre-deploy backup completed with failures: ${results.filter((r) => !r.success).map((r) => r.userId).join(", ")}`
+        );
+      } else {
+        console.log("Pre-deploy backup complete");
+      }
+    }).catch((err) => {
+      console.error("Pre-deploy backup failed:", err);
+    });
 
-  // Set up hourly backup check (runs if >24h since last backup)
-  setInterval(() => backup.checkAndRunDailyBackups(), 60 * 60 * 1000);
-} else {
-  console.log("[config] Running in single-user mode");
-  console.log(`[config] User ID: ${config.singleUser.userId}`);
-  console.log(`[config] Token auth: ${config.singleUser.token ? "enabled" : "disabled"}`);
+    // Set up hourly backup check (runs if >24h since last backup)
+    setInterval(() => backup.checkAndRunDailyBackups(), 60 * 60 * 1000);
+  } else {
+    console.log("[config] Running in single-user mode");
+    console.log(`[config] User ID: ${config.singleUser.userId}`);
+    console.log(`[config] Token auth: ${config.singleUser.token ? "enabled" : "disabled"}`);
 
-  // Ensure single-user mode user exists in the database
-  try {
-    const existingUsers = users.listUsers();
-    const userExists = existingUsers.some(u => u.id === config.singleUser.userId);
-    if (!userExists) {
-      console.log(`[config] Creating user '${config.singleUser.userId}' for single-user mode`);
-      users.createUser(config.singleUser.userId);
+    // Ensure single-user mode user exists in the database
+    try {
+      const existingUsers = users.listUsers();
+      const userExists = existingUsers.some(u => u.id === config.singleUser.userId);
+      if (!userExists) {
+        console.log(`[config] Creating user '${config.singleUser.userId}' for single-user mode`);
+        users.createUser(config.singleUser.userId);
+      }
+    } catch (e) {
+      console.error("[config] Error ensuring single-user mode user exists:", e.message);
     }
-  } catch (e) {
-    console.error("[config] Error ensuring single-user mode user exists:", e.message);
   }
+
+  serve({ fetch: app.fetch, port }, (info) => {
+    console.log(`Server running on http://localhost:${info.port}`);
+  });
 }
 
-serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`Server running on http://localhost:${info.port}`);
-});
+module.exports = { app };

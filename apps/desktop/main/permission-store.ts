@@ -14,7 +14,7 @@
  * stored choice and the handler skips the prompt.
  *
  * No electron imports — pure SQL wrapper, unit-testable under plain node
- * via an in-memory better-sqlite3.
+ * via an in-memory node:sqlite database.
  */
 
 const FEATURE_ID = 'page-permissions';
@@ -31,9 +31,9 @@ export interface DecisionRow {
   timestamp: number;
 }
 
-/** Subset of the better-sqlite3 surface this module needs — keeps the
- * type local so tests can pass an in-memory db without importing the
- * full Database type. */
+/** Subset of node:sqlite's DatabaseSync surface this module needs — keeps
+ * the type local so tests can pass an in-memory db without importing the
+ * full type. */
 export interface PermissionDb {
   prepare(sql: string): {
     get(...params: unknown[]): unknown;
