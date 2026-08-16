@@ -33,6 +33,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { openStore } from './store/index.js';
+import { normalizeCredentialKey } from './credential-key.js';
 
 // Set once main() opens it; every handler below reads through this.
 let store = null;
@@ -768,9 +769,19 @@ function resolveCredentialFromFile(key) {
   } catch (err) {
     throw new Error(`Could not read Peek MCP credential file ${filePath}: ${err.code || 'invalid JSON'}`);
   }
-  const entry = data && data.credentials && data.credentials[key];
+  const credentials = (data && data.credentials) || {};
+  // The write side (setup.js writeCredentialFile()) stores under the
+  // normalized key, but files predating that normalization hold the raw,
+  // unnormalized key verbatim — try normalized first, then fall back to
+  // whatever was actually asked for, so an existing file keeps working.
+  const normalizedKey = normalizeCredentialKey(key);
+  const entry = credentials[normalizedKey] || credentials[key];
   if (!entry || typeof entry.token !== 'string') {
-    throw new Error(`No credential found for key "${key}" in ${filePath}.`);
+    const available = Object.keys(credentials);
+    const keysList = available.length ? available.join(', ') : '(none)';
+    throw new Error(
+      `No credential found for key "${key}" in ${filePath}. Keys present: ${keysList}.`
+    );
   }
   return entry.token;
 }
