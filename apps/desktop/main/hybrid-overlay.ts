@@ -108,6 +108,8 @@ import {
   shadowKernelSetFullscreen,
   shadowKernelShowRequested,
   shadowKernelWindowContentOrderable,
+  shadowKernelAppActivated,
+  shadowKernelAppResigned,
   getShadowKernelExecutor,
 } from './window-kernel-shadow.js';
 import { getFaviconForUrl } from './datastore.js';
@@ -1423,10 +1425,18 @@ function installTestBridge(): void {
      */
     simAppResignActive(): boolean {
       dispatchWindowEvent({ type: 'APP_RESIGNED' });
+      // Feeds the kernel (window-kernel-shadow.ts) the same edge the old
+      // machine just saw — the kernel, not the old machine, performs the
+      // overlay hide, and this bridge is the only resign input a headless
+      // run has (see `shadowKernelAppResigned` / electron-window-backend.ts
+      // `did-resign-active`).
+      shadowKernelAppResigned(getWindowStateSnapshot());
       return true;
     },
     simAppBecomeActive(): boolean {
       dispatchWindowEvent({ type: 'APP_ACTIVATED' });
+      // Feeds the kernel, for the same reason as `simAppResignActive` above.
+      shadowKernelAppActivated(getWindowStateSnapshot());
       return true;
     },
     /** R1: whether the machine currently considers the app active. */
