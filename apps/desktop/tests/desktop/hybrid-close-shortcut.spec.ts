@@ -75,7 +75,7 @@ test.describe('Hybrid page-host cmd+W close (R1) @desktop', () => {
       // Drive the exact cmd+W close path (menu item / non-darwin shortcut both
       // call closeFocusedWindow). No real BrowserWindow is focused (headless),
       // so it must resolve the active hybrid window and close it.
-      const closedId = b.closeFocusedWindow();
+      const closedId = await b.closeFocusedWindow();
       const existsAfter = b.hybridWindowExists(id);
       return { id, existedBefore, closedId, existsAfter };
     });

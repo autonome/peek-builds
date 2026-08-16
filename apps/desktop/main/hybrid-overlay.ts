@@ -2742,9 +2742,17 @@ function installTestBridge(): void {
      * on (or null). A focus-free test sets a fake hybrid window active (no real
      * BrowserWindow is focused in a headless run, so getFocusedWindow() is null —
      * the real-world hybrid-frontmost condition) and asserts this closes it.
+     *
+     * The native destroy this triggers is a tracked async effect the executor
+     * does not await (`window-kernel-executor.ts performEffect`'s
+     * `CloseWindowDirect` arm fires-and-forgets `backend.closeWindow`), so the
+     * id resolved before the window was actually gone. Await the settle here,
+     * same as `runHybridEscape` above, so a test reading state after this
+     * resolves sees the close landed.
      */
-    closeFocusedWindow(): number | null {
-      return closeFocusedWindow();
+    closeFocusedWindow(): Promise<number | null> {
+      const id = closeFocusedWindow();
+      return waitForPendingWindowEffects().then(() => id);
     },
     /**
      * cmd+W overlay redirect: whether the registry recognises `id` as the shared
