@@ -238,6 +238,11 @@ the foreground gate should run the same yarn.
 Note `test:desktop:electron` exits non-zero if **any** of the 6 runners fails (it aggregates
 per-runner status) — don't read the chained exit code as one runner's.
 
+The gate cannot go green on Linux, and its failure count moves between identical runs, so judging
+a change means diffing the failing spec set against the recorded set in
+`apps/desktop/tests/gate-baseline.md` — which separates the failures that reproduce every run from
+the ones that come and go. Reading the count alone reports a flake as a regression.
+
 **Fixed since (2026-06-09, second pass):**
 
 - **peek/slide transient-on-blur — DONE (peek `8e5c3174`).** Peeks/slides open with
