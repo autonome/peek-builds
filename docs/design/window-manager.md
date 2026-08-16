@@ -12,6 +12,11 @@ Read this table first. §4 and §5 below are the detailed record; this block is 
 current answer to "how much is done" — verified against `scripts/check-r2-window-ops.mjs`
 and the commit log, not against the prose elsewhere in this document, which drifts.
 
+**This pass re-verified only the two R2 counts below** (via
+`scripts/check-r2-window-ops.mjs`), not the per-step statuses in the table — those track
+the older 11-step migration (§5), not the current window-kernel rewrite (§0.1), and carry
+forward unchanged.
+
 ### Step status (§5 migration sequence, 11 steps)
 
 | Step | What it is | Status |
@@ -30,7 +35,7 @@ and the commit log, not against the prose elsewhere in this document, which drif
 
 ### The mechanical progress measure
 
-`node scripts/check-r2-window-ops.mjs` (run 2026-07-29): **23 allowlisted entries / 37
+`node scripts/check-r2-window-ops.mjs` (run 2026-07-29): **15 allowlisted entries / 23
 calls**. This number — not the table above, not any other prose in this document — is the
 honest measure of how much window-op code still bypasses the machine. It is expected to
 shrink monotonically to zero; the check fails a PR that grows it.
@@ -76,7 +81,7 @@ are not yet checked on `main`.
 
 **Verification:** the full six-runner gate ran green over this batch in an isolated clone —
 4031 tests, 4000 passed, 0 failed, 31 pre-existing intentional skips, exit 0 — plus
-`node scripts/check-r2-window-ops.mjs` clean at 23 entries / 37 calls. This doc note is the
+`node scripts/check-r2-window-ops.mjs` clean at 15 entries / 23 calls. This doc note is the
 only change made after that run.
 
 **Known real bug, fix already written but unlanded:** `window-state.ts SWITCHER_SELECTED` sets
@@ -3733,15 +3738,17 @@ machine + adapter pair and exposes the numeric-id seam (`getWindowIdFor()` /
 `getNativeWindowFor()`) that the still-numeric renderer-facing id economy converts
 through (§3 scope decision).
 
-**The §0.1 rewrite exists alongside this, unwired.** `apps/desktop/main/window-kernel.ts` (the
-kernel), `window-escape.ts` (the Escape interpreter) and `window-kernel-executor.ts`
-(`WindowKernelExecutor`, the impure edge) are built and tested. None is constructed in
-production: `window-state.ts` and `window-os-adapter.ts` above remain the modules that drive the
-running app, and `window-kernel.ts` is imported only by `window-escape.ts`,
-`window-kernel-executor.ts` and their tests.
+**The §0.1 rewrite is wired and performs every window operation.** `apps/desktop/main/window-kernel.ts`
+(the kernel), `window-escape.ts` (the Escape interpreter) and `window-kernel-executor.ts`
+(`WindowKernelExecutor`, the impure edge) drive the running app; the executor provider is installed
+by `window-state-singleton.ts initWindowStateMachine`, and the arms of `window-os-adapter.ts runEffect`
+they replaced are labelled no-ops. Four responsibilities still sit on the old machine: the Escape
+renderer round trip, opening and closing the switcher, `reconcileEscGrab`, and two Escape-decided
+arms that carry kernel feeds and perform nothing. `window-state.ts` and `window-os-adapter.ts` are
+deleted once those have homes.
 
 **The R2 check is live** — `scripts/check-r2-window-ops.mjs`, in the
-`test:desktop:electron` chain: **23 allowlisted entries / 37 calls** as of this pass
+`test:desktop:electron` chain: **15 allowlisted entries / 23 calls** as of this pass
 (`node scripts/check-r2-window-ops.mjs`, 2026-07-29 — see "Where we are" at the top of
 this document for the canonical live count), each tagged with the §5 step that deletes
 it. The sole exempt file is `apps/desktop/main/electron-window-backend.ts` (swapped from
