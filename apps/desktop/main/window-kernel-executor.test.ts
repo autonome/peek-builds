@@ -194,7 +194,7 @@ describe('stackingLevelForLayer', () => {
 // ── Stacking re-assert (§0.1.6) ──────────────────────────────────────────────
 
 describe('the stacking re-assert loop', () => {
-  it('replays the whole visible orderable stack bottom-to-top on every order change, not a minimal diff', () => {
+  it('replays only the windows a change actually requires — a minimal diff, not the whole band', () => {
     const { exec, backend } = makeExecutor();
     for (const ev of [
       register(wid(1)),
@@ -206,48 +206,47 @@ describe('the stacking re-assert loop', () => {
     }
     backend.calls.length = 0;
 
-    // A third registration changes `order` — the emission is the FULL stack,
-    // both already-placed windows included.
+    // A third registration changes `order`'s membership, but the new window
+    // is not visible yet — it cannot appear in the replay at all — and the
+    // two already-placed windows kept their relative order, so nothing needs
+    // re-raising.
     exec.dispatch(register(wid(3)));
-    assert.deepStrictEqual(
-      backend.of('setStacking').map((c) => c.args[0]),
-      [wid(1), wid(2)],
-    );
+    assert.deepStrictEqual(backend.of('setStacking').map((c) => c.args[0]), []);
 
-    // A show does not reorder `order` (§0.1.10), but it DOES re-trigger the
-    // full re-assert: a window becoming visible is itself a reason to replay
-    // every visible window's level, because the native always-on-top ctor
-    // flag is unreliable on its own and a window is registered `visible:
-    // false` — before that flag can be trusted to have stuck — so the show is
-    // the first point this kernel can reinforce it (`window-kernel.ts
-    // react`'s `justBecameVisible`).
+    // Showing it is what makes it eligible for the first time; only IT gets
+    // replayed — windows 1 and 2 never moved, so they are not re-announced
+    // alongside it.
     backend.calls.length = 0;
     exec.dispatch({ type: 'WindowShown', id: wid(3) });
     assert.deepStrictEqual(
       backend.of('setStacking').map((c) => c.args[0]),
-      [wid(1), wid(2), wid(3)],
-      'the show reinforces the pin, not just an order change',
+      [wid(3)],
+      'only the window that newly became eligible is replayed',
     );
 
-    // The next order change replays all three, bottom -> top.
+    // A further registration of a not-yet-visible window again needs
+    // nothing: the three already-placed windows are still untouched.
     backend.calls.length = 0;
     exec.dispatch(register(wid(4)));
-    assert.deepStrictEqual(
-      backend.of('setStacking').map((c) => c.args[0]),
-      [wid(1), wid(2), wid(3)],
-    );
+    assert.deepStrictEqual(backend.of('setStacking').map((c) => c.args[0]), []);
   });
 
   it('replays within each layer band, lowest band first', () => {
     const { exec, backend } = makeExecutor();
-    // A pinned window registered between two base-layer ones — `order` is not
-    // layer-sorted, so the emission interleaves bands.
+    // Two base-layer windows and two pinned ones, registered alternating —
+    // `order` is not layer-sorted, so the raw array interleaves the bands.
     exec.dispatch(register(wid(1)));
     exec.dispatch(register(wid(2), { layer: BASE_LAYER + 1, class: 'hud' }));
     exec.dispatch(register(wid(3)));
-    for (const id of [wid(1), wid(2), wid(3)]) exec.dispatch({ type: 'WindowShown', id });
+    exec.dispatch(register(wid(4), { layer: BASE_LAYER + 1, class: 'hud' }));
+    for (const id of [wid(1), wid(2), wid(3), wid(4)]) exec.dispatch({ type: 'WindowShown', id });
     backend.calls.length = 0;
-    exec.dispatch({ type: 'WindowClosed', id: wid(3) });
+
+    // Reverse each band's internal order in one import — a genuine reorder in
+    // BOTH bands at once, the only way to see more than one band's replay in
+    // a single dispatch now that a plain close or registration of an
+    // ineligible window needs no replay at all.
+    exec.dispatch({ type: 'StackOrderImported', order: [wid(3), wid(1), wid(4), wid(2)] });
 
     const stacking = backend.of('setStacking');
     assert.deepStrictEqual(
@@ -256,6 +255,7 @@ describe('the stacking re-assert loop', () => {
         [wid(1), 'stacked'],
         [wid(2), 'pinned'],
       ],
+      'the base band replays before the pinned band, and only the one window each band actually needs moved',
     );
   });
 
@@ -267,15 +267,15 @@ describe('the stacking re-assert loop', () => {
     exec.dispatch(register(wid(4)));
     for (const id of [wid(1), wid(2), wid(3), wid(4)]) exec.dispatch({ type: 'WindowShown', id });
     backend.calls.length = 0;
-    exec.dispatch(register(wid(5)));
+
+    // A full reversal reorders both bands in one transition.
+    exec.dispatch({ type: 'StackOrderImported', order: [wid(4), wid(3), wid(2), wid(1)] });
 
     const stacking = backend.of('setStacking').map((c) => [c.args[0], c.args[1]]);
-    // Base band first (in array order), then the floating band (in array order).
+    // Base band first (in array order), then the floating band.
     assert.deepStrictEqual(stacking, [
       [wid(2), 'stacked'],
-      [wid(4), 'stacked'],
       [wid(1), 'pinned'],
-      [wid(3), 'pinned'],
     ]);
   });
 
@@ -287,16 +287,16 @@ describe('the stacking re-assert loop', () => {
     exec.dispatch({ type: 'WindowShown', id: wid(2) });
     backend.calls.length = 0;
     exec.dispatch(register(wid(3)));
-    assert.deepStrictEqual(
-      backend.of('setStacking').map((c) => c.args[0]),
-      [wid(1)],
-    );
-    // The first composited frame re-drives the emission with the host included.
+    // wid(3) is not visible, and neither placed window's relative order
+    // moved, so nothing needs replaying.
+    assert.deepStrictEqual(backend.of('setStacking').map((c) => c.args[0]), []);
+    // The first composited frame makes wid(2) eligible for the first time —
+    // only it is replayed, not wid(1) alongside it.
     backend.calls.length = 0;
     exec.dispatch({ type: 'WindowContentOrderable', id: wid(2) });
     assert.deepStrictEqual(
       backend.of('setStacking').map((c) => c.args[0]),
-      [wid(1), wid(2)],
+      [wid(2)],
     );
   });
 });
