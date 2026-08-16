@@ -2716,66 +2716,54 @@ export function react(prev: State, ev: Event, next: State): Effect[] {
     }
   }
 
-  // SetStacking (§0.1.6): a MINIMAL replay, not a re-assert of everything
-  // eligible. The native primitive is move-to-top, so a window whose index in
-  // its band did not change can still end up in the wrong place once a
-  // DIFFERENT window moves past it — bottom -> top `[A,B,C]` -> `[B,A,C]`
-  // only changes A's and B's index, but replaying move-to-top on just those
-  // two yields `[C,B,A]`, not `[B,A,C]`. The unit that has to be re-announced
-  // is therefore not "windows whose index changed" but the SMALLEST trailing
-  // run of the band's new order that, replayed bottom -> top over whatever
-  // the OS already has, reproduces the whole band — in the example above,
-  // that is A then C.
+  // SetStacking: §0.1.6 — the executor is a re-assert loop, not a diff. Any
+  // change to `order` (registration, close, raise) re-emits the FULL
+  // bottom -> top stacking over visible, ORDERABLE windows, one SetStacking
+  // per window. A window that is not yet orderable (a fresh page-host before
+  // its first composited frame) cannot be positioned by the OS, so it is
+  // omitted from the emission entirely. Always-on-top is folded into `layer`
+  // and realized ONLY here (`stackingLevelForLayer` in the executor) — there
+  // is no separate pin effect — so this loop is also where a pin gets
+  // reinforced, not just where order gets replayed.
+  const orderChanged =
+    prev.order.length !== next.order.length || prev.order.some((w, i) => w.id !== next.order[i]?.id);
+
+  // When `WindowContentOrderable` flips a window from non-orderable to
+  // orderable, that alone must trigger a fresh full re-emission — the
+  // machine form of the old first-frame re-assert, with no timer and no poll
+  // — even though `order`'s ids/positions did not change.
+  const justBecameOrderable =
+    ev.type === 'WindowContentOrderable' &&
+    prev.order.find((w) => w.id === ev.id)?.orderable !== true &&
+    next.order.find((w) => w.id === ev.id)?.orderable === true;
+
+  // A record becoming visible must trigger the same full re-emission, on the
+  // same reasoning: the native ctor-time always-on-top flag is unreliable on
+  // its own (the reason the old machine re-asserted it after construction),
+  // and a window is registered `visible: false` — before that flag can be
+  // trusted to have stuck — so the first opportunity this kernel has to
+  // reinforce it is the show. `orderChanged` alone misses this for a
+  // NON-ACTIVATING show (session restore, an inactive `windows.ts` show, an
+  // extension window): none of those reorder `order`, so without this clause
+  // a pinned window shown that way never gets its level reinforced.
   //
-  // Computed independently PER BAND (`w.layer > BASE_LAYER` is "pinned",
-  // everything else is "stacked" — §0.1.6's fixed layer array), because a
-  // native move-to-top only reorders within its own level and cannot perturb
-  // the other band. Within a band, `N` and `P` below sort by `layer`
-  // ascending then by position in their respective `order` — the SAME
-  // ordering `window-kernel-executor.ts reassertStacking` sorts its replay
-  // by, so the two stay in step.
-  //
-  // A window is FORCED into the suffix no matter where the minimal-diff
-  // search would have put it: one absent from `prev.order` entirely (a fresh
-  // registration), or whose `visible` or `orderable` flipped false -> true.
-  // Each of those is a window the OS has never placed at all, so it needs a
-  // replay even when its position in the band looks unchanged.
-  //
-  // When nothing in a band moved, this emits nothing for it — the emission
-  // is a genuine diff now, not an idempotent re-assert; see the doc on
-  // `window-kernel-executor.ts runEffects` for what that trades away.
-  for (const pinnedBand of [false, true] as const) {
-    const inBand = (w: WindowRecord) => (w.layer > BASE_LAYER) === pinnedBand;
-    const eligible = (w: WindowRecord) => w.visible && w.orderable && inBand(w);
+  // STRUCTURAL, like every other trigger in this function — a `visible` diff
+  // over `prev`/`next`, never a read of `ev.type` (`justBecameOrderable`
+  // above is the one exception already in this file; this clause does not
+  // add a second). `orderable` is carried over from the base gate for the
+  // same reason it gates the emission loop itself: a not-yet-orderable window
+  // cannot be positioned by the OS yet, so becoming visible before its first
+  // composited frame is not yet a reason to replay anything.
+  const justBecameVisible = next.order.some((w) => {
+    const prevRecord = prev.order.find((p) => p.id === w.id);
+    return prevRecord !== undefined && !prevRecord.visible && w.visible && w.orderable;
+  });
 
-    const N = next.order.filter(eligible).sort((a, b) => a.layer - b.layer);
-    const nIds = new Set(N.map((w) => w.id));
-    const P = prev.order
-      .filter(eligible)
-      .sort((a, b) => a.layer - b.layer)
-      .filter((w) => nIds.has(w.id));
-
-    // Smallest `k` such that dropping N's last `k` ids — from BOTH N and P —
-    // leaves the two sequences equal. `k` always resolves by `N.length`: at
-    // that point every id is dropped from both sides and both are empty.
-    let k = 0;
-    for (; k <= N.length; k++) {
-      const suffixIds = new Set(N.slice(N.length - k).map((w) => w.id));
-      const head = N.slice(0, N.length - k);
-      const pRemaining = P.filter((w) => !suffixIds.has(w.id));
-      if (head.length === pRemaining.length && head.every((w, i) => w.id === pRemaining[i].id)) break;
-    }
-    let suffixStart = N.length - k;
-
-    for (let i = 0; i < N.length; i++) {
-      const prevRecord = prev.order.find((p) => p.id === N[i].id);
-      const forced =
-        prevRecord === undefined || (!prevRecord.visible && N[i].visible) || (!prevRecord.orderable && N[i].orderable);
-      if (forced) suffixStart = Math.min(suffixStart, i);
-    }
-
-    for (let i = suffixStart; i < N.length; i++) {
-      effects.push({ type: 'SetStacking', id: N[i].id, layer: N[i].layer });
+  if (orderChanged || justBecameOrderable || justBecameVisible) {
+    for (const w of next.order) {
+      if (w.visible && w.orderable) {
+        effects.push({ type: 'SetStacking', id: w.id, layer: w.layer });
+      }
     }
   }
 

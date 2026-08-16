@@ -1925,19 +1925,15 @@ This is exactly what dwm does (`restack()` chains each window `Below` the previo
 surveyed WM computes a minimal diff** — dwm re-emits the entire stack on every focus change and no
 one has complained about the cost. Consequences:
 
-- The executor replays via `moveTop()` bottom → top within each layer, but `window-kernel.ts
-  react` no longer hands it the whole band on every mutation: it computes the smallest trailing
-  run of each band's order that still reproduces the band, so a mutation that moved nothing
-  emits nothing to replay. A window that is not in this minimal set is not re-asserted.
+- The executor is a **re-assert loop, not an insert** — O(n) in visible windows, inherently
+  idempotent. Mark dirty and re-emit once per tick, not once per mutation.
 - **Never read z-order back from Electron.** The OS stack is a *write-only projection*; the OS
   reorders it independently on user clicks and `app.activate`. This is EWMH's model —
   `_NET_CLIENT_LIST_STACKING` is published by the WM, never consulted by it.
 - **A reconciliation path is required, not just a write path.** dwm's `focusin()` exists solely
   because "there are some broken focus acquiring clients"; when X reports a focus dwm didn't
-  order, dwm re-asserts its own model. That still holds for a focus report itself (it is a
-  genuine `order` change, so it reaches `SetStacking`), but a minimal diff assumes `prev` already
-  matches the OS — an external perturbation the model never observed is not self-corrected the
-  way a full re-emission would have corrected it for free.
+  order, dwm re-asserts its own model. Full re-emission is idempotent, so the next re-assert
+  corrects any external perturbation for free.
 
 **Consequence for any `topmost` predicate: `order` is not layer-sorted, so a cross-band predicate
 is unsafe.** `order` is insertion- and movement-ordered only — nothing in `window-kernel.ts

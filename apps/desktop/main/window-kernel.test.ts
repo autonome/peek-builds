@@ -35,7 +35,6 @@ import {
   type Event,
   type Effect,
   type WindowId,
-  type WindowRecord,
   type Command,
   type Rectangle,
   type FocusCause,
@@ -1015,131 +1014,6 @@ describe('window-kernel: a window becoming visible re-asserts stacking, not just
     assert.strictEqual(setStackingEffects.length, 1, 'sanity: and exactly one SetStacking alongside it');
     assert.ok(!('opSeq' in setStackingEffects[0]), 'SetStacking carries no opSeq — it is not focus-family');
     assert.strictEqual(shown.opSeqCounter, state.opSeqCounter + 1, 'one advance, for the ShowWindow alone');
-  });
-});
-
-// ── SetStacking is a minimal diff, not a full re-assert ─────────────────────
-//
-// The retired property: `react` used to re-emit `SetStacking` for EVERY
-// visible+orderable window whenever `order` changed at all. It now emits only
-// a SUFFIX of each band's bottom -> top order — the smallest trailing run
-// that, replayed with `moveTop()` over whatever the OS already has, still
-// reproduces the whole band. "Windows whose index changed" is a DIFFERENT,
-// incorrect rule: bottom -> top `[A,B,C]` -> `[B,A,C]` only changes A's and
-// B's index, but replaying just those two yields `[C,B,A]`, not `[B,A,C]` —
-// the correct minimal replay is A then C (see the third case below).
-//
-// These build `prev`/`next` by hand, the same technique
-// "a pure REORDER raises nothing" above uses: `react` is a pure structural
-// diff of its two state arguments and never reads `ev`, so a hand-built pair
-// is exactly the call the executor would make.
-describe('window-kernel: SetStacking replays only the windows that actually need re-raising', () => {
-  /** A fully eligible (visible, orderable) `kind: 'browser'` record at `layer`. */
-  const makeRecord = (id: WindowId, layer: number): WindowRecord =>
-    fold([
-      { type: 'WindowRegistered', id, kind: 'browser', layer, canBecomeKey: true, acceptsInput: true, class: 'primary' },
-      { type: 'WindowShown', id },
-    ]).order[0];
-
-  const stacking = (effects: Effect[]) => effects.filter((e) => e.type === 'SetStacking');
-
-  it('no order change emits no SetStacking at all', () => {
-    const a = makeRecord(wid(1), BASE_LAYER);
-    const b = makeRecord(wid(2), BASE_LAYER);
-    const prev: State = { ...initialState(), order: [a, b] };
-    const next: State = { ...prev, version: prev.version + 1 };
-    assert.deepStrictEqual(stacking(react(prev, { type: 'AppActivated' }, next)), []);
-  });
-
-  it('a new window on top emits only that window', () => {
-    const a = makeRecord(wid(1), BASE_LAYER);
-    const b = makeRecord(wid(2), BASE_LAYER);
-    const prev: State = { ...initialState(), order: [a] };
-    const next: State = { ...prev, order: [a, b], version: prev.version + 1 };
-    assert.deepStrictEqual(stacking(react(prev, { type: 'AppActivated' }, next)), [
-      { type: 'SetStacking', id: wid(2), layer: BASE_LAYER },
-    ]);
-  });
-
-  it('bottom -> top [A,B,C] -> [B,A,C] emits exactly A then C, in that order', () => {
-    // The counter-example to "emit the windows whose index changed": that
-    // rule would emit A and B (C's index did not move) and replaying
-    // move-to-top on A then B yields [C,B,A], not [B,A,C].
-    const a = makeRecord(wid(1), BASE_LAYER);
-    const b = makeRecord(wid(2), BASE_LAYER);
-    const c = makeRecord(wid(3), BASE_LAYER);
-    const prev: State = { ...initialState(), order: [a, b, c] };
-    const next: State = { ...prev, order: [b, a, c], version: prev.version + 1 };
-    assert.deepStrictEqual(stacking(react(prev, { type: 'AppActivated' }, next)), [
-      { type: 'SetStacking', id: wid(1), layer: BASE_LAYER },
-      { type: 'SetStacking', id: wid(3), layer: BASE_LAYER },
-    ]);
-  });
-
-  it('a window inserted at the bottom emits the whole band', () => {
-    // Nothing in the previous order can anchor a shorter suffix: everything
-    // above the new bottom-most window has to be replayed over it.
-    const a = makeRecord(wid(1), BASE_LAYER);
-    const b = makeRecord(wid(2), BASE_LAYER);
-    const c = makeRecord(wid(3), BASE_LAYER);
-    const prev: State = { ...initialState(), order: [b, c] };
-    const next: State = { ...prev, order: [a, b, c], version: prev.version + 1 };
-    assert.deepStrictEqual(stacking(react(prev, { type: 'AppActivated' }, next)), [
-      { type: 'SetStacking', id: wid(1), layer: BASE_LAYER },
-      { type: 'SetStacking', id: wid(2), layer: BASE_LAYER },
-      { type: 'SetStacking', id: wid(3), layer: BASE_LAYER },
-    ]);
-  });
-
-  it('a window becoming visible is emitted even though its position did not change', () => {
-    const bottom = makeRecord(wid(2), BASE_LAYER);
-    const hidden = fold([
-      { type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary' },
-    ]).order[0];
-    assert.strictEqual(hidden.visible, false, 'precondition: registered, not yet shown');
-
-    const prev: State = { ...initialState(), order: [bottom, hidden] };
-    const shown: WindowRecord = { ...hidden, visible: true };
-    const next: State = { ...prev, order: [bottom, shown], version: prev.version + 1 };
-
-    assert.deepStrictEqual(stacking(react(prev, { type: 'AppActivated' }, next)), [
-      { type: 'SetStacking', id: wid(1), layer: BASE_LAYER },
-    ]);
-  });
-
-  it('a window becoming orderable is emitted even though its position did not change', () => {
-    const bottom = makeRecord(wid(2), BASE_LAYER);
-    const notOrderable = fold([
-      { type: 'WindowRegistered', id: wid(1), kind: 'page-host', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary' },
-      { type: 'WindowShown', id: wid(1) },
-    ]).order[0];
-    assert.strictEqual(notOrderable.visible, true, 'precondition: visible');
-    assert.strictEqual(notOrderable.orderable, false, 'precondition: a fresh page-host starts non-orderable');
-
-    const prev: State = { ...initialState(), order: [bottom, notOrderable] };
-    const orderable: WindowRecord = { ...notOrderable, orderable: true };
-    const next: State = { ...prev, order: [bottom, orderable], version: prev.version + 1 };
-
-    assert.deepStrictEqual(stacking(react(prev, { type: 'AppActivated' }, next)), [
-      { type: 'SetStacking', id: wid(1), layer: BASE_LAYER },
-    ]);
-  });
-
-  it('pinned and base-layer windows are diffed independently of one another', () => {
-    // A and B (base layer) swap; P1 and P2 (pinned) do not move at all — and
-    // are interleaved with A/B in `order` to prove the diff really groups by
-    // band rather than reading raw adjacency.
-    const a = makeRecord(wid(1), BASE_LAYER);
-    const b = makeRecord(wid(2), BASE_LAYER);
-    const p1 = makeRecord(wid(11), BASE_LAYER + 1);
-    const p2 = makeRecord(wid(12), BASE_LAYER + 1);
-
-    const prev: State = { ...initialState(), order: [a, p1, b, p2] };
-    const next: State = { ...prev, order: [b, p1, a, p2], version: prev.version + 1 };
-
-    assert.deepStrictEqual(stacking(react(prev, { type: 'AppActivated' }, next)), [
-      { type: 'SetStacking', id: wid(1), layer: BASE_LAYER },
-    ]);
   });
 });
 
@@ -5152,24 +5026,18 @@ describe('window-kernel: the stack-order import', () => {
 
   // ── What the import drives ────────────────────────────────────────────────
 
-  it('an import emits only the windows the minimal diff needs re-raised, and NO RaiseWindow', () => {
+  it('an import emits the full bottom -> top stacking sweep and NO RaiseWindow', () => {
     // An order import must never activate anything (the old machine forbids it
     // outright). It holds here without the import having to be constrained:
     // `react`'s raise rule diffs `State.key`, which a permutation never writes.
-    //
-    // `react` no longer re-asserts the whole band (that property is retired —
-    // see `window-kernel.ts react`'s `SetStacking` block). Before this import,
-    // `order` is `[1,2,3,11,10]`; naming `[3,1,2]` rewrites those three into
-    // the same three slots (0,1,2), so `order` becomes `[3,1,2,11,10]` — the
-    // stacked-band OS replay `1,2,3,10` only needs `1,2,10` replayed on top of
-    // an unmoved `3` to reach `3,1,2,10`; the pinned band (`11` alone) did not
-    // move at all.
     const before = restored();
     const { state: after, effects } = importOrder(before, [wid(3), wid(1), wid(2)]);
 
     assert.deepStrictEqual(effects, [
+      { type: 'SetStacking', id: wid(3), layer: BASE_LAYER },
       { type: 'SetStacking', id: wid(1), layer: BASE_LAYER },
       { type: 'SetStacking', id: wid(2), layer: BASE_LAYER },
+      { type: 'SetStacking', id: wid(11), layer: BASE_LAYER + 1 },
       { type: 'SetStacking', id: wid(10), layer: BASE_LAYER },
     ]);
     assert.ok(
