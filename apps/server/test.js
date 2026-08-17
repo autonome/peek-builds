@@ -2524,6 +2524,95 @@ describe("POST /items — real route (dropped-tombstone regression)", () => {
   });
 });
 
+// Regression suite for the empty-text sync stall: a desktop client holding an
+// empty `text` item retried it every sync forever, and the item never earned
+// a syncId — which stalled the event push's watermark behind it, forcing
+// every run to re-push the entire event history (see CONTENT_REQUIRED_TYPES
+// in index.js). `url` keeps the content requirement. Exercises the real
+// production app (`require("./index").app`), same convention as the POST
+// /items real-route suite above.
+describe("POST /items — content requirement is per-type (CONTENT_REQUIRED_TYPES)", () => {
+  let app;
+  let users;
+  let apiKey;
+  const TEST_USER = "contentrequser";
+
+  beforeEach(() => {
+    for (const mod of ["./db", "./users", "./grants", "./mcp-items", "./backup", "./auth", "./index"]) {
+      delete require.cache[require.resolve(mod)];
+    }
+    cleanTestDir();
+
+    require("./db");
+    users = require("./users");
+    ({ app } = require("./index"));
+
+    const result = users.createUser(TEST_USER);
+    apiKey = result.apiKey;
+  });
+
+  function authHeaders() {
+    return { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
+  }
+
+  async function fetchItems() {
+    const res = await app.request("/items", { headers: authHeaders() });
+    const json = await res.json();
+    return json.items;
+  }
+
+  it("accepts a text item with empty-string content", async () => {
+    const res = await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "text", content: "" }),
+    });
+    assert.strictEqual(res.status, 200);
+
+    const items = await fetchItems();
+    assert.strictEqual(items.length, 1);
+    assert.strictEqual(items[0].type, "text");
+  });
+
+  it("accepts a text item with content: null", async () => {
+    const res = await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "text", content: null }),
+    });
+    assert.strictEqual(res.status, 200);
+
+    const items = await fetchItems();
+    assert.strictEqual(items.length, 1);
+    assert.strictEqual(items[0].type, "text");
+  });
+
+  it("accepts a text item with content omitted entirely", async () => {
+    const res = await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "text" }),
+    });
+    assert.strictEqual(res.status, 200);
+
+    const items = await fetchItems();
+    assert.strictEqual(items.length, 1);
+    assert.strictEqual(items[0].type, "text");
+  });
+
+  it("still rejects a url item with no content", async () => {
+    const res = await app.request("/items", {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ type: "url" }),
+    });
+    assert.strictEqual(res.status, 400);
+
+    const json = await res.json();
+    assert.strictEqual(json.error, "content is required for type 'url'");
+  });
+});
+
 // Coverage for item_events sync: append-only observations backing series/feed
 // items. Exercises the real production app (`require("./index").app`), same
 // convention as the POST /items real-route suite above.
