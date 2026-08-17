@@ -50,13 +50,8 @@ playwright-report/
 # Session handoff notes (per-user session scratch — not source-controlled)
 handoff.md
 
-# Isolated agent workspaces (created by scripts/spawn-isolated-agent.sh)
-../mpeek-agent-*
-# Isolated agent clones (created by scripts/spawn-isolated-clone.sh)
+# Per-task git worktrees (git worktree add .worktrees/<slot> -b agent/<slot> main)
 .worktrees/
-# Local clone-task metadata (created by spawn-isolated-clone.sh inside a
-# clone's own root when /tmp/mpeek-clone-task is set — never tracked)
-.clone-task
 
 # Backup files
 *.bak

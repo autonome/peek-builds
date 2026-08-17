@@ -25,9 +25,8 @@ Rules owned elsewhere — follow the pointer, don't restate:
 | Agent liveness, brief sizing, routing | `~/.claude/docs/subagents.md` |
 | Loop wiring, kill switch, known failure modes | `operating.md` beside this file |
 
-The `agent-review` skill's *judgment* half is current; its finalize and
-clone-pool commands describe retired machinery. Landing steps below supersede
-them.
+The `agent-review` skill describes the same worktree flow; the landing steps
+below and its land + verify loop are the same machinery stated once each.
 
 ## Prerequisite: the Peek MCP must be wired into this repo
 
@@ -138,7 +137,8 @@ mcp__peek__record_event({ itemId, type: 'started', value: 'dispatched to .worktr
 ## 4. Spawn
 
 ```bash
-git -C /home/dev/workspace/peek worktree add .worktrees/<slot> -b agent/<slot> main
+# from the primary checkout's root
+git worktree add .worktrees/<slot> -b agent/<slot> main
 ```
 
 Then install inside it (`cd .worktrees/<slot> && yarn install`) — a worktree is
@@ -193,7 +193,8 @@ Only after `agent-review` returns a pass. In dependency order if several are
 waiting:
 
 ```bash
-git -C /home/dev/workspace/peek merge --ff-only agent/<slot>
+# from the primary checkout's root
+git merge --ff-only agent/<slot>
 ```
 
 Not a fast-forward → rebase **in the task worktree** (`git -C
@@ -215,8 +216,8 @@ worktree), and re-review when it returns.
 Clean up only after the task is marked done:
 
 ```bash
-git -C /home/dev/workspace/peek worktree remove .worktrees/<slot>
-git -C /home/dev/workspace/peek branch -d agent/<slot>
+git worktree remove .worktrees/<slot>
+git branch -d agent/<slot>
 ```
 
 ## Tick report
