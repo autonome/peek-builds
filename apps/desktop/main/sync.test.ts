@@ -414,6 +414,10 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
     // every call, not just the first — the grouping tests below need many
     // items to fail, not one.
     itemPushFailureFor?: (bodyText: string) => string | undefined;
+    // Overrides the HTTP status used for an itemPushFailureFor failure —
+    // defaults to 500 (transient) when omitted. Lets a test drive a 4xx
+    // (permanent, per isPermanentPushFailure()) failure through the same stub.
+    itemPushStatusFor?: (bodyText: string) => number;
   } = {}) {
     const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-progresslog-${name}-`));
     datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
@@ -435,7 +439,8 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
       if (opts.itemPushFailureFor && method === 'POST' && reqPath.startsWith('/items')) {
         const failMessage = opts.itemPushFailureFor(bodyText);
         if (failMessage !== undefined) {
-          return new Response(failMessage, { status: 500 });
+          const status = opts.itemPushStatusFor ? opts.itemPushStatusFor(bodyText) : 500;
+          return new Response(failMessage, { status });
         }
       }
 
@@ -556,6 +561,130 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
     assert.ok(
       !log.some((e) => e.message.includes(CONTENT_MARKER)),
       'expected no log entry to contain item content'
+    );
+  });
+
+  it('six item pushes failing with the SAME error list all six ids — the raised PUSH_FAILURE_IDS_MAX', async () => {
+    const { apiKey } = setup('item-fail-six-ids', {
+      itemPushFailureFor: () => 'simulated identical push failure',
+    });
+
+    // Past the old cap of 5, within the current cap of 20 — the six ids
+    // must all be listed, which the old cap would have suppressed entirely.
+    const ITEM_COUNT = 6;
+    const db = datastore.getDb();
+    const now = Date.now();
+    const CONTENT_MARKER = 'item-content-must-not-leak-into-the-log';
+    const insert = db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', ?, '{}', '', 0, ?, ?, 0)
+    `);
+    for (let i = 0; i < ITEM_COUNT; i++) {
+      insert.run(`local-fail-six-${i}`, `${CONTENT_MARKER}-${i}`, now, now);
+    }
+
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+    const failureEntries = log.filter((e) => e.stage === 'push-items' && e.phase === 'error');
+
+    assert.strictEqual(
+      failureEntries.length,
+      1,
+      `expected exactly one grouped entry for identical failures, got ${failureEntries.length}: ` +
+      JSON.stringify(failureEntries.map((e) => e.message))
+    );
+    for (let i = 0; i < ITEM_COUNT; i++) {
+      assert.ok(
+        failureEntries[0].message.includes(`local-fail-six-${i}`),
+        `expected the grouped entry to name item local-fail-six-${i} (6 failures, within the raised cap), got: ${failureEntries[0].message}`
+      );
+    }
+    assert.ok(
+      !log.some((e) => e.message.includes(CONTENT_MARKER)),
+      'expected no log entry to contain item content'
+    );
+  });
+
+  it('a 4xx item failure logs as permanent and a 5xx item failure logs as retryable in the same run', async () => {
+    const PERMANENT_MARKER = 'permanent-marker';
+    const TRANSIENT_MARKER = 'transient-marker';
+    const { apiKey } = setup('item-fail-mixed-permanence', {
+      itemPushFailureFor: (bodyText) =>
+        bodyText.includes(PERMANENT_MARKER)
+          ? `content is required for type 'text'`
+          : 'simulated server outage',
+      itemPushStatusFor: (bodyText) => (bodyText.includes(PERMANENT_MARKER) ? 400 : 500),
+    });
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', ?, '{}', '', 0, ?, ?, 0)
+    `).run('local-permanent-item', PERMANENT_MARKER, now, now);
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', ?, '{}', '', 0, ?, ?, 0)
+    `).run('local-transient-item', TRANSIENT_MARKER, now, now);
+
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+    const failureEntries = log.filter((e) => e.stage === 'push-items' && e.phase === 'error');
+
+    const permanentEntry = failureEntries.find((e) => e.message.includes('local-permanent-item'));
+    assert.ok(permanentEntry, `expected an entry naming the 4xx item, got: ${JSON.stringify(failureEntries.map((e) => e.message))}`);
+    assert.ok(
+      permanentEntry!.message.includes('will not succeed until the item changes'),
+      `expected the 4xx failure to be worded as permanent, got: ${permanentEntry!.message}`
+    );
+
+    const transientEntry = failureEntries.find((e) => e.message.includes('local-transient-item'));
+    assert.ok(transientEntry, `expected an entry naming the 5xx item, got: ${JSON.stringify(failureEntries.map((e) => e.message))}`);
+    assert.ok(
+      transientEntry!.message.includes('will retry next run'),
+      `expected the 5xx failure to be worded as retryable, got: ${transientEntry!.message}`
+    );
+
+    assert.ok(
+      !log.some((e) => e.message.includes(PERMANENT_MARKER) || e.message.includes(TRANSIENT_MARKER)),
+      'expected no log entry to contain item content'
+    );
+  });
+
+  it('a 4xx event chunk rejection is logged as permanent, not retryable', async () => {
+    const { apiKey } = setup('event-chunk-permanent', { failFirstEventPushOnce: true });
+
+    const createRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'series', metadata: { title: 'Event chunk permanence series' } }),
+    });
+    const { id: serverItemId } = (await createRes.json()) as { id: string };
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    const localItemId = 'local-event-chunk-permanent-item';
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', ?, ?, ?, ?, 0)
+    `).run(localItemId, serverItemId, now, now, now);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, ?, '{}', ?)
+    `).run('evt-chunk-permanent', localItemId, 1, now, now);
+
+    // setup()'s failFirstEventPushOnce rejects the chunk with a 400 —
+    // exercises isPermanentPushFailure()'s 4xx branch for an event chunk.
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+    const chunkFailure = log.find((e) => e.stage === 'push-events' && e.phase === 'error');
+    assert.ok(chunkFailure, 'expected a log entry for the rejected chunk');
+    assert.ok(
+      chunkFailure!.message.includes('will not succeed until the events change'),
+      `expected the 4xx chunk rejection to be worded as permanent, got: ${chunkFailure!.message}`
     );
   });
 

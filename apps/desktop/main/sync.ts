@@ -676,9 +676,12 @@ const ITEM_PUSH_PROGRESS_INTERVAL_MS = 3000;
 const PUSH_FAILURE_REASONS_MAX = 20;
 // Ids are listed only for a small group — past this, the id list is as
 // unreadable as one line per failure would have been, and the log's job here is
-// to say WHY a class of failure happened, not to enumerate every row (failed
-// rows are retried automatically on the next run regardless).
-const PUSH_FAILURE_IDS_MAX = 5;
+// to say WHY a class of failure happened, not to enumerate every row. A full
+// re-push can still fail thousands of items with the same reason, so the cap
+// has to hold even then — but a handful of failures (the case a user actually
+// chases down, e.g. one malformed item blocking every future run) is exactly
+// where the ids matter most, and 20 of them is still a readable log entry.
+const PUSH_FAILURE_IDS_MAX = 20;
 
 /**
  * Turn a reason -> ids map into one summary line per distinct reason, most
@@ -699,6 +702,38 @@ function groupFailuresByReason(idsByReason: Map<string, string[]>, noun: string)
     lines.push(`...and ${rest.length} more distinct error(s) (${restCount} more ${noun}(s))`);
   }
   return lines;
+}
+
+/**
+ * A message shaped `Server error <status>: <body>` (serverFetch's own error
+ * throw, above) with a 4xx status means the server looked at this exact row
+ * and rejected it — resending the same body next run cannot change that
+ * outcome. Anything else (a timeout, a network error, a 5xx) means the
+ * server or the link was unavailable, which is exactly the kind of failure
+ * an unchanged retry can clear on its own.
+ */
+function isPermanentPushFailure(message: string): boolean {
+  const match = message.match(/^Server error (\d)\d\d:/);
+  return match !== null && match[1] === '4';
+}
+
+/**
+ * Split a reason -> ids map into the permanent (isPermanentPushFailure()
+ * above) and transient reasons within it, so pushToServer() and
+ * pushEventsToServer() can log the two classes as separate lines — same
+ * grouping, different wording — without duplicating the accumulation loop
+ * per class.
+ */
+function partitionByPermanence(idsByReason: Map<string, string[]>): {
+  permanent: Map<string, string[]>;
+  transient: Map<string, string[]>;
+} {
+  const permanent = new Map<string, string[]>();
+  const transient = new Map<string, string[]>();
+  for (const [reason, ids] of idsByReason) {
+    (isPermanentPushFailure(reason) ? permanent : transient).set(reason, ids);
+  }
+  return { permanent, transient };
 }
 
 /**
@@ -806,10 +841,17 @@ export async function pushToServer(
   // Surfaced in the Settings sync log — "Pushed N item(s), M failed" (logged
   // by syncAll() from this function's return value) says HOW MANY, not why;
   // these lines say why, grouped so a systemic failure (every item hitting
-  // the same server error) reads as one line, not thousands.
+  // the same server error) reads as one line, not thousands. Split by
+  // isPermanentPushFailure() so a 400 (this item, as-sent, will never be
+  // accepted — retrying it every run is wasted work) reads differently from
+  // a timeout/5xx (the next run can simply succeed).
   if (failuresByReason.size > 0) {
-    for (const line of groupFailuresByReason(failuresByReason, 'item')) {
-      logSyncProgress('push-items', 'error', `Item push failed — ${line}`);
+    const { permanent, transient } = partitionByPermanence(failuresByReason);
+    for (const line of groupFailuresByReason(permanent, 'item')) {
+      logSyncProgress('push-items', 'error', `Item push rejected, will not succeed until the item changes — ${line}`);
+    }
+    for (const line of groupFailuresByReason(transient, 'item')) {
+      logSyncProgress('push-items', 'error', `Item push failed, will retry next run — ${line}`);
     }
   }
 
@@ -1192,9 +1234,15 @@ export async function pushEventsToServer(
   // message so N chunks failing for the SAME reason (e.g. the server down for
   // the whole run) collapse into one line instead of one per chunk. Events in
   // a failed chunk are not lost — they stay eligible for the next run via
-  // notDeliveredMinCreatedAt above.
+  // notDeliveredMinCreatedAt above, and are retried unchanged regardless of
+  // which class this is (see isPermanentPushFailure()); only the wording
+  // below tells the two apart, so a 400 doesn't read as if next run will help.
   if (chunkFailuresByReason.size > 0) {
-    for (const line of groupFailuresByReason(chunkFailuresByReason, 'event')) {
+    const { permanent, transient } = partitionByPermanence(chunkFailuresByReason);
+    for (const line of groupFailuresByReason(permanent, 'event')) {
+      logSyncProgress('push-events', 'error', `Event chunk(s) rejected, will not succeed until the events change — ${line}`);
+    }
+    for (const line of groupFailuresByReason(transient, 'event')) {
       logSyncProgress('push-events', 'error', `Event chunk(s) rejected, will retry next run — ${line}`);
     }
   }
