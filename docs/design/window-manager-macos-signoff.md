@@ -80,6 +80,16 @@ No automated check can reach any of these. For each, record what happened, not w
     The switcher should go away, and the application switched to must keep focus. This path has no
     home in the new machine yet and nothing reproduces it, so its observed behaviour here is the
     reference.
+11. **Raising a background window is clean, both ways.** With two page-hosts open and a peek in
+    front of one of them: (a) click the chrome of the background page-host (its title area, not the
+    page content) — it should come forward with no flicker of its own navbar or the peek's chrome,
+    and no other window should end up taking focus instead. (b) Cmd+Tab back to the window sitting
+    behind the peek — same expectation: it comes forward cleanly, the peek does not flash or
+    reassert itself on top, and focus lands on the window you switched to, not back on the peek.
+    This exercises the raise-is-a-reorder-not-a-show change (`electron-window-backend.ts
+    raiseWindow`) — the failure mode it targets is a background window's chrome or an
+    always-on-top overlay flickering show/hide while the two fight over which one the OS just
+    focused.
 
 ## What to report back
 
