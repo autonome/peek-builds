@@ -4216,6 +4216,93 @@ describe('window-kernel: topmostBaseLayerPageHost', () => {
       'attaching the shared chrome overlay singleton to a doomed host is the original overlay-attach defect family',
     );
   });
+
+  it('a visible base-layer page host is named when it is the topmost base-layer front-eligible window', () => {
+    const pageHost = wid(1);
+    const state = fold([registerPageHost(pageHost), ...shown(pageHost)]);
+    assert.strictEqual(topmostBaseLayerPageHost(state)?.id, pageHost);
+  });
+
+  it('REGRESSION: focusing an ordinary base-layer browser window answers null, even while a page host stays visible — the chrome must detach rather than keep framing the page underneath', () => {
+    const browserWin = wid(1);
+    const pageHost = wid(2);
+    const state = fold([
+      { type: 'WindowRegistered', id: browserWin, kind: 'browser', layer: BASE_LAYER, canBecomeKey: true, acceptsInput: true, class: 'primary', role: 'content' },
+      { type: 'WindowShown', id: browserWin },
+      registerPageHost(pageHost),
+      ...shown(pageHost),
+    ]);
+    // Precondition: with nothing else focused, the page host is still the attach target.
+    assert.strictEqual(topmostBaseLayerPageHost(state)?.id, pageHost);
+
+    const focused = evolve(state, { type: 'OsFocusGained', id: browserWin });
+    assert.deepStrictEqual(
+      focused.order.map((w) => w.id),
+      [pageHost, browserWin],
+      'the focus raise moved the ordinary browser window to the top of order, past the still-visible page host',
+    );
+    assert.strictEqual(
+      topmostBaseLayerPageHost(focused),
+      null,
+      'the topmost window the user could be working in is an ordinary browser window, not a page host — the shared chrome overlay must detach, not keep framing the page underneath',
+    );
+  });
+
+  it('a front-eligible window above the base layer at the top of order does not change the answer — the page host underneath is still named', () => {
+    const pageHost = wid(1);
+    const floatingPanel = wid(2);
+    const state = fold([
+      registerPageHost(pageHost),
+      ...shown(pageHost),
+      // A floating-layer window that IS genuinely front-eligible — unlike the
+      // production cmd panel, which is `role: 'palette'` and so is ALSO
+      // excluded as a satellite (see the satellite case below), which would
+      // conflate the two clauses. This isolates the layer clamp:
+      // `isBaseLayerFrontEligible` must exclude it on `layer` alone.
+      { type: 'WindowRegistered', id: floatingPanel, kind: 'browser', layer: FLOATING, canBecomeKey: true, acceptsInput: true, class: 'floating-panel', role: 'workspace' },
+      { type: 'WindowShown', id: floatingPanel },
+    ]);
+    assert.deepStrictEqual(state.order.map((w) => w.id), [pageHost, floatingPanel], 'the floating panel sits above the page host in order');
+    assert.strictEqual(isFrontEligibleWindow(state.order[1]), true, 'precondition: genuinely front-eligible, not excluded as a satellite');
+    assert.strictEqual(
+      topmostBaseLayerPageHost(state)?.id,
+      pageHost,
+      'the floating window sits above BASE_LAYER, so the band clamp excludes it before eligibility is even tested',
+    );
+  });
+
+  it('a satellite at the top of order does not change the answer', () => {
+    const pageHost = wid(1);
+    const overlay = wid(2);
+    const state = fold([
+      registerPageHost(pageHost),
+      ...shown(pageHost),
+      // The shared chrome overlay's own registration shape: floating layer,
+      // focusable (typing a URL takes key), `role: 'overlay'`.
+      { type: 'WindowRegistered', id: overlay, kind: 'browser', layer: FLOATING, canBecomeKey: true, acceptsInput: false, class: 'overlay', role: 'overlay' },
+      { type: 'WindowShown', id: overlay },
+    ]);
+    assert.deepStrictEqual(state.order.map((w) => w.id), [pageHost, overlay], 'the overlay sits above the page host in order');
+    assert.strictEqual(
+      topmostBaseLayerPageHost(state)?.id,
+      pageHost,
+      'role: overlay is a satellite — isFrontEligibleWindow excludes it, so it cannot shadow the page host underneath, and the chrome legitimately taking key on Cmd+L never flickers the attachment',
+    );
+  });
+
+  it('a topmost page host that is not yet orderable answers null, and answers the host once it becomes orderable', () => {
+    const pageHost = wid(1);
+    const state = fold([registerPageHost(pageHost), { type: 'WindowShown', id: pageHost }]); // visible, but no first-composited-frame report yet
+    assert.strictEqual(state.order[0].orderable, false, 'precondition: no WindowContentOrderable report yet');
+    assert.strictEqual(topmostBaseLayerPageHost(state), null, 'a page host the OS cannot yet z-order is not the attach target');
+
+    const orderable = evolve(state, { type: 'WindowContentOrderable', id: pageHost });
+    assert.strictEqual(
+      topmostBaseLayerPageHost(orderable)?.id,
+      pageHost,
+      'the same transition that flips orderable changes the answer, with no other input moving — the state self-heals',
+    );
+  });
 });
 
 // ── The overturn set: what the key/main split reverses ──────────────────────

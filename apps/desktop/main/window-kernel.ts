@@ -3233,7 +3233,17 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
 // Queries that replace `front` (§0.1.5)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Scans `order` from the top (the END of the array) and returns the first match, else null. */
+/**
+ * Scans `order` from the top (the END of the array) and returns the first match, else null.
+ *
+ * TRUSTWORTHY ONLY WHEN `pred` ADMITS RECORDS FROM ONE `layer`. `order` is
+ * insertion- and movement-ordered, never layer-sorted (§0.1.6), so array
+ * position and visual stacking agree only within a single layer band. A
+ * predicate whose admitted set spans bands can have this function return a
+ * window that is not visually topmost, with no error path to catch it — the
+ * winner is simply wrong. A predicate that spans bands must add a `layer`
+ * clause narrowing it to one band, or be replaced with a band-aware query.
+ */
 export function topmost(state: State, pred: (r: WindowRecord) => boolean): WindowRecord | null {
   for (let i = state.order.length - 1; i >= 0; i--) {
     if (pred(state.order[i])) {
@@ -3543,14 +3553,106 @@ export function isBaseLayerPageHost(r: WindowRecord): boolean {
 }
 
 /**
- * The page-host the shared chrome overlay should attach to: the topmost
- * base-layer page-host in `order` (`isBaseLayerPageHost`, above).
- * `topmost(state, pred)` is trustworthy only when every record `pred` admits
- * shares one `layer` (see `topmost`'s own doc); `isBaseLayerPageHost`'s
- * `layer === BASE_LAYER` clause holds that contract.
+ * `isFrontEligibleWindow`, clamped to `BASE_LAYER` and additionally excluding
+ * a doomed window — the admitted set `topmostBaseLayerPageHost` below scans
+ * `order` over. See that function's doc for why the clamp is needed at all,
+ * `topmost`'s own doc for the one-layer contract the clamp holds, and the
+ * "doomed vs. not-yet-ready" contrast on `topmostBaseLayerPageHost` for why
+ * `!pendingHidden` belongs HERE — deliberately NOT on `isFrontEligibleWindow`
+ * itself, whose other caller (the Cmd+W close target) must keep naming a
+ * window the user is in the middle of closing.
+ */
+function isBaseLayerFrontEligible(r: WindowRecord): boolean {
+  return isFrontEligibleWindow(r) && !r.pendingHidden && r.layer === BASE_LAYER;
+}
+
+/**
+ * THE OVERLAY ATTACH TARGET — a *main-window* question (§0.1.5, "Key vs.
+ * main"), not a key-window one: which window the user could be working in,
+ * answered as "the topmost such window, attached to only if it is a
+ * base-layer page host, and `null` otherwise". `null` is a real answer, and
+ * the whole point of this shape — it is what tells the caller to DETACH the
+ * shared chrome overlay, rather than leave it painted around a page the user
+ * has moved on from.
+ *
+ * TWO STEPS, NOT ONE `topmost(state, isBaseLayerPageHost)` CALL, and the
+ * split is load-bearing:
+ *
+ *   1. `topmost(state, isBaseLayerFrontEligible)` finds the topmost window
+ *      the user could plausibly be working in, clamped to `BASE_LAYER`
+ *      before the predicate is even applied.
+ *   2. Only THEN is that window tested against `isBaseLayerPageHost`.
+ *
+ * WHY BAND-CLAMPED RATHER THAN SCANNING EVERY LAYER AND TESTING THE WINNER.
+ * `order` is insertion- and movement-ordered, never layer-sorted (§0.1.6) —
+ * see `topmost`'s own doc for the general rule this predicate exists to
+ * satisfy: a `topmost` predicate whose admitted set spans layer bands can
+ * return a window that is not visually topmost, with no error path. A single
+ * `topmost(state, isBaseLayerPageHost)` call happens to hold that contract
+ * (`isBaseLayerPageHost` already clamps to `BASE_LAYER`), but the OLD
+ * one-line shape this replaces asked only that question — it could never
+ * answer `null` while any base-layer page host was visible anywhere in
+ * `order`, so focusing an ordinary base-layer browser window while a page
+ * host was still visible left the query naming the page host regardless.
+ * The fix is not to widen the predicate's admitted set — that would
+ * reintroduce the cross-band defect above — but to test topmost-overall
+ * (within the band) against the narrower fact.
+ *
+ * WHY NOT CONDITIONED ON `key`. The shared chrome overlay legitimately holds
+ * key on Cmd+L (typing a URL takes key), so a query gated on "is the
+ * topmost-and-key window a page host" would drop the attachment — and
+ * therefore the chrome — every time Cmd+L moved key onto the overlay itself,
+ * making the chrome flicker and re-attach on every keystroke. Excluding
+ * satellites (which `isFrontEligibleWindow` already does, via
+ * `SATELLITE_ROLES`) answers the same "is the user working in an ordinary
+ * window or a panel" question without that flicker, because the overlay
+ * holding key never changes which window is topmost among front-eligible
+ * ones.
+ *
+ * WHY `isFrontEligibleWindow` AND NOT `isContentWindow`. `isContentWindow`
+ * excludes `role: 'quick-view'` (peeks and slides) — see that predicate's own
+ * doc for why panels don't become AppKit's main window. But a frontmost peek
+ * or slide is exactly the window the user is working in, and it opens with
+ * `pageHost: true` specifically to use the shared address bar and ships no
+ * navbar of its own. Composing over `isContentWindow` here would skip a
+ * frontmost peek/slide entirely and let the chrome frame whatever ordinary
+ * page happens to sit behind it — the window the user is NOT working in.
+ *
+ * DOOMED VS. NOT-YET-READY — the topmost candidate can fail to be the attach
+ * target for two structurally different reasons, and this query treats them
+ * differently on purpose:
+ *
+ *   - DOOMED (`pendingHidden`): the machine has already decided this window
+ *     is going away (a teardown request already accepted — see that field's
+ *     doc). It is not a window the user could be working in, so
+ *     `isBaseLayerFrontEligible` excludes it outright and the scan continues
+ *     to the live window underneath — the same `!pendingHidden` reasoning
+ *     `isContentWindow` already carries. Answering `null` instead, and
+ *     waiting for the close to finish, would still be correct eventually, but
+ *     it is the wrong shape for an everyday gesture: closing the frontmost of
+ *     two page hosts (Cmd+W) would detach the overlay on the doomed host and
+ *     then immediately re-attach it to the one underneath once `WindowClosed`
+ *     retires the doomed record — two stacking replays (§0.1.6) for one
+ *     gesture, an `A -> null -> A` shape that is a known self-sustaining input
+ *     to a show/hide feedback loop this predicate is actively trying to damp.
+ *     Skipping straight to the live successor keeps it to the one retarget
+ *     the gesture actually needs.
+ *   - NOT YET READY (`!orderable`): nothing has decided this window is going
+ *     away — the user genuinely IS working in it, it just cannot be z-ordered
+ *     until its content reports a first composited frame. `isBaseLayerPageHost`
+ *     carries `orderable`, but `isBaseLayerFrontEligible` deliberately does
+ *     NOT — so this case is NOT skipped in the first step. The topmost
+ *     front-eligible window IS this one, it fails `isBaseLayerPageHost`, and
+ *     the query answers `null` rather than falling through to an older,
+ *     already-orderable page host underneath it. Falling through here would
+ *     frame the chrome around the wrong window — one the user has already
+ *     moved past. `null` self-heals, because the same `WindowContentOrderable`
+ *     transition that flips the host orderable changes this query's answer
+ *     without any other input moving.
  */
 export function topmostBaseLayerPageHost(state: State): WindowRecord | null {
-  return topmost(state, isBaseLayerPageHost);
+  const front = topmost(state, isBaseLayerFrontEligible);
+  return front !== null && isBaseLayerPageHost(front) ? front : null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
