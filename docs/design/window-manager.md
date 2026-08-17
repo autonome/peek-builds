@@ -1051,9 +1051,11 @@ Four prerequisites remain, each proven by that attempt rather than predicted:
 3. **`window-state-singleton.ts` — the shim layer every consumer imports.**
    `getFrontWindowId()` → `topmost(state, isContentWindow)`, never `keyWindow`.
    `getFrontPageHostId()` — today `getFrontWindowId()` filtered on `rec.kind === 'page-host'` →
-   `topmostBaseLayerPageHost(state)`. `subscribeFrontChange(cb)` — today diffs
-   `getFrontPageHostId()` on each `owner.subscribe` tick → the same diff over
-   `topmostBaseLayerPageHost(state)` on the kernel executor's `subscribe`. `getDevtoolsTargetId()` —
+   `topmostBaseLayerPageHost(state)`. `subscribeFrontChange(cb)` — landed as a deletion, not a
+   repoint: the attach target is an effect (`AttachOverlayTo`) the kernel emits off a diff of
+   `topmostBaseLayerPageHost(state)` across the transition, realized through the port and reported
+   back as the `OverlayAttached` event; the only subscription left in `hybrid-overlay.ts` is
+   `subscribeOverlayAttachment(cb)`, payload-only, deciding nothing about windows. `getDevtoolsTargetId()` —
    repoint to the new filtered live-URL scan. `waitForMode(id, mode)` — repoint to the kernel waiter
    (the accessor gap above), or delete and have the three callers import it directly; either way the
    return type becomes `FsSettleOutcome`. `getFocusOrder(id)` — **delete**; zero callers tree-wide,
@@ -1092,12 +1094,16 @@ Four prerequisites remain, each proven by that attempt rather than predicted:
    (`const activeId = frontPageHostOsId(); ... getHybridContentWC(activeId)`);
    `initHybridOverlay()`'s `registerLoadErrorListener((windowId, error) => ...)` callback (`if
    (windowId !== frontPageHostOsId()) return`); and the test bridge's `activeId()` and
-   `runDeferredBlur(_id)`, both returning `frontPageHostOsId()`. Driver position →
-   `topmostBaseLayerPageHost(state)`: `initHybridOverlay()`'s `unsubscribeActive =
-   subscribeFrontChange((front) => { ... retarget(win ? win.id : null) })`, and its seed read,
-   `const currentId = frontPageHostOsId(); ... retarget(currentId)`. Then: `frontPageHostOsId()`
-   (module-private) — delete once both positions are split; it is the single name serving both
-   queries, the hazard this design records. `installTestBridge()`'s `setActive(id)` — its `for (let
+   `runDeferredBlur(_id)`, both returning `frontPageHostOsId()`. Driver position — landed as an
+   effect, not a repointed subscription: `topmostBaseLayerPageHost(state)` is diffed across the
+   transition inside `react`, which emits `AttachOverlayTo`; the backend realizes it through the
+   port and reports back the `OverlayAttached` event. `initHybridOverlay()`'s
+   `subscribeFrontChange` → `retarget()` driver, and its seed read (`const currentId =
+   frontPageHostOsId(); ... retarget(currentId)`), are both deleted rather than repointed — the
+   boot seed is instead the `WindowRegistered` transition that mints the overlay's own record (see
+   `docs/design/overlay-attach-effect-plan.md` § 6, "The boot seed"). `frontPageHostOsId()`
+   (module-private) — deleted with them; it was the single name serving both queries, the hazard
+   this design records. `installTestBridge()`'s `setActive(id)` — its `for (let
    i = 0; i < 100; i++)` hide loop over `getFrontPageHostId()` is written against
    `enforceFrontInvariant`'s successor repair; the contract must be **rewritten** against
    `hostForOverlay`, not re-pointed. `installTestBridge()`'s `driveHostFullscreen(id, desired)` —
@@ -2949,6 +2955,26 @@ record orderable and re-drives `SET_STACKING` for it and everything above it. Th
 precondition for `SET_STACKING` to actually land where `applyRaiseRequest` and
 `applyOsFocusRealized` (§6) already point `front` — a page-host that can't yet take a raise
 must not be left stacked behind reality once it can.
+
+**Measured: `SET_STACKING`'s per-window focus suppression over-claims and causes a
+session-restore regression.** `session-restore-hybrid-focus.spec.ts` "two hybrid pages: the
+page focused at save is the one restore raises (not the other)" fails on the SAVE side, before
+restore runs at all — the snapshot marks the wrong window focused. Trace: opening the second
+page reorders `order`, so `react` re-emits the full `SetStacking` replay; off darwin every such
+native call can steal focus (`electron-window-backend.ts STACKING_TAKES_FOCUS`), so the backend
+arms focus-suppression (`pendingStackingFocus`) for every window in the batch. The platform
+provoked no focus for that batch, so all the armings survived, and the user's genuine focus on
+the first page was then swallowed by a stale arming. Neither the focus event nor its kernel feed
+fired, `order` never moved that page to the top, and `session.ts readKernelOrderFacts`'s
+`topmost(state, isContentWindow)` read — what the session snapshot records as `focused` — stayed
+on the other page. The rule-level statement: the suppression over-claims because `SetStacking`
+carries no operation token, unlike the focus-family effects (`electron-window-backend.ts
+pendingSelfCausedFocus`, above) — with only a bare boolean-per-window Set the backend cannot
+tell its own echo from a genuine focus. Timing was tested as a discriminator and refuted —
+across 617 stacking-provoked focuses, a microtask and a `setTimeout(0)` scheduled at arming time
+had both already run before the focus arrived, so any dispatch-, microtask- or
+macrotask-scoped arming would disable the suppression entirely. **Narrowing the suppression is a
+dead end; shrinking the emission is the route.**
 
 **3b. Chrome overlay follow / retarget** — ABSORBED (§5 step 9, commit `1bdd1c11`).
 The overlay-attachment relation lives in reducer state (`WindowRecord.overlayFor`);

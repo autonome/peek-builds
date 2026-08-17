@@ -1,7 +1,9 @@
 # Plan: the overlay's attach target becomes an effect the kernel emits
 
-Status: **scoped, not implemented.** Derived from `docs/design/window-manager.md` § "0. The
-governing rule set — derive everything from this".
+Status: **implemented**, through order-of-work step 5 (commits `6a9909fb`, `04bce7ce`,
+`3ce150a2`, `a62e575e`). Step 6 (re-measure before restoring the minimal-stacking commit) is
+also done, with a negative result — see "What this does and does not fix" below. Derived from
+`docs/design/window-manager.md` § "0. The governing rule set — derive everything from this".
 
 ## What is wrong today
 
@@ -125,8 +127,9 @@ known concept. The backend already computes overlay frames with the same helper 
 Two consequences worth stating plainly:
 
 - **`AttachOverlay` stops being a production command.** The relation is written only by the
-  backend's report. The command survives for the test bridge and for `detachOverlayFromMachine`'s
-  explicit teardown; if nothing else needs it, it can be deleted with the old machine.
+  backend's report. The command survives for the test bridge (`window-kernel-shadow.test.ts`
+  exercises it directly); `detachOverlayFromMachine`, its last production caller, has since been
+  deleted along with the old machine.
 - **Attachment becomes asynchronous.** Today `retarget()` writes the relation synchronously within
   the callback. After this change the relation lands one hop later. Any spec asserting attachment
   immediately after driving order must await `waitForPendingWindowEffects()`. This is the single
@@ -212,8 +215,18 @@ green.
   `SetStacking`-steals-focus on non-darwin. This change is a prerequisite because it moves the
   overlay's contribution to that loop inside the machine, where the emission is a diff and a
   no-change transition emits nothing at all.
-- **Unverified:** whether removing the outside feedback path alone damps the loop enough for the
-  minimal-stacking commit to be restored. Measure it; do not assume it.
+- **Measured, twice, independently — the answer is no.** With the plan implemented (through
+  `a62e575e`) and the minimal-stacking commit restored as an uncommitted probe (`git revert
+  --no-commit 7df51e2c`), the six window-operation patterns gave 4 failed / 58 passed on one
+  run and 16 failed / 46 passed on the next, with only two failures common to both. The
+  comparison point without the probe, same box, same head, is 13 failed / 49 passed. The
+  single-test repro (`hybrid-overlay.spec.ts` "active handoff paints navbar for A, swaps to B,
+  clears on null") no longer fails deterministically — it passed 2 of 3 runs, and when it
+  failed it took ~88s rather than the ~11s it used to. A second independent measurement had it
+  failing in ~1.0m with the probe and passing in ~1.2s on clean HEAD. Removing the overlay's
+  outside feedback path changed the loop's character but did not damp it: run-to-run variance
+  of twelve tests is not a damped loop. **The minimal-stacking commit stays reverted**, and the
+  loop's own cause has to be closed first.
 
 ## Order of work
 
@@ -223,10 +236,12 @@ green.
 3. Add the port method and its `NoopKernelBackend` arm; implement it in
    `electron-window-backend.ts` and have it report through the existing overlay-attached feed.
 4. Swap `hybrid-overlay.ts`: delete the `subscribeFrontChange` driver, keep `sendActiveHandoff` on
-   the new attachment subscription, keep `detachOverlayFromMachine` for explicit teardown.
+   the new attachment subscription. (`detachOverlayFromMachine` was kept at this step for explicit
+   teardown; it lost its last caller when `retarget()` was deleted and has since been removed —
+   detach is the same `AttachOverlayTo` diff answering null.)
 5. Delete `subscribeFrontChange`.
 6. Re-measure the six window-operation patterns against the pre-change head before restoring the
-   minimal-stacking commit.
+   minimal-stacking commit. **Done, negative result** — see "What this does and does not fix" above.
 
 ## Traps carried forward
 
@@ -241,5 +256,6 @@ green.
   better, because the re-mint would then be provoked from inside `runEffects`.
 - `topmost`'s docblock does not state the one-layer contract that `topmostBaseLayerPageHost` cites
   as living there. Fix the docblock while in the file.
-- The § 5 migration checklist items 3 and 7 still prescribe the repointed-subscription shape that
-  the later sections supersede. Amend them.
+- The § 0.1.5 cutover checklist ("The cutover checklist: per file, in execution order") items 3
+  and 7 prescribed the repointed-subscription shape that the later sections supersede — **amended**
+  to describe the landed effect/event shape instead.
