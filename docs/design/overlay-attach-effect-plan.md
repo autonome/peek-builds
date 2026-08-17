@@ -161,6 +161,49 @@ The seed must therefore stay, in one of two forms. **Recommended:** `ensureOverl
 (it is a diff: before, there was no such overlay record; after, there is), and it removes the
 explicit seed entirely. This wants an explicit test.
 
+## The attach-target query is wrong today, independently of this change
+
+Measured, not suspected: `hybrid-overlay.spec.ts` "clicking the chrome (overlay focus on content
+blur) does NOT deactivate" fails deterministically on this branch and passes on the pre-cutover
+baseline `f6262895`. The overlay stays attached to the page host after focus leaves it.
+
+Cause: `window-state-singleton.ts subscribeFrontChange` used to read a front-conditioned selector
+(null when the front record was not a page host) and now reads `topmostBaseLayerPageHost`, which is
+order-only. A record with `kind: 'browser'` is excluded from `isBaseLayerPageHost` entirely, so
+focusing one cannot displace a still-visible page host from the answer. The query never goes null,
+the subscription never fires, and no detach is ever requested.
+
+**This is a product defect, not a test artifact.** Focusing an ordinary window while a page host is
+still visible leaves the shared address bar painted over a page the user is no longer working in.
+
+It matters here because § 3's effect is emitted off a diff of exactly this query. Emitting off a
+query that cannot answer null reproduces the defect in the kernel instead of curing it, so **the
+query must be fixed as part of this change, not after it.**
+
+The rule to derive from is already stated in `docs/design/window-manager.md`: the old `front` was
+trying to be AppKit's *main* window while being written from focus events, and in the kernel "`key`
+is stored and main is the query `topmost(state, isContentWindow)`". The attach target is a main-
+window question — which window is the user working in — so the query is "the topmost window the
+user could be working in, attached to only if it is a base-layer page host, and null otherwise."
+
+Two constraints any candidate must satisfy, both already paid for in blood:
+
+- **It must not go null when the overlay itself takes key.** That is why key conditioning was
+  dropped: the chrome flickered and re-attached on every Cmd+L. The overlay registers as a
+  satellite, so a predicate that excludes satellites is immune to this without abandoning front
+  conditioning.
+- **It must still name a frontmost peek or slide.** `isBaseLayerPageHost` admits `quick-view`
+  deliberately — peeks and slides open with `pageHost: true` precisely to use the shared address
+  bar and ship no navbar of their own. A composition with `isContentWindow`, which excludes
+  `quick-view`, would frame the ordinary page behind a peek instead of the peek.
+
+`isFrontEligibleWindow` admits `quick-view` and excludes satellites, which is the right shape — but
+its admitted set spans layer bands, and `topmost` is trustworthy only within one band. **Open
+sub-question, to settle before implementing:** whether the query is `topmost` over a band-clamped
+front-eligible predicate, or a two-step "topmost front-eligible window, then test it with
+`isBaseLayerPageHost`". Settle it against § 0's rule set, not against whichever makes the spec go
+green.
+
 ## What this does and does not fix
 
 - **Fixes:** the second decider; the query-vs-relation dedup mismatch that turns an `A → null → A`
