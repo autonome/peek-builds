@@ -41,6 +41,91 @@ calls**. This number — not the table above, not any other prose in this docume
 honest measure of how much window-op code still bypasses the machine. It is expected to
 shrink monotonically to zero; the check fails a PR that grows it.
 
+### First macOS evidence for this branch, 2026-08-17
+
+The branch was written and measured entirely on Linux, which can observe none of the focus,
+fullscreen, Spaces or activation behavior it changes, and `apps/desktop/tests/gate-baseline.md`
+records the Linux failing set. These are the first macOS results: Playwright over the six
+window-manager-load-bearing specs, plus live runs. Machine: macOS 26.5.1, single built-in
+display, no external monitors or additional Spaces.
+
+**Method, because it is what makes the numbers mean anything.** Every claim below is an A/B
+against `main` on the same machine in the same sitting, by the same command, repeated. A single
+run distinguishes nothing here — `gate-baseline.md` exists precisely because this suite's failure
+count moves between identical runs, and reading one run reports a flake as a regression.
+
+#### One deterministic regression, still open
+
+`izui-escape.spec.ts` "regression: ESC on a page opened FROM a palette-role opener does NOT close
+it (full backend path)".
+
+| | branch | `main` |
+|---|---|---|
+| source-only (`test:grep`) | 4/4 fail | 3/3 pass |
+| packaged (`test:desktop:electron:spec`) | 2/2 fail | not run |
+
+The palette window is already closed when the spec tries to open a page from it
+(`page.evaluate: Target page, context or browser has been closed`), so the failure is upstream of
+the Escape behavior the spec names, and points at transient dismissal rather than at Escape.
+
+`gate-baseline.md` lists this spec as **unclassified** — deterministic on Linux with no diagnosis
+tying it to a cause. The A/B above supplies one: it is branch-caused, not environmental, and it
+survived the overlay-attach-effect work.
+
+#### The overlay attach regression is fixed
+
+`hybrid-overlay.spec.ts` "clicking the chrome (overlay focus on content blur) does NOT
+deactivate" failed deterministically at tip `dc1b6051`, before
+`docs/design/overlay-attach-effect-plan.md` was implemented — 2/2 fail there against 1/1 pass on
+`main`. After the plan landed (`the overlay attach target answers null when the front window is
+not a page host`, `a window declares that it tracks the base-layer top`, `the machine decides
+which host the chrome overlay frames`, `the machine decides the attach target, the overlay only
+paints`) it is **3/3 pass source-only on the branch, matching 3/3 on `main`.**
+
+**Do not read the packaged full-file run as contradicting that.** Four identical packaged runs of
+`hybrid-overlay.spec.ts` on the fixed tip produced 4, 0, 3 and 2 failures, with a different
+failing subset each time, drawn from `active handoff paints navbar…`, `page-info renders…`,
+`notes pane loads…` and the deactivate test. That instability is the overlay-renderer
+subscription race `gate-baseline.md` names as **overlay race** — the renderer subscribes after
+the handoff is published and the `did-finish-load` re-send never lands — and it is the largest
+single lever on that gate. It is not evidence about the attach rule.
+
+#### The other four specs
+
+Against the packaged build: `session-restore-hybrid-focus` 9 passed, `window-targeting` 2 passed,
+`session-restore-page-host` 2 passed. `boot-window-inventory` **skipped its only test and is
+evidence for nothing** — a gated skip of that shape reports green while covering nothing.
+
+#### Live observations, and what they cost to interpret
+
+Observed live at tip `dc1b6051` with `PEEK_SHADOW_KERNEL_COMPARE=1 E2E_TEST=true`:
+
+- **A click on a background page host did not raise it; a second click did.** Cmd+` cycled once
+  and then stopped moving it forward. Recorded here because the fix landed afterwards (`a raise on
+  a window already on screen reorders, never shows`) and this is the behavior it should be
+  measured against.
+- **No address bar appeared on any page**, on either the programmatic `pageHost: true` open or the
+  production Cmd+N path, where `main` showed one. This was measured before the attach plan landed;
+  the spec evidence above says the attach rule is now correct, but **no live macOS run has
+  confirmed the address bar returns.** That is an open sign-off item, not a closed one.
+
+Three traps this run walked into, recorded so the next one does not:
+
+- **A page opened programmatically from the background window lands below the last-focused
+  window.** That is the locked one-order rule working, not a stacking bug. It contaminated the
+  first attempt at sign-off check 1.
+- **Closing the last window leaves Cmd+N dead**, because local shortcuts route through the focused
+  window's input handler. An app with no windows is not a clean slate; it is a broken one.
+- **`window.app.window.maximize(<id>)` answers `{"success": false, "error": "Window not found"}`
+  for a live hybrid page host — and `main` answers identically.** This is the documented
+  hybrid-era invariant (`BrowserWindow.fromId()` is null for a hybrid page host), not kernel
+  damage.
+
+**Log-absence proves nothing on the overlay attach path.** Neither branch nor `main` logs anything
+there; both emit only the overlay's two `[preload:perf]` lines. A grep showing "no attach
+activity" says the path is unlogged.
+
+
 ### Remaining work, most-tractable first
 
 1. Determine whether step 11 has any task beyond the 8 already landed. No commit or doc
