@@ -12,10 +12,11 @@ Read this table first. §4 and §5 below are the detailed record; this block is 
 current answer to "how much is done" — verified against `scripts/check-r2-window-ops.mjs`
 and the commit log, not against the prose elsewhere in this document, which drifts.
 
-**This pass re-verified only the two R2 counts below** (via
-`scripts/check-r2-window-ops.mjs`), not the per-step statuses in the table — those track
-the older 11-step migration (§5), not the current window-kernel rewrite (§0.1), and carry
-forward unchanged.
+The two R2 counts below are current as of 2026-08-17 (via
+`scripts/check-r2-window-ops.mjs`). Steps 8 and 9 in the table below are verified against
+the allowlist and live code as of the same date; steps 1-7, 10, and 11 track the older
+11-step migration (§5), not the current window-kernel rewrite (§0.1), and carry forward
+unverified.
 
 ### Step status (§5 migration sequence, 11 steps)
 
@@ -28,28 +29,24 @@ forward unchanged.
 | 5 | Z-order / stacking (`SET_STACKING`, `stackOrder`) | DONE |
 | 6 | Visibility (`visible` authoritative, app-hide derived, no polling) | DONE |
 | 7 | Geometry / maximize (bounds/maximize collapse into one reducer-owned model) | DONE |
-| 8 | Focus rivals (delete `izui-state.ts`'s focus surface, `getFocusedWindow()` call sites) | PARTIAL — 4 entries / 8 calls still allowlisted under §5 step 8: `hybrid-overlay.ts` `focus` ×1, `izui-state.ts` `showInactive` ×2, `main.ts` `focus` ×2, `windows.ts` `focus` ×3 |
-| 9 | Overlay attach/retarget + transient autoclose | PARTIAL — transient autoclose and overlay follow/retarget are absorbed (`window-state.ts` `selectTransientAutoclose`, `applyOverlayFollow`); 4 entries / 6 calls still allowlisted under §5 step 9: `hybrid-overlay.ts` `showInactive` ×1 (test bridge), `destroy` ×2, `ipc.ts` `focus` ×2, `main.ts` `close` ×1 |
+| 8 | Focus rivals (delete `izui-state.ts`'s focus surface, `getFocusedWindow()` call sites) | DONE — residual call sites closed, commit `66c7958f` |
+| 9 | Overlay attach/retarget + transient autoclose | PARTIAL — write debt closed (commits `a3f658cf`, `a731cf66`); non-write-op scope in commits `ed0f80ce` and `c5c9bcd7` remains unaudited |
 | 10 | Displays and Spaces | DONE |
 | 11 | Session save / restore (last) | PARTIAL — 8 tasks landed (11.1, two Task 3s, two Task 4s, Task 5, Task 7, Task 8 — see §5 step 11 for the full write-up and the task-number collision note); no commit evidence of any task beyond these 8 |
 
 ### The mechanical progress measure
 
-`node scripts/check-r2-window-ops.mjs` (run 2026-07-29): **15 allowlisted entries / 23
+`node scripts/check-r2-window-ops.mjs` (re-verified 2026-08-17): **15 allowlisted entries / 23
 calls**. This number — not the table above, not any other prose in this document — is the
 honest measure of how much window-op code still bypasses the machine. It is expected to
 shrink monotonically to zero; the check fails a PR that grows it.
 
 ### Remaining work, most-tractable first
 
-1. Close step 8: route its 4 residual call sites through the machine, delete their
-   allowlist entries.
-2. Close step 9: route its 4 residual call sites through the machine, delete their
-   allowlist entries.
-3. Determine whether step 11 has any task beyond the 8 already landed. No commit or doc
+1. Determine whether step 11 has any task beyond the 8 already landed. No commit or doc
    evidence of one exists as of this writing; if none turns up, step 11 — and the whole
    migration — is DONE once the R2 allowlist above also reaches zero.
-4. Once steps 8, 9, and 11 are all DONE and the R2 allowlist is empty, delete this block
+2. Once steps 9 and 11 are all DONE and the R2 allowlist is empty, delete this block
    and replace it with a one-line completion note (see the directive below).
 
 ### Fixes landed 2026-07-30
@@ -2961,13 +2958,14 @@ The overlay-attachment relation lives in reducer state (`WindowRecord.overlayFor
 its own module-level `appActive` copy — the third copy of app-active — is also gone: the
 module now reads `AppWindowState.appActive` through `getAppActive()`/`subscribeAppActive()`
 (see the "FOLLOW is not wired here any more" comment at the old follow site in
-`hybrid-overlay.ts`). **Honest residue, still allowlisted (§5 step 9):**
-`hybrid-overlay.ts` `showInactive` ×1 (test bridge only) and `destroy` ×2 (singleton
-teardown) — `scripts/check-r2-window-ops.mjs`. A further `hybrid-overlay.ts` `focus` ×1
-(address-bar-typing activation) is allowlisted separately under §5 step 8, not this
-dimension. **Not re-verified here:** the original "40 live-query call sites" figure — the
-mechanism it counted is gone, so the number is stale, but no replacement count was taken
-in this pass.
+`hybrid-overlay.ts`). **Former residue, now closed:** `hybrid-overlay.ts` `showInactive`
+×1 (test bridge only) and `destroy` ×2 (singleton teardown) were allowlisted under §5 step
+9; both are gone from `scripts/check-r2-window-ops.mjs` and from live code, commit
+`a3f658cf`. A further `hybrid-overlay.ts` `focus` ×1 (address-bar-typing activation) was
+allowlisted separately under §5 step 8, not this dimension; it is likewise closed, commit
+`66c7958f`. **Not re-verified:** the original "40 live-query call sites" figure — the
+mechanism it counted is gone, so the number is stale, and no replacement count has been
+taken.
 
 **4. Visibility lifecycle** — TO ABSORB. *(Top divergence risk #2.)*
 Today: `WindowRecord.visible` (a mirror only) plus live `isVisible()` plus
@@ -3379,7 +3377,7 @@ failure mode this document exists to prevent (§2).**
    not step-7 remainder: `hybrid-overlay.ts` overlay-follow geometry (×6,
    step 9). `display-watcher.ts` is no longer on this list at all — step 10
    deleted its `setBounds` call outright; the module is now a pure producer.
-8. **Focus rivals — DONE except for 4 residual allowlisted call sites (see below).** Delete `izui-state.ts`'s focus surface and `restoreFocusGuard`; delete
+8. **Focus rivals — DONE.** Delete `izui-state.ts`'s focus surface and `restoreFocusGuard`; delete
    `BrowserWindow.getFocusedWindow()` from `entry.ts` and `tile-ipc.ts`. Reduce
    `izui-state.ts` to the session tri-state only.
    **8a — switcher focus-restore seed: DONE** (commit eff3bcd6). `enterOverlay`
@@ -3447,31 +3445,23 @@ failure mode this document exists to prevent (§2).**
      windows. The only front shift observed afterward was a `DEVTOOLS_OPENED`
      first-responder grab in the `DEBUG=1` build — the already-known step-9
      `ipc.ts devtools-opened` punt, not a restore regression.
-   **Step 8 residual R2 debt (not yet cut over):** 4 entries / 8 calls remain allowlisted
-   under §5 step 8 in `scripts/check-r2-window-ops.mjs` — `hybrid-overlay.ts` `focus` ×1
-   (overlayWin.focus for address-bar typing, `page:show-navbar`), `izui-state.ts`
-   `showInactive` ×2 (restore-without-activating in the focus-restore guard), `main.ts`
-   `focus` ×2 (overlay-selection/restore focus of the switcher target), `windows.ts`
-   `focus` ×3 (contentWC first-responder + bw/webContents focus, the show invariant).
-   Each is individually justified in the allowlist as "focus rivals, §5 step 8"; none has
-   a caller-cutover write-up here yet.
+   **Step 8 residual R2 debt: closed.** The four entries (`hybrid-overlay.ts` `focus`,
+   `izui-state.ts` `showInactive`, `main.ts` `focus`, `windows.ts` `focus`) are gone from
+   both the allowlist and live code, commit `66c7958f`.
 9. **Overlay attach/retarget + transient autoclose — PARTIAL.** Transient-sibling
    autoclose is absorbed (§4.4 dim 4b: `selectTransientAutoclose` /
    `selectAppResignTransients`). Overlay follow/retarget and the module's own `appActive`
    copy are absorbed (commit `1bdd1c11`, §4.3 dim 3b): `hybrid-overlay.ts` no longer
    drives the OS itself for geometry; the reducer owns the follow via
    `applyOverlayFollow` / `WindowRecord.overlayFor`.
-   **Residual R2 debt:** 4 entries / 6 calls remain allowlisted under §5 step 9 in
-   `scripts/check-r2-window-ops.mjs` — `hybrid-overlay.ts` `showInactive` ×1 (test bridge
-   only, fake-host focus-free show), `destroy` ×2 (overlay singleton teardown), `ipc.ts`
-   `focus` ×2 (devtools-opened first-responder restore + modal blur-settle re-focus,
-   punted from step 8e), `main.ts` `close` ×1 (close the overlay switcher on
-   `did-resign-active`).
+   **Write debt: closed.** The residual call sites (`hybrid-overlay.ts` `showInactive`,
+   `destroy`; `ipc.ts` `focus`; `main.ts` `close`) are gone from both the allowlist and
+   live code, commits `a3f658cf` (write debt) and `a731cf66` (`ipc.ts focus`).
    **Unverified here:** whether further step-9 work beyond the overlay-follow cutover has
    landed under other commit messages — the commit log carries at least two more
    `wm step 9`-tagged commits (`ed0f80ce`, `c5c9bcd7`) that this pass did not audit
    task-by-task. A future pass should reconcile them into this section rather than assume
-   step 9's remaining scope is only the 4 entries above.
+   step 9's remaining scope is only write debt.
 10. **Displays and Spaces.** Route `display-watcher.ts` through events; add the
     space-change listener that does not exist yet.
     **Part A — Displays: DONE** (commits af540e74, 81175dfe, b8e44377, 10c79748).
@@ -3692,10 +3682,11 @@ NOT rewritten in this pass** — out of scope for this truthing pass, which was 
 Migration steps landed since this document was written: the id space (§5 step 1), the
 port (§5 step 2), the R2 enforcement check (§5 step 3), special window classes + registry
 unification (§5 step 4), z-order/stacking (§5 step 5), visibility (§5 step 6),
-geometry/maximize (§5 step 7), displays and Spaces (§5 step 10) are all DONE; focus
-rivals (§5 step 8) and overlay attach/retarget + transient autoclose (§5 step 9) are each
-PARTIAL with a handful of allowlisted residual call sites; session save/restore (§5 step
-11) is PARTIAL with 8 tasks landed. See "Where we are" for the live per-step table. The
+geometry/maximize (§5 step 7), displays and Spaces (§5 step 10), and focus rivals (§5
+step 8) are all DONE; overlay attach/retarget + transient autoclose (§5 step 9) is
+PARTIAL — its write debt is closed but two commits' non-write-op scope remains unaudited;
+session save/restore (§5 step 11) is PARTIAL with 8 tasks landed. See "Where we are" for
+the live per-step table. The
 machine is live behind the seams already cut over (`window-state-singleton.ts` lists the
 authorities it replaced).
 
@@ -3748,8 +3739,8 @@ arms that carry kernel feeds and perform nothing. `window-state.ts` and `window-
 deleted once those have homes.
 
 **The R2 check is live** — `scripts/check-r2-window-ops.mjs`, in the
-`test:desktop:electron` chain: **15 allowlisted entries / 23 calls** as of this pass
-(`node scripts/check-r2-window-ops.mjs`, 2026-07-29 — see "Where we are" at the top of
+`test:desktop:electron` chain: **15 allowlisted entries / 23 calls**
+(`node scripts/check-r2-window-ops.mjs`, 2026-08-17 — see "Where we are" at the top of
 this document for the canonical live count), each tagged with the §5 step that deletes
 it. The sole exempt file is `apps/desktop/main/electron-window-backend.ts` (swapped from
 the executor when the port landed). The entry count is the migration's progress bar; it
