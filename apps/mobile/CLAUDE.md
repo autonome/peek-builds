@@ -146,10 +146,11 @@ Mobile work happens in a full independent clone at `../mpeek-clone-mobile`,
 NOT in a `.worktrees/<slot>` worktree like every other unit of work. It holds
 hours of warm build cache — Rust `target/`, Xcode derived data, the
 `libapp.a`/xcframework artifacts — all untracked, none of it reproducible in
-minutes.
+minutes, and much of it sensitive to its own absolute path.
 
-- **Never delete it, and never convert it to a worktree.** Its value is the
-  untracked cache, which no checkout operation preserves.
+- **Never delete it, and never move or convert it.** Converting it to a worktree
+  was tried during the move off jj and did not work; the clone is where it was
+  left. The cache is large and fragile, and its paths must not change.
 - Refresh it in place instead of recreating it. Untracked build output survives
   a reset, so the cache carries across:
 
