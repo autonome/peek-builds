@@ -561,11 +561,14 @@ export function deriveCanBecomeKey(facts: Pick<WindowSurfaceFacts, 'focusable'>)
  * click-through is a `setIgnoreMouseEvents(true, …)` call, and nothing else in
  * the open params implies one.
  *
- * ROLE IS NOT A PROXY — the two production role-`'overlay'` windows sit on
- * opposite sides of this. `features/windows/background.js openWindowsView`
- * opens a full-screen switcher the user clicks windows in; it must keep mouse
- * input. `features/spaces/background.js` opens a screen-edge border the pointer
- * must pass straight through. Same role, same `alwaysOnTop`, opposite answers.
+ * ROLE IS NOT A PROXY — the windows switcher and the space border sit on
+ * opposite sides of this despite both floating (`alwaysOnTop: true`).
+ * `features/windows/background.js openWindowsView` opens a full-screen
+ * switcher (`role: 'switcher'`) the user clicks windows in; it must keep
+ * mouse input. `features/spaces/background.js` opens a screen-edge border
+ * (`role: 'overlay'`) the pointer must pass straight through. Same
+ * `alwaysOnTop`, different role, opposite answers — neither fact predicts
+ * the other.
  *
  * THIS IS THE INITIAL VALUE ONLY. The shared chrome overlay
  * (`hybrid-overlay.ts ensureOverlay`) is click-through from birth — its

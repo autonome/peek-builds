@@ -134,7 +134,12 @@ export interface WindowRecord {
   layer: number;
   /** Electron `focusable` (§0.1.4: "a HUD never holds key" needs no special case). */
   canBecomeKey: boolean;
-  /** false = click-through (`setIgnoreMouseEvents`). */
+  /**
+   * false = click-through (`setIgnoreMouseEvents`). Set at registration; a
+   * window whose click-through changes afterward (e.g. the Space border's
+   * separate IPC round trip) is kept honest by `WindowAcceptsInputChanged`,
+   * the sole post-registration writer — see that event's doc.
+   */
   acceptsInput: boolean;
 
   /** Creation-time shorthand for logs and singleton lookups. Nothing branches on it. */
@@ -764,6 +769,31 @@ export type Event =
    * a request OF it.
    */
   | { type: 'ContentFirstResponderChanged'; id: WindowId; held: boolean }
+  /**
+   * A window's click-through state changed AFTER registration — the report
+   * that closes the gap `izui-roles.ts deriveAcceptsInput` names in its own
+   * doc: "A window whose click-through changes after registration needs an
+   * event, not a re-derivation." The Space border
+   * (`features/spaces/background.js showBorder`) is the case that gap left
+   * open — its `api.window.setIgnoreMouseEvents(...)` is a separate IPC round
+   * trip issued after `api.window.open` resolves, so the OS is already
+   * click-through by the time this arrives. Drives no effect: it is a report
+   * ABOUT the OS, not a request OF it, same as `ContentFirstResponderChanged`
+   * above. A report naming an unregistered window is a no-op, like every
+   * other dangling-id event here.
+   *
+   * FED FROM THE SITES THAT CAUSE THE CHANGE, not a backend observation —
+   * Electron has no getter for `setIgnoreMouseEvents` (the same reason
+   * `hybrid-overlay.ts` keeps its own `lastCaptureState` mirror rather than
+   * asking the OS), so this arrives from `tile-ipc.ts`'s
+   * `tile:window:set-ignore-mouse` handler and `hybrid-overlay.ts`'s
+   * `wireClickCapture`/`wireAppActiveGate`, at the moment each makes the
+   * change, rather than from a native echo. `WindowContentOrderable` above is
+   * the existing precedent for that compromise: the OS has no "is this window
+   * orderable" query either, so that fact too is fed from the site that
+   * observes it happen rather than polled.
+   */
+  | { type: 'WindowAcceptsInputChanged'; id: WindowId; acceptsInput: boolean }
   /**
    * `decide`'s translation of a `SetFullscreen` command that starts a FRESH
    * transition (the target was settled — `normal`/`fullscreen`) into a fact
@@ -1448,7 +1478,16 @@ export function evolve(state: State, ev: Event): State {
           kind: ev.kind,
           layer: ev.layer,
           canBecomeKey: ev.canBecomeKey,
-          acceptsInput: ev.acceptsInput,
+          // A LIVED fact (§ WindowRecord.acceptsInput's doc), same shape as
+          // `fsMode` below — never taken from a re-registration event.
+          // `ipc.ts` re-registers windows routinely and recomputes
+          // `deriveWindowSurface(...)` fresh from open params, which for the
+          // Space border yields `acceptsInput: true` (its click-through is a
+          // separate IPC call the re-derivation cannot see — see
+          // `izui-roles.ts deriveAcceptsInput`'s doc); taking the event's
+          // value here would silently undo the honest fact
+          // `WindowAcceptsInputChanged` reported.
+          acceptsInput: existing.acceptsInput,
           class: ev.class,
           visible: existing.visible,
           openSeq: existing.openSeq,
@@ -2061,6 +2100,18 @@ export function evolve(state: State, ev: Event): State {
       return {
         ...state,
         order: state.order.map((w) => (w.id === ev.id ? { ...w, contentFocused: ev.held } : w)),
+        version: state.version + 1,
+      };
+    }
+
+    case 'WindowAcceptsInputChanged': {
+      // Mechanical mirror write, total and guard-free: an unregistered id is
+      // a harmless no-op, and `acceptsInput` is stored as reported — same
+      // shape as `ContentFirstResponderChanged` above, and the sole
+      // post-registration writer of the field (see `WindowRecord.acceptsInput`'s doc).
+      return {
+        ...state,
+        order: state.order.map((w) => (w.id === ev.id ? { ...w, acceptsInput: ev.acceptsInput } : w)),
         version: state.version + 1,
       };
     }

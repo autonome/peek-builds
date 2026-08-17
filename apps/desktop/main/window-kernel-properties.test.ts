@@ -407,8 +407,17 @@ function randomLogItem(rng: Rng, state: State): LogItem {
     // for ids that were never registered, for `browser`-kind windows that
     // would never produce one in production, and in nonsense orders (held
     // twice, lost before ever held).
+    //
+    // SHARES ITS SLOT with the click-through mirror (`WindowAcceptsInputChanged`)
+    // via a sub-roll, same shape as the `cause` sub-roll on variant 4 — both
+    // are mechanical, effect-free mirror writes. Growing the switch's own
+    // modulus for a second one would re-derive every case's probability
+    // boundary and reshuffle every already-pinned seed's trajectory (the same
+    // measured cost that motivated case 32's four-way sub-roll below).
     case 31:
-      return { type: 'ContentFirstResponderChanged', id, held: randomBool(rng) };
+      return rng() < 0.5
+        ? { type: 'ContentFirstResponderChanged', id, held: randomBool(rng) }
+        : { type: 'WindowAcceptsInputChanged', id, acceptsInput: randomBool(rng) };
     // Teardown commands (§0.1.5) — through `decide`, same stale-expectedVersion
     // treatment as the other command variants above. `id` is drawn from the raw
     // pool exactly like everything else here, so the majority of these name a
@@ -658,6 +667,12 @@ function checkInvariants(state: State, prev?: State): string[] {
     // never anything that would let a consumer's `=== false` test misfire.
     if (record.contentFocused !== undefined && typeof record.contentFocused !== 'boolean') {
       violations.push(`malformed contentFocused for ${record.id}: ${JSON.stringify(record.contentFocused)}`);
+    }
+
+    // Click-through mirror (this slice): required, never absent — a shape
+    // check only, the same as `layer` above.
+    if (typeof record.acceptsInput !== 'boolean') {
+      violations.push(`malformed acceptsInput for ${record.id}: ${JSON.stringify(record.acceptsInput)}`);
     }
 
     // `pendingHidden` (this slice): absent or boolean — a shape check only.
@@ -1477,6 +1492,10 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     { type: 'DesktopMembershipSet', id, membership: 'anchor' },
     { type: 'OverlayAttached', overlayId: id, hostId: host, frame: { x: 10, y: 20, width: 30, height: 40 } },
     { type: 'ContentFirstResponderChanged', id, held: false },
+    // `register()` above declares `acceptsInput: true`; flipping it false
+    // here proves the merge preserves the LIVED value rather than the one
+    // the event happens to share with registration.
+    { type: 'WindowAcceptsInputChanged', id, acceptsInput: false },
     { type: 'FullscreenTransitionStarted', id, entering: true, preBounds: { x: 9, y: 9, width: 9, height: 9 } },
     // Sets `pendingHidden` without removing the record from `order` — a
     // teardown REQUEST, not the confirming `WindowClosed`. Without this the
@@ -1530,6 +1549,7 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     assert.strictEqual(record.keepLive, true);
     assert.strictEqual(record.parentId, host);
     assert.strictEqual(record.pendingHidden, true);
+    assert.strictEqual(record.acceptsInput, false);
   });
 
   it('the hiddenByAppBlur mark survives a re-registration mid-sweep', () => {
@@ -1551,7 +1571,7 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     // than merely present.
     const before = fold(livedLog());
     const record = before.order.find((w) => w.id === id)!;
-    const strip = (field: 'contentFocused' | 'escapeMode' | 'bounds' | 'pendingHidden'): State => {
+    const strip = (field: 'contentFocused' | 'escapeMode' | 'bounds' | 'pendingHidden' | 'acceptsInput'): State => {
       const mutilated: Record<string, unknown> = { ...record };
       delete mutilated[field];
       return {
@@ -1569,6 +1589,12 @@ describe('window-kernel: the re-registration merge preserves every lived fact', 
     ]);
     assert.deepStrictEqual(checkInvariants(strip('bounds'), before), [
       `bounds decayed back to absent for ${id}`,
+    ]);
+    // `acceptsInput` is required, so stripping it produces a shape violation
+    // rather than a "decayed back to absent" one — the field can never be
+    // legitimately absent, only malformed.
+    assert.deepStrictEqual(checkInvariants(strip('acceptsInput'), before), [
+      `malformed acceptsInput for ${id}: undefined`,
     ]);
     // `pendingHidden` is the deliberate exception (see `checkInvariants`' own
     // comment): clearing it is legitimate kernel behavior, not a merge bug,

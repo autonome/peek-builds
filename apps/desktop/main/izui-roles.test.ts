@@ -635,8 +635,8 @@ describe('deriveWindowSurface — real construction sites', () => {
     );
   });
 
-  it('the windows switcher (features/windows/background.js openWindowsView): role overlay, alwaysOnTop, and it TAKES clicks', () => {
-    // Same role and same alwaysOnTop as the space border, opposite
+  it('the windows switcher (features/windows/background.js openWindowsView): role switcher, alwaysOnTop, and it TAKES clicks', () => {
+    // Same alwaysOnTop as the space border, different role, opposite
     // acceptsInput — the user clicks windows in it. This is why acceptsInput
     // cannot key on role.
     assert.deepStrictEqual(

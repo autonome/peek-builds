@@ -43,6 +43,7 @@ import {
   shadowKernelMaximize,
   shadowKernelUnmaximize,
   shadowKernelSetDesktopMembership,
+  shadowKernelWindowAcceptsInputChanged,
 } from './window-kernel-shadow.js';
 import { WindowKernelExecutor } from './window-kernel-executor.js';
 import { BASE_LAYER, isContentWindow, topmost, topmostBaseLayerPageHost, type WindowId } from './window-kernel.js';
@@ -1088,6 +1089,66 @@ describe('window-kernel-shadow: content first responder feed', () => {
     const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
 
     assert.doesNotThrow(() => shadowKernelContentFirstResponderChanged(danglingId, true, oldSnapshot));
+    assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
+  });
+});
+
+describe('window-kernel-shadow: window accepts-input feed', () => {
+  beforeEach(() => {
+    _resetShadowKernelForTests();
+  });
+
+  it('a click-through report reaches the shadow kernel as acceptsInput: false, naming the window', () => {
+    const id = wid(160);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'browser',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+      },
+      oldSnapshot,
+    );
+
+    shadowKernelWindowAcceptsInputChanged(id, false, oldSnapshot);
+
+    const record = getShadowKernelExecutor()
+      .getState()
+      .order.find((w) => w.id === id);
+    assert.strictEqual(record?.acceptsInput, false);
+  });
+
+  it('a capturing report flips it back to true', () => {
+    const id = wid(161);
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+    shadowKernelRegisterWindow(
+      {
+        id,
+        kind: 'browser',
+        layer: BASE_LAYER,
+        canBecomeKey: true,
+        acceptsInput: true,
+        class: 'primary',
+      },
+      oldSnapshot,
+    );
+    shadowKernelWindowAcceptsInputChanged(id, false, oldSnapshot);
+    const record = () => getShadowKernelExecutor().getState().order.find((w) => w.id === id);
+    assert.strictEqual(record()?.acceptsInput, false, 'precondition: click-through');
+
+    shadowKernelWindowAcceptsInputChanged(id, true, oldSnapshot);
+
+    assert.strictEqual(record()?.acceptsInput, true);
+  });
+
+  it('never throws across an accepts-input feed naming a window with no record', () => {
+    const danglingId = wid(162); // never registered with the shadow kernel
+    const oldSnapshot = fakeOldMachine({ front: null, stackOrder: [], ids: [] });
+
+    assert.doesNotThrow(() => shadowKernelWindowAcceptsInputChanged(danglingId, false, oldSnapshot));
     assert.strictEqual(getShadowKernelExecutor().getState().order.length, 0, 'a dangling id never joins order');
   });
 });

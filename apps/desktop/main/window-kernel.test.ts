@@ -299,12 +299,17 @@ describe('window-kernel: re-registration merges in place', () => {
     assert.strictEqual(merged.kind, 'browser');
     assert.strictEqual(merged.layer, 2);
     assert.strictEqual(merged.canBecomeKey, false);
-    assert.strictEqual(merged.acceptsInput, false);
     assert.strictEqual(merged.class, 'hud');
     assert.strictEqual(merged.parentId, wid(2));
     // Lived facts are preserved, not reset by the re-registration.
     assert.strictEqual(merged.visible, true);
     assert.strictEqual(merged.openSeq, openSeqBefore);
+    // `acceptsInput` is a LIVED fact (§ WindowRecord.acceptsInput's doc), not
+    // an intrinsic: the event's `acceptsInput: false` above must NOT
+    // overwrite the `true` the original registration lived with — a
+    // re-registration recomputing surface facts fresh from open params must
+    // not undo a click-through change `WindowAcceptsInputChanged` reported.
+    assert.strictEqual(merged.acceptsInput, true);
   });
 
   it('re-registration overwrites a named role and keeps the existing one when the event names none', () => {

@@ -755,6 +755,19 @@ export function shadowKernelContentFirstResponderChanged(id: WindowId, held: boo
   compareAfterFeed(oldSnapshot);
 }
 
+/**
+ * Translate a window's post-registration click-through change into the
+ * kernel's `WindowAcceptsInputChanged` event — a mechanical mirror write
+ * (window-kernel.ts's evolve arm), the sole post-registration writer of
+ * `acceptsInput`. `acceptsInput` is stored as reported: the kernel never
+ * infers click-through state, only records what the causing site already did
+ * (see the event's own doc for why this is fed rather than observed).
+ */
+export function shadowKernelWindowAcceptsInputChanged(id: WindowId, acceptsInput: boolean, oldSnapshot: StateSnapshot): void {
+  shadowDispatch({ type: 'WindowAcceptsInputChanged', id, acceptsInput });
+  compareAfterFeed(oldSnapshot);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Cold-start focus latch — the tenth real input this step feeds the kernel.
 // Translated at the two production sites that dispatch the old machine's

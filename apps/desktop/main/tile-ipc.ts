@@ -142,6 +142,7 @@ import {
   shadowKernelSetDesktopMembership,
   shadowKernelShowRequested,
   shadowKernelHideRequested,
+  shadowKernelWindowAcceptsInputChanged,
 } from './window-kernel-shadow.js';
 import {
   registerGlobalShortcut,
@@ -3248,6 +3249,14 @@ export function registerTileIpcHandlers(): void {
       }
       const forward = args.options?.forward === true;
       win.setIgnoreMouseEvents(args.ignore === true, forward ? { forward: true } : undefined);
+      // Machine click-through mirror (window-kernel.ts
+      // WindowAcceptsInputChanged) — fed from here because this IS the
+      // chokepoint that causes the change; there is no native echo to
+      // observe (Electron has no getter for `setIgnoreMouseEvents`).
+      const machineId = getWindowIdFor(win);
+      if (machineId != null) {
+        shadowKernelWindowAcceptsInputChanged(machineId, args.ignore !== true, getWindowStateSnapshot());
+      }
       return { success: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

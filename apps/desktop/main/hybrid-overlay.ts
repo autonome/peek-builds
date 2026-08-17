@@ -110,6 +110,7 @@ import {
   shadowKernelWindowContentOrderable,
   shadowKernelAppActivated,
   shadowKernelAppResigned,
+  shadowKernelWindowAcceptsInputChanged,
   getShadowKernelExecutor,
 } from './window-kernel-shadow.js';
 import { getFaviconForUrl } from './datastore.js';
@@ -488,6 +489,10 @@ function wireClickCapture(): void {
     } else {
       overlayWin.setIgnoreMouseEvents(true, { forward: true });
     }
+    // Machine click-through mirror (window-kernel.ts
+    // WindowAcceptsInputChanged) — capture:true means the overlay now takes
+    // input, capture:false means it is click-through again.
+    if (overlayWmId != null) shadowKernelWindowAcceptsInputChanged(overlayWmId, capture, getWindowStateSnapshot());
   });
 }
 
@@ -524,6 +529,9 @@ function wireAppActiveGate(): void {
     } catch {
       /* setIgnoreMouseEvents unsupported in some envs */
     }
+    // Machine click-through mirror (window-kernel.ts
+    // WindowAcceptsInputChanged) — forced click-through on this edge.
+    if (overlayWmId != null) shadowKernelWindowAcceptsInputChanged(overlayWmId, false, getWindowStateSnapshot());
     // The WINDOW half of this edge is the reducer's (§5 step 9): `APP_RESIGNED`
     // pushes `HIDE_WINDOW` for every attached overlay (peek 88797f2d / R6), so
     // the chrome leaves the screen while Peek is backgrounded. The old
@@ -542,6 +550,10 @@ function wireAppActiveGate(): void {
     } catch {
       /* unsupported */
     }
+    // Machine click-through mirror (window-kernel.ts
+    // WindowAcceptsInputChanged) — restored to default click-through, still
+    // not capturing.
+    if (overlayWmId != null) shadowKernelWindowAcceptsInputChanged(overlayWmId, false, getWindowStateSnapshot());
     // The re-reveal is the reducer's: `APP_ACTIVATED` runs `applyOverlayFollow`
     // for every attached overlay, restoring its z-pin and re-showing it over the
     // host it is still attached to (the attachment survived the resign, so no

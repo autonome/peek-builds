@@ -92,6 +92,7 @@ const FORBIDDEN = [
   'setFullScreen',
   'showInactive',
   'orderFront',
+  'setIgnoreMouseEvents',
   'NSPanel',
   'NSWorkspace',
   'LSUIElement',
