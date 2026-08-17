@@ -1177,6 +1177,26 @@ export async function pushEventsToServer(
   // Reason (the server's own error message for the chunk) -> ids of every
   // event in a chunk that failed with it — see groupFailuresByReason() above.
   const chunkFailuresByReason = new Map<string, string[]>();
+  // How much work this stage is about to do, before it starts doing it. The
+  // count is NOT bounded by what changed since the last run: the watermark is
+  // held below the oldest event whose parent item has no syncId (see the
+  // blocked-event query below), so an item that can never sync pins it and
+  // every run re-pushes the whole tail. Stating the size up front is what
+  // tells that apart from a stage that is merely slow.
+  const chunkCount = Math.ceil(validRows.length / MAX_EVENTS_PER_PUSH);
+  if (validRows.length > 0) {
+    logSyncProgress(
+      'push-events',
+      'progress',
+      `Pushing ${validRows.length} event(s) in ${chunkCount} batch(es) of up to ${MAX_EVENTS_PER_PUSH}`
+    );
+  }
+  // Each batch is one sequential request that can sit for the full fetch
+  // timeout, so a stage covering tens of thousands of events can run for
+  // minutes with nothing to show for it. Emit a line per batch boundary,
+  // throttled the same way item push is (ITEM_PUSH_PROGRESS_INTERVAL_MS) so a
+  // fast run doesn't turn the log into one line per batch.
+  let lastEventProgressAt = Date.now();
   for (let i = 0; i < validRows.length; i += MAX_EVENTS_PER_PUSH) {
     const batch = validRows.slice(i, i + MAX_EVENTS_PER_PUSH);
     const events = batch.map((row) => {
@@ -1227,6 +1247,17 @@ export async function pushEventsToServer(
       } else {
         chunkFailuresByReason.set(message, batchIds);
       }
+    }
+
+    const doneRows = Math.min(i + MAX_EVENTS_PER_PUSH, validRows.length);
+    const now = Date.now();
+    if (doneRows === validRows.length || now - lastEventProgressAt >= ITEM_PUSH_PROGRESS_INTERVAL_MS) {
+      logSyncProgress(
+        'push-events',
+        'progress',
+        `Pushing events — ${doneRows} / ${validRows.length}`
+      );
+      lastEventProgressAt = now;
     }
   }
 

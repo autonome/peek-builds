@@ -927,6 +927,59 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
     assert.strictEqual(afterRun[0].phase, 'start');
   });
 
+  it('event push progress states the batch plan up front and the last entry carries the true final count across multiple batches', async () => {
+    const { apiKey } = setup('event-push-progress');
+
+    const createRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'series', metadata: { title: 'Event push progress series' } }),
+    });
+    const { id: serverItemId } = (await createRes.json()) as { id: string };
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    const localItemId = 'local-event-push-progress-item';
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', ?, ?, ?, ?, 0)
+    `).run(localItemId, serverItemId, now, now, now);
+
+    // One more than sync.ts's own MAX_EVENTS_PER_PUSH (500) — forces the chunk
+    // loop to run twice, the exact "tens of thousands of events, nothing
+    // logged until the finish line" shape this progress logging exists for.
+    const MAX_EVENTS_PER_PUSH = 500;
+    const EVENT_COUNT = MAX_EVENTS_PER_PUSH + 1;
+    const insert = db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, ?, '{}', ?)
+    `);
+    for (let i = 0; i < EVENT_COUNT; i++) {
+      insert.run(`evt-push-progress-${i}`, localItemId, i, now + i, now + i);
+    }
+
+    await sync.pushEventsToServer(FAKE_SERVER_URL, apiKey);
+
+    const progressEntries = sync.getSyncLog().filter((e) => e.stage === 'push-events' && e.phase === 'progress');
+
+    const planEntry = progressEntries.find(
+      (e) => e.message.includes(`${EVENT_COUNT} event(s)`) && e.message.includes('batch(es)')
+    );
+    assert.ok(
+      planEntry,
+      `expected an entry stating the total event count and batch count before the chunk loop starts, got: ${JSON.stringify(progressEntries.map((e) => e.message))}`
+    );
+
+    // Intermediate per-batch entries are time-throttled (ITEM_PUSH_PROGRESS_INTERVAL_MS)
+    // and may not appear at all in a fast test run — assert only that progress
+    // reaches the true final count, not on how many intermediate entries land.
+    const last = progressEntries[progressEntries.length - 1];
+    assert.ok(
+      last.message.includes(`${EVENT_COUNT} / ${EVENT_COUNT}`),
+      `expected the final progress entry to carry the true final count, got: ${last.message}`
+    );
+  });
+
   it('emitting progress with no renderer listening does not throw', () => {
     // No BrowserWindow / pubsub broadcaster exists in this plain `node
     // --test` environment — the exact "no renderer listening" case a real
