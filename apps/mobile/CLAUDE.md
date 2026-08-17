@@ -73,7 +73,7 @@ Android build and dev scripts are in `apps/mobile/`:
 The mobile app pins `@tauri-apps/cli` at `^2.10.1` (see `devDependencies` in `package.json`). All Android scripts (`dev-android.sh`, `build-android.sh`, `build-android-release.sh`, `dev-both.sh`) resolve the tauri CLI explicitly from `node_modules/.bin/tauri` — they do NOT use `npx tauri` or any system `cargo-tauri`.
 
 Two reasons for this:
-1. **Fresh-clone reliability**: `npx` resolution fails on pool clones where per-app `npm install` state isn't guaranteed (node_modules are symlinked from main, but npm's tauri resolution requires the symlink to be present).
+1. **Fresh-checkout reliability**: `npx` resolution fails wherever per-app `npm install` state isn't guaranteed — a fresh worktree or a just-reset mobile workspace — because npm's tauri resolution needs the per-app `node_modules` to be present.
 2. **Version mismatch panic**: System `cargo-tauri` installed via `cargo install` (e.g. 2.9.6) panics inside `android-studio-script` against our npm CLI at 2.10.x. Minor versions are NOT compatible across the cargo/npm distributions.
 
 If you have a system `cargo-tauri` installed, it is ignored by all scripts. If you need to verify which version will be used:
@@ -135,10 +135,32 @@ yarn test:sync:e2e:mobile   # cargo test ... --test sync_e2e_mobile -- --ignored
   (they still compile it). You must pass `--ignored` (the yarn script does).
 - Requires `apps/server` installed (`npm install --prefix apps/server`); the test
   panics with that hint if it cannot spawn the server. Binds a fixed port (3461).
-- **Run it ONLY from the dedicated `mobile` clone slot** (`scripts/spawn-mobile-workspace.sh`),
-  never the main checkout or a pool clone. Mobile Rust build/test execution belongs
-  in the `mobile` slot so it doesn't disturb the main checkout's target dir / interactive
-  state, and so the fixed server port can't collide with another clone's run.
+- **Run it ONLY from the standing mobile workspace** (see below), never the
+  primary checkout or a task worktree. Mobile Rust build/test execution belongs
+  there so it doesn't disturb the primary checkout's target dir / interactive
+  state, and so the fixed server port can't collide with another run.
+
+## The standing mobile workspace
+
+Mobile work happens in a full independent clone at `../mpeek-clone-mobile`,
+NOT in a `.worktrees/<slot>` worktree like every other unit of work. It holds
+hours of warm build cache — Rust `target/`, Xcode derived data, the
+`libapp.a`/xcframework artifacts — all untracked, none of it reproducible in
+minutes.
+
+- **Never delete it, and never convert it to a worktree.** Its value is the
+  untracked cache, which no checkout operation preserves.
+- Refresh it in place instead of recreating it. Untracked build output survives
+  a reset, so the cache carries across:
+
+  ```bash
+  git -C ../mpeek-clone-mobile fetch origin        # origin is the primary checkout
+  git -C ../mpeek-clone-mobile reset --hard origin/main
+  cd ../mpeek-clone-mobile && yarn install         # only if the lockfile moved
+  ```
+
+- Move work out of it the same way work moves anywhere: commit on a branch
+  there, then fetch that branch from the primary checkout.
 
 ---
 
