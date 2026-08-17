@@ -888,6 +888,28 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
     return { kind: 'machine', opSeq };
   }
 
+  /**
+   * Realize a raise on a window this backend already sees on screen: `moveTop()`
+   * alone, the same non-activating z-raise `setStacking` uses for its
+   * `stacked`/`excluded` branch — never `performOsShow`. See `raiseWindow`'s
+   * docblock for why a raise must stop short of a show once the target is
+   * already visible.
+   *
+   * `moveTop()` has crashed historically and is guarded accordingly. Off
+   * darwin it can itself take focus (`STACKING_TAKES_FOCUS`), so this reuses
+   * `pendingStackingFocus` — the SAME arming `setStacking` carries for the
+   * SAME primitive — rather than inventing a second suppression mechanism for
+   * one native call.
+   */
+  private reorderToTop(id: WindowId, win: NativeWindow): void {
+    try {
+      if (STACKING_TAKES_FOCUS) this.pendingStackingFocus.add(id);
+      win.moveTop();
+    } catch {
+      /* moveTop unsupported on some platforms, or torn down mid-raise — a no-op */
+    }
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // Port: commands.
   // ───────────────────────────────────────────────────────────────────────────
@@ -907,17 +929,48 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
    * raise that never meant to touch it — see `applyOsFocusRealized`'s docblock
    * for the shape of that feedback loop. The same holds for `showWindow`; see
    * the module header.
+   *
+   * ONE OF THESE RAISES IS ALSO WHAT A FOCUS REPORT DRIVES BACK AT THE OS
+   * (`applyRaiseRequest`, called off `OS_FOCUS_GAINED` for a window that was
+   * not already `front`): the OS already moved key onto the target, and this
+   * call exists only to make z-order agree with that fact. A raise realized
+   * as `performOsShow`'s activating `win.show()` (`makeKeyAndOrderFront:`)
+   * asks the OS for a show it doesn't need — the window is already on
+   * screen — and buys nothing but a fresh focus re-pick for the whole stack,
+   * which is exactly the ping-pong `docs/design/window-manager.md` §4.3 item
+   * 3 measures (a raise re-granting the focus it was only supposed to
+   * reflect). So: **when this backend's own `isVisible()` ground truth says
+   * the target is already on screen, realize the raise as a pure reorder —
+   * `moveTop()`, never a show.** A target that genuinely is not visible
+   * still needs the real show; nothing else will map it. This is not
+   * platform-scoped: a raise consequent on a focus report should not
+   * re-grant focus anywhere, and a window already on screen needs no show
+   * anywhere — the platform divergence (`STACKING_TAKES_FOCUS`) is only in
+   * how `moveTop()` itself behaves, reusing the SAME arming `setStacking`
+   * already carries for that primitive.
+   *
+   * Two rules this derives from: (1) a platform's workaround shape belongs
+   * in the backend, and the machine emits ONE effect for ONE intention —
+   * "bring this window to the front" is one intention, and which native
+   * primitive expresses it without extra side effects is this backend's
+   * business, not the reducer's. (2) a machine-initiated operation must not
+   * feed its own side effect back in as fresh OS evidence (see this file's
+   * header) — a raise that re-grants focus manufactures exactly such
+   * evidence.
    */
   raiseWindow(id: WindowId, opSeq: number): void {
     const entry = this.windows.get(id);
     if (!entry) return;
     const { win, kind, rendererWC } = entry;
     if (win.isDestroyed()) return;
+    const alreadyVisible = this.isVisibleSafe(win);
     if (kind === 'page-host') {
-      // Non-headless: activating show + content first responder (the
-      // `hybridShowIntent` invariant — the R4/R5/R7 dead-focus cluster).
-      // Headless: opacity-0 + showInactive, never activate/focus.
-      this.performOsShow(id, win, !isHeadless(), opSeq);
+      // Non-headless, not yet on screen: activating show + content first
+      // responder (the `hybridShowIntent` invariant — the R4/R5/R7
+      // dead-focus cluster). Headless: opacity-0 + showInactive, never
+      // activate/focus. Already on screen: reorder only — see docblock above.
+      if (alreadyVisible) this.reorderToTop(id, win);
+      else this.performOsShow(id, win, !isHeadless(), opSeq);
       if (!isHeadless() && rendererWC && !rendererWC.isDestroyed()) {
         try {
           // The raise's content-focus half provokes `rendererWC 'focus'` — the
@@ -933,18 +986,24 @@ export class ElectronWindowBackend implements WindowBackend, BackendMigrationShi
       return;
     }
     // Browser window: headless-safe show (opacity-0 + inactive under headless),
-    // activate + focus only when not headless.
-    this.performOsShow(id, win, !isHeadless(), opSeq);
-    this.emit({ type: 'WINDOW_SHOWN', id, focused: true });
-    shadowKernelWindowShown(id, this.getSnapshot(), true);
-    if (!isHeadless()) {
-      try {
-        this.armSelfCausedFocus(id, opSeq);
-        (win as unknown as BrowserWindow).focus();
-      } catch {
-        /* window gone mid-raise */
+    // activate + focus only when not headless — unless already on screen, in
+    // which case a reorder is all the raise means (see docblock above), and
+    // neither the show nor the trailing explicit focus below run.
+    if (alreadyVisible) {
+      this.reorderToTop(id, win);
+    } else {
+      this.performOsShow(id, win, !isHeadless(), opSeq);
+      if (!isHeadless()) {
+        try {
+          this.armSelfCausedFocus(id, opSeq);
+          (win as unknown as BrowserWindow).focus();
+        } catch {
+          /* window gone mid-raise */
+        }
       }
     }
+    this.emit({ type: 'WINDOW_SHOWN', id, focused: true });
+    shadowKernelWindowShown(id, this.getSnapshot(), true);
   }
 
   /** Make a page-host's content WC the macOS first responder. */
