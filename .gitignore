@@ -44,6 +44,9 @@ playwright-report/
 .agent-task.md
 /CLAUDE.md
 
+# Per-worktree temp dir: .claude/tracks.json points each track's TMPDIR here
+.tmp/
+
 # Session handoff notes (per-user session scratch — not source-controlled)
 handoff.md
 
