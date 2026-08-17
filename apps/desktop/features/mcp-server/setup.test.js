@@ -7,7 +7,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, statSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -503,6 +503,50 @@ describe('setup.js --remote', () => {
 
     const credPath = join(home, '.config', 'peek', 'mcp-credentials.json');
     assert.ok(!existsSync(credPath), '--print must not write the credential file');
+  });
+
+  it('replaces a pre-existing raw-keyed entry for the same target, leaving exactly one entry', () => {
+    const { projDir, home } = makeRemoteProject();
+    tmpDirs.push(projDir, home);
+
+    // Simulates a file written before key normalization existed: the raw
+    // url (trailing slash and all) baked straight into the stored key.
+    const slashedUrl = `${FAKE_URL}/`;
+    const credDir = join(home, '.config', 'peek');
+    mkdirSync(credDir, { recursive: true });
+    const credPath = join(credDir, 'mcp-credentials.json');
+    writeFileSync(credPath, JSON.stringify({
+      credentials: { [`${slashedUrl}#remotescope`]: { token: 'stale-token', label: 'old' } },
+    }, null, 2) + '\n');
+
+    const fakeToken = 'fake-minted-token-replace-raw-entry';
+    // Re-run with the same (slashed) url — the exact scenario a re-typed
+    // --remote invocation produces. runRemoteSetup() always passes the
+    // unslashed FAKE_URL, so this drives setup.js directly instead.
+    const args = [SETUP_JS, '--scope', 'remotescope', '--mcp-json', '--remote', slashedUrl, '--store-token'];
+    execFileSync(process.execPath, args, {
+      cwd: projDir,
+      env: { ...process.env, HOME: home },
+      input: fakeToken + '\n',
+    });
+
+    const credData = JSON.parse(readFileSync(credPath, 'utf-8'));
+    const keys = Object.keys(credData.credentials);
+    assert.strictEqual(keys.length, 1, `expected exactly one entry, got: ${keys.join(', ')}`);
+    assert.strictEqual(keys[0], `${FAKE_URL}#remotescope`, 'surviving entry should be under the normalized key');
+    assert.strictEqual(credData.credentials[keys[0]].token, fakeToken);
+  });
+
+  it('credential file mode stays 0600 after a second write', () => {
+    const { projDir, home } = makeRemoteProject();
+    tmpDirs.push(projDir, home);
+
+    runRemoteSetup(projDir, home, ['--store-token'], 'first-token\n');
+    runRemoteSetup(projDir, home, ['--store-token'], 'second-token\n');
+
+    const credPath = join(home, '.config', 'peek', 'mcp-credentials.json');
+    const mode = statSync(credPath).mode & 0o777;
+    assert.strictEqual(mode, 0o600, 'credential file must stay mode 0600 after a second write');
   });
 
   it('detectExistingInstall recognises a remote entry on refresh', () => {

@@ -38,6 +38,7 @@ import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { TEMPLATE_BODY, BODY_BEGIN, BODY_END, REMOTE_PARAGRAPH } from './peek-skill-template.js';
+import { credentialKey } from './credential-key.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -97,7 +98,13 @@ function writeCredentialFile(url, scope, token, label) {
   const path = credentialFilePath();
   const data = readJsonFile(path);
   if (!data.credentials) data.credentials = {};
-  const key = `${url}#${scope}`;
+  const key = credentialKey(url, scope);
+  // An older install may have stored this same target under the raw,
+  // unnormalized "<url>#<scope>" key (e.g. a url with a trailing slash) —
+  // replace it rather than leaving both entries once it's rewritten
+  // normalized.
+  const rawKey = `${url}#${scope}`;
+  if (rawKey !== key) delete data.credentials[rawKey];
   data.credentials[key] = { token, label };
   mkdirSync(dirname(path), { recursive: true });
   const tmp = path + '.peek-tmp';

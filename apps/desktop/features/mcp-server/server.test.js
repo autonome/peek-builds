@@ -1559,6 +1559,81 @@ describe('remoteStoreConfig() — remote/local selection (design doc §6)', () =
       );
     });
   });
+
+  // Trailing-slash / whitespace drift between the install-time --remote url
+  // and the later-exported PEEK_SYNC_URL is invisible on the HTTP side
+  // (openRemoteStore() normalizes its base url the same way) but used to
+  // throw here on a plain object-property lookup. credential-key.js's
+  // normalization must agree with openRemoteStore()'s so all three sides —
+  // write, HTTP, lookup — land on the same key.
+  it('resolves a key whose url differs only by a trailing slash', () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'peek-mcp-cred-'));
+    const credDir = join(tmpHome, '.config', 'peek');
+    mkdirSync(credDir, { recursive: true });
+    const storedKey = `${FAKE_REMOTE_URL}#peek`; // normalized, as a fresh write produces
+    writeFileSync(join(credDir, 'mcp-credentials.json'), JSON.stringify({
+      credentials: { [storedKey]: { token: 'fake-slash-token', label: 'test' } },
+    }));
+
+    withEnv({ HOME: tmpHome }, () => {
+      assert.equal(resolveCredentialFromFile(`${FAKE_REMOTE_URL}/#peek`), 'fake-slash-token');
+    });
+  });
+
+  it('resolves a key whose url differs only by surrounding whitespace', () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'peek-mcp-cred-'));
+    const credDir = join(tmpHome, '.config', 'peek');
+    mkdirSync(credDir, { recursive: true });
+    const storedKey = `${FAKE_REMOTE_URL}#peek`;
+    writeFileSync(join(credDir, 'mcp-credentials.json'), JSON.stringify({
+      credentials: { [storedKey]: { token: 'fake-whitespace-token', label: 'test' } },
+    }));
+
+    withEnv({ HOME: tmpHome }, () => {
+      assert.equal(resolveCredentialFromFile(`  ${FAKE_REMOTE_URL}  #peek`), 'fake-whitespace-token');
+    });
+  });
+
+  it('still resolves a pre-existing raw (unnormalized) key, unchanged, for backward compatibility', () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'peek-mcp-cred-'));
+    const credDir = join(tmpHome, '.config', 'peek');
+    mkdirSync(credDir, { recursive: true });
+    // Simulates a file written before normalization existed: the raw url
+    // (trailing slash and all) baked straight into the stored key.
+    const rawKey = `${FAKE_REMOTE_URL}/#peek`;
+    writeFileSync(join(credDir, 'mcp-credentials.json'), JSON.stringify({
+      credentials: { [rawKey]: { token: 'fake-raw-token', label: 'test' } },
+    }));
+
+    withEnv({ HOME: tmpHome }, () => {
+      // Lookup key matches the stored raw key exactly (no drift) — the
+      // normalized lookup misses (it strips the slash), so this only
+      // resolves via the raw fallback.
+      assert.equal(resolveCredentialFromFile(rawKey), 'fake-raw-token');
+    });
+  });
+
+  it('not-found error lists the keys the file DOES contain, and never a token value', () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'peek-mcp-cred-'));
+    const credDir = join(tmpHome, '.config', 'peek');
+    mkdirSync(credDir, { recursive: true });
+    const presentKey = `${FAKE_REMOTE_URL}#other-scope`;
+    const secretToken = 'fake-secret-must-not-leak-into-error';
+    writeFileSync(join(credDir, 'mcp-credentials.json'), JSON.stringify({
+      credentials: { [presentKey]: { token: secretToken, label: 'test' } },
+    }));
+
+    withEnv({ HOME: tmpHome }, () => {
+      try {
+        resolveCredentialFromFile(`${FAKE_REMOTE_URL}#missing-scope`);
+        assert.fail('expected resolveCredentialFromFile to throw');
+      } catch (err) {
+        assert.match(err.message, /No credential found for key/);
+        assert.ok(err.message.includes(presentKey), `expected error to list ${presentKey}, got: ${err.message}`);
+        assert.ok(!err.message.includes(secretToken), `token value leaked into error: ${err.message}`);
+      }
+    });
+  });
 });
 
 describe('scopeConsistencyError() — startup consistency check (design doc §4.3)', () => {
