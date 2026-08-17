@@ -17,6 +17,11 @@
  * rule.
  *
  * Mediation (all main-brokered — main owns the content webContents handle):
+ *   overlay → main (readiness):
+ *     - page-overlay:ready    {} (published once, at the very end of this
+ *                             module body, after every subscription above has
+ *                             registered — closes the first-load handoff race,
+ *                             see the publish site at the bottom of this file)
  *   main → overlay (active handoff + content events):
  *     - page-overlay:active   {windowId,url,title,canGoBack,canGoForward,loading}|null (directed)
  *     - page:title-updated    {windowId,url,title}
@@ -2389,3 +2394,18 @@ window.addEventListener('resize', () => relayoutChrome());
 // Signal readiness so main can verify the renderer is wired (and tests can wait).
 window.__overlayReady = true;
 DEBUG && console.log('[overlay] ready');
+
+// ── First-load handoff race ───────────────────────────────────────────────────
+// `page-overlay:active` (the main→overlay active-window handoff, see the
+// `api.subscribe` near the top of this file) can be published before this
+// module's subscription registers — the browser-process load signal main used
+// to key a re-send off (`did-finish-load`) and the renderer's
+// `tile:pubsub:subscribe` IPC travel on independent channels with no
+// cross-channel ordering guarantee, so a load-event re-send can still lose the
+// race. A late subscriber is answered by its own declaration instead: this
+// publish is the LAST statement in the module body, after every `api.subscribe`
+// above has registered, so main's `page-overlay:ready` subscriber
+// (`wireOverlayReady` in hybrid-overlay.ts) can safely re-send the current
+// active handoff the instant this fires — there is no earlier point at which
+// the resend could still beat the subscription it's answering.
+api.publish('page-overlay:ready', {});

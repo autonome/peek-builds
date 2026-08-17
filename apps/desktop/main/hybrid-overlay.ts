@@ -300,15 +300,6 @@ function ensureOverlay(): BrowserWindow {
     DEBUG && console.log('[hybrid-overlay] overlay chrome load failed:', err);
   });
 
-  // First-paint race: the renderer subscribes to `page-overlay:active` only
-  // after its module loads, which is AFTER the first `retarget()` may have
-  // already published the handoff. Re-send the current active state once the
-  // renderer has finished loading (and on every reload) so the navbar paints.
-  win.webContents.on('did-finish-load', () => {
-    const currentId = overlayHostOsId();
-    if (currentId != null) sendActiveHandoff(currentId);
-  });
-
   win.on('closed', () => {
     if (overlayWin === win) {
       overlayWin = null;
@@ -560,6 +551,33 @@ function wireAppActiveGate(): void {
 }
 
 /**
+ * First-load handoff race: the overlay renderer's `page-overlay:active`
+ * subscription (see `overlay.js`) registers only after its module loads,
+ * which can be AFTER `sendActiveHandoff` has already published the handoff —
+ * the renderer then sits with no active page (`activeHandoffApplied: false`).
+ * The browser-process load signal (`did-finish-load`) this used to be keyed
+ * off cannot close the race: it and the renderer's `tile:pubsub:subscribe`
+ * IPC travel on independent channels with no cross-channel ordering
+ * guarantee, so a re-send keyed off the FORMER can still beat the
+ * subscription it's meant to answer.
+ *
+ * A late subscriber is answered by its own declaration instead: `overlay.js`
+ * publishes `page-overlay:ready` once, as the very last statement in its
+ * module body — after every one of its `api.subscribe` calls has already
+ * registered. This subscription answers that declaration by re-running
+ * `sendActiveHandoff` with the current attach target (the same call the
+ * deleted `retarget()` used), so a re-minted overlay always ends up painted
+ * correctly no matter how the load and the subscribe interleaved. No poll, no
+ * retry, no timer, no second re-send on another lifecycle event.
+ */
+function wireOverlayReady(): void {
+  subscribe(getSystemAddress(), 'page-overlay:ready', () => {
+    const currentId = overlayHostOsId();
+    if (currentId != null) sendActiveHandoff(currentId);
+  });
+}
+
+/**
  * R3: focus the overlay WINDOW when Cmd+L (forwarded as `page:show-navbar`)
  * targets the active hybrid window, so the overlay becomes key and the
  * DOM-focused URL input (openNavbarFocused → focusUrl) is actually typeable.
@@ -703,6 +721,13 @@ export function initHybridOverlay(): void {
   // R3: focus the overlay window on a Cmd+L (page:show-navbar) for the active
   // hybrid window so the URL field is typeable (gated on app-active, see above).
   wireShowNavbarFocus();
+
+  // First-load handoff race: answer the renderer's own post-subscribe
+  // declaration (`page-overlay:ready`) rather than a load event it can arrive
+  // after. On the main pubsub registry, independent of the overlay window's
+  // lifetime, so a re-minted overlay (see the HAZARD note on `ensureOverlay`'s
+  // 'closed' handler) is covered too.
+  wireOverlayReady();
 
   // cmd+W overlay redirect is now structural: the overlay registers as a
   // satellite (see ensureOverlay), so it can never be the content window
