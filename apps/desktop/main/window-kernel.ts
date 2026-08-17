@@ -380,6 +380,29 @@ export interface WindowRecord {
   escapeMode?: 'ignore';
 
   /**
+   * Whether this window is the shared chrome overlay singleton — the one
+   * window whose job is to frame whichever base-layer page host is topmost
+   * (`topmostBaseLayerPageHost`). A DECLARED fact in the sense of §0 stored
+   * fact 3 ("each window's own lifecycle state, plus its intrinsic
+   * properties as created"): written at registration, never revisited, and
+   * — like every other declared fact on this record — OVERWRITTEN rather
+   * than preserved by the re-registration merge.
+   *
+   * NOT `role === 'overlay'`, deliberately. Keying the behavior on role
+   * would silently capture any future overlay-role window that is not the
+   * shared chrome — this file's repeated correction (`overlayFor`,
+   * `parentId`, and now this field) is that these relations are structural
+   * facts, never role lookups. It exists because the rule that will consume
+   * it must be able to name the overlay record when the overlay is
+   * DETACHED — at which point `overlayFor` is absent and there is no
+   * attachment edge left to find it by.
+   *
+   * Inert today: nothing reads this field yet. A later change adds the
+   * effect that does.
+   */
+  tracksBaseLayerTop?: boolean;
+
+  /**
    * Whether this window's CONTENT web contents currently holds macOS
    * first-responder status — the mirror of the native `rendererWC
    * 'focus'`/`'blur'` pair, written solely by
@@ -718,6 +741,8 @@ export type Event =
       escapeMode?: 'ignore';
       /** See `RegisterWindow.bounds`'s doc — carried through unchanged by `decide`. */
       bounds?: Rectangle;
+      /** See `WindowRecord.tracksBaseLayerTop` — declared here, nothing reads it yet. */
+      tracksBaseLayerTop?: boolean;
     }
   | { type: 'WindowShown'; id: WindowId }
   | { type: 'WindowHidden'; id: WindowId }
@@ -1004,6 +1029,8 @@ export type Command =
        * to seed just registers without it.
        */
       bounds?: Rectangle;
+      /** See `WindowRecord.tracksBaseLayerTop` — declared here, nothing reads it yet. */
+      tracksBaseLayerTop?: boolean;
       expectedVersion: number;
     }
   /**
@@ -1572,6 +1599,15 @@ export function evolve(state: State, ev: Event): State {
             : existing.escapeMode !== undefined
               ? { escapeMode: existing.escapeMode }
               : {}),
+          // Intrinsic, same shape as `role`/`keepLive`/`escapeMode` above —
+          // see `WindowRecord.tracksBaseLayerTop`'s doc: a DECLARED fact, so
+          // an event that names it overwrites, and an event that omits it
+          // keeps the existing value rather than erasing it.
+          ...(ev.tracksBaseLayerTop !== undefined
+            ? { tracksBaseLayerTop: ev.tracksBaseLayerTop }
+            : existing.tracksBaseLayerTop !== undefined
+              ? { tracksBaseLayerTop: existing.tracksBaseLayerTop }
+              : {}),
         };
         return {
           ...state,
@@ -1610,6 +1646,7 @@ export function evolve(state: State, ev: Event): State {
         ...(ev.parentId !== undefined ? { parentId: ev.parentId } : {}),
         ...(ev.keepLive !== undefined ? { keepLive: ev.keepLive } : {}),
         ...(ev.escapeMode !== undefined ? { escapeMode: ev.escapeMode } : {}),
+        ...(ev.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: ev.tracksBaseLayerTop } : {}),
         // `contentFocused` is deliberately NOT seeded: registration is
         // exactly the moment nothing has been reported, and absent is the
         // honest answer for that (see the field's doc).
@@ -3047,6 +3084,7 @@ export function decide(state: State, cmd: Command): { events: Event[] } | { reje
           ...(cmd.keepLive !== undefined ? { keepLive: cmd.keepLive } : {}),
           ...(cmd.escapeMode !== undefined ? { escapeMode: cmd.escapeMode } : {}),
           ...(cmd.bounds !== undefined ? { bounds: cmd.bounds } : {}),
+          ...(cmd.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: cmd.tracksBaseLayerTop } : {}),
         },
       ],
     };

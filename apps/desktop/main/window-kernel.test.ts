@@ -407,6 +407,36 @@ describe('window-kernel: re-registration merges in place', () => {
     ]);
     assert.strictEqual(state.order.find((w) => w.id === wid(1))?.parentId, wid(3), 'a named parentId overwrites');
   });
+
+  // The two cases below cover the re-registration MERGE's handling of
+  // `tracksBaseLayerTop` — same shape as the `keepLive` pair above, because
+  // it is a DECLARED fact for the same reason (see
+  // `WindowRecord.tracksBaseLayerTop`'s doc): written at registration, never
+  // revisited, and overwritten rather than preserved by a re-registration
+  // that names a value.
+  it('a re-registration that omits tracksBaseLayerTop KEEPS a previously-set tracksBaseLayerTop: true', () => {
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'overlay', tracksBaseLayerTop: true },
+      { type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'overlay' },
+    ]);
+    assert.strictEqual(
+      state.order.find((w) => w.id === wid(1))?.tracksBaseLayerTop,
+      true,
+      'a re-registration naming no tracksBaseLayerTop must not strip the one already declared',
+    );
+  });
+
+  it('a re-registration that names tracksBaseLayerTop: false overwrites it — an explicit value always wins', () => {
+    const state = fold([
+      { type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'overlay', tracksBaseLayerTop: true },
+      { type: 'WindowRegistered', id: wid(1), kind: 'browser', layer: 0, canBecomeKey: true, acceptsInput: true, class: 'overlay', tracksBaseLayerTop: false },
+    ]);
+    assert.strictEqual(
+      state.order.find((w) => w.id === wid(1))?.tracksBaseLayerTop,
+      false,
+      'a named tracksBaseLayerTop overwrites',
+    );
+  });
 });
 
 // ── raise vs. show ───────────────────────────────────────────────────────────

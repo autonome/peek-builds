@@ -53,6 +53,8 @@ export interface MachineWindowSpec {
   alwaysOnTop?: boolean;
   /** keepLive policy declared at open time — drives the reducer's `WINDOW_CLOSE_OR_HIDE_REQUESTED` hide-vs-close decision (see `WindowRecord.keepLive`). */
   keepLive?: boolean;
+  /** See `window-kernel.ts WindowRecord.tracksBaseLayerTop`'s doc — declared here, nothing reads it yet. Old machine does not carry this fact; it rides straight through to the kernel. */
+  tracksBaseLayerTop?: boolean;
   /** BaseWindow (page-host) or BrowserWindow (browser). */
   win: BaseWindow | BrowserWindow;
   /** Content view WC for a page-host, root WC for a browser. */
@@ -195,6 +197,7 @@ export function registerWindowWithMachine(spec: MachineWindowSpec): WindowId {
     ...(spec.keepLive !== undefined ? { keepLive: spec.keepLive } : {}),
     ...(spec.escapeMode !== undefined ? { escapeMode: spec.escapeMode } : {}),
     ...(registeredRecord?.bounds !== undefined ? { bounds: registeredRecord.bounds } : {}),
+    ...(spec.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: spec.tracksBaseLayerTop } : {}),
   }, settledSnapshot);
   // The divergence comparator now runs INSIDE `shadowKernelRegisterWindow`
   // itself (`window-kernel-shadow.ts`), against the old machine's

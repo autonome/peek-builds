@@ -371,6 +371,10 @@ function ensureOverlay(): BrowserWindow {
     // preventDefault the keystroke before the page ever sees it, so the shared
     // chrome is the one browser window that opts out of the machine's attach.
     attachEscHandler: false,
+    // See `window-kernel.ts WindowRecord.tracksBaseLayerTop`'s doc — this IS
+    // the shared chrome overlay singleton, the only production window that
+    // declares this fact.
+    tracksBaseLayerTop: true,
   });
 
   overlayWin = win;

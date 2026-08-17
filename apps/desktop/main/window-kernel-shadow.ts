@@ -335,6 +335,8 @@ export interface ShadowRegisterWindowSpec {
   escapeMode?: string;
   /** See `RegisterWindow.bounds`'s doc — the construction-time rect, when the caller has one. */
   bounds?: Rectangle;
+  /** See `WindowRecord.tracksBaseLayerTop`'s doc — declared here, nothing reads it yet. */
+  tracksBaseLayerTop?: boolean;
 }
 
 /**
@@ -359,6 +361,7 @@ export function shadowKernelRegisterWindow(spec: ShadowRegisterWindowSpec, oldSn
     ...(spec.keepLive !== undefined ? { keepLive: spec.keepLive } : {}),
     ...(spec.escapeMode === 'ignore' ? { escapeMode: 'ignore' as const } : {}),
     ...(spec.bounds !== undefined ? { bounds: spec.bounds } : {}),
+    ...(spec.tracksBaseLayerTop !== undefined ? { tracksBaseLayerTop: spec.tracksBaseLayerTop } : {}),
     expectedVersion: getShadowKernelExecutor().getState().version,
   });
   compareAfterFeed(oldSnapshot);

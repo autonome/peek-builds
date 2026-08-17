@@ -180,8 +180,13 @@ function randomRegistrationFields(rng: Rng) {
   const hasKeepLive = rng() < 0.3;
   const role = pick(rng, ROLES);
   const escapeMode = pick(rng, ESCAPE_MODES);
+  // Hoisted out of the returned object's `kind:` line (below) rather than
+  // left inline, so `tracksBaseLayerTop` can read it — same textual
+  // position, so the `rng()` call sequence is unchanged: no draw added, no
+  // pinned seed's downstream numbers move.
+  const kind = pick(rng, KINDS);
   return {
-    kind: pick(rng, KINDS),
+    kind,
     layer: randomInt(rng, 4),
     canBecomeKey: randomBool(rng),
     acceptsInput: randomBool(rng),
@@ -190,6 +195,12 @@ function randomRegistrationFields(rng: Rng) {
     ...(hasParent ? { parentId: wid(randomInt(rng, POOL_SIZE)) } : {}),
     ...(hasKeepLive ? { keepLive: randomBool(rng) } : {}),
     ...(escapeMode !== undefined ? { escapeMode } : {}),
+    // `tracksBaseLayerTop` (see `WindowRecord.tracksBaseLayerTop`'s doc):
+    // declared `true` for `kind: 'browser'` registrations only — mirrors
+    // the one production declaration site (the shared chrome overlay,
+    // `kind: 'browser'`) closely enough to give the field real coverage
+    // without spending a fresh `rng()` draw of its own (see `kind` above).
+    ...(kind === 'browser' ? { tracksBaseLayerTop: true } : {}),
   };
 }
 
@@ -859,6 +870,19 @@ function checkInvariants(state: State, prev?: State): string[] {
       // silently dropped there once already.
       if (nextRecord !== undefined && prevRecord.keepLive !== undefined && nextRecord.keepLive === undefined) {
         violations.push(`keepLive decayed back to absent for ${prevRecord.id}`);
+      }
+      // Same rule for `tracksBaseLayerTop`, for the same reason: it is
+      // declared exactly once, at registration (see the field's own doc),
+      // and the rule that will consume it needs to still find the overlay
+      // record once detached — a re-registration merge silently dropping
+      // the fact back to absent is the same bug class `keepLive` already
+      // suffered.
+      if (
+        nextRecord !== undefined &&
+        prevRecord.tracksBaseLayerTop !== undefined &&
+        nextRecord.tracksBaseLayerTop === undefined
+      ) {
+        violations.push(`tracksBaseLayerTop decayed back to absent for ${prevRecord.id}`);
       }
       // Same rule for `overlayFrame`, for the same reason: it is a lived fact
       // (the frame the overlay was last asked to occupy — see the field's
