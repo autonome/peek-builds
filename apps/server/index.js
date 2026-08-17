@@ -18,7 +18,7 @@ const { DATASTORE_VERSION, PROTOCOL_VERSION } = require("./version");
 // these it actually syncs (e.g. mobile syncs only url/text/tagset/image), but the
 // server stores whatever any client chooses to push so all data can live remotely.
 // Must stay a subset of the `items.type` CHECK constraint in db.js.
-const SYNCABLE_ITEM_TYPES = ["url", "text", "tagset", "image", "series", "feed", "entity"];
+const SYNCABLE_ITEM_TYPES = ["url", "text", "tagset", "image", "series", "feed", "entity", "event"];
 
 // Types whose payload lives in `content` and so require it on push. entity/series/feed
 // carry their data in `metadata` and are allowed to have null content.
