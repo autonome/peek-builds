@@ -1,0 +1,11 @@
+{
+  "worktrees": ".worktrees",
+  "base": "main",
+  "install": "yarn install",
+  "verify": "yarn test:desktop:electron",
+  "namespace": {
+    "PROFILE": "{track}",
+    "PEEK_PROFILE": "{track}",
+    "TMPDIR": "{worktree}/.tmp"
+  }
+}
