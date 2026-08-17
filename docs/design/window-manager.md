@@ -2976,6 +2976,57 @@ had both already run before the focus arrived, so any dispatch-, microtask- or
 macrotask-scoped arming would disable the suppression entirely. **Narrowing the suppression is a
 dead end; shrinking the emission is the route.**
 
+**Measured: the show/hide loop this shrink was meant to fix reproduces at 8.1%, not
+deterministically.** `hybrid-overlay.spec.ts` "active handoff paints navbar for A, swaps to B,
+clears on null" reproduces it with the minimal-stacking commit restored as an uncommitted probe
+(`git revert --no-commit 7df51e2c`): 8 failures in 99 runs (8.1%), pooled from three batches
+(1/9, 3/30, 4/60) against uninstrumented builds. Passing runs take ~6s; failing runs ~80s.
+Earlier notes describing the loop as failing deterministically in ~11s, or roughly one run in
+three, are superseded — those came from samples of three runs or fewer. The rate is
+timing-fragile: a build with a file trace compiled in dropped it to 1 in 22, so measuring this
+loop against an instrumented build measures the instrumentation, not the loop.
+
+**The loop's shape, from a 412,894-line trace of one looping run set against nine healthy
+ones.** It is a focus ping-pong between two content page-hosts, running at ~20ms per lap for
+about 150ms before collapsing into a faster show/hide storm. Each lap: `OsFocusGained` on the
+second host reorders `order`; `window-kernel.ts react()`'s rule that a focus report raises the
+new key window emits `RaiseWindow`; `electron-window-backend.ts raiseWindow()` performs a
+non-activating show; 2-3ms later the window manager hands focus to a different window — the
+always-on-top chrome overlay, or the host that held focus a moment earlier — which arrives as a
+world-caused focus, moves `key` again, and emits the next raise. The attach-target query flips
+with it, so the overlay shows and hides every lap, and its always-on-top re-pin re-enters the
+churn.
+
+**The finding that matters, as a rule problem: `react()`'s raise-on-focus-report rule assumes a
+platform that does not re-pick focus underneath a raise.** The rule rests on the fixed-point
+argument in its own docblock ("WHY A FOCUS REPORT DRIVES AN OS RAISE AT ALL", point 2): the
+raise makes its target the window in use, so the focus the OS echoes back names the window
+`key` already holds, and the diff is empty — one correcting write, then silence. On a window
+manager whose raise primitive re-picks the focus owner for the whole stack, that premise is
+false: the focus a raise provokes routinely lands on some other window, and the rule becomes a
+two-step cycle with the platform instead of a fixed point. Full stacking re-emission hid this —
+all the focus stealing happens inside one synchronous `reassertStacking()` burst, leaving no gap
+in which a re-pick can be observed as a separate `key` move. Minimal emission spreads the same
+stealing across separate transitions and exposes it.
+
+**Two more approaches measured against the loop, both closed out.**
+- *Symmetric blur arming* — skip `electron-window-backend.ts armBlurSettle()` while a stacking
+  batch is still awaiting its focus, testing `pendingStackingFocus` as a whole rather than per
+  window (a batch provokes at most one blur, and it lands on whichever window held focus, which
+  need not be a window in the batch): 4 failures in 90 runs against the 8-in-99 baseline —
+  directionally better, never worse, but Fisher exact p ≈ 0.37, so unproven rather than refuted.
+  It is the one candidate that did not make things worse, and the loop still happens under it.
+- *Arming the show rather than the stacking* — a platform fact plus a one-shot arming set in
+  `electron-window-backend.ts performOsShow()` on both branches, consumed by the first native
+  focus on any window: 7 failures in 30 runs, clearly worse than baseline. Refuted.
+
+**Also true, and not to be read as the loop's cause: the blur-arming asymmetry is a real
+mechanism, but healthy runs absorb it too.** The chain — a native blur while a stacking arm is
+live, the deferred settle check finding nothing focused, a focus loss reported for the key
+window, a spurious focus regain, an extra raise — fires 4 times in the looping run and in 8 of
+the 9 healthy runs, 1-6 times each; several healthy runs have more of these than the looping
+one does. It is an event the healthy path absorbs without looping, not what triggers the loop.
+
 **3b. Chrome overlay follow / retarget** — ABSORBED (§5 step 9, commit `1bdd1c11`).
 The overlay-attachment relation lives in reducer state (`WindowRecord.overlayFor`);
 `window-state.ts applyOverlayFollow` drives follow/retarget off `BOUNDS_CHANGED` and
