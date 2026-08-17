@@ -802,3 +802,202 @@ describe('IPC entry points — tile:sync:push / tile:sync:pull must run all thre
     assert.ok(localEvent, 'the event must exist locally after pull');
   });
 });
+
+describe('Bulk pull timeout budget — serverFetch() timeoutMs', () => {
+  before(async () => {
+    ({ app: serverApp } = require(path.join(SERVER_DIR, 'index.js')));
+    users = require(path.join(SERVER_DIR, 'users.js'));
+    datastore = await import('./datastore.js');
+    profiles = await import('./profiles.js');
+    sync = await import('./sync.js');
+    originalFetch = globalThis.fetch;
+  });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  });
+
+  function setup(name: string) {
+    const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-timeout-${name}-`));
+    datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
+    profiles.initProfilesDb(desktopDir);
+    profiles.ensureDefaultProfile();
+    const activeProfile = profiles.getActiveProfile();
+
+    const userId = `timeout-${name}-${crypto.randomUUID()}`;
+    const { apiKey } = users.createUser(userId);
+    profiles.enableSync(activeProfile.id, apiKey, 'default');
+
+    return { apiKey };
+  }
+
+  // Actually waiting out a 15s/120s budget to prove which side of it a slow
+  // response lands on would make this suite unusably slow. Scale every
+  // requested budget down by SCALE (ms -> ms/SCALE) so ARTIFICIAL_DELAY_MS of
+  // real time falls between the scaled default (15ms) and scaled bulk
+  // (120ms) budgets — same ordering, three orders of magnitude faster.
+  // AbortSignal.timeout is a writable, configurable static (verified against
+  // the Node version this repo runs), so wrapping it also records what
+  // serverFetch() actually asked for, for the "which call gets which budget"
+  // assertions below.
+  const SCALE = 1000;
+  const ARTIFICIAL_DELAY_MS = 50;
+
+  function installScaledTimeout(): { requestedTimeouts: number[]; restore: () => void } {
+    const requestedTimeouts: number[] = [];
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    (AbortSignal as unknown as { timeout: typeof AbortSignal.timeout }).timeout = ((ms: number) => {
+      requestedTimeouts.push(ms);
+      return originalTimeout(Math.max(1, Math.round(ms / SCALE)));
+    }) as typeof AbortSignal.timeout;
+    return {
+      requestedTimeouts,
+      restore: () => {
+        (AbortSignal as unknown as { timeout: typeof AbortSignal.timeout }).timeout = originalTimeout;
+      },
+    };
+  }
+
+  /**
+   * Fetch stub that delays every response by ARTIFICIAL_DELAY_MS before
+   * forwarding to the real server app, honoring the request's own
+   * AbortSignal exactly like real fetch would — a request whose (scaled)
+   * budget expires before the delay elapses genuinely rejects with the same
+   * TimeoutError shape real fetch produces.
+   */
+  function installDelayedFetch() {
+    globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+      const url = typeof input === 'string' ? input : String(input);
+      const reqPath = url.replace(FAKE_SERVER_URL, '');
+      const method = init.method || 'GET';
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, ARTIFICIAL_DELAY_MS);
+        const signal = init.signal;
+        if (!signal) return;
+        if (signal.aborted) {
+          clearTimeout(timer);
+          reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+          return;
+        }
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+        });
+      });
+      return serverApp.request(reqPath, { method, headers: init.headers, body: init.body });
+    }) as typeof fetch;
+  }
+
+  /** Fetch stub that never resolves on its own — only the request's own
+   * AbortSignal ends it — so a call through it exercises serverFetch()'s
+   * real timeout-wrapping path end to end. */
+  function installHangingFetch() {
+    globalThis.fetch = ((_input: unknown, init: RequestInit = {}) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init.signal;
+        if (!signal) return;
+        if (signal.aborted) {
+          reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+          return;
+        }
+        signal.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+        });
+      });
+    }) as typeof fetch;
+  }
+
+  it('a bulk pull slower than the default budget but faster than the bulk budget completes, while an equally slow per-item push times out', async () => {
+    const { apiKey } = setup('bulk-vs-default');
+    const scaled = installScaledTimeout();
+    installDelayedFetch();
+    try {
+      const pullResult = await sync.pullFromServer(FAKE_SERVER_URL, apiKey);
+      assert.deepStrictEqual(
+        pullResult,
+        { pulled: 0, conflicts: 0 },
+        'the items/since pull must complete under its larger scaled budget rather than abort'
+      );
+
+      const db = datastore.getDb();
+      const now = Date.now();
+      db.prepare(`
+        INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+        VALUES (?, 'text', 'bulk vs default item', '{}', '', 0, ?, ?, 0)
+      `).run('local-bulk-vs-default-item', now, now);
+
+      // pushToServer isolates per-item failures rather than throwing (see its
+      // own doc comment), so the same artificial delay that the bulk pull
+      // above survived shows up here as a counted failure, not a rejection.
+      const pushResult = await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+      assert.deepStrictEqual(
+        pushResult,
+        { pushed: 0, failed: 1 },
+        'a per-item push under the same artificial delay must time out at the smaller default budget'
+      );
+    } finally {
+      scaled.restore();
+    }
+  });
+
+  it('bulk pull calls request the larger timeout budget; a per-item push requests the default', async () => {
+    const { apiKey } = setup('timeout-selection');
+    const scaled = installScaledTimeout();
+    globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
+      const url = typeof input === 'string' ? input : String(input);
+      const reqPath = url.replace(FAKE_SERVER_URL, '');
+      const method = init.method || 'GET';
+      return serverApp.request(reqPath, { method, headers: init.headers, body: init.body });
+    }) as typeof fetch;
+
+    try {
+      await sync.pullFromServer(FAKE_SERVER_URL, apiKey);
+      assert.deepStrictEqual(scaled.requestedTimeouts, [120000], 'the items/since pull must request the bulk budget');
+      scaled.requestedTimeouts.length = 0;
+
+      await sync.pullTagsFromServer(FAKE_SERVER_URL, apiKey);
+      assert.deepStrictEqual(scaled.requestedTimeouts, [120000], 'the tags/since pull must request the bulk budget');
+      scaled.requestedTimeouts.length = 0;
+
+      await sync.pullEventsFromServer(FAKE_SERVER_URL, apiKey);
+      assert.deepStrictEqual(scaled.requestedTimeouts, [120000], 'the events/since pull must request the bulk budget');
+      scaled.requestedTimeouts.length = 0;
+
+      const db = datastore.getDb();
+      const now = Date.now();
+      db.prepare(`
+        INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+        VALUES (?, 'text', 'timeout selection item', '{}', '', 0, ?, ?, 0)
+      `).run('local-timeout-selection-item', now, now);
+      await sync.pushToServer(FAKE_SERVER_URL, apiKey, 0);
+      assert.deepStrictEqual(scaled.requestedTimeouts, [15000], 'a per-item push must request the default budget');
+    } finally {
+      scaled.restore();
+    }
+  });
+
+  it('a timed-out request throws an error naming the request path and the budget it exceeded', async () => {
+    const { apiKey } = setup('timeout-message');
+    const scaled = installScaledTimeout();
+    installHangingFetch();
+    try {
+      await assert.rejects(
+        () => sync.pullFromServer(FAKE_SERVER_URL, apiKey),
+        (error: Error) => {
+          assert.ok(
+            error.message.startsWith('Request to /items?profile='),
+            `error must name the request path, got: ${error.message}`
+          );
+          assert.ok(
+            error.message.endsWith('timed out after 120000ms'),
+            `error must name the elapsed timeout, got: ${error.message}`
+          );
+          return true;
+        }
+      );
+    } finally {
+      scaled.restore();
+    }
+  });
+});

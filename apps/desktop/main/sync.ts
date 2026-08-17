@@ -265,7 +265,22 @@ function fromISOString(value: string | number): number {
 interface FetchOptions {
   method?: string;
   body?: unknown;
+  timeoutMs?: number;
 }
+
+// Default per-request budget. A hung single write (item push, tag push, event
+// chunk) should still fail fast, so every call keeps this unless it opts into
+// a larger one below.
+const DEFAULT_FETCH_TIMEOUT_MS = 15000;
+
+// The items/tags/events `since` pulls each return the WHOLE profile as one
+// unpaginated JSON body — measured at ~10MB / ~600ms from a fast link, but
+// long enough over a slow one to blow past the default budget. Those pulls
+// also run first in syncAll(), before any push, so a too-tight timeout here
+// doesn't just fail one request — it aborts the entire sync before anything
+// ever gets pushed. Give bulk pulls this much larger budget instead of
+// raising the default everywhere.
+const BULK_PULL_TIMEOUT_MS = 120000;
 
 /**
  * Make an authenticated request to the sync server.
@@ -278,18 +293,31 @@ async function serverFetch<T>(
   options: FetchOptions = {}
 ): Promise<T> {
   const url = `${serverUrl.replace(/\/$/, '')}${path}`;
-  const response = await fetch(url, {
-    method: options.method || 'GET',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'X-Peek-Datastore-Version': String(DATASTORE_VERSION),
-      'X-Peek-Protocol-Version': String(PROTOCOL_VERSION),
-      'X-Peek-Client': 'desktop',
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-    signal: AbortSignal.timeout(15000),
-  });
+  const timeoutMs = options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: options.method || 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'X-Peek-Datastore-Version': String(DATASTORE_VERSION),
+        'X-Peek-Protocol-Version': String(PROTOCOL_VERSION),
+        'X-Peek-Client': 'desktop',
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    // AbortSignal.timeout() rejects with a bare DOMException — "The operation
+    // was aborted due to timeout" — that says nothing about which request
+    // died. Name the path and the budget it exceeded so a timeout is legible
+    // wherever it surfaces (getSyncStatus().lastError, the Settings error line).
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      throw new Error(`Request to ${path} timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     const error = await response.text();
@@ -369,7 +397,9 @@ export async function pullFromServer(
 
   DEBUG && console.log(`[sync] Fetching from: ${serverUrl}${path}`);
 
-  const response = await serverFetch<{ items: ServerItem[] }>(serverUrl, apiKey, path);
+  const response = await serverFetch<{ items: ServerItem[] }>(serverUrl, apiKey, path, {
+    timeoutMs: BULK_PULL_TIMEOUT_MS,
+  });
   const serverItems = response.items;
 
   DEBUG && console.log(`[sync] Received ${serverItems.length} items from server`);
@@ -1011,7 +1041,9 @@ export async function pullEventsFromServer(
   let path = `/events/since/${timestamp}`;
   path += `?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
 
-  const response = await serverFetch<{ events: ServerEvent[] }>(serverUrl, apiKey, path);
+  const response = await serverFetch<{ events: ServerEvent[] }>(serverUrl, apiKey, path, {
+    timeoutMs: BULK_PULL_TIMEOUT_MS,
+  });
   const serverEvents = response.events;
 
   DEBUG && console.log(`[sync] Received ${serverEvents.length} events from server`);
@@ -1297,7 +1329,9 @@ export async function pullTagsFromServer(
   let path = `/tags/since/${timestamp}`;
   path += `?profile=${encodeURIComponent(profileSyncConfig.serverProfileId || activeProfile.id)}`;
 
-  const response = await serverFetch<{ tags: ServerTag[] }>(serverUrl, apiKey, path);
+  const response = await serverFetch<{ tags: ServerTag[] }>(serverUrl, apiKey, path, {
+    timeoutMs: BULK_PULL_TIMEOUT_MS,
+  });
   const serverTags = response.tags;
 
   DEBUG && console.log(`[sync] Received ${serverTags.length} tags from server`);
