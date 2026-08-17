@@ -100,7 +100,6 @@ import {
 } from './window-kernel.js';
 import { deriveWindowSurface, classifyWindowRegistration } from './izui-roles.js';
 import {
-  shadowKernelAttachOverlay,
   shadowKernelDestroyWindow,
   shadowKernelWindowShown,
   shadowKernelWindowHidden,
@@ -678,23 +677,6 @@ function workAreaNearest(content: {
 }
 
 /**
- * Detach the overlay from whatever it was framing: clear the renderer chrome and
- * dispatch the null-host attach request, which the reducer turns into "drop
- * `overlayFor` + `HIDE_WINDOW`". No overlay yet -> nothing to detach (an
- * un-created overlay is neither attached nor on screen), so this never forces
- * the singleton into existence.
- */
-function detachOverlayFromMachine(): void {
-  sendActiveHandoff(null);
-  if (overlayWmId == null) return;
-  dispatchWindowEvent({ type: 'OVERLAY_ATTACH_REQUESTED', id: overlayWmId, hostId: null });
-  // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-  // window manager; the dispatch above only reaches the old machine, whose
-  // matching effect arm is a no-op.
-  shadowKernelAttachOverlay(overlayWmId, null, getWindowStateSnapshot());
-}
-
-/**
  * Start the shared-overlay manager: subscribe to the kernel's read-back
  * attachment relation so the overlay renderer's handoff follows whichever
  * host the machine has attached the chrome to. Idempotent: a second call
@@ -750,7 +732,12 @@ export function initHybridOverlay(): void {
   // it is not a second decider the way the deleted retarget driver was. Which
   // host the chrome attaches to is decided entirely inside the kernel now
   // (`react`'s `AttachOverlayTo` diff loop, realized through the port); this
-  // callback only paints once that decision has landed.
+  // callback only paints once that decision has landed. Detach is the same
+  // diff answering null rather than an id — there is no standalone
+  // `detachOverlayFromMachine()` any more (it lost its last caller alongside
+  // `retarget()`, and has been deleted). Do not re-add one: a function
+  // outside the kernel that writes the overlay-attachment relation is
+  // exactly the second decider this refactor removed.
   unsubscribeActive = subscribeOverlayAttachment((hostId) => {
     const win = hostId !== null ? getNativeWindowFor(hostId) : null;
     sendActiveHandoff(win ? win.id : null);

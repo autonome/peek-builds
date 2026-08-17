@@ -673,12 +673,19 @@ export function shadowKernelRaiseWindow(id: WindowId, oldSnapshot: StateSnapshot
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Overlay attach/detach (peek 7fffa286) — the seventh real input this step
-// feeds the kernel. Translated at the two production sites that dispatch the
-// old machine's mirrored `OVERLAY_ATTACH_REQUESTED` (`hybrid-overlay.ts`'s
-// `retarget()` — a real `hostId`, attach or retarget — and
-// `detachOverlayFromMachine()` — `hostId: null`, detach), alongside that
-// dispatch, never in place of it.
+// Overlay attach/detach (peek 7fffa286) — originally the seventh real input
+// this step fed the kernel, translated at the two production sites that
+// dispatched the old machine's mirrored `OVERLAY_ATTACH_REQUESTED`
+// (`hybrid-overlay.ts`'s `retarget()` — a real `hostId`, attach or retarget —
+// and `detachOverlayFromMachine()` — `hostId: null`, detach), alongside that
+// dispatch, never in place of it. Both call sites, and the old machine's
+// mirrored dispatch itself, are gone now: attach/detach is decided entirely
+// inside the kernel (`window-kernel.ts react`'s `AttachOverlayTo` diff loop),
+// realized through the port, and reported back as the `OverlayAttached`
+// EVENT (`shadowKernelOverlayAttached` below), not this COMMAND. This
+// function has no production caller any more — kept for the tests that
+// exercise `AttachOverlay` directly, and as the historical record of the gap
+// this feed closed.
 //
 // Closes the measured gap this feed was missing: `AttachOverlay` had no
 // production dispatcher anywhere, so `WindowRecord.overlayFor` stayed
@@ -690,17 +697,17 @@ export function shadowKernelRaiseWindow(id: WindowId, oldSnapshot: StateSnapshot
 /**
  * Translate a completed overlay attach/retarget/detach report into the
  * kernel's `AttachOverlay` command — `hostId: null` is detach, the same one
- * transition the old machine's `OVERLAY_ATTACH_REQUESTED` is. Same shape and
+ * transition the old machine's `OVERLAY_ATTACH_REQUESTED` was. Same shape and
  * containment as `shadowKernelRaiseWindow` et al.: routed through
  * `shadowExecute` (a rejected stale `expectedVersion`, or a `hostId`/
  * `overlayId` `decide` doesn't recognize, is logged, never thrown into the
- * caller), ending with the same `compareAfterFeed` tail.
+ * caller), ending with the same `compareAfterFeed` tail. No production
+ * caller remains (see the section comment above); `shadowKernelOverlayAttached`
+ * is what the live attach/detach path uses.
  *
- * `frame` is the freshly expanded overlay frame for `hostId`, computed at the
- * caller's dispatch site the same way `OVERLAY_ATTACH_REQUESTED.frame` is
- * (`hybrid-overlay.ts retarget()`) — see `window-kernel.ts
- * WindowRecord.overlayFrame`'s doc for why the kernel takes this as data
- * rather than computing it. Omitted on a detach.
+ * `frame` is the freshly expanded overlay frame for `hostId` — see
+ * `window-kernel.ts WindowRecord.overlayFrame`'s doc for why the kernel takes
+ * this as data rather than computing it. Omitted on a detach.
  */
 export function shadowKernelAttachOverlay(overlayId: WindowId, hostId: WindowId | null, oldSnapshot: StateSnapshot, frame?: Rectangle): void {
   shadowExecute({
