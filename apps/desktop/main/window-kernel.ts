@@ -3645,6 +3645,29 @@ export function roleIn(set: ReadonlySet<string>, role: string | undefined): bool
  * answer for one (spare anything newer than the focuser). Reading staleness
  * here could only widen the sweep, which is the direction both live failures
  * came from.
+ *
+ * ONE MORE EXEMPTION, and it is POLICY, not a derivation: a victim that does
+ * not accept input (`!rec.acceptsInput`) is spared. A window the pointer
+ * passes through cannot be in the user's way, so nothing displaces it — that
+ * is a decision about what dismissal is FOR, not a fact implied by the other
+ * clauses. Today it spares exactly one window, the Space border
+ * (`features/spaces/background.js showBorder`): a click-through, `role:
+ * 'overlay'` ambient annotation meant to stay visible while the user works in
+ * other applications, which every OTHER clause here admits as a victim (never
+ * attached to a host, so `overlayFor` does not exempt it either). A FUTURE
+ * click-through window that wants to be dismissed on an app blur would be
+ * silently denied that by this clause — there is no carve-out for it, because
+ * none is needed yet.
+ *
+ * The shared chrome overlay is click-through too, and is already exempt by
+ * its attachment relation (`overlayFor !== undefined`, above) — but the two
+ * exemptions are not redundant, because they cover DISJOINT parts of its
+ * life. Before its first `AttachOverlay` lands, `overlayFor` is still absent,
+ * so only the click-through clause protects it. Once attached, while the
+ * pointer sits over real chrome and `wireClickCapture` has turned capture on
+ * (`acceptsInput: true`), only the relation does — the click-through clause
+ * has nothing left to exempt at that moment. Neither clause covers the whole
+ * life on its own.
  */
 export function selectTransientAutoclose(
   state: State,
@@ -3662,6 +3685,9 @@ export function selectTransientAutoclose(
     if (!rec.visible) continue;
     if (!roleIn(TRANSIENT_ROLES, rec.role)) continue;
     if (rec.overlayFor !== undefined) continue;
+    // Policy, not derivation — see this function's doc for why and for the
+    // Space border / chrome overlay cases this spares and does not spare.
+    if (!rec.acceptsInput) continue;
     if (focuser?.parentId === rec.id || focuser?.overlayFor === rec.id) continue;
     if (orderingFloor !== null && rec.openSeq > orderingFloor) continue;
     out.push(rec.id);

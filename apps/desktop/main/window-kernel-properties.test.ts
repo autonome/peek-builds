@@ -949,6 +949,9 @@ function checkAutocloseInvariants(state: State): string[] {
     if (rec.role === undefined) return false;
     if (!TRANSIENT_ROLES_EXPECTED.has(rec.role)) return false;
     if (rec.overlayFor !== undefined) return false;
+    // Policy, not a relation (window-kernel.ts selectTransientAutoclose's own
+    // doc): a window the pointer passes through is never a victim.
+    if (!rec.acceptsInput) return false;
     const focuser = state.order.find((w) => w.id === focusedId);
     if (focuser?.parentId === rec.id || focuser?.overlayFor === rec.id) return false;
     return true;

@@ -3460,6 +3460,63 @@ describe('window-kernel: transient autoclose', () => {
     );
   });
 
+  // The Space border (features/spaces/background.js showBorder): role
+  // 'overlay', never attached to a host, click-through. Every OTHER clause
+  // admits it as a victim — only the acceptsInput policy spares it.
+  it('a click-through transient survives the null-holder app-resign sweep', () => {
+    const state = fold(
+      [
+        reg(1, 'workspace'),
+        {
+          type: 'WindowRegistered',
+          id: wid(2),
+          kind: 'browser',
+          layer: 1,
+          canBecomeKey: false,
+          acceptsInput: false,
+          class: 'overlay',
+          role: 'overlay',
+        },
+        show(1),
+        show(2),
+      ],
+      initialState(),
+    );
+    // `holder: null` is what a real AppResignSettled writes onto
+    // `lastAttention` — see `react`'s call site.
+    assert.deepStrictEqual(
+      selectTransientAutoclose(state, null, { kind: 'world' }),
+      [],
+      'the border does not accept input, so nothing displaces it — including a real app-deactivation settle',
+    );
+  });
+
+  it('a click-through transient survives an ordinary world-caused focus sweep', () => {
+    const state = fold(
+      [
+        reg(1, 'workspace'),
+        {
+          type: 'WindowRegistered',
+          id: wid(2),
+          kind: 'browser',
+          layer: 1,
+          canBecomeKey: false,
+          acceptsInput: false,
+          class: 'overlay',
+          role: 'overlay',
+        },
+        show(1),
+        show(2),
+      ],
+      initialState(),
+    );
+    assert.deepStrictEqual(
+      selectTransientAutoclose(state, wid(1), { kind: 'world' }),
+      [],
+      'a real focuser taking key still does not displace a click-through window',
+    );
+  });
+
 });
 
 // ── react applies transient autoclose (§0: rule application is non-optional) ─
