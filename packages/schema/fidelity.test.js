@@ -497,10 +497,25 @@ describe('Schema Fidelity Tests', () => {
       );
     });
 
+    test('Electron rules table has all columns from v1.json', () => {
+      // rules is local-only (every column is sync:false), so it is checked
+      // against Electron alone — the server has no rules table.
+      const schemaColumns = Object.keys(schema.tables.rules.columns);
+      const electronCols = parseCreateTable(electronSql, 'rules');
+      assert.ok(electronCols, 'Table rules not found in Electron');
+
+      const missing = schemaColumns.filter(col => !electronCols[col]);
+      assert.deepStrictEqual(
+        missing,
+        [],
+        `Columns in v1.json rules but missing from Electron: ${missing.join(', ')}`
+      );
+    });
+
     test('all v1.json tables have column completeness tests', () => {
       // Meta-test: ensure we don't forget to add column tests for new schema tables
       const schemaTables = Object.keys(schema.tables);
-      const testedTables = ['items', 'tags', 'item_tags', 'item_events'];
+      const testedTables = ['items', 'tags', 'item_tags', 'item_events', 'rules'];
       const untested = schemaTables.filter(t => !testedTables.includes(t));
       assert.deepStrictEqual(
         untested,
