@@ -78,7 +78,7 @@ import { publish, subscribe, unsubscribe, getSystemAddress } from './pubsub.js';
 // this is a one-way (acyclic) dependency.
 import { wireHybridContentEvents } from './ipc.js';
 import {
-  subscribeFrontChange,
+  subscribeOverlayAttachment,
   dispatchWindowEvent,
   waitForMode,
   registerWindowWithMachine,
@@ -91,11 +91,10 @@ import {
   subscribeAppActive,
   getWindowStateSnapshot,
 } from './window-state-singleton.js';
-import type { Rectangle, WindowId } from './window-kernel.js';
+import type { WindowId } from './window-kernel.js';
 import {
   hostForOverlay,
   isBaseLayerPageHost,
-  topmostBaseLayerPageHost,
   roleIn,
   SATELLITE_ROLES,
 } from './window-kernel.js';
@@ -124,38 +123,25 @@ import { registerLocalShortcut, unregisterLocalShortcut } from './shortcuts.js';
 /**
  * Which page host the overlay currently belongs to, as an ELECTRON window id
  * (or null) — the ATTACHMENT relation (`window-kernel.ts hostForOverlay(state,
- * overlayId)`), not an ordering query. `retarget(id)` detaches the overlay
- * (host destroyed, hybrid window gone, overlay id not yet minted) in states
- * where the topmost page-host is still non-null, so answering a read-back
- * with an ordering query would paint chrome over a window it isn't attached
- * to and run extension script against a page that isn't visible. Needs the
- * overlay's OWN kernel `WindowId` — `overlayWmId` below, minted in
- * `ensureOverlay()`'s `registerWindowWithMachine` call and cleared alongside
- * `overlayWin` in the window's `'closed'` handler, so a null read here before
- * the overlay exists is honest ("nothing to be attached yet"). The machine's
- * surface speaks WM WindowId only; this module's internals (the hybrid
- * registry it frames over, the pubsub payloads its renderer speaks) are still
- * keyed by Electron window ids, so every read-back converts here — through
- * the singleton's sanctioned mapping, never a private map.
+ * overlayId)`), not an ordering query. The kernel's `AttachOverlayTo` effect
+ * (realized by the backend, reported back as the `OverlayAttached` event) can
+ * leave this relation null (host destroyed, hybrid window gone, overlay id
+ * not yet minted) in states where the topmost page-host is still non-null, so
+ * answering a read-back with an ordering query would paint chrome over a
+ * window it isn't attached to and run extension script against a page that
+ * isn't visible. Needs the overlay's OWN kernel `WindowId` — `overlayWmId`
+ * below, minted in `ensureOverlay()`'s `registerWindowWithMachine` call and
+ * cleared alongside `overlayWin` in the window's `'closed'` handler, so a
+ * null read here before the overlay exists is honest ("nothing to be
+ * attached yet"). The machine's surface speaks WM WindowId only; this
+ * module's internals (the hybrid registry it frames over, the pubsub
+ * payloads its renderer speaks) are still keyed by Electron window ids, so
+ * every read-back converts here — through the singleton's sanctioned
+ * mapping, never a private map.
  */
 function overlayHostOsId(): number | null {
   if (overlayWmId == null) return null;
   const host = hostForOverlay(getShadowKernelExecutor().getState(), overlayWmId);
-  if (host == null) return null;
-  const win = getNativeWindowFor(host.id);
-  return win ? win.id : null;
-}
-
-/**
- * Which page host the overlay SHOULD attach to right now, as an ELECTRON
- * window id (or null) — the ordering driver behind `retarget()`
- * (`window-kernel.ts topmostBaseLayerPageHost(state)`). Diverges from
- * `overlayHostOsId()` above exactly where the overlay is detached but a
- * base-layer page-host is still topmost — that gap is the reason this is a
- * SEPARATE query rather than a re-derivation of the read-back.
- */
-function attachTargetHostOsId(): number | null {
-  const host = topmostBaseLayerPageHost(getShadowKernelExecutor().getState());
   if (host == null) return null;
   const win = getNativeWindowFor(host.id);
   return win ? win.id : null;
@@ -709,88 +695,10 @@ function detachOverlayFromMachine(): void {
 }
 
 /**
- * Retarget the overlay onto a newly-active hybrid window (or detach on null) —
- * ONE dispatch (§5 step 9 cutover). The machine owns the whole of what
- * `frameBounds()` used to do imperatively: the fullscreen gate (host record
- * `fsMode`), the bounds write, the app-active reveal gate, the z-pin re-assert
- * and the focus-free show. It also owns the FOLLOW: nothing is subscribed to
- * here any more, because `BOUNDS_CHANGED` / `OS_FULLSCREEN_ENTERED` / `LEFT`
- * already reach the reducer for every registered window.
- *
- * The rect math stays at the dispatch site (`window-state.ts` has zero value
- * imports, so it can never call `expandToOverlayFrame`): the host's CURRENT
- * outer bounds are read here, expanded to the overlay frame, and ride the event
- * as `frame`. Every LATER frame rides `BOUNDS_CHANGED.overlayFrame`, which the
- * backend computes with the same helper.
- *
- * `sendActiveHandoff` stays: it is the renderer payload (url/title/nav-state/
- * favicon/gutters) the navbar paints from, not window management.
- */
-function retarget(id: number | null): void {
-  if (id == null) {
-    // No active hybrid window — clear the chrome and detach (the centralized
-    // show/hide that fixed the old per-canvas overlay-stays-visible bug
-    // 88797f2d, now a reducer transition).
-    detachOverlayFromMachine();
-    return;
-  }
-
-  const entry = getHybridWindow(id);
-  if (!entry || entry.baseWin.isDestroyed()) {
-    // Active window vanished between signal and handling — clear + detach.
-    detachOverlayFromMachine();
-    return;
-  }
-
-  const baseWin = entry.baseWin;
-  // Lazily mint the singleton (and its machine registration) on the first
-  // attach — the old `frameBounds()` did this via its `ensureOverlay()` call.
-  ensureOverlay();
-  if (overlayWmId == null) return;
-
-  // The host as the machine names it. An unregistered host resolves to null,
-  // which the reducer reads as "a host the machine does not know" and detaches —
-  // the same outcome the vanished-host branch above produces.
-  const hostId = getWindowIdFor(baseWin);
-
-  // Rect math at the dispatch site (see the doc above), from the host's live
-  // outer bounds. Undefined when the host is gone mid-call: the reducer then
-  // drives order + visibility only and leaves the overlay at its last frame.
-  let frame: Rectangle | undefined;
-  try {
-    if (!baseWin.isDestroyed()) {
-      const content = baseWin.getBounds();
-      frame = expandToOverlayFrame(content, workAreaNearest(content));
-    }
-  } catch {
-    /* host torn down between the front signal and here */
-  }
-
-  dispatchWindowEvent({ type: 'OVERLAY_ATTACH_REQUESTED', id: overlayWmId, hostId, frame });
-  // Feed the kernel (window-kernel-shadow.ts) — this is what drives the
-  // window manager; the dispatch above only reaches the old machine, whose
-  // matching effect arm is a no-op. The SAME `frame` computed above for the
-  // old machine's event rides this feed too (`window-kernel.ts
-  // WindowRecord.overlayFrame`'s doc), so the kernel's attach/retarget
-  // reframes exactly as the old machine's does.
-  shadowKernelAttachOverlay(overlayWmId, hostId, getWindowStateSnapshot(), frame);
-
-  // Tell the overlay renderer which window is now active + a state snapshot so
-  // it fully swaps its navbar for the new window (instant paint, no flash).
-  // The renderer may not be loaded yet on the very first retarget; in that case
-  // overlay.js seeds nothing — but it also subscribes synchronously at module
-  // load, and the broadcaster only delivers to already-subscribed windows, so a
-  // re-send after did-finish-load guarantees the first paint. We re-send below
-  // for that race.
-  sendActiveHandoff(id);
-
-  DEBUG && console.log('[hybrid-overlay] retargeted onto hybrid window', id);
-}
-
-/**
- * Start the shared-overlay manager: subscribe to the registry's active-window
- * push signal so the overlay retargets/follows as the frontmost hybrid window
- * changes. Idempotent: a second call while already initialized is ignored.
+ * Start the shared-overlay manager: subscribe to the kernel's read-back
+ * attachment relation so the overlay renderer's handoff follows whichever
+ * host the machine has attached the chrome to. Idempotent: a second call
+ * while already initialized is ignored.
  *
  * Wire this from the main-process setup path that runs once the hybrid feature
  * is active (see `ipc.ts` `registerAllHandlers` / `entry.ts onReady`).
@@ -824,32 +732,28 @@ export function initHybridOverlay(): void {
   wireExecuteScript();
 
   // Mint the overlay window and register it with the window-state machine
-  // HERE, before the subscription below can fire a `retarget()`. The
-  // overlay's EXISTENCE is app infrastructure — like the bg/cmd/hud
-  // renderers, it is created once at startup and is not a consequence of any
-  // window event; only its ATTACHMENT to a host is event-driven. Minting it
-  // from inside a `retarget()` call put its `WindowRegistered` registration
-  // mid-dispatch (queued behind the very dispatch that triggered the mint),
-  // so the immediately-following `AttachOverlay` was decided against a
-  // window-manager state that did not yet contain it and was rejected as
-  // no-such-window — the overlay stayed permanently unattached. Calling
-  // `ensureOverlay()` here, ahead of the subscription, means registration
-  // always lands between dispatches; `retarget()`'s own call is idempotent
-  // and becomes a no-op re-entry.
+  // HERE, before the subscription below can observe anything. The overlay's
+  // EXISTENCE is app infrastructure — like the bg/cmd/hud renderers, it is
+  // created once at startup and is not a consequence of any window event;
+  // only its ATTACHMENT to a host is event-driven, and that attachment is now
+  // the kernel's decision, realized as the `AttachOverlayTo` effect. THIS
+  // REGISTRATION IS THE SEED: `ensureOverlay()`'s `registerWindowWithMachine`
+  // call is the `WindowRegistered` transition that adds a record with
+  // `tracksBaseLayerTop` set, and `react`'s diff loop (§ design doc "The boot
+  // seed") emits the attach for it on that very transition — before, there was
+  // no such overlay record; after, there is, so the diff fires once here with
+  // no separate seed call needed. Do not re-add an explicit seed.
   ensureOverlay();
 
-  unsubscribeActive = subscribeFrontChange(() => {
-    try {
-      // subscribeFrontChange fires on any change to the ordering query behind
-      // `attachTargetHostOsId()` (window-state-singleton.ts subscribeFrontChange
-      // dedups on `topmostBaseLayerPageHost`) — re-read through that same
-      // helper the seed read below uses rather than trust the pushed value, so
-      // this driver and the seed always agree on which query answers "which
-      // host should the overlay attach to right now".
-      retarget(attachTargetHostOsId());
-    } catch (err) {
-      DEBUG && console.log('[hybrid-overlay] retarget failed:', err);
-    }
+  // The subscription's ONLY job is the renderer payload (url/title/favicon/
+  // nav-state) — it issues no command and decides nothing about windows, so
+  // it is not a second decider the way the deleted retarget driver was. Which
+  // host the chrome attaches to is decided entirely inside the kernel now
+  // (`react`'s `AttachOverlayTo` diff loop, realized through the port); this
+  // callback only paints once that decision has landed.
+  unsubscribeActive = subscribeOverlayAttachment((hostId) => {
+    const win = hostId !== null ? getNativeWindowFor(hostId) : null;
+    sendActiveHandoff(win ? win.id : null);
   });
 
   // Hybrid window teardown → deny any pending web-permission requests for that
@@ -870,12 +774,9 @@ export function initHybridOverlay(): void {
     installTestBridge();
   }
 
-  // Seed off the current active window in case one is already frontmost at
-  // init time (e.g. session restore opened a hybrid window before this ran).
-  const currentId = attachTargetHostOsId();
-  if (currentId != null) {
-    retarget(currentId);
-  }
+  // No explicit boot seed here: `ensureOverlay()` above already produced one
+  // via its `WindowRegistered` transition's `isNew` arm (`window-kernel.ts
+  // react`'s `AttachOverlayTo` loop) — see the comment on that call for why.
   DEBUG && console.log('[hybrid-overlay] initialized (subscribed to active-window changes)');
 }
 
@@ -1036,8 +937,8 @@ function installTestBridge(): void {
       // null) meant no other host was active. The machine has no such slot —
       // it has ONE order, and the overlay's attach target is whichever visible
       // page-host is topmost in it (`window-kernel.ts
-      // topmostBaseLayerPageHost`, the same query `attachTargetHostOsId()`
-      // reads). Synthetically activated fakes stay machine-visible forever
+      // topmostBaseLayerPageHost` — the same query `react`'s `AttachOverlayTo`
+      // diff loop reads). Synthetically activated fakes stay machine-visible forever
       // (they are never OS-shown, so no native 'hide' can fire), so to keep the
       // bridge's contract EVERY setActive first drains that query to null by
       // hiding whichever host currently answers it.

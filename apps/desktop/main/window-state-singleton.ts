@@ -9,7 +9,7 @@
  * tile-launcher.ts). It replaces the deleted scattered authorities:
  *   - `getTopmostContentWindowId()` ← ipc.ts `getLastFocusedVisibleWindowId`
  *   - `getFrontPageHostId()`    ← registry `getActiveHybridWindowId`
- *   - `subscribeFrontChange()`  ← registry `onActiveHybridWindowChange`
+ *   - `subscribeOverlayAttachment()` ← registry `onActiveHybridWindowChange`
  *   - `getDevtoolsTargetId()`   ← ipc.ts `getLastContentWindowId`
  *   - `getWindowPreBounds()`    ← registry `preFullScreenBounds`
  *   - `dispatchWindowEvent()`   ← the FULLSCREEN/ESC/SWITCHER/hide reroutes
@@ -33,7 +33,7 @@ import {
   shadowKernelWindowShown,
   getShadowKernelExecutor,
 } from './window-kernel-shadow.js';
-import { topmost, isContentWindow, topmostBaseLayerPageHost } from './window-kernel.js';
+import { topmost, isContentWindow } from './window-kernel.js';
 
 /** Register-spec that accepts real Electron window handles (both kinds satisfy the adapter's structural `NativeWindow`). */
 export interface MachineWindowSpec {
@@ -270,13 +270,13 @@ export function getTopmostContentWindowId(): WindowId | null {
 
 /**
  * The old machine's front window iff its record is a page-host, else null.
- * Its two production consumers (`hybrid-overlay.ts overlayHostOsId` /
- * `attachTargetHostOsId`) wanted different queries once the kernel cut over —
- * the attachment relation (`window-kernel.ts hostForOverlay`) for one, the
- * ordering query (`topmostBaseLayerPageHost`) for the other — so this shared
- * selector has no single correct kernel mapping and both were repointed off
- * it directly. The only remaining caller is the `__peekHybridOverlayTest`
- * bridge's `setActive` (its up-to-100-iteration drain loop was written
+ * Its two production consumers (`hybrid-overlay.ts overlayHostOsId` and the
+ * now-deleted `attachTargetHostOsId`) wanted different queries once the
+ * kernel cut over — the attachment relation (`window-kernel.ts
+ * hostForOverlay`) for one, the ordering query (`topmostBaseLayerPageHost`)
+ * for the other — so this shared selector has no single correct kernel
+ * mapping and both were repointed off it directly. The only remaining caller
+ * is the `__peekHybridOverlayTest` bridge's `setActive` (its up-to-100-iteration drain loop was written
  * against the OLD machine's front-successor repair and needs re-deriving
  * against the kernel separately — see the comment on `setActive` — so this
  * selector stays exactly as it always read, off the old machine, until that
@@ -292,31 +292,31 @@ export function getFrontPageHostId(): WindowId | null {
 }
 
 /**
- * Subscribe to changes in the topmost base-layer page-host
- * (`window-kernel.ts topmostBaseLayerPageHost`) — the overlay attach-target
- * ordering query, not `keyWindow`: under `key` the selector would go null
- * whenever the overlay itself holds key (firing a spurious `retarget(null)`
- * that detaches chrome from a still-visible page) and re-attach on every
- * Cmd+L, flickering the chrome. Fires with the new id (or null) only when it
- * actually changes. Exactly one subscriber (`hybrid-overlay.ts
- * initHybridOverlay`'s retarget driver). Returns an unsubscribe function.
+ * Subscribe to changes in the overlay's read-back attachment relation
+ * (`window-kernel.ts WindowRecord.overlayFor`, read here via the record
+ * carrying `tracksBaseLayerTop`) — NOT the ordering query
+ * (`topmostBaseLayerPageHost`) that used to drive `subscribeFrontChange`.
+ * Which host the chrome frames is now a window decision made inside the
+ * kernel (`react`'s `AttachOverlayTo` diff loop, realized through the port);
+ * this subscription issues no command and decides nothing about windows — it
+ * only paints (`hybrid-overlay.ts sendActiveHandoff`), so it is not a second
+ * decider the way the deleted `retarget()` driver was.
  *
- * TRIGGERED BY THE KERNEL, NOT THE OLD MACHINE. This used to subscribe to
- * `getWindowOsAdapter().getOwner().subscribe(...)` while reading off the
- * kernel — two different machines. Every shadow feed site dispatches the old
- * event and THEN feeds the kernel (`shadowKernelX(...)`), and the old
- * machine's `dispatch` notifies its subscribers SYNCHRONOUSLY, before that
- * shadow feed ever runs — so a subscriber wired to the old machine always
- * read kernel state from before the event that woke it, and the write the
- * kernel had just recorded went unnoticed until some unrelated old-machine
- * dispatch arrived later. Subscribing to `getShadowKernelExecutor().subscribe`
- * instead means the trigger and the read come from the same machine: that
- * `subscribe` notifies at the tail of `WindowKernelExecutor.apply`, after
- * `evolve` has produced the new state and `react`'s effects have been run —
- * so `read()` below always sees the state the notifying transition produced.
+ * Finds the overlay by the declared `tracksBaseLayerTop` fact rather than by
+ * a stored id because the overlay singleton can be re-minted
+ * (`hybrid-overlay.ts ensureOverlay()`'s `'closed'` handler nulls the ids) —
+ * a freshly-minted record carries the same declared fact, so this
+ * subscription stays correct across a re-mint, where a captured id would go
+ * stale.
+ *
+ * Fires with the new host id (or null) only when the relation actually
+ * changes. Returns an unsubscribe function.
  */
-export function subscribeFrontChange(cb: (attachTargetHostId: WindowId | null) => void): () => void {
-  const read = () => topmostBaseLayerPageHost(getShadowKernelExecutor().getState())?.id ?? null;
+export function subscribeOverlayAttachment(cb: (hostId: WindowId | null) => void): () => void {
+  const read = (): WindowId | null => {
+    const state = getShadowKernelExecutor().getState();
+    return state.order.find((r) => r.tracksBaseLayerTop)?.overlayFor ?? null;
+  };
   let last = read();
   return getShadowKernelExecutor().subscribe(() => {
     const now = read();
