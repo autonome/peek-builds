@@ -155,6 +155,17 @@ describe('Event push watermark — cross-run stranding regression', () => {
     return json.items.length;
   }
 
+  /** Reads back the watermark pushEventsToServer() just saved (see
+   * saveEventPushWatermark() in sync.ts — same feature_settings row read by
+   * the version-bump-reset describe block's own readFeatureSetting()). */
+  function readEventPushWatermark(): number {
+    const db = datastore.getDb();
+    const row = db.prepare(`
+      SELECT value FROM feature_settings WHERE featureId = 'sync' AND key = 'lastEventPushAt'
+    `).get() as { value: string } | undefined;
+    return row ? JSON.parse(row.value) : 0;
+  }
+
   it('an item whose push fails on run 1 still gets its events synced once its own push succeeds on run 2', async () => {
     const FLAKY_MARKER = 'flaky-series-marker-9f3a';
     const { apiKey } = setup('run1-item-failure', { failFirstItemPushMarker: FLAKY_MARKER });
@@ -380,6 +391,95 @@ describe('Event push watermark — cross-run stranding regression', () => {
     );
     const statusAfterRun2 = sync.getSyncStatus();
     assert.strictEqual(statusAfterRun2.lastError, null, 'run 2: a fully successful run must clear the prior stage error');
+  });
+
+  it('a deleted never-synced item does not pin the watermark, but a live never-synced item still does', async () => {
+    const { apiKey } = setup('deleted-vs-live-blocked-item');
+
+    // Parent item already synced on both sides, so its event is eligible for
+    // this run regardless of the watermark — it is what proves the watermark
+    // actually moved (or didn't) past the blocked items' events below.
+    const createRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'series', metadata: { title: 'Blocked-item watermark series' } }),
+    });
+    const { id: serverItemId } = (await createRes.json()) as { id: string };
+
+    const db = datastore.getDb();
+    const now = Date.now();
+
+    // Oldest: a DELETED item that never synced (syncId === ''). It never will —
+    // pushToServer() only sends a tombstone whose syncId is already set — so its
+    // event must not pin the watermark (see the deletedAt = 0 term's comment above
+    // the blocked-event query in sync.ts).
+    const deletedItemId = 'local-deleted-never-synced-item';
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', '', 0, ?, ?, ?)
+    `).run(deletedItemId, now, now, now + 1);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, ?, '{}', ?)
+    `).run('evt-deleted-item-old', deletedItemId, 1, now, now);
+
+    // Middle: a LIVE item that never synced yet — could still sync on a later
+    // run, so its event MUST keep pinning the watermark, same as before this
+    // change.
+    const liveItemId = 'local-live-never-synced-item';
+    const liveEventCreatedAt = now + 10;
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', '', 0, ?, ?, 0)
+    `).run(liveItemId, now, now);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, ?, '{}', ?)
+    `).run('evt-live-item-old', liveItemId, 2, liveEventCreatedAt, liveEventCreatedAt);
+
+    // Newest: an event on the already-synced item — the one whose fate the
+    // watermark actually controls.
+    const syncedItemId = 'local-blocked-watermark-synced-item';
+    const syncedEventCreatedAt = now + 20;
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', ?, ?, ?, ?, 0)
+    `).run(syncedItemId, serverItemId, now, now, now);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, NULL, ?, ?, '{}', ?)
+    `).run('evt-synced-item-new', syncedItemId, 3, syncedEventCreatedAt, syncedEventCreatedAt);
+
+    await sync.pushEventsToServer(FAKE_SERVER_URL, apiKey);
+
+    assert.deepStrictEqual(
+      await fetchServerEventIds(apiKey),
+      ['evt-synced-item-new'],
+      'only the already-synced item\'s event should reach the server this run — the other two are still blocked'
+    );
+
+    const watermark = readEventPushWatermark();
+    assert.ok(
+      watermark >= now,
+      `the deleted never-synced item's event (createdAt ${now}) must not pin the watermark below itself — ` +
+      `it can never get a syncId, so holding it down would strand every event after it forever; got watermark ${watermark}`
+    );
+    assert.ok(
+      watermark < liveEventCreatedAt,
+      `the live never-synced item's event (createdAt ${liveEventCreatedAt}) must still pin the watermark below ` +
+      `itself — it could still sync on a later run, so this protection must stay intact; got watermark ${watermark}`
+    );
+
+    // Confirm the consequence, not just the number: on the next run, nothing
+    // new is selected — the synced item's event was already delivered, and
+    // the watermark sitting at/above its createdAt (not held down by the
+    // deleted item) means it is correctly not re-selected either.
+    await sync.pushEventsToServer(FAKE_SERVER_URL, apiKey);
+    assert.deepStrictEqual(
+      await fetchServerEventIds(apiKey),
+      ['evt-synced-item-new'],
+      'run 2: no new events should have reached the server — the synced item\'s event was already delivered'
+    );
   });
 });
 

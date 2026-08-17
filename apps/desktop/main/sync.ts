@@ -1284,11 +1284,17 @@ export async function pushEventsToServer(
   // server/datastore-version reset clears every item's syncId at once), not
   // just ones newer than the watermark this run started with. The watermark
   // must never advance past the oldest of them.
+  // `deletedAt = 0`: a deleted item that never synced can never GET a syncId —
+  // pushToServer() only sends a tombstone whose syncId is already set, so
+  // nothing will ever unblock its events. Without this term such an item pins
+  // the watermark permanently and every subsequent run re-pushes the entire
+  // event tail behind it, which is exactly what deleting an unsyncable item
+  // would otherwise cause.
   const blocked = db.prepare(`
     SELECT MIN(e.createdAt) as minCreatedAt
     FROM item_events e
     JOIN items i ON e.itemId = i.id
-    WHERE i.syncId = ''
+    WHERE i.syncId = '' AND i.deletedAt = 0
   `).get() as { minCreatedAt: number | null };
 
   // `- 1`: the query above (and next run's) is a strict `createdAt > watermark`,
