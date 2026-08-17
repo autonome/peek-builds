@@ -659,6 +659,48 @@ interface PushResult {
 const ITEM_PUSH_PROGRESS_EVERY = 100;
 const ITEM_PUSH_PROGRESS_INTERVAL_MS = 3000;
 
+// Shared by this section and the event-push section below (pushEventsToServer's
+// dropped-row and rejected-chunk summaries): a per-row try/catch that only counts
+// failures (the shape both item push and event push use) tells the user nothing
+// about WHY, but logging one entry per failure doesn't scale — a full re-push can
+// fail thousands of items, and a down server fails every one of them with the
+// SAME message. Group by message instead, one line per distinct reason, so a
+// systemic failure is one line and a handful of one-off failures are still legible
+// individually.
+//
+// Capped at 20 distinct reasons: enough to surface every common cause in one
+// screen of the (already-scrollable) sync log without a validation bug that
+// produces a different message per row turning the log into the failure list
+// itself. Reasons past the cap collapse into a single "N more" tail instead of
+// vanishing silently.
+const PUSH_FAILURE_REASONS_MAX = 20;
+// Ids are listed only for a small group — past this, the id list is as
+// unreadable as one line per failure would have been, and the log's job here is
+// to say WHY a class of failure happened, not to enumerate every row (failed
+// rows are retried automatically on the next run regardless).
+const PUSH_FAILURE_IDS_MAX = 5;
+
+/**
+ * Turn a reason -> ids map into one summary line per distinct reason, most
+ * common first, capped per PUSH_FAILURE_REASONS_MAX/_IDS_MAX above. `noun`
+ * only affects wording ('item', 'event'); ids are always the row's own id —
+ * never content or values, since this ends up in the Settings sync log.
+ */
+function groupFailuresByReason(idsByReason: Map<string, string[]>, noun: string): string[] {
+  const sorted = [...idsByReason.entries()].sort((a, b) => b[1].length - a[1].length);
+  const shown = sorted.slice(0, PUSH_FAILURE_REASONS_MAX);
+  const lines = shown.map(([reason, ids]) => {
+    const idPart = ids.length <= PUSH_FAILURE_IDS_MAX ? ` (${ids.join(', ')})` : '';
+    return `${ids.length} ${noun}(s): ${reason}${idPart}`;
+  });
+  const rest = sorted.slice(PUSH_FAILURE_REASONS_MAX);
+  if (rest.length > 0) {
+    const restCount = rest.reduce((sum, [, ids]) => sum + ids.length, 0);
+    lines.push(`...and ${rest.length} more distinct error(s) (${restCount} more ${noun}(s))`);
+  }
+  return lines;
+}
+
 /**
  * Push unsynced local items to server
  *
@@ -715,6 +757,10 @@ export async function pushToServer(
 
   let pushed = 0;
   let failed = 0;
+  // Reason (error message) -> ids of every item that failed with it — see
+  // groupFailuresByReason() above for why this is grouped rather than logged
+  // per failure.
+  const failuresByReason = new Map<string, string[]>();
 
   // Throttle state for the item-push progress line — see
   // ITEM_PUSH_PROGRESS_EVERY/_INTERVAL_MS above.
@@ -726,8 +772,15 @@ export async function pushToServer(
       await pushSingleItem(serverUrl, apiKey, item);
       pushed++;
     } catch (error) {
-      DEBUG && console.log(`[sync] Failed to push item ${item.id}:`, (error as Error).message);
+      const message = (error as Error).message;
+      DEBUG && console.log(`[sync] Failed to push item ${item.id}:`, message);
       failed++;
+      const ids = failuresByReason.get(message);
+      if (ids) {
+        ids.push(item.id);
+      } else {
+        failuresByReason.set(message, [item.id]);
+      }
     }
 
     const done = pushed + failed;
@@ -748,6 +801,16 @@ export async function pushToServer(
   // stale count after the loop is actually done.
   if (items.length > 0) {
     logSyncProgress('push-items', 'progress', `Pushing items — ${pushed + failed} / ${items.length}`);
+  }
+
+  // Surfaced in the Settings sync log — "Pushed N item(s), M failed" (logged
+  // by syncAll() from this function's return value) says HOW MANY, not why;
+  // these lines say why, grouped so a systemic failure (every item hitting
+  // the same server error) reads as one line, not thousands.
+  if (failuresByReason.size > 0) {
+    for (const line of groupFailuresByReason(failuresByReason, 'item')) {
+      logSyncProgress('push-items', 'error', `Item push failed — ${line}`);
+    }
   }
 
   DEBUG && console.log(`[sync] Push complete: ${pushed} pushed, ${failed} failed`);
@@ -1016,26 +1079,39 @@ export async function pushEventsToServer(
   // than a loud one, since nothing else will ever point at the bad row.
   const validRows: typeof rows = [];
   const droppedRows: typeof rows = [];
+  // Reason (which specific field was bad) -> ids of every row dropped for it —
+  // grouped for the same reason pushToServer() groups item failures (see
+  // groupFailuresByReason() above): a bad batch can drop far more rows than a
+  // one-line-per-row log could stay readable through.
+  const droppedByReason = new Map<string, string[]>();
   for (const row of rows) {
-    if (!row.id || !row.itemSyncId || !Number.isFinite(row.occurredAt) || !Number.isFinite(row.createdAt)) {
+    const badFields: string[] = [];
+    if (!row.id) badFields.push('missing id');
+    if (!row.itemSyncId) badFields.push('missing itemId');
+    if (!Number.isFinite(row.occurredAt)) badFields.push('non-numeric occurredAt');
+    if (!Number.isFinite(row.createdAt)) badFields.push('non-numeric createdAt');
+    if (badFields.length > 0) {
       droppedRows.push(row);
+      const reason = badFields.join(', ');
+      const id = row.id || '(no id)';
+      const ids = droppedByReason.get(reason);
+      if (ids) {
+        ids.push(id);
+      } else {
+        droppedByReason.set(reason, [id]);
+      }
     } else {
       validRows.push(row);
     }
   }
   if (droppedRows.length > 0) {
-    console.log(
-      `[sync] Dropped ${droppedRows.length} malformed event(s) from push (missing id/itemId or ` +
-      `non-finite occurredAt/createdAt): ${droppedRows.map((r) => r.id || '(no id)').join(', ')}`
-    );
-    // Surfaced in the Settings sync log too — a silently dropped event is
-    // exactly what the user needs to see, not just what DEBUG logging sees.
-    logSyncProgress(
-      'push-events',
-      'dropped',
-      `Dropped ${droppedRows.length} malformed event(s) (missing id/itemId or non-finite ` +
-      `occurredAt/createdAt): ${droppedRows.map((r) => r.id || '(no id)').join(', ')}`
-    );
+    console.log(`[sync] Dropped ${droppedRows.length} malformed event(s) from push`);
+    // Surfaced in the Settings sync log too, one line per distinct bad field —
+    // a silently dropped event is exactly what the user needs to see, not
+    // just what DEBUG logging sees.
+    for (const line of groupFailuresByReason(droppedByReason, 'event')) {
+      logSyncProgress('push-events', 'dropped', `Dropped malformed event(s) — ${line}`);
+    }
   }
 
   // Tracks the oldest createdAt among events that did NOT make it to the server this
@@ -1056,6 +1132,9 @@ export async function pushEventsToServer(
 
   let pushed = 0;
   let failed = 0;
+  // Reason (the server's own error message for the chunk) -> ids of every
+  // event in a chunk that failed with it — see groupFailuresByReason() above.
+  const chunkFailuresByReason = new Map<string, string[]>();
   for (let i = 0; i < validRows.length; i += MAX_EVENTS_PER_PUSH) {
     const batch = validRows.slice(i, i + MAX_EVENTS_PER_PUSH);
     const events = batch.map((row) => {
@@ -1092,17 +1171,31 @@ export async function pushEventsToServer(
       // independent request, so a transient failure on chunk N has no bearing on
       // whether chunk N+1 will succeed. The failed chunk's events stay eligible for
       // the next run via notDeliveredMinCreatedAt below.
+      const message = (error as Error).message;
       DEBUG && console.log(
         `[sync] Event push chunk failed (${batch.length} events), will retry next run:`,
-        (error as Error).message
-      );
-      logSyncProgress(
-        'push-events',
-        'error',
-        `Chunk of ${batch.length} event(s) rejected, will retry next run: ${(error as Error).message}`
+        message
       );
       trackNotDelivered(batch);
       failed += batch.length;
+      const ids = chunkFailuresByReason.get(message);
+      const batchIds = batch.map((row) => row.id);
+      if (ids) {
+        ids.push(...batchIds);
+      } else {
+        chunkFailuresByReason.set(message, batchIds);
+      }
+    }
+  }
+
+  // Surfaced in the Settings sync log — grouped by the server's own error
+  // message so N chunks failing for the SAME reason (e.g. the server down for
+  // the whole run) collapse into one line instead of one per chunk. Events in
+  // a failed chunk are not lost — they stay eligible for the next run via
+  // notDeliveredMinCreatedAt above.
+  if (chunkFailuresByReason.size > 0) {
+    for (const line of groupFailuresByReason(chunkFailuresByReason, 'event')) {
+      logSyncProgress('push-events', 'error', `Event chunk(s) rejected, will retry next run — ${line}`);
     }
   }
 

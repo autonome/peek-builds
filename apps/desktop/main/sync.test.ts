@@ -405,7 +405,16 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
   /** Same shape as the event-sync describe block's setup() above: a fresh
    * profile + fetch stub routed to the real server in-process, optionally
    * rejecting the first POST /events chunk outright. */
-  function setup(name: string, opts: { failFirstEventPushOnce?: boolean } = {}) {
+  function setup(name: string, opts: {
+    failFirstEventPushOnce?: boolean;
+    // Called for every POST /items request; returning a string fails THAT
+    // request with a 500 whose body is the returned string (so it ends up
+    // verbatim as serverFetch()'s thrown error message). Unlike
+    // failFirstItemPushMarker in the other describe block, this applies to
+    // every call, not just the first — the grouping tests below need many
+    // items to fail, not one.
+    itemPushFailureFor?: (bodyText: string) => string | undefined;
+  } = {}) {
     const desktopDir = fs.mkdtempSync(path.join(os.tmpdir(), `peek-desktop-progresslog-${name}-`));
     datastore.initDatabase(path.join(desktopDir, 'datastore.sqlite'));
     profiles.initProfilesDb(desktopDir);
@@ -421,6 +430,14 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
       const url = typeof input === 'string' ? input : String(input);
       const reqPath = url.replace(FAKE_SERVER_URL, '');
       const method = init.method || 'GET';
+      const bodyText = typeof init.body === 'string' ? init.body : '';
+
+      if (opts.itemPushFailureFor && method === 'POST' && reqPath.startsWith('/items')) {
+        const failMessage = opts.itemPushFailureFor(bodyText);
+        if (failMessage !== undefined) {
+          return new Response(failMessage, { status: 500 });
+        }
+      }
 
       if (
         opts.failFirstEventPushOnce &&
@@ -492,6 +509,95 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
     );
   });
 
+  it('several item pushes failing with the SAME error produce one grouped log entry, not one per item', async () => {
+    const { apiKey } = setup('item-fail-same-reason', {
+      itemPushFailureFor: () => 'simulated identical push failure',
+    });
+
+    const ITEM_COUNT = 4;
+    const db = datastore.getDb();
+    const now = Date.now();
+    const CONTENT_MARKER = 'item-content-must-not-leak-into-the-log';
+    const insert = db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', ?, '{}', '', 0, ?, ?, 0)
+    `);
+    for (let i = 0; i < ITEM_COUNT; i++) {
+      insert.run(`local-fail-same-${i}`, `${CONTENT_MARKER}-${i}`, now, now);
+    }
+
+    // pushToServer() isolates per-item failures — the run as a whole must
+    // still complete even though every item in it fails to push.
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+    const failureEntries = log.filter((e) => e.stage === 'push-items' && e.phase === 'error');
+
+    assert.strictEqual(
+      failureEntries.length,
+      1,
+      `expected exactly one grouped entry for identical failures, got ${failureEntries.length}: ` +
+      JSON.stringify(failureEntries.map((e) => e.message))
+    );
+    assert.ok(
+      failureEntries[0].message.includes(`${ITEM_COUNT} item(s)`),
+      `expected the grouped entry to carry the true failure count, got: ${failureEntries[0].message}`
+    );
+    assert.ok(
+      failureEntries[0].message.includes('simulated identical push failure'),
+      `expected the grouped entry to carry the failure reason, got: ${failureEntries[0].message}`
+    );
+    for (let i = 0; i < ITEM_COUNT; i++) {
+      assert.ok(
+        failureEntries[0].message.includes(`local-fail-same-${i}`),
+        `expected the grouped entry to name item local-fail-same-${i} (small failure count), got: ${failureEntries[0].message}`
+      );
+    }
+    assert.ok(
+      !log.some((e) => e.message.includes(CONTENT_MARKER)),
+      'expected no log entry to contain item content'
+    );
+  });
+
+  it('item pushes failing with DIFFERENT errors produce one entry per distinct reason, capped with a rolled-up tail', async () => {
+    let counter = 0;
+    const { apiKey } = setup('item-fail-different-reasons', {
+      itemPushFailureFor: () => `distinct push failure #${counter++}`,
+    });
+
+    // Comfortably more than any reasonable per-run cap on distinct reasons —
+    // proves the summary collapses instead of growing one line per item.
+    const ITEM_COUNT = 40;
+    const db = datastore.getDb();
+    const now = Date.now();
+    const CONTENT_MARKER = 'item-content-must-not-leak-into-the-log';
+    const insert = db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'text', ?, '{}', '', 0, ?, ?, 0)
+    `);
+    for (let i = 0; i < ITEM_COUNT; i++) {
+      insert.run(`local-fail-diff-${i}`, `${CONTENT_MARKER}-${i}`, now, now);
+    }
+
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+    const failureEntries = log.filter((e) => e.stage === 'push-items' && e.phase === 'error');
+
+    assert.ok(
+      failureEntries.length > 1 && failureEntries.length < ITEM_COUNT,
+      `expected more than one but far fewer than ${ITEM_COUNT} entries (capped + rolled-up tail), got ${failureEntries.length}`
+    );
+    assert.ok(
+      failureEntries.some((e) => e.message.includes('more distinct error')),
+      `expected a rolled-up "N more" tail entry among: ${JSON.stringify(failureEntries.map((e) => e.message))}`
+    );
+    assert.ok(
+      !log.some((e) => e.message.includes(CONTENT_MARKER)),
+      'expected no log entry to contain item content'
+    );
+  });
+
   it('a dropped malformed event and a rejected chunk each produce a log entry', async () => {
     const { apiKey } = setup('dropped-and-failed', { failFirstEventPushOnce: true });
 
@@ -535,6 +641,125 @@ describe('Sync progress log — sync:progress emission and the bounded ring buff
 
     const chunkFailure = log.find((e) => e.stage === 'push-events' && e.phase === 'error');
     assert.ok(chunkFailure, 'expected a log entry for the rejected chunk');
+    assert.ok(
+      chunkFailure!.message.includes('simulated chunk rejection'),
+      `expected the rejected-chunk entry to carry the server's own error message, got: ${chunkFailure!.message}`
+    );
+  });
+
+  it('several malformed events dropped for the SAME reason produce one grouped log entry, not one per event', async () => {
+    const { apiKey } = setup('event-drop-same-reason');
+
+    const createRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'series', metadata: { title: 'Event drop grouping series' } }),
+    });
+    const { id: serverItemId } = (await createRes.json()) as { id: string };
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    const localItemId = 'local-event-drop-same-item';
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', ?, ?, ?, ?, 0)
+    `).run(localItemId, serverItemId, now, now, now);
+
+    const CONTENT_MARKER = 'event-content-must-not-leak-into-the-log';
+    const EVENT_COUNT = 3;
+    const insert = db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, ?, ?, 'not-a-number', '{}', ?)
+    `);
+    for (let i = 0; i < EVENT_COUNT; i++) {
+      insert.run(`evt-drop-same-${i}`, localItemId, `${CONTENT_MARKER}-${i}`, i, now + i);
+    }
+
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+    const droppedEntries = log.filter((e) => e.stage === 'push-events' && e.phase === 'dropped');
+
+    assert.strictEqual(
+      droppedEntries.length,
+      1,
+      `expected exactly one grouped drop entry for identical reasons, got ${droppedEntries.length}: ` +
+      JSON.stringify(droppedEntries.map((e) => e.message))
+    );
+    assert.ok(
+      droppedEntries[0].message.includes(`${EVENT_COUNT} event(s)`),
+      `expected the grouped entry to carry the true drop count, got: ${droppedEntries[0].message}`
+    );
+    assert.ok(
+      droppedEntries[0].message.includes('non-numeric occurredAt'),
+      `expected the grouped entry to say what was wrong, got: ${droppedEntries[0].message}`
+    );
+    for (let i = 0; i < EVENT_COUNT; i++) {
+      assert.ok(
+        droppedEntries[0].message.includes(`evt-drop-same-${i}`),
+        `expected the grouped entry to name evt-drop-same-${i} (small drop count), got: ${droppedEntries[0].message}`
+      );
+    }
+    assert.ok(
+      !log.some((e) => e.message.includes(CONTENT_MARKER)),
+      'expected no log entry to contain event content'
+    );
+  });
+
+  it('malformed events dropped for DIFFERENT reasons produce one entry per distinct reason', async () => {
+    const { apiKey } = setup('event-drop-different-reasons');
+
+    const createRes = await serverApp.request('/items', {
+      method: 'POST',
+      headers: authHeaders(apiKey),
+      body: JSON.stringify({ type: 'series', metadata: { title: 'Event drop reasons series' } }),
+    });
+    const { id: serverItemId } = (await createRes.json()) as { id: string };
+
+    const db = datastore.getDb();
+    const now = Date.now();
+    const localItemId = 'local-event-drop-diff-item';
+    db.prepare(`
+      INSERT INTO items (id, type, content, metadata, syncId, syncedAt, createdAt, updatedAt, deletedAt)
+      VALUES (?, 'series', NULL, '{}', ?, ?, ?, ?, 0)
+    `).run(localItemId, serverItemId, now, now, now);
+
+    const CONTENT_MARKER = 'event-content-must-not-leak-into-the-log';
+    // Two independently-bad fields — two distinct reason strings. The second
+    // row uses a missing id (rather than a bad createdAt) to keep this test
+    // clear of createdAt's role in the watermark math below.
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES (?, ?, ?, ?, 'not-a-number', '{}', ?)
+    `).run('evt-drop-diff-occurred', localItemId, `${CONTENT_MARKER}-a`, 1, now);
+    db.prepare(`
+      INSERT INTO item_events (id, itemId, content, value, occurredAt, metadata, createdAt)
+      VALUES ('', ?, ?, ?, ?, '{}', ?)
+    `).run(localItemId, `${CONTENT_MARKER}-b`, 2, now + 2, now + 1);
+
+    await assert.doesNotReject(() => sync.syncAll(FAKE_SERVER_URL, apiKey));
+
+    const log = sync.getSyncLog();
+    const droppedEntries = log.filter((e) => e.stage === 'push-events' && e.phase === 'dropped');
+
+    assert.strictEqual(
+      droppedEntries.length,
+      2,
+      `expected one entry per distinct drop reason, got ${droppedEntries.length}: ` +
+      JSON.stringify(droppedEntries.map((e) => e.message))
+    );
+    assert.ok(
+      droppedEntries.some((e) => e.message.includes('non-numeric occurredAt') && e.message.includes('evt-drop-diff-occurred')),
+      `expected an entry for the bad-occurredAt row, got: ${JSON.stringify(droppedEntries.map((e) => e.message))}`
+    );
+    assert.ok(
+      droppedEntries.some((e) => e.message.includes('missing id') && e.message.includes('(no id)')),
+      `expected an entry for the missing-id row, got: ${JSON.stringify(droppedEntries.map((e) => e.message))}`
+    );
+    assert.ok(
+      !log.some((e) => e.message.includes(CONTENT_MARKER)),
+      'expected no log entry to contain event content'
+    );
   });
 
   it('the buffer is bounded across a long run and is cleared at the start of a new run', async () => {
